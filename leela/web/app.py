@@ -807,10 +807,11 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
 
 
 def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_port=8400,
-              open_ws=True, allow_remote_terminal=False):
+              open_ws=True, allow_remote_terminal=False, kernel='ipykernel'):
     "Start the web IDE over `roots` (or the saved workspace when none are given)."
     import uvicorn
-    ws = Workspace.load(port=kernel_port, agent=agent) if (open_ws and not roots) else Workspace(port=kernel_port, agent=agent)
+    ws = (Workspace.load(port=kernel_port, agent=agent, kernel=kernel) if (open_ws and not roots)
+          else Workspace(port=kernel_port, agent=agent, kernel=kernel))
     for r in roots: ws.add_root(r)
     if not ws.fs.roots: ws.add_root(os.getcwd())
     gate = TerminalGate(host=host, allow_remote=allow_remote_terminal)

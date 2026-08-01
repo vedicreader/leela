@@ -15,10 +15,17 @@ real ipykernel process driven over `jupyter_client`, which the IDE talks to on
 The in-kernel server registers itself in leela's registry, so a kernel started
 here shows up as just another env to the web panel and to the env picker -- no
 new discovery mechanism.
-"""
+
+The launcher is pluggable: `kernel='ipykernel'` (the default) uses ipykernel and
+matches historical behaviour exactly. `kernel='ipymini'` launches the pure-Python
+[ipymini](https://github.com/AnswerDotAI/ipymini) kernel instead. ipymini adds
+`get_ipython().kernel.subshell()` / `.unlock()` helpers so leela's in-kernel HTTP
+handlers (`/agent/api/exec`, `/api/exec`) can execute *alongside* a running cell
+rather than sharing its GIL slice. The two-channel split above is preserved --
+ipymini is a drop-in kernel launcher, not a new inspection transport."""
 
 from __future__ import annotations
-import asyncio, os, sys, queue
+import asyncio, importlib.util, os, sys, queue, warnings
 from dataclasses import dataclass, field
 from fastcore.all import store_attr, ifnone, L
 from fastcore.ansi import strip_ansi
@@ -27,7 +34,13 @@ from jupyter_client.kernelspec import KernelSpec
 
 from .inspect.server import reg_dir, active
 
-__all__ = ['ExecOutcome', 'Kernel', 'KernelPool', 'bootstrap_src', 'output_text']
+__all__ = ['ExecOutcome', 'Kernel', 'KernelPool', 'bootstrap_src', 'output_text', 'ipymini_available']
+
+KERNELS = ('ipykernel', 'ipymini')
+
+def ipymini_available():
+    "True when the ipymini package can be imported in this interpreter."
+    return importlib.util.find_spec('ipymini') is not None
 
 # Bootstrap run silently in a fresh kernel to start its inspector.
 #
@@ -35,18 +48,28 @@ __all__ = ['ExecOutcome', 'Kernel', 'KernelPool', 'bootstrap_src', 'output_text'
 # exactly as empty as they left it -- an inspector that shows you its own scaffolding
 # in your variable list has failed at its one job. Nothing is returned through the
 # namespace either; the port comes back via the registry entry, matched on pid.
+#
+# Under ipymini we also stash a reference to `get_ipython().kernel` on the inspect
+# server module, so its HTTP handlers can enter a subshell for concurrent execution.
 BOOTSTRAP = '''
 def _lee_bootstrap():
 	import leela.inspect.server as ls
-	return ls.serve_in_kernel(name={name!r}, port={port!r}, agent={agent!r}, token={token!r})
+	r = ls.serve_in_kernel(name={name!r}, port={port!r}, agent={agent!r}, token={token!r})
+	if {ipymini!r}:
+		try:
+			from IPython import get_ipython
+			ls._kernel_backend = getattr(get_ipython(), 'kernel', None)
+		except Exception: ls._kernel_backend = None
+	return r
 try: _lee_bootstrap()
 finally: del _lee_bootstrap
 '''
 
 
-def bootstrap_src(name=None, port=8000, agent='restricted', token=True):
+def bootstrap_src(name=None, port=8000, agent='restricted', token=True, kernel='ipykernel'):
     "The bootstrap cell source for a kernel that should host an inspector."
-    return BOOTSTRAP.format(name=name, port=port, agent=agent, token=token)
+    return BOOTSTRAP.format(name=name, port=port, agent=agent, token=token,
+                            ipymini=(kernel == 'ipymini'))
 
 
 def output_text(outs):
@@ -74,10 +97,13 @@ class ExecOutcome:
     def text(self): return output_text(self.outputs)
 
 
-def _spec(python=None, name='python3'):
+def _spec(python=None, name='python3', kernel='ipykernel'):
     "A kernelspec pinned to a specific interpreter, so the kernel lands in *this* venv."
-    return KernelSpec(argv=[python or sys.executable, '-m', 'ipykernel_launcher', '-f', '{connection_file}'],
-                      display_name=name, language='python')
+    if kernel == 'ipymini':
+        argv = [python or sys.executable, '-Xfrozen_modules=off', '-m', 'ipymini', '-f', '{connection_file}']
+    else:
+        argv = [python or sys.executable, '-m', 'ipykernel_launcher', '-f', '{connection_file}']
+    return KernelSpec(argv=argv, display_name=name, language='python')
 
 
 class Kernel:
@@ -89,12 +115,23 @@ class Kernel:
                  python=None,           # interpreter to launch (default: this one)
                  inspect=True,          # start an in-kernel inspector
                  agent='restricted',    # agent surface on that server: restricted|readonly|off
-                 port=8000):            # base port for the inspector (auto-bumps if taken)
+                 port=8000,             # base port for the inspector (auto-bumps if taken)
+                 kernel='ipykernel'):   # kernel launcher: 'ipykernel' | 'ipymini'
+        if kernel not in KERNELS: kernel = 'ipykernel'
+        if kernel == 'ipymini' and not ipymini_available():
+            warnings.warn("ipymini not installed; falling back to ipykernel. "
+                          "Install with `pip install \"leela[ipymini]\"`.")
+            kernel = 'ipykernel'
         store_attr()
         self.km = self.kc = None
         self.base = None               # inspector base URL, once bootstrapped
         self.boot_error = None         # bootstrap failure text, if the inspector could not start
         self._exec_lock = asyncio.Lock()
+
+    @property
+    def kernel_kind(self):
+        "Which launcher this kernel was started with: 'ipykernel' or 'ipymini'."
+        return self.kernel
 
     # -- lifecycle ------------------------------------------------------------
     @property
@@ -108,8 +145,8 @@ class Kernel:
 
     async def start(self, timeout=60):
         "Launch the kernel, wait for it to answer, then bootstrap its inspector."
-        self.km = AsyncKernelManager(kernel_name='python3')
-        self.km._kernel_spec = _spec(self.python, ifnone(self.name, 'python3'))
+        self.km = AsyncKernelManager(kernel_name=self.kernel if self.kernel == 'ipymini' else 'python3')
+        self.km._kernel_spec = _spec(self.python, ifnone(self.name, 'python3'), self.kernel)
         cwd = str(self.cwd) if self.cwd else os.getcwd()
         await self.km.start_kernel(cwd=cwd)
         self.kc = self.km.client()
@@ -123,7 +160,7 @@ class Kernel:
 
     async def bootstrap(self):
         "Start the inspector inside the kernel and record its base URL."
-        src = bootstrap_src(self.name, self.port, self.agent, True)
+        src = bootstrap_src(self.name, self.port, self.agent, True, self.kernel)
         r = await self.execute(src, silent=True, store_history=False)
         if not r.ok:
             self.boot_error = r.error or r.text or 'inspector bootstrap failed'
@@ -278,11 +315,14 @@ class Kernel:
 class KernelPool:
     "The IDE's kernels, keyed by an id the workspace assigns (usually a tab or a folder root)."
 
-    def __init__(self, port=8000): self.port, self.kernels = port, {}
+    def __init__(self, port=8000, default_kernel='ipykernel'):
+        self.port, self.kernels = port, {}
+        self.default_kernel = default_kernel if default_kernel in KERNELS else 'ipykernel'
 
     async def get(self, key, **kw):
         "The kernel for `key`, starting it on first use."
         if (k := self.kernels.get(key)) is not None and k.alive: return k
+        kw.setdefault('kernel', self.default_kernel)
         k = self.kernels[key] = Kernel(port=self.port, **kw)
         await k.start()
         return k

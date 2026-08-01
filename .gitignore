@@ -155,3 +155,4 @@ leela/web/src/package-lock.json
 
 # pytest-textual-snapshot writes this on failure
 snapshot_report.html
+leela_sessions/

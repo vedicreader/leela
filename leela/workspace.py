@@ -55,14 +55,15 @@ class Tab(Dictable):
 class Workspace:
     "The IDE's session: open folders, open tabs, and the kernels behind them."
 
-    def __init__(self, roots=(), port=8000, agent='restricted', dev_port=9000):
+    def __init__(self, roots=(), port=8000, agent='restricted', dev_port=9000, kernel='ipykernel'):
         self.fs = Sandbox(roots)
-        self.pool = KernelPool(port=port)
+        self.pool = KernelPool(port=port, default_kernel=kernel)
         self.dev = DevServers(port=dev_port)
         self.search = Search(self.fs)
         self.research = Research(self.fs)
         self.terms = Terminals(cwd=self.fs.roots[0] if self.fs.roots else None)
         self.agent = agent
+        self.kernel = kernel
         self.tabs = L()
         self.active = 0
         self._untitled = 0
@@ -252,12 +253,12 @@ class Workspace:
         return p
 
     @classmethod
-    def load(cls, path=None, port=8000, agent='restricted'):
+    def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel'):
         "Restore a saved workspace, dropping any folder or file that has since gone away."
         p = Path(path or ws_path())
         try: d = p.read_json()
         except Exception: d = {}
-        ws = cls(port=port, agent=agent)
+        ws = cls(port=port, agent=agent, kernel=kernel)
         for r in d.get('roots', []):
             try: ws.add_root(r)
             except Exception: pass

@@ -36,6 +36,23 @@ folders, tabs and kernels.
 - **Live variables** from the notebook's own kernel. Each notebook tab owns a real
   ipykernel process with an inspector running *inside* it, so the variable tree
   stays responsive even while a long cell is running.
+- **Concurrent kernels (optional).** Pass `--kernel ipymini` to launch each notebook
+  under [ipymini](https://github.com/AnswerDotAI/ipymini) instead of ipykernel.
+  ipymini exposes `get_ipython().kernel.unlock()` and `.subshell()` so leela's
+  in-kernel inspector and agent execs don't queue behind a long-running cell.
+  Install with `pip install "leela[ipymini]"`; it falls back to ipykernel with a
+  warning if the extra isn't installed.
+
+  Measured on a cell that awaits `asyncio.sleep(2.0)`:
+
+  ![web concurrency](docs/screenshots/web-concurrency.png)
+
+  The HTTP inspector paths already ran on a background thread, so they answer
+  quickly on both kernels. The shell channel is where ipymini matters &mdash; a
+  `complete_request` (used by the completion popup) waits ~3&thinsp;s behind the
+  cell on ipykernel and returns in ~275&thinsp;ms on ipymini.
+
+  ![tui view](docs/screenshots/tui-concurrency.png)
 - **Shared kernels per folder.** Tabs bind per root, not per tab: the exec strip,
   the scratch box and two open notebooks all see the same variables. A tab can opt
   out and take a private kernel.
