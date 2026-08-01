@@ -1,0 +1,34 @@
+{
+  "name": "leela-editor",
+  "private": true,
+  "description": "Vendored browser bundles for the leela IDE (CodeMirror 6 editor, xterm.js terminal). Build with `npm install && npm run build`; the output is committed so users never need node.",
+  "scripts": {
+    "build": "npm run build:editor && npm run build:term && npm run build:termcss",
+    "build:editor": "esbuild editor.js --bundle --format=iife --global-name=LeeCM --minify --outfile=../static/lee-cm6.js",
+    "build:term": "esbuild term.js --bundle --format=iife --minify --outfile=../static/lee-term.js",
+    "build:termcss": "cp node_modules/@xterm/xterm/css/xterm.css ../static/lee-term.css"
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "^6.18.0",
+    "@codemirror/commands": "^6.7.0",
+    "@codemirror/lang-css": "^6.3.0",
+    "@codemirror/lang-html": "^6.4.9",
+    "@codemirror/lang-javascript": "^6.2.2",
+    "@codemirror/lang-json": "^6.0.1",
+    "@codemirror/lang-markdown": "^6.3.0",
+    "@codemirror/lang-python": "^6.1.6",
+    "@codemirror/lang-sql": "^6.8.0",
+    "@codemirror/lang-yaml": "^6.1.1",
+    "@codemirror/language": "^6.10.3",
+    "@codemirror/search": "^6.5.6",
+    "@codemirror/state": "^6.4.1",
+    "@codemirror/view": "^6.34.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "esbuild": "^0.24.0"
+  },
+  "dependencies": {
+    "@lezer/highlight": "^1.2.3",
+    "htmx.org": "^2.0.7"
+  }
+}

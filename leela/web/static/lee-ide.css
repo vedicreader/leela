@@ -1,0 +1,293 @@
+/* leela IDE.
+   Layout is one grid: header / [left | centre | right] / footer, with the
+   centre itself a column of editor · exec · agent. Panel sizes live in CSS
+   custom properties so the splitters (and the keyboard resize) only ever
+   write one value, and localStorage can restore them.
+
+   Colours are declared once as --lee-* and consumed everywhere, including by
+   the CodeMirror theme, so the editor cannot drift from the app. */
+
+:root {
+  --lee-bg: #0d1117; --lee-bg1: #161b22; --lee-bg2: #21262d; --lee-bg3: #30363d;
+  --lee-fg: #c9d1d9; --lee-fg2: #b1bac4; --lee-fg4: #6e7681;
+  --lee-border: #30363d; --lee-accent: #58a6ff; --lee-sel: #264f78;
+  --lee-red: #ff7b72; --lee-green: #7ee787; --lee-yellow: #e3b341; --lee-orange: #ffa657;
+  --lee-blue: #d2a8ff; --lee-purple: #d2a8ff; --lee-aqua: #79c0ff;
+  --lee-active-line: rgba(255,255,255,.03); --lee-bracket: rgba(88,166,255,.25);
+  --lee-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --lee-code-size: 13px;
+
+  --lee-left-w: 260px;
+  --lee-right-w: 420px;      /* the thicker variable sidebar */
+  --lee-exec-h: 190px;
+  --lee-agent-h: 150px;
+  --lee-term-h: 320px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --lee-bg: #ffffff; --lee-bg1: #f6f8fa; --lee-bg2: #eaeef2; --lee-bg3: #d0d7de;
+    --lee-fg: #1f2328; --lee-fg2: #424a53; --lee-fg4: #6e7781;
+    --lee-border: #d0d7de; --lee-accent: #0969da; --lee-sel: #b6d7ff;
+    --lee-red: #cf222e; --lee-green: #1a7f37; --lee-yellow: #9a6700; --lee-orange: #bc4c00;
+    --lee-blue: #8250df; --lee-purple: #8250df; --lee-aqua: #0550ae;
+    --lee-active-line: rgba(0,0,0,.03); --lee-bracket: rgba(9,105,218,.2);
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--lee-bg); color: var(--lee-fg);
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+
+.lee-app { display: grid; grid-template-rows: 34px 1fr 24px; height: 100vh; }
+.lee-body {
+  display: grid;
+  grid-template-columns: var(--lee-left-w) 4px 1fr 4px var(--lee-right-w);
+  min-height: 0;
+}
+.lee-app.no-left  .lee-body { grid-template-columns: 0 0 1fr 4px var(--lee-right-w); }
+.lee-app.no-right .lee-body { grid-template-columns: var(--lee-left-w) 4px 1fr 0 0; }
+.lee-app.no-left.no-right .lee-body { grid-template-columns: 0 0 1fr 0 0; }
+
+/* ---- header ---- */
+.lee-header {
+  display: flex; align-items: center; gap: 8px; padding: 0 8px;
+  background: var(--lee-bg1); border-bottom: 1px solid var(--lee-border); min-width: 0;
+}
+.lee-brand { font-weight: 600; color: var(--lee-accent); letter-spacing: .3px; flex: none; }
+.lee-spacer { flex: 1 1 auto; }
+
+.lee-tabbar { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; min-width: 0; flex: 0 1 auto; }
+.lee-tabbar::-webkit-scrollbar { display: none; }
+.lee-tab {
+  display: flex; align-items: center; gap: 5px; padding: 3px 8px; cursor: pointer;
+  border-radius: 4px 4px 0 0; color: var(--lee-fg4); white-space: nowrap;
+  border: 1px solid transparent; border-bottom: none; max-width: 200px;
+}
+.lee-tab:hover { background: var(--lee-bg2); color: var(--lee-fg2); }
+.lee-tab.active { background: var(--lee-bg); color: var(--lee-fg); border-color: var(--lee-border); }
+.lee-tab-name { overflow: hidden; text-overflow: ellipsis; }
+.lee-tab-x { opacity: 0; padding: 0 2px; border-radius: 3px; }
+.lee-tab:hover .lee-tab-x { opacity: .7; }
+.lee-tab-x:hover { background: var(--lee-bg3); opacity: 1; }
+.lee-dot { color: var(--lee-orange); font-size: 9px; }
+
+.lee-pill { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--lee-bg2); color: var(--lee-fg4); }
+.lee-pill-on  { color: var(--lee-green); }
+.lee-pill-err { color: var(--lee-red); }
+.lee-icon {
+  background: none; border: none; color: var(--lee-fg4); cursor: pointer;
+  padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: inherit;
+}
+.lee-icon:hover { background: var(--lee-bg2); color: var(--lee-fg); }
+
+/* ---- panels ---- */
+.lee-left, .lee-right { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--lee-bg1); }
+.lee-left  { border-right: 1px solid var(--lee-border); }
+.lee-right { border-left: 1px solid var(--lee-border); }
+.lee-panel { display: flex; flex-direction: column; min-height: 0; }
+.lee-phead {
+  display: flex; align-items: center; gap: 6px; padding: 4px 8px; flex: none;
+  border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1);
+}
+.lee-ptitle { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--lee-fg4); font-weight: 600; }
+.lee-files { flex: 1 1 auto; }
+.lee-keys  { flex: none; max-height: 34%; border-top: 1px solid var(--lee-border); }
+.lee-varspanel { flex: 1 1 auto; }
+
+.lee-split { cursor: col-resize; background: transparent; }
+.lee-split:hover, .lee-split.drag { background: var(--lee-accent); }
+.lee-hsplit { height: 4px; cursor: row-resize; flex: none; }
+.lee-hsplit:hover, .lee-hsplit.drag { background: var(--lee-accent); }
+
+/* ---- file tree ---- */
+.lee-tree { overflow: auto; padding: 4px 0 8px; flex: 1 1 auto; font-size: 12.5px; }
+.lee-node { padding: 1px 8px 1px 10px; cursor: pointer; border-radius: 3px; white-space: nowrap; }
+.lee-node:hover { background: var(--lee-bg2); }
+.lee-node.sel { background: var(--lee-sel); }
+.lee-file { color: var(--lee-fg2); }
+.lee-dir > summary { list-style: none; cursor: pointer; padding: 1px 0; }
+.lee-dir > summary::-webkit-details-marker { display: none; }
+.lee-caret { display: inline-block; width: 12px; color: var(--lee-fg4); transition: transform .12s; }
+.lee-dir[open] > summary .lee-caret { transform: rotate(90deg); }
+.lee-root > summary .lee-fname { font-weight: 600; color: var(--lee-fg); }
+.lee-kids { padding-left: 12px; border-left: 1px solid var(--lee-bg2); margin-left: 6px; }
+
+/* ---- key toast ---- */
+.lee-toast { overflow: auto; padding: 4px 8px 8px; font-size: 11.5px; }
+.lee-krow { display: flex; gap: 8px; align-items: baseline; padding: 1px 0; color: var(--lee-fg4); }
+.lee-krow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+kbd {
+  font-family: var(--lee-mono); font-size: 10.5px; padding: 1px 5px; border-radius: 3px;
+  background: var(--lee-bg2); border: 1px solid var(--lee-border); color: var(--lee-fg2);
+  white-space: nowrap; flex: none; min-width: 62px; text-align: center;
+}
+
+/* ---- centre ---- */
+.lee-centre { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.lee-editor { flex: 1 1 auto; overflow: auto; min-height: 0; background: var(--lee-bg); }
+.lee-empty { padding: 40px; text-align: center; color: var(--lee-fg4); }
+.lee-exec  { height: var(--lee-exec-h);  flex: none; border-top: 1px solid var(--lee-border); background: var(--lee-bg1); }
+.lee-agent { height: var(--lee-agent-h); flex: none; border-top: 1px solid var(--lee-border); background: var(--lee-bg1); }
+
+/* The terminal drawer. Collapsed to nothing until `show-term` is set, rather than
+   display:none, because xterm measures its host on open and a hidden host measures 0. */
+.lee-termpanel { height: 0; flex: none; overflow: hidden; border-top: 1px solid var(--lee-border);
+                background: var(--lee-bg); }
+.show-term .lee-termpanel { height: var(--lee-term-h); }
+.lee-term { height: calc(100% - 26px); padding: 2px 4px; }
+.lee-term .xterm { height: 100%; }
+.lee-termoff { padding: 8px 10px; line-height: 1.5; }
+.lee-mfoot { padding: 6px 10px 2px; border-top: 1px solid var(--lee-border); font-size: 11px; }
+
+/* ---- notebook cells ---- */
+.lee-cell { display: flex; gap: 6px; padding: 3px 8px; border-left: 2px solid transparent; }
+.lee-cell.sel { border-left-color: var(--lee-accent); background: var(--lee-active-line); }
+.lee-cell.running { border-left-color: var(--lee-yellow); }
+.lee-gutter {
+  flex: none; width: 58px; text-align: right; padding-top: 5px; font-family: var(--lee-mono);
+  font-size: 11px; color: var(--lee-fg4); user-select: none;
+}
+.lee-cellmain { flex: 1 1 auto; min-width: 0; }
+.lee-cm {
+  border: 1px solid var(--lee-border); border-radius: 5px; background: var(--lee-bg1); overflow: hidden;
+}
+.lee-cell.sel .lee-cm { border-color: var(--lee-accent); }
+.lee-cell.md .lee-cm { background: transparent; }
+.lee-out {
+  font-family: var(--lee-mono); font-size: 12px; white-space: pre-wrap; word-break: break-word;
+  padding: 4px 8px; color: var(--lee-fg2); max-height: 420px; overflow: auto;
+}
+.lee-out.err { color: var(--lee-red); }
+.lee-out img, .lee-out svg { max-width: 100%; }
+/* A prompt cell is a question living in the notebook, so it is tinted and marked to read
+   as a different kind of thing from the code around it -- without leaving the column. */
+.lee-cell.prompt .lee-cm { background: var(--lee-bg1); border-color: var(--lee-purple); }
+.lee-cell.prompt .lee-gutter { color: var(--lee-purple); }
+.lee-cell.prompt.sel .lee-cm { border-color: var(--lee-accent); }
+.lee-reply {
+  padding: 6px 10px; margin: 4px 0 2px; white-space: pre-wrap; color: var(--lee-fg);
+  border-left: 2px solid var(--lee-purple); background: var(--lee-active-line);
+}
+.lee-pcalls {
+  padding: 2px 10px; font-family: var(--lee-mono); font-size: 11px; color: var(--lee-fg4);
+  white-space: pre-wrap; word-break: break-all;
+}
+.lee-md { padding: 4px 8px; color: var(--lee-fg); }
+.lee-md h1, .lee-md h2, .lee-md h3 { margin: .4em 0 .2em; }
+.lee-md code { font-family: var(--lee-mono); background: var(--lee-bg2); padding: 1px 4px; border-radius: 3px; }
+
+/* ---- exec + agent ---- */
+.lee-execlog, .lee-agentlog {
+  flex: 1 1 auto; overflow: auto; padding: 4px 8px; font-family: var(--lee-mono);
+  font-size: 12px; white-space: pre-wrap; word-break: break-word; min-height: 0;
+}
+.lee-execbox { flex: none; border-top: 1px solid var(--lee-border); max-height: 55%; overflow: auto; }
+.lee-runline { padding: 1px 0; }
+.lee-runline .code { color: var(--lee-fg); }
+.lee-runline .arrow { color: var(--lee-fg4); padding: 0 6px; }
+.lee-runline .res { color: var(--lee-aqua); }
+.lee-runline .sub { color: var(--lee-fg4); font-size: 11px; }
+.lee-runline.err .res { color: var(--lee-red); }
+.lee-scope-tag { font-size: 10.5px; color: var(--lee-fg4); }
+.lee-promptbar { flex: none; padding: 4px 8px 6px; }
+.lee-prompt { width: 100%; }
+
+.lee-segbar { display: inline-flex; border: 1px solid var(--lee-border); border-radius: 4px; overflow: hidden; }
+.lee-seg {
+  background: none; border: none; color: var(--lee-fg4); cursor: pointer;
+  padding: 2px 9px; font-size: 11px; font-family: inherit;
+}
+.lee-seg.active { background: var(--lee-accent); color: var(--lee-bg); }
+
+/* ---- variables ---- */
+.lee-filterbar { display: flex; gap: 4px; padding: 4px 8px; flex: none; border-bottom: 1px solid var(--lee-border); }
+.lee-input, .lee-select {
+  background: var(--lee-bg); color: var(--lee-fg); border: 1px solid var(--lee-border);
+  border-radius: 4px; padding: 3px 6px; font: inherit; font-size: 12px; min-width: 0;
+}
+.lee-input { flex: 1 1 auto; }
+.lee-input:focus, .lee-select:focus { outline: 1px solid var(--lee-accent); border-color: var(--lee-accent); }
+.lee-vars { overflow: auto; padding: 4px 4px 12px; flex: 1 1 auto; font-family: var(--lee-mono); font-size: 12px; }
+.lee-vrow { padding: 1px 4px; border-radius: 3px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lee-vrow:hover { background: var(--lee-bg2); }
+.lee-vname { color: var(--lee-aqua); font-weight: 600; }
+.lee-vtype { color: var(--lee-fg4); }
+.lee-vval  { color: var(--lee-fg2); }
+.lee-vgrid { color: var(--lee-orange); }
+.lee-vkids { padding-left: 14px; border-left: 1px solid var(--lee-bg2); margin-left: 5px; }
+.lee-vgroup { color: var(--lee-yellow); font-weight: 600; font-size: 11px; text-transform: uppercase; padding: 4px 4px 1px; }
+.lee-vnew  { color: var(--lee-green); font-style: italic; }
+.lee-vedit { color: var(--lee-yellow); font-style: italic; }
+
+/* ---- footer ---- */
+.lee-footer {
+  display: flex; align-items: center; gap: 10px; padding: 0 8px; overflow: hidden;
+  background: var(--lee-bg1); border-top: 1px solid var(--lee-border); font-size: 11px; color: var(--lee-fg4);
+}
+.lee-fkey { display: flex; gap: 4px; align-items: center; white-space: nowrap; }
+.lee-fkey kbd { min-width: 0; }
+.lee-status { color: var(--lee-fg4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lee-status.err { color: var(--lee-red); }
+.lee-status.ok  { color: var(--lee-green); }
+
+/* ---- overlays ---- */
+.lee-modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 50;
+  display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh;
+}
+.lee-modalbox {
+  background: var(--lee-bg1); border: 1px solid var(--lee-border); border-radius: 8px;
+  width: min(680px, 92vw); max-height: 70vh; display: flex; flex-direction: column;
+  box-shadow: 0 16px 48px rgba(0,0,0,.5); overflow: hidden;
+}
+.lee-modalbox .lee-input { margin: 8px; }
+.lee-modallist { overflow: auto; padding: 0 0 8px; }
+.lee-mrow { padding: 4px 12px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+.lee-mrow.sel { background: var(--lee-sel); }
+.lee-mrow .sub { color: var(--lee-fg4); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.lee-mhead {
+  display: flex; align-items: baseline; gap: 8px; padding: 8px 12px 4px;
+  border-bottom: 1px solid var(--lee-border); font-weight: 600; color: var(--lee-fg);
+}
+.lee-mhead .sub { font-weight: 400; color: var(--lee-fg4); font-size: 11px; }
+.lee-help { columns: 2; column-gap: 24px; padding: 12px 16px; overflow: auto; }
+.lee-help h4 { margin: 8px 0 4px; color: var(--lee-accent); font-size: 11px; text-transform: uppercase; }
+.lee-mfoot { display: flex; gap: 8px; align-items: center; padding: 6px 12px;
+            border-top: 1px solid var(--lee-border); font-size: 11px; }
+.lee-btn {
+  background: var(--lee-bg2); color: var(--lee-fg); border: 1px solid var(--lee-border);
+  border-radius: 4px; padding: 3px 10px; font: inherit; font-size: 11px; cursor: pointer;
+}
+.lee-btn:hover { background: var(--lee-bg3); }
+.lee-docs { margin: 0; padding: 10px 14px; overflow: auto; white-space: pre-wrap;
+           font-family: var(--lee-mono); font-size: 12px; color: var(--lee-fg2); }
+
+/* ---- diffs ----
+   Added and removed lines are tinted rather than merely coloured: at a glance the
+   shape of a change should be readable without reading the +/- column at all. */
+.lee-diff { overflow: auto; padding: 4px 0; font-family: var(--lee-mono); font-size: 12px; line-height: 1.45; }
+.lee-diff.inline { max-height: 220px; border-left: 2px solid var(--lee-border); margin: 2px 0 4px 4px; }
+.lee-drow { display: flex; gap: 8px; padding: 0 10px; white-space: pre; }
+.lee-dnum { flex: none; width: 3.5em; text-align: right; color: var(--lee-fg4); user-select: none; }
+.lee-dtext { flex: 1 1 auto; }
+.lee-drow.add { background: rgba(126,231,135,.10); }
+.lee-drow.add .lee-dtext { color: var(--lee-green); }
+.lee-drow.add .lee-dtext::before { content: '+'; }
+.lee-drow.del { background: rgba(255,123,114,.10); }
+.lee-drow.del .lee-dtext { color: var(--lee-red); }
+.lee-drow.del .lee-dtext::before { content: '-'; }
+.lee-drow.ctx .lee-dtext { color: var(--lee-fg2); }
+.lee-drow.ctx .lee-dtext::before { content: ' '; }
+.lee-drow.hunk, .lee-drow.head { color: var(--lee-fg4); background: var(--lee-bg2); }
+.lee-drow.hunk .lee-dtext, .lee-drow.head .lee-dtext { color: var(--lee-aqua); }
+
+.lee-dim { color: var(--lee-fg4); padding: 6px 8px; }
+.lee-err { color: var(--lee-red); padding: 6px 8px; font-family: var(--lee-mono); font-size: 12px; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: var(--lee-bg3); border-radius: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
