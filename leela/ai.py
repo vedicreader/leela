@@ -257,7 +257,7 @@ def ide_tools(ws, session=None):
              notebook_cells, view_cell, edit_cell, add_cell,
              web_search, read_url, research, read_terminal]
     if session is not None:
-        from dhrishti.agent import agent_tools
+        from .inspect.agent import agent_tools
         tools += list(agent_tools(session))
     return tools
 

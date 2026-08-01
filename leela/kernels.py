@@ -1,4 +1,4 @@
-"""Managed ipykernels, each hosting its own dhrishti inspector.
+"""Managed ipykernels, each hosting its own leela inspector.
 
 This is the pivot away from `get_ipython()`. A notebook tab owns a `Kernel`: a
 real ipykernel process driven over `jupyter_client`, which the IDE talks to on
@@ -7,14 +7,14 @@ real ipykernel process driven over `jupyter_client`, which the IDE talks to on
 - **execution** goes down the kernel's shell channel, so exec-strip code and
   notebook cells share one serialised queue, stream their output back over
   iopub, and are interruptible like any cell.
-- **inspection** goes over HTTP to a dhrishti server started *inside* that
+- **inspection** goes over HTTP to a `leela.inspect` server started *inside* that
   kernel by `bootstrap()`. Shell messages queue behind a running cell, so a
   comm-based variable tree would freeze during exactly the long cell you most
   want to watch; a background thread in the kernel does not.
 
-The in-kernel server registers itself in dhrishti's existing registry, so a
-kernel started here shows up as just another env to `dhrishti-tui`, to the web
-panel, and to the env picker -- no new discovery mechanism.
+The in-kernel server registers itself in leela's registry, so a kernel started
+here shows up as just another env to the web panel and to the env picker -- no
+new discovery mechanism.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from fastcore.ansi import strip_ansi
 from jupyter_client.manager import AsyncKernelManager
 from jupyter_client.kernelspec import KernelSpec
 
-from dhrishti.serving import reg_dir, active
+from .inspect.server import reg_dir, active
 
 __all__ = ['ExecOutcome', 'Kernel', 'KernelPool', 'bootstrap_src', 'output_text']
 
@@ -37,8 +37,8 @@ __all__ = ['ExecOutcome', 'Kernel', 'KernelPool', 'bootstrap_src', 'output_text'
 # namespace either; the port comes back via the registry entry, matched on pid.
 BOOTSTRAP = '''
 def _lee_bootstrap():
-	import dhrishti.serving as ds
-	return ds.serve_in_kernel(name={name!r}, port={port!r}, agent={agent!r}, token={token!r})
+	import leela.inspect.server as ls
+	return ls.serve_in_kernel(name={name!r}, port={port!r}, agent={agent!r}, token={token!r})
 try: _lee_bootstrap()
 finally: del _lee_bootstrap
 '''
@@ -81,13 +81,13 @@ def _spec(python=None, name='python3'):
 
 
 class Kernel:
-    "One ipykernel process: execute/complete over jupyter_client, live variables over its in-kernel dhrishti server."
+    "One ipykernel process: execute/complete over jupyter_client, live variables over its in-kernel inspector."
 
     def __init__(self,
                  cwd=None,              # working directory for the kernel process
                  name=None,             # env label shown in the inspector (default: cwd basename)
                  python=None,           # interpreter to launch (default: this one)
-                 inspect=True,          # start an in-kernel dhrishti server
+                 inspect=True,          # start an in-kernel inspector
                  agent='restricted',    # agent surface on that server: restricted|readonly|off
                  port=8000):            # base port for the inspector (auto-bumps if taken)
         store_attr()
@@ -122,7 +122,7 @@ class Kernel:
         return self
 
     async def bootstrap(self):
-        "Start the dhrishti inspector inside the kernel and record its base URL."
+        "Start the inspector inside the kernel and record its base URL."
         src = bootstrap_src(self.name, self.port, self.agent, True)
         r = await self.execute(src, silent=True, store_history=False)
         if not r.ok:
@@ -154,7 +154,7 @@ class Kernel:
         """
         if not self.base: return None
         import httpx
-        h = {'X-Dhrishti-Token': t} if (t := self.token) else {}
+        h = {'X-Leela-Token': t} if (t := self.token) else {}
         try:
             async with httpx.AsyncClient(base_url=self.base, timeout=timeout, headers=h) as c:
                 r = await c.get(path, params=params or {})
@@ -254,7 +254,7 @@ class Kernel:
             if (msg.get('parent_header') or {}).get('msg_id') == msg_id: return msg
 
     async def complete(self, code, pos):
-        "Completions at `pos` in dhrishti's `{from, matches}` shape (what both frontends already consume)."
+        "Completions at `pos` in the `{from, matches}` shape both frontends already consume."
         if not self.alive: return {'from': pos, 'matches': []}
         msg_id = self.kc.complete(code, pos)
         r = await self._reply(msg_id)

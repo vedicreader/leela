@@ -1,14 +1,13 @@
 """Run a web app from the IDE, with a live inspector attached to it.
 
-This is the piece dhrishti was always closest to and never quite reached: a
-FastHTML (or Flask, or any Python) app started from the editor, running under
-`dhrishti-serve`, so its module namespace shows up in the variable panel as
+A FastHTML (or Flask, or any Python) app started from the editor, running under
+`leela.inspect.serve`, so its module namespace shows up in the variable panel as
 just another env. You can watch a request handler's globals change while the
 app serves traffic -- which is the thing an ordinary debugger cannot do,
 because it needs the process stopped.
 
 Nothing new is invented for discovery. `serve()` inside the child registers in
-dhrishti's registry, so the IDE finds the inspector by pid exactly the way it
+leela's registry, so the IDE finds the inspector by pid exactly the way it
 finds a kernel's.
 """
 
@@ -18,7 +17,7 @@ from collections import deque
 from dataclasses import dataclass
 from fastcore.all import Path, L
 
-from dhrishti.serving import active
+from .inspect.server import active
 
 __all__ = ['DevServer', 'DevServers']
 
@@ -27,7 +26,7 @@ _URL_HINTS = ('running on', 'listening on', 'http://')
 
 @dataclass
 class DevServer:
-    'One app subprocess running under a live dhrishti inspector.'
+    'One app subprocess running under a live inspector.'
     script: str
     cwd: str | None = None
     args: tuple = ()
@@ -162,12 +161,12 @@ def _child(argv=None):
     there showing a request counter frozen at zero while the app happily serves.
 
     Registering first means uvicorn's import finds this module, so the dict the
-    handlers write to is exactly the dict dhrishti is watching.
+    handlers write to is exactly the dict the inspector is watching.
 
     `__name__` is still `__main__` so the app's own guard fires and starts the server.
     """
     import argparse, types
-    from dhrishti.serving import serve
+    from .inspect.server import serve
 
     p = argparse.ArgumentParser(prog='leela-dev')
     p.add_argument('script')

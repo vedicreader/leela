@@ -15,23 +15,20 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-    # The inspection core leela renders: live variables, the in-kernel server, the agent overlay.
-    # NOTE: live variables need `dhrishti.serving.serve_in_kernel`, which exists in dhrishti's
-    # repo but is NOT in the published 0.0.5 wheel. Until dhrishti cuts a release containing it,
-    # install dhrishti from a checkout (`uv pip install -e ../dhrishti`) or kernels will start
-    # fine and then report `boot_error` with no variable tree. Raise this floor to that release.
-    "dhrishti>=0.0.5",
     "exhash>=0.4.9",           # hash-verified line addressing: how the agent edits files safely
     "fastcore>=2.1.16",        # str_diff / fenced_blocks / strip_ansi, behind the diff and completion surfaces
     "fossick>=0.0.15",         # web search, fetch and page-to-markdown for research
     "httpx>=0.27.0",           # how the IDE talks to each kernel's in-kernel inspector
     "ipykernel>=7.3.0",        # the kernel each notebook tab runs in
+    "ipython>=9.15.0",         # leela.inspect reads the live kernel through IPython's namespace
     "jupyter-client>=8.9.1",   # leela <-> kernel: execute, complete, interrupt, restart
     "koshas>=0.0.29",          # code index behind search: FTS5 + embeddings + call graph
-    "numpy>=2.4.6",            # usearch vectors in the search layer
-    "python-fasthtml>=0.14.9", # the web frontend
+    "numpy>=2.4.6",            # usearch vectors in search; array resolvers in leela.inspect
+    "pandas>=3.0.3",           # DataFrame/Series resolvers and the grid view
+    "python-fasthtml>=0.14.9", # the web frontend, and the in-kernel inspector's JSON API
     "rich>=13.0.0",            # diff and cell rendering in the TUI
     "rishi>=0.0.2",            # the chat + tool loop behind the assistant
+    "safepyrun>=0.2.5",        # the allowlist sandbox the agent's isolated scope runs in
     "starlette>=0.40.0",       # the web terminal's WebSocket route
     "textual[syntax]>=8.2.8",  # [syntax] pulls tree-sitter for cell highlighting in the TUI
     "uvicorn>=0.30.0",         # serves the web frontend

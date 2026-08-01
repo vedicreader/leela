@@ -4,29 +4,19 @@
 
 leela is an IDE for notebooks, files and **live variables** — in the terminal or in
 the browser, over the same workspace. It grew up inside
-[dhrishti](https://github.com/vedicreader/dhrishti) and now lives here, on its own.
+[dhrishti](https://github.com/vedicreader/dhrishti) and now stands on its own, with
+no dependency back.
 
-The split is deliberate. dhrishti is the library: live variable inspection and
-manipulation for Python runtimes, authored literately in notebooks under nbdev.
-leela is the application built on top of it — a few thousand lines of Textual and
-FastHTML wiring — and depends on dhrishti like any other package.
+It comes in two halves. `leela.inspect` is the engine: it turns a live Python
+namespace into the node tree the frontends render, runs code in it, and serves that
+over HTTP from *inside* the kernel that owns it. Everything else is the application
+shell — the workspace, the notebook document, the assistant, and the two frontends.
 
 ## Install
 
 ```sh
 pip install leela
 ```
-
-> **Live variables need an unreleased dhrishti.** The in-kernel inspector is started
-> through `dhrishti.serving.serve_in_kernel`, which is in dhrishti's repository but
-> not in the published 0.0.5 wheel. With only PyPI dhrishti installed, kernels start
-> and run code normally but the variable panel stays empty and the kernel reports a
-> `boot_error`. Until dhrishti cuts a release with it, install dhrishti from a
-> checkout alongside leela:
->
-> ```sh
-> uv pip install -e ../dhrishti
-> ```
 
 ## Use
 
@@ -44,8 +34,8 @@ folders, tabs and kernels.
 - **Notebooks and files** side by side, with a real editor in each frontend
   (Textual in the terminal, CodeMirror 6 in the browser).
 - **Live variables** from the notebook's own kernel. Each notebook tab owns a real
-  ipykernel process with a dhrishti inspector running *inside* it, so the variable
-  tree stays responsive even while a long cell is running.
+  ipykernel process with an inspector running *inside* it, so the variable tree
+  stays responsive even while a long cell is running.
 - **Shared kernels per folder.** Tabs bind per root, not per tab: the exec strip,
   the scratch box and two open notebooks all see the same variables. A tab can opt
   out and take a private kernel.
@@ -64,9 +54,14 @@ folders, tabs and kernels.
 
 ```
 leela/
+  inspect/        the engine: namespace -> node tree, and the in-kernel JSON API
+    core.py       variable info, resolvers, snapshots, the grouped view
+    runtime.py    executing and completing in a namespace; the Bridge
+    agent.py      the agent overlay and its restriction list
+    server.py     the HTTP API served from inside each kernel
   cli.py          the `leela` entry point
   workspace.py    open folders, open tabs, and which kernel each tab talks to
-  kernels.py      managed ipykernels, each hosting its own dhrishti inspector
+  kernels.py      managed ipykernels, each hosting its own inspector
   nb.py           the notebook document: cells, outputs, running them
   ai.py           the assistant and inline completion
   search.py       code search over kosha, with a plain-scan fallback
@@ -92,9 +87,11 @@ uv pip install -e . --group test
 pytest tests -q
 ```
 
-The suite covers the notebook document, the diff engine, the keymap, and SVG
-snapshots of the terminal frontend. Kernels are faked in `tests/conftest.py` rather
-than launched, so the tests are fast and do not need a working ipykernel.
+The suite covers the inspection engine, the notebook document, the diff engine, the
+keymap, and SVG snapshots of the terminal frontend. Kernels are faked in
+`tests/conftest.py` rather than launched, so the tests are fast and do not need a
+working ipykernel — `tests/test_inspect.py` covers the engine directly instead, by
+driving it over a plain dict.
 
 The browser bundles in `leela/web/static` are committed so users never need node.
 To rebuild them:

@@ -1,13 +1,18 @@
 """leela — notebooks, files and live variables in the terminal and the browser.
 
-leela is the IDE that grew up inside `dhrishti` and now lives in its own repository.
-It stays a *frontend*: the inspection core it renders — `dhrishti.core`,
-`dhrishti.runtime`, `dhrishti.agent`, `dhrishti.serving` — remains nbdev-authored
-over in dhrishti, and leela depends on it like any other library.
+leela started inside `dhrishti` and now stands on its own, with no dependency back.
+It comes in two halves:
 
-Unlike dhrishti, this package is plain Python rather than compiled notebooks: it is
-application shell, and literate notebook authoring buys little for a few thousand
-lines of Textual and FastHTML wiring. It has a pytest suite under `tests/` instead.
+- `leela.inspect` — the engine. It turns a live Python namespace into the node tree
+  the frontends render, runs code in it, and serves that over HTTP from inside the
+  kernel that owns it. Vendored from dhrishti, where it was authored literately
+  under nbdev; leela owns it as plain Python now.
+- everything else — the application shell: the workspace, the notebook document,
+  the assistant, and the two frontends that draw them.
+
+The whole package is plain Python rather than compiled notebooks. Literate authoring
+buys little for a few thousand lines of Textual and FastHTML wiring, and the engine
+is easier to keep honest under the pytest suite in `tests/` than under nbdev.
 """
 
 __version__ = "0.0.1"

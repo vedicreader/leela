@@ -13,7 +13,7 @@ Proxying keeps the token server-side and the page single-origin.
 The exec strip's two scopes are genuinely different runtimes, not a flag:
 `live` runs on the tab's kernel, sharing the notebook's namespace, while
 `isolated` runs through the agent session's safepyrun sandbox, where writes are
-discarded and escapes refused. (dhrishti's older `scope='isolated'` copies the
+discarded and escapes refused. (The older `scope='isolated'` copies the
 namespace dict shallowly, so a mutating call still reached the real object --
 routing the toggle at the sandbox makes the label true.)
 """
@@ -24,7 +24,7 @@ from urllib.parse import quote
 from fasthtml.common import *          # re-exports fastcore's Path, L, first, asdict, ...
 from starlette.routing import WebSocketRoute
 
-from dhrishti.core import PROFILES, SORTS
+from ..inspect.core import PROFILES, SORTS
 from .. import errstr
 from ..diffs import diff_label, diff_rows, did_you_mean, fuzzy_rank, udiff
 from ..fs import lang_for

@@ -28,7 +28,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Input, Label, OptionList, Static, Tree, TextArea, Tabs, Tab
 from rich.text import Text
 
-from dhrishti.core import GHDK, SORTS
+from ..inspect.core import GHDK, SORTS
 from .. import errstr
 from ..diffs import diff_label, diff_rows, did_you_mean, fuzzy_rank, udiff
 from ..keys import tui_bindings, toast_rows, help_rows
@@ -784,7 +784,7 @@ class IdeApp(App):
 
     def action_switch_env(self):
         """Point the variable panel at another live env -- a dev server, or another kernel."""
-        from dhrishti.serving import active
+        from ..inspect.server import active
         envs = active()
         self.status('live envs: ' + ', '.join(f"{e['name']}:{e['port']}" for e in envs) if envs else 'no live envs')
 
