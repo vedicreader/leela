@@ -19,6 +19,10 @@ def main(argv=None):
     p.add_argument('--kernel-port', type=int, default=8400, help='base port for kernel inspectors')
     p.add_argument('--agent', default='restricted', choices=['restricted', 'readonly', 'off'],
                    help='agent surface on each kernel (default: restricted)')
+    p.add_argument('--kernel', default='ipykernel', choices=['ipykernel', 'ipymini'],
+                   help='kernel launcher for notebook tabs (default: ipykernel). '
+                        'ipymini lets inspector/agent execs run concurrently with a busy cell '
+                        'via its subshell helper; install with `pip install "leela[ipymini]"`.')
     p.add_argument('--allow-remote-terminal', action='store_true',
                    help='serve the web terminal even on a non-loopback host (this is a remote shell)')
     a = p.parse_args(argv)
@@ -28,10 +32,10 @@ def main(argv=None):
     if a.web:
         from .web.app import serve_ide
         serve_ide(roots, port=a.port, host=a.host, agent=a.agent, kernel_port=a.kernel_port,
-                  allow_remote_terminal=a.allow_remote_terminal)
+                  kernel=a.kernel, allow_remote_terminal=a.allow_remote_terminal)
     else:
         from .tui.app import run
-        run(roots, agent=a.agent, kernel_port=a.kernel_port)
+        run(roots, agent=a.agent, kernel_port=a.kernel_port, kernel=a.kernel)
 
 
 if __name__ == '__main__': main()

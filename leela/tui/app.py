@@ -1245,10 +1245,11 @@ class IdeApp(App):
             v._paint()
 
 
-def run(roots=(), agent='restricted', kernel_port=8400):
+def run(roots=(), agent='restricted', kernel_port=8400, kernel='ipykernel'):
     "Launch the terminal IDE over `roots`, or the saved workspace when none are given."
     import os
-    ws = Workspace.load(port=kernel_port, agent=agent) if not roots else Workspace(port=kernel_port, agent=agent)
+    ws = (Workspace.load(port=kernel_port, agent=agent, kernel=kernel) if not roots
+          else Workspace(port=kernel_port, agent=agent, kernel=kernel))
     for r in roots: ws.add_root(r)
     if not ws.fs.roots: ws.add_root(os.getcwd())
     app = IdeApp(ws)
