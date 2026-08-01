@@ -177,3 +177,25 @@ def test_ipymini_agent_exec_runs_while_cell_sleeps(tmp_path):
         finally:
             await k.shutdown()
     _run(go())
+
+
+# ---------------------------------------------------------------------------
+# the launcher choice must not collide with the workspace's own API
+# ---------------------------------------------------------------------------
+def test_workspace_kernel_stays_callable():
+    """`Workspace.kernel()` is the coroutine that hands out a tab's live kernel.
+
+    Storing the *launcher name* on `self.kernel` shadowed it with a string, so every
+    `await ws.kernel()` in both frontends awaited `'ipykernel'` and the TUI hung on its
+    first cell run. The launcher lives on `kernel_kind`, and this is here so it stays there.
+    """
+    from leela.workspace import Workspace
+    ws = Workspace(kernel='ipymini')
+    assert ws.kernel_kind == 'ipymini'
+    assert callable(ws.kernel)
+    assert ws.pool.default_kernel in ('ipymini', 'ipykernel')
+
+
+def test_workspace_kernel_kind_defaults():
+    from leela.workspace import Workspace
+    assert Workspace().kernel_kind == 'ipykernel'

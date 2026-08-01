@@ -63,7 +63,10 @@ class Workspace:
         self.research = Research(self.fs)
         self.terms = Terminals(cwd=self.fs.roots[0] if self.fs.roots else None)
         self.agent = agent
-        self.kernel = kernel
+        # `kernel_kind`, not `kernel`: `kernel()` below is the coroutine that hands out the
+        # live kernel for a tab, and an attribute of the same name shadows it — every
+        # `await ws.kernel()` in both frontends then awaits the string 'ipykernel'.
+        self.kernel_kind = kernel
         self.tabs = L()
         self.active = 0
         self._untitled = 0
