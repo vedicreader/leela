@@ -15,7 +15,12 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-    "dhrishti>=0.0.5",         # the inspection core leela renders: live variables, the in-kernel server, the agent overlay
+    # The inspection core leela renders: live variables, the in-kernel server, the agent overlay.
+    # NOTE: live variables need `dhrishti.serving.serve_in_kernel`, which exists in dhrishti's
+    # repo but is NOT in the published 0.0.5 wheel. Until dhrishti cuts a release containing it,
+    # install dhrishti from a checkout (`uv pip install -e ../dhrishti`) or kernels will start
+    # fine and then report `boot_error` with no variable tree. Raise this floor to that release.
+    "dhrishti>=0.0.5",
     "exhash>=0.4.9",           # hash-verified line addressing: how the agent edits files safely
     "fastcore>=2.1.16",        # str_diff / fenced_blocks / strip_ansi, behind the diff and completion surfaces
     "fossick>=0.0.15",         # web search, fetch and page-to-markdown for research

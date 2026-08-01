@@ -410,6 +410,7 @@ class PreviewScreen(ModalScreen):
 # ---------------------------------------------------------------------------
 class IdeApp(App):
     "leela in the terminal: notebooks, files, and live variables from the notebook's own kernel."
+    TITLE = 'leela'          # without this Textual titles the terminal window 'IdeApp'
     BINDINGS = _binds('global')
 
     CSS = """

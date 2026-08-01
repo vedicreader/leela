@@ -17,6 +17,17 @@ FastHTML wiring — and depends on dhrishti like any other package.
 pip install leela
 ```
 
+> **Live variables need an unreleased dhrishti.** The in-kernel inspector is started
+> through `dhrishti.serving.serve_in_kernel`, which is in dhrishti's repository but
+> not in the published 0.0.5 wheel. With only PyPI dhrishti installed, kernels start
+> and run code normally but the variable panel stays empty and the kernel reports a
+> `boot_error`. Until dhrishti cuts a release with it, install dhrishti from a
+> checkout alongside leela:
+>
+> ```sh
+> uv pip install -e ../dhrishti
+> ```
+
 ## Use
 
 ```sh
