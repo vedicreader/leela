@@ -209,9 +209,15 @@ class NotebookView(VerticalScroll):
         self.nb: Notebook | None = None
         self.sel = 0
 
-    async def load(self, nb):
-        "Rebuild the cell column. Both halves are awaited: Textual's unmount and mount are\n        deferred, and painting before they land queries widgets that do not exist yet."
-        self.nb, self.sel = nb, 0
+    async def load(self, nb, keep=False):
+        """Rebuild the cell column. Both halves are awaited: Textual's unmount and mount are
+        deferred, and painting before they land queries widgets that do not exist yet.
+
+        `keep` holds the selection where it was, for a rebuild the user did not ask for --
+        the agent adding approval or compaction cells mid-turn should not scroll them back
+        to the top of the notebook."""
+        sel = self.sel if keep else 0
+        self.nb, self.sel = nb, min(sel, max(0, len(nb) - 1))
         await self.remove_children()
         for i, c in enumerate(nb.cells): await self.mount(CellBox(c, i, classes='cell'))
         self._paint()
@@ -405,6 +411,44 @@ class PreviewScreen(ModalScreen):
     def action_cancel(self): self.dismiss(None)
 
 
+class ApprovalScreen(ModalScreen):
+    """The agent wants to change something. Show what, and take an answer with a reason.
+
+    The reason box is the point. `y` and `n` alone make this a permission dialog; typing
+    "no, that file is generated, edit the notebook instead" makes it a turn in the
+    conversation, and the harness sends that sentence back to the model. A refusal without
+    a reason produces an agent that tries the same edit again with the indentation changed.
+
+    Dismisses `(ok, note)`.
+    """
+    BINDINGS = [Binding('escape', 'refuse', 'refuse'), Binding('ctrl+y', 'approve', 'approve')]
+    CSS = """
+    ApprovalScreen { align: center middle; background: $background 70%; }
+    #apprbox { width: 90%; max-width: 120; height: auto; max-height: 85%;
+               background: $panel; border: round $warning; padding: 0 1; }
+    #apprnote { margin: 1 0 0 0; }
+    """
+
+    def __init__(self, ask):
+        super().__init__()
+        self.ask = ask
+
+    def compose(self):
+        with VerticalScroll(id='apprbox'):
+            yield Label(Text(f'🔐 approval needed — {self.ask.tool}', style=f"bold {PAL['orange']}"))
+            yield Label(Text(self.ask.summary, style=PAL['fg']))
+            if self.ask.preview: yield Static(Text(self.ask.preview, style=PAL['fg2']))
+            yield Input(placeholder='reason (optional, and it goes back to the model)', id='apprnote')
+            yield Label(Text('  ctrl+y: approve   ·   enter: refuse with this reason   ·   escape: refuse',
+                             style=PAL['gray']))
+
+    def on_mount(self): self.query_one('#apprnote', Input).focus()
+    def _note(self): return self.query_one('#apprnote', Input).value.strip()
+    def action_approve(self): self.dismiss((True, self._note()))
+    def action_refuse(self): self.dismiss((False, self._note()))
+    def on_input_submitted(self, e): self.dismiss((False, self._note()))
+
+
 # ---------------------------------------------------------------------------
 # app
 # ---------------------------------------------------------------------------
@@ -458,6 +502,8 @@ class IdeApp(App):
         self.hist, self.hidx = [], 0
         self._exec_lines = []
         self.last_edits = {}              # {path: (before, after)} from the assistant's last turn
+        self._asking = ''                 # the question a turn in flight is answering
+        self._unlisten = None             # unregisters this frontend from the approval queue
 
     # -- layout ------------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -487,8 +533,12 @@ class IdeApp(App):
         self._paint_scope()
         if self.ws.tab: await self._load_tab()
         self.set_interval(2.5, self.refresh_vars)
+        self._watch_approvals()
         self.query_one('#filetree', FileTree).focus()
         self.status('ready')
+
+    def on_unmount(self):
+        if (stop := getattr(self, '_unlisten', None)): stop()
 
     # -- helpers -----------------------------------------------------------
     def status(self, msg, err=False):
@@ -586,11 +636,16 @@ class IdeApp(App):
 
     # -- variables ---------------------------------------------------------
     async def refresh_vars(self):
-        tree = self.query_one('#vartree', VarTree)
+        # This runs on a 2.5s interval, so it can fire against a screen that is being torn
+        # down or is behind a modal. `query_one` raises `NoMatches` there, which Textual
+        # surfaces as an uncaught error in whatever test or session happens to be running.
+        try: tree = self.query_one('#vartree', VarTree)
+        except Exception: return
         base = '/agent/api/rows' if self.scope_mode == 'isolated' else '/api/rows'
         d = await self.kapi(base, {'profile': tree.profile, 'sort': tree.sort})
         if d is None:
-            self.query_one('#vartop', Static).update(Text(' no kernel inspector', style=PAL['gray']))
+            try: self.query_one('#vartop', Static).update(Text(' no kernel inspector', style=PAL['gray']))
+            except Exception: pass
             return
         tree.show(d.get('groups'))
         self._paint_scope()
@@ -811,9 +866,11 @@ class IdeApp(App):
             # The answer goes in the cell, not the pane below -- that is what makes it part
             # of the document. Off the UI thread, like every other model call here.
             self.status('thinking…')
+            self._hook_activity()
             try: await asyncio.to_thread(self.ws.ask_cell, v.nb, i)
             except Exception as e: return self.status(errstr(e), err=True)
             self.last_edits = self.ws.ai.changes()
+            await v.load(v.nb, keep=True)   # approval/compaction cells landed while it worked
             if (b := v.box(i)): b.show_outputs()
             if self.ws.tab: self.ws.tab.dirty = True
             await self._sync_tabs()
@@ -1145,16 +1202,17 @@ class IdeApp(App):
         if not q: return
         i.value = ''
         log = self.query_one('#agentlog', Static)
+        self._asking = q
+        self._hook_activity()
         log.update(Text.assemble((f'▸ {q}\n', PAL['fg']), ('thinking…', PAL['gray'])))
         self.status('thinking…')
         ai = self.ws.ai
-        before = len(ai.calls)
         text = await asyncio.to_thread(self.ws.ask, q)   # attaches any pending screen capture
+        self._asking = ''
         self.last_edits = ai.changes()
         t = Text()
         t.append(f'▸ {q}\n', style=PAL['fg'])
-        for name, args in ai.calls[before:]:
-            t.append(f'  ⚙ {name} {str(args)[:120]}\n', style=PAL['gray'])
+        for line in ai.turn_lines(): t.append(f'  {line}\n', style=PAL['gray'])
         for p, (was, now) in self.last_edits.items():
             t.append(f'  ✎ {Path(p).name}  {diff_label(was, now)}   (ctrl+alt+l for the diff)\n',
                      style=PAL['orange'])
@@ -1184,10 +1242,57 @@ class IdeApp(App):
         self.status(f'{Path(t.path).name} reloaded from disk')
 
     def action_agent_stop(self):
-        if (c := getattr(self.ws.ai, 'chat', None)) is not None:
-            try: c.cancel(); return self.status('asked the model to stop')
-            except Exception as e: return self.status(errstr(e), err=True)
+        try:
+            if self.ws.ai.cancel(): return self.status('asked the model to stop')
+        except Exception as e: return self.status(errstr(e), err=True)
         self.status('assistant is not running')
+
+    # -- approval ----------------------------------------------------------
+    def _watch_approvals(self):
+        """Register this frontend as somewhere an approval can be asked.
+
+        `Approvals` refuses immediately when nothing is listening, which is the right
+        answer for a headless run and the wrong one here. Registered through `listen`
+        rather than by assigning `on_ask`, so the notebook recorder that is already hooked
+        there keeps getting both halves of every exchange.
+        """
+        self._unlisten = self.ws.approvals.listen(on_ask=self._ask_approval)
+
+    def _ask_approval(self, ask):
+        "Called on the model's worker thread; hop to the UI thread to put the modal up."
+        try: self.call_from_thread(self._show_approval, ask)
+        except Exception: pass
+
+    @work
+    async def _show_approval(self, ask):
+        got = await self.push_screen_wait(ApprovalScreen(ask))
+        ok, note = got if got else (False, '')
+        self.ws.answer_approval(ask.id, ok, note)
+        self.status(('approved' if ok else 'refused') + f' {ask.tool}' + (f' — {note}' if note else ''))
+
+    def _hook_activity(self):
+        """Point the agent's activity stream at this app, on the first turn that needs it.
+
+        Not at mount: touching `ws.ai` builds the agent, and the whole point of building it
+        lazily is that opening the IDE must not wait on anything a model needs.
+        """
+        self.ws.ai.activity.on_change = self._on_activity
+
+    def _on_activity(self, act):
+        "Repaint the agent pane as each tool call starts and finishes, from whichever thread fired it."
+        try: self.call_from_thread(self._paint_activity)
+        except Exception: pass
+
+    def _paint_activity(self):
+        "The live account of an agentic loop: one line per tool call, newest last."
+        try: log = self.query_one('#agentlog', Static)
+        except Exception: return
+        ai = self.ws.ai
+        t = Text()
+        if self._asking: t.append(f'▸ {self._asking}\n', style=PAL['fg'])
+        for line in ai.turn_lines()[-12:]: t.append(f'  {line}\n', style=PAL['gray'])
+        if ai.busy: t.append('  thinking…', style=PAL['aqua'])
+        log.update(t)
 
     def action_agent_tools(self):
         """What the assistant actually did: every tool call, and the diff of every file that moved.
@@ -1196,16 +1301,20 @@ class IdeApp(App):
         rows -- and the diff is the part of "what it did" worth reading.
         """
         ai = self.ws.ai
+        s = ai.status()
         t = Text()
-        t.append(f'{ai.note} · {len(ai.tools)} tools' + (' · thinking now' if ai.busy else '') + '\n',
-                 style=f"bold {PAL['yellow']}")
-        for name, args in ai.calls[-25:]:
-            t.append(f'{name}', style=PAL['aqua'])
-            t.append(f'  {str(args)[:110]}\n', style=PAL['fg4'])
+        t.append(f"{s['model_note']}  ·  {s['ntools']} tools  ·  {s['nskills']} skills"
+                 + (' · thinking now' if s['busy'] else '') + '\n', style=f"bold {PAL['yellow']}")
+        t.append(f"{s['note']}\n", style=PAL['fg4'])
+        t.append(f"context {100*s['pct_full']:.0f}% full"
+                 + (f" · {s['compactions']} compaction(s)" if s['compactions'] else '')
+                 + (f"  ·  {s['usage']}" if s['use']['total'] else '') + '\n\n', style=PAL['gray'])
+        for a in ai.activity.acts[-25:]:
+            t.append(f'{a.line()}\n', style=PAL['aqua'] if a.ok else PAL['red'])
         for p, (was, now) in self.last_edits.items():
             t.append(f'\n{p}  {diff_label(was, now)}\n', style=f"bold {PAL['orange']}")
             t.append(diff_text(diff_rows(udiff(was, now))))
-        if not (ai.calls or self.last_edits): t.append('(nothing yet)', style=PAL['gray'])
+        if not (ai.activity.acts or self.last_edits): t.append('(nothing yet)', style=PAL['gray'])
         self.push_screen(PreviewScreen('what the assistant did', t))
 
     @work
@@ -1245,11 +1354,12 @@ class IdeApp(App):
             v._paint()
 
 
-def run(roots=(), agent='restricted', kernel_port=8400, kernel='ipykernel'):
+def run(roots=(), agent='restricted', kernel_port=8400, kernel='ipykernel',
+        model=None, approvals='ask'):
     "Launch the terminal IDE over `roots`, or the saved workspace when none are given."
     import os
-    ws = (Workspace.load(port=kernel_port, agent=agent, kernel=kernel) if not roots
-          else Workspace(port=kernel_port, agent=agent, kernel=kernel))
+    kw = dict(port=kernel_port, agent=agent, kernel=kernel, model=model, approvals=approvals)
+    ws = Workspace.load(**kw) if not roots else Workspace(**kw)
     for r in roots: ws.add_root(r)
     if not ws.fs.roots: ws.add_root(os.getcwd())
     app = IdeApp(ws)

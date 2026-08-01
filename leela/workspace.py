@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from fastcore.all import Path, L, ifnone
 
 from . import Dictable, leela_cfg
-from .ai import Assistant, Completer
+from .ai import Assistant, Completer, notebook_approvals
 from .devserver import DevServers
 from .fs import Sandbox, Unsafe, lang_for, is_texty
 from .kernels import KernelPool
@@ -55,7 +55,9 @@ class Tab(Dictable):
 class Workspace:
     "The IDE's session: open folders, open tabs, and the kernels behind them."
 
-    def __init__(self, roots=(), port=8000, agent='restricted', dev_port=9000, kernel='ipykernel'):
+    def __init__(self, roots=(), port=8000, agent='restricted', dev_port=9000, kernel='ipykernel',
+                 model=None,              # the agent's turn model; None takes the routing default
+                 approvals='ask'):        # 'ask' | 'auto' (approve every write) | 'off' (refuse them)
         self.fs = Sandbox(roots)
         self.pool = KernelPool(port=port, default_kernel=kernel)
         self.dev = DevServers(port=dev_port)
@@ -71,13 +73,38 @@ class Workspace:
         self.active = 0
         self._untitled = 0
         self._ai = self._completer = None
+        self.model = model                # the turn model; None takes the routing default
         self.screen = (None, '', '')      # a capture waiting to ride along with the next question
+        self.on_note = None               # a frontend's status line, when one has registered
+        # Where an approval raised mid-turn writes itself. Set by `ask_cell` for the length
+        # of one prompt cell and cleared afterwards, so an approval for a question typed in
+        # the prompt bar does not land in whichever notebook happens to be open.
+        self._approval_target = None
+        self.approvals = notebook_approvals(lambda: self._approval_target, mode=approvals)
 
     @property
     def ai(self):
         "The assistant, built on first ask. Held here so both frontends share one conversation."
-        if self._ai is None: self._ai = Assistant(self)
+        if self._ai is None:
+            self._ai = Assistant(self, model_id=self.model, on_compact=self._compacted)
+            self.approvals.host = self._ai.host
         return self._ai
+
+    def _compacted(self, summary):
+        """Write a compaction summary into the notebook the conversation is happening in.
+
+        Everywhere else compaction is invisible until you notice the agent has forgotten
+        something. Here it is a cell: readable, editable, and saved with the work. If the
+        model dropped something that mattered you can type it straight back in.
+        """
+        t = self._approval_target
+        if not t: return
+        nb, i = t
+        from .nb import Cell
+        c = Cell(source=f'**🗜 context compacted**\n\n{summary}', cell_type='markdown')
+        c.approval = {'kind': 'compaction'}
+        nb.insert(min(i + 1, len(nb)), c)
+        nb.dirty = True
 
     @property
     def completer(self):
@@ -169,15 +196,25 @@ class Workspace:
         Blocking -- the model runs on whichever thread calls this, so both frontends hand
         it to a worker. The reply lands *in the cell*, which is the whole point: it is
         saved with the document, read in order with everything else, and re-runnable.
+
+        Everything the agent does while answering lands in the same document: an approval
+        it raises becomes markdown cells below this one, a compaction becomes a summary
+        cell, and the tool calls are folded under the answer. So the notebook is the whole
+        record of the exchange, not just its last line.
         """
         c = nb[i]
         if not c.is_prompt: raise ValueError(f'cell {i} is a {c.cell_type} cell, not a prompt')
         a = self.ai
-        n = len(a.calls)
         png, screen, _ = self.take_screen()
-        c.reply = a.ask_with(c.source, context=nb.context(i, since=nb.prompt_start(i)),
-                             screen=screen, image=png)
-        c.calls = [{'tool': t, 'args': str(g)[:300]} for t, g in a.calls[n:]]
+        self._approval_target = (nb, i)
+        try:
+            text = a.ask_with(c.source, context=nb.context(i, since=nb.prompt_start(i)),
+                              screen=screen, image=png)
+        finally:
+            self._approval_target = None
+        trail = a.turn_md()
+        c.reply = f'{text}\n\n{trail}' if trail else text
+        c.calls = a.activity.rows(mark=a.activity._mark)
         nb.dirty = True
         return c
 
@@ -185,6 +222,16 @@ class Workspace:
         "One turn from a prompt bar, with any pending capture attached."
         png, screen, _ = self.take_screen()
         return self.ai.ask_with(prompt, screen=screen, image=png)
+
+    # -- approvals -------------------------------------------------------------
+    @property
+    def pending_approval(self):
+        "The write waiting for a person, or None. What both frontends poll while a turn runs."
+        return self.approvals.pending
+
+    def answer_approval(self, id, ok, note=''):
+        "Answer the pending approval. `note` is the reason, and the reason goes back to the model."
+        return self.approvals.answer(id, ok, note)
 
     def put_screen(self, png=None, text='', note=''):
         """Hold a capture for the next question. One slot, because the useful capture is the latest.
@@ -256,12 +303,13 @@ class Workspace:
         return p
 
     @classmethod
-    def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel'):
+    def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel',
+             model=None, approvals='ask'):
         "Restore a saved workspace, dropping any folder or file that has since gone away."
         p = Path(path or ws_path())
         try: d = p.read_json()
         except Exception: d = {}
-        ws = cls(port=port, agent=agent, kernel=kernel)
+        ws = cls(port=port, agent=agent, kernel=kernel, model=model, approvals=approvals)
         for r in d.get('roots', []):
             try: ws.add_root(r)
             except Exception: pass

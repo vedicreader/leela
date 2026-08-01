@@ -251,6 +251,10 @@ def _shell(ws, gate):
 # app
 # ---------------------------------------------------------------------------
 def ide_app(ws: Workspace, gate: TerminalGate = None):
+    # Registering makes asking possible: with nobody listening `Approvals` refuses every
+    # gated write immediately rather than parking the model's thread on an answer that is
+    # never coming. The browser counts as a listener for as long as the app is served.
+    ws.approvals.listen()
     "Build the FastHTML IDE around an open workspace. `gate` decides who may open a terminal."
     gate = gate or TerminalGate()
     # Everything is served from disk. FastHTML's default headers pull htmx and friends
@@ -462,6 +466,8 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
         except Exception as e: return _fail(e)
         if ws.tab: ws.tab.dirty = True
         return {'ok': ws.ai.ready, 'i': i, 'cell': c.dict(), 'note': ws.ai.note,
+                'cells': [x.dict() for x in nb.cells],   # approval/compaction cells may have landed
+                'activity': ws.ai.activity.rows(mark=ws.ai.activity._mark),
                 'edits': [{'path': p, **_diff(was, now)} for p, (was, now) in ws.ai.changes().items()]}
 
     @rt('/nb/edit')
@@ -744,21 +750,53 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
 
     @rt('/agent/status')
     def agent_status():
-        "Whether the assistant is loaded, whether it is mid-turn, and what it has done so far."
-        a = ws.ai
-        return {'ready': a.ready, 'busy': a.busy, 'note': a.note, 'ntools': len(a.tools),
-                'calls': [{'tool': t, 'args': str(g)[:300]} for t, g in a.calls[-40:]]}
+        """Whether the assistant is loaded, what model it is on, and what it is doing right now.
+
+        Polled while a turn runs, which is why `activity` is in here: an agentic loop that
+        shows nothing for forty seconds is indistinguishable from a hang, and the client
+        renders these rows as they arrive. `approval` is in the same payload so a write
+        waiting on a person is picked up by the poll already in flight rather than needing
+        a channel of its own.
+        """
+        return ws.ai.status()
 
     @rt('/agent/stop')
     def agent_stop():
         "Ask the model to stop generating. The turn in flight returns whatever it already had."
-        c = getattr(ws.ai, 'chat', None)
-        if c is None: return {'ok': False, 'error': 'the assistant is not running'}
         try:
-            c.cancel()
-            return {'ok': True}
+            if ws.ai.cancel(): return {'ok': True}
+            return {'ok': False, 'error': 'the assistant is not running'}
         except Exception as e:
             return {'ok': False, 'error': errstr(e)}
+
+    @rt('/agent/approval')
+    def agent_approval():
+        "The write waiting for a person, or None. The client shows this as a card, not a modal."
+        a = ws.pending_approval
+        return {'pending': a.dict() if a is not None else None}
+
+    @rt('/agent/approve')
+    async def agent_approve(req):
+        """Answer a pending approval. `note` is the reason, and the reason goes back to the model.
+
+        Refusing with a reason is the point of the whole mechanism: "no, that file is
+        generated, edit the notebook instead" redirects the agent, where a bare denial just
+        makes it try the same edit again.
+        """
+        d = await req.json()
+        a = ws.answer_approval(d.get('id') or '', bool(d.get('ok')), (d.get('note') or '').strip())
+        if a is None: return _fail('nothing is waiting for an answer')
+        return {'ok': True, 'answer': a.dict()}
+
+    @rt('/agent/command')
+    async def agent_command(req):
+        "Run a slash command (`/model`, `/cost`, `/compact`, `/skills`, `/tools`, `/reload`)."
+        d = await req.json()
+        line = (d.get('line') or '').strip()
+        if not line: return {'ok': True, 'text': 'commands: ' + ', '.join('/' + c for c in ws.ai.commands())}
+        out = await _off_loop(ws.ai.command, line)
+        if out is None: return _fail(f'unknown command {line.split()[0]}')
+        return {'ok': True, 'text': out}
 
     @rt('/agent/ask')
     async def agent_ask(req):
@@ -777,10 +815,10 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
         q = (d.get('prompt') or '').strip()
         if not q: return _fail('nothing to ask')
         a = ws.ai
-        before = len(a.calls)
         text = await _off_loop(ws.ask, q)      # `ws.ask` attaches any pending screen capture
         return {'ok': a.ready, 'text': text, 'note': a.note,
-                'calls': [{'tool': t, 'args': str(g)[:300]} for t, g in a.calls[before:]],
+                'activity': a.activity.rows(mark=a.activity._mark),
+                'usage': repr(a.use), 'model': a.model.name,
                 'edits': [{'path': p, **_diff(was, now)} for p, (was, now) in a.changes().items()]}
 
     # -- kernel control ----------------------------------------------------
@@ -807,11 +845,12 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
 
 
 def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_port=8400,
-              open_ws=True, allow_remote_terminal=False, kernel='ipykernel'):
+              open_ws=True, allow_remote_terminal=False, kernel='ipykernel',
+              model=None, approvals='ask'):
     "Start the web IDE over `roots` (or the saved workspace when none are given)."
     import uvicorn
-    ws = (Workspace.load(port=kernel_port, agent=agent, kernel=kernel) if (open_ws and not roots)
-          else Workspace(port=kernel_port, agent=agent, kernel=kernel))
+    kw = dict(port=kernel_port, agent=agent, kernel=kernel, model=model, approvals=approvals)
+    ws = Workspace.load(**kw) if (open_ws and not roots) else Workspace(**kw)
     for r in roots: ws.add_root(r)
     if not ws.fs.roots: ws.add_root(os.getcwd())
     gate = TerminalGate(host=host, allow_remote=allow_remote_terminal)

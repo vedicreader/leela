@@ -197,22 +197,44 @@ class Approvals:
                  on_ask=None,               # called with the `Ask` when one is raised
                  on_answer=None):           # called with the `Ask` when it is answered
         self.tools, self.mode, self.timeout, self.host = frozenset(tools), mode, timeout, host
+        # `on_ask`/`on_answer` are the *application's* recorder -- in leela, the thing that
+        # writes the exchange into the notebook. Frontends register through `listen`
+        # instead, so a second frontend opening does not silently unhook the first, or the
+        # recorder. Both halves of an exchange must reach every one of them.
         self.on_ask, self.on_answer = on_ask, on_answer
         self.current = None                 # the `Ask` in flight, or None
         self.history = []                   # every `Ask` this session, answered or not
-        self.listeners = 0                  # how many frontends are watching
+        self._watchers = []                 # (on_ask, on_answer) per registered frontend
         self._lock = threading.Lock()
 
     # -- the frontend side ---------------------------------------------------
-    def listen(self):
-        "Register a frontend. Returns a callable that unregisters it."
-        with self._lock: self.listeners += 1
+    @property
+    def listeners(self): return len(self._watchers)
+
+    def listen(self, on_ask=None, on_answer=None):
+        """Register a frontend, and how to reach it. Returns a callable that unregisters it.
+
+        Registering is what makes asking possible at all: with nobody listening, `request`
+        refuses immediately rather than parking the model's worker thread until the timeout
+        for an answer that was never going to come.
+        """
+        w = (on_ask, on_answer)
+        with self._lock: self._watchers.append(w)
         done = [False]
         def stop():
             if done[0]: return
             done[0] = True
-            with self._lock: self.listeners -= 1
+            with self._lock:
+                if w in self._watchers: self._watchers.remove(w)
         return stop
+
+    def _notify(self, which, a):
+        "Call the recorder and every watcher, swallowing failures so one bad frontend cannot block a turn."
+        fns = [getattr(self, f'on_{which}')] + [w[0 if which == 'ask' else 1] for w in list(self._watchers)]
+        for f in fns:
+            if not f: continue
+            try: f(a)
+            except Exception: pass
 
     @property
     def pending(self):
@@ -225,9 +247,7 @@ class Approvals:
         a = self.current
         if a is None or a.id != id or not a.pending: return None
         a.resolve(ok, note)
-        if self.on_answer:
-            try: self.on_answer(a)
-            except Exception: pass
+        self._notify('answer', a)
         return a
 
     def cancel_all(self, note='the turn was cancelled'):
@@ -258,14 +278,10 @@ class Approvals:
         if self.mode == 'off':            return a.resolve(False, 'approval is switched off for this session')
         if self.listeners < 1:            return a.resolve(False, 'nothing is listening for approvals, so this could not be asked')
         self.current = a
-        if self.on_ask:
-            try: self.on_ask(a)
-            except Exception: pass
+        self._notify('ask', a)
         if not a.wait(self.timeout):
             a.resolve(False, f'no answer after {self.timeout}s')
-            if self.on_answer:
-                try: self.on_answer(a)
-                except Exception: pass
+            self._notify('answer', a)
         return a
 
 

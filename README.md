@@ -59,8 +59,20 @@ folders, tabs and kernels.
 - **Prompt cells.** Ask a question in the notebook and the answer is saved *in the
   cell* — re-runnable, read in order with everything else. Written as markdown with
   the reply in metadata, so the file stays valid and legible in plain Jupyter.
-- **An assistant** that sees what you see: the code index, the open files, the live
-  namespace, and the IDE's own screen.
+- **An agent** that sees what you see: the code index, the open files, the live
+  namespace, and the IDE's own screen. It runs on a local model or a cloud one, and
+  routes the cheap jobs — completions, summaries, sub-agent fan-out — to the local one
+  whatever the turn is running on.
+- **Approval as a conversation.** When the agent wants to write, it asks, shows you the
+  edit, and takes your *reason* — which goes back to the model, so "no, that file is
+  generated" redirects it instead of making it retry. The whole exchange is saved into
+  the notebook as markdown cells.
+- **A running account of what it is doing.** Every tool call shows up as it happens —
+  `Search AgentSession`, `View leela/ai.py:240-290`, `Web fetch: …` — with the result one
+  fold away, and the trail saved under the answer.
+- **Skills from whatever is installed.** Packages that publish a `pyskills` entry point,
+  plus `SKILL.md` directories. Installing `aidialog` teaches the agent to edit notebooks
+  with no code on leela's side.
 - **Code search** over [kosha](https://pypi.org/project/koshas/) — FTS5, embeddings
   and a call graph — falling back to a literal scan when the index is unavailable.
 - **A dev server** that runs your app under a live inspector, so its module
@@ -76,11 +88,23 @@ leela/
     runtime.py    executing and completing in a namespace; the Bridge
     agent.py      the agent overlay and its restriction list
     server.py     the HTTP API served from inside each kernel
+  agent/          the harness: the brain, with no import back into the IDE
+    host.py       what an application must supply to host an agent
+    backend.py    one chat protocol over rishi (local) and fastllm (cloud)
+    models.py     the model table, and which model each *job* runs on
+    hitl.py       approval as a conversation, with the reason carried back
+    compact.py    surviving a long conversation, and saying so afterwards
+    skills.py     skills discovered from installed packages and SKILL.md dirs
+    activity.py   the live account of what the agent is doing
+    tools.py      the tools, written against `Host`
+    extensions.py user Python that registers more of all of the above
+    subagent.py   delegation to a cheap model whose context is thrown away
+    chat.py       the facade the application holds
   cli.py          the `leela` entry point
   workspace.py    open folders, open tabs, and which kernel each tab talks to
   kernels.py      managed ipykernels, each hosting its own inspector
   nb.py           the notebook document: cells, outputs, running them
-  ai.py           the assistant and inline completion
+  ai.py           binds a `Workspace` to the harness; notebook-based approval
   search.py       code search over kosha, with a plain-scan fallback
   diffs.py        the diff engine both frontends render
   keys.py         single-source keymap for both frontends
@@ -105,7 +129,9 @@ pytest tests -q
 ```
 
 The suite covers the inspection engine, the notebook document, the diff engine, the
-keymap, and SVG snapshots of the terminal frontend. Kernels are faked in
+keymap, the agent harness, and SVG snapshots of the terminal frontend. The harness tests
+load no model: a `FakeBackend` over scripted replies drives a whole turn, which is enough
+to test routing, approval, compaction and the tool wrappers without gigabytes in the way. Kernels are faked in
 `tests/conftest.py` rather than launched, so the tests are fast and do not need a
 working ipykernel — `tests/test_inspect.py` covers the engine directly instead, by
 driving it over a plain dict.

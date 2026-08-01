@@ -126,3 +126,40 @@ def test_source_text_marks_cells_by_type_and_id():
 def test_source_text_leaves_outputs_out():
     "It is a view of what was written, not of what was produced."
     assert 'dtype: int64' not in dialog().source_text()
+
+
+# ---------------------------------------------------------------------------
+# approval and compaction cells
+# ---------------------------------------------------------------------------
+def test_an_approval_cell_round_trips_as_plain_markdown(tmp_path):
+    """The exchange between the agent and the person is saved with the work.
+
+    Written as markdown carrying its structure in metadata -- the same trick a prompt cell
+    uses, and for the same reason: the file stays valid nbformat and legible in plain
+    Jupyter, where the negotiation simply reads as prose.
+    """
+    from leela.nb import Cell, Notebook
+    nb = Notebook([Cell(source='fix the bug', cell_type='prompt')])
+    c = Cell(source='**🔐 approval needed — `edit_file`**', cell_type='markdown')
+    c.approval = {'kind': 'approval', 'id': 'ab12', 'tool': 'edit_file', 'state': 'refused'}
+    nb.insert(1, c)
+    p = tmp_path/'d.ipynb'
+    nb.save(p)
+
+    import nbformat
+    nbformat.validate(nbformat.read(str(p), as_version=4))
+
+    back = Notebook.load(p)
+    assert back[1].cell_type == 'markdown'
+    assert back[1].is_approval
+    assert back[1].approval['tool'] == 'edit_file'
+    assert back[1].approval['state'] == 'refused'
+    assert not back[0].is_approval
+
+
+def test_ordinary_cells_carry_no_approval_metadata(tmp_path):
+    from leela.nb import Cell, Notebook
+    nb = Notebook([Cell(source='x = 1')])
+    nb.save(p := tmp_path/'d.ipynb')
+    assert Notebook.load(p)[0].approval is None
+    assert 'leela' not in json.loads(p.read_text())['cells'][0]['metadata']

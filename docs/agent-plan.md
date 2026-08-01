@@ -363,3 +363,44 @@ is a contribution to make upstream rather than a wheel to reinvent privately.
 If only two phases ever land, make them **0 and 1**: the seam, and cloud models behind it.
 Everything else in this document is a small addition to a harness that exists, and nothing
 else is possible until it does.
+
+---
+
+## Appendix: what shipped
+
+All of §4 landed in one pass, plus two things the plan did not have.
+
+| Phase | Where it lives | Notes |
+| --- | --- | --- |
+| 0 · the seam | `leela/agent/`, `host.py` | `test_agent_package_does_not_import_leela` enforces the rule mechanically |
+| 1 · cloud | `backend.py`, `models.py` | `RishiBackend` (sync/local) and `FastllmBackend` (async/cloud on one shared loop) |
+| 1b · approval | `hitl.py`, `fastllm_hitl.py`, `leela/ai.py` | see below |
+| 2 · routing & cost | `models.Routing`, `backend.Usage` | job → model; `--model`, `LEELA_MODEL_*`, `/model`, `/cost` |
+| 3 · compaction | `compact.py` | tau's prompts, aai-coding's reorientation, summary cell in the notebook |
+| 4 · skills | `skills.py` | six skills discovered from a bare install, zero written here |
+| 5 · extensions & sub-agents | `extensions.py`, `subagent.py` | `setup(ext)` from `~/.config/leela/extensions/`; sub-agents get no write tools |
+
+**Added along the way:**
+
+- `activity.py` — every tool call becomes a message as it happens (`Search …`,
+  `View path:10-40`, `Web fetch: …`), folded results, saved under the answer. An agentic
+  loop that shows nothing for forty seconds is indistinguishable from a hang, which is why
+  people kill turns that were about to succeed.
+- Approval as a conversation *in the notebook*. The request and the answer are markdown
+  cells beside the prompt cell, and the refusal carries the user's reason back to the
+  model. `hitl.Ask.__bool__` is what makes that work on both backends at once: the gate
+  returns the decision object, which is falsy when refused and still knows what to say.
+
+**The fastllm patch** is `fastllm_hitl.apply()` — three changes (`AsyncChat.approve`, one
+key in `tcdict`, an `approve=` guard in `_alite_call_func`), written as the upstream diff
+and applied at runtime. It is exercised against the real fastllm in `tests/test_agent.py`,
+which is the point of patching rather than reimplementing: when it goes upstream the tests
+keep passing and the patch becomes a no-op.
+
+**Not yet done:** streaming into the two frontends. `Backend.stream` and `Agent.stream`
+exist and are covered, but neither frontend consumes them — they still block a turn on a
+worker and show the activity feed instead, which turned out to carry most of the benefit.
+
+**Untested against a live engine:** `RishiBackend._replace_hist` rebuilds a litert
+conversation on the same engine, and no local model was downloaded in the environment this
+was built in. The fastllm side of compaction is a list reassignment and is covered.
