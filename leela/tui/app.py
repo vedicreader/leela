@@ -1448,10 +1448,11 @@ class IdeApp(App):
 
 
 def run(roots=(), agent='restricted', kernel_port=8400, kernel='ipykernel',
-        model=None, approvals='ask'):
+        model=None, approvals='ask', agent_scope='overlay'):
     "Launch the terminal IDE over `roots`, or the saved workspace when none are given."
     import os
-    kw = dict(port=kernel_port, agent=agent, kernel=kernel, model=model, approvals=approvals)
+    kw = dict(port=kernel_port, agent=agent, kernel=kernel, model=model, approvals=approvals,
+              agent_scope=agent_scope)
     ws = Workspace.load(**kw) if not roots else Workspace(**kw)
     for r in roots: ws.add_root(r)
     if not ws.fs.roots: ws.add_root(os.getcwd())

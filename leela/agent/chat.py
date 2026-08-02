@@ -77,8 +77,9 @@ How to work:
   Work bottom-to-top when making several structural edits in one call.
 - `run_python` shares the user's kernel namespace. Read anything; bind results to NEW
   names. You cannot rebind or delete the user's variables, so do not try.
-- To *look at* live state, prefer `inspect_python`: it runs read-only and keeps nothing,
-  so it needs no approval.{conc}
+- To *look at* live state, prefer `inspect_python`: neither of its scopes can change what
+  the user made, so it needs no approval. Start with the default sandbox and pass
+  `scope='overlay'` when it refuses a library call you need.{conc}
 - Use `web_search`/`read_url` when the answer depends on current documentation.
 - When two or more questions are independent and each would take several tool calls,
   send them together with `delegate_parallel` rather than working through them yourself.

@@ -39,9 +39,13 @@ class FakeSession:
     """
     class _R:
         def __init__(self, v): self.error, self.stdout, self.result = None, '', type('V', (), {'value': v})()
-    _ANS = {'df.shape': '(200, 2)', 'len(df)': '200', 'keep': '1'}
+    _ANS = {'df.shape': '(200, 2)', 'len(df)': '200', 'keep': '1',
+            'list(df.columns)': "['a', 'b']"}
 
     def run(self, code, scope='overlay'):
+        if scope == 'isolated' and code.strip().startswith('list('):
+            r = self._R(None); r.error = 'PermissionError: Audit: fastaudit.call blocked in sandbox'
+            return r
         return self._R(self._ANS.get(code.strip(), 'None'))
 
     def view(self, profile='minimal'):
@@ -92,7 +96,10 @@ STEPS = [
 # A second scene: the agent notices three independent questions and fans them out to
 # sub-agents rather than working through them itself, then inspects live state read-only.
 SUB_STEPS = [
-    Step(tool=('inspect_python', {'code': 'df.shape'}), pause=0.35),
+    Step(tool=('inspect_python', {'code': 'df.shape'}), pause=0.3),
+    # The sandbox refuses this one, so the model moves up a scope -- which is exactly the
+    # sequence its docstring describes, and worth having in a picture.
+    Step(tool=('inspect_python', {'code': 'list(df.columns)', 'scope': 'overlay'}), pause=0.3),
     Step(tool=('delegate_parallel', {'questions': json.dumps([
         'which files import fastllm?',
         'where is compaction triggered?',
@@ -100,7 +107,9 @@ SUB_STEPS = [
     Step(text='Three answers, none of which cost you their working: fastllm is imported in '
               '`backend.py`, `models.py` and `fastllm_hitl.py`; compaction fires from '
               '`Agent._prepare` once the turn model crosses its threshold; and `df` is (200, 2). '
-              'The sub-agents ran read-only against your live kernel while your cell was still going.',
+              'The sub-agents read your live kernel while your cell was still going -- the sandbox '
+              'refused `list(df.columns)`, so I ran it in the overlay scope, which cannot touch '
+              'your variables either.',
          pause=0.2),
 ]
 

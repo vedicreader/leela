@@ -31,6 +31,12 @@ def main(argv=None):
     p.add_argument('--approvals', default='ask', choices=['ask', 'auto', 'off'],
                    help='what happens when the agent wants to write: ask a person (default), '
                         'approve everything, or refuse everything')
+    p.add_argument('--agent-scope', default='overlay', choices=['overlay', 'isolated'],
+                   help="widest scope the agent's read-only inspection may use. overlay "
+                        '(default) gives it the real interpreter against your namespace, '
+                        'with your variables protected by policy and its own bindings kept '
+                        'in a separate layer; isolated confines it to an allowlist sandbox '
+                        'on a copy, which refuses most library calls')
     p.add_argument('--allow-remote-terminal', action='store_true',
                    help='serve the web terminal even on a non-loopback host (this is a remote shell)')
     a = p.parse_args(argv)
@@ -40,12 +46,12 @@ def main(argv=None):
     if a.web:
         from .web.app import serve_ide
         serve_ide(roots, port=a.port, host=a.host, agent=a.agent, kernel_port=a.kernel_port,
-                  kernel=a.kernel, model=a.model, approvals=a.approvals,
+                  kernel=a.kernel, model=a.model, approvals=a.approvals, agent_scope=a.agent_scope,
                   allow_remote_terminal=a.allow_remote_terminal)
     else:
         from .tui.app import run
         run(roots, agent=a.agent, kernel_port=a.kernel_port, kernel=a.kernel,
-            model=a.model, approvals=a.approvals)
+            model=a.model, approvals=a.approvals, agent_scope=a.agent_scope)
 
 
 if __name__ == '__main__': main()

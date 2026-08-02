@@ -213,20 +213,25 @@ def session_tools(host):
         except NotImplementedError: raise
         except Exception as e: return f'run failed: {agent_err(e)}'
 
-    def inspect_python(code: str) -> str:
-        """Look at the user's live variables by running read-only Python against them.
+    def inspect_python(code: str, scope: str = 'isolated') -> str:
+        """Look at the user's live variables by running Python that cannot change them.
 
-        Nothing you bind here is kept: the namespace is seeded into a throwaway sandbox and
-        every write is discarded, so this needs no approval and runs even while one of the
-        user's cells is still going.
+        Two scopes. Both leave the user's variables exactly as they were; they differ in
+        how much Python you get, so pick by what the question needs:
 
-        The sandbox is an allowlist and it is strict. **Attribute reads and builtins work**
-        (`df.shape`, `len(df)`, `x.size`, `type(x).__name__`); **most library method calls
-        do not** (`list(df.columns)`, `df.head().to_dict()` are refused). So use this for
-        "what shape / how many / what type", and when you need a real call, use `run_python`
-        instead -- it has the full interpreter and only asks the user first.
+        - `scope='isolated'` (default) runs in an allowlist sandbox on a copy. Attribute
+          reads and builtins work — `df.shape`, `len(df)`, `type(x).__name__` — and most
+          library method calls are refused. Costs nothing to be wrong about.
+        - `scope='overlay'` runs the real interpreter against the real namespace. Library
+          calls work: `list(df.columns)`, `df.head(3).to_dict()`, `model.summary()`. Names
+          you bind persist into your own layer for later calls. You still cannot delete,
+          rebind or mutate anything the user made — that is refused, with an explanation.
+
+        Start isolated; move to overlay when the sandbox refuses something you need. Neither
+        needs approval, and both run while one of the user's cells is still going. For work
+        that must land in the *user's* namespace, use `run_python` instead.
         """
-        try: return clip(host.inspect_python(code))
+        try: return clip(host.inspect_python(code, scope=scope))
         except NotImplementedError: raise
         except Exception as e: return f'inspection failed: {agent_err(e)}'
 

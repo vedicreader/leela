@@ -718,3 +718,41 @@ def test_the_sse_endpoint_streams_the_real_app():
     import json as _j
     d = _j.loads(done.strip())
     assert d['ok'] and 'edits' in d and d['activity']
+
+
+def test_a_subagent_can_ask_for_the_overlay_scope():
+    """A sub-agent gets the scope choice too, because the sandbox is a limit on the Python
+    available and not on what it is allowed to see — the overlay scope is protected by the
+    AST policy rather than by an allowlist, so it is no more dangerous to delegate."""
+    import inspect as _i
+    from leela.agent.subagent import read_only
+
+    class H(NullHost):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.calls = []
+        def inspect_python(self, code, scope='isolated'):
+            self.calls.append((code, scope))
+            return 'ok'
+        def list_vars(self): return 'df: DataFrame'
+        def terminal_text(self, lines=200): return ''
+        def run_python(self, code): return 'ok'
+
+    h = H(['/x'])
+    tools = tools_for(h)
+    sub = {t.__name__: t for t in read_only(tools)}
+    assert 'inspect_python' in sub
+    assert 'scope' in _i.signature(sub['inspect_python']).parameters
+    sub['inspect_python'](code='list(df.columns)', scope='overlay')
+    assert h.calls == [('list(df.columns)', 'overlay')]
+
+
+def test_a_narrow_host_says_why_rather_than_failing_silently():
+    from leela.agent.host import NullHost as _N
+
+    class H(_N):
+        scopes = ('isolated',)
+        def inspect_python(self, code, scope='isolated'):
+            if scope not in self.scopes: return f'scope {scope!r} is not available here'
+            return 'sandboxed ok'
+    assert 'not available' in H(['/x']).inspect_python('x', 'overlay')

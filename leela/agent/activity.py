@@ -77,7 +77,10 @@ def summarise(tool, args):
     if tool == 'read_url':       return f'Web fetch: {_s(a.get("url", ""), 120)}'
     if tool == 'research':       return f'Research: {_s(q)}'
     if tool == 'run_python':     return f'Run python: {_s((a.get("code", "") or "").strip().splitlines()[0] if a.get("code") else "")}'
-    if tool == 'inspect_python': return f'Inspect: {_s((a.get("code", "") or "").strip().splitlines()[0] if a.get("code") else "")}'
+    if tool == 'inspect_python':
+        sc = a.get('scope') or 'isolated'
+        body = _s((a.get('code', '') or '').strip().splitlines()[0] if a.get('code') else '')
+        return f'Inspect: {body}' + ('' if sc == 'isolated' else f'  [{sc}]')
     if tool == 'list_vars':      return 'List variables'
     if tool == 'read_terminal':  return 'Read terminal'
     if tool == 'read_skill':     return f'Read skill {a.get("name", "?")}'

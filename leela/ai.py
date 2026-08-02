@@ -105,20 +105,32 @@ class WorkspaceHost(Host):
         if r.result is not None: out += ('\n' if out else '') + r.result.value
         return out or '(ok)'
 
-    def inspect_python(self, code):
-        """Read-only execution: `AgentSession`'s isolated scope, which leela already had.
+    def inspect_python(self, code, scope='isolated'):
+        """Read-only execution: `AgentSession`'s own scopes, which leela already had.
 
-        `scope='isolated'` seeds the owner's state into a safepyrun sandbox and throws away
-        every write, which is exactly the contract a sub-agent needs and exactly what the
-        inspection engine was already built to do. Nothing new had to be invented here --
-        the capability existed and was simply not offered as a tool.
+        Neither scope can change what the user made -- `isolated` because it runs on a copy
+        in a safepyrun allowlist, `overlay` because the AST policy refuses to delete,
+        rebind or mutate an owner name and sends the agent's own bindings to its layer
+        instead. So both are safe to hand to an agent nobody is watching, and the choice is
+        about how much Python the question needs rather than how much trust it gets.
+
+        A workspace opened with `agent_scope='isolated'` refuses overlay and says so, which
+        is the setting for a machine where the agent's own scratch layer is not wanted.
         """
         if self.session is None: raise NotImplementedError('no agent session on this kernel')
-        r = self.session.run(code, scope='isolated')
+        if scope not in self.scopes:
+            return (f'scope {scope!r} is not available here (allowed: {", ".join(self.scopes)}); '
+                    'the workspace was opened with a narrower agent scope')
+        r = self.session.run(code, scope=scope)
         if r.error: return r.error
         out = r.stdout or ''
         if r.result is not None: out += ('\n' if out else '') + r.result.value
         return out or '(ok)'
+
+    @property
+    def scopes(self):
+        s = getattr(self.ws, 'agent_scope', 'overlay')
+        return ('isolated',) if s == 'isolated' else ('isolated', 'overlay')
 
     @property
     def kernel_kind(self): return getattr(self.ws, 'kernel_kind', 'ipykernel')

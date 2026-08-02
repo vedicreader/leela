@@ -17,7 +17,10 @@ tests are the evidence for what it can and cannot do:
   because CPython hands the GIL over every few milliseconds — only the very first call,
   which builds the session, is slow enough to notice;
 - several inspections overlap rather than queue;
-- and nothing a sub-agent runs can change what the user has.
+- the **overlay** scope gives it the real interpreter -- `list(df.columns)`,
+  `df.head().to_dict()` -- while the user's cell keeps running, with the agent's own
+  bindings kept in a layer of their own;
+- and nothing it runs, in either scope, can change what the user has.
 
 Everything skips without ipymini so the comparison can be made; the single-kernel
 behaviour is asserted for ipykernel too, since that is what most people run.
@@ -63,7 +66,7 @@ async def _kernel(tmp_path, kind, port=8600):
     return k
 
 
-async def _inspect(k, code, timeout=20):
+async def _inspect(k, code, scope='isolated', timeout=20):
     """One `/agent/api/exec` in the isolated scope: exactly what `Host.inspect_python` does.
 
     Driven over HTTP rather than through the harness because the harness would only be
@@ -72,7 +75,7 @@ async def _inspect(k, code, timeout=20):
     import httpx
     async with httpx.AsyncClient(base_url=k.base, timeout=timeout) as c:
         t0 = time.monotonic()
-        r = await c.get('/agent/api/exec', params={'code': code, 'scope': 'isolated'})
+        r = await c.get('/agent/api/exec', params={'code': code, 'scope': scope})
         return time.monotonic() - t0, r.json()
 
 
@@ -180,6 +183,137 @@ def test_an_inspection_cannot_change_what_the_user_has(tmp_path, kind):
         finally:
             await k.shutdown()
     _run(go())
+
+
+def test_a_subagent_is_given_inspect_python_and_no_write_tools():
+    "The harness half: `read_only` must keep the one execution tool that is safe to delegate."
+    from leela.agent.subagent import NO_SUB, read_only
+    from leela.agent.tools import WRITE_TOOLS
+
+    class Fake:
+        def __init__(self, n): self.__name__ = n
+    tools = [Fake(n) for n in ('search_code', 'view_file', 'inspect_python', 'run_python',
+                               'edit_file', 'delegate_search', 'delegate_parallel')]
+    names = {t.__name__ for t in read_only(tools)}
+    assert 'inspect_python' in names
+    assert not (names & WRITE_TOOLS), 'a sub-agent must not be able to write'
+    assert not (names & NO_SUB), 'a sub-agent must not spawn sub-agents of its own'
+
+
+def test_the_briefing_says_what_is_true_of_both_kernels():
+    """The briefing promises concurrency unconditionally, because it is unconditionally true.
+
+    An earlier version made the promise only under ipymini and warned the model to keep
+    inspections short otherwise. The tests above are why that was removed: the concurrency
+    comes from leela's in-kernel inspector, so the warning was advice for a problem that
+    does not exist, and it would have made the agent avoid a tool that works.
+    """
+    from leela.agent.chat import system_prompt
+    from leela.agent.host import NullHost
+
+    class Mini(NullHost): kernel_kind = 'ipymini'
+    for h in (Mini(['/x']), NullHost(['/x'])):
+        sp = system_prompt(h, [])
+        assert "while one of the user's cells is still running" in sp
+        assert 'one thing at a time' not in sp
+    assert 'subshell' in system_prompt(Mini(['/x']), [])
+    assert 'subshell' not in system_prompt(NullHost(['/x']), [])
+
+
+@pytest.mark.parametrize('kind', KINDS)
+def test_overlay_gives_the_real_interpreter_while_a_cell_runs(tmp_path, kind):
+    """The scope that makes `inspect_python` worth having, and the one I got wrong first.
+
+    The allowlist sandbox refuses `list(df.columns)` and `df.head().to_dict()`, and I wrote
+    that up as the tool's limit. It is the limit of the *scope*, not of the mechanism: the
+    overlay scope runs the real interpreter against the real namespace under the AST policy,
+    those calls work, and it is just as concurrent. Both are asserted here so the difference
+    is measured rather than remembered.
+    """
+    async def go():
+        k = await _kernel(tmp_path, kind, port=8680)
+        try:
+            await k.execute('import pandas as pd\n'
+                            'df = pd.DataFrame({"a": range(200), "b": range(200)})\n', timeout=20)
+            await _inspect(k, '1', 'overlay')                       # warm
+            busy = asyncio.create_task(k.execute(YIELDING, timeout=40))
+            await asyncio.sleep(1.0)
+
+            for code in ('list(df.columns)', 'df.head(2).to_dict()'):
+                dt, out = await _inspect(k, code, 'overlay')
+                assert out.get('ok'), f'{kind}: overlay should allow {code}: {out}'
+                assert dt < 1.5, f'{kind}: {code} took {dt:.2f}s beside a running cell'
+                _, sandboxed = await _inspect(k, code, 'isolated')
+                assert not sandboxed.get('ok'), (
+                    f'{code} is allowed in the sandbox now; the tool docstring says otherwise')
+
+            assert not busy.done(), 'the cell finished first, so this proved nothing'
+            await busy
+        finally:
+            await k.shutdown()
+    _run(go())
+
+
+@pytest.mark.parametrize('kind', KINDS)
+def test_overlay_names_persist_but_the_owners_do_not_move(tmp_path, kind):
+    """Overlay is a *layer*, and that is the whole reason it is safe to offer.
+
+    The agent's own bindings survive from one call to the next, so it can build a piece of
+    analysis across several. A binding that collides with one of the user's shadows it
+    inside the layer and leaves the user's alone -- which is what makes "the agent and I
+    working at the same time" a fact rather than a hope.
+    """
+    async def go():
+        k = await _kernel(tmp_path, kind, port=8700)
+        try:
+            await k.execute('seed = 1\nimport pandas as pd\n'
+                            'df = pd.DataFrame({"a": range(200), "b": range(200)})\n', timeout=20)
+            await _inspect(k, '1', 'overlay')
+            busy = asyncio.create_task(k.execute(YIELDING, timeout=40))
+            await asyncio.sleep(1.0)
+
+            _, mk = await _inspect(k, 'agent_tmp = len(df) * 2', 'overlay')
+            assert mk.get('ok'), mk
+            _, got = await _inspect(k, 'agent_tmp', 'overlay')
+            assert '400' in str(got.get('result') or got.get('stdout')), got
+
+            _, shadow = await _inspect(k, 'seed = 999', 'overlay')
+            assert shadow.get('ok'), shadow
+            assert not busy.done()
+            await busy
+
+            after = await k.execute('print(seed)', timeout=20)
+            assert '1' in after.text and '999' not in after.text, (
+                f"the agent moved the owner's variable: {after.text!r}")
+        finally:
+            await k.shutdown()
+    _run(go())
+
+
+@pytest.mark.parametrize('kind', KINDS)
+def test_overlay_still_refuses_to_touch_what_the_user_made(tmp_path, kind):
+    "The AST policy, which is what stands in for the sandbox once the sandbox is gone."
+    async def go():
+        k = await _kernel(tmp_path, kind, port=8720)
+        try:
+            await k.execute('vals = [1, 2, 3]\n', timeout=20)
+            for code in ('vals.append(4)', 'del vals', 'vals[0] = 9'):
+                _, out = await _inspect(k, code, 'overlay')
+                assert not out.get('ok'), f'overlay allowed {code}: {out}'
+                assert 'blocked' in str(out.get('error')).lower(), out
+            after = await k.execute('print(vals)', timeout=20)
+            assert '[1, 2, 3]' in after.text, after.text
+        finally:
+            await k.shutdown()
+    _run(go())
+
+
+def test_a_host_can_refuse_overlay():
+    "`--agent-scope isolated` is the setting for a machine where even a scratch layer is unwanted."
+    from leela.ai import WorkspaceHost
+    from leela.workspace import Workspace
+    assert WorkspaceHost(Workspace(roots=[])).scopes == ('isolated', 'overlay')
+    assert WorkspaceHost(Workspace(roots=[], agent_scope='isolated')).scopes == ('isolated',)
 
 
 def test_a_subagent_is_given_inspect_python_and_no_write_tools():

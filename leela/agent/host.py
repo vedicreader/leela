@@ -129,21 +129,30 @@ class Host:
         """
         raise NotImplementedError
 
-    def inspect_python(self, code):
-        """Run `code` against the live namespace **read-only**: nothing it binds is kept.
+    def inspect_python(self, code, scope='isolated'):
+        """Run `code` against the live namespace without touching what the user has.
 
-        The difference from `run_python` is the whole reason this exists separately. That
-        one persists names into the agent's layer, so it is a write and is gated by
-        approval and withheld from sub-agents. This one seeds the owner's state into a
-        throwaway sandbox and discards every write, which makes it safe to hand to an agent
-        nobody is watching -- and it is what lets a sub-agent answer "what shape is that
-        dataframe" without anyone approving anything.
+        Two scopes, and the difference is the interpreter you get rather than the safety you
+        get -- both protect the owner's variables, by different means:
 
-        Under a concurrent kernel (see `kernel_kind`) this runs *alongside* a busy cell
-        rather than queueing behind it, which is what makes it usable at all while the
-        user has a long computation running.
+        - `'isolated'` runs in an allowlist sandbox on a *copy*. Attribute reads and builtins
+          work; most library method calls are refused. Nothing can reach the real namespace
+          at all, which is why it is the default and why it needs no trust.
+        - `'overlay'` runs the real interpreter against the real namespace under an AST
+          policy: the agent may read anything and bind its own names, which persist in its
+          own layer, and cannot delete, rebind in place, or mutate the owner's. `list(df.columns)`
+          and `df.head().to_dict()` work here; in the sandbox they do not.
+
+        A host may refuse `'overlay'` (see `scopes`) and fall back to isolated, which is what
+        a locked-down deployment does. Under a concurrent kernel either scope runs *alongside*
+        a busy cell rather than queueing behind it.
         """
         raise NotImplementedError
+
+    @property
+    def scopes(self):
+        "The scopes `inspect_python` will actually honour, most trusted last."
+        return ('isolated',)
 
     @property
     def kernel_kind(self):
@@ -203,6 +212,6 @@ class NullHost(Host):
     def nb_cells(self, path): raise NotImplementedError
     def nb_add_cell(self, path, source, index=-1, cell_type='code'): raise NotImplementedError
     def run_python(self, code): raise NotImplementedError
-    def inspect_python(self, code): raise NotImplementedError
+    def inspect_python(self, code, scope='isolated'): raise NotImplementedError
     def list_vars(self): raise NotImplementedError
     def terminal_text(self, lines=200): raise NotImplementedError

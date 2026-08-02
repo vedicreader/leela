@@ -47,8 +47,9 @@ question to you because answering it takes many tool calls and the answer is sho
 - If the answer is that there is nothing, say so plainly. A confident wrong answer is far \
 worse than "no matches, and here is what I searched for".
 - You cannot edit anything. If the answer implies a change, describe the change and stop.
-- `inspect_python` runs read-only against the user's live variables and keeps nothing. Use \
-it to answer questions about state rather than guessing at it."""
+- `inspect_python` answers questions about the user's live variables without changing them. \
+Its default scope is a sandbox that refuses most library calls; pass `scope='overlay'` to \
+get the real interpreter. Use it rather than guessing at what is in memory."""
 
 
 # A sub-agent does not get to spawn sub-agents. Not a safety rule so much as an economic

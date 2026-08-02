@@ -57,7 +57,8 @@ class Workspace:
 
     def __init__(self, roots=(), port=8000, agent='restricted', dev_port=9000, kernel='ipykernel',
                  model=None,              # the agent's turn model; None takes the routing default
-                 approvals='ask'):        # 'ask' | 'auto' (approve every write) | 'off' (refuse them)
+                 approvals='ask',         # 'ask' | 'auto' (approve every write) | 'off' (refuse them)
+                 agent_scope='overlay'):  # widest scope `inspect_python` may use: 'overlay' | 'isolated'
         self.fs = Sandbox(roots)
         self.pool = KernelPool(port=port, default_kernel=kernel)
         self.dev = DevServers(port=dev_port)
@@ -69,6 +70,11 @@ class Workspace:
         # live kernel for a tab, and an attribute of the same name shadows it — every
         # `await ws.kernel()` in both frontends then awaits the string 'ipykernel'.
         self.kernel_kind = kernel
+        # The widest scope the agent's read-only execution may reach for. Neither scope
+        # can change what the user made; 'isolated' additionally denies it the real
+        # interpreter, which is the setting for a machine where even a scratch layer in
+        # the kernel is unwanted.
+        self.agent_scope = agent_scope
         self.tabs = L()
         self.active = 0
         self._untitled = 0
@@ -341,12 +347,13 @@ class Workspace:
 
     @classmethod
     def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel',
-             model=None, approvals='ask'):
+             model=None, approvals='ask', agent_scope='overlay'):
         "Restore a saved workspace, dropping any folder or file that has since gone away."
         p = Path(path or ws_path())
         try: d = p.read_json()
         except Exception: d = {}
-        ws = cls(port=port, agent=agent, kernel=kernel, model=model, approvals=approvals)
+        ws = cls(port=port, agent=agent, kernel=kernel, model=model, approvals=approvals,
+                 agent_scope=agent_scope)
         for r in d.get('roots', []):
             try: ws.add_root(r)
             except Exception: pass

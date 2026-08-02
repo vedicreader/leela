@@ -451,14 +451,27 @@ still earns its `_concurrent()` wrapper — each inspection gets its own subshel
 rather than executing on the HTTP thread — but that is correctness, not throughput, and the
 briefing now says only what is true of both.
 
-**The honest limit.** The isolated scope is safepyrun's allowlist and it is strict:
-attribute reads and builtins pass (`df.shape`, `len(df)`, `df.size`), most library method
-calls do not (`list(df.columns)`, `df.head().to_dict()`). So `inspect_python` answers "what
-shape / how many / what type", and its docstring says so, so the model reaches for
-`run_python` — which has the whole interpreter and asks the user first — when it needs a
-real call. Loosening this means giving each sub-agent its own overlay `AgentSession`, which
-is a real design decision and not something to slip in; it is the obvious next step if the
-limit bites.
+**Two scopes, and the correction.** I first shipped `inspect_python` on the isolated scope
+only and wrote its allowlist up as the tool's limit: attribute reads pass (`df.shape`,
+`len(df)`), most library calls do not (`list(df.columns)`, `df.head().to_dict()`). That was
+the limit of the scope I picked, not of the mechanism. The **overlay** scope runs the real
+interpreter against the real namespace under the AST policy, and measured against a live
+kernel with a cell still running:
+
+| | `list(df.columns)` | `df.head(2).to_dict()` | agent's own names persist | `seed = 999` | user's `seed` after |
+| --- | --- | --- | --- | --- | --- |
+| isolated | refused | refused | n/a | — | — |
+| overlay | `['a','b']`, 0.01–0.22s | ok | yes | lands in the agent's layer | still `1` |
+
+Both are safe to delegate, by different means: isolated because it runs on a copy inside an
+allowlist, overlay because the policy refuses to delete, rebind or mutate an owner name and
+sends the agent's bindings to a layer of its own. So `inspect_python` takes `scope=`, starts
+in the sandbox, and moves up when the sandbox refuses something. `--agent-scope isolated`
+takes overlay away for a deployment that does not want even a scratch layer in the kernel.
+
+That is what makes "the agent and I are both working" true rather than hopeful — and it is
+`vals.append(4)`, `del vals`, `vals[0] = 9` all coming back blocked, with the user's list
+intact, that makes it safe.
 
 **Parallel fan-out** is `delegate_parallel`: a JSON array of independent questions, each
 answered in its own throwaway conversation with the read-only tools. Generation overlaps on
