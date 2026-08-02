@@ -437,9 +437,32 @@ class Agent:
         "This turn's tool calls as plain summary lines, for a pane that cannot fold."
         return self.activity.lines(mark=self.activity._mark)
 
+    @property
+    def problems(self):
+        """Everything that went wrong and had nowhere to be reported, newest last.
+
+        Gathered from every backend rather than kept here, because most of these happen on
+        the *cheap* model -- a compaction that could not run, a completion the engine
+        refused, an engine complaining on stderr in native code where nothing can catch it.
+        Each of those returns `''` to a caller that cannot raise, and until this existed,
+        `''` was the whole story the user got.
+        """
+        out = []
+        for b in self._backends.values():
+            for p in b.problems:
+                if p not in out: out.append(p)
+        if (n := self.compactor.note).startswith('compaction') and n not in out: out.append(n)
+        return out[-10:]
+
+    def clear_problems(self):
+        "Forget them, for a frontend that has shown them."
+        for b in self._backends.values(): b.problems.clear()
+        return self
+
     def status(self):
         "Everything a status bar or an `/agent` command wants, in one dict."
         return {'ready': self.ready, 'busy': self.busy, 'note': self.note,
+                'problems': self.problems,
                 'model': self.model.name, 'model_note': model_note(self.model),
                 'ntools': len(self.tools), 'nskills': len(self.skills),
                 'pct_full': round(self.pct_full, 3), 'compactions': self.compactor.count,

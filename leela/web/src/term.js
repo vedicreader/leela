@@ -16,15 +16,25 @@ import {FitAddon} from "@xterm/addon-fit";
 
 // Colours come from the app's CSS custom properties, so the terminal follows the IDE's
 // theme instead of carrying its own palette (same rule as the editor).
+//
+// Every name here has to be one the stylesheet actually defines. `--lee-primary` and
+// `--lee-gray` were not: an undefined property reads as `''`, becomes `undefined`, and
+// xterm falls back to its own default -- which for the cursor is **white**, whatever the
+// theme. On the dark theme that passed for correct; in light mode it is a white cursor on
+// a white background, which is why the terminal looked like it had no cursor at all.
+// `cursorAccent` is the character *under* a block cursor, so it has to be the background.
 function themeFrom(el) {
   const v = n => getComputedStyle(el).getPropertyValue(n).trim() || undefined;
   return {
     background: v('--lee-bg'), foreground: v('--lee-fg'),
-    cursor: v('--lee-primary'), selectionBackground: v('--lee-bg2'),
+    cursor: v('--lee-accent'), cursorAccent: v('--lee-bg'), selectionBackground: v('--lee-sel'),
+    // `--lee-blue` is the same purple as `--lee-magenta` in the IDE's palette, which is
+    // fine for a file tree and wrong for a terminal: ls, git and every prompt in the world
+    // expect blue to be blue.
     black: v('--lee-bg1'), red: v('--lee-red'), green: v('--lee-green'), yellow: v('--lee-yellow'),
-    blue: v('--lee-blue'), magenta: v('--lee-purple'), cyan: v('--lee-aqua'), white: v('--lee-fg2'),
-    brightBlack: v('--lee-gray'), brightRed: v('--lee-red'), brightGreen: v('--lee-green'),
-    brightYellow: v('--lee-yellow'), brightBlue: v('--lee-blue'), brightMagenta: v('--lee-purple'),
+    blue: v('--lee-accent'), magenta: v('--lee-purple'), cyan: v('--lee-aqua'), white: v('--lee-fg2'),
+    brightBlack: v('--lee-fg4'), brightRed: v('--lee-red'), brightGreen: v('--lee-green'),
+    brightYellow: v('--lee-orange'), brightBlue: v('--lee-accent'), brightMagenta: v('--lee-purple'),
     brightCyan: v('--lee-aqua'), brightWhite: v('--lee-fg'),
   };
 }
@@ -84,6 +94,12 @@ class LeeTerminal {
   focus()  { this.term.focus(); }
   clear()  { this.term.clear(); }
   paste(s) { this.raw(s); }
+
+  // The theme is read from CSS once, at construction. macOS flips the whole system
+  // between light and dark while apps are running, and the IDE follows it through a
+  // media query -- so the terminal has to be told, or it keeps a dark palette on a
+  // light page and the cursor goes invisible again from the other direction.
+  retheme() { try { this.term.options.theme = themeFrom(this.el); } catch {} }
 
   dispose() {
     try { this._ro.disconnect(); } catch {}

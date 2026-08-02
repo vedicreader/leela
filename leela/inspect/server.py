@@ -337,9 +337,28 @@ def serve(port=8000, ns=None, name=None, profile='minimal', agent='restricted', 
 	'''Start the inspector in a background thread for a plain process; returns its base URL.
 
 	ns defaults to the caller's globals. This is what `leela.devserver` runs an app under,
-	so the app's module namespace shows up in the variable panel as just another env.'''
+	so the app's module namespace shows up in the variable panel as just another env.
+
+	Call it from anything you started yourself, too -- a uvicorn process, a training loop,
+	a long-running script -- and it shows up in leela's env picker like any other:
+
+	    import leela.inspect as li; li.serve(name='api')
+	'''
 	global bridge
 	ns = ns or sys._getframe(1).f_globals
 	bridge = Bridge(NsClient(ns))
 	_start(port, profile, name, agent, token, ns, 'http://127.0.0.1')
 	return _server, f'http://127.0.0.1:{_port}'
+
+
+def watch(ns, name=None):
+	'''Point an already-running inspector at a different namespace.
+
+	For the case where the interesting namespace does not exist yet when the server starts:
+	`leela.run` serves the inspector first so the IDE can see the process immediately, then
+	imports the module the command is actually about and calls this. The dict is held by
+	reference, so what is watched afterwards is the live module, not a copy of it.'''
+	global bridge, _env
+	bridge = Bridge(NsClient(ns))
+	if name: _env = name
+	return bridge

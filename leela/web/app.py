@@ -26,9 +26,12 @@ from starlette.routing import WebSocketRoute
 
 from ..inspect.core import PROFILES, SORTS
 from .. import errstr
+from ..buttons import bar as btn_bar
 from ..diffs import diff_label, diff_rows, did_you_mean, fuzzy_rank, udiff
 from ..fs import lang_for
-from ..keys import web_keymap, help_rows, toast_rows, by_scope
+from .. import keys as keymap
+from ..keys import (web_keymap, help_rows, toast_rows, by_scope, chord_display, keymap_path,
+                    keymap_json)
 from ..nb import Notebook, Cell
 from ..term import TerminalGate, lazygit_argv, LazygitMissing
 from ..workspace import Workspace
@@ -99,13 +102,25 @@ def _tab_bar(ws):
 
 
 def _kernel_pill(ws):
-    "Kernel identity and liveness for the active tab."
-    k = ws.kernel_peek()
-    if k is None: return Span('no kernel', cls='lee-pill lee-pill-off', id='kpill')
-    if not k.alive: return Span('kernel dead', cls='lee-pill lee-pill-err', id='kpill')
+    "Kernel identity and liveness for the active tab. Clicking it opens the picker."
+    common = dict(id='kpill', onclick='leeAct("pick_kernel")')
+    if (k := ws.kernel_peek()) is None:
+        return Span('no kernel', cls='lee-pill lee-pill-off', title='choose a kernel', **common)
+    if not k.alive: return Span('kernel dead', cls='lee-pill lee-pill-err', title='choose a kernel', **common)
     nm = Path(ws.kernel_key()).name or 'kernel'
-    return Span(f'⏺ {nm}', cls='lee-pill lee-pill-on', id='kpill',
-                title=f'{k.base or "no inspector"} · pid {k.pid}')
+    return Span(f'⏺ {nm}', cls='lee-pill lee-pill-on',
+                title=f'{k.base or "no inspector"} · pid {k.pid} — click to change', **common)
+
+
+def _btn(b):
+    "One button from the shared table. The click runs the same action its key runs."
+    return Button(b.label, cls='lee-btn ' + (b.kind or 'plain'), title=b.tooltip,
+                  onclick=f'leeAct("{b.action}")')
+
+
+def _action_bar(name, **kw):
+    "A whole bar of them, in the order `leela.buttons` declares."
+    return Div(*[_btn(b) for b in btn_bar(name)], cls=f'lee-bar lee-bar-{name}', **kw)
 
 
 def _header(ws):
@@ -114,9 +129,6 @@ def _header(ws):
         _tab_bar(ws),
         Span(cls='lee-spacer'),
         _kernel_pill(ws),
-        Button('⟳', cls='lee-icon', title='restart kernel', onclick='leeAct("restart")'),
-        Button('⏸', cls='lee-icon', title='interrupt kernel', onclick='leeAct("interrupt")'),
-        Button('⌘', cls='lee-icon', title='command palette', onclick='leeAct("palette")'),
         cls='lee-header', id='header')
 
 
@@ -136,9 +148,7 @@ def _tree_node(e):
 def _files_panel(ws):
     body = [_tree_node(e) for e in ws.fs.ls(None)] or [Div('no folder open', cls='lee-dim')]
     return Section(
-        Div(Span('files', cls='lee-ptitle'),
-            Button('+', cls='lee-icon', title='open folder', onclick='leeAct("add_root")'),
-            cls='lee-phead'),
+        Div(Span('files', cls='lee-ptitle'), Span(cls='lee-spacer'), _action_bar('files'), cls='lee-phead'),
         Div(*body, id='filetree', cls='lee-tree'),
         cls='lee-panel lee-files')
 
@@ -147,11 +157,19 @@ def _toast_panel():
     "The left-sidebar cheatsheet: the keys that earn space but do not fit the footer."
     rows = [Div(Kbd(k), Span(lbl), cls='lee-krow') for k, lbl in toast_rows()]
     return Section(
-        Div(Span('keys', cls='lee-ptitle'),
-            Button('all', cls='lee-icon', title='every binding', onclick='leeAct("help")'),
-            cls='lee-phead'),
+        Div(Span('keys', cls='lee-ptitle'), Span(cls='lee-spacer'), _action_bar('keys'), cls='lee-phead'),
         Div(*rows, cls='lee-toast'),
         cls='lee-panel lee-keys')
+
+
+def _toolbar():
+    """The main toolbar, above the editor.
+
+    Every button in it names an action from the keymap, which is the same action the
+    keyboard dispatches -- so the two can never mean different things, and nothing in the
+    IDE is reachable only by a chord the browser or the OS decides to keep.
+    """
+    return Div(_action_bar('toolbar'), cls='lee-toolbar', id='toolbar')
 
 
 def _vars_panel(ws):
@@ -165,6 +183,10 @@ def _vars_panel(ws):
             Div(Button('live', id='sc-live', cls='lee-seg active', onclick='leeScope("live")'),
                 Button('isolated', id='sc-iso', cls='lee-seg', onclick='leeScope("isolated")'),
                 cls='lee-segbar', title='live runs in the kernel · isolated is sandboxed and discards writes'),
+            # Named only when it is *not* the tab's kernel: a panel showing a running app
+            # must never be mistaken for the notebook's own namespace.
+            Span(id='envtag', cls='lee-pill lee-pill-on', style='display:none'),
+            Span(cls='lee-spacer'), _action_bar('vars'),
             cls='lee-phead'),
         Div(Input(id='varfilter', placeholder='filter…', cls='lee-input', oninput='leeFilterVars()'),
             Select(*[Option(p, value=p, selected=(p == 'minimal')) for p in PROFILES],
@@ -189,7 +211,7 @@ def _exec_strip():
     return Section(
         Div(Span('exec', cls='lee-ptitle'), Span(id='execscope', cls='lee-scope-tag'),
             Span(cls='lee-spacer'),
-            Button('clear', cls='lee-icon', onclick='leeExecClear()'),
+            _action_bar('exec'),
             cls='lee-phead'),
         Div(id='execlog', cls='lee-execlog'),
         Div(id='execbox', cls='lee-execbox'),
@@ -220,11 +242,11 @@ def _agent_panel():
         Div(Span('agent', cls='lee-ptitle'),
             Span(id='agentnames', cls='lee-dim'),
             Span(cls='lee-spacer'),
-            Button('transcript', cls='lee-icon', onclick='leeAgentTranscript()'),
+            _action_bar('agent'),
             cls='lee-phead'),
         Div(id='agentlog', cls='lee-agentlog'),
         Div(Input(id='agentprompt', cls='lee-input lee-prompt',
-                  placeholder='ask leela to do something…  (ctrl+enter)'),
+                  placeholder=f'ask leela to do something…  ({chord_display("agent_send")})'),
             cls='lee-promptbar'),
         cls='lee-panel lee-agent')
 
@@ -240,6 +262,7 @@ def _shell(ws, gate):
     "The whole app body; every structural route returns this so the client re-mounts consistently."
     return Div(
         _header(ws),
+        _toolbar(),
         Div(
             Aside(_files_panel(ws), _toast_panel(), cls='lee-left', id='left'),
             Div(cls='lee-split', data_split='left'),
@@ -344,7 +367,14 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
     async def _k(): return await ws.kernel()
 
     async def _api(path, params=None, timeout=15):
-        "Proxy one inspector call on the active tab's kernel; None when it has no server."
+        """Proxy one inspector call on whatever the panel is watching; None when there is none.
+
+        Which is usually the active tab's kernel, and is a running app when the env picker
+        says so -- the panel does not care, because `Workspace.inspector` hands back the
+        same shape either way.
+        """
+        if ws.env_base and (env := ws.inspector()) is not None and getattr(env, 'kernel_kind', '') == 'env':
+            return await env.api(path, params, timeout)
         k = await _k()
         return await k.api(path, params, timeout) if k else None
 
@@ -354,7 +384,49 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
         return Title('leela'), _shell(ws, gate)
 
     @rt('/keys.json')
-    def keys_json(): return JSONResponse({'keys': web_keymap(), 'help': help_rows()})
+    def keys_json():
+        "The keymap, and the buttons that run the same actions -- one fetch, one source."
+        from ..buttons import BARS
+        return JSONResponse({'keys': web_keymap(), 'help': help_rows(),
+                             'path': str(keymap_path()), 'notes': list(keymap.NOTES),
+                             'bars': {n: [{'action': b.action, 'label': b.label, 'title': b.tooltip,
+                                           'kind': b.kind} for b in btn_bar(n)] for n in BARS}})
+
+    # -- the user's keymap -------------------------------------------------
+    # Editable from the IDE, and applied without a restart: the whole browser keymap is
+    # built from /keys.json at boot, so rewriting the file and re-reading it is the entire
+    # update path. (The terminal frontend builds Textual `Binding`s at import, so it reads
+    # the same file but needs a restart to see a change.)
+    @rt('/keys/file')
+    def keys_file():
+        p = keymap_path()
+        try: text = p.read_text()
+        except Exception: text = json.dumps(keymap_json(), indent=2) + '\n'
+        return {'path': str(p), 'exists': p.exists(), 'text': text, 'notes': list(keymap.NOTES)}
+
+    @rt('/keys/save')
+    async def keys_save(req):
+        "Write the keymap, re-read it, and hand back what it now says -- including what it refused."
+        d = await req.json()
+        text = d.get('text') or ''
+        try: json.loads(text)
+        except Exception as e: return _fail(f'that is not valid JSON — {errstr(e)}')
+        p = keymap_path()
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text)
+        except Exception as e: return _fail(e)
+        keymap.reload()
+        return {'ok': True, 'path': str(p), 'notes': list(keymap.NOTES),
+                'keys': web_keymap(), 'help': help_rows()}
+
+    @rt('/keys/reset')
+    def keys_reset():
+        "Put leela's own defaults back, so a keymap you cannot use is one click from gone."
+        p = keymap.write_keymap(keys=keymap.DEFAULTS)
+        keymap.reload()
+        return {'ok': True, 'path': str(p), 'notes': list(keymap.NOTES),
+                'keys': web_keymap(), 'help': help_rows()}
 
 
     # -- files -------------------------------------------------------------
@@ -471,6 +543,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
         except Exception as e: return _fail(e)
         if ws.tab: ws.tab.dirty = True
         return {'ok': ws.ai.ready, 'i': i, 'cell': c.dict(), 'note': ws.ai.note,
+                'problems': ws.ai.problems,
                 'cells': [x.dict() for x in nb.cells],   # approval/compaction cells may have landed
                 'activity': ws.ai.activity.rows(mark=ws.ai.activity._mark),
                 'edits': [{'path': p, **_diff(was, now)} for p, (was, now) in ws.ai.changes().items()]}
@@ -558,6 +631,34 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
         res = await k.execute(code)
         return {'ok': res.ok, 'text': await _explain(k, res.error) or res.text or 'ok',
                 'outputs': res.outputs, 'count': res.execution_count, 'scope': 'live'}
+
+    @rt('/run/file')
+    async def run_file(req):
+        """Run the open .py as a script, in the tab's kernel.
+
+        The editor's text is what runs, not the file on disk -- pressing run after typing
+        should run what is on the screen -- and it runs *in* the kernel rather than in a
+        subprocess, so everything the script defines is in the variable panel when it
+        finishes.
+        """
+        d = await req.json()
+        code, label = ws.run_file_code(src=d.get('text'))
+        if code is None: return _fail(label)
+        k = await _k()
+        res = await k.execute(code)
+        return {'ok': res.ok, 'label': label, 'outputs': res.outputs,
+                'text': await _explain(k, res.error) or res.text or 'ok'}
+
+    @rt('/run/code')
+    async def run_code(req):
+        "Run an arbitrary block -- what the `run selection` button sends -- in the tab's kernel."
+        d = await req.json()
+        code = (d.get('code') or '').strip()
+        if not code: return _fail('nothing to run')
+        k = await _k()
+        res = await k.execute(code)
+        return {'ok': res.ok, 'outputs': res.outputs,
+                'text': await _explain(k, res.error) or res.text or 'ok'}
 
     @rt('/exec/history')
     async def exec_history(n: int = 200):
@@ -704,16 +805,76 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
             return {'ok': True, 'entry': e.dict(), 'note': ws.research.note}
         except Exception as e: return _fail(e)
 
-    # -- dev servers -------------------------------------------------------
+    # -- live envs ---------------------------------------------------------
+    @rt('/envs')
+    def envs_route():
+        """Everything the variable panel could point at, and what it is pointing at now.
+
+        A process only appears here if it has an inspector in it. That is the whole answer
+        to "will you pick up the uvicorn I started in a terminal": not unless it says
+        `leela.inspect.serve()`, or leela started it from a run configuration.
+        """
+        return {'envs': ws.envs(), 'watching': ws.env_base,
+                'hint': 'import leela.inspect as li; li.serve(name="api")'}
+
+    @rt('/envs/watch')
+    async def envs_watch(req):
+        d = await req.json()
+        return {'ok': True, 'watching': ws.watch_env(d.get('base'))}
+
+    # -- run configurations & dev servers ----------------------------------
+    @rt('/runs')
+    def runs_route():
+        "The project's run configurations, plus one for the open file so the picker is never empty."
+        t = ws.tab
+        here = ws.runs.for_file(t.path) if (t is not None and (t.path or '').endswith('.py')) else None
+        names = {r.name for r in ws.runs.runs}
+        return {'runs': [r.dict() for r in ws.runs.runs],
+                'here': here.dict() if (here and here.name not in names) else None,
+                'path': str(ws.runs.path or ''), 'note': ws.runs.note,
+                'servers': [s.state() for s in ws.dev.all()]}
+
+    @rt('/runs/save')
+    async def runs_save(req):
+        "Write the configurations file, creating it from a template when there is none yet."
+        d = await req.json()
+        try:
+            if (text := d.get('text')) is not None:
+                json.loads(text)                      # refuse to write a file we could not read back
+                p = ws.runs.path
+                if p is None: return _fail('open a folder first')
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(text)
+            ws.runs.load()
+        except Exception as e: return _fail(e)
+        return {'ok': True, 'path': str(ws.runs.path or ''), 'note': ws.runs.note,
+                'runs': [r.dict() for r in ws.runs.runs]}
+
+    @rt('/runs/file')
+    def runs_file():
+        "The configurations file as text, or a template for one, for the in-IDE editor."
+        p = ws.runs.path
+        t = ws.tab
+        try: text = p.read_text() if (p and p.exists()) else ''
+        except Exception: text = ''
+        if not text:
+            text = json.dumps(ws.runs.template(t.path if t else None), indent=2) + '\n'
+        return {'path': str(p or ''), 'exists': bool(p and p.exists()), 'text': text,
+                'note': ws.runs.note}
+
     @rt('/dev/list')
     def dev_list(): return {'servers': [s.state() for s in ws.dev.all()]}
 
     @rt('/dev/start')
-    async def dev_start(path: str):
-        "Run a python web app under a live inspector; its module globals become another env."
+    async def dev_start(path: str = '', name: str = ''):
+        """Start a run configuration, or a file, under a live inspector.
+
+        The inspector is in the process the command runs in -- that is what makes its
+        module namespace watchable while it serves. `name` picks a configuration; `path`
+        runs a file directly.
+        """
         try:
-            p = ws.fs._check(path, must_exist=True)
-            s = await ws.dev.start(p)
+            s = await ws.run(name or path)
             return {'ok': s.alive, **s.state(), 'log': s.tail(20)}
         except Exception as e:
             return _fail(e)
@@ -815,8 +976,11 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
                     for r in rows[n:]: yield _sse('activity', r)
                     n = len(rows)
             await task
+            # `problems` rather than `note` alone: a turn can finish looking fine while the
+            # engine refused a compaction or a completion on the way, and those failures
+            # have no other way out -- see `Agent.problems`.
             yield _sse('done', {'ok': a.ready, 'note': a.note, 'usage': repr(a.use),
-                                'model': a.model.name,
+                                'model': a.model.name, 'problems': a.problems,
                                 'activity': a.activity.rows(mark=a.activity._mark),
                                 'edits': [{'path': p, **_diff(was, now)}
                                           for p, (was, now) in a.changes().items()]})
@@ -897,16 +1061,36 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
                 'pid': k.pid if k else None, 'key': ws.kernel_key(),
                 'boot_error': k.boot_error if k else None}
 
+    @rt('/kernel/options')
+    def k_options():
+        "What the kernel picker shows: the launchers, the interpreters, and what is running."
+        return ws.kernel_options()
+
+    @rt('/kernel/select')
+    async def k_select(req):
+        """Choose a launcher and/or an interpreter, and start the kernel on it.
+
+        This restarts, and restarting loses the namespace -- so the client says so before
+        it posts, rather than this route deciding on the user's behalf that it was fine.
+        """
+        d = await req.json()
+        try:
+            o = await ws.set_kernel(kind=d.get('kind'),
+                                    python=d['python'] if 'python' in d else False,
+                                    private=d.get('private'))
+        except Exception as e: return _fail(e)
+        return {'ok': True, **o}
+
     return app
 
 
 def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_port=8400,
               open_ws=True, allow_remote_terminal=False, kernel='ipykernel',
-              model=None, approvals='ask', agent_scope='overlay'):
+              model=None, approvals='ask', agent_scope='overlay', python=None):
     "Start the web IDE over `roots` (or the saved workspace when none are given)."
     import uvicorn
     kw = dict(port=kernel_port, agent=agent, kernel=kernel, model=model, approvals=approvals,
-              agent_scope=agent_scope)
+              agent_scope=agent_scope, python=python)
     ws = Workspace.load(**kw) if (open_ws and not roots) else Workspace(**kw)
     for r in roots: ws.add_root(r)
     if not ws.fs.roots: ws.add_root(os.getcwd())

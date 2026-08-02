@@ -33,7 +33,8 @@ from dataclasses import dataclass, field
 
 from . import agent_err
 
-__all__ = ['JOBS', 'LOCAL', 'CLOUD', 'MODELS', 'DEFAULT_POLICY', 'ModelSpec', 'Routing', 'resolve', 'model_note']
+__all__ = ['JOBS', 'LOCAL', 'CLOUD', 'MODELS', 'DEFAULT_POLICY', 'DFLT_LOCAL_CTX', 'ModelSpec',
+           'Routing', 'resolve', 'model_note', 'local_ctx']
 
 # The jobs the harness distinguishes. Adding one means adding a caller; the policy just
 # falls back to `turn` for anything it has not been told about.
@@ -75,8 +76,31 @@ DFLT_LOCAL = 'gemma-e2b'
 DEFAULT_POLICY = {'turn': None, 'completion': DFLT_LOCAL, 'classify': DFLT_LOCAL,
                   'summary': DFLT_LOCAL, 'subagent': DFLT_LOCAL}
 
-# Conservative context windows for the local models, which are not in any pricing table.
-_LOCAL_CTX = {'gemma-e2b': 32_000, 'gemma-e4b': 32_000, 'gemma-12b': 128_000}
+# Context windows for the local models, which are in no pricing table.
+#
+# These are the numbers compaction counts down from, and they were wrong in the expensive
+# direction: 32k for the gemma-3n bundles, which are commonly built with a 4096-token KV
+# cache. The engine then refuses the turn outright -- "input token IDs exceed the maximum
+# 4096, got 5092" -- at a point where leela still believed it was at 15% of the window and
+# had therefore never compacted. Under-stating the window costs an early compaction;
+# over-stating it costs the turn, so these now err small.
+#
+# `LEELA_LOCAL_CTX` overrides them for a bundle built with a bigger cache
+# (`LEELA_LOCAL_CTX=8192`, or `LEELA_LOCAL_CTX=gemma-e4b:8192,gemma-12b:32000`), and
+# `RishiBackend` narrows it further if the engine will say what it really is.
+_LOCAL_CTX = {'gemma-e2b': 4_096, 'gemma-e4b': 4_096, 'gemma-12b': 32_000}
+DFLT_LOCAL_CTX = 4_096
+
+
+def local_ctx(name, dflt=DFLT_LOCAL_CTX):
+    "The context window for a local model: `$LEELA_LOCAL_CTX` if it says, else the table."
+    env = (os.environ.get('LEELA_LOCAL_CTX') or '').strip()
+    if env:
+        if env.isdigit(): return int(env)
+        for part in env.split(','):
+            k, _, v = part.partition(':')
+            if k.strip() == name and v.strip().isdigit(): return int(v)
+    return _LOCAL_CTX.get(name, dflt)
 
 
 @dataclass(frozen=True)
@@ -125,7 +149,7 @@ def resolve(name, default_local=DFLT_LOCAL):
     if not name: name = default_local
     if name in MODELS:
         backend, mid = MODELS[name]
-        if backend == 'rishi': return ModelSpec(name, backend, mid, _LOCAL_CTX.get(name, 32_000))
+        if backend == 'rishi': return ModelSpec(name, backend, mid, local_ctx(name))
         ctx, note = _cloud_ctx(mid)
         return ModelSpec(name, backend, mid, ctx, note)
     if '/' in name:

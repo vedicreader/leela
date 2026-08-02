@@ -143,8 +143,34 @@ class Backend:
         self.chat = None
         self.use = Usage(model=spec.model_id)
         self.note = 'not started'
+        # Everything that went wrong and was not raised to a caller who could show it: a
+        # cheap job that failed, an engine that complained on stderr, a turn that came back
+        # empty. `note` is one line and gets overwritten by the next thing; this keeps.
+        self.problems = []
+        # What the engine last wrote to stdout/stderr that looked like a complaint. Only a
+        # native backend fills this in; see `leela.agent.native`.
+        self.last_native = ''
         self._tried = False
         self.lock = threading.Lock()
+
+    def problem(self, text):
+        """Record something the user should know, and return it.
+
+        Silence is the failure mode this exists for. A completion, a classification or a
+        compaction that fails returns `''` to its caller by design -- none of them can
+        usefully raise -- and until this list existed, `''` was the entire report.
+        """
+        text = (text or '').strip()
+        if not text: return ''
+        if not self.problems or self.problems[-1] != text: self.problems.append(text)
+        del self.problems[:-20]
+        return text
+
+    def _failed(self, what, e):
+        "One failure, with whatever the native engine said on its way out, recorded and returned."
+        native = getattr(e, 'native_output', '') or ''
+        self.note = f'{self.spec.name} {what} ({agent_err(e)})' + (f' — {native}' if native else '')
+        return self.problem(self.note)
 
     # -- lifecycle -----------------------------------------------------------
     @property
@@ -161,7 +187,8 @@ class Backend:
             self.chat = self._start()
             self.note = f'{len(self.tools)} tools'
         except Exception as e:
-            self.chat, self.note = None, f'{self.spec.name} unavailable ({agent_err(e)})'
+            self.chat = None
+            self._failed('unavailable', e)
         return self.chat
 
     def retry(self):
@@ -195,10 +222,9 @@ class Backend:
             try:
                 out = self._send(msg, **kw)
                 self.use = self._usage()
-                return out or '(no reply)'
+                return out or self._empty()
             except Exception as e:
-                self.note = f'{self.spec.name} failed ({agent_err(e)})'
-                return self.note
+                return self._failed('failed', e)
 
     def stream(self, msg, **kw):
         "One turn as an iterator of markdown chunks. Falls back to a single chunk on failure."
@@ -206,12 +232,32 @@ class Backend:
             yield self.note
             return
         with self.lock:
+            n = 0
             try:
-                yield from self._stream(msg, **kw)
+                for c in self._stream(msg, **kw):
+                    n += len(c or '')
+                    yield c
                 self.use = self._usage()
+                # A turn that produced nothing is a failure that did not raise -- the usual
+                # cause is the engine refusing the request in native code, where no
+                # exception is available to catch. Whatever it said is worth more than the
+                # blank pane that used to be the whole report.
+                if not n and (why := self._empty(strict=True)): yield why
             except Exception as e:
-                self.note = f'{self.spec.name} failed ({agent_err(e)})'
-                yield f'\n\n{self.note}'
+                yield f'\n\n{self._failed("failed", e)}'
+
+    def _empty(self, strict=False):
+        """What to say about a turn that came back with nothing.
+
+        `last_native` is the point: on a local engine an empty reply usually means the
+        native layer refused the request and said so on a file descriptor, so the answer to
+        "why is the pane blank" is sitting right there. Without it this is still better
+        than nothing -- it at least says the model returned nothing, rather than showing an
+        empty box and a status line that says everything is fine.
+        """
+        why = (f'{self.spec.name} returned nothing'
+               + (f' — {self.last_native}' if self.last_native else ''))
+        return self.problem(why) if strict else ((f'({why})') if self.last_native else '(no reply)')
 
     def oneshot(self, prompt, sp='', max_tokens=None):
         """A question in a throwaway conversation on this engine, with no tools.
@@ -226,7 +272,10 @@ class Backend:
         if not self.lock.acquire(blocking=False): return ''
         try: return self._oneshot(prompt, sp, max_tokens) or ''
         except Exception as e:
-            self.note = f'{self.spec.name} one-shot failed ({agent_err(e)})'
+            # Returning '' is right -- none of the callers can do anything with an
+            # exception -- but returning '' *and saying nothing* is how a compaction that
+            # could not run, or a completion the engine refused, became invisible.
+            self._failed('one-shot failed', e)
             return ''
         finally: self.lock.release()
 
@@ -286,15 +335,35 @@ class Backend:
 # local: rishi over litert
 # ---------------------------------------------------------------------------
 class RishiBackend(Backend):
-    "A local litert model through rishi. Synchronous all the way down, so this is mostly pass-through."
+    """A local litert model through rishi. Synchronous all the way down, so this is mostly pass-through.
+
+    Except for one thing that is not pass-through at all: litert is C++, and when it
+    refuses a request it says so on a file descriptor and returns, without raising. Every
+    call into the engine therefore runs inside `native.captured`, which tees that output
+    and keeps the tail -- so "input token IDs exceed the maximum number of tokens 4096, got
+    5092" ends up on the status bar instead of scrolling past in the terminal that happened
+    to launch the server.
+    """
 
     kind = 'rishi'
 
+    def _native(self, fn, *a, **kw):
+        "Run one engine call, keeping whatever it printed. Exceptions carry it out on `native_output`."
+        from .native import capture
+        try:
+            out, said = capture(fn, *a, **kw)
+        except Exception:
+            self.last_native = ''
+            raise
+        self.last_native = said
+        if said: self.problem(f'{self.spec.name}: {said}')
+        return out
+
     def _start(self):
         from rishi.core import Chat
-        return Chat(sp=self.sp, tools=self.tools, model_id=self.spec.model_id,
-                    approve=self.approve, tool_max_len=self.tool_max_len,
-                    ctx_limit=self.spec.ctx, **self.kw)
+        return self._native(Chat, sp=self.sp, tools=self.tools, model_id=self.spec.model_id,
+                            approve=self.approve, tool_max_len=self.tool_max_len,
+                            ctx_limit=self.spec.ctx, **self.kw)
 
     def spawn(self, sp='', tools=(), **kw):
         "A second conversation on this engine. `engine=` is rishi's own way of saying 'do not load another'."
@@ -312,17 +381,26 @@ class RishiBackend(Backend):
 
     def _send(self, msg, **kw):
         from rishi.core import resp_text
-        return resp_text(self.chat(msg, **kw))
+        return resp_text(self._native(self.chat, msg, **kw))
 
     def _stream(self, msg, **kw):
-        # rishi's `_stream` already yields formatted markdown, so there is nothing to add.
-        yield from self.chat(msg, stream=True, **kw)
+        # rishi's `_stream` already yields formatted markdown, so there is nothing to add
+        # but the capture, which has to span the whole iteration: the engine does its
+        # complaining on the first send, long before the first chunk that never comes.
+        from .native import captured
+        with captured() as cap:
+            yield from self.chat(msg, stream=True, **kw)
+        self.last_native = cap.problems
+        if cap.problems: self.problem(f'{self.spec.name}: {cap.problems}')
 
     def _oneshot(self, prompt, sp, max_tokens):
         from rishi.core import mk_msg, resp_text
         pre = [{'role': 'system', 'content': sp}] if sp else None
-        with self.chat.engine.create_conversation(messages=pre) as conv:
-            return resp_text(conv.send_message(mk_msg(prompt), max_output_tokens=max_tokens))
+
+        def run():
+            with self.chat.engine.create_conversation(messages=pre) as conv:
+                return resp_text(conv.send_message(mk_msg(prompt), max_output_tokens=max_tokens))
+        return self._native(run)
 
     def _usage(self):
         u = self.chat.use

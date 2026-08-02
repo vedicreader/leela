@@ -11,6 +11,14 @@ exactly what the scope model describes: the focused pane's bindings win, and
 `global` sits on the App underneath them all. Adding a key in Python lights it
 up here and in the browser at once.
 
+Neither are the buttons. Every toolbar in here is generated from
+`leela.buttons`, and a click runs `app.<action>` -- the same action the same
+key runs. That matters more in the terminal than in the browser: `ctrl+enter`,
+`shift+enter` and `alt+<key>` only reach a Textual app from a terminal that
+speaks the kitty keyboard protocol, and in Terminal.app they simply do not
+arrive. The keys are still there for terminals that deliver them, every one of
+them is rebindable in `keys.json`, and nothing is reachable *only* by a chord.
+
 Cells are `TextArea`s with `language='python'`, which is tree-sitter
 highlighting via textual[syntax] -- the same grammar family the file editor uses
 for every other language.
@@ -18,22 +26,27 @@ for every other language.
 
 from __future__ import annotations
 import asyncio, json, subprocess
+from functools import partial
 from fastcore.all import Path
 
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.command import DiscoveryHit, Hit, Provider
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Input, Label, OptionList, Static, Tree, TextArea, Tabs, Tab
+from textual.widgets import Button, Footer, Input, Label, OptionList, Static, Tree, TextArea, Tabs, Tab
 from rich.text import Text
 
 from ..inspect.core import GHDK, SORTS
 from .. import errstr
+from ..buttons import bar as btn_bar
 from ..diffs import diff_label, diff_rows, did_you_mean, fuzzy_rank, udiff
-from ..keys import tui_bindings, toast_rows, help_rows
+from ..keys import (KEYS, NOTES, WEB_ONLY_SCOPES, chord_display, keymap_path, tui_bindings,
+                    toast_rows, help_rows, write_keymap)
 from ..term import lazygit_argv, LazygitMissing
 from ..nb import Notebook, Cell
+from ..runs import RUNS_FILE
 from ..workspace import Workspace
 
 __all__ = ['IdeApp', 'run']
@@ -75,6 +88,62 @@ def diff_text(rows):
         t.append(f"{r.line or '':>5} ", style=PAL['fg4'])
         t.append(f"{_DIFF_MARK[r.kind]}{r.text}\n", style=_DIFF_STYLE[r.kind])
     return t
+
+
+# ---------------------------------------------------------------------------
+# commands
+# ---------------------------------------------------------------------------
+class ActionCommands(Provider):
+    """Every keymap action, in the command palette, findable by name.
+
+    The third door into the same room, and the one that scales: a toolbar has room for
+    the dozen actions worth a permanent button, while this has room for all of them --
+    including the ones whose chord the terminal ate, and the ones deliberately left
+    unbound so a user can claim the chord themselves.
+    """
+    def _rows(self):
+        for k in KEYS:
+            if k.scope in WEB_ONLY_SCOPES: continue
+            yield (f'{k.label or k.action}', k.action,
+                   f'{k.scope} · {chord_display(k.action)}')
+
+    async def discover(self):
+        for text, action, help in self._rows():
+            yield DiscoveryHit(text, partial(self.app.run_action, f'app.{action}'), help=help)
+
+    async def search(self, query):
+        m = self.matcher(query)
+        for text, action, help in self._rows():
+            if (score := m.match(text)):
+                yield Hit(score, m.highlight(text), partial(self.app.run_action, f'app.{action}'), help=help)
+
+
+# ---------------------------------------------------------------------------
+# buttons
+# ---------------------------------------------------------------------------
+class ActionBar(Horizontal):
+    """One row of clickable buttons, generated from `leela.buttons`.
+
+    The action is namespaced to `app.` for the same reason `_binds` namespaces the keys:
+    every `action_*` method lives on `IdeApp`, while the button itself is mounted inside a
+    pane, and Textual resolves an unqualified action against the widget that declared it.
+    So a button and its key end up in exactly the same handler, by construction.
+
+    One row, and it clips: a horizontal scrollbar would eat the row the buttons are in.
+    Whatever falls off a narrow terminal is still in the command palette.
+    """
+    def __init__(self, name, **kw):
+        super().__init__(**kw)
+        self.bar_name = name
+        self.add_class('actionbar')
+
+    def compose(self):
+        for i, b in enumerate(btn_bar(self.bar_name)):
+            btn = Button(b.label, id=f'b-{self.bar_name}-{i}', action=f'app.{b.action}',
+                         tooltip=b.tooltip, compact=True, flat=True,
+                         classes='leebtn ' + (b.kind or 'plain'))
+            btn.can_focus = False    # tab-order belongs to the editors, not to a toolbar
+            yield btn
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +192,7 @@ class KeyToast(VerticalScroll):
     "The cheatsheet: keys worth advertising that do not fit the footer."
     def compose(self):
         for k, lbl in toast_rows():
-            yield Label(Text.assemble((f'{k:14}', f"bold {PAL['aqua']}"), (lbl, PAL['fg4'])))
+            yield Label(Text.assemble((f'{k:16}', f"bold {PAL['aqua']}"), (lbl, PAL['fg4'])))
 
 
 def screen_capture(app, title=None):
@@ -180,24 +249,45 @@ def _cell_title(c):
 
 
 class CellBox(Vertical):
-    "One notebook cell: a highlighted editor plus its output (or, for a prompt cell, its answer)."
-    def __init__(self, cell: Cell, i: int, **kw):
+    """One notebook cell: a highlighted editor plus its output (or, for a prompt cell, its answer).
+
+    `whole_file` is the same widget doing the other job. A plain file opens as a one-cell
+    document so that one editor path serves both, which was right -- except that a cell is
+    capped at twenty rows, and a *file* rendered in twenty rows with the rest simply not
+    drawn is not an editor. In file mode the box takes the pane instead, and the TextArea
+    scrolls inside it.
+    """
+    def __init__(self, cell: Cell, i: int, whole_file=False, lang=None, title='', **kw):
         super().__init__(**kw)
-        self.cell, self.i = cell, i
+        self.cell, self.i, self.whole_file, self.lang = cell, i, whole_file, lang
+        self.file_title = title
+        if whole_file: self.add_class('filecell')
+
+    def _title(self):
+        "A file says which file it is; a cell says which kind of cell it is."
+        return self.file_title if (self.whole_file and self.file_title) else _cell_title(self.cell)
 
     def compose(self):
-        ta = TextArea(self.cell.source, language=_ta_lang('python' if self.cell.cell_type == 'code' else 'markdown'),
+        lang = _ta_lang(self.lang or ('python' if self.cell.cell_type == 'code' else 'markdown'))
+        ta = TextArea(self.cell.source, language=lang,
                       theme='vscode_dark', soft_wrap=True, tab_behavior='indent',
                       id=f'ta-{self.cell.id}', classes='cellta')
-        ta.border_title = _cell_title(self.cell)
+        ta.show_line_numbers = self.whole_file
+        ta.border_title = self._title()
         yield ta
-        yield Static('', id=f'out-{self.cell.id}', classes='cellout')
+        # The output is scrolled, not clipped. It has a ceiling -- one `df.describe()`
+        # should not push the next cell off the screen -- but a ceiling that hides the last
+        # line of a traceback with no way to reach it is the bug this pane had.
+        with VerticalScroll(id=f'outwrap-{self.cell.id}', classes='cellout'):
+            yield Static('', id=f'out-{self.cell.id}')
 
     @property
     def ta(self): return self.query_one(f'#ta-{self.cell.id}', TextArea)
 
     def show_outputs(self):
-        try: out = self.query_one(f'#out-{self.cell.id}', Static)
+        try:
+            out = self.query_one(f'#out-{self.cell.id}', Static)
+            wrap = self.query_one(f'#outwrap-{self.cell.id}', VerticalScroll)
         except Exception: return          # mid-unmount; the next paint will catch it
         c = self.cell
         if c.is_prompt:
@@ -212,12 +302,12 @@ class CellBox(Vertical):
             if c.reply: t.append(_strip_trail(c.reply).rstrip(), style=PAL['fg'])
             elif c.running: t.append('  thinking…', style=PAL['aqua'])
             out.update(t)
-            out.display = bool(c.reply or c.calls or c.running)
+            wrap.display = bool(c.reply or c.calls or c.running)
         else:
             txt = c.text.rstrip()
             out.update(Text(txt, style=PAL['red'] if c.has_error else PAL['fg2']))
-            out.display = bool(txt)
-        self.ta.border_title = _cell_title(c)
+            wrap.display = bool(txt)
+        self.ta.border_title = self._title()
 
 
 class NotebookView(VerticalScroll):
@@ -228,8 +318,9 @@ class NotebookView(VerticalScroll):
         super().__init__(**kw)
         self.nb: Notebook | None = None
         self.sel = 0
+        self.whole_file = False       # this document is a plain file, shown as one editor
 
-    async def load(self, nb, keep=False):
+    async def load(self, nb, keep=False, whole_file=False, lang=None, title=''):
         """Rebuild the cell column. Both halves are awaited: Textual's unmount and mount are
         deferred, and painting before they land queries widgets that do not exist yet.
 
@@ -237,9 +328,11 @@ class NotebookView(VerticalScroll):
         the agent adding approval or compaction cells mid-turn should not scroll them back
         to the top of the notebook."""
         sel = self.sel if keep else 0
-        self.nb, self.sel = nb, min(sel, max(0, len(nb) - 1))
+        self.nb, self.sel, self.whole_file = nb, min(sel, max(0, len(nb) - 1)), whole_file
+        self.set_class(whole_file, 'filemode')
         await self.remove_children()
-        for i, c in enumerate(nb.cells): await self.mount(CellBox(c, i, classes='cell'))
+        for i, c in enumerate(nb.cells):
+            await self.mount(CellBox(c, i, whole_file=whole_file, lang=lang, title=title, classes='cell'))
         self._paint()
 
     def _paint(self):
@@ -352,11 +445,83 @@ class HelpScreen(ModalScreen):
     """
     def compose(self):
         with VerticalScroll(id='helpbox'):
+            yield Label(Text.assemble(
+                ('your keys: ', f"bold {PAL['orange']}"), (str(keymap_path()), PAL['fg4']),
+                ('   ·  every action below can be rebound there', PAL['gray'])))
+            for n in NOTES: yield Label(Text(f'  ⚠ {n}', style=PAL['red']))
+            yield Label(Text('  ⌨ ctrl+enter / shift+enter / alt+… need a terminal that speaks the kitty '
+                             'keyboard protocol (kitty, ghostty, WezTerm, iTerm2). The f-keys and the '
+                             'buttons work everywhere.', style=PAL['gray']))
             for scope, rows in help_rows().items():
                 if not rows: continue
                 yield Label(Text(scope.upper(), style=f"bold {PAL['yellow']}"))
                 for k, lbl in rows:
-                    yield Label(Text.assemble(('  '), (f'{k:18}', f"bold {PAL['aqua']}"), (lbl, PAL['fg2'])))
+                    yield Label(Text.assemble(('  '), (f'{k:22}', f"bold {PAL['aqua']}"), (lbl, PAL['fg2'])))
+
+
+class KernelScreen(ModalScreen):
+    """Choose what this tab's kernel is: the launcher, and the interpreter behind it.
+
+    Two lists rather than one, because they are two questions -- which venv's packages the
+    notebook can import, and whether execs may run alongside a busy cell. Picking either
+    one restarts the kernel, which is why the current state is spelled out above them:
+    what is about to be thrown away should be on the screen when the choice is made.
+
+    Dismisses `{'kind':..., 'python':...}`, or None.
+    """
+    BINDINGS = [Binding('escape', 'cancel', 'cancel')]
+    CSS = """
+    KernelScreen { align: center middle; background: $background 60%; }
+    #kbox { width: 80%; max-width: 100; height: auto; max-height: 85%;
+            background: $panel; border: round $primary; padding: 0 1; }
+    #kbox OptionList { height: auto; max-height: 10; border: none; background: $surface; margin: 0 0 1 0; }
+    """
+
+    def __init__(self, opts):
+        super().__init__()
+        self.opts = opts
+
+    def compose(self):
+        o = self.opts
+        with VerticalScroll(id='kbox'):
+            yield Label(Text('kernel', style=f"bold {PAL['orange']}"))
+            yield Label(Text.assemble(
+                (f"  {o['key']}  ", PAL['fg4']),
+                ('⏺ running' if o['alive'] else '○ not started',
+                 PAL['aqua'] if o['alive'] else PAL['gray']),
+                (f"  pid {o['pid']}" if o['pid'] else '', PAL['fg4']),
+                ('   · private to this tab' if o['private'] else '   · shared across this folder', PAL['gray'])))
+            if o['boot_error']: yield Label(Text(f"  ⚠ {o['boot_error']}", style=PAL['red']))
+            yield Label(Text('  choosing either of these restarts the kernel — its variables are lost',
+                             style=PAL['gray']))
+            yield Label(Text('launcher', style=f"bold {PAL['yellow']}"))
+            yield OptionList(*[self._kind_row(k) for k in o['kinds']], id='kinds')
+            yield Label(Text('interpreter', style=f"bold {PAL['yellow']}"))
+            yield OptionList(*[self._py_row(p) for p in o['pythons']], id='pys')
+
+    def _kind_row(self, k):
+        t = Text()
+        t.append('● ' if k['current'] else '○ ', style=PAL['aqua'] if k['current'] else PAL['gray'])
+        t.append(k['id'], style=PAL['fg'] if k['available'] else PAL['gray'])
+        if k['note']: t.append(f"   {k['note']}", style=PAL['red'])
+        return t
+
+    def _py_row(self, p):
+        t = Text()
+        t.append('● ' if p['current'] else '○ ', style=PAL['aqua'] if p['current'] else PAL['gray'])
+        t.append(f"{p['label']:24}", style=PAL['fg'])
+        t.append(p['path'], style=PAL['fg4'])
+        return t
+
+    def on_option_list_option_selected(self, ev):
+        if ev.option_list.id == 'kinds':
+            k = self.opts['kinds'][ev.option_index]
+            if not k['available']: return self.app.status(k['note'], err=True)
+            self.dismiss({'kind': k['id']})
+        else:
+            self.dismiss({'python': self.opts['pythons'][ev.option_index]['path']})
+
+    def action_cancel(self): self.dismiss(None)
 
 
 class PromptScreen(ModalScreen):
@@ -476,16 +641,17 @@ class IdeApp(App):
     "leela in the terminal: notebooks, files, and live variables from the notebook's own kernel."
     TITLE = 'leela'          # without this Textual titles the terminal window 'IdeApp'
     BINDINGS = _binds('global')
+    COMMANDS = App.COMMANDS | {ActionCommands}
 
     CSS = """
     Screen { background: $background; }
     #body { height: 1fr; }
-    #left { width: 30; border-right: solid $panel; }
+    #left { width: 32; border-right: solid $panel; }
     #right { width: 52; border-left: solid $panel; }
     #left.hidden, #right.hidden { display: none; }
     #centre { width: 1fr; }
     #filetree { height: 1fr; padding: 0 1; }
-    KeyToast { height: 12; border-top: round $panel; padding: 0 1; }
+    KeyToast { height: 10; border-top: round $panel; padding: 0 1; }
     KeyToast Label { height: 1; }
     #nbview { height: 1fr; padding: 0 1; }
     .cell { height: auto; padding: 0 0 1 0; border-left: solid $background; }
@@ -493,13 +659,30 @@ class IdeApp(App):
     .cellta { height: auto; max-height: 20; border: round $panel; background: $surface;
               border-title-color: $accent; border-title-align: left; }
     .cellta:focus { border: round $accent; }
-    .cellout { height: auto; max-height: 16; padding: 0 1; color: $foreground; }
-    #execwrap { height: 12; border-top: round $panel; }
+    /* A file is not a cell. In file mode the one box takes the pane and the editor
+       scrolls inside it, instead of showing the first twenty lines and nothing else. */
+    #nbview.filemode { padding: 0 1 0 1; }
+    .cell.filecell { height: 1fr; padding: 0; }
+    .filecell .cellta { height: 1fr; max-height: 100%; }
+    .cellout { height: auto; max-height: 16; padding: 0 1; color: $foreground; scrollbar-size: 1 1; }
+
+    /* Toolbars: one row of buttons per pane, one row high. A row is what a terminal has
+       to spare, so the buttons are borderless and the bar clips rather than scrolls --
+       a horizontal scrollbar would take the row the buttons are in. What falls off the
+       end of a narrow terminal is still in the command palette, which lists every
+       action there is. */
+    .actionbar { height: 1; width: 100%; overflow: hidden; background: $panel; }
+    .leebtn { height: 1; min-width: 0; width: auto; border: none; padding: 0 1; margin: 0;
+              background: $boost; color: $foreground; text-style: none; }
+    .leebtn:hover { background: $accent 40%; }
+    .leebtn.go { color: $success; text-style: bold; }
+    .leebtn.warn { color: $warning; }
+    #execwrap { height: 13; border-top: round $panel; }
     #execlog { height: 1fr; padding: 0 1; }
     ExecBox { height: 6; border: round $panel; background: $surface;
               border-title-color: $accent; border-title-align: left; }
     ExecBox:focus { border: round $accent; }
-    #agentwrap { height: 7; border-top: round $panel; }
+    #agentwrap { height: 8; border-top: round $panel; }
     #agentlog { height: 1fr; padding: 0 1; }
     #agentprompt { border: none; background: $surface; }
     #vartop { height: 1; padding: 0 1; }
@@ -522,6 +705,7 @@ class IdeApp(App):
         self.hist, self.hidx = [], 0
         self._exec_lines = []
         self.last_edits = {}              # {path: (before, after)} from the assistant's last turn
+        self._rebuilding = 0              # >0 while the tab bar is being rebuilt; see `_sync_tabs`
         self._asking = ''                 # the question a turn in flight is answering
         self._reply = ''                  # the answer so far, while it streams in
         self._unlisten = None             # unregisters this frontend from the approval queue
@@ -529,22 +713,29 @@ class IdeApp(App):
     # -- layout ------------------------------------------------------------
     def compose(self) -> ComposeResult:
         yield Tabs(id='tabs')
+        yield ActionBar('toolbar', id='toolbar')
         with Horizontal(id='body'):
             with Vertical(id='left'):
+                yield ActionBar('files', id='filesbar')
                 yield FileTree(self.ws, id='filetree')
+                yield ActionBar('keys', id='keysbar')
                 yield KeyToast()
             with Vertical(id='centre'):
                 yield NotebookView(id='nbview')
                 with Vertical(id='execwrap'):
                     yield Static('', id='execlog')
                     yield ExecBox(id='execbox')
+                    yield ActionBar('exec', id='execbar')
                 with Vertical(id='agentwrap'):
                     yield Static(Text('(no agent activity yet)', style=PAL['gray']), id='agentlog')
-                    yield Input(placeholder='ask leela to do something…  (ctrl+enter)', id='agentprompt')
+                    yield Input(placeholder=f'ask leela to do something…  ({chord_display("agent_send")})',
+                                id='agentprompt')
+                    yield ActionBar('agent', id='agentbar')
             with Vertical(id='right'):
                 yield Static('', id='vartop')
                 yield Input(placeholder='filter…', id='varfilter')
                 yield VarTree(id='vartree')
+                yield ActionBar('vars', id='varsbar')
         yield Static('', id='status')
         yield Footer()
 
@@ -556,7 +747,9 @@ class IdeApp(App):
         self.set_interval(2.5, self.refresh_vars)
         self._watch_approvals()
         self.query_one('#filetree', FileTree).focus()
-        self.status('ready')
+        # A keymap that half-loaded is worth one line on the status bar: the alternative is
+        # a user pressing a key they wrote down themselves and getting nothing.
+        self.status(f'{NOTES[0]} · f1 for the rest' if NOTES else 'ready', err=bool(NOTES))
 
     def on_unmount(self):
         if (stop := getattr(self, '_unlisten', None)): stop()
@@ -567,8 +760,8 @@ class IdeApp(App):
             Text(f' {msg}', style=PAL['red'] if err else PAL['fg4']))
 
     async def kapi(self, path, params=None):
-        "One call to the active kernel's inspector."
-        k = self.ws.kernel_peek()
+        "One call to whichever inspector the panel is watching: the tab's kernel, or a chosen env."
+        k = self.ws.inspector()
         return await k.api(path, params) if k else None
 
     async def _explain(self, k, err):
@@ -611,15 +804,29 @@ class IdeApp(App):
         `Tabs.clear()` is awaitable, and adding before the removal lands raises on
         duplicate ids -- so await it, and skip the whole dance when nothing moved
         (which is the common case, since a keystroke marking a tab dirty gets here).
+
+        The rebuild also *selects*, and that is the subtle part: a `Tabs` with nothing
+        active selects the first tab it is given, which posts an activation for tab 0 that
+        `on_tabs_tab_activated` faithfully acts on -- so opening a second file put you
+        straight back on the first one. Hence `want_i`, read before the first `await` and
+        restored after the last, and `_rebuilding`, which tells the handler that an
+        activation arriving mid-rebuild is the widget talking to itself rather than the
+        user choosing a tab.
         """
         tabs = self.query_one('#tabs', Tabs)
         want = [('● ' if t.dirty else '') + t.title for t in self.ws.tabs]
-        if want != [str(t.label) for t in tabs.query(Tab)]:
-            await tabs.clear()
-            for i, lbl in enumerate(want): tabs.add_tab(Tab(lbl, id=f't{i}'))
-        if self.ws.tabs:
-            try: tabs.active = f't{self.ws.active}'
-            except Exception: pass
+        want_i = self.ws.active
+        self._rebuilding += 1
+        try:
+            if want != [str(t.label) for t in tabs.query(Tab)]:
+                await tabs.clear()
+                for i, lbl in enumerate(want): await tabs.add_tab(Tab(lbl, id=f't{i}'))
+            if self.ws.tabs:
+                self.ws.activate(want_i)
+                try: tabs.active = f't{want_i}'
+                except Exception: pass
+        finally:
+            self._rebuilding -= 1
 
     def _tabs_soon(self):
         "Fire-and-forget tab refresh, for the sync call sites."
@@ -645,13 +852,15 @@ class IdeApp(App):
             if key not in self.docs:
                 try: self.docs[key] = Notebook.load(t.path) if t.path else Notebook.blank()
                 except Exception as e: return self.status(errstr(e), err=True)
+            await view.load(self.docs[key])
         else:
-            # a plain file is shown as a single cell, so one editor path serves both
-            try: text = self.ws.fs.read(t.path)
+            # a plain file is shown as a single cell, so one editor path serves both --
+            # in file mode, though, that cell is the whole pane rather than twenty rows
+            try: text = self.ws.fs.read(t.path) if t.path else ''
             except Exception as e: return self.status(errstr(e), err=True)
             if key not in self.docs:
                 self.docs[key] = Notebook([Cell(source=text, cell_type='code')], t.path)
-        await view.load(self.docs[key])
+            await view.load(self.docs[key], whole_file=True, lang=t.lang, title=t.title)
         await self.kernel()
         await self.refresh_vars()
 
@@ -675,10 +884,14 @@ class IdeApp(App):
         live = self.scope_mode == 'live'
         t = self.query_one('#vartop', Static)
         tree = self.query_one('#vartree', VarTree)
+        # The env is named only when it is *not* the tab's kernel: a panel that is watching
+        # a running app rather than the notebook must never be mistaken for the notebook.
+        env = next((e['name'] for e in self.ws.envs() if e['current']), '') if self.ws.env_base else ''
         t.update(Text.assemble(
             (' live ', f"bold {'black on ' + PAL['aqua'] if live else PAL['gray']}"),
             ('  '),
             (' isolated ', f"bold {'black on ' + PAL['orange'] if not live else PAL['gray']}"),
+            (f'  ▶ {env}' if env else '', f"bold {PAL['green']}"),
             (f"   {tree.profile} · {tree.sort}", PAL['fg4'])))
         try: self.query_one('#execbox', ExecBox).border_title = f'exec · {self.scope_mode}'
         except Exception: pass
@@ -701,15 +914,30 @@ class IdeApp(App):
         self._paint_scope()
         self.run_worker(self.refresh_vars())
 
+    @work
     async def action_save(self):
         t = self.ws.tab
         nb = self.doc
         if t is None or nb is None: return self.status('nothing to save')
         self.query_one('#nbview', NotebookView).sync()
+        # A scratch tab has nowhere to go yet, so ask -- otherwise `new notebook` makes
+        # something that cannot be kept, which is a worse offer than not making it.
+        if not t.path:
+            root = self.ws.fs.roots[0] if self.ws.fs.roots else None
+            if root is None: return self.status('open a folder first', err=True)
+            name = await self.push_screen_wait(
+                PromptScreen(f'save in {root.name}/ as', f'{t.title}.ipynb' if t.kind == 'notebook' else t.title))
+            if not name: return
+            was = t.title
+            t.path, t.title, t.scratch = str(root/name), Path(name).name, False
+            self.docs[t.path] = self.docs.pop(was, nb)
         try:
             if t.kind == 'notebook': nb.save(t.path, sandbox=self.ws.fs)
             else: self.ws.fs.write(t.path, nb[0].source)
-            t.dirty = False; await self._sync_tabs()
+            t.dirty = False
+            await self._sync_tabs()
+            self.query_one('#filetree', FileTree).reload_roots()
+            self.ws.save()
             self.status(f'saved {Path(t.path).name}')
         except Exception as e: self.status(errstr(e), err=True)
 
@@ -730,6 +958,18 @@ class IdeApp(App):
             await k.restart()
             self.status('kernel restarted')
             await self.refresh_vars()
+
+    @work
+    async def action_pick_kernel(self):
+        "Choose the launcher and the interpreter, from a list, with the mouse."
+        pick = await self.push_screen_wait(KernelScreen(self.ws.kernel_options()))
+        if not pick: return
+        self.status('starting the new kernel…')
+        try: o = await self.ws.set_kernel(kind=pick.get('kind'),
+                                          python=pick.get('python', False))
+        except Exception as e: return self.status(errstr(e), err=True)
+        self.status(f"kernel: {o['running_kind']} · {Path(o['python'] or 'leela’s own python').name}")
+        await self.refresh_vars()
 
     def action_palette(self): self.action_command_palette()
     def action_quick_open(self): self._quick_open()
@@ -762,19 +1002,164 @@ class IdeApp(App):
         self.query_one('#agentlog', Static).update(t)
         await self.open_path(hits[0].path)
 
+    # -- running files -----------------------------------------------------
+    async def _run_code(self, code, label=None):
+        """Run one block in the tab's kernel and log it in the exec strip.
+
+        The exec log is the right place for it whether the code came from the exec box, a
+        selection, or a whole file: it is the running account of everything that was asked
+        of this kernel outside the notebook, and a file that printed something belongs in
+        that account.
+        """
+        k = await self.kernel()
+        if self.scope_mode == 'isolated':
+            r = await k.api('/agent/api/exec', {'code': code, 'scope': 'isolated'})
+            ok = bool(r and r.get('ok'))
+            txt = await self._explain(k, (r or {}).get('error')) or (r or {}).get('stdout') or 'ok'
+        else:
+            res = await k.execute(code)
+            ok, txt = res.ok, (await self._explain(k, res.error) or res.text or 'ok')
+        self._exec_lines.append((label or code, txt.strip(), not ok))
+        self._exec_lines = self._exec_lines[-40:]
+        self._paint_exec()
+        await self.refresh_vars()
+        return ok, txt
+
+    @work
+    async def action_run_file(self):
+        """Run the open .py as a script, in the tab's own kernel.
+
+        The buffer is what runs, not the file on disk -- editing and then running should
+        run what is on the screen. Everything it defines stays in the namespace afterwards,
+        which is the difference between this and a subprocess: the variable panel has the
+        script's own state in it when it finishes.
+        """
+        t = self.ws.tab
+        src = self._buffer_text() if (t is not None and t.kind != 'notebook') else None
+        code, label = self.ws.run_file_code(src=src)
+        if code is None: return self.status(label, err=True)
+        self.status(f'running {label}…')
+        ok, _ = await self._run_code(code, f'▶ {label}')
+        self.status(f'{label} finished' if ok else f'{label} raised — see the exec log', err=not ok)
+
+    @work
+    async def action_run_selection(self):
+        "Run just what is selected, in whichever editor holds the cursor."
+        w, _, _ = self._edit_ctx()
+        sel = (getattr(w, 'selected_text', '') or '').strip() if w is not None else ''
+        if not sel: return self.status('select some code first', err=True)
+        ok, _ = await self._run_code(sel)
+        self.status('ran the selection' if ok else 'the selection raised — see the exec log', err=not ok)
+
+    @work
+    async def action_run_all(self):
+        "Every code cell, top to bottom, stopping at the first error -- or the whole file, if it is one."
+        v = self._view()
+        if v.nb is None: return
+        if v.whole_file: return self.action_run_file()
+        v.sync()
+        k = await self.kernel()
+        self.status('running every cell…')
+        for i, c in enumerate(v.nb.cells):
+            if c.cell_type != 'code' or not c.source.strip(): continue
+            self.status(f'running cell {i}…')
+            await v.nb.run(i, k)
+            if (b := v.box(i)): b.show_outputs()
+            if c.has_error:
+                self.status(f'cell {i} raised — stopped there', err=True)
+                break
+        else:
+            self.status('ran every cell')
+        if self.ws.tab: self.ws.tab.dirty = True
+        await self._sync_tabs()
+        await self.refresh_vars()
+
+    async def action_new_notebook(self):
+        "An unsaved notebook to type in. `ctrl+s` asks where it should live."
+        self.ws.new_scratch('notebook')
+        await self._sync_tabs()
+        await self._load_tab()
+        self.status('new notebook — ctrl+s asks where to save it')
+
+    @work
+    async def action_edit_keys(self):
+        """Show the user's keymap file, writing the template first if it does not exist.
+
+        Not opened as a tab: it lives in leela's config directory, and the file sandbox is
+        confined to the folders the user opened -- which is the correct answer, and means
+        the path plus the format is what this can usefully offer.
+        """
+        p = keymap_path()
+        made = False
+        if not p.exists():
+            try:
+                write_keymap(p); made = True
+            except Exception as e: return self.status(errstr(e), err=True)
+        t = Text()
+        t.append(f'{p}\n\n', style=f"bold {PAL['aqua']}")
+        t.append('written with every action and its current chord — edit it and restart leela.\n'
+                 if made else 'edit it and restart leela.\n', style=PAL['fg2'])
+        t.append('an action maps to one chord or several, separated by spaces; "" unbinds it.\n\n',
+                 style=PAL['fg2'])
+        t.append('  "run_cell": "ctrl+enter f5 ctrl+y"\n', style=PAL['green'])
+        for n in NOTES: t.append(f'\n⚠ {n}', style=PAL['red'])
+        self.push_screen(PreviewScreen('your keybindings', t))
+        self.status(f'keymap: {p}')
+
     # -- dev servers -------------------------------------------------------
     @work
     async def action_run_app(self):
-        """Run the open .py under a live inspector. Its module globals register as another
-        env, so the variable panel can watch a request handler mutate state as it serves."""
+        """Start a run configuration -- or the open file -- under a live inspector.
+
+        The inspector goes inside the process the command runs in, which is what lets the
+        variable panel watch a request handler mutate state while the app serves. Something
+        started in a terminal instead has no inspector in it and cannot be watched; the
+        picker says so, because that is the question everyone asks about this feature.
+        """
+        rs = list(self.ws.runs.runs)
         t = self.ws.tab
-        if t is None or not t.path.endswith('.py'): return self.status('open a .py app first', err=True)
-        self.status('starting dev server…')
-        try: srv = await self.ws.dev.start(t.path)
+        here = self.ws.runs.for_file(t.path) if (t is not None and (t.path or '').endswith('.py')) else None
+        opts = rs + ([here] if here and not any(r.name == here.name for r in rs) else [])
+        if not opts:
+            return self.status(f'no run configurations — write {RUNS_FILE} or open a .py', err=True)
+        pick = opts[0] if len(opts) == 1 else await self.push_screen_wait(
+            PickerScreen('run', opts, fmt=lambda r: f'{r.name:16} {r.cmd}'))
+        if pick is None: return
+        self.status(f'starting {pick.name}…')
+        try: srv = await self.ws.run(pick.name if self.ws.runs.get(pick.name) else pick.cmd)
         except Exception as e: return self.status(errstr(e), err=True)
-        self.query_one('#agentlog', Static).update(
-            Text('\n'.join(srv.tail(12)), style=PAL['fg2']))
-        self.status(f"{srv.label}: app {srv.app_url or '?'} · inspector {srv.base or 'pending'}")
+        self.query_one('#agentlog', Static).update(Text('\n'.join(srv.tail(14)), style=PAL['fg2']))
+        self.status(f"{srv.label}: app {srv.app_url or '?'} · inspector {srv.base or 'pending'}"
+                    + (' · ctrl+alt+e to watch it' if srv.base else ''))
+
+    @work
+    async def action_edit_runs(self):
+        "Show (and create) the project's run configurations file."
+        p = self.ws.runs.path
+        if p is None: return self.status('open a folder first', err=True)
+        made = False
+        if not p.exists():
+            t = self.ws.tab
+            try:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps(self.ws.runs.template(t.path if t else None), indent=2) + '\n')
+                made = True
+            except Exception as e: return self.status(errstr(e), err=True)
+        self.ws.runs.load()
+        txt = Text()
+        txt.append(f'{p}\n\n', style=f"bold {PAL['aqua']}")
+        txt.append('written with a starting entry — edit it and run with ctrl+alt+d.\n' if made
+                   else 'edit it and run with ctrl+alt+d.\n', style=PAL['fg2'])
+        txt.append('each entry is a command line; leela runs it in a process with an inspector\n'
+                   'in it, so its module namespace shows up in the variable panel.\n\n', style=PAL['fg2'])
+        txt.append('  {"name": "api", "cmd": "uvicorn app:app --port 8000", "watch": "app"}\n\n',
+                   style=PAL['green'])
+        txt.append('something you start yourself can join in too, in one line:\n', style=PAL['fg2'])
+        txt.append('  import leela.inspect as li; li.serve(name="api")\n', style=PAL['green'])
+        for r in self.ws.runs.runs: txt.append(f'\n  {r.name:16} {r.cmd}', style=PAL['fg4'])
+        if self.ws.runs.note: txt.append(f'\n⚠ {self.ws.runs.note}', style=PAL['red'])
+        self.push_screen(PreviewScreen('run configurations', txt))
+        self.status(f'runs: {p}')
 
     # -- git, terminal, research -------------------------------------------
     @work
@@ -858,11 +1243,29 @@ class IdeApp(App):
         self.query_one('#agentlog', Static).update(t)
         self.status(self.ws.research.note)
 
-    def action_switch_env(self):
-        """Point the variable panel at another live env -- a dev server, or another kernel."""
-        from ..inspect.server import active
-        envs = active()
-        self.status('live envs: ' + ', '.join(f"{e['name']}:{e['port']}" for e in envs) if envs else 'no live envs')
+    @work
+    async def action_switch_env(self):
+        """Point the variable panel at another live env -- an app leela started, or another kernel.
+
+        Every process that registered an inspector is on this list, whoever started it: a
+        notebook kernel, an app run from a configuration, or something you launched
+        yourself that called `leela.inspect.serve()`. What is *not* on it is a process with
+        no inspector in it, because there is nothing there to read.
+        """
+        envs = self.ws.envs()
+        rows = [{'name': 'the tab’s own kernel', 'base': None, 'kind': 'kernel', 'pid': None,
+                 'current': not self.ws.env_base}] + envs
+        def fmt(e):
+            mark = '● ' if e['current'] else '○ '
+            tail = f" · pid {e['pid']}" if e.get('pid') else ''
+            return f"{mark}{e['name']:24} {e['kind']:7}{tail}"
+        pick = await self.push_screen_wait(PickerScreen(
+            f'{len(envs)} live env(s) — anything running leela.inspect.serve()', rows, fmt=fmt))
+        if pick is None: return
+        self.ws.watch_env(pick['base'])
+        self._paint_scope()
+        await self.refresh_vars()
+        self.status(f"watching {pick['name']}" if pick['base'] else 'back on the tab’s kernel')
 
     # tab_1..tab_9
     def _mk_tab_action(i):
@@ -879,6 +1282,11 @@ class IdeApp(App):
         v = self._view()
         if v.nb is None: return
         v.sync()
+        # A file has no cells to run, advance through or insert after: "run" there means
+        # run the file, with the argv and the `__main__` a script expects.
+        if v.whole_file:
+            if self.ws.tab and (self.ws.tab.path or '').endswith('.py'): return self.action_run_file()
+            return self.status(f'{self.ws.tab.title if self.ws.tab else "this"} is not python — nothing to run')
         i = v.sel
         c = v.nb[i]
         if c.cell_type == 'markdown':
@@ -916,8 +1324,9 @@ class IdeApp(App):
             if self.ws.tab: self.ws.tab.dirty = True
             await self._sync_tabs()
             edited = ', '.join(Path(p).name for p in self.last_edits) if self.last_edits else ''
-            self.status(f'answered · edited {edited} (ctrl+alt+l for the diff)' if edited
-                        else self.ws.ai.note, err=not self.ws.ai.ready)
+            if edited and not self.ws.ai.problems:
+                self.status(f'answered · edited {edited} (ctrl+alt+l for the diff)')
+            else: self._say_note(self.ws.ai)
         else:
             self.status(f'running cell {i}…')
             k = await self.kernel()
@@ -946,6 +1355,9 @@ class IdeApp(App):
         """
         v = self._view()
         if v.nb is None: return
+        # A file is one document, not a column of cells: inserting or deleting one here
+        # would silently split the buffer the editor is showing.
+        if v.whole_file: return self.status('cells belong to notebooks — this tab is a file')
         v.sync()
         i = fn(v)
         await v.load(v.nb)
@@ -1098,20 +1510,9 @@ class IdeApp(App):
         box = self.query_one('#execbox', ExecBox)
         code = box.text.strip()
         if not code: return
-        k = await self.kernel()
-        if self.scope_mode == 'isolated':
-            r = await k.api('/agent/api/exec', {'code': code, 'scope': 'isolated'})
-            ok = bool(r and r.get('ok'))
-            txt = await self._explain(k, (r or {}).get('error')) or (r or {}).get('stdout') or 'ok'
-        else:
-            res = await k.execute(code)
-            ok, txt = res.ok, (await self._explain(k, res.error) or res.text or 'ok')
-        self._exec_lines.append((code, txt.strip(), not ok))
-        self._exec_lines = self._exec_lines[-40:]
-        self._paint_exec()
+        await self._run_code(code)
         self.hist.append(code); self.hidx = len(self.hist)
         box.text = ''
-        await self.refresh_vars()
 
     def _paint_exec(self):
         t = Text()
@@ -1262,9 +1663,20 @@ class IdeApp(App):
             t.append(f'  ✎ {Path(p).name}  {diff_label(was, now)}   (ctrl+alt+l for the diff)\n',
                      style=PAL['orange'])
         t.append(text, style=PAL['fg2'])
+        for p in ai.problems: t.append(f'\n⚠ {p}', style=PAL['red'])
         log.update(t)
-        self.status(ai.note, err=not ai.ready)
+        self._say_note(ai)
         await self._after_edits()
+
+    def _say_note(self, ai):
+        """The status line after a turn: what went wrong if anything did, else the note.
+
+        A turn can finish looking fine while the engine refused the compaction it needed,
+        or answered a cheap job with nothing. Those failures cannot raise -- their callers
+        have nowhere to put an exception -- so the status line is where they surface.
+        """
+        if ai.problems: return self.status(ai.problems[-1] + '  (ctrl+alt+l for the rest)', err=True)
+        self.status(ai.note, err=not ai.ready)
 
     async def _after_edits(self):
         """Reload the open tab when the assistant moved the file underneath it.
@@ -1401,7 +1813,12 @@ class IdeApp(App):
         if s['note'] and not s['note'].startswith(s['model_note']): t.append(f"{s['note']}\n", style=PAL['fg4'])
         t.append(f"context {100*s['pct_full']:.0f}% full"
                  + (f" · {s['compactions']} compaction(s)" if s['compactions'] else '')
-                 + (f"  ·  {s['usage']}" if s['use']['total'] else '') + '\n\n', style=PAL['gray'])
+                 + (f"  ·  {s['usage']}" if s['use']['total'] else '') + '\n', style=PAL['gray'])
+        # What failed quietly. These are the ones with nowhere else to go: a cheap job
+        # returns '' to a caller that cannot raise, and a native engine complains on a file
+        # descriptor rather than in an exception.
+        for p in s.get('problems') or []: t.append(f'⚠ {p}\n', style=PAL['red'])
+        t.append('\n')
         for a in ai.activity.acts[-25:]:
             t.append(f'{a.line()}\n', style=PAL['aqua'] if a.ok else PAL['red'])
         for p, (was, now) in self.last_edits.items():
@@ -1422,7 +1839,18 @@ class IdeApp(App):
 
     # -- events ------------------------------------------------------------
     async def on_tabs_tab_activated(self, ev):
-        if ev.tab is None: return
+        """A tab was selected. Rebuilds of the bar send one of these too, and lie about which.
+
+        `_sync_tabs` clears the bar and adds the tabs back, and `Tabs.add_tab` activates the
+        first one it is given -- so opening a *second* file posts an activation for tab 0
+        after the assignment that selected tab 1, and the file you just opened flips back to
+        the one you were on. `Tabs.active` is set synchronously by that assignment, so it is
+        the honest record of what was actually chosen: anything that disagrees with it is a
+        message from the rebuild rather than from the user.
+        """
+        if ev.tab is None or self._rebuilding: return
+        tabs = self.query_one('#tabs', Tabs)
+        if str(tabs.active) != str(ev.tab.id): return
         i = int(str(ev.tab.id)[1:])
         if i != self.ws.active:
             self.ws.activate(i)
@@ -1448,11 +1876,11 @@ class IdeApp(App):
 
 
 def run(roots=(), agent='restricted', kernel_port=8400, kernel='ipykernel',
-        model=None, approvals='ask', agent_scope='overlay'):
+        model=None, approvals='ask', agent_scope='overlay', python=None):
     "Launch the terminal IDE over `roots`, or the saved workspace when none are given."
     import os
     kw = dict(port=kernel_port, agent=agent, kernel=kernel, model=model, approvals=approvals,
-              agent_scope=agent_scope)
+              agent_scope=agent_scope, python=python)
     ws = Workspace.load(**kw) if not roots else Workspace(**kw)
     for r in roots: ws.add_root(r)
     if not ws.fs.roots: ws.add_root(os.getcwd())
