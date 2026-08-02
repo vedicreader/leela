@@ -59,9 +59,22 @@ class ScriptedBackend(Backend):
 
     def _replace_hist(self, summary, keep): self.hist_ = [{'role': 'user', 'content': summary}] + list(keep)
 
+    #: what a spawned sub-agent answers, keyed by a substring of the question. A fan-out
+    #: whose three sub-agents all say the same thing would look like one call in a wig.
+    SUB_ANSWERS = {
+        'import': 'three files: leela/agent/backend.py, models.py, fastllm_hitl.py',
+        'compaction': 'leela/agent/chat.py:compact(), fired from _prepare() at the threshold',
+        'shape': 'df is (200, 2); `keep` is an int',
+    }
+
     def spawn(self, sp='', tools=(), **kw):
-        return ScriptedBackend(self.spec, steps=[Step(text='three places, all in leela/agent/')],
-                               token_delay=0, shared=True)
+        answers = self.SUB_ANSWERS
+        class Sub(ScriptedBackend):
+            def _run(self, msg):
+                q = str(msg).lower()
+                hit = next((v for k, v in answers.items() if k in q), 'nothing found')
+                for w in hit.split(' '): yield w + ' '
+        return Sub(self.spec, token_delay=0, shared=True)
 
     def _tool(self, name):
         return next((t for t in self.tools if getattr(t, '__name__', '') == name), None)

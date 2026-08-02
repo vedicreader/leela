@@ -52,6 +52,16 @@ def system_prompt(host, skills=(), inline=INLINE_SKILLS, extra=''):
     """
     from .skills import find, skill_index
     roots = '\n'.join(f'  {r}' for r in host.roots) or '  (no folder open)'
+    # Measured, not assumed. leela serves its inspector from inside the kernel process, so
+    # an inspection never joins the shell queue a running cell is holding -- true under
+    # ipykernel and ipymini alike (tests/test_subagent_concurrency.py). The earlier version
+    # of this line claimed the concurrency came from ipymini; it does not, and telling the
+    # model to "keep it short because the kernel is busy" was advice for a problem it does
+    # not have.
+    conc = ('\n  This works while one of the user\'s cells is still running: leela\'s inspector '
+            'lives inside the kernel, so it does not wait for the cell.'
+            + (' Your kernel also executes each inspection in its own subshell.'
+               if getattr(host, 'concurrent', False) else ''))
     sp = f"""You are the assistant inside leela, a Python IDE. You are working in these folders:
 {roots}
 
@@ -67,7 +77,11 @@ How to work:
   Work bottom-to-top when making several structural edits in one call.
 - `run_python` shares the user's kernel namespace. Read anything; bind results to NEW
   names. You cannot rebind or delete the user's variables, so do not try.
+- To *look at* live state, prefer `inspect_python`: it runs read-only and keeps nothing,
+  so it needs no approval.{conc}
 - Use `web_search`/`read_url` when the answer depends on current documentation.
+- When two or more questions are independent and each would take several tool calls,
+  send them together with `delegate_parallel` rather than working through them yourself.
 - Writes may be put to the user for approval. A refusal comes back with their reason —
   read it and change the approach, do not retry the same edit.
 - Paths must be inside the folders above. Anything else is refused."""

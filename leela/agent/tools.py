@@ -213,6 +213,23 @@ def session_tools(host):
         except NotImplementedError: raise
         except Exception as e: return f'run failed: {agent_err(e)}'
 
+    def inspect_python(code: str) -> str:
+        """Look at the user's live variables by running read-only Python against them.
+
+        Nothing you bind here is kept: the namespace is seeded into a throwaway sandbox and
+        every write is discarded, so this needs no approval and runs even while one of the
+        user's cells is still going.
+
+        The sandbox is an allowlist and it is strict. **Attribute reads and builtins work**
+        (`df.shape`, `len(df)`, `x.size`, `type(x).__name__`); **most library method calls
+        do not** (`list(df.columns)`, `df.head().to_dict()` are refused). So use this for
+        "what shape / how many / what type", and when you need a real call, use `run_python`
+        instead -- it has the full interpreter and only asks the user first.
+        """
+        try: return clip(host.inspect_python(code))
+        except NotImplementedError: raise
+        except Exception as e: return f'inspection failed: {agent_err(e)}'
+
     def read_terminal(lines: int = 200) -> str:
         """Read what the IDE's terminal has printed -- a failing build, a stack trace, a test run.
 
@@ -221,7 +238,7 @@ def session_tools(host):
         """
         return clip(host.terminal_text(int(lines)) or 'the terminal has printed nothing yet')
 
-    return [list_vars, run_python, read_terminal]
+    return [list_vars, run_python, inspect_python, read_terminal]
 
 
 def skill_tools(get_skills):

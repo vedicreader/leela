@@ -29,11 +29,12 @@ approval the user is actually looking at.
 """
 
 from __future__ import annotations
+import json
 
 from . import agent_err
 from .tools import WRITE_TOOLS, clip, MAX_TOOL_CHARS
 
-__all__ = ['SUB_SP', 'SUB_MAX_STEPS', 'read_only', 'delegate', 'subagent_tools']
+__all__ = ['SUB_SP', 'SUB_MAX_STEPS', 'read_only', 'delegate', 'delegate_many', 'subagent_tools']
 
 SUB_MAX_STEPS = 12
 
@@ -45,12 +46,20 @@ question to you because answering it takes many tool calls and the answer is sho
 - Report what you found, with file paths and line numbers, not what you infer or expect.
 - If the answer is that there is nothing, say so plainly. A confident wrong answer is far \
 worse than "no matches, and here is what I searched for".
-- You cannot edit anything. If the answer implies a change, describe the change and stop."""
+- You cannot edit anything. If the answer implies a change, describe the change and stop.
+- `inspect_python` runs read-only against the user's live variables and keeps nothing. Use \
+it to answer questions about state rather than guessing at it."""
+
+
+# A sub-agent does not get to spawn sub-agents. Not a safety rule so much as an economic
+# one: recursion here is a fan-out tree whose width nobody chose, and the second level
+# never has enough context to ask a good question anyway.
+NO_SUB = frozenset({'delegate_search', 'delegate_parallel'})
 
 
 def read_only(tools):
-    "The tools a sub-agent may have: everything that only reads. See the module docstring."
-    return [t for t in tools if getattr(t, '__name__', '') not in WRITE_TOOLS]
+    "The tools a sub-agent may have: everything that only reads, and no delegation of its own."
+    return [t for t in tools if getattr(t, '__name__', '') not in (WRITE_TOOLS | NO_SUB)]
 
 
 def delegate(backend, question, tools=(), sp=SUB_SP, max_steps=SUB_MAX_STEPS):
@@ -73,6 +82,34 @@ def delegate(backend, question, tools=(), sp=SUB_SP, max_steps=SUB_MAX_STEPS):
             except Exception: pass
 
 
+def delegate_many(backend, questions, tools=(), sp=SUB_SP, max_steps=SUB_MAX_STEPS, n_workers=4):
+    """Ask several questions at once. Returns answers in the order the questions were given.
+
+    Whether this is genuinely parallel depends on what is underneath, and it is worth being
+    exact rather than optimistic:
+
+    - **Generation** overlaps on a cloud backend, where each sub-agent is its own HTTP
+      request. On a local engine it does not -- litert holds one conversation at a time --
+      so local fan-out is run one after another rather than racing for the same engine and
+      finding out what happens.
+    - **Tool work** overlaps either way, and is usually the bulk of it: three sub-agents
+      each doing six searches is eighteen searches, and they do not wait for each other.
+      Under a concurrent kernel (`Host.kernel_kind == 'ipymini'`) that includes
+      `inspect_python`, which is the case that used to be hopeless -- an inspection queued
+      behind the user's running cell, and then behind the other two sub-agents' inspections.
+
+    The point of the whole thing is context, not speed. Three questions answered in
+    parallel cost the caller three short answers instead of sixty tool results.
+    """
+    qs = list(questions)
+    if not qs: return []
+    if len(qs) == 1 or getattr(backend.spec, 'local', False) or n_workers < 2:
+        return [delegate(backend, q, tools, sp, max_steps) for q in qs]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(min(n_workers, len(qs))) as ex:
+        return list(ex.map(lambda q: delegate(backend, q, tools, sp, max_steps), qs))
+
+
 def subagent_tools(get_backend, get_tools):
     """The `delegate` tool, bound to whatever backend routing says sub-agents run on.
 
@@ -84,11 +121,11 @@ def subagent_tools(get_backend, get_tools):
     def delegate_search(question: str) -> str:
         """Hand a broad search question to a sub-agent and get back only its conclusion.
 
-        Use this when answering would take many `search_code` / `view_file` / `read_url`
-        calls whose results you do not need to keep -- "where else do we do X", "which
-        files import Y", "what does this library's API look like". The sub-agent has your
-        read-only tools and none of your write tools, and its working is discarded, so the
-        cost to your context is one question and one answer.
+        Use this when answering would take many `search_code` / `view_file` / `read_url` /
+        `inspect_python` calls whose results you do not need to keep -- "where else do we
+        do X", "which files import Y", "what shape is everything in this namespace". The
+        sub-agent has your read-only tools and none of your write tools, and its working is
+        discarded, so the cost to your context is one question and one answer.
 
         Ask one self-contained question. The sub-agent cannot see this conversation.
         """
@@ -96,4 +133,30 @@ def subagent_tools(get_backend, get_tools):
         if b is None: return 'no model is available to delegate to'
         return clip(delegate(b, question, get_tools()), MAX_TOOL_CHARS)
 
-    return [delegate_search]
+    def delegate_parallel(questions: str) -> str:
+        """Hand several independent questions to sub-agents at once, and get back every answer.
+
+        `questions` is a JSON array of strings, e.g.
+          ["which files import fastllm?", "where is compaction triggered?", "what is df's shape?"]
+
+        Use it when you have two or more questions that do not depend on each other. They
+        run concurrently, each in its own throwaway conversation with your read-only tools,
+        so three questions cost you three short answers rather than the sixty tool results
+        it would take to answer them yourself.
+
+        Every question must be self-contained: a sub-agent cannot see this conversation or
+        the other questions.
+        """
+        b = get_backend()
+        if b is None: return 'no model is available to delegate to'
+        try:
+            qs = json.loads(questions) if isinstance(questions, str) else list(questions)
+            if not isinstance(qs, list) or not all(isinstance(q, str) for q in qs):
+                raise ValueError('expected a JSON array of strings')
+        except Exception as e:
+            return f'could not parse questions: {agent_err(e)}'
+        if not qs: return 'no questions given'
+        answers = delegate_many(b, qs, get_tools())
+        return clip('\n\n'.join(f'### {q}\n{a}' for q, a in zip(qs, answers)), MAX_TOOL_CHARS * 2)
+
+    return [delegate_search, delegate_parallel]

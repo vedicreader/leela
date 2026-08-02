@@ -129,6 +129,36 @@ class Host:
         """
         raise NotImplementedError
 
+    def inspect_python(self, code):
+        """Run `code` against the live namespace **read-only**: nothing it binds is kept.
+
+        The difference from `run_python` is the whole reason this exists separately. That
+        one persists names into the agent's layer, so it is a write and is gated by
+        approval and withheld from sub-agents. This one seeds the owner's state into a
+        throwaway sandbox and discards every write, which makes it safe to hand to an agent
+        nobody is watching -- and it is what lets a sub-agent answer "what shape is that
+        dataframe" without anyone approving anything.
+
+        Under a concurrent kernel (see `kernel_kind`) this runs *alongside* a busy cell
+        rather than queueing behind it, which is what makes it usable at all while the
+        user has a long computation running.
+        """
+        raise NotImplementedError
+
+    @property
+    def kernel_kind(self):
+        """What runs the live namespace, and whether it can execute concurrently.
+
+        `'ipymini'` means an inspection can run while a cell is busy; anything else means
+        it queues behind whatever the kernel is already doing. The agent is told which,
+        because "read the dataframe" is good advice under one and a way to hang the session
+        under the other.
+        """
+        return 'ipykernel'
+
+    @property
+    def concurrent(self): return self.kernel_kind == 'ipymini'
+
     def list_vars(self):
         "What is in the live namespace: name, type, and a short value, one per line."
         raise NotImplementedError
@@ -173,5 +203,6 @@ class NullHost(Host):
     def nb_cells(self, path): raise NotImplementedError
     def nb_add_cell(self, path, source, index=-1, cell_type='code'): raise NotImplementedError
     def run_python(self, code): raise NotImplementedError
+    def inspect_python(self, code): raise NotImplementedError
     def list_vars(self): raise NotImplementedError
     def terminal_text(self, lines=200): raise NotImplementedError

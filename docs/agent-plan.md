@@ -415,3 +415,54 @@ does the same through Playwright against the real server and the real client JS.
 **Untested against a live engine:** `RishiBackend._replace_hist` rebuilds a litert
 conversation on the same engine, and no local model was downloaded in the environment this
 was built in. The fastllm side of compaction is a list reassignment and is covered.
+
+
+---
+
+## Appendix: sub-agents and the kernel
+
+Asked whether ipymini is what lets sub-agents run. It is not, and the measurement is worth
+recording because the obvious guess is wrong in a useful direction.
+
+**What was actually missing.** `subagent.read_only` strips every write tool, `run_python`
+is a write tool, and there was no read-only execution tool — so a sub-agent could search
+and read files and had *no way to touch the live namespace at all*. `inspect_python` is
+that tool: `AgentSession`'s isolated scope, which leela already had and simply never
+offered. Nothing needed inventing.
+
+**Where the concurrency comes from.** leela serves its inspector from an HTTP server
+*inside* the kernel process, so an agent request never joins the shell queue a running cell
+is holding. Measured (`tests/test_subagent_concurrency.py`), against a real kernel:
+
+| cell | ipykernel | ipymini |
+| --- | --- | --- |
+| `await asyncio.sleep(3)` | inspection in ~0.07s | ~0.08s |
+| tight CPU loop, GIL held | ~0.09s once warm | ~0.09s once warm |
+| four inspections at once | ~0.22s total | ~0.29s total |
+
+So it works on both, and it worked before ipymini. The spinning-cell row was the surprise:
+CPython hands the GIL over every few milliseconds, so only the *first* call — which builds
+the agent session and imports the sandbox — is slow enough to notice.
+
+An earlier version of the briefing told the agent it had concurrency only under ipymini and
+warned it to keep inspections short otherwise. That was advice for a problem that does not
+exist, and it would have made the agent avoid a tool that works, so it was removed. ipymini
+still earns its `_concurrent()` wrapper — each inspection gets its own subshell context
+rather than executing on the HTTP thread — but that is correctness, not throughput, and the
+briefing now says only what is true of both.
+
+**The honest limit.** The isolated scope is safepyrun's allowlist and it is strict:
+attribute reads and builtins pass (`df.shape`, `len(df)`, `df.size`), most library method
+calls do not (`list(df.columns)`, `df.head().to_dict()`). So `inspect_python` answers "what
+shape / how many / what type", and its docstring says so, so the model reaches for
+`run_python` — which has the whole interpreter and asks the user first — when it needs a
+real call. Loosening this means giving each sub-agent its own overlay `AgentSession`, which
+is a real design decision and not something to slip in; it is the obvious next step if the
+limit bites.
+
+**Parallel fan-out** is `delegate_parallel`: a JSON array of independent questions, each
+answered in its own throwaway conversation with the read-only tools. Generation overlaps on
+a cloud backend and is run sequentially on a local one — litert holds one conversation at a
+time, and racing it to find out what happens is not a feature. Tool work overlaps either
+way, which is usually the bulk of it. The point is context, not speed: three questions come
+back as three short answers instead of sixty tool results.

@@ -105,6 +105,24 @@ class WorkspaceHost(Host):
         if r.result is not None: out += ('\n' if out else '') + r.result.value
         return out or '(ok)'
 
+    def inspect_python(self, code):
+        """Read-only execution: `AgentSession`'s isolated scope, which leela already had.
+
+        `scope='isolated'` seeds the owner's state into a safepyrun sandbox and throws away
+        every write, which is exactly the contract a sub-agent needs and exactly what the
+        inspection engine was already built to do. Nothing new had to be invented here --
+        the capability existed and was simply not offered as a tool.
+        """
+        if self.session is None: raise NotImplementedError('no agent session on this kernel')
+        r = self.session.run(code, scope='isolated')
+        if r.error: return r.error
+        out = r.stdout or ''
+        if r.result is not None: out += ('\n' if out else '') + r.result.value
+        return out or '(ok)'
+
+    @property
+    def kernel_kind(self): return getattr(self.ws, 'kernel_kind', 'ipykernel')
+
     def list_vars(self):
         if self.session is None: raise NotImplementedError('no agent session on this kernel')
         return '\n'.join(f'{v.name}: {v.type} = {v.value}' for _, vs in self.session.view('minimal') for v in vs)

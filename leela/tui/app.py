@@ -153,6 +153,21 @@ def screen_capture(app, title=None):
             console.export_text(clear=False))
 
 
+_TRAIL = '<details><summary>what I did'
+
+
+def _strip_trail(reply):
+    """Drop the folded tool trail from a reply before rendering it here.
+
+    The trail is markdown with `<details>` in it, which is exactly right for the saved
+    notebook -- Jupyter folds it, and a reader next week can open it -- and exactly wrong
+    for a Rich renderer, which prints the tags. The same information is already above the
+    reply as activity lines, so here it is redundant as well as ugly.
+    """
+    i = reply.find(_TRAIL)
+    return reply if i < 0 else reply[:i].rstrip()
+
+
 def _then(_, i):
     "Run an edit for its effect and return the cell index to land on -- see `IdeApp._struct`."
     return i
@@ -194,7 +209,7 @@ class CellBox(Vertical):
                 # Notebooks written before it fall back to the older {tool, args} shape.
                 t.append('  ' + (x.get('line') or f"⚙ {x.get('tool','?')} {str(x.get('args',''))[:90]}") + '\n',
                          style=PAL['gray'])
-            if c.reply: t.append(c.reply.rstrip(), style=PAL['fg'])
+            if c.reply: t.append(_strip_trail(c.reply).rstrip(), style=PAL['fg'])
             elif c.running: t.append('  thinking…', style=PAL['aqua'])
             out.update(t)
             out.display = bool(c.reply or c.calls or c.running)

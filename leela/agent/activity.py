@@ -40,7 +40,8 @@ _KIND = {
     'edit_file': 'edit', 'create_file': 'edit', 'edit_cell': 'edit', 'add_cell': 'edit',
     'web_search': 'web', 'read_url': 'web', 'research': 'web',
     'run_python': 'run', 'list_vars': 'run',
-    'read_skill': 'skill', 'delegate_search': 'delegate',
+    'read_skill': 'skill', 'delegate_search': 'delegate', 'delegate_parallel': 'delegate',
+    'inspect_python': 'run',
 }
 
 
@@ -76,10 +77,17 @@ def summarise(tool, args):
     if tool == 'read_url':       return f'Web fetch: {_s(a.get("url", ""), 120)}'
     if tool == 'research':       return f'Research: {_s(q)}'
     if tool == 'run_python':     return f'Run python: {_s((a.get("code", "") or "").strip().splitlines()[0] if a.get("code") else "")}'
+    if tool == 'inspect_python': return f'Inspect: {_s((a.get("code", "") or "").strip().splitlines()[0] if a.get("code") else "")}'
     if tool == 'list_vars':      return 'List variables'
     if tool == 'read_terminal':  return 'Read terminal'
     if tool == 'read_skill':     return f'Read skill {a.get("name", "?")}'
     if tool == 'delegate_search': return f'Delegate: {_s(a.get("question", ""), 120)}'
+    if tool == 'delegate_parallel':
+        try:
+            import json as _j
+            qs = _j.loads(a.get('questions') or '[]')
+            return f'Delegate {len(qs)} questions in parallel: ' + _s('; '.join(qs), 110)
+        except Exception: return f'Delegate in parallel: {_s(a.get("questions", ""), 110)}'
     inner = ', '.join(f'{k}={_s(v, 30)!r}' for k, v in a.items())
     return f'{tool}({inner})'
 
