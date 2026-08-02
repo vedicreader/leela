@@ -71,7 +71,11 @@ folders, tabs and kernels.
 - **An agent** that sees what you see: the code index, the open files, the live
   namespace, and the IDE's own screen. It runs on a local model or a cloud one, and
   routes the cheap jobs — completions, summaries, sub-agent fan-out — to the local one
-  whatever the turn is running on.
+  whatever the turn is running on. When something fails quietly — a compaction the engine
+  refused, a completion that came back empty, a local model complaining in native code
+  where no exception exists to catch — it is reported rather than swallowed. Local context
+  windows err small, and `LEELA_LOCAL_CTX` overrides them for a bundle built with a bigger
+  KV cache.
 - **Approval as a conversation.** When the agent wants to write, it asks, shows you the
   edit, and takes your *reason* — which goes back to the model, so "no, that file is
   generated" redirects it instead of making it retry. The whole exchange is saved into
@@ -84,9 +88,52 @@ folders, tabs and kernels.
   with no code on leela's side.
 - **Code search** over [kosha](https://pypi.org/project/koshas/) — FTS5, embeddings
   and a call graph — falling back to a literal scan when the index is unavailable.
-- **A dev server** that runs your app under a live inspector, so its module
-  namespace shows up in the variable panel while it serves.
+- **Run configurations, and a live-env picker.** `.leela/runs.json` says how this
+  project starts — `uvicorn app:app --port 8000`, `python train.py`, `python -m flask
+  run` — and leela runs that command in a process with an inspector *inside* it, so the
+  app's own module namespace shows up in the variable panel while it serves. `env…`
+  points the panel at any of them, or back at the notebook's kernel. See
+  [watching something run](#watching-something-run).
 - **A terminal**, and lazygit if you have it.
+
+## Watching something run
+
+The variable panel reads a **live inspector**, and an inspector is a thing that lives
+*inside* a process. So the rule is simple, and it is worth stating plainly because it is
+the first thing everybody asks:
+
+> A process leela started under a run configuration is watchable. A process you started
+> anywhere else is not — unless it says so itself, in one line.
+
+**Run configurations** live in the project, at `.leela/runs.json`:
+
+```json
+{"runs": [
+  {"name": "api",   "cmd": "uvicorn app:app --port 8000", "watch": "app"},
+  {"name": "train", "cmd": "python train.py"}
+]}
+```
+
+`cmd` is the command line you would type. leela runs it in a process it puts an inspector
+into, imports `watch` *before* the command so uvicorn's own `import app` finds the module
+already loaded, and the panel then shows that module's namespace — you can watch a request
+handler mutate state while it serves. `watch` is inferred from `app:app` when you leave it
+out. Start one with **run** in the toolbar (`ctrl+alt+d`), and point the panel at it with
+**env…** (`ctrl+alt+e`).
+
+`--reload` is the exception, and says so: uvicorn's reloader runs your app in a *child*
+process, where the inspector is not.
+
+**Something you started yourself** — a uvicorn in your own terminal, a training script, a
+long-running job — joins in by asking:
+
+```python
+import leela.inspect as li; li.serve(name='api')
+```
+
+That registers it, and it appears in `env…` alongside everything else. Nothing else picks
+it up automatically: a process leela did not start has no inspector in it, and there is
+nothing there for the panel to read.
 
 ## Keys and buttons
 
@@ -140,6 +187,7 @@ leela/
     compact.py    surviving a long conversation, and saying so afterwards
     skills.py     skills discovered from installed packages and SKILL.md dirs
     activity.py   the live account of what the agent is doing
+    native.py     catching what a native engine prints instead of raising
     tools.py      the tools, written against `Host`
     extensions.py user Python that registers more of all of the above
     subagent.py   delegation to a cheap model whose context is thrown away
@@ -156,7 +204,8 @@ leela/
   fs.py           filesystem access, confined to the open folders
   term.py         terminals and lazygit
   research.py     web search and fetch
-  devserver.py    run an app under a live inspector
+  runs.py         named ways to run this project, saved with the project
+  devserver.py    run any command under a live inspector
   tui/            the terminal frontend (Textual)
   web/            the browser frontend (FastHTML), with vendored browser bundles
 ```

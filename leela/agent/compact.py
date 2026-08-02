@@ -127,9 +127,16 @@ def estimate_tokens(text, count=None):
 
 
 def threshold(ctx, reserve=RESERVE):
-    "The token count at which a conversation should be compacted, or None when there is no window."
+    """The token count at which a conversation should be compacted, or None when there is no window.
+
+    The reserve is capped at a quarter of the window, which matters entirely for small
+    local models: a 4k window against the 16k reserve gives `max(1, 4096-16384) == 1`, so
+    every turn is "due" and the agent compacts a two-message conversation forever. A
+    fraction is the right shape anyway -- what is being reserved is room for one reply and
+    its tool results, and on a small model both are smaller.
+    """
     if not ctx or ctx <= 0: return None
-    return max(1, ctx - reserve)
+    return max(1, ctx - min(reserve, max(1, ctx // 4)))
 
 
 def should_compact(used, ctx, reserve=RESERVE):
@@ -275,17 +282,28 @@ class Compactor:
         "Whether `backend` has crossed its threshold."
         return should_compact(backend.used_tokens, backend.spec.ctx, self.reserve)
 
-    def _keep(self, msgs, count=None):
+    def budget(self, ctx=0):
+        """How much recent conversation to keep, for a window of `ctx`.
+
+        Capped at half the window for the same reason the reserve is: 20k of "recent" on a
+        4k local model means the tail is the whole conversation, `older` is empty, and
+        compaction reports "everything is recent; nothing to compact" right up until the
+        engine refuses the turn. Half a window leaves half to summarise into.
+        """
+        return min(self.keep_recent, max(256, ctx // 2)) if ctx else self.keep_recent
+
+    def _keep(self, msgs, count=None, ctx=0):
         """The tail to keep uncompacted, newest-first until the budget runs out.
 
         Kept whole-message: half a tool result is worse than none, and a kept assistant
         message whose tool result was dropped leaves a dangling call that some providers
         reject outright.
         """
+        budget = self.budget(ctx)
         kept, used = [], 0
         for m in reversed(msgs):
             n = estimate_tokens(_text(m), count) + 8
-            if used + n > self.keep_recent and kept: break
+            if used + n > budget and kept: break
             kept.append(m); used += n
         kept.reverse()
         # Then cut back to a clean boundary. A tail that starts at a tool result whose
@@ -308,7 +326,7 @@ class Compactor:
         if not msgs:
             self.note = 'nothing to compact'
             return ''
-        keep = self._keep(msgs, backend.count_tokens)
+        keep = self._keep(msgs, backend.count_tokens, getattr(backend.spec, 'ctx', 0))
         older = msgs[:len(msgs) - len(keep)] if len(keep) < len(msgs) else msgs
         if not older:
             self.note = 'everything is recent; nothing to compact'

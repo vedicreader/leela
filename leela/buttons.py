@@ -60,13 +60,13 @@ BUTTONS = L(
     Btn('run_file',     '▶ file',   'run the whole file in the kernel','toolbar'),
     Btn('run_selection','▶ sel',    'run just what is selected',       'toolbar'),
     Btn('cell_below',   '+ cell',   'insert a cell below',             'toolbar'),
-    Btn('cell_delete',  '- cell',   'delete this cell',                'toolbar'),
     Btn('cell_type',    'type',     'code / markdown / prompt',        'toolbar'),
     Btn('save',         'save',     'save this tab',                   'toolbar'),
     Btn('show_diff',    'diff',     'what changed since the last save','toolbar'),
     Btn('interrupt',    'stop',     'interrupt the kernel',            'toolbar', 'warn'),
     Btn('restart',      'restart',  'restart the kernel',              'toolbar', 'warn'),
-    Btn('pick_kernel',  'kernel…',  'choose the kernel and interpreter','toolbar'),
+    Btn('run_app',      'run',      'start a run configuration under an inspector', 'toolbar'),
+    Btn('pick_kernel',  'kernel',   'choose the kernel and interpreter','toolbar'),
     Btn('palette',      'cmds',     'command palette',                 'toolbar'),
     Btn('help',         'keys',     'every binding',                   'toolbar'),
 
@@ -94,6 +94,7 @@ BUTTONS = L(
     Btn('exec_clear',   'clear',    'clear the log',                   'exec'),
 
     # -- the variable panel -----------------------------------------------------------
+    Btn('switch_env',   'env…',     'watch another live namespace',    'vars'),
     Btn('edit_value',   'set',      'set the selected variable',       'vars'),
     Btn('promote',      '→live',    'copy it into the live namespace', 'vars'),
     Btn('copy_value',   'copy',     'copy its value',                  'vars'),

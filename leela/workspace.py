@@ -25,10 +25,58 @@ from .fs import Sandbox, Unsafe, lang_for, is_texty
 from .kernels import KernelPool
 from .nb import Notebook
 from .research import Research
+from .runs import Run, Runs
 from .search import Search
 from .term import Terminals
 
 __all__ = ['Tab', 'Workspace', 'ws_path']
+
+
+class _EnvClient:
+    """Read-only access to some *other* process's inspector, in the shape `Kernel.api` has.
+
+    So the panel does not care what it is looking at. A kernel has an execution channel and
+    a lifecycle on top of this; an app leela started, or a process that called
+    `leela.inspect.serve()` itself, has only the HTTP surface -- which is all the variable
+    tree ever used.
+    """
+
+    def __init__(self, base, name=''):
+        self.base, self.name = base, name
+        self.alive, self.boot_error, self.pid = True, None, None
+        self.kernel_kind = 'env'
+
+    @property
+    def token(self):
+        "The owner token this inspector wrote next to its registry entry, if it armed one."
+        from .inspect.server import reg_dir
+        try: return (reg_dir()/f"token-{self.base.rsplit(':', 1)[-1]}").read_text().strip() or None
+        except Exception: return None
+
+    async def api(self, path, params=None, timeout=15):
+        import httpx
+        h = {'X-Leela-Token': t} if (t := self.token) else {}
+        try:
+            async with httpx.AsyncClient(base_url=self.base, timeout=timeout, headers=h) as c:
+                r = await c.get(path, params=params or {})
+                r.raise_for_status()
+                return r.json()
+        except Exception:
+            return None
+
+    async def names(self, scope='live', profile='full'):
+        r = await self.api('/api/rows', {'profile': profile, 'sort': 'name'})
+        return L(n.get('name', '') for g in (r or {}).get('groups', []) for n in g.get('nodes', []))
+
+    async def execute(self, code, **kw):
+        "Not available: an env is a namespace to look at, not a kernel with a shell channel."
+        from .kernels import ExecOutcome
+        return ExecOutcome(ok=False, error=f'{self.name} is a watched env, not a kernel — '
+                                           'switch back to the kernel to run code')
+    async def complete(self, code, pos): return {'from': pos, 'matches': []}
+    async def inspect_obj(self, code, pos, detail=0): return ''
+    async def interrupt(self): pass
+    async def restart(self): pass
 
 
 def ws_path(): return leela_cfg/'workspace.json'
@@ -65,6 +113,10 @@ class Workspace:
         self.dev = DevServers(port=dev_port)
         self.search = Search(self.fs)
         self.research = Research(self.fs)
+        self.runs = Runs(self.fs.roots[0] if self.fs.roots else None)
+        # Which live inspector the variable panel is looking at, when it is not the tab's
+        # own kernel. A base URL, because that is what identifies an env across processes.
+        self.env_base = None
         self.terms = Terminals(cwd=self.fs.roots[0] if self.fs.roots else None)
         self.agent = agent
         # `kernel_kind`, not `kernel`: `kernel()` below is the coroutine that hands out the
@@ -120,7 +172,10 @@ class Workspace:
         return self._completer
 
     # -- folders ---------------------------------------------------------------
-    def add_root(self, p): return self.fs.add_root(p)
+    def add_root(self, p):
+        r = self.fs.add_root(p)
+        if self.runs.root is None: self.runs = Runs(self.fs.roots[0])
+        return r
 
     def drop_root(self, p):
         "Close a folder, and every tab that lived inside it."
@@ -325,6 +380,69 @@ class Workspace:
         return await self.pool.get(key, cwd=cwd, name=Path(key).name if cwd else None, agent=self.agent)
 
     def kernel_peek(self, tab=None): return self.pool.peek(self.kernel_key(tab))
+
+    # -- live envs -------------------------------------------------------------
+    # The variable panel used to be able to look at exactly one thing: the active tab's
+    # kernel. Everything else that registers an inspector -- an app leela started, a
+    # process that called `leela.inspect.serve()` itself -- was discoverable and
+    # unwatchable, which is a strange place to stop.
+    def envs(self):
+        """Every inspector this IDE could point the variable panel at.
+
+        Kernels are listed from the pool rather than from the registry so a tab's kernel is
+        named after its folder, the way the rest of the IDE names it; everything else comes
+        from the registry, which is where any process that called `serve()` writes itself.
+        """
+        from .inspect.server import active
+        out, seen = L(), set()
+        for key, k in self.pool.kernels.items():
+            if not (k and getattr(k, 'base', None)): continue
+            seen.add(k.base)
+            out.append({'name': Path(key).name or 'kernel', 'base': k.base, 'kind': 'kernel',
+                        'pid': k.pid, 'current': k.base == self.env_base,
+                        'is_tab': key == self.kernel_key()})
+        for e in active():
+            if e.get('base') in seen: continue
+            out.append({'name': e.get('name') or f"pid {e.get('pid')}", 'base': e['base'],
+                        'kind': 'app', 'pid': e.get('pid'), 'cwd': e.get('cwd', ''),
+                        'current': e['base'] == self.env_base, 'is_tab': False})
+        return out
+
+    def watch_env(self, base=None):
+        "Point the variable panel at one env, or back at the active tab's kernel with `None`."
+        self.env_base = base or None
+        return self.env_base
+
+    def inspector(self, tab=None):
+        """What the variable panel should be reading: the chosen env, else the tab's kernel.
+
+        Falls back rather than failing when the chosen env has gone away -- an app you were
+        watching exits, and the panel should quietly return to the kernel instead of going
+        blank and staying blank.
+        """
+        if self.env_base:
+            e = next((x for x in self.envs() if x['base'] == self.env_base), None)
+            if e is None: self.env_base = None
+            else: return _EnvClient(e['base'], e['name'])
+        return self.kernel_peek(tab)
+
+    # -- run configurations ----------------------------------------------------
+    async def run(self, name_or_path, save=False):
+        """Start a run configuration, or a file, under a live inspector. Returns the `DevServer`.
+
+        The inspector goes *inside* the process the command runs in, which is what makes
+        the variable panel able to show a request handler mutating state while it serves.
+        A command started anywhere else -- a shell, another terminal -- has no inspector in
+        it and cannot be watched; that is what `leela.inspect.serve()` is for.
+        """
+        r = self.runs.get(name_or_path)
+        if r is None:
+            p = self.fs._check(name_or_path, must_exist=True)
+            r = self.runs.for_file(p)
+            if save: self.runs.add(r)
+        root = self.fs.roots[0] if self.fs.roots else None
+        return await self.dev.start(r.cmd, cwd=r.resolved_cwd(root) if root else None,
+                                    name=r.name, watch=r.watch, env=dict(r.env))
 
     def kernel_options(self, tab=None):
         """Everything a kernel picker needs, so neither frontend has to know how kernels work.

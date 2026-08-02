@@ -46,6 +46,7 @@ from ..keys import (KEYS, NOTES, WEB_ONLY_SCOPES, chord_display, keymap_path, tu
                     toast_rows, help_rows, write_keymap)
 from ..term import lazygit_argv, LazygitMissing
 from ..nb import Notebook, Cell
+from ..runs import RUNS_FILE
 from ..workspace import Workspace
 
 __all__ = ['IdeApp', 'run']
@@ -759,8 +760,8 @@ class IdeApp(App):
             Text(f' {msg}', style=PAL['red'] if err else PAL['fg4']))
 
     async def kapi(self, path, params=None):
-        "One call to the active kernel's inspector."
-        k = self.ws.kernel_peek()
+        "One call to whichever inspector the panel is watching: the tab's kernel, or a chosen env."
+        k = self.ws.inspector()
         return await k.api(path, params) if k else None
 
     async def _explain(self, k, err):
@@ -883,10 +884,14 @@ class IdeApp(App):
         live = self.scope_mode == 'live'
         t = self.query_one('#vartop', Static)
         tree = self.query_one('#vartree', VarTree)
+        # The env is named only when it is *not* the tab's kernel: a panel that is watching
+        # a running app rather than the notebook must never be mistaken for the notebook.
+        env = next((e['name'] for e in self.ws.envs() if e['current']), '') if self.ws.env_base else ''
         t.update(Text.assemble(
             (' live ', f"bold {'black on ' + PAL['aqua'] if live else PAL['gray']}"),
             ('  '),
             (' isolated ', f"bold {'black on ' + PAL['orange'] if not live else PAL['gray']}"),
+            (f'  ▶ {env}' if env else '', f"bold {PAL['green']}"),
             (f"   {tree.profile} · {tree.sort}", PAL['fg4'])))
         try: self.query_one('#execbox', ExecBox).border_title = f'exec · {self.scope_mode}'
         except Exception: pass
@@ -1104,16 +1109,57 @@ class IdeApp(App):
     # -- dev servers -------------------------------------------------------
     @work
     async def action_run_app(self):
-        """Run the open .py under a live inspector. Its module globals register as another
-        env, so the variable panel can watch a request handler mutate state as it serves."""
+        """Start a run configuration -- or the open file -- under a live inspector.
+
+        The inspector goes inside the process the command runs in, which is what lets the
+        variable panel watch a request handler mutate state while the app serves. Something
+        started in a terminal instead has no inspector in it and cannot be watched; the
+        picker says so, because that is the question everyone asks about this feature.
+        """
+        rs = list(self.ws.runs.runs)
         t = self.ws.tab
-        if t is None or not t.path.endswith('.py'): return self.status('open a .py app first', err=True)
-        self.status('starting dev server…')
-        try: srv = await self.ws.dev.start(t.path)
+        here = self.ws.runs.for_file(t.path) if (t is not None and (t.path or '').endswith('.py')) else None
+        opts = rs + ([here] if here and not any(r.name == here.name for r in rs) else [])
+        if not opts:
+            return self.status(f'no run configurations — write {RUNS_FILE} or open a .py', err=True)
+        pick = opts[0] if len(opts) == 1 else await self.push_screen_wait(
+            PickerScreen('run', opts, fmt=lambda r: f'{r.name:16} {r.cmd}'))
+        if pick is None: return
+        self.status(f'starting {pick.name}…')
+        try: srv = await self.ws.run(pick.name if self.ws.runs.get(pick.name) else pick.cmd)
         except Exception as e: return self.status(errstr(e), err=True)
-        self.query_one('#agentlog', Static).update(
-            Text('\n'.join(srv.tail(12)), style=PAL['fg2']))
-        self.status(f"{srv.label}: app {srv.app_url or '?'} · inspector {srv.base or 'pending'}")
+        self.query_one('#agentlog', Static).update(Text('\n'.join(srv.tail(14)), style=PAL['fg2']))
+        self.status(f"{srv.label}: app {srv.app_url or '?'} · inspector {srv.base or 'pending'}"
+                    + (' · ctrl+alt+e to watch it' if srv.base else ''))
+
+    @work
+    async def action_edit_runs(self):
+        "Show (and create) the project's run configurations file."
+        p = self.ws.runs.path
+        if p is None: return self.status('open a folder first', err=True)
+        made = False
+        if not p.exists():
+            t = self.ws.tab
+            try:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps(self.ws.runs.template(t.path if t else None), indent=2) + '\n')
+                made = True
+            except Exception as e: return self.status(errstr(e), err=True)
+        self.ws.runs.load()
+        txt = Text()
+        txt.append(f'{p}\n\n', style=f"bold {PAL['aqua']}")
+        txt.append('written with a starting entry — edit it and run with ctrl+alt+d.\n' if made
+                   else 'edit it and run with ctrl+alt+d.\n', style=PAL['fg2'])
+        txt.append('each entry is a command line; leela runs it in a process with an inspector\n'
+                   'in it, so its module namespace shows up in the variable panel.\n\n', style=PAL['fg2'])
+        txt.append('  {"name": "api", "cmd": "uvicorn app:app --port 8000", "watch": "app"}\n\n',
+                   style=PAL['green'])
+        txt.append('something you start yourself can join in too, in one line:\n', style=PAL['fg2'])
+        txt.append('  import leela.inspect as li; li.serve(name="api")\n', style=PAL['green'])
+        for r in self.ws.runs.runs: txt.append(f'\n  {r.name:16} {r.cmd}', style=PAL['fg4'])
+        if self.ws.runs.note: txt.append(f'\n⚠ {self.ws.runs.note}', style=PAL['red'])
+        self.push_screen(PreviewScreen('run configurations', txt))
+        self.status(f'runs: {p}')
 
     # -- git, terminal, research -------------------------------------------
     @work
@@ -1197,11 +1243,29 @@ class IdeApp(App):
         self.query_one('#agentlog', Static).update(t)
         self.status(self.ws.research.note)
 
-    def action_switch_env(self):
-        """Point the variable panel at another live env -- a dev server, or another kernel."""
-        from ..inspect.server import active
-        envs = active()
-        self.status('live envs: ' + ', '.join(f"{e['name']}:{e['port']}" for e in envs) if envs else 'no live envs')
+    @work
+    async def action_switch_env(self):
+        """Point the variable panel at another live env -- an app leela started, or another kernel.
+
+        Every process that registered an inspector is on this list, whoever started it: a
+        notebook kernel, an app run from a configuration, or something you launched
+        yourself that called `leela.inspect.serve()`. What is *not* on it is a process with
+        no inspector in it, because there is nothing there to read.
+        """
+        envs = self.ws.envs()
+        rows = [{'name': 'the tab’s own kernel', 'base': None, 'kind': 'kernel', 'pid': None,
+                 'current': not self.ws.env_base}] + envs
+        def fmt(e):
+            mark = '● ' if e['current'] else '○ '
+            tail = f" · pid {e['pid']}" if e.get('pid') else ''
+            return f"{mark}{e['name']:24} {e['kind']:7}{tail}"
+        pick = await self.push_screen_wait(PickerScreen(
+            f'{len(envs)} live env(s) — anything running leela.inspect.serve()', rows, fmt=fmt))
+        if pick is None: return
+        self.ws.watch_env(pick['base'])
+        self._paint_scope()
+        await self.refresh_vars()
+        self.status(f"watching {pick['name']}" if pick['base'] else 'back on the tab’s kernel')
 
     # tab_1..tab_9
     def _mk_tab_action(i):
@@ -1260,8 +1324,9 @@ class IdeApp(App):
             if self.ws.tab: self.ws.tab.dirty = True
             await self._sync_tabs()
             edited = ', '.join(Path(p).name for p in self.last_edits) if self.last_edits else ''
-            self.status(f'answered · edited {edited} (ctrl+alt+l for the diff)' if edited
-                        else self.ws.ai.note, err=not self.ws.ai.ready)
+            if edited and not self.ws.ai.problems:
+                self.status(f'answered · edited {edited} (ctrl+alt+l for the diff)')
+            else: self._say_note(self.ws.ai)
         else:
             self.status(f'running cell {i}…')
             k = await self.kernel()
@@ -1598,9 +1663,20 @@ class IdeApp(App):
             t.append(f'  ✎ {Path(p).name}  {diff_label(was, now)}   (ctrl+alt+l for the diff)\n',
                      style=PAL['orange'])
         t.append(text, style=PAL['fg2'])
+        for p in ai.problems: t.append(f'\n⚠ {p}', style=PAL['red'])
         log.update(t)
-        self.status(ai.note, err=not ai.ready)
+        self._say_note(ai)
         await self._after_edits()
+
+    def _say_note(self, ai):
+        """The status line after a turn: what went wrong if anything did, else the note.
+
+        A turn can finish looking fine while the engine refused the compaction it needed,
+        or answered a cheap job with nothing. Those failures cannot raise -- their callers
+        have nowhere to put an exception -- so the status line is where they surface.
+        """
+        if ai.problems: return self.status(ai.problems[-1] + '  (ctrl+alt+l for the rest)', err=True)
+        self.status(ai.note, err=not ai.ready)
 
     async def _after_edits(self):
         """Reload the open tab when the assistant moved the file underneath it.
@@ -1737,7 +1813,12 @@ class IdeApp(App):
         if s['note'] and not s['note'].startswith(s['model_note']): t.append(f"{s['note']}\n", style=PAL['fg4'])
         t.append(f"context {100*s['pct_full']:.0f}% full"
                  + (f" · {s['compactions']} compaction(s)" if s['compactions'] else '')
-                 + (f"  ·  {s['usage']}" if s['use']['total'] else '') + '\n\n', style=PAL['gray'])
+                 + (f"  ·  {s['usage']}" if s['use']['total'] else '') + '\n', style=PAL['gray'])
+        # What failed quietly. These are the ones with nowhere else to go: a cheap job
+        # returns '' to a caller that cannot raise, and a native engine complains on a file
+        # descriptor rather than in an exception.
+        for p in s.get('problems') or []: t.append(f'⚠ {p}\n', style=PAL['red'])
+        t.append('\n')
         for a in ai.activity.acts[-25:]:
             t.append(f'{a.line()}\n', style=PAL['aqua'] if a.ok else PAL['red'])
         for p, (was, now) in self.last_edits.items():

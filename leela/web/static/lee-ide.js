@@ -17,6 +17,7 @@ const lee = {
   hist: [], histIdx: 0,
   varOpen: new Set(), varPrev: {},
   term: null, lastDoc: null,
+  shownProblems: new Set(),   // agent failures already written into the pane, so they show once
 };
 window.lee = lee;
 
@@ -129,7 +130,8 @@ const ACTIONS = {
   prev_tab:     () => shiftTab(-1),
   interrupt:    async () => { await post('/kernel/interrupt'); status('interrupted', 'ok'); },
   restart:      async () => { status('restarting kernel…'); await post('/kernel/restart'); status('kernel restarted', 'ok'); leeVars(); },
-  switch_env:   () => status('env switching arrives with the dev-server panel'),
+  switch_env:   pickEnv,
+  edit_runs:    editRuns,
   quit:         () => status('close the browser tab to leave'),
 
   run_cell:     () => lee.kind === 'text' ? runFile() : runCell(lee.sel, false),
@@ -393,8 +395,11 @@ async function askCell(i, src, el) {
       agentLog(`<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
                `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
     const here = (r.edits || []).some(e => e.path === lee.path);
-    status(here ? 'this notebook also changed on disk — your buffer wins until you save'
-                : (r.note || 'answered'), r.ok && !here ? 'ok' : 'err');
+    showProblems(r.problems);
+    status((r.problems || []).length ? r.problems[r.problems.length - 1]
+           : here ? 'this notebook also changed on disk — your buffer wins until you save'
+                  : (r.note || 'answered'),
+           r.ok && !here && !(r.problems || []).length ? 'ok' : 'err');
     markDirty();
     leeVars();
   } catch (e) { status(String(e.message || e), 'err'); }
@@ -881,7 +886,11 @@ function sendAgent() {
       agentLog(`<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
                `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
     const tail = d.usage ? `${d.note || 'done'} · ${d.usage}` : (d.note || 'done');
-    status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
+    // Problems win the status line. A turn that "succeeded" while the engine refused the
+    // compaction it needed is the case where a cheerful status line is actively misleading.
+    showProblems(d.problems);
+    if ((d.problems || []).length) status(d.problems[d.problems.length - 1], 'err');
+    else status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
     await reloadAfterEdits(d.edits || []);
   });
 
@@ -914,12 +923,25 @@ async function stopAgent() {
   status(d.ok ? 'asked the model to stop' : d.error, d.ok ? 'ok' : 'err');
 }
 
+/* Failures with nowhere else to go: a compaction the engine refused, a completion that
+ * came back empty, anything the native model layer printed instead of raising. They land
+ * in the agent pane because that is where the turn they belong to is. */
+function showProblems(ps) {
+  for (const p of (ps || [])) {
+    if (lee.shownProblems.has(p)) continue;
+    lee.shownProblems.add(p);
+    agentLog(`<div class="lee-runline err"><span class="res">⚠ ${esc(p)}</span></div>`);
+  }
+}
+
 async function agentTools() {
   const d = await api('/agent/status');
   const rows = (d.calls || []).map(c => `${c.tool}(${c.args})`).join('\n');
   agentLog(`<div class="lee-runline"><span class="sub">${esc(d.note)} · ${d.ntools} tools` +
-           `${d.busy ? ' · thinking now' : ''}</span></div>` +
+           `${d.busy ? ' · thinking now' : ''} · context ${Math.round(100 * (d.pct_full || 0))}% full` +
+           `${d.compactions ? ' · ' + d.compactions + ' compaction(s)' : ''}</span></div>` +
            (rows ? `<div class="lee-runline"><span class="code">${esc(rows)}</span></div>` : ''));
+  showProblems(d.problems);
 }
 
 /* ------------------------------------------------------------------ terminal */
@@ -943,6 +965,12 @@ async function openTerm(kind) {
   setScope('term');
   lee.term.focus();
 }
+
+// The IDE follows the system's light/dark setting through a media query; the terminal
+// reads its colours from CSS once, when it is created, so it has to be told.
+try {
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => lee.term?.retheme());
+} catch (e) {}
 
 function closeTerm() {
   if (lee.term) { lee.term.dispose(); lee.term = null; }
@@ -1189,16 +1217,98 @@ async function codeMap() {
   });
 }
 
+/* Start a run configuration -- a command line, kept in the project -- in a process leela
+ * puts an inspector into. That is the difference between this and the same command in a
+ * terminal: the inspector is *inside* it, so the variable panel can watch the app's own
+ * module while it serves. A process started anywhere else has to opt in with
+ * `leela.inspect.serve()`; the picker says so, because everyone asks. */
 async function runApp() {
-  if (!lee.path || !lee.path.endsWith('.py')) return status('open a .py app first', 'err');
-  status('starting dev server…');
-  try {
-    const d = await api('/dev/start?path=' + encodeURIComponent(lee.path));
-    if (!d.ok) return status(d.error || 'failed to start', 'err');
-    status(`${d.label} running · app ${d.app_url || '?'} · inspector ${d.base || '?'}`, 'ok');
-    const log = $('#agentlog');
-    if (log) log.textContent = (d.log || []).join('\n');
-  } catch (e) { status(String(e.message || e), 'err'); }
+  const d = await api('/runs');
+  const opts = (d.runs || []).concat(d.here ? [d.here] : []);
+  if (!opts.length) {
+    editRuns();
+    return status('no run configurations yet — here is the file', 'err');
+  }
+  const start = async (r) => {
+    status(`starting ${r.name}…`);
+    const s = await api('/dev/start?name=' + encodeURIComponent(r.name) +
+                        '&path=' + encodeURIComponent(r.cmd));
+    if (!s.ok) return status(s.error || 'failed to start', 'err');
+    agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)} — ${esc(s.cmd)}</span></div>` +
+             `<div class="lee-runline"><span class="res">${esc((s.log || []).join('\n'))}</span></div>`);
+    status(`${s.label} running · app ${s.app_url || '?'} · inspector ${s.base || 'pending'}` +
+           (s.base ? ' — “env…” in the variable panel watches it' : ''), 'ok');
+    leeVars();
+  };
+  if (opts.length === 1) return start(opts[0]);
+  const m = modal(
+    `<div class="lee-mhead">run<span class="sub">${esc(d.path || 'no project folder')}</span></div>` +
+    `<div class="lee-modallist">${opts.map((r, i) =>
+      `<div class="lee-mrow" data-i="${i}">${esc(r.name)}<span class="sub">${esc(r.cmd)}</span></div>`).join('')}</div>` +
+    `<div class="lee-mfoot"><button class="lee-btn" id="editruns">edit configurations</button></div>`);
+  m.addEventListener('click', (e) => {
+    const r = e.target.closest('.lee-mrow'); if (!r) return;
+    m.remove(); start(opts[+r.dataset.i]);
+  });
+  m.querySelector('#editruns').onclick = () => { m.remove(); editRuns(); };
+}
+
+/* Which live namespace the variable panel shows. Every process that registered an
+ * inspector is here -- a notebook kernel, an app leela started, or something you launched
+ * yourself that called `leela.inspect.serve()`. Nothing else can be, because nothing else
+ * has anything to read. */
+function paintEnv(name) {
+  lee.env = name || '';
+  const t = $('#envtag'); if (!t) return;
+  t.textContent = name ? '▶ ' + name : '';
+  t.style.display = name ? '' : 'none';
+  t.title = name ? 'the variable panel is watching this env, not the tab’s kernel' : '';
+}
+
+async function pickEnv() {
+  const d = await api('/envs');
+  const rows = [{name: 'the tab’s own kernel', base: null, kind: 'kernel', current: !d.watching}]
+    .concat(d.envs || []);
+  const m = modal(
+    `<div class="lee-mhead">watch<span class="sub">${(d.envs || []).length} live env(s)</span></div>` +
+    `<div class="lee-modallist">${rows.map((e, i) =>
+      `<div class="lee-mrow${e.current ? ' sel' : ''}" data-i="${i}">${e.current ? '● ' : '○ '}` +
+      `${esc(e.name)}<span class="sub">${esc(e.kind)}${e.pid ? ' · pid ' + e.pid : ''}</span></div>`).join('')}</div>` +
+    `<div class="lee-dim">a process only appears here if it has an inspector in it — ` +
+    `<code>${esc(d.hint)}</code> puts one in yours.</div>`);
+  m.addEventListener('click', async (e) => {
+    const r = e.target.closest('.lee-mrow'); if (!r) return;
+    const pick = rows[+r.dataset.i];
+    m.remove();
+    await post('/envs/watch', {base: pick.base});
+    paintEnv(pick.base ? pick.name : '');
+    status(pick.base ? 'watching ' + pick.name : 'back on the tab’s kernel', 'ok');
+    leeVars();
+  });
+}
+
+/* The configurations themselves, editable in place for the same reason the keymap is:
+ * telling someone to go and find a JSON file is not a feature. */
+async function editRuns() {
+  const d = await api('/runs/file');
+  const m = modal(
+    `<div class="lee-mhead">run configurations<span class="sub">${esc(d.path || 'open a folder first')}</span></div>` +
+    `<div class="lee-dim">each entry is a command line — <code>uvicorn app:app --port 8000</code>, ` +
+    `<code>python train.py</code>. leela runs it with an inspector inside the process, so its ` +
+    `module namespace shows up in the variable panel. <code>watch</code> names that module; ` +
+    `blank infers it.</div>` +
+    (d.note ? `<div class="lee-err">${esc(d.note)}</div>` : '') +
+    `<textarea class="lee-keyedit" id="runstext" spellcheck="false"></textarea>` +
+    `<div class="lee-mfoot"><button class="lee-btn go" id="runsave">save</button></div>`);
+  const ta = m.querySelector('#runstext');
+  ta.value = d.text;
+  m.querySelector('#runsave').onclick = async () => {
+    try {
+      const r = await post('/runs/save', {text: ta.value});
+      status(r.note || `saved ${r.runs.length} configuration(s)`, r.note ? 'err' : 'ok');
+      m.remove();
+    } catch (e) { status(String(e.message || e), 'err'); }
+  };
 }
 
 function palette() {

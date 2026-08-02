@@ -183,6 +183,9 @@ def _vars_panel(ws):
             Div(Button('live', id='sc-live', cls='lee-seg active', onclick='leeScope("live")'),
                 Button('isolated', id='sc-iso', cls='lee-seg', onclick='leeScope("isolated")'),
                 cls='lee-segbar', title='live runs in the kernel · isolated is sandboxed and discards writes'),
+            # Named only when it is *not* the tab's kernel: a panel showing a running app
+            # must never be mistaken for the notebook's own namespace.
+            Span(id='envtag', cls='lee-pill lee-pill-on', style='display:none'),
             Span(cls='lee-spacer'), _action_bar('vars'),
             cls='lee-phead'),
         Div(Input(id='varfilter', placeholder='filter…', cls='lee-input', oninput='leeFilterVars()'),
@@ -364,7 +367,14 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
     async def _k(): return await ws.kernel()
 
     async def _api(path, params=None, timeout=15):
-        "Proxy one inspector call on the active tab's kernel; None when it has no server."
+        """Proxy one inspector call on whatever the panel is watching; None when there is none.
+
+        Which is usually the active tab's kernel, and is a running app when the env picker
+        says so -- the panel does not care, because `Workspace.inspector` hands back the
+        same shape either way.
+        """
+        if ws.env_base and (env := ws.inspector()) is not None and getattr(env, 'kernel_kind', '') == 'env':
+            return await env.api(path, params, timeout)
         k = await _k()
         return await k.api(path, params, timeout) if k else None
 
@@ -533,6 +543,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
         except Exception as e: return _fail(e)
         if ws.tab: ws.tab.dirty = True
         return {'ok': ws.ai.ready, 'i': i, 'cell': c.dict(), 'note': ws.ai.note,
+                'problems': ws.ai.problems,
                 'cells': [x.dict() for x in nb.cells],   # approval/compaction cells may have landed
                 'activity': ws.ai.activity.rows(mark=ws.ai.activity._mark),
                 'edits': [{'path': p, **_diff(was, now)} for p, (was, now) in ws.ai.changes().items()]}
@@ -794,16 +805,76 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
             return {'ok': True, 'entry': e.dict(), 'note': ws.research.note}
         except Exception as e: return _fail(e)
 
-    # -- dev servers -------------------------------------------------------
+    # -- live envs ---------------------------------------------------------
+    @rt('/envs')
+    def envs_route():
+        """Everything the variable panel could point at, and what it is pointing at now.
+
+        A process only appears here if it has an inspector in it. That is the whole answer
+        to "will you pick up the uvicorn I started in a terminal": not unless it says
+        `leela.inspect.serve()`, or leela started it from a run configuration.
+        """
+        return {'envs': ws.envs(), 'watching': ws.env_base,
+                'hint': 'import leela.inspect as li; li.serve(name="api")'}
+
+    @rt('/envs/watch')
+    async def envs_watch(req):
+        d = await req.json()
+        return {'ok': True, 'watching': ws.watch_env(d.get('base'))}
+
+    # -- run configurations & dev servers ----------------------------------
+    @rt('/runs')
+    def runs_route():
+        "The project's run configurations, plus one for the open file so the picker is never empty."
+        t = ws.tab
+        here = ws.runs.for_file(t.path) if (t is not None and (t.path or '').endswith('.py')) else None
+        names = {r.name for r in ws.runs.runs}
+        return {'runs': [r.dict() for r in ws.runs.runs],
+                'here': here.dict() if (here and here.name not in names) else None,
+                'path': str(ws.runs.path or ''), 'note': ws.runs.note,
+                'servers': [s.state() for s in ws.dev.all()]}
+
+    @rt('/runs/save')
+    async def runs_save(req):
+        "Write the configurations file, creating it from a template when there is none yet."
+        d = await req.json()
+        try:
+            if (text := d.get('text')) is not None:
+                json.loads(text)                      # refuse to write a file we could not read back
+                p = ws.runs.path
+                if p is None: return _fail('open a folder first')
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(text)
+            ws.runs.load()
+        except Exception as e: return _fail(e)
+        return {'ok': True, 'path': str(ws.runs.path or ''), 'note': ws.runs.note,
+                'runs': [r.dict() for r in ws.runs.runs]}
+
+    @rt('/runs/file')
+    def runs_file():
+        "The configurations file as text, or a template for one, for the in-IDE editor."
+        p = ws.runs.path
+        t = ws.tab
+        try: text = p.read_text() if (p and p.exists()) else ''
+        except Exception: text = ''
+        if not text:
+            text = json.dumps(ws.runs.template(t.path if t else None), indent=2) + '\n'
+        return {'path': str(p or ''), 'exists': bool(p and p.exists()), 'text': text,
+                'note': ws.runs.note}
+
     @rt('/dev/list')
     def dev_list(): return {'servers': [s.state() for s in ws.dev.all()]}
 
     @rt('/dev/start')
-    async def dev_start(path: str):
-        "Run a python web app under a live inspector; its module globals become another env."
+    async def dev_start(path: str = '', name: str = ''):
+        """Start a run configuration, or a file, under a live inspector.
+
+        The inspector is in the process the command runs in -- that is what makes its
+        module namespace watchable while it serves. `name` picks a configuration; `path`
+        runs a file directly.
+        """
         try:
-            p = ws.fs._check(path, must_exist=True)
-            s = await ws.dev.start(p)
+            s = await ws.run(name or path)
             return {'ok': s.alive, **s.state(), 'log': s.tail(20)}
         except Exception as e:
             return _fail(e)
@@ -905,8 +976,11 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
                     for r in rows[n:]: yield _sse('activity', r)
                     n = len(rows)
             await task
+            # `problems` rather than `note` alone: a turn can finish looking fine while the
+            # engine refused a compaction or a completion on the way, and those failures
+            # have no other way out -- see `Agent.problems`.
             yield _sse('done', {'ok': a.ready, 'note': a.note, 'usage': repr(a.use),
-                                'model': a.model.name,
+                                'model': a.model.name, 'problems': a.problems,
                                 'activity': a.activity.rows(mark=a.activity._mark),
                                 'edits': [{'path': p, **_diff(was, now)}
                                           for p, (was, now) in a.changes().items()]})

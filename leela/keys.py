@@ -184,7 +184,8 @@ DEFAULTS = L(
     Key('interrupt',        'ctrl+alt+i f10', 'global', 'interrupt kernel',   'toast'),
     Key('restart',          'ctrl+alt+k',    'global', 'restart kernel'),
     Key('pick_kernel',      'ctrl+alt+j',    'global', 'choose kernel',       'toast'),
-    Key('switch_env',       'ctrl+alt+e',    'global', 'switch env'),
+    Key('switch_env',       'ctrl+alt+e',    'global', 'watch another env',   'toast'),
+    Key('edit_runs',        '',              'global', 'run configurations'),
     # Running a *file* is its own thing, and not the same as running the cell the cursor is
     # in: it runs the whole buffer as a script, in the tab's kernel, so what it defines is
     # in the variable panel afterwards. `run_app` below is the third thing again -- a
