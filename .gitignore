@@ -155,3 +155,8 @@ leela/web/src/package-lock.json
 
 # pytest-textual-snapshot writes this on failure
 snapshot_report.html
+leela_sessions/
+
+# capture side-products: the SVG and PNG are the artefacts, the text dump is a debugging aid
+docs/screenshots/*.txt
+leela/_shot.ipynb

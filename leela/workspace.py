@@ -19,16 +19,64 @@ from dataclasses import dataclass
 from fastcore.all import Path, L, ifnone
 
 from . import Dictable, leela_cfg
-from .ai import Assistant, Completer
+from .ai import Assistant, Completer, notebook_approvals
 from .devserver import DevServers
 from .fs import Sandbox, Unsafe, lang_for, is_texty
 from .kernels import KernelPool
 from .nb import Notebook
 from .research import Research
+from .runs import Run, Runs
 from .search import Search
 from .term import Terminals
 
 __all__ = ['Tab', 'Workspace', 'ws_path']
+
+
+class _EnvClient:
+    """Read-only access to some *other* process's inspector, in the shape `Kernel.api` has.
+
+    So the panel does not care what it is looking at. A kernel has an execution channel and
+    a lifecycle on top of this; an app leela started, or a process that called
+    `leela.inspect.serve()` itself, has only the HTTP surface -- which is all the variable
+    tree ever used.
+    """
+
+    def __init__(self, base, name=''):
+        self.base, self.name = base, name
+        self.alive, self.boot_error, self.pid = True, None, None
+        self.kernel_kind = 'env'
+
+    @property
+    def token(self):
+        "The owner token this inspector wrote next to its registry entry, if it armed one."
+        from .inspect.server import reg_dir
+        try: return (reg_dir()/f"token-{self.base.rsplit(':', 1)[-1]}").read_text().strip() or None
+        except Exception: return None
+
+    async def api(self, path, params=None, timeout=15):
+        import httpx
+        h = {'X-Leela-Token': t} if (t := self.token) else {}
+        try:
+            async with httpx.AsyncClient(base_url=self.base, timeout=timeout, headers=h) as c:
+                r = await c.get(path, params=params or {})
+                r.raise_for_status()
+                return r.json()
+        except Exception:
+            return None
+
+    async def names(self, scope='live', profile='full'):
+        r = await self.api('/api/rows', {'profile': profile, 'sort': 'name'})
+        return L(n.get('name', '') for g in (r or {}).get('groups', []) for n in g.get('nodes', []))
+
+    async def execute(self, code, **kw):
+        "Not available: an env is a namespace to look at, not a kernel with a shell channel."
+        from .kernels import ExecOutcome
+        return ExecOutcome(ok=False, error=f'{self.name} is a watched env, not a kernel — '
+                                           'switch back to the kernel to run code')
+    async def complete(self, code, pos): return {'from': pos, 'matches': []}
+    async def inspect_obj(self, code, pos, detail=0): return ''
+    async def interrupt(self): pass
+    async def restart(self): pass
 
 
 def ws_path(): return leela_cfg/'workspace.json'
@@ -55,25 +103,67 @@ class Tab(Dictable):
 class Workspace:
     "The IDE's session: open folders, open tabs, and the kernels behind them."
 
-    def __init__(self, roots=(), port=8000, agent='restricted', dev_port=9000):
+    def __init__(self, roots=(), port=8000, agent='restricted', dev_port=9000, kernel='ipykernel',
+                 model=None,              # the agent's turn model; None takes the routing default
+                 approvals='ask',         # 'ask' | 'auto' (approve every write) | 'off' (refuse them)
+                 agent_scope='overlay',   # widest scope `inspect_python` may use: 'overlay' | 'isolated'
+                 python=None):            # interpreter kernels launch under; None is leela's own
         self.fs = Sandbox(roots)
-        self.pool = KernelPool(port=port)
+        self.pool = KernelPool(port=port, default_kernel=kernel, default_python=python)
         self.dev = DevServers(port=dev_port)
         self.search = Search(self.fs)
         self.research = Research(self.fs)
+        self.runs = Runs(self.fs.roots[0] if self.fs.roots else None)
+        # Which live inspector the variable panel is looking at, when it is not the tab's
+        # own kernel. A base URL, because that is what identifies an env across processes.
+        self.env_base = None
         self.terms = Terminals(cwd=self.fs.roots[0] if self.fs.roots else None)
         self.agent = agent
+        # `kernel_kind`, not `kernel`: `kernel()` below is the coroutine that hands out the
+        # live kernel for a tab, and an attribute of the same name shadows it — every
+        # `await ws.kernel()` in both frontends then awaits the string 'ipykernel'.
+        self.kernel_kind = kernel
+        # The widest scope the agent's read-only execution may reach for. Neither scope
+        # can change what the user made; 'isolated' additionally denies it the real
+        # interpreter, which is the setting for a machine where even a scratch layer in
+        # the kernel is unwanted.
+        self.agent_scope = agent_scope
         self.tabs = L()
         self.active = 0
         self._untitled = 0
         self._ai = self._completer = None
+        self.model = model                # the turn model; None takes the routing default
         self.screen = (None, '', '')      # a capture waiting to ride along with the next question
+        self.on_note = None               # a frontend's status line, when one has registered
+        # Where an approval raised mid-turn writes itself. Set by `ask_cell` for the length
+        # of one prompt cell and cleared afterwards, so an approval for a question typed in
+        # the prompt bar does not land in whichever notebook happens to be open.
+        self._approval_target = None
+        self.approvals = notebook_approvals(lambda: self._approval_target, mode=approvals)
 
     @property
     def ai(self):
         "The assistant, built on first ask. Held here so both frontends share one conversation."
-        if self._ai is None: self._ai = Assistant(self)
+        if self._ai is None:
+            self._ai = Assistant(self, model_id=self.model, on_compact=self._compacted)
+            self.approvals.host = self._ai.host
         return self._ai
+
+    def _compacted(self, summary):
+        """Write a compaction summary into the notebook the conversation is happening in.
+
+        Everywhere else compaction is invisible until you notice the agent has forgotten
+        something. Here it is a cell: readable, editable, and saved with the work. If the
+        model dropped something that mattered you can type it straight back in.
+        """
+        t = self._approval_target
+        if not t: return
+        nb, i = t
+        from .nb import Cell
+        c = Cell(source=f'**🗜 context compacted**\n\n{summary}', cell_type='markdown')
+        c.approval = {'kind': 'compaction'}
+        nb.insert(min(i + 1, len(nb)), c)
+        nb.dirty = True
 
     @property
     def completer(self):
@@ -82,7 +172,10 @@ class Workspace:
         return self._completer
 
     # -- folders ---------------------------------------------------------------
-    def add_root(self, p): return self.fs.add_root(p)
+    def add_root(self, p):
+        r = self.fs.add_root(p)
+        if self.runs.root is None: self.runs = Runs(self.fs.roots[0])
+        return r
 
     def drop_root(self, p):
         "Close a folder, and every tab that lived inside it."
@@ -165,15 +258,25 @@ class Workspace:
         Blocking -- the model runs on whichever thread calls this, so both frontends hand
         it to a worker. The reply lands *in the cell*, which is the whole point: it is
         saved with the document, read in order with everything else, and re-runnable.
+
+        Everything the agent does while answering lands in the same document: an approval
+        it raises becomes markdown cells below this one, a compaction becomes a summary
+        cell, and the tool calls are folded under the answer. So the notebook is the whole
+        record of the exchange, not just its last line.
         """
         c = nb[i]
         if not c.is_prompt: raise ValueError(f'cell {i} is a {c.cell_type} cell, not a prompt')
         a = self.ai
-        n = len(a.calls)
         png, screen, _ = self.take_screen()
-        c.reply = a.ask_with(c.source, context=nb.context(i, since=nb.prompt_start(i)),
-                             screen=screen, image=png)
-        c.calls = [{'tool': t, 'args': str(g)[:300]} for t, g in a.calls[n:]]
+        self._approval_target = (nb, i)
+        try:
+            text = a.ask_with(c.source, context=nb.context(i, since=nb.prompt_start(i)),
+                              screen=screen, image=png)
+        finally:
+            self._approval_target = None
+        trail = a.turn_md()
+        c.reply = f'{text}\n\n{trail}' if trail else text
+        c.calls = a.activity.rows(mark=a.activity._mark)
         nb.dirty = True
         return c
 
@@ -181,6 +284,53 @@ class Workspace:
         "One turn from a prompt bar, with any pending capture attached."
         png, screen, _ = self.take_screen()
         return self.ai.ask_with(prompt, screen=screen, image=png)
+
+    def ask_stream(self, prompt):
+        "The same turn, yielding markdown as it arrives. A cloud turn is far too long to sit through."
+        png, screen, _ = self.take_screen()
+        return self.ai.stream_with(prompt, screen=screen, image=png)
+
+    def ask_cell_stream(self, nb, i):
+        """Answer the prompt cell at `i`, filling the cell in as the answer arrives.
+
+        Yields each markdown chunk *and* appends it to `cell.reply` on the way past, so a
+        frontend can either render the chunks itself or simply repaint the cell — the cell
+        is already the correct thing to look at, which is the advantage of having put the
+        answer in the document in the first place.
+
+        The activity trail is appended at the end rather than streamed, because it is a
+        fold that belongs under the finished answer, not interleaved with it.
+        """
+        c = nb[i]
+        if not c.is_prompt: raise ValueError(f'cell {i} is a {c.cell_type} cell, not a prompt')
+        a = self.ai
+        png, screen, _ = self.take_screen()
+        c.reply, c.calls = '', []
+        nb.dirty = True
+        self._approval_target = (nb, i)
+        try:
+            for chunk in a.stream_with(c.source, context=nb.context(i, since=nb.prompt_start(i)),
+                                       screen=screen, image=png):
+                c.reply += chunk
+                # Refreshed per chunk, not only at the end: a frontend that repaints the
+                # cell should see the tool trail and the answer agree at every moment.
+                c.calls = a.activity.rows(mark=a.activity._mark)
+                yield chunk
+        finally:
+            self._approval_target = None
+            if (trail := a.turn_md()): c.reply += f'\n\n{trail}'
+            c.calls = a.activity.rows(mark=a.activity._mark)
+            nb.dirty = True
+
+    # -- approvals -------------------------------------------------------------
+    @property
+    def pending_approval(self):
+        "The write waiting for a person, or None. What both frontends poll while a turn runs."
+        return self.approvals.pending
+
+    def answer_approval(self, id, ok, note=''):
+        "Answer the pending approval. `note` is the reason, and the reason goes back to the model."
+        return self.approvals.answer(id, ok, note)
 
     def put_screen(self, png=None, text='', note=''):
         """Hold a capture for the next question. One slot, because the useful capture is the latest.
@@ -231,6 +381,142 @@ class Workspace:
 
     def kernel_peek(self, tab=None): return self.pool.peek(self.kernel_key(tab))
 
+    # -- live envs -------------------------------------------------------------
+    # The variable panel used to be able to look at exactly one thing: the active tab's
+    # kernel. Everything else that registers an inspector -- an app leela started, a
+    # process that called `leela.inspect.serve()` itself -- was discoverable and
+    # unwatchable, which is a strange place to stop.
+    def envs(self):
+        """Every inspector this IDE could point the variable panel at.
+
+        Kernels are listed from the pool rather than from the registry so a tab's kernel is
+        named after its folder, the way the rest of the IDE names it; everything else comes
+        from the registry, which is where any process that called `serve()` writes itself.
+        """
+        from .inspect.server import active
+        out, seen = L(), set()
+        for key, k in self.pool.kernels.items():
+            if not (k and getattr(k, 'base', None)): continue
+            seen.add(k.base)
+            out.append({'name': Path(key).name or 'kernel', 'base': k.base, 'kind': 'kernel',
+                        'pid': k.pid, 'current': k.base == self.env_base,
+                        'is_tab': key == self.kernel_key()})
+        for e in active():
+            if e.get('base') in seen: continue
+            out.append({'name': e.get('name') or f"pid {e.get('pid')}", 'base': e['base'],
+                        'kind': 'app', 'pid': e.get('pid'), 'cwd': e.get('cwd', ''),
+                        'current': e['base'] == self.env_base, 'is_tab': False})
+        return out
+
+    def watch_env(self, base=None):
+        "Point the variable panel at one env, or back at the active tab's kernel with `None`."
+        self.env_base = base or None
+        return self.env_base
+
+    def inspector(self, tab=None):
+        """What the variable panel should be reading: the chosen env, else the tab's kernel.
+
+        Falls back rather than failing when the chosen env has gone away -- an app you were
+        watching exits, and the panel should quietly return to the kernel instead of going
+        blank and staying blank.
+        """
+        if self.env_base:
+            e = next((x for x in self.envs() if x['base'] == self.env_base), None)
+            if e is None: self.env_base = None
+            else: return _EnvClient(e['base'], e['name'])
+        return self.kernel_peek(tab)
+
+    # -- run configurations ----------------------------------------------------
+    async def run(self, name_or_path, save=False):
+        """Start a run configuration, or a file, under a live inspector. Returns the `DevServer`.
+
+        The inspector goes *inside* the process the command runs in, which is what makes
+        the variable panel able to show a request handler mutating state while it serves.
+        A command started anywhere else -- a shell, another terminal -- has no inspector in
+        it and cannot be watched; that is what `leela.inspect.serve()` is for.
+        """
+        r = self.runs.get(name_or_path)
+        if r is None:
+            p = self.fs._check(name_or_path, must_exist=True)
+            r = self.runs.for_file(p)
+            if save: self.runs.add(r)
+        root = self.fs.roots[0] if self.fs.roots else None
+        return await self.dev.start(r.cmd, cwd=r.resolved_cwd(root) if root else None,
+                                    name=r.name, watch=r.watch, env=dict(r.env))
+
+    def kernel_options(self, tab=None):
+        """Everything a kernel picker needs, so neither frontend has to know how kernels work.
+
+        Both halves of the choice are here because both are things people mean by "which
+        kernel": the *launcher* (ipykernel, or ipymini for execs that do not queue behind a
+        running cell) and the *interpreter* (which venv's packages the notebook can import).
+        `available` is on the launcher rather than filtered out of the list, so an option
+        that is missing says why instead of not being there.
+        """
+        from .kernels import KERNELS, find_pythons, ipymini_available
+        t = tab or self.tab
+        k = self.kernel_peek(t)
+        cur_py = self.pool.default_python
+        return {
+            'key': self.kernel_key(t),
+            'alive': bool(k and k.alive),
+            'pid': k.pid if k else None,
+            'boot_error': k.boot_error if k else None,
+            'private': bool(t and t.private_kernel),
+            'kinds': [{'id': n, 'current': n == self.pool.default_kernel,
+                       'available': n != 'ipymini' or ipymini_available(),
+                       'note': ('' if n != 'ipymini' or ipymini_available()
+                                else 'pip install "leela[ipymini]"')} for n in KERNELS],
+            'running_kind': k.kernel_kind if k else self.pool.default_kernel,
+            'pythons': [{**p, 'current': p['path'] == cur_py or (cur_py is None and i == 0)}
+                        for i, p in enumerate(find_pythons(self.fs.roots))],
+            'python': cur_py,
+        }
+
+    async def set_kernel(self, kind=None, python=False, private=None, tab=None, restart=True):
+        """Point a tab at a different kernel, and start it.
+
+        The old kernel is shut down rather than left running: two interpreters holding two
+        copies of a large frame is not what anyone asked for by picking from a list, and the
+        variable panel can only show one of them anyway. What *is* preserved is the choice
+        of when -- `restart=False` lets a caller stage the selection and apply it later.
+        """
+        t = tab or self.tab
+        self.pool.choose(kernel=kind, python=python)
+        if private is not None and t is not None: t.private_kernel = bool(private)
+        if not restart: return self.kernel_options(t)
+        await self.pool.close(self.kernel_key(t))
+        await self.kernel(t)
+        return self.kernel_options(t)
+
+    async def restart_kernel(self, tab=None):
+        "Restart the tab's kernel in place, keeping its key and its port."
+        k = self.kernel_peek(tab)
+        if k is None: return await self.kernel(tab)
+        await k.restart()
+        return k
+
+    # -- running a file --------------------------------------------------------
+    def run_file_code(self, tab=None, src=None):
+        """`(code, label)` that runs a tab's file as a script in its kernel, or `(None, why)`.
+
+        Notebooks are cells and files are scripts, and until now only the first of those
+        could actually be run: a `.py` tab was a one-cell document, so "run" meant "run the
+        whole thing as a cell", with no `__main__` and no argv. This is the other half --
+        the same file, run the way `python file.py` would run it, but *in* the kernel, so
+        the variable panel has what it defined afterwards.
+        """
+        from .kernels import run_file_src
+        t = tab or self.tab
+        if t is None: return None, 'nothing open'
+        if t.kind == 'notebook': return None, 'this is a notebook — run its cells, or use run all'
+        if not t.path: return None, f'{t.title} has never been saved'
+        if not t.path.endswith('.py'): return None, f'{Path(t.path).name} is not a python file'
+        if src is None:
+            src = self.text_at(t.path)
+            if src is None: return None, f'could not read {Path(t.path).name}'
+        return run_file_src(t.path, src), Path(t.path).name
+
     async def shutdown(self):
         "Stop every kernel, dev server, terminal and model this workspace started."
         self.terms.close_all()
@@ -252,12 +538,14 @@ class Workspace:
         return p
 
     @classmethod
-    def load(cls, path=None, port=8000, agent='restricted'):
+    def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel',
+             model=None, approvals='ask', agent_scope='overlay', python=None):
         "Restore a saved workspace, dropping any folder or file that has since gone away."
         p = Path(path or ws_path())
         try: d = p.read_json()
         except Exception: d = {}
-        ws = cls(port=port, agent=agent)
+        ws = cls(port=port, agent=agent, kernel=kernel, model=model, approvals=approvals,
+                 agent_scope=agent_scope, python=python)
         for r in d.get('roots', []):
             try: ws.add_root(r)
             except Exception: pass

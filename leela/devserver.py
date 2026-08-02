@@ -9,6 +9,19 @@ because it needs the process stopped.
 Nothing new is invented for discovery. `serve()` inside the child registers in
 leela's registry, so the IDE finds the inspector by pid exactly the way it
 finds a kernel's.
+
+**Any command, not only a script.** `python app.py` was the only shape this
+could run, and it is not the shape most apps are started in: `uvicorn app:app`,
+`python -m flask run`, `pytest -x`. The child resolves a command line the way a
+shell would but *inside its own process* -- an entry point is loaded and called,
+a module is run with `runpy`, a script is exec'd -- because the inspector has to
+live in the process that ends up holding the namespace.
+
+`--watch app` names the module whose namespace the panel should show, and the
+order matters: the module is imported *first*, so when uvicorn later does
+`import app` it finds the one already in `sys.modules` and the dict the handlers
+write to is the dict being inspected. (`--reload` defeats this and says so: the
+reloader runs the app in a *child* of this process, where our inspector is not.)
 """
 
 from __future__ import annotations
@@ -24,15 +37,39 @@ __all__ = ['DevServer', 'DevServers']
 _URL_HINTS = ('running on', 'listening on', 'http://')
 
 
+def split_cmd(cmd):
+    "A command line as argv. Accepts a list already split, or a string to split like a shell."
+    if not isinstance(cmd, str): return [str(c) for c in cmd]
+    import shlex
+    return shlex.split(cmd)
+
+
+def infer_watch(argv):
+    """Which module a command is *about*, for the inspector to watch.
+
+    `uvicorn app:app` and `gunicorn app:app` both name it in the same place, and it is the
+    module the request handlers live in -- which is the namespace worth watching. A bare
+    script is its own module. Anything else, and the caller has to say.
+    """
+    for a in argv[1:]:
+        if a.startswith('-'): continue
+        if ':' in a and '/' not in a and not a.endswith('.py'): return a.split(':', 1)[0]
+    for a in argv:
+        if a.endswith('.py'): return Path(a).stem
+    return ''
+
+
 @dataclass
 class DevServer:
     'One app subprocess running under a live inspector.'
-    script: str
+    script: str                    # a .py path, or any command line ('uvicorn app:app --port 8000')
     cwd: str | None = None
     args: tuple = ()
     name: str | None = None
     port: int = 9000               # base port for the app's *inspector* (auto-bumps if taken)
     max_log: int = 400
+    watch: str = ''                # module whose namespace the panel shows; inferred when blank
+    env: dict | None = None        # extra environment for the child
 
     def __post_init__(self):
         self.proc = None
@@ -50,19 +87,37 @@ class DevServer:
     def pid(self): return self.proc.pid if self.proc else None
 
     @property
-    def label(self): return self.name or Path(self.script).stem
+    def argv(self): return split_cmd(self.script) + [str(a) for a in self.args]
+
+    @property
+    def is_script(self):
+        "Whether this is the original shape: one .py file, run as a script."
+        a = self.argv
+        return len(a) == 1 and a[0].endswith('.py')
+
+    @property
+    def label(self):
+        if self.name: return self.name
+        a = self.argv
+        return Path(a[0]).stem if self.is_script else ' '.join(a[:2])
 
     def _cmd(self):
         # -u so the child's output reaches the log pane as it happens rather than in blocks
+        w = self.watch or infer_watch(self.argv)
         return [sys.executable, '-u', '-m', 'leela.devserver', '--port', str(self.port),
-                '--name', self.label, self.script, *map(str, self.args)]
+                '--name', self.label, *(['--watch', w] if w else []), '--', *self.argv]
+
+    def _cwd(self):
+        if self.cwd: return str(self.cwd)
+        a = self.argv[0]
+        return str(Path(a).parent) if a.endswith('.py') else os.getcwd()
 
     async def start(self):
         "Spawn the app and begin draining its output. Returns self once the inspector registers."
         if self.alive: return self
         self.log.clear(); self.base = self.app_url = None
         self.proc = await asyncio.create_subprocess_exec(
-            *self._cmd(), cwd=str(self.cwd or Path(self.script).parent),
+            *self._cmd(), cwd=self._cwd(), env={**os.environ, **(self.env or {})},
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             start_new_session=True)          # its own group, so stop() cannot signal the IDE
         self.started = time.time()
@@ -114,20 +169,26 @@ class DevServer:
     def tail(self, n=40): return list(self.log)[-n:]
 
     def state(self):
-        return {'label': self.label, 'script': self.script, 'alive': self.alive, 'pid': self.pid,
+        return {'label': self.label, 'script': self.script, 'cmd': ' '.join(self.argv),
+                'alive': self.alive, 'pid': self.pid, 'watch': self.watch or infer_watch(self.argv),
                 'base': self.base, 'app_url': self.app_url,
                 'uptime': (time.time() - self.started) if self.started and self.alive else 0}
 
 
 class DevServers:
-    "The IDE's running apps, keyed by script path."
+    "The IDE's running apps, keyed by what they run."
 
     def __init__(self, port=9000): self.port, self.servers = port, {}
 
     @staticmethod
     def key(script):
-        "Servers are keyed by resolved path, so the same app opened two ways is one server."
-        return str(Path(script).resolve())
+        """Servers are keyed by resolved path, so the same app opened two ways is one server.
+
+        A command line is its own key: `uvicorn app:app --port 8000` and `... --port 8001`
+        are two different things to run, and resolving either as a path would be nonsense.
+        """
+        s = str(script)
+        return str(Path(s).resolve()) if s.endswith('.py') and ' ' not in s else s
 
     async def start(self, script, **kw):
         key = self.key(script)
@@ -147,50 +208,144 @@ class DevServers:
 
 
 # ---------------------------------------------------------------------------
-# child entry point: `python -m leela.devserver app.py`
+# child entry point: `python -m leela.devserver -- <command>`
 # ---------------------------------------------------------------------------
-def _child(argv=None):
-    """Run a script under a live inspector, in this process.
+def _script_module(script, name=None):
+    """Exec a .py into a real module object *pre-registered in `sys.modules`*, and return it.
 
-    The script is executed inside a real module object that is *pre-registered in
-    `sys.modules` under its own name*, and that detail is the whole trick.
-    FastHTML's `serve()` hands uvicorn an import string (`app:app`), so uvicorn
-    imports the module rather than reusing the one already executed. Without the
-    pre-registration that import builds a second module object, and every request
-    then mutates globals that are not the ones being inspected -- the panel sits
-    there showing a request counter frozen at zero while the app happily serves.
-
-    Registering first means uvicorn's import finds this module, so the dict the
-    handlers write to is exactly the dict the inspector is watching.
-
-    `__name__` is still `__main__` so the app's own guard fires and starts the server.
+    The pre-registration is the whole trick. FastHTML's `serve()` hands uvicorn an import
+    string (`app:app`), so uvicorn imports the module rather than reusing the one already
+    executed. Without this that import builds a *second* module object, and every request
+    then mutates globals that are not the ones being inspected -- the panel sits there
+    showing a request counter frozen at zero while the app happily serves.
     """
-    import argparse, types
+    import types
+    script = Path(script).resolve()
+    modname = name or script.stem
+    mod = types.ModuleType(modname)
+    mod.__dict__.update({'__name__': '__main__', '__file__': str(script), '__package__': None})
+    sys.modules[modname] = mod
+    return mod, script
+
+
+def _watch_module(name):
+    """Import the module the panel should watch, before the command that uses it runs.
+
+    Imported *by us and first*, so whatever the command does later -- uvicorn's
+    `import app`, gunicorn's, a factory call -- finds this module in `sys.modules` and
+    writes into the dict the inspector is holding. A module that cannot be imported is not
+    fatal: the process still runs, and the panel shows the runner's own namespace.
+    """
+    from .inspect.server import watch
+    p = Path(f'{name}.py')
+    try:
+        if p.exists():
+            mod, script = _script_module(p, name)
+            exec(compile(script.read_text(), str(script), 'exec'), mod.__dict__)
+        else:
+            from importlib import import_module
+            mod = import_module(name)
+        watch(mod.__dict__, name)
+        print(f'[leela] watching {name}', flush=True)
+        return mod
+    except Exception as e:
+        print(f'[leela] could not watch {name}: {type(e).__name__}: {e}', flush=True)
+        return None
+
+
+def _entry_point(name):
+    "An installed console script by name (`uvicorn`, `flask`, `pytest`), as a callable, or None."
+    try:
+        from importlib.metadata import entry_points
+        for ep in entry_points(group='console_scripts'):
+            if ep.name == name: return ep.load()
+    except Exception: pass
+    return None
+
+
+def run_command(argv):
+    """Run `argv` *in this process*, so the inspector shares its namespace.
+
+    A subprocess would be simpler and would defeat the whole point: the app's globals have
+    to be in the process the inspector is serving from. So the command is resolved the way
+    a shell would resolve it, in this order -- a python invocation is unwrapped, `-m` runs
+    a module, a `.py` is exec'd, and anything else is looked up as an installed console
+    script and *called*, which is what makes `uvicorn app:app` work as typed.
+    """
+    import runpy
+    argv = [str(a) for a in argv]
+    if not argv: raise SystemExit('nothing to run')
+    head, rest = argv[0], argv[1:]
+    if Path(head).name in ('python', 'python3', sys.executable, Path(sys.executable).name):
+        return run_command(rest)
+    if head == '-m':
+        if not rest: raise SystemExit('-m needs a module')
+        sys.argv = [rest[0], *rest[1:]]
+        return runpy.run_module(rest[0], run_name='__main__', alter_sys=True)
+    if head.endswith('.py'):
+        mod, script = _script_module(head)
+        sys.argv = [str(script), *rest]
+        sys.path.insert(0, str(script.parent))
+        return exec(compile(script.read_text(), str(script), 'exec'), mod.__dict__)
+    if (fn := _entry_point(head)) is not None:
+        sys.argv = [head, *rest]
+        return fn()
+    # Not resolvable in-process. Saying so beats silently running it in a subprocess the
+    # inspector cannot see, which would look like the feature working and show nothing.
+    raise SystemExit(f'[leela] cannot run {head!r} in this process — '
+                     f'write it as `python -m {head} ...` if it is a module')
+
+
+def _child(argv=None):
+    """Run a command under a live inspector, in this process.
+
+    `--watch` decides which namespace the panel shows and is imported before the command
+    runs; without it, a script is its own namespace and `x:y` in the command line is taken
+    to name the module (`uvicorn app:app` -> `app`).
+    """
+    import argparse
     from .inspect.server import serve
 
     p = argparse.ArgumentParser(prog='leela-dev')
-    p.add_argument('script')
     p.add_argument('--port', type=int, default=9000, help='base port for the inspector')
     p.add_argument('--name', default=None)
-    p.add_argument('rest', nargs=argparse.REMAINDER)
+    p.add_argument('--watch', default='', help='module whose namespace the panel should show')
+    p.add_argument('cmd', nargs=argparse.REMAINDER,
+                   help='the command to run, after `--` (a .py, `-m module`, or a console script)')
     a = p.parse_args(argv)
+    cmd = [c for c in a.cmd if c != '--']
+    if not cmd: raise SystemExit('nothing to run')
 
-    script = Path(a.script).resolve()
-    modname = script.stem
-    mod = types.ModuleType(modname)
-    mod.__dict__.update({'__name__': '__main__', '__file__': str(script), '__package__': None})
-    sys.modules[modname] = mod          # so uvicorn's `import <modname>` returns *this* module
+    watch = a.watch or infer_watch(cmd)
+    sys.path.insert(0, os.getcwd())
+    label = a.name or watch or Path(cmd[0]).stem
 
-    _, base = serve(port=a.port, ns=mod.__dict__, name=a.name or modname)
-    print(f'[leela] inspector live at {base}', flush=True)
+    # A script is served straight onto its own module, so it is inspectable *while* it
+    # executes rather than only once it has finished importing.
+    if len(cmd) == 1 and cmd[0].endswith('.py'):
+        mod, script = _script_module(cmd[0])
+        _, base = serve(port=a.port, ns=mod.__dict__, name=label)
+        print(f'[leela] inspector live at {base}', flush=True)
+        sys.argv = [str(script)]
+        sys.path.insert(0, str(script.parent))
+        body = lambda: exec(compile(script.read_text(), str(script), 'exec'), mod.__dict__)
+    else:
+        _, base = serve(port=a.port, ns={'__name__': '__main__'}, name=label)
+        print(f'[leela] inspector live at {base}', flush=True)
+        if any(c == '--reload' for c in cmd):
+            print('[leela] --reload runs your app in a child process; the inspector is in '
+                  'this one and will not see it. Drop --reload to inspect it.', flush=True)
+        if watch: _watch_module(watch)
+        body = lambda: run_command(cmd)
 
-    sys.argv = [str(script), *a.rest]
-    sys.path.insert(0, str(script.parent))
-    try:
-        exec(compile(script.read_text(), str(script), 'exec'), mod.__dict__)
+    try: body()
     except KeyboardInterrupt: pass
+    except SystemExit as e:
+        if e.code: print(f'[leela] {e}', flush=True)
     finally:
-        print('[leela] app exited; inspector still live', flush=True)
+        # The inspector outlives the command on purpose: a script that has finished still
+        # has a namespace worth looking at, which is most of why you would run one here.
+        print('[leela] command exited; inspector still live', flush=True)
         try:
             while True: time.sleep(1)
         except KeyboardInterrupt: pass

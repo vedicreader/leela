@@ -8,9 +8,12 @@ and in `f1` and wired to nothing -- which is what these tests exist to stop.
 """
 
 import asyncio
+import json
 import pytest
 
-from leela.keys import KEYS, SCOPES, WEB_ONLY_SCOPES, help_rows, tui_key, web_keymap
+from leela import keys as K
+from leela.keys import (DEFAULTS, KEYS, SCOPES, WEB_ONLY_SCOPES, apply_overrides, help_rows,
+                        keymap_json, lookup, read_overrides, tui_key, web_keymap)
 from leela.tui.app import IdeApp, _binds
 
 
@@ -52,6 +55,90 @@ def test_completions_and_docs_reach_the_exec_strip():
     for action in ('complete', 'ai_complete', 'show_docs'):
         k = next(k for k in KEYS if k.action == action)
         assert k.scope == 'global', f'{action} is {k.scope}-scoped and cannot fire in the exec strip'
+
+
+def test_every_chord_that_needs_a_modern_terminal_has_a_plain_fallback():
+    """`ctrl+enter`, `shift+enter` and `alt+enter` need the kitty keyboard protocol.
+
+    In Terminal.app they arrive as a bare `enter`, which is to say the most important keys
+    in the IDE cannot be pressed at all -- so every binding that leads with one of them
+    carries a function key as well. This is the test that stops a new one being added
+    without one.
+    """
+    hard = {'ctrl+enter', 'shift+enter', 'alt+enter'}
+    for k in KEYS:
+        if k.keys and k.keys[0] in hard:
+            assert len(k.keys) > 1, f'{k.action} is only reachable by {k.keys[0]}'
+            assert k.keys[1].startswith('f'), f'{k.action}: {k.keys[1]} is no easier to press'
+
+
+def test_an_unbound_action_is_still_a_real_action():
+    "An action with no chord is declared, labelled, clickable and rebindable -- just not bound."
+    k = lookup('run_selection')
+    assert k.keys == [] and not k.bound and k.label
+    assert {r['action'] for r in web_keymap()} >= {'run_selection'}
+    assert not [b for b in _binds(k.scope) if b.action.endswith('run_selection')]
+
+
+# ---- the user's own keymap ------------------------------------------------
+def _keymap(tmp_path, d):
+    p = tmp_path / 'keys.json'
+    p.write_text(json.dumps(d))
+    return p
+
+
+def test_a_user_keymap_replaces_the_chord_and_leaves_the_rest(tmp_path):
+    p = _keymap(tmp_path, {'keys': {'run_cell': 'ctrl+y f5', 'quit': ''}})
+    ks = apply_overrides(DEFAULTS, read_overrides(p, notes=[]), notes=[])
+    by = {k.action: k for k in ks}
+    assert by['run_cell'].keys == ['ctrl+y', 'f5']
+    assert by['quit'].keys == [] and not by['quit'].bound
+    assert by['save'].key == lookup('save').key
+
+
+def test_a_broken_entry_costs_that_entry_and_nothing_else(tmp_path):
+    """One typo must not throw the file away, and must not be silent either.
+
+    Each override is applied on its own and checked against the map as it stands, so an
+    unknown action, an unparseable chord and a collision are three notes and three kept
+    defaults -- while the good entry in the same file still lands.
+    """
+    p = _keymap(tmp_path, {'run_cell': 'ctrl+y', 'nope': 'ctrl+q',
+                           'save': 'ctrl+bogus+s', 'focus_files': 'ctrl+e'})
+    notes = []
+    ks = apply_overrides(DEFAULTS, read_overrides(p, notes=notes), notes=notes)
+    by = {k.action: k for k in ks}
+    assert by['run_cell'].keys[0] == 'ctrl+y'          # the good one landed
+    assert by['save'].key == lookup('save').key        # the bad chord was refused
+    assert by['focus_files'].key == 'ctrl+b'           # the collision was refused
+    assert len(notes) == 3 and all(isinstance(n, str) and n for n in notes)
+
+
+def test_a_rejected_override_does_not_leak_into_the_defaults(tmp_path):
+    "The trial map is a copy: a refused entry must not still be sitting in the table it was tried against."
+    p = _keymap(tmp_path, {'focus_files': 'ctrl+e'})
+    apply_overrides(DEFAULTS, read_overrides(p, notes=[]), notes=[])
+    assert lookup('focus_files').key == 'ctrl+b'
+    assert {k.action: k.key for k in DEFAULTS}['focus_files'] == 'ctrl+b'
+
+
+def test_an_unreadable_keymap_is_a_note_not_a_crash(tmp_path):
+    "A config file that cannot be parsed must never be able to stop the IDE from starting."
+    p = tmp_path / 'keys.json'
+    p.write_text('{oops')
+    notes = []
+    assert read_overrides(p, notes=notes) == {}
+    assert len(notes) == 1 and str(p) in notes[0]
+    assert read_overrides(tmp_path / 'nothing-here.json', notes=notes) == {}
+    assert len(notes) == 1, 'a missing file is the normal case, not a problem'
+
+
+def test_the_written_template_reproduces_the_map(tmp_path):
+    "What `--write-keymap` writes, read back, is the map it was written from."
+    p = tmp_path / 'keys.json'
+    p.write_text(json.dumps(keymap_json()))
+    ks = apply_overrides(DEFAULTS, read_overrides(p, notes=[]), notes=[])
+    assert {k.action: k.key for k in ks} == {k.action: k.key for k in KEYS}
 
 
 def _press(app, chord, focus, check):

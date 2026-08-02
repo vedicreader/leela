@@ -51,6 +51,10 @@ class Cell(Dictable):
     running: bool = False
     reply: str = ''                                # a prompt cell's answer
     calls: list = field(default_factory=list)      # and the tools used to reach it
+    # An approval exchange the agent raised while answering a prompt cell: the request, or
+    # the person's answer to it, saved as an ordinary markdown cell so the negotiation is
+    # read in order with everything else. `None` on every other cell.
+    approval: dict | None = None
 
     @property
     def text(self): return output_text(self.outputs)
@@ -60,6 +64,9 @@ class Cell(Dictable):
 
     @property
     def is_prompt(self): return self.cell_type == 'prompt'
+
+    @property
+    def is_approval(self): return self.approval is not None
 
     def clear(self):
         self.outputs, self.execution_count = [], None
@@ -82,6 +89,10 @@ class Cell(Dictable):
         elif self.is_prompt:
             c['cell_type'] = 'markdown'
             c['metadata'] = {'leela': {'kind': 'prompt', 'reply': self.reply, 'calls': list(self.calls)}}
+        elif self.approval is not None:
+            # Same trick as a prompt cell, for the same reason: the exchange is prose, so
+            # it is written as markdown and only the structure lives in metadata.
+            c['metadata'] = {'leela': dict(self.approval, kind='approval')}
         return c
 
     @classmethod
@@ -94,7 +105,8 @@ class Cell(Dictable):
                    outputs=list(c.get('outputs') or []),
                    execution_count=c.get('execution_count'),
                    id=str(c.get('id') or cell_id()),
-                   reply=str(meta.get('reply') or ''), calls=list(meta.get('calls') or []))
+                   reply=str(meta.get('reply') or ''), calls=list(meta.get('calls') or []),
+                   approval=dict(meta) if meta.get('kind') == 'approval' else None)
 
 
 class Notebook:

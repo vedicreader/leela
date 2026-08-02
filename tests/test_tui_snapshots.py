@@ -123,6 +123,54 @@ def test_nameerror_suggests_a_near_miss(snap_compare, app):
     assert snap_compare(app, terminal_size=(140, 42), run_before=run)
 
 
+def test_a_file_fills_the_pane(snap_compare, app):
+    """A `.py` tab is one editor over the whole pane, not a cell capped at twenty rows.
+
+    It opened as a one-cell notebook, which is still how it is edited -- but a cell has a
+    ceiling on its height, so a file longer than the ceiling was drawn with its tail simply
+    missing. This is the regression test for that: the last line of the fixture has to be
+    on the screen.
+    """
+    async def run(pilot):
+        await settle(pilot)
+        await pilot.app.open_path(str(pilot.app.ws.fs.roots[0] / 'sample.py'))
+        await settle(pilot)
+        v = pilot.app._view()
+        assert v.whole_file and v.box(0).ta.show_line_numbers
+    assert snap_compare(app, terminal_size=(140, 42), run_before=run)
+
+
+def test_the_kernel_picker(snap_compare, app):
+    "Launcher and interpreter, both pickable with the mouse, with the cost of doing so stated."
+    async def run(pilot):
+        await settle(pilot)
+        pilot.app.action_pick_kernel()
+        await settle(pilot)
+    assert snap_compare(app, terminal_size=(140, 42), run_before=run)
+
+
+def test_clicking_a_toolbar_button_runs_its_action(app):
+    """The button and the key are two doors into one room, and this is the door with no keymap.
+
+    Pressed rather than called: the whole point is that `on_button_pressed` finds the right
+    action and dispatches it on the *app*, which is exactly where the equivalent bug in the
+    keymap lived (a scoped binding that resolved against the pane and reached nothing).
+    """
+    from leela.buttons import bar
+    from textual.widgets import Button
+
+    async def run():
+        async with app.run_test(size=(140, 42)) as pilot:
+            await settle(pilot)
+            i = [b.action for b in bar('toolbar')].index('cell_type')
+            app._view().focus_cell(3)
+            await settle(pilot, ticks=2)
+            await pilot.click(f'#b-toolbar-{i}')
+            await settle(pilot, ticks=3)
+            return app._view().nb[3].cell_type
+    assert asyncio.run(run()) == 'markdown'
+
+
 def test_help_lists_every_binding(snap_compare, app):
     "f1 is generated from `leela.keys`, so a new binding appears here for free."
     async def run(pilot):

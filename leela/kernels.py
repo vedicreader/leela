@@ -15,10 +15,17 @@ real ipykernel process driven over `jupyter_client`, which the IDE talks to on
 The in-kernel server registers itself in leela's registry, so a kernel started
 here shows up as just another env to the web panel and to the env picker -- no
 new discovery mechanism.
-"""
+
+The launcher is pluggable: `kernel='ipykernel'` (the default) uses ipykernel and
+matches historical behaviour exactly. `kernel='ipymini'` launches the pure-Python
+[ipymini](https://github.com/AnswerDotAI/ipymini) kernel instead. ipymini adds
+`get_ipython().kernel.subshell()` / `.unlock()` helpers so leela's in-kernel HTTP
+handlers (`/agent/api/exec`, `/api/exec`) can execute *alongside* a running cell
+rather than sharing its GIL slice. The two-channel split above is preserved --
+ipymini is a drop-in kernel launcher, not a new inspection transport."""
 
 from __future__ import annotations
-import asyncio, os, sys, queue
+import asyncio, importlib.util, os, sys, queue, warnings
 from dataclasses import dataclass, field
 from fastcore.all import store_attr, ifnone, L
 from fastcore.ansi import strip_ansi
@@ -27,7 +34,76 @@ from jupyter_client.kernelspec import KernelSpec
 
 from .inspect.server import reg_dir, active
 
-__all__ = ['ExecOutcome', 'Kernel', 'KernelPool', 'bootstrap_src', 'output_text']
+__all__ = ['ExecOutcome', 'Kernel', 'KernelPool', 'bootstrap_src', 'output_text', 'ipymini_available',
+           'find_pythons', 'run_file_src']
+
+KERNELS = ('ipykernel', 'ipymini')
+
+def ipymini_available():
+    "True when the ipymini package can be imported in this interpreter."
+    return importlib.util.find_spec('ipymini') is not None
+
+
+def find_pythons(roots=()):
+    """Interpreters a kernel could be launched under: this one, plus any venv in an open folder.
+
+    What a person means by "which kernel" is usually *which environment* -- the venv with
+    their project's dependencies in it, not the one leela happens to be installed in. The
+    two are the same only when leela was installed into the project, which is the least
+    likely arrangement of the three (pipx, uv tool, and a project venv all separate them).
+
+    Discovery is deliberately shallow: the interpreter running leela, then `bin/python` in
+    the usual venv directory names directly under each open folder. Anything else can be
+    typed in -- this list is the common case made clickable, not an exhaustive search of
+    the disk.
+    """
+    from pathlib import Path
+    from shutil import which
+    out, seen = L(), set()
+
+    def add(p, label):
+        p = str(p)
+        if p in seen or not os.path.exists(p): return
+        seen.add(p)
+        out.append({'path': p, 'label': label})
+
+    add(sys.executable, 'this one (leela’s own)')
+    for r in L(roots):
+        r = Path(r)
+        for d in ('.venv', 'venv', 'env', '.env'):
+            for b in ('bin/python', 'Scripts/python.exe'):
+                add(r/d/b, f'{r.name}/{d}')
+    for n in ('python3', 'python'):
+        if (w := which(n)): add(w, f'{n} on PATH')
+    return out
+
+
+def run_file_src(path, src=None, argv=()):
+    """Code that runs a file in the kernel's *own* namespace, with script semantics.
+
+    Three things have to be true at once, and each rules out an obvious alternative:
+
+    - what the script defines must land in the namespace the variable panel is watching,
+      which `runpy.run_path` (a fresh dict) and a subprocess (a fresh process) both fail;
+    - `__name__` must be `'__main__'`, so a script's `if __name__ == '__main__':` block
+      runs -- which it is already, in a kernel, since the user namespace *is* `__main__`;
+    - the traceback must point at the file, which is why the source is compiled under
+      `path` rather than exec'd as a string.
+
+    `src` is the editor's buffer when it has one, so an unsaved change runs as typed
+    instead of silently running the last saved version. The temporaries are named and
+    deleted rather than hidden in a function, because a function body would give the
+    script its own local scope and every assignment in it would vanish on return.
+    """
+    src = open(path, encoding='utf-8').read() if src is None else src
+    return ('import sys as _lee_sys\n'
+            f'_lee_code = compile({src!r}, {str(path)!r}, "exec")\n'
+            '_lee_argv = _lee_sys.argv\n'
+            f'_lee_sys.argv = [{str(path)!r}, *{list(argv)!r}]\n'
+            'try: exec(_lee_code)\n'
+            'finally:\n'
+            '    _lee_sys.argv = _lee_argv\n'
+            '    del _lee_sys, _lee_code, _lee_argv\n')
 
 # Bootstrap run silently in a fresh kernel to start its inspector.
 #
@@ -35,18 +111,28 @@ __all__ = ['ExecOutcome', 'Kernel', 'KernelPool', 'bootstrap_src', 'output_text'
 # exactly as empty as they left it -- an inspector that shows you its own scaffolding
 # in your variable list has failed at its one job. Nothing is returned through the
 # namespace either; the port comes back via the registry entry, matched on pid.
+#
+# Under ipymini we also stash a reference to `get_ipython().kernel` on the inspect
+# server module, so its HTTP handlers can enter a subshell for concurrent execution.
 BOOTSTRAP = '''
 def _lee_bootstrap():
 	import leela.inspect.server as ls
-	return ls.serve_in_kernel(name={name!r}, port={port!r}, agent={agent!r}, token={token!r})
+	r = ls.serve_in_kernel(name={name!r}, port={port!r}, agent={agent!r}, token={token!r})
+	if {ipymini!r}:
+		try:
+			from IPython import get_ipython
+			ls._kernel_backend = getattr(get_ipython(), 'kernel', None)
+		except Exception: ls._kernel_backend = None
+	return r
 try: _lee_bootstrap()
 finally: del _lee_bootstrap
 '''
 
 
-def bootstrap_src(name=None, port=8000, agent='restricted', token=True):
+def bootstrap_src(name=None, port=8000, agent='restricted', token=True, kernel='ipykernel'):
     "The bootstrap cell source for a kernel that should host an inspector."
-    return BOOTSTRAP.format(name=name, port=port, agent=agent, token=token)
+    return BOOTSTRAP.format(name=name, port=port, agent=agent, token=token,
+                            ipymini=(kernel == 'ipymini'))
 
 
 def output_text(outs):
@@ -74,10 +160,13 @@ class ExecOutcome:
     def text(self): return output_text(self.outputs)
 
 
-def _spec(python=None, name='python3'):
+def _spec(python=None, name='python3', kernel='ipykernel'):
     "A kernelspec pinned to a specific interpreter, so the kernel lands in *this* venv."
-    return KernelSpec(argv=[python or sys.executable, '-m', 'ipykernel_launcher', '-f', '{connection_file}'],
-                      display_name=name, language='python')
+    if kernel == 'ipymini':
+        argv = [python or sys.executable, '-Xfrozen_modules=off', '-m', 'ipymini', '-f', '{connection_file}']
+    else:
+        argv = [python or sys.executable, '-m', 'ipykernel_launcher', '-f', '{connection_file}']
+    return KernelSpec(argv=argv, display_name=name, language='python')
 
 
 class Kernel:
@@ -89,12 +178,23 @@ class Kernel:
                  python=None,           # interpreter to launch (default: this one)
                  inspect=True,          # start an in-kernel inspector
                  agent='restricted',    # agent surface on that server: restricted|readonly|off
-                 port=8000):            # base port for the inspector (auto-bumps if taken)
+                 port=8000,             # base port for the inspector (auto-bumps if taken)
+                 kernel='ipykernel'):   # kernel launcher: 'ipykernel' | 'ipymini'
+        if kernel not in KERNELS: kernel = 'ipykernel'
+        if kernel == 'ipymini' and not ipymini_available():
+            warnings.warn("ipymini not installed; falling back to ipykernel. "
+                          "Install with `pip install \"leela[ipymini]\"`.")
+            kernel = 'ipykernel'
         store_attr()
         self.km = self.kc = None
         self.base = None               # inspector base URL, once bootstrapped
         self.boot_error = None         # bootstrap failure text, if the inspector could not start
         self._exec_lock = asyncio.Lock()
+
+    @property
+    def kernel_kind(self):
+        "Which launcher this kernel was started with: 'ipykernel' or 'ipymini'."
+        return self.kernel
 
     # -- lifecycle ------------------------------------------------------------
     @property
@@ -108,8 +208,8 @@ class Kernel:
 
     async def start(self, timeout=60):
         "Launch the kernel, wait for it to answer, then bootstrap its inspector."
-        self.km = AsyncKernelManager(kernel_name='python3')
-        self.km._kernel_spec = _spec(self.python, ifnone(self.name, 'python3'))
+        self.km = AsyncKernelManager(kernel_name=self.kernel if self.kernel == 'ipymini' else 'python3')
+        self.km._kernel_spec = _spec(self.python, ifnone(self.name, 'python3'), self.kernel)
         cwd = str(self.cwd) if self.cwd else os.getcwd()
         await self.km.start_kernel(cwd=cwd)
         self.kc = self.km.client()
@@ -123,7 +223,7 @@ class Kernel:
 
     async def bootstrap(self):
         "Start the inspector inside the kernel and record its base URL."
-        src = bootstrap_src(self.name, self.port, self.agent, True)
+        src = bootstrap_src(self.name, self.port, self.agent, True, self.kernel)
         r = await self.execute(src, silent=True, store_history=False)
         if not r.ok:
             self.boot_error = r.error or r.text or 'inspector bootstrap failed'
@@ -278,11 +378,32 @@ class Kernel:
 class KernelPool:
     "The IDE's kernels, keyed by an id the workspace assigns (usually a tab or a folder root)."
 
-    def __init__(self, port=8000): self.port, self.kernels = port, {}
+    def __init__(self, port=8000, default_kernel='ipykernel', default_python=None):
+        self.port, self.kernels = port, {}
+        self.default_kernel = default_kernel if default_kernel in KERNELS else 'ipykernel'
+        # None means "the interpreter leela is running under", which is what `Kernel`
+        # already does with it -- so the picker's default needs no special case.
+        self.default_python = default_python
+
+    def choose(self, kernel=None, python=False):
+        """Set what the *next* kernel starts as. Running kernels are left alone.
+
+        `python=False` rather than `None` as the "leave it" sentinel, because `None` is a
+        real choice here: it means leela's own interpreter.
+
+        Nothing is restarted from in here. A namespace is the user's work, and dropping it
+        because they opened a picker would be the most expensive thing this IDE could do
+        by accident -- the caller restarts, once the person has said so.
+        """
+        if kernel and kernel in KERNELS: self.default_kernel = kernel
+        if python is not False: self.default_python = python
+        return {'kernel': self.default_kernel, 'python': self.default_python}
 
     async def get(self, key, **kw):
         "The kernel for `key`, starting it on first use."
         if (k := self.kernels.get(key)) is not None and k.alive: return k
+        kw.setdefault('kernel', self.default_kernel)
+        kw.setdefault('python', self.default_python)
         k = self.kernels[key] = Kernel(port=self.port, **kw)
         await k.start()
         return k

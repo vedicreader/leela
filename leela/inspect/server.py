@@ -92,6 +92,29 @@ def active():
 
 bridge = Bridge()
 
+# ipymini backend, stashed by the kernel bootstrap when running under ipymini. Its
+# `.subshell()` context manager lets a queued shell request run alongside the current
+# cell instead of behind it, so the agent (and the owner exec bar) don't freeze when
+# a long cell is executing. `None` under ipykernel -- `_concurrent()` is then a no-op.
+_kernel_backend = None
+
+from contextlib import contextmanager
+@contextmanager
+def _concurrent():
+	"""Run a block under ipymini's subshell if available; a no-op otherwise.
+
+	Guarded so an ipymini quirk (missing method, subshell failure) degrades to serial
+	execution rather than breaking the endpoint. `_kernel_backend` is set by the kernel
+	bootstrap (see `leela.kernels.BOOTSTRAP`)."""
+	sub = getattr(_kernel_backend, 'subshell', None) if _kernel_backend is not None else None
+	if sub is None:
+		yield
+		return
+	try:
+		with sub(): yield
+	except Exception:
+		yield
+
 # A JSON-only app. leela served an htmx inspector UI from here as well; leela renders
 # its own, polling /api/rows from the IDE process, so none of that markup is carried over --
 # and with it go the static assets, the highlight.js headers and the /live websocket.
@@ -181,7 +204,8 @@ def api_envs():
 def api_exec(req, code:str, scope:str='global'):
 	"Run code in the server's namespace; return {ok, result, stdout, error} as JSON (the terminal exec bar consumes this)."
 	if not _authed(req): return JSONResponse({'error': 'owner token required'}, status_code=403)
-	r = run(code, scope if scope in ('global','isolated') else 'global')
+	with _concurrent():
+		r = run(code, scope if scope in ('global','isolated') else 'global')
 	return {'ok': r.ok, 'stdout': r.stdout, 'error': r.error,
 	                     'result': _vd(r.result) if r.result is not None else None}
 
@@ -270,7 +294,8 @@ def agent_exec(code:str, scope:str='overlay'):
 	g = _agent_gate()
 	if g is not None: return g
 	scope = 'isolated' if (_agent_mode == 'readonly' or scope == 'isolated') else 'overlay'
-	r = agent_session().run(code, scope)
+	with _concurrent():
+		r = agent_session().run(code, scope)
 	return {'ok': r.ok, 'stdout': r.stdout, 'error': r.error, 'scope': scope,
 	                     'result': _vd(r.result) if r.result is not None else None}
 
@@ -312,9 +337,28 @@ def serve(port=8000, ns=None, name=None, profile='minimal', agent='restricted', 
 	'''Start the inspector in a background thread for a plain process; returns its base URL.
 
 	ns defaults to the caller's globals. This is what `leela.devserver` runs an app under,
-	so the app's module namespace shows up in the variable panel as just another env.'''
+	so the app's module namespace shows up in the variable panel as just another env.
+
+	Call it from anything you started yourself, too -- a uvicorn process, a training loop,
+	a long-running script -- and it shows up in leela's env picker like any other:
+
+	    import leela.inspect as li; li.serve(name='api')
+	'''
 	global bridge
 	ns = ns or sys._getframe(1).f_globals
 	bridge = Bridge(NsClient(ns))
 	_start(port, profile, name, agent, token, ns, 'http://127.0.0.1')
 	return _server, f'http://127.0.0.1:{_port}'
+
+
+def watch(ns, name=None):
+	'''Point an already-running inspector at a different namespace.
+
+	For the case where the interesting namespace does not exist yet when the server starts:
+	`leela.run` serves the inspector first so the IDE can see the process immediately, then
+	imports the module the command is actually about and calls this. The dict is held by
+	reference, so what is watched afterwards is the live module, not a copy of it.'''
+	global bridge, _env
+	bridge = Bridge(NsClient(ns))
+	if name: _env = name
+	return bridge

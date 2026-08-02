@@ -26,6 +26,8 @@ dependencies = [
     "numpy>=2.4.6",            # usearch vectors in search; array resolvers in leela.inspect
     "pandas>=3.0.3",           # DataFrame/Series resolvers and the grid view
     "python-fasthtml>=0.14.9", # the web frontend, and the in-kernel inspector's JSON API
+    "python-fastllm>=0.0.36",  # cloud models behind the same chat shape rishi has, for leela.agent
+    "aidialog>=0.0.6",         # fastllm's message model, and the dlgskill the agent discovers
     "rich>=13.0.0",            # diff and cell rendering in the TUI
     "rishi>=0.0.2",            # the chat + tool loop behind the assistant
     "safepyrun>=0.2.5",        # the allowlist sandbox the agent's isolated scope runs in
@@ -33,6 +35,12 @@ dependencies = [
     "textual[syntax]>=8.2.8",  # [syntax] pulls tree-sitter for cell highlighting in the TUI
     "uvicorn>=0.30.0",         # serves the web frontend
 ]
+
+[project.optional-dependencies]
+# Optional Python-only Jupyter kernel with subshell/unlock helpers. When installed and
+# selected (--kernel ipymini), leela routes agent execs and shell-channel calls through
+# a subshell so they don't queue behind a long-running cell.
+ipymini = ["ipymini>=0.0.1"]
 
 [project.urls]
 Repository = "https://github.com/vedicreader/leela"
