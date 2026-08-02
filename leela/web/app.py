@@ -50,6 +50,11 @@ def _found(ws, hits):
     return {'backend': ws.search.backend, 'note': ws.search.note, 'hits': [h.dict() for h in hits]}
 
 
+def _sse(event, data):
+    "One server-sent event. Newlines in the payload would end the frame, so it goes as JSON."
+    return f'event: {event}\ndata: {json.dumps(data)}\n\n'
+
+
 async def _off_loop(fn, *a, **kw):
     """Run a blocking call on a worker thread.
 
@@ -768,6 +773,57 @@ def ide_app(ws: Workspace, gate: TerminalGate = None):
             return {'ok': False, 'error': 'the assistant is not running'}
         except Exception as e:
             return {'ok': False, 'error': errstr(e)}
+
+    @rt('/agent/stream')
+    async def agent_stream(req):
+        """One turn as server-sent events, so the browser fills in as the model writes.
+
+        SSE rather than a WebSocket because this is one-way and short-lived, and the
+        terminal already owns the only socket in this app. Each event carries either a
+        markdown chunk, an activity row, or the final payload with the diffs -- so the
+        client renders the same three things it renders for a blocking turn, just sooner.
+
+        The generator runs on a worker thread and hands chunks over a queue: the harness is
+        synchronous by design (see `leela.agent.backend`), and blocking the event loop on a
+        model would freeze every other request this server is serving.
+        """
+        q = (req.query_params.get('prompt') or '').strip()
+        if not q: return _fail('nothing to ask')
+        a = ws.ai
+
+        async def events():
+            import queue as _q
+            out, done = _q.Queue(), object()
+
+            def pump():
+                try:
+                    for c in ws.ask_stream(q): out.put(('chunk', c))
+                except Exception as e: out.put(('error', errstr(e)))
+                finally: out.put((done, None))
+
+            loop = asyncio.get_running_loop()
+            task = loop.run_in_executor(None, pump)
+            n = 0
+            while True:
+                kind, val = await loop.run_in_executor(None, out.get)
+                if kind is done: break
+                yield _sse(kind, {'text': val} if kind == 'chunk' else {'error': val})
+                # Activity rows are interleaved rather than sent at the end, so a tool call
+                # shows up while it is running rather than after the answer arrives.
+                rows = a.activity.rows(mark=a.activity._mark)
+                if len(rows) > n:
+                    for r in rows[n:]: yield _sse('activity', r)
+                    n = len(rows)
+            await task
+            yield _sse('done', {'ok': a.ready, 'note': a.note, 'usage': repr(a.use),
+                                'model': a.model.name,
+                                'activity': a.activity.rows(mark=a.activity._mark),
+                                'edits': [{'path': p, **_diff(was, now)}
+                                          for p, (was, now) in a.changes().items()]})
+
+        from starlette.responses import StreamingResponse
+        return StreamingResponse(events(), media_type='text/event-stream',
+                                 headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
     @rt('/agent/approval')
     def agent_approval():

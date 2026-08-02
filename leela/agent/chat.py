@@ -243,13 +243,18 @@ class Agent:
     @property
     def chat(self):
         "The live chat object, or None. Kept for the frontends, which use it to cancel."
-        b = self._backends.get((lambda s: (s.backend, s.model_id))(self.routing.spec('turn')))
-        return None if b is None else b.chat
+        return self._be('turn').chat
 
     @property
     def ready(self):
-        b = self._backends.get((lambda s: (s.backend, s.model_id))(self.routing.spec('turn')))
-        return bool(b is not None and b.ready)
+        """Whether the turn model is up.
+
+        Asked of the backend rather than looked up in the cache. Building a `Backend` is
+        just an object -- the expensive part is `start()`, which this does not call -- and
+        reaching into `_backends` by key meant anything that supplied a backend some other
+        way (a test, a sub-agent harness) reported itself as permanently not ready.
+        """
+        return self._be('turn').ready
 
     @property
     def busy(self): return self.lock.locked()
@@ -263,7 +268,9 @@ class Agent:
         if b.start() is None:
             self.note = b.note
             return None
-        self.note = f'{model_note(self.model)} · {len(self.tools)} tools'
+        # From the backend that is actually running, not from the routing table: a status
+        # line that names a model the turn is not on is worse than no status line.
+        self.note = f'{model_note(b.spec)} · {len(self.tools)} tools'
         return b
 
     def retry(self):
@@ -325,8 +332,8 @@ class Agent:
                 self.note = f'the assistant failed ({agent_err(e)})'
                 yield f'\n\n{self.note}'
 
-    def ask_with(self, prompt, context='', screen='', image=None):
-        """One turn, with whatever the frontend can supply attached: the notebook above the
+    def compose(self, prompt, context='', screen='', image=None):
+        """One message from whatever the frontend can supply: the notebook above the
         question, a captured screen as text, and a captured screen as a picture.
 
         `image` goes in as a *content part* rather than as a tool result, which is both the
@@ -337,19 +344,30 @@ class Agent:
         `screen` is the terminal frontend's equivalent and stays text on purpose: a
         terminal screen is a grid of characters, so sending it as prose is both exact and
         far cheaper than a rendering of it would be.
+
+        Separate from `ask_with` so `stream_with` composes identically. A streamed turn
+        that quietly saw a different message from a blocking one would be a very hard bug
+        to find.
         """
         parts = []
         if context: parts.append(f'<notebook>\n{context}\n</notebook>')
         if screen: parts.append(f'<screen>\n{screen}\n</screen>')
         parts.append(prompt)
         ask = '\n\n'.join(parts)
-        return self.ask([image, ask] if image else ask)
+        return [image, ask] if image else ask
+
+    def ask_with(self, prompt, context='', screen='', image=None):
+        "One turn with the frontend's context attached. Blocking; see `stream_with` for the live one."
+        return self.ask(self.compose(prompt, context, screen, image))
+
+    def stream_with(self, prompt, context='', screen='', image=None):
+        "The same turn, as an iterator of markdown chunks."
+        return self.stream(self.compose(prompt, context, screen, image))
 
     def cancel(self):
         "Stop the turn in flight, and release anyone waiting on an approval for it."
         if self.approvals is not None: self.approvals.cancel_all('the turn was stopped')
-        b = self._backends.get((lambda s: (s.backend, s.model_id))(self.routing.spec('turn')))
-        return bool(b is not None and b.cancel())
+        return bool(self._be('turn').cancel())
 
     def close(self):
         for b in list(self._backends.values()):

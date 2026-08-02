@@ -614,3 +614,107 @@ def test_a_workspace_host_hides_what_the_workspace_cannot_do():
     h = WorkspaceHost(Workspace(roots=[]))
     with pytest.raises(NotImplementedError): h.run_python('1')
     assert 'run_python' not in {t.__name__ for t in tools_for(h)}
+
+
+# ---------------------------------------------------------------------------
+# streaming
+# ---------------------------------------------------------------------------
+def test_a_stream_yields_before_it_finishes(spec):
+    "The whole point. A stream that only yields at the end is a blocking call with extra steps."
+    from tests.fakemodel import ScriptedBackend, Step
+    be = ScriptedBackend(steps=[Step(text='one two three')], token_delay=0)
+    be.start()
+    got = list(be.stream('hi'))
+    assert len(got) == 3 and ''.join(got).split() == ['one', 'two', 'three']
+
+
+def test_streaming_and_blocking_compose_the_same_message():
+    "A streamed turn that quietly saw a different message would be a very hard bug to find."
+    a, be = fake_agent(replies=['x', 'y'])
+    a.ask_with('q', context='CTX', screen='SCR')
+    blocking = str(be.sent[-1])
+    list(a.stream_with('q', context='CTX', screen='SCR'))
+    assert str(be.sent[-1]) == blocking
+    assert '<notebook>' in blocking and '<screen>' in blocking
+
+
+def test_a_streamed_turn_still_records_usage_and_activity():
+    a, be = fake_agent(replies=['all done'])
+    out = ''.join(a.stream('go'))
+    assert out.strip() == 'all done'
+    assert a.use.total == 15
+
+
+def test_a_prompt_cell_fills_in_as_the_answer_arrives():
+    """`ask_cell_stream` appends to `cell.reply` on the way past, so repainting the cell
+    *is* the live view -- the advantage of having put the answer in the document."""
+    from leela.nb import Cell, Notebook
+    from leela.workspace import Workspace
+    from tests.fakemodel import Step, install
+    ws = Workspace(roots=[])
+    install(ws, [Step(text='the answer is four')], token_delay=0)
+    nb = Notebook([Cell(source='what is 2+2', cell_type='prompt')])
+    seen = []
+    for _ in ws.ask_cell_stream(nb, 0): seen.append(nb[0].reply)
+    assert len(seen) > 1
+    assert seen[0].strip() == 'the'          # the cell held a partial answer while it ran
+    assert seen[-1].strip() == 'the answer is four'
+    assert nb[0].reply.startswith('the answer is four')
+    assert nb.dirty
+
+
+def test_a_streamed_cell_still_gets_its_activity_trail():
+    from leela.nb import Cell, Notebook
+    from leela.workspace import Workspace
+    from tests.fakemodel import Step, install
+    ws = Workspace(roots=[])
+    ws.add_root('.')
+    install(ws, [Step(tool=('search_code', {'query': 'Approvals'})),
+                 Step(text='found it')], token_delay=0)
+    nb = Notebook([Cell(source='where is approval handled?', cell_type='prompt')])
+    list(ws.ask_cell_stream(nb, 0))
+    assert '<details>' in nb[0].reply and 'Search Approvals' in nb[0].reply
+    assert nb[0].calls and nb[0].calls[0]['tool'] == 'search_code'
+
+
+def test_the_sse_frame_survives_a_newline_in_the_payload():
+    "A raw newline would end the frame early; JSON is why chunks can contain markdown."
+    from leela.web.app import _sse
+    f = _sse('chunk', {'text': 'line one\nline two'})
+    assert f.count('\n\n') == 1 and f.startswith('event: chunk\ndata: ')
+
+
+def test_the_sse_endpoint_streams_the_real_app():
+    """Drive the actual route, not a mock of it.
+
+    Streaming has a lot of places to go wrong that a unit test cannot see — the generator
+    running off the event loop, the frame format, the ordering of activity against chunks —
+    so this exercises the mounted app end to end and asserts on the wire bytes.
+    """
+    pytest.importorskip('starlette.testclient')
+    from starlette.testclient import TestClient
+    from leela.web.app import ide_app
+    from leela.workspace import Workspace
+    from tests.fakemodel import Step, install
+
+    ws = Workspace(roots=[])
+    ws.add_root('.')
+    install(ws, [Step(tool=('search_code', {'query': 'Approvals'})),
+                 Step(text='found it in hitl.py')], token_delay=0)
+
+    with TestClient(ide_app(ws)) as c:
+        with c.stream('GET', '/agent/stream', params={'prompt': 'where?'}) as r:
+            assert r.status_code == 200
+            assert r.headers['content-type'].startswith('text/event-stream')
+            body = ''.join(r.iter_text())
+
+    assert 'event: chunk' in body
+    assert 'event: activity' in body
+    assert 'event: done' in body
+    assert 'Search Approvals' in body            # the activity row, rendered by the harness
+    assert 'found' in body
+    # The final frame is what carries the diffs and the usage the client shows afterwards.
+    done = body.rsplit('event: done\ndata: ', 1)[1]
+    import json as _j
+    d = _j.loads(done.strip())
+    assert d['ok'] and 'edits' in d and d['activity']

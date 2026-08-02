@@ -652,20 +652,60 @@ function agentLog(html) {
 // What comes back with the reply is the diff of every open file that actually moved,
 // which is the model's work rather than its account of its work -- and it is what makes
 // re-mounting the tab safe to decide about.
-async function sendAgent() {
+// Streamed over SSE, because a turn with a tool loop in it is far too long to sit in
+// front of with nothing moving. Three kinds of event arrive: `activity` rows as each tool
+// call starts and finishes, `chunk`s of the answer as the model writes it, and one `done`
+// carrying the diffs. The last is what makes re-mounting the tab safe to decide about:
+// it is the model's work rather than its account of its work.
+function sendAgent() {
   const el = $('#agentprompt'); if (!el || !el.value.trim()) return;
   const q = el.value; el.value = '';
   agentLog(`<div class="lee-runline"><span class="code">▸ ${esc(q)}</span></div>`);
   status('thinking…');
-  const d = await post('/agent/ask', {prompt: q});
-  for (const c of (d.calls || []))
-    agentLog(`<div class="lee-runline"><span class="sub">⚙ ${esc(c.tool)} ${esc(c.args)}</span></div>`);
-  agentLog(`<div class="lee-runline"><span class="res">${esc(d.text || d.error || d.note)}</span></div>`);
-  for (const e of (d.edits || []))
-    agentLog(`<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
-             `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
-  status(d.ok ? (d.note || 'done') : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
-  await reloadAfterEdits(d.edits || []);
+
+  const log = $('#agentlog');
+  const acts = document.createElement('div');           // tool calls, rewritten in place
+  const out = document.createElement('div');            // the answer, appended to
+  out.className = 'lee-runline';
+  out.innerHTML = '<span class="res"></span>';
+  log.appendChild(acts); log.appendChild(out);
+  const body = out.querySelector('.res');
+  const seen = new Map();
+
+  const es = new EventSource('/agent/stream?prompt=' + encodeURIComponent(q));
+
+  es.addEventListener('activity', ev => {
+    const a = JSON.parse(ev.data);
+    // Keyed by id so the ⏳ line a call opens with is *replaced* by its result, rather
+    // than leaving a stale pending row above the finished one.
+    let row = seen.get(a.id);
+    if (!row) { row = document.createElement('div'); row.className = 'lee-runline'; acts.appendChild(row); seen.set(a.id, row); }
+    row.innerHTML = `<span class="sub">${esc(a.line)}</span>`;
+    log.scrollTop = log.scrollHeight;
+  });
+
+  es.addEventListener('chunk', ev => {
+    body.textContent += JSON.parse(ev.data).text || '';
+    log.scrollTop = log.scrollHeight;
+  });
+
+  es.addEventListener('error', ev => {
+    try { body.textContent += JSON.parse(ev.data).error || ''; } catch (_) {}
+  });
+
+  es.addEventListener('done', async ev => {
+    es.close();
+    const d = JSON.parse(ev.data);
+    for (const e of (d.edits || []))
+      agentLog(`<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
+               `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
+    const tail = d.usage ? `${d.note || 'done'} · ${d.usage}` : (d.note || 'done');
+    status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
+    await reloadAfterEdits(d.edits || []);
+  });
+
+  // A dropped connection must not leave the pane saying "thinking…" for ever.
+  es.onerror = () => { if (es.readyState === EventSource.CLOSED) status('the stream ended', 'err'); es.close(); };
 }
 
 /* Reloading the open tab is what makes an AI edit visible without a refresh -- but only

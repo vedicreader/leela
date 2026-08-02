@@ -223,6 +223,43 @@ class Workspace:
         png, screen, _ = self.take_screen()
         return self.ai.ask_with(prompt, screen=screen, image=png)
 
+    def ask_stream(self, prompt):
+        "The same turn, yielding markdown as it arrives. A cloud turn is far too long to sit through."
+        png, screen, _ = self.take_screen()
+        return self.ai.stream_with(prompt, screen=screen, image=png)
+
+    def ask_cell_stream(self, nb, i):
+        """Answer the prompt cell at `i`, filling the cell in as the answer arrives.
+
+        Yields each markdown chunk *and* appends it to `cell.reply` on the way past, so a
+        frontend can either render the chunks itself or simply repaint the cell — the cell
+        is already the correct thing to look at, which is the advantage of having put the
+        answer in the document in the first place.
+
+        The activity trail is appended at the end rather than streamed, because it is a
+        fold that belongs under the finished answer, not interleaved with it.
+        """
+        c = nb[i]
+        if not c.is_prompt: raise ValueError(f'cell {i} is a {c.cell_type} cell, not a prompt')
+        a = self.ai
+        png, screen, _ = self.take_screen()
+        c.reply, c.calls = '', []
+        nb.dirty = True
+        self._approval_target = (nb, i)
+        try:
+            for chunk in a.stream_with(c.source, context=nb.context(i, since=nb.prompt_start(i)),
+                                       screen=screen, image=png):
+                c.reply += chunk
+                # Refreshed per chunk, not only at the end: a frontend that repaints the
+                # cell should see the tool trail and the answer agree at every moment.
+                c.calls = a.activity.rows(mark=a.activity._mark)
+                yield chunk
+        finally:
+            self._approval_target = None
+            if (trail := a.turn_md()): c.reply += f'\n\n{trail}'
+            c.calls = a.activity.rows(mark=a.activity._mark)
+            nb.dirty = True
+
     # -- approvals -------------------------------------------------------------
     @property
     def pending_approval(self):

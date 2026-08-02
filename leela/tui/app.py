@@ -189,10 +189,15 @@ class CellBox(Vertical):
             # a prompt cell's "output" is its answer, kept on the cell rather than in an
             # nbformat output, so it renders from its own fields
             t = Text()
-            for x in c.calls: t.append(f"⚙ {x.get('tool','?')} {str(x.get('args',''))[:90]}\n", style=PAL['gray'])
+            for x in c.calls:
+                # `line` is the activity stream's own rendering ("🔍 Search Approvals").
+                # Notebooks written before it fall back to the older {tool, args} shape.
+                t.append('  ' + (x.get('line') or f"⚙ {x.get('tool','?')} {str(x.get('args',''))[:90]}") + '\n',
+                         style=PAL['gray'])
             if c.reply: t.append(c.reply.rstrip(), style=PAL['fg'])
+            elif c.running: t.append('  thinking…', style=PAL['aqua'])
             out.update(t)
-            out.display = bool(c.reply or c.calls)
+            out.display = bool(c.reply or c.calls or c.running)
         else:
             txt = c.text.rstrip()
             out.update(Text(txt, style=PAL['red'] if c.has_error else PAL['fg2']))
@@ -503,6 +508,7 @@ class IdeApp(App):
         self._exec_lines = []
         self.last_edits = {}              # {path: (before, after)} from the assistant's last turn
         self._asking = ''                 # the question a turn in flight is answering
+        self._reply = ''                  # the answer so far, while it streams in
         self._unlisten = None             # unregisters this frontend from the approval queue
 
     # -- layout ------------------------------------------------------------
@@ -867,8 +873,28 @@ class IdeApp(App):
             # of the document. Off the UI thread, like every other model call here.
             self.status('thinking…')
             self._hook_activity()
-            try: await asyncio.to_thread(self.ws.ask_cell, v.nb, i)
+            c.running = True
+            # Streamed straight into the cell: `ask_cell_stream` appends each chunk to
+            # `cell.reply` on the way past, so repainting the cell *is* the live view. The
+            # advantage of having put the answer in the document in the first place.
+            box = v.box(i)
+            def paint():
+                # Refreshed here rather than only inside the stream, because the tool loop
+                # runs *before* the first token: without this the cell shows nothing at all
+                # for however long the model spends looking around, which is exactly the
+                # stretch the feed exists to fill.
+                a = self.ws.ai
+                v.nb[i].calls = a.activity.rows(mark=a.activity._mark)
+                if box is not None: box.show_outputs()
+            # A tool call that returns nothing to the stream still has to show up, so the
+            # activity hook repaints the cell for the length of this turn.
+            prev, self.ws.ai.activity.on_change = self.ws.ai.activity.on_change, \
+                lambda _act: self.call_from_thread(paint)
+            try: await asyncio.to_thread(self._pump_cell, self.ws.ask_cell_stream(v.nb, i), paint)
             except Exception as e: return self.status(errstr(e), err=True)
+            finally:
+                c.running = False
+                self.ws.ai.activity.on_change = prev
             self.last_edits = self.ws.ai.changes()
             await v.load(v.nb, keep=True)   # approval/compaction cells landed while it worked
             if (b := v.box(i)): b.show_outputs()
@@ -1207,7 +1233,11 @@ class IdeApp(App):
         log.update(Text.assemble((f'▸ {q}\n', PAL['fg']), ('thinking…', PAL['gray'])))
         self.status('thinking…')
         ai = self.ws.ai
-        text = await asyncio.to_thread(self.ws.ask, q)   # attaches any pending screen capture
+        self._reply = ''
+        # Streamed, not blocked on: a cloud turn with a tool loop in it is far too long to
+        # sit in front of with nothing moving.
+        await asyncio.to_thread(self._pump, self.ws.ask_stream(q))
+        text = self._reply
         self._asking = ''
         self.last_edits = ai.changes()
         t = Text()
@@ -1270,6 +1300,59 @@ class IdeApp(App):
         self.ws.answer_approval(ask.id, ok, note)
         self.status(('approved' if ok else 'refused') + f' {ask.tool}' + (f' — {note}' if note else ''))
 
+    def _pump(self, chunks):
+        """Drain a markdown-chunk iterator on a worker thread, repainting as it arrives.
+
+        The paint is coalesced rather than fired per chunk: a model emits tokens far faster
+        than a terminal can usefully redraw, and `call_from_thread` blocks until the UI
+        thread is done, so painting every chunk would throttle the model to the refresh
+        rate. Twenty a second looks continuous and costs nothing.
+        """
+        from time import monotonic
+        last = 0.0
+        for c in chunks:
+            self._reply += c
+            if (now := monotonic()) - last > 0.05:
+                last = now
+                try: self.call_from_thread(self._paint_stream)
+                except Exception: pass
+        try: self.call_from_thread(self._paint_stream)
+        except Exception: pass
+        return self._reply
+
+    def _pump_cell(self, chunks, paint):
+        "Drain a prompt cell's stream, repainting the cell itself. Coalesced like `_pump`."
+        from time import monotonic
+        last = 0.0
+        for _ in chunks:
+            if (now := monotonic()) - last > 0.05:
+                last = now
+                try: self.call_from_thread(paint)
+                except Exception: pass
+        try: self.call_from_thread(paint)
+        except Exception: pass
+
+    def _paint_stream(self):
+        """The agent pane mid-turn: the question, the tool calls so far, and the answer as it lands.
+
+        The activity list collapses once the answer starts arriving. This pane is seven
+        rows; a full tool trail would push the answer straight off the bottom, and while
+        the model is writing, the answer is the thing being watched. The whole trail stays
+        one key away in `ctrl+alt+l`.
+        """
+        try: log = self.query_one('#agentlog', Static)
+        except Exception: return
+        lines = self.ws.ai.turn_lines()
+        t = Text()
+        if self._asking: t.append(f'▸ {self._asking}\n', style=PAL['fg'])
+        if self._reply and len(lines) > 2:
+            t.append(f'  … {len(lines)-2} earlier steps\n', style=PAL['fg4'])
+            lines = lines[-2:]
+        for line in lines[-8:]: t.append(f'  {line}\n', style=PAL['gray'])
+        if self._reply: t.append(self._reply, style=PAL['fg2'])
+        elif self.ws.ai.busy: t.append('  thinking…', style=PAL['aqua'])
+        log.update(t)
+
     def _hook_activity(self):
         """Point the agent's activity stream at this app, on the first turn that needs it.
 
@@ -1284,15 +1367,8 @@ class IdeApp(App):
         except Exception: pass
 
     def _paint_activity(self):
-        "The live account of an agentic loop: one line per tool call, newest last."
-        try: log = self.query_one('#agentlog', Static)
-        except Exception: return
-        ai = self.ws.ai
-        t = Text()
-        if self._asking: t.append(f'▸ {self._asking}\n', style=PAL['fg'])
-        for line in ai.turn_lines()[-12:]: t.append(f'  {line}\n', style=PAL['gray'])
-        if ai.busy: t.append('  thinking…', style=PAL['aqua'])
-        log.update(t)
+        "A tool call started or finished. Same painter as the token stream, so they cannot fight."
+        self._paint_stream()
 
     def action_agent_tools(self):
         """What the assistant actually did: every tool call, and the diff of every file that moved.
@@ -1305,7 +1381,9 @@ class IdeApp(App):
         t = Text()
         t.append(f"{s['model_note']}  ·  {s['ntools']} tools  ·  {s['nskills']} skills"
                  + (' · thinking now' if s['busy'] else '') + '\n', style=f"bold {PAL['yellow']}")
-        t.append(f"{s['note']}\n", style=PAL['fg4'])
+        # `note` usually restates the line above once a turn has run, so it only earns a
+        # row when it is saying something else -- a failure, or why the model is missing.
+        if s['note'] and not s['note'].startswith(s['model_note']): t.append(f"{s['note']}\n", style=PAL['fg4'])
         t.append(f"context {100*s['pct_full']:.0f}% full"
                  + (f" · {s['compactions']} compaction(s)" if s['compactions'] else '')
                  + (f"  ·  {s['usage']}" if s['use']['total'] else '') + '\n\n', style=PAL['gray'])

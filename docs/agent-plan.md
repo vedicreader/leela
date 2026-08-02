@@ -397,9 +397,20 @@ and applied at runtime. It is exercised against the real fastllm in `tests/test_
 which is the point of patching rather than reimplementing: when it goes upstream the tests
 keep passing and the patch becomes a no-op.
 
-**Not yet done:** streaming into the two frontends. `Backend.stream` and `Agent.stream`
-exist and are covered, but neither frontend consumes them — they still block a turn on a
-worker and show the activity feed instead, which turned out to carry most of the benefit.
+**Streaming now lands in both frontends.** The TUI drains the chunk iterator on a worker
+and repaints through `call_from_thread`, coalesced at 20fps — painting per chunk would
+throttle the model to the terminal's refresh rate, since `call_from_thread` blocks. A
+prompt cell streams *into itself*: `Workspace.ask_cell_stream` appends each chunk to
+`cell.reply` on the way past, so repainting the cell is the live view, which is the payoff
+for having put the answer in the document in the first place. The browser gets SSE at
+`/agent/stream`, with three event kinds — `activity` rows keyed by id so a `⏳` line is
+replaced by its result rather than stacking, `chunk`s of the answer, and one `done`
+carrying the diffs and usage.
+
+Captured against a real run rather than described: `tools/shots.py` drives the Textual app
+with `tests.fakemodel.ScriptedBackend`, which calls the agent's real tools and emits words
+one at a time, so a capture taken mid-turn shows a turn that genuinely is. `tools/webshots.py`
+does the same through Playwright against the real server and the real client JS.
 
 **Untested against a live engine:** `RishiBackend._replace_hist` rebuilds a litert
 conversation on the same engine, and no local model was downloaded in the environment this
