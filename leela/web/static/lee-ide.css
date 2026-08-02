@@ -43,7 +43,9 @@ body {
   overflow: hidden;
 }
 
-.lee-app { display: grid; grid-template-rows: 34px 1fr 24px; height: 100vh; }
+/* header · toolbar · body · footer. The toolbar is `auto` rather than a fixed row so it
+   keeps whatever height the buttons need, and only the body stretches. */
+.lee-app { display: grid; grid-template-rows: 34px auto 1fr 24px; height: 100vh; }
 .lee-body {
   display: grid;
   grid-template-columns: var(--lee-left-w) 4px 1fr 4px var(--lee-right-w);
@@ -84,6 +86,46 @@ body {
   padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: inherit;
 }
 .lee-icon:hover { background: var(--lee-bg2); color: var(--lee-fg); }
+.lee-pill { cursor: pointer; }
+
+/* ---- buttons ----
+   Every one of these runs a keymap action, so they are styled as one family wherever they
+   appear: the main toolbar, a panel header, or a cell's own gutter. */
+.lee-toolbar {
+  display: flex; align-items: center; padding: 2px 6px; flex: none;
+  background: var(--lee-bg1); border-bottom: 1px solid var(--lee-border); overflow-x: auto;
+  scrollbar-width: none;
+}
+.lee-toolbar::-webkit-scrollbar { display: none; }
+.lee-bar { display: flex; align-items: center; gap: 3px; flex: none; }
+.lee-btn {
+  background: var(--lee-bg2); border: 1px solid transparent; color: var(--lee-fg2); cursor: pointer;
+  padding: 2px 8px; border-radius: 4px; font: inherit; font-size: 11.5px; white-space: nowrap;
+}
+.lee-btn:hover { background: var(--lee-bg3); color: var(--lee-fg); border-color: var(--lee-border); }
+.lee-btn.go   { color: var(--lee-green); font-weight: 600; }
+.lee-btn.warn { color: var(--lee-orange); }
+/* In a panel header the buttons are secondary to what the panel is showing, so they lose
+   the chip and keep only the hover. */
+.lee-phead .lee-btn { background: none; padding: 1px 5px; font-size: 11px; }
+.lee-phead .lee-btn:hover { background: var(--lee-bg2); }
+
+.lee-cellbtns { display: flex; gap: 1px; justify-content: flex-end; opacity: 0; transition: opacity .1s; }
+.lee-cell:hover .lee-cellbtns, .lee-cell.sel .lee-cellbtns { opacity: 1; }
+.lee-cbtn {
+  background: none; border: none; color: var(--lee-fg4); cursor: pointer;
+  padding: 0 3px; border-radius: 3px; font: inherit; font-size: 11px; line-height: 1.4;
+}
+.lee-cbtn:hover { background: var(--lee-bg2); color: var(--lee-fg); }
+.lee-cbtn.go:hover { color: var(--lee-green); }
+.lee-cbtn.warn:hover { color: var(--lee-red); }
+
+.lee-keyedit {
+  width: 100%; height: 46vh; margin: 6px 0; padding: 8px; box-sizing: border-box;
+  background: var(--lee-bg); color: var(--lee-fg); border: 1px solid var(--lee-border);
+  border-radius: 5px; font-family: var(--lee-mono); font-size: 12px; resize: vertical;
+}
+.lee-keyedit:focus { outline: 1px solid var(--lee-accent); }
 
 /* ---- panels ---- */
 .lee-left, .lee-right { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--lee-bg1); }
@@ -149,7 +191,7 @@ kbd {
 .lee-cell.sel { border-left-color: var(--lee-accent); background: var(--lee-active-line); }
 .lee-cell.running { border-left-color: var(--lee-yellow); }
 .lee-gutter {
-  flex: none; width: 58px; text-align: right; padding-top: 5px; font-family: var(--lee-mono);
+  flex: none; width: 76px; text-align: right; padding-top: 5px; font-family: var(--lee-mono);
   font-size: 11px; color: var(--lee-fg4); user-select: none;
 }
 .lee-cellmain { flex: 1 1 auto; min-width: 0; }

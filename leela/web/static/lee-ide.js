@@ -45,12 +45,35 @@ function status(msg, kind) {
 /* ------------------------------------------------------------------ keymap */
 async function loadKeys() {
   const d = await api('/keys.json');
-  lee.keys = d.keys; lee.help = d.help;
+  lee.keys = d.keys; lee.help = d.help; lee.keyPath = d.path; lee.keyNotes = d.notes || [];
+  lee.bars = d.bars || {};
+  if (lee.keyNotes.length) status(lee.keyNotes[0] + ' — see the keys panel', 'err');
+}
+
+/* The physical key behind an event, for the one case where `e.key` lies.
+ *
+ * On macOS, Option is a compose key: alt+w arrives as `e.key === '∑'`, alt+i as a dead
+ * key, and so on -- so every alt binding in the map would silently never match. `e.code`
+ * is the physical key and is unaffected, so it is used as a second chance *only* when alt
+ * is held. Anywhere else `e.key` is the right answer, because it is the one that respects
+ * the user's keyboard layout. */
+function physKey(e) {
+  const c = e.code || '';
+  if (/^Key[A-Z]$/.test(c)) return c.slice(3).toLowerCase();
+  if (/^Digit[0-9]$/.test(c)) return c.slice(5);
+  if (/^Bracket(Left|Right)$/.test(c)) return c === 'BracketLeft' ? '[' : ']';
+  if (c === 'Slash') return '/';
+  if (c === 'Backquote') return '`';
+  if (c === 'Minus') return '-';
+  if (c === 'Equal') return '=';
+  return '';
 }
 
 function chordMatches(c, e) {
-  return c.key.toLowerCase() === (e.key || '').toLowerCase() &&
-         !!c.ctrl === (e.ctrlKey || e.metaKey) && !!c.alt === e.altKey && !!c.shift === e.shiftKey;
+  const want = c.key.toLowerCase();
+  const hit = want === (e.key || '').toLowerCase() ||
+              (e.altKey && want.length === 1 && want === physKey(e));
+  return hit && !!c.ctrl === (e.ctrlKey || e.metaKey) && !!c.alt === e.altKey && !!c.shift === e.shiftKey;
 }
 
 // In the terminal almost nothing is ours. A pty expects every keystroke, and the
@@ -109,9 +132,15 @@ const ACTIONS = {
   switch_env:   () => status('env switching arrives with the dev-server panel'),
   quit:         () => status('close the browser tab to leave'),
 
-  run_cell:     () => runCell(lee.sel, false),
-  run_advance:  () => runCell(lee.sel, true),
-  run_insert:   () => runCell(lee.sel, 'insert'),
+  run_cell:     () => lee.kind === 'text' ? runFile() : runCell(lee.sel, false),
+  run_advance:  () => lee.kind === 'text' ? runFile() : runCell(lee.sel, true),
+  run_insert:   () => lee.kind === 'text' ? runFile() : runCell(lee.sel, 'insert'),
+  run_all:      runAll,
+  run_file:     runFile,
+  run_selection: runSelection,
+  pick_kernel:  pickKernel,
+  new_notebook: () => htmxPost('/tab/new?kind=notebook'),
+  edit_keys:    editKeys,
   cell_above:   () => nbEdit({op: 'insert', i: lee.sel}).then(() => selectCell(lee.sel)),
   cell_below:   () => nbEdit({op: 'insert', i: lee.sel + 1}).then(() => selectCell(lee.sel + 1)),
   cell_delete:  () => nbEdit({op: 'delete', i: lee.sel}).then(() => selectCell(Math.max(0, lee.sel - 1))),
@@ -225,12 +254,24 @@ function mountNotebook(host, st) {
 const gutterFor = (c) => c.cell_type === 'code' ? '[' + (c.execution_count ?? ' ') + ']'
                        : c.cell_type === 'prompt' ? '✦' : 'md';
 
+/* The per-cell controls, from the same table the toolbar comes from. They act on the cell
+ * they are drawn in rather than on the selected one -- clicking ▶ on the third cell has
+ * to run the third cell, whatever the cursor was doing. */
+function cellButtons(i) {
+  return (lee.bars.cell || []).map(b =>
+    `<button class="lee-cbtn ${esc(b.kind)}" title="${esc(b.title)}" ` +
+    `onclick="leeCellAct(${i}, '${esc(b.action)}')">${esc(b.label)}</button>`).join('');
+}
+function leeCellAct(i, action) { selectCell(i); setScope('editor'); leeAct(action); }
+window.leeCellAct = leeCellAct;
+
 function cellEl(c, i) {
   const d = document.createElement('div');
   d.className = 'lee-cell ' + c.cell_type;
   d.dataset.i = i; d.dataset.id = c.id;
   d.innerHTML =
-    `<div class="lee-gutter" id="g-${c.id}">${gutterFor(c)}</div>` +
+    `<div class="lee-gutter"><div id="g-${c.id}">${gutterFor(c)}</div>` +
+    `<div class="lee-cellbtns">${cellButtons(i)}</div></div>` +
     `<div class="lee-cellmain"><div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div></div>`;
   d.addEventListener('mousedown', () => { selectCell(i); setScope('editor'); });
   return d;
@@ -361,6 +402,143 @@ async function askCell(i, src, el) {
   el?.classList.remove('running');
 }
 
+/* ---------------------------------------------------------- running files */
+/* The exec log is where anything run outside a notebook cell lands -- the exec box, a
+ * selection, a whole file. One place to look for "what have I asked this kernel to do". */
+function execLine(code, text, ok) {
+  const log = $('#execlog'); if (!log) return;
+  const line = document.createElement('div');
+  line.className = 'lee-runline' + (ok ? '' : ' err');
+  line.innerHTML = `<span class="code">${esc(code)}</span><span class="arrow">→</span>` +
+                   `<span class="res">${esc((text || 'ok').trim())}</span>`;
+  log.appendChild(line); log.scrollTop = log.scrollHeight;
+}
+
+/* Run the open .py as a script, in the tab's own kernel: `__main__`, an argv, and a
+ * traceback that points at the file -- but with everything it defines left in the
+ * namespace the variable panel is watching, which a subprocess could not do. */
+async function runFile() {
+  if (lee.kind !== 'text') return status('this is a notebook — run its cells, or “▶ all”', 'err');
+  const v = lee.editors.get('file');
+  const name = (lee.path || '').split('/').pop();
+  status('running ' + name + '…');
+  const r = await post('/run/file', {text: v ? LeeCM.getDoc(v) : null});
+  execLine('▶ ' + r.label, r.text, r.ok);
+  status(r.ok ? r.label + ' finished' : r.label + ' raised — see the exec log', r.ok ? 'ok' : 'err');
+  leeVars();
+}
+
+/* Just the selected code. Read straight off the CodeMirror state rather than through
+ * `LeeCM`: the bundle in static/ is committed and rebuilding it needs node, so the client
+ * does not grow a dependency on a wrapper function that is not in the shipped build. */
+async function runSelection() {
+  const v = curEditor();
+  if (!v) return status('put the cursor in some code first', 'err');
+  const s = v.state.selection.main;
+  const code = s.empty ? '' : v.state.doc.sliceString(s.from, s.to);
+  if (!code.trim()) return status('select some code first', 'err');
+  const r = await post('/run/code', {code});
+  const head = code.trim().split('\n')[0].slice(0, 60);
+  execLine(head + (code.trim().includes('\n') ? ' …' : ''), r.text, r.ok);
+  status(r.ok ? 'ran the selection' : 'the selection raised — see the exec log', r.ok ? 'ok' : 'err');
+  leeVars();
+}
+
+/* Every code cell, in order, stopping where Jupyter's own "run all" stops. */
+async function runAll() {
+  if (lee.kind !== 'notebook') return runFile();
+  for (let i = 0; i < lee.cells.length; i++) {
+    const c = lee.cells[i];
+    if (c.cell_type !== 'code' || !(c.source || '').trim()) continue;
+    status(`running cell ${i}…`);
+    await runCell(i, false);
+    if ((lee.cells[i].outputs || []).some(o => o.output_type === 'error'))
+      return status(`cell ${i} raised — stopped there`, 'err');
+  }
+  status('ran every cell', 'ok');
+}
+
+/* ---------------------------------------------------------- kernel picker */
+/* Two questions, two lists: which interpreter's packages this tab can import, and which
+ * launcher runs it. Both restart the kernel, so what that costs is on the screen while
+ * the choice is being made rather than in a toast afterwards. */
+async function pickKernel() {
+  const o = await api('/kernel/options');
+  const row = (cur, main, sub, attrs) =>
+    `<div class="lee-mrow${cur ? ' sel' : ''}" ${attrs}>${cur ? '● ' : '○ '}${esc(main)}` +
+    `<span class="sub">${esc(sub)}</span></div>`;
+  const kinds = o.kinds.map(k => row(
+    k.current, k.id,
+    k.note || (k.id === 'ipymini' ? 'execs and completions run beside a busy cell'
+                                  : 'the standard jupyter kernel'),
+    `data-kind="${esc(k.id)}"${k.available ? '' : ' data-off="1"'}`)).join('');
+  const pys = o.pythons.map(p => row(p.current, p.label, p.path, `data-py="${esc(p.path)}"`)).join('');
+  const m = modal(
+    `<div class="lee-mhead">kernel<span class="sub">${esc(o.key)} · ` +
+    `${o.alive ? '⏺ running, pid ' + o.pid : '○ not started'} · ` +
+    `${o.private ? 'private to this tab' : 'shared across this folder'}</span></div>` +
+    (o.boot_error ? `<div class="lee-err">${esc(o.boot_error)}</div>` : '') +
+    `<div class="lee-dim">choosing either of these restarts the kernel — its variables are lost</div>` +
+    `<h4>launcher</h4><div class="lee-modallist">${kinds}</div>` +
+    `<h4>interpreter</h4><div class="lee-modallist">${pys}</div>`);
+  m.addEventListener('click', async (e) => {
+    const r = e.target.closest('.lee-mrow'); if (!r) return;
+    if (r.dataset.off) return status('not installed: pip install "leela[ipymini]"', 'err');
+    m.remove();
+    status('starting the new kernel…');
+    const d = await post('/kernel/select',
+                         r.dataset.kind ? {kind: r.dataset.kind} : {python: r.dataset.py});
+    status(`kernel: ${d.running_kind} · ${(d.python || 'leela’s own python').split('/').pop()}`, 'ok');
+    refreshKernelPill(); leeVars();
+  });
+}
+
+/* ---------------------------------------------------------- the keymap */
+/* Editable here, because the alternative is telling someone whose terminal or browser
+ * eats ctrl+enter to go and find a JSON file. Saving re-reads it server-side and reloads
+ * the table this client dispatches on, so a new chord works on the next keystroke. */
+async function editKeys() {
+  const d = await api('/keys/file');
+  const m = modal(
+    `<div class="lee-mhead">keybindings<span class="sub">${esc(d.path)}</span></div>` +
+    `<div class="lee-dim">action → chord, or several separated by spaces; "" unbinds it. ` +
+    `A chord is [ctrl+][alt+][shift+]base.</div>` +
+    `<div id="keynotes"></div>` +
+    `<textarea class="lee-keyedit" id="keytext" spellcheck="false"></textarea>` +
+    `<div class="lee-mfoot"><button class="lee-btn go" id="keysave">save</button>` +
+    `<button class="lee-btn" id="keyreset">restore defaults</button></div>`);
+  const ta = m.querySelector('#keytext');
+  ta.value = d.text;
+  const notes = (ns) => {
+    m.querySelector('#keynotes').innerHTML = (ns || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('');
+  };
+  notes(d.notes);
+  const applied = (r) => {
+    lee.keys = r.keys; lee.help = r.help; lee.keyNotes = r.notes || [];
+    notes(r.notes);
+    status(r.notes.length ? 'saved, but some entries were skipped' : 'keys saved and live', 'ok');
+    remountEditors();
+  };
+  m.querySelector('#keysave').onclick = async () => {
+    try { applied(await post('/keys/save', {text: ta.value})); }
+    catch (e) { status(String(e.message || e), 'err'); }
+  };
+  m.querySelector('#keyreset').onclick = async () => {
+    const r = await post('/keys/reset');
+    ta.value = JSON.stringify({keys: Object.fromEntries(r.keys.map(k => [k.action, k.key]))}, null, 2);
+    applied(r);
+  };
+}
+
+/* CodeMirror captures its own keymap at creation, so a rebound chord only reaches the
+ * editors after they are rebuilt. Cheap, and it happens once, when the map changes. */
+function remountEditors() {
+  const v = lee.editors.get('exec');
+  if (v) { LeeCM.destroy(v); lee.editors.delete('exec'); }
+  mountExec();
+  mountTab();
+}
+
 /* Screen capture. The grab happens here, not on the server: getDisplayMedia needs a user
  * gesture and a real display, and a server process has neither. The track is kept across
  * captures so only the first press asks permission. */
@@ -382,6 +560,9 @@ async function captureScreen() {
 }
 
 async function nbEdit(d) {
+  // A file is one document, not a column of cells; a structural edit here would split the
+  // buffer the editor is showing.
+  if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return {}; }
   const cur = lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
   for (const c of cur) if (lee.cells[c.i]) lee.cells[c.i].source = c.source;
   if (d.op !== 'source') for (const c of cur) await post('/nb/edit', {op: 'source', i: c.i, source: c.source});
@@ -864,7 +1045,14 @@ function showHelp() {
   const body = Object.entries(lee.help).map(([scope, rows]) =>
     `<h4>${esc(scope)}</h4>` + rows.map(([k, l]) =>
       `<div class="lee-krow"><kbd>${esc(k)}</kbd><span>${esc(l)}</span></div>`).join('')).join('');
-  modal(`<div class="lee-help">${body}</div>`);
+  const m = modal(
+    `<div class="lee-mhead">keys<span class="sub">${esc(lee.keyPath || '')}</span></div>` +
+    (lee.keyNotes || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('') +
+    `<div class="lee-dim">every one of these can be rebound, and every one of them also has a ` +
+    `button — nothing here is reachable only by a chord.</div>` +
+    `<div class="lee-help">${body}</div>` +
+    `<div class="lee-mfoot"><button class="lee-btn" id="gokeys">edit keybindings</button></div>`);
+  m.querySelector('#gokeys').onclick = () => { m.remove(); editKeys(); };
 }
 
 async function quickOpen(searchMode) {

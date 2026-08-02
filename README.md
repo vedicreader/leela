@@ -32,7 +32,16 @@ folders, tabs and kernels.
 ## What it does
 
 - **Notebooks and files** side by side, with a real editor in each frontend
-  (Textual in the terminal, CodeMirror 6 in the browser).
+  (Textual in the terminal, CodeMirror 6 in the browser). A notebook runs its cells;
+  a `.py` file runs as a *script* — `▶ file`, or `ctrl+alt+enter` / `f9` — in the tab's
+  own kernel, so it gets `__main__` and an argv, and everything it defines is in the
+  variable panel when it finishes. `▶ sel` runs just what you have selected.
+- **Buttons for everything, and keys you can change.** Every action has a toolbar or
+  panel button, a command-palette entry, and a chord you can rebind — see
+  [keys and buttons](#keys-and-buttons).
+- **A kernel picker.** `kernel…` in the toolbar (or the kernel pill in the browser)
+  lists the launchers and the interpreters it can find — the venv in your project as
+  well as leela's own — and starts the tab's kernel on whichever you click.
 - **Live variables** from the notebook's own kernel. Each notebook tab owns a real
   ipykernel process with an inspector running *inside* it, so the variable tree
   stays responsive even while a long cell is running.
@@ -79,6 +88,41 @@ folders, tabs and kernels.
   namespace shows up in the variable panel while it serves.
 - **A terminal**, and lazygit if you have it.
 
+## Keys and buttons
+
+Some chords never arrive. `ctrl+enter`, `shift+enter` and `alt+enter` only reach a
+terminal app through the kitty keyboard protocol — kitty, ghostty, WezTerm and recent
+iTerm2 speak it; **Terminal.app does not**, and delivers them as a plain `enter`. On
+macOS, Option is a compose key, so `alt+w` arrives as `∑` unless the terminal is set to
+send Meta. Browsers keep a dozen combinations for themselves.
+
+So leela does not rely on any of them:
+
+- **Every binding that needs a modern terminal has a function key too.** `f5` runs the
+  cell, the exec box or the agent prompt, whichever has the cursor; `f6` runs and
+  advances; `f8` runs everything; `f9` runs the file; `f3` is the command palette,
+  `f4` search, `f1` this list.
+- **Every action has a button.** One toolbar above the editor, a small bar in each
+  panel, and per-cell controls in the browser's gutter. They run the same actions the
+  keys do — the table lives in `leela/buttons.py` and both frontends generate from it.
+- **Everything else is in the command palette** (`ctrl+shift+p`, `f3`, or `cmds`),
+  which lists every action there is, searchable.
+- **And you can rebind any of it.** `keys.json` in leela's config dir — or wherever
+  `$LEELA_KEYMAP` points, or `--keymap` says:
+
+  ```json
+  {"keys": {"run_cell": "ctrl+enter f5 ctrl+y", "palette": "f3", "quit": ""}}
+  ```
+
+  An action maps to one chord or several separated by spaces; `""` unbinds it. Start
+  from the full list with `leela --write-keymap`, or edit it in the browser (**keys →
+  edit**), where saving applies it without a restart. Anything unparseable, unknown or
+  in conflict is skipped, kept at its default, and reported in the IDE — a keymap with a
+  typo in it cannot stop leela from starting.
+
+Some actions ship deliberately unbound (`run the selection`, `new notebook`) — they have
+buttons, and the chord is yours to choose.
+
 ## Layout
 
 ```
@@ -107,7 +151,8 @@ leela/
   ai.py           binds a `Workspace` to the harness; notebook-based approval
   search.py       code search over kosha, with a plain-scan fallback
   diffs.py        the diff engine both frontends render
-  keys.py         single-source keymap for both frontends
+  keys.py         single-source keymap for both frontends, and the user's overrides
+  buttons.py      single-source button bars, over those same actions
   fs.py           filesystem access, confined to the open folders
   term.py         terminals and lazygit
   research.py     web search and fetch
@@ -118,7 +163,9 @@ leela/
 
 `keys.py` is the single source of the keymap: the TUI builds its bindings from it
 and the web client generates its handlers from it, so the two frontends cannot
-drift apart on shortcuts.
+drift apart on shortcuts. `buttons.py` is the same arrangement for the mouse — every
+button names an action from `keys.py`, and the package refuses to import if one of
+them names an action that does not exist.
 
 ## Develop
 
@@ -129,7 +176,8 @@ pytest tests -q
 ```
 
 The suite covers the inspection engine, the notebook document, the diff engine, the
-keymap, the agent harness, and SVG snapshots of the terminal frontend. The harness tests
+keymap (including the user's own overrides), the button table, running a file, the agent
+harness, and SVG snapshots of the terminal frontend. The harness tests
 load no model: a `FakeBackend` over scripted replies drives a whole turn, which is enough
 to test routing, approval, compaction and the tool wrappers without gigabytes in the way. Kernels are faked in
 `tests/conftest.py` rather than launched, so the tests are fast and do not need a

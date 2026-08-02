@@ -58,9 +58,10 @@ class Workspace:
     def __init__(self, roots=(), port=8000, agent='restricted', dev_port=9000, kernel='ipykernel',
                  model=None,              # the agent's turn model; None takes the routing default
                  approvals='ask',         # 'ask' | 'auto' (approve every write) | 'off' (refuse them)
-                 agent_scope='overlay'):  # widest scope `inspect_python` may use: 'overlay' | 'isolated'
+                 agent_scope='overlay',   # widest scope `inspect_python` may use: 'overlay' | 'isolated'
+                 python=None):            # interpreter kernels launch under; None is leela's own
         self.fs = Sandbox(roots)
-        self.pool = KernelPool(port=port, default_kernel=kernel)
+        self.pool = KernelPool(port=port, default_kernel=kernel, default_python=python)
         self.dev = DevServers(port=dev_port)
         self.search = Search(self.fs)
         self.research = Research(self.fs)
@@ -325,6 +326,79 @@ class Workspace:
 
     def kernel_peek(self, tab=None): return self.pool.peek(self.kernel_key(tab))
 
+    def kernel_options(self, tab=None):
+        """Everything a kernel picker needs, so neither frontend has to know how kernels work.
+
+        Both halves of the choice are here because both are things people mean by "which
+        kernel": the *launcher* (ipykernel, or ipymini for execs that do not queue behind a
+        running cell) and the *interpreter* (which venv's packages the notebook can import).
+        `available` is on the launcher rather than filtered out of the list, so an option
+        that is missing says why instead of not being there.
+        """
+        from .kernels import KERNELS, find_pythons, ipymini_available
+        t = tab or self.tab
+        k = self.kernel_peek(t)
+        cur_py = self.pool.default_python
+        return {
+            'key': self.kernel_key(t),
+            'alive': bool(k and k.alive),
+            'pid': k.pid if k else None,
+            'boot_error': k.boot_error if k else None,
+            'private': bool(t and t.private_kernel),
+            'kinds': [{'id': n, 'current': n == self.pool.default_kernel,
+                       'available': n != 'ipymini' or ipymini_available(),
+                       'note': ('' if n != 'ipymini' or ipymini_available()
+                                else 'pip install "leela[ipymini]"')} for n in KERNELS],
+            'running_kind': k.kernel_kind if k else self.pool.default_kernel,
+            'pythons': [{**p, 'current': p['path'] == cur_py or (cur_py is None and i == 0)}
+                        for i, p in enumerate(find_pythons(self.fs.roots))],
+            'python': cur_py,
+        }
+
+    async def set_kernel(self, kind=None, python=False, private=None, tab=None, restart=True):
+        """Point a tab at a different kernel, and start it.
+
+        The old kernel is shut down rather than left running: two interpreters holding two
+        copies of a large frame is not what anyone asked for by picking from a list, and the
+        variable panel can only show one of them anyway. What *is* preserved is the choice
+        of when -- `restart=False` lets a caller stage the selection and apply it later.
+        """
+        t = tab or self.tab
+        self.pool.choose(kernel=kind, python=python)
+        if private is not None and t is not None: t.private_kernel = bool(private)
+        if not restart: return self.kernel_options(t)
+        await self.pool.close(self.kernel_key(t))
+        await self.kernel(t)
+        return self.kernel_options(t)
+
+    async def restart_kernel(self, tab=None):
+        "Restart the tab's kernel in place, keeping its key and its port."
+        k = self.kernel_peek(tab)
+        if k is None: return await self.kernel(tab)
+        await k.restart()
+        return k
+
+    # -- running a file --------------------------------------------------------
+    def run_file_code(self, tab=None, src=None):
+        """`(code, label)` that runs a tab's file as a script in its kernel, or `(None, why)`.
+
+        Notebooks are cells and files are scripts, and until now only the first of those
+        could actually be run: a `.py` tab was a one-cell document, so "run" meant "run the
+        whole thing as a cell", with no `__main__` and no argv. This is the other half --
+        the same file, run the way `python file.py` would run it, but *in* the kernel, so
+        the variable panel has what it defined afterwards.
+        """
+        from .kernels import run_file_src
+        t = tab or self.tab
+        if t is None: return None, 'nothing open'
+        if t.kind == 'notebook': return None, 'this is a notebook — run its cells, or use run all'
+        if not t.path: return None, f'{t.title} has never been saved'
+        if not t.path.endswith('.py'): return None, f'{Path(t.path).name} is not a python file'
+        if src is None:
+            src = self.text_at(t.path)
+            if src is None: return None, f'could not read {Path(t.path).name}'
+        return run_file_src(t.path, src), Path(t.path).name
+
     async def shutdown(self):
         "Stop every kernel, dev server, terminal and model this workspace started."
         self.terms.close_all()
@@ -347,13 +421,13 @@ class Workspace:
 
     @classmethod
     def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel',
-             model=None, approvals='ask', agent_scope='overlay'):
+             model=None, approvals='ask', agent_scope='overlay', python=None):
         "Restore a saved workspace, dropping any folder or file that has since gone away."
         p = Path(path or ws_path())
         try: d = p.read_json()
         except Exception: d = {}
         ws = cls(port=port, agent=agent, kernel=kernel, model=model, approvals=approvals,
-                 agent_scope=agent_scope)
+                 agent_scope=agent_scope, python=python)
         for r in d.get('roots', []):
             try: ws.add_root(r)
             except Exception: pass

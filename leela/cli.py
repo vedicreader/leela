@@ -37,9 +37,28 @@ def main(argv=None):
                         'with your variables protected by policy and its own bindings kept '
                         'in a separate layer; isolated confines it to an allowlist sandbox '
                         'on a copy, which refuses most library calls')
+    p.add_argument('--python', default=None,
+                   help='interpreter to launch kernels under (default: the one running leela). '
+                        'Also selectable from the kernel picker in either frontend.')
+    p.add_argument('--keymap', default=None,
+                   help='keybindings file to apply over the defaults '
+                        '(default: $LEELA_KEYMAP, else keys.json in leela’s config dir)')
+    p.add_argument('--write-keymap', action='store_true',
+                   help='write every action and its current chord to that file, then exit — '
+                        'the starting point for rebinding anything your terminal swallows')
     p.add_argument('--allow-remote-terminal', action='store_true',
                    help='serve the web terminal even on a non-loopback host (this is a remote shell)')
     a = p.parse_args(argv)
+    # Set before either frontend is imported: the terminal app builds its Textual bindings
+    # at import time, from whatever `leela.keys` loaded when *it* was imported.
+    if a.keymap: os.environ['LEELA_KEYMAP'] = os.path.abspath(a.keymap)
+    if a.write_keymap:
+        from .keys import write_keymap, keymap_path, NOTES
+        path = write_keymap()
+        print(f'wrote {path}')
+        print('  action -> chord, or several chords separated by spaces; "" unbinds it.')
+        for n in NOTES: print(f'  ⚠ {n}')
+        return
     roots = [os.path.abspath(f) for f in a.folders]
     for r in roots:
         if not os.path.isdir(r): p.error(f'not a directory: {r}')
@@ -47,11 +66,11 @@ def main(argv=None):
         from .web.app import serve_ide
         serve_ide(roots, port=a.port, host=a.host, agent=a.agent, kernel_port=a.kernel_port,
                   kernel=a.kernel, model=a.model, approvals=a.approvals, agent_scope=a.agent_scope,
-                  allow_remote_terminal=a.allow_remote_terminal)
+                  allow_remote_terminal=a.allow_remote_terminal, python=a.python)
     else:
         from .tui.app import run
         run(roots, agent=a.agent, kernel_port=a.kernel_port, kernel=a.kernel,
-            model=a.model, approvals=a.approvals, agent_scope=a.agent_scope)
+            model=a.model, approvals=a.approvals, agent_scope=a.agent_scope, python=a.python)
 
 
 if __name__ == '__main__': main()

@@ -71,6 +71,7 @@ class FakeKernel:
     pid = 4242
     boot_error = None
     token = None
+    kernel_kind = 'ipykernel'      # what the kernel picker reports as running
 
     async def api(self, path, params=None, timeout=15):
         if path.endswith('/api/rows'): return ROWS
