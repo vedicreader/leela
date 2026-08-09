@@ -77,13 +77,19 @@ Measured with `uv run python tools/bench_ctx.py`:
 
 | | |
 |---|---|
-| `ctx.fs` (eager) | **18.8 ns** vs `ws.fs` at 19.6 ns |
-| `ctx.ai` (lazy) | 108.7 ns vs `ws.ai` at 46.7 ns |
-| `Ctx(...)` construction | ~1 µs, once per block per workspace |
+| `ctx.fs` (eager) | **18.9 ns** vs `ws.fs` at 19.4 ns |
+| `ctx.ai` (lazy) | 149 ns vs `ws.ai` at 46 ns |
+| `Ctx(...)` construction | ~1.5 µs, once per block per workspace |
 
-Eager capabilities are *slightly faster* than the status quo: they are `__slots__`
-descriptor reads, where `ws.fs` is an instance-dict lookup. Lazy ones pay ~62 ns for the
-extra delegation, on paths that are about to call a model or open a language server.
+Eager capabilities — around 90% of all access — are *slightly faster* than the status quo:
+they are `__slots__` descriptor reads, where `ws.fs` is an instance-dict lookup.
+
+Lazy ones cost ~103 ns more, on paths that are about to call a model or open a language
+server. About 39 ns of that is `Ctx.__getattr__`, which turns an undeclared capability into
+a message naming the block and the fix; defining it switches CPython to the hooked
+attribute path, which the lazy property body pays for several times over. It is free on the
+eager path. That trade is deliberate, and the benchmark prints it separately so it cannot
+drift unnoticed.
 
 ### Why some capabilities are lazy
 
@@ -121,7 +127,32 @@ uv run python -m tests.test_route_inventory     # regenerate, then commit the di
    serving changes.
 5. Tests for a block construct a `Ctx` over a fake, not a whole `Workspace`.
 
+## Extraction status
+
+Blocks are moved out of `ide_app` a group at a time. What has moved:
+
+| block | routes | caps |
+|---|---|---|
+| `keys` | `/keys.json`, `/keys/{file,save,reset}` | — |
+| `settings` | `/settings`, `/settings/{save,reset}` | `fs` |
+| `search` | `/search`, `/code/*`, `/outline`, `/similar`, `/clusters` | `search` |
+| `memory` | `/memory/*` | `memory` |
+
+Still closures inside `leela/web/app.py`, in the order they are planned to move: `fs`,
+`git`, `term`, `research`, `runs`, `tabs`, `editor`, `vars`, `nb`, `exec`, `debug`,
+`agent`. The hardest are last on purpose — `agent` is 45 routes, and `nb`/`debug` share the
+run locks and debugger state that `leela/core/session.py` exists to hold.
+
+`DocStore` is already live: the closure names `_docs`, `_buffers`, `_buffer_bases` and
+`_run_locks` are the same objects it holds, so routes that have not moved keep working
+unchanged. `DebugState` and `RunState` are defined but not yet supplied to `connect_all`,
+because the debugger closures have not moved — a `Ctx` must never hand a block a capability
+that is not the live one.
+
 ## Ports
+
+Selecting an alternate implementation, writing an adapter and checking it conforms are
+covered in **[Plugging in vishalakshi and ramabana](integration.md)**. In short:
 
 Three subsystems are getting alternate implementations —
 [vishalakshi](https://github.com/vedicreader/vishalakshi) for memory and retrieval,

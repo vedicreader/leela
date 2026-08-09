@@ -73,7 +73,10 @@ class SearchPort(Protocol):
     `leela/memory.py` says so at the top. A single "retrieval" port would force the two
     back together at exactly the moment vishalakshi is being introduced.
     """
+    # Both are values, not calls: `core.web.found` puts them straight into the reply so
+    # that an empty hit list always says which backend produced it.
     note: str
+    backend: str
 
     def search(self, q, limit: int = 60, regex: bool = False, force_scan: bool = False,
                mode: str = 'rg') -> Any: ...
@@ -90,7 +93,6 @@ class SearchPort(Protocol):
     def sync(self, notebooks: bool = True, graph: bool = True) -> Any: ...
     def async_sync(self, notebooks: bool = True, graph: bool = True) -> Any: ...
     def status(self) -> Any: ...
-    def backend(self) -> Any: ...
 
 
 @runtime_checkable

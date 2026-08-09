@@ -61,6 +61,21 @@ def main():
     print(f'\neager overhead : {rows_["ctx.fs"] - rows_["ws.fs"]:+.2f} ns/access')
     print(f'lazy overhead  : {rows_["ctx.ai"] - rows_["ws.ai"]:+.2f} ns/access')
 
+    # -- what the error-message hook costs ------------------------------------
+    # `Ctx.__getattr__` turns an undeclared capability into a message naming the block and
+    # the fix. Defining it switches CPython to the hooked attribute path, so it is not free
+    # even when it never fires -- measured here rather than asserted, because it is the one
+    # place the capability object is slower than what it replaced.
+    hook = Ctx.__getattr__
+    del Ctx.__getattr__
+    try:
+        off = [bench('ctx.fs  without the hook', 'ctx.fs', env),
+               bench('ctx.ai  without the hook', 'ctx.ai', env)]
+    finally:
+        Ctx.__getattr__ = hook
+    print(f'\nerror-hook cost: eager {rows_["ctx.fs"] - off[0][1]:+.2f}ns   '
+          f'lazy {rows_["ctx.ai"] - off[1][1]:+.2f}ns')
+
     # -- construction, paid once per block per workspace ----------------------
     c_full = bench('Ctx(ws)', 'Ctx(ws)', env, n=200_000)
     c_narrow = bench("Ctx(ws, caps=('fs',))", "Ctx(ws, caps=('fs','journal'))", env, n=200_000)

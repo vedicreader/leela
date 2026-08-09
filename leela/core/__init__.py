@@ -15,9 +15,24 @@ swapped out underneath* (`ports`).
 from .block import Block, block_caps, connect_all
 from .ctx import APP, CAPABILITIES, EAGER, LAZY, Ctx
 from .ports import MemoryPort, RuntimePort, SearchPort
+from .providers import ProviderError, build, provider, providers_for, register, selected
 from .session import DebugState, DocStore, RunState
+
+
+# `conformance` is a diagnostic, not part of the hot path, and it runs as
+# `python -m leela.core.conformance`. Importing it here eagerly would put it in sys.modules
+# before runpy executes it, which makes runpy warn about unpredictable behaviour. Resolving
+# it on first use keeps the re-export without the warning.
+def __getattr__(name):
+    if name in ('check_port', 'port_report'):
+        from . import conformance
+        v = globals()[name] = {'check_port': conformance.check, 'port_report': conformance.report}[name]
+        return v
+    raise AttributeError(name)
 
 __all__ = ['Ctx', 'CAPABILITIES', 'EAGER', 'LAZY', 'APP',
            'Block', 'connect_all', 'block_caps',
            'DocStore', 'DebugState', 'RunState',
-           'MemoryPort', 'SearchPort', 'RuntimePort']
+           'MemoryPort', 'SearchPort', 'RuntimePort',
+           'register', 'provider', 'build', 'providers_for', 'selected', 'ProviderError',
+           'check_port', 'port_report']

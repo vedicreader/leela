@@ -93,10 +93,15 @@ class Ctx:
     def __getattr__(self, name):
         """Explain an undeclared capability instead of reporting a missing attribute.
 
-        Only reached when normal lookup has already failed -- an unset slot, i.e. exactly
-        the narrowing case -- so the success path pays nothing for this. That is the whole
-        reason narrowing is enforced by leaving slots unassigned rather than by checking a
-        set on every access.
+        Only *called* when normal lookup has already failed -- an unset slot, i.e. exactly
+        the narrowing case. Merely defining it is not quite free, though: CPython switches
+        the type to the hooked attribute path, which measures at ~0ns on an eager
+        capability (one slot read) and ~32ns on a lazy one, whose property body makes
+        several reads of its own. `tools/bench_ctx.py` breaks that out.
+
+        Worth it: the eager path is 90% of access and is unaffected, while the lazy path
+        is about to call a model. The alternative was CPython's bare "object has no
+        attribute 'memory'", which names neither the block nor the fix.
         """
         if name in APP and name not in self._app:
             raise AttributeError(

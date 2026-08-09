@@ -151,11 +151,15 @@ class Workspace:
         self.pool = KernelPool(port=port, default_kernel=kernel, default_python=runtime_python,
                                transport=transport, gateway=gateway)
         self.dev = DevServers(port=dev_port)
-        self.search = Search(self.fs)
-        from .memory import Memory
+        # Both go through the provider registry rather than being constructed directly, so
+        # an alternate implementation is `LEELA_SEARCH=…` / `LEELA_MEMORY=…` rather than an
+        # edit here. `leela` is registered like any other provider, so the default takes
+        # exactly the same path an alternate does. See `leela/core/providers.py`.
+        from .core.providers import build as build_provider
+        self.search = build_provider('search', self.fs)
         # Web memory reuses Kosha's already-resident embedder but owns a document-tree DB;
         # code ASTs and prose headings are different corpora and should not share tables.
-        self.memory = Memory(kosha=self.search._kosha)
+        self.memory = build_provider('memory', kosha=getattr(self.search, '_kosha', None))
         self.research = Research(self.fs, memory=self.memory)
         self.runs = Runs(self.fs.roots[0] if self.fs.roots else None)
         from .journal import OperationJournal
