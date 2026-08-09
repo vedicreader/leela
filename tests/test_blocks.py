@@ -93,6 +93,65 @@ def test_saving_an_unknown_settings_scope_fails_rather_than_writing_somewhere(cl
     assert r.status_code == 400 or r.json().get('ok') is not True
 
 
+# -- git ---------------------------------------------------------------------
+
+# Every op the browser can send, as the if/elif ladder in ide_app listed them. Kept here so
+# that turning that ladder into a dispatch table cannot have silently dropped one.
+GIT_OPS = [
+    'stage', 'unstage', 'discard', 'resolve_conflict', 'apply_patch', 'checkout', 'create',
+    'rename_branch', 'set_upstream', 'unset_upstream', 'delete', 'delete_remote', 'commit',
+    'fetch', 'pull', 'push', 'stash', 'stash_pop', 'stash_apply', 'stash_drop', 'merge',
+    'rebase', 'cherry_pick', 'revert', 'reset', 'abort_merge', 'abort_rebase', 'tag',
+    'delete_tag', 'add_remote', 'set_remote', 'remove_remote', 'add_worktree',
+    'remove_worktree',
+]
+
+
+class _FakeRepo:
+    "Records what was called on it; every method accepts anything."
+    def __init__(self): self.calls = []
+    def __getattr__(self, name):
+        def call(*a, **kw): self.calls.append(name); return None
+        return call
+
+
+@pytest.mark.parametrize('op', GIT_OPS)
+def test_every_git_op_still_dispatches(op):
+    from leela.blocks.git.app import _apply
+    repo = _FakeRepo()
+    _apply(repo, op, {'paths': ['a.py'], 'path': 'a.py', 'branch': 'main', 'name': 'x',
+                      'ref': 'HEAD', 'url': 'u', 'message': 'm', 'choice': 'ours'})
+    assert repo.calls, f'{op} reached no repository method'
+
+
+def test_the_operation_family_is_matched_by_prefix():
+    "continue/skip/abort are sent as operation_* rather than being enumerated."
+    from leela.blocks.git.app import _apply
+    for suffix in ('continue', 'skip', 'abort'):
+        repo = _FakeRepo()
+        _apply(repo, f'operation_{suffix}', {})
+        assert repo.calls == ['operation_action']
+
+
+def test_an_unknown_git_op_is_refused():
+    from leela.git import GitError
+    from leela.blocks.git.app import _apply
+    with pytest.raises(GitError, match='unknown Git action'): _apply(_FakeRepo(), 'rm -rf', {})
+
+
+@pytest.mark.parametrize('bad', ['/etc/passwd', '../outside', 'a/../../b'])
+def test_git_pathspecs_from_the_browser_cannot_escape_the_repository(bad):
+    from leela.git import GitError
+    from leela.blocks.git.app import git_paths
+    with pytest.raises(GitError, match='invalid repository path'): git_paths([bad])
+
+
+def test_git_requires_at_least_one_path():
+    from leela.git import GitError
+    from leela.blocks.git.app import git_paths
+    with pytest.raises(GitError, match='at least one'): git_paths([])
+
+
 # -- capability enforcement, end to end --------------------------------------
 
 def test_a_block_reaching_past_its_caps_fails_loudly(monkeypatch):

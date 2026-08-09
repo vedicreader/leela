@@ -26,10 +26,16 @@ from starlette.routing import WebSocketRoute
 
 from dhrishti.core import PROFILES, SORTS
 from .. import errstr
+from ..blocks import git as git_block
 from ..blocks import keys as keys_block
 from ..blocks import memory as memory_block
+from ..blocks import research as research_block
+from ..blocks import runs as runs_block
 from ..blocks import search as search_block
 from ..blocks import settings as settings_block
+from ..blocks import term as term_block
+from ..blocks import workspace as workspace_block
+from ..blocks.term.app import term_cwd
 from ..buttons import bar as btn_bar
 from ..core import DocStore, connect_all
 from ..core.web import asset as _asset
@@ -38,17 +44,12 @@ from ..core.web import fail as _fail
 from ..core.web import off_loop as _off_loop
 from ..core.web import sse as _sse
 from ..core.web import static_dir
-from ..diffs import diff_label, diff_rows, did_you_mean, fuzzy_rank, udiff
+from ..diffs import did_you_mean, fuzzy_rank
 from ..fs import lang_for
 from ..git import GitRepo, GitError
-from .. import keys as keymap
-from ..keys import (web_keymap, help_rows, toast_rows, by_scope, chord_display, keymap_path,
-                    keymap_json)
-from ..menus import web_menus
+from ..keys import by_scope, chord_display, toast_rows
 from ..nb import Notebook, Cell
-from ..research import MAX_DOC_CHARS
-from ..settings import Settings
-from ..term import TerminalGate, lazygit_argv, LazygitMissing
+from ..term import TerminalGate, lazygit_argv
 from ..workspace import Workspace
 from ..agent.core import model_note
 
@@ -61,7 +62,8 @@ __all__ = ['ide_app', 'serve_ide']
 #
 # Everything not listed here is still a closure inside `ide_app`; see `docs/blocks.md` for
 # the extraction order and what remains.
-BLOCKS = [keys_block, settings_block, search_block, memory_block]
+BLOCKS = [keys_block, settings_block, search_block, memory_block,
+          research_block, term_block, runs_block, workspace_block, git_block]
 
 
 def _found(ws, hits):
@@ -840,12 +842,9 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             Link(rel='stylesheet', href=_asset('lee-ide.css')),
             Script(src=_asset('lee-ide.js'), defer=True))
 
-    def _term_cwd(ref=None):
-        "Where a new terminal starts. Ergonomics, not confinement -- a shell can `cd` anywhere."
-        if ref:
-            try: return ws.fs._check(ref, must_exist=True)
-            except Exception: pass
-        return ws.cwd_for() or (ws.fs.roots[0] if ws.fs.roots else None)
+    # The pty websocket is registered when the app is built, before any block connects, so
+    # it cannot reach the term block's Ctx. It shares the block's definition instead.
+    def _term_cwd(ref=None): return term_cwd(ws, ref)
 
     async def term_ws(sock):
         """One websocket, one pty. Binary frames are keystrokes; text frames are control.
@@ -2080,221 +2079,11 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
 
     # `search` is connected as a block; see BLOCKS.
 
-    # -- working directory & git ------------------------------------------
-    def _repo():
-        cwd = ws.cwd_for()
-        if cwd is None: raise GitError('open a folder first')
-        return GitRepo.at(cwd)
+    # `workspace` and `git` are connected as blocks; see BLOCKS.
 
-    def _git_paths(values):
-        "Pathspecs accepted from the browser, constrained to repository-relative files."
-        out = []
-        for value in values or ():
-            p = Path(str(value))
-            if p.is_absolute() or '..' in p.parts: raise GitError(f'invalid repository path: {value}')
-            out.append(str(p))
-        if not out: raise GitError('select at least one changed file')
-        return out
+    # `term` is connected as a block; see BLOCKS.
 
-    @rt('/workspace/info')
-    def workspace_info():
-        "The current multi-root project plus independently hosted workspace windows."
-        active = ws.fs.root_of(ws.tab.path) if ws.tab and ws.tab.path else (ws.fs.roots[0] if ws.fs.roots else None)
-        sites = workspace_catalog() if callable(workspace_catalog) else list(workspace_catalog or ())
-        return {'active': str(active or ''),
-                'roots': [{'path': str(root), 'name': root.name} for root in ws.fs.roots],
-                'workspaces': sites}
-
-    @rt('/cwd')
-    def cwd_info():
-        t = ws.tab
-        return {'cwd': str(ws.cwd_for() or ''), 'explicit': bool(t and t.cwd),
-                'root': str(ws.fs.root_of(t.path) if t and t.path else (ws.fs.roots[0] if ws.fs.roots else ''))}
-
-    @rt('/cwd/set')
-    async def cwd_set(req):
-        d = await req.json()
-        try:
-            p = ws.set_cwd(d.get('path'))
-            ws.save()
-            return {'ok': True, 'cwd': str(p), 'explicit': bool(ws.tab and ws.tab.cwd)}
-        except Exception as e: return _fail(e)
-
-    @rt('/git/info')
-    async def git_info():
-        try: return await _off_loop(lambda: _repo().info())
-        except Exception as e: return _fail(e)
-
-    @rt('/git/action')
-    async def git_action(req):
-        """Perform one explicit Git mutation and return the one refreshed snapshot.
-
-        The browser renders this response directly; it must not follow each mutation with
-        several duplicate status requests. Destructive operations remain confirmed by the
-        client and Git itself remains the final safety check.
-        """
-        d = await req.json()
-        try:
-            def act():
-                repo, op = _repo(), str(d.get('op') or '')
-                if op == 'stage': repo.stage(_git_paths(d.get('paths')))
-                elif op == 'unstage': repo.unstage(_git_paths(d.get('paths')))
-                elif op == 'discard': repo.discard(_git_paths(d.get('paths')))
-                elif op == 'resolve_conflict': repo.resolve_conflict(_git_paths([d.get('path')])[0], d.get('choice') or '')
-                elif op == 'apply_patch': repo.apply_patch(d.get('patch') or '', bool(d.get('staged', True)), bool(d.get('reverse')))
-                elif op == 'checkout': repo.checkout(d.get('branch') or '')
-                elif op == 'create': repo.create(d.get('branch') or '', d.get('start') or 'HEAD')
-                elif op == 'rename_branch': repo.rename_branch(d.get('branch') or '', d.get('name') or '')
-                elif op == 'set_upstream': repo.set_upstream(d.get('branch') or '', d.get('upstream') or '')
-                elif op == 'unset_upstream': repo.unset_upstream(d.get('branch') or '')
-                elif op == 'delete': repo.delete(d.get('branch') or '', bool(d.get('force')))
-                elif op == 'delete_remote': repo.delete_remote(d.get('remote') or 'origin', d.get('branch') or '')
-                elif op == 'commit': repo.commit(d.get('message') or '', bool(d.get('amend')))
-                elif op == 'fetch': repo.fetch(d.get('remote') or '', bool(d.get('prune', True)))
-                elif op == 'pull': repo.pull()
-                elif op == 'push': repo.push(bool(d.get('publish')), bool(d.get('force_with_lease')))
-                elif op == 'stash': repo.stash(d.get('message') or '')
-                elif op == 'stash_pop': repo.stash_pop(d.get('ref') or 'stash@{0}')
-                elif op == 'stash_apply': repo.stash_apply(d.get('ref') or 'stash@{0}')
-                elif op == 'stash_drop': repo.stash_drop(d.get('ref') or 'stash@{0}')
-                elif op == 'merge': repo.merge(d.get('branch') or '')
-                elif op == 'rebase': repo.rebase(d.get('branch') or '')
-                elif op == 'cherry_pick': repo.cherry_pick(d.get('ref') or '')
-                elif op == 'revert': repo.revert(d.get('ref') or '')
-                elif op == 'reset': repo.reset(d.get('ref') or 'HEAD', d.get('mode') or 'mixed')
-                elif op.startswith('operation_'): repo.operation_action(op.removeprefix('operation_'))
-                elif op == 'abort_merge': repo.operation_action('abort')
-                elif op == 'abort_rebase': repo.operation_action('abort')
-                elif op == 'tag': repo.tag(d.get('name') or '', d.get('message') or '', d.get('ref') or 'HEAD')
-                elif op == 'delete_tag': repo.delete_tag(d.get('name') or '', d.get('remote') or '')
-                elif op == 'add_remote': repo.add_remote(d.get('name') or '', d.get('url') or '')
-                elif op == 'set_remote': repo.set_remote(d.get('name') or '', d.get('url') or '', bool(d.get('push')))
-                elif op == 'remove_remote': repo.remove_remote(d.get('name') or '')
-                elif op == 'add_worktree': repo.add_worktree(d.get('path') or '', d.get('branch') or '', bool(d.get('create')))
-                elif op == 'remove_worktree': repo.remove_worktree(d.get('path') or '', bool(d.get('force')))
-                else: raise GitError(f'unknown Git action: {op}')
-                return repo.info()
-            return await _off_loop(act)
-        except Exception as e: return _fail(e)
-
-    @rt('/git/history')
-    async def git_history(limit: int = 100, skip: int = 0, query: str = '', ref: str = '--all', path: str = ''):
-        try:
-            clean = _git_paths([path])[0] if path else ''
-            return {'commits': await _off_loop(_repo().history, limit, skip, query, ref, clean)}
-        except Exception as e: return _fail(e)
-
-    @rt('/git/reflog')
-    async def git_reflog(limit: int = 100):
-        try: return {'entries': await _off_loop(_repo().reflog, limit)}
-        except Exception as e: return _fail(e)
-
-    @rt('/git/conflict')
-    async def git_conflict(path: str = ''):
-        try: return await _off_loop(_repo().conflict_versions, _git_paths([path])[0])
-        except Exception as e: return _fail(e)
-
-    @rt('/git/commit')
-    async def git_commit_detail(ref: str = 'HEAD'):
-        try: return await _off_loop(_repo().commit_detail, ref)
-        except Exception as e: return _fail(e)
-
-    @rt('/git/compare')
-    async def git_compare(left: str = 'HEAD', right: str = ''):
-        try:
-            if not right: raise GitError('choose two refs to compare')
-            return await _off_loop(_repo().compare, left, right)
-        except Exception as e: return _fail(e)
-
-    @rt('/git/blame')
-    async def git_blame(path: str = '', start: int = 1, end: int = 0):
-        try: return {'lines': await _off_loop(_repo().blame, _git_paths([path])[0], start, end)}
-        except Exception as e: return _fail(e)
-
-    @rt('/git/resources')
-    async def git_resources():
-        try:
-            repo = _repo()
-            worktrees, submodules = await __import__('asyncio').gather(
-                _off_loop(repo.worktrees), _off_loop(repo.submodules))
-            return {'worktrees': worktrees, 'submodules': submodules}
-        except Exception as e: return _fail(e)
-
-    @rt('/git/diff')
-    async def git_diff(path: str = '', staged: bool = False):
-        try:
-            clean = _git_paths([path])[0]
-            view = await _off_loop(lambda: _repo().diff_view(clean, staged))
-            return {'path': path, 'staged': staged, **view}
-        except Exception as e: return _fail(e)
-
-    @rt('/git/file')
-    async def git_file(path: str = ''):
-        try:
-            repo = _repo()
-            absolute = ws.fs._check(path, must_exist=False)
-            try: relative = str(absolute.relative_to(repo.root))
-            except ValueError: raise GitError('the active file is outside this repository')
-            return await _off_loop(repo.file_changes, relative)
-        except Exception as e: return _fail(e)
-
-    # -- terminal ----------------------------------------------------------
-    @rt('/term/info')
-    def term_info():
-        """What the client needs to open a terminal, including the token.
-
-        The token is handed out over this same-origin route and nowhere else. That is the
-        whole point: a websocket is not bound by the same-origin policy, so any page the
-        user visits can reach `127.0.0.1` -- only one that can *read* this response is the IDE.
-        """
-        try: lazygit_argv(); git, git_why = True, ''
-        except LazygitMissing as e: git, git_why = False, str(e)
-        return {'enabled': gate.enabled, 'why': gate.why, 'token': gate.token if gate.enabled else '',
-                'cwd': str(_term_cwd() or ''), 'lazygit': git, 'lazygit_why': git_why,
-                'open': [t.state() for t in ws.terms.all()]}
-
-    @rt('/term/close')
-    def term_close(id: str = 'shell'):
-        ws.terms.close(id)
-        return {'ok': True}
-
-    # -- research ----------------------------------------------------------
-    @rt('/research/search')
-    async def research_search(q: str = '', n: int = 15):
-        "Web search: titles and urls only, so it stays fast enough to drive from a prompt box."
-        n = min(50, max(1, int(n)))
-        docs = await _off_loop(ws.research.search, q, n)
-        return {'note': ws.research.note, 'docs': [d.dict() for d in docs]}
-
-    @rt('/research/read')
-    async def research_read(url: str = '', remember: bool = True):
-        "One page (or GitHub file, or arxiv paper) as markdown."
-        d = await _off_loop(ws.research.read, url, None, remember)
-        return {'note': ws.research.note, 'doc': d.dict() if d else None}
-
-    @rt('/research/dig')
-    async def research_dig(q: str = '', n: int = 5, remember: bool = True):
-        "Search and read the top results into one cited digest."
-        n = min(12, max(1, int(n)))
-        docs, digest = await _off_loop(ws.research.dig, q, n, MAX_DOC_CHARS, remember)
-        return {'note': ws.research.note, 'digest': digest, 'docs': [d.dict() for d in docs]}
-
-    # `memory` is connected as a block; see BLOCKS.
-
-    @rt('/research/save')
-    async def research_save(req):
-        "Keep a fetched page: markdown by default, or a runnable notebook with kind='notebook'."
-        d = await req.json()
-        try:
-            if d.get('kind') == 'notebook':
-                e = await _off_loop(ws.research.save_notebook, d['url'], d.get('path'))
-            else:
-                from ..research import Doc
-                doc = Doc(title=d.get('title') or '', url=d.get('url') or '', text=d.get('text') or '')
-                e = await _off_loop(ws.research.save, doc, d.get('path'))
-            if e is None: return _fail(ws.research.note)
-            return {'ok': True, 'entry': e.dict(), 'note': ws.research.note}
-        except Exception as e: return _fail(e)
+    # `research` is connected as a block; see BLOCKS.
 
     # -- live envs ---------------------------------------------------------
     @rt('/envs')
@@ -2314,32 +2103,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         return {'ok': True, 'watching': ws.watch_env(d.get('base'))}
 
     # -- run configurations & dev servers ----------------------------------
-    @rt('/runs')
-    def runs_route():
-        "The project's run configurations, plus one for the open file so the picker is never empty."
-        t = ws.tab
-        here = ws.runs.for_file(t.path) if (t is not None and (t.path or '').endswith('.py')) else None
-        names = {r.name for r in ws.runs.runs}
-        return {'runs': [r.dict() for r in ws.runs.runs],
-                'here': here.dict() if (here and here.name not in names) else None,
-                'path': str(ws.runs.path or ''), 'note': ws.runs.note,
-                'servers': [s.state() for s in ws.dev.all()]}
-
-    @rt('/runs/save')
-    async def runs_save(req):
-        "Write the configurations file, creating it from a template when there is none yet."
-        d = await req.json()
-        try:
-            if (text := d.get('text')) is not None:
-                json.loads(text)                      # refuse to write a file we could not read back
-                p = ws.runs.path
-                if p is None: return _fail('open a folder first')
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(text)
-            ws.runs.load()
-        except Exception as e: return _fail(e)
-        return {'ok': True, 'path': str(ws.runs.path or ''), 'note': ws.runs.note,
-                'runs': [r.dict() for r in ws.runs.runs]}
+    # `runs` is connected as a block; see BLOCKS.
 
     @rt('/debug/capabilities')
     def debug_capabilities():
