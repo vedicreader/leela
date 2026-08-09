@@ -26,6 +26,7 @@ from starlette.routing import WebSocketRoute
 
 from dhrishti.core import PROFILES, SORTS
 from .. import errstr
+from ..blocks import fs as fs_block
 from ..blocks import git as git_block
 from ..blocks import keys as keys_block
 from ..blocks import memory as memory_block
@@ -38,6 +39,11 @@ from ..blocks import workspace as workspace_block
 from ..blocks.term.app import term_cwd
 from ..buttons import bar as btn_bar
 from ..core import DocStore, connect_all
+from ..blocks.fs.ui import files_panel as _files_panel
+from ..core.ui import action_bar as _action_bar
+from ..core.ui import activity_icon as _activity_icon
+from ..core.ui import btn as _btn
+from ..core.ui import menu_button as _menu_button
 from ..core.web import asset as _asset
 from ..core.web import diff_payload as _diff
 from ..core.web import fail as _fail
@@ -63,7 +69,8 @@ __all__ = ['ide_app', 'serve_ide']
 # Everything not listed here is still a closure inside `ide_app`; see `docs/blocks.md` for
 # the extraction order and what remains.
 BLOCKS = [keys_block, settings_block, search_block, memory_block,
-          research_block, term_block, runs_block, workspace_block, git_block]
+          research_block, term_block, runs_block, workspace_block, git_block,
+          fs_block]
 
 
 def _found(ws, hits):
@@ -424,23 +431,6 @@ def _kernel_pill(ws):
                 title=f'{k.base or "no inspector"} · pid {k.pid} — click to change', **common)
 
 
-def _btn(b):
-    "One button from the shared table. The click runs the same action its key runs."
-    return Button(b.label, cls='lee-btn ' + (b.kind or 'plain'), title=b.tooltip,
-                  data_action=b.action, onclick=f'leeAct("{b.action}")')
-
-
-def _action_bar(name, **kw):
-    "A whole bar of them, in the order `leela.buttons` declares."
-    return Div(*[_btn(b) for b in btn_bar(name)], cls=f'lee-bar lee-bar-{name}', **kw)
-
-
-def _menu_button(surface):
-    "Mouse-discoverable door into the same contextual registry used by right-click."
-    return Button('⋯', cls='lee-more', title=f'{surface} actions', aria_label=f'{surface} actions',
-                  onclick=f'leeMenuAt("{surface}", this)')
-
-
 def _header(ws):
     """Project identity first, document tabs second, infrequent actions in menus.
 
@@ -467,61 +457,6 @@ def _header(ws):
         Span(cls='lee-spacer'),
         _kernel_pill(ws),
         cls='lee-header', id='header')
-
-
-def _git_tree_state(ws):
-    "Absolute changed paths for file-tree decoration, across every open repository."
-    out = {}
-    seen = set()
-    for root in ws.fs.roots:
-        try: repo = GitRepo.at(root)
-        except GitError: continue
-        if repo.root in seen: continue
-        seen.add(repo.root)
-        try:
-            for c in repo.changes():
-                out[str((repo.root/c['path']).resolve())] = c
-        except GitError: pass
-    return out
-
-
-def _tree_node(e, git_state=None):
-    "One file-tree row; directories lazily fetch their children on first open."
-    if e.is_dir:
-        return Details(
-            Summary(Span('▸', cls='lee-caret'), Span(e.name, cls='lee-fname'),
-                    hx_get=f'/tree?path={quote(e.path)}', hx_target='next .lee-kids', hx_trigger='click once'),
-            Div(cls='lee-kids'),
-            cls='lee-node lee-dir' + (' lee-root' if e.is_root else ''), data_path=e.path,
-            role='treeitem', aria_expanded='false', aria_selected='false')
-    change = (git_state or {}).get(str(Path(e.path).resolve()))
-    state = ('conflict' if change and change['conflicted'] else 'untracked' if change and change['untracked']
-             else 'staged' if change and change['staged'] and not change['unstaged'] else 'modified' if change else '')
-    return Div(Span(e.name, cls='lee-fname'), Span(state[:1].upper(), cls='lee-tree-git') if state else '',
-               cls='lee-node lee-file' + (f' git-{state}' if state else ''), data_path=e.path, data_lang=e.lang or '',
-               role='treeitem',aria_selected='false',
-               onclick=f'event.preventDefault();event.stopPropagation();leeOpenFile({json.dumps(e.path)})')
-
-
-def _activity_icon(kind):
-    "Small monochrome activity-bar icons; labels remain available to assistive tech."
-    if kind == 'files':
-        return NotStr('<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5h6l1.7 2h7.3v8.5h-15zM2.5 5.5V4h5l1.5 1.5"/></svg>')
-    if kind == 'symbols':
-        return NotStr('<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3.5h10M5 10h10M5 16.5h10"/><circle cx="3" cy="3.5" r="1"/><circle cx="3" cy="10" r="1"/><circle cx="3" cy="16.5" r="1"/></svg>')
-    return NotStr('<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="4" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="5" cy="16" r="2"/><path d="M5 6v8m2-7h4a4 4 0 0 1 4 4v-3"/></svg>')
-
-
-def _files_panel(ws):
-    state = _git_tree_state(ws)
-    body = [_tree_node(e, state) for e in ws.fs.ls(None)] or [Div('no folder open', cls='lee-dim')]
-    return Section(
-        Div(Span('files', cls='lee-ptitle'), Span(cls='lee-spacer'), _action_bar('web_files'),
-            _action_bar('files'), _menu_button('files'),
-            Button('−', cls='lee-pane-min', title='minimise files', aria_label='minimise files',
-                   onclick='leePane("left", false)'), cls='lee-phead'),
-        Div(*body, id='filetree', cls='lee-tree', tabindex='0', role='tree', aria_label='project files'),
-        cls='lee-panel lee-files')
 
 
 def _git_panel():
@@ -556,7 +491,7 @@ def _left_workspace(ws):
             Button(_activity_icon('git'), Span('Git', cls='sr-only'), cls='lee-activity-btn',
                    data_left='git', title='Git source control', aria_label='Git source control',
                    onclick='leeLeft("git")'), cls='lee-activity', aria_label='Project tools'),
-        Div(_files_panel(ws), _symbols_panel(), _git_panel(), _toast_panel(), cls='lee-left-content'),
+        Div(_files_panel(ws.fs), _symbols_panel(), _git_panel(), _toast_panel(), cls='lee-left-content'),
         cls='lee-left left-files', id='left')
 
 
@@ -1062,96 +997,13 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         ws.pool.choose(python=py)
         return {'ok': True, 'python': py}
 
-    # -- files -------------------------------------------------------------
-    @rt('/tree')
-    def tree(path: str):
-        try:
-            state = _git_tree_state(ws)
-            return tuple(_tree_node(e, state) for e in ws.fs.ls(path))
-        except Exception as e: return Div(errstr(e), cls='lee-err')
-
-    @rt('/files/panel')
-    def files_panel():
-        "Refresh only the file pane; the client restores expansion, selection and scroll."
-        return _files_panel(ws)
-
+    # `fs` is connected as a block; see BLOCKS. `/fs/add_root` stays here because it
+    # re-renders the whole shell, which is the last thing left in this function.
     @rt('/fs/add_root')
     def add_root(path: str):
         try: ws.add_root(path); ws.save()
         except Exception as e: return _fail(str(e))
         return _shell(ws, gate)
-
-    @rt('/fs/add-root')
-    async def add_root_json(req):
-        "Add a root without rebuilding the editor, model controls and every other pane."
-        d = await req.json()
-        try: ws.add_root(d.get('path') or ''); ws.save()
-        except Exception as e: return _fail(e)
-        return {'ok': True}
-
-    @rt('/fs/browse')
-    def fs_browse(path: str = ''):
-        "Directories for the in-app folder picker. Files are intentionally never exposed here."
-        try:
-            p = Path(path or Path.home()).expanduser().resolve()
-            if not p.is_dir(): raise NotADirectoryError(str(p))
-            dirs = sorted((x for x in p.iterdir() if x.is_dir() and not x.name.startswith('.')),
-                          key=lambda x: x.name.lower())
-            parent = p.parent if p.parent != p else None
-            return {'path': str(p), 'parent': str(parent) if parent else '',
-                    'dirs': [{'name': x.name, 'path': str(x)} for x in dirs]}
-        except Exception as e: return _fail(e)
-
-    @rt('/fs/new')
-    async def fs_new(req):
-        "Create a file or folder. `kind` is 'file' or 'dir'."
-        d = await req.json()
-        parent, name, kind = d.get('parent') or '', d.get('name') or '', d.get('kind', 'file')
-        if not name: return _fail('name required')
-        try:
-            target = Path(parent)/name
-            e = ws.fs.mkdir(target) if kind == 'dir' else ws.create_document(target)
-            if kind != 'dir': ws.journal.record(f'Create {name}', [(e.path, None, Path(e.path).read_text())], kind='create')
-            return {'ok': True, 'entry': e.dict()}
-        except Exception as e: return _fail(e)
-
-    @rt('/fs/rename')
-    async def fs_rename(req):
-        d = await req.json()
-        try:
-            old = ws.fs._check(d['path'], must_exist=True)
-            before = old.read_text(encoding='utf-8', errors='replace') if old.is_file() else None
-            entry = ws.fs.rename(old, d['name'])
-            if before is not None: ws.journal.record(f'Rename {old.name} to {entry.name}', [(old, before, None), (entry.path, None, before)], kind='rename')
-            return {'ok': True, 'entry': entry.dict()}
-        except Exception as e: return _fail(e)
-
-    @rt('/fs/remove-root')
-    async def fs_remove_root(req):
-        "Remove an open root from the workspace without touching anything on disk."
-        d = await req.json()
-        try:
-            ws.drop_root(d['path']); ws.save()
-            return {'ok': True}
-        except Exception as e: return _fail(e)
-
-    @rt('/fs/delete')
-    async def fs_delete(req):
-        d = await req.json()
-        try:
-            p = ws.fs._check(d['path'], must_exist=True)
-            before = p.read_text(encoding='utf-8', errors='replace') if p.is_file() else None
-            ws.fs.delete(p)
-            if before is not None: ws.journal.record(f'Delete {p.name}', [(p, before, None)], kind='delete')
-            if (i := ws.find(d['path'])) is not None: ws.close(i)
-            return {'ok': True}
-        except Exception as e: return _fail(e)
-
-    @rt('/fs/find')
-    def fs_find(q: str = '', limit: int = 200):
-        "Quick-open: fuzzy match over every file in the open folders, best match first."
-        hits = fuzzy_rank(q, ws.fs.walk(), key=str, limit=limit)
-        return {'hits': [{'path': str(p), 'name': p.name, 'lang': lang_for(p) or ''} for p in hits]}
 
     # -- tabs --------------------------------------------------------------
     # Tab routes swap only the tab bar, never the whole shell. Re-rendering everything

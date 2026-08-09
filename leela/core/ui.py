@@ -1,0 +1,45 @@
+"""The chrome every panel is built from.
+
+Four helpers, shared because a block's panel has to look like the rest of the IDE without
+knowing anything about the rest of the IDE. They live in core rather than in a block for
+the reason stated in `leela/core/__init__.py`: what two blocks both need belongs here.
+
+The buttons matter more than they look. `btn(b)` renders a row from `leela.buttons` with
+`onclick="leeAct(action)"` -- the *same* action name the keymap binds to a chord. One table,
+one code path, so a button and its keyboard shortcut cannot drift into doing different
+things, and `/keys.json` can serve both to the browser together.
+"""
+
+from __future__ import annotations
+
+from fasthtml.common import Button, Div, NotStr
+
+from ..buttons import bar as btn_bar
+
+__all__ = ['btn', 'action_bar', 'menu_button', 'activity_icon']
+
+
+def btn(b):
+    "One button from the shared table. The click runs the same action its key runs."
+    return Button(b.label, cls='lee-btn ' + (b.kind or 'plain'), title=b.tooltip,
+                  data_action=b.action, onclick=f'leeAct("{b.action}")')
+
+
+def action_bar(name, **kw):
+    "A whole bar of them, in the order `leela.buttons` declares."
+    return Div(*[btn(b) for b in btn_bar(name)], cls=f'lee-bar lee-bar-{name}', **kw)
+
+
+def menu_button(surface):
+    "Mouse-discoverable door into the same contextual registry used by right-click."
+    return Button('⋯', cls='lee-more', title=f'{surface} actions', aria_label=f'{surface} actions',
+                  onclick=f'leeMenuAt("{surface}", this)')
+
+
+def activity_icon(kind):
+    "Small monochrome activity-bar icons; labels remain available to assistive tech."
+    if kind == 'files':
+        return NotStr('<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5h6l1.7 2h7.3v8.5h-15zM2.5 5.5V4h5l1.5 1.5"/></svg>')
+    if kind == 'symbols':
+        return NotStr('<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3.5h10M5 10h10M5 16.5h10"/><circle cx="3" cy="3.5" r="1"/><circle cx="3" cy="10" r="1"/><circle cx="3" cy="16.5" r="1"/></svg>')
+    return NotStr('<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="4" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="5" cy="16" r="2"/><path d="M5 6v8m2-7h4a4 4 0 0 1 4 4v-3"/></svg>')
