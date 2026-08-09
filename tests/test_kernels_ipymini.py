@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio, sys, warnings
 import pytest
 
-from leela.kernels import Kernel, KernelPool, _spec, bootstrap_src, ipymini_available
+from leela.kernels import Kernel, KernelPool, _spec, bootstrap_src, ipymini_available, output_text
 
 
 # -- unit tests: no live kernel, no ipymini required ---------------------------------
@@ -17,6 +17,7 @@ from leela.kernels import Kernel, KernelPool, _spec, bootstrap_src, ipymini_avai
 def test_spec_ipykernel_default():
     s = _spec()
     assert s.argv == [sys.executable, '-m', 'ipykernel_launcher', '-f', '{connection_file}']
+    assert s.metadata['supported_encryption'] == 'curve'
 
 def test_spec_ipymini_argv():
     s = _spec(kernel='ipymini')
@@ -30,6 +31,14 @@ def test_bootstrap_src_carries_ipymini_flag():
     src = bootstrap_src(kernel='ipykernel')
     assert 'False' in src
 
+
+def test_bootstrap_pins_leelas_dhrishti_even_when_the_project_has_an_older_copy():
+    import dhrishti
+    src = bootstrap_src()
+    assert str(__import__('pathlib').Path(dhrishti.__file__).resolve()) in src
+    assert "spec_from_file_location('dhrishti'" in src
+    assert "del sys.modules[_n]" in src
+
 def test_kernel_kind_default_ipykernel():
     k = Kernel()
     assert k.kernel_kind == 'ipykernel'
@@ -38,6 +47,12 @@ def test_kernel_kind_ipymini_selected():
     if not ipymini_available(): pytest.skip('ipymini not installed')
     k = Kernel(kernel='ipymini')
     assert k.kernel_kind == 'ipymini'
+
+
+def test_ipymini_debugging_is_explicitly_refused():
+    k = Kernel(); k.kernel = 'ipymini'
+    with pytest.raises(RuntimeError, match='requires an ipykernel'):
+        asyncio.run(k.debug_request('initialize'))
 
 def test_unknown_kernel_falls_back():
     k = Kernel(kernel='definitely-not-a-kernel')
@@ -53,6 +68,223 @@ def test_pool_default_kernel_forwarded(monkeypatch):
     pool = KernelPool(default_kernel='ipymini')
     asyncio.new_event_loop().run_until_complete(pool.get('k'))
     assert seen['kernel'] == 'ipymini'
+
+def test_markdown_is_the_plain_text_fallback_for_terminal_surfaces():
+    outs = [{'output_type': 'display_data', 'data': {
+        'text/markdown': '**rendered**', 'text/plain': '<IPython.display.Markdown object>'}}]
+    assert output_text(outs) == '**rendered**'
+
+
+def test_real_ipykernel_debugger_stops_and_exposes_locals():
+    "The Jupyter Debug Protocol seam, including the control channel and unparented stop event."
+    async def run():
+        k = Kernel(inspect=False, kernel='ipykernel')
+        await k.start()
+        stopped = asyncio.Event()
+        try:
+            code = 'x = [4, 5]\ny = x[0] + 3\nprint(y)'
+            assert await k.debug_start(code, [2], [('cell-before', 'helper = 1'), ('cell-current', code)]) == [2]
+            assert {'cell-before', 'cell-current'} <= set(k._debug_sources.values())
+            def event(row):
+                if row.get('event') == 'stopped': stopped.set()
+            task = asyncio.create_task(k.execute(code, on_debug=event))
+            await asyncio.wait_for(stopped.wait(), 15)
+            state = await k.debug_state()
+            assert state['paused'] and state['frames'][0]['line'] == 2
+            x = next(v for v in state['variables'] if v['name'] == 'x')
+            assert x['value'] == '[4, 5]' and x['variablesReference']
+            children = await k.debug_variables(x['variablesReference'])
+            assert any(v['name'] == '0' and v['value'] == '4' for v in children)
+            evaluated = await k.debug_evaluate('x[1] * 10', state['frame_id'])
+            assert evaluated['result'] == '50'
+            completed = await k.debug_complete('x.co', 4, state['frame_id'])
+            assert 'copy' in completed['matches']
+            await k.debug_control('continue')
+            result = await asyncio.wait_for(task, 15)
+            assert result.ok and result.text == '7\n'
+        finally:
+            try: await k.debug_stop()
+            except Exception: pass
+            await k.shutdown()
+    asyncio.run(run())
+
+
+def test_step_in_source_maps_back_to_the_notebook_definition_cell():
+    async def run():
+        k = Kernel(inspect=False, kernel='ipykernel'); await k.start()
+        stopped = asyncio.Event()
+        definition = 'def helper(values):\n    first = values[0]\n    return first + 3'
+        call = 'seed = [4, 5]\ny = helper(seed)\nprint(y)'
+        try:
+            assert (await k.execute(definition)).ok
+            await k.debug_start(call, [2], [('definition-cell', definition), ('call-cell', call)])
+            def event(row):
+                if row.get('event') == 'stopped': stopped.set()
+            task = asyncio.create_task(k.execute(call, on_debug=event))
+            await asyncio.wait_for(stopped.wait(), 15); stopped.clear()
+            await k.debug_control('stepIn')
+            await asyncio.wait_for(stopped.wait(), 15)
+            state = await k.debug_state()
+            assert k._debug_sources[state['frames'][0]['source']['path']] == 'definition-cell'
+            assert any(v['name'] == 'values' and v['value'] == '[4, 5]' for v in state['variables'])
+            await k.debug_control('continue'); assert (await task).text == '7\n'
+        finally:
+            try: await k.debug_stop()
+            except Exception: pass
+            await k.shutdown()
+    asyncio.run(run())
+
+
+def test_collect_forwards_unparented_debug_events_without_losing_cell_output():
+    class Manager:
+        has_kernel = True
+    class Client:
+        def __init__(self):
+            self.messages = [
+                {'parent_header': {}, 'header': {'msg_type': 'debug_event'},
+                 'content': {'event': 'stopped', 'body': {'threadId': 7}}},
+                {'parent_header': {'msg_id': 'm'}, 'header': {'msg_type': 'stream'},
+                 'content': {'name': 'stdout', 'text': 'done\n'}},
+                {'parent_header': {'msg_id': 'm'}, 'header': {'msg_type': 'status'},
+                 'content': {'execution_state': 'idle'}},
+            ]
+        async def get_iopub_msg(self, timeout=None): return self.messages.pop(0)
+    k = Kernel(); k.km, k.kc = Manager(), Client()
+    events = []
+    outs = asyncio.run(k._collect('m', on_debug=events.append))
+    assert events[0]['event'] == 'stopped' and k._debug_thread == 7
+    assert outs[0]['text'] == 'done\n'
+
+
+def test_display_id_updates_replace_streaming_markdown_in_place():
+    class Manager:
+        has_kernel = True
+    class Client:
+        def __init__(self):
+            self.messages = [
+                {'parent_header': {'msg_id': 'm'}, 'header': {'msg_type': 'display_data'},
+                 'content': {'data': {'text/markdown': 'first'}, 'metadata': {},
+                             'transient': {'display_id': 'rishi'}}},
+                {'parent_header': {'msg_id': 'm'}, 'header': {'msg_type': 'update_display_data'},
+                 'content': {'data': {'text/markdown': 'final'}, 'metadata': {},
+                             'transient': {'display_id': 'rishi'}}},
+                {'parent_header': {'msg_id': 'm'}, 'header': {'msg_type': 'status'},
+                 'content': {'execution_state': 'idle'}},
+            ]
+        async def get_iopub_msg(self, timeout=None): return self.messages.pop(0)
+    k = Kernel(); k.km, k.kc = Manager(), Client()
+    events = []
+    outs = asyncio.run(k._collect('m', on_output=events.append))
+    assert len(outs) == 1
+    assert outs[0]['data']['text/markdown'] == 'final'
+    assert events[0]['_display_id'] == 'rishi' and not events[0]['_update']
+    assert events[1]['_display_id'] == 'rishi' and events[1]['_update']
+
+
+def test_concurrent_pool_gets_share_one_start(monkeypatch):
+    """Autocomplete, variables and the kernel pill all ask at boot; that must launch one process."""
+    made = []
+    class Fake:
+        alive = False
+        def __init__(self, **kw): made.append(self)
+        async def start(self):
+            await asyncio.sleep(0.02)
+            self.alive = True
+            return self
+    monkeypatch.setattr('leela.kernels.Kernel', Fake)
+
+    async def go():
+        pool = KernelPool()
+        got = await asyncio.gather(*[pool.get('project') for _ in range(5)])
+        return got
+    got = asyncio.run(go())
+    assert len(made) == 1 and all(k is made[0] for k in got)
+
+
+def test_pool_does_not_expose_a_half_started_kernel(monkeypatch):
+    """A manager can have a process before its client exists; later requests must await start()."""
+    process_started, finish_start = asyncio.Event(), asyncio.Event()
+
+    class Fake:
+        def __init__(self, **kw): self.process_alive, self.kc = False, None
+        @property
+        def alive(self): return self.process_alive
+        async def start(self):
+            self.process_alive = True
+            process_started.set()
+            await finish_start.wait()
+            self.kc = object()
+            return self
+
+    monkeypatch.setattr('leela.kernels.Kernel', Fake)
+
+    async def go():
+        pool = KernelPool()
+        first = asyncio.create_task(pool.get('project'))
+        await process_started.wait()
+        second = asyncio.create_task(pool.get('project'))
+        await asyncio.sleep(0)
+        assert not second.done()
+        finish_start.set()
+        return await first, await second
+
+    first, second = asyncio.run(go())
+    assert first is second and first.kc is not None
+
+
+def test_kernel_is_not_alive_before_its_client_exists():
+    class Manager:
+        has_kernel = True
+    kernel = Kernel()
+    kernel.km = Manager()
+    assert not kernel.alive
+
+
+def test_pool_peek_hides_a_kernel_until_start_is_complete(monkeypatch):
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    class Fake:
+        def __init__(self, **kw): self.alive = False
+        async def start(self):
+            started.set()
+            await finish.wait()
+            self.alive = True
+            return self
+
+    monkeypatch.setattr('leela.kernels.Kernel', Fake)
+
+    async def go():
+        pool = KernelPool()
+        pending = asyncio.create_task(pool.get('project'))
+        await started.wait()
+        assert pool.peek('project') is None
+        finish.set()
+        kernel = await pending
+        assert pool.peek('project') is kernel
+
+    asyncio.run(go())
+
+
+def test_stop_forces_restart_when_execution_ignores_interrupt(monkeypatch):
+    async def go():
+        k = Kernel()
+        calls = []
+        async def interrupt(): calls.append('interrupt')
+        async def restart(): calls.append('restart')
+        monkeypatch.setattr(k, 'interrupt', interrupt)
+        monkeypatch.setattr(k, 'restart', restart)
+        task = asyncio.create_task(asyncio.sleep(30))
+        k._exec_task = task
+        result = await k.stop(timeout=0.01)
+        assert result['ok'] and result['forced']
+        assert calls == ['interrupt', 'restart'] and task.cancelled()
+    asyncio.run(go())
+
+
+def test_stop_reports_when_nothing_is_executing():
+    assert asyncio.run(Kernel().stop()) == {
+        'ok': False, 'forced': False, 'note': 'nothing is running'}
+
 
 def test_pool_ignores_bad_default():
     pool = KernelPool(default_kernel='bogus')
@@ -75,7 +307,7 @@ def test_cli_default_kernel_is_ipykernel(monkeypatch):
     from leela import cli
     seen = {}
     def fake_run(roots, **kw): seen.update(kw); seen['_roots'] = roots
-    monkeypatch.setattr('leela.tui.app.run', fake_run)
+    monkeypatch.setattr('leela.web.app.serve_ide', fake_run)
     cli.main([])
     assert seen['kernel'] == 'ipykernel'
 
@@ -83,7 +315,7 @@ def test_cli_ipymini_flag(monkeypatch):
     from leela import cli
     seen = {}
     def fake_run(roots, **kw): seen.update(kw)
-    monkeypatch.setattr('leela.tui.app.run', fake_run)
+    monkeypatch.setattr('leela.web.app.serve_ide', fake_run)
     cli.main(['--kernel', 'ipymini'])
     assert seen['kernel'] == 'ipymini'
 
@@ -91,6 +323,13 @@ def test_cli_rejects_unknown_kernel():
     from leela import cli
     with pytest.raises(SystemExit):
         cli.main(['--kernel', 'nonesuch'])
+
+
+def test_cli_refuses_non_loopback_bind_before_starting_server(monkeypatch):
+    from leela import cli
+    monkeypatch.setattr('leela.web.app.serve_ide', lambda *a, **k: pytest.fail('server should not start'))
+    with pytest.raises(SystemExit):
+        cli.main(['--host', '0.0.0.0'])
 
 
 # -- live-kernel tests, gated on ipymini ---------------------------------------------
@@ -133,7 +372,7 @@ def test_ipymini_agent_exec_runs_while_cell_sleeps(tmp_path):
     Baseline: this test also demonstrates that /api/rows keeps answering (unchanged from
     ipykernel). Together they lock in the concurrency behaviour we added ipymini for.
     """
-    import time, httpx
+    import time, httpx2 as httpx
     async def go():
         k = Kernel(kernel='ipymini', name='ipymini-race', cwd=str(tmp_path))
         try:
@@ -154,7 +393,7 @@ def test_ipymini_agent_exec_runs_while_cell_sleeps(tmp_path):
             await asyncio.sleep(0.4)  # let the cell start and hit unlock()
 
             # While it's sleeping, hit /agent/api/exec and /api/rows over HTTP.
-            headers = {'X-Leela-Token': k.token} if k.token else {}
+            headers = {'X-Dhrishti-Token': k.token} if k.token else {}
             async with httpx.AsyncClient(base_url=k.base, headers=headers, timeout=10) as c:
                 t0 = time.monotonic()
                 rows = await c.get('/api/rows')
@@ -186,7 +425,7 @@ def test_workspace_kernel_stays_callable():
     """`Workspace.kernel()` is the coroutine that hands out a tab's live kernel.
 
     Storing the *launcher name* on `self.kernel` shadowed it with a string, so every
-    `await ws.kernel()` in both frontends awaited `'ipykernel'` and the TUI hung on its
+    `await ws.kernel()` awaited `'ipykernel'` and the UI hung on its
     first cell run. The launcher lives on `kernel_kind`, and this is here so it stays there.
     """
     from leela.workspace import Workspace

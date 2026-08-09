@@ -1,4 +1,4 @@
-"""The browser frontend: a FastHTML app over the same workspace the TUI drives."""
+"""The browser frontend: a FastHTML app over a Leela workspace."""
 
 from .app import ide_app, serve_ide
 

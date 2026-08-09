@@ -12,8 +12,7 @@ that actually have buttons.
 import pytest
 
 from leela.buttons import BARS, BUTTONS, bar, tip
-from leela.keys import KEYS, WEB_ONLY_SCOPES, lookup
-from leela.tui.app import IdeApp
+from leela.keys import KEYS
 
 
 def test_every_button_names_a_real_action():
@@ -22,53 +21,21 @@ def test_every_button_names_a_real_action():
     assert not [b.action for b in BUTTONS if b.action not in known]
 
 
-def test_every_button_reaches_a_handler():
-    "The same contract `test_keymap` holds the keymap to, for the other door into it."
-    missing = [b.action for b in BUTTONS
-               if lookup(b.action).scope not in WEB_ONLY_SCOPES
-               and not hasattr(IdeApp, f'action_{b.action}')]
-    assert not missing, f'no action_* method on IdeApp for: {missing}'
-
-
 @pytest.mark.parametrize('name', BARS)
 def test_every_bar_has_buttons(name):
     "A declared bar that renders empty is a hole in a toolbar someone is looking at."
     assert len(bar(name)) > 0
 
 
-def test_the_keys_a_terminal_eats_all_have_buttons():
-    """The point of the whole module, stated as a test.
-
-    `ctrl+enter` and friends are the chords a stock macOS terminal never delivers. Each of
-    them must be clickable somewhere, or a Terminal.app user cannot run a cell at all.
-    """
-    # `exec_newline` is the exception, and only because it is not a command: it types a
-    # newline into the exec box, which a button cannot usefully do and `f7` already does.
-    hard = {k.action for k in KEYS
-            if k.keys and k.keys[0] in ('ctrl+enter', 'shift+enter', 'alt+enter')} - {'exec_newline'}
+def test_run_commands_have_buttons_as_well_as_function_keys():
+    "The function keys are reliable, but every run command remains directly clickable."
+    runs = {'run_cell', 'run_advance', 'run_insert', 'exec_run', 'agent_send'}
     clickable = {b.action for b in BUTTONS}
-    assert not (hard - clickable), f'unreachable without a chord: {sorted(hard - clickable)}'
-
-
-def test_the_command_palette_offers_every_action():
-    """The third door, and the one with room for everything.
-
-    A toolbar holds the dozen actions worth a permanent button; the palette holds all of
-    them, which is what makes it the answer for a chord a terminal ate.
-    """
-    from leela.tui.app import ActionCommands
-    rows = ActionCommands.__new__(ActionCommands)._rows()      # `_rows` needs no screen
-    assert {a for _, a, _ in rows} == {k.action for k in KEYS if k.scope not in WEB_ONLY_SCOPES}
+    assert not (runs - clickable), f'run commands without buttons: {sorted(runs - clickable)}'
 
 
 def test_a_tooltip_says_what_it_does_and_which_key_does_it():
     "Hovering is how the keys get discovered, so the chord travels with the button."
     t = tip('run_cell')
-    assert 'run cell' in t and 'ctrl+enter' in t and 'f5' in t
-    assert tip('run_selection') == 'run the selection', 'an unbound action advertises no chord'
-
-
-def test_button_labels_stay_short_enough_for_a_terminal_row():
-    "A toolbar is one row in the TUI; a long label pushes the buttons after it off the screen."
-    long = [b.label for b in BUTTONS if b.bar != 'agent' and len(b.label) > 8]
-    assert not long, f'too long for a terminal toolbar: {long}'
+    assert 'run cell' in t and 'mod+enter' in t and 'f5' not in t
+    assert tip('run_selection') == 'run the selection  (hyper+s)'

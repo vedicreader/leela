@@ -20,6 +20,15 @@ from leela.workspace import _EnvClient
 
 
 # ---- the configurations ----------------------------------------------------
+def test_run_environment_file_is_confined_and_overlaid_by_explicit_values(tmp_path):
+    (tmp_path/'.env.local').write_text('TOKEN="from file"\nPORT=8000\nexport DEBUG=true\n')
+    run = Run('api', 'python app.py', env={'PORT': '9000'}, env_file='.env.local')
+    assert run.resolved_env(tmp_path) == {'TOKEN': 'from file', 'PORT': '9000', 'DEBUG': 'true'}
+    run.env_file = '../outside.env'
+    with pytest.raises(ValueError, match='outside the project'):
+        run.resolved_env(tmp_path)
+
+
 def test_a_configuration_round_trips_through_the_project(tmp_path):
     "They live in the project, next to the code they run, so the next person finds them."
     r = Runs(tmp_path)
@@ -131,7 +140,7 @@ def test_the_env_list_covers_kernels_and_anything_that_registered(ws, monkeypatc
     "A notebook kernel, an app leela started, and a process that called serve() are all envs."
     import leela.workspace as W
     monkeypatch.setattr(W, 'active', lambda: [], raising=False)
-    monkeypatch.setattr('leela.inspect.server.active',
+    monkeypatch.setattr('dhrishti.serving.active',
                         lambda: [{'name': 'api', 'base': 'http://127.0.0.1:9500', 'pid': 4321,
                                   'cwd': '/tmp'}])
     ws.pool.kernels['k'] = type('K', (), {'base': 'http://127.0.0.1:8000', 'pid': 11})()
@@ -141,7 +150,7 @@ def test_the_env_list_covers_kernels_and_anything_that_registered(ws, monkeypatc
 
 
 def test_watching_an_env_points_the_panel_at_it_and_back(ws, monkeypatch):
-    monkeypatch.setattr('leela.inspect.server.active',
+    monkeypatch.setattr('dhrishti.serving.active',
                         lambda: [{'name': 'api', 'base': 'http://127.0.0.1:9500', 'pid': 4321}])
     ws.watch_env('http://127.0.0.1:9500')
     assert isinstance(ws.inspector(), _EnvClient)
@@ -151,20 +160,20 @@ def test_watching_an_env_points_the_panel_at_it_and_back(ws, monkeypatch):
 
 def test_watching_an_env_that_died_falls_back_rather_than_going_blank(ws, monkeypatch):
     "An app you were watching exits; the panel should quietly return to the kernel."
-    monkeypatch.setattr('leela.inspect.server.active', lambda: [])
+    monkeypatch.setattr('dhrishti.serving.active', lambda: [])
     ws.watch_env('http://127.0.0.1:9999')
     assert not isinstance(ws.inspector(), _EnvClient)
     assert ws.env_base is None
 
 
-def test_a_watched_env_is_a_namespace_not_a_kernel():
-    """It has no shell channel, so `execute` says that instead of failing obscurely.
-
-    An env is something else's process. leela can read its namespace over HTTP; running
-    code in it is a different question with a different answer, and pretending otherwise
-    would produce a run button that silently did nothing.
-    """
+def test_a_watched_env_executes_through_its_owner_inspector(monkeypatch):
+    """A picked runtime has no shell channel, but its inspector owns the live namespace."""
     import asyncio
     e = _EnvClient('http://127.0.0.1:9500', 'api')
+    async def answer(path, params=None, timeout=15):
+        assert path == '/api/exec' and params == {'code': '1+1', 'scope': 'global'}
+        return {'ok': True, 'stdout': '', 'error': None,
+                'result': {'name': 'result', 'type': 'int', 'value': '2'}}
+    monkeypatch.setattr(e, 'api', answer)
     r = asyncio.run(e.execute('1+1'))
-    assert not r.ok and 'not a kernel' in r.error
+    assert r.ok and r.outputs[0]['data']['text/plain'] == '2'

@@ -1,8 +1,7 @@
 /* leela IDE client.
  *
  * The keymap is not defined here. It is fetched from /keys.json, which Python
- * generates from leela.keys, so this file cannot drift from the TUI --
- * adding a binding in Python lights it up in both frontends.
+ * generates from leela.keys, so handlers, help, and tooltips share one table.
  *
  * Dispatch is scope-aware: the focused pane sets `lee.scope`, a binding fires
  * when its scope matches or is 'global', and a chord that matches nothing is
@@ -13,18 +12,401 @@
 const lee = {
   keys: [], help: {}, scope: 'editor', execScope: 'live',
   editors: new Map(),        // cell id (or 'exec'/'file') -> CodeMirror view
-  cells: [], sel: 0, kind: null, path: '',
+  cells: [], sel: 0, cellSelection: new Set(), cellAnchor: 0, kind: null, path: '',
   hist: [], histIdx: 0,
-  varOpen: new Set(), varPrev: {},
-  term: null, lastDoc: null,
+  varOpen: new Set(), varPrev: {}, varStates: new Map(), varFingerprints: new Map(), varRuntime: '',
+  term: null, terms: new Map(), activeTerm: '', termSeq: 0,
+  cellObserver: null, lastDoc: null, buffers: new Map(), dirtyBuffers: new Set(), bufferTimers: new Map(),
+  autoSaveTimer: null, saving: false, editVersion: 0, collapsedCells: new Set(), fileGit: null,
+  diskVersion: '', seenDiskVersion: '', watchingDisk: false,
+  breakpoints: new Map(), debugThread: null, debugCell: null, debugState: null, directDebug: false, debugWatches: [],
   shownProblems: new Set(),   // agent failures already written into the pane, so they show once
+  agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
+  cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
+  recentTabs: [], researchDocs: [], researchSelected: new Set(),
+  draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
+  editorPrefs: null, settingsMeta: null, filePrefs: {}, workbenchPrefs: {}, debugPrefs: {},
 };
+const CODE_FONTS = [
+  ['JetBrains Mono', 'Bundled · full italic support'],
+  ['Fira Code', 'Bundled · strong coding ligatures'],
+  ['System monospace', 'Uses the platform editor font'],
+];
+const FONT_STACKS = {
+  'JetBrains Mono': '"JetBrains Mono", ui-monospace, monospace',
+  'Fira Code': '"Fira Code", ui-monospace, monospace',
+  'System monospace': 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+};
+const EDITOR_DEFAULTS = {fontFamily: 'JetBrains Mono', fontSize: 13, lineHeight: 1.5,
+  lineLength: 100, guideColumns: '88', visualGuides: true, ligatures: true, tabSize: 4,
+  useTabs: false, detectIndentation: true, wordWrap: 'off', wrapIndent: 'same',
+  bracketMatching: true, bracketColors: false, closeBrackets: true, activeLine: true,
+  minimapMode: 'long', minimapThreshold: 120, stickyNavigation: true,
+  lineNumbers: 'absolute', renderWhitespace: 'selection', indentGuides: true,
+  highlightSelection: true, methodSeparators: false, cursorStyle: 'line',
+  cursorBlinking: 'blink', scrollPastEnd: false, smoothScrolling: true, scrollMargin: 3,
+  folding: true, quickSuggestions: true, parameterHints: true, inlayHints: true};
+function readEditorPrefs() {
+  try {
+    const old = JSON.parse(localStorage.getItem('lee-editor-settings') || '{}');
+    if (old.fontFamily && !FONT_STACKS[old.fontFamily]) {
+      const match = Object.keys(FONT_STACKS).find(name => String(old.fontFamily).includes(name));
+      old.fontFamily = match || 'System monospace';
+    }
+    if (typeof old.wordWrap === 'boolean') old.wordWrap = old.wordWrap ? 'viewport' : 'off';
+    if ('minimap' in old && !old.minimapMode) old.minimapMode = old.minimap ? 'always' : 'off';
+    return {...EDITOR_DEFAULTS, ...old};
+  } catch (_) { return {...EDITOR_DEFAULTS}; }
+}
+lee.editorPrefs = readEditorPrefs();
+function applyEditorPrefs(prefs = lee.editorPrefs, persist = false) {
+  const p = {...EDITOR_DEFAULTS, ...prefs};
+  p.fontSize = Math.max(9, Math.min(28, Number(p.fontSize) || 13));
+  p.lineHeight = Math.max(1, Math.min(2.4, Number(p.lineHeight) || 1.5));
+  p.tabSize = Math.max(1, Math.min(8, Number(p.tabSize) || 4));
+  p.lineLength = Math.max(40, Math.min(240, Number(p.lineLength) || 100));
+  p.guideColumns = p.guideColumns == null ? '' : String(p.guideColumns);
+  lee.editorPrefs = p;
+  const root = document.documentElement;
+  root.style.setProperty('--lee-mono', FONT_STACKS[p.fontFamily] || FONT_STACKS['System monospace']);
+  root.style.setProperty('--lee-code-size', p.fontSize + 'px');
+  root.style.setProperty('--lee-code-line-height', String(p.lineHeight));
+  root.dataset.editorLigatures = p.ligatures ? 'on' : 'off';
+  for (const [key,view] of lee.editors) LeeCM.configure?.(view, ['file','secondary'].includes(key)?p:{...p,minimapMode:'off'});
+  if (persist) localStorage.setItem('lee-editor-settings', JSON.stringify(p));
+  return p;
+}
+async function loadSettings(language = '') {
+  try {
+    const d = await api('/settings?language=' + encodeURIComponent(language));
+    lee.settingsMeta = d; lee.filePrefs = d.effective.files || {};
+    lee.workbenchPrefs = d.effective.workbench || {}; lee.debugPrefs = d.effective.debug || {};
+    applyEditorPrefs(d.effective.editor || EDITOR_DEFAULTS);
+  } catch (_) { applyEditorPrefs(lee.editorPrefs); }
+}
+applyEditorPrefs(lee.editorPrefs);
+function createEditor(el, opts = {}) { return LeeCM.create(el, {...opts, settings: {...lee.editorPrefs, ...(opts.settings||{})}}); }
+try { lee.recentTabs = JSON.parse(sessionStorage.getItem('lee-recent-tabs') || '[]'); }
+catch (_) { lee.recentTabs = []; }
+try { lee.breakpoints = new Map(JSON.parse(localStorage.getItem('lee-breakpoints') || '[]')); }
+catch (_) { lee.breakpoints = new Map(); }
+try { lee.debugWatches=JSON.parse(localStorage.getItem('lee-debug-watches')||'[]'); } catch(_){lee.debugWatches=[];}
+function rememberBreakpoints(key, rows){lee.breakpoints.set(key,rows);localStorage.setItem('lee-breakpoints',JSON.stringify([...lee.breakpoints]));}
+function detailedBreakpoints(path){const details=JSON.parse(localStorage.getItem('lee-breakpoint-details')||'{}');return (lee.breakpoints.get(path)||[]).map(line=>({line,...(details[`${path}:${line}`]||{})}));}
+document.addEventListener('contextmenu',e=>{const gutter=e.target.closest?.('.cm-lee-breakpoints');if(!gutter)return;e.preventDefault();
+  const entry=[...lee.editors.entries()].find(([,view])=>view.dom.contains(gutter));if(!entry)return;const [key,view]=entry,path=key==='file'?lee.path:key;
+  const pos=view.posAtCoords({x:e.clientX,y:e.clientY});if(pos==null)return;const line=view.state.doc.lineAt(pos).number;editBreakpoint(path,line,view);});
+async function editBreakpoint(path,line,view){const all=JSON.parse(localStorage.getItem('lee-breakpoint-details')||'{}'),current=all[`${path}:${line}`]||{};
+  const m=modal(`<div class="lee-mhead">breakpoint<span class="sub">line ${line}</span></div><div class="lee-run-fields"><label>Condition<input class="lee-input" data-condition value="${esc(current.condition||'')}"></label><label>Hit count<input class="lee-input" data-hit value="${esc(current.hitCondition||'')}" placeholder="> 3"></label><label>Log message<input class="lee-input" data-log value="${esc(current.logMessage||'')}" placeholder="value={value}"></label></div><div class="lee-mfoot"><button class="lee-btn warn" data-remove>remove</button><span class="lee-spacer"></span><button class="lee-btn go" data-save>save breakpoint</button></div>`);
+  $('[data-remove]',m).onclick=()=>{const rows=(lee.breakpoints.get(path)||[]).filter(x=>x!==line);rememberBreakpoints(path,rows);delete all[`${path}:${line}`];localStorage.setItem('lee-breakpoint-details',JSON.stringify(all));LeeCM.setBreakpoints(view,rows);m.remove();};
+  $('[data-save]',m).onclick=()=>{const rows=[...new Set([...(lee.breakpoints.get(path)||[]),line])].sort((a,b)=>a-b);rememberBreakpoints(path,rows);all[`${path}:${line}`]={condition:$('[data-condition]',m).value.trim(),hitCondition:$('[data-hit]',m).value.trim(),logMessage:$('[data-log]',m).value.trim()};localStorage.setItem('lee-breakpoint-details',JSON.stringify(all));LeeCM.setBreakpoints(view,rows);if(lee.directDebug)post('/debug/breakpoints',{path,breakpoints:detailedBreakpoints(path)});m.remove();};}
+
+/* Durable browser drafts. indexed-cache is intentionally not used here: it caches static
+ * asset Blobs, while editor recovery needs keyed mutable records and atomic replacement.
+ * Native IndexedDB is the smaller and more appropriate primitive. */
+const DRAFT_DB = 'leela-editor-drafts', DRAFT_STORE = 'drafts';
+let draftDBPromise = null;
+function draftDB() {
+  if (!('indexedDB' in window)) return Promise.resolve(null);
+  if (draftDBPromise) return draftDBPromise;
+  draftDBPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(DRAFT_DB, 1);
+    req.onupgradeneeded = () => {
+      const store = req.result.createObjectStore(DRAFT_STORE, {keyPath: 'key'});
+      store.createIndex('document', 'document', {unique: false});
+    };
+    req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
+  }).catch(e => { console.warn('Leela draft store unavailable:', e); return null; });
+  return draftDBPromise;
+}
+async function draftPut(record) {
+  const db = await draftDB(); if (!db) return;
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(DRAFT_STORE, 'readwrite'); tx.objectStore(DRAFT_STORE).put(record);
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+  });
+}
+async function draftsFor(documentKey) {
+  const db = await draftDB(); if (!db || !documentKey) return [];
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DRAFT_STORE, 'readonly');
+    const req = tx.objectStore(DRAFT_STORE).index('document').getAll(documentKey);
+    req.onsuccess = () => resolve(req.result || []); req.onerror = () => reject(req.error);
+  });
+}
+async function rebaseDrafts(documentKey, diskVersion) {
+  for (const key of [...lee.draftBases.keys()]) if (key === documentKey || key.startsWith(documentKey + ':'))
+    lee.draftBases.set(key, diskVersion);
+  const db = await draftDB(); if (!db) return;
+  const rows = await draftsFor(documentKey);
+  await Promise.all(rows.map(row => draftPut({...row, baseDiskVersion: diskVersion})));
+}
+async function clearDrafts(documentKey) {
+  if (!documentKey) return;
+  for (const [key, timer] of [...lee.draftTimers]) if (key === documentKey || key.startsWith(documentKey + ':')) {
+    clearTimeout(timer); lee.draftTimers.delete(key);
+  }
+  const db = await draftDB(); if (!db) return;
+  const rows = await draftsFor(documentKey);
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(DRAFT_STORE, 'readwrite'), store = tx.objectStore(DRAFT_STORE);
+    rows.forEach(row => store.delete(row.key)); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+  });
+  for (const key of [...lee.draftBases.keys()]) if (key === documentKey || key.startsWith(documentKey + ':')) lee.draftBases.delete(key);
+}
+function draftBaseFor(documentKey) {
+  const values = [...lee.draftBases].filter(([key]) => key === documentKey || key.startsWith(documentKey + ':'))
+    .map(([, value]) => value).filter(Boolean);
+  return values[0] || lee.diskVersion || '';
+}
+function writeDraftNow(key, payload) {
+  const documentKey = payload.path || payload.title || lee.tabKey || key;
+  if (!documentKey) return;
+  const draftKey = payload.kind === 'notebook' ? `${documentKey}:${payload.id || payload.i}` : documentKey;
+  if (!lee.draftBases.has(draftKey)) lee.draftBases.set(draftKey, lee.diskVersion || '');
+  draftPut({key: draftKey, document: documentKey, payload, baseDiskVersion: lee.draftBases.get(draftKey),
+            updatedAt: Date.now()}).catch(() => {});
+}
+function persistDraft(key, payload) {
+  const documentKey = payload.path || payload.title || lee.tabKey || key;
+  if (!documentKey) return;
+  const draftKey = payload.kind === 'notebook' ? `${documentKey}:${payload.id || payload.i}` : documentKey;
+  if (!lee.draftBases.has(draftKey)) lee.draftBases.set(draftKey, lee.diskVersion || '');
+  clearTimeout(lee.draftTimers.get(draftKey));
+  lee.draftTimers.set(draftKey, setTimeout(() => {
+    lee.draftTimers.delete(draftKey);
+    writeDraftNow(key, payload);
+  }, 60));
+}
+function snapshotCurrentDraft() {
+  if (!lee.tabKey || !$('.lee-tab.active.dirty')) return;
+  if (lee.kind === 'text') {
+    const view = lee.editors.get('file'); if (view) writeDraftNow(lee.tabKey, {path: lee.path, title: lee.tabKey, kind: 'text', text: LeeCM.getDoc(view)});
+  } else if (lee.kind === 'notebook') {
+    lee.cells.forEach((cell, i) => {
+      const view = lee.editors.get(cell.id), text = view ? LeeCM.getDoc(view) : cell.source;
+      writeDraftNow(`${lee.tabKey}:${cell.id}`, {path: lee.path, title: lee.tabKey, kind: 'notebook', i, id: cell.id, text});
+    });
+  }
+}
+window.addEventListener('pagehide', snapshotCurrentDraft);
+window.addEventListener('beforeunload', e => {
+  snapshotCurrentDraft();
+  if ($('.lee-tab.dirty')) { e.preventDefault(); e.returnValue = ''; }
+});
+async function restoreDrafts(st) {
+  const documentKey = st.path || st.title || ''; if (!documentKey) return false;
+  let rows = [];
+  try { rows = await draftsFor(documentKey); } catch (_) { return false; }
+  if (!rows.length) return false;
+  // A draft record is not itself evidence of unsaved work. Records can survive a crash
+  // after the disk write but before IndexedDB cleanup; treating an identical record as a
+  // recovery marked the clean tab dirty, then autosave compared its stale base and opened
+  // the keep/overwrite dialog on every mount.
+  let recovered = false;
+  if (st.kind === 'text') {
+    const row = rows.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    if (row?.payload?.text != null && row.payload.text !== st.text) {
+      st.text = row.payload.text; recovered = true;
+      lee.draftBases.set(row.key, row.baseDiskVersion || '');
+    }
+  } else if (st.kind === 'notebook') {
+    const byId = new Map(rows.map(row => [row.payload?.id, row]));
+    for (const cell of (st.cells || [])) {
+      const row = byId.get(cell.id); if (!row || row.payload.text === cell.source) continue;
+      lee.draftBases.set(row.key, row.baseDiskVersion || '');
+      cell.source = row.payload.text; recovered = true;
+    }
+  }
+  if (!recovered) await clearDrafts(documentKey);
+  return recovered;
+}
 window.lee = lee;
 
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
   ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+
+const fmtArgs = (args) => typeof args === 'string' ? args
+  : Object.entries(args || {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ');
+
+const CODE_LANGS = {py: 'python', python: 'python', js: 'javascript', javascript: 'javascript',
+  mjs: 'javascript', cjs: 'javascript', ts: 'typescript', typescript: 'typescript', jsx: 'jsx', tsx: 'tsx',
+  json: 'json', jsonc: 'json', json5: 'json', toml: 'toml', html: 'html', css: 'css', sql: 'sql',
+  yml: 'yaml', yaml: 'yaml', md: 'markdown', markdown: 'markdown', sh: 'bash', bash: 'bash', shell: 'bash',
+  zsh: 'bash', fish: 'bash', rs: 'rust', rust: 'rust', go: 'go', java: 'java', c: 'cpp', cc: 'cpp',
+  cpp: 'cpp', cxx: 'cpp', h: 'cpp', hpp: 'cpp', xml: 'xml', svg: 'xml', ini: 'properties',
+  properties: 'properties'};
+function codeLang(name = '', path = '') {
+  const raw = String(name || '').toLowerCase().replace(/^language-/, '');
+  const ext = String(path || '').split('.').pop().toLowerCase();
+  return CODE_LANGS[raw] || CODE_LANGS[ext] || 'python';
+}
+async function promoteCodeToNotebook(code, lang = 'python') {
+  if (lee.kind !== 'notebook') return status('open a notebook before promoting code', 'err');
+  const at = lee.sel + 1;
+  await nbEdit({op: 'insert', i: at, source: code, cell_type: lang === 'markdown' ? 'markdown' : 'code'});
+  focusCell(at); status(`promoted to cell ${at + 1}`, 'ok');
+}
+function mountCodeSurface(host, code, lang = 'python', promote = false) {
+  const shell = document.createElement('section'); shell.className = 'lee-code-surface';
+  const head = document.createElement('header'); head.className = 'lee-code-head';
+  head.innerHTML = `<span>${esc(lang)}</span><span class="lee-spacer"></span>` +
+    `<button type="button" data-copy>copy</button>` +
+    (promote ? `<button type="button" data-promote>promote to cell</button>` : '');
+  const editor = document.createElement('div'); editor.className = 'lee-code-editor';
+  const lines = Math.max(1, String(code).split('\n').length);
+  editor.style.setProperty('--lee-code-lines', Math.min(lines, 18));
+  shell.append(head, editor); host.appendChild(shell);
+  const view = createEditor(editor, {doc: String(code || ''), lang: codeLang(lang), readOnly: true, lineNums: true});
+  head.querySelector('[data-copy]').onclick = () => {
+    navigator.clipboard?.writeText(String(code || '')); status('code copied', 'ok');
+  };
+  head.querySelector('[data-promote]')?.addEventListener('click', () => promoteCodeToNotebook(String(code || ''), codeLang(lang)));
+  return view;
+}
+function portableToolPayload(raw) {
+  try {
+    const value = JSON.parse(raw);
+    if (!value || !('result' in value)) return null;
+    if (value.name) return {id: value.id || '', tool: value.name, args: value.args || {}, detail: value.result};
+    const fn = value.call?.function;
+    if (fn?.name) return {id: value.id || '', tool: fn.name, args: fn.arguments || {}, detail: value.result};
+  } catch {}
+  return null;
+}
+function compactPath(path) {
+  const bits = String(path || '').split('/').filter(Boolean);
+  return bits.slice(-2).join('/') || String(path || '');
+}
+function portableToolKind(tool) {
+  if (['search_code', 'similar_code', 'outline', 'list_files'].includes(tool)) return 'search';
+  if (['view_file', 'view_cell', 'notebook_cells', 'read_terminal'].includes(tool)) return 'view';
+  if (['edit_file', 'create_file', 'edit_cell', 'add_cell'].includes(tool)) return 'edit';
+  if (['web_search', 'read_url', 'research'].includes(tool)) return 'web';
+  if (['run_python', 'inspect_python', 'list_vars'].includes(tool)) return 'run';
+  if (tool === 'read_skill') return 'skill';
+  if (tool.startsWith('delegate_')) return 'delegate';
+  return 'tool';
+}
+function portableToolSummary(tool, args) {
+  const a = args || {}, short = value => String(value || '').replace(/\s+/g, ' ').trim();
+  if (tool === 'search_code') return `Search code · ${short(a.query).slice(0, 92)}`;
+  if (tool === 'view_file') {
+    const range = a.start || a.end ? `:${a.start || 1}–${a.end || 'end'}` : '';
+    return `Read · ${compactPath(a.path)}${range}`;
+  }
+  if (tool === 'read_skill') return `Load skill · ${short(a.name)}`;
+  if (tool === 'list_files') return `Scan files · ${short(a.pattern) || 'all'}`;
+  if (tool === 'run_python') return `Run Python · ${short(a.code).split(';')[0].slice(0, 82)}`;
+  if (tool === 'inspect_python') return `Inspect · ${short(a.code).split(';')[0].slice(0, 82)}`;
+  if (tool === 'web_search') return `Search web · ${short(a.query).slice(0, 92)}`;
+  if (tool === 'read_url') return `Read web · ${short(a.url).slice(0, 92)}`;
+  const body = Object.entries(a).slice(0, 2).map(([k, v]) => `${k}: ${short(v).slice(0, 54)}`).join(' · ');
+  return `${tool.replaceAll('_', ' ')}${body ? ' · ' + body : ''}`;
+}
+function polishActivityGroup(el) {
+  // Markdown keeps a standards-compliant list for plain Jupyter. In Leela, collapse that
+  // scaffolding into one compact timeline so a dozen calls occupy a dozen rows, not a page.
+  $$('ul, ol', el).forEach(list => {
+    const rows = $$('.lee-agent-step', list);
+    if (!rows.length) return;
+    const timeline = document.createElement('section'); timeline.className = 'lee-activity-list';
+    rows.forEach(row => timeline.appendChild(row)); list.replaceWith(timeline);
+  });
+  $$('details', el).forEach(group => {
+    const summary = group.querySelector(':scope > summary');
+    if (!summary || !/what i did/i.test(summary.textContent || '')) return;
+    group.classList.add('lee-activity-group');
+    const count = $$('.lee-agent-step', group).length;
+    summary.innerHTML = `<span class="lee-activity-title">Work log</span>` +
+      `<span class="lee-activity-count">${count} ${count === 1 ? 'step' : 'steps'}</span>` +
+      `<span class="lee-agent-step-chevron" aria-hidden="true"></span>`;
+  });
+}
+function upgradePortableToolMarkdown(el) {
+  // Rishi's formatter emits portable JSON so plain Jupyter can retain tool activity.
+  // In the IDE that JSON becomes the same compact disclosure row as native live activity.
+  $$('pre > code', el).forEach(code => {
+    const payload = portableToolPayload(code.textContent || ''); if (!payload) return;
+    const row = document.createElement('details');
+    renderAgentStep(row, {...payload, kind: portableToolKind(payload.tool), done: true, ok: true, secs: 0,
+                          summary: portableToolSummary(payload.tool, payload.args)});
+    const container = code.parentElement.closest('details') || code.parentElement;
+    container.replaceWith(row);
+  });
+  // The pending portable line is redundant once its completed disclosure exists.
+  $$('li', el).forEach(li => {
+    if (/[⏳⌛]/u.test(li.textContent || '') && li.querySelector('code')) li.remove();
+  });
+  polishActivityGroup(el);
+}
+function enhanceCodeBlocks(el) {
+  for (const v of (el._leeCodeViews || [])) try { LeeCM.destroy(v); } catch {}
+  el._leeCodeViews = [];
+  $$('pre > code', el).forEach(code => {
+    const pre = code.parentElement, text = code.textContent || '';
+    const declared = [...code.classList].find(x => x.startsWith('language-')) || '';
+    const lang = codeLang(declared);
+    // Every explicitly tagged supported language gets the editor's syntax surface.
+    // Promotion stays Python-only: highlighting a TOML or JS answer must not imply that a
+    // Python notebook kernel can execute it. Untagged and huge blocks remain lightweight.
+    const python = /^(language-)?(py|python)$/.test(declared.toLowerCase());
+    const named = declared.replace(/^language-/, '').toLowerCase();
+    if (!declared || !CODE_LANGS[named] || text.length > 40000) return;
+    const host = document.createElement('div'); pre.replaceWith(host);
+    el._leeCodeViews.push(mountCodeSurface(host, text.replace(/\n$/, ''), lang,
+                                           python && el.classList.contains('lee-reply')));
+  });
+}
+function addMarkdownCellAction(el) {
+  if (!el.dataset.markdown.trim() ||
+      (!el.classList.contains('lee-reply') && !el.classList.contains('lee-md-output'))) return;
+  const bar = document.createElement('footer'); bar.className = 'lee-reply-actions';
+  const button = document.createElement('button'); button.type = 'button';
+  button.textContent = el.classList.contains('lee-reply')
+    ? 'edit response as markdown cell' : 'edit as markdown cell';
+  button.onclick = () => promoteCodeToNotebook(el.dataset.markdown, 'markdown');
+  bar.appendChild(button); el.appendChild(bar);
+}
+function renderMarkdown(el, text, allowRaw = false) {
+  if (!el) return;
+  el.dataset.markdown = String(text || '');
+  el._leeMarkdownSeq = (el._leeMarkdownSeq || 0) + 1;
+  const seq = el._leeMarkdownSeq;
+  clearTimeout(el._leeMarkdownTimer);
+  el._leeMarkdownAbort?.abort();
+  // Streaming can deliver many partial documents per second. Render only the newest one;
+  // until mdhtml answers, plain text is the safe fallback rather than client-side raw HTML.
+  el._leeMarkdownTimer = setTimeout(async () => {
+    const controller = new AbortController(); el._leeMarkdownAbort = controller;
+    try {
+      const r = await fetch('/markdown/render', {method: 'POST', signal: controller.signal,
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: el.dataset.markdown, allow_raw: allowRaw})});
+      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      const d = await r.json(); if (seq !== el._leeMarkdownSeq) return;
+      el.innerHTML = d.html;
+      if (d.warnings?.length) el.dataset.markdownWarnings = d.warnings.join(' · ');
+      else delete el.dataset.markdownWarnings;
+      if (el._leeCodeFrame) cancelAnimationFrame(el._leeCodeFrame);
+      el._leeCodeFrame = requestAnimationFrame(() => {
+        el._leeCodeFrame = 0; upgradePortableToolMarkdown(el); enhanceCodeBlocks(el); addMarkdownCellAction(el);
+      });
+    } catch (e) {
+      if (e.name === 'AbortError' || seq !== el._leeMarkdownSeq || !el.isConnected) return;
+      el.textContent = el.dataset.markdown;
+      // A stream repaint or app restart can invalidate an in-flight fragment. Keep the
+      // readable source in place and annotate this surface; do not emit dozens of global
+      // error toasts while the conversation is still mounting.
+      el.dataset.markdownWarnings = `renderer unavailable: ${e.message || e}`;
+      if (!el._leeMarkdownReported) {
+        el._leeMarkdownReported = true;
+        console.warn('Leela markdown fallback:', e);
+      }
+    }
+  }, 32);
+}
 
 async function api(url, opts) {
   const r = await fetch(url, opts);
@@ -36,100 +418,210 @@ async function api(url, opts) {
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify(data || {})});
 
+async function postEvents(url, data, onEvent) {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                              body: JSON.stringify(data || {})});
+  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+  const reader = r.body.getReader(), decoder = new TextDecoder();
+  let pending = '';
+  while (true) {
+    const {value, done} = await reader.read();
+    pending += decoder.decode(value || new Uint8Array(), {stream: !done});
+    let cut;
+    while ((cut = pending.indexOf('\n\n')) >= 0) {
+      const frame = pending.slice(0, cut); pending = pending.slice(cut + 2);
+      let event = 'message', payload = '';
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) payload += line.slice(5).trim();
+      }
+      if (payload) onEvent(event, JSON.parse(payload));
+    }
+    if (done) break;
+  }
+}
+
+let statusTimer = null;
 function status(msg, kind) {
   const el = $('#status'); if (!el) return;
-  el.textContent = msg || '';
-  el.className = 'lee-status' + (kind ? ' ' + kind : '');
-  if (kind === 'ok') setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2500);
+  clearTimeout(statusTimer); statusTimer = null;
+  msg = String(msg || '').trim();
+  if (!msg) { el.textContent = ''; el.className = 'lee-status'; el.hidden = true; return; }
+  const busyWords = /(?:running|starting|loading|syncing|searching|fetching|reading|asking|finding|creating|installing|restarting|clustering|working|saving|stopping|connecting)/i;
+  const tone = kind || (busyWords.test(msg) || msg.endsWith('…') ? 'busy' : 'info');
+  el.textContent = msg; el.hidden = false;
+  el.onclick = () => {
+    clearTimeout(statusTimer); el.classList.remove('show');
+    setTimeout(() => { el.hidden = true; el.textContent = ''; }, 180);
+  };
+  // Re-adding `show` on a fresh frame restarts the entrance motion even when one status
+  // immediately replaces another (running cell 2 after running cell 1).
+  el.className = `lee-status ${tone}`;
+  requestAnimationFrame(() => el.classList.add('show'));
+  const ttl = tone === 'busy' ? 0 : tone === 'err' ? 8000 : tone === 'ok' ? 3200 : 5000;
+  if (ttl) statusTimer = setTimeout(() => {
+    if (el.textContent !== msg) return;
+    el.classList.remove('show');
+    setTimeout(() => { if (el.textContent === msg) { el.textContent = ''; el.hidden = true; } }, 220);
+  }, ttl);
 }
 
 /* ------------------------------------------------------------------ keymap */
+const MAC = /Mac|iPhone|iPad|iPod/.test(navigator.userAgentData?.platform || navigator.platform || '');
+const displayChord = s => String(s || '').replace(/\bmod\+/g, MAC ? '⌘' : 'ctrl+');
+function paintKeyLabels(root = document) {
+  $$('kbd', root).forEach(k => { if (k.textContent.includes('mod+')) k.textContent = displayChord(k.textContent); });
+}
+
 async function loadKeys() {
   const d = await api('/keys.json');
   lee.keys = d.keys; lee.help = d.help; lee.keyPath = d.path; lee.keyNotes = d.notes || [];
-  lee.bars = d.bars || {};
+  lee.bars = d.bars || {}; lee.menus = d.menus || {};
+  paintKeyLabels();
+  const prompt = $('#agentprompt'); if (prompt) prompt.placeholder = displayChord(prompt.placeholder);
+  renderContextKeys(lee.scope);
   if (lee.keyNotes.length) status(lee.keyNotes[0] + ' — see the keys panel', 'err');
 }
 
-/* The physical key behind an event, for the one case where `e.key` lies.
- *
- * On macOS, Option is a compose key: alt+w arrives as `e.key === '∑'`, alt+i as a dead
- * key, and so on -- so every alt binding in the map would silently never match. `e.code`
- * is the physical key and is unaffected, so it is used as a second chance *only* when alt
- * is held. Anywhere else `e.key` is the right answer, because it is the one that respects
- * the user's keyboard layout. */
-function physKey(e) {
-  const c = e.code || '';
-  if (/^Key[A-Z]$/.test(c)) return c.slice(3).toLowerCase();
-  if (/^Digit[0-9]$/.test(c)) return c.slice(5);
-  if (/^Bracket(Left|Right)$/.test(c)) return c === 'BracketLeft' ? '[' : ']';
-  if (c === 'Slash') return '/';
-  if (c === 'Backquote') return '`';
-  if (c === 'Minus') return '-';
-  if (c === 'Equal') return '=';
-  return '';
+function renderContextKeys(scope = lee.scope) {
+  const host = $('#keytoast'), tag = $('#keyscope');
+  if (!host || !lee.keys.length) return;
+  // This panel is a glanceable contextual cheat sheet, not the full keymap. Commands
+  // marked help-only stay in the searchable help/settings surfaces instead of pushing the
+  // file tree and editor off screen when the editor scope has dozens of actions.
+  const local = lee.keys.filter(k => k.scope === scope && k.label && k.key && ['footer','toast'].includes(k.show)).slice(0, 8);
+  const global = lee.keys.filter(k => k.scope === 'global' && k.show === 'toast' && k.label && k.key).slice(0, 4);
+  const rows = local.concat(global);
+  if (tag) tag.textContent = scope && scope !== 'global' ? `· ${scope}` : '';
+  host.innerHTML = rows.length ? rows.map(k =>
+    `<div class="lee-krow${k.scope === scope ? ' contextual' : ''}"><kbd>${esc(displayChord(k.key))}</kbd>` +
+    `<span>${esc(k.label)}</span></div>`).join('') : '<div class="lee-dim">no keys in this context</div>';
+}
+
+/* One application-level keyboard router owns every app command. CodeMirror owns editing
+ * commands and xterm owns pty input, but neither gets a duplicate copy of this map. A
+ * capturing listener is intentional: an accepted app command is resolved before an editor
+ * can consume it; an unaccepted event is untouched and continues normally. */
+const TERM_ESCAPES = new Set(['help', 'quit', 'palette', 'settings', 'toggle_left', 'toggle_right']);
+const EDITING_SCOPES = new Set(['editor', 'exec', 'agent', 'term']);
+
+function eventContext(e) {
+  const path = e.composedPath ? e.composedPath() : [e.target];
+  const inPath = selector => path.some(n => n instanceof Element && n.matches(selector));
+  // Overlays own their keyboard while open. Their local handler receives the event after
+  // this router leaves it alone; commands behind a dialog must never fire accidentally.
+  if (inPath('.lee-modal, .lee-ctxmenu')) return 'overlay';
+  if (inPath('#termwrap, .xterm')) return 'term';
+  if (inPath('#agentprompt, .lee-agent')) return 'agent';
+  if (inPath('#execbox, .lee-exec')) return 'exec';
+  if (inPath('#editor, .lee-cell, #filecm')) return 'editor';
+  if (inPath('#vars, #varfilter, .lee-varspanel')) return 'vars';
+  if (inPath('#filetree, .lee-files')) return 'files';
+  return lee.scope || 'editor';
+}
+
+function isTextEntry(el) {
+  if (!(el instanceof Element)) return false;
+  if (el.isContentEditable) return true;
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+  return el.tagName === 'INPUT' &&
+    !['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file'].includes(el.type);
 }
 
 function chordMatches(c, e) {
-  const want = c.key.toLowerCase();
-  const hit = want === (e.key || '').toLowerCase() ||
-              (e.altKey && want.length === 1 && want === physKey(e));
-  return hit && !!c.ctrl === (e.ctrlKey || e.metaKey) && !!c.alt === e.altKey && !!c.shift === e.shiftKey;
+  if (e.isComposing || e.key === 'Process' || e.repeat) return false;
+  // macOS reports Caps Lock remapped to Hyper as all four modifiers. Other platforms and
+  // some Karabiner/browser combinations expose only Ctrl+Alt+Shift—the Command/Meta bit
+  // is not portable there. Hyper explicitly accepts either shape; ordinary `mod` remains
+  // strict, so regular shortcuts do not become ambiguous.
+  if (c.hyper) {
+    // Hyper remappers agree on Ctrl+Alt but Safari/Chrome occasionally omit either the
+    // synthetic Shift or Meta bit for named keys. Require the stable pair plus one of the
+    // two high modifiers; this accepts both browser shapes without colliding with normal
+    // two-modifier shortcuts.
+    if (!e.ctrlKey || !e.altKey || !(e.shiftKey || e.metaKey)) return false;
+  } else {
+    const wantCtrl = !!c.ctrl || (!!c.mod && !MAC);
+    const wantMeta = !!c.mod && MAC;
+    if (wantCtrl !== e.ctrlKey || wantMeta !== e.metaKey || !!c.alt !== e.altKey || !!c.shift !== e.shiftKey)
+      return false;
+  }
+  // Every modified shortcut is matched by physical code when available. Karabiner/Hyper
+  // can transform `event.key` (not just Option-printable characters), while `event.code`
+  // remains Enter, KeyR, ArrowDown, and so on.
+  if (c.code && (c.mod || c.ctrl || c.alt || c.hyper)) return c.code === e.code;
+  return c.key.toLowerCase() === (e.key || '').toLowerCase();
 }
 
-// In the terminal almost nothing is ours. A pty expects every keystroke, and the
-// chords the IDE would otherwise claim are exactly the ones a shell needs most
-// (ctrl+e, ctrl+b, ctrl+r are readline's end-of-line, back-char and history search).
-// So `term` scope inverts the usual rule: only bindings declared *for* the terminal
-// fire, plus the handful needed to get back out of it.
-const TERM_ESCAPES = new Set(['help', 'quit', 'palette', 'toggle_left', 'toggle_right']);
-const firesInTerm = (k) => k.scope === 'term' || k.action.startsWith('focus_') || TERM_ESCAPES.has(k.action);
-
+const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.test(c.key);
 function findBinding(e, scope) {
-  const inScope = scope === 'term'
-    ? firesInTerm
-    : (k) => k.scope === scope || k.scope === 'global';
-  return lee.keys.find(k => inScope(k) && k.chords.some(c => chordMatches(c, e)));
+  if (scope === 'overlay') return null;
+  const allowed = scope === 'term'
+    ? k => k.scope === 'term' || k.action.startsWith('focus_') || TERM_ESCAPES.has(k.action)
+    : k => k.scope === scope || k.scope === 'global';
+  const guard = !EDITING_SCOPES.has(scope) && isTextEntry(e.target);
+  for (const k of lee.keys) {
+    if (!allowed(k)) continue;
+    const chord = k.chords.find(c => chordMatches(c, e));
+    if (!chord || (guard && !firesInTextEntry(chord))) continue;
+    // Standard Copy/Cut become whole-cell operations only when a notebook cell has no
+    // text selection. Selected source keeps the browser/CodeMirror clipboard semantics.
+    if (['cell_copy', 'cell_cut'].includes(k.action)) {
+      if (lee.kind !== 'notebook') continue;
+      const inEditor = e.composedPath?.().some(n => n instanceof Element && n.matches('.cm-editor'));
+      const selection = curEditor() ? LeeCM.selection(curEditor()) : null;
+      if (inEditor && selection?.from !== selection?.to) continue;
+    }
+    if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down'].includes(k.action) && lee.kind !== 'notebook') continue;
+    return {binding: k, chord};
+  }
+  return null;
 }
 
-document.addEventListener('keydown', (e) => {
-  const k = findBinding(e, lee.scope);
-  if (!k) return;                      // unbound: let the browser and CodeMirror have it
+window.addEventListener('keydown', e => {
+  const scope = eventContext(e), match = findBinding(e, scope);
+  // Kept on `lee` deliberately: the key editor and DevTools can distinguish "Chrome did
+  // not deliver it" from "the router rejected it" using the last real event.
+  lee.lastKeyEvent = {key: e.key, code: e.code, ctrl: e.ctrlKey, alt: e.altKey,
+                      shift: e.shiftKey, meta: e.metaKey, scope,
+                      action: match?.binding.action || '', trusted: e.isTrusted};
+  if (!match) return;
   e.preventDefault(); e.stopPropagation();
-  leeAct(k.action);
+  leeAct(match.binding.action);
 }, true);
-
-/* The bindings CodeMirror must own, because they fire while it has the cursor
- * and would otherwise be swallowed by the editor's own keymap. */
-function cmBinds(scope) {
-  const cmKey = (c) => (c.ctrl ? 'Ctrl-' : '') + (c.alt ? 'Alt-' : '') + (c.shift ? 'Shift-' : '') +
-    (c.key.length === 1 ? c.key : c.key.replace('Arrow', ''));
-  return lee.keys.filter(k => k.scope === scope || k.scope === 'global')
-                .flatMap(k => k.chords.map(c => ({cm: cmKey(c), run: () => leeAct(k.action)})));
-}
 
 /* ------------------------------------------------------------------ actions */
 const ACTIONS = {
-  focus_files:  () => { setScope('files'); $('#filetree')?.focus(); highlightTree(); },
-  focus_editor: () => { setScope('editor'); focusCell(lee.sel); },
-  focus_exec:   () => { setScope('exec'); lee.editors.get('exec')?.focus(); },
-  focus_vars:   () => { setScope('vars'); $('#varfilter')?.focus(); },
-  focus_agent:  () => { setScope('agent'); $('#agentprompt')?.focus(); },
-  toggle_left:  () => $('#shell').classList.toggle('no-left'),
-  toggle_right: () => $('#shell').classList.toggle('no-right'),
-  toggle_scope: () => leeScope(lee.execScope === 'live' ? 'isolated' : 'live'),
+  focus_files:  () => { leePane('left', true); leeLeft('files'); setScope('files'); $('#filetree')?.focus(); highlightTree(); },
+  focus_editor: () => { setScope('editor'); if (lee.cells.length) focusCell(lee.sel); else $('#editor')?.focus(); },
+  focus_exec:   () => { leePane('bottom', true); leeDock('exec'); setScope('exec'); lee.editors.get('exec')?.focus(); },
+  focus_vars:   () => { leePane('right', true); leeRight('vars'); setScope('vars'); $('#varfilter')?.focus(); },
+  focus_agent:  () => { leePane('right', true); leeRight('agent'); setScope('agent'); $('#agentprompt')?.focus(); },
+  toggle_left:  () => leePane('left'),
+  toggle_right: () => leePane('right'),
+  toggle_bottom:() => leePane('bottom'),
+  toggle_scope: () => leeScope(lee.execScope === 'live' ? 'agent' : 'live'),
   help:         showHelp,
+  settings:     editorSettings,
   quick_open:   quickOpen,
   code_search:  codeSearch,
+  find_definition: () => findDefinition(),
+  find_usages: () => findUsages(),
+  rename_symbol: () => renameSymbol(),
+  sync_index: syncCodeIndex,
   run_app:      runApp,
   palette:      palette,
+  recent_tabs:  recentTabs,
   save:         saveTab,
-  save_all:     saveTab,
-  close_tab:    () => htmxPost('/tab/close?i=' + activeTabIndex()),
+  save_all:     saveAllTabs,
+  close_tab:    closeTab,
   next_tab:     () => shiftTab(1),
   prev_tab:     () => shiftTab(-1),
-  interrupt:    async () => { await post('/kernel/interrupt'); status('interrupted', 'ok'); },
-  restart:      async () => { status('restarting kernel…'); await post('/kernel/restart'); status('kernel restarted', 'ok'); leeVars(); },
+  interrupt:    async () => {
+    const r = await post('/kernel/interrupt');
+    status(r.note || 'cell stopped', (r.forced || !r.ok) ? 'err' : 'ok');
+  },
+  restart:      async () => { status('restarting kernel…'); await post('/kernel/restart'); markPreviousRuns(); status('kernel restarted · saved outputs are from the previous kernel', 'ok'); leeVars(); },
   switch_env:   pickEnv,
   edit_runs:    editRuns,
   quit:         () => status('close the browser tab to leave'),
@@ -137,19 +629,71 @@ const ACTIONS = {
   run_cell:     () => lee.kind === 'text' ? runFile() : runCell(lee.sel, false),
   run_advance:  () => lee.kind === 'text' ? runFile() : runCell(lee.sel, true),
   run_insert:   () => lee.kind === 'text' ? runFile() : runCell(lee.sel, 'insert'),
+  stop_cell:    () => stopCell(lee.sel),
+  run_above:    () => runRange(0, lee.sel, 'cells above'),
+  run_below:    () => runRange(lee.sel, lee.cells.length, 'this cell and below'),
   run_all:      runAll,
+  restart_run_all: restartRunAll,
   run_file:     runFile,
   run_selection: runSelection,
   pick_kernel:  pickKernel,
   new_notebook: () => htmxPost('/tab/new?kind=notebook'),
   edit_keys:    editKeys,
-  cell_above:   () => nbEdit({op: 'insert', i: lee.sel}).then(() => selectCell(lee.sel)),
-  cell_below:   () => nbEdit({op: 'insert', i: lee.sel + 1}).then(() => selectCell(lee.sel + 1)),
-  cell_delete:  () => nbEdit({op: 'delete', i: lee.sel}).then(() => selectCell(Math.max(0, lee.sel - 1))),
-  cell_type:    () => nbEdit({op: 'type', i: lee.sel, cycle: true}),
+  cell_select_above: () => focusCell(lee.sel - 1),
+  cell_select_below: () => focusCell(lee.sel + 1),
+  cell_first: () => focusCell(0),
+  cell_last: () => focusCell(lee.cells.length - 1),
+  cell_page_up: () => focusCellPage(-1),
+  cell_page_down: () => focusCellPage(1),
+  cell_move_up: () => moveCellTo(lee.sel, lee.sel - 1),
+  cell_move_down: () => moveCellTo(lee.sel, lee.sel + 1),
+  cell_above:   async () => { const at = lee.sel; await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted above', 'ok'); },
+  cell_below:   async () => { const at = lee.sel + 1; await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted below', 'ok'); },
+  cell_delete:  async () => { const at = lee.sel; await nbEdit({op: 'delete', i: at}); focusCell(Math.min(at, lee.cells.length - 1)); status('cell deleted', 'ok'); },
+  notebook_undo: async () => {
+    const r = await nbEdit({op: 'undo', i: lee.sel});
+    focusCell(r.index ?? lee.sel); status('cell operation undone', 'ok');
+  },
+  notebook_redo: async () => {
+    const r = await nbEdit({op: 'redo', i: lee.sel});
+    focusCell(r.index ?? lee.sel); status('cell operation redone', 'ok');
+  },
+  cell_type:    async () => {
+    const id = lee.cells[lee.sel]?.id;
+    const r = await nbEdit({op: 'type', i: lee.sel, cycle: true});
+    const at = Math.max(0, r.cells.findIndex(c => c.id === id));
+    focusCell(at); status(`cell ${at + 1} is now ${r.cells[at]?.cell_type || 'code'}`, 'ok');
+  },
   capture:      captureScreen,
-  cell_split:   () => { const v = lee.editors.get(lee.cells[lee.sel].id);
-                        nbEdit({op: 'split', i: lee.sel, offset: v ? LeeCM.cursor(v) : 0}); },
+  cell_split:   async () => {
+    const at = lee.sel, v = lee.editors.get(lee.cells[at].id);
+    await nbEdit({op: 'split', i: at, offset: v ? LeeCM.cursor(v) : 0});
+    focusCell(at + 1); status('cell split', 'ok');
+  },
+  cell_collapse: () => setCellCollapsed(lee.sel),
+  cell_duplicate: async () => {
+    const at = lee.sel; await nbEdit({op: 'duplicate', i: at});
+    focusCell(at + 1); status('cell duplicated', 'ok');
+  },
+  cell_copy: () => copyCell(lee.sel),
+  cell_cut: () => cutCell(lee.sel),
+  cell_paste_above: () => pasteCell(lee.sel),
+  cell_paste_below: () => pasteCell(lee.sel + 1),
+  cell_merge_above: async () => {
+    const at = lee.sel; if (at < 1) return status('there is no cell above', 'err');
+    await nbEdit({op: 'merge_above', i: at}); focusCell(at - 1); status('cells merged', 'ok');
+  },
+  cell_merge_below: async () => {
+    const at = lee.sel; if (at + 1 >= lee.cells.length) return status('there is no cell below', 'err');
+    await nbEdit({op: 'merge_below', i: at}); focusCell(at); status('cells merged', 'ok');
+  },
+  clear_cell_output: async () => {
+    const at = lee.sel; await nbEdit({op: 'clear_cell', i: at});
+    focusCell(at); status('cell output cleared', 'ok');
+  },
+  clear_all_outputs: async () => {
+    await nbEdit({op: 'clear'}); focusCell(lee.sel); status('all outputs cleared', 'ok');
+  },
   comment:      toggleComment,
   complete:     kernelComplete,
   ai_complete:  aiComplete,
@@ -159,26 +703,31 @@ const ACTIONS = {
   code_map:     codeMap,
 
   exec_run:     runExec,
-  exec_newline: () => {},
+  exec_newline: () => { const v = lee.editors.get('exec'); if (v) LeeCM.insert(v, '\n'); },
   exec_prev:    () => recall(-1),
   exec_next:    () => recall(1),
   exec_clear:   leeExecClear,
   exec_promote: () => { leeScope('live'); runExec(); },
 
-  open:         () => { const n = $('.lee-node.sel'); if (n) htmxPost('/tab/open?path=' + encodeURIComponent(n.dataset.path)); },
+  open:         treeActivate,
+  tree_down:    () => moveTreeSelection(1),
+  tree_up:      () => moveTreeSelection(-1),
+  tree_expand:  treeExpand,
+  tree_collapse: treeCollapse,
   new_file:     () => newEntry('file'),
   new_dir:      () => newEntry('dir'),
   rename:       renameEntry,
   delete:       deleteEntry,
   add_root:     addRoot,
-  refresh_files: () => location.reload(),
-  up_dir:       () => {},
+  remove_root:  removeRoot,
+  refresh_files: () => refreshFileTree(),
+  up_dir:       treeCollapse,
   filter_files: () => status('filter the tree with ctrl+p'),
 
   expand:       () => $('.lee-vrow.sel')?.click(),
   filter_vars:  () => $('#varfilter')?.focus(),
   edit_value:   editSelectedVar,
-  grid:         () => status('click ▦ on a variable to open its grid'),
+  grid:         openGrid,
   copy_value:   () => copyVar('value'),
   copy_path:    () => copyVar('path'),
   promote:      promoteVar,
@@ -189,11 +738,13 @@ const ACTIONS = {
 
   agent_send:   sendAgent,
   agent_stop:   stopAgent,
-  agent_transcript: leeAgentTranscript,
   agent_tools:  agentTools,
 
   terminal:     () => openTerm('shell'),
   git:          () => openTerm('git'),
+  term_new:     leeNewTerm,
+  term_next:    () => cycleTerm(1),
+  term_prev:    () => cycleTerm(-1),
   term_close:   closeTerm,
 
   web_search:   webSearch,
@@ -210,110 +761,754 @@ function leeAct(name) {
 }
 window.leeAct = leeAct;
 
-function setScope(s) { lee.scope = s; }
+function setScope(s) {
+  lee.scope = s;
+  renderContextKeys(s);
+}
 const activeTabIndex = () => $$('.lee-tab').findIndex(t => t.classList.contains('active'));
+async function closeTab(index = null) {
+  const i = index == null ? (lee.menuTab == null ? activeTabIndex() : lee.menuTab) : Number(index);
+  lee.menuTab = null;
+  if (i < 0) return;
+  const tab = $$('.lee-tab')[i];
+  if (tab?.classList.contains('dirty') &&
+      !await confirmDialog('close unsaved tab', `${$('.lee-tab-name', tab)?.textContent || 'This file'} has unsaved changes.`)) return;
+  htmxPost('/tab/close?i=' + i);
+}
+window.leeCloseTab = closeTab;
+function rememberRecentTab(st) {
+  const key = st.path || st.title || '';
+  if (!key) return;
+  const current = {key, path: st.path || '', title: st.title || key, kind: st.kind || 'text', at: Date.now()};
+  lee.recentTabs = [current, ...lee.recentTabs.filter(x => x?.key !== key)].slice(0, 60);
+  try { sessionStorage.setItem('lee-recent-tabs', JSON.stringify(lee.recentTabs)); } catch (_) {}
+}
+function recentTabs() {
+  const open = $$('.lee-tab').map((tab, i) => ({
+    i, key: tab.title || $('.lee-tab-name', tab)?.textContent || '',
+    path: tab.title || '', title: $('.lee-tab-name', tab)?.textContent || 'untitled',
+    dirty: tab.classList.contains('dirty'), running: !!$('.lee-tab-run', tab),
+  }));
+  if (!open.length) return status('no files are open', 'err');
+  const byKey = new Map(open.map(x => [x.key, x]));
+  let rows = lee.recentTabs.map(x => ({...x, ...byKey.get(x.key)})).filter(x => x.i != null);
+  for (const row of open) if (!rows.some(x => x.i === row.i)) rows.push(row);
+  let filtered = rows, sel = Math.max(0, Math.min(1, rows.length - 1));
+  const m = modal(`<div class="lee-mhead">Recent files<span class="sub">most recently used</span></div>` +
+    `<input class="lee-input lee-recent-query" placeholder="filter open files…" autofocus>` +
+    `<div class="lee-modallist lee-recent-list"></div><div class="lee-mfoot lee-dim">enter switch · delete close</div>`, e => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, filtered.length - 1); paint(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(0, sel - 1); paint(); }
+      else if (e.key === 'Enter') { e.preventDefault(); go(); }
+      else if (e.key === 'Delete' && filtered[sel]) { e.preventDefault(); const row = filtered[sel]; m.remove(); closeTab(row.i); }
+    });
+  const list = $('.lee-recent-list', m), input = $('.lee-recent-query', m);
+  const paint = () => {
+    list.innerHTML = filtered.length ? filtered.map((r, i) => `<button class="lee-recent-row${i === sel ? ' sel' : ''}" data-i="${i}">` +
+      `<span class="lee-recent-kind">${r.kind === 'notebook' ? 'NB' : 'FILE'}</span>` +
+      `<span class="lee-recent-copy"><strong>${esc(r.title)}</strong><small>${esc(compactPath(r.path))}</small></span>` +
+      `<span class="lee-recent-state">${r.running ? 'running' : r.dirty ? 'unsaved' : ''}</span></button>`).join('') :
+      '<div class="lee-dim">No matching open files.</div>';
+    $('.lee-recent-row.sel', list)?.scrollIntoView({block: 'nearest'});
+  };
+  const go = () => { const row = filtered[sel]; if (!row) return; m.remove(); htmxPost('/tab/select?i=' + row.i); };
+  input.oninput = () => { const q = input.value.trim().toLowerCase(); filtered = rows.filter(r => `${r.title} ${r.path}`.toLowerCase().includes(q)); sel = 0; paint(); };
+  list.onclick = e => { const row = e.target.closest('[data-i]'); if (!row) return; sel = +row.dataset.i; go(); };
+  paint();
+}
 function shiftTab(d) {
   const n = $$('.lee-tab').length; if (!n) return;
   htmxPost('/tab/select?i=' + ((activeTabIndex() + d + n) % n));
 }
+function layoutTabs() {
+  const bar = $('#tabbar'), more = $('#taboverflow'); if (!bar || !more) return;
+  const tabs = $$('.lee-tab', bar), active = Math.max(0, activeTabIndex());
+  // Keep a calm, finite strip. The active file and its neighbours remain spatially
+  // meaningful; every other open document is one click away in the overflow menu.
+  const breakpointCap = innerWidth >= 1700 ? 7 : innerWidth >= 1300 ? 5 : innerWidth >= 960 ? 4 : 2;
+  const cap = Math.max(1, Math.min(breakpointCap, Math.floor(bar.clientWidth / 138) || 1));
+  const keep = new Set();
+  if (tabs.length <= cap) tabs.forEach((_, i) => keep.add(i));
+  else {
+    keep.add(active);
+    for (let distance = 1; keep.size < cap && distance < tabs.length; distance++) {
+      if (active - distance >= 0) keep.add(active - distance);
+      if (keep.size < cap && active + distance < tabs.length) keep.add(active + distance);
+    }
+    for (let i = 0; keep.size < cap && i < tabs.length; i++) keep.add(i);
+  }
+  tabs.forEach((tab, i) => tab.classList.toggle('overflowed', !keep.has(i)));
+  const hidden = tabs.length - keep.size;
+  more.hidden = hidden <= 0; more.textContent = hidden > 0 ? `+${hidden}` : '⋯';
+  more.title = hidden > 0 ? `${hidden} more open files` : 'all open files';
+}
+function leeTabOverflow(anchor) {
+  const rows = $$('.lee-tab').map((tab, i) => ({tab, i})).filter(x => x.tab.classList.contains('overflowed')).map(({tab, i}) => ({
+    label: $('.lee-tab-name', tab)?.textContent || `tab ${i + 1}`,
+    detail: `${tab.classList.contains('dirty') ? 'unsaved · ' : ''}${tab.title || ''}`,
+    run: () => htmxPost('/tab/select?i=' + i),
+  }));
+  openChromeMenu(anchor, rows);
+}
+window.leeTabOverflow = leeTabOverflow;
 function htmxPost(url) { htmx.ajax('POST', url, {target: '#tabbar', swap: 'outerHTML'}); }
+let openFileVersion=0;
+async function leeOpenFile(path) {
+  // The absolute path is the identity. Use one versioned request rather than HTMX's
+  // implicit swap: an older response must never remount a same-named file from another root.
+  path=String(path||'');const version=++openFileVersion;lee.pendingFocusPath=path;
+  const response=await fetch('/tab/open?path='+encodeURIComponent(path),{method:'POST',headers:{'HX-Request':'true'}});
+  if(!response.ok)throw new Error(await response.text());const html=await response.text();
+  if(version!==openFileVersion)return;
+  const doc=new DOMParser().parseFromString(html,'text/html'),fresh=doc.querySelector('#tabbar'),old=$('#tabbar');
+  if(!fresh||!old)throw new Error('tab open returned no tab bar');old.replaceWith(fresh);htmx.process(fresh);
+  await mountTab(path);await leeVars();refreshProjectPills();requestAnimationFrame(layoutTabs);
+}
+window.leeOpenFile = leeOpenFile;
 
 /* ------------------------------------------------------------------ editor */
-async function mountTab() {
-  const st = await api('/tab/state');
-  // Only the tab's own editors are torn down. The exec strip belongs to the app, not
-  // to the tab, and destroying it here would silently leave the box unmounted.
-  lee.editors.forEach((v, k) => { if (k !== 'exec') { LeeCM.destroy(v); lee.editors.delete(k); } });
-  const host = $('#editor'); if (!host) return;
-  lee.kind = st.kind; lee.path = st.path || ''; lee.cells = st.cells || [];
-  if (!st.kind) { host.innerHTML = '<div class="lee-empty">open a file, or press <kbd>ctrl+p</kbd></div>'; return; }
-  if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
-  if (st.kind === 'notebook') mountNotebook(host, st);
-  else mountFile(host, st);
-  refreshKernelPill();
+function updateToolbarForKind(kind) {
+  const notebook = kind === 'notebook', text = kind === 'text';
+  const visibility = {run_cell: notebook, run_advance: notebook, run_file: text, run_selection: text};
+  for (const [action, shown] of Object.entries(visibility)) {
+    const button = $(`#toolbar [data-action="${action}"]`); if (button) button.hidden = !shown;
+  }
 }
 
-function mountFile(host, st) {
-  host.innerHTML = '<div class="lee-cm" id="filecm"></div>';
-  const v = LeeCM.create($('#filecm'), {
-    doc: st.text || '', lang: st.lang || 'python', lineNums: true,
-    binds: cmBinds('editor'), completeUrl: '/complete',
-    onChange: () => markDirty(),
+let mountTabVersion=0;
+async function mountTab(expectedPath = '') {
+  const mountVersion=++mountTabVersion;
+  clearTimeout(lee.autoSaveTimer);
+  lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab
+  const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
+  if(mountVersion!==mountTabVersion)return;
+  const recoveredDraft = await restoreDrafts(st);
+  // Only the tab's own editors are torn down. The exec strip belongs to the app, not
+  // to the tab, and destroying it here would silently leave the box unmounted.
+  lee.cellObserver?.disconnect(); lee.cellObserver = null;
+  lee.editors.forEach((v, k) => { if (k !== 'exec') { LeeCM.destroy(v); lee.editors.delete(k); } });
+  const host = $('#editor'); if (!host) return;
+  lee.kind = st.kind; lee.path = st.path || ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
+  await loadSettings(st.lang || (st.kind === 'notebook' ? 'python' : ''));
+  updateToolbarForKind(st.kind);
+  rememberRecentTab(st);
+  lee.diskVersion = st.disk_version || ''; lee.seenDiskVersion = lee.diskVersion;
+  // Tab navigation always returns Run and Variables to that tab's private kernel.
+  paintEnv('');
+  if (!st.kind) {
+    host.innerHTML = `<section class="lee-empty"><span class="lee-empty-mark">L</span>` +
+      `<strong>Start with a file</strong><p>Open a file from this workspace, or create a notebook for exploratory work.</p>` +
+      `<div class="lee-empty-actions"><button class="lee-btn go" onclick="leeAct('quick_open')">Open file</button>` +
+      `<button class="lee-btn" onclick="leeAct('new_notebook')">New notebook</button>` +
+      `<button class="lee-btn" onclick="leeAct('research')">Research a topic</button></div>` +
+      `<small>Press <kbd>ctrl+p</kbd> to open files without leaving the keyboard.</small></section>`;
+    return;
+  }
+  if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
+  if (st.kind === 'notebook') mountNotebook(host, st);
+  else await mountFile(host, st);
+  if (recoveredDraft) {
+    const tab = $('.lee-tab.active'); tab?.classList.add('dirty'); setTabSaveState(tab, 'pending');
+    status('restored an unsaved browser draft · autosave will persist it', 'ok');
+    scheduleAutoSave();
+  }
+  if (lee.pendingLocation && (!lee.pendingLocation.path || lee.pendingLocation.path === st.path)) {
+    const loc = lee.pendingLocation; lee.pendingLocation = null;
+    requestAnimationFrame(() => {
+      if (loc.cellId && lee.kind === 'notebook') {
+        const i = lee.cells.findIndex(c => c.id === loc.cellId);
+        if (i >= 0) {
+          selectCell(i); const view = ensureCellMounted(i); LeeCM.setDebugLine(view, loc.line);
+          paintDebugInlineValues(view, loc.line, lee.debugState?.variables); jumpToLine(loc.line);
+        }
+      } else {
+        jumpToLine(loc.line);
+        if (loc.debug && lee.editors.get('file')) {
+          LeeCM.setDebugLine(lee.editors.get('file'), loc.line);
+          paintDebugInlineValues(lee.editors.get('file'), loc.line, lee.debugState?.variables);
+        }
+      }
+    });
+  }
+  refreshKernelPill();
+  if ($('#left')?.classList.contains('left-symbols')) leeSymbols();
+  paintAgentAttachments();
+  try { const split=JSON.parse(localStorage.getItem('lee-editor-split')||'null'); if(split?.path&&split.path!==st.path) await mountSecondary(split.path,split.direction); }
+  catch (_) { localStorage.removeItem('lee-editor-split'); }
+  if (lee.pendingFocusPath === st.path) {
+    lee.pendingFocusPath = '';
+    requestAnimationFrame(() => {
+      const view = st.kind === 'text' ? lee.editors.get('file') : lee.editors.get(lee.cells[lee.sel]?.id);
+      if (view) { LeeCM.focus(view); setScope('editor'); }
+    });
+  }
+}
+
+function rememberBuffer(key, payload) {
+  lee.buffers.set(key, payload.text); lee.dirtyBuffers.add(key); persistDraft(key, payload);
+  clearTimeout(lee.bufferTimers.get(key));
+  lee.bufferTimers.set(key, setTimeout(() => {
+    lee.bufferTimers.delete(key);
+    const documentKey = payload.path || payload.title || lee.tabKey || key;
+    post('/tab/buffer', {...payload, base_disk_version: draftBaseFor(documentKey)})
+      .catch(e => status(String(e.message || e), 'err'));
+  }, 120));
+}
+
+async function mountFile(host, st) {
+  const isProject = st.path?.endsWith('/pyproject.toml') || st.title === 'pyproject.toml';
+  const crumbMode=lee.workbenchPrefs.breadcrumbs||'pathAndSymbols',crumb=crumbMode==='off'?'':`<nav class="lee-breadcrumbs" id="editorcrumbs" aria-label="File and symbol path"><span>${esc(compactPath(st.path||st.title||''))}</span></nav>`;
+  host.innerHTML = crumb + (isProject ? '<div class="lee-package-summary" id="packagebar" hidden></div>' : '') +
+                   '<div class="lee-cm" id="filecm"></div>';
+  let git = {ranges: []}, packages = null;
+  if (st.path) {
+    const requests = [api('/git/file?path=' + encodeURIComponent(st.path)).catch(() => git)];
+    if (isProject && lee.workbenchPrefs.dependencyHints !== false) requests.push(api('/editor/packages?path=' + encodeURIComponent(st.path)).catch(() => null));
+    [git, packages] = await Promise.all(requests);
+  }
+  lee.fileGit = git;
+  const key = st.path || st.title;
+  const v = createEditor($('#filecm'), {
+    // A cached value is authoritative only after an actual user edit. This guard prevents
+    // stale/programmatic empty entries from blanking a freshly loaded file or run result.
+    doc: lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : (st.text || ''),
+    lang: st.lang || 'python', lineNums: true, lintPath: st.path || '',
+    completeUrl: '/complete', changedLines: git.ranges || [], breakpoints: lee.breakpoints.get(st.path)||[],
+    onBreakpoint: st.lang==='python' ? lines=>{rememberBreakpoints(st.path,lines);if(lee.directDebug)post('/debug/breakpoints',{path:st.path,breakpoints:lines}).catch(e=>status(e.message||String(e),'err'));} : null,
+    onChangeClick: line => showGitFileDiff(st.path, lee.fileGit?.diff || '', line),
+    onDefinition: name => findDefinition(name), onSelection: () => {
+      clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120);
+    },
+    onChange: txt => { rememberBuffer(key, {path: key, kind: 'text', text: txt}); markDirty(); },
   });
   lee.editors.set('file', v);
-  $('#filecm').addEventListener('focusin', () => setScope('editor'));
+  if(st.lang==='python'&&st.path&&lee.editorPrefs.inlayHints)api('/lsp/inlay-hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>LeeCM.setInlayHints?.(v,d.hints||[])).catch(()=>{});
+  if(st.lang==='python'&&st.path&&['symbols','pathAndSymbols'].includes(crumbMode))api('/lsp/symbols',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>{const el=$('#editorcrumbs');if(el){const names=(d.symbols||[]).slice(0,40).map(s=>`<button data-line="${(s.range?.start?.line||0)+1}">${esc(s.name)}</button>`).join('');el.insertAdjacentHTML('beforeend',`<i>›</i><span class="lee-breadcrumb-symbols">${names}</span>`);el.onclick=e=>{const b=e.target.closest('[data-line]');if(b)jumpToLine(b.dataset.line);};}}).catch(()=>{});
+  if (packages) paintPackageVersions(v, packages);
+  $('#filecm').addEventListener('focusin', () => { lee.activeEditor='primary'; setScope('editor'); });
+}
+
+async function mountSecondary(path, direction = 'vertical') {
+  const stage=$('#editorstage'),host=$('#editor2'); if (!stage || !host) return;
+  const st=await api('/tab/state?path='+encodeURIComponent(path));
+  if (st.kind!=='text') return status('split view currently opens text files; notebooks stay in the primary editor','err');
+  if (lee.editors.get('secondary')) { LeeCM.destroy(lee.editors.get('secondary')); lee.editors.delete('secondary'); }
+  stage.classList.add('split',`split-${direction}`); stage.classList.remove(`split-${direction==='vertical'?'horizontal':'vertical'}`);
+  host.hidden=false; host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path))}</span><button class="lee-btn" onclick="leeCloseSplit()">close</button></div><div class="lee-cm" id="filecm2"></div>`;
+  const key=st.path,view=createEditor($('#filecm2'),{doc:lee.dirtyBuffers.has(key)?lee.buffers.get(key):(st.text||''),lang:st.lang||'python',lineNums:true,lintPath:st.path||'',completeUrl:'/complete',
+    onDefinition:name=>findDefinition(name),onChange:txt=>{rememberBuffer(key,{path:key,kind:'text',text:txt});lee.editVersion+=1;const tab=$$('.lee-tab').find(x=>x.title===key);tab?.classList.add('dirty');setTabSaveState(tab,'pending');scheduleAutoSave();}});
+  lee.editors.set('secondary',view);lee.secondaryPath=path;$('#filecm2').addEventListener('focusin',()=>{lee.activeEditor='secondary';setScope('editor');});localStorage.setItem('lee-editor-split',JSON.stringify({path,direction}));LeeCM.focus(view);
+}
+function leeCloseSplit(){const stage=$('#editorstage'),host=$('#editor2'),v=lee.editors.get('secondary');if(v)LeeCM.destroy(v);lee.editors.delete('secondary');lee.secondaryPath='';lee.activeEditor='primary';stage?.classList.remove('split','split-vertical','split-horizontal');if(host){host.hidden=true;host.innerHTML='';}localStorage.removeItem('lee-editor-split');}
+window.leeCloseSplit=leeCloseSplit;
+function leeSplit(direction='vertical') {
+  const rows=$$('.lee-tab').filter(t=>t.dataset.kind==='text'&&t.title!==lee.path).map(t=>({path:t.title,label:$('.lee-tab-name',t)?.textContent||t.title}));
+  if (!rows.length) return status('open another text file before splitting','err');
+  const m=modal(`<div class="lee-mhead">Split editor<span class="sub">${direction==='vertical'?'side by side':'top and bottom'}</span></div><div class="lee-modallist">${rows.map((r,i)=>`<button class="lee-mrow" data-i="${i}"><strong>${esc(r.label)}</strong><span class="sub">${esc(compactPath(r.path))}</span></button>`).join('')}</div>`);
+  $$('.lee-mrow',m).forEach(b=>b.onclick=()=>{const r=rows[+b.dataset.i];m.remove();mountSecondary(r.path,direction);});
+}
+window.leeSplit=leeSplit;
+
+function paintPackageVersions(view, data) {
+  LeeCM.setPackageVersions(view, data.packages || []);
+  const bar = $('#packagebar'), s = data.summary || {};
+  if (!bar) return;
+  const env = String(s.python || '').replace(/\\/g, '/').split('/').slice(-2).join('/');
+  bar.innerHTML = `<strong>environment</strong><span>${esc(env || 'python')}</span>` +
+    `<span>${s.installed || 0}/${s.total || 0} installed</span>` +
+    (s.mismatch ? `<span class="warn">${s.mismatch} version mismatch${s.mismatch === 1 ? '' : 'es'}</span>` : '') +
+    (s.missing ? `<span class="err">${s.missing} missing</span>` : '<span class="ok">requirements satisfied</span>');
+  bar.hidden = false;
+}
+
+async function refreshPackageVersions() {
+  if (!lee.path?.endsWith('/pyproject.toml') || !lee.editors.get('file')) return;
+  try { paintPackageVersions(lee.editors.get('file'), await api('/editor/packages?path=' + encodeURIComponent(lee.path))); }
+  catch (_) {}
+}
+
+window.addEventListener('lee-package-open', e => {
+  $('.lee-package-popover')?.remove();
+  const item = e.detail?.item || {}, anchor = e.detail?.anchor;
+  const p = document.createElement('aside'); p.className = 'lee-package-popover';
+  const state = item.installed == null ? 'missing from this environment'
+    : item.compatible === false ? 'installed version does not satisfy the declaration'
+    : 'installed in this environment';
+  p.innerHTML = `<div class="lee-inline-head"><strong>${esc(item.name || 'package')}</strong>` +
+    `<button class="lee-icon" aria-label="close">×</button></div>` +
+    `<dl><dt>declared</dt><dd>${esc(item.required || 'any version')}</dd>` +
+    `<dt>installed</dt><dd>${esc(item.installed || 'not installed')}</dd>` +
+    (item.marker ? `<dt>marker</dt><dd>${esc(item.marker)}</dd>` : '') +
+    `<dt>runtime</dt><dd title="${esc(item.python || '')}">${esc(String(item.python || '').split('/').slice(-2).join('/'))}</dd></dl>` +
+    `<p class="${item.installed == null || item.compatible === false ? 'warn' : 'ok'}">${esc(state)}</p>`;
+  document.body.appendChild(p);
+  const a = anchor?.getBoundingClientRect() || {left: innerWidth / 2, bottom: innerHeight / 2};
+  const r = p.getBoundingClientRect(); p.style.left = Math.max(8, Math.min(a.left, innerWidth-r.width-8)) + 'px';
+  p.style.top = Math.min(innerHeight-r.height-8, a.bottom+6) + 'px';
+  p.querySelector('[aria-label="close"]').onclick = () => p.remove();
+});
+document.addEventListener('pointerdown', e => {
+  if ($('.lee-package-popover') && !e.target.closest('.lee-package-popover, .cm-lee-package'))
+    $('.lee-package-popover')?.remove();
+}, true);
+
+function notebookHeadings(cells) {
+  return cells.flatMap((c, i) => c.cell_type === 'markdown' ? String(c.source || '').split('\n').flatMap(line => {
+    const m = /^(#{1,6})\s+(.+?)\s*$/.exec(line); return m ? [{i, level: m[1].length, text: m[2].replace(/[*_`]/g, '')}] : [];
+  }) : []);
+}
+function notebookToc(cells) {
+  const headings = notebookHeadings(cells);
+  const toc = document.createElement('details'); toc.className = 'lee-nb-toc';
+  toc.innerHTML = `<summary>contents <span>${headings.length || 'no'} sections</span></summary><nav></nav>`;
+  const nav = toc.querySelector('nav');
+  if (!headings.length) nav.innerHTML = '<div class="lee-dim">Add Markdown headings to build the outline.</div>';
+  else headings.forEach((h, at) => {
+    const next = headings.slice(at + 1).find(x => x.level <= h.level);
+    const row = document.createElement('div'); row.className = 'lee-toc-row'; row.style.setProperty('--level', h.level);
+    row.innerHTML = `<button class="lee-toc-jump">${esc(h.text)}</button>` +
+      `<button class="lee-toc-fold" title="collapse or expand this section">${lee.collapsedCells.has(cells[h.i].id) ? '+' : '−'}</button>`;
+    row.querySelector('.lee-toc-jump').onclick = () => { toc.open = false; focusCell(h.i); };
+    row.querySelector('.lee-toc-fold').onclick = () => {
+      const end = next ? next.i : cells.length;
+      for (let i = h.i; i < end; i++) setCellCollapsed(i, !lee.collapsedCells.has(cells[h.i].id));
+      row.querySelector('.lee-toc-fold').textContent = lee.collapsedCells.has(cells[h.i].id) ? '+' : '−';
+    };
+    nav.appendChild(row);
+  });
+  return toc;
+}
+function observeNotebookCells(host, cells) {
+  // Cell shells preserve the notebook's geometry; CodeMirror is only created near the
+  // viewport. A 150-cell notebook therefore paints immediately instead of constructing
+  // 150 editors in one uninterruptible task.
+  lee.cellObserver?.disconnect();
+  lee.cellObserver = new IntersectionObserver(entries => {
+    for (const e of entries) if (e.isIntersecting) {
+      const i = +e.target.dataset.i; ensureCellMounted(i); lee.cellObserver?.unobserve(e.target);
+    }
+  }, {root: host, rootMargin: '700px 0px'});
+  $$('.lee-cell', host).forEach((el, i) => {
+    if (i === lee.sel || cells[i]?.running) ensureCellMounted(i);
+    else lee.cellObserver.observe(el);
+  });
 }
 
 function mountNotebook(host, st) {
+  lee.cellObserver?.disconnect();
+  for (const [key, view] of [...lee.editors.entries()]) {
+    if (key === 'exec' || key === 'file') continue;
+    LeeCM.destroy(view); lee.editors.delete(key);
+  }
   host.innerHTML = '';
+  host.appendChild(notebookToc(st.cells));
   st.cells.forEach((c, i) => host.appendChild(cellEl(c, i)));
-  st.cells.forEach((c, i) => mountCell(c, i));
   selectCell(Math.min(lee.sel, st.cells.length - 1));
+  observeNotebookCells(host, st.cells);
+}
+
+function patchNotebook(host, before, cells, op = '') {
+  // Keep unchanged cell DOM and CodeMirror views alive. Moving those nodes is effectively
+  // free and, unlike rebuilding the notebook, cannot flash blank or reset the viewport.
+  lee.cellObserver?.disconnect();
+  const oldCells = new Map(before.map(c => [c.id, c]));
+  const oldEls = new Map($$('.lee-cell', host).map(el => [el.dataset.id, el]));
+  const ids = new Set(cells.map(c => c.id));
+  for (const [id, el] of oldEls) if (!ids.has(id)) {
+    const view = lee.editors.get(id); if (view) LeeCM.destroy(view);
+    lee.editors.delete(id); el.remove();
+  }
+  const toc = notebookToc(cells), oldToc = $('.lee-nb-toc', host);
+  if (oldToc) oldToc.replaceWith(toc); else host.prepend(toc);
+  cells.forEach((c, i) => {
+    const old = oldCells.get(c.id);
+    let el = oldEls.get(c.id);
+    const changed = !old || old.source !== c.source || old.cell_type !== c.cell_type;
+    if (!el || changed) {
+      const view = lee.editors.get(c.id); if (view) LeeCM.destroy(view);
+      lee.editors.delete(c.id);
+      const key = `${lee.path || 'scratch'}:${c.id}`;
+      lee.buffers.set(key, c.source); lee.dirtyBuffers.add(key);
+      const fresh = cellEl(c, i);
+      if (el) el.replaceWith(fresh);
+      el = fresh;
+    } else {
+      el.dataset.i = i;
+      el.className = 'lee-cell ' + c.cell_type + (lee.collapsedCells.has(c.id) ? ' collapsed' : '');
+      const buttons = $('.lee-cellbtns', el); if (buttons) buttons.innerHTML = cellButtons(i);
+      const summary = $('.lee-cell-summary', el);
+      if (summary) summary.textContent = String(c.source || '').trim().split('\n')[0] || 'empty cell';
+      const gutter = $('#g-' + c.id); if (gutter) gutter.textContent = gutterFor(c);
+      const context = $('.lee-cell-context', el); if (context) paintCellContext(context, c);
+      setCellState(c, cellState(c)); setCellTime(c, c.execution_ms, c.running);
+      if (op === 'clear' || op === 'clear_cell') renderOutputs(c);
+    }
+    host.appendChild(el); // appending an existing node reorders it without remounting
+  });
+  paintSel();
+  observeNotebookCells(host, cells);
+}
+
+function ensureCellMounted(i) {
+  const c = lee.cells[i];
+  if (!c || lee.editors.has(c.id)) return lee.editors.get(c?.id);
+  mountCell(c, i);
+  return lee.editors.get(c.id);
 }
 
 // A prompt cell's gutter is its own mark, so the three kinds are told apart at a glance
 // without reading any of them.
 const gutterFor = (c) => c.cell_type === 'code' ? '[' + (c.execution_count ?? ' ') + ']'
                        : c.cell_type === 'prompt' ? '✦' : 'md';
+const cellState = (c) => c.running ? 'running' : c.cell_type === 'code' && c.execution_count != null
+  ? (!c.fresh ? 'previous' : (c.outputs || []).some(o => o.output_type === 'error') ? 'error' : 'done') : 'idle';
+const stateSvg = (state) => state === 'done'
+  ? '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.2 2.8 2.8 6.2-6.2"/></svg>'
+  : state === 'error'
+    ? '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7m0-7-7 7"/></svg>'
+    : state === 'previous'
+      ? '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5"/><path d="M8 5v3l2 1.5"/></svg>'
+      : state === 'running' ? '<span class="lee-cell-spinner" aria-hidden="true"></span>' : '';
+function setCellState(c, state, label = '') {
+  const badge = $('#state-' + c.id); if (!badge) return;
+  badge.className = 'lee-cell-state ' + state;
+  badge.innerHTML = stateSvg(state);
+  badge.title = label || ({done: 'ran successfully in the current kernel', error: 'run failed in the current kernel',
+    previous: 'saved output from a previous kernel; run this cell to restore its variables', running: 'running'}[state] || 'not run');
+  badge.setAttribute('aria-label', badge.title);
+}
+function markPreviousRuns() {
+  for (const c of lee.cells) {
+    if (c.cell_type !== 'code' || c.execution_count == null) continue;
+    c.fresh = false; setCellState(c, 'previous'); setCellTime(c, c.execution_ms, false);
+  }
+}
+function formatCellTime(ms) {
+  if (ms == null || !Number.isFinite(Number(ms))) return '';
+  ms = Number(ms);
+  if (ms < 1000) return `${Math.max(1, Math.round(ms))}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
+  const seconds = Math.floor(ms / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+function setCellTime(c, ms, running = false) {
+  const el = $('#time-' + c.id); if (!el) return;
+  el.textContent = formatCellTime(ms);
+  el.hidden = !el.textContent;
+  el.classList.toggle('running', running);
+  const previous = !running && c.cell_type === 'code' && c.execution_count != null && !c.fresh;
+  el.classList.toggle('previous', previous);
+  el.title = running ? 'current execution time' : previous ? 'duration of the saved run; its variables are not in this kernel' : 'last execution time';
+}
 
 /* The per-cell controls, from the same table the toolbar comes from. They act on the cell
  * they are drawn in rather than on the selected one -- clicking ▶ on the third cell has
  * to run the third cell, whatever the cursor was doing. */
+const contextLabel = mode => ({keep: 'keep context', discard: 'discard first', auto: 'context auto'}[mode] || 'context auto');
+function paintCellContext(button, c) {
+  const mode = c.context_mode || 'auto';
+  button.dataset.mode = mode; button.textContent = contextLabel(mode);
+  button.title = mode === 'keep' ? 'keep this cell if notebook context is compacted'
+    : mode === 'discard' ? 'discard this cell first if notebook context is compacted'
+    : 'automatically choose if notebook context is compacted';
+}
+async function cycleCellContext(i) {
+  const c = lee.cells[i]; if (!c) return;
+  const modes = ['auto', 'keep', 'discard'], mode = modes[(modes.indexOf(c.context_mode || 'auto') + 1) % modes.length];
+  const r = await nbEdit({op: 'context', i, mode});
+  Object.assign(c, r.cells[i]);
+  const button = $(`.lee-cell[data-i="${i}"] .lee-cell-context`); if (button) paintCellContext(button, c);
+  status(`cell ${i + 1}: ${contextLabel(mode)}`, 'ok');
+}
+window.leeCellContext = cycleCellContext;
+
 function cellButtons(i) {
-  return (lee.bars.cell || []).map(b =>
+  const normal = (lee.bars.cell || []).map(b =>
     `<button class="lee-cbtn ${esc(b.kind)}" title="${esc(b.title)}" ` +
     `onclick="leeCellAct(${i}, '${esc(b.action)}')">${esc(b.label)}</button>`).join('');
+  const debug = lee.cells[i]?.cell_type === 'code'
+    ? `<button class="lee-cbtn" title="debug this cell (ipykernel)" onclick="leeDebugCell(${i})">◆</button>` : '';
+  const more = `<button class="lee-cbtn" title="more cell actions" aria-label="more cell actions" ` +
+    `onclick="leeCellMenu(${i}, this, event)">⋯</button>`;
+  return debug + normal + more;
 }
 function leeCellAct(i, action) { selectCell(i); setScope('editor'); leeAct(action); }
-window.leeCellAct = leeCellAct;
+function leeCellMenu(i, button, event) {
+  event?.preventDefault(); event?.stopPropagation(); selectCell(i); setScope('editor');
+  const r = button.getBoundingClientRect(); openMenu('cell', r.right - 4, r.bottom + 3);
+}
+window.leeCellAct = leeCellAct; window.leeCellMenu = leeCellMenu;
 
 function cellEl(c, i) {
   const d = document.createElement('div');
-  d.className = 'lee-cell ' + c.cell_type;
+  d.className = 'lee-cell ' + c.cell_type + (lee.collapsedCells.has(c.id) ? ' collapsed' : '');
   d.dataset.i = i; d.dataset.id = c.id;
+  d.style.setProperty('--lee-cell-lines', Math.min(20, Math.max(2, String(c.source || '').split('\n').length)));
+  const state = cellState(c);
   d.innerHTML =
-    `<div class="lee-gutter"><div id="g-${c.id}">${gutterFor(c)}</div>` +
+    `<div class="lee-gutter" draggable="true" title="drag to move cell">` +
+    `<button class="lee-cell-fold" title="collapse cell" aria-label="collapse cell">${lee.collapsedCells.has(c.id) ? '+' : '−'}</button>` +
+    `<div class="lee-execution-count" id="g-${c.id}">${gutterFor(c)}</div></div>` +
+    `<div class="lee-cellmain"><div class="lee-cell-chrome">` +
+    `<span class="lee-cell-summary">${esc(String(c.source || '').trim().split('\n')[0] || 'empty cell')}</span>` +
+    `<span class="lee-cell-state ${state}" id="state-${c.id}" ` +
+    `title="${state === 'done' ? 'ran successfully in the current kernel' : state === 'error' ? 'run failed in the current kernel' : state === 'previous' ? 'saved output from a previous kernel; run to restore variables' : 'not run'}">${stateSvg(state)}</span>` +
+    `<time class="lee-cell-time" id="time-${c.id}" title="last execution time" ` +
+    `${c.execution_ms == null ? 'hidden' : ''}>${esc(formatCellTime(c.execution_ms))}</time>` +
+    `<button class="lee-cell-context" data-mode="${esc(c.context_mode || 'auto')}" ` +
+    `onclick="event.stopPropagation();leeCellContext(${i})">${esc(contextLabel(c.context_mode || 'auto'))}</button>` +
+    `<div class="lee-model-running" id="model-${c.id}" role="status" aria-live="polite" hidden>` +
+    `<span class="lee-running-dot" aria-hidden="true">●</span>` +
+    `<span class="lee-running-copy">Model is running</span>` +
+    `<span class="lee-running-time"> · starting</span></div>` +
     `<div class="lee-cellbtns">${cellButtons(i)}</div></div>` +
-    `<div class="lee-cellmain"><div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div></div>`;
-  d.addEventListener('mousedown', () => { selectCell(i); setScope('editor'); });
+    `<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div></div>`;
+  d.addEventListener('mousedown', e => { selectCell(+d.dataset.i, e.shiftKey); setScope('editor'); });
+  d.querySelector('.lee-cell-fold').onclick = e => { e.stopPropagation(); setCellCollapsed(+d.dataset.i); };
+  const gutter = d.querySelector('.lee-gutter');
+  gutter.addEventListener('dragstart', e => {
+    if (!lee.cellSelection.has(+d.dataset.i)) selectCell(+d.dataset.i);
+    e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/lee-cell', d.dataset.i);
+    e.dataTransfer.setData('text/lee-cells', JSON.stringify([...lee.cellSelection].sort((a,b) => a-b)));
+    d.classList.add('dragging');
+  });
+  gutter.addEventListener('dragend', () => {
+    d.classList.remove('dragging'); $$('.lee-cell.drag-target').forEach(x => x.classList.remove('drag-target'));
+  });
+  d.addEventListener('dragover', e => {
+    if (!e.dataTransfer.types.includes('text/lee-cell')) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move'; d.classList.add('drag-target');
+  });
+  d.addEventListener('dragleave', () => d.classList.remove('drag-target'));
+  d.addEventListener('drop', e => {
+    const from = Number(e.dataTransfer.getData('text/lee-cell'));
+    if (!Number.isInteger(from)) return;
+    let indices = [from]; try { indices = JSON.parse(e.dataTransfer.getData('text/lee-cells') || `[${from}]`); } catch (_) {}
+    e.preventDefault(); d.classList.remove('drag-target');
+    if (indices.length > 1) moveCellsTo(indices, +d.dataset.i); else moveCellTo(from, +d.dataset.i);
+  });
   return d;
 }
 
+function setCellCollapsed(i, value = null) {
+  const c = lee.cells[i]; if (!c) return;
+  const collapsed = value === null ? !lee.collapsedCells.has(c.id) : value;
+  if (collapsed) lee.collapsedCells.add(c.id); else lee.collapsedCells.delete(c.id);
+  const el = $(`.lee-cell[data-i="${i}"]`); el?.classList.toggle('collapsed', collapsed);
+  const button = el?.querySelector('.lee-cell-fold'); if (button) button.textContent = collapsed ? '+' : '−';
+}
+
+function cellClipboardPayload(i) {
+  const cell = lee.cells[i]; if (!cell || lee.kind !== 'notebook') return null;
+  const view = lee.editors.get(cell.id);
+  const payload = JSON.parse(JSON.stringify(cell));
+  if (view) payload.source = LeeCM.getDoc(view);
+  payload.running = false; payload.fresh = false;
+  return payload;
+}
+function selectedCellIndices(fallback = lee.sel) {
+  return [...(lee.cellSelection.size ? lee.cellSelection : new Set([fallback]))].filter(i => i >= 0 && i < lee.cells.length).sort((a,b) => a-b);
+}
+function copyCell(i) {
+  const indices = selectedCellIndices(i), cells = indices.map(cellClipboardPayload).filter(Boolean);
+  if (!cells.length) return status('select notebook cells to copy', 'err');
+  lee.cellClipboard = {cells, cell: cells[0], from: lee.path || lee.tabKey || 'scratch'};
+  status(`${cells.length} cell${cells.length === 1 ? '' : 's'} copied — open another notebook and paste`, 'ok');
+}
+async function cutCell(i) {
+  const indices = selectedCellIndices(i), cells = indices.map(cellClipboardPayload).filter(Boolean);
+  if (!cells.length) return status('select notebook cells to cut', 'err');
+  lee.cellClipboard = {cells, cell: cells[0], from: lee.path || lee.tabKey || 'scratch'};
+  await nbEdit({op: 'delete_many', i: indices[0], indices});
+  focusCell(Math.min(indices[0], lee.cells.length - 1));
+  status(`${cells.length} cell${cells.length === 1 ? '' : 's'} cut`, 'ok');
+}
+async function pasteCell(i) {
+  if (lee.kind !== 'notebook') return status('cells can only be pasted into a notebook', 'err');
+  const cells = lee.cellClipboard?.cells || (lee.cellClipboard?.cell ? [lee.cellClipboard.cell] : []);
+  if (!cells.length) return status('copy or cut cells first', 'err');
+  const at = Math.max(0, Math.min(i, lee.cells.length));
+  await nbEdit({op: 'paste_many', i: at, cells});
+  focusCell(at); lee.cellSelection = new Set(cells.map((_, n) => at + n)); paintSel();
+  status(`${cells.length} cell${cells.length === 1 ? '' : 's'} pasted from ${compactPath(lee.cellClipboard.from)}`, 'ok');
+}
+
+async function moveCellsTo(indices, to) {
+  indices = [...new Set(indices)].sort((a,b) => a-b);
+  const r = await nbEdit({op: 'move_many', i: indices[0], indices, target: to});
+  const at = r.index ?? to; focusCell(at); lee.cellSelection = new Set(indices.map((_, n) => at + n));
+  paintSel(); status(`${indices.length} cells moved`, 'ok');
+}
+
+async function moveCellTo(from, to) {
+  const last = lee.cells.length - 1;
+  to = Math.max(0, Math.min(to, last));
+  if (from === to || from < 0 || from > last) return focusCell(from);
+  await nbEdit({op: 'move', i: from, d: to - from});
+  focusCell(to); status(`cell moved to ${to + 1}`, 'ok');
+}
+
 function mountCell(c, i) {
-  const v = LeeCM.create($('#cm-' + c.id), {
-    doc: c.source, lang: c.cell_type === 'code' ? 'python' : 'markdown',
-    placeholder: c.cell_type === 'prompt' ? 'ask the assistant — ctrl+enter answers, in place' : '',
-    binds: cmBinds('editor'), completeUrl: c.cell_type === 'code' ? '/complete' : null,
-    onChange: (txt) => { lee.cells[i].source = txt; markDirty(); },
+  if (lee.editors.has(c.id)) return;
+  const key = `${lee.path || 'scratch'}:${c.id}`;
+  // Only a docChanged transaction marks a buffer authoritative. A stale empty cache must
+  // never replace the non-empty source returned by /tab/state after running a cell.
+  const source = lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : c.source;
+  c.source = source;
+  const v = createEditor($('#cm-' + c.id), {
+    doc: source, lang: c.cell_type === 'code' ? 'python' : c.cell_type === 'markdown' ? 'markdown' : '',
+    placeholder: c.cell_type === 'prompt' ? `ask the inline model — ${displayChord('mod+enter')} answers in place` : '',
+    completeUrl: c.cell_type === 'code' ? '/complete' : null,
+    onDefinition: c.cell_type === 'code' ? name => findDefinition(name) : null,
+    breakpoints: lee.breakpoints.get(c.id) || [],
+    onBreakpoint: c.cell_type === 'code' ? lines => rememberBreakpoints(c.id, lines) : null,
+    settings: {minimapMode:'off'},
+    onSelection: () => { clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120); },
+    onChange: (txt) => {
+      const at = lee.cells.findIndex(cell => cell.id === c.id); if (at < 0) return;
+      lee.cells[at].source = txt;
+      rememberBuffer(key, {path: lee.path, kind: 'notebook', i: at, id: c.id, text: txt});
+      if (cellState(lee.cells[at]) !== 'idle') setCellState(lee.cells[at], 'stale', 'code changed since the last run');
+      markDirty();
+    },
   });
   lee.editors.set(c.id, v);
-  $('#cm-' + c.id).addEventListener('focusin', () => { lee.sel = i; setScope('editor'); paintSel(); });
+  $('#cm-' + c.id).addEventListener('focusin', () => {
+    const at = lee.cells.findIndex(cell => cell.id === c.id);
+    if (at >= 0) { lee.activeEditor='primary'; lee.sel = at; setScope('editor'); paintSel(); }
+  });
   renderOutputs(c);
+  if (c.running) {
+    const el = $(`.lee-cell[data-i="${i}"]`); el?.classList.add('running');
+    setCellState(c, 'running', 'still running in the background');
+    setCellTime(c, 0, true);
+    if (c.cell_type === 'prompt') {
+      const notice = $('#model-' + c.id);
+      if (notice) { notice.hidden = false; notice.querySelector('.lee-running-time').textContent = ' · in background'; }
+    }
+  }
 }
 
 function renderOutputs(c) {
   const box = $('#out-' + c.id); if (!box) return;
+  $$('[data-markdown]', box).forEach(el => {
+    if (el._leeCodeFrame) cancelAnimationFrame(el._leeCodeFrame);
+    for (const v of (el._leeCodeViews || [])) try { LeeCM.destroy(v); } catch {}
+  });
   box.innerHTML = '';
   // A prompt cell's "output" is the answer, and it is stored in the cell rather than in
   // an nbformat output -- so it renders from its own fields.
   if (c.cell_type === 'prompt') {
-    if ((c.calls || []).length)
-      box.innerHTML += `<div class="lee-pcalls">${c.calls.map(
-        x => `⚙ ${esc(x.tool)} ${esc(x.args)}`).join('<br>')}</div>`;
-    if (c.reply) box.innerHTML += `<div class="lee-reply">${esc(c.reply)}</div>`;
+    if ((c.calls || []).length) {
+      const steps = document.createElement('div'); steps.className = 'lee-agent-steps lee-cell-agent-steps';
+      for (const activity of c.calls) {
+        const row = document.createElement('details'); renderAgentStep(row, activity); steps.appendChild(row);
+      }
+      box.appendChild(steps);
+    }
+    if (c.reply) {
+      const reply = document.createElement('div');
+      reply.className = 'lee-reply'; box.appendChild(reply);
+      renderMarkdown(reply, c.reply);
+      const usage = usageMeta(c.usage, '', c.usage?.model); if (usage) box.appendChild(usage);
+    }
     return;
   }
   for (const o of (c.outputs || [])) box.appendChild(outputEl(o));
 }
 
 const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '');
+const MAX_OUTPUT_CHARS = 60000;
+function outputText(el, value) {
+  const text = String(value || '');
+  if (text.length <= MAX_OUTPUT_CHARS) { el.textContent = text; return; }
+  el.textContent = text.slice(0, MAX_OUTPUT_CHARS);
+  const folded = document.createElement('button');
+  folded.className = 'lee-output-fold';
+  folded.textContent = `show ${(text.length - MAX_OUTPUT_CHARS).toLocaleString()} more characters`;
+  folded.title = 'Large outputs are folded to keep the notebook responsive';
+  folded.onclick = () => { el.textContent = text; };
+  el.appendChild(folded);
+}
 
+function closeInlinePopover() { $('.lee-inline-popover')?.remove(); }
+function valueLensMeta(item) {
+  return [item.type && item.type !== 'result' ? item.type : '', item.shape ? `shape ${item.shape}` : '',
+          item.dtype ? `dtype ${item.dtype}` : ''].filter(Boolean).join(' · ') || 'runtime value';
+}
+function openValueLens(item, anchor, label = '') {
+  if (!item) return;
+  closeInlinePopover();
+  const p = document.createElement('aside');
+  p.className = 'lee-inline-popover lee-value-lens'; p.setAttribute('role', 'dialog');
+  p.setAttribute('aria-label', `${label || item.name || 'result'} runtime value`);
+  p.innerHTML = `<div class="lee-inline-head"><strong>${esc(label || item.path || item.name || 'result')}</strong>` +
+    `<span>${esc(valueLensMeta(item))}</span><button class="lee-icon" aria-label="close">×</button></div>` +
+    `<div class="lee-value-tree"></div><div class="lee-inline-actions">` +
+    `<button class="lee-btn" data-copy>copy value</button>` +
+    (item.accessor?.length && item.accessor[0] !== '_' ? `<button class="lee-btn" data-variables>variables</button>` : '') + `</div>`;
+  const tree = $('.lee-value-tree', p);
+  const row = (value, depth = 0) => {
+    const shell = document.createElement('div'); shell.className = 'lee-value-node';
+    const button = document.createElement('button'); button.className = 'lee-value-row';
+    button.style.setProperty('--depth', depth);
+    button.innerHTML = `<span class="lee-value-caret">${value.is_container ? '›' : ''}</span>` +
+      `<strong>${esc(value.name || 'result')}</strong><small>${esc(value.type || '')}</small>` +
+      `<span>${esc(value.value || '')}</span>`;
+    shell.appendChild(button);
+    if (value.is_container && value.accessor?.length) {
+      const kids = document.createElement('div'); kids.className = 'lee-value-kids'; kids.hidden = true; shell.appendChild(kids);
+      let open = false, loaded = false;
+      button.onclick = async () => {
+        open = !open; button.classList.toggle('open', open); kids.hidden = !open;
+        if (!open || loaded) return;
+        kids.innerHTML = '<div class="lee-value-loading">reading children…</div>';
+        try {
+          const acc = encodeURIComponent(JSON.stringify(value.accessor));
+          const values = await api(`/vars/expand?accessor=${acc}&scope=${lee.execScope}`);
+          kids.innerHTML = ''; values.forEach(child => kids.appendChild(row(child, depth + 1)));
+          if (!values.length) kids.innerHTML = '<div class="lee-value-loading">no children</div>';
+          loaded = true;
+        } catch (e) { kids.innerHTML = `<div class="lee-value-error">${esc(e.message || e)}</div>`; }
+      };
+    }
+    return shell;
+  };
+  tree.appendChild(row(item)); document.body.appendChild(p);
+  const a = anchor?.getBoundingClientRect() || {left: innerWidth / 2, right: innerWidth / 2, top: innerHeight / 2, bottom: innerHeight / 2};
+  const r = p.getBoundingClientRect(), below = a.bottom + 6;
+  p.style.left = Math.max(8, Math.min(a.right - r.width, innerWidth - r.width - 8)) + 'px';
+  p.style.top = (below + r.height < innerHeight - 8 ? below : Math.max(8, a.top - r.height - 6)) + 'px';
+  $('[aria-label="close"]', p).onclick = closeInlinePopover;
+  $('[data-copy]', p).onclick = () => { navigator.clipboard?.writeText(item.value || ''); status('value copied', 'ok'); };
+  const show = $('[data-variables]', p);
+  if (show) show.onclick = async () => {
+    closeInlinePopover(); leePane('right', true); leeRight('vars'); await leeVars(); setScope('vars');
+    const found = $$('#vars .lee-vrow').find(r => r.dataset.name === item.name);
+    if (found) { selectVar(found); found.scrollIntoView({block: 'nearest'}); }
+  };
+}
+window.openValueLens = openValueLens;
+window.addEventListener('lee-inline-open', e => openValueLens(e.detail?.item, e.detail?.anchor));
+document.addEventListener('pointerdown', e => {
+  if ($('.lee-inline-popover') && !e.target.closest('.lee-inline-popover, .cm-lee-inline-value')) closeInlinePopover();
+}, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeInlinePopover(); }, true);
+
+function outputTone(o) {
+  if (o.output_type === 'error') return 'error';
+  if (o.output_type === 'stream' && o.name === 'stderr')
+    return /\b(?:warning|warns?|deprecated|deprecation)\b/i.test(String(o.text || '')) ? 'warning' : 'log';
+  if (o.output_type === 'execute_result' || o.output_type === 'display_data') return 'result';
+  return 'output';
+}
 function outputEl(o) {
   const d = document.createElement('div');
-  d.className = 'lee-out' + (o.output_type === 'error' ? ' err' : '');
-  if (o.output_type === 'stream') { d.textContent = o.text; return d; }
+  const tone = outputTone(o);
+  d.className = `lee-out ${tone}`;
+  if (o.output_type === 'stream') { outputText(d, o.text); return d; }
   if (o.output_type === 'error') {
-    d.textContent = stripAnsi((o.traceback || []).join('\n')) || `${o.ename}: ${o.evalue}`;
+    outputText(d, stripAnsi((o.traceback || []).join('\n')) || `${o.ename}: ${o.evalue}`);
     return d;
   }
   const data = o.data || {};
@@ -322,59 +1517,360 @@ function outputEl(o) {
     i.src = 'data:image/png;base64,' + data['image/png'];
     d.appendChild(i); return d;
   }
+  if (data['text/markdown']) {
+    d.classList.add('lee-md-output'); renderMarkdown(d, data['text/markdown']); return d;
+  }
   if (data['text/html'] || data['image/svg+xml']) {
     // Rich reprs get their own shadow root. pandas ships a <style> block with every
     // DataFrame and `scoped` has been dead for years, so without this an output could
-    // restyle the IDE around it.
-    d.attachShadow({mode: 'open'}).innerHTML = data['text/html'] || data['image/svg+xml'];
+    // restyle the IDE around it. Very large HTML stays unparsed until requested: parsing
+    // a multi-megabyte table on the main thread is enough to trigger Chrome's hang dialog.
+    const rich = data['text/html'] || data['image/svg+xml'];
+    const show = () => { d.textContent = ''; d.attachShadow({mode: 'open'}).innerHTML = rich; };
+    if (rich.length > MAX_OUTPUT_CHARS) {
+      const folded = document.createElement('button'); folded.className = 'lee-output-fold';
+      folded.textContent = `render large rich output (${Math.round(rich.length / 1024).toLocaleString()}kb)`;
+      folded.onclick = show; d.appendChild(folded);
+    } else show();
     return d;
   }
-  d.textContent = data['text/plain'] || '';
+  outputText(d, data['text/plain'] || '');
   return d;
 }
 
 function paintSel() {
-  $$('.lee-cell').forEach(el => el.classList.toggle('sel', +el.dataset.i === lee.sel));
+  $$('.lee-cell').forEach(el => {
+    const i = +el.dataset.i, selected = lee.cellSelection.has(i) || (!lee.cellSelection.size && i === lee.sel);
+    el.classList.toggle('sel', selected); el.setAttribute('aria-selected', String(selected));
+  });
 }
-function selectCell(i) {
+function selectCell(i, extend = false) {
   if (!lee.cells.length) return;
   lee.sel = Math.max(0, Math.min(i, lee.cells.length - 1));
+  if (extend) {
+    const lo = Math.min(lee.cellAnchor, lee.sel), hi = Math.max(lee.cellAnchor, lee.sel);
+    lee.cellSelection = new Set(Array.from({length: hi - lo + 1}, (_, n) => lo + n));
+  } else { lee.cellAnchor = lee.sel; lee.cellSelection = new Set([lee.sel]); }
   paintSel();
 }
 function focusCell(i) {
   selectCell(i);
   const c = lee.cells[lee.sel]; if (!c) return;
-  const v = lee.editors.get(c.id); if (v) LeeCM.focus(v);
+  const cell = $(`.lee-cell[data-i="${lee.sel}"]`);
+  // CodeMirror focuses its own scroller but cannot reveal itself inside the notebook's
+  // outer scroller. Run-and-advance therefore used to move the caret below the viewport.
+  cell?.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  const v = ensureCellMounted(lee.sel);
+  if (v) requestAnimationFrame(() => LeeCM.focus(v));
 }
+function focusCellPage(direction) {
+  if (!lee.cells.length) return;
+  const host = $('#editor'), current = $(`.lee-cell[data-i="${lee.sel}"]`);
+  if (!host || !current) return focusCell(lee.sel + direction);
+  const target = current.getBoundingClientRect().top + direction * Math.max(180, host.clientHeight * .78);
+  const cells = $$('.lee-cell', host);
+  const candidates = cells.filter(el => direction < 0 ? +el.dataset.i < lee.sel : +el.dataset.i > lee.sel);
+  if (!candidates.length) return focusCell(direction < 0 ? 0 : lee.cells.length - 1);
+  const next = candidates.reduce((best, el) =>
+    Math.abs(el.getBoundingClientRect().top - target) < Math.abs(best.getBoundingClientRect().top - target) ? el : best);
+  focusCell(+next.dataset.i);
+}
+function autoSaveEnabled() { return (lee.filePrefs.autoSave || 'afterDelay') !== 'off'; }
+function normalizeSavedText(text) {
+  const prefs=lee.filePrefs||{}; let out=String(text??'');
+  if(prefs.trimTrailingWhitespace)out=out.split('\n').map(line=>line.replace(/[ \t]+$/,'')).join('\n');
+  if(prefs.trimFinalNewlines)out=out.replace(/\n+$/,'');
+  if(prefs.insertFinalNewline && out && !out.endsWith('\n'))out+='\n';
+  return out;
+}
+function setTabSaveState(tab, state, detail = '') {
+  if (!tab) return;
+  const dot = $('.lee-save-state', tab); if (!dot) return;
+  const labels = {
+    pending: lee.path ? 'Changes queued for autosave' : 'Unsaved — choose a filename to save',
+    saving: 'Saving changes…', saved: 'Saved on disk', error: 'Autosave failed',
+  };
+  dot.className = `lee-save-state ${state}`;
+  dot.title = detail || labels[state] || state;
+  dot.setAttribute('aria-label', dot.title);
+  tab.dataset.saveState = state;
+}
+function scheduleAutoSave() {
+  clearTimeout(lee.autoSaveTimer);
+  if ((lee.filePrefs.autoSave || 'afterDelay') !== 'afterDelay' || !lee.path || lee.heldSaveConflicts.has(lee.path)) return;
+  const version = lee.editVersion;
+  lee.autoSaveTimer = setTimeout(async () => {
+    if (lee.saving || version !== lee.editVersion) return scheduleAutoSave();
+    lee.saving = true;
+    setTabSaveState($('.lee-tab.active'), 'saving');
+    try { await saveTab(true, version); }
+    finally { lee.saving = false; if (version !== lee.editVersion) scheduleAutoSave(); }
+  }, Math.max(100, Number(lee.filePrefs.autoSaveDelay) || 900));
+}
+document.addEventListener('focusout',e=>{if(lee.filePrefs.autoSave==='onFocusChange'&&!lee.heldSaveConflicts.has(lee.path)&&e.target.closest?.('.cm-editor')&&$('.lee-tab.active.dirty'))saveTab(true);});
+window.addEventListener('blur',()=>{if(lee.filePrefs.autoSave==='onWindowChange'&&!lee.heldSaveConflicts.has(lee.path)&&$('.lee-tab.active.dirty'))saveTab(true);});
 function markDirty() {
-  const t = $('.lee-tab.active'); if (t && !t.classList.contains('dirty')) t.classList.add('dirty');
+  lee.editVersion += 1;
+  const t = $('.lee-tab.active');
+  if (t) { t.classList.add('dirty'); setTabSaveState(t, 'pending'); }
+  scheduleAutoSave();
+}
+function jumpToLine(line) {
+  const v = lee.kind === 'notebook' ? lee.editors.get(lee.cells[lee.sel]?.id) : lee.editors.get('file');
+  if (!v) return;
+  const n = Math.max(1, Math.min(Number(line) || 1, v.state.doc.lines));
+  const pos = v.state.doc.line(n).from;
+  v.dispatch({selection: {anchor: pos}, scrollIntoView: true}); v.focus();
+}
+function openLocation(hit) {
+  lee.pendingLocation = {path: hit.path, line: hit.line};
+  leeOpenFile(hit.path);
+  status(`${hit.path.split('/').pop()}:${hit.line}`);
+}
+
+async function stopCell(i) {
+  const c = lee.cells[i];
+  if (!c?.running) return status(`cell ${i + 1} is not running`, 'err');
+  status(`stopping cell ${i + 1}…`);
+  const r = await post('/nb/interrupt', {path: lee.tabKey || '', id: c.id});
+  status(r.forced ? 'cell stopped · kernel restarted because interrupt was ignored' : 'cell stopped',
+         r.forced ? 'err' : 'ok');
 }
 
 async function runCell(i, advance) {
   const c = lee.cells[i]; if (!c) return;
-  const v = lee.editors.get(c.id);
+  if (c.running) return status(`cell ${i + 1} is already running`, 'err');
+  const runPath = lee.path, cellId = c.id;
+  const v = ensureCellMounted(i);
   const src = v ? LeeCM.getDoc(v) : c.source;
   const el = $(`.lee-cell[data-i="${i}"]`);
   if (c.cell_type === 'markdown') {
-    if (el) el.querySelector('.lee-cm').style.display = 'none';
-    const out = $('#out-' + c.id); if (out) out.innerHTML = `<div class="lee-md">${esc(src)}</div>`;
+    // Rendering must not make the source editor disappear permanently. Keep both visible:
+    // the preview is evidence of Run, and the source remains one click away to edit.
+    const out = $('#out-' + c.id);
+    if (out) {
+      out.innerHTML = '<div class="lee-md"></div>';
+      renderMarkdown(out.querySelector('.lee-md'), src, true);
+    }
   } else if (c.cell_type === 'prompt') {
-    await askCell(i, src, el);
+    c.running = true;
+    try { await askCell(i, src, el); }
+    finally { c.running = false; }
   } else {
+    // PyCharm/Jupyter users expect code run from a file-backed notebook to be visible to
+    // code that reads that notebook during the cell (indexers, nbdev, papermill). Flush
+    // the complete browser document before execution; otherwise a newly created .ipynb
+    // can still be zero-byte on disk while its in-memory cell is already running.
+    if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) {
+      return status('save the notebook before running this cell', 'err');
+    }
+    const began = performance.now();
+    c.running = true;
     el?.classList.add('running');
+    setCellState(c, 'running');
+    setCellTime(c, 0, true);
+    const cellClock = setInterval(() => setCellTime(c, performance.now() - began, true), 100);
     $('#g-' + c.id).textContent = '[*]';
+    status(`running cell ${i + 1}…`);
     try {
-      const r = await post('/nb/run', {i, source: src});
-      lee.cells[i] = r.cell;
+      let r = null;
+      await postEvents('/nb/run/stream', {i, id: cellId, path: runPath || lee.tabKey || '', source: src}, (event, data) => {
+        const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
+        if (!stillHere) return;
+        if (event === 'output') {
+          lee.cells[i].outputs = data.outputs || [];
+          renderOutputs(lee.cells[i]);
+        } else if (event === 'error') throw new Error(data.text || 'cell execution failed');
+        else if (event === 'done') r = data;
+      });
+      if (!r) throw new Error('cell execution ended without a result');
+      const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
+      if (!stillHere) { leeVars(); return; }
+      // Preserve the mounted cell object and its source/editor relationship. Replacing it
+      // wholesale made stale buffer state able to win on a later remount and show blanks.
+      Object.assign(c, r.cell);
       renderOutputs(r.cell);
+      LeeCM.setInlineValues(v, r.inline || []);
+      if (r.result) requestAnimationFrame(() => openValueLens(r.result, $('#out-' + c.id) || el, 'expression result'));
       $('#g-' + c.id).textContent = '[' + (r.cell.execution_count ?? ' ') + ']';
-    } catch (e) { status(String(e.message || e), 'err'); }
+      const elapsed = Number(c.execution_ms ?? (performance.now() - began));
+      const duration = formatCellTime(elapsed);
+      setCellTime(c, elapsed, false);
+      setCellState(c, r.ok ? 'done' : 'error', r.ok ? `ran successfully in ${duration}` : `failed after ${duration}`);
+      status(r.ok ? `cell ${i + 1} ran in ${duration}` : `cell ${i + 1} failed after ${duration}`,
+             r.ok ? 'ok' : 'err');
+    } catch (e) {
+      const elapsed = performance.now() - began;
+      c.execution_ms = elapsed; setCellTime(c, elapsed, false);
+      setCellState(c, 'error', `run failed after ${formatCellTime(elapsed)}`);
+      status(String(e.message || e), 'err');
+    } finally { clearInterval(cellClock); }
+    c.running = false;
     el?.classList.remove('running');
     leeVars();
   }
   if (advance === 'insert') { await nbEdit({op: 'insert', i: i + 1}); focusCell(i + 1); }
   else if (advance) { if (i + 1 < lee.cells.length) focusCell(i + 1); else { await nbEdit({op: 'insert', i: i + 1}); focusCell(i + 1); } }
 }
+
+function paintDebugInlineValues(view, lineNo, variables) {
+  if (!view || !lineNo || lee.debugPrefs.showInlineValues === false) return;
+  const line = view.state.doc.line(Math.min(lineNo, view.state.doc.lines));
+  const names = new Set((line.text.match(/[_A-Za-z]\w*/g) || []));
+  const values = (variables || []).filter(v => names.has(v.name)).map(v => ({
+    line: line.number, name: v.name, value: v.value || '', type: v.type || '',
+    shape: null, dtype: null, is_grid: false, accessor: ['debug', Number(v.variablesReference) || 0],
+  }));
+  LeeCM.setInlineValues(view, values);
+}
+
+async function revealDebugFrame(state) {
+  const frame = (state.frames || []).find(f => f.id === state.frame_id) || state.frames?.[0];
+  if (!frame) return;
+  // Exactly one source line is current. Clear the old marker before moving, including
+  // when step-in changes files.
+  for (const [key, view] of lee.editors) if (key !== 'exec') { LeeCM.setDebugLine(view, 0); LeeCM.setInlineValues(view, []); }
+  if (frame.open_path) {
+    $('#debugsource')?.remove();
+    if (lee.path !== frame.open_path) {
+      lee.pendingLocation = {path: frame.open_path, line: frame.line, debug: true,
+                             cellId: frame.cell_id || ''};
+      leeOpenFile(frame.open_path);
+      return;
+    }
+    if (frame.cell_id && lee.kind === 'notebook') {
+      const i = lee.cells.findIndex(c => c.id === frame.cell_id);
+      if (i >= 0) {
+        selectCell(i); const view = ensureCellMounted(i);
+        LeeCM.setDebugLine(view, frame.line); paintDebugInlineValues(view, frame.line, state.variables); jumpToLine(frame.line);
+      }
+    } else {
+      const view = lee.editors.get('file');
+      if (view) { LeeCM.setDebugLine(view, frame.line); paintDebugInlineValues(view, frame.line, state.variables); jumpToLine(frame.line); }
+    }
+    return;
+  }
+  // Library frames are outside the workspace sandbox. Ask by frame id (never by an
+  // arbitrary browser path) and show a read-only source view so step-in remains useful.
+  if(lee.directDebug)return;
+  const src = await api(`/nb/debug/source?frame_id=${frame.id}`);
+  let pane = $('#debugsource');
+  if (!pane) {
+    pane = document.createElement('aside'); pane.id = 'debugsource'; pane.className = 'lee-debug-source-pane';
+    pane.innerHTML = `<div class="lee-mhead">debug source <span class="sub"></span>` +
+                     `<button class="lee-icon" aria-label="close">×</button></div>` +
+                     `<div class="lee-debug-source-editor"></div>`;
+    pane.querySelector('[aria-label="close"]').onclick = () => pane.remove();
+    document.body.appendChild(pane);
+  }
+  pane.querySelector('.lee-mhead .sub').textContent = src.path || src.name || 'external frame';
+  const host = pane.querySelector('.lee-debug-source-editor'); host.innerHTML = '';
+  if (host._leeView) LeeCM.destroy(host._leeView);
+  host._leeView = createEditor(host, {doc: src.content || '', lang: 'python', readOnly: true, lineNums: true});
+  LeeCM.setDebugLine(host._leeView, src.line); const pos = host._leeView.state.doc.line(Math.min(src.line, host._leeView.state.doc.lines)).from;
+  host._leeView.dispatch({selection: {anchor: pos}, scrollIntoView: true});
+}
+
+async function debugEvaluate(expression){return post(lee.directDebug?'/debug/evaluate':'/nb/debug/evaluate',lee.directDebug?{expression,frame_id:lee.debugState?.frame_id}:{code:expression,frame_id:lee.debugState?.frame_id});}
+async function paintDebugWatches(panel=$('#debugger')){const host=$('.lee-debug-watches',panel);if(!host)return;host.innerHTML=lee.debugWatches.map((expression,i)=>`<div class="lee-debug-watch" data-i="${i}"><strong>${esc(expression)}</strong><span>evaluating…</span><button aria-label="remove">×</button></div>`).join('')||'<div class="lee-dim">no watch expressions</div>';
+  $$('.lee-debug-watch',host).forEach(async row=>{row.querySelector('button').onclick=()=>{lee.debugWatches.splice(+row.dataset.i,1);localStorage.setItem('lee-debug-watches',JSON.stringify(lee.debugWatches));paintDebugWatches(panel);};try{const r=await debugEvaluate($('strong',row).textContent);$('span',row).textContent=r.result??r.value??'';}catch(e){$('span',row).textContent=e.message||String(e);}});}
+
+function paintDebugger(state) {
+  lee.debugState = state;
+  let panel = $('#debugger');
+  if (!panel) {
+    panel = document.createElement('aside'); panel.id = 'debugger'; panel.className = 'lee-debugger';
+    document.body.appendChild(panel);
+  }
+  const frames = state.frames || [], vars = state.variables || [];
+  panel.innerHTML = `<div class="lee-debug-head"><strong>Paused at line ${esc(frames[0]?.line || '?')}</strong>` +
+    `<span>${esc(frames[0]?.name || '')}</span><div class="lee-debug-controls">` +
+    `<button title="continue" onclick="leeDebugControl('continue')">▶</button>` +
+    `<button title="step over" onclick="leeDebugControl('next')">↷</button>` +
+    `<button title="step into" onclick="leeDebugControl('stepIn')">↓</button>` +
+    `<button title="step out" onclick="leeDebugControl('stepOut')">↑</button>` +
+    `<button title="stop" onclick="leeDebugStop()">■</button></div></div>` +
+    `<div class="lee-debug-body"><section><h4>call stack</h4>${frames.map(f =>
+      `<button class="lee-debug-frame ${f.id === state.frame_id ? 'active' : ''}" onclick="leeDebugFrame(${f.id})">` +
+      `${esc(f.name)} <span>line ${esc(f.line)}</span></button>`).join('')}</section>` +
+    `<section><h4>locals <span class="lee-dim">expand in Variables</span></h4>${vars.map(v => `<div class="lee-debug-var"><strong>${esc(v.name)}</strong>` +
+      `<span>${esc(v.value)}</span><small>${esc(v.type || '')}</small></div>`).join('') || '<div class="lee-dim">no locals</div>'}` +
+    `<h4>watch</h4><form class="lee-debug-watch-form"><input class="lee-input" placeholder="expression"><button class="lee-btn">add</button></form><div class="lee-debug-watches"></div>` +
+    `<h4>debug console</h4><form class="lee-debug-console-form"><input class="lee-input" placeholder="evaluate in selected frame"><button class="lee-btn">run</button></form><div class="lee-debug-console-out"></div></section></div>`;
+  $('.lee-debug-watch-form',panel).onsubmit=e=>{e.preventDefault();const input=$('input',e.currentTarget),expression=input.value.trim();if(expression&&!lee.debugWatches.includes(expression)){lee.debugWatches.push(expression);localStorage.setItem('lee-debug-watches',JSON.stringify(lee.debugWatches));input.value='';paintDebugWatches(panel);}};
+  $('.lee-debug-console-form',panel).onsubmit=async e=>{e.preventDefault();const input=$('input',e.currentTarget),expression=input.value.trim();if(!expression)return;try{const r=await debugEvaluate(expression);$('.lee-debug-console-out',panel).textContent=`${expression} → ${r.result??r.value??''}`;}catch(error){$('.lee-debug-console-out',panel).textContent=error.message||String(error);}};
+  paintDebugWatches(panel);
+  revealDebugFrame(state).catch(e => status(String(e.message || e), 'err'));
+  leeScope('live'); leeRight('vars'); leeVars();
+}
+
+async function leeDebugFrame(frameId) {
+  try {
+    const state = await api(`${lee.directDebug?'/debug/state':'/nb/debug/state'}?frame_id=${frameId}`);
+    paintDebugger(state);
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+window.leeDebugFrame = leeDebugFrame;
+
+async function leeDebugControl(command) {
+  try {
+    await post(lee.directDebug?'/debug/control':'/nb/debug/control', {command, thread_id: lee.debugThread});
+    $('#debugger')?.classList.add('running'); status(`debugger: ${command}`);
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+window.leeDebugControl = leeDebugControl;
+
+async function leeDebugStop() {
+  try { await post(lee.directDebug?'/debug/stop':'/nb/debug/stop', {}); } catch (_) {}
+  lee.debugThread = null; lee.debugCell = null; lee.debugState = null; lee.directDebug=false;
+  $('#debugger')?.remove(); $('#debugsource')?.remove();
+  for (const [key, view] of lee.editors) if (key !== 'exec') { LeeCM.setDebugLine(view, 0); LeeCM.setInlineValues(view, []); }
+  leeScope('live'); leeVars(); status('debugger stopped', 'ok');
+}
+window.leeDebugStop = leeDebugStop;
+
+async function debugCell(i) {
+  const c = lee.cells[i]; if (!c || c.cell_type !== 'code') return;
+  if (lee.debugCell != null) return status('a debugger session is already active', 'err');
+  const view = ensureCellMounted(i), source = LeeCM.getDoc(view);
+  let breakpoints = lee.breakpoints.get(c.id) || [];
+  if (!breakpoints.length) {
+    breakpoints = [LeeCM.lineOf(view)]; rememberBreakpoints(c.id, breakpoints);
+    LeeCM.setBreakpoints(view, breakpoints);
+  }
+  lee.debugCell = i; c.running = true; setCellState(c, 'running');
+  status(`starting ipykernel debugger for cell ${i + 1}…`);
+  let done = null;
+  try {
+    await postEvents('/nb/debug/stream', {i, id: c.id, path: lee.path || lee.tabKey || '', source, breakpoints}, (event, data) => {
+      if (event === 'ready') {
+        rememberBreakpoints(c.id, data.breakpoints || breakpoints);
+        LeeCM.setBreakpoints(view, data.breakpoints || breakpoints);
+      } else if (event === 'stopped') {
+        lee.debugThread = data.thread_id; $('#debugger')?.classList.remove('running');
+        paintDebugger(data); status(`paused at line ${data.frames?.[0]?.line || '?'}`, 'ok');
+      } else if (event === 'continued') {
+        lee.debugThread = null; lee.debugState = null; $('#debugger')?.classList.add('running');
+        for (const [key, editor] of lee.editors) if (key !== 'exec') { LeeCM.setDebugLine(editor, 0); LeeCM.setInlineValues(editor, []); }
+        leeVars();
+      } else if (event === 'done') done = data;
+      else if (event === 'error') throw new Error(data.text || 'debugger failed');
+    });
+    if (done?.cell) {
+      Object.assign(c, done.cell); renderOutputs(c);
+      $('#g-' + c.id).textContent = '[' + (c.execution_count ?? ' ') + ']';
+      setCellState(c, done.ok ? 'done' : 'error');
+    }
+    status(done?.ok ? 'debug session finished' : (done?.error || 'debug session failed'), done?.ok ? 'ok' : 'err');
+  } catch (e) { setCellState(c, 'error'); status(String(e.message || e), 'err'); }
+  finally {
+    c.running = false; lee.debugThread = null; lee.debugCell = null; lee.debugState = null;
+    $('#debugger')?.remove(); $('#debugsource')?.remove();
+    for (const [key, view] of lee.editors) if (key !== 'exec') { LeeCM.setDebugLine(view, 0); LeeCM.setInlineValues(view, []); }
+    leeScope('live'); leeVars();
+  }
+}
+window.leeDebugCell = debugCell;
 
 /* Running a prompt cell. The answer lands in the cell rather than in the pane below,
  * which is the point of the cell type: it saves with the notebook and reads in order.
@@ -383,14 +1879,47 @@ async function runCell(i, advance) {
  * may have edited files -- /tab/state reloads the notebook from disk, which would throw
  * away the answer that has not been saved yet. Files it changed are reported instead. */
 async function askCell(i, src, el) {
-  const c = lee.cells[i];
+  const c = lee.cells[i], runPath = lee.path, cellId = c.id;
+  const notice = $('#model-' + c.id);
+  const began = performance.now();
+  let clock = null;
   el?.classList.add('running');
   $('#g-' + c.id).textContent = '…';
-  status('thinking…');
+  if (notice) {
+    notice.hidden = false;
+    const tick = () => {
+      const elapsed = performance.now() - began;
+      const seconds = Math.floor(elapsed / 1000);
+      setCellTime(c, elapsed, true);
+      const time = notice.querySelector('.lee-running-time');
+      if (time) time.textContent = seconds < 2 ? ' · starting' : ` · ${seconds}s elapsed`;
+    };
+    tick();
+    clock = setInterval(tick, 1000);
+  }
+  status('model running…');
   try {
-    const r = await post('/nb/ask', {i, source: src});
-    lee.cells[i] = r.cell;
-    renderOutputs(r.cell);
+    let r = null, raw = '';
+    const out = $('#out-' + c.id), seen = new Map();
+    if (out) out.innerHTML = '<div class="lee-agent-steps lee-cell-agent-steps"></div><div class="lee-reply"></div>';
+    await postEvents('/nb/ask/stream', {i, source: src}, (event, data) => {
+      if (event === 'chunk') {
+        raw += data.text || '';
+        const reply = $('#out-' + c.id + ' .lee-reply');
+        renderMarkdown(reply, raw);
+      } else if (event === 'activity') {
+        const steps = $('#out-' + c.id + ' .lee-agent-steps');
+        let row = seen.get(data.id);
+        if (!row && steps) { row = document.createElement('details'); steps.appendChild(row); seen.set(data.id, row); }
+        if (row) renderAgentStep(row, data);
+      } else if (event === 'approval') showApproval(data);
+      else if (event === 'error') throw new Error(data.text || 'model failed');
+      else if (event === 'done') r = data;
+    });
+    if (!r) throw new Error('the model stream ended without a result');
+    if (lee.path !== runPath || lee.cells[i]?.id !== cellId) { leeVars(); return; }
+    Object.assign(c, r.cell);
+    renderOutputs(c);
     for (const e of (r.edits || []))
       agentLog(`<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
                `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
@@ -403,6 +1932,12 @@ async function askCell(i, src, el) {
     markDirty();
     leeVars();
   } catch (e) { status(String(e.message || e), 'err'); }
+  finally {
+    if (clock) clearInterval(clock);
+    if (c.execution_ms == null) c.execution_ms = performance.now() - began;
+    setCellTime(c, c.execution_ms, false);
+    if (notice) notice.hidden = true;
+  }
   $('#g-' + c.id).textContent = '✦';
   el?.classList.remove('running');
 }
@@ -424,6 +1959,8 @@ function execLine(code, text, ok) {
  * namespace the variable panel is watching, which a subprocess could not do. */
 async function runFile() {
   if (lee.kind !== 'text') return status('this is a notebook — run its cells, or “▶ all”', 'err');
+  if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true))
+    return status('save the file before running it', 'err');
   const v = lee.editors.get('file');
   const name = (lee.path || '').split('/').pop();
   status('running ' + name + '…');
@@ -449,18 +1986,32 @@ async function runSelection() {
   leeVars();
 }
 
-/* Every code cell, in order, stopping where Jupyter's own "run all" stops. */
-async function runAll() {
+/* Execute a bounded notebook range in order. Range commands deliberately run code cells
+ * only: “run above” must not unexpectedly send every prompt cell above it to a model. */
+async function runRange(start, end, label) {
   if (lee.kind !== 'notebook') return runFile();
-  for (let i = 0; i < lee.cells.length; i++) {
+  start = Math.max(0, start); end = Math.min(end, lee.cells.length);
+  for (let i = start; i < end; i++) {
     const c = lee.cells[i];
     if (c.cell_type !== 'code' || !(c.source || '').trim()) continue;
-    status(`running cell ${i}…`);
+    status(`running cell ${i + 1}…`);
     await runCell(i, false);
     if ((lee.cells[i].outputs || []).some(o => o.output_type === 'error'))
-      return status(`cell ${i} raised — stopped there`, 'err');
+      return status(`cell ${i + 1} raised — stopped there`, 'err');
   }
-  status('ran every cell', 'ok');
+  status(`ran ${label}`, 'ok');
+}
+
+async function runAll() {
+  return runRange(0, lee.cells.length, 'every cell');
+}
+
+async function restartRunAll() {
+  if (lee.kind !== 'notebook') return runFile();
+  status('restarting kernel…');
+  await post('/kernel/restart');
+  markPreviousRuns();
+  await runAll();
 }
 
 /* ---------------------------------------------------------- kernel picker */
@@ -483,17 +2034,51 @@ async function pickKernel() {
     `${o.alive ? '⏺ running, pid ' + o.pid : '○ not started'} · ` +
     `${o.private ? 'private to this tab' : 'shared across this folder'}</span></div>` +
     (o.boot_error ? `<div class="lee-err">${esc(o.boot_error)}</div>` : '') +
+    (o.api_error ? `<div class="lee-err">Inspector connection failed: ${esc(o.api_error)} <button class="lee-btn" data-kernel-reconnect>Restart kernel</button></div>` : '') +
     `<div class="lee-dim">choosing either of these restarts the kernel — its variables are lost</div>` +
     `<h4>launcher</h4><div class="lee-modallist">${kinds}</div>` +
-    `<h4>interpreter</h4><div class="lee-modallist">${pys}</div>`);
+    `<h4>interpreter</h4><div class="lee-modallist">${pys}</div>` +
+    `<div class="lee-runtime-cwd"><span>working directory</span><code>${esc(o.cwd || '')}</code>` +
+    `<button class="lee-btn" id="kernelcwd">change</button></div>` +
+    `<div class="lee-mfoot"><button class="lee-btn" id="kernelattach">` +
+    `${o.private ? 'attach to folder kernel' : 'give this tab its own kernel'}</button>` +
+    `<span class="lee-dim">notebooks default to their own kernel; files share by folder</span></div>`);
+  const reconnect = $('[data-kernel-reconnect]', m);
+  if (reconnect) reconnect.onclick = async () => { await post('/kernel/restart'); m.remove(); status('kernel restarted', 'ok'); };
+  m.querySelector('#kernelcwd').onclick = async () => {
+    const cwd = await inputDialog('kernel working directory', 'folder inside an open project',
+                                  o.cwd || '', '/path/to/project');
+    if (!cwd || cwd === o.cwd) return;
+    m.remove(); status('restarting kernel in ' + cwd + '…');
+    const d = await post('/kernel/cwd', {cwd});
+    markPreviousRuns(); paintEnv(''); status('kernel cwd: ' + d.cwd, 'ok'); refreshKernelPill(); leeVars();
+  };
+  m.querySelector('#kernelattach').onclick = async () => {
+    const privateKernel = !o.private; m.remove(); status('changing kernel attachment…');
+    const d = await post('/kernel/select', {private: privateKernel});
+    markPreviousRuns(); paintEnv('');
+    status(privateKernel ? 'this tab now has its own kernel' : 'attached to the folder kernel', 'ok');
+    refreshKernelPill(); leeVars();
+  };
   m.addEventListener('click', async (e) => {
     const r = e.target.closest('.lee-mrow'); if (!r) return;
-    if (r.dataset.off) return status('not installed: pip install "leela[ipymini]"', 'err');
+    if (r.dataset.off) {
+      if (!o.python) return status('choose a project interpreter before installing kernel support', 'err');
+      m.remove(); status('installing ipykernel and ipymini with uv…');
+      const support = await post('/runtime/support', {python: o.python});
+      status(support.ok ? 'kernel support installed · ipykernel + ipymini' : support.error,
+             support.ok ? 'ok' : 'err');
+      return pickKernel();
+    }
     m.remove();
     status('starting the new kernel…');
     const d = await post('/kernel/select',
                          r.dataset.kind ? {kind: r.dataset.kind} : {python: r.dataset.py});
-    status(`kernel: ${d.running_kind} · ${(d.python || 'leela’s own python').split('/').pop()}`, 'ok');
+    markPreviousRuns();
+    // Picking a runtime also makes its namespace the live variable source. Do not leave
+    // the panel visually (or server-side) pinned to the process watched before the switch.
+    paintEnv('');
+    status(`kernel: ${d.running_kind} · ${(d.python || 'leela’s own python').split('/').pop()} · variables connected`, 'ok');
     refreshKernelPill(); leeVars();
   });
 }
@@ -507,7 +2092,7 @@ async function editKeys() {
   const m = modal(
     `<div class="lee-mhead">keybindings<span class="sub">${esc(d.path)}</span></div>` +
     `<div class="lee-dim">action → chord, or several separated by spaces; "" unbinds it. ` +
-    `A chord is [ctrl+][alt+][shift+]base.</div>` +
+    `A chord is [mod+][ctrl+][alt+][shift+]base; mod is ⌘ on this Mac and ctrl elsewhere.</div>` +
     `<div id="keynotes"></div>` +
     `<textarea class="lee-keyedit" id="keytext" spellcheck="false"></textarea>` +
     `<div class="lee-mfoot"><button class="lee-btn go" id="keysave">save</button>` +
@@ -568,12 +2153,27 @@ async function nbEdit(d) {
   // A file is one document, not a column of cells; a structural edit here would split the
   // buffer the editor is showing.
   if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return {}; }
+  const host = $('#editor'), scrollTop = host?.scrollTop || 0;
+  const before = lee.cells.slice();
+  const visible = $$('.lee-cell', host).find(el => el.getBoundingClientRect().bottom > host.getBoundingClientRect().top);
+  const anchor = visible ? {id: visible.dataset.id, top: visible.getBoundingClientRect().top} : null;
+  const selectedId = lee.cells[lee.sel]?.id, selectedView = selectedId && lee.editors.get(selectedId);
+  const cursor = selectedView ? LeeCM.cursor(selectedView) : 0;
   const cur = lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
   for (const c of cur) if (lee.cells[c.i]) lee.cells[c.i].source = c.source;
-  if (d.op !== 'source') for (const c of cur) await post('/nb/edit', {op: 'source', i: c.i, source: c.source});
-  const r = await post('/nb/edit', d);
+  const r = await post('/nb/edit', d.op === 'source' ? d : {...d, sources: cur});
   lee.cells = r.cells;
-  mountNotebook($('#editor'), {cells: r.cells});
+  const same = r.cells.findIndex(c => c.id === selectedId);
+  if (d.op === 'undo' || d.op === 'redo') lee.sel = Math.max(0, Math.min(r.index ?? lee.sel, r.cells.length - 1));
+  else if (same >= 0) lee.sel = same;
+  patchNotebook(host, before, r.cells, d.op);
+  if (host) {
+    host.scrollTop = scrollTop;
+    const anchored = anchor && $(`.lee-cell[data-id="${CSS.escape(anchor.id)}"]`, host);
+    if (anchored) host.scrollTop += anchored.getBoundingClientRect().top - anchor.top;
+  }
+  const restored = same >= 0 && lee.editors.get(selectedId);
+  if (restored) LeeCM.setCursor?.(restored, Math.min(cursor, restored.state.doc.length));
   markDirty();
   return r;
 }
@@ -590,6 +2190,7 @@ async function toggleComment() {
 /* ---- whichever editor has the cursor: a cell, a whole file, or the exec box ---- */
 function curEditor() {
   if (lee.scope === 'exec') return lee.editors.get('exec');
+  if (lee.activeEditor === 'secondary') return lee.editors.get('secondary');
   if (lee.kind === 'notebook') { const c = lee.cells[lee.sel]; return c && lee.editors.get(c.id); }
   return lee.editors.get('file');
 }
@@ -605,22 +2206,94 @@ function kernelComplete() {
   LeeCM.startCompletion(v);
 }
 
-/* Two completions, two different questions. ctrl+space asks the kernel what names
+/* Two completions, two different questions. alt+/ asks the kernel what names
  * exist -- instant, and right by construction because it is the real namespace.
  * This asks the model what should come next, which costs a forward pass, so it is
  * never fired by typing and the suggestion stays ghost text until tab accepts it. */
+function closeSelectionHelp() { $('.lee-selection-tools')?.remove(); }
+function selectionEditor() {
+  if (!['editor', 'exec'].includes(lee.scope)) return null;
+  return curEditor();
+}
+function positionFloating(el, rect) {
+  document.body.appendChild(el);
+  const own = el.getBoundingClientRect(), left = Math.max(8, Math.min(rect.left, innerWidth - own.width - 8));
+  const below = rect.bottom + 7, top = below + own.height < innerHeight - 8 ? below : Math.max(8, rect.top - own.height - 7);
+  el.style.left = left + 'px'; el.style.top = top + 'px';
+}
+function showSelectionHelp() {
+  if ($('.lee-selection-reply') || document.activeElement?.closest?.('.lee-selection-tools')) return;
+  const view = selectionEditor(); if (!view) return closeSelectionHelp();
+  const selected = LeeCM.selection(view); if (!selected?.text.trim()) return closeSelectionHelp();
+  const rect = LeeCM.selectionCoords(view); if (!rect) return closeSelectionHelp();
+  closeSelectionHelp();
+  const tools = document.createElement('aside'); tools.className = 'lee-selection-tools';
+  tools.innerHTML = `<button type="button" data-summary>summarise</button>` +
+    `<button type="button" data-ask>ask AI</button>`;
+  positionFloating(tools, rect);
+  $('[data-summary]', tools).onclick = () => runSelectionHelp(view, selected, rect, 'summary');
+  $('[data-ask]', tools).onclick = () => {
+    tools.classList.add('asking');
+    tools.innerHTML = `<input class="lee-input" placeholder="e.g. make this clearer, fix it, explain briefly…">` +
+      `<button type="button" data-send>send</button>`;
+    const input = $('input', tools); input.focus();
+    const send = () => { const instruction = input.value.trim(); if (instruction) runSelectionHelp(view, selected, rect, 'instruction', instruction); };
+    $('[data-send]', tools).onclick = send;
+    input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); send(); } else if (e.key === 'Escape') closeSelectionHelp(); };
+  };
+}
+async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
+  closeSelectionHelp();
+  status(mode === 'summary' ? 'summarising selection with the local model…' : 'asking the inline model to rewrite the selection…');
+  const panel = document.createElement('aside'); panel.className = 'lee-selection-reply loading';
+  panel.innerHTML = `<header><strong>${mode === 'summary' ? 'Summarising selection' : 'Inline AI help'}</strong>` +
+    `<span>working locally when available</span></header><div class="lee-selection-skeleton"><i></i><i></i><i></i></div>`;
+  positionFloating(panel, rect);
+  try {
+    const result = await post('/complete/selection', {text: selected.text, mode, instruction, lang: curLang()});
+    panel.classList.remove('loading'); panel.innerHTML = `<header><strong>${mode === 'summary' ? 'Summary' : 'Suggested replacement'}</strong>` +
+      `<span>${esc(result.model || '')}</span></header><pre></pre><footer>` +
+      `<button class="lee-btn" data-discard>discard</button><button class="lee-btn go" data-replace>replace selection</button></footer>`;
+    $('pre', panel).textContent = result.text;
+    $('[data-discard]', panel).onclick = () => panel.remove();
+    $('[data-replace]', panel).onclick = () => {
+      if (LeeCM.slice(view, selected.from, selected.to) !== selected.text)
+        return status('selection changed while the model was answering; suggestion left open', 'err');
+      LeeCM.replaceRange(view, selected.from, selected.to, result.text); panel.remove(); status('selection replaced', 'ok');
+    };
+    panel.onkeydown = e => {
+      if (e.key === 'Escape') panel.remove();
+      else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('[data-replace]', panel).click();
+    };
+    $('[data-replace]', panel).focus();
+    status(`${mode === 'summary' ? 'summary' : 'replacement'} ready from ${result.model || 'the inline model'} · review before replacing`, 'ok');
+  } catch (e) {
+    panel.classList.remove('loading'); panel.innerHTML = `<div class="lee-selection-error">${esc(e.message || e)}</div>` +
+      `<footer><button class="lee-btn" data-discard>close</button></footer>`;
+    $('[data-discard]', panel).onclick = () => panel.remove();
+  }
+}
+let selectionHelpTimer = null;
+document.addEventListener('selectionchange', () => {
+  clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 180);
+});
+document.addEventListener('pointerdown', e => {
+  if ($('.lee-selection-tools') && !e.target.closest('.lee-selection-tools, .cm-editor')) closeSelectionHelp();
+}, true);
+
 async function aiComplete() {
   const v = curEditor();
   if (!v) return status('put the cursor in some code first', 'err');
   if (LeeCM.ghost(v)) { LeeCM.acceptGhost(v); return status('accepted', 'ok'); }
   const pos = LeeCM.cursor(v);
-  status('asking the model…');
-  const d = await post('/complete/ai', {code: LeeCM.getDoc(v), pos, lang: curLang()});
+  status('checking Kosha graph, then asking the completion model…');
+  const d = await post('/complete/ai', {code: LeeCM.getDoc(v), pos, lang: curLang(), cell: lee.sel});
   if (!d.text) return status(d.note || 'no suggestion', 'err');
   if (LeeCM.cursor(v) !== pos) return status('cursor moved while the model was thinking', 'err');
   LeeCM.focus(v);
   LeeCM.setGhost(v, d.text);
-  status('tab accepts · esc dismisses · ' + d.note, 'ok');
+  const graph = d.graph_methods ? ` · ${d.graph_methods} Kosha graph method(s)` : '';
+  status(`suggestion ready from ${d.model || 'the completion model'}${graph} · tab accepts · esc dismisses`, 'ok');
 }
 
 async function showDocs() {
@@ -660,25 +2333,162 @@ async function showDiff() {
   diffModal('unsaved changes — ' + d.title, d.label, d.rows);
 }
 
-async function saveTab() {
+async function openMergeConflict(conflictBox) {
+  if (!lee.path) return status('save the document before merging it', 'err');
+  const disk = await api('/tab/disk?path=' + encodeURIComponent(lee.path));
+  if (lee.kind === 'notebook') {
+    conflictBox?.remove(); const merges = [];
+    const count = Math.max(lee.cells.length, (disk.cells || []).length);
+    const m = modal(`<div class="lee-mhead">Resolve notebook conflict<span class="sub">cell-aware disk / draft merge</span></div>` +
+      `<div class="lee-notebook-merge">${Array.from({length: count}, (_, i) => `<section><header>Cell ${i + 1} · ${esc(lee.cells[i]?.cell_type || disk.cells?.[i]?.cell_type || 'code')}</header><div data-cell-merge="${i}"></div></section>`).join('')}</div>` +
+      `<div class="lee-mfoot"><span class="lee-dim">Disk is left; the result saved to the notebook is right.</span><span class="lee-spacer"></span><button class="lee-btn" data-cancel>cancel</button><button class="lee-btn go" data-save-merge>save merged notebook</button></div>`,
+      null, () => merges.forEach(LeeCM.destroyMerge), {className:'lee-merge-modal', storageKey:'notebook-merge'});
+    for (let i = 0; i < count; i++) {
+      const view = lee.cells[i] && lee.editors.get(lee.cells[i].id);
+      const draft = view ? LeeCM.getDoc(view) : (lee.cells[i]?.source || '');
+      merges[i] = LeeCM.createMerge($(`[data-cell-merge="${i}"]`, m), {left: disk.cells?.[i]?.source || '', right: draft,
+        lang: lee.cells[i]?.cell_type === 'markdown' ? 'markdown' : 'python', settings: lee.editorPrefs});
+    }
+    $('[data-cancel]', m).onclick = () => m.remove();
+    $('[data-save-merge]', m).onclick = async () => {
+      for (let i = 0; i < Math.min(lee.cells.length, merges.length); i++) {
+        const source = LeeCM.mergeResult(merges[i]); lee.cells[i].source = source;
+        const view = lee.editors.get(lee.cells[i].id); if (view) LeeCM.setDoc(view, source);
+      }
+      const added = merges.slice(lee.cells.length).map((merge, n) => ({
+        source: LeeCM.mergeResult(merge), cell_type: disk.cells?.[lee.cells.length + n]?.cell_type || 'code',
+        metadata: {}, outputs: [], execution_count: null})).filter(cell => cell.source);
+      if (added.length) await nbEdit({op:'paste_many', i:lee.cells.length, cells:added});
+      m.remove(); await saveTab(false, disk.disk_version, true); status('merged notebook saved', 'ok');
+    };
+    return;
+  }
+  const draft = LeeCM.getDoc(lee.editors.get('file'));
+  conflictBox?.remove();
+  let mergeView = null;
+  const m = modal(`<div class="lee-mhead">Resolve file conflict<span class="sub">disk on the left · editable result on the right</span></div>` +
+    `<div class="lee-merge-host"></div><div class="lee-mfoot"><span class="lee-dim">Use the arrows to accept disk changes into your result.</span>` +
+    `<span class="lee-spacer"></span><button class="lee-btn" data-cancel>cancel</button><button class="lee-btn go" data-save-merge>save merged result</button></div>`,
+    null, () => { if (mergeView) LeeCM.destroyMerge(mergeView); }, {className: 'lee-merge-modal', storageKey: 'merge'});
+  mergeView = LeeCM.createMerge($('.lee-merge-host', m), {left: disk.text || '', right: draft,
+    lang: curLang(), settings: lee.editorPrefs});
+  $('[data-cancel]', m).onclick = () => m.remove();
+  $('[data-save-merge]', m).onclick = async () => {
+    const result = LeeCM.mergeResult(mergeView), view = lee.editors.get('file');
+    LeeCM.setDoc(view, result); rememberBuffer(lee.path, {path: lee.path, kind: 'text', text: result});
+    m.remove(); await saveTab(false, disk.disk_version, true); status('merged file saved', 'ok');
+  };
+}
+function showSaveConflict(message) {
+  if ($('.lee-save-conflict')) return;
+  const box = modal(`<div class="lee-mhead">File changed on disk</div>` +
+    `<div class="lee-dialogcopy">${esc(message)} Your browser draft is safe and has not been replaced.</div>` +
+    `<div class="lee-mfoot"><button class="lee-btn go" data-keep>keep draft</button>` +
+    `<button class="lee-btn" data-merge>merge changes</button>` +
+    `<button class="lee-btn warn" data-overwrite>overwrite disk</button>` +
+    `<button class="lee-btn" data-disk>load disk version</button></div>`);
+  box.classList.add('lee-save-conflict');
+  $('[data-keep]', box).onclick = () => {
+    lee.heldSaveConflicts.add(lee.path); box.remove();
+    setTabSaveState($('.lee-tab.active'), 'pending', 'Draft kept; press Save to review the disk conflict again');
+    status('kept browser draft · automatic retries paused until you save or resolve it', 'ok');
+  };
+  $('[data-merge]', box).onclick = () => openMergeConflict(box);
+  $('[data-overwrite]', box).onclick = async () => { lee.heldSaveConflicts.delete(lee.path); box.remove(); await saveTab(false, null, true); };
+  $('[data-disk]', box).onclick = async () => { lee.heldSaveConflicts.delete(lee.path); box.remove(); await takeDiskVersion(lee.path); status('loaded disk version; browser draft discarded', 'ok'); };
+}
+async function saveTab(quiet = false, expectedVersion = null, force = false) {
+  let saveTabEl = $('.lee-tab.active');
+  setTabSaveState(saveTabEl, 'saving');
   try {
+    if (lee.activeEditor==='secondary' && lee.editors.get('secondary') && lee.secondaryPath) {
+      const path=lee.secondaryPath,base_disk_version=draftBaseFor(path);
+      const d=await post('/nb/save',{path,text:normalizeSavedText(LeeCM.getDoc(lee.editors.get('secondary'))),base_disk_version,force});
+      lee.buffers.delete(path);lee.dirtyBuffers.delete(path);await clearDrafts(path);
+      saveTabEl = $$('.lee-tab').find(x=>x.title===path); saveTabEl?.classList.remove('dirty');
+      setTabSaveState(saveTabEl, 'saved');
+      if(!quiet)status(`saved ${path.split('/').pop()}`,'ok');return true;
+    }
+    const bufferKeys = lee.kind === 'notebook'
+      ? [...lee.bufferTimers.keys()].filter(k => k.startsWith((lee.path || 'scratch') + ':'))
+      : [lee.path || $('.lee-tab.active .lee-tab-name')?.textContent || ''];
+    for (const k of bufferKeys) { clearTimeout(lee.bufferTimers.get(k)); lee.bufferTimers.delete(k); }
+    let d;
+    const documentKey = lee.path || $('.lee-tab.active .lee-tab-name')?.textContent || '';
+    const base_disk_version = draftBaseFor(documentKey);
     if (lee.kind === 'notebook') {
       const cells = lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
-      await post('/nb/save', {cells});
+      d = await post('/nb/save', {cells, base_disk_version, force});
     } else {
-      await post('/nb/save', {text: LeeCM.getDoc(lee.editors.get('file'))});
+      let text=normalizeSavedText(LeeCM.getDoc(lee.editors.get('file')));
+      if(lee.filePrefs.formatOnSave){try{const formatted=await post('/editor/format',{path:lee.path,lang:curLang(),text});text=formatted.text;if(text!==LeeCM.getDoc(lee.editors.get('file')))LeeCM.setDoc(lee.editors.get('file'),text);}catch(e){status(`format skipped: ${e.message||e}`,'err');}}
+      d = await post('/nb/save', {text, base_disk_version, force});
     }
-    $('.lee-tab.active')?.classList.remove('dirty');
-    status('saved', 'ok');
-  } catch (e) { status(String(e.message || e), 'err'); }
+    // An autosave request may finish after another keystroke. The disk has its snapshot,
+    // but the newer browser buffer must remain authoritative and schedule the next save.
+    if (expectedVersion !== null && expectedVersion !== lee.editVersion) {
+      // This request wrote an older snapshot, but newer typing is still in the editor and
+      // IndexedDB. Rebase that draft on our own disk write so the follow-up autosave is not
+      // mistaken for an external conflict.
+      lee.diskVersion = d.disk_version || lee.diskVersion; lee.seenDiskVersion = lee.diskVersion;
+      await rebaseDrafts(documentKey, lee.diskVersion);
+      setTabSaveState(saveTabEl, 'pending', 'Newer changes are queued for autosave');
+      return false;
+    }
+    lee.diskVersion = d.disk_version || lee.diskVersion; lee.seenDiskVersion = lee.diskVersion;
+    const key = documentKey;
+    if (lee.kind === 'notebook') {
+      for (const k of [...lee.buffers.keys()]) if (k.startsWith((lee.path || 'scratch') + ':')) {
+        lee.buffers.delete(k); lee.dirtyBuffers.delete(k);
+      }
+    } else { lee.buffers.delete(key); lee.dirtyBuffers.delete(key); }
+    await clearDrafts(documentKey);
+    lee.heldSaveConflicts.delete(documentKey);
+    saveTabEl?.classList.remove('dirty');
+    setTabSaveState(saveTabEl, 'saved');
+    if (!quiet) status('saved', 'ok');
+    refreshProjectPills();
+    if (lee.kind === 'text') refreshOpenGitMarks();
+    if (lee.path?.endsWith('/pyproject.toml')) refreshPackageVersions();
+    return true;
+  } catch (e) {
+    const message = String(e.message || e);
+    setTabSaveState(saveTabEl, 'error', `Autosave failed: ${message}`);
+    if (message.includes('changed on disk after this browser draft began')) {
+      const documentKey = lee.path || $('.lee-tab.active .lee-tab-name')?.textContent || '';
+      if (!quiet || !lee.heldSaveConflicts.has(documentKey)) showSaveConflict(message);
+    }
+    else status(message, 'err');
+    return false;
+  }
+}
+
+async function saveAllTabs() {
+  // The active editor is saved through the same version-checked path as ordinary autosave.
+  // Inactive editors are mirrored to the server within 120ms; let pending mirrors land
+  // rather than cancelling their timers and accidentally saving the previous snapshot.
+  if (!lee.kind) return status('nothing to save', 'err');
+  if (!lee.path) return status('save the unnamed tab individually first', 'err');
+  const activeDirty = !!$('.lee-tab.active.dirty');
+  if (activeDirty && !await saveTab(true)) return;
+  await new Promise(resolve => setTimeout(resolve, 140));
+  try {
+    const d = await post('/tabs/save-all'), saved = d.saved + (activeDirty ? 1 : 0);
+    for (const tab of $$('.lee-tab')) {
+      if (tab.classList.contains('dirty')) await clearDrafts(tab.title || $('.lee-tab-name', tab)?.textContent || '');
+      tab.classList.remove('dirty'); setTabSaveState(tab, 'saved');
+    }
+    status(`saved ${saved} tab${saved === 1 ? '' : 's'}`, 'ok');
+  } catch (e) { status(e.message || String(e), 'err'); }
 }
 
 /* ------------------------------------------------------------------ exec */
 function mountExec() {
   const host = $('#execbox'); if (!host || lee.editors.has('exec')) return;
-  const v = LeeCM.create(host, {
-    doc: '', lang: 'python', placeholder: 'python — ctrl+enter runs · ctrl+↑/↓ history',
-    binds: cmBinds('exec'), completeUrl: '/complete',
+  const v = createEditor(host, {
+    doc: '', lang: 'python', placeholder: `python — ${displayChord('mod+enter')} runs · ctrl+shift+↑/↓ history`,
+    completeUrl: '/complete', onDefinition: name => findDefinition(name),
+    onSelection: () => { clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120); },
   });
   lee.editors.set('exec', v);
   host.addEventListener('focusin', () => setScope('exec'));
@@ -688,10 +2498,14 @@ function mountExec() {
 
 function leeScope(s) {
   lee.execScope = s;
+  const scopeButton = $('.lee-bar-exec .lee-btn:nth-child(2)');
+  if (scopeButton) { scopeButton.textContent = 'live/agent'; scopeButton.title = 'switch owner and protected agent namespaces'; }
   $('#sc-live')?.classList.toggle('active', s === 'live');
-  $('#sc-iso')?.classList.toggle('active', s === 'isolated');
+  $('#sc-agent')?.classList.toggle('active', s === 'agent');
   const tag = $('#execscope');
-  if (tag) tag.textContent = s === 'live' ? '· runs in the kernel' : '· sandboxed, writes discarded';
+  if (tag) tag.textContent = s === 'live'
+    ? (lee.debugState?.paused ? '· evaluates in the paused debug frame' : '· runs in your kernel')
+    : '· protected agent session';
   leeVars();
 }
 window.leeScope = leeScope;
@@ -699,18 +2513,26 @@ window.leeScope = leeScope;
 async function runExec() {
   const v = lee.editors.get('exec'); if (!v) return;
   const code = LeeCM.getDoc(v).trim(); if (!code) return;
+  if (lee.execBusy) return status('exec is already running', 'err');
+  lee.execBusy = true; status('running exec…');
   const log = $('#execlog');
   try {
-    const r = await post('/exec', {code, scope: lee.execScope});
+    const r = await post('/exec', {code, scope: lee.execScope, frame_id: lee.debugState?.frame_id});
     const line = document.createElement('div');
     line.className = 'lee-runline' + (r.ok ? '' : ' err');
     line.innerHTML = `<span class="code">${esc(code)}</span><span class="arrow">→</span>` +
                      `<span class="res">${esc((r.text || 'ok').trim())}</span>`;
     log.appendChild(line); log.scrollTop = log.scrollHeight;
+    if (r.result) requestAnimationFrame(() => openValueLens(r.result, line, code));
     lee.hist.push(code); lee.histIdx = lee.hist.length;
     LeeCM.setDoc(v, '');
+    if (r.debug && lee.debugState) {
+      try { lee.debugState = await api(`/nb/debug/state?frame_id=${lee.debugState.frame_id}`); }
+      catch (_) {}
+    }
     leeVars();
   } catch (e) { status(String(e.message || e), 'err'); }
+  finally { lee.execBusy = false; }
 }
 
 function recall(d) {
@@ -724,17 +2546,72 @@ window.leeExecClear = leeExecClear;
 
 /* ------------------------------------------------------------------ variables */
 async function leeVars() {
-  const box = $('#vars'); if (!box) return;
+  const box = $('#vars'); if (!box || document.hidden) return;
+  // Polling is a refresh, not a queue. A slow inspector used to let the 2.5s interval
+  // stack an unbounded number of fetches and full-tree DOM rebuilds until Chrome declared
+  // the page unresponsive. Coalesce every request that arrives while one is in flight.
+  if (lee.varsBusy) { lee.varsPending = true; return; }
+  lee.varsBusy = true;
+  try { await refreshVars(box); }
+  finally {
+    lee.varsBusy = false;
+    if (lee.varsPending) { lee.varsPending = false; queueMicrotask(leeVars); }
+  }
+}
+window.leeVars = leeVars;
+
+async function refreshVars(box) {
   const profile = $('#varprofile')?.value || 'minimal';
   const sort = $('#varsort')?.value || 'recent';
   let d;
-  try { d = await api(`/vars?profile=${profile}&sort=${sort}&scope=${lee.execScope}`); }
-  catch (e) { box.innerHTML = `<div class="lee-err">${esc(e.message)}</div>`; return; }
-  if (d.error) { box.innerHTML = `<div class="lee-dim">${esc(d.error)}</div>`; return; }
+  if (lee.debugState?.paused) {
+    const frame = (lee.debugState.frames || []).find(f => f.id === lee.debugState.frame_id);
+    d = {runtime: `debug:${lee.debugState.thread_id}:${lee.debugState.frame_id}`,
+         groups: [{label: `paused locals · ${frame?.name || 'frame'} · line ${frame?.line || '?'}`,
+                   nodes: (lee.debugState.variables || []).map(debugVar)}]};
+  } else {
+    try { d = await api(`/vars?profile=${profile}&sort=${sort}&scope=${lee.execScope}`); }
+    catch (e) { box.innerHTML = `<div class="lee-err">${esc(e.message)}</div>`; return; }
+    if (d.error) {
+      box.innerHTML = `<div class="lee-err"><strong>Dhrishti inspector unavailable</strong><span>${esc(d.error)}</span>` +
+        `<button class="lee-btn" data-repair-inspector>Restart kernel and repair</button></div>`;
+      $('[data-repair-inspector]', box).onclick = async () => {
+        if (!await confirmDialog('Restart kernel', 'Repairing the inspector restarts this kernel and clears its live variables.', 'restart and repair')) return;
+        await post('/kernel/restart'); markPreviousRuns(); await leeVars(); refreshKernelPill();
+      };
+      return;
+    }
+    if (d.python) paintEnv(String(d.python).split('/').slice(-3).join('/'));
+    const envTag = $('#envtag');
+    if (envTag && d.inspector) envTag.title = `${d.inspector} inspector · ${d.python || d.runtime}${d.cwd ? ' · cwd ' + d.cwd : ''}`;
+  }
 
-  // A poll must not cost the user their place: remember what is open, what is selected
+  // Every runtime gets its own little view memory. Switching notebooks should feel like
+  // switching debugger sessions, not like one global tree whose open rows and filter leak.
+  const runtime = d.runtime || 'default';
+  if (lee.varRuntime !== runtime) {
+    if (lee.varRuntime) lee.varStates.set(lee.varRuntime, {
+      open: new Set(lee.varOpen), prev: lee.varPrev, seen: lee.varSeen,
+      scroll: box.scrollTop, filter: $('#varfilter')?.value || '', selected: selVar()?.dataset.name || '',
+    });
+    const saved = lee.varStates.get(runtime) || {};
+    lee.varRuntime = runtime; lee.varOpen = new Set(saved.open || []);
+    lee.varPrev = saved.prev || {}; lee.varSeen = !!saved.seen;
+    if ($('#varfilter')) $('#varfilter').value = saved.filter || '';
+    lee.varRestore = {scroll: saved.scroll || 0, selected: saved.selected || ''};
+  }
+
+  // Most polls are identical. Avoid rebuilding the entire variable DOM every 2.5 seconds;
+  // that work competes directly with CodeMirror selection and streamed Markdown painting.
+  const fingerprint = JSON.stringify(d.groups || []);
+  if (!lee.varRestore && lee.varFingerprints.get(runtime) === fingerprint) return;
+  lee.varFingerprints.set(runtime, fingerprint);
+
+  // A changed poll must not cost the user their place: remember what is open, selected,
   // and where the panel is scrolled, re-render, then put all three back.
-  const scroll = box.scrollTop, selName = selVar()?.dataset.name;
+  const scroll = lee.varRestore ? lee.varRestore.scroll : box.scrollTop;
+  const selName = lee.varRestore ? lee.varRestore.selected : selVar()?.dataset.name;
+  lee.varRestore = null;
   const cur = {};
   const html = (d.groups || []).map(g => {
     const rows = (g.nodes || []).map(n => { cur[n.name] = n.value; return varRow(n); }).join('');
@@ -747,7 +2624,12 @@ async function leeVars() {
   box.scrollTop = scroll;
   leeFilterVars();
 }
-window.leeVars = leeVars;
+
+function debugVar(v) {
+  const ref = Number(v.variablesReference) || 0;
+  return {name: v.name || '?', type: v.type || '', value: v.value || '', shape: null,
+          accessor: ['debug', ref], is_container: ref > 0, is_grid: false, debug_reference: ref};
+}
 
 function varRow(n, depth = 0) {
   // new/edited is a statement about the namespace, so it only makes sense for top-level
@@ -759,9 +2641,10 @@ function varRow(n, depth = 0) {
   const typ = n.shape ? `${n.type}: ${n.shape}` : n.type;
   const acc = encodeURIComponent(JSON.stringify(n.accessor));
   return `<div class="lee-vrow" data-name="${esc(n.name)}" data-acc="${acc}" data-container="${n.is_container ? 1 : 0}"
-            onclick="leeVarClick(this)">` +
+            data-grid="${n.is_grid ? 1 : 0}" onclick="leeVarClick(this)">` +
     `<span class="lee-vname">${esc(n.name)}</span> <span class="lee-vtype">{${esc(typ)}}</span> ` +
-    `<span class="lee-vval">${esc(n.value)}</span>${n.is_grid ? ' <span class="lee-vgrid">▦</span>' : ''}${tag}</div>` +
+    `<span class="lee-vval">${esc(n.value)}</span>${n.is_grid ?
+      ' <button class="lee-vgrid" title="open grid" onclick="event.stopPropagation(); selectVar(this.closest(\'.lee-vrow\')); openGrid()">▦</button>' : ''}${tag}</div>` +
     `<div class="lee-vkids" id="k-${acc}"></div>`;
 }
 
@@ -769,14 +2652,22 @@ async function fillKids(acc) {
   const box = document.getElementById('k-' + acc);
   if (!box) { lee.varOpen.delete(acc); return; }   // the variable is gone; stop tracking it
   try {
-    const kids = await api(`/vars/expand?accessor=${acc}&scope=${lee.execScope}`);
+    const accessor = JSON.parse(decodeURIComponent(acc));
+    const kids = accessor[0] === 'debug'
+      ? (await api(`/nb/debug/variables?reference=${Number(accessor[1])}`)).variables.map(debugVar)
+      : await api(`/vars/expand?accessor=${acc}&scope=${lee.execScope}`);
     box.innerHTML = kids.map(k => varRow(k, 1)).join('');
-  } catch (e) { lee.varOpen.delete(acc); }
+  } catch (e) { lee.varOpen.delete(acc); box.innerHTML = `<div class="lee-err">${esc(e.message)}</div>`; }
 }
 
-async function leeVarClick(el) {
+function selectVar(el) {
   $$('.lee-vrow').forEach(r => r.classList.remove('sel'));
-  el.classList.add('sel');
+  el?.classList.add('sel');
+}
+window.selectVar = selectVar;
+
+async function leeVarClick(el) {
+  selectVar(el);
   if (el.dataset.container !== '1') return;
   const acc = el.dataset.acc;
   const box = document.getElementById('k-' + acc);
@@ -788,22 +2679,66 @@ async function leeVarClick(el) {
 window.leeVarClick = leeVarClick;
 
 function leeFilterVars() {
-  const q = ($('#varfilter')?.value || '').toLowerCase();
+  const raw = $('#varfilter')?.value || '', q = raw.toLowerCase();
+  const expression = raw.trimStart().startsWith('=');
   $$('#vars .lee-vrow').forEach(r => {
-    r.style.display = (!q || (r.dataset.name || '').toLowerCase().includes(q)) ? '' : 'none';
+    r.style.display = (expression || !q || (r.dataset.name || '').toLowerCase().includes(q)) ? '' : 'none';
   });
+  $('#varfilter')?.classList.toggle('expression', expression);
 }
-window.leeFilterVars = leeFilterVars;
+async function leeEvalVarFilter(event) {
+  if (event.key !== 'Enter') return;
+  const input = event.currentTarget, raw = input.value.trim();
+  if (!raw.startsWith('=')) return;
+  event.preventDefault(); event.stopPropagation();
+  const code = raw.slice(1).trim(); if (!code) return status('enter Python after =', 'err');
+  input.disabled = true; status('evaluating variable expression…');
+  try {
+    const r = await post('/vars/eval', {code, scope: lee.execScope});
+    if (!r.ok) return status(r.error || 'expression failed', 'err');
+    if (r.stdout) status(r.stdout.trim(), 'info');
+    if (!r.result) return status('expression returned no value', 'info');
+    openValueLens(r.result, input, code); status('expression ready', 'ok');
+  } catch (e) { status(e.message || String(e), 'err'); }
+  finally { input.disabled = false; input.focus(); }
+}
+window.leeFilterVars = leeFilterVars; window.leeEvalVarFilter = leeEvalVarFilter;
 
 function setProfile(p) { const s = $('#varprofile'); if (s) { s.value = p; leeVars(); } }
 const selVar = () => $('.lee-vrow.sel');
 
 async function editSelectedVar() {
   const r = selVar(); if (!r) return status('select a variable first');
-  const expr = prompt(`set ${r.dataset.name} =`, '');
+  const expr = await inputDialog('set variable', `${r.dataset.name} =`, '', 'Python expression');
   if (expr == null) return;
   const res = await post('/vars/set', {accessor: decodeURIComponent(r.dataset.acc), expr});
   res.ok ? (status('set ' + r.dataset.name, 'ok'), leeVars()) : status(res.error, 'err');
+}
+
+async function openGrid() {
+  const row = selVar();
+  if (!row) return status('select a variable first', 'err');
+  if (row.dataset.grid !== '1') return status(row.dataset.name + ' is not a table or array', 'err');
+  let roff = 0, coff = 0, page = null;
+  const m = modal(`<div class="lee-mhead">${esc(row.dataset.name)}<span class="sub">grid view</span></div>
+    <div class="lee-gridwrap" id="gridbody"></div>
+    <div class="lee-mfoot"><button class="lee-btn" id="gprevrow">↑ rows</button>
+    <button class="lee-btn" id="gnextrow">↓ rows</button><button class="lee-btn" id="gprevcol">← columns</button>
+    <button class="lee-btn" id="gnextcol">→ columns</button><span class="lee-dim" id="gridpos"></span></div>`);
+  const draw = async () => {
+    page = await api(`/vars/grid?accessor=${row.dataset.acc}&roff=${roff}&coff=${coff}&scope=${lee.execScope}`);
+    if (!page) { m.remove(); return status('that value cannot be shown as a grid', 'err'); }
+    const heads = page.headers.map(h => `<th>${esc(h)}</th>`).join('');
+    const rows = page.cells.map((cells, i) => `<tr><th>${esc(page.index[i])}</th>` +
+      cells.map(c => `<td>${esc(c)}</td>`).join('') + '</tr>').join('');
+    m.querySelector('#gridbody').innerHTML = `<table class="lee-grid"><thead><tr><th></th>${heads}</tr></thead><tbody>${rows}</tbody></table>`;
+    m.querySelector('#gridpos').textContent = `rows ${page.roff + 1}–${Math.min(page.roff + page.rows, page.nrows)} of ${page.nrows} · columns ${page.coff + 1}–${Math.min(page.coff + page.cols, page.ncols)} of ${page.ncols}`;
+  };
+  m.querySelector('#gprevrow').onclick = () => { roff = Math.max(0, roff - (page?.rows || 50)); draw(); };
+  m.querySelector('#gnextrow').onclick = () => { roff = Math.min(Math.max(0, (page?.nrows || 1) - 1), roff + (page?.rows || 50)); draw(); };
+  m.querySelector('#gprevcol').onclick = () => { coff = Math.max(0, coff - (page?.cols || 50)); draw(); };
+  m.querySelector('#gnextcol').onclick = () => { coff = Math.min(Math.max(0, (page?.ncols || 1) - 1), coff + (page?.cols || 50)); draw(); };
+  try { await draw(); } catch (e) { m.remove(); status(String(e.message || e), 'err'); }
 }
 async function promoteVar() {
   const r = selVar(); if (!r) return status('select a variable first');
@@ -818,84 +2753,1273 @@ function copyVar(what) {
 }
 
 /* ------------------------------------------------------------------ agent */
-async function leeAgentTranscript() {
-  const d = await api('/agent/transcript');
-  const log = $('#agentlog');
-  log.innerHTML = (d.cells || []).map(c =>
-    `<div class="lee-runline"><span class="${c.cell_type === 'markdown' ? 'res' : 'code'}">${esc(c.source)}</span></div>`
-  ).join('') || '<div class="lee-dim">(no transcript yet)</div>';
+function closeDismissableDisclosures(except = null) {
+  $$('details.lee-dismissable[open]').forEach(details => { if (details !== except) details.open = false; });
+}
+document.addEventListener('pointerdown', e => {
+  const inside = e.target.closest?.('details.lee-dismissable');
+  closeDismissableDisclosures(inside);
+}, true);
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || $$('.lee-modal').length) return;
+  const open = $$('details.lee-dismissable[open]').at(-1);
+  if (!open) return;
+  e.preventDefault(); e.stopPropagation(); open.open = false;
+  open.querySelector(':scope > summary')?.focus();
+}, true);
+window.addEventListener('blur', () => closeDismissableDisclosures());
+
+async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
+  const selects = {agent: $('#agentmodel'), inline: $('#inlinemodel'), completion: $('#completionmodel')};
+  if (!selects.agent || !selects.inline || !selects.completion) return;
+  const previous = Object.fromEntries(Object.entries(selects).map(([k, s]) => [k, s.value]));
+  const d = await api('/agent/models?legacy=' + (legacy ? 'true' : 'false'));
+  for (const [target, select] of Object.entries(selects)) {
+    select.innerHTML = '';
+    for (const m of (d.models || [])) {
+      const option = document.createElement('option');
+      option.value = m.value; option.textContent = `${m.label} · ${m.provider}`;
+      option.title = m.source || ''; select.appendChild(option);
+    }
+    const wanted = d.selected?.[target] || previous[target];
+    if ([...select.options].some(o => o.value === wanted)) select.value = wanted;
+  }
+  const notes = Object.values(d.auth || {}).map(x => x.note).filter(Boolean);
+  if (notes.length) selects.agent.title = notes.join(' · ');
+}
+window.leeLoadModels = loadAgentModels;
+
+async function leeAddModel() {
+  const d = await api('/agent/models');
+  const saved = (d.saved || []).map(x => `<div class="lee-krow"><span><strong>${esc(x.name)}</strong> · ${esc(x.runtime)}<br><small>${esc(x.model_id)}</small></span><button class="lee-btn warn" data-remove="${esc(x.name)}">remove</button></div>`).join('');
+  const m = modal(`<div class="lee-mhead">Add model<span class="sub">saved in Leela · API keys stay in environment variables</span></div>
+    <label>name<input class="lee-input" id="modelalias" placeholder="ornith-test"></label>
+    <label>model ID or Hugging Face URL<input class="lee-input" id="modelid" placeholder="https://huggingface.co/mlx-community/… or openai/model-id"></label>
+    <label>runtime<select class="lee-select" id="modelruntime"><option value="mlx">MLX</option><option value="litert">LiteRT</option><option value="llama">llama.cpp</option><option value="remote">hosted API / FastLLM</option></select></label>
+    <label>context tokens<input class="lee-input" id="modelctx" type="number" value="128000" min="1024"></label>
+    <details><summary>hosted API settings</summary><label>base URL<input class="lee-input" id="modelbase" placeholder="https://api.example.com/v1"></label><label>API key environment variable<input class="lee-input" id="modelkeyenv" placeholder="OPENAI_API_KEY"></label><label>FastLLM vendor<input class="lee-input" id="modelvendor" placeholder="openai"></label><label>FastLLM API transport<input class="lee-input" id="modelapi" placeholder="openai"></label></details>
+    <button class="lee-btn go" id="modelsave">save model</button>
+    <h4>saved models</h4><div class="lee-modallist">${saved || '<div class="lee-dim">none yet</div>'}</div>`);
+  $('#modelsave', m).onclick = async () => {
+    status('validating and saving model…');
+    const r = await post('/agent/models/add', {name: $('#modelalias',m).value.trim(), model_id: $('#modelid',m).value.trim(), runtime: $('#modelruntime',m).value, ctx: Number($('#modelctx',m).value), base_url: $('#modelbase',m).value.trim(), api_key_env: $('#modelkeyenv',m).value.trim(), vendor_name: $('#modelvendor',m).value.trim(), api_name: $('#modelapi',m).value.trim()});
+    if (!r.ok) return status(r.error || 'could not save model','err');
+    m.remove(); await loadAgentModels(); status(`saved ${r.model.name} · ${r.model.runtime} · ${r.model.model_id}`,'ok');
+  };
+  $$('[data-remove]',m).forEach(b => b.onclick = async () => {
+    const name=b.dataset.remove; const r=await post('/agent/models/remove',{name});
+    if (!r.ok) return status(r.error || 'could not remove model','err');
+    m.remove(); await loadAgentModels(); status(`removed ${name}`,'ok');
+  });
+  $('#modelalias',m)?.focus();
+}
+window.leeAddModel = leeAddModel;
+
+async function leeAgentModel(target, model) {
+  const select = $('#' + (target === 'agent' ? 'agentmodel' : target === 'inline' ? 'inlinemodel' : 'completionmodel'));
+  if (select) select.disabled = true;
+  try {
+    const d = await post('/agent/model', {target, model});
+    status(d.ok ? `${target} model saved: ${d.model}` : (d.error || 'model switch failed'), d.ok ? 'ok' : 'err');
+    if (d.ok && target === 'completion') api('/complete/warm').catch(() => {});
+    if (!d.ok) await loadAgentModels();
+  } catch (e) { await loadAgentModels(); status(e.message || String(e), 'err'); }
+  finally { if (select) select.disabled = false; }
+}
+window.leeAgentModel = leeAgentModel;
+
+async function leeAgentCompaction() {
+  try {
+    const d = await post('/agent/compaction', {auto: !!$('#autocompact')?.checked,
+                                               strategy: $('#compactstrategy')?.value || 'surgical'});
+    status(d.note, 'ok');
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+window.leeAgentCompaction = leeAgentCompaction;
+
+async function leeLocalMultimodal(enabled) {
+  const box = $('#localmultimodal');
+  const d = await post('/agent/settings', {local_multimodal: !!enabled});
+  if (!d.ok && box) box.checked = !enabled;
+  status(d.ok ? d.note : (d.error || 'local multimodal setting failed'), d.ok ? 'ok' : 'err');
+}
+window.leeLocalMultimodal = leeLocalMultimodal;
+
+function leeAgentExpand() {
+  const shell = $('#shell'); if (!shell) return;
+  leeRight('agent'); shell.classList.toggle('agent-focus');
+  const expanded = shell.classList.contains('agent-focus');
+  $('.lee-agent')?.classList.toggle('timeline-workspace', expanded);
+  if ($('#agentexpand')) $('#agentexpand').textContent = expanded ? 'restore' : 'expand';
+  localStorage.setItem('lee-agent-expanded', expanded ? '1' : '0');
+}
+window.leeAgentExpand = leeAgentExpand;
+
+function leeRight(which) {
+  const right = $('#right'); if (!right) return;
+  right.classList.toggle('right-agent', which === 'agent');
+  right.classList.toggle('right-vars', which === 'vars');
+  right.classList.toggle('right-memory', which === 'memory');
+  $$('.lee-righttab', right).forEach(b => {
+    const active = b.dataset.right === which;
+    b.classList.toggle('active', active); b.setAttribute('aria-selected', String(active));
+  });
+  if (which === 'agent') requestAnimationFrame(() => { const log = $('#agentlog'); if (log) log.scrollTop = log.scrollHeight; });
+  if (which === 'memory' && !lee.memoryLoaded) leeMemoryNotes();
+}
+window.leeRight = leeRight;
+
+function setMemoryView(view) {
+  const panel = $('.lee-memory');
+  if (panel) { panel.classList.remove('memory-view-notes', 'memory-view-sources', 'memory-view-topics'); panel.classList.add('memory-view-' + view); }
+  $$('[data-memory-view]').forEach(button => button.classList.toggle('active', button.dataset.memoryView === view));
+}
+async function leeMemoryNotes() {
+  const body = $('#memorybody'); if (!body) return;
+  lee.memoryLoaded = 'loading'; leePane('right', true); leeRight('memory'); setMemoryView('notes');
+  body.innerHTML = '<div class="lee-memory-empty">Loading agent memory…</div>';
+  try {
+    const data = await api('/agent/memory'), selected = Object.fromEntries(
+      Object.entries(data.selected || {}).map(([target, ids]) => [target, new Set(ids || [])]));
+    lee.agentMemory = data; lee.memoryLoaded = 'notes';
+    $('#memorystatus').textContent = `· ${data.notes.length} note${data.notes.length === 1 ? '' : 's'}`;
+    if (!data.notes.length) {
+      body.innerHTML = `<section class="lee-memory-notes-empty"><strong>Give the models durable context</strong>` +
+        `<p>Store project conventions, decisions, preferences, and recurring instructions. You choose which model sees each note.</p>` +
+        `<button class="lee-btn go" onclick="leeNewMemoryNote()">Create a memory note</button></section>`; return;
+    }
+    const labels = {agent: 'Agent', inline: 'Prompt', completion: 'Complete'};
+    body.innerHTML = `<div class="lee-memory-notes-intro"><span>Model context</span><strong>Select exactly where each note is used.</strong></div>` +
+      data.notes.map(note => `<article class="lee-memory-note-card" data-note-id="${esc(note.id)}"><button class="lee-memory-note-open" data-edit-note>` +
+        `<strong>${esc(note.title || 'Untitled note')}</strong><span>${esc(String(note.text || '').replace(/\s+/g, ' ').slice(0, 180))}</span></button>` +
+        `<div class="lee-memory-note-routes">${Object.entries(labels).map(([target, label]) => `<label title="Use in ${esc(data.targets[target])}">` +
+          `<input type="checkbox" data-quick-target="${target}"${selected[target]?.has(String(note.id)) ? ' checked' : ''}><span>${label}</span></label>`).join('')}</div>` +
+        `<button class="lee-memory-note-edit" data-edit-note aria-label="edit ${esc(note.title || 'memory note')}">edit</button></article>`).join('');
+    $$('.lee-memory-note-card', body).forEach(card => {
+      const note = data.notes.find(item => String(item.id) === card.dataset.noteId);
+      $$('[data-edit-note]', card).forEach(button => button.onclick = () => leeAgentMemory(note.id));
+      $$('[data-quick-target]', card).forEach(input => input.onchange = async () => {
+        const target = input.dataset.quickTarget, id = String(note.id);
+        input.checked ? selected[target].add(id) : selected[target].delete(id);
+        try {
+          const result = await post('/agent/memory/select', {target, ids: [...selected[target]]});
+          status(`${data.targets[target]} memory updated · about ${result.tokens.toLocaleString()} tokens`, 'ok');
+        } catch (e) { input.checked = !input.checked; status(e.message || String(e), 'err'); }
+      });
+    });
+  } catch (e) { lee.memoryLoaded = false; body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+}
+function leeNewMemoryNote(draft = {}) { leeAgentMemory('__new__', draft); }
+window.leeMemoryNotes = leeMemoryNotes; window.leeNewMemoryNote = leeNewMemoryNote;
+
+async function leeAgentMemory(focusId = '', draft = {}) {
+  try {
+    const data = await api('/agent/memory'), selected = Object.fromEntries(
+      Object.entries(data.selected || {}).map(([target, ids]) => [target, new Set(ids || [])]));
+    let active = focusId === '__new__' ? {id: '', title: draft.title || '', text: draft.text || ''} :
+      (data.notes || []).find(note => String(note.id) === String(focusId)) || data.notes?.[0] || null;
+    const box = modal(`<div class="lee-mhead">Agent memory<span class="sub">durable notes with explicit model routing</span></div>` +
+      `<div class="lee-memory-workbench"><aside class="lee-memory-note-list"><header><strong>Notes</strong>` +
+      `<button class="lee-btn" data-new-note>New note</button></header><input class="lee-input" data-note-filter placeholder="Filter notes…">` +
+      `<div data-note-list></div></aside><section class="lee-memory-note-editor"><div class="lee-memory-note-empty" data-note-empty>` +
+      `<strong>No memory note selected</strong><span>Create a note for conventions, architectural decisions, preferences, or recurring context.</span>` +
+      `<button class="lee-btn go" data-empty-new>Create first note</button></div><div data-note-form hidden>` +
+      `<label class="lee-fieldlabel">Title<input class="lee-input" data-note-title placeholder="e.g. API compatibility rules"></label>` +
+      `<div class="lee-memory-editor-head"><span>Memory note</span><small>Markdown · editable</small></div>` +
+      `<div class="lee-memory-note-cm" data-note-text></div></div></section>` +
+      `<aside class="lee-memory-routing"><header><strong>Use this note in</strong><span>${active?.id ? 'Changes apply to live model context immediately.' : 'Choose now; routing starts when you save.'}</span></header>` +
+      `<div data-memory-targets></div><section class="lee-memory-routing-help"><strong>How routing works</strong>` +
+      `<p><b>Agent</b> guides the long-running conversation and tools.</p><p><b>Prompt cells</b> guides notebook AI cells independently.</p>` +
+      `<p><b>Completion</b> adds a bounded excerpt to one-shot code suggestions. Keep these notes short.</p></section>` +
+      `<div class="lee-memory-budget" data-memory-budget></div></aside></div>` +
+      `<div class="lee-mfoot"><button class="lee-btn warn" data-delete-note disabled>Delete note</button>` +
+      `<span class="lee-spacer"></span><span class="lee-dim" data-note-status>Notes are durable; routing is saved with this workspace.</span>` +
+      `<button class="lee-btn go" data-save-note disabled>Save note</button></div>`, null, null,
+      {className: 'lee-agent-memory-modal', storageKey: 'agent-memory-v2'});
+    const list = $('[data-note-list]', box), form = $('[data-note-form]', box), empty = $('[data-note-empty]', box);
+    const title = $('[data-note-title]', box), textHost = $('[data-note-text]', box), targets = $('[data-memory-targets]', box);
+    const stateView = createEditor(textHost, {doc: '', lang: 'markdown', lineNums: true,
+      placeholder: '# Context\n\nWrite only information that should influence a model…'});
+    const noteText = {get value() { return LeeCM.getDoc(stateView); }, set value(value) { LeeCM.setDoc(stateView, String(value || '')); }};
+    const labels = data.targets || {agent: 'Agent conversation', inline: 'Prompt cells', completion: 'Code completion'};
+    const hasUnsavedChanges = () => !!active && (title.value !== (active.title || '') || noteText.value !== (active.text || ''));
+    const mayLeaveNote = async () => !hasUnsavedChanges() || await confirmDialog(
+      'discard unsaved note changes', 'Switch notes without saving the edits in the current note?', 'discard edits');
+    const isSelected = (target, id) => selected[target]?.has(String(id));
+    const selectionCount = id => Object.keys(labels).filter(target => isSelected(target, id)).length;
+    const routeBadges = id => [['agent','A'],['inline','P'],['completion','C']]
+      .map(([target, label]) => `<i class="${isSelected(target, id) ? 'active' : ''}" title="${esc(labels[target])}">${label}</i>`).join('');
+    const paintList = (query = '') => {
+      const q = query.trim().toLowerCase(), notes = (data.notes || []).filter(note =>
+        !q || `${note.title} ${note.text}`.toLowerCase().includes(q));
+      list.innerHTML = notes.map(note => `<button class="lee-memory-note-row${String(note.id) === String(active?.id) ? ' active' : ''}" data-note-id="${esc(note.id)}">` +
+        `<span><strong>${esc(note.title || 'Untitled note')}</strong><small>${esc(String(note.text || '').replace(/\s+/g, ' ').slice(0, 110))}</small></span>` +
+        `<b class="lee-memory-route-badges">${routeBadges(note.id)}</b></button>`).join('') ||
+        '<div class="lee-memory-note-none">No matching notes.</div>';
+      $$('[data-note-id]', list).forEach(row => row.onclick = async () => {
+        const next = data.notes.find(note => String(note.id) === row.dataset.noteId);
+        if (next === active || !await mayLeaveNote()) return; active = next; paint();
+      });
+    };
+    const paintTargets = () => {
+      targets.innerHTML = Object.entries(labels).map(([target, label]) => `<label class="lee-memory-target${active && isSelected(target, active.id) ? ' active' : ''}">` +
+        `<input type="checkbox" data-memory-target="${target}"${active?.id && isSelected(target, active.id) ? ' checked' : ''}>` +
+        `<span><strong>${esc(label)}</strong><small>${target === 'agent' ? 'conversation + tools' : target === 'inline' ? 'notebook prompt cells' : 'one-shot suggestions'}</small></span></label>`).join('');
+      $$('[data-memory-target]', targets).forEach(input => input.onchange = async () => {
+        const target = input.dataset.memoryTarget, id = String(active.id);
+        if (!id) { $('[data-note-status]', box).textContent = 'Routing will activate when you save this note.'; paintBudget(); return; }
+        input.checked ? selected[target].add(id) : selected[target].delete(id);
+        try {
+          const result = await post('/agent/memory/select', {target, ids: [...selected[target]]});
+          $('[data-note-status]', box).textContent = `${labels[target]} updated · about ${result.tokens.toLocaleString()} context tokens`;
+          paintList($('[data-note-filter]', box).value); paintTargets(); paintBudget();
+        } catch (e) { input.checked = !input.checked; status(e.message || String(e), 'err'); }
+      });
+    };
+    const paintBudget = () => {
+      if (!active) { $('[data-memory-budget]', box).textContent = 'Select a note to route it.'; return; }
+      const tokens = Math.max(1, Math.ceil(noteText.value.length / 4));
+      $('[data-memory-budget]', box).innerHTML = active.id
+        ? `<strong>~${tokens.toLocaleString()} tokens</strong><span>this note · active on ${selectionCount(active.id)} of 3 surfaces</span>`
+        : `<strong>Unsaved note</strong><span>Save it before adding it to model context.</span>`;
+    };
+    const paint = () => {
+      empty.hidden = !!active; form.hidden = !active;
+      $('[data-save-note]', box).disabled = !active; $('[data-delete-note]', box).disabled = !active;
+      if (active) { title.value = active.title || ''; noteText.value = active.text || ''; }
+      paintList($('[data-note-filter]', box).value); paintTargets(); paintBudget();
+    };
+    const newNote = async () => { if (!await mayLeaveNote()) return; active = {id: '', title: '', text: ''}; paint(); title.focus(); };
+    $('[data-new-note]', box).onclick = newNote; $('[data-empty-new]', box).onclick = newNote;
+    $('[data-note-filter]', box).oninput = e => paintList(e.target.value);
+    const markDirty = () => { $('[data-note-status]', box).textContent = 'Unsaved changes'; paintBudget(); };
+    title.oninput = markDirty;
+    stateView.dom.addEventListener('input', markDirty);
+    $('[data-save-note]', box).onclick = async () => {
+      const button = $('[data-save-note]', box); button.disabled = true; button.textContent = 'Saving…';
+      try {
+        const oldId = String(active.id || ''), requestedTargets = $$('[data-memory-target]:checked', targets).map(input => input.dataset.memoryTarget);
+        const result = await post('/agent/memory/save', {id: oldId, title: title.value, text: noteText.value, targets: requestedTargets});
+        box.remove(); lee.memoryLoaded = false; status(oldId ? 'memory note updated' : 'memory note created', 'ok'); leeMemoryNotes();
+      } catch (e) { button.disabled = false; button.textContent = 'Save note'; status(e.message || String(e), 'err'); }
+    };
+    $('[data-delete-note]', box).onclick = async () => {
+      if (!active?.id || !await confirmDialog('delete memory note', `Delete “${active.title || 'Untitled note'}” from memory and every model route?`)) return;
+      await post('/agent/memory/delete', {id: active.id}); box.remove(); lee.memoryLoaded = false; status('memory note deleted', 'ok'); leeMemoryNotes();
+    };
+    paint();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+window.leeAgentMemory = leeAgentMemory;
+
+function memoryRows(rows, kind = 'doc') {
+  return rows.map((row, i) => {
+    const title = row.breadcrumb || row.title || row.label || row.source || 'Untitled';
+    const detail = row.source || row.summary || row.note || `${row.size || row.nchunks || 0} items`;
+    const excerpt = (row.snippets || [])[0] || row.text || '';
+    return `<button class="lee-memory-${kind}" data-i="${i}"><span class="lee-memory-index">${String(i + 1).padStart(2, '0')}</span>` +
+      `<span class="lee-memory-copy"><strong>${esc(title)}</strong><small>${esc(detail)}</small>` +
+      `${excerpt ? `<p>${esc(String(excerpt).replace(/\s+/g, ' ').slice(0, 220))}</p>` : ''}</span>` +
+      `<span class="lee-memory-kind">${esc(row.kind || (kind === 'hit' ? 'section' : kind))}</span></button>`;
+  }).join('');
+}
+async function leeMemoryHome() {
+  const body = $('#memorybody'); if (!body) return;
+  lee.memoryLoaded = 'loading'; leePane('right', true); leeRight('memory'); setMemoryView('sources');
+  body.innerHTML = '<div class="lee-memory-empty">Opening durable memory…</div>';
+  try {
+    const d = await api('/memory/info'); lee.memoryLoaded = true; lee.memoryDocs = d.items || [];
+    $('#memorystatus').textContent = `· ${d.documents} docs · ${d.nodes} sections`;
+    body.innerHTML = lee.memoryDocs.length ? memoryRows(lee.memoryDocs) :
+      '<div class="lee-memory-empty">Pages you read and research will be indexed here automatically.</div>';
+    $$('.lee-memory-doc', body).forEach((row, i) => row.onclick = () => leeMemoryTree(lee.memoryDocs[i].id));
+  } catch (e) { lee.memoryLoaded = false; body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+}
+async function leeMemoryPurge() {
+  let docs = lee.memoryDocs;
+  if (!docs) docs = (await api('/memory/info')).items || [];
+  if (!docs.length) return status('memory is already empty', 'info');
+  const m = modal(`<div class="lee-mhead">Purge memory<span class="sub">remove bad or irrelevant sources</span></div>` +
+    `<div class="lee-memory-purge-list">${docs.map((doc, i) => `<label><input type="checkbox" value="${esc(doc.id)}">` +
+      `<span><strong>${esc(doc.title)}</strong><small>${esc(doc.source || doc.kind || '')}</small></span></label>`).join('')}</div>` +
+    `<div class="lee-mfoot"><button class="lee-btn warn" data-selected>purge selected</button>` +
+    `<span class="lee-spacer"></span><button class="lee-btn warn" data-all>purge everything</button></div>`);
+  $('[data-selected]', m).onclick = async () => {
+    const ids = $$('input:checked', m).map(x => x.value);
+    if (!ids.length) return status('select at least one source to purge', 'err');
+    if (!await confirmDialog('purge selected memory', `Remove ${ids.length} document${ids.length === 1 ? '' : 's'} and all indexed sections?`)) return;
+    await post('/memory/purge', {ids}); m.remove(); lee.memoryLoaded = false; lee.memoryDocs = null; leeMemoryHome();
+  };
+  $('[data-all]', m).onclick = async () => {
+    if (!await confirmDialog('purge all research memory', `Remove all ${docs.length} documents, trees, chunks and vectors?`)) return;
+    await post('/memory/purge', {ids: null}); m.remove(); lee.memoryLoaded = false; lee.memoryDocs = null; leeMemoryHome();
+  };
+}
+async function leeMemorySearch() {
+  const input = $('#memoryquery'), body = $('#memorybody'), q = input?.value.trim(); if (!q || !body) return;
+  body.innerHTML = '<div class="lee-memory-empty">Searching remembered sections…</div>';
+  try {
+    const d = await api('/memory/search?q=' + encodeURIComponent(q)); lee.memoryHits = d.results || [];
+    $('#memorystatus').textContent = `· ${d.note || ''}`;
+    body.innerHTML = lee.memoryHits.length ? memoryRows(lee.memoryHits, 'hit') : '<div class="lee-memory-empty">Nothing remembered matches this query.</div>';
+    $$('.lee-memory-hit', body).forEach((row, i) => row.onclick = () => leeMemoryRead(lee.memoryHits[i].node_id));
+  } catch (e) { body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+}
+async function leeMemoryTree(doc) {
+  const body = $('#memorybody'); if (!body) return;
+  body.innerHTML = '<div class="lee-memory-empty">Reading document structure…</div>';
+  const d = await api('/memory/toc?doc=' + encodeURIComponent(doc || ''));
+  const flatten = (node, depth = 0, out = []) => {
+    if (node) { out.push({...node, depth}); (node.children || []).forEach(child => flatten(child, depth + 1, out)); }
+    return out;
+  };
+  const document = (d.documents || [])[0], rows = document ? flatten(document.tree) : [];
+  body.innerHTML = `<div class="lee-memory-tree-actions"><button class="lee-btn lee-memory-back" onclick="leeMemoryHome()">Back to memory</button>` +
+    `${document ? '<button class="lee-btn warn" data-forget>Forget document</button>' : ''}</div>` +
+    `<div class="lee-memory-breadcrumb">${esc(document?.title || 'Document tree')}</div>` +
+    (rows.length ? rows.map((row, i) => `<button class="lee-memory-hit lee-memory-tree" style="--depth:${row.depth}" data-node="${esc(row.id)}">` +
+      `<span class="lee-memory-index">${String(i + 1).padStart(2, '0')}</span><span class="lee-memory-copy"><strong>${esc(row.title)}</strong>` +
+      `<small>${esc(row.summary || `${row.nchunks || 0} chunks`)}</small></span><span class="lee-memory-kind">L${row.level}</span></button>`).join('') :
+      '<div class="lee-memory-empty">No section tree is available.</div>');
+  $$('[data-node]', body).forEach(row => row.onclick = () => leeMemoryRead(row.dataset.node));
+  const forget = $('[data-forget]', body);
+  if (forget) forget.onclick = async () => {
+    if (!await confirmDialog('forget research document', `Remove ${document.title} and all of its remembered sections?`)) return;
+    await post('/memory/forget', {id: document.doc_id}); lee.memoryLoaded = false; leeMemoryHome();
+  };
+}
+async function leeMemoryRead(node) {
+  if (!node) return;
+  const body = $('#memorybody'); body.innerHTML = '<div class="lee-memory-empty">Assembling the section…</div>';
+  const d = await api('/memory/read?node=' + encodeURIComponent(node)), section = d.section || {};
+  body.innerHTML = `<button class="lee-btn lee-memory-back" onclick="leeMemoryHome()">Back to memory</button>` +
+    `<div class="lee-memory-breadcrumb">${esc(section.breadcrumb || section.title || node)}</div><article class="lee-memory-reader"></article>`;
+  renderMarkdown($('.lee-memory-reader', body), section.text || 'No section text was retained.');
+}
+async function leeMemoryTopics() {
+  const body = $('#memorybody'); if (!body) return;
+  lee.memoryLoaded = 'loading'; leePane('right', true); leeRight('memory'); setMemoryView('topics'); body.innerHTML = '<div class="lee-memory-empty">Clustering remembered research…</div>';
+  const d = await api('/memory/clusters'); lee.memoryTopics = d.clusters || [];
+  $('#memorystatus').textContent = `· ${d.note || 'topics'}`;
+  body.innerHTML = lee.memoryTopics.length ? memoryRows(lee.memoryTopics, 'topic') : `<div class="lee-memory-empty">${esc(d.note || 'Not enough remembered material to form topics.')}</div>`;
+  $$('.lee-memory-topic', body).forEach((row, i) => row.onclick = () => {
+    const topic = lee.memoryTopics[i], members = topic.members || [];
+    body.innerHTML = `<button class="lee-btn lee-memory-back" onclick="leeMemoryTopics()">Back to topics</button>` +
+      `<div class="lee-memory-breadcrumb">${esc(topic.label || 'Topic')} · ${topic.size || members.length} sections</div>` +
+      (members.length ? memoryRows(members, 'hit') : '<div class="lee-memory-empty">No representative sections.</div>');
+    $$('.lee-memory-hit', body).forEach((member, at) => member.onclick = () => leeMemoryRead(members[at].node_id));
+  });
+}
+window.leeMemoryHome = leeMemoryHome; window.leeMemorySearch = leeMemorySearch; window.leeMemoryPurge = leeMemoryPurge;
+window.leeMemoryTree = leeMemoryTree; window.leeMemoryRead = leeMemoryRead; window.leeMemoryTopics = leeMemoryTopics;
+
+function rememberAgentLive() {
+  if (!lee.agentView || lee.agentView === 'live') lee.agentLive = $('#agentlog')?.innerHTML || '';
+}
+function restoreAgentLive() {
+  const log = $('#agentlog'); if (!log) return;
+  log.innerHTML = lee.agentLive || ''; lee.agentView = 'live';
+  $('#agenthistory')?.classList.remove('active');
   log.scrollTop = log.scrollHeight;
 }
-window.leeAgentTranscript = leeAgentTranscript;
+function userMessage(text) {
+  const raw = String(text || '').trim(), long = raw.length > 900 || raw.split('\n').length > 14;
+  const card = document.createElement('section'); card.className = 'lee-user-message';
+  const head = document.createElement('header');
+  head.innerHTML = '<strong>You</strong><span>request</span>'; card.appendChild(head);
+  if (!long) {
+    const body = document.createElement('div'); body.className = 'lee-user-message-body';
+    body.textContent = raw; card.appendChild(body); return card;
+  }
+  const lines = raw.split('\n');
+  const preview = lines.slice(0, 6).join('\n').slice(0, 620).trimEnd();
+  const body = document.createElement('div'); body.className = 'lee-user-message-body preview';
+  body.textContent = preview + (preview.length < raw.length ? '\n…' : ''); card.appendChild(body);
+  const more = document.createElement('details'); more.className = 'lee-user-message-more';
+  more.innerHTML = `<summary>Show full request <span>${raw.length.toLocaleString()} characters · ${lines.length} lines</span>` +
+    `<i class="lee-agent-step-chevron" aria-hidden="true"></i></summary><pre></pre>`;
+  more.querySelector('pre').textContent = raw; card.appendChild(more);
+  return card;
+}
+function usageMeta(usage, label = '', model = '') {
+  if (!usage && !label) return null;
+  const u = usage || {}, parts = [];
+  if (Number(u.total)) parts.push(`${Number(u.total).toLocaleString()} tokens`);
+  if (Number(u.input)) parts.push(`${Number(u.input).toLocaleString()} input`);
+  if (Number(u.output)) parts.push(`${Number(u.output).toLocaleString()} output`);
+  if (Number(u.cached)) parts.push(`${Number(u.cached).toLocaleString()} cached`);
+  if (Number(u.reasoning)) parts.push(`${Number(u.reasoning).toLocaleString()} reasoning`);
+  if (Number(u.cost)) parts.push(`$${Number(u.cost).toFixed(4)}`);
+  if (!parts.length && label) parts.push(label);
+  if (model || u.model) parts.push(String(model || u.model).split('/').pop());
+  const el = document.createElement('footer'); el.className = 'lee-turn-usage';
+  el.setAttribute('aria-label', 'Token usage and estimated cost for this turn');
+  el.innerHTML = `<span class="lee-turn-usage-mark" aria-hidden="true">∑</span>` + parts.map((part, i) => `<span${i === parts.length - 1 ? ' class="model"' : ''}>${esc(part)}</span>`).join('');
+  return el;
+}
+
+function renderTurns(log, turns, heading) {
+  if (heading) log.insertAdjacentHTML('beforeend', `<div class="lee-vgroup">${esc(heading)}</div>`);
+  for (const turn of (turns || [])) {
+    const item = document.createElement('article'); item.className = 'lee-history-turn';
+    item.innerHTML = `<div class="lee-history-meta"><span>${esc(turn.model)}</span>` +
+      `<span>${esc(turn.plan?.route || 'direct')}</span></div>`;
+    item.appendChild(userMessage(turn.prompt));
+    if ((turn.activity || []).length) {
+      const steps = document.createElement('div'); steps.className = 'lee-agent-steps';
+      for (const activity of turn.activity) {
+        const row = document.createElement('details'); renderAgentStep(row, activity); steps.appendChild(row);
+      }
+      item.appendChild(steps);
+    }
+    const reply = document.createElement('div'); reply.className = 'lee-reply'; item.appendChild(reply);
+    renderMarkdown(reply, turn.reply || '');
+    const usage = usageMeta(turn.usage, turn.usage_label, turn.model); if (usage) item.appendChild(usage);
+    log.appendChild(item);
+  }
+}
+const sessionTime = s => s.started ? new Date(s.started * 1000).toLocaleString() : s.id.replace(/^agent_/, '');
+async function showHistorySession(group, groups) {
+  const log = $('#agentlog'); if (!log) return; log.innerHTML = '';
+  const index = document.createElement('nav'); index.className = 'lee-history-index';
+  const options = (groups || []).map(s => {
+    const models = (s.models || []).map(m => m.split('/').pop()).join(' + ') || 'execution';
+    const label = `${sessionTime(s)} · ${models} · ${s.turns.length} turn${s.turns.length === 1 ? '' : 's'}`;
+    return `<option value="${esc(s.id)}"${s.id === group?.id ? ' selected' : ''}>${esc(label)}</option>`;
+  }).join('');
+  index.innerHTML = `<div class="lee-history-heading"><strong>History</strong>` +
+    `<span>one continuous model context per session</span></div>` +
+    `<select class="lee-select lee-history-select" aria-label="agent history session">${options}</select>` +
+    `<span class="lee-history-runs">${group?.code || 0} kernel run${group?.code === 1 ? '' : 's'}</span>`;
+  index.querySelector('select')?.addEventListener('change', e =>
+    showHistorySession(groups.find(s => s.id === e.target.value), groups));
+  log.appendChild(index);
+  if (!group) { log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>'); return; }
+  log.insertAdjacentHTML('beforeend', `<div class="lee-history-session-head"><strong>${esc(sessionTime(group))}</strong>` +
+    `<span>${group.context_continues ? 'context continued across these turns' : 'separate context'}</span></div>`);
+  renderTurns(log, group.turns || [], 'conversation');
+  if (group.code || group.id.startsWith('agent_')) {
+    const transcript = await api('/agent/transcript?session=' + encodeURIComponent(group.id));
+    if ((transcript.cells || []).length) {
+      log.insertAdjacentHTML('beforeend', '<div class="lee-vgroup">code executed in this session</div>');
+      renderSessionCells(log, transcript);
+    }
+  }
+  log.scrollTop = 0;
+}
+async function leeAgentHistory() {
+  if (lee.agentView === 'history') return restoreAgentLive();
+  rememberAgentLive(); lee.agentView = 'history'; $('#agenthistory')?.classList.add('active');
+  const d = await api('/agent/history');
+  await showHistorySession((d.sessions || [])[0], d.sessions || []);
+}
+window.leeAgentHistory = leeAgentHistory;
+
+async function leeAgentState() {
+  try {
+    const [draft, saved, template] = await Promise.all([api('/agent/state/draft'), api('/agent/states'), api('/agent/state/template')]);
+    const rows = (saved.states || []).map(s => `<button class="lee-agent-state-row" data-id="${esc(s.id)}">` +
+      `<strong>${esc(s.title)}</strong><span>${esc(new Date((s.added_at || 0) * 1000).toLocaleString())}</span></button>`).join('');
+    const box = modal(`<div class="lee-mhead">Agent state<span class="sub">remembered rules that stay visible and follow the code</span></div>` +
+      `<section class="lee-agent-state-onboard${saved.active ? ' configured' : ''}"${saved.active ? ' hidden' : ''}><div><strong>Start with a worked template</strong>` +
+      `<span>Describe what you want this agent to do. The configured summary model fills a complete charter using only tools that are actually installed.</span></div>` +
+      `<input class="lee-input" id="agentstateintent" placeholder="e.g. Maintain this Python project; inspect before editing and run focused tests">` +
+      `<button class="lee-btn go" data-bootstrap>Generate my charter</button><button class="lee-btn" data-template>Use blank template</button></section>` +
+      `<div class="lee-agent-state-grid"><section><div class="lee-agent-state-controls"><label>Where this applies<select class="lee-select" id="agentstatelayer">` +
+      `${['organization','project','task','preferences','branch','ephemeral'].map(x => `<option value="${x}"${x === 'task' ? ' selected' : ''}>${x}</option>`).join('')}</select></label>` +
+      `<button class="lee-btn" data-update>Refresh from code</button><button class="lee-btn" data-diagnose>Check state</button></div>` +
+      `<label class="lee-fieldlabel">Title<input class="lee-input" id="agentstatetitle" value="Working state"></label>` +
+      `<div class="lee-state-editor-head"><span>Markdown charter</span><button class="lee-btn" data-add-rule>Add rule</button>` +
+      `<button class="lee-btn" data-add-check>Add verification</button><button class="lee-btn" data-add-tool>Add tool route</button>` +
+      `<button class="lee-btn" data-preview-state>Preview</button></div><div class="lee-agent-state-editor" id="agentstatetext"></div>` +
+      `<div class="lee-agent-state-help" data-state-help>Keep goal, constraints, progress, decisions, next steps, and critical context. ` +
+      `This is an explicit briefing, not hidden chat history.</div></section>` +
+      `<section class="lee-agent-state-reference"><nav class="lee-state-ref-tabs"><button class="active" data-ref="conversation">Conversation</button>` +
+      `<button data-ref="tools">Tools</button><button data-ref="preview">Preview</button><button data-ref="saved">Saved</button></nav>` +
+      `<div class="lee-state-ref-pane active" data-ref-pane="conversation"><pre class="lee-agent-conversation">${esc(draft.conversation || '(no completed turns)')}</pre></div>` +
+      `<div class="lee-state-ref-pane" data-ref-pane="tools"><div class="lee-state-tool-list">${template.tools.map(t => `<button data-tool-name="${esc(t.name)}"><strong>${esc(t.name)}</strong><span>${esc(t.group)} · ${esc(t.description)}</span></button>`).join('')}</div></div>` +
+      `<div class="lee-state-ref-pane lee-md" data-ref-pane="preview" id="agentstatepreview"></div>` +
+      `<div class="lee-state-ref-pane" data-ref-pane="saved"><div class="lee-agent-state-list">${rows || '<div class="lee-dim">No saved states yet.</div>'}</div></div></section></div>` +
+      `<div class="lee-mfoot"><button class="lee-btn go" data-save>Save to memory + activate</button>` +
+      `<button class="lee-btn" data-activate>Activate without saving</button>` +
+      `<span class="lee-dim">Drag the lower-right edge to resize · double-click the title to expand.</span></div>`,
+      null, null, {className: 'lee-agent-state-modal', storageKey: 'agent-state'});
+    const text = $('#agentstatetext', box), layer = $('#agentstatelayer', box);
+    const stateView = createEditor(text, {doc: '', lang: 'markdown', lineNums: true, lintPath: '<agent-state>',
+      placeholder: '# Agent charter\n\nDescribe how this agent should work…'});
+    Object.defineProperty(text, 'value', {get: () => LeeCM.getDoc(stateView), set: value => LeeCM.setDoc(stateView, String(value || ''))});
+    const insertStateMarkdown = value => {
+      const at = LeeCM.cursor(stateView), prefix = at && !text.value.slice(0, at).endsWith('\n') ? '\n' : '';
+      LeeCM.replaceRange(stateView, at, at, prefix + value); LeeCM.focus(stateView);
+    };
+    const showReference = name => {
+      $$('.lee-state-ref-tabs button', box).forEach(b => b.classList.toggle('active', b.dataset.ref === name));
+      $$('.lee-state-ref-pane', box).forEach(p => p.classList.toggle('active', p.dataset.refPane === name));
+      if (name === 'preview') renderMarkdown($('#agentstatepreview', box), text.value, true);
+    };
+    $$('.lee-state-ref-tabs button', box).forEach(b => b.onclick = () => showReference(b.dataset.ref));
+    $('[data-preview-state]', box).onclick = () => showReference('preview');
+    $('[data-add-rule]', box).onclick = () => insertStateMarkdown('\n- [Write a clear, testable rule.]');
+    $('[data-add-check]', box).onclick = () => insertStateMarkdown('\n- [Describe the evidence required before completion.]');
+    $('[data-add-tool]', box).onclick = () => showReference('tools');
+    $$('.lee-state-tool-list button', box).forEach(b => b.onclick = () => {
+      const tool = template.tools.find(t => t.name === b.dataset.toolName);
+      insertStateMarkdown(`\n- ${tool.name} → ${tool.description}`); showReference('preview');
+    });
+    const loadLayer = () => { text.value = saved.layers?.[layer.value]?.text || (layer.value === 'task' ? draft.state : ''); };
+    loadLayer(); layer.onchange = loadLayer;
+    $('[data-template]', box).onclick = async () => {
+      const d = await api('/agent/state/template'); text.value = d.template + '\n\n' + d.catalog;
+      $('[data-state-help]', box).textContent = 'Template loaded. Replace bracketed prompts, then activate or save it.';
+    };
+    $('[data-bootstrap]', box).onclick = async () => {
+      const button = $('[data-bootstrap]', box); button.disabled = true; button.textContent = 'Generating…';
+      try {
+        const d = await post('/agent/state/bootstrap', {intent: $('#agentstateintent', box).value});
+        text.value = d.text; $('#agentstatetitle', box).value = ($('#agentstateintent', box).value || 'Workspace agent charter').slice(0, 80);
+        $('[data-state-help]', box).textContent = `Drafted with ${d.model}. Read every rule, then save + activate.`;
+      } catch (e) { $('[data-state-help]', box).textContent = e.message || String(e); }
+      finally { button.disabled = false; button.textContent = 'Generate my charter'; }
+    };
+    $('[data-update]', box).onclick = async () => {
+      const d = await post('/agent/state/update', {current: text.value, conversation: draft.conversation});
+      const review = modal(`<div class="lee-mhead">Review proposed state update<span class="sub">nothing changes until you apply it</span></div>` +
+        `<div class="lee-diff lee-state-update-diff">${diffHtml(d.diff.rows || [])}</div>` +
+        `<div class="lee-mfoot"><button class="lee-btn go" data-accept>Apply to editor</button>` +
+        `<button class="lee-btn" data-reject>Keep current state</button></div>`);
+      $('[data-accept]', review).onclick = () => { text.value = d.text; review.remove(); $('[data-state-help]', box).textContent = 'Proposed update applied to the editor. Review before saving or activating.'; };
+      $('[data-reject]', review).onclick = () => review.remove();
+    };
+    $('[data-diagnose]', box).onclick = async () => {
+      const d = await post('/agent/state/diagnostics', {text: text.value});
+      $('[data-state-help]', box).textContent = `${d.tokens} tokens` +
+        (d.missing_paths.length ? ` · missing paths: ${d.missing_paths.join(', ')}` : ' · paths current') +
+        (d.duplicate_headings.length ? ` · duplicate headings: ${d.duplicate_headings.join(', ')}` : '');
+    };
+    const markActive = () => {
+      const badge = $('#agentnames'); if (badge) badge.textContent = 'state active';
+      $('.lee-agent-welcome', $('#agentlog'))?.remove();
+    };
+    $('[data-save]', box).onclick = async () => {
+      const d = await post('/agent/state/save', {title: $('#agentstatetitle', box).value, text: text.value, layer: layer.value, activate: true});
+      markActive(); status(d.saved?.skipped ? 'state already in memory and activated' : 'state saved to memory and activated', 'ok'); box.remove();
+    };
+    $('[data-activate]', box).onclick = async () => {
+      await post('/agent/state/activate', {text: text.value, layer: layer.value});
+      markActive(); status('starting state activated without saving', 'ok'); box.remove();
+    };
+    $$('.lee-agent-state-row', box).forEach(row => row.onclick = async () => {
+      const compared = await post('/agent/state/compare', {id: row.dataset.id, current: text.value});
+      const review = modal(`<div class="lee-mhead">Compare state revision<span class="sub">choose how this revision enters ${esc(layer.value)}</span></div>` +
+        `<div class="lee-diff lee-state-update-diff">${diffHtml(compared.diff.rows || [])}</div>` +
+        `<div class="lee-mfoot"><button class="lee-btn go" data-replace>Replace + activate</button>` +
+        `<button class="lee-btn" data-merge>Merge below current</button><button class="lee-btn" data-cancel>Cancel</button></div>`);
+      $('[data-replace]', review).onclick = async () => {
+        const d = await post('/agent/state/load', {id: row.dataset.id, layer: layer.value}); text.value = d.state;
+        review.remove(); $$('.lee-agent-state-row', box).forEach(x => x.classList.toggle('active', x === row)); status('saved revision restored and active', 'ok');
+      };
+      $('[data-merge]', review).onclick = () => { text.value = text.value.trim() + '\n\n' + compared.state.trim(); review.remove(); status('revision merged into editor; review before activation', 'ok'); };
+      $('[data-cancel]', review).onclick = () => review.remove();
+    });
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+window.leeAgentState = leeAgentState;
+
+function renderSessionCells(log, d) {
+  if (d.path) log.insertAdjacentHTML('beforeend', `<div class="lee-session-path">${esc(d.path)}</div>`);
+  for (const [i, cell] of (d.cells || []).entries()) {
+    if (cell.cell_type === 'markdown') {
+      const md = document.createElement('div'); md.className = 'lee-session-markdown';
+      renderMarkdown(md, cell.source); log.appendChild(md); continue;
+    }
+    const details = document.createElement('details'); details.className = 'lee-session-code';
+    const first = (cell.source || '').split('\n').find(x => x.trim()) || '(empty code cell)';
+    details.innerHTML = `<summary><span>run ${i + 1}</span><code>${esc(first)}</code>` +
+      `<span class="lee-agent-step-chevron" aria-hidden="true"></span></summary><div class="lee-session-code-body"></div>`;
+    let mounted = false;
+    details.ontoggle = () => {
+      if (!details.open || mounted) return; mounted = true;
+      requestAnimationFrame(() => mountCodeSurface($('.lee-session-code-body', details), cell.source, 'python', true));
+    };
+    log.appendChild(details);
+  }
+}
 
 function agentLog(html) {
   const log = $('#agentlog');
-  log.innerHTML += html;
+  // Never use `innerHTML +=`: it reparses every existing child and silently detaches all
+  // checkpoint, fork, rollback, CodeMirror, and disclosure handlers already in the log.
+  log.insertAdjacentHTML('beforeend', html);
   log.scrollTop = log.scrollHeight;
 }
 
+/* A write pauses Rishi's tool loop until it is answered. Keep the question in the agent
+ * pane rather than a modal, so the rest of the IDE remains usable while the model waits.
+ * The same event is used by agent-chat and notebook prompt-cell streams. */
+const approvalCards = new Map(), resolvedProposalCards = [];
+function proposalArgs(card) {
+  const schema = card._schema, args = {};
+  for (const field of (schema?.fields || [])) {
+    const input = card.querySelector(`[data-field="${CSS.escape(field.name)}"]`);
+    if (!input) continue;
+    if (field.kind === 'boolean') args[field.name] = input.checked;
+    else {
+      const raw = input._leeView ? LeeCM.getDoc(input._leeView) : input.value;
+      if (!field.required && raw === '') continue;
+      if (field.kind === 'integer') args[field.name] = Number.parseInt(raw, 10);
+      else if (field.kind === 'number') args[field.name] = Number.parseFloat(raw);
+      else args[field.name] = raw;
+      if (field.required && (args[field.name] === '' || Number.isNaN(args[field.name])))
+        throw new Error(`${field.name} is required`);
+    }
+  }
+  return args;
+}
+function proposalFields(schema, args) {
+  return (schema?.fields || []).map(field => {
+    const value = args[field.name] ?? field.default ?? '', required = field.required ? ' required' : '';
+    if (field.kind === 'boolean')
+      return `<label class="lee-proposal-check"><input type="checkbox" data-field="${esc(field.name)}"${value ? ' checked' : ''}>${esc(field.name)}</label>`;
+    const type = field.kind === 'integer' || field.kind === 'number' ? 'number' : 'text';
+    const control = field.multiline
+      ? `<div class="lee-proposal-field-editor" data-field="${esc(field.name)}" data-value="${esc(value)}"${required}></div>`
+      : `<input class="lee-input" type="${type}" data-field="${esc(field.name)}" value="${esc(value)}"${required}>`;
+    return `<label><span>${esc(field.name)}${field.required ? ' *' : ''}</span>${control}</label>`;
+  }).join('');
+}
+function mountProposalEditors(card) {
+  $$('[data-field-editor], .lee-proposal-field-editor', card).forEach(host => {
+    if (host._leeView) return;
+    const field = host.dataset.field || '', tool = $('[data-tool]', card)?.value || '';
+    const lang = field === 'commands' ? 'json' : field === 'text' || field === 'source'
+      ? codeLang('', proposalArgsSafe(card).path || '') : tool.includes('python') ? 'python' : 'text';
+    host._leeView = createEditor(host, {doc: host.dataset.value || '', lang, lineNums: true});
+  });
+}
+function proposalArgsSafe(card) { try { return proposalArgs(card); } catch (_) { return {}; } }
+function groupedToolOptions(schemas, selected) {
+  const groups = new Map();
+  for (const schema of schemas) {
+    if (!groups.has(schema.group)) groups.set(schema.group, []);
+    groups.get(schema.group).push(schema);
+  }
+  return [...groups].map(([group, tools]) => `<optgroup label="${esc(group)}">` + tools.map(tool =>
+    `<option value="${esc(tool.name)}"${tool.name === selected ? ' selected' : ''}>${esc(tool.name)} — ${esc(tool.description)}</option>`).join('') + '</optgroup>').join('');
+}
+function previewContent(preview) {
+  if (!preview) return '<div class="lee-proposal-empty">No preview available.</div>';
+  if (preview.kind === 'diff') return `<div class="lee-diff">${diffHtml(preview.rows || [])}</div>`;
+  return `<pre class="lee-proposal-code">${esc(preview.text || '')}</pre>`;
+}
+async function refreshProposalPreview(card) {
+  const host = $('[data-preview-body]', card), error = $('.lee-proposal-error', card);
+  if (!host) return;
+  try {
+    const args = card._previewArgs || proposalArgs(card), tool = $('[data-tool]', card).value;
+    card._previewArgs = null;
+    host.innerHTML = '<div class="lee-proposal-loading"><i></i><i></i><i></i><span>Building dry-run preview</span></div>';
+    const d = await post('/agent/tool-preview', {tool, args});
+    host.innerHTML = previewContent(d.preview); error.textContent = '';
+  } catch (e) { host.innerHTML = ''; error.textContent = e.message || String(e); }
+}
+function checkpointExplanation(tool, args = {}, schema = {}) {
+  const target = args.path ? compactPath(args.path) : args.cwd ? compactPath(args.cwd) : '';
+  if (tool === 'run_shell') return {
+    title: 'Command approval',
+    lead: `The agent wants to run a shell command${target ? ` in ${target}` : ''}. Nothing runs until you approve.`,
+    detail: 'Commands can read files, use the network, start processes, and change data. Open “Edit call” to review or change the command.'};
+  if (tool === 'run_python') return {
+    title: 'Python approval', lead: 'The agent wants to execute Python in the live workspace. Nothing runs until you approve.',
+    detail: 'This can change variables and process state. Open “Edit call” to review or change the code.'};
+  if (schema.changes_state) return {
+    title: 'Change approval', lead: `The agent wants to change ${target || 'the workspace'}. Nothing changes until you approve.`,
+    detail: 'Review the preview, edit the call if needed, then choose how far the agent may continue.'};
+  return {title: 'Tool approval', lead: `The agent wants to use ${tool}. Nothing runs until you approve.`,
+    detail: 'This is a read-only call. You can review its inputs now and run it again later with different inputs.'};
+}
+function checkpointResult(detail, ok, secs) {
+  const result = document.createElement('details'); result.className = 'lee-checkpoint-result';
+  const summary = document.createElement('summary');
+  summary.innerHTML = `<strong>${ok ? 'Completed' : 'Failed'}</strong><span>${Number(secs || 0).toFixed(1)}s · View output</span>`;
+  const pre = document.createElement('pre'); pre.textContent = readableDetail(detail);
+  result.append(summary, pre); return result;
+}
+function showApproval(a) {
+  if (!a?.id || approvalCards.has(a.id)) return;
+  leePane('right', true); leeRight('agent');
+  if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
+  const log = $('#agentlog'); if (!log) return;
+  const schemas = a.schemas || [], byName = new Map(schemas.map(s => [s.name, s]));
+  const card = document.createElement('section');
+  card.className = 'lee-approval lee-proposal proposed'; card.dataset.id = a.id; card.dataset.tool = a.tool; card.tabIndex = -1;
+  const pendingRow = [...$$('.lee-agent-step.pending', log)].at(-1);
+  if (pendingRow) { pendingRow.hidden = true; card._activityRow = pendingRow; }
+  card._schema = byName.get(a.tool) || {name: a.tool, fields: Object.keys(a.args || {}).map(name => ({name, kind: 'string'}))};
+  const explanation = checkpointExplanation(a.tool, a.args, card._schema);
+  card.innerHTML = `<header class="lee-approval-head"><span class="lee-proposal-mark" aria-hidden="true"></span>` +
+    `<span class="lee-checkpoint-title"><strong>${esc(explanation.title)}</strong><small><b>${esc(a.control || 'guided')}</b> paused for your decision</small></span>` +
+    `<kbd>↵ run&nbsp;&nbsp; ⇧↵ don’t run&nbsp;&nbsp; E edit&nbsp;&nbsp; S steer</kbd></header>` +
+    `<div class="lee-checkpoint-intro"><strong>${esc(explanation.lead)}</strong><span>${esc(explanation.detail)}</span></div>` +
+    `<div class="lee-approval-summary"><span>Agent’s reason</span>${esc(a.summary || '')}</div>` +
+    `<nav class="lee-proposal-tabs"><button class="active" data-tab="preview">What will happen</button>` +
+    `<button data-tab="call">Edit call</button><button data-tab="json">Raw JSON</button></nav>` +
+    `<section class="lee-proposal-pane active" data-pane="preview"><div data-preview-body>` +
+    `<pre class="lee-proposal-code">${esc(a.preview || '')}</pre></div></section>` +
+    `<section class="lee-proposal-pane" data-pane="call"><div class="lee-proposal-fields">` +
+    `<label><span>Tool</span><select class="lee-select" data-tool>${groupedToolOptions(schemas, a.tool)}</select></label>` +
+    `<div data-schema-fields>${proposalFields(card._schema, a.args || {})}</div></div></section>` +
+    `<section class="lee-proposal-pane" data-pane="json"><textarea class="lee-input lee-proposal-json" data-args spellcheck="false"></textarea></section>` +
+    `<div class="lee-proposal-error" role="alert"></div>` +
+    `<div class="lee-proposal-steer"><label><span>If you don’t run it, tell the agent what to do instead</span>` +
+    `<input class="lee-input" data-note placeholder="Optional: use another approach, inspect a different file…"></label></div>` +
+    `<footer class="lee-approval-actions"><button class="lee-btn warn" data-ok="0">Don’t run</button>` +
+    `<span class="lee-spacer"></span><label class="lee-run-policy-label"><span>After this</span>` +
+    `<select class="lee-select" data-run-policy title="how far the agent may continue without another pause">` +
+    `<option value="once">Pause again</option><option value="count:3">Allow next 3 tools</option>` +
+    `<option value="until_write">Allow reads, pause before changes</option><option value="reads">Allow read-only tools</option>` +
+    `<option value="until_failure">Continue until a tool fails</option><option value="completion">Continue until finished</option>` +
+    `<option value="approve_session">Trust changes for this session</option></select></label>` +
+    `<button class="lee-btn go" data-ok="1">Run this tool</button></footer>`;
+  const raw = $('[data-args]', card); raw.value = JSON.stringify(a.args || {}, null, 2); mountProposalEditors(card);
+  const switchTab = name => {
+    $$('.lee-proposal-tabs button', card).forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    $$('.lee-proposal-pane', card).forEach(p => p.classList.toggle('active', p.dataset.pane === name));
+    if (name === 'json') { try { raw.value = JSON.stringify(proposalArgs(card), null, 2); } catch (_) {} }
+    if (name === 'preview') refreshProposalPreview(card);
+  };
+  $$('.lee-proposal-tabs button', card).forEach(b => b.onclick = () => {
+    if (b.dataset.tab === 'preview') { try { card._previewArgs = argsFromUI(); } catch (_) {} }
+    switchTab(b.dataset.tab);
+  });
+  $('[data-tool]', card).onchange = e => {
+    card._schema = byName.get(e.target.value) || {name: e.target.value, fields: []};
+    $('[data-schema-fields]', card).innerHTML = proposalFields(card._schema, {});
+    mountProposalEditors(card); switchTab('call');
+  };
+  const argsFromUI = () => {
+    if ($('[data-pane="json"]', card).classList.contains('active')) {
+      const parsed = JSON.parse(raw.value || '{}');
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('arguments must be a JSON object');
+      return parsed;
+    }
+    return proposalArgs(card);
+  };
+  const answer = async ok => {
+    const buttons = $$('button', card), error = $('.lee-proposal-error', card);
+    // These are two different HITL decisions, not one form with a boolean switch.
+    // Approval executes the displayed call and therefore must parse and validate edits.
+    // Rejection executes no call, so malformed/missing arguments must never trap the user.
+    let args = null, tool = null, changed = false;
+    if (ok) {
+      try {
+        args = argsFromUI(); tool = $('[data-tool]', card).value || a.tool;
+        changed = tool !== a.tool || JSON.stringify(args) !== JSON.stringify(a.args || {});
+        error.textContent = '';
+      } catch (e) { switchTab('call'); error.textContent = e.message || String(e); return; }
+    }
+    buttons.forEach(b => b.disabled = true);
+    try {
+      const note = $('[data-note]', card).value || '';
+      if (ok) {
+        const spec = $('[data-run-policy]', card).value, [policy, count] = spec.split(':');
+        if (!['once', 'approve_session'].includes(policy))
+          await post('/agent/run-policy', {policy, count: Number(count || 1)});
+      }
+      const session = ok && $('[data-run-policy]', card).value === 'approve_session';
+      await post('/agent/approve', {id: a.id, ok, note, session, tool, args});
+      card.classList.remove('proposed'); card.classList.add(ok ? 'running' : 'refused'); if (changed) card.classList.add('edited');
+      const checkpointState = $('.lee-checkpoint-title small', card);
+      if (checkpointState) checkpointState.textContent = ok
+        ? (changed ? 'You edited the call · running now' : 'You approved it · running now')
+        : 'You chose not to run it';
+      const resolvedTool = ok ? tool : a.tool;
+      card.dataset.tool = resolvedTool; card.dataset.resolvedTool = resolvedTool;
+      card.dataset.retryable = String(!!byName.get(resolvedTool)?.retryable);
+      resolvedProposalCards.push(card);
+      $('.lee-approval-actions', card).innerHTML = `<span>${ok ? (changed ? 'Edited call is running' : 'Running approved tool') : (note ? 'Not run · your direction was sent to the agent' : 'Not run')}</span>` +
+        (ok && card.dataset.retryable === 'true' ? `<button class="lee-btn" data-retry title="Run this read-only tool again without changing the conversation">Run again</button>` : '') +
+        (ok && ['edit_file','create_file'].includes(resolvedTool) ? `<button class="lee-btn warn" data-rollback disabled>Undo file change</button>` : '');
+      $('[data-retry]', card)?.addEventListener('click', () => retryProposal(card, resolvedTool, args));
+      const rollback = $('[data-rollback]', card);
+      if (rollback) { setTimeout(() => rollback.disabled = false, 700); rollback.onclick = () => rollbackProposal(card, a.id); }
+      status(ok ? `${changed ? 'edited and ran' : 'ran'} ${resolvedTool}` : `rejected ${a.tool}`, ok ? 'ok' : 'err');
+    } catch (e) { buttons.forEach(b => b.disabled = false); error.textContent = String(e.message || e); }
+  };
+  $('[data-ok="1"]', card).onclick = () => answer(true);
+  $('[data-ok="0"]', card).onclick = () => answer(false);
+  card.onkeydown = e => {
+    if (e.target.matches('input, textarea, select') && e.key !== 'Escape' && !(e.key === 'Enter' && (e.metaKey || e.ctrlKey))) return;
+    if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); answer(false); }
+    else if (e.key === 'Enter') { e.preventDefault(); answer(true); }
+    else if (/^[1-6]$/.test(e.key)) { e.preventDefault(); $('[data-run-policy]', card).selectedIndex = Number(e.key) - 1; }
+    else if (e.key.toLowerCase() === 'e') { e.preventDefault(); switchTab('call'); card.querySelector('[data-field], [data-tool]')?.focus(); }
+    else if (e.key.toLowerCase() === 's') { e.preventDefault(); $('[data-note]', card).focus(); }
+    else if (e.key === 'Escape') switchTab('preview');
+  };
+  log.appendChild(card); approvalCards.set(a.id, card); card.focus(); log.scrollTop = log.scrollHeight;
+  refreshProposalPreview(card); updateAgentRunstrip({waiting: a.tool});
+  status(`${a.tool} is waiting at a checkpoint`, 'err');
+}
+
+function decodeResponseEntities(text) {
+  const area = document.createElement('textarea'); let value = String(text || '');
+  for (let i = 0; i < 3 && /&(?:#\d+|#x[\da-f]+|amp|lt|gt|quot|apos);/i.test(value); i++) {
+    area.innerHTML = value; const decoded = area.value;
+    if (decoded === value) break; value = decoded;
+  }
+  return value;
+}
+function editableResponse(raw) {
+  const tools = '(?:run_shell|run_python|inspect_python|grep|search_code|similar_code|list_files|ls|view_file|create_file|edit_file|replace_text|view_cell|edit_cell|add_cell|web_search|read_url|research|delegate_[\\w-]+)';
+  let text = decodeResponseEntities(raw)
+    .replace(/\n?\s*<details>\s*<summary>result<\/summary>[\s\S]*?<\/details>\s*/gi, '\n');
+  text = text.split('\n').filter(line =>
+    !new RegExp(`^\\s*-\\s*[^\\w<]{0,6}\\s*<code>${tools}\\s*\\(`, 'i').test(line) &&
+    !/^\s*(?:#{1,4}\s*)?what i did\s*$/i.test(line)).join('\n');
+  return text.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function addResponseRevision(out, turnId, raw, capabilities = {}) {
+  if (!turnId || !out || !raw.trim()) return;
+  const bar = document.createElement('div'); bar.className = 'lee-response-revision';
+  const reviseWhy = capabilities.revisable ? 'Correct this answer and continue the next turn from your version'
+    : 'Unavailable: this turn failed before an assistant response entered model history';
+  const undoWhy = capabilities.undoable ? `Restore ${capabilities.files.length} file${capabilities.files.length === 1 ? '' : 's'} changed by this turn`
+    : 'Unavailable: this turn made no reversible file changes';
+  bar.innerHTML = `<span>turn ${esc(turnId.split(':').at(-1))}</span>` +
+    `<button class="lee-btn" data-revise title="${esc(reviseWhy)}"${capabilities.revisable ? '' : ' disabled'}>Edit what agent remembers</button>` +
+    `<button class="lee-btn warn" data-undo title="${esc(undoWhy)}"${capabilities.undoable ? '' : ' disabled'}>Undo turn</button>`;
+  const undoButton = $('[data-undo]', bar), reviseButton = $('[data-revise]', bar);
+  undoButton.onclick = async () => {
+    try {
+      const tx = await api('/agent/turn-transaction?turn_id=' + encodeURIComponent(turnId));
+      const files = tx.transaction.files || [], warning = (tx.transaction.irreversible || []).length
+        ? `\n\nCannot undo external effects: ${tx.transaction.irreversible.join(', ')}` : '';
+      if (!await confirmDialog('Undo agent turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
+      const d = await post('/agent/rollback-turn', {turn_id: turnId});
+      for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
+      bar.classList.add('rolled-back'); $('[data-undo]', bar).disabled = true; status('turn changes rolled back', 'ok');
+    } catch (e) { status(e.message || String(e), 'err'); }
+  };
+  reviseButton.onclick = () => {
+    const original = editableResponse(raw);
+    const box = modal(`<div class="lee-mhead">Shape the next turn<span class="sub">edit what the agent remembers, not the files it touched</span></div>` +
+      `<section class="lee-revision-explainer"><strong>You are correcting the conversation.</strong>` +
+      `<span>Tools will not run again and files will not change. The agent’s next reply will continue as if it gave your edited answer. The original stays in history.</span></section>` +
+      `<div class="lee-revision-layout"><label class="lee-revision-editor"><span>Answer the agent should remember <b>Markdown</b></span>` +
+      `<textarea class="lee-keyedit" data-revision spellcheck="true" aria-label="answer the agent should remember"></textarea></label>` +
+      `<section class="lee-revision-preview"><header><span>How it will read</span><small>live preview</small></header>` +
+      `<div class="lee-md" data-revision-preview></div></section></div>` +
+      `<div class="lee-mfoot"><button class="lee-btn" data-cancel>Keep original</button><span class="lee-spacer"></span>` +
+      `<span class="lee-dim">Creates a new conversation branch</span><button class="lee-btn go" data-apply>Use edited answer</button></div>`,
+      null, null, {className: 'lee-response-editor-modal', storageKey: 'response-editor'});
+    const editor = $('[data-revision]', box), preview = $('[data-revision-preview]', box);
+    editor.value = original;
+    let previewTimer = null;
+    const paint = () => { clearTimeout(previewTimer); previewTimer = setTimeout(() => renderMarkdown(preview, editor.value), 90); };
+    editor.addEventListener('input', paint); paint();
+    $('[data-cancel]', box).onclick = () => box.remove();
+    $('[data-apply]', box).onclick = async () => {
+      const text = editor.value.trim();
+      if (!text) return status('the remembered answer cannot be empty', 'err');
+      const d = await post('/agent/revise', {turn_id: turnId, text});
+      renderMarkdown(out, text); out.dataset.userRevised = '1';
+      bar.innerHTML = `<span>Your edited answer now guides the next turn · ${esc(d.branch_id)}</span>`;
+      box.remove(); status('edited answer is now the active conversation branch', 'ok');
+    };
+  };
+  out.after(bar);
+}
+
+async function retryProposal(card, tool, args) {
+  const copy = structuredClone(args), number = card.querySelectorAll('.lee-proposal-branch').length + 1;
+  try {
+    const d = await post('/agent/retry-tool', {tool, args: copy});
+    const row = document.createElement('section'); row.className = 'lee-proposal-branch';
+    row.innerHTML = `<header><strong>Rerun ${number}</strong><span>${esc(tool)} completed with the inputs shown below</span>` +
+      `<button class="lee-btn" data-edit-retry>Edit inputs and run</button></header>` +
+      `<details class="lee-checkpoint-result"><summary><strong>Result</strong><span>View output</span></summary><pre>${esc(d.result)}</pre></details>` +
+      `<footer><span>This result is not in the conversation yet.</span><button class="lee-btn" data-use-result>Use in next message</button></footer>`;
+    $('[data-edit-retry]', row).onclick = async () => {
+      const text = await textDialog('Run tool with different inputs', 'Arguments as JSON', JSON.stringify(copy, null, 2)); if (!text) return;
+      try { await retryProposal(card, tool, JSON.parse(text)); }
+      catch (e) { status(e.message || String(e), 'err'); }
+    };
+    $('[data-use-result]', row).onclick = () => {
+      const prompt = $('#agentprompt'); if (!prompt) return;
+      const result = String(d.result || '').slice(0, 20_000);
+      prompt.value = `Use this rerun of ${tool} to reconsider your previous answer. Explain what changed and what I should do next.\n\n<rerun-result tool="${tool}">\n${result}\n</rerun-result>`;
+      prompt.dispatchEvent(new Event('input', {bubbles: true})); prompt.focus();
+      row.scrollIntoView({block: 'nearest'}); status('rerun result added to your next message; review it before sending', 'ok');
+    };
+    card.appendChild(row); status(`rerun ${number} completed; previous conversation is unchanged`, 'ok');
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function rollbackProposal(card, id) {
+  try {
+    const d = await post('/agent/rollback-tool', {id});
+    card.classList.add('rolled-back'); $('[data-rollback]', card).disabled = true;
+    status(`${d.path.split('/').pop()} rolled back`, 'ok');
+    if (d.path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(d.path);
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+function runPolicyLabel(policy) {
+  if (!policy) return '';
+  const names = {once: 'next call', count: `next ${policy.remaining}`, until_write: 'until next write',
+    reads: 'read-only calls', until_failure: 'until failure', completion: 'to completion'};
+  return names[policy.kind] || policy.kind;
+}
+function updateAgentRunstrip(state = {}) {
+  const strip = $('#agentrunstrip'); if (!strip) return;
+  strip.hidden = !lee.agentBusy && !state.waiting;
+  const label = state.waiting ? `Waiting · ${state.waiting}`
+    : state.queued_steer ? 'Steering queued · applies after current call'
+    : state.run_policy ? `Running automatically · ${runPolicyLabel(state.run_policy)}`
+    : `${($('#agentcontrol')?.value || 'guided').toUpperCase()} · agent working`;
+  $('.lee-agent-run-state', strip).textContent = label;
+  strip.onclick = e => {
+    if (state.waiting && !e.target.closest('button')) approvalCards.get([...approvalCards.keys()].at(-1))?.scrollIntoView({block: 'center'});
+  };
+}
+async function pauseAgentAfterCurrent() {
+  const d = await post('/agent/run-policy', {policy: 'pause'}); updateAgentRunstrip(d);
+  status('agent will pause before the next call', 'ok');
+}
+async function leeQueueSteer() {
+  const input = $('#agentsteer'), text = input?.value.trim(); if (!text) return status('write a steering instruction first', 'err');
+  try {
+    const d = await post('/agent/steer', {text}); input.value = '';
+    const queue = $('#agentsteerqueue');
+    queue.innerHTML = `<span>Steering queued</span><strong>${esc(text)}</strong><button type="button">Cancel</button>`;
+    $('button', queue).onclick = async () => { await post('/agent/steer', {cancel: true}); queue.innerHTML = ''; updateAgentRunstrip(); };
+    updateAgentRunstrip(d); status('steering queued after the current call', 'ok');
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+window.leeQueueSteer = leeQueueSteer;
+
+async function pollApproval() {
+  try {
+    const r = await api('/agent/approval');
+    if (r.pending) showApproval(r.pending);
+  } catch (_) {}
+}
+
+function readableDetail(value) {
+  const text = String(value || '');
+  try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
+}
+function renderAgentStep(row, a) {
+  const wasOpen = row.open;
+  for (const v of (row._leeViews || [])) try { LeeCM.destroy(v); } catch {}
+  row._leeViews = []; row.innerHTML = '';
+  const deferredEditors = [];
+  row.className = `lee-agent-step kind-${a.kind || 'tool'} ${a.done ? (a.ok ? 'done' : 'failed') : 'pending'}`;
+  const summary = document.createElement('summary');
+  summary.innerHTML = `<span class="lee-agent-step-state" aria-hidden="true"></span>` +
+    `<span class="lee-agent-step-copy">${esc(a.summary || a.tool || 'Working')}</span>` +
+    `<span class="lee-agent-step-meta">${a.done && a.secs ? esc(Number(a.secs).toFixed(1) + 's') : esc(a.kind || '')}</span>` +
+    `<span class="lee-agent-step-chevron" aria-hidden="true"></span>`;
+  row.appendChild(summary);
+
+  const args = a.args && typeof a.args === 'object' ? a.args : {};
+  const code = typeof args.code === 'string' ? args.code : '';
+  const rest = Object.entries(args).filter(([k, v]) => k !== 'code' && v != null && String(v) !== '');
+  if (code || rest.length || a.detail) {
+    const panel = document.createElement('div'); panel.className = 'lee-agent-step-detail';
+    if (rest.length) {
+      const dl = document.createElement('dl');
+      for (const [key, value] of rest) {
+        const dt = document.createElement('dt'), dd = document.createElement('dd');
+        dt.textContent = key; dd.textContent = typeof value === 'string' ? value : JSON.stringify(value);
+        dl.append(dt, dd);
+      }
+      panel.appendChild(dl);
+    }
+    if (code) {
+      const block = document.createElement('div'); panel.appendChild(block);
+      deferredEditors.push(() => row._leeViews.push(mountCodeSurface(block, code, 'python', true)));
+    }
+    if (a.detail) {
+      const result = document.createElement('section'); result.className = 'lee-tool-result';
+      const label = document.createElement('header'); label.textContent = 'result'; result.appendChild(label);
+      const detail = readableDetail(a.detail);
+      if (a.kind === 'view' || a.kind === 'skill') {
+        const block = document.createElement('div'); result.appendChild(block);
+        const path = args.path || (a.kind === 'skill' ? 'note.md' : '');
+        deferredEditors.push(() => row._leeViews.push(mountCodeSurface(
+          block, detail, codeLang('', path), /\.py$/i.test(path))));
+      } else {
+        const pre = document.createElement('pre'); pre.textContent = detail; result.appendChild(pre);
+      }
+      panel.appendChild(result);
+    }
+    row.appendChild(panel); row.open = wasOpen;
+    let mounted = false;
+    const mountDeferred = () => {
+      if (mounted || !row.open) return;
+      mounted = true; requestAnimationFrame(() => deferredEditors.forEach(fn => fn()));
+    };
+    row.ontoggle = mountDeferred;
+    mountDeferred();
+  } else { summary.classList.add('empty'); row.ontoggle = null; }
+}
+
+// A turn gets an immediate, persistent status surface. It is deliberately in the agent
+// log rather than only in the footer: long local inference must still look alive when the
+// footer is out of sight, and the current phase should sit beside the work it describes.
+function agentProgress(log) {
+  const el = document.createElement('section');
+  el.className = 'lee-agent-progress'; el.setAttribute('role', 'status'); el.setAttribute('aria-live', 'polite');
+  el.innerHTML = `<div class="lee-agent-motion" aria-hidden="true"><i></i><i></i><i></i></div>` +
+    `<div class="lee-agent-progress-copy"><strong>Model is working</strong>` +
+    `<span class="lee-agent-phase">Preparing context</span></div>` +
+    `<time class="lee-agent-elapsed">0:00</time>` +
+    `<button class="lee-agent-stop" type="button">Stop</button>`;
+  log.appendChild(el);
+  const began = performance.now(), clock = setInterval(() => {
+    const secs = Math.floor((performance.now() - began) / 1000);
+    $('.lee-agent-elapsed', el).textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  }, 250);
+  $('.lee-agent-stop', el).onclick = () => { $('.lee-agent-phase', el).textContent = 'Stopping after this step'; stopAgent(); };
+  return {
+    phase(text) { $('.lee-agent-phase', el).textContent = text; },
+    finish(ok = true) {
+      clearInterval(clock); el.classList.add(ok ? 'complete' : 'failed');
+      $('.lee-agent-progress-copy strong', el).textContent = ok ? 'Response ready' : 'Model stopped';
+      $('.lee-agent-phase', el).textContent = ok ? 'Finished' : 'The stream ended before completion';
+      $('.lee-agent-stop', el).remove();
+      setTimeout(() => el.remove(), 900);
+    },
+  };
+}
+
+// Slash commands and @ files are resolved inline, without sending a half-written token
+// to the model. Selected files remain visible as removable chips until the turn starts.
+function paintAgentAttachments() {
+  const host = $('#agentattachments'); if (!host) return;
+  const active = lee.path ? `<span class="lee-agent-context" title="The assistant can see the active workspace and open files">` +
+    `<span>active · ${esc(compactPath(lee.path))}</span></span>` : '';
+  const states = lee.stateSuggestions.map(s => `<button type="button" class="lee-agent-state-suggestion" data-state-id="${esc(s.id)}" ` +
+    `title="Preview and attach this remembered starting state">state · ${esc(s.title)}</button>`).join('');
+  host.innerHTML = active + [...lee.agentAttachments.entries()].map(([path, name]) =>
+    `<span class="lee-agent-attachment" title="${esc(path)}"><span>${esc(name)}</span>` +
+    `<button type="button" data-path="${esc(path)}" aria-label="remove ${esc(name)}">remove</button></span>`).join('') + states;
+  $$('.lee-agent-state-suggestion', host).forEach(b => b.onclick = async () => {
+    await post('/agent/state/load', {id: b.dataset.stateId, layer: 'task'});
+    lee.stateSuggestions = []; paintAgentAttachments(); status('relevant state attached to this workspace', 'ok');
+  });
+  $$('button', host).forEach(b => b.onclick = () => { lee.agentAttachments.delete(b.dataset.path); paintAgentAttachments(); });
+}
+function closeAgentSuggest() {
+  const menu = $('#agentsuggest'); if (!menu) return;
+  menu.hidden = true; menu.innerHTML = ''; lee.agentSuggest = []; lee.agentSuggestAt = 0;
+}
+function paintAgentSuggest() {
+  const menu = $('#agentsuggest'); if (!menu) return;
+  menu.hidden = !lee.agentSuggest.length;
+  menu.innerHTML = lee.agentSuggest.map((x, i) =>
+    `<button type="button" role="option" aria-selected="${i === lee.agentSuggestAt}" ` +
+    `class="lee-agent-suggest-row${i === lee.agentSuggestAt ? ' active' : ''}" data-i="${i}">` +
+    `<strong>${esc(x.label)}</strong><span>${esc(x.detail || '')}</span></button>`).join('');
+  $$('button', menu).forEach(b => b.onclick = () => chooseAgentSuggest(+b.dataset.i));
+}
+function chooseAgentSuggest(i = lee.agentSuggestAt) {
+  const item = lee.agentSuggest[i], input = $('#agentprompt'); if (!item || !input) return;
+  if (item.kind === 'command') input.value = `/${item.name} `;
+  else if (item.kind === 'tool' || item.kind === 'skill') {
+    const at = input.selectionStart, before = input.value.slice(0, at);
+    const left = before.replace(/(^|\s)\/(?:[A-Za-z_][\w-]*)?$/, `$1/${item.name} `);
+    input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
+  } else {
+    lee.agentAttachments.set(item.path, item.name);
+    const at = input.selectionStart, left = input.value.slice(0, at).replace(/(^|\s)@[^\s@]*$/, '$1');
+    input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
+    paintAgentAttachments();
+  }
+  closeAgentSuggest(); input.focus();
+}
+let agentSuggestSeq = 0, stateSuggestTimer = null;
+async function suggestAgentState(text) {
+  if (text.trim().length < 18 || text.trim().startsWith('/')) { lee.stateSuggestions = []; return paintAgentAttachments(); }
+  try {
+    const d = await api('/agent/state/suggest?q=' + encodeURIComponent(text.trim()));
+    lee.stateSuggestions = (d.states || []).slice(0, 2); paintAgentAttachments();
+  } catch (_) {}
+}
+async function updateAgentSuggest() {
+  const input = $('#agentprompt'); if (!input) return;
+  const before = input.value.slice(0, input.selectionStart);
+  const slash = before.match(/(?:^|\s)\/([A-Za-z_][\w-]*)?$/), commandSlash = before.match(/^\s*\/([\w-]*)$/);
+  const mention = before.match(/(?:^|\s)@([^\s@]*)$/); const seq = ++agentSuggestSeq;
+  if (slash) {
+    lee.agentVocabulary ||= await api('/agent/commands');
+    if (seq !== agentSuggestSeq) return;
+    const query = (slash[1] || '').toLowerCase(), vocab = lee.agentVocabulary;
+    const commands = commandSlash ? (vocab.commands || []).map(c => ({kind: 'command', ...c})) : [];
+    const tools = (vocab.tools || []).map(t => ({kind: 'tool', ...t}));
+    const skills = (vocab.skills || []).map(s => ({kind: 'skill', ...s}));
+    lee.agentSuggest = [...commands, ...tools, ...skills]
+      .filter(x => x.name.toLowerCase().startsWith(query)).slice(0, 14)
+      .map(x => ({...x, label: '/' + x.name, detail: `${x.kind} · ${x.help || ''}`}));
+  } else if (mention) {
+    const d = await api('/fs/find?q=' + encodeURIComponent(mention[1]) + '&limit=12');
+    if (seq !== agentSuggestSeq) return;
+    lee.agentSuggest = (d.hits || []).slice(0, 12).map(f => ({kind: 'file', path: f.path, name: f.name,
+      label: '@' + f.name, detail: compactPath(f.path)}));
+  } else return closeAgentSuggest();
+  lee.agentSuggestAt = 0; paintAgentSuggest();
+}
+async function leeAgentControl(control) {
+  try {
+    const d = await post('/agent/control', {control});
+    const select = $('#agentcontrol'); if (select) select.value = d.control;
+    status(`agent control: ${d.control}`, 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+window.leeAgentControl = leeAgentControl;
+
+function initAgentComposer() {
+  const input = $('#agentprompt'); if (!input || input.dataset.composerReady) return;
+  input.dataset.composerReady = '1';
+  $('[data-agent-pause]')?.addEventListener('click', pauseAgentAfterCurrent);
+  $('[data-agent-stop]')?.addEventListener('click', stopAgent);
+  const reasoning = $('#agentreasoning');
+  if (reasoning) {
+    reasoning.value = localStorage.getItem('lee-agent-reasoning') || 'auto';
+    reasoning.onchange = () => localStorage.setItem('lee-agent-reasoning', reasoning.value);
+  }
+  const grow = () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(190, Math.max(64, input.scrollHeight)) + 'px';
+  };
+  input.addEventListener('input', () => {
+    grow(); updateAgentSuggest().catch(e => status(String(e.message || e), 'err'));
+    clearTimeout(stateSuggestTimer); stateSuggestTimer = setTimeout(() => suggestAgentState(input.value), 420);
+  });
+  grow();
+  input.addEventListener('keydown', e => {
+    if ($('#agentsuggest')?.hidden) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); const d = e.key === 'ArrowDown' ? 1 : -1;
+      lee.agentSuggestAt = (lee.agentSuggestAt + d + lee.agentSuggest.length) % lee.agentSuggest.length;
+      paintAgentSuggest();
+    } else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); chooseAgentSuggest(); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeAgentSuggest(); }
+  });
+}
+async function sendAgentCommand(line) {
+  const log = $('#agentlog'); log?.appendChild(userMessage(line));
+  try {
+    const d = await post('/agent/command', {line});
+    if (/^\/reload(?:\s|$)/.test(line)) lee.agentVocabulary = null;
+    const out = document.createElement('div'); out.className = 'lee-reply lee-agent-reply'; log?.appendChild(out);
+    renderMarkdown(out, d.text || ''); if (log) log.scrollTop = log.scrollHeight;
+    status('command finished', 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+
 // The assistant's tools edit files on disk, so a turn can change what is on screen.
-// What comes back with the reply is the diff of every open file that actually moved,
-// which is the model's work rather than its account of its work -- and it is what makes
-// re-mounting the tab safe to decide about.
-// Streamed over SSE, because a turn with a tool loop in it is far too long to sit in
-// front of with nothing moving. Three kinds of event arrive: `activity` rows as each tool
-// call starts and finishes, `chunk`s of the answer as the model writes it, and one `done`
-// carrying the diffs. The last is what makes re-mounting the tab safe to decide about:
-// it is the model's work rather than its account of its work.
-function sendAgent() {
+// Activity, answer chunks, and final diffs stream independently; each tool row is updated
+// in place so pending work never remains on screen after that step has finished.
+async function sendAgent() {
+  if (lee.agentBusy) return status('the model is already working', 'err');
+  if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
   const el = $('#agentprompt'); if (!el || !el.value.trim()) return;
-  const q = el.value; el.value = '';
-  agentLog(`<div class="lee-runline"><span class="code">▸ ${esc(q)}</span></div>`);
-  status('thinking…');
+  const q = el.value.trim(); el.value = ''; el.style.height = '64px'; closeAgentSuggest();
+  if (q.startsWith('/')) {
+    try { lee.agentVocabulary ||= await api('/agent/commands'); } catch (_) {}
+    const head = q.slice(1).split(/\s/, 1)[0];
+    if ((lee.agentVocabulary?.commands || []).some(c => c.name === head)) return sendAgentCommand(q);
+  }
+  const attachments = [...lee.agentAttachments.keys()]; lee.agentAttachments.clear(); paintAgentAttachments();
+  lee.agentBusy = true; updateAgentRunstrip();
+  const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
+  log.appendChild(userMessage(q)); log.scrollTop = log.scrollHeight;
+  status('model is working…');
 
-  const log = $('#agentlog');
-  const acts = document.createElement('div');           // tool calls, rewritten in place
-  const out = document.createElement('div');            // the answer, appended to
-  out.className = 'lee-runline';
-  out.innerHTML = '<span class="res"></span>';
-  log.appendChild(acts); log.appendChild(out);
-  const body = out.querySelector('.res');
-  const seen = new Map();
+  const progress = agentProgress(log);
+  const acts = document.createElement('div');
+  acts.className = 'lee-agent-steps';
+  const out = document.createElement('div');
+  out.className = 'lee-reply lee-agent-reply';
+  log.appendChild(acts); log.appendChild(out); log.scrollTop = log.scrollHeight;
+  const body = out, seen = new Map(); let raw = '', finished = false;
 
-  const es = new EventSource('/agent/stream?prompt=' + encodeURIComponent(q));
+  const reasoning = $('#agentreasoning')?.value || 'auto';
+  const es = new EventSource('/agent/stream?prompt=' + encodeURIComponent(q) +
+    '&attachments=' + encodeURIComponent(JSON.stringify(attachments)) +
+    '&reasoning=' + encodeURIComponent(reasoning));
 
   es.addEventListener('activity', ev => {
     const a = JSON.parse(ev.data);
-    // Keyed by id so the ⏳ line a call opens with is *replaced* by its result, rather
-    // than leaving a stale pending row above the finished one.
     let row = seen.get(a.id);
-    if (!row) { row = document.createElement('div'); row.className = 'lee-runline'; acts.appendChild(row); seen.set(a.id, row); }
-    row.innerHTML = `<span class="sub">${esc(a.line)}</span>`;
+    if (!row) {
+      row = document.createElement('details'); acts.appendChild(row); seen.set(a.id, row);
+      row.animate([{opacity: 0, transform: 'translateY(4px)'}, {opacity: 1, transform: 'translateY(0)'}],
+                  {duration: 220, easing: 'cubic-bezier(.16,1,.3,1)'});
+    }
+    renderAgentStep(row, a);
+    const lifecycle = approvalCards.get(a.action_id || a.id);
+    if (lifecycle && a.done) {
+      lifecycle.classList.remove('running', 'proposed'); lifecycle.classList.add(a.ok ? 'complete' : 'failed');
+      const actions = $('.lee-approval-actions', lifecycle);
+      if (actions && !lifecycle.querySelector('.lee-checkpoint-result'))
+        actions.before(checkpointResult(a.detail, a.ok, a.secs));
+      const checkpointState = $('.lee-checkpoint-title small', lifecycle);
+      if (checkpointState) checkpointState.textContent = a.ok ? 'Completed' : 'Tool failed';
+      const actionState = $('.lee-approval-actions > span', lifecycle);
+      if (actionState) actionState.innerHTML = a.ok
+        ? (lifecycle.dataset.retryable === 'true'
+            ? '<strong>Completed</strong><small>You can rerun this read-only tool without changing the conversation.</small>'
+            : '<strong>Completed</strong><small>To run it again, ask the agent so you can review a new checkpoint.</small>')
+        : '<strong>Failed</strong><small>The output above explains what the tool returned.</small>';
+      updateAgentRunstrip();
+    }
+    if (a.done && a.ok && a.kind === 'edit' && a.args?.path) scheduleAgentFileReload(a.args.path);
+    progress.phase(a.done ? 'Reviewing tool results' : (a.summary || `Running ${a.tool}`));
     log.scrollTop = log.scrollHeight;
   });
 
   es.addEventListener('chunk', ev => {
-    body.textContent += JSON.parse(ev.data).text || '';
+    raw += JSON.parse(ev.data).text || '';
+    progress.phase('Writing response');
+    renderMarkdown(body, raw);
     log.scrollTop = log.scrollHeight;
   });
 
+  es.addEventListener('approval', ev => { progress.phase('Waiting for your approval'); showApproval(JSON.parse(ev.data)); });
+  es.addEventListener('execution', ev => updateAgentRunstrip(JSON.parse(ev.data)));
+  es.addEventListener('compaction', ev => {
+    const d = JSON.parse(ev.data), note = document.createElement('details'); note.className = 'lee-compaction-event';
+    note.innerHTML = `<summary>Context compacted automatically · ${esc(d.strategy)} · ${esc(d.note)}</summary><pre>${esc(d.text || '')}</pre>`;
+    acts.appendChild(note); progress.phase('Context compacted; continuing from checkpoint');
+  });
+
   es.addEventListener('error', ev => {
-    try { body.textContent += JSON.parse(ev.data).error || ''; } catch (_) {}
+    try { raw += JSON.parse(ev.data).error || ''; renderMarkdown(body, raw); } catch (_) {}
   });
 
   es.addEventListener('done', async ev => {
-    es.close();
+    finished = true; lee.agentBusy = false; es.close(); progress.finish(true); updateAgentRunstrip();
     const d = JSON.parse(ev.data);
+    addResponseRevision(out, d.turn_id, raw, d.capabilities || {});
+    const usage = usageMeta(d.usage, d.usage_label, d.model); if (usage) out.after(usage);
     for (const e of (d.edits || []))
       agentLog(`<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
                `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
-    const tail = d.usage ? `${d.note || 'done'} · ${d.usage}` : (d.note || 'done');
-    // Problems win the status line. A turn that "succeeded" while the engine refused the
-    // compaction it needed is the case where a cheerful status line is actively misleading.
+    const tail = d.usage_label ? `${d.note || 'done'} · ${d.usage_label}` : (d.note || 'done');
     showProblems(d.problems);
     if ((d.problems || []).length) status(d.problems[d.problems.length - 1], 'err');
     else status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
     await reloadAfterEdits(d.edits || []);
   });
 
-  // A dropped connection must not leave the pane saying "thinking…" for ever.
-  es.onerror = () => { if (es.readyState === EventSource.CLOSED) status('the stream ended', 'err'); es.close(); };
+  // A dropped connection must clear both the functional busy lock and its visual state.
+  es.onerror = () => {
+    if (finished) return;
+    lee.agentBusy = false; progress.finish(false); updateAgentRunstrip();
+    status('the model stream ended before it returned a result', 'err'); es.close();
+  };
 }
 
 /* Reloading the open tab is what makes an AI edit visible without a refresh -- but only
@@ -903,10 +4027,61 @@ function sendAgent() {
  * and a buffer with unsaved edits is not something to overwrite silently just because
  * the model happened to reach the same file. So that case is offered, with the diff, and
  * the choice is the user's. */
+function scheduleAgentFileReload(path) {
+  if (path !== lee.path || $('.lee-tab.active')?.classList.contains('dirty')) return;
+  clearTimeout(lee.agentReloadTimer);
+  lee.agentReloadTimer = setTimeout(async () => {
+    if (path !== lee.path || $('.lee-tab.active')?.classList.contains('dirty')) return;
+    try { await takeDiskVersion(path); status(`${path.split('/').pop()} updated from the agent edit`, 'ok'); }
+    catch (e) { status(String(e.message || e), 'err'); }
+  }, 90);
+}
+async function watchOpenFile() {
+  if (!lee.path || lee.watchingDisk || document.hidden) return;
+  lee.watchingDisk = true;
+  try {
+    const d = await api('/tab/watch');
+    if (!d || d.path !== lee.path || !lee.diskVersion) return;
+    if (d.disk_version === lee.diskVersion) return;
+    // Never advance the editor's base token while it is dirty. Doing so makes a missing
+    // IndexedDB base fall back to the *new* disk version and silently turns an external
+    // write into our own. The old token is exactly what makes the save endpoint detect it.
+    // Never destroy typing that has not reached disk. The diff command remains available,
+    // while a clean editor follows agent, terminal, git, and other external writes live.
+    if ($('.lee-tab.active')?.classList.contains('dirty')) {
+      if (d.disk_version !== lee.seenDiskVersion)
+        status(`${lee.path.split('/').pop()} changed on disk — keeping your unsaved buffer`, 'err');
+      lee.seenDiskVersion = d.disk_version;
+      return;
+    }
+    await takeDiskVersion(lee.path);
+    status(`${lee.path.split('/').pop()} updated from disk`, 'ok');
+  } catch (_) {
+    // Watching is convenience; a transient request failure should not interrupt editing.
+  } finally { lee.watchingDisk = false; }
+}
+
+async function takeDiskVersion(path) {
+  lee.heldSaveConflicts.delete(path);
+  // Accepting disk is explicit. Remove any durable browser draft first so mountTab cannot
+  // faithfully restore the very buffer the user chose to discard.
+  await clearDrafts(path);
+  // Clear both client and server document caches. The following mount therefore reads the
+  // bytes the tool just wrote rather than replaying the notebook object from before the turn.
+  for (const key of [...lee.buffers.keys()])
+    if (key === path || key.startsWith(path + ':')) {
+      lee.buffers.delete(key); lee.dirtyBuffers.delete(key);
+    }
+  await post('/tab/reload', {path});
+  await mountTab();
+}
 async function reloadAfterEdits(edits) {
   const e = edits.find(x => x.path && x.path === lee.path);
   if (!e) return;
-  if (!$('.lee-tab.active')?.classList.contains('dirty')) return mountTab();
+  if (!$('.lee-tab.active')?.classList.contains('dirty')) {
+    await takeDiskVersion(e.path);
+    return status(`${e.path.split('/').pop()} updated from the agent edit`, 'ok');
+  }
   const m = diffModal(e.path.split('/').pop() + ' changed on disk', e.label, e.rows);
   const bar = document.createElement('div');
   bar.className = 'lee-mfoot';
@@ -914,7 +4089,9 @@ async function reloadAfterEdits(edits) {
                   '<button class="lee-btn" id="dkeep">keep my buffer</button>' +
                   '<span class="lee-dim">you have unsaved edits in this tab</span>';
   m.querySelector('.lee-modalbox').appendChild(bar);
-  bar.querySelector('#dtake').onclick = () => { m.remove(); mountTab(); status('reloaded from disk', 'ok'); };
+  bar.querySelector('#dtake').onclick = async () => {
+    m.remove(); await takeDiskVersion(e.path); status('loaded the agent edit from disk', 'ok');
+  };
   bar.querySelector('#dkeep').onclick = () => { m.remove(); status('kept your buffer — ctrl+s overwrites', 'ok'); };
 }
 
@@ -945,134 +4122,1126 @@ async function agentTools() {
 }
 
 /* ------------------------------------------------------------------ terminal */
-// One terminal at a time in the drawer. `kind` picks what runs on it: a shell, or
-// lazygit. Both are the same pty on the server; only the argv differs.
-async function openTerm(kind) {
+let termBundle = null;
+function loadTermBundle() {
+  if (window.LeeTerm) return Promise.resolve();
+  if (termBundle) return termBundle;
+  termBundle = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = $('#termwrap')?.dataset.termSrc || '/leestatic/lee-term.js';
+    script.onload = resolve; script.onerror = () => reject(new Error('terminal bundle failed to load'));
+    document.head.appendChild(script);
+  });
+  return termBundle;
+}
+// Multiple xterm instances keep their websocket/pty alive while hidden. The 285kb bundle
+// still loads only on the first terminal action, never during ordinary notebook startup.
+function nextTermId(kind) {
+  if (kind === 'git') return 'git';
+  do { lee.termSeq += 1; } while (lee.terms.has('term-' + lee.termSeq));
+  return 'term-' + lee.termSeq;
+}
+function termLabel(kind, id) { return kind === 'git' ? 'lazygit' : `terminal ${id.split('-').pop()}`; }
+function paintTermTabs() {
+  const bar = $('#termtabs'); if (!bar) return;
+  bar.innerHTML = [...lee.terms.entries()].map(([id, t]) =>
+    `<button role="tab" aria-selected="${id === lee.activeTerm}" class="lee-termtab${id === lee.activeTerm ? ' active' : ''}" ` +
+    `data-term="${esc(id)}" title="${esc(t.cwd || '')}">${esc(t.label)}</button>`).join('');
+  bar.querySelectorAll('.lee-termtab').forEach(b => b.onclick = () => switchTerm(b.dataset.term));
+  $('#termempty')?.toggleAttribute('hidden', lee.terms.size > 0);
+}
+function leeLeft(which = 'files') {
+  const left = $('#left'); if (!left) return;
+  leePane('left', true);
+  left.classList.toggle('left-files', which === 'files');
+  left.classList.toggle('left-symbols', which === 'symbols');
+  left.classList.toggle('left-git', which === 'git');
+  $$('.lee-activity-btn', left).forEach(b => {
+    const active = b.dataset.left === which; b.classList.toggle('active', active);
+    b.setAttribute('aria-pressed', String(active));
+  });
+  localStorage.setItem('lee-left-view', which);
+  if (which === 'git') { setScope('files'); renderGitPanel(); }
+  else if (which === 'symbols') { setScope('files'); leeSymbols(); }
+  else { setScope('files'); requestAnimationFrame(() => $('#filetree')?.focus()); }
+}
+window.leeLeft = leeLeft;
+function leePane(which, show = null) {
+  const shell = $('#shell'); if (!shell) return;
+  const cls = which === 'left' ? 'no-left' : which === 'right' ? 'no-right' : 'no-bottom';
+  const hidden = show === null ? !shell.classList.contains(cls) : !show;
+  shell.classList.toggle(cls, hidden);
+  if (matchMedia('(max-width: 1100px)').matches && which !== 'bottom') {
+    shell.classList.toggle('mobile-' + which, !hidden);
+    if (!hidden) {
+      const other = which === 'left' ? 'right' : 'left';
+      shell.classList.remove('mobile-' + other);
+      shell.classList.add(other === 'left' ? 'no-left' : 'no-right');
+    }
+  }
+  localStorage.setItem('lee-pane-' + which, hidden ? 'hidden' : 'shown');
+  if (!hidden && which === 'bottom') requestAnimationFrame(() => lee.term?.refit());
+}
+window.leePane = leePane;
+function leeDock(which) {
+  const dock = $('#bottomdock'); if (!dock) return;
+  leePane('bottom', true);
+  const centre = $('.lee-centre');
+  dock.classList.toggle('dock-exec', which === 'exec');
+  dock.classList.toggle('dock-term', which === 'term');
+  $$('.lee-docktab', dock).forEach(b => {
+    const active = b.dataset.dock === which; b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', String(active));
+  });
+  if (which === 'term') requestAnimationFrame(() => lee.term?.refit());
+}
+window.leeDock = leeDock;
+function switchTerm(id) {
+  const t = lee.terms.get(id); if (!t) return;
+  leeDock('term'); lee.activeTerm = id; lee.term = t.view;
+  $$('.lee-term-session').forEach(x => x.hidden = x.dataset.term !== id);
+  paintTermTabs(); $('#shell').classList.add('show-term'); setScope('term');
+  requestAnimationFrame(() => { t.view.refit(); t.view.focus(); });
+}
+function cycleTerm(d) {
+  const ids = [...lee.terms.keys()]; if (!ids.length) return;
+  const at = Math.max(0, ids.indexOf(lee.activeTerm));
+  switchTerm(ids[(at + d + ids.length) % ids.length]);
+}
+async function openTerm(kind = 'shell', forceNew = false) {
+  await loadTermBundle();
   const d = await api('/term/info');
   if (!d.enabled) return status(d.why, 'err');
   if (kind === 'git' && !d.lazygit) return status(d.lazygit_why, 'err');
+  if (!forceNew) {
+    const existing = [...lee.terms.entries()].find(([, t]) => t.kind === kind);
+    if (existing) return switchTerm(existing[0]);
+  }
+  const id = nextTermId(kind);
+  if (lee.terms.has(id)) return switchTerm(id);
   $('#shell').classList.add('show-term');
-  const host = $('#term');
-  if (!host) return status('no terminal pane', 'err');
-  if (lee.term) { lee.term.dispose(); lee.term = null; }
-  host.innerHTML = '';
-  $('#termtag').textContent = kind === 'git' ? 'lazygit' : (d.cwd || '').split('/').pop();
-  lee.term = LeeTerm.create(host, {
-    token: d.token, cwd: d.cwd, kind: kind || 'shell', id: kind || 'shell',
-    onStatus: (m) => status('terminal: ' + m),
-    onExit: () => { status('terminal exited'); },
+  const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
+  const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
+  host.dataset.term = id; parent.appendChild(host);
+  const record = {id, kind, label: termLabel(kind, id), cwd: d.cwd, host, view: null};
+  record.view = LeeTerm.create(host, {
+    token: d.token, cwd: d.cwd, kind, id,
+    onStatus: m => status(`${record.label}: ${m}`),
+    onExit: () => { record.exited = true; paintTermTabs(); status(`${record.label} exited`); },
   });
-  setScope('term');
-  lee.term.focus();
+  lee.terms.set(id, record); switchTerm(id);
 }
+function leeNewTerm() { return openTerm('shell', true); }
+window.leeNewTerm = leeNewTerm;
 
 // The IDE follows the system's light/dark setting through a media query; the terminal
 // reads its colours from CSS once, when it is created, so it has to be told.
 try {
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => lee.term?.retheme());
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    for (const t of lee.terms.values()) t.view.retheme();
+  });
 } catch (e) {}
 
-function closeTerm() {
-  if (lee.term) { lee.term.dispose(); lee.term = null; }
-  post('/term/close?id=shell'); post('/term/close?id=git');
-  $('#shell').classList.remove('show-term');
-  setScope('editor');
-  // lazygit may have changed the working tree under us; the file tree is now stale.
-  status('terminal closed');
+function leeTermExpand() {
+  const centre = $('.lee-centre'); if (!centre) return;
+  leeDock('term');
+  centre.classList.toggle('term-expanded');
+  const expanded = centre.classList.contains('term-expanded');
+  $('#termexpand').textContent = expanded ? 'restore' : 'expand';
+  requestAnimationFrame(() => { lee.term?.refit(); lee.term?.focus(); });
 }
+window.leeTermExpand = leeTermExpand;
+
+function closeTerm(id = lee.activeTerm) {
+  const t = lee.terms.get(id); if (!t) return;
+  t.view.dispose(); t.host.remove(); lee.terms.delete(id); post('/term/close?id=' + encodeURIComponent(id));
+  const next = [...lee.terms.keys()].at(-1);
+  lee.term = null; lee.activeTerm = '';
+  if (next) switchTerm(next);
+  else {
+    paintTermTabs(); $('#shell').classList.remove('show-term'); leeDock('exec');
+    $('.lee-centre')?.classList.remove('term-expanded'); setScope('editor');
+  }
+  // A shell or lazygit may have changed the working tree under us.
+  refreshFileTree(undefined, false).catch(e => status(String(e.message || e), 'err'));
+}
+
+/* ---------------------------------------------------------- web preferences */
+const THEMES = ['system', 'dark', 'light'];
+function applyTheme(theme) {
+  theme = THEMES.includes(theme) ? theme : 'system';
+  localStorage.setItem('lee-theme', theme);
+  if (theme === 'system') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  document.documentElement.style.colorScheme = theme === 'system' ? 'light dark' : theme;
+  const pill = $('#themepill'); if (pill) pill.textContent = theme;
+  for (const t of lee.terms.values()) t.view.retheme();
+}
+async function editorSettings(languageScope = null) {
+  if(typeof languageScope!=='string'){
+    // Default to All languages, never to the focused tab's language. Deriving it from
+    // curLang() silently scoped every save into `languages.<lang>`, and since saving also
+    // remembers the choice, one visit with a .py file focused sent all later edits there
+    // too. The values were written correctly and then read back through a scope the editor
+    // only uses for matching tabs, so global preferences looked like they reverted on
+    // every restart. A language scope is now only ever chosen explicitly.
+    const remembered=localStorage.getItem('lee-settings-language-scope');
+    languageScope=remembered!==null?remembered:'';
+  }
+  const rememberedScope=localStorage.getItem('lee-settings-save-scope')||'user';
+  await loadSettings(languageScope);
+  const original = {...lee.editorPrefs}, originalFiles = {...lee.filePrefs},
+        originalWorkbench = {...lee.workbenchPrefs}, originalDebug = {...lee.debugPrefs},
+        originalTheme = localStorage.getItem('lee-theme') || 'system';
+  let saved = false, previewView = null;
+  const selected = (value, current) => value === current ? ' selected' : '';
+  const checked = (section, key) => (section === 'editor' ? lee.editorPrefs : section === 'files' ? lee.filePrefs :
+    section === 'workbench' ? lee.workbenchPrefs : lee.debugPrefs)[key] ? ' checked' : '';
+  const fontSelect = CODE_FONTS.map(([name, detail]) =>
+    `<option value="${esc(name)}"${selected(name, lee.editorPrefs.fontFamily)}>${esc(name)} — ${esc(detail)}</option>`).join('');
+  const field = (section, key, label, input, help='') => `<label>${label}${input.replace('data-setting', `data-pref-section="${section}" data-pref="${key}"`)}${help ? `<small>${help}</small>` : ''}</label>`;
+  const check = (section, key, label, help='') => `<label class="lee-settings-toggle"><input type="checkbox" data-pref-section="${section}" data-pref="${key}"${checked(section,key)}><span>${label}${help ? `<small>${help}</small>` : ''}</span></label>`;
+  const select = (section, key, label, values, help='') => field(section,key,label,
+    `<select class="lee-select" data-setting>${values.map(([value,text]) => `<option value="${value}"${selected(value,(section==='editor'?lee.editorPrefs:section==='files'?lee.filePrefs:section==='workbench'?lee.workbenchPrefs:lee.debugPrefs)[key])}>${text}</option>`).join('')}</select>`,help);
+  const m = modal(`<div class="lee-mhead">settings<span class="sub">user · workspace · language-aware</span></div>` +
+    `<div class="lee-settings-scope"><label>Save to <select class="lee-select" data-settings-scope><option value="user"${selected('user',rememberedScope)}>User</option><option value="workspace"${selected('workspace',rememberedScope)}>Workspace</option></select></label>` +
+    `<label>Apply to <select class="lee-select" data-settings-language><option value=""${selected('',languageScope)}>All languages</option><option value="python"${selected('python',languageScope)}>Python</option><option value="markdown"${selected('markdown',languageScope)}>Markdown</option></select></label>` +
+    `<span data-settings-target></span><span data-settings-path>${esc(lee.settingsMeta?.paths?.user || '')}</span></div>` +
+    `<div class="lee-settings-layout"><nav class="lee-settings-nav" aria-label="Settings sections">` +
+    `<button class="active" data-settings-page="editor">Text editor</button><button data-settings-page="appearance">Appearance</button>` +
+    `<button data-settings-page="files">Files & save</button><button data-settings-page="debug">Run & debug</button>` +
+    `<button data-settings-page="keys">Keybindings</button></nav><div class="lee-settings-content">` +
+    `<section data-settings-section="editor"><div class="lee-settings-title"><span>Text editor</span><kbd>${esc(displayChord(lee.keys.find(k=>k.action==='settings')?.key||'mod+,'))}</kbd></div>` +
+    `<p>Editing behavior updates live. Portable values are saved as JSON, not trapped in this browser.</p>` +
+    `<div class="lee-settings-group"><h4>Typography</h4><div class="lee-settings-grid">` +
+    `<label class="wide">Code font<select class="lee-select" data-pref-section="editor" data-pref="fontFamily">${fontSelect}</select><small>JetBrains Mono and Fira Code are bundled for reliable offline rendering.</small></label>` +
+    field('editor','fontSize','Size',`<input class="lee-input" data-setting type="number" min="9" max="28" value="${lee.editorPrefs.fontSize}">`) +
+    field('editor','lineHeight','Line height',`<input class="lee-input" data-setting type="number" min="1" max="2.4" step="0.1" value="${lee.editorPrefs.lineHeight}">`) +
+    field('editor','tabSize','Tab size',`<input class="lee-input" data-setting type="number" min="1" max="8" value="${lee.editorPrefs.tabSize}">`) + `</div>` +
+    `<div class="lee-ligature-proof"><span>Ligature proof</span><code>!=  ->  =>  <=  >=  ===  ::</code></div></div>` +
+    `<div class="lee-settings-group"><h4>Wrapping and line length</h4><div class="lee-settings-grid lee-settings-line-grid">` +
+    select('editor','wordWrap','Word wrap',[['off','Off'],['viewport','At viewport'],['column','At preferred column']]) +
+    field('editor','lineLength','Preferred column',`<input class="lee-input" data-setting type="number" min="40" max="240" value="${lee.editorPrefs.lineLength}">`) +
+    `<label class="wide">Additional guides<input class="lee-input" data-pref-section="editor" data-pref="guideColumns" value="${esc(lee.editorPrefs.guideColumns)}" placeholder="88, 120"><small>Comma-separated; preferred column remains the primary guide.</small></label></div></div>` +
+    `<div class="lee-settings-checks">${check('editor','visualGuides','Visual column guides')}${check('editor','ligatures','Programming ligatures','Visible with the proof row above.')}` +
+    `${check('editor','useTabs','Indent with tabs')}${check('editor','detectIndentation','Detect existing indentation')}${check('editor','activeLine','Highlight active line')}` +
+    `${check('editor','bracketMatching','Match brackets')}${check('editor','closeBrackets','Auto-close brackets and quotes')}${check('editor','folding','Code folding')}` +
+    `${check('editor','stickyNavigation','Sticky Python symbol')}${check('editor','scrollPastEnd','Scroll past end')}${check('editor','smoothScrolling','Smooth scrolling')}</div>` +
+    `<div class="lee-settings-preview" id="settingspreview"></div><div class="lee-setting-row"><span><strong>Python language service</strong><small>Pyright diagnostics and code intelligence</small></span><span class="lee-setting-state" data-lsp-state>checking…</span></div></section>` +
+    `<section data-settings-section="appearance" hidden><h3>Appearance</h3><p>Reduce navigation friction without crowding the editor.</p>` +
+    `<div class="lee-theme-options">${THEMES.map(t=>`<button class="lee-theme-choice${t===originalTheme?' active':''}" data-theme="${t}"><span class="lee-theme-swatch ${t}"></span><strong>${t}</strong><span>${t==='system'?'follow your device':t+' interface'}</span></button>`).join('')}</div>` +
+    `<div class="lee-settings-group"><h4>Editor chrome</h4><div class="lee-settings-grid">` +
+    select('editor','lineNumbers','Line numbers',[['off','Off'],['absolute','Absolute'],['relative','Relative'],['hybrid','Hybrid']]) +
+    select('editor','renderWhitespace','Whitespace',[['none','None'],['selection','Selection'],['trailing','Trailing'],['all','All']]) +
+    select('editor','cursorStyle','Caret',[['line','Line'],['block','Block'],['underline','Underline']]) +
+    select('editor','cursorBlinking','Blinking',[['off','Off'],['blink','Blink'],['smooth','Smooth']]) +
+    select('editor','minimapMode','Code overview',[['off','Off'],['long','Long files only'],['always','Always']], 'Compressed file map; click it to jump. Long-file mode keeps it out of notebook cells.') +
+    field('editor','minimapThreshold','Long file threshold',`<input class="lee-input" data-setting type="number" min="20" max="5000" value="${lee.editorPrefs.minimapThreshold}">`) + `</div>` +
+    `<div class="lee-settings-checks">${check('editor','indentGuides','Indent guides')}${check('editor','methodSeparators','Function separators')}${check('editor','bracketColors','Bracket-pair colors')}${check('editor','highlightSelection','Highlight selected occurrences')}</div></div>` +
+    `<div class="lee-settings-group"><h4>Navigation</h4><div class="lee-settings-grid">` +
+    select('workbench','breadcrumbs','Breadcrumbs',[['off','Off'],['path','File path'],['symbols','Symbols'],['pathAndSymbols','Path and symbols']]) +
+    `</div><div class="lee-settings-checks">${check('editor','inlayHints','Inferred type and parameter hints from Pyright')}${check('workbench','dependencyHints','Dependency version hints')}</div></div></section>` +
+    `<section data-settings-section="files" hidden><h3>Files & save</h3><p>Recovery is always enabled; choose when durable disk writes happen.</p><div class="lee-settings-group"><div class="lee-settings-grid">` +
+    select('files','autoSave','Auto save',[['off','Off'],['afterDelay','After delay'],['onFocusChange','On editor focus change'],['onWindowChange','On window focus change']]) +
+    field('files','autoSaveDelay','Delay (ms)',`<input class="lee-input" data-setting type="number" min="100" max="60000" value="${lee.filePrefs.autoSaveDelay||900}">`) + `</div>` +
+    `<div class="lee-settings-checks">${check('files','trimTrailingWhitespace','Trim trailing whitespace')}${check('files','trimFinalNewlines','Remove final blank lines')}${check('files','insertFinalNewline','Ensure final newline')}${check('files','formatOnSave','Format on save')}${check('files','confirmDelete','Confirm destructive deletes')}</div></div>` +
+    `<div class="lee-setting-row"><span><strong>Crash recovery</strong><small>Unsaved drafts stay in IndexedDB and external writes require review.</small></span><span class="lee-setting-state">always on</span></div></section>` +
+    `<section data-settings-section="debug" hidden><h3>Run & debug</h3><p>Defaults for notebook DAP and direct debugpy sessions.</p><div class="lee-settings-checks">` +
+    `${check('debug','justMyCode','Just my code')}${check('debug','stopOnEntry','Stop on entry')}${check('debug','subProcess','Debug subprocesses')}${check('debug','showInlineValues','Inline paused values')}${check('debug','breakOnRaised','Break on raised exceptions')}${check('debug','breakOnUncaught','Break on uncaught exceptions')}</div>` +
+    `<div class="lee-setting-row"><span><strong>debugpy</strong><small>Python files, modules, tests, applications, and attach sessions use the selected project interpreter.</small></span><button class="lee-btn" data-open-runs>Run configurations…</button></div></section>` +
+    `<section data-settings-section="keys" hidden><h3>Keybindings</h3><p>Every command can be rebound from the same single-source keymap.</p><button class="lee-btn" data-open-keys>Edit keybindings…</button></section>` +
+    `</div></div><div class="lee-mfoot"><button class="lee-btn" data-reset>Reset this section</button><span class="lee-spacer"></span><button class="lee-btn" data-cancel>Cancel</button><button class="lee-btn go" data-save>Save settings</button></div>`,
+    null,()=>{if(previewView)LeeCM.destroy(previewView);if(!saved){applyEditorPrefs(original);lee.filePrefs=originalFiles;lee.workbenchPrefs=originalWorkbench;lee.debugPrefs=originalDebug;applyTheme(originalTheme);}},
+    {className:'lee-settings-modal',storageKey:'settings'});
+  api('/lsp/status').then(d=>{const el=$('[data-lsp-state]',m);if(el){el.textContent=d.available?(d.alive?'connected':'available'):'optional';el.title=d.note||'';}}).catch(()=>{});
+  await document.fonts.ready;
+  previewView=createEditor($('#settingspreview',m),{doc:'# Programming ligatures and line guides\nfrom pathlib import Path\n\ndef compare(left: int, right: int) -> bool:\n    return left != right and left <= 100  # => result\n',lang:'python',lineNums:true});
+  const sections={editor:lee.editorPrefs,files:lee.filePrefs,workbench:lee.workbenchPrefs,debug:lee.debugPrefs};
+  const initialSections=Object.fromEntries(Object.entries(sections).map(([name,values])=>[name,{...values}]));
+  const update=()=>{$$('[data-pref]',m).forEach(input=>{const target=sections[input.dataset.prefSection];target[input.dataset.pref]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;});applyEditorPrefs(sections.editor);LeeCM.configure(previewView,sections.editor);};
+  $$('[data-pref]',m).forEach(input=>input.addEventListener('input',update));
+  let page='editor';
+  $$('[data-settings-page]',m).forEach(button=>button.onclick=()=>{page=button.dataset.settingsPage;$$('[data-settings-page]',m).forEach(x=>x.classList.toggle('active',x===button));$$('[data-settings-section]',m).forEach(x=>x.hidden=x.dataset.settingsSection!==page);});
+  const scope=$('[data-settings-scope]',m),language=$('[data-settings-language]',m),path=$('[data-settings-path]',m),target=$('[data-settings-target]',m);
+  const paintPath=()=>{path.textContent=lee.settingsMeta?.paths?.[scope.value]||'';target.textContent=`${scope.value} · ${language.value||'all languages'}`;};
+  scope.onchange=()=>{localStorage.setItem('lee-settings-save-scope',scope.value);paintPath();};paintPath();
+  language.onchange=()=>{localStorage.setItem('lee-settings-language-scope',language.value);saved=true;m.remove();editorSettings(language.value);};
+  $$('[data-theme]',m).forEach(b=>b.onclick=()=>{applyTheme(b.dataset.theme);$$('[data-theme]',m).forEach(x=>x.classList.toggle('active',x===b));});
+  $('[data-reset]',m).onclick=async()=>{const section=page==='appearance'?'editor':page; if(!sections[section])return;await post('/settings/reset',{scope:scope.value,section,language:language.value});saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
+  $('[data-cancel]',m).onclick=()=>m.remove();
+  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>value!==initialSections[section][key]));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})`,'ok');};
+  $('[data-open-keys]',m).onclick=()=>{saved=true;m.remove();editKeys();};
+  $('[data-open-runs]',m).onclick=()=>{saved=true;m.remove();editRuns();};
+}
+function leeTheme() { editorSettings(); }
+window.leeTheme = leeTheme; window.leeEditorSettings = editorSettings;
+
+/* ---------------------------------------------------------- cwd and source control */
+function paintGitTree(d) {
+  $$('.lee-file').forEach(row => {
+    row.classList.remove('git-modified', 'git-staged', 'git-untracked', 'git-conflict');
+    row.querySelectorAll('.lee-tree-git').forEach(badge => badge.remove());
+  });
+  for (const c of (d.changes || [])) {
+    const path = d.root + '/' + c.path;
+    const row = $$('.lee-file').find(x => x.dataset.path === path); if (!row) continue;
+    const state = c.conflicted ? 'conflict' : c.untracked ? 'untracked' : c.staged && !c.unstaged ? 'staged' : 'modified';
+    row.classList.add('git-' + state);
+    const badge = document.createElement('span'); badge.className = 'lee-tree-git'; badge.textContent = state[0].toUpperCase();
+    row.appendChild(badge);
+  }
+}
+async function refreshOpenGitMarks() {
+  if (lee.kind !== 'text' || !lee.path) return;
+  try {
+    lee.fileGit = await api('/git/file?path=' + encodeURIComponent(lee.path));
+    const view = lee.editors.get('file'); if (view) LeeCM.setChangedLines(view, lee.fileGit.ranges || []);
+  } catch (_) {}
+}
+async function refreshProjectPills() {
+  try {
+    const d = await api('/workspace/info');
+    const active = (d.roots || []).find(r => r.path === d.active) || (d.roots || [])[0];
+    const name = $('#workspacename'); if (name) name.textContent = active?.name || 'open workspace';
+    const workspace = $('#workspacepill'); if (workspace) workspace.title = active?.path || 'open workspace';
+  } catch (_) {}
+  try {
+    const d = await api('/cwd');
+    const cwd = $('#cwdpill');
+    if (cwd) { cwd.textContent = (d.explicit ? 'cwd ' : 'cwd auto ') + (d.cwd.split('/').pop() || d.cwd);
+               cwd.title = d.cwd || 'choose a working directory'; }
+  } catch (_) {}
+  try {
+    const d = await api('/git/info');
+    const git = $('#gitpill'); if (!git) return;
+    const n = (d.changes || []).length;
+    git.textContent = `${d.branch}${n ? ' · ' + n : ''}`;
+    git.className = 'lee-branch-switcher ' + (n ? 'lee-pill-warn' : 'lee-pill-on');
+    git.title = `${d.root}${d.upstream ? ' · ' + d.upstream : ''}${d.ahead ? ' · ahead ' + d.ahead : ''}${d.behind ? ' · behind ' + d.behind : ''}`;
+    paintGitTree(d);
+  } catch (_) {
+    const git = $('#gitpill'); if (git) { git.textContent = 'no git'; git.className = 'lee-branch-switcher'; }
+  }
+}
+
+async function leeCwd() {
+  const d = await api('/cwd');
+  const value = await inputDialog('script working directory', 'Directory inside an open folder', d.cwd,
+                                  'Leave empty to use the Git repository root');
+  if (value === null) return;
+  const r = await post('/cwd/set', {path: value});
+  status(`${r.explicit ? 'working directory' : 'automatic repository root'}: ${r.cwd}`, 'ok');
+  refreshProjectPills();
+}
+window.leeCwd = leeCwd;
+
+function gitPatchHtml(text) {
+  if (!text) return '<div class="lee-git-empty-state"><strong>No patch yet</strong><span>Stage an untracked file to create its first patch.</span></div>';
+  return String(text).split('\n').map(line => {
+    const kind = line.startsWith('@@') ? 'hunk' : line.startsWith('+') && !line.startsWith('+++') ? 'add' :
+                 line.startsWith('-') && !line.startsWith('---') ? 'del' : line.startsWith('diff ') || line.startsWith('index ') ? 'meta' : '';
+    return `<div class="lee-patch-line ${kind}">${esc(line) || ' '}</div>`;
+  }).join('');
+}
+function gitPatchParts(text) {
+  const lines = String(text || '').split('\n'), first = lines.findIndex(x => x.startsWith('@@'));
+  if (first < 0) return {header: text, hunks: []};
+  const header = lines.slice(0, first).join('\n') + '\n', hunks = [];
+  let current = [];
+  for (const line of lines.slice(first)) {
+    if (line.startsWith('@@') && current.length) { hunks.push(current.join('\n') + '\n'); current = []; }
+    current.push(line);
+  }
+  if (current.length) hunks.push(current.join('\n') + '\n');
+  return {header, hunks};
+}
+function showGitFileDiff(path, patch = '', line = 0, rawPatch = '', notebook = false, options = {}) {
+  const name = String(path || '').split('/').pop(), parts = gitPatchParts(rawPatch || patch);
+  const canPartial = !notebook && parts.hunks.length > 0 && options.group;
+  const controls = canPartial ? `<button class="lee-btn" id="githunks">select hunks</button>` : '';
+  const m = modal(`<div class="lee-mhead">${esc(name)}<span class="sub">${options.label || 'working tree against HEAD'}${line ? ' · line ' + line : ''}</span>` +
+    `<span class="lee-spacer"></span>${notebook ? '<button class="lee-btn active" id="gitcontent">cell content</button><button class="lee-btn" id="gitraw">raw notebook</button>' : ''}` +
+    `${controls}<button class="lee-btn" id="gitexpand">expand</button></div>` +
+    `<div class="lee-git-patch">${gitPatchHtml(patch)}</div>` +
+    `<div class="lee-mfoot"><button class="lee-btn" id="gitopenfile">open file</button><span class="lee-dim">Unified patch · additions and removals retain Git semantics.</span></div>`);
+  m.querySelector('#gitopenfile').onclick = () => { m.remove(); leeOpenFile(path); };
+  const repaint = (text, active) => {
+    m.querySelector('.lee-git-patch').innerHTML = gitPatchHtml(text);
+    for (const id of ['gitcontent', 'gitraw']) m.querySelector('#' + id)?.classList.toggle('active', id === active);
+  };
+  m.querySelector('#gitcontent')?.addEventListener('click', () => repaint(patch, 'gitcontent'));
+  m.querySelector('#gitraw')?.addEventListener('click', () => repaint(rawPatch, 'gitraw'));
+  m.querySelector('#githunks')?.addEventListener('click', () => {
+    const body = m.querySelector('.lee-git-patch');
+    body.innerHTML = parts.hunks.map((h, i) => `<label class="lee-git-hunk"><input type="checkbox" data-hunk="${i}" checked><span>hunk ${i + 1}</span>${gitPatchHtml(h)}</label>`).join('');
+    const foot = m.querySelector('.lee-mfoot');
+    foot.innerHTML = `<button class="lee-btn go" id="gitapplyhunks">${options.group === 'staged' ? 'unstage' : 'stage'} selected hunks</button><span class="lee-dim">Only checked hunks will move between the index and working tree.</span>`;
+    foot.querySelector('#gitapplyhunks').onclick = async () => {
+      const selected = [...body.querySelectorAll('[data-hunk]:checked')].map(x => parts.hunks[+x.dataset.hunk]);
+      if (!selected.length) return status('select at least one hunk', 'err');
+      try {
+        const d = await gitDo('apply_patch', {patch: parts.header + selected.join(''), staged: true, reverse: options.group === 'staged'});
+        m.remove(); renderGitPanel(d);
+      } catch (e) { status(e.message || String(e), 'err'); }
+    };
+  });
+  m.querySelector('#gitexpand').onclick = e => {
+    const expanded = m.classList.toggle('lee-git-diff-expanded');
+    e.target.textContent = expanded ? 'restore' : 'expand';
+  };
+}
+function gitChangeRow(c, group) {
+  const state = c.conflicted ? 'conflict' : c.untracked ? 'new file' : group === 'staged' ? 'will commit' : 'not staged';
+  return `<article class="lee-git-change ${group}" data-path="${esc(c.path)}" data-group="${group}">` +
+    `<button class="lee-git-file" title="review diff"><span class="lee-git-status">${esc(group === 'staged' ? c.index : c.worktree)}</span><span>${esc(c.path)}</span></button>` +
+    `<span class="sub">${state}</span><span class="lee-spacer"></span>${c.conflicted ? '<button class="lee-btn warn" data-resolve>resolve</button>' : '<button class="lee-btn" data-blame title="file history and blame">blame</button>'}` +
+    `<button class="lee-btn" data-open title="open file">open</button>` +
+    `${group === 'unstaged' ? '<button class="lee-btn" data-git="stage">stage</button>' : '<button class="lee-btn" data-git="unstage">unstage</button>'}` +
+    `${group === 'unstaged' && !c.untracked ? '<button class="lee-btn warn" data-git="discard">discard</button>' : ''}</article>`;
+}
+function gitRelative(stamp) {
+  if (!stamp) return 'date unavailable';
+  const seconds = Math.max(0, Date.now() / 1000 - stamp), units = [[31536000, 'y'], [2592000, 'mo'], [604800, 'w'], [86400, 'd'], [3600, 'h'], [60, 'm']];
+  for (const [size, label] of units) if (seconds >= size) return `${Math.floor(seconds / size)}${label} ago`;
+  return 'just now';
+}
+function gitFreshness(stamp) { return stamp ? `fetched ${gitRelative(stamp)}` : 'remote refs have not been fetched'; }
+const gitUI = {tab: 'changes', snapshot: null, history: [], historyQuery: '', branchQuery: '', branchScope: 'all', busy: ''};
+function paintGitPill(d) {
+  const git = $('#gitpill'); if (!git || !d) return;
+  const n = (d.changes || []).length;
+  git.textContent = `${d.branch}${n ? ' · ' + n : ''}${d.ahead ? ' · ↑' + d.ahead : ''}${d.behind ? ' · ↓' + d.behind : ''}`;
+  git.className = 'lee-branch-switcher ' + (n ? 'lee-pill-warn' : 'lee-pill-on');
+  git.title = `${d.root}${d.upstream ? ' · ' + d.upstream : ' · no upstream'} · ${gitFreshness(d.fetched_at)}`;
+  paintGitTree(d);
+}
+async function gitDo(op, extra = {}) {
+  const started = performance.now(); gitUI.busy = op; status(`git ${op.replaceAll('_', ' ')}…`);
+  try {
+    const d = await post('/git/action', {op, ...extra});
+    gitUI.snapshot = d; paintGitPill(d); paintGitTree(d);
+    status(`git ${op.replaceAll('_', ' ')} complete · ${Math.round(performance.now() - started)} ms`, 'ok');
+    return d;
+  } finally { gitUI.busy = ''; }
+}
+function gitOperationBanner(d) {
+  const op = d.operation || {};
+  if (!op.active) return '';
+  return `<section class="lee-git-operation"><div><strong>${esc(op.active)} in progress</strong><span>Resolve the listed conflicts, then continue or abort.</span></div>` +
+    `<span class="lee-spacer"></span>${op.can_continue ? '<button data-operation="continue">continue</button>' : ''}${op.can_skip ? '<button data-operation="skip">skip</button>' : ''}` +
+    `${op.can_abort ? '<button data-operation="abort" class="warn">abort</button>' : ''}</section>`;
+}
+function gitNav() {
+  return `<nav class="lee-git-nav" aria-label="Source control views">${[['changes','Changes'],['branches','Branches'],['history','History'],['resources','Repository']].map(([id, label]) =>
+    `<button data-git-tab="${id}" class="${gitUI.tab === id ? 'active' : ''}">${label}</button>`).join('')}</nav>`;
+}
+function gitSummary(d) {
+  return `<header class="lee-sc-branch"><div><strong>${esc(d.branch)}</strong><span>${esc(d.upstream || 'unpublished branch')}</span></div>` +
+    `<span class="lee-spacer"></span>${d.behind ? `<b>↓${d.behind}</b>` : ''}${d.ahead ? `<b>↑${d.ahead}</b>` : ''}` +
+    `<small title="Remote-derived branch data may be stale">${esc(gitFreshness(d.fetched_at))}</small></header>`;
+}
+function gitChangesView(d) {
+  const staged = (d.changes || []).filter(c => c.staged), unstaged = (d.changes || []).filter(c => c.unstaged);
+  const rows = (items, group) => items.length ? items.map(c => gitChangeRow(c, group)).join('') :
+    `<div class="lee-git-empty-state"><strong>${group === 'staged' ? 'Nothing staged' : 'Working tree clean'}</strong><span>${group === 'staged' ? 'Stage files or individual hunks to prepare a commit.' : 'There are no local file changes.'}</span></div>`;
+  return gitOperationBanner(d) + `<div class="lee-sc-actions"><button data-top="fetch">fetch</button><button data-top="pull">pull</button><button data-top="push">push</button>` +
+    `${!d.upstream ? '<button data-top="publish">publish branch</button>' : ''}<button id="scstash">stash</button></div>` +
+    `<form id="sccommit" class="lee-sc-commit"><label>Commit message<textarea rows="3" placeholder="Describe this change" aria-label="Commit message"></textarea></label>` +
+    `<label class="lee-git-check"><input type="checkbox" name="amend"> amend previous commit</label><button ${staged.length ? '' : 'disabled'}>commit ${staged.length || ''}</button></form>` +
+    `<details class="lee-sc-group" open><summary><span>Staged changes</span><b>${staged.length}</b>${staged.length ? '<button type="button" id="scunstageall">unstage all</button>' : ''}</summary><div>${rows(staged, 'staged')}</div></details>` +
+    `<details class="lee-sc-group" open><summary><span>Changes</span><b>${unstaged.length}</b>${unstaged.length ? '<button type="button" id="scstageall">stage all</button>' : ''}</summary><div>${rows(unstaged, 'unstaged')}</div></details>` +
+    `<details class="lee-sc-group"><summary><span>Stashes</span><b>${(d.stashes || []).length}</b></summary><div class="lee-sc-refs">` +
+    `${(d.stashes || []).map(s => `<div class="lee-sc-ref" data-stash="${esc(s.ref)}"><span>${esc(s.ref)}</span><small>${esc(s.subject)} · ${gitRelative(s.timestamp)}</small><button data-apply>apply</button><button data-pop>pop</button><button data-drop>drop</button></div>`).join('') || '<div class="lee-dim lee-git-empty">No stashes</div>'}</div></details>`;
+}
+function gitBranchesView(d) {
+  let branches = [...(d.branches || [])];
+  const q = gitUI.branchQuery.toLowerCase();
+  if (q) branches = branches.filter(b => `${b.name} ${b.subject} ${b.author}`.toLowerCase().includes(q));
+  if (gitUI.branchScope === 'local') branches = branches.filter(b => !b.remote);
+  if (gitUI.branchScope === 'remote') branches = branches.filter(b => b.remote);
+  if (gitUI.branchScope === 'unmerged') branches = branches.filter(b => !b.merged);
+  branches.sort((a, b) => b.timestamp - a.timestamp);
+  return `<div class="lee-git-filter"><input id="gitbranchfilter" class="lee-input" value="${esc(gitUI.branchQuery)}" placeholder="Filter branches, commits, authors…">` +
+    `<select id="gitbranchscope"><option value="all">all refs</option><option value="local">local</option><option value="remote">remote</option><option value="unmerged">unmerged</option></select><button id="scbranch">new branch</button></div>` +
+    `<div class="lee-git-branch-list">${branches.map((b, index) => `<article class="lee-git-branch-row${b.current ? ' current' : ''}${b.latest ? ' latest' : ''}" data-branch="${esc(b.name)}">` +
+      `<button data-switch ${b.current ? 'disabled' : ''} title="${b.remote ? 'create local tracking branch' : 'switch branch'}">${b.current ? '●' : '○'}</button><div class="lee-git-branch-copy"><strong>${esc(b.name)}</strong>` +
+      `<span>${esc(b.subject || 'No commit subject')}</span><small>${esc(b.author)} · ${gitRelative(b.timestamp)} · ${esc(b.oid)}</small></div>` +
+      `<div class="lee-git-badges">${index === 0 ? '<i>latest commit</i>' : ''}${b.default ? '<i>default</i>' : ''}${b.remote ? '<i>remote</i>' : ''}${b.merged ? '<i>merged</i>' : '<i>unmerged</i>'}${b.track ? `<i>${esc(b.track)}</i>` : ''}</div>` +
+      `${b.remote ? '' : '<button data-more title="branch actions">•••</button>'}</article>`).join('') || '<div class="lee-git-empty-state"><strong>No matching branches</strong><span>Change the filter or fetch remote refs.</span></div>'}</div>` +
+    `<details class="lee-sc-group"><summary><span>Tags</span><b>${(d.tags || []).length}</b><button id="sctag">new tag</button></summary><div class="lee-sc-meta">` +
+    `${(d.tag_details || []).map(t => `<span class="lee-sc-tag" data-tag="${esc(t.name)}">${esc(t.name)} <small>${gitRelative(t.timestamp)}</small><button data-delete-tag>×</button></span>`).join('') || '<span>no tags</span>'}</div></details>`;
+}
+function gitHistoryView(d) {
+  return `<div class="lee-git-filter"><input id="githistoryfilter" class="lee-input" value="${esc(gitUI.historyQuery)}" placeholder="Search commit messages…"><button id="githistorygo">search</button>` +
+    `<select id="githistoryref"><option value="--all">all refs</option>${(d.branches || []).map(b => `<option value="${esc(b.name)}">${esc(b.name)}</option>`).join('')}</select><button id="gitreflog">reflog</button></div>` +
+    `<div class="lee-git-compare"><label>Compare<input id="gitcompareleft" value="${esc(d.branch)}"></label><span>…</span><label>with<input id="gitcompareright" placeholder="branch or tag"></label><button id="gitcomparego">compare</button></div>` +
+    `<div id="githistoryrows" class="lee-git-history">${gitUI.history.length ? gitUI.history.map(c => `<button class="lee-git-commit-row" data-commit="${c.oid}"><span class="lee-git-graph">${c.parents.length > 1 ? '◆' : '●'}</span><span><strong>${esc(c.subject)}</strong><small>${esc(c.author)} · ${gitRelative(c.timestamp)} · ${esc(c.short)}${c.decoration ? ' · ' + esc(c.decoration) : ''}</small></span></button>`).join('') : '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading commit graph</small></div>'}</div>`;
+}
+function gitResourcesView(d) {
+  const hosted = (d.remotes || []).find(r => r.web_url);
+  const pr = hosted ? `${hosted.web_url}/${hosted.web_url.includes('gitlab') ? '-/merge_requests/new?merge_request[source_branch]=' : 'compare/' + encodeURIComponent(d.branch) + '?expand=1'}${hosted.web_url.includes('gitlab') ? encodeURIComponent(d.branch) : ''}` : '';
+  return `<section class="lee-git-resource"><header><strong>Remotes</strong>${pr ? `<button data-hosted-pr data-url="${esc(pr)}">open pull request</button>` : ''}<button id="gitaddremote">add remote</button></header><div class="lee-sc-meta">` +
+    `${(d.remotes || []).map(r => `<article data-remote="${esc(r.name)}"><strong>${esc(r.name)}</strong><code>${esc(r.fetch)}</code><code>${esc(r.push)}</code><span>${r.web_url ? `<button data-open-remote data-url="${esc(r.web_url)}">open host</button>` : ''}<button data-fetch-remote>fetch</button><button data-edit-remote>edit</button><button data-remove-remote class="warn">remove</button></span></article>`).join('') || '<div class="lee-git-empty-state"><strong>No remotes</strong><span>Add a remote to fetch, publish, and collaborate.</span></div>'}</div></section>` +
+    `<section class="lee-git-resource"><header><strong>Worktrees</strong><button id="gitaddworktree">add worktree</button></header><div id="gitworktrees"><div class="lee-git-loading"><small>reading worktrees</small></div></div></section>` +
+    `<section class="lee-git-resource"><header><strong>Submodules</strong></header><div id="gitsubmodules"><div class="lee-git-loading"><small>reading submodules</small></div></div></section>`;
+}
+async function renderGitPanel(snapshot = null) {
+  const host = $('#gitpanel'); if (!host) return;
+  host.dataset.features = 'Staged changes · Changes · Branches · Stashes · Remotes & tags · staged changes · working tree · fetch · pull · push · stash · tag · stage all · unstage all';
+  if (!snapshot && !gitUI.snapshot) host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading repository</small></div>';
+  let d = snapshot || gitUI.snapshot;
+  try { if (!d) d = await api('/git/info'); }
+  catch (e) { host.innerHTML = `<div class="lee-git-empty-state"><strong>No Git repository</strong><span>${esc(e.message || e)}</span></div>`; return; }
+  gitUI.snapshot = d; paintGitPill(d);
+  const view = gitUI.tab === 'changes' ? gitChangesView(d) : gitUI.tab === 'branches' ? gitBranchesView(d) : gitUI.tab === 'history' ? gitHistoryView(d) : gitResourcesView(d);
+  host.innerHTML = gitSummary(d) + gitNav() + `<main class="lee-git-view">${view}</main>`;
+  wireGitPanel(host, d);
+  if (gitUI.tab === 'history' && !gitUI.history.length) loadGitHistory();
+  if (gitUI.tab === 'resources') loadGitResources();
+}
+async function loadGitHistory() {
+  const rows = $('#githistoryrows');
+  try {
+    const ref = $('#githistoryref')?.value || '--all';
+    const result = await api('/git/history?limit=150&query=' + encodeURIComponent(gitUI.historyQuery) + '&ref=' + encodeURIComponent(ref));
+    gitUI.history = result.commits || []; renderGitPanel(gitUI.snapshot);
+  } catch (e) { if (rows) rows.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+}
+async function loadGitResources() {
+  try {
+    const r = await api('/git/resources');
+    const worktrees = $('#gitworktrees');
+    if (worktrees) worktrees.innerHTML = (r.worktrees || []).map(w => `<article class="lee-git-resource-row" data-worktree="${esc(w.path)}"><div><strong>${esc(w.branch || 'detached')}</strong><code>${esc(w.path)}</code></div>${w.path === gitUI.snapshot.root ? '<i>current</i>' : '<button data-remove-worktree class="warn">remove</button>'}</article>`).join('') || '<span class="lee-dim">No worktrees</span>';
+    const submodules = $('#gitsubmodules');
+    if (submodules) submodules.innerHTML = (r.submodules || []).map(s => `<article class="lee-git-resource-row"><div><strong>${esc(s.path)}</strong><code>${esc(s.oid)}</code></div><i>${s.state === ' ' ? 'clean' : s.state === '-' ? 'not initialized' : s.state === '+' ? 'different commit' : 'conflict'}</i></article>`).join('') || '<span class="lee-dim">No submodules</span>';
+    worktrees?.querySelectorAll('[data-remove-worktree]').forEach(b => b.onclick = async () => {
+      const path = b.closest('[data-worktree]').dataset.worktree;
+      if (await confirmDialog('remove worktree', `Remove ${path}? Uncommitted work prevents removal.`, 'remove')) renderGitPanel(await gitDo('remove_worktree', {path}));
+    });
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+function wireGitPanel(host, d) {
+  host.querySelectorAll('[data-git-tab]').forEach(b => b.onclick = () => { gitUI.tab = b.dataset.gitTab; if (gitUI.tab !== 'history') gitUI.history = []; renderGitPanel(d); });
+  const act = async (op, extra = {}) => renderGitPanel(await gitDo(op, extra));
+  host.querySelectorAll('[data-operation]').forEach(b => b.onclick = async () => {
+    if (b.dataset.operation === 'abort' && !await confirmDialog('abort Git operation', `Abort the active ${d.operation.active}?`)) return;
+    act('operation_' + b.dataset.operation);
+  });
+  host.querySelectorAll('[data-top]').forEach(b => b.onclick = () => b.dataset.top === 'publish' ? act('push', {publish: true}) : act(b.dataset.top));
+  host.querySelector('#scstageall')?.addEventListener('click', e => { e.preventDefault(); act('stage', {paths: d.changes.filter(x => x.unstaged).map(x => x.path)}); });
+  host.querySelector('#scunstageall')?.addEventListener('click', e => { e.preventDefault(); act('unstage', {paths: d.changes.filter(x => x.staged).map(x => x.path)}); });
+  host.querySelector('#scstash')?.addEventListener('click', async () => { const message = await inputDialog('stash changes', 'Optional message', '', 'work in progress'); if (message !== null) act('stash', {message}); });
+  host.querySelector('#sccommit')?.addEventListener('submit', e => { e.preventDefault(); const message = e.target.querySelector('textarea').value.trim(); if (message) act('commit', {message, amend: e.target.elements.amend.checked}); });
+  host.querySelectorAll('.lee-git-change').forEach(row => {
+    const path = row.dataset.path, staged = row.dataset.group === 'staged';
+    row.querySelector('.lee-git-file').onclick = async () => { const patch = await api('/git/diff?path=' + encodeURIComponent(path) + '&staged=' + staged); showGitFileDiff(d.root + '/' + path, patch.content || patch.text || '', 0, patch.text || '', !!patch.notebook, {group: row.dataset.group, label: staged ? 'staged against HEAD' : 'working tree against index'}); };
+    row.querySelector('[data-open]').onclick = () => leeOpenFile(d.root + '/' + path);
+    row.querySelector('[data-blame]')?.addEventListener('click', () => showGitBlame(d.root, path));
+    row.querySelector('[data-resolve]')?.addEventListener('click', () => showGitConflict(path));
+    row.querySelectorAll('[data-git]').forEach(b => b.onclick = async () => { const op = b.dataset.git; if (op === 'discard' && !await confirmDialog('discard changes', `Restore ${path} from the index? This cannot be undone.`)) return; act(op, {paths: [path]}); });
+  });
+  host.querySelectorAll('[data-stash]').forEach(row => { const ref = row.dataset.stash; row.querySelector('[data-apply]').onclick = () => act('stash_apply', {ref}); row.querySelector('[data-pop]').onclick = () => act('stash_pop', {ref}); row.querySelector('[data-drop]').onclick = async () => { if (await confirmDialog('drop stash', `Delete ${ref}?`)) act('stash_drop', {ref}); }; });
+  const branchFilter = host.querySelector('#gitbranchfilter'); if (branchFilter) branchFilter.oninput = () => { gitUI.branchQuery = branchFilter.value; renderGitPanel(d); requestAnimationFrame(() => { const x = $('#gitbranchfilter'); x?.focus(); x?.setSelectionRange(x.value.length, x.value.length); }); };
+  const branchScope = host.querySelector('#gitbranchscope'); if (branchScope) { branchScope.value = gitUI.branchScope; branchScope.onchange = () => { gitUI.branchScope = branchScope.value; renderGitPanel(d); }; }
+  host.querySelector('#scbranch')?.addEventListener('click', async () => { const branch = await inputDialog('new branch', 'Branch name', '', 'feature/name'); if (branch) act('create', {branch}); });
+  host.querySelectorAll('[data-branch]').forEach(row => { const branch = row.dataset.branch; row.querySelector('[data-switch]').onclick = () => act('checkout', {branch}); row.querySelector('[data-more]')?.addEventListener('click', () => branchActions(branch, d, act)); });
+  host.querySelector('#sctag')?.addEventListener('click', async () => { const name = await inputDialog('create tag', 'Tag name', '', 'v1.0.0'); if (!name) return; const message = await inputDialog('annotated tag', 'Optional annotation', '', ''); if (message !== null) act('tag', {name, message}); });
+  host.querySelectorAll('[data-delete-tag]').forEach(b => b.onclick = async () => { const name = b.closest('[data-tag]').dataset.tag; if (await confirmDialog('delete tag', `Delete local tag ${name}?`)) act('delete_tag', {name}); });
+  host.querySelector('#githistorygo')?.addEventListener('click', () => { gitUI.historyQuery = $('#githistoryfilter').value.trim(); gitUI.history = []; loadGitHistory(); });
+  host.querySelector('#githistoryfilter')?.addEventListener('keydown', e => { if (e.key === 'Enter') { gitUI.historyQuery = e.target.value.trim(); gitUI.history = []; loadGitHistory(); } });
+  host.querySelector('#githistoryref')?.addEventListener('change', () => { gitUI.history = []; loadGitHistory(); });
+  host.querySelector('#gitreflog')?.addEventListener('click', showGitReflog);
+  host.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
+  host.querySelector('#gitcomparego')?.addEventListener('click', () => showGitCompare($('#gitcompareleft').value.trim(), $('#gitcompareright').value.trim()));
+  host.querySelector('[data-hosted-pr]')?.addEventListener('click', e => window.open(e.currentTarget.dataset.url, '_blank', 'noopener,noreferrer'));
+  host.querySelector('#gitaddremote')?.addEventListener('click', async () => { const name = await inputDialog('add remote', 'Remote name', '', 'origin'); if (!name) return; const url = await inputDialog('add remote', 'Fetch URL', '', 'https://github.com/owner/repository.git'); if (url) act('add_remote', {name, url}); });
+  host.querySelectorAll('[data-remote]').forEach(row => { const remote = row.dataset.remote; row.querySelector('[data-open-remote]')?.addEventListener('click', b => window.open(b.currentTarget.dataset.url, '_blank', 'noopener,noreferrer')); row.querySelector('[data-fetch-remote]').onclick = () => act('fetch', {remote}); row.querySelector('[data-edit-remote]').onclick = async () => { const url = await inputDialog('edit remote', `${remote} fetch URL`, row.querySelector('code').textContent, 'https://github.com/owner/repository.git'); if (url) act('set_remote', {name: remote, url}); }; row.querySelector('[data-remove-remote]').onclick = async () => { if (await confirmDialog('remove remote', `Remove ${remote}? Local commits and branches remain.`, 'remove')) act('remove_remote', {name: remote}); }; });
+  host.querySelector('#gitaddworktree')?.addEventListener('click', async () => { const path = await inputDialog('add worktree', 'Directory path', '', '../project-feature'); if (!path) return; const branch = await inputDialog('add worktree', 'Existing branch, or a new branch name', '', 'feature/name'); if (branch) act('add_worktree', {path, branch, create: !(d.branches || []).some(b => !b.remote && b.name === branch)}); });
+}
+async function branchActions(branch, d, act) {
+  const m = modal(`<div class="lee-mhead">${esc(branch)}<span class="sub">branch actions</span></div><div class="lee-branch-actions">` +
+    `<button class="lee-btn" data-op="merge">merge into ${esc(d.branch)}</button><button class="lee-btn" data-op="rebase">rebase current onto branch</button>` +
+    `<button class="lee-btn" data-op="rename">rename</button><button class="lee-btn" data-op="upstream">set upstream</button><button class="lee-btn" data-op="compare">compare with current</button>` +
+    `<button class="lee-btn warn" data-op="delete">delete local branch</button></div>`);
+  m.querySelectorAll('[data-op]').forEach(b => b.onclick = async () => {
+    const op = b.dataset.op;
+    if (op === 'delete') { if (!await confirmDialog('delete branch', `Delete local branch ${branch}?`)) return; m.remove(); return act('delete', {branch}); }
+    if (op === 'rename') { const name = await inputDialog('rename branch', 'New name', branch, 'feature/name'); if (name) { m.remove(); act('rename_branch', {branch, name}); } return; }
+    if (op === 'upstream') { const upstream = await inputDialog('set upstream', 'Remote tracking branch', '', 'origin/' + branch); if (upstream) { m.remove(); act('set_upstream', {branch, upstream}); } return; }
+    if (op === 'compare') { m.remove(); return showGitCompare(d.branch, branch); }
+    m.remove(); act(op, {branch});
+  });
+}
+async function showGitCommit(ref) {
+  try {
+    const c = await api('/git/commit?ref=' + encodeURIComponent(ref));
+    const m = modal(`<div class="lee-mhead">${esc(c.short)}<span class="sub">${esc(c.author)} · ${new Date(c.timestamp * 1000).toLocaleString()}</span><span class="lee-spacer"></span><button class="lee-btn" data-cherry>cherry-pick</button><button class="lee-btn" data-revert>revert</button><button class="lee-btn warn" data-reset>reset…</button></div>` +
+      `<article class="lee-git-commit-detail"><h3>${esc(c.message)}</h3><code>${esc(c.oid)}</code><div class="lee-git-patch">${gitPatchHtml(c.patch)}</div></article>`);
+    m.querySelector('[data-cherry]').onclick = async () => { m.remove(); renderGitPanel(await gitDo('cherry_pick', {ref: c.oid})); };
+    m.querySelector('[data-revert]').onclick = async () => { if (await confirmDialog('revert commit', `Create a commit that reverses ${c.short}?`)) { m.remove(); renderGitPanel(await gitDo('revert', {ref: c.oid})); } };
+    m.querySelector('[data-reset]').onclick = async () => { const mode = await inputDialog('reset branch', 'Mode: soft keeps index; mixed keeps files; hard discards changes', 'mixed', 'soft, mixed, or hard'); if (!['soft','mixed','hard'].includes(mode)) return status('reset mode must be soft, mixed, or hard', 'err'); if (mode === 'hard' && !await confirmDialog('hard reset', `Discard tracked changes and reset to ${c.short}? This cannot be undone.`)) return; m.remove(); renderGitPanel(await gitDo('reset', {ref: c.oid, mode})); };
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function showGitCompare(left, right) {
+  if (!left || !right) return status('choose two refs to compare', 'err');
+  try { const d = await api('/git/compare?left=' + encodeURIComponent(left) + '&right=' + encodeURIComponent(right)); showGitFileDiff(`${left}…${right}`, d.patch, 0, d.patch, false, {label: `${d.left_only} commits only on ${left} · ${d.right_only} only on ${right}`}); }
+  catch (e) { status(e.message || String(e), 'err'); }
+}
+async function showGitReflog() {
+  try {
+    const d = await api('/git/reflog?limit=150');
+    const m = modal(`<div class="lee-mhead">reflog<span class="sub">local recovery history · newest first</span></div><div class="lee-git-history">${(d.entries || []).map(x => `<button class="lee-git-commit-row" data-commit="${x.oid}"><span class="lee-git-graph">◆</span><span><strong>${esc(x.subject)}</strong><small>${esc(x.selector)} · ${esc(x.author)} · ${gitRelative(x.timestamp)} · ${esc(x.short)}</small></span></button>`).join('') || '<div class="lee-git-empty-state"><strong>No reflog entries</strong><span>This repository has no local movement history.</span></div>'}</div>`);
+    m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function showGitConflict(path) {
+  try {
+    const d = await api('/git/conflict?path=' + encodeURIComponent(path));
+    const version = (label, text, choice) => `<section><header><strong>${label}</strong><button data-choice="${choice}">use ${label.toLowerCase()}</button></header><pre>${esc(text || 'This side deleted the file.')}</pre></section>`;
+    const m = modal(`<div class="lee-mhead">resolve ${esc(path)}<span class="sub">base, ours, and theirs</span></div><div class="lee-git-conflict">${version('Ours', d.ours, 'ours')}${version('Theirs', d.theirs, 'theirs')}<details><summary>common base</summary><pre>${esc(d.base || 'No common base content.')}</pre></details><details><summary>current worktree result</summary><pre>${esc(d.worktree || '')}</pre><button data-choice="worktree">mark current worktree resolved</button></details></div>`);
+    m.querySelectorAll('[data-choice]').forEach(b => b.onclick = async () => { const choice = b.dataset.choice; if (!await confirmDialog('resolve conflict', `Use ${choice} for ${path} and stage it as resolved?`)) return; m.remove(); renderGitPanel(await gitDo('resolve_conflict', {path, choice})); });
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function showGitBlame(root, path) {
+  try {
+    const d = await api('/git/blame?path=' + encodeURIComponent(path));
+    const m = modal(`<div class="lee-mhead">${esc(path)}<span class="sub">line history</span></div><div class="lee-git-blame">${(d.lines || []).map(x => `<button data-commit="${x.oid}"><code>${esc(x.oid.slice(0, 8))}</code><span>${x.line}</span><strong>${esc(x.author)}</strong><small>${gitRelative(x.timestamp)}</small><pre>${esc(x.text)}</pre></button>`).join('')}</div>`);
+    m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+function leeGit() { leeLeft('git'); }
+function leeGitRefresh() { gitUI.snapshot = null; gitUI.history = []; renderGitPanel(); refreshProjectPills(); }
+window.leeGit = leeGit; window.leeGitRefresh = leeGitRefresh;
 
 /* ------------------------------------------------------------------ research */
-// Web results reuse the hit-list modal shape, so search-the-code and search-the-web
-// feel like the same gesture. Enter reads the page; ctrl+enter saves it into the project.
-function docList(docs, note, title) {
-  let sel = 0;
-  const m = modal(
-    `<div class="lee-mhead">${esc(title)}<span class="sub">${esc(note || '')}</span></div>
-     <div class="lee-modallist" id="dl"></div>
-     <div class="lee-dim lee-mfoot">enter read · ctrl+enter save as markdown · alt+enter save as notebook</div>`,
-    (e) => {
-      if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, docs.length - 1); paint(); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); paint(); }
-      else if (e.key === 'Enter') {
-        e.preventDefault(); const d = docs[sel]; if (!d) return;
-        m.remove();
-        if (e.altKey) saveDoc(d, 'notebook');
-        else if (e.ctrlKey || e.metaKey) saveDoc(d, 'markdown');
-        else readUrl(d.url);
-      }
-    });
-  const list = m.querySelector('#dl');
-  const paint = () => {
-    list.innerHTML = docs.length ? docs.map((d, i) =>
-      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">` +
-      `<span>${esc(d.title || d.url)}</span><span class="sub">${esc(d.url)}</span></div>`).join('')
-      : '<div class="lee-dim">nothing found</div>';
-    list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});
-  };
-  list.addEventListener('click', e => {
-    const r = e.target.closest('.lee-mrow'); if (!r) return;
-    sel = +r.dataset.i; const d = docs[sel]; m.remove(); readUrl(d.url);
-  });
-  paint();
-  return m;
+function researchDomain(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch (_) { return 'source'; }
 }
-
-async function webSearch() {
-  const q = prompt('search the web'); if (!q) return;
-  status('searching…');
-  const d = await api('/research/search?q=' + encodeURIComponent(q));
-  status(d.note, d.docs.length ? 'ok' : null);
-  docList(d.docs, d.note, 'web search');
+function openWebpage(url) {
+  if (!url) return status('choose a source first', 'err');
+  window.open(url, '_blank', 'noopener,noreferrer');
 }
-
-async function readUrl(url) {
-  url = url || prompt('read a url'); if (!url) return;
-  status('fetching ' + url);
-  const d = await api('/research/read?url=' + encodeURIComponent(url));
-  if (!d.doc) return status(d.note, 'err');
-  status(d.note, 'ok');
-  agentLog(`<div class="lee-runline"><span class="sub">${esc(d.doc.title)} — ${esc(d.doc.url)}</span></div>` +
-           `<div class="lee-runline"><span class="res">${esc(d.doc.text.slice(0, 4000))}</span></div>`);
-  lee.lastDoc = d.doc;
-}
-
-async function researchQ() {
-  const q = prompt('research a question'); if (!q) return;
-  status('reading the top results… this takes a moment');
-  const d = await api('/research/dig?q=' + encodeURIComponent(q));
-  status(d.note, d.docs.length ? 'ok' : 'err');
-  agentLog(`<div class="lee-runline"><span class="res">${esc(d.digest.slice(0, 8000))}</span></div>`);
-  lee.lastDoc = {title: q, url: '', text: d.digest};
-}
-
 async function saveDoc(doc, kind) {
   doc = doc || lee.lastDoc; if (!doc) return status('nothing fetched yet', 'err');
+  if (kind === 'notebook' && !doc.url) return status('a research digest can be saved as markdown; source pages can become notebooks', 'err');
+  if (!doc.text && doc.url && kind !== 'notebook') {
+    status('reading source before saving…');
+    const fetched = await api('/research/read?url=' + encodeURIComponent(doc.url));
+    if (!fetched.doc) return status(fetched.note, 'err');
+    doc = fetched.doc;
+  }
   const r = await post('/research/save', {kind: kind === 'notebook' ? 'notebook' : 'md',
                                           url: doc.url, title: doc.title, text: doc.text});
-  if (!r.ok) return status(r.error, 'err');
   status('saved ' + r.entry.path, 'ok');
-  htmxPost('/tab/open?path=' + encodeURIComponent(r.entry.path));
+  leeOpenFile(r.entry.path);
 }
+function researchWorkspace(mode = 'search', value = '') {
+  let activeMode = mode, docs = [], activeDoc = null, digest = '', query = value;
+  const m = modal(`<div class="lee-mhead lee-research-head"><span>Research</span>` +
+    `<span class="sub">search, read, and keep sources with the project</span></div>` +
+    `<form class="lee-research-command"><div class="lee-segbar" aria-label="research mode">` +
+    `<button type="button" class="lee-seg" data-mode="search">Search</button>` +
+    `<button type="button" class="lee-seg" data-mode="read">Read URL</button>` +
+    `<button type="button" class="lee-seg" data-mode="research">Research</button></div>` +
+    `<input class="lee-input" id="researchquery" autocomplete="off">` +
+    `<label class="lee-research-remember" title="Store fetched sources in durable memory"><input type="checkbox" id="researchremember" checked> remember</label>` +
+    `<button class="lee-btn go" type="submit">Go</button></form>` +
+    `<div class="lee-research-body"><aside class="lee-research-sources">` +
+    `<div class="lee-research-section-label">Sources</div><div id="researchsources" class="lee-research-source-list">` +
+    `<div class="lee-research-empty">Search the web or enter a URL to begin.</div></div></aside>` +
+    `<main class="lee-research-reader"><div class="lee-research-reader-head"><div>` +
+    `<strong id="researchtitle">Research workspace</strong><span id="researchmeta">Current sources stay visible while you read.</span></div>` +
+    `<div class="lee-research-actions"><button class="lee-btn" data-new-thought>New note</button>` +
+    `<button class="lee-btn" data-open disabled>Open webpage</button>` +
+    `<button class="lee-btn" data-save disabled>Save Markdown</button><button class="lee-btn" data-notebook disabled>Make notebook</button>` +
+    `<button class="lee-btn" data-memory-note disabled>Add to agent memory</button>` +
+    `<button class="lee-btn" data-forget disabled>Forget</button><button class="lee-btn" data-ask disabled>Ask with sources</button></div></div>` +
+    `<article id="researchreader" class="lee-research-content"><div class="lee-research-hero">` +
+    `<span class="lee-research-mark">R</span><strong>Keep evidence close to the work.</strong>` +
+    `<p>Read a source cleanly, save it into the project, or carry cited results into the assistant.</p></div></article></main></div>`);
+  m.classList.add('lee-research-modal');
+  const input = $('#researchquery', m), list = $('#researchsources', m), reader = $('#researchreader', m);
+  const title = $('#researchtitle', m), meta = $('#researchmeta', m);
+  const setMode = next => {
+    activeMode = next;
+    $$('[data-mode]', m).forEach(b => b.classList.toggle('active', b.dataset.mode === next));
+    input.placeholder = next === 'read' ? 'https://example.com/article' :
+      next === 'research' ? 'Research a question across several sources…' : 'Search the web…';
+    input.focus();
+  };
+  const setBusy = text => {
+    reader.innerHTML = `<div class="lee-research-loading"><span></span><span></span><span></span><p>${esc(text)}</p></div>`;
+  };
+  const setActions = doc => {
+    $('[data-open]', m).disabled = !doc?.url;
+    $('[data-save]', m).disabled = !doc;
+    $('[data-notebook]', m).disabled = !doc?.url;
+    $('[data-memory-note]', m).disabled = !doc?.text;
+    $('[data-forget]', m).disabled = !doc?.memory_id;
+    $('[data-ask]', m).disabled = !(docs.length || doc);
+  };
+  const showDoc = async doc => {
+    activeDoc = doc; lee.lastDoc = doc;
+    title.textContent = doc.title || doc.url || 'Source'; meta.textContent = doc.url || 'research digest';
+    setActions(doc);
+    if (!doc.text && doc.url) {
+      setBusy('Reading and cleaning the source…');
+      try {
+        const remember = $('#researchremember', m)?.checked !== false;
+        const result = await api('/research/read?url=' + encodeURIComponent(doc.url) + '&remember=' + remember);
+        if (!result.doc) throw new Error(result.note || 'No readable content');
+        Object.assign(doc, result.doc); activeDoc = doc; lee.lastDoc = doc; setActions(doc);
+      } catch (e) { reader.innerHTML = `<div class="lee-research-error"><strong>Could not read this source</strong><p>${esc(e.message || e)}</p>` +
+        `<button class="lee-btn" data-open-fallback>Open the original webpage</button></div>`;
+        $('[data-open-fallback]', reader).onclick = () => openWebpage(doc.url); return; }
+    }
+    reader.innerHTML = '';
+    if ((doc.sections || []).length > 1) {
+      const collection = document.createElement('div'); collection.className = 'lee-research-collection';
+      doc.sections.forEach((section, i) => {
+        const article = document.createElement('article'); article.className = 'lee-research-article';
+        article.innerHTML = `<header><span>${String(i + 1).padStart(2, '0')}</span>` +
+          `<strong>${esc(section.title || `Article ${i + 1}`)}</strong></header>`;
+        const body = document.createElement('div'); body.className = 'lee-research-markdown';
+        article.appendChild(body); collection.appendChild(article); renderMarkdown(body, section.text || '');
+      });
+      reader.appendChild(collection);
+      meta.textContent = `${researchDomain(doc.url)} · ${doc.sections.length} articles · ` +
+        `${doc.sections.reduce((n, x) => n + (x.text || '').length, 0).toLocaleString()} characters`;
+    } else {
+      const md = document.createElement('div'); md.className = 'lee-research-markdown'; reader.appendChild(md);
+      renderMarkdown(md, doc.text || 'No readable content was returned.');
+      meta.textContent = `${researchDomain(doc.url)} · ${(doc.text || '').length.toLocaleString()} characters`;
+    }
+  };
+  const paintSources = () => {
+    list.innerHTML = docs.length ? docs.map((doc, i) => `<button class="lee-research-source${doc === activeDoc ? ' active' : ''}" data-source="${i}">` +
+      `<span class="lee-research-source-index">${String(i + 1).padStart(2, '0')}</span><span><strong>${esc(doc.title || doc.url)}</strong>` +
+      `<small>${esc(researchDomain(doc.url))}</small></span></button>`).join('') :
+      '<div class="lee-research-empty">No sources yet.</div>';
+  };
+  const run = async () => {
+    query = input.value.trim(); if (!query) return;
+    setBusy(activeMode === 'research' ? 'Reading and comparing the strongest sources…' : activeMode === 'read' ? 'Fetching the page…' : 'Searching the web…');
+    try {
+      if (activeMode === 'read') {
+        const remember = $('#researchremember', m)?.checked !== false;
+        const result = await api('/research/read?url=' + encodeURIComponent(query) + '&remember=' + remember);
+        if (!result.doc) throw new Error(result.note || 'No readable content');
+        docs = [result.doc]; paintSources(); await showDoc(result.doc); paintSources();
+      } else if (activeMode === 'research') {
+        const remember = $('#researchremember', m)?.checked !== false;
+        const result = await api('/research/dig?q=' + encodeURIComponent(query) + '&remember=' + remember);
+        docs = result.docs || []; digest = result.digest || '';
+        const brief = {title: query, url: '', text: digest, kind: 'research'};
+        paintSources(); await showDoc(brief); status(result.note, docs.length ? 'ok' : 'err');
+      } else {
+        const result = await api('/research/search?q=' + encodeURIComponent(query));
+        docs = result.docs || []; activeDoc = null; paintSources();
+        title.textContent = `${docs.length} results`; meta.textContent = result.note || query; setActions(null);
+        reader.innerHTML = docs.length ? '<div class="lee-research-empty">Choose a source to open it in the reader.</div>' :
+          '<div class="lee-research-error"><strong>No sources found</strong><p>Try a more specific query or switch to Research.</p></div>';
+        status(result.note, docs.length ? 'ok' : 'err');
+      }
+    } catch (e) { reader.innerHTML = `<div class="lee-research-error"><strong>Research stopped</strong><p>${esc(e.message || e)}</p></div>`; status(e.message || String(e), 'err'); }
+  };
+  m.querySelector('.lee-research-command').onsubmit = e => { e.preventDefault(); run(); };
+  m.querySelector('.lee-segbar').onclick = e => { const b = e.target.closest('[data-mode]'); if (b) setMode(b.dataset.mode); };
+  list.onclick = e => { const b = e.target.closest('[data-source]'); if (!b) return; const doc = docs[+b.dataset.source]; showDoc(doc).then(paintSources); };
+  $('[data-new-thought]', m).onclick = () => {
+    activeDoc = {title: 'Research notes', url: '', text: '', kind: 'note'}; lee.lastDoc = activeDoc;
+    title.textContent = 'New research note'; meta.textContent = 'Your Markdown scratchpad · save to the project or agent memory';
+    reader.innerHTML = `<section class="lee-research-note-editor"><label>Title<input class="lee-input" data-thought-title value="Research notes"></label>` +
+      `<div class="lee-research-note-cm"></div></section>`;
+    const noteEditor = createEditor($('.lee-research-note-cm', reader), {doc: '# Notes\n\n', lang: 'markdown', lineNums: true,
+      placeholder: 'Write observations, decisions, open questions, and links…', onChange: text => {
+        activeDoc.text = text; setActions(activeDoc);
+      }});
+    activeDoc.text = LeeCM.getDoc(noteEditor); setActions(activeDoc);
+    $('[data-thought-title]', reader).oninput = e => { activeDoc.title = e.target.value || 'Research notes'; };
+    $('[data-thought-title]', reader).focus();
+  };
+  $('[data-open]', m).onclick = () => openWebpage(activeDoc?.url);
+  $('[data-save]', m).onclick = () => activeDoc && saveDoc(activeDoc, 'markdown');
+  $('[data-notebook]', m).onclick = () => activeDoc && saveDoc(activeDoc, 'notebook');
+  $('[data-memory-note]', m).onclick = () => {
+    if (!activeDoc?.text) return;
+    const source = activeDoc.url ? `\n\nSource: ${activeDoc.url}` : '';
+    const text = String(activeDoc.text || '').slice(0, 30_000) + source;
+    m.remove(); leeNewMemoryNote({title: activeDoc.title || query || 'Research note', text});
+    status('research added to a new memory note; edit and choose model routing before saving', 'ok');
+  };
+  $('[data-forget]', m).onclick = async () => {
+    if (!activeDoc?.memory_id) return;
+    if (!await confirmDialog('forget research source', `Remove ${activeDoc.title || activeDoc.url} from durable memory?`)) return;
+    await post('/memory/forget', {id: activeDoc.memory_id}); activeDoc.memory_id = '';
+    setActions(activeDoc); lee.memoryLoaded = false; status('source removed from memory', 'ok');
+  };
+  $('[data-ask]', m).onclick = () => {
+    const sources = docs.filter(d => d.url).map((d, i) => `[${i + 1}] ${d.title}: ${d.url}`).join('\n');
+    const prompt = $('#agentprompt'); if (!prompt) return;
+    prompt.value = `Research this question using these sources and cite them in the answer:\n\n${query || activeDoc?.title || ''}\n\n${sources}`;
+    m.remove(); leePane('right', true); leeRight('agent'); prompt.focus(); status(`${docs.length} research sources added to the prompt`, 'ok');
+  };
+  setMode(mode); input.value = value;
+  if (value) queueMicrotask(run);
+  return m;
+}
+function webSearch() { return researchWorkspace('search'); }
+function readUrl(url = '') { return researchWorkspace('read', url); }
+function researchQ() { return researchWorkspace('research'); }
 
 /* ------------------------------------------------------------------ overlays */
-function modal(inner, onKey) {
+function modal(inner, onKey, onClose, options = {}) {
+  const previousFocus = document.activeElement;
   const m = document.createElement('div');
-  m.className = 'lee-modal';
-  m.innerHTML = `<div class="lee-modalbox">${inner}</div>`;
-  m.addEventListener('mousedown', e => { if (e.target === m) m.remove(); });
+  m.className = `lee-modal${options.className ? ' ' + options.className : ''}`;
+  m.innerHTML = `<div class="lee-modalbox lee-modal-resizable" role="dialog" aria-modal="true" tabindex="-1">` +
+                `<div class="lee-modal-grip" aria-hidden="true"></div>${inner}` +
+                `<button class="lee-modal-expand" type="button" aria-label="expand dialog" title="expand dialog">↗</button>` +
+                `<button class="lee-modal-close" type="button" aria-label="close dialog">×</button></div>`;
+  const box = m.querySelector('.lee-modalbox');
+  const heading = box.querySelector('.lee-mhead');
+  if (heading) box.setAttribute('aria-label', heading.textContent.trim());
+  const storageKey = options.storageKey ? `lee-modal-size:${options.storageKey}` : '';
+  if (storageKey) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+      if (saved?.width) box.style.width = Math.min(saved.width, innerWidth - 16) + 'px';
+      if (saved?.height) box.style.height = Math.min(saved.height, innerHeight - 16) + 'px';
+      if (Number.isFinite(saved?.left) && Number.isFinite(saved?.top)) {
+        m.classList.add('lee-modal-moved');
+        box.style.left = Math.max(0, Math.min(saved.left, innerWidth - 80)) + 'px';
+        box.style.top = Math.max(0, Math.min(saved.top, innerHeight - 48)) + 'px';
+      }
+    } catch (_) {}
+  }
+  // Result rows are true keyboard targets, not divs that only a mouse can activate.
+  const prepareRows = root => $$('.lee-mrow', root).forEach(row => {
+    row.tabIndex = row.dataset.off ? -1 : 0; row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(row.classList.contains('sel')));
+    const list = row.closest('.lee-modallist'); if (list && !list.hasAttribute('role')) list.setAttribute('role', 'listbox');
+  });
+  prepareRows(m);
+  const observer = new MutationObserver(records => records.forEach(r => r.addedNodes.forEach(n => {
+    if (n instanceof Element) { if (n.matches('.lee-mrow')) prepareRows(n.parentElement); else prepareRows(n); }
+  })));
+  observer.observe(box, {childList: true, subtree: true});
+  let closed = false;
+  const nativeRemove = m.remove.bind(m);
+  const focusables = () => $$('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])', box)
+    .filter(el => !el.hidden && el.getClientRects().length);
   const key = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); m.remove(); document.removeEventListener('keydown', key, true); return; }
+    // Nested dialogs (for example “change cwd” from the kernel picker) form a stack.
+    // Only the top one owns keys; otherwise one Escape closes every layer at once.
+    if ($$('.lee-modal').at(-1) !== m) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); m.remove(); return; }
+    if (e.key === 'Tab') {
+      const items = focusables(); if (!items.length) { e.preventDefault(); box.focus(); return; }
+      const at = items.indexOf(document.activeElement);
+      if (e.shiftKey && at <= 0) { e.preventDefault(); items.at(-1).focus(); }
+      else if (!e.shiftKey && (at < 0 || at === items.length - 1)) { e.preventDefault(); items[0].focus(); }
+      return;
+    }
     if (onKey) onKey(e, m);
+    if (e.defaultPrevented) return;
+    const rows = $$('.lee-mrow:not([data-off])', m), at = rows.indexOf(document.activeElement);
+    if (rows.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault(); e.stopPropagation();
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      const next = rows[(Math.max(0, at) + step + rows.length) % rows.length];
+      rows.forEach(r => { const selected = r === next; r.classList.toggle('sel', selected); r.setAttribute('aria-selected', String(selected)); });
+      next.focus(); next.scrollIntoView({block: 'nearest'});
+    } else if (at >= 0 && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault(); e.stopPropagation(); rows[at].click();
+    }
   };
+  m.remove = () => {
+    if (closed) return;
+    closed = true; observer.disconnect(); document.removeEventListener('keydown', key, true); nativeRemove();
+    if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({preventScroll: true});
+    if (onClose) onClose();
+  };
+  const dragHandle = heading || m.querySelector('.lee-modal-grip');
+  let drag = null;
+  dragHandle.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || e.target.closest('button, input, textarea, select, a') || m.classList.contains('lee-modal-expanded')) return;
+    const r = box.getBoundingClientRect();
+    m.classList.add('lee-modal-moved', 'lee-modal-dragging');
+    box.style.left = r.left + 'px'; box.style.top = r.top + 'px';
+    drag = {x: e.clientX, y: e.clientY, left: r.left, top: r.top, dx: 0, dy: 0};
+    dragHandle.setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  dragHandle.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const r = box.getBoundingClientRect(), width = r.width, height = r.height;
+    const maxX = Math.max(0, innerWidth - width) - drag.left;
+    const maxY = Math.max(0, innerHeight - height) - drag.top;
+    drag.dx = Math.max(-drag.left, Math.min(e.clientX - drag.x, maxX));
+    drag.dy = Math.max(-drag.top, Math.min(e.clientY - drag.y, maxY));
+    box.style.transform = `translate3d(${drag.dx}px, ${drag.dy}px, 0)`;
+    e.preventDefault();
+  });
+  const endDrag = e => {
+    if (!drag) return;
+    box.style.left = Math.max(0, drag.left + drag.dx) + 'px'; box.style.top = Math.max(0, drag.top + drag.dy) + 'px';
+    box.style.transform = ''; drag = null; m.classList.remove('lee-modal-dragging');
+    try { dragHandle.releasePointerCapture(e.pointerId); } catch (_) {}
+  };
+  dragHandle.addEventListener('pointerup', endDrag); dragHandle.addEventListener('pointercancel', endDrag);
+  const toggleExpanded = () => {
+    const expanding = !m.classList.contains('lee-modal-expanded');
+    if (expanding) {
+      box._leeRestorePosition = m.classList.contains('lee-modal-moved')
+        ? {left: box.style.left, top: box.style.top} : null;
+      m.classList.remove('lee-modal-moved'); box.style.left = box.style.top = box.style.transform = '';
+      m.classList.add('lee-modal-expanded');
+    } else {
+      m.classList.remove('lee-modal-expanded');
+      if (box._leeRestorePosition) {
+        m.classList.add('lee-modal-moved'); box.style.left = box._leeRestorePosition.left; box.style.top = box._leeRestorePosition.top;
+      }
+    }
+    const expanded = m.classList.contains('lee-modal-expanded');
+    m.querySelector('.lee-modal-expand').textContent = expanded ? '↙' : '↗';
+    m.querySelector('.lee-modal-expand').setAttribute('aria-label', expanded ? 'restore dialog' : 'expand dialog');
+  };
+  m.querySelector('.lee-modal-expand').onclick = toggleExpanded;
+  heading?.addEventListener('dblclick', e => { if (!e.target.closest('button, input, select')) toggleExpanded(); });
+  if (storageKey && 'ResizeObserver' in window) {
+    const sizeObserver = new ResizeObserver(() => {
+      if (m.classList.contains('lee-modal-expanded')) return;
+      const r = box.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) localStorage.setItem(storageKey, JSON.stringify({width: Math.round(r.width), height: Math.round(r.height), left: Math.round(r.left), top: Math.round(r.top)}));
+    });
+    sizeObserver.observe(box);
+    const oldRemove = m.remove;
+    m.remove = () => { sizeObserver.disconnect(); oldRemove(); };
+  }
+  m.querySelector('.lee-modal-close').onclick = () => m.remove();
+  m.addEventListener('mousedown', e => { if (e.target === m) m.remove(); });
   document.addEventListener('keydown', key, true);
   document.body.appendChild(m);
+  requestAnimationFrame(() => {
+    const target = box.querySelector('[autofocus]') || box.querySelector('.lee-mrow.sel:not([data-off])') ||
+                   box.querySelector('.lee-mrow:not([data-off])') || box.querySelector('input, textarea, select') ||
+                   box.querySelector('button:not(.lee-modal-close):not([disabled])') || box;
+    target.focus({preventScroll: true});
+    if (target.classList.contains('lee-mrow')) target.scrollIntoView({block: 'nearest'});
+  });
   return m;
 }
 
+function inputDialog(title, label, value = '', placeholder = '') {
+  return new Promise(resolve => {
+    let settled = false;
+    const done = value => { if (settled) return; settled = true; m.remove(); resolve(value); };
+    const m = modal(
+      `<form class="lee-dialogform"><div class="lee-mhead">${esc(title)}</div>` +
+      `<label class="lee-fieldlabel">${esc(label)}<input class="lee-input" id="dialoginput" ` +
+      `placeholder="${esc(placeholder)}" autocomplete="off"></label>` +
+      `<div class="lee-mfoot"><button class="lee-btn go" type="submit">confirm</button>` +
+      `<button class="lee-btn" type="button" id="dialogcancel">cancel</button></div></form>`,
+      null, () => { if (!settled) { settled = true; resolve(null); } });
+    const input = m.querySelector('#dialoginput'); input.value = value;
+    m.querySelector('form').onsubmit = e => { e.preventDefault(); done(input.value.trim()); };
+    m.querySelector('#dialogcancel').onclick = () => done(null);
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+  });
+}
+
+function textDialog(title, label, value = '') {
+  return new Promise(resolve => {
+    let settled = false;
+    const done = value => { if (settled) return; settled = true; m.remove(); resolve(value); };
+    const m = modal(
+      `<form class="lee-dialogform"><div class="lee-mhead">${esc(title)}</div>` +
+      `<label class="lee-fieldlabel">${esc(label)}<textarea class="lee-keyedit" id="dialogtext" rows="12" spellcheck="false"></textarea></label>` +
+      `<div class="lee-mfoot"><button class="lee-btn go" type="submit">retry</button>` +
+      `<button class="lee-btn" type="button" id="dialogcancel">cancel</button></div></form>`,
+      null, () => { if (!settled) { settled = true; resolve(null); } });
+    const input = m.querySelector('#dialogtext'); input.value = value;
+    m.querySelector('form').onsubmit = e => { e.preventDefault(); done(input.value.trim()); };
+    m.querySelector('#dialogcancel').onclick = () => done(null);
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+  });
+}
+
+function confirmDialog(title, detail, action = 'delete') {
+  return new Promise(resolve => {
+    let settled = false;
+    const done = value => { if (settled) return; settled = true; m.remove(); resolve(value); };
+    const m = modal(`<div class="lee-mhead">${esc(title)}</div><div class="lee-dialogcopy">${esc(detail)}</div>` +
+      `<div class="lee-mfoot"><button class="lee-btn warn" id="dialogyes">${esc(action)}</button>` +
+      `<button class="lee-btn" id="dialogno" autofocus>cancel</button></div>`, null,
+      () => { if (!settled) { settled = true; resolve(false); } });
+    m.querySelector('#dialogyes').onclick = () => done(true);
+    m.querySelector('#dialogno').onclick = () => done(false);
+  });
+}
+
+/* One menu renderer for every contextual surface. Labels and effective chords came from
+ * leela.menus + leela.keys; the browser only positions rows and dispatches their action. */
+function closeMenu() { $('.lee-ctxmenu')?.remove(); }
+function openMenu(surface, x, y) {
+  closeMenu();
+  const rows = lee.menus?.[surface] || [];
+  if (!rows.length) return;
+  const menu = document.createElement('div');
+  menu.className = 'lee-ctxmenu'; menu.setAttribute('role', 'menu'); menu.tabIndex = -1;
+  menu.innerHTML = rows.map(r => r.separator ? '<div class="lee-menusep" role="separator"></div>' :
+    `<button class="lee-menuitem ${esc(r.kind)}" role="menuitem" data-action="${esc(r.action)}">` +
+    `<span>${esc(r.label)}</span>${r.chord && r.chord !== '—' ? `<kbd>${esc(displayChord(r.chord))}</kbd>` : ''}</button>`).join('');
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = Math.max(4, Math.min(x, innerWidth - rect.width - 4)) + 'px';
+  menu.style.top = Math.max(4, Math.min(y, innerHeight - rect.height - 4)) + 'px';
+  menu.onclick = e => { const item = e.target.closest('.lee-menuitem'); if (!item) return; closeMenu(); leeAct(item.dataset.action); };
+  menu.onkeydown = e => {
+    const items = $$('.lee-menuitem', menu), at = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); closeMenu(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); items[(at + 1 + items.length) % items.length]?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); items[(at - 1 + items.length) % items.length]?.focus(); }
+    else if (e.key === 'Home') { e.preventDefault(); items[0]?.focus(); }
+    else if (e.key === 'End') { e.preventDefault(); items.at(-1)?.focus(); }
+  };
+  menu.focus();
+}
+function leeMenuAt(surface, anchor) {
+  const r = anchor.getBoundingClientRect(); openMenu(surface, r.right - 4, r.bottom + 3);
+}
+window.leeMenuAt = leeMenuAt;
+
+function openChromeMenu(anchor, rows) {
+  closeMenu();
+  const menu = document.createElement('div'); menu.className = 'lee-ctxmenu'; menu.setAttribute('role', 'menu');
+  menu.innerHTML = rows.map((r, i) => r.separator ? '<div class="lee-menusep" role="separator"></div>' :
+    `<button class="lee-menuitem${r.warn ? ' warn' : ''}" role="menuitem" data-i="${i}" ${r.disabled ? 'disabled' : ''}>` +
+    `<span>${esc(r.label)}</span>${r.detail ? `<small>${esc(r.detail)}</small>` : ''}</button>`).join('');
+  document.body.appendChild(menu);
+  const a = anchor.getBoundingClientRect(), rect = menu.getBoundingClientRect();
+  menu.style.left = Math.max(4, Math.min(a.left, innerWidth - rect.width - 4)) + 'px';
+  menu.style.top = Math.max(4, Math.min(a.bottom + 3, innerHeight - rect.height - 4)) + 'px';
+  menu.onclick = e => { const b = e.target.closest('[data-i]'); if (!b || b.disabled) return; closeMenu(); rows[+b.dataset.i].run?.(); };
+  menu.tabIndex = -1; menu.focus();
+}
+
+async function leeWorkspaceMenu(anchor) {
+  const d = await api('/workspace/info');
+  const sites = d.workspaces || [];
+  const rows = sites.map(site => ({label: site.name, detail: site.root, run: () => {
+    if (site.url && site.url !== location.href) location.href = site.url;
+  }}));
+  if (sites.length && (d.roots || []).length) rows.push({separator: true});
+  rows.push(...(d.roots || []).map(root => ({label: sites.length ? `Folder: ${root.name}` : root.name,
+    detail: root.path, run: async () => {
+      leeLeft('files');
+      const node = $$('.lee-root').find(n => n.dataset.path === root.path);
+      if (node) { selectTreeNode(node); await loadTreeDir(node); node.scrollIntoView({block: 'nearest'}); }
+    }})));
+  if (rows.length) rows.push({separator: true});
+  rows.push({label: 'Add folder…', detail: 'to this workspace', run: addRoot});
+  openChromeMenu(anchor, rows);
+}
+window.leeWorkspaceMenu = leeWorkspaceMenu;
+
+async function leeBranchMenu(anchor) {
+  try {
+    const d = await api('/git/info');
+    const rows = (d.branches || []).map(b => ({label: b.name, detail: b.current ? 'current' : b.oid,
+      run: () => b.current ? leeLeft('git') : gitDo('checkout', {branch: b.name})}));
+    rows.push({separator: true}, {label: 'Create branch…', run: async () => {
+      const branch = await inputDialog('new branch', 'Branch name', '', 'feature/name');
+      if (branch) gitDo('create', {branch});
+    }}, {label: 'Source control', detail: `${(d.changes || []).length} changes`, run: () => leeLeft('git')});
+    openChromeMenu(anchor, rows);
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+window.leeBranchMenu = leeBranchMenu;
+
+async function operationHistory() {
+  const d = await api('/history/operations');
+  const m = modal(`<div class="lee-mhead">workspace history<span class="sub">saved file checkpoints · newest first</span></div>` +
+    `<div class="lee-modallist">${(d.operations || []).map((op, i) => `<button class="lee-mrow" data-op="${esc(op.id)}"${op.reversible ? '' : ' data-off="1"'}>` +
+      `<strong>${esc(op.label)}</strong><span class="sub">${new Date(op.at * 1000).toLocaleString()} · ${esc((op.paths || []).join(', '))}${op.irreversible?.length ? ' · external: ' + esc(op.irreversible.join(', ')) : ''}</span></button>`).join('') || '<div class="lee-dim">No saved operations yet.</div>'}</div>` +
+    `<div class="lee-mfoot"><span class="lee-dim">Undo is refused if any file changed after its checkpoint.</span></div>`);
+  $$('[data-op]:not([data-off])', m).forEach(row => row.onclick = async () => {
+    if (!await confirmDialog('Undo workspace operation', `Restore ${row.textContent.trim()}?`, 'undo')) return;
+    try { const r = await post('/history/undo', {id: row.dataset.op}); m.remove();
+      if ((r.operation.resources || []).some(x => x.path === lee.path)) await takeDiskVersion(lee.path);
+      status('workspace operation undone', 'ok'); refreshFileTree(undefined, false);
+    } catch (e) { status(e.message || String(e), 'err'); }
+  });
+}
+
+function leeToolsMenu(anchor) {
+  openChromeMenu(anchor, [
+    {label: 'Command palette', detail: displayChord('mod+shift+p'), run: () => leeAct('palette')},
+    {label: 'Recent files', detail: displayChord('mod+e'), run: () => leeAct('recent_tabs')},
+    {separator: true},
+    {label: 'Research workspace…', run: () => leeAct('research')},
+    {label: 'Read webpage…', run: () => leeAct('read_url')},
+    {label: 'Kernel and interpreter…', run: () => leeAct('pick_kernel')},
+    {label: 'Working directory…', run: leeCwd},
+    {separator: true},
+    {label: 'Settings…', detail: displayChord(lee.keys.find(k => k.action === 'settings')?.key || 'mod+,'), run: editorSettings},
+    {label: 'Workspace history…', detail: 'conflict-safe undo', run: operationHistory},
+    {label: 'Keybindings…', run: () => leeAct('edit_keys')},
+    {label: 'Terminal', run: () => leeAct('terminal')},
+  ]);
+}
+window.leeToolsMenu = leeToolsMenu;
+
+function leeEditorMenu(anchor) {
+  const rows = [
+    {label: 'Run selection', detail: displayChord(lee.keys.find(k => k.action === 'run_selection')?.key || ''), run: () => leeAct('run_selection')},
+    {label: 'Run all cells', detail: displayChord(lee.keys.find(k => k.action === 'run_all')?.key || ''), run: () => leeAct('run_all')},
+    {label: 'Restart and run all', run: () => leeAct('restart_run_all')},
+    {separator: true},
+    {label: 'Save', detail: displayChord(lee.keys.find(k => k.action === 'save')?.key || ''), run: () => leeAct('save')},
+    {label: 'Show unsaved changes', run: () => leeAct('show_diff')},
+    {label: 'Rename symbol…', run: () => leeAct('rename_symbol')},
+    {separator: true},
+    {label: 'Insert cell below', run: () => leeAct('cell_below')},
+    {label: 'Change cell type', run: () => leeAct('cell_type')},
+    {label: 'Clear all outputs', run: () => leeAct('clear_all_outputs')},
+    {separator: true},
+    {label: 'All commands…', detail: displayChord(lee.keys.find(k => k.action === 'palette')?.key || ''), run: () => leeAct('palette')},
+  ];
+  openChromeMenu(anchor, rows);
+}
+window.leeEditorMenu = leeEditorMenu;
+
+function leeDebugMenu(anchor) {
+  openChromeMenu(anchor, [
+    {label:'Debug current Python file',detail:'debugpy',disabled:lee.kind!=='text'||curLang()!=='python',run:()=>startDirectDebug({name:lee.path?.split('/').pop()||'Python',program:lee.path,debug:true})},
+    {label:'Run or debug configuration…',run:()=>leeAct('run_app')},
+    {label:'Edit configurations…',run:editRuns},
+    {separator:true},
+    {label:'Continue',disabled:!lee.debugState,run:()=>leeDebugControl('continue')},
+    {label:'Step over',disabled:!lee.debugState,run:()=>leeDebugControl('next')},
+    {label:'Step into',disabled:!lee.debugState,run:()=>leeDebugControl('stepIn')},
+    {label:'Step out',disabled:!lee.debugState,run:()=>leeDebugControl('stepOut')},
+    {label:'Stop debugger',warn:true,disabled:!lee.debugCell&&!lee.directDebug,run:leeDebugStop},
+    {separator:true},
+    {label:'Interrupt kernel',warn:true,run:()=>leeAct('interrupt')},
+    {label:'Restart kernel',warn:true,run:()=>leeAct('restart')},
+  ]);
+}
+window.leeDebugMenu = leeDebugMenu;
+
+document.addEventListener('pointerdown', e => { if (!e.target.closest('.lee-ctxmenu, .lee-more')) closeMenu(); }, true);
+window.addEventListener('blur', closeMenu);
+window.addEventListener('resize', () => { closeMenu(); layoutTabs(); });
+window.addEventListener('scroll', closeMenu, true);
+
 function showHelp() {
-  const body = Object.entries(lee.help).map(([scope, rows]) =>
-    `<h4>${esc(scope)}</h4>` + rows.map(([k, l]) =>
-      `<div class="lee-krow"><kbd>${esc(k)}</kbd><span>${esc(l)}</span></div>`).join('')).join('');
+  const scopes = Object.entries(lee.help).sort(([a], [b]) =>
+    a === lee.scope ? -1 : b === lee.scope ? 1 : a === 'global' ? -1 : b === 'global' ? 1 : 0);
+  const body = scopes.map(([scope, rows]) =>
+    `<section class="lee-help-scope${scope === lee.scope ? ' active' : ''}"><h4>${esc(scope)}` +
+    `${scope === lee.scope ? '<span>current</span>' : ''}</h4>` + rows.map(([k, l]) =>
+      `<div class="lee-krow"><kbd>${esc(displayChord(k))}</kbd><span>${esc(l)}</span></div>`).join('') + '</section>').join('');
   const m = modal(
     `<div class="lee-mhead">keys<span class="sub">${esc(lee.keyPath || '')}</span></div>` +
     (lee.keyNotes || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('') +
@@ -1100,7 +5269,7 @@ async function quickOpen(searchMode) {
       `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(h.name)}<span class="sub">${esc(h.path)}</span></div>`).join('');
     list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});
   };
-  const go = () => { const h = hits[sel]; if (h) { m.remove(); htmxPost('/tab/open?path=' + encodeURIComponent(h.path)); } };
+  const go = () => { const h = hits[sel]; if (h) { m.remove(); leeOpenFile(h.path); } };
   list.addEventListener('click', e => { const r = e.target.closest('.lee-mrow'); if (r) { sel = +r.dataset.i; go(); } });
   input.addEventListener('input', async () => {
     const q = input.value.trim();
@@ -1110,47 +5279,196 @@ async function quickOpen(searchMode) {
 }
 
 async function codeSearch() {
-  let hits = [], sel = 0, backend = '';
+  let hits = [], sel = 0, backend = '', mode = 'context', previewView = null, searchSeq = 0;
   const m = modal(
-    `<input class="lee-input" id="cs" placeholder="search code…" autofocus>
-     <div class="lee-modallist" id="cslist"><div class="lee-dim">type to search</div></div>`,
+    `<div class="lee-searchbar"><input class="lee-input" id="cs" placeholder="search code, symbols and meaning…" autofocus>
+     <div class="lee-segbar lee-searchmodes" aria-label="search mode">
+       <button class="lee-seg active" data-mode="context" title="Kosha composed retrieval across repository code and installed packages">context</button>
+       <button class="lee-seg" data-mode="repo" title="Kosha repository code store">repo</button>
+       <button class="lee-seg" data-mode="env" title="Kosha installed-package environment store">packages</button>
+       <button class="lee-seg" data-mode="all" title="rank ripgrep, symbols, FTS and semantic repo results together">all</button>
+       <button class="lee-seg" data-mode="rg" title="ripgrep: literal search over current files">rg</button>
+       <button class="lee-seg" data-mode="symbols" title="Kosha symbols: repository and indexed packages">symbols</button>
+       <button class="lee-seg" data-mode="ann" title="Kosha embedding ANN">ANN</button>
+     </div><button class="lee-btn" id="kosharefresh" type="button">sync</button></div>` +
+    `<div class="lee-kosha-status" id="koshastatus"><span>Opening Kosha…</span></div>
+     <div class="lee-code-search-body"><div class="lee-modallist" id="cslist"><div class="lee-dim">type to search repository + environment context</div></div>
+       <aside class="lee-search-preview"><header><div><strong id="cspreviewtitle">Code preview</strong>` +
+       `<span id="cspreviewmeta">Select a result</span></div><button class="lee-btn go" id="csopen" disabled>Open file</button></header>` +
+       `<div id="cspreview"><div class="lee-search-preview-empty">Matches open here with syntax highlighting.</div></div>` +
+       `<div class="lee-search-relations" id="csrelations"></div></aside></div>`,
     (e) => {
       if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, hits.length - 1); paint(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); paint(); }
       else if (e.key === 'Enter') { e.preventDefault(); go(); }
+    }, () => { if (previewView) LeeCM.destroy(previewView); });
+  m.classList.add('lee-code-search-modal');
+  const list = $('#cslist', m), input = $('#cs', m), preview = $('#cspreview', m), open = $('#csopen', m);
+  const showPreview = () => {
+    if (previewView) { LeeCM.destroy(previewView); previewView = null; }
+    const h = hits[sel];
+    if (!h) {
+      preview.innerHTML = '<div class="lee-search-preview-empty">No result selected.</div>';
+      open.disabled = true; return;
+    }
+    const filename = h.path.split('/').pop() || h.package || 'indexed source';
+    $('#cspreviewtitle', m).textContent = h.symbol || filename;
+    $('#cspreviewmeta', m).textContent = `${h.package ? h.package + ' · ' : ''}${filename}:${h.line} · ${(h.sources || [h.kind]).join(' + ')}`;
+    const environment = h.kind.startsWith('env-');
+    open.disabled = environment && !h.package;
+    open.textContent = environment ? (h.package ? 'Package API' : 'Indexed package') : 'Open file';
+    preview.innerHTML = '<div class="lee-search-preview-editor"></div>';
+    previewView = mountCodeSurface($('.lee-search-preview-editor', preview), h.text || '(no indexed preview)',
+                                   codeLang('', h.path), false);
+    const relations = $('#csrelations', m), callers = h.callers || [];
+    relations.innerHTML = callers.length ? `<span>called by</span>` + callers.map(name =>
+      `<button data-symbol="${esc(name)}">${esc(name.split('.').pop())}</button>`).join('') : '';
+    $$('[data-symbol]', relations).forEach(button => button.onclick = () => {
+      input.value = button.dataset.symbol; mode = 'context';
+      $$('.lee-searchmodes .lee-seg', m).forEach(x => x.classList.toggle('active', x.dataset.mode === mode));
+      search();
     });
-  const list = m.querySelector('#cslist'), input = m.querySelector('#cs');
+  };
   const paint = () => {
-    if (!hits.length) { list.innerHTML = `<div class="lee-dim">no matches · ${esc(backend)}</div>`; return; }
+    if (!hits.length) {
+      list.innerHTML = `<div class="lee-dim">${backend ? 'no matches · ' + esc(backend) : 'type to search'}</div>`;
+      showPreview(); return;
+    }
     list.innerHTML = hits.map((h, i) => {
-      const f = h.path.split('/').pop();
-      return `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">` +
-             `<span>${esc(h.symbol || h.text.slice(0, 60))}</span>` +
-             `<span class="sub">${esc(f)}:${h.line} · ${esc(h.kind)}</span></div>`;
+      const f = h.path.split('/').pop() || h.package || 'environment';
+      const foundBy = (h.sources || [h.kind]).join(' + ');
+      return `<button class="lee-search-result${i === sel ? ' sel' : ''}" data-i="${i}">` +
+        `<span class="lee-search-result-kind">${esc(h.kind.startsWith('env-') ? 'PKG' : h.symbol ? 'SYM' : 'TXT')}</span>` +
+        `<span><strong>${esc(h.symbol || h.text.split('\n')[0].slice(0, 90))}</strong>` +
+        `<small>${esc(h.package ? h.package + ' · ' : '')}${esc(f)}:${h.line}</small></span>` +
+        `<em>${esc(foundBy)}</em></button>`;
     }).join('');
-    list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});
+    $('.lee-search-result.sel', list)?.scrollIntoView({block: 'nearest'}); showPreview();
   };
-  const go = () => {
+  const go = async () => {
     const h = hits[sel]; if (!h) return;
-    m.remove();
-    htmxPost('/tab/open?path=' + encodeURIComponent(h.path));
-    status(`${h.path.split('/').pop()}:${h.line}`);
+    if (h.kind.startsWith('env-')) {
+      if (!h.package) return status('package source is indexed read-only', 'info');
+      const d = await api('/code/package-api?package=' + encodeURIComponent(h.package));
+      const box = modal(`<div class="lee-mhead">${esc(h.package)}<span class="sub">public API from Kosha</span></div>` +
+        `<div class="lee-package-api"></div>`);
+      const body = $('.lee-package-api', box), symbols = d.symbols || [];
+      body.innerHTML = symbols.length ? symbols.map(row => `<button data-name="${esc(row.mod_name || '')}">` +
+        `<strong>${esc(row.mod_name || '')}</strong><span>${esc(row.docstring || '')}</span></button>`).join('') :
+        '<div class="lee-dim">No exported API metadata found.</div>';
+      $$('[data-name]', body).forEach(row => row.onclick = () => { box.remove(); input.value = row.dataset.name; search(); });
+      return;
+    }
+    m.remove(); openLocation(h);
   };
-  list.addEventListener('click', e => { const r = e.target.closest('.lee-mrow'); if (r) { sel = +r.dataset.i; go(); } });
+  list.onclick = e => {
+    const row = e.target.closest('[data-i]'); if (!row) return;
+    const next = +row.dataset.i;
+    if (next === sel) { if (e.detail > 1) go(); else showPreview(); return; }
+    sel = next; paint();
+  };
+  open.onclick = go;
   let timer;
-  input.addEventListener('input', () => {
-    clearTimeout(timer);
+  const search = () => {
+    clearTimeout(timer); const seq = ++searchSeq;
     timer = setTimeout(async () => {
       const q = input.value.trim();
-      if (!q) { hits = []; list.innerHTML = '<div class="lee-dim">type to search</div>'; return; }
-      const d = await api('/search?q=' + encodeURIComponent(q));
-      hits = d.hits; backend = d.backend + (d.note ? ' · ' + d.note : ''); sel = 0;
-      paint();
-      status(`search: ${d.backend}${d.note ? ' — ' + d.note : ''}`);
-    }, 180);
-  });
+      if (!q) { hits = []; backend = ''; paint(); return; }
+      list.innerHTML = `<div class="lee-search-progress"><span></span>searching ${esc(mode === 'context' ? 'Kosha repo + environment context' : mode === 'all' ? 'rg, symbols, FTS and ANN' : mode)}…</div>`;
+      try {
+        const d = await api('/search?q=' + encodeURIComponent(q) + '&mode=' + mode);
+        if (seq !== searchSeq) return;
+        hits = d.hits || []; backend = d.backend + (d.note ? ' · ' + d.note : ''); sel = 0;
+        paint(); status(`search: ${d.backend}${d.note ? ' — ' + d.note : ''}`);
+      } catch (e) {
+        if (seq !== searchSeq) return;
+        hits = []; backend = e.message || String(e); paint(); status(backend, 'err');
+      }
+    }, mode === 'rg' ? 120 : mode === 'all' || mode === 'context' ? 360 : 280);
+  };
+  input.addEventListener('input', search);
+  api('/code/status').then(d => {
+    const el = $('#koshastatus', m); if (!el) return;
+    el.innerHTML = d.ok ? `<span class="ok">Kosha connected</span><span>${Number(d.files || 0).toLocaleString()} files</span>` +
+      `<span>${Number(d.packages || 0).toLocaleString()} packages</span><span>${Number(d.graph_nodes || 0).toLocaleString()} graph nodes</span>` +
+      `${d.stale_files ? `<span class="warn">${d.stale_files} stale files</span>` : ''}` : `<span class="warn">${esc(d.note || 'Kosha unavailable')}</span>`;
+  }).catch(() => {});
+  $('#kosharefresh', m).onclick = async () => {
+    const button = $('#kosharefresh', m); button.disabled = true; button.textContent = 'syncing…';
+    try { await post('/code/sync'); button.textContent = 'synced'; status('Kosha code, notebooks and graph synced', 'ok'); if (input.value.trim()) search(); }
+    catch (e) { button.textContent = 'retry sync'; status(e.message || String(e), 'err'); }
+    finally { button.disabled = false; }
+  };
+  $('.lee-searchmodes', m).onclick = e => {
+    const b = e.target.closest('[data-mode]'); if (!b) return;
+    e.preventDefault(); mode = b.dataset.mode;
+    $$('.lee-searchmodes .lee-seg', m).forEach(x => x.classList.toggle('active', x === b));
+    search(); input.focus();
+  };
   setTimeout(() => input.focus(), 0);
 }
+
+function cursorWord() {
+  const v = curEditor(); return v ? LeeCM.wordAtCursor(v) : '';
+}
+async function findDefinition(name = cursorWord()) {
+  if (!name) return status('put the cursor on a symbol first', 'err');
+  status(`finding ${name}…`);
+  const d = await api('/code/definition?name=' + encodeURIComponent(name) + '&path=' + encodeURIComponent(lee.path || ''));
+  if (!(d.hits || []).length) return status(`no definition found for ${name}`, 'err');
+  if (d.hits.length === 1) return openLocation(d.hits[0]);
+  hitList(d.hits, `${d.backend} — ${d.note}`, `definitions of ${name}`, openLocation);
+}
+async function findUsages(name = cursorWord()) {
+  if (!name) return status('put the cursor on a symbol first', 'err');
+  const d = await api('/code/usages?name=' + encodeURIComponent(name));
+  hitList(d.hits || [], `${d.backend} — ${d.note}`, `usages of ${name}`, openLocation);
+}
+async function renameSymbol() {
+  const name=cursorWord(),view=curEditor();
+  if(!name||!view||!lee.path||curLang()!=='python')return status('put the cursor on a Python symbol first','err');
+  const next=await inputDialog('rename symbol','New name',name,'valid Python identifier');
+  if(!next||next===name)return;
+  const pos=LeeCM.cursor(view),line=view.state.doc.lineAt(pos),character=pos-line.from;
+  try{
+    const preview=await post('/lsp/rename',{path:lee.path,text:LeeCM.getDoc(view),line:line.number-1,character,newName:next});
+    if(!preview.files?.length)return status('Pyright found no rename edits','err');
+    const summary=preview.files.map(f=>`${f.path.split('/').pop()} · ${f.edits} edit${f.edits===1?'':'s'}`).join('\n');
+    if(!await confirmDialog('Rename across workspace',`${name} → ${next}\n\n${summary}`,'rename'))return;
+    await post('/lsp/rename',{path:lee.path,text:LeeCM.getDoc(view),line:line.number-1,character,newName:next,apply:true});
+    await post('/tab/reload',{path:lee.path});await mountTab();refreshFileTree(undefined,false);status(`renamed ${name} to ${next}`,'ok');
+  }catch(e){status(e.message||String(e),'err');}
+}
+
+async function syncCodeIndex() {
+  status('syncing Kosha index, notebooks and call graph…');
+  const d = await post('/code/sync'); status(d.note || 'Kosha index synced', d.ok ? 'ok' : 'err');
+}
+
+async function leeSymbols() {
+  const host = $('#symbols'), label = $('#symbolfile'); if (!host) return;
+  const name = compactPath(lee.path || ''); if (label) label.textContent = name ? '· ' + name : '';
+  if (!lee.path || lee.kind !== 'text') {
+    host.innerHTML = '<div class="lee-dim">Open a source file to see its symbols.</div>'; return;
+  }
+  host.innerHTML = '<div class="lee-symbol-loading">Reading structure…</div>';
+  try {
+    const d = await api('/outline?path=' + encodeURIComponent(lee.path));
+    const rows = d.symbols || [];
+    host.innerHTML = rows.length ? rows.map((s, i) => {
+      const depth = Math.max(0, Math.floor(Number(s.score || 0) / 4));
+      const kind = /^class\s/.test(s.text || '') ? 'class' : 'function';
+      return `<button class="lee-symbol-row" role="treeitem" style="--depth:${depth}" ` +
+        `data-line="${Number(s.line || 1)}"><span class="lee-symbol-kind">${kind === 'class' ? 'C' : 'ƒ'}</span>` +
+        `<span>${esc(s.symbol)}</span><small>${Number(s.line || 1)}</small></button>`;
+    }).join('') : '<div class="lee-dim">No functions or classes in this file.</div>';
+    $$('.lee-symbol-row', host).forEach(row => row.onclick = () => {
+      openLocation({path: lee.path, line: +row.dataset.line});
+      if (matchMedia('(max-width: 1100px)').matches) leePane('left', false);
+    });
+  } catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+}
+window.leeSymbols = leeSymbols;
 
 /* ---- similarity: what else in this codebase looks like the thing under the cursor ---- */
 function cursorLine() {
@@ -1188,10 +5506,7 @@ function hitList(hits, note, title, onPick) {
   return m;
 }
 
-const openHit = (h) => {
-  htmxPost('/tab/open?path=' + encodeURIComponent(h.path));
-  status(`${h.path.split('/').pop()}:${h.line}`);
-};
+const openHit = openLocation;
 
 async function findSimilar() {
   if (!lee.path) return status('open a file first', 'err');
@@ -1221,7 +5536,7 @@ async function codeMap() {
  * puts an inspector into. That is the difference between this and the same command in a
  * terminal: the inspector is *inside* it, so the variable panel can watch the app's own
  * module while it serves. A process started anywhere else has to opt in with
- * `leela.inspect.serve()`; the picker says so, because everyone asks. */
+ * `dhrishti.serving.serve()`; the picker says so, because everyone asks. */
 async function runApp() {
   const d = await api('/runs');
   const opts = (d.runs || []).concat(d.here ? [d.here] : []);
@@ -1230,14 +5545,21 @@ async function runApp() {
     return status('no run configurations yet — here is the file', 'err');
   }
   const start = async (r) => {
+    if(r.debug)return startDirectDebug(r);
     status(`starting ${r.name}…`);
     const s = await api('/dev/start?name=' + encodeURIComponent(r.name) +
                         '&path=' + encodeURIComponent(r.cmd));
     if (!s.ok) return status(s.error || 'failed to start', 'err');
     agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)} — ${esc(s.cmd)}</span></div>` +
              `<div class="lee-runline"><span class="res">${esc((s.log || []).join('\n'))}</span></div>`);
-    status(`${s.label} running · app ${s.app_url || '?'} · inspector ${s.base || 'pending'}` +
-           (s.base ? ' — “env…” in the variable panel watches it' : ''), 'ok');
+    if (s.base) {
+      // Running from the picker is an explicit choice of runtime. Connect the variable
+      // panel immediately instead of making the user repeat that choice in “env…”.
+      await post('/envs/watch', {base: s.base});
+      paintEnv(s.label);
+    }
+    status(`${s.label} running · app ${s.app_url || '?'} · ` +
+           (s.base ? 'variables connected' : 'inspector pending'), 'ok');
     leeVars();
   };
   if (opts.length === 1) return start(opts[0]);
@@ -1253,16 +5575,38 @@ async function runApp() {
   m.querySelector('#editruns').onclick = () => { m.remove(); editRuns(); };
 }
 
+async function startDirectDebug(run={}) {
+  let capabilities=await api('/debug/capabilities');
+  if(!capabilities.debugpy){
+    const ok=await confirmDialog('Install debugpy',`Install debugpy into ${capabilities.python}?`,'install');
+    if(!ok)return;
+    status('installing debugpy…');await post('/debug/install',{python:capabilities.python});
+  }
+  const path=run.program||lee.path||'', lines=path?detailedBreakpoints(path):[];
+  status(`starting debugger: ${run.name||path.split('/').pop()||'Python'}…`);
+  const config={...lee.debugPrefs,...run,program:run.program||path,breakpoints:path?{[path]:lines}:{}};
+  await post('/debug/start',config);lee.directDebug=true;
+  status('debugger running','ok');
+  postEvents('/debug/events',{},(event,data)=>{
+    if(event==='stopped'){lee.debugThread=data.thread_id;paintDebugger(data);status(`paused at line ${data.frames?.[0]?.line||'?'}`,'ok');}
+    else if(event==='continued'){$('#debugger')?.classList.add('running');}
+    else if(event==='output'){const text=data.output||'';if(text)agentLog(`<div class="lee-runline"><span class="res">${esc(text)}</span></div>`);}
+    else if(event==='error')status(data.message||'debugger failed','err');
+    else if(event==='terminated'||event==='exited'){leeDebugStop();status('debug session finished','ok');}
+  }).catch(e=>status(e.message||String(e),'err'));
+}
+window.leeStartDebug=startDirectDebug;
+
 /* Which live namespace the variable panel shows. Every process that registered an
  * inspector is here -- a notebook kernel, an app leela started, or something you launched
- * yourself that called `leela.inspect.serve()`. Nothing else can be, because nothing else
+ * yourself that called `dhrishti.serving.serve()`. Nothing else can be, because nothing else
  * has anything to read. */
 function paintEnv(name) {
   lee.env = name || '';
   const t = $('#envtag'); if (!t) return;
   t.textContent = name ? '▶ ' + name : '';
   t.style.display = name ? '' : 'none';
-  t.title = name ? 'the variable panel is watching this env, not the tab’s kernel' : '';
+  t.title = name ? 'Run and the variable panel are connected to this runtime' : '';
 }
 
 async function pickEnv() {
@@ -1270,7 +5614,7 @@ async function pickEnv() {
   const rows = [{name: 'the tab’s own kernel', base: null, kind: 'kernel', current: !d.watching}]
     .concat(d.envs || []);
   const m = modal(
-    `<div class="lee-mhead">watch<span class="sub">${(d.envs || []).length} live env(s)</span></div>` +
+    `<div class="lee-mhead">runtime<span class="sub">Run + variables · ${(d.envs || []).length} live env(s)</span></div>` +
     `<div class="lee-modallist">${rows.map((e, i) =>
       `<div class="lee-mrow${e.current ? ' sel' : ''}" data-i="${i}">${e.current ? '● ' : '○ '}` +
       `${esc(e.name)}<span class="sub">${esc(e.kind)}${e.pid ? ' · pid ' + e.pid : ''}</span></div>`).join('')}</div>` +
@@ -1291,28 +5635,82 @@ async function pickEnv() {
  * telling someone to go and find a JSON file is not a feature. */
 async function editRuns() {
   const d = await api('/runs/file');
-  const m = modal(
-    `<div class="lee-mhead">run configurations<span class="sub">${esc(d.path || 'open a folder first')}</span></div>` +
-    `<div class="lee-dim">each entry is a command line — <code>uvicorn app:app --port 8000</code>, ` +
-    `<code>python train.py</code>. leela runs it with an inspector inside the process, so its ` +
-    `module namespace shows up in the variable panel. <code>watch</code> names that module; ` +
-    `blank infers it.</div>` +
-    (d.note ? `<div class="lee-err">${esc(d.note)}</div>` : '') +
-    `<textarea class="lee-keyedit" id="runstext" spellcheck="false"></textarea>` +
-    `<div class="lee-mfoot"><button class="lee-btn go" id="runsave">save</button></div>`);
-  const ta = m.querySelector('#runstext');
-  ta.value = d.text;
-  m.querySelector('#runsave').onclick = async () => {
+  let data;
+  try { data = JSON.parse(d.text); } catch (_) { data = {runs: []}; }
+  let runs = Array.isArray(data) ? data : (data.runs || []);
+  const m = modal(`<div class="lee-mhead">run configurations<span class="sub">${esc(d.path || 'open a folder first')}</span></div>` +
+    `<div class="lee-runtime-workbench"><header><div><strong>Project runtime</strong><span>Commands, working directories, and environment sources</span></div>` +
+    `<button class="lee-btn" data-add-run>Add configuration</button></header><div data-run-list></div>` +
+    `<details class="lee-run-json"><summary>Advanced JSON</summary><textarea class="lee-keyedit" spellcheck="false"></textarea></details></div>` +
+    `<div class="lee-mfoot"><span class="lee-dim">Secret values belong in an ignored .env.local file, not runs.json.</span><span class="lee-spacer"></span>` +
+    `<button class="lee-btn" data-cancel>cancel</button><button class="lee-btn go" data-save>save configurations</button></div>`,
+    null, null, {className: 'lee-runtime-modal', storageKey: 'runs'});
+  const list = $('[data-run-list]', m), json = $('.lee-run-json textarea', m);
+  const normal = r => ({name:r.name||'run',cmd:r.cmd||'',cwd:r.cwd||'',watch:r.watch||'',inspect:r.inspect!==false,
+    env_file:r.env_file||'',env:{...(r.env||{})},debug:!!r.debug,request:r.request||'launch',program:r.program||'',module:r.module||'',
+    args:Array.isArray(r.args)?r.args:[],justMyCode:r.justMyCode!==false,stopOnEntry:!!r.stopOnEntry,subProcess:r.subProcess!==false,
+    host:r.host||'127.0.0.1',port:Number(r.port)||5678,django:!!r.django,jinja:!!r.jinja,gevent:!!r.gevent,pathMappings:r.pathMappings||[]});
+  runs = runs.map(normal);
+  const collect = () => $$('.lee-run-card', list).map(card => {
+    const env = {}; $$('.lee-env-row', card).forEach(row => { const key = $('[data-env-key]', row).value.trim(); if (key) env[key] = $('[data-env-value]', row).value; });
+    return {name:$('[data-run-name]',card).value.trim()||'run',cmd:$('[data-run-cmd]',card).value.trim(),cwd:$('[data-run-cwd]',card).value.trim(),
+      watch:$('[data-run-watch]',card).value.trim(),env_file:$('[data-run-env-file]',card).value.trim(),inspect:$('[data-run-inspect]',card).checked,env,
+      debug:$('[data-run-debug]',card).checked,request:$('[data-debug-request]',card).value,program:$('[data-debug-program]',card).value.trim(),
+      module:$('[data-debug-module]',card).value.trim(),args:$('[data-debug-args]',card).value.trim().split(/\s+/).filter(Boolean),
+      justMyCode:$('[data-debug-mycode]',card).checked,stopOnEntry:$('[data-debug-entry]',card).checked,subProcess:$('[data-debug-subprocess]',card).checked,
+      host:$('[data-debug-host]',card).value.trim()||'127.0.0.1',port:Number($('[data-debug-port]',card).value)||5678,
+      django:$('[data-debug-django]',card).checked,jinja:$('[data-debug-jinja]',card).checked,gevent:$('[data-debug-gevent]',card).checked,
+      pathMappings:(()=>{try{return JSON.parse($('[data-debug-paths]',card).value||'[]');}catch(_){return [];}})()};
+  });
+  const envRow = (key = '', value = '') => `<div class="lee-env-row"><input class="lee-input" data-env-key placeholder="NAME" value="${esc(key)}">` +
+    `<input class="lee-input" data-env-value placeholder="value" value="${esc(value)}"><button class="lee-icon" data-remove-env aria-label="remove variable">×</button></div>`;
+  const paint = () => {
+    list.innerHTML = runs.map((r, i) => `<section class="lee-run-card" data-i="${i}"><header><strong>${esc(r.name)}</strong>` +
+      `<button class="lee-btn warn" data-remove-run>remove</button></header><div class="lee-run-fields">` +
+      `<label>Name<input class="lee-input" data-run-name value="${esc(r.name)}"></label><label>Command<input class="lee-input" data-run-cmd value="${esc(r.cmd)}" placeholder="uv run python app.py"></label>` +
+      `<label>Working directory<input class="lee-input" data-run-cwd value="${esc(r.cwd)}" placeholder="project root"></label><label>Watch module<input class="lee-input" data-run-watch value="${esc(r.watch)}" placeholder="infer from command"></label>` +
+      `<label>Environment file<input class="lee-input" data-run-env-file value="${esc(r.env_file)}" placeholder=".env.local"></label><label class="lee-run-check"><input type="checkbox" data-run-inspect${r.inspect?' checked':''}> Attach live inspector</label></div>` +
+      `<details class="lee-debug-config"${r.debug?' open':''}><summary><label class="lee-run-check"><input type="checkbox" data-run-debug${r.debug?' checked':''}> Debug with debugpy</label></summary><div class="lee-run-fields">` +
+      `<label>Request<select class="lee-select" data-debug-request><option value="launch"${r.request==='launch'?' selected':''}>Launch</option><option value="attach"${r.request==='attach'?' selected':''}>Attach</option></select></label>` +
+      `<label>Program<input class="lee-input" data-debug-program value="${esc(r.program)}" placeholder="active Python file"></label><label>Module<input class="lee-input" data-debug-module value="${esc(r.module)}" placeholder="pytest"></label>` +
+      `<label>Arguments<input class="lee-input" data-debug-args value="${esc(r.args.join(' '))}" placeholder="-x tests"></label><label>Attach host<input class="lee-input" data-debug-host value="${esc(r.host)}"></label><label>Attach port<input class="lee-input" data-debug-port type="number" value="${r.port}"></label>` +
+      `<label>Path mappings<input class="lee-input" data-debug-paths value="${esc(JSON.stringify(r.pathMappings||[]))}" placeholder='[{"localRoot":".","remoteRoot":"/app"}]'></label>` +
+      `<label class="lee-run-check"><input type="checkbox" data-debug-mycode${r.justMyCode?' checked':''}> Just my code</label><label class="lee-run-check"><input type="checkbox" data-debug-entry${r.stopOnEntry?' checked':''}> Stop on entry</label><label class="lee-run-check"><input type="checkbox" data-debug-subprocess${r.subProcess?' checked':''}> Subprocesses</label>` +
+      `<label class="lee-run-check"><input type="checkbox" data-debug-django${r.django?' checked':''}> Django</label><label class="lee-run-check"><input type="checkbox" data-debug-jinja${r.jinja?' checked':''}> Jinja templates</label><label class="lee-run-check"><input type="checkbox" data-debug-gevent${r.gevent?' checked':''}> gevent</label></div></details>` +
+      `<div class="lee-env-head"><strong>Environment variables</strong><button class="lee-btn" data-add-env>Add variable</button></div><div data-env-list>${Object.entries(r.env).map(([k,v])=>envRow(k,v)).join('')}</div></section>`).join('') ||
+      `<div class="lee-empty"><strong>No run configurations</strong><p>Add how this project starts, then attach its live namespace to Variables.</p></div>`;
+    $$('.lee-run-card', list).forEach(card => {
+      $('[data-remove-run]', card).onclick = () => { runs = collect(); runs.splice(+card.dataset.i, 1); paint(); };
+      $('[data-add-env]', card).onclick = () => { $('[data-env-list]', card).insertAdjacentHTML('beforeend', envRow()); $('.lee-env-row:last-child [data-env-key]', card).focus(); };
+      card.onclick = e => { const b = e.target.closest('[data-remove-env]'); if (b) b.closest('.lee-env-row').remove(); };
+    });
+  };
+  paint();
+  $('[data-add-run]', m).onclick = () => { runs = collect(); runs.push(normal({name: `run ${runs.length + 1}`})); paint(); $$('.lee-run-card', list).at(-1)?.scrollIntoView({block:'center'}); };
+  $('.lee-run-json', m).ontoggle = e => { if (e.target.open) json.value = JSON.stringify({runs: collect()}, null, 2); };
+  json.addEventListener('change', () => { try { runs = (JSON.parse(json.value).runs || []).map(normal); paint(); } catch (e) { status('invalid run configuration JSON: ' + e.message, 'err'); } });
+  $('[data-cancel]', m).onclick = () => m.remove();
+  $('[data-save]', m).onclick = async () => {
     try {
-      const r = await post('/runs/save', {text: ta.value});
-      status(r.note || `saved ${r.runs.length} configuration(s)`, r.note ? 'err' : 'ok');
-      m.remove();
+      runs = collect();
+      const r = await post('/runs/save', {text: JSON.stringify({runs}, null, 2) + '\n'});
+      status(r.note || `saved ${r.runs.length} configuration(s)`, r.note ? 'err' : 'ok'); m.remove();
     } catch (e) { status(String(e.message || e), 'err'); }
   };
 }
 
 function palette() {
-  const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: k.key}));
+  const agentCommands = [
+    {name: 'Agent: autopilot mode', scope: 'agent', run: () => leeAgentControl('autopilot')},
+    {name: 'Agent: guided mode', scope: 'agent', run: () => leeAgentControl('guided')},
+    {name: 'Agent: directed mode', scope: 'agent', run: () => leeAgentControl('directed')},
+    {name: 'Agent: pause after current call', scope: 'agent', run: pauseAgentAfterCurrent},
+    {name: 'Agent: run until next write', scope: 'agent', run: () => post('/agent/run-policy', {policy: 'until_write'})},
+    {name: 'Agent: run read-only calls', scope: 'agent', run: () => post('/agent/run-policy', {policy: 'reads'})},
+    {name: 'Agent: edit starting state', scope: 'agent', run: leeAgentState},
+    {name: 'Agent: steer after current call', scope: 'agent', run: () => $('#agentsteer')?.focus()},
+  ];
+  const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: k.key})).concat(agentCommands);
   let hits = cmds, sel = 0;
   const m = modal(`<input class="lee-input" id="cp" placeholder="command…" autofocus>
                    <div class="lee-modallist" id="cplist"></div>`,
@@ -1324,60 +5722,218 @@ function palette() {
   const list = m.querySelector('#cplist'), input = m.querySelector('#cp');
   const paint = () => {
     list.innerHTML = hits.slice(0, 200).map((h, i) =>
-      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(h.name)}<span class="sub">${esc(h.scope)} · ${esc(h.key)}</span></div>`).join('');
+      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(h.name)}<span class="sub">${esc(h.scope)} · ${esc(displayChord(h.key))}</span></div>`).join('');
     list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});
   };
-  const go = () => { const h = hits[sel]; if (h) { m.remove(); leeAct(h.action); } };
+  const go = () => { const h = hits[sel]; if (h) { m.remove(); h.run ? h.run() : leeAct(h.action); } };
   list.addEventListener('click', e => { const r = e.target.closest('.lee-mrow'); if (r) { sel = +r.dataset.i; go(); } });
   input.addEventListener('input', () => {
     const q = input.value.toLowerCase();
-    hits = cmds.filter(c => c.name.toLowerCase().includes(q) || c.action.includes(q)); sel = 0; paint();
+    hits = cmds.filter(c => c.name.toLowerCase().includes(q) || (c.action || '').includes(q)); sel = 0; paint();
   });
   paint(); setTimeout(() => input.focus(), 0);
 }
 
 /* ------------------------------------------------------------------ file ops */
 const treeSel = () => $('.lee-node.sel');
-function highlightTree() { if (!treeSel()) $$('.lee-node')[0]?.classList.add('sel'); }
+const visibleTreeNodes = () => $$('.lee-node').filter(n => n.getClientRects().length);
+function selectTreeNode(n) {
+  if (!n) return;
+  $$('.lee-node').forEach(x => { x.classList.remove('sel'); x.setAttribute('aria-selected', 'false'); });
+  n.classList.add('sel'); n.setAttribute('aria-selected', 'true');
+  n.scrollIntoView({block: 'nearest'});
+}
+function highlightTree() { if (!treeSel()) selectTreeNode(visibleTreeNodes()[0]); }
+function moveTreeSelection(d) {
+  const nodes = visibleTreeNodes(); if (!nodes.length) return;
+  const at = Math.max(0, nodes.indexOf(treeSel()));
+  selectTreeNode(nodes[Math.max(0, Math.min(nodes.length - 1, at + d))]);
+}
+async function loadTreeDir(n) {
+  if (!n?.classList.contains('lee-dir')) return;
+  const kids = n.querySelector(':scope > .lee-kids');
+  n.open = true; n.setAttribute('aria-expanded', 'true');
+  if (kids && !kids.children.length) {
+    kids.innerHTML = await fetch('/tree?path=' + encodeURIComponent(n.dataset.path),
+                                 {headers: {'HX-Request': 'true'}}).then(r => r.text());
+    htmx.process(kids);
+  }
+}
+async function treeActivate() {
+  const n = treeSel(); if (!n) return highlightTree();
+  if (n.classList.contains('lee-dir')) {
+    if (n.open) { n.open = false; n.setAttribute('aria-expanded', 'false'); }
+    else await loadTreeDir(n);
+    return;
+  }
+  leeOpenFile(n.dataset.path);
+}
+async function treeExpand() {
+  const n = treeSel(); if (!n) return highlightTree();
+  if (!n.classList.contains('lee-dir')) return treeActivate();
+  if (!n.open) await loadTreeDir(n);
+  else selectTreeNode(visibleTreeNodes()[visibleTreeNodes().indexOf(n) + 1] || n);
+}
+function treeCollapse() {
+  const n = treeSel(); if (!n) return highlightTree();
+  if (n.classList.contains('lee-dir') && n.open) {
+    n.open = false; return;
+  }
+  selectTreeNode(n.parentElement?.closest('.lee-node.lee-dir') || n);
+}
+async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = true) {
+  const old = $('.lee-files'); if (!old) return;
+  const open = $$('.lee-dir[open]', old).map(n => n.dataset.path).sort((a, b) => a.split('/').length - b.split('/').length);
+  const scrollTop = $('#filetree')?.scrollTop || 0;
+  const html = await fetch('/files/panel').then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
+  const doc = new DOMParser().parseFromString(html, 'text/html'), fresh = doc.querySelector('.lee-files');
+  if (!fresh) throw new Error('file tree refresh returned no panel');
+  old.replaceWith(fresh); htmx.process(fresh);
+  for (const path of open) {
+    const dir = $$('.lee-dir').find(n => n.dataset.path === path); if (!dir) continue;
+    dir.open = true;
+    const kids = dir.querySelector(':scope > .lee-kids');
+    const childHtml = await fetch('/tree?path=' + encodeURIComponent(path),
+                                  {headers: {'HX-Request': 'true'}}).then(r => r.text());
+    kids.innerHTML = childHtml; htmx.process(kids);
+  }
+  const wanted = $$('.lee-node').find(n => n.dataset.path === selectPath) || visibleTreeNodes()[0];
+  selectTreeNode(wanted); if ($('#filetree')) $('#filetree').scrollTop = scrollTop;
+  if (focus) setScope('files');
+  status('files refreshed', 'ok');
+}
 
 async function newEntry(kind) {
   const sel = treeSel();
   const parent = sel ? (sel.classList.contains('lee-dir') ? sel.dataset.path
                                                         : sel.dataset.path.replace(/\/[^/]+$/, '')) : '';
-  const name = prompt(kind === 'dir' ? 'new folder name' : 'new file name', '');
+  if (!parent) return status('open a folder first', 'err');
+  const name = await inputDialog(kind === 'dir' ? 'new folder' : 'new file', 'name', '',
+                                 kind === 'dir' ? 'folder name' : 'filename.py');
   if (!name) return;
   const r = await post('/fs/new', {parent, name, kind});
-  if (!r.ok) return status(r.error, 'err');
   status('created ' + name, 'ok');
-  if (kind === 'file') htmxPost('/tab/open?path=' + encodeURIComponent(r.entry.path));
-  else location.reload();
+  await refreshFileTree(r.entry.path);
+  if (kind === 'file') leeOpenFile(r.entry.path);
 }
 async function renameEntry() {
-  const sel = treeSel(); if (!sel) return status('select a file first');
-  const name = prompt('rename to', sel.dataset.path.split('/').pop());
-  if (!name) return;
+  const sel = treeSel(); if (!sel) return status('select a file or folder first');
+  const old = sel.dataset.path.split('/').pop();
+  const name = await inputDialog('rename', 'name', old);
+  if (!name || name === old) return;
   const r = await post('/fs/rename', {path: sel.dataset.path, name});
-  r.ok ? location.reload() : status(r.error, 'err');
+  await refreshFileTree(r.entry.path);
 }
 async function deleteEntry() {
-  const sel = treeSel(); if (!sel) return status('select a file first');
-  if (!confirm('delete ' + sel.dataset.path + '?')) return;
-  const r = await post('/fs/delete', {path: sel.dataset.path});
-  r.ok ? location.reload() : status(r.error, 'err');
+  const sel = treeSel(); if (!sel) return status('select a file or folder first');
+  const name = sel.dataset.path.split('/').pop(), folder = sel.classList.contains('lee-dir');
+  const warning = folder
+    ? 'This permanently deletes the folder and everything inside it from disk.'
+    : 'This permanently deletes the file from disk.';
+  if (lee.filePrefs.confirmDelete !== false && !await confirmDialog('delete ' + name + ' from disk', warning)) return;
+  const parent = sel.parentElement?.closest('.lee-node.lee-dir')?.dataset.path;
+  await post('/fs/delete', {path: sel.dataset.path});
+  await refreshFileTree(parent);
 }
-function addRoot() {
-  const p = prompt('folder to open', '');
-  if (p) htmx.ajax('POST', '/fs/add_root?path=' + encodeURIComponent(p), {target: '#shell', swap: 'outerHTML'});
+async function removeRoot() {
+  const sel = treeSel();
+  if (!sel?.classList.contains('lee-root')) return status('select an open project root first', 'err');
+  const name = sel.dataset.path.split('/').pop();
+  if (!await confirmDialog('remove ' + name + ' from workspace', 'Files stay on disk. Open tabs inside it will close.')) return;
+  await post('/fs/remove-root', {path: sel.dataset.path});
+  await refreshFileTree();
+  status(name + ' removed from the workspace; files were not deleted', 'ok');
 }
+async function addRoot() {
+  let current = '';
+  const m = modal(`<div class="lee-mhead">open folder<span class="sub">choose a project root</span></div>
+    <div class="lee-pathbar"><button class="lee-btn" id="folderup" title="parent folder">↑</button>
+    <input class="lee-input" id="folderpath" aria-label="folder path"></div>
+    <div class="lee-modallist lee-folderlist" id="folderlist"></div>
+    <div class="lee-mfoot"><button class="lee-btn go" id="folderopen">open this folder</button>
+    <span class="lee-dim">choose a subfolder, then confirm</span></div>`);
+  const list = m.querySelector('#folderlist'), path = m.querySelector('#folderpath'), up = m.querySelector('#folderup');
+  const load = async p => {
+    try {
+      const d = await api('/fs/browse?path=' + encodeURIComponent(p || ''));
+      current = d.path; path.value = current; up.disabled = !d.parent; up.dataset.path = d.parent || '';
+      list.innerHTML = d.dirs.length ? d.dirs.map(x =>
+        `<button class="lee-folderrow" data-path="${esc(x.path)}"><span class="lee-folderglyph">▸</span>${esc(x.name)}</button>`
+      ).join('') : '<div class="lee-dim">no subfolders</div>';
+    } catch (e) { status(String(e.message || e), 'err'); }
+  };
+  const open = () => {
+    if (!current) return;
+    m.remove();
+    post('/fs/add-root', {path: current}).then(() => refreshFileTree(current))
+      .catch(e => status(String(e.message || e), 'err'));
+  };
+  list.onclick = e => { const row = e.target.closest('.lee-folderrow'); if (row) load(row.dataset.path); };
+  up.onclick = () => { if (up.dataset.path) load(up.dataset.path); };
+  path.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); load(path.value); } };
+  m.querySelector('#folderopen').onclick = open;
+  await load('');
+}
+
+document.addEventListener('keydown', e => {
+  const tab = e.target.closest?.('.lee-tab'); if (!tab) return;
+  const tabs = $$('.lee-tab'), at = tabs.indexOf(tab);
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    e.preventDefault(); const step = e.key === 'ArrowRight' ? 1 : -1;
+    const next = tabs[(at + step + tabs.length) % tabs.length]; next?.focus(); next?.click();
+  } else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tab.click(); }
+  else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); tab.querySelector('.lee-tab-x')?.click(); }
+});
 
 document.addEventListener('click', (e) => {
   const n = e.target.closest('.lee-node');
-  if (n) { $$('.lee-node').forEach(x => x.classList.remove('sel')); n.classList.add('sel'); setScope('files'); }
+  if (n) { selectTreeNode(n); setScope('files'); }
   if (e.target.closest('.lee-vars')) setScope('vars');
+});
+document.addEventListener('toggle', e => {
+  if (e.target.matches?.('.lee-dir')) e.target.setAttribute('aria-expanded', e.target.open ? 'true' : 'false');
+}, true);
+
+document.addEventListener('contextmenu', e => {
+  // Shift+right-click remains the browser's native copy/paste/spellcheck menu.
+  if (e.shiftKey) return;
+  const node = e.target.closest('.lee-node');
+  if (node) {
+    e.preventDefault(); $$('.lee-node').forEach(x => x.classList.remove('sel')); node.classList.add('sel');
+    const surface = node.classList.contains('lee-root') ? 'root' : node.classList.contains('lee-dir') ? 'folder' : 'file';
+    setScope('files'); openMenu(surface, e.clientX, e.clientY); return;
+  }
+  if (e.target.closest('#filetree')) {
+    e.preventDefault(); setScope('files'); openMenu('files', e.clientX, e.clientY); return;
+  }
+  const variable = e.target.closest('.lee-vrow');
+  if (variable) {
+    e.preventDefault(); selectVar(variable); setScope('vars'); openMenu('variable', e.clientX, e.clientY); return;
+  }
+  const cell = e.target.closest('.lee-cell');
+  if (cell) {
+    e.preventDefault(); selectCell(+cell.dataset.i); setScope('editor'); openMenu('cell', e.clientX, e.clientY); return;
+  }
+  const tab = e.target.closest('.lee-tab');
+  if (tab) {
+    e.preventDefault(); lee.menuTab = +tab.dataset.i;
+    if (!tab.classList.contains('active')) htmxPost('/tab/select?i=' + tab.dataset.i);
+    openMenu('tab', e.clientX, e.clientY); return;
+  }
+  if (e.target.closest('#kpill')) { e.preventDefault(); openMenu('kernel', e.clientX, e.clientY); return; }
+  if (e.target.closest('.lee-exec')) { e.preventDefault(); setScope('exec'); openMenu('exec', e.clientX, e.clientY); return; }
+  if (e.target.closest('#editor')) { e.preventDefault(); setScope('editor'); openMenu('editor', e.clientX, e.clientY); }
 });
 
 /* ------------------------------------------------------------------ splitters */
 function initSplits() {
+  const savedLeft = localStorage.getItem('lee-left-view');
+  leeLeft(['git', 'symbols'].includes(savedLeft) ? savedLeft : 'files');
+  for (const pane of ['left', 'right', 'bottom'])
+    if (localStorage.getItem('lee-pane-' + pane) === 'hidden') leePane(pane, false);
+  if (matchMedia('(max-width: 1100px)').matches) {
+    leePane('left', false); leePane('right', false);
+  }
   $$('.lee-split').forEach(sp => {
     sp.onpointerdown = (e) => {
       e.preventDefault(); sp.classList.add('drag'); sp.setPointerCapture(e.pointerId);
@@ -1392,42 +5948,128 @@ function initSplits() {
       sp.onpointermove = move; sp.onpointerup = up;
     };
   });
-  const hs = $('.lee-hsplit');
-  if (hs) hs.onpointerdown = (e) => {
-    e.preventDefault(); hs.classList.add('drag'); hs.setPointerCapture(e.pointerId);
+  const centreHeight = () => $('.lee-centre')?.clientHeight || window.innerHeight;
+  // The dock may occupy most of the workspace; 360px made Agent and Terminal feel like
+  // preview strips on large displays. The editor keeps its own 140px safety floor.
+  const limit = () => Math.min(900, Math.max(110, centreHeight() - 240));
+  const dockSplit = $('.lee-dock-split');
+  if (dockSplit) dockSplit.onpointerdown = (e) => {
+    e.preventDefault(); dockSplit.classList.add('drag'); dockSplit.setPointerCapture(e.pointerId);
+    const bottom = $('#bottomdock')?.getBoundingClientRect().bottom || window.innerHeight;
     const move = (ev) => {
-      const v = Math.max(80, Math.min(window.innerHeight - 220, window.innerHeight - ev.clientY - 190));
-      document.documentElement.style.setProperty('--lee-exec-h', v + 'px');
-      localStorage.setItem('lee-exec-h', v + 'px');
+      const v = Math.max(110, Math.min(limit(), bottom - ev.clientY));
+      document.documentElement.style.setProperty('--lee-dock-h', v + 'px');
+      localStorage.setItem('lee-dock-h', v + 'px');
+      localStorage.setItem('lee-agent-h', v + 'px'); // migrate the previous bottom-dock preference
+      requestAnimationFrame(() => lee.term?.refit());
     };
-    hs.onpointermove = move;
-    hs.onpointerup = () => { hs.classList.remove('drag'); hs.onpointermove = null; };
+    dockSplit.onpointermove = move;
+    dockSplit.onpointerup = () => { dockSplit.classList.remove('drag'); dockSplit.onpointermove = null; };
   };
-  ['left-w', 'right-w', 'exec-h'].forEach(k => {
+  ['left-w', 'right-w'].forEach(k => {
     const v = localStorage.getItem('lee-' + k);
     if (v) document.documentElement.style.setProperty('--lee-' + k, v);
   });
+  // Legacy names remain readable so an upgrade preserves the user's lower-panel height.
+  const legacyPanelFloors = [['exec-h', 80], ['agent-h', 110]];
+  void legacyPanelFloors;
+  for (const [k, floor] of [['dock-h', 110]]) {
+    const raw = parseFloat(localStorage.getItem('lee-' + k) || localStorage.getItem('lee-agent-h'));
+    if (!Number.isFinite(raw)) continue;
+    const value = Math.max(floor, Math.min(limit(), raw));
+    document.documentElement.style.setProperty('--lee-' + k, value + 'px');
+    localStorage.setItem('lee-' + k, value + 'px');
+  }
+  if (localStorage.getItem('lee-agent-expanded') === '1') {
+    $('#shell')?.classList.add('agent-focus');
+    if ($('#agentexpand')) $('#agentexpand').textContent = 'restore';
+  }
 }
 
 async function refreshKernelPill() {
   try {
     const d = await api('/kernel/info');
     const pill = $('#kpill'); if (!pill) return;
-    pill.className = 'lee-pill ' + (d.alive ? 'lee-pill-on' : 'lee-pill-err');
-    pill.textContent = (d.alive ? '⏺ ' : '○ ') + (d.key || '').split('/').pop();
-    pill.title = (d.base || 'no inspector') + (d.boot_error ? ' · ' + d.boot_error : '');
+    pill.className = 'lee-pill ' + (d.api_error || d.boot_error ? 'lee-pill-warn' : d.alive ? 'lee-pill-on' : 'lee-pill-err');
+    pill.textContent = (d.api_error ? '⚠ ' : d.alive ? '⏺ ' : '○ ') + (d.key || '').split('/').pop();
+    pill.title = (d.base || 'no inspector') + (d.cwd ? ' · cwd ' + d.cwd : '') +
+                 (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '');
+    (d.tabs || []).forEach((state, i) => {
+      const tab = $(`.lee-tab[data-i="${i}"]`); if (!tab) return;
+      let run = tab.querySelector('.lee-tab-run');
+      if (state.running && !run) { run = document.createElement('span'); run.className = 'lee-tab-run'; tab.prepend(run); }
+      if (run) { run.hidden = !state.running; run.title = `${state.running} cell(s) running`; }
+      const wasDirty = tab.classList.contains('dirty');
+      tab.classList.toggle('dirty', !!state.dirty);
+      if (state.dirty && !wasDirty) setTabSaveState(tab, 'pending');
+      else if (!state.dirty && wasDirty && tab.dataset.saveState !== 'error') setTabSaveState(tab, 'saved');
+    });
   } catch (e) {}
+}
+
+async function checkProjectRuntime() {
+  let d;
+  try { d = await api('/runtime/info'); } catch (_) { return; }
+  if ((!d.needs_create && !d.needs_support) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
+  sessionStorage.setItem('lee-runtime-asked:' + d.root, '1');
+  if (d.needs_support) {
+    const m = modal(`<div class="lee-mhead">enable project runtime<span class="sub">${esc(d.python)}</span></div>` +
+      `<div class="lee-dialogcopy">Leela found this folder’s environment, but it needs ` +
+      `<code>ipykernel</code> and <code>ipymini</code> to run notebook code. ` +
+      `Leela installs them into this project environment with uv; the IDE remains separate.</div>` +
+      `<div class="lee-mfoot"><button class="lee-btn go" id="runtimeenable">install kernel support</button>` +
+      `<button class="lee-btn" id="runtimelater">not now</button></div>`);
+    m.querySelector('#runtimeenable').onclick = async () => {
+      m.querySelector('#runtimeenable').disabled = true; status('installing project kernel support…');
+      try {
+        const r = await post('/runtime/support', {python: d.python}); m.remove();
+        status(`project runtime ready · ipykernel + ipymini`, 'ok');
+        refreshKernelPill();
+      }
+      catch (e) { status(String(e.message || e), 'err'); m.querySelector('#runtimeenable').disabled = false; }
+    };
+    m.querySelector('#runtimelater').onclick = () => m.remove();
+    return;
+  }
+  const m = modal(`<div class="lee-mhead">project runtime<span class="sub">${esc(d.root)}</span></div>` +
+    `<div class="lee-dialogcopy">This folder has no <code>.venv</code>, <code>venv</code>, ` +
+    `<code>env</code>, or <code>.env</code>. Leela stays in its own environment; your code ` +
+    `runs in a project environment.</div><div class="lee-mfoot">` +
+    `<button class="lee-btn go" id="runtimecreate">create .venv</button>` +
+    `<button class="lee-btn" id="runtimepick">choose interpreter</button>` +
+    `<button class="lee-btn" id="runtimelater">not now</button></div>`);
+  m.querySelector('#runtimecreate').onclick = async () => {
+    m.querySelector('#runtimecreate').disabled = true; status('creating .venv and installing ipykernel…');
+    try {
+      const r = await post('/runtime/create'); m.remove();
+      status(`project runtime ready: ${r.python}`, 'ok'); refreshKernelPill();
+    } catch (e) { status(String(e.message || e), 'err'); m.querySelector('#runtimecreate').disabled = false; }
+  };
+  m.querySelector('#runtimepick').onclick = () => { m.remove(); pickKernel(); };
+  m.querySelector('#runtimelater').onclick = () => m.remove();
 }
 
 /* ------------------------------------------------------------------ boot */
 async function boot() {
-  await loadKeys();
+  await Promise.all([loadKeys(), loadSettings()]);
+  // Model discovery can probe CLIs and registries; it must not hold the editor's first paint.
+  loadAgentModels().catch(e => status(String(e.message || e), 'err'));
   initSplits();
   mountExec();
+  initAgentComposer();
   await mountTab();
+  layoutTabs();
+  new ResizeObserver(layoutTabs).observe($('#header'));
+  checkProjectRuntime();
   leeVars();
   setInterval(leeVars, 2500);          // the kernel's own inspector is the source of truth; poll it
+  setInterval(watchOpenFile, 1000);    // agent, terminal and git writes appear without a page refresh
+  pollApproval();
+  setInterval(pollApproval, 750);       // catches Rishi approvals raised outside an agent SSE stream
+  applyTheme(localStorage.getItem('lee-theme') || 'system');
+  refreshProjectPills();
   setInterval(refreshKernelPill, 5000);
+  setInterval(refreshProjectPills, 5000);
   status('ready', 'ok');
 }
 
@@ -1436,7 +6078,7 @@ document.addEventListener('DOMContentLoaded', boot);
 document.addEventListener('htmx:afterSwap', (e) => {
   const id = e.target.id || '';
   // A tab change swaps only the tab bar; re-mount the editor for whatever is now active.
-  if (id === 'tabbar') mountTab().then(leeVars);
+  if (id === 'tabbar') { mountTab().then(leeVars); refreshProjectPills(); requestAnimationFrame(layoutTabs); }
   // Adding a folder rebuilds the whole shell, so everything the client owns is remounted.
-  else if (id === 'shell') { lee.editors.clear(); initSplits(); mountExec(); mountTab().then(leeVars); }
+  else if (id === 'shell') { lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); mountTab().then(leeVars); requestAnimationFrame(layoutTabs); }
 });

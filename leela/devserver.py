@@ -1,7 +1,7 @@
 """Run a web app from the IDE, with a live inspector attached to it.
 
 A FastHTML (or Flask, or any Python) app started from the editor, running under
-`leela.inspect.serve`, so its module namespace shows up in the variable panel as
+`dhrishti.serving.serve`, so its module namespace shows up in the variable panel as
 just another env. You can watch a request handler's globals change while the
 app serves traffic -- which is the thing an ordinary debugger cannot do,
 because it needs the process stopped.
@@ -30,7 +30,7 @@ from collections import deque
 from dataclasses import dataclass
 from fastcore.all import Path, L
 
-from .inspect.server import active
+from dhrishti.serving import active
 
 __all__ = ['DevServer', 'DevServers']
 
@@ -236,7 +236,7 @@ def _watch_module(name):
     writes into the dict the inspector is holding. A module that cannot be imported is not
     fatal: the process still runs, and the panel shows the runner's own namespace.
     """
-    from .inspect.server import watch
+    from dhrishti.serving import watch
     p = Path(f'{name}.py')
     try:
         if p.exists():
@@ -304,7 +304,10 @@ def _child(argv=None):
     to name the module (`uvicorn app:app` -> `app`).
     """
     import argparse
-    from .inspect.server import serve
+    from functools import partial
+    from dhrishti.serving import serve as _serve
+    # keep dhrishti's transcripts under leela's names, as the kernel bootstrap does
+    serve = partial(_serve, session_dir='leela_sessions', agent_session_dir='leela_agent_sessions')
 
     p = argparse.ArgumentParser(prog='leela-dev')
     p.add_argument('--port', type=int, default=9000, help='base port for the inspector')

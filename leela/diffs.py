@@ -15,7 +15,7 @@ live together:
   name matches instead of listing every substring hit in directory order.
 
 Rendering deliberately stays in the frontends. This module hands back rows;
-Textual paints them with `rich.Text` and the browser with CSS classes, and
+The browser paints them with CSS classes, and
 neither has to know how a unified diff is spelled.
 """
 

@@ -1,33 +1,9 @@
-"""Fixtures for the IDE's tests.
-
-Every test here runs against a **fake kernel**, and that is a decision rather than a
-shortcut. A real ipykernel puts a pid in the status line, a temp path in the inspector
-URL and two or three seconds on every test -- none of which belong in an image that is
-compared byte for byte. What these tests are actually about is the terminal IDE's
-*rendering*: which panes exist, what a cell looks like, what a modal contains, which keys
-the footer advertises. The kernel is only where the numbers come from, so it is replaced
-by one that always returns the same numbers.
-
-The exchange is worth naming: the snapshots cannot catch a break in real kernel
-communication, and `leela.kernels` needs its own tests for that. What they do
-catch is the thing that is otherwise untested and easiest to break by accident -- a
-layout that shifts, a binding that stops being advertised, a cell type that stops
-rendering its answer.
-"""
-
-import os
-
-# Before Textual is imported, because it reads this once at import time. Scrolling a cell
-# into view is animated, so with animations on the scroll offset at screenshot time
-# depends on how far the animation happened to have got -- which showed up as a scrollbar
-# thumb that changed size between otherwise identical runs.
-os.environ.setdefault('TEXTUAL_ANIMATIONS', 'none')
+"""Deterministic workspace and kernel fixtures for the IDE tests."""
 
 import asyncio
 import pytest
 
 from leela.kernels import ExecOutcome, KernelPool
-from leela.tui.app import IdeApp
 from leela.workspace import Workspace
 
 FIXTURES = 'fixtures'          # relative to this file; kept short so it renders the same everywhere
@@ -60,12 +36,7 @@ DOCSTRING = ('Type:        DataFrame\n'
 
 
 class FakeKernel:
-    """Enough of `leela.kernels.Kernel` for the TUI, answering the same shapes every time.
-
-    Deliberately hand-written rather than a `Mock`: the point is to state, in one readable
-    place, exactly what contract the frontends rely on. If a frontend starts needing
-    something else, this file is where that shows up.
-    """
+    """Enough of `leela.kernels.Kernel` for browser tests, with stable answers."""
     alive = True
     base = 'http://127.0.0.1:8000'
     pid = 4242
@@ -113,16 +84,3 @@ def ws(request, monkeypatch):
     monkeypatch.setattr(KernelPool, 'peek', lambda self, key: self.kernels.get(key))
     monkeypatch.setattr(KernelPool, 'close_all', lambda self: asyncio.sleep(0))
     return Workspace(roots=[fixture_dir(request)], port=8000)
-
-
-@pytest.fixture
-def app(ws):
-    """The terminal IDE over the fixture project, with the dialog notebook open.
-
-    Cursor blink is off: a blinking caret is a coin flip at screenshot time, and every
-    snapshot would fail half the time it ran.
-    """
-    ws.open(str(ws.fs.roots[0] / 'dialog.ipynb'))
-    a = IdeApp(ws)
-    a.CSS += '\nTextArea { text-style: not blink; }\n'
-    return a

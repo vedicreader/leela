@@ -25,15 +25,21 @@ SKIP_DIRS = {'.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', 'node_module
              '.pytest_cache', '.ruff_cache', '.ipynb_checkpoints', '.tox', 'dist', 'build', '.idea'}
 _SKIP_RE = '^(' + '|'.join(d.replace('.', r'\.') for d in sorted(SKIP_DIRS)) + ')$'
 
-# suffix -> language id. The same string names a CodeMirror 6 mode and a Textual
-# tree-sitter grammar, which is why both frontends can share this table.
+# suffix -> CodeMirror 6 language id.
 LANGS = {'.py': 'python', '.pyi': 'python', '.ipynb': 'python', '.js': 'javascript',
-         '.mjs': 'javascript', '.jsx': 'javascript', '.ts': 'typescript', '.tsx': 'typescript',
-         '.json': 'json', '.md': 'markdown', '.markdown': 'markdown', '.html': 'html',
-         '.htm': 'html', '.css': 'css', '.scss': 'css', '.yaml': 'yaml', '.yml': 'yaml',
-         '.toml': 'toml', '.sh': 'bash', '.bash': 'bash', '.zsh': 'bash', '.sql': 'sql',
-         '.rs': 'rust', '.go': 'go', '.c': 'c', '.h': 'c', '.cpp': 'cpp', '.java': 'java',
-         '.xml': 'xml', '.txt': None, '.cfg': 'toml', '.ini': 'toml'}
+         '.mjs': 'javascript', '.cjs': 'javascript', '.jsx': 'jsx',
+         '.ts': 'typescript', '.mts': 'typescript', '.cts': 'typescript', '.tsx': 'tsx',
+         '.json': 'json', '.jsonc': 'json', '.json5': 'json',
+         '.md': 'markdown', '.markdown': 'markdown', '.html': 'html', '.htm': 'html',
+         '.css': 'css', '.scss': 'css', '.yaml': 'yaml', '.yml': 'yaml',
+         '.toml': 'toml', '.sh': 'bash', '.bash': 'bash', '.zsh': 'bash', '.fish': 'bash',
+         '.sql': 'sql', '.rs': 'rust', '.go': 'go', '.c': 'cpp', '.h': 'cpp',
+         '.cc': 'cpp', '.cpp': 'cpp', '.cxx': 'cpp', '.hpp': 'cpp', '.java': 'java',
+         '.xml': 'xml', '.svg': 'xml', '.properties': 'properties', '.gradle': 'java',
+         '.txt': None, '.cfg': 'toml', '.ini': 'properties'}
+
+NAME_LANGS = {'Dockerfile': 'bash', 'Makefile': 'bash', 'Procfile': 'bash',
+              'Cargo.lock': 'toml', 'Pipfile': 'toml'}
 
 _BINARY = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.gz', '.tar',
            '.whl', '.so', '.dylib', '.dll', '.pyc', '.parquet', '.db', '.sqlite', '.woff',
@@ -47,8 +53,9 @@ class Unsafe(Exception):
 
 
 def lang_for(p):
-    "Language id for a path, or None when there is no highlighting to do."
-    return LANGS.get(Path(p).suffix.lower())
+    "Language id for a path, including conventional extensionless project files."
+    p = Path(p)
+    return NAME_LANGS.get(p.name, LANGS.get(p.suffix.lower()))
 
 
 def is_texty(p):

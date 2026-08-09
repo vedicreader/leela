@@ -19,11 +19,11 @@ import sys
 
 import pytest
 
-from leela.agent.backend import Backend, Usage
-from leela.agent.compact import Compactor, RESERVE, threshold
-from leela.agent.models import DFLT_LOCAL_CTX, local_ctx, resolve
-from leela.agent.native import captured, interesting
-from leela.agent.native import capture as native_capture
+from leela.agent.runtime import Backend, Usage
+from leela.agent.runtime import Compactor, RESERVE, threshold
+from leela.agent.core import DFLT_LOCAL_CTX, env, local_ctx, resolve
+from leela.agent.runtime import captured, interesting
+from leela.agent.runtime import capture as native_capture
 
 
 # ---- the window ------------------------------------------------------------
@@ -54,14 +54,22 @@ def test_recent_is_capped_by_the_window_too():
 def test_the_local_window_errs_small_and_can_be_overridden(monkeypatch):
     "Under-stating a window costs one early compaction; over-stating it costs the turn."
     monkeypatch.delenv('LEELA_LOCAL_CTX', raising=False)
-    assert local_ctx('gemma-e2b') == 4096
-    assert resolve('gemma-e2b').ctx == 4096
+    assert local_ctx('gemma-e2b') == 16384
+    assert resolve('gemma-e2b').ctx == 16384
     assert local_ctx('something-else') == DFLT_LOCAL_CTX
     monkeypatch.setenv('LEELA_LOCAL_CTX', '8192')
     assert local_ctx('gemma-e2b') == 8192
     monkeypatch.setenv('LEELA_LOCAL_CTX', 'gemma-e4b:16384,gemma-12b:32000')
     assert local_ctx('gemma-e4b') == 16384
-    assert local_ctx('gemma-e2b') == 4096, 'a per-model override must not move the others'
+    assert local_ctx('gemma-e2b') == 16384, 'a per-model override must not move the others'
+
+
+def test_leela_environment_names_override_legacy_ramabana_names(monkeypatch):
+    monkeypatch.setenv('LEELA_MODEL', 'current')
+    monkeypatch.setenv('RAMABANA_MODEL', 'legacy')
+    assert env('MODEL') == 'current'
+    monkeypatch.delenv('LEELA_MODEL')
+    assert env('MODEL') == 'legacy'
 
 
 # ---- what the engine says on its way past ----------------------------------
@@ -158,7 +166,7 @@ class MutteringBackend(Backend):
 
 @pytest.fixture
 def muttering():
-    from leela.agent.models import ModelSpec
+    from leela.agent.core import ModelSpec
     return MutteringBackend(ModelSpec('gemma-e2b', 'muttering', 'gemma/e2b', ctx=4096))
 
 
@@ -182,7 +190,7 @@ def test_a_cheap_job_that_fails_still_says_so(muttering):
 
 def test_problems_reach_the_agents_status(ws):
     "Which is what the frontends read, and what puts it on a status bar."
-    from leela.agent.models import ModelSpec
+    from leela.agent.core import ModelSpec
     ai = ws.ai
     b = MutteringBackend(ModelSpec('gemma-e2b', 'muttering', 'gemma/e2b', ctx=4096))
     ai._backends[('muttering', 'gemma/e2b')] = b

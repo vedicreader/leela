@@ -1,17 +1,17 @@
 """leela — notebooks, files and live variables in the terminal and the browser.
 
-leela started inside `dhrishti` and now stands on its own, with no dependency back.
-It comes in two halves:
+leela started inside `dhrishti` and comes in two halves:
 
-- `leela.inspect` — the engine. It turns a live Python namespace into the node tree
-  the frontends render, runs code in it, and serves that over HTTP from inside the
-  kernel that owns it. Vendored from dhrishti, where it was authored literately
-  under nbdev; leela owns it as plain Python now.
-- everything else — the application shell: the workspace, the notebook document,
+- `dhrishti` — the engine, and now a dependency again. It turns a live Python namespace
+  into the node tree the frontends render, runs code in it, and serves that as a JSON API
+  from inside the kernel that owns it. leela vendored it as `leela.inspect` for a while and
+  evolved it; that work went back upstream, and dhrishti is a JSON API with no frontend of
+  its own, which is exactly what leela wants from it.
+- everything else, here — the application shell: the workspace, the notebook document,
   the assistant, and the two frontends that draw them.
 
 The whole package is plain Python rather than compiled notebooks. Literate authoring
-buys little for a few thousand lines of Textual and FastHTML wiring, and the engine
+buys little for a few thousand lines of FastHTML and browser wiring, and the engine
 is easier to keep honest under the pytest suite in `tests/` than under nbdev.
 """
 
@@ -34,5 +34,5 @@ def errstr(e):
 
 
 class Dictable:
-    "Mixin for the dataclasses both frontends serialise: `.dict()` is what routes and JSON payloads call."
+    "Mixin for dataclasses serialized by routes and JSON payloads."
     def dict(self): return asdict(self)

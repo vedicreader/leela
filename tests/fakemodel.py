@@ -2,7 +2,7 @@
 
 Streaming is the one feature whose whole value is *when* things appear, so testing it
 against a blocking fake would test nothing. `ScriptedBackend` emits tokens with a delay
-between them and calls its tools for real, which is enough to make both frontends behave
+between them and calls its tools for real, which is enough to make the browser behave
 exactly as they do against a live model -- and enough for a screenshot taken mid-turn to
 show a turn that is genuinely mid-flight rather than a mock-up of one.
 
@@ -13,8 +13,8 @@ importable from outside its own directory.
 from __future__ import annotations
 import time
 
-from leela.agent.backend import Backend, Usage
-from leela.agent.models import ModelSpec
+from leela.agent.runtime import Backend, Usage
+from leela.agent.core import ModelSpec
 
 __all__ = ['SPEC', 'ScriptedBackend', 'Step', 'install']
 
@@ -116,6 +116,9 @@ def install(ws, steps, token_delay=0.02):
     would make a screenshot lie about which model answered.
     """
     a = ws.ai
+    # Prompt cells normally own a separate assistant/model. Tests install one deterministic
+    # script for every surface, so point the inline slot at that same harness explicitly.
+    ws._inline_ai = a
     be = ScriptedBackend(steps=steps, token_delay=token_delay)
     be.tools = a.tools
     a.routing.turn = SPEC.name

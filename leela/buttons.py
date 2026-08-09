@@ -1,4 +1,4 @@
-"""Single-source button bars for both frontends.
+"""Single-source button bars for the browser IDE.
 
 `leela.keys` is the same idea for the keyboard: declare a thing once, and let each
 frontend render it. This is the other half of the promise, and it exists because a
@@ -9,7 +9,7 @@ leela's to fix -- but nothing important should be *reachable only* by a chord th
 particular terminal happens to swallow.
 
 So every button here names an action from `leela.keys`, which is the same action the
-keymap dispatches, which is the same `action_*` method on the Textual app and the same
+keymap dispatches, using the same browser action registry and the same
 entry in the browser's handler table. A button and a key are two doors into one room.
 The import-time check below is what keeps it that way: a button naming an action the
 keymap does not declare stops the package from importing, exactly as a duplicate chord
@@ -28,7 +28,8 @@ __all__ = ['Btn', 'BARS', 'BUTTONS', 'bar', 'tip']
 
 # Where a bar is drawn. `cell` is per-cell and only the browser has room for it; the
 # terminal puts the same three actions in the main toolbar, acting on the selected cell.
-BARS = ('toolbar', 'cell', 'files', 'keys', 'exec', 'vars', 'agent')
+BARS = ('toolbar', 'cell', 'files', 'keys', 'exec', 'vars', 'agent',
+        'web_editor', 'web_files', 'web_vars')
 
 
 @dataclass(frozen=True)
@@ -57,9 +58,12 @@ BUTTONS = L(
     Btn('run_cell',     '▶ run',    'run the current cell',            'toolbar', 'go'),
     Btn('run_advance',  '▶ next',   'run it and move on',              'toolbar'),
     Btn('run_all',      '▶ all',    'run every cell, top to bottom',   'toolbar'),
+    Btn('clear_all_outputs', 'clear',    'clear every cell output',   'toolbar'),
     Btn('run_file',     '▶ file',   'run the whole file in the kernel','toolbar'),
     Btn('run_selection','▶ sel',    'run just what is selected',       'toolbar'),
     Btn('cell_below',   '+ cell',   'insert a cell below',             'toolbar'),
+    Btn('notebook_undo','undo',     'undo the last cell operation',     'toolbar'),
+    Btn('notebook_redo','redo',     'redo the last cell operation',     'toolbar'),
     Btn('cell_type',    'type',     'code / markdown / prompt',        'toolbar'),
     Btn('save',         'save',     'save this tab',                   'toolbar'),
     Btn('show_diff',    'diff',     'what changed since the last save','toolbar'),
@@ -72,7 +76,11 @@ BUTTONS = L(
 
     # -- per-cell, in the gutter ------------------------------------------------------
     Btn('run_cell',     '▶',        'run this cell',                   'cell', 'go'),
+    Btn('stop_cell',    '■',        'stop this cell; restart its kernel if interrupt is ignored', 'cell', 'warn'),
+    Btn('run_above',    '↑▶',       'run every code cell above this one','cell'),
     Btn('run_insert',   '▶+',       'run it and open a new cell below','cell'),
+    Btn('cell_move_up', '↑',        'move this cell up',               'cell'),
+    Btn('cell_move_down','↓',        'move this cell down',             'cell'),
     Btn('cell_type',    '↻',        'code / markdown / prompt',        'cell'),
     Btn('cell_below',   '+',        'insert a cell below',             'cell'),
     Btn('cell_delete',  '×',        'delete this cell',                'cell', 'warn'),
@@ -98,13 +106,20 @@ BUTTONS = L(
     Btn('edit_value',   'set',      'set the selected variable',       'vars'),
     Btn('promote',      '→live',    'copy it into the live namespace', 'vars'),
     Btn('copy_value',   'copy',     'copy its value',                  'vars'),
-    Btn('sort',         'sort',     'cycle the sort order',            'vars'),
 
     # -- the agent session ------------------------------------------------------------
     Btn('agent_send',   '▶ send',   'ask the assistant',               'agent', 'go'),
     Btn('agent_stop',   'stop',     'stop the turn in flight',         'agent', 'warn'),
     Btn('agent_tools',  'what it did', 'tool calls and diffs',         'agent'),
-    Btn('agent_transcript', 'transcript', 'the conversation so far',   'agent'),
+
+    # -- browser-only discoverability -------------------------------------------------
+    # The browser can scroll and has contextual menus, so these actions keep permanent
+    # mouse targets without crowding the primary toolbar.
+    Btn('show_docs',    'docs',     'docs for the symbol at the cursor','web_editor'),
+    Btn('find_similar', 'similar',  'code like the symbol at the cursor','web_editor'),
+    Btn('code_map',     'map',      'code clusters across this project','web_editor'),
+    Btn('quick_open',   'file…',    'open a file',                     'web_files'),
+    Btn('grid',         'grid',     'open the selected table or array','web_vars'),
 )
 
 

@@ -20,7 +20,7 @@ Three deliberate choices:
 
 A process you start yourself can still join in -- it just has to say so, in one line:
 
-    import leela.inspect as li; li.serve(name='api')
+    import dhrishti.serving as ds; ds.serve(name='api')
 """
 
 from __future__ import annotations
@@ -41,9 +41,24 @@ class Run(Dictable):
     name: str
     cmd: str                                    # 'uvicorn app:app --port 8000', 'python train.py', 'pytest -x'
     cwd: str = ''                               # relative to the project root; '' is the root
-    env: dict = field(default_factory=dict)     # extra environment for the child
+    env: dict = field(default_factory=dict)     # non-secret environment values for the child
+    env_file: str = ''                          # optional project-relative dotenv file (for example .env.local)
     watch: str = ''                             # module whose namespace to inspect; '' infers it
     inspect: bool = True                        # run it under an inspector at all
+    debug: bool = False                         # launch this command through debugpy/DAP
+    request: str = 'launch'                     # launch | attach
+    program: str = ''                           # project-relative Python file; inferred from cmd when blank
+    module: str = ''                            # python -m target
+    args: list = field(default_factory=list)
+    justMyCode: bool = True
+    stopOnEntry: bool = False
+    subProcess: bool = True
+    host: str = '127.0.0.1'                     # attach is loopback by default
+    port: int = 5678
+    pathMappings: list = field(default_factory=list)
+    django: bool = False
+    jinja: bool = False
+    gevent: bool = False
 
     def __post_init__(self):
         if not self.name: self.name = (self.cmd or 'run').split()[0]
@@ -53,6 +68,28 @@ class Run(Dictable):
 
     def resolved_cwd(self, root):
         return str(Path(root)/self.cwd) if self.cwd else str(root)
+
+    def resolved_env(self, root):
+        "Environment from an optional dotenv file, overlaid by explicit values."
+        out = {}
+        if self.env_file:
+            p = (Path(root)/self.env_file).resolve()
+            root = Path(root).resolve()
+            if not p.is_relative_to(root): raise ValueError('environment file is outside the project')
+            if p.exists():
+                for raw in p.read_text(encoding='utf-8', errors='replace').splitlines():
+                    line = raw.strip()
+                    if not line or line.startswith('#'): continue
+                    if line.startswith('export '): line = line[7:].lstrip()
+                    key, sep, value = line.partition('=')
+                    key = key.strip()
+                    if not sep or not key.replace('_', 'a').isalnum() or key[0].isdigit(): continue
+                    value = value.strip()
+                    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('\"', "'"):
+                        value = value[1:-1]
+                    out[key] = value
+        out.update({str(k): str(v) for k, v in (self.env or {}).items()})
+        return out
 
 
 class Runs:

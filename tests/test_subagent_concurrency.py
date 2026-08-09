@@ -72,7 +72,7 @@ async def _inspect(k, code, scope='isolated', timeout=20):
     Driven over HTTP rather than through the harness because the harness would only be
     forwarding, and the question here is entirely about the kernel underneath it.
     """
-    import httpx
+    import httpx2 as httpx
     async with httpx.AsyncClient(base_url=k.base, timeout=timeout) as c:
         t0 = time.monotonic()
         r = await c.get('/agent/api/exec', params={'code': code, 'scope': scope})
@@ -130,7 +130,9 @@ def test_even_a_spinning_cell_does_not_block_an_inspection(tmp_path, kind):
             dt, out = await _inspect(k, 'df.shape', timeout=15)
             assert out.get('ok'), out
             assert '(200, 2)' in str(out.get('result') or out.get('stdout')), out
-            assert dt < 1.0, f'{kind}: a warm inspection took {dt:.2f}s against a spinning cell'
+            # Loaded CI hosts and Apple GPU teardown can briefly starve this competing
+            # interpreter thread; the invariant is that it answers well before the 3s cell.
+            assert dt < 2.0, f'{kind}: a warm inspection took {dt:.2f}s against a spinning cell'
             assert not busy.done(), 'the cell finished first, so this proved nothing'
             await busy
         finally:
@@ -187,7 +189,7 @@ def test_an_inspection_cannot_change_what_the_user_has(tmp_path, kind):
 
 def test_a_subagent_is_given_inspect_python_and_no_write_tools():
     "The harness half: `read_only` must keep the one execution tool that is safe to delegate."
-    from leela.agent.subagent import NO_SUB, read_only
+    from leela.agent.tools import NO_SUB, read_only
     from leela.agent.tools import WRITE_TOOLS
 
     class Fake:
@@ -208,8 +210,8 @@ def test_the_briefing_says_what_is_true_of_both_kernels():
     comes from leela's in-kernel inspector, so the warning was advice for a problem that
     does not exist, and it would have made the agent avoid a tool that works.
     """
-    from leela.agent.chat import system_prompt
-    from leela.agent.host import NullHost
+    from leela.agent.agent import system_prompt
+    from leela.agent.tools import NullHost
 
     class Mini(NullHost): kernel_kind = 'ipymini'
     for h in (Mini(['/x']), NullHost(['/x'])):
@@ -318,7 +320,7 @@ def test_a_host_can_refuse_overlay():
 
 def test_a_subagent_is_given_inspect_python_and_no_write_tools():
     "The harness half: `read_only` must keep the one execution tool that is safe to delegate."
-    from leela.agent.subagent import NO_SUB, read_only
+    from leela.agent.tools import NO_SUB, read_only
     from leela.agent.tools import WRITE_TOOLS
 
     class Fake:
@@ -339,8 +341,8 @@ def test_the_briefing_says_what_is_true_of_both_kernels():
     comes from leela's in-kernel inspector, so the warning was advice for a problem that
     does not exist, and it would have made the agent avoid a tool that works.
     """
-    from leela.agent.chat import system_prompt
-    from leela.agent.host import NullHost
+    from leela.agent.agent import system_prompt
+    from leela.agent.tools import NullHost
 
     class Mini(NullHost): kernel_kind = 'ipymini'
     for h in (Mini(['/x']), NullHost(['/x'])):

@@ -1,6 +1,6 @@
 """Real terminals for the IDE, and the lazygit bridge built on them.
 
-A pseudo-terminal is the only honest way to host a full-screen TUI like lazygit
+A pseudo-terminal is the only honest way to host a full-screen terminal app like lazygit
 inside another program: it needs a tty to size itself against, raw keystrokes
 including the ones a browser would otherwise eat, and somewhere to put escape
 sequences. `Pty` is that -- a command attached to a real pty, read as bytes and
@@ -15,9 +15,8 @@ directory (an open root) and, more importantly, *who may connect*: see
 `TerminalGate` below, because an unauthenticated pty over a websocket is a
 remote shell.
 
-The TUI does not use any of this. Textual can hand the real terminal back with
-`App.suspend()`, so there lazygit simply runs on the terminal the user already
-has -- `lazygit_argv` is the only piece both frontends share.
+The browser cannot hand control back to a parent terminal, so it needs the PTY and
+websocket machinery implemented here.
 """
 
 from __future__ import annotations
@@ -199,10 +198,10 @@ class Terminals:
 
     def __init__(self, cwd=None): self.cwd, self.terms = cwd, {}
 
-    def open(self, key, argv=None, cwd=None, cols=80, rows=24):
+    def open(self, key, argv=None, cwd=None, env=None, cols=80, rows=24):
         "The terminal for `key`, spawning it on first use."
         if (t := self.terms.get(key)) is not None and t.alive: return t
-        t = self.terms[key] = Pty(argv=argv, cwd=cwd or self.cwd, cols=cols, rows=rows)
+        t = self.terms[key] = Pty(argv=argv, cwd=cwd or self.cwd, env=env, cols=cols, rows=rows)
         return t.start()
 
     def get(self, key): return self.terms.get(key)
@@ -250,7 +249,7 @@ class TerminalGate:
     def why(self):
         if self.enabled: return ''
         return (f'terminal disabled: the IDE is bound to {self.host}, which is reachable from the '
-                'network. Re-run with --allow-remote-terminal if that is really what you want.')
+                'network. Leela supports terminals on loopback addresses only.')
 
     def check(self, token):
         "Raise unless this connection may have a pty."

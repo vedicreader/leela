@@ -15,32 +15,36 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-    "exhash>=0.4.9",           # hash-verified line addressing: how the agent edits files safely
-    "fastcore>=2.1.16",        # str_diff / fenced_blocks / strip_ansi, behind the diff and completion surfaces
+    "fastcore>=1.7.0",         # Path, L, patch, docments: the vocabulary leela.agent is written in
+    "rishi>=0.1.1",            # on-device model execution (litert / llama.cpp) for leela.agent
+    "python-fastllm>=0.0.36",  # cloud model execution for leela.agent
+    "exhash>=0.4.10",          # hash-verified line and cell edits behind edit_file/edit_cell
+    "httpx>=0.27.0",           # listing the models an OpenAI key can actually use
     "fossick>=0.0.15",         # web search, fetch and page-to-markdown for research
-    "httpx>=0.27.0",           # how the IDE talks to each kernel's in-kernel inspector
-    "ipykernel>=7.3.0",        # the kernel each notebook tab runs in
-    "ipython>=9.15.0",         # leela.inspect reads the live kernel through IPython's namespace
+    "ipykernel>=7.3.0",        # standard kernel launcher
+    "ipymini>=0.0.1",          # concurrent lightweight kernel launcher
+    "ipython>=9.15.0",         # dhrishti reads the live kernel through IPython's namespace
     "jupyter-client>=8.9.1",   # leela <-> kernel: execute, complete, interrupt, restart
     "koshas>=0.0.29",          # code index behind search: FTS5 + embeddings + call graph
-    "numpy>=2.4.6",            # usearch vectors in search; array resolvers in leela.inspect
-    "pandas>=3.0.3",           # DataFrame/Series resolvers and the grid view
-    "python-fasthtml>=0.14.9", # the web frontend, and the in-kernel inspector's JSON API
-    "python-fastllm>=0.0.36",  # cloud models behind the same chat shape rishi has, for leela.agent
-    "aidialog>=0.0.6",         # fastllm's message model, and the dlgskill the agent discovers
-    "rich>=13.0.0",            # diff and cell rendering in the TUI
-    "rishi>=0.0.2",            # the chat + tool loop behind the assistant
-    "safepyrun>=0.2.5",        # the allowlist sandbox the agent's isolated scope runs in
-    "starlette>=0.40.0",       # the web terminal's WebSocket route
-    "textual[syntax]>=8.2.8",  # [syntax] pulls tree-sitter for cell highlighting in the TUI
-    "uvicorn>=0.30.0",         # serves the web frontend
+    "litesearch>=0.1.7",
+    "mdhtml>=0.1.21",          # bounded, paste-safe Markdown -> structural MDHTML
+    "python-fasthtml>=0.14.9", # the web frontend
+    "dhrishti>=0.1.2",         # the inspection engine: namespace -> node tree, as a JSON API in-kernel
 ]
 
 [project.optional-dependencies]
 # Optional Python-only Jupyter kernel with subshell/unlock helpers. When installed and
 # selected (--kernel ipymini), leela routes agent execs and shell-channel calls through
 # a subshell so they don't queue behind a long-running cell.
-ipymini = ["ipymini>=0.0.1"]
+ipymini = [] # compatibility extra; ipymini now ships with Leela
+lsp = ["pyright>=1.1.400"]
+gateway = [
+    "jupygate>=0.0.1",
+    "jupyasyncclient>=0.2.1",
+    "jupywire>=0.1.1",
+]
+macapp = ["py2app>=0.28.8; sys_platform == 'darwin'"]
+windows = ["py2exe>=0.14.2; sys_platform == 'win32'"]
 
 [project.urls]
 Repository = "https://github.com/vedicreader/leela"
@@ -58,11 +62,18 @@ include = ["/leela", "/README.md", "/pyproject.toml"]
 path = "leela/__init__.py"
 
 [dependency-groups]
+dev = [
+    "leela[gateway]",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
 test = [
     "pytest>=8.0.0",
-    "pytest-textual-snapshot>=1.0.0",   # SVG snapshots of the terminal IDE
     "nbformat>=5.10.0",                 # to assert the notebooks leela writes stay valid for Jupyter
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+leela = { workspace = true }

@@ -80,7 +80,7 @@ def test_closest_is_ordered_best_first():
 
 
 # -- fuzzy ranking ---------------------------------------------------------
-FILES = ['a/web/app.py', 'a/some_long_app_helper.py', 'a/ide/tui/app.py',
+FILES = ['a/web/app.py', 'a/some_long_app_helper.py', 'a/ide/panels/app.py',
          'a/README.md', 'a/apple/pie.txt']
 
 

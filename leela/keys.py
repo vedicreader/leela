@@ -1,14 +1,14 @@
-"""Single-source keymap for both frontends.
+"""The browser IDE's single-source keymap.
 
-Every binding in the IDE is declared once, here, as a `Key`. The Textual app
-generates its `Binding`s from `tui_bindings()`; the web app ships the same table
-to the browser as JSON via `web_keymap()` and builds its handler and its help
-overlay from that. Nothing is hand-duplicated, so the two frontends cannot drift.
+Every binding is declared once as a `Key`. The table is shipped to the browser
+as JSON via `web_keymap()` and drives its handler, help overlay, and tooltips.
 
-Canonical key syntax is `[ctrl+][alt+][shift+]base`, base being a single
-printable character or a name (`enter`, `escape`, `tab`, `up`, `f1`, ...).
-`shift+<letter>` is written as the bare uppercase letter (`X`), which is what
-both toolkits actually deliver. An empty `key` is legal and means *unbound*: the
+Canonical key syntax is `[mod+][ctrl+][alt+][shift+]base`, base being a single
+printable character or a name (`enter`, `escape`, `tab`, `up`, `f1`, ...). `mod`
+is Command in a macOS browser and Control in other browsers. `hyper+` is shorthand
+for Command+Control+Option+Shift on macOS and Control+Alt+Shift elsewhere, intended
+for a Caps Lock remapped to that modifier combination. `shift+<letter>` is written
+as the bare uppercase letter (`X`). An empty `key` is legal and means *unbound*: the
 action still exists, is still clickable, and can still be given a chord in the
 user's own keymap.
 
@@ -22,25 +22,22 @@ its scope is `global`. Two rules keep the map honest, enforced in `Key`:
 Chords the browser refuses to hand over (ctrl+w, ctrl+tab, ctrl+n, ...) are
 avoided outright rather than bound and silently lost on the web side.
 
-**Two chords per action, not one.** `ctrl+enter`, `shift+enter` and `alt+enter`
-only reach an application from a terminal that speaks the kitty keyboard
-protocol (kitty, ghostty, WezTerm, recent iTerm2). In Terminal.app they arrive
-as a bare `enter`, and `alt+<letter>` arrives as whatever character Option
-produces -- so on a stock Mac the most important keys in the IDE are the ones
-that cannot be pressed. Every binding that would otherwise be unreachable there
-carries a plain function key as its second chord, and nothing important is
-keyboard-only in any case: `leela.buttons` gives both frontends a clickable
-button for the same actions.
+Notebook commands follow PyCharm/Jupyter conventions: `mod+enter` runs,
+`shift+enter` runs and selects below, and `alt+enter` runs and inserts below.
+Terminal.app cannot distinguish every modified Enter without a modern keyboard
+protocol, so nothing important is keyboard-only: `leela.buttons` gives every
+action a clickable control. Function keys are not used
+as fallbacks because stock laptop and browser settings reserve many of them.
 
 **And the map is the user's to change.** `keys.json` in leela's config dir (or
 wherever `$LEELA_KEYMAP` points) maps an action to the chord -- or chords -- it
 should answer to:
 
-    {"run_cell": "ctrl+enter f5 ctrl+y", "quit": ""}
+    {"run_cell": "mod+enter ctrl+y", "quit": ""}
 
 It is applied over the defaults at import, one entry at a time; anything
 unparseable, unknown or in conflict with the rest of the map is skipped and
-reported in `NOTES`, which both frontends show. A broken config file must not
+reported in `NOTES`, which the settings UI shows. A broken config file must not
 be able to stop the IDE from starting.
 """
 
@@ -49,7 +46,7 @@ from dataclasses import dataclass, asdict, replace
 from fastcore.all import L, Path, first
 
 __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'WEB_ONLY_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
-           'parse_key', 'tui_key', 'web_key', 'by_scope', 'tui_bindings', 'web_keymap',
+           'parse_key', 'web_key', 'by_scope', 'web_keymap',
            'help_rows', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
            'apply_overrides', 'keymap_json', 'write_keymap', 'reload']
 
@@ -60,34 +57,38 @@ EDITING_SCOPES = ('editor', 'exec', 'agent', 'term')
 # Focusable panes, outermost first. `global` bindings fire from any of them.
 SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term')
 
-# Scopes that only one frontend can have. `term` is the browser's embedded pty; the TUI
-# has no such pane because it hands the *real* terminal over with `App.suspend()`, so
-# there is nothing of its own to close. Declared rather than left implicit, so a binding
-# that never fires in the terminal frontend is a decision and not an oversight.
-WEB_ONLY_SCOPES = ('term',)
+# Retained as a compatibility export for extensions that used it to filter browser-only
+# actions. The browser is now the only frontend, so every scope is native.
+WEB_ONLY_SCOPES = ()
 
 _NAMED = {'enter', 'escape', 'tab', 'backspace', 'delete', 'space', 'up', 'down', 'left', 'right',
           'home', 'end', 'pageup', 'pagedown', *[f'f{i}' for i in range(1, 13)]}
 
-# canonical base -> Textual key name (Textual spells punctuation out)
-_TUI_BASE = {'/': 'slash', '\\': 'backslash', '.': 'full_stop', ',': 'comma', '=': 'equals_sign',
-             '-': 'minus', '?': 'question_mark', "'": 'apostrophe', ';': 'semicolon',
-             '`': 'grave_accent', '[': 'left_square_bracket', ']': 'right_square_bracket'}
 # canonical base -> browser KeyboardEvent.key
 _WEB_BASE = {'enter': 'Enter', 'escape': 'Escape', 'tab': 'Tab', 'backspace': 'Backspace',
              'delete': 'Delete', 'space': ' ', 'up': 'ArrowUp', 'down': 'ArrowDown',
              'left': 'ArrowLeft', 'right': 'ArrowRight', 'home': 'Home', 'end': 'End',
              'pageup': 'PageUp', 'pagedown': 'PageDown',
              **{f'f{i}': f'F{i}' for i in range(1, 13)}}   # KeyboardEvent.key is 'F2', not 'f2'
+_WEB_CODE = {**{chr(c): f'Key{chr(c).upper()}' for c in range(ord('a'), ord('z') + 1)},
+             **{str(i): f'Digit{i}' for i in range(10)},
+             'enter': 'Enter', 'space': 'Space', 'tab': 'Tab', 'escape': 'Escape',
+             'backspace': 'Backspace', 'delete': 'Delete',
+             'up': 'ArrowUp', 'down': 'ArrowDown', 'left': 'ArrowLeft', 'right': 'ArrowRight',
+             'home': 'Home', 'end': 'End', 'pageup': 'PageUp', 'pagedown': 'PageDown',
+             '[': 'BracketLeft', ']': 'BracketRight', '/': 'Slash', '\\': 'Backslash',
+             '`': 'Backquote', '-': 'Minus', '=': 'Equal', '.': 'Period', ',': 'Comma',
+             ';': 'Semicolon', "'": 'Quote'}
 
 
 def parse_key(k):
     "Canonical chord -> (frozenset of modifiers, base key). 'X' normalises to ({'shift'}, 'x')."
     *mods, base = k.split('+')
     mods = {m.lower() for m in mods}
+    if 'hyper' in mods: mods = (mods - {'hyper'}) | {'mod', 'ctrl', 'alt', 'shift'}
     if base.lower() in _NAMED: base = base.lower()
     elif len(base) == 1 and base.isupper(): mods, base = mods | {'shift'}, base.lower()
-    bad = mods - {'ctrl', 'alt', 'shift'}
+    bad = mods - {'mod', 'ctrl', 'alt', 'shift'}
     if bad: raise ValueError(f'unknown modifier(s) {sorted(bad)} in {k!r}')
     if base not in _NAMED and len(base) != 1: raise ValueError(f'unknown base key {base!r} in {k!r}')
     return frozenset(mods), base
@@ -121,20 +122,14 @@ class Key:
     def bound(self): return bool(self.keys)
 
 
-def tui_key(k):
-    "Canonical chord -> a Textual binding string."
-    mods, base = parse_key(k)
-    base = _TUI_BASE.get(base, base)
-    if 'shift' in mods and len(base) == 1: base, mods = base.upper(), mods - {'shift'}
-    return '+'.join([*[m for m in ('ctrl', 'alt', 'shift') if m in mods], base])
-
-
 def web_key(k):
     "Canonical chord -> the dict the browser handler matches a KeyboardEvent against."
+    hyper = 'hyper' in {part.lower() for part in k.split('+')[:-1]}
     mods, base = parse_key(k)
     key = _WEB_BASE.get(base, base)
     if 'shift' in mods and len(key) == 1: key = key.upper()
-    return {'key': key, 'ctrl': 'ctrl' in mods, 'alt': 'alt' in mods, 'shift': 'shift' in mods}
+    return {'key': key, 'code': _WEB_CODE.get(base), 'hyper': hyper, 'mod': 'mod' in mods,
+            'ctrl': 'ctrl' in mods, 'alt': 'alt' in mods, 'shift': 'shift' in mods}
 
 
 # ---------------------------------------------------------------------------
@@ -143,98 +138,140 @@ def web_key(k):
 # Deliberately avoided, because Chrome will not release them: ctrl+w, ctrl+t,
 # ctrl+n, ctrl+tab, ctrl+shift+w. Tab motion uses alt+[ / alt+] instead.
 #
-# Function keys are the second chord wherever the first one needs a terminal
-# that speaks the kitty keyboard protocol. They are allotted once across the
-# whole map so that a key means the same thing wherever the cursor is:
+# Also avoided, because macOS grabs them before any app -- terminal or browser -- when
+# Mission Control's default shortcuts are on: ctrl+up (Mission Control), ctrl+down (App
+# Exposé), ctrl+left / ctrl+right (move between Spaces). What wanted ctrl+up / ctrl+down
+# (exec history) uses the shift variants, which the OS leaves alone.
 #
-#   f1  help          f2  rename (files)   f3  command palette   f4  search code
-#   f5  run           f6  run and advance  f7  run and insert    f8  run all
-#   f9  run this file
-#
-# f5 is `run` in three scopes -- the cell, the exec box, the agent prompt -- which
-# is the same promise `ctrl+enter` makes in each of them.
+# Function keys are not defaults: on stock Mac laptops many are media/system keys, while
+# browsers reserve others. Notebook execution follows the PyCharm/Jupyter gestures instead:
+# platform-modified Enter runs, Shift+Enter runs and advances, and Alt+Enter runs and inserts.
 # ---------------------------------------------------------------------------
 DEFAULTS = L(
     # -- global: reachable from any pane, including from inside a cell editor ----------
-    Key('focus_files',      'ctrl+b',        'global', 'files',               'footer'),
-    Key('focus_editor',     'ctrl+j',        'global', 'editor',              'footer'),
-    Key('focus_exec',       'ctrl+e',        'global', 'exec',                'footer'),
-    Key('focus_vars',       'ctrl+r',        'global', 'variables',           'footer'),
-    Key('focus_agent',      'ctrl+g',        'global', 'agent',               'footer'),
-    Key('palette',          'ctrl+shift+p f3', 'global', 'command palette',   'footer'),
-    Key('quick_open',       'ctrl+p',        'global', 'open file',           'toast'),
-    Key('code_search',      'ctrl+shift+f f4', 'global', 'search code',       'toast'),
-    Key('save',             'ctrl+s',        'global', 'save',                'toast'),
-    Key('save_all',         'ctrl+alt+s',    'global', 'save all'),
-    Key('show_diff',        'ctrl+alt+/',    'global', 'what changed',        'toast'),
+    # One positional family, clear of macOS text editing and Chrome: left-to-right panes 1–5.
+    Key('focus_files',      'alt+shift+1',   'global', 'files',               'footer'),
+    Key('focus_editor',     'alt+shift+2',   'global', 'editor',              'footer'),
+    Key('focus_exec',       'alt+shift+3',   'global', 'exec',                'footer'),
+    Key('focus_vars',       'alt+shift+4',   'global', 'variables',           'footer'),
+    Key('focus_agent',      'alt+shift+5',   'global', 'agent',               'footer'),
+    Key('palette',          'mod+shift+p',   'global', 'command palette',     'footer'),
+    # The platform-standard preferences gesture: Command+, on macOS, Control+, elsewhere.
+    Key('settings',         'mod+,',         'global', 'settings',             'toast'),
+    Key('quick_open',       'mod+p',         'global', 'open file',           'toast'),
+    # Chrome owns Ctrl+Tab even in an app window. Mod+E is the reliable JetBrains-style
+    # recent-files gesture; the browser switcher itself is MRU rather than positional.
+    Key('recent_tabs',      'mod+e',         'global', 'recent files',        'toast'),
+    Key('code_search',      'mod+shift+f',    'global', 'search code',        'toast'),
+    Key('find_definition',  'mod+b',          'global', 'go to definition',   'toast'),
+    Key('find_usages',      'hyper+u',        'global', 'find usages',        'toast'),
+    Key('rename_symbol',    '',               'global', 'rename symbol'),
+    Key('sync_index',       'hyper+i',        'global', 'sync Kosha index'),
+    Key('save',             'mod+s',         'global', 'save',                'toast'),
+    Key('save_all',         'alt+shift+s',   'global', 'save all'),
+    Key('show_diff',        'alt+shift+d',   'global', 'what changed',        'toast'),
     # Both completions and the docstring lookup are global rather than editor-scoped, so
     # they also reach the exec strip -- a half-remembered attribute name is just as likely
     # to need looking up there, and all three handlers already resolve the cursor from
     # whichever editor holds it.
-    Key('complete',         'ctrl+space',    'global', 'complete',            'toast'),
-    Key('ai_complete',      'ctrl+alt+space', 'global', 'ai completion',      'toast'),
-    Key('show_docs',        'ctrl+alt+h',    'global', 'docs for symbol',     'toast'),
-    Key('capture',          'ctrl+alt+p',    'global', 'screenshot for the assistant', 'toast'),
+    Key('complete',         'alt+/ ctrl+space', 'global', 'complete',         'toast'),
+    Key('ai_complete',      'alt+shift+space', 'global', 'ai completion',     'toast'),
+    Key('show_docs',        'alt+shift+h',   'global', 'docs for symbol',     'toast'),
+    Key('capture',          'alt+shift+p',   'global', 'screenshot for the assistant', 'toast'),
     Key('close_tab',        'alt+w',         'global', 'close tab',           'toast'),
     Key('next_tab',         'alt+]',         'global', 'next tab'),
     Key('prev_tab',         'alt+[',         'global', 'previous tab'),
-    Key('toggle_left',      'ctrl+alt+b',    'global', 'toggle file pane'),
-    Key('toggle_right',     'ctrl+alt+r',    'global', 'toggle variable pane'),
+    Key('toggle_left',      'alt+shift+b hyper+left', 'global', 'toggle file pane'),
+    Key('toggle_right',     'alt+shift+v hyper+right', 'global', 'toggle agent / variables pane'),
+    Key('toggle_bottom',    'hyper+down',    'global', 'toggle bottom tools'),
     Key('toggle_scope',     'alt+i',         'global', 'live / isolated',     'toast'),
-    Key('interrupt',        'ctrl+alt+i f10', 'global', 'interrupt kernel',   'toast'),
-    Key('restart',          'ctrl+alt+k',    'global', 'restart kernel'),
-    Key('pick_kernel',      'ctrl+alt+j',    'global', 'choose kernel',       'toast'),
-    Key('switch_env',       'ctrl+alt+e',    'global', 'watch another env',   'toast'),
+    Key('interrupt',        'alt+shift+i',    'global', 'interrupt kernel',   'toast'),
+    Key('restart',          'alt+shift+r hyper+r', 'global', 'restart kernel'),
+    Key('pick_kernel',      'alt+shift+k',   'global', 'choose kernel',       'toast'),
+    Key('switch_env',       'alt+shift+e',   'global', 'watch another env',   'toast'),
     Key('edit_runs',        '',              'global', 'run configurations'),
     # Running a *file* is its own thing, and not the same as running the cell the cursor is
     # in: it runs the whole buffer as a script, in the tab's kernel, so what it defines is
     # in the variable panel afterwards. `run_app` below is the third thing again -- a
     # long-lived server under an inspector rather than a script that finishes.
-    Key('run_file',         'ctrl+alt+enter f9', 'global', 'run this file',   'toast'),
-    Key('run_selection',    '',              'global', 'run the selection'),
-    Key('new_notebook',     '',              'global', 'new notebook'),
-    Key('edit_keys',        '',              'global', 'edit keybindings'),
-    Key('run_app',          'ctrl+alt+d',    'global', 'run app under inspector', 'toast'),
-    Key('terminal',         'ctrl+alt+`',    'global', 'terminal',            'toast'),
-    Key('git',              'ctrl+alt+v',    'global', 'lazygit',             'toast'),
-    Key('web_search',       'ctrl+alt+w',    'global', 'search the web',      'toast'),
-    Key('research',         'ctrl+alt+n',    'global', 'research a question'),
-    Key('read_url',         'ctrl+alt+u',    'global', 'read a url'),
-    Key('help',             'f1',            'global', 'keys',                'footer'),
-    Key('quit',             'ctrl+alt+q',    'global', 'quit',                'footer'),
+    Key('run_file',         'mod+alt+enter',  'global', 'run this file',      'toast'),
+    Key('run_selection',    'hyper+s',       'global', 'run the selection'),
+    Key('new_notebook',     'hyper+n',       'global', 'new notebook'),
+    Key('edit_keys',        'hyper+k',       'global', 'edit keybindings'),
+    Key('run_app',          'alt+shift+a',   'global', 'run app under inspector', 'toast'),
+    Key('terminal',         'ctrl+`',        'global', 'terminal',            'toast'),
+    Key('git',              'alt+shift+g',   'global', 'lazygit',             'toast'),
+    Key('web_search',       'alt+shift+w',   'global', 'search the web',      'toast'),
+    Key('research',         'alt+shift+q',   'global', 'research a question'),
+    Key('read_url',         'alt+shift+u',   'global', 'read a url'),
+    Key('help',             'mod+shift+/',   'global', 'keys',                'footer'),
+    Key('quit',             '',              'global', 'quit'),
     *[Key(f'tab_{i}', f'alt+{i}', 'global', f'tab {i}') for i in range(1, 10)],
 
     # -- editor: notebook cells and plain files ---------------------------------------
-    Key('run_cell',         'ctrl+enter f5', 'editor', 'run cell',            'footer'),
-    Key('run_advance',      'shift+enter f6', 'editor', 'run and advance',    'footer'),
-    Key('run_insert',       'alt+enter f7',  'editor', 'run and insert below'),
-    Key('run_all',          'f8',            'editor', 'run every cell'),
-    Key('cell_above',       'ctrl+alt+up',   'editor', 'insert cell above'),
-    Key('cell_below',       'ctrl+alt+down', 'editor', 'insert cell below'),
-    Key('cell_delete',      'ctrl+alt+delete', 'editor', 'delete cell'),
-    Key('cell_type',        'ctrl+alt+m',    'editor', 'code / markdown / prompt', 'toast'),
-    Key('cell_split',       'ctrl+alt+-',    'editor', 'split cell'),
-    Key('comment',          'ctrl+/',        'editor', 'toggle comment',      'toast'),
+    Key('run_cell',         'mod+enter',       'editor', 'run cell',              'footer'),
+    Key('run_advance',      'shift+enter',     'editor', 'run and select below',  'footer'),
+    Key('run_insert',       'alt+enter',       'editor', 'run and insert below'),
+    Key('stop_cell',        'alt+shift+c',     'editor', 'stop running cell'),
+    Key('run_above',        'hyper+enter',     'editor', 'run all cells above'),
+    Key('run_below',        'hyper+pageDown',  'editor', 'run this cell and below'),
+    Key('run_all',          'mod+shift+enter', 'editor', 'run every cell'),
+    Key('restart_run_all',  'hyper+backspace', 'editor', 'restart kernel and run all'),
+    Key('cell_select_above','ctrl+shift+up',   'editor', 'select cell above'),
+    Key('cell_select_below','ctrl+shift+down', 'editor', 'select cell below'),
+    Key('cell_first',       'mod+home',         'editor', 'first cell',          'toast'),
+    Key('cell_last',        'mod+end',          'editor', 'last cell',           'toast'),
+    Key('cell_page_up',     'alt+pageup',       'editor', 'previous page of cells'),
+    Key('cell_page_down',   'alt+pagedown',     'editor', 'next page of cells'),
+    Key('cell_move_up',     'alt+shift+up',    'editor', 'move cell up'),
+    Key('cell_move_down',   'alt+shift+down',  'editor', 'move cell down'),
+    Key('cell_above',       'mod+alt+up',      'editor', 'insert cell above'),
+    Key('cell_below',       'mod+alt+down',    'editor', 'insert cell below'),
+    Key('cell_delete',      'mod+alt+backspace', 'editor', 'delete cell'),
+    # Keep mod+z/mod+shift+z for character undo in the focused text editor. These two
+    # operate on whole-cell structure, including restoring an accidentally deleted cell.
+    Key('notebook_undo',    'mod+alt+z',       'editor', 'undo cell operation', 'toast'),
+    Key('notebook_redo',    'mod+alt+shift+z', 'editor', 'redo cell operation'),
+    Key('cell_type',        'alt+shift+m',     'editor', 'code / markdown / prompt', 'toast'),
+    Key('cell_split',       'alt+shift+-',     'editor', 'split cell'),
+    Key('cell_collapse',    'hyper+c',         'editor', 'collapse / expand cell'),
+    Key('cell_duplicate',   'hyper+d',         'editor', 'duplicate cell below'),
+    # Standard copy/cut become whole-cell operations only when there is no source selection;
+    # the browser router leaves selected text to CodeMirror and the system clipboard.
+    Key('cell_copy',        'mod+c',           'editor', 'copy cell'),
+    Key('cell_cut',         'mod+x',           'editor', 'cut cell'),
+    Key('cell_paste_above', '',                'editor', 'paste cell above'),
+    Key('cell_paste_below', '',                'editor', 'paste cell below'),
+    Key('cell_merge_above', 'hyper+up',        'editor', 'merge cell above'),
+    Key('cell_merge_below', 'hyper+pageup',    'editor', 'merge cell below'),
+    Key('clear_cell_output','hyper+delete',    'editor', 'clear this cell output'),
+    Key('clear_all_outputs','mod+shift+backspace', 'editor', 'clear all outputs'),
+    Key('comment',          'mod+/',         'editor', 'toggle comment',      'toast'),
     Key('find_similar',     'ctrl+shift+a',  'editor', 'code like this',      'toast'),
     Key('code_map',         'ctrl+shift+m',  'editor', 'code map (clusters)'),
 
     # -- exec strip: the merged live/isolated box -------------------------------------
-    Key('exec_run',         'ctrl+enter f5', 'exec',   'run',                 'footer'),
-    Key('exec_newline',     'alt+enter f7',  'exec',   'newline'),
-    Key('exec_prev',        'ctrl+up',       'exec',   'older',               'toast'),
-    Key('exec_next',        'ctrl+down',     'exec',   'newer',               'toast'),
-    Key('exec_clear',       'ctrl+l',        'exec',   'clear log'),
-    Key('exec_promote',     'ctrl+alt+g',    'exec',   'run in live namespace'),
+    Key('exec_run',         'mod+enter',     'exec',   'run',                  'footer'),
+    Key('exec_newline',     'alt+enter',     'exec',   'newline'),
+    Key('exec_prev',        'ctrl+shift+up', 'exec',   'older',               'toast'),
+    Key('exec_next',        'ctrl+shift+down', 'exec', 'newer',               'toast'),
+    Key('exec_clear',       'alt+shift+l',   'exec',   'clear log'),
+    Key('exec_promote',     'mod+shift+g',   'exec',   'run in live namespace'),
 
     # -- files: the left tree (no text cursor, so bare letters are fine) --------------
-    Key('open',             'enter',         'files',  'open',                'footer'),
-    Key('up_dir',           'backspace',     'files',  'up'),
-    Key('new_file',         'a',             'files',  'new file',            'toast'),
-    Key('new_dir',          'A',             'files',  'new folder',          'toast'),
-    Key('rename',           'f2 r',          'files',  'rename',              'toast'),
-    Key('delete',           'd',             'files',  'delete'),
+    Key('open',             'enter',         'files',  'open / toggle folder','footer'),
+    Key('tree_down',        'down',          'files',  'next item',           'footer'),
+    Key('tree_up',          'up',            'files',  'previous item'),
+    Key('tree_expand',      'right',         'files',  'expand / enter folder'),
+    Key('tree_collapse',    'left',          'files',  'collapse / parent'),
+    Key('up_dir',           'backspace',     'files',  'parent folder'),
+    Key('new_file',         'n',             'files',  'new file',            'toast'),
+    Key('new_dir',          'N',             'files',  'new folder',          'toast'),
+    Key('rename',           'r',             'files',  'rename',              'toast'),
+    Key('delete',           'd',             'files',  'delete from disk'),
     Key('refresh_files',    'R',             'files',  'refresh'),
     Key('add_root',         'o',             'files',  'open folder',         'toast'),
+    Key('remove_root',      '',              'files',  'remove folder from workspace'),
     Key('filter_files',     '/',             'files',  'filter'),
 
     # -- vars: the right-hand inspector -----------------------------------------------
@@ -251,15 +288,17 @@ DEFAULTS = L(
     Key('profile_full',     '3',             'vars',   'full'),
 
     # -- agent session (bottom centre) -------------------------------------------------
-    Key('agent_send',       'ctrl+enter f5', 'agent',  'send',                'footer'),
-    Key('agent_stop',       'ctrl+alt+c',    'agent',  'stop agent'),
-    Key('agent_transcript', 'ctrl+alt+t',    'agent',  'transcript'),
-    Key('agent_tools',      'ctrl+alt+l',    'agent',  'what the agent did'),
+    Key('agent_send',       'mod+enter',     'agent',  'send',                 'footer'),
+    Key('agent_stop',       'alt+shift+c',   'agent',  'stop agent'),
+    Key('agent_tools',      'alt+shift+t',   'agent',  'what the agent did'),
 
     # -- terminal: a real pty, so almost every chord belongs to the child process.
     # Only what the pty must not swallow is bound here; `git` and the focus keys are
     # global and already reach this pane.
-    Key('term_close',       'ctrl+alt+x',    'term',   'close terminal',      'toast'),
+    Key('term_new',         'ctrl+shift+`',  'term',   'new terminal',        'toast'),
+    Key('term_next',        'ctrl+shift+]',  'term',   'next terminal'),
+    Key('term_prev',        'ctrl+shift+[',  'term',   'previous terminal'),
+    Key('term_close',       'alt+shift+x',   'term',   'close terminal',      'toast'),
 )
 
 
@@ -269,16 +308,24 @@ def _dupes(keys):
     keys = L(keys)
     for k in keys:
         for c in k.keys:
-            sig = (k.scope, tui_key(c))
+            mods, base = parse_key(c)
+            # Outside macOS, `mod` is Control. Treat the two as colliding so a keymap
+            # accepted on one platform cannot become ambiguous on another.
+            if 'mod' in mods: mods = (mods - {'mod'}) | {'ctrl'}
+            sig = (k.scope, tuple(sorted(mods)), base)
             if sig in seen: bad.append(f'{c} is bound by both {seen[sig]} and {k.action} in scope {k.scope}')
             else: seen[sig] = k.action
     acts = keys.attrgot('action')
     bad += [f'action {a!r} declared twice' for a in set(acts) if acts.count(a) > 1]
     # A global chord that collides with a scoped one is ambiguous when that pane has focus.
-    g = {tui_key(c): k.action for k in keys.filter(lambda k: k.scope == 'global') for c in k.keys}
+    def signature(chord):
+        mods, base = parse_key(chord)
+        if 'mod' in mods: mods = (mods - {'mod'}) | {'ctrl'}
+        return tuple(sorted(mods)), base
+    g = {signature(c): k.action for k in keys.filter(lambda k: k.scope == 'global') for c in k.keys}
     for k in keys.filter(lambda k: k.scope != 'global'):
         for c in k.keys:
-            if (t := tui_key(c)) in g: bad.append(f'{c} is both global ({g[t]}) and {k.scope} ({k.action})')
+            if (t := signature(c)) in g: bad.append(f'{c} is both global ({g[t]}) and {k.scope} ({k.action})')
     return bad
 
 
@@ -291,17 +338,6 @@ def chord_display(action_or_key, sep=' / '):
     k = lookup(action_or_key) if isinstance(action_or_key, str) else action_or_key
     if k is None: return ''
     return sep.join(k.keys) if k.bound else '—'
-
-
-def tui_bindings(scope):
-    """[(textual_key, action, label, show_in_footer)] for one scope -- feed straight into Textual `Binding`s.
-
-    One Binding per chord, but only the *first* chord of an action is shown in the footer:
-    every alternative is real and fires, and a footer that listed `ctrl+enter` and `f5` as
-    two separate entries would say the same thing twice in the row with the least room.
-    """
-    return [(tui_key(c), k.action, k.label, k.show == 'footer' and i == 0)
-            for k in by_scope(scope) for i, c in enumerate(k.keys)]
 
 
 def web_keymap():
@@ -336,6 +372,64 @@ def keymap_path(path=None):
     return Path(path or os.environ.get('LEELA_KEYMAP') or (leela_cfg/'keys.json'))
 
 
+_GENERATED_DEFAULT_MIGRATIONS = {
+    # Exact defaults written by older versions of `--write-keymap`. A genuinely custom
+    # chord is never touched; this only prevents a generated snapshot pinning known-bad
+    # browser/system bindings forever.
+    'focus_files': ('ctrl+b', 'alt+shift+1'),
+    'focus_editor': ('ctrl+j', 'alt+shift+2'),
+    'focus_exec': ('ctrl+e', 'alt+shift+3'),
+    'focus_vars': ('ctrl+r', 'alt+shift+4'),
+    'focus_agent': ('ctrl+g', 'alt+shift+5'),
+    'palette': ('ctrl+shift+p f3', 'mod+shift+p'),
+    'quick_open': ('ctrl+p', 'mod+p'),
+    'code_search': ('ctrl+shift+f f4', 'mod+shift+f'),
+    'save': ('ctrl+s', 'mod+s'),
+    'save_all': ('ctrl+alt+s', 'alt+shift+s'),
+    'show_diff': ('ctrl+alt+/', 'alt+shift+d'),
+    'complete': ('ctrl+space', 'alt+/ ctrl+space'),
+    'ai_complete': ('ctrl+alt+space', 'alt+shift+space'),
+    'show_docs': ('ctrl+alt+h', 'alt+shift+h'),
+    'capture': ('ctrl+alt+p', 'alt+shift+p'),
+    'toggle_left': ('ctrl+alt+b', 'alt+shift+b'),
+    'toggle_right': ('ctrl+alt+r', 'alt+shift+v'),
+    'interrupt': ('ctrl+alt+i f10', 'alt+shift+i'),
+    'restart': ('ctrl+alt+k', 'alt+shift+r'),
+    'pick_kernel': ('ctrl+alt+j', 'alt+shift+k'),
+    'switch_env': ('ctrl+alt+e', 'alt+shift+e'),
+    'run_file': ('ctrl+alt+enter f9', 'mod+alt+enter'),
+    'run_app': ('ctrl+alt+d', 'alt+shift+a'),
+    'terminal': ('ctrl+alt+`', 'ctrl+`'),
+    'git': ('ctrl+alt+v', 'alt+shift+g'),
+    'web_search': ('ctrl+alt+w', 'alt+shift+w'),
+    'research': ('ctrl+alt+n', 'alt+shift+q'),
+    'read_url': ('ctrl+alt+u', 'alt+shift+u'),
+    'help': ('f1', 'mod+shift+/'),
+    'quit': ('ctrl+alt+q', ''),
+    'run_cell': ('f5 ctrl+enter', 'mod+enter'),
+    'run_advance': ('f6 shift+enter', 'shift+enter'),
+    'run_insert': ('f7 alt+enter', 'alt+enter'),
+    'run_all': ('f8', 'mod+shift+enter'),
+    'cell_delete': ('ctrl+alt+delete', 'mod+alt+backspace'),
+    'cell_type': ('ctrl+alt+m', 'alt+shift+m'),
+    'cell_split': ('ctrl+alt+-', 'alt+shift+-'),
+    'comment': ('ctrl+/', 'mod+/'),
+    'exec_run': ('f5 ctrl+enter', 'mod+enter'),
+    'exec_newline': ('alt+enter f7', 'alt+enter'),
+    'exec_clear': ('ctrl+l', 'alt+shift+l'),
+    'exec_promote': ('ctrl+alt+g', 'mod+shift+g'),
+    'agent_send': ('f5 ctrl+enter', 'mod+enter'),
+    'agent_stop': ('ctrl+alt+c', 'alt+shift+c'),
+    'agent_tools': ('ctrl+alt+l', 'alt+shift+t'),
+    'term_close': ('ctrl+alt+x', 'alt+shift+x'),
+    # Control+Option+Arrow is intercepted by macOS accessibility/window features on some
+    # machines. Command+Option is delivered by Chrome; other browsers map `mod` to Control.
+    'cell_above': ('ctrl+alt+up', 'mod+alt+up'),
+    'cell_below': ('ctrl+alt+down', 'mod+alt+down'),
+    'rename': ('f2 r', 'r'),
+}
+
+
 def read_overrides(path=None, notes=None):
     """`{action: chord}` from the user's keymap file. Never raises -- a broken file is a note.
 
@@ -354,10 +448,33 @@ def read_overrides(path=None, notes=None):
     if not isinstance(d, dict):
         notes.append(f'{p}: expected an object of action -> chord — using the default keys')
         return {}
+    # The old in-app editor wrote every default into the file. Without this narrow migration,
+    # that generated snapshot would permanently defeat the new Mac-aware `mod` defaults. Only
+    # exact old defaults migrate; a user's genuinely custom Control chord remains untouched.
+    help_text = ' '.join(map(str, d.get('_help') or ()))
+    generated_snapshot = isinstance(d.get('keys'), dict) and len(d['keys']) > 50 and 'leela keymap' in help_text
+    legacy_generated = generated_snapshot and 'mod is Command' not in help_text
     if isinstance(d.get('keys'), dict): d = d['keys']
+    if legacy_generated:
+        d = dict(d)
+        for action, (old, new) in _GENERATED_DEFAULT_MIGRATIONS.items():
+            if d.get(action) == old: d[action] = new
+    if generated_snapshot:
+        # A full map written by `--write-keymap` pins the defaults that existed that day.
+        # Migrate exact old values only; any genuinely customised chord remains untouched.
+        d = dict(d)
+        current = {
+            'restart': ('alt+shift+r', 'alt+shift+r hyper+r'),
+            'toggle_left': ('alt+shift+b', 'alt+shift+b hyper+left'),
+            'toggle_right': ('alt+shift+v', 'alt+shift+v hyper+right'),
+            'run_selection': ('', 'hyper+s'), 'new_notebook': ('', 'hyper+n'),
+            'edit_keys': ('', 'hyper+k'),
+        }
+        for action, (old, new) in current.items():
+            if d.get(action) == old: d[action] = new
     out = {}
     for a, c in d.items():
-        if a.startswith('_'): continue
+        if a.startswith('_') or a == 'agent_transcript': continue  # removed: History owns sessions
         if not isinstance(c, str): notes.append(f'{p}: {a}: {c!r} is not a chord string')
         else: out[a] = c.strip()
     return out
@@ -397,7 +514,7 @@ def keymap_json(keys=None):
     "The effective map as the JSON a user would edit, with a comment explaining the format."
     ks = KEYS if keys is None else L(keys)
     return {'_help': ['leela keymap: action -> chord, or several chords separated by spaces.',
-                      'A chord is [ctrl+][alt+][shift+]base; base is a character or a name '
+                      'A chord is [mod+][ctrl+][alt+][shift+]base; hyper is Command+Control+Option+Shift on macOS; mod is Command on macOS and Control elsewhere; base is a character or a name '
                       '(enter, escape, tab, space, up, f1..f12).',
                       'An empty string unbinds the action. Delete an entry to take leela\'s default.',
                       'Anything unparseable or conflicting is skipped and reported in the IDE.'],

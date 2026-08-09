@@ -1,22 +1,19 @@
-"""Code search for the IDE, over kosha when it is usable and a plain scan when it is not.
+"""Predictable human search, semantic agent search.
 
-kosha gives the good answer -- FTS5 plus embeddings plus a call graph, over the
-repo *and* the installed packages, so "where is this pattern already used" finds
-prior art in dependencies too. kosha is a hard dependency, so the import always
-works; what is *not* guaranteed is a built index and an embedding model on disk,
-neither of which exists on a fresh checkout or an offline machine.
-
-So the backend is chosen at call time and reported to the UI. A search box that
-silently returns nothing because a model failed to download is worse than one
-that says it is running a literal scan. `Search.backend` is what the frontends
-display.
+The browser's default searches current files with ``rg`` and therefore sees unsaved-to-index
+edits; its FTS and ANN modes activate only when a person explicitly selects them. The inline
+coding agent has a different contract: its natural-language query goes through Kosha's repo +
+environment context first, then falls back to current files when the index has no live result.
+Every result reports its backend.
 """
 
 from __future__ import annotations
-import json, re
+import json, re, shutil, subprocess
 from dataclasses import dataclass, field
 import numpy as np
-from fastcore.all import L
+from fastcore.all import L, Path
+from fastcore.aio import athreaded
+from fastcore.parallel import threaded
 
 from . import Dictable, errstr
 from .fs import LANGS
@@ -30,6 +27,22 @@ MAX_SCAN_BYTES = 2_000_000
 # no structure to cut and raises outright. Measured: ~300 vectors still fails, ~1000
 # succeeds. Below this we do not even try, and fall back to plain k-NN.
 MIN_CLUSTERABLE = 1000
+
+
+def _receiver(code, pos):
+    "`(type_name, typed_fragment, replace_from)` for an attribute expression at `pos`."
+    before=(code or '')[:pos]
+    m=re.search(r'([_A-Za-z]\w*)\.([_A-Za-z]\w*)$', before)
+    if not m: return '', '', pos
+    obj,frag=m.groups(); typ=''
+    # `p: Path`, `p = Path(...)`, and a class name used directly cover the useful
+    # static cases without executing incomplete editor input.
+    pats=(rf'\b{re.escape(obj)}\s*:\s*([_A-Za-z]\w*)',
+          rf'\b{re.escape(obj)}\s*=\s*([_A-Za-z]\w*)\s*\(')
+    for pat in pats:
+        if ms:=re.findall(pat,before): typ=ms[-1]
+    if not typ and obj[:1].isupper(): typ=obj
+    return typ,frag,m.start(2)
 
 
 def _meta(row):
@@ -51,6 +64,8 @@ class Hit(Dictable):
     symbol: str = ''
     score: float = 0.0
     callers: list = None
+    package: str = ''
+    sources: list = field(default_factory=list)  # backends that independently found this location
 
 
 @dataclass
@@ -77,7 +92,7 @@ class Cluster:
 
 
 class Search:
-    "Search the open folders; uses kosha when it is available and falls back to a literal scan."
+    "Human search uses explicit modes; inline-agent search uses Kosha with an rg fallback."
 
     def __init__(self, sandbox, prefer_kosha=True):
         self.fs = sandbox
@@ -87,8 +102,18 @@ class Search:
         self._k_note = 'kosha not tried yet'   # why the index is unavailable, remembered across calls
         self.backend = 'scan'
         self.note = ''
+        self._completion_cache = {}  # (receiver type, imported packages) -> patch detail rows
+        self._agent_sync_tried = False # first agent retrieval refreshes stale repo/notebook chunks once
 
     # -- kosha ---------------------------------------------------------------
+    def _make_kosha(self):
+        "A fresh Kosha handle: separate SQLite connections for readers and the sync writer."
+        from kosha import Kosha
+        root=self.fs.roots[0] if self.fs.roots else None
+        k=Kosha(dir=root,install_skill=False)
+        k.status(pyproject=False)
+        return k
+
     def _kosha(self):
         """The kosha handle, or None. Tried once: a failure here means no model or no
         index, and retrying it on every keystroke would stall the search box."""
@@ -101,37 +126,171 @@ class Search:
             # Deferred on purpose. kosha is a hard dependency, so this cannot fail for
             # want of a package -- but importing it pulls in the embedding stack, which
             # measurably slows every IDE launch for a feature most sessions never touch.
-            from kosha import Kosha
-            k = Kosha(install_skill=False)
-            k.status()                     # touches the db and the encoder; fails fast if either is missing
+            # A packaged app's cwd is its launcher directory, not the project. Keep the
+            # repository DB workspace-local and Kosha's environment DB shared through XDG.
+            k=self._make_kosha()
             self._k = k
             self.backend, self.note = 'kosha', 'repo + installed packages'
         except Exception as e:
-            self._k_note = f'kosha unavailable ({type(e).__name__})'
+            self._k_note = f'kosha unavailable ({errstr(e)})'
             self.note = self._k_note + '; literal scan'
         return self._k
 
-    def _kosha_hits(self, q, limit):
+    def _context_rows(self, rows, default_kind='context'):
+        out = L()
+        for row in rows:
+            m = _meta(row)
+            path = str(m.get('path') or row.get('path') or '')
+            try: local = bool(path) and self.fs.covers(Path(path).resolve())
+            except Exception: local = False
+            package = str(row.get('package') or m.get('package') or '')
+            out.append(Hit(path=path, line=int(m.get('lineno') or 1),
+                           text=(row.get('content') or '').strip(),
+                           kind=default_kind if local else 'env-context',
+                           symbol=str(m.get('mod_name') or m.get('name') or ''),
+                           score=float(row.get('pagerank') or row.get('_rrf_score') or 0.0),
+                           callers=[str(c) for c in (row.get('callers') or [])][:8],
+                           package=package, sources=['kosha context']))
+        return out
+
+    def _context(self, q, limit):
+        "Kosha's composed repo + environment retrieval, including graph context."
         k = self._kosha()
         if k is None: return None
-        try: rows = k.context(q, graph=True, limit=limit)
+        try: rows = k.context(q, graph=True, env=True, limit=limit)
+        except Exception as e:
+            self.note = f'Kosha context failed ({errstr(e)})'
+            return None
+        out = self._context_rows(rows)
+        self.backend = 'context'
+        local_n = sum(h.kind == 'context' for h in out)
+        self.note = f'Kosha composed retrieval · {local_n} repo + {len(out)-local_n} environment'
+        return out
+
+    def _repo_context(self, q, limit):
+        k = self._kosha()
+        if k is None: return None
+        try: rows = k.repo_context(q, columns='content,path,metadata', limit=limit)
+        except Exception as e: self.note = f'Kosha repo search failed ({errstr(e)})'; return None
+        out = self._context_rows(rows, 'repo-context')
+        self.backend, self.note = 'repo', f'Kosha code store · {len(out)} results'
+        return out
+
+    def _env_context(self, q, limit):
+        k = self._kosha()
+        if k is None: return None
+        try: rows = k.env_context(q, columns='content,metadata,package', limit=limit)
+        except Exception as e: self.note = f'Kosha environment search failed ({errstr(e)})'; return None
+        out = self._context_rows(rows, 'env-context')
+        self.backend, self.note = 'environment', f'Kosha environment store · {len(out)} results'
+        return out
+
+    def package_api(self, package):
+        k = self._kosha()
+        if k is None or not package: return []
+        try: return [dict(r) for r in k.public_api(package)]
+        except Exception as e: self.note = f'package API failed ({errstr(e)})'; return []
+
+    def completion_patches(self, code, pos, limit=50):
+        """Methods dynamically patched onto the receiver type, from Kosha's code stores.
+
+        Runtime completion remains authoritative. This fills its blind spot when a package
+        adds methods dynamically (fastcore's `@patch`, for example) but that package or patch
+        module has not yet been imported into the live kernel.
+        """
+        typ,frag,start=_receiver(code,pos)
+        if not typ: return {'from':start,'matches':[],'details':[]}
+        k=self._kosha()
+        if k is None: return {'from':start,'matches':[],'details':[]}
+        rows=[]
+        # Kosha's graph-aware public API includes @patch-derived methods. The annotation
+        # query also handles an index whose graph predates those patch edges.
+        packages=set(re.findall(r'^\s*(?:from|import)\s+([\w.]+)',code or '',re.M))
+        packages={p.split('.')[0] for p in packages}
+        key=(typ,tuple(sorted(packages)))
+        cached=self._completion_cache.get(key)
+        if cached is not None:
+            details=[x for x in cached if not frag or x['name'].startswith(frag)][:limit]
+            return {'from':start,'matches':[x['name'] for x in details],'details':details}
+        for pkg in packages:
+            try: rows += list(k.public_api(pkg,meta_cols='name,mod_name,docstring,path,lineno',limit=2000))
+            except Exception: pass
+        pats=[f'def %self:{typ}%',f'def %self: {typ}%']
+        for st in (k.code_st,k.env_st):
+            for pat in pats:
+                try: rows += list(st.rows_where('content LIKE ?',[pat],select='content, metadata',limit=limit))
+                except Exception: pass
+        out={}
+        for row in rows:
+            m=_meta(row); name=str(m.get('name') or str(m.get('mod_name') or '').rsplit('.',1)[-1])
+            content=str(row.get('content') or '')
+            # Public API rows can contain ordinary functions; an explicit receiver
+            # annotation is the proof it belongs after this dot.
+            if content and not re.search(rf'^def\s+{re.escape(name)}\s*\(self\s*:\s*{re.escape(typ)}\b',content): continue
+            if not name or name.startswith('_'): continue
+            out[name]={'name':name,'type':typ,'symbol':m.get('mod_name') or name,
+                       'doc':m.get('docstring') or 'dynamically patched method'}
+        all_details=list(out.values())
+        self._completion_cache[key]=all_details
+        details=[x for x in all_details if not frag or x['name'].startswith(frag)][:limit]
+        if details:self.note=f'Kosha graph · {len(details)} patched {typ} method(s)'
+        return {'from':start,'matches':[x['name'] for x in details],'details':details}
+
+    def merge_completions(self, code, pos, runtime=None, limit=50):
+        "Merge live-kernel and Kosha graph completions, preserving runtime order."
+        runtime=runtime or {'from':pos,'matches':[]}
+        graph=self.completion_patches(code,pos,limit)
+        start=min(int(runtime.get('from',pos)),int(graph.get('from',pos)))
+        vals=[]
+        for x in [*runtime.get('matches',[]),*graph.get('matches',[])]:
+            if x not in vals: vals.append(x)
+        return {'from':start,'matches':vals[:limit],'graph':graph.get('details',[])}
+
+    def status(self):
+        k = self._kosha()
+        if k is None: return {'ok': False, 'note': self._k_note}
+        try: return {'ok': True, **k.status(pyproject=False), 'root': str(k.root)}
+        except Exception as e: return {'ok': False, 'note': errstr(e)}
+
+    def _kosha_hits(self, q, limit):
+        """Semantic repo + environment results for the coding agent.
+
+        The interactive search box deliberately defaults to rg, but an agent's natural-language
+        request is not a literal pattern. Only return paths that still exist so a stale index can
+        never teach the model to invent a nearby path. The first agent retrieval also brings a
+        missing/stale repository index current, including notebook cells; otherwise a fresh
+        workspace silently falls through to literal search before Kosha has ever seen a file.
+        """
+        k = self._kosha()
+        if k is None: return None
+        if not self._agent_sync_tried:
+            self._agent_sync_tried = True
+            try:
+                state = k.status(pyproject=False)
+                if not state.get('files') or state.get('new_files') or state.get('stale_files'):
+                    self._sync(notebooks=True, graph=True)
+            except Exception: pass
+        try: rows = k.context(q, graph=True, env=True, limit=limit)
         except Exception as e:
             self.note = f'kosha search failed ({type(e).__name__}); literal scan'
-            self._k = None
             return None
         out = L()
         for r in rows:
             m = r.get('metadata') or {}
-            out.append(Hit(path=str(m.get('path') or ''), line=int(m.get('lineno') or 1),
+            path = str(m.get('path') or '')
+            if not path or not Path(path).exists(): continue
+            out.append(Hit(path=path, line=int(m.get('lineno') or 1),
                            text=(r.get('content') or '').strip().split('\n')[0][:200],
                            kind='kosha', symbol=str(m.get('mod_name') or ''),
                            score=float(r.get('pagerank') or 0.0),
-                           callers=[str(c) for c in (r.get('callers') or [])][:5]))
+                           callers=[str(c) for c in (r.get('callers') or [])][:5],
+                           package=str(m.get('package') or '')))
+        self.backend, self.note = 'kosha', 'semantic repo + installed packages · existing paths only'
         return out
 
-    # -- literal scan --------------------------------------------------------
+    # -- literal search ------------------------------------------------------
     def _scan(self, q, limit, regex=False):
-        "Grep the open folders. Always available, and the only backend that sees uncommitted edits."
+        "Python fallback when ripgrep is unavailable."
         try: pat = re.compile(q if regex else re.escape(q), re.I)
         except re.error as e:
             self.note = f'bad pattern: {e}'
@@ -147,6 +306,116 @@ class Search:
                     out.append(Hit(path=str(p), line=i, text=line.strip()[:200], kind='scan'))
                     if len(out) >= limit: return out
         return out
+
+    def _rg(self, q, limit, regex=False):
+        "Fast, current-disk search. JSON output keeps colons and non-UTF8 paths unambiguous."
+        exe = shutil.which('rg')
+        if not exe:
+            self.backend, self.note = 'scan', 'ripgrep is not installed; Python fallback'
+            return self._scan(q, limit, regex)
+        out = L()
+        for root in self.fs.roots:
+            cmd = [exe, '--json', '--ignore-case', '--max-filesize', str(MAX_SCAN_BYTES),
+                   '--glob', '!{.git,.hg,.svn,.venv,venv,node_modules,__pycache__,dist,build}/**']
+            if not regex: cmd.append('--fixed-strings')
+            cmd += ['--', q, str(root)]
+            try:
+                p = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            except Exception as e:
+                self.note = f'ripgrep failed ({errstr(e)}); Python fallback'
+                return self._scan(q, limit, regex)
+            if p.returncode not in (0, 1):
+                self.note = (p.stderr or 'ripgrep failed').strip()[:200]
+                return L()
+            for line in p.stdout.splitlines():
+                try: msg = json.loads(line)
+                except Exception: continue
+                if msg.get('type') != 'match': continue
+                d = msg.get('data') or {}
+                path = (d.get('path') or {}).get('text') or ''
+                text = (d.get('lines') or {}).get('text') or ''
+                out.append(Hit(path=path, line=int(d.get('line_number') or 1),
+                               text=text.rstrip('\r\n').strip()[:200], kind='rg'))
+                if len(out) >= limit:
+                    self.backend, self.note = 'rg', f'first {limit} matches on disk'
+                    return out
+        self.backend, self.note = 'rg', 'ripgrep · current files on disk'
+        return out
+
+    def _indexed_hits(self, rows, kind, score_key=''):
+        "Only indexed rows the workspace can actually open; Kosha may index a wider checkout."
+        out = L()
+        for row in rows:
+            hit = self._hit(row, kind, (row.get(score_key) or 0.0) if score_key else 0.0)
+            try: allowed = bool(hit.path) and self.fs.covers(Path(hit.path).resolve())
+            except Exception: allowed = False
+            if allowed: out.append(hit)
+        return out
+
+    def _fts(self, q, limit):
+        "Kosha's lexical FTS5 leg only: no embedding and no vector search hidden behind it."
+        k = self._kosha()
+        if k is None: return None
+        try:
+            from kosha.core import filt2wh, parseq, pre
+            raw, filters = parseq(q)
+            fq = pre(raw, wide=True, extract_kw=False)
+            rows = k.codedb.t.store.fts_search(
+                fq, ['content', 'path', 'metadata'], 'rank', limit, where=filt2wh(filters, 'code'), quote=True)
+        except Exception as e:
+            self.note = f'kosha FTS failed ({errstr(e)})'
+            return None
+        self.backend, self.note = 'fts', 'kosha FTS5 · indexed files'
+        return self._indexed_hits(rows, 'fts', 'rank')
+
+    def _symbols(self, q, limit):
+        "Exact/fuzzy symbol names across this repo and Kosha's shared environment DB."
+        k = self._kosha()
+        if k is None: return None
+        name = (q or '').strip()
+        if not re.match(r'^[_A-Za-z][\w.:\\>\-]*$', name):
+            self.note = 'symbol names only (letters, digits, _, or namespace separators)'
+            return L()
+        leaf = re.split(r'::|\\|->|\.', name)[-1]
+        like = f'%{leaf}%'
+        exact = "json_extract(metadata, '$.name') = ?"
+        fuzzy = "json_extract(metadata, '$.name') LIKE ? OR json_extract(metadata, '$.mod_name') LIKE ?"
+        select = 'content, metadata, path'
+        try:
+            def rows(st, env=False):
+                cols = 'content, metadata' + (', package' if env else ', path')
+                found = list(st.rows_where(exact, [leaf], select=cols, limit=limit))
+                if len(found) < limit:
+                    more = st.rows_where(f'NOT ({exact}) AND ({fuzzy})', [leaf, like, like],
+                                         select=cols, limit=limit - len(found))
+                    found.extend(more)
+                return found
+            rr, er = rows(k.code_st), rows(k.env_st, True)
+        except Exception as e:
+            self.note = f'Kosha symbol search failed ({errstr(e)})'
+            return None
+        out = L()
+        for row, env in [*((r, False) for r in rr), *((r, True) for r in er)]:
+            m = _meta(row)
+            out.append(Hit(path=str(m.get('path') or row.get('path') or ''),
+                           line=int(m.get('lineno') or 1), text=(row.get('content') or '').strip(),
+                           kind='env-symbol' if env else 'symbol',
+                           symbol=str(m.get('mod_name') or m.get('name') or ''),
+                           package=str(row.get('package') or m.get('package') or '')))
+        self.backend = 'symbols'
+        self.note = f'Kosha metadata · repo + {k.pkgs.count} indexed environment packages'
+        return out[:limit]
+
+    def _ann(self, q, limit):
+        "Kosha hybrid FTS + HNSW search, used only when the caller explicitly selects ANN."
+        k = self._kosha()
+        if k is None: return None
+        try: rows = k.repo_context(q, ann=True, limit=limit)
+        except Exception as e:
+            self.note = f'kosha ANN failed ({errstr(e)})'
+            return None
+        self.backend, self.note = 'ann', 'kosha FTS5 + HNSW embeddings · indexed files'
+        return self._indexed_hits(rows, 'ann', 'pagerank')
 
     # -- ANN: nearest neighbours and cluster peers ---------------------------
     def _store(self):
@@ -286,23 +555,186 @@ class Search:
         self.note = f'cluster {centroid} · {len(members) + 1} members'
         return L(self._hit(rows[m], 'cluster') for m in members if m in rows)
 
-    # -- api -----------------------------------------------------------------
-    def search(self, q, limit=60, regex=False, force_scan=False):
-        """Hits for `q`, best backend first.
+    # -- code intelligence ---------------------------------------------------
+    def definitions(self, name, path=None, limit=30):
+        """Exact definitions for ``name``: Kosha metadata first, live files as fallback."""
+        name = (name or '').strip()
+        if not re.match(r'^[_A-Za-z]\w*$', name): return L()
+        out = L()
+        if (k := self._kosha()) is not None:
+            try:
+                rows = k.codedb.t.store.rows_where(
+                    "json_extract(metadata, '$.name') = ?", [name],
+                    select='content, metadata, path', limit=limit)
+                out = self._indexed_hits(rows, 'definition')
+            except Exception as e: self.note = f'Kosha definition lookup failed ({errstr(e)}); scanning files'
+        if not out:
+            for p in self.fs.walk().filter(lambda p: p.suffix.lower() in _CODE_SUFFIXES):
+                for hit in self.symbols(p):
+                    if hit.symbol == name: out.append(hit)
+                    if len(out) >= limit: break
+                if len(out) >= limit: break
+        # Definitions in the current file are overwhelmingly the intended target, then
+        # nearest definitions in that file, then the graph's cross-file candidates.
+        here = str(Path(path).resolve()) if path else ''
+        out = out.sorted(key=lambda h: (str(Path(h.path).resolve()) != here, h.line))
+        self.backend, self.note = ('kosha', 'exact symbol metadata + code graph') if out else ('scan', 'no definition found')
+        return out[:limit]
 
-        A short or punctuation-heavy query goes straight to the scan: kosha is a semantic
-        index and answers those poorly, while a literal grep is exactly right for them.
+    def usages(self, name, limit=200):
+        """Exact on-disk token occurrences; unlike the index this includes unsaved-to-index files."""
+        name = (name or '').strip()
+        if not re.match(r'^[_A-Za-z]\w*$', name): return L()
+        return self._rg(rf'\b{re.escape(name)}\b', limit, regex=True)
+
+    @athreaded
+    def async_sync(self, notebooks=True, graph=True):
+        "Awaitable index refresh, always executed by fastcore on a worker thread."
+        return self._sync(notebooks, graph)
+
+    @threaded(daemon=True)
+    def sync(self, notebooks=True, graph=True):
+        """Start an index refresh on a dedicated daemon thread and return that thread.
+
+        Kosha can import an embedder, walk a repository, embed notebooks and rebuild a
+        graph. None of that belongs on the UI loop or the user's kernel thread.
+        The returned fastcore thread receives its result in `.result` when complete.
+        """
+        return self._sync(notebooks, graph)
+
+    sync_background = sync
+
+    def _sync(self, notebooks=True, graph=True):
+        "Refresh Kosha's repository store, treating each notebook cell as its own chunk."
+        # Never sync through the reader handle. litesearch uses WAL, so a dedicated
+        # writer connection can commit while the long-lived reader keeps serving the
+        # previous snapshot; new searches see commits as their read transactions begin.
+        try:k=self._make_kosha()
+        except Exception as e:return {'ok':False,'note':f'Kosha unavailable ({errstr(e)})'}
+        try:
+            from kosha.core import code_exts, file_parse
+            # Widen Kosha's repository pass to notebooks, which are intentionally absent
+            # from its default code_exts. Environment packages live in Kosha's shared DB
+            # and are refreshed separately; syncing a project must not re-embed the world.
+            exts = code_exts + (',.ipynb' if notebooks else '')
+            # Kosha's own update path scopes the hash diff by file while preserving every
+            # content hash. A manual `key_col="path"` upsert here used to collapse notebook
+            # cells and could remove code chunks belonging to the same sync scope.
+            if notebooks: k.update_repo(dir=k.root, exts=exts, verbose=False, embed=True)
+            else: k.sync(dir=k.root, pyproject=False, in_parallel=True,
+                         sync_graph=graph, verbose=False)
+            indexed = sum(len(file_parse(Path(p))) for p in self.fs.walk()
+                          if notebooks and p.suffix.lower() == '.ipynb')
+            if graph and notebooks:
+                try: k.graph.sync(dir=k.root, pkgs=[], force=False)
+                except Exception: pass       # semantic chunks remain useful without graph edges
+        except Exception as e:
+            return {'ok':False,'note':f'Kosha sync failed ({errstr(e)})'}
+        self._completion_cache.clear()
+        self._agent_sync_tried = True
+        graph_note = 'graph enabled' if graph else 'graph unchanged'
+        self.backend,self.note='kosha',f'index synced · {graph_note} · {indexed} notebook cells'
+        status=k.status(pyproject=False)
+        for db in (getattr(k,'codedb',None),getattr(k,'envdb',None),getattr(getattr(k,'graph',None),'db',None)):
+            try:
+                if db:db.close()
+            except Exception:pass
+        return {'ok':True,'note':self.note,'status':status,'notebook_cells':indexed}
+
+    # -- api -----------------------------------------------------------------
+    def agent_search(self, q, limit=20):
+        """Natural-language search for the inline agent: Kosha first, current disk fallback.
+
+        This is separate from ``search`` because a human's search box must remain predictable
+        (rg unless they select FTS/ANN), while the coding agent needs semantic retrieval before
+        it knows the exact symbol or filename.
         """
         q = (q or '').strip()
         if not q: return L()
-        if force_scan or regex or len(q) < 4 or not re.search(r'[a-zA-Z]{3}', q):
-            self.backend = 'scan'
-            return self._scan(q, limit, regex)
-        if (hits := self._kosha_hits(q, limit)) is not None and len(hits):
-            self.backend = 'kosha'
-            return hits
-        self.backend = 'scan'
-        return self._scan(q, limit, regex)
+        hits = self._kosha_hits(q, limit)
+        if hits: return hits
+        fallback = self._rg(q, limit)
+        self.note = f'Kosha returned no existing paths; {self.note}'
+        return fallback
+
+    def _all(self, q, limit, regex=False):
+        "Search every available leg and rank one deduplicated result set."
+        per = max(12, min(limit, 40))
+        legs, notes = [], []
+        for name, fn in (
+            ('rg', lambda: self._rg(q, per, regex)),
+            ('symbols', lambda: self._symbols(q, per)),
+            ('fts', lambda: self._fts(q, per)),
+            ('ann', lambda: self._ann(q, per)),
+        ):
+            try: rows = fn()
+            except Exception as e:
+                notes.append(f'{name} failed: {errstr(e)}')
+                continue
+            if rows is None:
+                notes.append(f'{name} unavailable')
+                continue
+            legs.extend((name, h) for h in rows)
+
+        query, leaf = q.lower(), re.split(r'::|\\|->|\.', q)[-1].lower()
+        priority = {'symbols': 100, 'rg': 80, 'fts': 60, 'ann': 40}
+        merged = {}
+        for source, hit in legs:
+            # Environment symbols have no workspace path to open, so package participates
+            # in identity. Repo hits deduplicate when multiple engines found one location.
+            key = (hit.path, int(hit.line), hit.package if hit.kind == 'env-symbol' else '')
+            symbol, text, filename = hit.symbol.lower(), hit.text.lower(), Path(hit.path).name.lower()
+            relevance = priority[source]
+            if symbol and symbol.rsplit('.', 1)[-1] == leaf: relevance += 120
+            elif leaf and leaf in symbol: relevance += 55
+            if query and query in text: relevance += 40
+            if leaf and leaf in filename: relevance += 20
+            # Preserve an ANN/FTS score only as a small tie-breaker; their scales differ.
+            relevance += min(10.0, abs(float(hit.score or 0.0)))
+            if key not in merged or relevance > merged[key][0]:
+                old_sources = merged[key][1].sources if key in merged else []
+                hit.sources = list(dict.fromkeys([*old_sources, source]))
+                hit.score = relevance
+                merged[key] = (relevance, hit)
+            else:
+                merged[key][1].sources = list(dict.fromkeys([*merged[key][1].sources, source]))
+        out = L(row[1] for row in sorted(merged.values(), key=lambda row: (-row[0], row[1].path, row[1].line)))
+        self.backend = 'all'
+        used = sorted({source for source, _ in legs})
+        self.note = (' + '.join(used) if used else 'no available search backend')
+        if notes and not used: self.note += ' · ' + '; '.join(notes[:2])
+        return out[:limit]
+
+    def search(self, q, limit=60, regex=False, force_scan=False, mode='rg'):
+        """Search explicitly: ripgrep by default, optional Kosha FTS or ANN.
+
+        Search mode is never inferred from query length. That old policy made the same box
+        silently switch corpora and ranking algorithms while a person typed. `rg` is simple,
+        sees current files, and always wins unless the caller deliberately asks for an index.
+        """
+        q = (q or '').strip()
+        if not q: return L()
+        if force_scan: mode = 'rg'
+        if mode == 'context':
+            hits = self._context(q, limit)
+            return hits if hits is not None else L()
+        if mode == 'repo':
+            hits = self._repo_context(q, limit)
+            return hits if hits is not None else L()
+        if mode == 'env':
+            hits = self._env_context(q, limit)
+            return hits if hits is not None else L()
+        if mode == 'all': return self._all(q, limit, regex)
+        if mode == 'fts':
+            hits = self._fts(q, limit)
+            return hits if hits is not None else L()
+        if mode == 'ann':
+            hits = self._ann(q, limit)
+            return hits if hits is not None else L()
+        if mode == 'symbols':
+            hits = self._symbols(q, limit)
+            return hits if hits is not None else L()
+        return self._rg(q, limit, regex)
 
     def symbols(self, path):
         """Defs and classes in one file, for an outline. Methods are included, not just

@@ -1,11 +1,12 @@
-"""`leela` — the IDE entry point.
+"""`leela` — the browser IDE entry point.
 
-    leela                 open the saved workspace in the terminal
-    leela .               open a folder in the terminal
-    leela --web src tests open two folders in the browser
+    leela                 open the saved workspace
+    leela .               open a folder
+    leela src tests       open two folders in one workspace
+    leela --app src tests open each folder in its own app window
 """
 
-import argparse, os
+import argparse, ipaddress, os
 
 __all__ = ['main']
 
@@ -13,16 +14,23 @@ __all__ = ['main']
 def main(argv=None):
     p = argparse.ArgumentParser(prog='leela', description='notebooks, files and live variables')
     p.add_argument('folders', nargs='*', help='folders to open (default: the saved workspace, else cwd)')
-    p.add_argument('--web', action='store_true', help='run the browser frontend instead of the terminal one')
+    p.add_argument('--app', action='store_true',
+                   help='open each folder as an independent app window in fossick’s persistent CDP Chrome')
+    p.add_argument('--cdp-port', type=int, default=9223,
+                   help='Chrome remote-debugging port used by --app (default: 9223)')
     p.add_argument('--port', type=int, default=5001, help='web IDE port (default: 5001)')
     p.add_argument('--host', default='127.0.0.1', help='web IDE host (default: 127.0.0.1)')
     p.add_argument('--kernel-port', type=int, default=8400, help='base port for kernel inspectors')
+    p.add_argument('--transport', choices=['auto', 'direct', 'gateway'], default='auto',
+                   help='kernel transport; auto uses the shared gateway for app windows')
+    p.add_argument('--gateway-port', type=int, default=8787,
+                   help='shared jupygate port when gateway transport is active')
     p.add_argument('--agent', default='restricted', choices=['restricted', 'readonly', 'off'],
                    help='agent surface on each kernel (default: restricted)')
     p.add_argument('--kernel', default='ipykernel', choices=['ipykernel', 'ipymini'],
                    help='kernel launcher for notebook tabs (default: ipykernel). '
-                        'ipymini lets inspector/agent execs run concurrently with a busy cell '
-                        'via its subshell helper; install with `pip install "leela[ipymini]"`.')
+                        'ipymini lets inspector/agent execs run concurrently with a busy cell; '
+                        'both launchers ship with Leela and can be installed into a project from the picker.')
     p.add_argument('--model', default=None,
                    help='the agent\'s model: a short name (sonnet, opus, flash, gemma-e2b, ...) '
                         'or any vendor/model spec. Cheap jobs -- completion, classification, '
@@ -46,11 +54,8 @@ def main(argv=None):
     p.add_argument('--write-keymap', action='store_true',
                    help='write every action and its current chord to that file, then exit — '
                         'the starting point for rebinding anything your terminal swallows')
-    p.add_argument('--allow-remote-terminal', action='store_true',
-                   help='serve the web terminal even on a non-loopback host (this is a remote shell)')
     a = p.parse_args(argv)
-    # Set before either frontend is imported: the terminal app builds its Textual bindings
-    # at import time, from whatever `leela.keys` loaded when *it* was imported.
+    # Set before the web app imports `leela.keys`, which loads overrides at import time.
     if a.keymap: os.environ['LEELA_KEYMAP'] = os.path.abspath(a.keymap)
     if a.write_keymap:
         from .keys import write_keymap, keymap_path, NOTES
@@ -62,15 +67,18 @@ def main(argv=None):
     roots = [os.path.abspath(f) for f in a.folders]
     for r in roots:
         if not os.path.isdir(r): p.error(f'not a directory: {r}')
-    if a.web:
-        from .web.app import serve_ide
-        serve_ide(roots, port=a.port, host=a.host, agent=a.agent, kernel_port=a.kernel_port,
-                  kernel=a.kernel, model=a.model, approvals=a.approvals, agent_scope=a.agent_scope,
-                  allow_remote_terminal=a.allow_remote_terminal, python=a.python)
-    else:
-        from .tui.app import run
-        run(roots, agent=a.agent, kernel_port=a.kernel_port, kernel=a.kernel,
-            model=a.model, approvals=a.approvals, agent_scope=a.agent_scope, python=a.python)
+    try:
+        loopback = a.host == 'localhost' or ipaddress.ip_address(a.host).is_loopback
+    except ValueError:
+        loopback = False
+    if not loopback:
+        p.error('Leela executes code and is intentionally loopback-only; use 127.0.0.1, ::1, or localhost')
+    from .web.app import serve_ide
+    serve_ide(roots, port=a.port, host=a.host, agent=a.agent, kernel_port=a.kernel_port,
+              kernel=a.kernel, model=a.model, approvals=a.approvals, agent_scope=a.agent_scope,
+              python=a.python,
+              app_window=a.app, cdp_port=a.cdp_port, transport=a.transport,
+              gateway_port=a.gateway_port)
 
 
 if __name__ == '__main__': main()
