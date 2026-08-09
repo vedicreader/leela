@@ -1,16 +1,13 @@
 """Structural notebook edits are fast, preserve position, and report what happened."""
 
 import json
-from pathlib import Path
 
 from starlette.testclient import TestClient
 
 from leela.web.app import ide_app
 from leela.workspace import Workspace
 
-ROOT = Path(__file__).resolve().parents[1]
-JS = (ROOT/'leela/web/static/lee-ide.js').read_text()
-CSS = (ROOT/'leela/web/static/lee-ide.css').read_text()
+from tests.assets import JS, CSS
 
 
 def _notebook(path):

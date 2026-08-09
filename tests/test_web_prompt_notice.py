@@ -1,10 +1,6 @@
 """The prompt-cell progress notice is local to the question, not only in the footer."""
 
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-JS = (ROOT/'leela/web/static/lee-ide.js').read_text()
-CSS = (ROOT/'leela/web/static/lee-ide.css').read_text()
+from tests.assets import JS, CSS, SERVER, AGENT
 
 
 def test_prompt_cells_have_a_local_live_status_slot():
@@ -136,8 +132,8 @@ def test_long_user_messages_are_composed_cards_not_unbounded_traceback_text():
 
 
 def test_agent_turn_usage_is_persisted_and_rendered_in_live_and_history_views():
-    js = (ROOT/'leela/web/static/lee-ide.js').read_text()
-    agent = (ROOT/'leela/agent/agent.py').read_text()
+    js = JS
+    agent = AGENT
     assert "'usage': self.turn_use.dict()" in agent
     assert 'function usageMeta(' in js and 'usageMeta(turn.usage' in js
     assert 'usageMeta(d.usage' in js and 'Token usage and estimated cost for this turn' in js
@@ -196,7 +192,7 @@ def test_agent_state_refresh_uses_current_project_evidence(tmp_path):
     context = _project_state_context(Workspace(roots=[tmp_path]))
     assert 'pyproject.toml' in context and 'module.py' in context and 'current-code' in context
     assert 'Refresh from code' in JS
-    assert '<current-project>' in (ROOT/'leela/web/app.py').read_text()
+    assert '<current-project>' in SERVER
 
 
 def test_custom_model_controls_are_in_the_dropdown_ui():

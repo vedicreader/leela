@@ -1,15 +1,13 @@
 """Switching editors does not detach the runtime or erase in-flight notebook state."""
 
 import json
-from pathlib import Path
 
 from starlette.testclient import TestClient
 
 from leela.web.app import ide_app
 from leela.workspace import Workspace
 
-ROOT = Path(__file__).resolve().parents[1]
-JS = (ROOT/'leela/web/static/lee-ide.js').read_text()
+from tests.assets import JS
 
 
 def _nb(path, source):

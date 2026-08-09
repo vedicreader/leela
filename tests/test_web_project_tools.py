@@ -1,14 +1,10 @@
-from pathlib import Path
-
 from fasthtml.common import to_xml
 
 from leela.term import TerminalGate
 from leela.web.app import _shell
 from leela.workspace import Workspace
 
-ROOT = Path(__file__).resolve().parents[1]
-JS = (ROOT/'leela/web/static/lee-ide.js').read_text()
-CSS = (ROOT/'leela/web/static/lee-ide.css').read_text()
+from tests.assets import JS, CSS
 
 
 def test_status_is_a_prominent_timed_banner_with_a_busy_state():

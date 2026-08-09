@@ -39,7 +39,7 @@ def test_cell_menu_exposes_cross_notebook_clipboard_without_stealing_text_shortc
     assert by_action['cell_copy'] == 'mod+c' and by_action['cell_cut'] == 'mod+x'
 
     from pathlib import Path
-    js = (Path(__file__).resolve().parents[1]/'leela/web/static/lee-ide.js').read_text()
+    from tests.assets import JS as js
     assert "['cell_copy', 'cell_cut'].includes(k.action)" in js   # the chords are special-cased
     assert "lee.kind !== 'notebook'" in js                        # outside a notebook, hands off
     assert 'selection?.from !== selection?.to' in js              # and yields to selected text

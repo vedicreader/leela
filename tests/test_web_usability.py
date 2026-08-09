@@ -6,8 +6,7 @@ from leela.kernels import bootstrap_src, project_python
 from leela.workspace import Workspace
 
 ROOT = Path(__file__).resolve().parents[1]
-JS = (ROOT/'leela/web/static/lee-ide.js').read_text()
-CSS = (ROOT/'leela/web/static/lee-ide.css').read_text()
+from tests.assets import JS, CSS, EDITOR
 
 
 def _fake_venv(root):
@@ -107,7 +106,7 @@ def test_terminal_starts_inside_the_project_uv_environment():
 
 
 def test_codemirror_preferences_are_live_reconfigurable_and_have_a_settings_workbench():
-    editor = (ROOT/'leela/web/src/editor.js').read_text()
+    editor = EDITOR
     assert 'function settingsExt' in editor and 'export function configure' in editor
     assert 'EditorState.tabSize.of' in editor and 'EditorView.lineWrapping' in editor
     assert 'async function editorSettings(' in JS and "post('/settings/save'" in JS
@@ -122,7 +121,7 @@ def test_codemirror_preferences_are_live_reconfigurable_and_have_a_settings_work
 
 
 def test_indent_detection_copies_tabs_or_space_units_without_treating_alignment_as_policy():
-    editor = (ROOT/'leela/web/src/editor.js').read_text()
+    editor = EDITOR
     detection = editor[editor.index('function detectedIndentation'):editor.index('function normalizedSettings')]
     assert "if(tabs>widths.length)return {...settings,useTabs:true}" in detection
     assert 'const candidates=[2,4,8]' in detection and 'width%unit===0' in detection
@@ -132,13 +131,13 @@ def test_indent_detection_copies_tabs_or_space_units_without_treating_alignment_
 
 
 def test_codemirror_navigation_extensions_are_optional_live_preferences():
-    editor = (ROOT/'leela/web/src/editor.js').read_text()
+    editor = EDITOR
     assert 'function minimapPlugin' in editor and 'const stickyPlugin' in editor
     assert "'editor','minimapMode'" in JS and "'editor','stickyNavigation'" in JS
 
 
 def test_codemirror_merge_view_is_used_for_external_file_conflicts():
-    editor = (ROOT/'leela/web/src/editor.js').read_text()
+    editor = EDITOR
     assert 'MergeView' in editor and 'export function createMerge' in editor
     assert 'function openMergeConflict' in JS and 'data-save-merge' in JS
     assert 'Resolve notebook conflict' in JS and 'data-cell-merge' in JS
@@ -322,7 +321,7 @@ def test_screen_capture_route_rejects_oversized_payloads_before_decoding(tmp_pat
 
 
 def test_editor_keeps_replaced_triple_quotes_paired():
-    src=(ROOT/'leela/web/src/editor.js').read_text()
+    src=EDITOR
     assert 'pairedTripleQuotes' in src and 'transactionFilter' in src
     assert (ROOT/'leela/web/static/lee-cm6.js').stat().st_size > 100_000
 
