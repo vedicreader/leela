@@ -26,7 +26,18 @@ from starlette.routing import WebSocketRoute
 
 from dhrishti.core import PROFILES, SORTS
 from .. import errstr
+from ..blocks import keys as keys_block
+from ..blocks import memory as memory_block
+from ..blocks import search as search_block
+from ..blocks import settings as settings_block
 from ..buttons import bar as btn_bar
+from ..core import DocStore, connect_all
+from ..core.web import asset as _asset
+from ..core.web import diff_payload as _diff
+from ..core.web import fail as _fail
+from ..core.web import off_loop as _off_loop
+from ..core.web import sse as _sse
+from ..core.web import static_dir
 from ..diffs import diff_label, diff_rows, did_you_mean, fuzzy_rank, udiff
 from ..fs import lang_for
 from ..git import GitRepo, GitError
@@ -44,29 +55,13 @@ from ..agent.core import model_note
 __all__ = ['ide_app', 'serve_ide']
 
 
-def static_dir():
-    "Web assets in a normal install, py2app Resources, or a py2exe distribution."
-    import sys
-    candidates = [Path(__file__).parent/'static']
-    if getattr(sys, 'frozen', False):
-        exe = Path(sys.executable).resolve()
-        candidates += [exe.parent/'leela'/'web'/'static',
-                       exe.parent.parent/'Resources'/'leela'/'web'/'static']
-    return next((p for p in candidates if p.exists()), candidates[0])
-
-
-def _asset(name):
-    "A static URL that changes when the local asset does, preventing mixed JS/CSS revisions."
-    p = static_dir()/name
-    try: version = p.stat().st_mtime_ns
-    except OSError: version = 0
-    return f'/leestatic/{name}?v={version}'
-
-
-def _fail(err, code=400):
-    "The IDE's JSON error shape. `err` is an exception (reported `Type: message`) or a ready string."
-    return JSONResponse({'ok': False, 'error': errstr(err) if isinstance(err, Exception) else str(err)},
-                        status_code=code)
+# Connect your blocks. Order is registration order and the first route to match a path
+# wins, so a block claiming a broad path belongs after the specific ones. The URL surface
+# this produces is pinned by `tests/routes.txt`.
+#
+# Everything not listed here is still a closure inside `ide_app`; see `docs/blocks.md` for
+# the extraction order and what remains.
+BLOCKS = [keys_block, settings_block, search_block, memory_block]
 
 
 def _found(ws, hits):
@@ -118,24 +113,6 @@ def _python_diagnostics(source, filename='<cell>'):
                           'message': str(warning.message), 'source': 'Python',
                           'code': warning.category.__name__})
     return found
-
-
-def _sse(event, data):
-    "One server-sent event. Newlines in the payload would end the frame, so it goes as JSON."
-    return f'event: {event}\ndata: {json.dumps(data)}\n\n'
-
-
-from fastcore.aio import athreaded
-
-@athreaded
-def _off_loop(fn, *a, **kw):
-    """Run blocking research, indexing and model work on fastcore's worker thread."""
-    return fn(*a, **kw)
-
-
-def _diff(was, now):
-    "One text-vs-text comparison in the shape every diff surface in the client consumes."
-    return {'label': diff_label(was, now), 'rows': [r.dict() for r in diff_rows(udiff(was, now))]}
 
 
 def _project_state_context(ws, max_files=120, max_chars=12_000):
@@ -934,15 +911,15 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                        routes=(Mount('/leestatic', StaticFiles(directory=str(static_dir()))),
                                WebSocketRoute('/term/ws', term_ws)))
 
-    # Open notebooks, keyed by tab. The server holds the document so structural
-    # edits and runs stay consistent across reloads of the page.
-    _docs: dict[str, Notebook] = {}
-    _buffers: dict[str, str] = {}       # unsaved text files survive tab switches
-    _buffer_bases: dict[str, str] = {}  # disk version each browser draft began from
-    # Admission happens before kernel startup. Kernel.execute serialises live requests, but
-    # two first cells can both wait for the same startup and then reach that lock in the
-    # opposite order. Definitions and their tests must execute in submission order.
-    _run_locks: dict[str, asyncio.Lock] = {}
+    # Open notebooks, unsaved buffers and per-kernel run locks. `DocStore` owns them so the
+    # extracted blocks can share them as a capability; the four names below are the same
+    # objects under their old names, so the routes still in this function are untouched
+    # until they move. See `leela/core/session.py`.
+    _docstore = DocStore(ws)
+    _docs: dict[str, Notebook] = _docstore.docs
+    _buffers: dict[str, str] = _docstore.buffers
+    _buffer_bases: dict[str, str] = _docstore.bases
+    _run_locks: dict[str, asyncio.Lock] = _docstore.run_locks
     # A paused debugger belongs to the kernel that started it, not whichever tab becomes
     # active while stepping into another source file.
     _debug = {'kernel': None, 'origin_path': '', 'cell_id': ''}
@@ -1035,73 +1012,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             return {'html': str(rendered), 'warnings': list(dict.fromkeys(map(str, warnings)))}
         except Exception as e: return _fail(e)
 
-    @rt('/keys.json')
-    def keys_json():
-        "The keymap, and the buttons that run the same actions -- one fetch, one source."
-        from ..buttons import BARS
-        return JSONResponse({'keys': web_keymap(), 'help': help_rows(), 'menus': web_menus(),
-                             'path': str(keymap_path()), 'notes': list(keymap.NOTES),
-                             'bars': {n: [{'action': b.action, 'label': b.label, 'title': b.tooltip,
-                                           'kind': b.kind} for b in btn_bar(n)] for n in BARS}})
-
-    # -- the user's keymap -------------------------------------------------
-    # Editable from the IDE and applied without a restart: rewriting the file, re-reading
-    # it, and returning the rebuilt browser map is the entire update path.
-    @rt('/keys/file')
-    def keys_file():
-        p = keymap_path()
-        try: text = p.read_text()
-        except Exception: text = json.dumps(keymap_json(), indent=2) + '\n'
-        return {'path': str(p), 'exists': p.exists(), 'text': text, 'notes': list(keymap.NOTES)}
-
-    @rt('/keys/save')
-    async def keys_save(req):
-        "Write the keymap, re-read it, and hand back what it now says -- including what it refused."
-        d = await req.json()
-        text = d.get('text') or ''
-        try: json.loads(text)
-        except Exception as e: return _fail(f'that is not valid JSON — {errstr(e)}')
-        p = keymap_path()
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(text)
-        except Exception as e: return _fail(e)
-        keymap.reload()
-        return {'ok': True, 'path': str(p), 'notes': list(keymap.NOTES),
-                'keys': web_keymap(), 'help': help_rows()}
-
-    @rt('/keys/reset')
-    def keys_reset():
-        "Put leela's own defaults back, so a keymap you cannot use is one click from gone."
-        p = keymap.write_keymap(keys=keymap.DEFAULTS)
-        keymap.reload()
-        return {'ok': True, 'path': str(p), 'notes': list(keymap.NOTES),
-                'keys': web_keymap(), 'help': help_rows()}
-
-    # -- layered settings --------------------------------------------------
-    def _settings(): return Settings(ws.fs.roots[0] if ws.fs.roots else None)
-
-    @rt('/settings')
-    def settings_get(language: str = ''):
-        "Effective defaults + user + workspace + language values and their origins."
-        return _settings().describe(language)
-
-    @rt('/settings/save')
-    async def settings_save(req):
-        d = await req.json()
-        try:
-            return {'ok': True, **_settings().save(d.get('scope', 'user'), d.get('section', 'editor'),
-                                                    d.get('values') or {}, d.get('language') or '')}
-        except Exception as e: return _fail(e)
-
-    @rt('/settings/reset')
-    async def settings_reset(req):
-        d = await req.json()
-        try:
-            return {'ok': True, **_settings().reset(d.get('scope', 'user'), d.get('section'),
-                                                     d.get('language') or '')}
-        except Exception as e: return _fail(e)
-
+    # `keys` and `settings` are connected as blocks at the end of this function.
 
     # -- project runtime ---------------------------------------------------
     @rt('/runtime/broker')
@@ -2167,56 +2078,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         r = await _api('/api/promote', {'accessor': accessor})
         return r or {'ok': False, 'error': 'no kernel inspector'}
 
-    # -- code search -------------------------------------------------------
-    @rt('/search')
-    async def search_route(q: str = '', regex: bool = False, limit: int = 60, mode: str = 'rg'):
-        "Ripgrep by default; every blocking search backend runs off the web event loop."
-        if mode not in ('context', 'repo', 'env', 'all', 'rg', 'symbols', 'fts', 'ann'): return _fail(f'unknown search mode {mode!r}')
-        hits = await _off_loop(ws.search.search, q, limit=limit, regex=regex, mode=mode)
-        return _found(ws, hits)
-
-    @rt('/code/status')
-    async def code_status():
-        return await _off_loop(ws.search.status)
-
-    @rt('/code/package-api')
-    async def code_package_api(package: str = ''):
-        rows = await _off_loop(ws.search.package_api, package)
-        return {'package': package, 'note': ws.search.note, 'symbols': rows}
-
-    @rt('/outline')
-    async def outline_route(path: str):
-        return {'symbols': [h.dict() for h in await _off_loop(ws.search.symbols, path)]}
-
-    @rt('/code/definition')
-    async def code_definition(name: str = '', path: str = '', limit: int = 30):
-        return _found(ws, await _off_loop(ws.search.definitions, name, path, limit))
-
-    @rt('/code/usages')
-    async def code_usages(name: str = '', limit: int = 200):
-        return _found(ws, await _off_loop(ws.search.usages, name, limit))
-
-    @rt('/code/sync')
-    async def code_sync():
-        try: return await ws.search.async_sync(True, True)
-        except Exception as e: return _fail(e)
-
-    @rt('/similar')
-    async def similar_route(path: str, line: int = 1, mode: str = 'cluster', limit: int = 25):
-        """Code like the function at `path:line`.
-
-        `mode=cluster` answers "the family this belongs to" via usearch clustering;
-        `mode=knn` answers "the N closest things". The first is usually what you want
-        when hunting for every place a pattern was already implemented.
-        """
-        fn = ws.search.peers if mode == 'cluster' else ws.search.similar
-        return _found(ws, await _off_loop(fn, path, line, limit=limit))
-
-    @rt('/clusters')
-    async def clusters_route(limit: int = 40):
-        "An ANN clustering of the whole indexed corpus -- a map of the codebase by shape."
-        cs = await _off_loop(ws.search.clusters)
-        return {'note': ws.search.note, 'clusters': [c.dict() for c in cs[:limit]]}
+    # `search` is connected as a block; see BLOCKS.
 
     # -- working directory & git ------------------------------------------
     def _repo():
@@ -2417,57 +2279,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         docs, digest = await _off_loop(ws.research.dig, q, n, MAX_DOC_CHARS, remember)
         return {'note': ws.research.note, 'digest': digest, 'docs': [d.dict() for d in docs]}
 
-    # -- durable research memory --------------------------------------------
-    @rt('/memory/info')
-    async def memory_info():
-        status = await _off_loop(ws.memory.status)
-        docs = await _off_loop(ws.memory.documents, 80)
-        return {**status, 'items': docs}
-
-    @rt('/memory/forget')
-    async def memory_forget(req):
-        d = await req.json(); doc_id = str(d.get('id') or '')
-        ok = await _off_loop(ws.memory.forget, doc_id)
-        if ok:
-            for target, ids in ws.agent_memory_selection.items():
-                ws.agent_memory_selection[target] = [value for value in ids if value != doc_id]
-            ws.save()
-            for assistant in (ws._ai, ws._inline_ai):
-                if assistant is not None: assistant.refresh()
-        return {'ok': ok, 'note': ws.memory.note}
-
-    @rt('/memory/purge')
-    async def memory_purge(req):
-        d = await req.json()
-        ids = d.get('ids')
-        if ids is not None and not isinstance(ids, list): return _fail('ids must be a list')
-        removed_ids = ({str(value) for value in ids} if ids is not None else
-                       {str(note['id']) for note in await _off_loop(ws.memory.agent_notes)})
-        removed = await _off_loop(ws.memory.purge, ids)
-        for target, selected in ws.agent_memory_selection.items():
-            ws.agent_memory_selection[target] = [value for value in selected if value not in removed_ids]
-        ws.save()
-        for assistant in (ws._ai, ws._inline_ai):
-            if assistant is not None: assistant.refresh()
-        return {'ok': True, 'removed': removed, 'note': ws.memory.note}
-
-    @rt('/memory/search')
-    async def memory_search(q: str = '', limit: int = 8):
-        rows = await _off_loop(ws.memory.search, q, min(30, max(1, int(limit))))
-        return {'note': ws.memory.note, 'results': rows}
-
-    @rt('/memory/toc')
-    async def memory_toc(doc: str = '', depth: int = 3):
-        rows = await _off_loop(ws.memory.toc, doc or None, depth)
-        return {'note': ws.memory.note, 'documents': rows}
-
-    @rt('/memory/read')
-    async def memory_read(node: str = ''):
-        return {'note': ws.memory.note, 'section': await _off_loop(ws.memory.read, node)}
-
-    @rt('/memory/clusters')
-    async def memory_clusters(limit: int = 20):
-        return await _off_loop(ws.memory.clusters, min(50, max(1, int(limit))))
+    # `memory` is connected as a block; see BLOCKS.
 
     @rt('/research/save')
     async def research_save(req):
@@ -3429,6 +3241,16 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             _previous_runs()
         except Exception as e: return _fail(e)
         return {'ok': True, **o}
+
+    # -- blocks --------------------------------------------------------------
+    # Routes extracted from this function so far. Order is the registration order, and the
+    # first route to match a path wins; `tests/routes.txt` pins the resulting surface.
+    # Blocks connect last for now, so anything still defined above keeps its precedence
+    # while the extraction is in progress.
+    # `debug` and `running` are not supplied yet: the debugger and run-state closures are
+    # still in this function, and a Ctx must not hand a block a capability that is not the
+    # live one. They join here when those blocks move.
+    connect_all(app, ws, BLOCKS, docs=_docstore, gate=gate, catalog=workspace_catalog)
 
     return app
 

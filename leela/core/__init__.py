@@ -13,9 +13,11 @@ swapped out underneath* (`ports`).
 """
 
 from .block import Block, block_caps, connect_all
-from .ctx import CAPABILITIES, EAGER, LAZY, Ctx
+from .ctx import APP, CAPABILITIES, EAGER, LAZY, Ctx
 from .ports import MemoryPort, RuntimePort, SearchPort
+from .session import DebugState, DocStore, RunState
 
-__all__ = ['Ctx', 'CAPABILITIES', 'EAGER', 'LAZY',
+__all__ = ['Ctx', 'CAPABILITIES', 'EAGER', 'LAZY', 'APP',
            'Block', 'connect_all', 'block_caps',
+           'DocStore', 'DebugState', 'RunState',
            'MemoryPort', 'SearchPort', 'RuntimePort']

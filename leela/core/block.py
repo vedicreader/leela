@@ -68,16 +68,17 @@ def block_name(module):
     return getattr(module, 'NAME', None) or (parts[-2] if len(parts) > 1 else parts[-1])
 
 
-def connect_all(app, session, blocks, gate=None, catalog=None):
+def connect_all(app, session, blocks, **services):
     """Connect `blocks` to `app` in order, each with its own narrowed `Ctx`.
 
-    Returns the `Block` receipts. `session` is the `Workspace`; every block gets a `Ctx`
-    over the same one, differing only in what it is allowed to see.
+    Returns the `Block` receipts. `session` is the `Workspace`; `services` are the
+    application-scoped capabilities (`docs`, `debug`, `running`, `gate`, `catalog`) that
+    `ide_app` owns. Every block gets a `Ctx` over the same session and the same services,
+    differing only in what it is allowed to see.
     """
     out = []
     for i, m in enumerate(blocks):
         name, caps = block_name(m), block_caps(m)
-        ctx = Ctx(session, name=name, gate=gate, catalog=catalog, caps=caps)
-        m.connect(app, ctx)
+        m.connect(app, Ctx(session, name=name, caps=caps, **services))
         out.append(Block(name, m, caps or CAPABILITIES, i))
     return out
