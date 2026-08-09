@@ -20,7 +20,23 @@ from __future__ import annotations
 
 import asyncio
 
-__all__ = ['DocStore', 'DebugState', 'RunState']
+__all__ = ['DocStore', 'DebugState', 'RunState', 'kernel_api']
+
+
+async def kernel_api(session, path, params=None, timeout=15, tab=None):
+    """Proxy an inspector call through the exact runtime `Run` would use.
+
+    Deliberately resolves `Workspace.runtime` rather than independently peeking at an
+    inspector. A selected venv may restart or replace the tab's kernel, and execution and
+    Variables have to cross the same runtime boundary on every request -- not merely happen
+    to agree while the old kernel is still cached.
+
+    Proxying at all is what keeps the page single-origin: each kernel hosts its own
+    dhrishti inspector on its own port, so letting the browser reach those directly would
+    mean CORS on every kernel and the owner token living in the browser.
+    """
+    client = await session.runtime(tab)
+    return await client.api(path, params, timeout) if client else None
 
 
 class DocStore:

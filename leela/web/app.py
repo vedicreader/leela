@@ -29,12 +29,14 @@ from .. import errstr
 from ..blocks import fs as fs_block
 from ..blocks import git as git_block
 from ..blocks import keys as keys_block
+from ..blocks import lsp as lsp_block
 from ..blocks import memory as memory_block
 from ..blocks import research as research_block
 from ..blocks import runs as runs_block
 from ..blocks import search as search_block
 from ..blocks import settings as settings_block
 from ..blocks import term as term_block
+from ..blocks import vars as vars_block
 from ..blocks import workspace as workspace_block
 from ..blocks.term.app import term_cwd
 from ..buttons import bar as btn_bar
@@ -70,7 +72,7 @@ __all__ = ['ide_app', 'serve_ide']
 # the extraction order and what remains.
 BLOCKS = [keys_block, settings_block, search_block, memory_block,
           research_block, term_block, runs_block, workspace_block, git_block,
-          fs_block]
+          fs_block, lsp_block, vars_block]
 
 
 def _found(ws, hits):
@@ -1743,60 +1745,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                                         'source': 'agent state'})
         return {'diagnostics': diagnostics}
 
-    @rt('/lsp/status')
-    def lsp_status():
-        return {'provider':'pyright', 'available':ws.lsp.available, 'alive':ws.lsp.alive, 'note':ws.lsp.note}
-
-    @rt('/lsp/symbols')
-    async def lsp_symbols(req):
-        d=await req.json()
-        try:
-            rows=await _off_loop(ws.lsp.request,'textDocument/documentSymbol',d.get('path'),d.get('text',''),None,0,None,8)
-            return {'symbols':rows or []}
-        except Exception as e:return _fail(e)
-
-    @rt('/lsp/hover')
-    async def lsp_hover(req):
-        d=await req.json()
-        try:return {'hover':await _off_loop(ws.lsp.request,'textDocument/hover',d.get('path'),d.get('text',''),d.get('line',0),d.get('character',0))}
-        except Exception as e:return _fail(e)
-
-    @rt('/lsp/inlay-hints')
-    async def lsp_inlay_hints(req):
-        d=await req.json(); text=d.get('text',''); lines=text.splitlines()
-        end={'line':max(0,len(lines)-1),'character':len(lines[-1]) if lines else 0}
-        try:
-            rows=await _off_loop(ws.lsp.request,'textDocument/inlayHint',d.get('path'),text,None,0,
-                                 {'range':{'start':{'line':0,'character':0},'end':end}},8)
-            return {'hints':rows or []}
-        except Exception as e:return _fail(e)
-
-    @rt('/lsp/rename')
-    async def lsp_rename(req):
-        "Preview or atomically apply Pyright's workspace rename edit within open roots."
-        from urllib.parse import unquote, urlparse
-        d=await req.json()
-        try:
-            edit=await _off_loop(ws.lsp.request,'textDocument/rename',d.get('path'),d.get('text',''),
-                                 d.get('line',0),d.get('character',0),{'newName':d.get('newName','')},12)
-            changes=(edit or {}).get('changes') or {}
-            previews=[]
-            for uri, edits in changes.items():
-                path=unquote(urlparse(uri).path); p=ws.fs._check(path,must_exist=True); before=ws.fs.read(p)
-                source=before; ls=source.splitlines(keepends=True) or ['']; starts=[];at=0
-                for line in ls:starts.append(at);at+=len(line)
-                def offset(pos):
-                    row=max(0,min(int(pos.get('line',0)),len(ls)-1));return starts[row]+min(int(pos.get('character',0)),len(ls[row].rstrip('\r\n')))
-                replacements=sorted([(offset(x['range']['start']),offset(x['range']['end']),x.get('newText','')) for x in edits],reverse=True)
-                after=source
-                for start,end,new in replacements:after=after[:start]+new+after[end:]
-                previews.append({'path':str(p),'before':before,'after':after,'edits':len(edits)})
-            if d.get('apply'):
-                operation=[]
-                for row in previews:ws.fs.write(row['path'],row['after']);operation.append((row['path'],row['before'],row['after']))
-                ws.journal.record(f"Rename to {d.get('newName','')}",operation,kind='rename-symbol')
-            return {'ok':True,'applied':bool(d.get('apply')),'files':previews}
-        except Exception as e:return _fail(e)
+    # `lsp` is connected as a block; see BLOCKS.
 
     @rt('/complete')
     async def complete_route(req, pos: int = 0):
@@ -1872,62 +1821,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         return {'ok': True, 'text': answer, 'mode': mode,
                 'model': ws.ai.routing.name_for('summary' if mode == 'summary' else 'completion')}
 
-    @rt('/inspect')
-    async def inspect_route(req):
-        "Signature and docstring for the name at the cursor, from the object that is actually loaded."
-        d = await req.json()
-        k = await _k()
-        txt = await k.inspect_obj(d.get('code', ''), int(d.get('pos', 0)), int(d.get('detail', 0))) if k else ''
-        return {'text': txt, 'note': '' if txt else 'the kernel knows nothing about that name'}
-
-    # -- variables (proxied from the kernel's own inspector) ---------------
-    @rt('/vars/eval')
-    async def vars_eval(req):
-        "Evaluate a Python expression from the Variables filter and return an expandable result."
-        d = await req.json()
-        code, scope = (d.get('code') or '').strip(), d.get('scope', 'live')
-        if not code: return _fail('enter a Python expression after =')
-        k = await _k()
-        path = '/agent/api/exec' if scope == 'agent' else '/api/exec'
-        params = {'code': code, 'scope': 'overlay' if scope == 'agent' else 'global'}
-        r = await k.api(path, params, timeout=120) if k else None
-        if r is None: return _fail('no runtime answered')
-        return {'ok': bool(r.get('ok')), 'error': r.get('error'), 'stdout': r.get('stdout') or '',
-                'result': r.get('result'), 'scope': scope}
-
-    @rt('/vars')
-    async def vars_route(profile: str = 'minimal', sort: str = 'recent', scope: str = 'live'):
-        base = '/agent/api/rows' if scope == 'agent' else '/api/rows'
-        runtime = await _k()
-        r = await runtime.api(base, {'profile': profile, 'sort': sort}, 15) if runtime else None
-        identity = ((getattr(runtime, 'base', None) or
-                     (f'kernel:{ws.kernel_key()}' if runtime is not None else 'none')) + f':{scope}')
-        problem = (getattr(runtime, 'boot_error', '') or getattr(runtime, 'last_api_error', '') or
-                   'no dhrishti inspector') if not r else ''
-        return {**(r or {'groups': [], 'error': problem}), 'runtime': identity,
-                'inspector': 'dhrishti', 'python': str(getattr(runtime, 'python', '') or ''),
-                'cwd': str(getattr(runtime, 'cwd', '') or '')}
-
-    @rt('/vars/expand')
-    async def vars_expand(accessor: str, offset: int = 0, scope: str = 'live'):
-        base = '/agent/api/expand' if scope == 'agent' else '/api/expand'
-        return JSONResponse(await _api(base, {'accessor': accessor, 'offset': offset}) or [])
-
-    @rt('/vars/grid')
-    async def vars_grid(accessor: str, roff: int = 0, coff: int = 0, scope: str = 'live'):
-        base = '/agent/api/grid' if scope == 'agent' else '/api/grid'
-        return JSONResponse(await _api(base, {'accessor': accessor, 'roff': roff, 'coff': coff}))
-
-    @rt('/vars/set')
-    async def vars_set(req):
-        d = await req.json()
-        r = await _api('/api/set', {'accessor': d['accessor'], 'expr': d['expr']})
-        return r or {'ok': False, 'error': 'no kernel inspector'}
-
-    @rt('/vars/promote')
-    async def vars_promote(accessor: str):
-        r = await _api('/api/promote', {'accessor': accessor})
-        return r or {'ok': False, 'error': 'no kernel inspector'}
+    # `vars` is connected as a block; see BLOCKS.
 
     # `search` is connected as a block; see BLOCKS.
 
