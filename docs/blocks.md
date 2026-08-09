@@ -129,7 +129,8 @@ uv run python -m tests.test_route_inventory     # regenerate, then commit the di
 
 ## Extraction status
 
-Blocks are moved out of `ide_app` a group at a time. What has moved:
+Blocks are moved out of `ide_app` a group at a time. What has moved — 15 blocks, ~118
+routes:
 
 | block | routes | caps |
 |---|---|---|
@@ -137,17 +138,47 @@ Blocks are moved out of `ide_app` a group at a time. What has moved:
 | `settings` | `/settings`, `/settings/{save,reset}` | `fs` |
 | `search` | `/search`, `/code/*`, `/outline`, `/similar`, `/clusters` | `search` |
 | `memory` | `/memory/*` | `memory` |
+| `research` | `/research/*` | `research` |
+| `term` | `/term/{info,close}` | `terms`, `fs`, `gate` |
+| `runs` | `/runs`, `/runs/save` | `runs`, `dev`, `tab` |
+| `workspace` | `/workspace/info`, `/cwd`, `/cwd/set` | `fs`, `tab`, `catalog` |
+| `git` | `/git/*` | `fs` |
+| `fs` | `/tree`, `/files/panel`, `/fs/*` | `fs`, `journal` |
+| `lsp` | `/lsp/*` | `lsp`, `fs`, `journal` |
+| `vars` | `/vars/*`, `/inspect` | — |
+| `runtime` | `/runtime/*`, `/kernel/*`, `/envs*`, `/dev/*` | `fs`, `pool`, `dev`, `terms`, `tab`, `docs` |
+| `tabs` | `/tab/*` | `fs`, `pool`, `tab`, `docs` |
+| `editor` | `/editor/{format,packages}` | `fs`, `pool` |
 
-Still closures inside `leela/web/app.py`, in the order they are planned to move: `fs`,
-`git`, `term`, `research`, `runs`, `tabs`, `editor`, `vars`, `nb`, `exec`, `debug`,
-`agent`. The hardest are last on purpose — `agent` is 45 routes, and `nb`/`debug` share the
-run locks and debugger state that `leela/core/session.py` exists to hold.
+`leela/web/app.py` is down from 3,539 lines to 2,466.
 
-`DocStore` is already live: the closure names `_docs`, `_buffers`, `_buffer_bases` and
-`_run_locks` are the same objects it holds, so routes that have not moved keep working
-unchanged. `DebugState` and `RunState` are defined but not yet supplied to `connect_all`,
-because the debugger closures have not moved — a `Ctx` must never hand a block a capability
-that is not the live one.
+Still closures inside `ide_app`, in the order they are planned to move: `nb` (14 routes),
+`debug` (10), `agent` (45), plus `exec`, `run`, `history`, `diff`, `lint`, `markdown`,
+`screen`, `tabs/save-all` and the shell itself (`/`, `_shell`, `/fs/add_root`). The hardest
+are last on purpose — `agent` is the single biggest group, and `nb`/`debug` share the run
+locks and debugger state that `leela/core/session.py` exists to hold.
+
+`DocStore` and `RunState` are live: the closure names `_docs`, `_buffers`, `_buffer_bases`,
+`_run_locks` and `running_cells` are the same objects they hold, so routes that have not
+moved keep working unchanged. `DebugState` is defined but not yet supplied to
+`connect_all`, because the debugger closures have not moved — a `Ctx` must never hand a
+block a capability that is not the live one.
+
+### What the guardrails do and do not catch
+
+`tests/routes.txt` has been byte-identical through every extraction, which is what proves
+no route was dropped. It cannot catch everything: twice, a move broke rendering while the
+URL surface stayed correct — once by changing `files_panel`'s parameter without updating
+`ide_app`'s call site, once by cutting a group that contained `_disk_version` while
+`/nb/save` still used it. Both failed at call time, and both were caught by the web tests
+within one run.
+
+The lesson worth carrying: keep the move behaviour-identical, read the code you are moving
+rather than reconstructing it, and run the whole suite rather than the route inventory
+alone. Reconstructing `/tab/state`'s text branch from memory produced three differences
+from the original, including `buffers.get(key) or …` where the original used `key in
+buffers` — which would have silently fallen through to disk for a buffer holding the empty
+string.
 
 ## Ports
 

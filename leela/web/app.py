@@ -26,6 +26,7 @@ from starlette.routing import WebSocketRoute
 
 from dhrishti.core import PROFILES, SORTS
 from .. import errstr
+from ..blocks import editor as editor_block
 from ..blocks import fs as fs_block
 from ..blocks import git as git_block
 from ..blocks import keys as keys_block
@@ -37,12 +38,16 @@ from ..blocks import runtime as runtime_block
 from ..blocks import search as search_block
 from ..blocks import settings as settings_block
 from ..blocks import term as term_block
+from ..blocks import tabs as tabs_block
 from ..blocks import vars as vars_block
 from ..blocks import workspace as workspace_block
 from ..blocks.term.app import term_cwd
 from ..buttons import bar as btn_bar
 from ..core import DocStore, RunState, connect_all
 from ..blocks.fs.ui import files_panel as _files_panel
+from ..blocks.tabs.app import disk_version as _disk_version
+from ..blocks.tabs.ui import kernel_pill as _kernel_pill
+from ..blocks.tabs.ui import tab_bar as _tab_bar
 from ..core.ui import action_bar as _action_bar
 from ..core.ui import activity_icon as _activity_icon
 from ..core.ui import btn as _btn
@@ -73,7 +78,7 @@ __all__ = ['ide_app', 'serve_ide']
 # the extraction order and what remains.
 BLOCKS = [keys_block, settings_block, search_block, memory_block,
           research_block, term_block, runs_block, workspace_block, git_block,
-          fs_block, lsp_block, vars_block, runtime_block]
+          fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block]
 
 
 def _found(ws, hits):
@@ -293,75 +298,6 @@ def _inline_values(source, groups, outputs=(), result_info=None):
     return out
 
 
-def _project_package_rows(path, python=None):
-    """Declared pyproject requirements with installed versions and source-line addresses.
-
-    The selected project interpreter is queried in one short subprocess. Nothing is
-    imported from the project and no package code executes: importlib.metadata reads only
-    installed distribution metadata.
-    """
-    import tomllib
-    p = Path(path)
-    source = p.read_text(encoding='utf-8')
-    data = tomllib.loads(source)
-    project = data.get('project') or {}
-    declared = list(project.get('dependencies') or [])
-    for values in (project.get('optional-dependencies') or {}).values(): declared += list(values or [])
-    for values in (data.get('dependency-groups') or {}).values():
-        declared += [x for x in (values or []) if isinstance(x, str)]
-    try:
-        from packaging.requirements import Requirement
-        parsed = [(Requirement(x), x) for x in declared]
-    except Exception:
-        parsed = []
-    names = list(dict.fromkeys(r.name for r, _raw in parsed))
-    versions = {}
-    if names:
-        # Keep the child snippet explicit and exception-safe; a missing distribution is
-        # data for a pill, not a failed endpoint.
-        script = ('import importlib.metadata as m,json,sys\n'
-                  'out={}\n'
-                  'for n in json.loads(sys.argv[1]):\n'
-                  ' try: out[n]=m.version(n)\n'
-                  ' except m.PackageNotFoundError: out[n]=None\n'
-                  'print(json.dumps(out))')
-        try:
-            proc = subprocess.run([str(python or sys.executable), '-c', script, json.dumps(names)],
-                                  capture_output=True, text=True, timeout=8, check=True)
-            versions = json.loads(proc.stdout)
-        except Exception: versions = {n: None for n in names}
-    rows, used = [], set()
-    lines = source.splitlines()
-    for req, raw in parsed:
-        try:
-            if req.marker and not req.marker.evaluate(): continue
-        except Exception: pass
-        # Match the complete declaration, not merely the package name. A package name may
-        # also occur in keywords, comments or URLs; annotating that nearest text is exactly
-        # the kind of plausible-looking wrong answer an editor must avoid. The address is
-        # immediately after the closing quote, before a trailing comma/comment.
-        found = None
-        for i, line in enumerate(lines, 1):
-            for quote in ('"', "'"):
-                token = f'{quote}{raw}{quote}'
-                at = line.find(token)
-                key = (i, at, token)
-                if at >= 0 and key not in used:
-                    found = (i, at + len(token)); used.add(key); break
-            if found: break
-        if not found: continue
-        installed = versions.get(req.name)
-        compatible = None
-        if installed is not None and str(req.specifier):
-            try: compatible = req.specifier.contains(installed, prereleases=True)
-            except Exception: compatible = None
-        rows.append({'line': found[0], 'column': found[1], 'name': req.name,
-                     'required': str(req.specifier), 'marker': str(req.marker or ''),
-                     'installed': installed, 'compatible': compatible,
-                     'python': str(python or sys.executable)})
-    return rows
-
-
 def _history_sessions(turns, execution=()):
     """Turns grouped by durable model-context id; old untagged history splits after 30m."""
     groups, by_id, legacy_n, legacy_last = [], {}, 0, None
@@ -397,43 +333,6 @@ async def _explain(k, err, scope='live'):
 # ---------------------------------------------------------------------------
 # chrome
 # ---------------------------------------------------------------------------
-def _tab_bar(ws):
-    "The open tabs. `alt+1..9` selects, the x closes."
-    if not ws.tabs: return Div(Span('no files open', cls='lee-dim'), id='tabbar', cls='lee-tabbar', role='tablist')
-    kids=[];counts={}
-    for t in ws.tabs:counts[t.title]=counts.get(t.title,0)+1
-    def label(t):
-        if counts[t.title]<2 or not t.path:return t.title
-        try:
-            root=ws.fs.root_of(t.path);return f'{root.name}/{Path(t.path).relative_to(root)}'
-        except Exception:return t.path
-    for i,t in enumerate(ws.tabs):
-        cls='lee-tab'+(' active' if i==ws.active else '')+(' dirty' if t.dirty else '')
-        kids.append(Div(
-            Span(cls='lee-tab-run', title=f'{t.running} cell(s) running') if t.running else '',
-            Span(cls='lee-save-state '+('pending' if t.dirty else 'saved'),
-                 title='changes waiting for autosave' if t.dirty else 'saved on disk',
-                 aria_label='changes waiting for autosave' if t.dirty else 'saved on disk'),
-            Span(label(t),cls='lee-tab-name'),
-            Button('×', cls='lee-tab-x', title=f'close {t.title}', aria_label=f'close {t.title}',
-                   onclick=f'event.stopPropagation();leeCloseTab({i})'),
-            cls=cls,title=t.path or t.title,data_i=i,data_kind=t.kind,role='tab',
-            aria_selected='true' if i == ws.active else 'false', tabindex='0' if i == ws.active else '-1',
-            hx_post=f'/tab/select?i={i}', hx_target='#tabbar', hx_swap='outerHTML'))
-    return Div(*kids, id='tabbar', cls='lee-tabbar', role='tablist', aria_label='open files')
-
-
-def _kernel_pill(ws):
-    "Kernel identity and liveness for the active tab. Clicking it opens the picker."
-    common = dict(id='kpill', onclick='leeAct("pick_kernel")')
-    if (k := ws.runtime_peek()) is None:
-        return Span('no kernel', cls='lee-pill lee-pill-off', title='choose a kernel', **common)
-    if not k.alive: return Span('kernel dead', cls='lee-pill lee-pill-err', title='choose a kernel', **common)
-    nm = getattr(k, 'name', '') or Path(ws.kernel_key()).name or 'kernel'
-    return Span(f'⏺ {nm}', cls='lee-pill lee-pill-on',
-                title=f'{k.base or "no inspector"} · pid {k.pid} — click to change', **common)
-
-
 def _header(ws):
     """Project identity first, document tabs second, infrequent actions in menus.
 
@@ -967,158 +866,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     # Tab routes swap only the tab bar, never the whole shell. Re-rendering everything
     # for a tab switch would collapse the file tree, drop the exec editor and reset the
     # variable panel -- the client re-mounts just the editor when #tabbar changes.
-    @rt('/tab/open')
-    def tab_open(path: str):
-        try:
-            ws.open(path)
-            # Notebook tabs own kernels by default. A manually watched app belongs to the
-            # tab it was chosen from; changing tabs restores the new tab's own runtime.
-            ws.watch_env(None)
-            ws.save()
-        except Exception as e: return Div(errstr(e), cls='lee-err')
-        return _tab_bar(ws)
-
-    @rt('/tab/select')
-    def tab_select(i: int):
-        ws.activate(i)
-        ws.watch_env(None)
-        return _tab_bar(ws)
-
-    @rt('/tab/close')
-    async def tab_close(i: int):
-        key = ws.kernel_key(ws.tabs[i]) if 0 <= i < len(ws.tabs) else None
-        private = bool(0 <= i < len(ws.tabs) and ws.tabs[i].private_kernel)
-        ws.close(i); ws.watch_env(None); ws.save()
-        if private and key: await ws.pool.close(key)
-        return _tab_bar(ws)
-
-    @rt('/tab/new')
-    def tab_new(kind: str = 'notebook'):
-        ws.new_scratch(kind)
-        ws.watch_env(None)
-        return _tab_bar(ws)
-
-    def _disk_version(path):
-        "A cheap browser-watch token; changes whenever the active file is replaced or written."
-        if not path: return ''
-        try:
-            s = Path(path).stat()
-            return f'{s.st_mtime_ns}:{s.st_size}'
-        except OSError: return 'missing'
-
-    @rt('/tab/state')
-    def tab_state(path: str = ''):
-        "Everything needed to mount the active tab, or an open tab addressed by absolute path."
-        t=next((x for x in ws.tabs if x.path==str(Path(path).expanduser().resolve())),None) if path else ws.tab
-        if t is None: return {'kind': None}
-        if t.kind == 'notebook':
-            key = t.path or t.title
-            try:
-                # The in-memory document owns unsaved outputs and running state. Reloading
-                # from disk on every tab switch erased both while work was still in flight.
-                nb = _docs.get(key)
-                if nb is None: nb = Notebook.load(t.path) if t.path else Notebook.blank()
-            except Exception as e: return {'kind': 'error', 'error': errstr(e)}
-            _docs[key] = nb
-            return {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
-                    'disk_version': _disk_version(t.path), 'cells': [c.dict() for c in nb.cells]}
-        try:
-            key = t.path or t.title
-            text = _buffers[key] if key in _buffers else (ws.fs.read(t.path) if t.path else '')
-        except Exception as e: return {'kind': 'error', 'error': errstr(e)}
-        return {'kind': 'text', 'path': t.path, 'title': t.title, 'lang': t.lang or '',
-                'disk_version': _disk_version(t.path), 'text': text}
-
-    @rt('/editor/format')
-    async def editor_format(req):
-        "Format without writing; the browser reviews and saves the returned text."
-        d = await req.json(); text = str(d.get('text') or ''); lang = d.get('lang') or ''
-        if len(text) > 2_000_000: return _fail('formatter input is larger than 2 MB')
-        try:
-            if lang == 'json':
-                formatted = json.dumps(json.loads(text), indent=2, ensure_ascii=False) + '\n'
-            elif lang == 'python':
-                from ..kernels import project_python
-                python = ws.pool.default_python or project_python(ws.fs.roots) or sys.executable
-                cwd = str(ws.fs.roots[0]) if ws.fs.roots else None
-                def format_python():
-                    choices = [[str(python), '-m', 'ruff', 'format', '-'], [str(python), '-m', 'black', '-q', '-']]
-                    failures=[]
-                    for cmd in choices:
-                        result=subprocess.run(cmd,input=text,text=True,capture_output=True,cwd=cwd,timeout=30)
-                        if result.returncode == 0: return result.stdout
-                        failures.append(result.stderr.strip())
-                    raise RuntimeError('install ruff or black in the project environment · ' + ' · '.join(x for x in failures if x))
-                formatted = await _off_loop(format_python)
-            else: return _fail(f'no formatter configured for {lang or "this file"}')
-            return {'ok': True, 'text': formatted}
-        except Exception as e: return _fail(e)
-
-    @rt('/editor/packages')
-    def editor_packages(path: str):
-        "Installed-version annotations for a workspace pyproject.toml."
-        try:
-            p = ws.fs._check(path, must_exist=True)
-            if p.name != 'pyproject.toml': return {'packages': [], 'summary': {}}
-            python = ws.pool.default_python or sys.executable
-            rows = _project_package_rows(p, python)
-            return {'packages': rows, 'summary': {
-                'total': len(rows), 'installed': sum(r['installed'] is not None for r in rows),
-                'missing': sum(r['installed'] is None for r in rows),
-                'mismatch': sum(r['compatible'] is False for r in rows),
-                'python': str(python),
-            }}
-        except Exception as e: return _fail(e)
-
-    @rt('/tab/disk')
-    def tab_disk(path: str = ''):
-        "Current on-disk text for the explicit conflict/merge editor."
-        try:
-            p = ws.fs._check(path or (ws.tab.path if ws.tab else ''), must_exist=True)
-            if p.suffix == '.ipynb':
-                return {'path': str(p), 'kind': 'notebook', 'cells': [c.dict() for c in Notebook.load(p).cells],
-                        'disk_version': _disk_version(p)}
-            return {'path': str(p), 'kind': 'text', 'text': ws.fs.read(p),
-                    'disk_version': _disk_version(p)}
-        except Exception as e: return _fail(e)
-
-    @rt('/tab/watch')
-    def tab_watch():
-        "Pollable disk identity for the open document; no file contents cross the wire."
-        t = ws.tab
-        return {'path': t.path if t else '', 'disk_version': _disk_version(t.path) if t else ''}
-
-    @rt('/tab/reload')
-    async def tab_reload(req):
-        """Drop server-side editor caches so the next state read comes straight from disk.
-
-        Agent edits happen outside the open document objects. Without this invalidation a
-        browser remount could faithfully redisplay the stale notebook it had cached.
-        """
-        d = await req.json()
-        t = ws.tab
-        if t is None or (d.get('path') and d.get('path') != t.path): return _fail('that tab is no longer active')
-        key = t.path or t.title
-        _docs.pop(key, None); _buffers.pop(key, None); _buffer_bases.pop(key, None)
-        t.dirty = False
-        return {'ok': True, 'path': t.path}
-
-    @rt('/tab/buffer')
-    async def tab_buffer(req):
-        "Persist an editor buffer in memory so a tab switch cannot discard unsaved typing."
-        d = await req.json()
-        path, kind, text = d.get('path') or d.get('title') or '', d.get('kind'), d.get('text', '')
-        tab = next((t for t in ws.tabs if (t.path or t.title) == path), None)
-        if tab is None: return _fail('that tab is no longer open')
-        _buffer_bases.setdefault(path, str(d.get('base_disk_version') or _disk_version(tab.path)))
-        if kind == 'notebook':
-            nb = _docs.get(path)
-            i = int(d.get('i', -1))
-            if nb is not None and 0 <= i < len(nb) and (not d.get('id') or nb[i].id == d.get('id')):
-                nb[i].source = text; nb.dirty = True
-        else: _buffers[path] = text
-        tab.dirty = True
-        return {'ok': True}
+    # `tabs` and `editor` are connected as blocks; see BLOCKS.
 
     # -- notebooks ---------------------------------------------------------
     @rt('/nb/run')
