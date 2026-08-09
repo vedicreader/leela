@@ -33,6 +33,7 @@ from ..blocks import lsp as lsp_block
 from ..blocks import memory as memory_block
 from ..blocks import research as research_block
 from ..blocks import runs as runs_block
+from ..blocks import runtime as runtime_block
 from ..blocks import search as search_block
 from ..blocks import settings as settings_block
 from ..blocks import term as term_block
@@ -40,7 +41,7 @@ from ..blocks import vars as vars_block
 from ..blocks import workspace as workspace_block
 from ..blocks.term.app import term_cwd
 from ..buttons import bar as btn_bar
-from ..core import DocStore, connect_all
+from ..core import DocStore, RunState, connect_all
 from ..blocks.fs.ui import files_panel as _files_panel
 from ..core.ui import action_bar as _action_bar
 from ..core.ui import activity_icon as _activity_icon
@@ -72,7 +73,7 @@ __all__ = ['ide_app', 'serve_ide']
 # the extraction order and what remains.
 BLOCKS = [keys_block, settings_block, search_block, memory_block,
           research_block, term_block, runs_block, workspace_block, git_block,
-          fs_block, lsp_block, vars_block]
+          fs_block, lsp_block, vars_block, runtime_block]
 
 
 def _found(ws, hits):
@@ -764,7 +765,10 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     gate = gate or TerminalGate()
     # (tab identity, cell id) -> (runtime, execution task). This keeps Stop aimed at the
     # cell that started the work even if the person switches tabs before pressing it.
-    running_cells = {}
+    # `RunState` owns it so blocks can share it; `running_cells` is the same dict under its
+    # old name, so the routes still in this function are untouched until they move.
+    _runstate = RunState()
+    running_cells = _runstate.cells
     # Everything is served from disk. FastHTML's default headers pull htmx and friends
     # from a CDN, which would make a local IDE need the network to start -- and fail
     # outright behind a proxy or on a plane. `default_hdrs=False` plus the vendored
@@ -890,8 +894,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
 
     def _previous_runs():
         """A reset namespace makes every saved output historical, even though it remains useful."""
-        for nb in _docs.values():
-            for c in nb.cells: c.fresh = False
+        _docstore.mark_all_stale()
 
     async def _k(tab=None):
         "The explicitly picked runtime, else the addressed tab's own project/notebook kernel."
@@ -950,54 +953,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
 
     # `keys` and `settings` are connected as blocks at the end of this function.
 
-    # -- project runtime ---------------------------------------------------
-    @rt('/runtime/broker')
-    def runtime_broker():
-        broker = getattr(ws.pool, 'broker', None)
-        return broker.status() if broker else {'live': len(ws.pool.kernels), 'limit': None, 'runtimes': []}
-
-    @rt('/runtime/info')
-    async def runtime_info():
-        from ..kernels import project_python
-        from ..runtime_support import kernel_support
-        root = ws.fs.roots[0] if ws.fs.roots else None
-        py = project_python([root]) if root else None
-        support = await _off_loop(kernel_support, py) if py else {}
-        return {'root': str(root or ''), 'python': py or '', 'needs_create': bool(root and not py),
-                'needs_support': bool(py and not support.get('ipykernel', {}).get('available')),
-                'support': support, 'active': ws.pool.default_python or ''}
-
-    @rt('/runtime/support')
-    async def runtime_support(req):
-        from ..runtime_support import install_kernel_support
-        d = await req.json()
-        py = d.get('python') or ws.pool.default_python
-        if not py: return _fail('choose a project interpreter first')
-        try:
-            result = await _off_loop(install_kernel_support, py)
-            # The selected launcher becomes available immediately; no Leela restart needed.
-            return result
-        except Exception as e: return _fail(f'could not install project kernel support — {errstr(e)}')
-
-    @rt('/runtime/create')
-    async def runtime_create():
-        "Create an explicit .venv for the project and install only its kernel transport."
-        if not ws.fs.roots: return _fail('open a folder first')
-        root, target = ws.fs.roots[0], ws.fs.roots[0]/'.venv'
-        if target.exists(): return _fail(f'{target} already exists')
-        def create():
-            import subprocess, sys, venv
-            if uv := shutil.which('uv'):
-                subprocess.run([uv, 'venv', str(target)], check=True, env=os.environ.copy())
-            else: venv.EnvBuilder(with_pip=True).create(target)
-            py = target/('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
-            from ..runtime_support import install_kernel_support
-            install_kernel_support(py)
-            return str(py)
-        try: py = await _off_loop(create)
-        except Exception as e: return _fail(f'could not create .venv — {errstr(e)}')
-        ws.pool.choose(python=py)
-        return {'ok': True, 'python': py}
+    # `runtime` is connected as a block; see BLOCKS.
 
     # `fs` is connected as a block; see BLOCKS. `/fs/add_root` stays here because it
     # re-renders the whole shell, which is the last thing left in this function.
@@ -1832,22 +1788,6 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     # `research` is connected as a block; see BLOCKS.
 
     # -- live envs ---------------------------------------------------------
-    @rt('/envs')
-    def envs_route():
-        """Everything the variable panel could point at, and what it is pointing at now.
-
-        A process only appears here if it has an inspector in it. That is the whole answer
-        to "will you pick up the uvicorn I started in a terminal": not unless it says
-        `dhrishti.serving.serve()`, or leela started it from a run configuration.
-        """
-        return {'envs': ws.envs(), 'watching': ws.env_base,
-                'hint': 'import dhrishti.serving as ds; ds.serve(name="api")'}
-
-    @rt('/envs/watch')
-    async def envs_watch(req):
-        d = await req.json()
-        return {'ok': True, 'watching': ws.watch_env(d.get('base'))}
-
     # -- run configurations & dev servers ----------------------------------
     # `runs` is connected as a block; see BLOCKS.
 
@@ -1974,33 +1914,6 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             text = json.dumps(ws.runs.template(t.path if t else None), indent=2) + '\n'
         return {'path': str(p or ''), 'exists': bool(p and p.exists()), 'text': text,
                 'note': ws.runs.note}
-
-    @rt('/dev/list')
-    def dev_list(): return {'servers': [s.state() for s in ws.dev.all()]}
-
-    @rt('/dev/start')
-    async def dev_start(path: str = '', name: str = ''):
-        """Start a run configuration, or a file, under a live inspector.
-
-        The inspector is in the process the command runs in -- that is what makes its
-        module namespace watchable while it serves. `name` picks a configuration; `path`
-        runs a file directly.
-        """
-        try:
-            s = await ws.run(name or path)
-            return {'ok': s.alive, **s.state(), 'log': s.tail(20)}
-        except Exception as e:
-            return _fail(e)
-
-    @rt('/dev/stop')
-    async def dev_stop(path: str):
-        await ws.dev.stop(path)
-        return {'ok': True}
-
-    @rt('/dev/log')
-    def dev_log(path: str, n: int = 60):
-        s = ws.dev.get(path)
-        return {'log': s.tail(n) if s else [], **(s.state() if s else {})}
 
     # -- what the assistant can see ---------------------------------------
     @rt('/screen')
@@ -2672,14 +2585,6 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                 'edits': [{'path': p, **_diff(was, now)} for p, (was, now) in a.changes().items()]}
 
     # -- kernel control ----------------------------------------------------
-    @rt('/kernel/interrupt')
-    async def k_interrupt():
-        k = ws.runtime_peek()
-        if k is None: return _fail('no running kernel')
-        if hasattr(k, 'stop'): return await k.stop(timeout=2.0)
-        await k.interrupt()
-        return {'ok': True, 'forced': False, 'note': 'interrupt sent'}
-
     @rt('/nb/interrupt')
     async def nb_interrupt(req):
         "Interrupt one exact running cell, force-restarting its managed kernel if needed."
@@ -2690,77 +2595,19 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         if not hasattr(k, 'stop'): return _fail('this external runtime cannot be stopped safely')
         return await k.stop(timeout=2.0)
 
-    @rt('/kernel/restart')
-    async def k_restart():
-        k = ws.runtime_peek()
-        if k: await k.restart()
-        _previous_runs()
-        return {'ok': True, 'base': k.base if k else None}
 
-    @rt('/kernel/info')
-    async def k_info():
-        k = await _k()
-        return {'alive': bool(k and k.alive), 'base': k.base if k else None,
-                'pid': k.pid if k else None,
-                'key': getattr(k, 'name', '') or Path(ws.kernel_key()).name or 'kernel',
-                'boot_error': k.boot_error if k else None,
-                'api_error': getattr(k, 'last_api_error', '') if k else '',
-                'cwd': str(ws.cwd_for() or ''),
-                'tabs': [{'running': t.running, 'dirty': t.dirty} for t in ws.tabs]}
-
-    @rt('/kernel/options')
-    def k_options():
-        "What the kernel picker shows: the launchers, the interpreters, and what is running."
-        return ws.kernel_options()
-
-    @rt('/kernel/cwd')
-    async def k_cwd(req):
-        "Set this tab's working directory and restart its kernel so the process adopts it."
-        d = await req.json()
-        t = ws.tab
-        if t is None: return _fail('no active tab')
-        raw = (d.get('cwd') or '').strip()
-        try:
-            cwd = ws.fs._check(raw, must_exist=True) if raw else None
-            if cwd is not None and not cwd.is_dir(): return _fail(f'{cwd} is not a directory')
-        except Exception as e: return _fail(e)
-        key = ws.kernel_key(t)
-        ws.watch_env(None)
-        t.cwd = str(cwd) if cwd else ''
-        await ws.pool.close(key)
-        k = await ws.kernel(t)
-        _previous_runs()
-        ws.save()
-        return {'ok': True, 'cwd': str(ws.cwd_for(t) or ''), 'base': k.base if k else None}
-
-    @rt('/kernel/select')
-    async def k_select(req):
-        """Choose a launcher and/or an interpreter, and start the kernel on it.
-
-        This restarts, and restarting loses the namespace -- so the client says so before
-        it posts, rather than this route deciding on the user's behalf that it was fine.
-        """
-        d = await req.json()
-        try:
-            o = await ws.set_kernel(kind=d.get('kind'),
-                                    python=d['python'] if 'python' in d else False,
-                                    private=d.get('private'))
-            # A shell cannot change its inherited VIRTUAL_ENV after it starts. Closing it
-            # lets the client reopen immediately with the newly selected project runtime.
-            ws.terms.close('shell')
-            _previous_runs()
-        except Exception as e: return _fail(e)
-        return {'ok': True, **o}
+    # `runtime` also owns the /kernel/* routes; see BLOCKS.
 
     # -- blocks --------------------------------------------------------------
     # Routes extracted from this function so far. Order is the registration order, and the
     # first route to match a path wins; `tests/routes.txt` pins the resulting surface.
     # Blocks connect last for now, so anything still defined above keeps its precedence
     # while the extraction is in progress.
-    # `debug` and `running` are not supplied yet: the debugger and run-state closures are
-    # still in this function, and a Ctx must not hand a block a capability that is not the
-    # live one. They join here when those blocks move.
-    connect_all(app, ws, BLOCKS, docs=_docstore, gate=gate, catalog=workspace_catalog)
+    # `debug` is not supplied yet: the debugger closures are still in this function, and a
+    # Ctx must not hand a block a capability that is not the live one. It joins here when
+    # the debug block moves.
+    connect_all(app, ws, BLOCKS, docs=_docstore, running=_runstate, gate=gate,
+                catalog=workspace_catalog)
 
     return app
 
