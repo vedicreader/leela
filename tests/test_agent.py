@@ -1122,7 +1122,7 @@ def test_a_streamed_cell_still_gets_its_activity_trail():
 
 def test_the_sse_frame_survives_a_newline_in_the_payload():
     "A raw newline would end the frame early; JSON is why chunks can contain markdown."
-    from leela.web.app import _sse
+    from leela.app import _sse
     f = _sse('chunk', {'text': 'line one\nline two'})
     assert f.count('\n\n') == 1 and f.startswith('event: chunk\ndata: ')
 
@@ -1145,7 +1145,7 @@ def test_the_sse_endpoint_streams_the_real_app():
     """
     pytest.importorskip('starlette.testclient')
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     from tests.fakemodel import Step, install
 
@@ -1175,7 +1175,7 @@ def test_the_sse_endpoint_streams_the_real_app():
 
 def test_external_rishi_request_uses_the_web_approval_queue():
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
 
     ws = Workspace(roots=[])
@@ -1199,7 +1199,7 @@ def test_external_rishi_request_uses_the_web_approval_queue():
 def test_prompt_cell_endpoint_streams_into_the_notebook():
     from pathlib import Path
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     from tests.fakemodel import Step, install
 

@@ -450,7 +450,7 @@ def test_leelas_own_agent_is_offered_the_shell(project):
 
 def test_the_browser_previews_an_exact_text_edit_as_a_diff_without_writing_it(project):
     "The checkpoint form shows what the call would do. It must not do it."
-    from leela.web.app import _tool_preview
+    from leela.app import _tool_preview
     path = project.roots[0] + '/src/app.py'
     args = {'path': path, 'edits': '[{"oldText": "value = 1", "newText": "value = 2"}]'}
     preview = _tool_preview(project.ws.ai, 'replace_text', args)
@@ -459,7 +459,7 @@ def test_the_browser_previews_an_exact_text_edit_as_a_diff_without_writing_it(pr
 
 
 def test_the_browser_previews_a_command_as_a_command(project):
-    from leela.web.app import _tool_preview
+    from leela.app import _tool_preview
     p = _tool_preview(project.ws.ai, 'run_shell', {'command': 'pytest -q'})
     assert p['text'] == 'pytest -q' and p['language'] == 'bash'
 

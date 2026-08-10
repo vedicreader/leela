@@ -307,7 +307,7 @@ def test_cli_default_kernel_is_ipykernel(monkeypatch):
     from leela import cli
     seen = {}
     def fake_run(roots, **kw): seen.update(kw); seen['_roots'] = roots
-    monkeypatch.setattr('leela.web.app.serve_ide', fake_run)
+    monkeypatch.setattr('leela.app.serve_ide', fake_run)
     cli.main([])
     assert seen['kernel'] == 'ipykernel'
 
@@ -315,7 +315,7 @@ def test_cli_ipymini_flag(monkeypatch):
     from leela import cli
     seen = {}
     def fake_run(roots, **kw): seen.update(kw)
-    monkeypatch.setattr('leela.web.app.serve_ide', fake_run)
+    monkeypatch.setattr('leela.app.serve_ide', fake_run)
     cli.main(['--kernel', 'ipymini'])
     assert seen['kernel'] == 'ipymini'
 
@@ -327,7 +327,7 @@ def test_cli_rejects_unknown_kernel():
 
 def test_cli_refuses_non_loopback_bind_before_starting_server(monkeypatch):
     from leela import cli
-    monkeypatch.setattr('leela.web.app.serve_ide', lambda *a, **k: pytest.fail('server should not start'))
+    monkeypatch.setattr('leela.app.serve_ide', lambda *a, **k: pytest.fail('server should not start'))
     with pytest.raises(SystemExit):
         cli.main(['--host', '0.0.0.0'])
 

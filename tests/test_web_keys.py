@@ -24,7 +24,7 @@ pytest.importorskip('playwright.async_api')
 from playwright.async_api import async_playwright   # noqa: E402
 
 from leela.kernels import KernelPool                # noqa: E402
-from leela.web.app import ide_app                   # noqa: E402
+from leela.app import ide_app                   # noqa: E402
 from leela.workspace import Workspace               # noqa: E402
 from conftest import FakeKernel                     # noqa: E402
 

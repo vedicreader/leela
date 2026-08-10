@@ -4,7 +4,7 @@ import json
 
 from starlette.testclient import TestClient
 
-from leela.web.app import ide_app
+from leela.app import ide_app
 from leela.workspace import Workspace
 
 from tests.assets import JS, CSS

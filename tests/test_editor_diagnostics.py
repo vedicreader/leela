@@ -4,7 +4,7 @@ from pathlib import Path
 
 from starlette.testclient import TestClient
 
-from leela.web.app import _python_diagnostics, ide_app
+from leela.app import _python_diagnostics, ide_app
 from leela.workspace import Workspace
 
 ROOT = Path(__file__).resolve().parents[1]

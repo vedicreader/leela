@@ -17,7 +17,7 @@ from starlette.testclient import TestClient
 from leela.blocks import keys as keys_block
 from leela.blocks import settings as settings_block
 from leela.core import Ctx, connect_all
-from leela.web.app import BLOCKS, ide_app
+from leela.app import BLOCKS, ide_app
 from leela.workspace import Workspace
 
 

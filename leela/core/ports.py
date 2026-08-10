@@ -3,7 +3,7 @@
 leela is about to grow alternates for three of its subsystems -- `vishalakshi` for memory
 and retrieval, `ramabana` for agent runtimes. Swapping an implementation is only cheap if
 the thing being swapped was written down first, so these are Protocols, extracted from what
-`leela/web/app.py` actually calls today rather than from what a memory system might
+`leela/app.py` actually calls today rather than from what a memory system might
 plausibly offer.
 
 They are `runtime_checkable` but structural: `leela.memory.Memory` already satisfies

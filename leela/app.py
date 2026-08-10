@@ -25,47 +25,47 @@ from fasthtml.common import *          # re-exports fastcore's Path, L, first, a
 from starlette.routing import WebSocketRoute
 
 from dhrishti.core import PROFILES, SORTS
-from .. import errstr
-from ..blocks import editor as editor_block
-from ..blocks import fs as fs_block
-from ..blocks import git as git_block
-from ..blocks import keys as keys_block
-from ..blocks import lsp as lsp_block
-from ..blocks import memory as memory_block
-from ..blocks import research as research_block
-from ..blocks import runs as runs_block
-from ..blocks import runtime as runtime_block
-from ..blocks import search as search_block
-from ..blocks import settings as settings_block
-from ..blocks import term as term_block
-from ..blocks import tabs as tabs_block
-from ..blocks import vars as vars_block
-from ..blocks import workspace as workspace_block
-from ..blocks.term.app import term_cwd
-from ..buttons import bar as btn_bar
-from ..core import DocStore, RunState, connect_all
-from ..blocks.fs.ui import files_panel as _files_panel
-from ..blocks.tabs.app import disk_version as _disk_version
-from ..blocks.tabs.ui import kernel_pill as _kernel_pill
-from ..blocks.tabs.ui import tab_bar as _tab_bar
-from ..core.ui import action_bar as _action_bar
-from ..core.ui import activity_icon as _activity_icon
-from ..core.ui import btn as _btn
-from ..core.ui import menu_button as _menu_button
-from ..core.web import asset as _asset
-from ..core.web import diff_payload as _diff
-from ..core.web import fail as _fail
-from ..core.web import off_loop as _off_loop
-from ..core.web import sse as _sse
-from ..core.web import static_dir
-from ..diffs import did_you_mean, fuzzy_rank
-from ..fs import lang_for
-from ..git import GitRepo, GitError
-from ..keys import by_scope, chord_display, toast_rows
-from ..nb import Notebook, Cell
-from ..term import TerminalGate, lazygit_argv
-from ..workspace import Workspace
-from ..agent.core import model_note
+from . import errstr
+from .blocks import editor as editor_block
+from .blocks import fs as fs_block
+from .blocks import git as git_block
+from .blocks import keys as keys_block
+from .blocks import lsp as lsp_block
+from .blocks import memory as memory_block
+from .blocks import research as research_block
+from .blocks import runs as runs_block
+from .blocks import runtime as runtime_block
+from .blocks import search as search_block
+from .blocks import settings as settings_block
+from .blocks import term as term_block
+from .blocks import tabs as tabs_block
+from .blocks import vars as vars_block
+from .blocks import workspace as workspace_block
+from .blocks.term.app import term_cwd
+from .buttons import bar as btn_bar
+from .core import DocStore, RunState, connect_all
+from .blocks.fs.ui import files_panel as _files_panel
+from .blocks.tabs.app import disk_version as _disk_version
+from .blocks.tabs.ui import kernel_pill as _kernel_pill
+from .blocks.tabs.ui import tab_bar as _tab_bar
+from .core.ui import action_bar as _action_bar
+from .core.ui import activity_icon as _activity_icon
+from .core.ui import btn as _btn
+from .core.ui import menu_button as _menu_button
+from .core.web import asset as _asset
+from .core.web import diff_payload as _diff
+from .core.web import fail as _fail
+from .core.web import off_loop as _off_loop
+from .core.web import sse as _sse
+from .core.web import static_dir
+from .diffs import did_you_mean, fuzzy_rank
+from .fs import lang_for
+from .git import GitRepo, GitError
+from .keys import by_scope, chord_display, toast_rows
+from .nb import Notebook, Cell
+from .term import TerminalGate, lazygit_argv
+from .workspace import Workspace
+from .agent.core import model_note
 
 __all__ = ['ide_app', 'serve_ide']
 
@@ -163,7 +163,7 @@ def _tool_preview(agent, tool, args):
         before = agent.host.text_at(path) or ''
         return {'kind': 'diff', **_diff(before, str(args.get('text', '')))}
     if tool == 'edit_file':
-        from ..agent.tools import _cmds
+        from .agent.tools import _cmds
         from exhash import exhash
         path = args.get('path', '')
         before = agent.host.text_at(path)
@@ -173,7 +173,7 @@ def _tool_preview(agent, tool, args):
     if tool == 'replace_text':
         # Previewed as the diff it would make, computed against the file on disk without
         # writing it -- the same guarantee `edit_file` above gives.
-        from ..agent.tools import _apply_edits, _edits
+        from .agent.tools import _apply_edits, _edits
         path = args.get('path', '')
         before = agent.host.text_at(path)
         if before is None: raise ValueError(f'no such file: {path}')
@@ -192,7 +192,7 @@ def _tool_preview(agent, tool, args):
 def _tool_schemas(agent):
     "Browser-sized schemas for editable checkpoint forms; callable validation remains authoritative."
     import inspect
-    from ..ai import WRITE_TOOLS
+    from .ai import WRITE_TOOLS
     out = []
     for tool in agent.tools:
         sig = inspect.signature(tool)
@@ -542,7 +542,7 @@ def _right_workspace(ws):
 
 def _agent_panel(ws):
     "Bottom centre; model choices load asynchronously after the editor can paint."
-    from ..agent.core import DFLT_LOCAL, env as _env
+    from .agent.core import DFLT_LOCAL, env as _env
 
     agent_model = ws.model or _env('MODEL') or DFLT_LOCAL
     inline_model = ws.inline_model or _env('MODEL_INLINE') or 'gpt-mini'
@@ -1541,15 +1541,15 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
 
     @rt('/debug/capabilities')
     def debug_capabilities():
-        from ..debug import debugpy_available
-        from ..kernels import project_python
+        from .debug import debugpy_available
+        from .kernels import project_python
         python = ws.pool.default_python or project_python(ws.fs.roots) or sys.executable
         return {'python': str(python), 'debugpy': debugpy_available(python),
                 'notebook': True, 'direct': debugpy_available(python)}
 
     @rt('/debug/install')
     async def debug_install(req):
-        from ..kernels import project_python
+        from .kernels import project_python
         d = await req.json(); python = d.get('python') or ws.pool.default_python or project_python(ws.fs.roots)
         if not python: return _fail('choose a project interpreter first')
         def install():
@@ -1562,8 +1562,8 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/debug/start')
     async def debug_start(req):
         "Launch a Python file/module or attach through a direct debugpy DAP session."
-        from ..debug import DebugSession
-        from ..kernels import project_python
+        from .debug import DebugSession
+        from .kernels import project_python
         d = await req.json(); name = d.get('name') or ''
         run = ws.runs.get(name) if name else None
         config = run.dict() if run else dict(d)
@@ -1712,8 +1712,8 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
 
     @rt('/agent/models')
     def agent_models(legacy: bool = True):
-        from ..agent.core import DFLT_LOCAL, available_models, auth_status, resolve
-        from ..model_store import load_models
+        from .agent.core import DFLT_LOCAL, available_models, auth_status, resolve
+        from .model_store import load_models
         saved=load_models()
         rows = available_models(include_legacy=legacy)
         rows += [{'value':x['name'],'label':x['name'],'provider':x['runtime'],
@@ -1745,13 +1745,13 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/agent/models/add')
     async def agent_models_add(req):
         "Save a Hugging Face repo/URL or hosted provider model alias."
-        from ..model_store import save_model
+        from .model_store import save_model
         try:return {'ok':True,'model':save_model(await req.json())}
         except Exception as e:return _fail(e)
 
     @rt('/agent/models/remove')
     async def agent_models_remove(req):
-        from ..model_store import delete_model
+        from .model_store import delete_model
         try:return {'ok':True,'name':delete_model((await req.json()).get('name',''))}
         except Exception as e:return _fail(e)
 
@@ -1790,7 +1790,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     async def agent_model(req):
         d = await req.json()
         try:
-            from ..model_store import load_models
+            from .model_store import load_models
             load_models()
             target = d.get('target', 'agent')
             assistant = ws.inline_ai if target == 'inline' else ws.ai
@@ -1875,7 +1875,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/agent/state/template')
     def agent_state_template():
         "A complete, usable rules template with this workspace's actual tool catalog."
-        from ..ai import STATE_TEMPLATE
+        from .ai import STATE_TEMPLATE
         tools = _tool_schemas(ws.ai)
         catalog = '\n'.join(f"- `{t['name']}` ({t['group']}): {t['description']}" for t in tools)
         return {'template': STATE_TEMPLATE, 'tools': tools,
@@ -1884,7 +1884,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/agent/state/bootstrap')
     async def agent_state_bootstrap(req):
         "Ask the summary model to fill a transparent charter from the template and real tools."
-        from ..ai import STATE_TEMPLATE
+        from .ai import STATE_TEMPLATE
         d = await req.json(); intent = (d.get('intent') or '').strip()
         tools = _tool_schemas(ws.ai)
         catalog = '\n'.join(f"- {t['name']} [{t['group']}]: {t['description']}" for t in tools)
@@ -1906,7 +1906,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         turns = list(ws.ai.history[-12:]) if ws._ai is not None else []
         conversation = '\n\n'.join(f"### User\n{t.get('prompt','')}\n\n### Agent\n{t.get('reply','')}"
                                    for t in turns)
-        from ..ai import STATE_TEMPLATE
+        from .ai import STATE_TEMPLATE
         state = ws.agent_state or STATE_TEMPLATE
         return {'state': state, 'layers': ws.agent_state_layers,
                 'conversation': conversation, 'turns': len(turns)}
@@ -2219,7 +2219,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/agent/retry-tool')
     async def agent_retry_tool(req):
         "Rerun a completed read-only call; return its result without changing model history."
-        from ..ai import WRITE_TOOLS
+        from .ai import WRITE_TOOLS
         d = await req.json()
         tool, args = (d.get('tool') or '').strip(), d.get('args')
         if tool in WRITE_TOOLS: return _fail('only read-only calls can be retried from a checkpoint')
@@ -2377,8 +2377,8 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
         loopback = False
     if not loopback:
         raise ValueError('Leela executes code and may only bind to a loopback address')
-    from .. import leela_cfg
-    from ..hub import WorkspaceHub, WorkspaceSite, workspace_slug
+    from . import leela_cfg
+    from .hub import WorkspaceHub, WorkspaceSite, workspace_slug
 
     roots = [Path(r).expanduser().resolve() for r in roots]
     gate = TerminalGate(host=host)
@@ -2387,7 +2387,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
     gateway = None
     if transport == 'gateway':
         try:
-            from ..kernels import GatewayService
+            from .kernels import GatewayService
             gateway = GatewayService(port=gateway_port).start()
         except (ImportError, RuntimeError) as e:
             # App windows prefer the shared gateway, but a desktop/source install without
@@ -2397,7 +2397,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             transport = 'direct'
             print(f'  gateway unavailable; using direct kernel transport: {errstr(e)}')
     if app_window and roots:
-        from ..kernels import RuntimeBroker
+        from .kernels import RuntimeBroker
         sites, used, hub, broker = [], [], None, RuntimeBroker()
         for i, root in enumerate(roots):
             slug = workspace_slug(root.name, used); used.append(slug)
@@ -2425,7 +2425,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
                 for _ in range(150):
                     try: urllib.request.urlopen(probe, timeout=.25).close(); break
                     except Exception: time.sleep(.1)
-                from .cdp import open_cdp_app
+                from .chrome import open_cdp_app
                 for url in urls:
                     result = open_cdp_app(url, port=cdp_port)
                     print(f"  Chrome {'reused' if result['reused'] else 'started'}: {url}")
@@ -2458,9 +2458,9 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
                 for _ in range(150):
                     try: urllib.request.urlopen(url, timeout=.25).close(); break
                     except Exception: time.sleep(.1)
-                from .cdp import open_cdp_app
+                from .chrome import open_cdp_app
                 open_cdp_app(url, port=cdp_port)
             threading.Thread(target=open_window, daemon=True, name='leela-cdp-open').start()
     if not gate.enabled: print(f'  {gate.why}')
-    from ..hub import LoopbackHostGuard
+    from .hub import LoopbackHostGuard
     uvicorn.run(LoopbackHostGuard(app), host=host, port=port, log_level='warning')

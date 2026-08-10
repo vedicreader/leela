@@ -73,7 +73,7 @@ def main(argv=None):
         loopback = False
     if not loopback:
         p.error('Leela executes code and is intentionally loopback-only; use 127.0.0.1, ::1, or localhost')
-    from .web.app import serve_ide
+    from .app import serve_ide
     serve_ide(roots, port=a.port, host=a.host, agent=a.agent, kernel_port=a.kernel_port,
               kernel=a.kernel, model=a.model, approvals=a.approvals, agent_scope=a.agent_scope,
               python=a.python,

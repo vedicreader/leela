@@ -47,9 +47,11 @@ def _static(glob): return tree_text('leela/web/static', glob)
 
 @cache
 def _server():
-    # The web layer today is `leela/web/*.py`; block extraction moves routes to
-    # `leela/blocks/<name>/*.py`. Reading both means the move needs no test edits.
-    return tree_text('leela/web', '*.py') + '\n' + tree_text('leela/blocks', '*.py')
+    # Every Python module leela ships: the shell in `leela/app.py`, the blocks, and core.
+    # Reading the whole tree rather than named files is the point -- a route can move from
+    # `app.py` into a block, or a domain module into the block that owns it, without a test
+    # edit, while deleting the behaviour still fails.
+    return tree_text('leela', '*.py')
 
 
 # Vendored bundles are minified third-party code (CodeMirror, xterm, htmx). They would add

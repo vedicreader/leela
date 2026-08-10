@@ -14,10 +14,10 @@ Run it to see the current split:
     uv run python -m tests.test_route_owners
 """
 
-from leela.web.app import BLOCKS, ide_app
+from leela.app import BLOCKS, ide_app
 from leela.workspace import Workspace
 
-CLOSURE = 'leela.web.app'
+CLOSURE = 'leela.app'
 
 
 def owner(route):

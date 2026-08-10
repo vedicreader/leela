@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from leela.kernels import RuntimeBroker, KernelPool
-from leela.web.cdp import cdp_ready, open_cdp_app
+from leela.chrome import cdp_ready, open_cdp_app
 from leela.hub import LoopbackHostGuard, WorkspaceHub, WorkspaceSite, workspace_slug
 
 
@@ -80,7 +80,7 @@ def test_cdp_ready_reads_the_active_debug_endpoint(monkeypatch):
 
 
 def test_open_cdp_app_reuses_fossicks_profile(monkeypatch, tmp_path):
-    monkeypatch.setattr('leela.web.cdp.cdp_ready', lambda port: {'webSocketDebuggerUrl': 'ws://active'})
+    monkeypatch.setattr('leela.chrome.cdp_ready', lambda port: {'webSocketDebuggerUrl': 'ws://active'})
     monkeypatch.setattr('fossick.cdp.chrome_bin', lambda: '/chrome')
     launched = []
     monkeypatch.setattr('subprocess.Popen', lambda args, **kw: launched.append((args, kw)) or Mock())

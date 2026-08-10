@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from leela.web.app import ide_app
+from leela.app import ide_app
 from leela.workspace import Workspace
 
 

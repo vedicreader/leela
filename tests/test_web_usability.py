@@ -63,7 +63,7 @@ def test_one_router_owns_platform_mod_and_derives_context_from_focus():
 
 
 def test_exec_and_variables_can_switch_to_the_persistent_agent_session():
-    from leela.web.app import _vars_panel
+    from leela.app import _vars_panel
     from leela.workspace import Workspace
     html = str(_vars_panel(Workspace(roots=[])))
     assert '>agent</button>' in html and 'leeScope("agent")' in html
@@ -97,7 +97,7 @@ def test_switching_runtime_does_not_destroy_existing_terminal_tabs():
 
 
 def test_terminal_starts_inside_the_project_uv_environment():
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     import inspect
     source = inspect.getsource(ide_app)
     assert "env['VIRTUAL_ENV'] = venv" in source
@@ -151,7 +151,7 @@ def test_run_configuration_workbench_edits_environment_without_putting_secrets_i
 
 def test_editor_toolbar_keeps_contextual_actions_and_moves_the_rest_to_kebab():
     from fasthtml.common import to_xml
-    from leela.web.app import _toolbar
+    from leela.app import _toolbar
     html = to_xml(_toolbar())
     assert 'data-action="run_cell"' in html and 'data-action="run_file"' in html
     assert 'data-action="run_all"' not in html
@@ -161,7 +161,7 @@ def test_editor_toolbar_keeps_contextual_actions_and_moves_the_rest_to_kebab():
 
 def test_agent_teleprompter_exposes_control_modes_and_editable_tool_calls():
     from fasthtml.common import to_xml
-    from leela.web.app import _agent_panel
+    from leela.app import _agent_panel
     from leela.workspace import Workspace
     html = to_xml(_agent_panel(Workspace(roots=[])))
     assert 'id="agentcontrol"' in html
@@ -229,7 +229,7 @@ def test_agent_execution_ui_has_run_policies_previews_steering_and_state_memory(
     required = ("/agent/run-policy", "/agent/tool-preview", "/agent/retry-tool", "/agent/rollback-tool",
                 "/agent/steer", "/agent/state/save", "/agent/state/load")
     from inspect import getsource
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     source = getsource(ide_app)
     assert all(route in source for route in required)
     assert 'function proposalFields' in JS and 'function refreshProposalPreview' in JS
@@ -240,7 +240,7 @@ def test_agent_execution_ui_has_run_policies_previews_steering_and_state_memory(
 
 
 def test_tool_schema_only_marks_read_only_calls_as_rerunnable(tmp_path):
-    from leela.web.app import _tool_schemas
+    from leela.app import _tool_schemas
     from leela.workspace import Workspace
     rows = {row['name']: row for row in _tool_schemas(Workspace(roots=[tmp_path]).ai)}
     assert rows['run_shell']['changes_state'] and not rows['run_shell']['retryable']
@@ -262,7 +262,7 @@ def test_checkpoints_and_response_revision_explain_consequences_in_plain_languag
 
 def test_agent_control_route_changes_checkpoint_policy_without_starting_a_model(tmp_path):
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     with TestClient(ide_app(ws)) as client:
@@ -275,7 +275,7 @@ def test_agent_control_route_changes_checkpoint_policy_without_starting_a_model(
 
 def test_agent_and_variables_share_the_right_tabs_while_exec_and_terminal_share_the_bottom():
     from fasthtml.common import to_xml
-    from leela.web.app import _shell
+    from leela.app import _shell
     from leela.term import TerminalGate
     from leela.workspace import Workspace
     html = to_xml(_shell(Workspace(roots=[]), TerminalGate()))
@@ -312,7 +312,7 @@ def test_terminal_has_mouse_resize_and_multiple_live_tabs():
 
 def test_screen_capture_route_rejects_oversized_payloads_before_decoding(tmp_path):
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         response = client.post('/screen', json={'data_url': 'data:image/png;base64,' + 'A' * 12_000_001})
@@ -334,7 +334,7 @@ def test_inline_model_calls_explain_their_progress():
 
 def test_selection_help_uses_summary_and_completion_jobs_without_editing(tmp_path, monkeypatch):
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     calls = []
@@ -355,7 +355,7 @@ def test_selection_help_uses_summary_and_completion_jobs_without_editing(tmp_pat
 
 def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         raw = '```{=html}\n<img src=x onerror=alert(1)>\n```'
@@ -372,7 +372,7 @@ def test_rendering_markdown_does_not_hide_its_editor():
 
 
 def test_model_discovery_does_not_block_shell_render_or_editor_mount():
-    from leela.web.app import _agent_panel
+    from leela.app import _agent_panel
     from leela.workspace import Workspace
     html = str(_agent_panel(Workspace(roots=[])))
     assert html.count('loading…') == 3
@@ -394,7 +394,7 @@ def test_notebook_editors_mount_lazily_near_the_viewport():
 
 
 def test_terminal_bundle_loads_only_when_the_terminal_opens():
-    from leela.web.app import _asset, _shell
+    from leela.app import _asset, _shell
     from leela.term import TerminalGate
     from leela.workspace import Workspace
     html = str(_shell(Workspace(roots=[]), TerminalGate()))

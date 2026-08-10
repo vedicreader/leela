@@ -1,6 +1,6 @@
 """The state `ide_app` keeps in its closure, made into objects blocks can share.
 
-`Workspace` is not the only coupling in `leela/web/app.py`. The 2,594-line `ide_app`
+`Workspace` is not the only coupling in `leela/app.py`. The 2,594-line `ide_app`
 closure also holds mutable state of its own -- open notebook documents, unsaved buffers,
 per-kernel run locks, the paused debugger -- and route groups that look unrelated reach
 into it. `/tab/state`, `/nb/save`, `/tabs/save-all`, `/tab/buffer`, `/tab/reload` and

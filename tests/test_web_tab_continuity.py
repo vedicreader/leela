@@ -4,7 +4,7 @@ import json
 
 from starlette.testclient import TestClient
 
-from leela.web.app import ide_app
+from leela.app import ide_app
 from leela.workspace import Workspace
 
 from tests.assets import JS
@@ -85,7 +85,7 @@ def test_same_named_files_in_different_roots_keep_absolute_identity(tmp_path):
         assert client.get('/tab/state').json()['cells'][0]['source']=='RAMABANA'
     assert len(ws.tabs)==2 and {t.path for t in ws.tabs}=={str(a.resolve()),str(b.resolve())}
     from fasthtml.common import to_xml
-    from leela.web.app import _tab_bar
+    from leela.app import _tab_bar
     tabs=to_xml(_tab_bar(ws));assert 'ramabana/00_core.ipynb' in tabs and 'rishi/00_core.ipynb' in tabs
     assert 'leeOpenFile' in JS and 'pendingFocusPath === st.path' in JS
     assert 'version!==openFileVersion' in JS and "mountTab(path)" in JS

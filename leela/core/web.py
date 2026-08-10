@@ -1,11 +1,11 @@
 """The web vocabulary every block shares: error shape, streaming frames, static URLs.
 
-These were module-level helpers in `leela/web/app.py` with leading underscores, which was
+These were module-level helpers in `leela/app.py` with leading underscores, which was
 right while there was one web module. Blocks need them, and a block importing a private
 name out of the module it is being extracted from is not an improvement -- so they move
 here and lose the underscore.
 
-`leela/web/app.py` re-exports the old names, because `tests/` and any external caller
+`leela/app.py` re-exports the old names, because `tests/` and any external caller
 import some of them from there.
 """
 

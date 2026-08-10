@@ -1,7 +1,7 @@
 from fasthtml.common import to_xml
 
 from leela.term import TerminalGate
-from leela.web.app import _shell
+from leela.app import _shell
 from leela.workspace import Workspace
 
 from tests.assets import JS, CSS
@@ -60,7 +60,7 @@ def test_autosave_is_configurable_debounced_and_invalidates_stale_requests():
 
 
 def test_every_tab_reports_pending_saving_saved_and_failed_autosave(tmp_path):
-    from leela.web.app import _tab_bar
+    from leela.app import _tab_bar
     p = tmp_path/'notes.py'; p.write_text('answer = 42\n')
     ws = Workspace(roots=[tmp_path]); tab = ws.open(p)
     saved = to_xml(_tab_bar(ws))
@@ -107,7 +107,7 @@ def test_agent_model_and_reasoning_live_below_the_growing_prompt(tmp_path):
 
 def test_agent_panel_sends_the_open_notebook_cells_as_context():
     from inspect import getsource
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     source = getsource(ide_app)
     stream = source[source.index("@rt('/agent/stream')"):source.index("@rt('/agent/approval')")]
     assert 'context = nb.context(len(nb))' in stream
@@ -120,7 +120,7 @@ def test_agent_vocabulary_exposes_commands_tools_and_project_skills(tmp_path):
     skill.parent.mkdir(parents=True)
     skill.write_text('---\nname: notebook-tests\ndescription: How this project tests notebooks.\n---\n\nDo it carefully.\n')
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         vocabulary = client.get('/agent/commands').json()
     assert {'commands', 'tools', 'skills'} <= vocabulary.keys()
@@ -160,7 +160,7 @@ def test_notebook_cells_offer_ipykernel_debugging():
 
 def test_pyproject_dependencies_get_runtime_version_pills(tmp_path):
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     p = tmp_path/'pyproject.toml'
     p.write_text('[project]\nname="demo"\nversion="0.1"\nkeywords=["package-that-does-not-exist"]\n'

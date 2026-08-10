@@ -19,7 +19,7 @@ and commit the diff alongside the change, where it is reviewable.
 
 from pathlib import Path
 
-from leela.web.app import ide_app
+from leela.app import ide_app
 from leela.workspace import Workspace
 
 INVENTORY = Path(__file__).parent/'routes.txt'

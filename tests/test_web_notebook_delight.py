@@ -3,7 +3,7 @@
 import asyncio
 
 from leela.buttons import bar
-from leela.web.app import _assigned_lines, _inline_values, ide_app
+from leela.app import _assigned_lines, _inline_values, ide_app
 from leela.workspace import Workspace, _EnvClient
 
 from tests.assets import JS, CSS, SERVER, EDITOR
