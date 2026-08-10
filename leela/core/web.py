@@ -15,30 +15,65 @@ import json
 from pathlib import Path
 
 from fastcore.aio import athreaded
+from fastcore.basics import first
 from fasthtml.common import JSONResponse
+from starlette.staticfiles import StaticFiles
 
 from .. import errstr
 
-__all__ = ['static_dir', 'asset', 'fail', 'sse', 'off_loop', 'diff_payload', 'found']
+__all__ = ['asset_dir', 'static_dirs', 'Assets', 'asset', 'fail', 'sse', 'off_loop',
+           'diff_payload', 'found']
 
 
-def static_dir():
-    "Web assets in a normal install, py2app Resources, or a py2exe distribution."
+def asset_dir(name):
+    "One of leela's asset dirs, in a normal install, py2app Resources, or a py2exe distribution."
     import sys
-    candidates = [Path(__file__).parent.parent/'web'/'static']
+    candidates = [Path(__file__).parent.parent/name]
     if getattr(sys, 'frozen', False):
         exe = Path(sys.executable).resolve()
-        candidates += [exe.parent/'leela'/'web'/'static',
-                       exe.parent.parent/'Resources'/'leela'/'web'/'static']
+        candidates += [exe.parent/'leela'/name, exe.parent.parent/'Resources'/'leela'/name]
     return next((p for p in candidates if p.exists()), candidates[0])
+
+
+def static_dirs():
+    """The asset dirs behind `/leestatic`, in lookup order: authored first, vendored second.
+
+    `static/` is leela's own hand-written `lee-ide.js` and `lee-ide.css`; `vendor/` is what
+    esbuild produced or npm supplied -- CodeMirror, xterm, htmx, the woff2 faces. Separating
+    them means a search of leela's browser code cannot hit 2MB of minified third-party
+    output, and `.gitignore` and the packaging manifests describe directories instead of
+    listing filenames.
+    """
+    return [asset_dir('static'), asset_dir('vendor')]
 
 
 def asset(name):
     "A static URL that changes when the local asset does, preventing mixed JS/CSS revisions."
-    p = static_dir()/name
-    try: version = p.stat().st_mtime_ns
-    except OSError: version = 0
-    return f'/leestatic/{name}?v={version}'
+    p = first(d/name for d in static_dirs() if (d/name).is_file())
+    return f'/leestatic/{name}?v={p.stat().st_mtime_ns if p else 0}'
+
+
+class Assets:
+    """Serve one URL prefix from several directories, first match winning.
+
+    Starlette's `Mount` does not fall through when the app behind it 404s, so two mounts on
+    `/leestatic` would shadow rather than combine. Resolving the directory here keeps every
+    asset URL -- including the `/leestatic/fonts/*.woff2` that `lee-ide.css` names -- exactly
+    as it was when both trees lived in one folder.
+    """
+
+    def __init__(self, *dirs):
+        self.dirs = [Path(d) for d in dirs]
+        self.apps = [StaticFiles(directory=str(d)) for d in self.dirs]
+
+    async def __call__(self, scope, receive, send):
+        # `Mount` leaves `scope['path']` absolute and reports the matched prefix as `root_path`,
+        # which is what `StaticFiles` strips to find the file. Removing the prefix here agrees
+        # with it either way: if a Starlette version rewrites `path` to be mount-relative
+        # instead, `removeprefix` finds nothing to remove and the result is the same.
+        rel = scope['path'].removeprefix(scope.get('root_path') or '').lstrip('/')
+        served = first(a for d, a in zip(self.dirs, self.apps) if (d/rel).is_file())
+        return await (served or self.apps[0])(scope, receive, send)   # else the first one 404s
 
 
 def fail(err, code=400):

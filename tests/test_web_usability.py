@@ -323,7 +323,27 @@ def test_screen_capture_route_rejects_oversized_payloads_before_decoding(tmp_pat
 def test_editor_keeps_replaced_triple_quotes_paired():
     src=EDITOR
     assert 'pairedTripleQuotes' in src and 'transactionFilter' in src
-    assert (ROOT/'leela/web/static/lee-cm6.js').stat().st_size > 100_000
+    assert (ROOT/'leela/vendor/lee-cm6.js').stat().st_size > 100_000
+
+
+def test_one_static_prefix_serves_both_the_authored_and_vendored_asset_trees(tmp_path):
+    """`/leestatic` spans `leela/static` and `leela/vendor` as if they were one folder.
+
+    Splitting them must not change a single asset URL. The font is the case that matters:
+    `lee-ide.css` names `/leestatic/fonts/*.woff2` from the authored tree, but the file itself
+    now lives in the vendored one, so a mount that could not fall through would 404 it.
+    """
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        authored = client.get('/leestatic/lee-ide.css')
+        vendored = client.get('/leestatic/lee-cm6.js')
+        font = client.get('/leestatic/fonts/jetbrains-mono-latin-wght-normal.woff2')
+        missing = client.get('/leestatic/no-such-asset.js')
+    assert authored.status_code == vendored.status_code == font.status_code == 200
+    assert b'@font-face' in authored.content and b'/leestatic/fonts/' in authored.content
+    assert missing.status_code == 404
 
 
 def test_inline_model_calls_explain_their_progress():

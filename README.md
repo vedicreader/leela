@@ -405,11 +405,12 @@ to test routing, approval, compaction and the tool wrappers without gigabytes in
 working ipykernel — `tests/test_inspect.py` covers the engine directly instead, by
 driving it over a plain dict.
 
-The browser bundles in `leela/web/static` are committed so users never need node.
+leela's own browser code is `leela/static/`; the bundles esbuild and npm produce sit in
+`leela/vendor/` and are committed so users never need node.
 To rebuild them:
 
 ```sh
-cd leela/web/src && npm install && npm run build
+cd frontend && npm install && npm run build
 ```
 
 ## License

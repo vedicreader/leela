@@ -8,8 +8,8 @@ from leela.app import _python_diagnostics, ide_app
 from leela.workspace import Workspace
 
 ROOT = Path(__file__).resolve().parents[1]
-EDITOR = (ROOT / 'leela/web/src/editor.js').read_text()
-PACKAGE = (ROOT / 'leela/web/src/package.json').read_text()
+EDITOR = (ROOT / 'frontend/editor.js').read_text()
+PACKAGE = (ROOT / 'frontend/package.json').read_text()
 
 
 def test_python_compiler_reports_precise_syntax_errors():

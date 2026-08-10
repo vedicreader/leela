@@ -1,12 +1,12 @@
 {
   "name": "leela-editor",
   "private": true,
-  "description": "Vendored browser bundles for the leela IDE (CodeMirror 6 editor, xterm.js terminal). Build with `npm install && npm run build`; the output is committed so users never need node.",
+  "description": "Browser build inputs for the leela IDE (CodeMirror 6 editor, xterm.js terminal). Build with `npm install && npm run build`; output lands in `leela/vendor/` and is committed so users never need node.",
   "scripts": {
     "build": "npm run build:editor && npm run build:term && npm run build:termcss",
-    "build:editor": "esbuild editor.js --bundle --format=iife --global-name=LeeCM --minify --outfile=../static/lee-cm6.js",
-    "build:term": "esbuild term.js --bundle --format=iife --minify --outfile=../static/lee-term.js",
-    "build:termcss": "cp node_modules/@xterm/xterm/css/xterm.css ../static/lee-term.css"
+    "build:editor": "esbuild editor.js --bundle --format=iife --global-name=LeeCM --minify --outfile=../leela/vendor/lee-cm6.js",
+    "build:term": "esbuild term.js --bundle --format=iife --minify --outfile=../leela/vendor/lee-term.js",
+    "build:termcss": "cp node_modules/@xterm/xterm/css/xterm.css ../leela/vendor/lee-term.css"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.18.0",

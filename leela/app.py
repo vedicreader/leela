@@ -57,7 +57,7 @@ from .core.web import diff_payload as _diff
 from .core.web import fail as _fail
 from .core.web import off_loop as _off_loop
 from .core.web import sse as _sse
-from .core.web import static_dir
+from .core.web import Assets, static_dirs
 from .diffs import did_you_mean, fuzzy_rank
 from .fs import lang_for
 from .git import GitRepo, GitError
@@ -747,7 +747,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             except Exception: pass
 
     app, rt = fast_app(pico=False, default_hdrs=False, hdrs=hdrs,
-                       routes=(Mount('/leestatic', StaticFiles(directory=str(static_dir()))),
+                       routes=(Mount('/leestatic', Assets(*static_dirs())),
                                WebSocketRoute('/term/ws', term_ws)))
 
     # Open notebooks, unsaved buffers and per-kernel run locks. `DocStore` owns them so the

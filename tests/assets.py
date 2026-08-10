@@ -4,10 +4,10 @@ A large part of the suite asserts on the *text* of what leela ships to the brows
 that a keybinding exists, that a CSS class is defined, that a route renders a given id.
 Those assertions were each reading one file:
 
-    JS = (ROOT/'leela/web/static/lee-ide.js').read_text()
+    JS = (ROOT/'leela/static/lee-ide.js').read_text()
 
 which quietly pins the architecture: `lee-ide.js` is one 6,000-line file *because* ~200
-assertions say so, and the same for `web/app.py`. Splitting either one would fail a
+assertions say so, and the same for `app.py`. Splitting either one would fail a
 hundred tests that have no opinion about file layout at all.
 
 Reading a whole tree instead keeps the assertions honest about what they actually mean --
@@ -43,7 +43,7 @@ def read(rel):
 
 
 @cache
-def _static(glob): return tree_text('leela/web/static', glob)
+def _static(glob): return tree_text('leela/static', glob) + '\n' + tree_text('leela/vendor', glob)
 
 @cache
 def _server():
@@ -56,14 +56,11 @@ def _server():
 
 # Vendored bundles are minified third-party code (CodeMirror, xterm, htmx). They would add
 # ~2MB of noise to every substring search and can produce false positives, so the browser
-# text is leela's own hand-written assets only.
-VENDOR = {'lee-cm6.js', 'lee-term.js', 'htmx.min.js'}
-
+# text is leela's own hand-written assets only -- which is now simply `leela/static`, where
+# it used to be a filename blocklist over one mixed folder. CSS still spans both trees,
+# because xterm's stylesheet ships as `lee-term.css`.
 @cache
-def _authored_js():
-    d = ROOT/'leela/web/static'
-    if not d.is_dir(): return ''
-    return '\n'.join(p.read_text() for p in sorted(d.rglob('*.js')) if p.name not in VENDOR)
+def _authored_js(): return tree_text('leela/static', '*.js')
 
 
 # PEP 562. Each corpus is a plain `str` -- `'x' in JS` and `JS.count(...)` are the whole
@@ -72,8 +69,8 @@ def _authored_js():
 # module dict means later lookups never reach this function.
 _CORPORA = {'JS':     _authored_js,
             'CSS':    lambda: _static('*.css'),
-            'EDITOR': lambda: read('leela/web/src/editor.js'),
-            'TERM':   lambda: read('leela/web/src/term.js'),
+            'EDITOR': lambda: read('frontend/editor.js'),
+            'TERM':   lambda: read('frontend/term.js'),
             'SERVER': _server,
             'AGENT':  lambda: tree_text('leela/agent', '*.py')}
 
