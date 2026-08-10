@@ -91,24 +91,12 @@ def build(port, *a, override=None, **kw):
         raise ProviderError(f'{port} provider {name!r} failed to start: {type(e).__name__}: {e}') from e
 
 
-# -- the built-ins -----------------------------------------------------------
-# Registered like any other provider, with the import inside the factory so that selecting
-# a different one does not pay for these, and so `leela.core` stays importable without the
-# heavier subsystems being constructed.
-
-@provider('search', DEFAULT)
-def _leela_search(fs, **kw):
-    from ..blocks.search.search import Search
-    return Search(fs, **kw)
-
-
-@provider('memory', DEFAULT)
-def _leela_memory(kosha=None, path=None, **kw):
-    from ..blocks.memory.memory import Memory
-    return Memory(kosha=kosha, path=path, **kw)
-
-
-@provider('runtime', DEFAULT)
-def _leela_runtime(spec, **kw):
-    from ..agent.runtime import Backend
-    return Backend(spec, **kw)
+# There are deliberately no built-in registrations here. `core` names no implementation at
+# all: each block registers the default for the port it owns, beside the module that
+# satisfies it -- `blocks/search/__init__.py`, `blocks/memory/__init__.py`,
+# `blocks/agent/__init__.py`. `leela/blocks/__init__.py` imports those three so the
+# registrations exist before `Workspace.__init__` calls `build`.
+#
+# That is what makes `LEELA_MEMORY=vishalakshi` a swap of one folder for one package: the
+# built-in and the alternate register through an identical path, so there is no privileged
+# route that only the default takes.

@@ -17,11 +17,11 @@ from dataclasses import dataclass
 from fastcore.all import Path, L, ifnone
 
 from . import Dictable, leela_cfg
-from .ai import Assistant, Completer, notebook_approvals
+from .blocks.agent.ai import Assistant, Completer, notebook_approvals
 from .blocks.runtime.devserver import DevServers
 from .blocks.fs.fs import Sandbox, Unsafe, lang_for, is_texty
 from .blocks.runtime.kernels import KernelPool
-from .nb import Notebook
+from .blocks.nb.nb import Notebook
 from .blocks.research.research import Research
 from .blocks.runs.runs import Run, Runs
 from .blocks.search.search import Search
@@ -236,7 +236,7 @@ class Workspace:
         t = self._approval_target
         if not t: return
         nb, i = t
-        from .nb import Cell
+        from .blocks.nb.nb import Cell
         c = Cell(source=f'**🗜 context compacted**\n\n{summary}', cell_type='markdown')
         c.approval = {'kind': 'compaction'}
         nb.insert(min(i + 1, len(nb)), c)

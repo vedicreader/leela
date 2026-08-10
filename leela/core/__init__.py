@@ -19,20 +19,13 @@ from .providers import ProviderError, build, provider, providers_for, register, 
 from .session import DebugState, DocStore, RunState
 
 
-# `conformance` is a diagnostic, not part of the hot path, and it runs as
-# `python -m leela.core.conformance`. Importing it here eagerly would put it in sys.modules
-# before runpy executes it, which makes runpy warn about unpredictable behaviour. Resolving
-# it on first use keeps the re-export without the warning.
-def __getattr__(name):
-    if name in ('check_port', 'port_report'):
-        from . import conformance
-        v = globals()[name] = {'check_port': conformance.check, 'port_report': conformance.report}[name]
-        return v
-    raise AttributeError(name)
+# `conformance` used to be re-exported from here. It now lives at `leela/conformance.py`,
+# because checking a provider means building one, and building one needs `fs.Sandbox` and
+# `agent.core.resolve` -- so the diagnostic has to name implementations, which is exactly what
+# core must not do. Run it as `python -m leela.conformance`, or import `leela.conformance`.
 
 __all__ = ['Ctx', 'CAPABILITIES', 'EAGER', 'LAZY', 'APP',
            'Block', 'connect_all', 'block_caps',
            'DocStore', 'DebugState', 'RunState',
            'MemoryPort', 'SearchPort', 'RuntimePort',
-           'register', 'provider', 'build', 'providers_for', 'selected', 'ProviderError',
-           'check_port', 'port_report']
+           'register', 'provider', 'build', 'providers_for', 'selected', 'ProviderError']

@@ -312,7 +312,7 @@ def test_overlay_still_refuses_to_touch_what_the_user_made(tmp_path, kind):
 
 def test_a_host_can_refuse_overlay():
     "`--agent-scope isolated` is the setting for a machine where even a scratch layer is unwanted."
-    from leela.ai import WorkspaceHost
+    from leela.blocks.agent.ai import WorkspaceHost
     from leela.workspace import Workspace
     assert WorkspaceHost(Workspace(roots=[])).scopes == ('isolated', 'overlay')
     assert WorkspaceHost(Workspace(roots=[], agent_scope='isolated')).scopes == ('isolated',)

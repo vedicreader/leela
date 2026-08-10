@@ -173,7 +173,7 @@ def test_narrow_carries_the_application_services_through(ws, services):
 
 def test_docstore_resolves_a_request_to_the_tab_that_submitted_it(ws):
     "`owner` survives a tab switch mid-run, which is the whole reason it takes a ref."
-    from leela.nb import Notebook
+    from leela.blocks.nb.nb import Notebook
     store = DocStore(ws)
     tab = ws.new_scratch()
     key = store.key(tab)

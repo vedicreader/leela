@@ -26,11 +26,11 @@ from __future__ import annotations
 
 import functools, inspect, json, threading
 
-from . import errstr, leela_cfg
-from .blocks.fs.fs import Unsafe
-from .agent.agent import (Activity, Agent, Approvals, Ask, Completer, _summary, answer_md, ask_md,
+from ... import errstr, leela_cfg
+from ..fs.fs import  Unsafe
+from ...agent.agent import (Activity, Agent, Approvals, Ask, Completer, _summary, answer_md, ask_md,
                           preview_for)
-from .agent.tools import (MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS, Hit, Host, clip,
+from ...agent.tools import (MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS, Hit, Host, clip,
                           tools_for)
 
 GIT_WRITE_TOOLS = frozenset({'git_fetch', 'git_checkout', 'git_pull', 'git_push'})
@@ -350,11 +350,11 @@ class WorkspaceHost(Host):
 
     # -- notebooks -----------------------------------------------------------
     def nb_cells(self, path):
-        from .nb import Notebook
+        from ..nb.nb import Notebook
         return [(c.id, c.cell_type, c.source) for c in Notebook.load(self.check(path)).cells]
 
     def nb_add_cell(self, path, source, index=-1, cell_type='code'):
-        from .nb import Cell, Notebook
+        from ..nb.nb import Cell, Notebook
         p = self.check(path)
         nb = Notebook.load(p) if p.exists() else Notebook.blank(p)
         c = nb.insert(len(nb) if index < 0 else int(index), Cell(source=source, cell_type=cell_type))
@@ -498,7 +498,7 @@ class WorkspaceHost(Host):
 def _git_tools(host):
     """Git operations bound to an open repository and kept inside workspace roots."""
     from pathlib import Path
-    from .blocks.git.git import GitRepo
+    from ..git.git import GitRepo
 
     def repo(path=''):
         roots = [Path(r).expanduser().resolve() for r in host.roots]
@@ -596,7 +596,7 @@ def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, h
     prompt cells use: valid nbformat, legible in plain Jupyter, and recognisable to leela
     when the file is reopened.
     """
-    from .nb import Cell
+    from ..nb.nb import Cell
 
     def _add(md, meta):
         t = get_target()
@@ -644,7 +644,7 @@ class Assistant(Agent):
     """
 
     def __init__(self, ws, session=None, model=None, sp=None, approve=None, surface='agent', **kw):
-        from .model_store import load_models
+        from .models import load_models
         load_models()  # saved aliases work in prompt cells and the web dropdown alike
         host = WorkspaceHost(ws, session)
         kw.setdefault('cfg', leela_cfg)
@@ -806,7 +806,7 @@ class _PolicyApprovals(Approvals):
         self._approve = approve
 
     def request(self, name, args):
-        from .agent.agent import Ask, preview_for, _summary
+        from ...agent.agent import Ask, preview_for, _summary
         a = Ask(tool=name, args=args, summary=_summary(name, args), preview=preview_for(name, args))
         self.history.append(a)
         try: ok = self._approve({'function': {'name': name, 'arguments': args}})

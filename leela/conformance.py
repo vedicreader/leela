@@ -19,14 +19,14 @@ whose `search` takes `(q, n)` passes `isinstance` and fails at runtime on the fi
 
 Use it from a test, or from the command line once an alternate exists:
 
-    python -m leela.core.conformance memory vishalakshi
+    python -m leela.conformance memory vishalakshi
 """
 
 from __future__ import annotations
 
 import inspect
 
-from . import ports
+from .core import ports
 
 __all__ = ['PORTS', 'CALLS', 'check', 'report']
 
@@ -133,18 +133,18 @@ def _sample_args(port):
     fixture.
     """
     if port == 'search':
-        from ..blocks.fs.fs import Sandbox
+        from .blocks.fs.fs import Sandbox
         return (Sandbox([]),), {}
     if port == 'runtime':
-        from ..agent.core import resolve
+        from .agent.core import resolve
         return (resolve('gpt-mini'),), {}
     return (), {}
 
 
 def _main(argv):
-    from .providers import ProviderError, build
+    from .core.providers import ProviderError, build
     if not argv or argv[0] not in PORTS:
-        print(f'usage: python -m leela.core.conformance <{"|".join(PORTS)}> [provider]')
+        print(f'usage: python -m leela.conformance <{"|".join(PORTS)}> [provider]')
         return 2
     port = argv[0]
     name = argv[1] if len(argv) > 1 else None

@@ -62,7 +62,7 @@ from .core.diffs import did_you_mean, fuzzy_rank
 from .blocks.fs.fs import lang_for
 from .blocks.git.git import GitRepo, GitError
 from .core.keys import by_scope, chord_display, toast_rows
-from .nb import Notebook, Cell
+from .blocks.nb.nb import Notebook, Cell
 from .blocks.term.term import TerminalGate, lazygit_argv
 from .workspace import Workspace
 from .agent.core import model_note
@@ -192,7 +192,7 @@ def _tool_preview(agent, tool, args):
 def _tool_schemas(agent):
     "Browser-sized schemas for editable checkpoint forms; callable validation remains authoritative."
     import inspect
-    from .ai import WRITE_TOOLS
+    from .blocks.agent.ai import WRITE_TOOLS
     out = []
     for tool in agent.tools:
         sig = inspect.signature(tool)
@@ -1541,7 +1541,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
 
     @rt('/debug/capabilities')
     def debug_capabilities():
-        from .debug import debugpy_available
+        from .blocks.debug.debug import debugpy_available
         from .blocks.runtime.kernels import project_python
         python = ws.pool.default_python or project_python(ws.fs.roots) or sys.executable
         return {'python': str(python), 'debugpy': debugpy_available(python),
@@ -1562,7 +1562,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/debug/start')
     async def debug_start(req):
         "Launch a Python file/module or attach through a direct debugpy DAP session."
-        from .debug import DebugSession
+        from .blocks.debug.debug import DebugSession
         from .blocks.runtime.kernels import project_python
         d = await req.json(); name = d.get('name') or ''
         run = ws.runs.get(name) if name else None
@@ -1713,7 +1713,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/agent/models')
     def agent_models(legacy: bool = True):
         from .agent.core import DFLT_LOCAL, available_models, auth_status, resolve
-        from .model_store import load_models
+        from .blocks.agent.models import load_models
         saved=load_models()
         rows = available_models(include_legacy=legacy)
         rows += [{'value':x['name'],'label':x['name'],'provider':x['runtime'],
@@ -1745,13 +1745,13 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/agent/models/add')
     async def agent_models_add(req):
         "Save a Hugging Face repo/URL or hosted provider model alias."
-        from .model_store import save_model
+        from .blocks.agent.models import save_model
         try:return {'ok':True,'model':save_model(await req.json())}
         except Exception as e:return _fail(e)
 
     @rt('/agent/models/remove')
     async def agent_models_remove(req):
-        from .model_store import delete_model
+        from .blocks.agent.models import delete_model
         try:return {'ok':True,'name':delete_model((await req.json()).get('name',''))}
         except Exception as e:return _fail(e)
 
@@ -1790,7 +1790,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     async def agent_model(req):
         d = await req.json()
         try:
-            from .model_store import load_models
+            from .blocks.agent.models import load_models
             load_models()
             target = d.get('target', 'agent')
             assistant = ws.inline_ai if target == 'inline' else ws.ai
@@ -1875,7 +1875,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/agent/state/template')
     def agent_state_template():
         "A complete, usable rules template with this workspace's actual tool catalog."
-        from .ai import STATE_TEMPLATE
+        from .blocks.agent.ai import STATE_TEMPLATE
         tools = _tool_schemas(ws.ai)
         catalog = '\n'.join(f"- `{t['name']}` ({t['group']}): {t['description']}" for t in tools)
         return {'template': STATE_TEMPLATE, 'tools': tools,
@@ -1884,7 +1884,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/agent/state/bootstrap')
     async def agent_state_bootstrap(req):
         "Ask the summary model to fill a transparent charter from the template and real tools."
-        from .ai import STATE_TEMPLATE
+        from .blocks.agent.ai import STATE_TEMPLATE
         d = await req.json(); intent = (d.get('intent') or '').strip()
         tools = _tool_schemas(ws.ai)
         catalog = '\n'.join(f"- {t['name']} [{t['group']}]: {t['description']}" for t in tools)
@@ -1906,7 +1906,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         turns = list(ws.ai.history[-12:]) if ws._ai is not None else []
         conversation = '\n\n'.join(f"### User\n{t.get('prompt','')}\n\n### Agent\n{t.get('reply','')}"
                                    for t in turns)
-        from .ai import STATE_TEMPLATE
+        from .blocks.agent.ai import STATE_TEMPLATE
         state = ws.agent_state or STATE_TEMPLATE
         return {'state': state, 'layers': ws.agent_state_layers,
                 'conversation': conversation, 'turns': len(turns)}
@@ -2219,7 +2219,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/agent/retry-tool')
     async def agent_retry_tool(req):
         "Rerun a completed read-only call; return its result without changing model history."
-        from .ai import WRITE_TOOLS
+        from .blocks.agent.ai import WRITE_TOOLS
         d = await req.json()
         tool, args = (d.get('tool') or '').strip(), d.get('args')
         if tool in WRITE_TOOLS: return _fail('only read-only calls can be retried from a checkpoint')

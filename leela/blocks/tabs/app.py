@@ -28,7 +28,7 @@ from fasthtml.common import Div
 
 from ... import errstr
 from ...core.web import fail
-from ...nb import Notebook
+from ..nb.nb import Notebook
 from .ui import tab_bar
 
 __all__ = ['CAPS', 'connect', 'disk_version']

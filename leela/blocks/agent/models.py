@@ -1,7 +1,7 @@
 """Persistent user-added local and hosted model aliases."""
 import json, re
 from fastcore.all import Path
-from . import leela_cfg
+from ... import leela_cfg
 
 __all__=['model_path','load_models','save_model','delete_model']
 _RUNTIMES=('mlx','litert','llama','remote')
@@ -15,7 +15,7 @@ def _rows(path=None):
 
 def load_models(path=None):
     "Register saved aliases with Ramabana and return valid rows."
-    from .agent.core import register_model
+    from ...agent.core import register_model
     out=[]
     for row in _rows(path):
         try:
@@ -27,7 +27,7 @@ def load_models(path=None):
 
 def save_model(row,path=None):
     "Validate, register and persist one model alias. API keys are never stored here."
-    from .agent.core import MODELS,CUSTOM,register_model
+    from ...agent.core import MODELS,CUSTOM,register_model
     name=str(row.get('name') or '').strip(); model_id=str(row.get('model_id') or '').strip()
     runtime=str(row.get('runtime') or '').strip()
     if not re.match(r'^[A-Za-z0-9][\w.-]{0,63}$',name):raise ValueError('name must use letters, numbers, _, . or -')
@@ -44,7 +44,7 @@ def save_model(row,path=None):
     return clean
 
 def delete_model(name,path=None):
-    from .agent.core import unregister_model
+    from ...agent.core import unregister_model
     rows=[x for x in _rows(path) if x.get('name')!=name]
     p=model_path(path);p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(rows,indent=2)+'\n')
     unregister_model(name);return name

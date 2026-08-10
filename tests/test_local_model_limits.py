@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from leela.agent.core import LOCAL, local_ctx
-from leela.nb import Notebook
+from leela.blocks.nb.nb import Notebook
 from leela.workspace import Workspace
 
 MODEL_NAME = 'gemma-e4b'

@@ -386,7 +386,7 @@ def test_the_briefing_the_agent_sends_matches_the_tools_it_has():
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def project(tmp_path):
-    from leela.ai import WorkspaceHost
+    from leela.blocks.agent.ai import WorkspaceHost
     from leela.workspace import Workspace
     (tmp_path/'src').mkdir()
     (tmp_path/'src'/'app.py').write_text('value = 1\n')
@@ -444,7 +444,7 @@ def test_the_probe_command_never_spawns_anything(project):
 
 
 def test_leelas_own_agent_is_offered_the_shell(project):
-    from leela.ai import ide_tools
+    from leela.blocks.agent.ai import ide_tools
     assert 'run_shell' in named(ide_tools(project))
 
 
@@ -467,7 +467,7 @@ def test_the_browser_previews_a_command_as_a_command(project):
 def test_a_sub_agent_does_not_get_a_shell(project):
     "A research sub-agent reports; it does not act, and a command is an action."
     from leela.agent.tools import read_only
-    from leela.ai import ide_tools
+    from leela.blocks.agent.ai import ide_tools
     assert 'run_shell' not in named(read_only(ide_tools(project)))
     assert 'replace_text' not in named(read_only(ide_tools(project)))
     assert 'grep' in named(read_only(ide_tools(project)))

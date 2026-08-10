@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from leela.ai import GIT_WRITE_TOOLS, WRITE_TOOLS, _git_tools
+from leela.blocks.agent.ai import GIT_WRITE_TOOLS, WRITE_TOOLS, _git_tools
 from leela.blocks.git.git import GitError, GitRepo, repo_root
 from leela.workspace import Workspace
 

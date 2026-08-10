@@ -60,7 +60,7 @@ signatures — `runtime_checkable` Protocols never do. An implementation whose `
 So check properly:
 
 ```sh
-python -m leela.core.conformance memory vishalakshi
+python -m leela.conformance memory vishalakshi
 ```
 
 ```python
@@ -83,7 +83,7 @@ memory <- a half-built alternate: 3 problem(s)
 3. **signature** — every keyword Leela actually passes is accepted by that name
 
 The keyword lists live in `CALLS` in
-[`leela/core/conformance.py`](../leela/core/conformance.py) and come from the real call
+[`leela/conformance.py`](../leela/conformance.py) and come from the real call
 sites. An adapter that forwards `**kwargs` satisfies the signature check by construction,
 which is usually the easiest way to write one.
 
@@ -146,6 +146,6 @@ expensive to unpick — and that day tends to arrive right after the swap.
 ## Checklist
 
 1. Write the adapter; forward `**kwargs`.
-2. `python -m leela.core.conformance <port> <name>` until it prints `OK`.
+2. `python -m leela.conformance <port> <name>` until it prints `OK`.
 3. Register the factory with `@provider(port, name)` and lazy-import inside it.
 4. Run Leela with `LEELA_<PORT>=<name>` and compare against the default.

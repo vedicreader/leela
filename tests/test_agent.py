@@ -244,7 +244,7 @@ def test_agent_refresh_is_a_noop_when_nothing_is_running():
 # approval and editable execution checkpoints
 # ---------------------------------------------------------------------------
 def test_agent_state_template_teaches_rules_routing_tools_and_maintenance():
-    from leela.ai import STATE_TEMPLATE
+    from leela.blocks.agent.ai import STATE_TEMPLATE
     for heading in ('Agent charter', 'Hard boundaries', 'Routing rules', 'Tool practices',
                     'Verification', 'Progress', 'Critical context', 'State maintenance'):
         assert heading in STATE_TEMPLATE
@@ -253,7 +253,7 @@ def test_agent_state_template_teaches_rules_routing_tools_and_maintenance():
 
 
 def test_directed_checkpoint_can_rewrite_the_live_tool_call():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     ap = Interventions(tools={'edit_file'}, mode='ask', control='directed', timeout=2)
     stop = ap.listen()
     tc = {'function': {'name': 'search_code', 'arguments': {'query': 'old'}}}
@@ -274,11 +274,11 @@ def test_directed_checkpoint_can_rewrite_the_live_tool_call():
 
 
 def test_rejection_ignores_rewritten_or_malformed_call_fields():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     ap = Interventions(tools={'edit_file'}, mode='ask', control='directed')
     # Put a request in flight directly to exercise the answer boundary without involving
     # a worker thread: rejection must preserve the proposal rather than accept form edits.
-    from leela.ai import Intervention
+    from leela.blocks.agent.ai import Intervention
     pending = Intervention(tool='edit_file', args={'path': 'original.py', 'commands': '[]'},
                            summary='edit_file → original.py')
     ap.current = pending
@@ -292,7 +292,7 @@ def test_rejection_ignores_rewritten_or_malformed_call_fields():
 
 @pytest.mark.parametrize('note', ['', 'edit the notebook source instead'])
 def test_refusal_becomes_a_do_not_retry_tool_result_with_optional_direction(note):
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     ap = Interventions(tools={'edit_file'}, mode='ask', control='directed', timeout=2)
     stop = ap.listen(); tc = {'id': 'call_edit', 'function': {'name': 'edit_file', 'arguments': {'path': 'a.py'}}}
     def refuse():
@@ -310,7 +310,7 @@ def test_refusal_becomes_a_do_not_retry_tool_result_with_optional_direction(note
 
 
 def test_control_levels_checkpoint_only_the_expected_tools():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     auto = Interventions(tools={'edit_file'}, mode='ask', control='autopilot')
     assert auto.request('search_code', {'query': 'x'})
     assert not auto.history[-1].edited
@@ -320,7 +320,7 @@ def test_control_levels_checkpoint_only_the_expected_tools():
 
 
 def test_run_until_write_bypasses_reads_then_stops_at_the_write():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     ap = Interventions(tools={'edit_file'}, mode='ask', control='directed')
     ap.set_run_policy('until_write')
     assert ap.request('search_code', {'query': 'x'})
@@ -331,7 +331,7 @@ def test_run_until_write_bypasses_reads_then_stops_at_the_write():
 
 
 def test_count_and_until_failure_policies_have_explicit_stop_conditions():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     ap = Interventions(control='directed')
     ap.set_run_policy('count', 2)
     assert ap.request('search_code', {'query': 'one'})
@@ -344,8 +344,8 @@ def test_count_and_until_failure_policies_have_explicit_stop_conditions():
 
 
 def test_approved_notebook_call_passes_only_activity_identity_metadata(tmp_path):
-    from leela.ai import Interventions
-    from leela.nb import Cell, Notebook
+    from leela.blocks.agent.ai import Interventions
+    from leela.blocks.nb.nb import Cell, Notebook
     from leela.workspace import Workspace
     p = tmp_path/'sample.ipynb'; Notebook([Cell(source='x = 1')]).save(p)
     ws = Workspace(roots=[tmp_path], approvals='auto'); a = ws.ai
@@ -362,7 +362,7 @@ def test_approved_notebook_call_passes_only_activity_identity_metadata(tmp_path)
 
 
 def test_new_agent_setup_keeps_file_and_notebook_access_inside_workspace(tmp_path):
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     from leela.workspace import Workspace
     file = tmp_path/'a.py'; file.write_text('x = 1\n')
     notebook = tmp_path/'a.ipynb'; Notebook([Cell(source='y = 2')]).save(notebook)
@@ -386,7 +386,7 @@ def test_activity_uses_the_backend_tool_call_id_across_approval_and_execution():
 
 
 def test_file_checkpoint_rolls_back_only_its_unchanged_output():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     host = MemHost({'/proj/a.py': 'before'})
     ap = Interventions(tools={'create_file'}, mode='auto', control='autopilot', host=host)
     decision = ap.request('create_file', {'path': '/proj/a.py', 'text': 'after'})
@@ -399,7 +399,7 @@ def test_file_checkpoint_rolls_back_only_its_unchanged_output():
 
 
 def test_queued_steering_is_consumed_exactly_once():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     ap = Interventions(control='guided')
     ap.queue_steer('inspect the existing component first')
     assert ap.state()['queued_steer'] == 'inspect the existing component first'
@@ -942,7 +942,7 @@ def test_usage_adds_up_across_models():
 def test_an_approval_exchange_is_written_into_the_notebook():
     """The request, the refusal and the reason land as cells beside the prompt that caused
     them, so reading the notebook top to bottom reads as what actually happened."""
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     from leela.workspace import Workspace
     ws = Workspace(roots=[])
     nb = Notebook([Cell(source='fix it', cell_type='prompt')])
@@ -965,7 +965,7 @@ def test_an_approval_exchange_is_written_into_the_notebook():
 
 
 def test_workspace_path_refusal_names_the_files_that_are_open(tmp_path):
-    from leela.ai import WorkspaceHost
+    from leela.blocks.agent.ai import WorkspaceHost
     from leela.workspace import Workspace
     p = tmp_path/'dialog.ipynb'
     p.write_text('{}')
@@ -976,7 +976,7 @@ def test_workspace_path_refusal_names_the_files_that_are_open(tmp_path):
 
 
 def test_workspace_agent_reaches_the_live_kernel_inspector():
-    from leela.ai import WorkspaceHost
+    from leela.blocks.agent.ai import WorkspaceHost
     from leela.workspace import Workspace
 
     class K:
@@ -1001,7 +1001,7 @@ def test_workspace_agent_reaches_the_live_kernel_inspector():
 
 def test_a_workspace_host_hides_what_the_workspace_cannot_do():
     "No kernel session bound yet means no run_python offered, not a run_python that always fails."
-    from leela.ai import WorkspaceHost
+    from leela.blocks.agent.ai import WorkspaceHost
     from leela.workspace import Workspace
     h = WorkspaceHost(Workspace(roots=[]))
     with pytest.raises(NotImplementedError): h.run_python('1')
@@ -1091,7 +1091,7 @@ def test_prompt_cells_and_agent_chat_have_separate_assistants_and_histories():
 def test_a_prompt_cell_fills_in_as_the_answer_arrives():
     """`ask_cell_stream` appends to `cell.reply` on the way past, so repainting the cell
     *is* the live view -- the advantage of having put the answer in the document."""
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     from leela.workspace import Workspace
     from tests.fakemodel import Step, install
     ws = Workspace(roots=[])
@@ -1107,7 +1107,7 @@ def test_a_prompt_cell_fills_in_as_the_answer_arrives():
 
 
 def test_a_streamed_cell_still_gets_its_activity_trail():
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     from leela.workspace import Workspace
     from tests.fakemodel import Step, install
     ws = Workspace(roots=[])

@@ -2,7 +2,8 @@
 
 import pytest
 
-from leela.core import conformance, providers
+from leela import conformance
+from leela.core import providers
 from leela.core.providers import ProviderError, build, providers_for, selected
 
 
@@ -149,7 +150,7 @@ def test_an_unknown_port_is_rejected():
 
 @pytest.mark.parametrize('port', ['memory', 'search', 'runtime'])
 def test_every_port_can_be_checked_from_the_command_line(port, capsys):
-    """`python -m leela.core.conformance <port>` is the first thing to run against an
+    """`python -m leela.conformance <port>` is the first thing to run against an
     alternate, so each port has to be buildable without a model or an index."""
     assert conformance._main([port]) == 0
     assert 'OK' in capsys.readouterr().out

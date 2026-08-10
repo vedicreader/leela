@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from leela.nb import CELL_TYPES, Cell, Notebook
+from leela.blocks.nb.nb import CELL_TYPES, Cell, Notebook
 
 
 def dialog():
@@ -252,7 +252,7 @@ def test_detached_cell_can_be_pasted_between_notebooks_repeatedly():
 
 
 def test_moving_a_cell_multiple_places_preserves_the_order_between():
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     nb = Notebook([Cell(source=x) for x in 'abcd'])
     assert nb.move(0, 2) == 2
     assert [c.source for c in nb.cells] == ['b', 'c', 'a', 'd']
@@ -281,7 +281,7 @@ def test_an_approval_cell_round_trips_as_plain_markdown(tmp_path):
     uses, and for the same reason: the file stays valid nbformat and legible in plain
     Jupyter, where the negotiation simply reads as prose.
     """
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     nb = Notebook([Cell(source='fix the bug', cell_type='prompt')])
     c = Cell(source='**🔐 approval needed — `edit_file`**', cell_type='markdown')
     c.approval = {'kind': 'approval', 'id': 'ab12', 'tool': 'edit_file', 'state': 'refused'}
@@ -309,7 +309,7 @@ def test_cell_context_policy_survives_the_notebook_round_trip(tmp_path):
 
 
 def test_ordinary_cells_carry_no_approval_metadata(tmp_path):
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     nb = Notebook([Cell(source='x = 1')])
     nb.save(p := tmp_path/'d.ipynb')
     assert Notebook.load(p)[0].approval is None

@@ -26,8 +26,8 @@ from dataclasses import dataclass, field
 from fastcore.all import L, ifnone
 from fastcore.nbio import read_nb, write_nb, new_nb
 
-from . import Dictable
-from .blocks.runtime.kernels import output_text
+from ... import Dictable
+from ..runtime.kernels import output_text
 
 __all__ = ['CELL_TYPES', 'Cell', 'Notebook', 'cell_id']
 
