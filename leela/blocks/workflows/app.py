@@ -62,6 +62,23 @@ def connect(app, ctx):
         try: return await off_loop(flows(repo).catalogue)
         except Exception as e: return fail(e)
 
+    @rt('/workflows/presets')
+    def workflows_presets():
+        """The builder's vocabulary: triggers and job presets, with their options.
+
+        Data rather than markup, so the panel renders a form from it and a preset gained in
+        `leela.wfbuild` appears in the browser without a line of frontend. It is also the
+        teaching surface -- the form is the list of decisions a workflow actually has.
+        """
+        from ...wfbuild import preset_rows
+        return preset_rows()
+
+    @rt('/workflows/spec')
+    def workflows_spec(repo: str = '', file: str = ''):
+        "The spec a built workflow came from, and whether the file has been edited since."
+        try: return flows(repo).spec(str(file)) or {'spec': None, 'stale': False}
+        except Exception as e: return fail(e)
+
     @rt('/workflows/docker')
     async def workflows_docker(repo: str = ''):
         "What dockeasy would build here -- the thing a docker job in the workflow builds."
@@ -97,6 +114,9 @@ def connect(app, ctx):
             elif op == 'cancel': out = await off_loop(wf.cancel, d.get('id') or 0)
             elif op == 'preview': out = {'yaml': await off_loop(wf.preview, d.get('workflow') or '')}
             elif op == 'add': out = await off_loop(wf.add, d.get('workflow') or '', d.get('file') or '')
+            elif op == 'build': out = {'yaml': await off_loop(wf.build, d.get('spec') or {})}
+            elif op == 'write_spec':
+                out = await off_loop(wf.write_spec, d.get('spec') or {}, d.get('file') or '')
             elif op == 'generate': out = {'yaml': await off_loop(wf.generate)}
             elif op == 'write': out = await off_loop(wf.write_generated)
             elif op == 'dockerfile': out = await off_loop(wf.write_dockerfile)

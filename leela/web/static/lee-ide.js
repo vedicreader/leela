@@ -4894,14 +4894,16 @@ function renderWorkflowsPanel() {
         : `<div class="lee-git-empty-state"><strong>No runs</strong><span>${st.token ? 'This workflow has not run yet.' : 'Connect a token to see run history.'}</span></div>`}</div>`
     : wfUI.view === 'add'
     ? wfPickRows(wfUI.catalogue)
+    : wfUI.view === 'build'
+    ? renderBuilder()
     : wfUI.view === 'yaml'
     ? `<pre class="lee-wf-yaml">${esc(wfUI.preview || 'Generate to preview the workflow gheasy would write from .gheasy/config.json.')}</pre>`
     : wf ? wfGraph(wf, wfUI.runJobs) : '<div class="lee-git-empty-state"><strong>No workflows</strong><span>This project has no .github/workflows yet.</span></div>';
   host.innerHTML = wfStatusNote(st) +
     `<header class="lee-sc-branch"><div><strong>${esc(st.repo || d.root.split('/').pop())}</strong><span>${d.workflows.length} workflow${d.workflows.length === 1 ? '' : 's'}${d.config ? ' · gheasy config' : ''}</span></div></header>` +
-    `<nav class="lee-git-nav" aria-label="Workflow views">${[['graph', 'Jobs'], ['add', 'Add'], ['runs', 'Runs'], ['yaml', 'Generated'], ['env', 'Environment']].map(([id, label]) =>
+    `<nav class="lee-git-nav" aria-label="Workflow views">${[['graph', 'Jobs'], ['add', 'Add'], ['build', 'Build'], ['runs', 'Runs'], ['env', 'Environment']].map(([id, label]) =>
       `<button data-wf-view="${id}" class="${wfUI.view === id ? 'active' : ''}">${label}</button>`).join('')}</nav>` +
-    (wfUI.view === 'add'
+    (wfUI.view === 'add' || wfUI.view === 'build'
       ? `<main class="lee-wf-body">${body}</main>`
       : wfUI.view === 'env'
       ? `<div class="lee-sc-actions"><button data-wf-env="refresh">refresh</button>` +
@@ -4911,21 +4913,25 @@ function renderWorkflowsPanel() {
         `<div class="lee-wf-envs">${wfEnvRows(wfUI.env?.entries)}</div>`
       : `<div class="lee-wf-tabs">${tabs}</div>` +
         `<div class="lee-sc-actions">${wf?.dispatchable ? '<button data-wf-op="dispatch">run workflow</button>' : ''}` +
-        `<button data-wf-op="open">open file</button><button data-wf-op="generate">generate from gheasy</button>` +
+        `<button data-wf-op="open">open file</button><button data-wf-op="edit">edit in builder</button>` +
+        `<button data-wf-op="generate">from gheasy config</button>` +
         `${d.config ? '<button data-wf-op="write">write gheasy.yml</button>' : ''}` +
         `<button data-wf-op="docker">Dockerfile…</button></div>` +
         `<main class="lee-wf-body">${body}</main>`);
   wireWorkflowsPanel(host, d, wf);
+  if (wfUI.view === 'build') wireBuilder(host);
 }
 function wireWorkflowsPanel(host, d, wf) {
   host.querySelectorAll('[data-wf-view]').forEach(b => b.onclick = () => {
     wfUI.view = b.dataset.wfView; renderWorkflowsPanel();
     if (wfUI.view === 'runs' && !wfUI.runs) loadWorkflowRuns();
     if (wfUI.view === 'add' && !wfUI.catalogue) loadWorkflowCatalogue();
+    if (wfUI.view === 'build' && !bldUI.vocab) loadBuilder(wfUI.open);
     if (wfUI.view === 'env' && !wfUI.env) loadWorkflowEnv();
   });
   host.querySelectorAll('[data-wf]').forEach(b => b.onclick = () => { wfUI.open = b.dataset.wf; wfUI.runJobs = null; renderWorkflowsPanel(); });
   host.querySelectorAll('[data-wf-op]').forEach(b => b.onclick = () => workflowOp(b.dataset.wfOp, wf));
+  host.querySelector('[data-wf-op="edit"]')?.addEventListener('click', () => { wfUI.view = 'build'; loadBuilder(wf?.file); });
   host.querySelectorAll('.lee-wf-pick').forEach(row => {
     const id = row.dataset.pick;
     row.querySelector('[data-pick-preview]').onclick = () => pickWorkflow('preview', id);
@@ -5013,6 +5019,7 @@ async function envOp(op, extra) {
 async function workflowOp(op, wf) {
   try {
     if (op === 'open') { if (wf) leeOpenFile(wf.path); return; }
+    if (op === 'edit') return;                       // wired separately: it changes view, not state
     if (op === 'docker') {
       const d = await api('/workflows/docker' + projectQuery());
       if (d.why) return status(d.why, 'err');
@@ -5037,8 +5044,159 @@ async function workflowOp(op, wf) {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 
+// -- the workflow builder ---------------------------------------------------------------
+// A form over gheasy's DSL. The vocabulary comes from the server as data, so a preset added
+// in leela/wfbuild.py appears here without a line of frontend -- and the form is the list of
+// decisions a workflow actually has, which is the part that is hard to learn from YAML.
+const bldUI = {vocab: null, spec: null, yaml: '', file: '', stale: false, timer: 0};
+function blankSpec() {
+  return {name: 'ci', file: 'ci.yml', on: {push: 'main', pull_request: 'main', workflow_dispatch: true},
+          jobs: [{preset: 'uv_test', needs: []}]};
+}
+function bldTrigger(t, on) {
+  const v = on[t.id];
+  const checked = t.kind === 'flag' ? !!v : (v !== undefined && v !== false && v !== '');
+  const field = t.kind === 'flag' ? '' :
+    `<input class="lee-input" data-trigger-value="${t.id}" value="${esc(checked ? String(v ?? t.default) : t.default)}" ` +
+    `placeholder="${esc(t.kind === 'cron' ? 'minute hour day month weekday' : 'main, release')}" ${checked ? '' : 'disabled'}>`;
+  return `<article class="lee-bld-trigger"><label><input type="checkbox" data-trigger="${t.id}" ${checked ? 'checked' : ''}>` +
+    `<strong>${esc(t.label)}</strong></label><small>${esc(t.doc)}</small>${field}</article>`;
+}
+function bldOption(o, job, i) {
+  const value = (job.options || {})[o.key] ?? o.default;
+  const field = o.type === 'flag'
+    ? `<input type="checkbox" data-opt="${o.key}" data-job="${i}" ${value ? 'checked' : ''}>`
+    : o.type === 'lines'
+    ? `<textarea class="lee-keyedit" rows="3" data-opt="${o.key}" data-job="${i}">${esc(value)}</textarea>`
+    : `<input class="lee-input" data-opt="${o.key}" data-job="${i}" value="${esc(value)}">`;
+  return `<label class="lee-bld-opt"><span>${esc(o.label)}</span>${field}${o.doc ? `<small>${esc(o.doc)}</small>` : ''}</label>`;
+}
+function bldJob(job, i, presets, spec) {
+  const preset = presets.find(p => p.id === job.preset) || presets[0];
+  const others = spec.jobs.map((j, n) => n === i ? null : (j.id || (presets.find(p => p.id === j.preset) || {}).job))
+                         .filter(Boolean);
+  const needs = (job.needs || []).join(', ');
+  return `<article class="lee-bld-job" data-job="${i}">` +
+    `<header><select data-preset="${i}">${presets.map(p => `<option value="${p.id}" ${p.id === job.preset ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>` +
+    `<button data-job-up="${i}" title="move earlier" ${i ? '' : 'disabled'}>↑</button>` +
+    `<button data-job-del="${i}" title="remove" aria-label="remove job">×</button></header>` +
+    `<small>${esc(preset.doc)}</small>` +
+    (others.length ? `<label class="lee-bld-opt"><span>waits for</span>` +
+      `<input class="lee-input" data-needs="${i}" value="${esc(needs)}" placeholder="${esc(others.join(', '))}"></label>` : '') +
+    preset.options.map(o => bldOption(o, job, i)).join('') + `</article>`;
+}
+function renderBuilder() {
+  const v = bldUI.vocab;
+  if (!v) return '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the presets</small></div>';
+  const spec = bldUI.spec || (bldUI.spec = blankSpec());
+  return `<div class="lee-bld">` +
+    `<div class="lee-bld-head"><label class="lee-bld-opt"><span>file</span><input class="lee-input" id="bldfile" value="${esc(spec.file || 'ci.yml')}"></label>` +
+    `<label class="lee-bld-opt"><span>name</span><input class="lee-input" id="bldname" value="${esc(spec.name || 'ci')}"></label></div>` +
+    `${bldUI.stale ? '<div class="lee-wf-note"><strong>The file has been edited</strong><span>Writing replaces those edits with what this form says.</span></div>' : ''}` +
+    `<section class="lee-bld-section"><header>when it runs</header>${v.triggers.map(t => bldTrigger(t, spec.on || {})).join('')}</section>` +
+    `<section class="lee-bld-section"><header>what it does<button id="bldaddjob">add job</button></header>` +
+    `${spec.jobs.map((j, i) => bldJob(j, i, v.presets, spec)).join('')}</section>` +
+    `<div class="lee-sc-actions"><button id="bldwrite">write ${esc(spec.file || 'ci.yml')}</button><button id="bldyaml">show YAML</button></div>` +
+    `${bldUI.yaml ? `<pre class="lee-wf-yaml">${esc(bldUI.yaml)}</pre>` : ''}</div>`;
+}
+function wireBuilder(host) {
+  const spec = bldUI.spec;
+  const touch = () => { renderWorkflowsPanel(); scheduleBuild(); };
+  host.querySelector('#bldfile')?.addEventListener('change', e => { spec.file = e.target.value.trim(); touch(); });
+  host.querySelector('#bldname')?.addEventListener('change', e => { spec.name = e.target.value.trim(); touch(); });
+  host.querySelectorAll('[data-trigger]').forEach(b => b.onchange = () => {
+    const id = b.dataset.trigger, t = bldUI.vocab.triggers.find(x => x.id === id);
+    spec.on = spec.on || {};
+    if (!b.checked) delete spec.on[id];
+    else spec.on[id] = t.kind === 'flag' ? true : t.default;
+    touch();
+  });
+  host.querySelectorAll('[data-trigger-value]').forEach(i => i.onchange = () => {
+    spec.on[i.dataset.triggerValue] = i.value.trim(); touch();
+  });
+  host.querySelector('#bldaddjob')?.addEventListener('click', () => { spec.jobs.push({preset: 'run', needs: []}); touch(); });
+  host.querySelectorAll('[data-preset]').forEach(sel => sel.onchange = () => {
+    const i = Number(sel.dataset.preset);
+    spec.jobs[i] = {preset: sel.value, needs: spec.jobs[i].needs || []};
+    touch();
+  });
+  host.querySelectorAll('[data-job-del]').forEach(b => b.onclick = () => { spec.jobs.splice(Number(b.dataset.jobDel), 1); touch(); });
+  host.querySelectorAll('[data-job-up]').forEach(b => b.onclick = () => {
+    const i = Number(b.dataset.jobUp); if (!i) return;
+    [spec.jobs[i - 1], spec.jobs[i]] = [spec.jobs[i], spec.jobs[i - 1]]; touch();
+  });
+  host.querySelectorAll('[data-needs]').forEach(i => i.onchange = () => {
+    spec.jobs[Number(i.dataset.needs)].needs = i.value.split(',').map(x => x.trim()).filter(Boolean);
+    touch();
+  });
+  host.querySelectorAll('[data-opt]').forEach(el => el.onchange = () => {
+    const job = spec.jobs[Number(el.dataset.job)];
+    job.options = job.options || {};
+    job.options[el.dataset.opt] = el.type === 'checkbox' ? el.checked : el.value;
+    scheduleBuild();
+  });
+  host.querySelector('#bldyaml')?.addEventListener('click', () => buildYaml(true));
+  host.querySelector('#bldwrite')?.addEventListener('click', async () => {
+    try {
+      const d = await post('/workflows/action', {op: 'write_spec', repo: projectRepo(), spec: bldUI.spec, file: bldUI.spec.file});
+      status(`wrote ${d.path}`, 'ok');
+      wfUI.data = {...wfUI.data, workflows: d.workflows, status: d.status};
+      wfUI.catalogue = null; bldUI.stale = false; wfUI.view = 'graph';
+      wfUI.open = bldUI.spec.file;
+      renderWorkflowsPanel();
+    } catch (e) { status(e.message || String(e), 'err'); }
+  });
+}
+function scheduleBuild() { clearTimeout(bldUI.timer); bldUI.timer = setTimeout(() => buildYaml(false), 350); }
+async function buildYaml(show) {
+  try {
+    const d = await post('/workflows/action', {op: 'build', repo: projectRepo(), spec: bldUI.spec});
+    if (show || bldUI.yaml) { bldUI.yaml = d.yaml; renderWorkflowsPanel(); }
+    else bldUI.yaml = '';
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function loadBuilder(file = '') {
+  if (!bldUI.vocab) { try { bldUI.vocab = await api('/workflows/presets'); } catch (e) { return status(e.message || String(e), 'err'); } }
+  if (file) {
+    try {
+      const d = await api('/workflows/spec' + projectQuery({file}));
+      if (d.spec) { bldUI.spec = d.spec; bldUI.stale = !!d.stale; }
+    } catch (e) {}
+  }
+  if (!bldUI.spec) bldUI.spec = blankSpec();
+  renderWorkflowsPanel();
+}
+
 // -- the release pipeline ------------------------------------------------------------
 const REL_MARK = {passed: '✓', failed: '✗', running: '•', skipped: '⤼', pending: '·'};
+// A failed step's traceback belongs to *someone*, and in a stack you own that is the whole
+// question. The server rewrote the path to the checkout in this workspace, so "open" lands
+// in the repository rather than in a copy under .venv that the next sync overwrites.
+function blameRow(b) {
+  if (!b || !b.package) return '';
+  const where = b.file ? `${b.package}/${b.file.split('/').slice(-1)[0]}:${b.line}` : b.package;
+  return `<div class="lee-blame"><strong>${esc(b.package)}</strong>` +
+    `<span>${esc(b.error || 'raised here')}</span>` +
+    `<code>${esc(where)}${b.fn ? ' in ' + esc(b.fn) : ''}</code>` +
+    `${b.checkout ? '<i>your checkout</i>' : '<i class="warn">installed copy</i>'}` +
+    `${b.open ? `<button data-blame-open="${esc(b.open)}" data-blame-line="${b.line}">open</button>` : ''}</div>`;
+}
+function wireBlame(host) {
+  host.querySelectorAll('[data-blame-open]').forEach(b => b.onclick = async () => {
+    try { await leeOpenFile(b.dataset.blameOpen); } catch (e) { return status(e.message || String(e), 'err'); }
+    // The line the traceback named, once the editor has actually mounted the file.
+    const line = Number(b.dataset.blameLine) || 0;
+    if (!line) return;
+    setTimeout(() => {
+      const view = lee.editors.get('file'); if (!view) return;
+      const doc = view.state.doc, at = doc.line(Math.max(1, Math.min(line, doc.lines)));
+      // `setCursor` deliberately does not scroll, so the move is dispatched with the
+      // scroll asked for -- landing on a line you cannot see is not landing on it.
+      view.dispatch({selection: {anchor: at.from}, scrollIntoView: true});
+      LeeCM.focus?.(view);
+    }, 350);
+  });
+}
 function relStepRow(s, d) {
   const busy = d.running && s.status !== 'running';
   return `<article class="lee-rel-step state-${s.status}" data-step="${esc(s.id)}">` +
@@ -5065,9 +5223,11 @@ function renderReleasesPanel() {
     `<button data-rel-top="terminal">terminal</button><button data-rel-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
     `<button data-rel-top="edit">edit steps</button>${d.configured ? '<button data-rel-top="defaults">defaults</button>' : ''}</div>` +
     `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the release terminal. Fix and retry, or skip it deliberately.</span></div>` : ''}` +
+    blameRow(d.blame) +
     `<div class="lee-rel-steps">${d.steps.map(s => relStepRow(s, d)).join('')}</div>` +
     `${d.needs.length ? `<div class="lee-rel-needs"><strong>needs</strong>${d.needs.map(k => `<i>${esc(k)}</i>`).join('')}<button data-rel-top="env">environment…</button></div>` : ''}`;
   wireReleasesPanel(host, d);
+  wireBlame(host);
   relPoll(d);
 }
 function wireReleasesPanel(host, d) {
@@ -5121,9 +5281,9 @@ async function releaseTop(op, d) {
 // -- deploy ---------------------------------------------------------------------------
 // The same pipeline as a release, with a target above it: a deploy that cannot say where it
 // is going is the one nobody presses.
-const depUI = {data: null, poll: 0};
+const depUI = {data: null, poll: 0, view: 'stages', infra: null, stack: null, zone: '', records: null};
 function depTargetCard(t) {
-  const files = [['deploy.py', t.script], ['Dockerfile', t.dockerfile],
+  const files = [['deploy.py', t.script], ['setup.py', t.setup], ['Dockerfile', t.dockerfile],
                  ['docker-compose.yml', t.compose], ['Caddyfile', t.caddyfile]];
   return `<header class="lee-sc-branch"><div><strong>${esc(t.domain || t.app)}</strong>` +
     `<span>${esc(t.server || 'no server named')} · ${esc(t.user)}@:${esc(t.port)}</span></div></header>` +
@@ -5131,12 +5291,92 @@ function depTargetCard(t) {
     (t.missing.length ? `<div class="lee-wf-note"><strong>${t.missing.length} value${t.missing.length === 1 ? '' : 's'} not set</strong>` +
       `<span>${t.missing.map(esc).join(', ')}</span><code>set them in Workflows → Environment</code></div>` : '');
 }
+
+function depInfraRows() {
+  const d = depUI.infra;
+  if (!d) return '<div class="lee-git-loading"><span></span><span></span><span></span><small>asking Hetzner and Cloudflare</small></div>';
+  const st = d.status || {};
+  const half = (title, part, render) => `<section class="lee-inf-group"><header>${title}</header>` +
+    (part.error ? `<div class="lee-wf-note"><span>${esc(part.error)}</span></div>`
+                : (part.rows.length ? part.rows.map(render).join('')
+                                    : '<div class="lee-dim lee-git-empty">none</div>')) + '</section>';
+  return `<div class="lee-inf-status">${['vpseasy', 'cfeasy'].map(k => `<i class="${st[k] ? 'has' : ''}">${k}</i>`).join('')}` +
+    `<i class="${st.hcloud_token ? 'has' : ''}">HCLOUD_TOKEN</i><i class="${st.cf_token ? 'has' : ''}">CLOUDFLARE_API_TOKEN</i></div>` +
+    half('servers', d.servers || {rows: [], error: ''}, s =>
+      `<article class="lee-inf-row" data-server="${esc(s.name)}"><div><strong>${esc(s.name)}</strong><small>${esc(s.ip || '')} · ${esc(s.status || '')}</small></div>` +
+      `<button data-server-del title="delete this server">delete</button></article>`) +
+    half('tunnels', d.tunnels || {rows: [], error: ''}, t =>
+      `<article class="lee-inf-row" data-tunnel="${esc(t.id)}"><div><strong>${esc(t.name)}</strong><small>${esc(t.status || '')} · ${t.connections} connection${t.connections === 1 ? '' : 's'}</small></div>` +
+      `<button data-tunnel-del title="delete this tunnel">delete</button></article>`) +
+    half('zones', d.zones || {rows: [], error: ''}, z =>
+      `<article class="lee-inf-row" data-zone="${esc(z.name)}"><div><strong>${esc(z.name)}</strong><small>${esc(z.status || '')}</small></div>` +
+      `<button data-zone-dns>records</button></article>`) +
+    (depUI.records ? `<section class="lee-inf-group"><header>${esc(depUI.zone)}</header>` +
+      depUI.records.map(r => `<article class="lee-inf-row"><div><strong>${esc(r.name)}</strong>` +
+        `<small>${esc(r.type)} · ${esc(r.content)}${r.proxied ? ' · proxied' : ''}</small></div>` +
+        `${r.tunnel ? '<i class="lee-inf-tag">tunnel</i>' : ''}</article>`).join('') + '</section>' : '');
+}
+function depStackRows() {
+  const d = depUI.stack;
+  if (!d) return '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the stack</small></div>';
+  return `<div class="lee-inf-status"><i>${d.checkouts.length} checkouts open</i></div>` +
+    `<div class="lee-pkgs">${d.packages.map(p => `<article class="lee-pkg${p.shadowed ? ' shadowed' : ''}">` +
+      `<div><strong>${esc(p.name)}</strong><small>${p.installed ? esc(p.version || 'no version') + ' · ' + esc(p.source) : 'not installed'}</small>` +
+      `${p.shadowed ? '<i class="warn">edits in your checkout are not what runs — reinstall it editable</i>' : ''}</div>` +
+      `${p.checkout ? `<button data-pkg-open="${esc(p.checkout)}">open</button>` : ''}</article>`).join('')}</div>`;
+}
+async function loadInfra(force = false) {
+  if (depUI.infra && !force) return renderDeployPanel();
+  try { depUI.infra = await api('/infra'); } catch (e) { status(e.message || String(e), 'err'); return; }
+  renderDeployPanel();
+}
+async function loadStack() {
+  try { depUI.stack = await api('/stack' + projectQuery()); } catch (e) { status(e.message || String(e), 'err'); return; }
+  renderDeployPanel();
+}
+async function infraOp(op, extra = {}) {
+  try {
+    depUI.infra = await post('/infra/action', {op, ...extra});
+    status(`${op.replace('_', ' ')} done`, 'ok');
+    renderDeployPanel();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+function wireInfra(host) {
+  host.querySelectorAll('[data-server-del]').forEach(b => b.onclick = async () => {
+    const name = b.closest('[data-server]').dataset.server;
+    if (await confirmDialog('delete server', `Delete ${name}? The machine and everything on it goes.`, 'delete'))
+      infraOp('delete_server', {name});
+  });
+  host.querySelectorAll('[data-tunnel-del]').forEach(b => b.onclick = async () => {
+    const row = b.closest('[data-tunnel]');
+    if (await confirmDialog('delete tunnel', `Delete this tunnel? Anything routed through it stops answering.`, 'delete'))
+      infraOp('delete_tunnel', {id: row.dataset.tunnel});
+  });
+  host.querySelectorAll('[data-zone-dns]').forEach(b => b.onclick = async () => {
+    const zone = b.closest('[data-zone]').dataset.zone;
+    try { depUI.zone = zone; depUI.records = (await api('/infra/records?zone=' + encodeURIComponent(zone))).records; }
+    catch (e) { return status(e.message || String(e), 'err'); }
+    renderDeployPanel();
+  });
+  host.querySelectorAll('[data-pkg-open]').forEach(b => b.onclick = () => leeOpenFile(b.dataset.pkgOpen));
+}
 function renderDeployPanel() {
   const host = $('#deploypanel'); if (!host) return;
   const d = depUI.data;
   if (!d) { host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the deploy plan</small></div>'; return; }
   const t = d.target;
-  host.innerHTML = depTargetCard(t) +
+  const nav = `<nav class="lee-git-nav" aria-label="Deploy views">${[['stages', 'Stages'], ['infra', 'Servers'], ['stack', 'Stack']].map(([id, label]) =>
+    `<button data-dep-view="${id}" class="${depUI.view === id ? 'active' : ''}">${label}</button>`).join('')}</nav>`;
+  if (depUI.view !== 'stages') {
+    host.innerHTML = depTargetCard(t) + nav +
+      `<main class="lee-wf-body">${depUI.view === 'infra' ? depInfraRows() : depStackRows()}</main>`;
+    host.querySelectorAll('[data-dep-view]').forEach(b => b.onclick = () => { depUI.view = b.dataset.depView; renderDeployPanel(); });
+    wireInfra(host);
+    if (depUI.view === 'infra' && !depUI.infra) loadInfra();
+    if (depUI.view === 'stack' && !depUI.stack) loadStack();
+    return;
+  }
+  host.innerHTML = depTargetCard(t) + nav +
     `<div class="lee-sc-actions">` +
     `${t.script ? (d.running ? '<button data-dep-top="stop" class="warn">stop</button>'
                              : `<button data-dep-top="start">${d.failed ? 'continue' : 'deploy'}</button>`)
@@ -5146,8 +5386,11 @@ function renderDeployPanel() {
     `<button data-dep-top="edit">edit steps</button>` +
     `${t.script ? '<button data-dep-top="open">open deploy.py</button>' : ''}</div>` +
     `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the deploy terminal. The stages are idempotent — fix and continue.</span></div>` : ''}` +
+    blameRow(d.blame) +
     `<div class="lee-rel-steps">${d.steps.map(s => relStepRow(s, d)).join('')}</div>`;
+  host.querySelectorAll('[data-dep-view]').forEach(b => b.onclick = () => { depUI.view = b.dataset.depView; renderDeployPanel(); });
   host.querySelectorAll('[data-dep-top]').forEach(b => b.onclick = () => deployTop(b.dataset.depTop, d));
+  wireBlame(host);
   host.querySelectorAll('.lee-rel-step').forEach(row => {
     const step = row.dataset.step;
     row.querySelectorAll('[data-rel]').forEach(b => b.onclick = () => deployOp(b.dataset.rel, {step}));
@@ -5179,10 +5422,15 @@ async function deployTop(op, d) {
     if (!domain) return;
     const sub = await inputDialog('write deploy.py', 'Subdomain, or empty for the apex', '', 'app');
     if (sub === null) return;
-    const r = await post('/deploys/action', {op: 'scaffold', repo: projectRepo(), domain, subdomain: sub}).catch(e => { status(e.message || String(e), 'err'); });
+    const second = await inputDialog('write deploy.py', 'A second hostname on the same container, or empty',
+                                     '', 'the apex, as lego serves it');
+    if (second === null) return;
+    const r = await post('/deploys/action', {op: 'scaffold', repo: projectRepo(), domain,
+                                             subdomain: sub, second_host: second})
+                    .catch(e => { status(e.message || String(e), 'err'); });
     if (!r) return;
     depUI.data = r.state;
-    status(`wrote ${(r.written || []).length} files`, 'ok');
+    status(`wrote ${(r.written || []).map(p => p.split('/').pop()).join(', ')}`, 'ok');
     return renderDeployPanel();
   }
   if (op === 'start') {

@@ -224,9 +224,9 @@ def test_workflows_are_a_panel_with_a_job_graph_in_it():
     assert "api('/workflows'" in block and "post('/workflows/action'" in block
     assert "api('/workflows/runs'" in block and "api('/workflows/env'" in block
     assert 'function wfGraph' in block and 'lee-wf-level' in block and 'lee-wf-edge' in block
-    for view in ('Jobs', 'Runs', 'Generated', 'Environment'):
+    for view in ('Jobs', 'Add', 'Build', 'Runs', 'Environment'):
         assert view in block
-    for op in ('run workflow', 'generate from gheasy', 'Dockerfile'):
+    for op in ('run workflow', 'edit in builder', 'from gheasy config', 'Dockerfile'):
         assert op in block
     assert '.lee-wf-job' in CSS and '.lee-wf-graph' in CSS and '.lee-left.left-workflows' in CSS
 
@@ -244,6 +244,42 @@ def test_the_picker_offers_a_list_and_says_why_each_one_is_recommended():
     assert "api('/workflows/catalogue'" in JS and "op: op === 'add' ? 'add' : 'preview'" in JS
     assert "['add', 'Add']" in JS, 'the picker is one of the panel views'
     assert '.lee-wf-pick.recommended' in CSS and '.lee-wf-detect' in CSS
+
+
+def test_the_builder_is_a_form_rendered_from_the_servers_vocabulary():
+    """The answer to "I am not good at Actions": choose, do not type.
+
+    The form is generated from `/workflows/presets`, so the set of decisions a workflow has
+    is defined once in Python. Hard-coding any of it here in JS would be the bug.
+    """
+    block = JS[JS.index('const bldUI ='):JS.index('// -- the release pipeline')]
+    assert "api('/workflows/presets')" in block, 'the vocabulary is fetched, not hard-coded'
+    assert 'bldTrigger' in block and 'bldOption' in block and 'bldJob' in block
+    assert "o.type === 'flag'" in block and "o.type === 'lines'" in block
+    assert "op: 'build'" in block and "op: 'write_spec'" in block
+    assert 'scheduleBuild' in block, 'the YAML follows the form as it changes'
+    assert 'data-needs' in block, 'jobs wire to each other by needs'
+    assert 'The file has been edited' in block, 'a hand edit is not overwritten silently'
+    assert '.lee-bld-job' in CSS and '.lee-bld-trigger' in CSS
+
+
+def test_a_failure_names_the_package_and_opens_your_copy_of_it():
+    block = JS[JS.index('function blameRow'):JS.index('function relStepRow')]
+    assert 'your checkout' in block and 'installed copy' in block
+    assert 'data-blame-open' in block and 'leeOpenFile' in JS
+    assert 'scrollIntoView: true' in JS, 'landing on a line you cannot see is not landing on it'
+    assert '.lee-blame' in CSS
+
+
+def test_the_deploy_panel_shows_the_servers_and_tunnels_it_deploys_onto():
+    block = JS[JS.index('function depInfraRows'):JS.index('function renderDeployPanel')]
+    assert "api('/infra')" in block and "api('/infra/records?zone=" in block and "api('/stack'" in block
+    for word in ('servers', 'tunnels', 'zones'):
+        assert word in block
+    assert 'data-server-del' in block and 'data-tunnel-del' in block
+    assert 'delete this server' in block and 'confirmDialog' in JS
+    assert 'edits in your checkout are not what runs' in block, 'the shadowed package warning'
+    assert '.lee-inf-row' in CSS and '.lee-pkg.shadowed' in CSS
 
 
 def test_authenticating_opens_the_real_gh_login():

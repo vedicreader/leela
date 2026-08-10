@@ -298,6 +298,20 @@ class Pipeline:
         if ok and self._auto and (nxt := self._after(step)) is not None:
             await self._run(nxt)
 
+    def blame(self, checkouts=()):
+        """Which of your packages raised in the last failure, and where to open it.
+
+        A pipeline is where the family's code actually runs, so it is where a traceback
+        actually appears -- and the useful question about one is never "what does it say"
+        but *whose code is that*. `leela.packages` answers it and rewrites the path to the
+        checkout this workspace has open, so the fix lands in the repository rather than in
+        a copy under `.venv`.
+        """
+        from .packages import blame as attribute
+        if not any((self.results.get(s.id) or {}).get('status') == 'failed' for s in self.steps):
+            return {}
+        return attribute(self.tail(400), checkouts=checkouts)
+
     def tail(self, lines=80):
         """The end of the release transcript as plain text, for a summary or for the agent.
 

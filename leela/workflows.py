@@ -405,6 +405,49 @@ class Workflows:
             .step('Deploy').run('python deploy.py deploy').end_job())
         return wfb.build()
 
+    # -- building one by hand --------------------------------------------------
+    def build(self, spec):
+        "A spec from the builder as YAML, composed entirely with gheasy's DSL."
+        _gheasy()
+        from .wfbuild import compose
+        cfg = self.config() or {}
+        return compose(spec, schema=self.schema(), app=str(cfg.get('app') or self.root.name))
+
+    def write_spec(self, spec, file=''):
+        """Write a built workflow, and keep the spec beside it.
+
+        The spec is saved because reading YAML back into one is lossy: someone edits the
+        file by hand and a reopened builder would either lose that edit or refuse to open.
+        Keeping it means the builder reopens what you built, and the panel can say when the
+        file has moved on from it.
+        """
+        _gheasy()
+        from .wfbuild import save_spec
+        name = str(file or spec.get('file') or f"{spec.get('name') or 'ci'}.yml")
+        if '/' in name or not name.endswith(('.yml', '.yaml')):
+            raise WorkflowError(f'not a workflow file name: {name}')
+        text = self.build(spec)
+        path = self.dir/name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding='utf-8')
+        save_spec(self.root, name, {**spec, 'file': name})
+        return {'path': str(path), 'file': name}
+
+    def spec(self, file):
+        """The spec a workflow was built from, plus whether the file still matches it.
+
+        `stale` is the honest half: a hand edit is not something to overwrite silently, so
+        the panel is told and can offer to keep or to replace.
+        """
+        from .wfbuild import load_spec
+        spec = load_spec(self.root, file)
+        if spec is None: return None
+        try: current = (self.dir/file).read_text(encoding='utf-8')
+        except OSError: current = ''
+        try: stale = bool(current) and current.strip() != self.build(spec).strip()
+        except WorkflowError: stale = False
+        return {'spec': spec, 'stale': stale}
+
     def preview(self, choice):
         "The YAML a catalogue entry would write, without writing it."
         _gheasy()

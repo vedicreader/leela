@@ -111,6 +111,9 @@ GET,POST /git/review
 GET,POST /git/review/file
 GET,POST /history/operations
 GET,POST /history/undo
+GET,POST /infra
+GET,POST /infra/action
+GET,POST /infra/records
 GET,POST /inspect
 GET,POST /kernel/cwd
 GET,POST /kernel/info
@@ -173,6 +176,7 @@ GET,POST /settings
 GET,POST /settings/reset
 GET,POST /settings/save
 GET,POST /similar
+GET,POST /stack
 GET,POST /tab/buffer
 GET,POST /tab/close
 GET,POST /tab/disk
@@ -199,7 +203,9 @@ GET,POST /workflows/docker
 GET,POST /workflows/env
 GET,POST /workflows/env/action
 GET,POST /workflows/jobs
+GET,POST /workflows/presets
 GET,POST /workflows/runs
+GET,POST /workflows/spec
 GET,POST /workspace/info
 Mount /leestatic
 WebSocketRoute /pipeline/ws

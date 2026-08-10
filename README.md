@@ -266,6 +266,14 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   The VPS entry is lego's deploy workflow with its key list read rather than written down:
   gheasy's `env_schema` becomes the `env:` block, secrets and variables sorted by the same
   rule that decides where a value is pushed.
+- **A builder for people who are not good at Actions.** *Build* is a form: checkboxes for
+  when it runs, a job per card, each job's options with a sentence saying what they do, and
+  `waits for` to wire one job to another. The YAML updates as you change it and is written
+  only when you say so. Every job is a gheasy preset or its DSL, so the file is the one
+  `gheasy` would have produced — and the vocabulary is served from `leela/wfbuild.py` as
+  data, so a preset gained there appears in the form without a line of frontend. The spec is
+  kept beside the file it produced, so reopening the builder reopens what *you built*; if
+  the YAML has been edited by hand since, the panel says so before offering to replace it.
 - **`gh auth login`, in a terminal.** Authenticating is a conversation — which host, open a
   browser, paste a one-time code — so the button opens the real thing in the dock rather
   than a form pretending to be one. It appears when the CLI is installed and not logged in,
@@ -293,7 +301,27 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   the server, cfeasy's `CF().setup_tunnel` for the tunnel and its DNS — together with the
   gheasy schema those keys live in and the deploy workflow generated from it. It is a
   starting point to edit, generated from the same libraries it imports, so there is one way
-  these deploys work rather than two.
+  these deploys work rather than two. Both halves are written: `setup.py` — the schema, LFS,
+  `.env.example`, the workflow, the secrets and the deploy key, run once by you — and
+  `deploy.py`, which CI runs on every push, with the compose stack, the tunnel, an optional
+  second hostname on the same container, the rsync include list, `status` and a guarded
+  `nuke`.
+- **The servers and tunnels it landed on.** The Deploy panel's *Servers* view lists what
+  Hetzner and Cloudflare actually have — servers with their IP and state, tunnels with their
+  connection count, zones and their DNS records with the tunnel-backed ones marked, which is
+  where the answer lives when a host serves the wrong thing. It is vpseasy's `Hetzner` and
+  cfeasy's `CF`, with the token taken from dockeasy's store and put back afterwards rather
+  than left in the environment. Nothing here is bulk: the two deletions each name one thing,
+  and there is no "remove everything unused" button, because deciding what is unused is the
+  judgement that goes wrong on infrastructure someone is serving from.
+- **Which of your packages just raised.** When a release or a deploy fails, the panel names
+  the deepest frame belonging to one of your packages — gheasy, dockeasy, vpseasy, cfeasy,
+  the app — with the exception line and an **open** button. The path is rewritten to the
+  checkout this workspace has open, so the fix lands in the repository rather than in a copy
+  under `.venv` that the next sync overwrites. The *Stack* view is the same knowledge
+  standing still: every package, its version, whether it runs from a checkout or from
+  site-packages, and a warning on any package you have open here but are importing from a
+  wheel — where an edit does nothing at all until you reinstall it.
 - **The values they need, where dockeasy already keeps them.** `GITHUB_TOKEN` and the twine
   credentials are read and written through dockeasy's `secret_set`/`env_get`: the OS
   keychain, a `0600` file under `~/.config/fastops`, and `os.environ` first — so a token set
@@ -426,6 +454,9 @@ leela/
   git.py          one repository, as records rather than porcelain text
   repos.py        every repository in the workspace, and one operation across all of them
   workflows.py    GitHub Actions read into jobs and edges; the rest is gheasy's
+  wfbuild.py      the workflow builder: a spec, and gheasy's DSL applied to it
+  infra.py        servers, tunnels and DNS, through vpseasy and cfeasy
+  packages.py     which of your packages is running, and which one just raised
   pipelines.py    a named sequence of commands on a pty: the runner both panels share
   releases.py     the release pipeline: nbdev's commands, one step at a time
   deploys.py      the deploy pipeline, and the first deploy.py for a project with none

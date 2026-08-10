@@ -345,6 +345,54 @@ def test_an_unknown_deploy_action_is_refused(project_client):
     assert r.status_code == 400 and 'unknown deploy action' in r.json()['error']
 
 
+def test_the_builder_vocabulary_is_served_as_data(client):
+    "The form is rendered from this, so a preset added in Python needs no frontend change."
+    d = client.get('/workflows/presets').json()
+    ids = {p['id'] for p in d['presets']}
+    assert {'uv_test', 'uv_lint', 'uv_pypi', 'deploy', 'run'} <= ids
+    assert {t['id'] for t in d['triggers']} >= {'push', 'pull_request', 'workflow_dispatch'}
+
+
+def test_a_built_workflow_round_trips_through_its_spec(project_client):
+    client, root = project_client
+    spec = {'name': 'built', 'file': 'built.yml', 'on': {'push': 'main'},
+            'jobs': [{'preset': 'uv_lint'}, {'preset': 'uv_test', 'needs': ['lint']}]}
+    preview = client.post('/workflows/action', json={'op': 'build', 'spec': spec}).json()
+    assert 'lint:' in preview['yaml'] and not (root/'.github'/'workflows'/'built.yml').exists()
+
+    written = client.post('/workflows/action', json={'op': 'write_spec', 'spec': spec}).json()
+    assert written['file'] == 'built.yml' and (root/'.github'/'workflows'/'built.yml').exists()
+    back = client.get('/workflows/spec', params={'file': 'built.yml'}).json()
+    assert back['spec']['jobs'] == spec['jobs'] and not back['stale']
+
+    (root/'.github'/'workflows'/'built.yml').write_text('name: edited by hand\n')
+    assert client.get('/workflows/spec', params={'file': 'built.yml'}).json()['stale'], \
+        'a hand edit is not something to overwrite silently'
+
+
+def test_the_stack_view_reports_the_family(project_client):
+    client, _ = project_client
+    d = client.get('/stack').json()
+    names = {p['name'] for p in d['packages']}
+    assert {'gheasy', 'dockeasy', 'vpseasy', 'cfeasy'} <= names
+    assert all({'installed', 'version', 'source', 'shadowed'} <= set(p) for p in d['packages'])
+
+
+def test_infrastructure_reports_each_half_separately(project_client):
+    "No token in a test environment, so this is the shape of the answer, not the answer."
+    client, _ = project_client
+    d = client.get('/infra').json()
+    assert set(d) >= {'status', 'servers', 'tunnels', 'zones'}
+    for half in ('servers', 'tunnels', 'zones'):
+        assert 'rows' in d[half] and 'error' in d[half]
+
+
+def test_an_unknown_infrastructure_action_is_refused(project_client):
+    client, _ = project_client
+    r = client.post('/infra/action', json={'op': 'delete everything'})
+    assert r.status_code == 400 and 'unknown infrastructure action' in r.json()['error']
+
+
 def test_these_panels_say_to_open_a_folder_rather_than_failing_obscurely(client):
     for path in ('/workflows', '/releases', '/deploys'):
         r = client.get(path)

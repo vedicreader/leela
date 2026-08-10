@@ -28,7 +28,7 @@ from ...deploys import Deploy
 from ...envs import EnvStore
 from ...pipelines import PipelineError
 from ...releases import Release
-from ...repos import repo_for
+from ...repos import RepoSet, repo_for
 
 __all__ = ['CAPS', 'connect']
 
@@ -59,23 +59,39 @@ def connect(app, ctx):
         finishes. The state it returns says which step that is, and the terminal says the
         rest -- a deploy that took four minutes must not be a four-minute request.
         """
-        op = str(d.get('op') or '')
-        p = pipeline(kind, d.get('repo') or '')
-        if op == 'start': return await p.start(d.get('step') or '', bool(d.get('auto', True)))
-        if op == 'step': return await p.start(d.get('step') or '', False)
-        if op == 'stop': return p.stop()
-        if op == 'skip': return p.skip(d.get('step') or '')
-        if op == 'reset': return p.reset()
-        if op == 'save': return p.save(d.get('steps') or ())
-        if op == 'reset_plan': return p.reset_plan()
+        op, target = str(d.get('op') or ''), d.get('repo') or ''
+        p = pipeline(kind, target)
         if op == 'scaffold' and kind == 'deploy':
-            return await off_loop(p.scaffold, d.get('domain') or '', d.get('subdomain') or '',
-                                  d.get('app') or '', bool(d.get('force')))
-        raise PipelineError(f'unknown {kind} action: {op}')
+            out = await off_loop(p.scaffold, d.get('domain') or '', d.get('subdomain') or '',
+                                 d.get('app') or '', bool(d.get('force')), d.get('second_host') or '')
+            return out | {'state': state(kind, target)}
+        if op == 'start': await p.start(d.get('step') or '', bool(d.get('auto', True)))
+        elif op == 'step': await p.start(d.get('step') or '', False)
+        elif op == 'stop': p.stop()
+        elif op == 'skip': p.skip(d.get('step') or '')
+        elif op == 'reset': p.reset()
+        elif op == 'save': p.save(d.get('steps') or ())
+        elif op == 'reset_plan': p.reset_plan()
+        else: raise PipelineError(f'unknown {kind} action: {op}')
+        return state(kind, target)
+
+    def state(kind, target):
+        """The pipeline's state, and on a failure, which package raised.
+
+        Attribution is attached here rather than computed by the panel because it needs the
+        workspace's checkouts to rewrite a `site-packages` path to the repository you can
+        actually fix, and the workspace is what this block has.
+        """
+        p = pipeline(kind, target)
+        out = p.state()
+        if out.get('failed'):
+            try: out['blame'] = p.blame([str(r) for r in RepoSet(ctx.fs.roots).paths()])
+            except Exception: out['blame'] = {}
+        return out
 
     @rt('/releases')
     def releases_info(repo: str = ''):
-        try: return pipeline('release', repo).state()
+        try: return state('release', repo)
         except Exception as e: return fail(e)
 
     @rt('/releases/action')
@@ -91,7 +107,7 @@ def connect(app, ctx):
 
     @rt('/deploys')
     def deploys_info(repo: str = ''):
-        try: return pipeline('deploy', repo).state()
+        try: return state('deploy', repo)
         except Exception as e: return fail(e)
 
     @rt('/deploys/action')

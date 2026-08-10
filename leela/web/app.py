@@ -38,6 +38,7 @@ from ..blocks import runs as runs_block
 from ..blocks import runtime as runtime_block
 from ..blocks import search as search_block
 from ..blocks import settings as settings_block
+from ..blocks import stack as stack_block
 from ..blocks import term as term_block
 from ..blocks import tabs as tabs_block
 from ..blocks import vars as vars_block
@@ -80,7 +81,7 @@ __all__ = ['ide_app', 'serve_ide']
 # the extraction order and what remains.
 BLOCKS = [keys_block, settings_block, search_block, memory_block,
           research_block, term_block, runs_block, workspace_block, git_block,
-          workflows_block, pipelines_block,
+          workflows_block, pipelines_block, stack_block,
           fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block]
 
 
