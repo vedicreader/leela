@@ -129,8 +129,8 @@ uv run python -m tests.test_route_inventory     # regenerate, then commit the di
 
 ## Extraction status
 
-Blocks are moved out of `ide_app` a group at a time. What has moved — 15 blocks, ~118
-routes:
+Blocks are moved out of `ide_app` a group at a time. What has moved — 15 blocks, 93 of the 181
+registered routes:
 
 | block | routes | caps |
 |---|---|---|
@@ -150,7 +150,12 @@ routes:
 | `tabs` | `/tab/*` | `fs`, `pool`, `tab`, `docs` |
 | `editor` | `/editor/{format,packages}` | `fs`, `pool` |
 
-`leela/web/app.py` is down from 3,539 lines to 2,466.
+`leela/web/app.py` is down from 3,539 lines to 2,466, and serves 88 routes; the blocks
+serve the other 93. To check which module is actually behind a path:
+
+```sh
+uv run python -m tests.test_route_owners
+```
 
 Still closures inside `ide_app`, in the order they are planned to move: `nb` (14 routes),
 `debug` (10), `agent` (45), plus `exec`, `run`, `history`, `diff`, `lint`, `markdown`,
