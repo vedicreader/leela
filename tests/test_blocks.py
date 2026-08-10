@@ -393,6 +393,40 @@ def test_an_unknown_infrastructure_action_is_refused(project_client):
     assert r.status_code == 400 and 'unknown infrastructure action' in r.json()['error']
 
 
+def test_blame_answers_in_cells_for_a_notebook_and_lines_for_a_file(project_client):
+    """One route, two shapes, because a notebook blamed as text answers the wrong question.
+
+    `cells=false` is the way back to the raw file lines, which is what the modal falls back
+    to when a notebook is in a shape the cell mapping cannot read.
+    """
+    import json
+    import subprocess
+    client, root = project_client
+    nb = {'cells': [{'cell_type': 'code', 'id': 'c1', 'metadata': {}, 'execution_count': None,
+                     'outputs': [], 'source': ['x = 1\n', 'y = 2\n']}],
+          'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}
+    (root/'nb.ipynb').write_text(json.dumps(nb, indent=1) + '\n')
+    for args in (['add', '.'], ['-c', 'user.email=t@l', '-c', 'user.name=t', 'commit', '-m', 'nb']):
+        subprocess.run(['git', *args], cwd=root, check=True, capture_output=True)
+
+    d = client.get('/git/blame', params={'path': 'nb.ipynb'}).json()
+    assert d['notebook'] and len(d['cells']) == 1
+    assert [l['text'] for l in d['cells'][0]['lines']] == ['x = 1', 'y = 2']
+
+    raw = client.get('/git/blame', params={'path': 'nb.ipynb', 'cells': 'false'}).json()
+    assert not raw['notebook'] and raw['lines'], 'the JSON lines are still reachable'
+    assert any('"source"' in l['text'] for l in raw['lines'])
+
+    py = client.get('/git/blame', params={'path': '.github/workflows/ci.yml'}).json()
+    assert not py['notebook'] and py['cells'] == []
+
+
+def test_blame_still_refuses_a_path_outside_the_repository(project_client):
+    client, _ = project_client
+    r = client.get('/git/blame', params={'path': '../../etc/passwd'})
+    assert r.status_code == 400 and 'invalid repository path' in r.json()['error']
+
+
 def test_the_drive_panel_offers_one_call_per_package(project_client):
     "The alternative to the deploy script: same runner, one library call per step."
     client, _ = project_client

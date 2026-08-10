@@ -300,6 +300,27 @@ def test_the_deploy_panel_shows_where_it_goes_before_it_goes_there():
     assert '.lee-dep-files i.has' in CSS and '.lee-left.left-deploys' in CSS
 
 
+def test_blame_is_reachable_from_anywhere_and_groups_a_notebook_into_cells():
+    """Two separate things it needs to be useful.
+
+    Reach: it was only ever on a changed-file row, so a clean file -- almost every file --
+    had no way in at all. It is an action now, which means a chord, the palette, and the
+    four context menus that name it.
+
+    Shape: a notebook blamed as text is a list of `"source": [`, so the cell view shows the
+    decoded source with per-line attribution inside a per-cell summary.
+    """
+    block = JS[JS.index('function blameRelative'):JS.index('async function showGitBlame')]
+    assert 'function blameSelectionRange' in block, 'a text file blames what you selected'
+    assert 'function blameCells' in block and 'lee-blame-bar' in block
+    assert 'blameHue' in block, 'a cell made of three commits reads as three bands'
+    assert 'git_blame:' in JS and 'function leeBlame' in JS, 'it is a dispatchable action'
+    assert "Key('git_blame'" in read('leela/keys.py'), 'so it has a chord and a palette entry'
+    assert read('leela/menus.py').count("S('git_blame')") >= 4, 'file, editor, cell and tab'
+    assert 'blame the whole file' in JS, 'the range answer is one button from the whole one'
+    assert '.lee-blame-cell' in CSS and '.lee-blame-legend' in CSS
+
+
 def test_the_drive_panel_shows_the_call_it_is_about_to_make():
     """A button you cannot read is not a diagnostic.
 

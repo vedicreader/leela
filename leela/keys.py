@@ -170,6 +170,9 @@ DEFAULTS = L(
     Key('save',             'mod+s',         'global', 'save',                'toast'),
     Key('save_all',         'alt+shift+s',   'global', 'save all'),
     Key('show_diff',        'alt+shift+d',   'global', 'what changed',        'toast'),
+    # Blame is about the lines under the cursor, so it is global rather than editor-scoped:
+    # it has to reach a notebook cell and the file editor alike.
+    Key('git_blame',        'hyper+b',       'global', 'who wrote this',      'toast'),
     # Both completions and the docstring lookup are global rather than editor-scoped, so
     # they also reach the exec strip -- a half-remembered attribute name is just as likely
     # to need looking up there, and all three handlers already resolve the cursor from

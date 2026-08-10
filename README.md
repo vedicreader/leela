@@ -221,6 +221,12 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   publish, rename, track, compare, safe delete, fetch/pull/push, and amend. Merge and rebase
   now open non-mutating plans first: incoming commits, file statistics, ancestry, working-tree
   safety, conflict rehearsal, and merge strategy are visible before history changes.
+  Blame is an action rather than a button on one row: a chord, the command palette, and the
+  file, editor, cell and tab menus all reach it, and a text file blames the lines you have
+  selected with the whole file one press away. A **notebook is blamed as cells**, not as its
+  JSON — each cell shows who touched it last and the commits it is made of, expanding to its
+  real source lines with per-line attribution, so a line someone else changed inside a cell
+  that is otherwise yours is visible. Colour-coding is by commit, newest first.
   Annotated tags and complete stash handling remain in the same workspace. History provides
   a searchable commit graph and a compact file-first inspector; selecting a file opens the
   same diff tab instead of rendering an entire commit patch in a dialog. Signatures,

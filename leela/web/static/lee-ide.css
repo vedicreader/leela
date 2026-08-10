@@ -2238,7 +2238,25 @@ kbd {
 .lee-git-commit-detail h3 { margin: 0; padding: 10px 12px 0; font-size: 13px; white-space: pre-wrap; }
 .lee-git-commit-detail > code { padding: 0 12px; color: var(--lee-fg4); font-size: 9px; }
 .lee-git-blame { max-height: 72vh; overflow: auto; background: var(--lee-bg); }
-.lee-git-blame > button { display: grid; grid-template-columns: 62px 34px 110px 60px minmax(280px, 1fr); align-items: baseline; width: 100%; gap: 8px; padding: 3px 8px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 50%, transparent); background: transparent; color: var(--lee-fg2); cursor: pointer; text-align: left; }
+/* colour · oid · author · when · line number · the line itself */
+.lee-git-blame > button { display: grid; grid-template-columns: 3px 62px 110px 60px 34px minmax(260px, 1fr); align-items: baseline; width: 100%; gap: 8px; padding: 3px 8px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 50%, transparent); background: transparent; color: var(--lee-fg2); cursor: pointer; text-align: left; }
+.lee-blame-line > i { align-self: stretch; border-radius: 1px; }
+.lee-blame-line.uncommitted { background: color-mix(in srgb, var(--lee-green) 7%, transparent); }
+.lee-blame-line > em { color: var(--lee-fg4); font: normal 9px/1.4 var(--lee-mono); text-align: right; }
+.lee-blame-who { overflow: hidden; color: var(--lee-fg2); text-overflow: ellipsis; white-space: nowrap; }
+.lee-blame-legend { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 8px; border-bottom: 1px solid var(--lee-border); }
+.lee-blame-legend i { padding: 2px 5px; border-left: 3px solid var(--lee-fg4); background: var(--lee-bg2); color: var(--lee-fg4); font: normal 9px/1.5 var(--lee-mono); }
+.lee-blame-cells { max-height: 70vh; overflow: auto; background: var(--lee-bg); }
+.lee-blame-cell { border-bottom: 1px solid var(--lee-border); }
+.lee-blame-cell > summary { display: grid; grid-template-columns: 26px 62px minmax(0, 1fr) auto 90px; gap: 8px; align-items: baseline; padding: 6px 8px; cursor: pointer; font: 10px/1.5 var(--lee-mono); }
+.lee-blame-cell > summary:hover { background: var(--lee-active-line); }
+.lee-blame-cell > summary b { color: var(--lee-fg4); font-weight: 400; text-align: right; }
+.lee-blame-cell > summary strong { overflow: hidden; color: var(--lee-fg); text-overflow: ellipsis; white-space: nowrap; }
+.lee-blame-cell > summary small { color: var(--lee-fg4); }
+.lee-blame-kind { color: var(--lee-accent); font-size: 9px; }
+.lee-blame-bar { display: flex; align-self: center; gap: 1px; height: 6px; }
+.lee-blame-bar i { min-width: 2px; border-radius: 1px; }
+.lee-blame-cell[open] > summary { background: var(--lee-bg2); }
 .lee-git-blame > button:hover { background: var(--lee-active-line); }
 .lee-git-blame pre { margin: 0; overflow: hidden; color: var(--lee-fg); font: 10px/1.4 var(--lee-mono); white-space: pre; }
 .lee-git-blame small { color: var(--lee-fg4); }

@@ -237,8 +237,23 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
 
     @rt('/git/blame')
-    async def git_blame(path: str = '', start: int = 1, end: int = 0, repo: str = ''):
-        try: return {'lines': await off_loop(repo_at(repo).blame, git_paths([path])[0], start, end)}
+    async def git_blame(path: str = '', start: int = 1, end: int = 0, repo: str = '',
+                        cells: bool = True):
+        """Who wrote these lines -- grouped into cells when the file is a notebook.
+
+        A `.ipynb` blamed as text is a list of `"source": [` and escaped newlines, which is a
+        result rather than an answer, so by default a notebook comes back as cells with their
+        real source beside the attribution. `cells=false` asks for the raw file lines, which
+        is the honest fallback when a notebook is in a shape the mapping cannot read.
+        """
+        try:
+            clean = git_paths([path])[0]
+            repository = repo_at(repo)
+            if cells and clean.lower().endswith('.ipynb') and not end:
+                return await off_loop(repository.blame_notebook, clean)
+            rows = await off_loop(repository.blame, clean, start, end)
+            return {'lines': rows, 'notebook': False, 'cells': [], 'path': clean,
+                    'start': start, 'end': end}
         except Exception as e: return fail(e)
 
     @rt('/git/resources')
