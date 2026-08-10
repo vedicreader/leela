@@ -262,6 +262,37 @@ modules can move without test edits, so ~200 assertions survive on 5 path-string
 | 9 | pre-place `blocks/{nb,debug,agent}/` | leela |
 | 10 | contract-enforcement test, `docs/blocks.md` rewrite | leela |
 
+## Where the implementation diverged from this design
+
+Four things this document got wrong, corrected while building. `docs/blocks.md` describes the
+result; this section records the reasons.
+
+1. **`leela/agent/` does not move.** The tree above put the harness in `blocks/agent/` beside
+   the adapter. It cannot go there: `tests/test_agent.py::test_agent_package_does_not_import_leela`
+   forbids that directory from importing anything in leela, including `from ..`, and the
+   adapter needs `errstr`, `leela_cfg` and `fs.Unsafe`. Folding them together would have meant
+   gutting a guard that keeps the agent loop testable against a dict. `blocks/agent/` holds
+   `ai.py` and `models.py`; the harness stays a library, and porting it to ramabana replaces
+   it wholesale.
+
+2. **Cross-block imports could not avoid loading `app.py` the way this document claimed.**
+   Naming the domain module explicitly (`from ..git.git import …`) does not help, because
+   importing a submodule runs the parent package's `__init__` first, and that did
+   `from .app import CAPS, connect`. Each block's `__init__` now resolves those two names
+   through a module `__getattr__`.
+
+3. **`conformance.py` had to leave `core/`.** Checking a provider means building one, which
+   needs `fs.Sandbox` and `agent.core.resolve` — so the diagnostic must name implementations,
+   which is exactly what rule 1 forbids core from doing. It is `leela/conformance.py`, run as
+   `python -m leela.conformance`.
+
+4. **The esbuild inputs went to a top-level `frontend/`, not `vendor/src/`.** They are build
+   inputs, and every wheel was shipping them.
+
+One prerequisite also turned up: `tests/routes.txt` was already stale by six git routes, so
+the invariant this plan leans on was failing before any of it started. Regenerated first, as
+its own commit.
+
 ## Out of scope
 
 - Extracting the remaining 88 routes from `app.py` (`nb`, `debug`, `agent`, `exec`, `run`,
