@@ -899,7 +899,7 @@ async function activateGitDiffTab(key) {
     if (data.mergeResult == null) return;
     const message = `Replace the working-tree version of ${data.path} with this reviewed result? The file will remain uncommitted.`;
     if (!await confirmDialog('apply split diff result', message, 'apply result')) return;
-    try { const next = await gitDo('write_worktree', {path: data.path, content: data.mergeResult}), fresh = await api('/git/diff?path=' + encodeURIComponent(data.path) + '&staged=false'); data.base = 'index'; data.head = 'worktree'; data.baseLabel = 'index'; data.headLabel = 'working tree'; data.left = fresh.left || ''; data.right = fresh.right || ''; data.patch = fresh.content || fresh.text || ''; data.rawPatch = fresh.text || ''; data.group = 'unstaged'; data.mergeResult = null; gitUI.review = null; paintGitPill(next); await activateGitDiffTab(key); status(`${data.path} updated in the working tree`, 'ok'); }
+    try { const next = await gitDo('write_worktree', {path: data.path, content: data.mergeResult}), fresh = await api(gitUrl('/git/diff', {path: data.path, staged: false})); data.base = 'index'; data.head = 'worktree'; data.baseLabel = 'index'; data.headLabel = 'working tree'; data.left = fresh.left || ''; data.right = fresh.right || ''; data.patch = fresh.content || fresh.text || ''; data.rawPatch = fresh.text || ''; data.group = 'unstaged'; data.mergeResult = null; gitUI.review = null; paintGitPill(next); await activateGitDiffTab(key); status(`${data.path} updated in the working tree`, 'ok'); }
     catch (e) { status(e.message || String(e), 'err'); }
   });
   const body = host.querySelector('.lee-diff-document-body');
@@ -4585,10 +4585,23 @@ let savedGitLists = {}, savedGitReviews = {}, savedGitNotes = {};
 try { savedGitLists = JSON.parse(localStorage.getItem('lee-git-changelists') || '{}'); } catch (_) {}
 try { savedGitReviews = JSON.parse(localStorage.getItem('lee-git-reviews') || '{}'); } catch (_) {}
 try { savedGitNotes = JSON.parse(localStorage.getItem('lee-git-review-notes') || '{}'); } catch (_) {}
-const gitUI = {tab: 'changes', snapshot: null, history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
+const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResults: [], expect: '', history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
+// Which repository a panel request is about. Empty means the one the active tab lives in,
+// which is what the branch pill, the file tree and the editor's change marks always mean.
+function gitUrl(path, params = {}) {
+  const q = new URLSearchParams(params);
+  if (gitUI.repo) q.set('repo', gitUI.repo);
+  const query = q.toString();
+  return query ? `${path}?${query}` : path;
+}
+function gitRepoName(root) { return String(root || '').split('/').filter(Boolean).pop() || root; }
 function saveGitWorkflowState() { localStorage.setItem('lee-git-changelists', JSON.stringify(gitUI.changeLists)); localStorage.setItem('lee-git-reviews', JSON.stringify(gitUI.reviewed)); localStorage.setItem('lee-git-review-notes', JSON.stringify(gitUI.reviewNotes)); }
 function gitReviewKey(d, path) { return `${d.root || gitUI.snapshot?.root || ''}\0${d.base}\0${d.head}\0${d.mode}\0${path}`; }
 function paintGitPill(d) {
+  // The pill and the tree badges belong to the repository the active tab is in. A panel
+  // pinned to another repository in the workspace must not repaint them from a snapshot
+  // that is not theirs -- a clean pill over a dirty file tree is worse than no pill.
+  if (gitUI.repo) return;
   const git = $('#gitpill'); if (!git || !d) return;
   const n = (d.changes || []).length;
   git.textContent = `${d.branch}${n ? ' · ' + n : ''}${d.ahead ? ' · ↑' + d.ahead : ''}${d.behind ? ' · ↓' + d.behind : ''}`;
@@ -4599,8 +4612,8 @@ function paintGitPill(d) {
 async function gitDo(op, extra = {}) {
   const started = performance.now(); gitUI.busy = op; status(`git ${op.replaceAll('_', ' ')}…`);
   try {
-    const d = await post('/git/action', {op, ...extra});
-    gitUI.snapshot = d; paintGitPill(d); paintGitTree(d);
+    const d = await post('/git/action', {op, repo: gitUI.repo, ...extra});
+    gitUI.snapshot = d; paintGitPill(d);
     status(`git ${op.replaceAll('_', ' ')} complete · ${Math.round(performance.now() - started)} ms`, 'ok');
     return d;
   } finally { gitUI.busy = ''; }
@@ -4613,7 +4626,7 @@ function gitOperationBanner(d) {
     `${op.can_abort ? '<button data-operation="abort" class="warn">abort</button>' : ''}</section>`;
 }
 function gitNav() {
-  return `<nav class="lee-git-nav" aria-label="Source control views">${[['changes','Changes'],['review','Review'],['branches','Branches'],['history','History'],['resources','Repository']].map(([id, label]) =>
+  return `<nav class="lee-git-nav" aria-label="Source control views">${[['changes','Changes'],['review','Review'],['branches','Branches'],['history','History'],['resources','Repository'],['repos','All repos']].map(([id, label]) =>
     `<button data-git-tab="${id}" class="${gitUI.tab === id ? 'active' : ''}">${label}</button>`).join('')}</nav>`;
 }
 function gitSummary(d) {
@@ -4700,16 +4713,104 @@ function gitResourcesView(d) {
     `<section class="lee-git-resource"><header><strong>Worktrees</strong><button id="gitaddworktree">add worktree</button></header><div id="gitworktrees"><div class="lee-git-loading"><small>reading worktrees</small></div></div></section>` +
     `<section class="lee-git-resource"><header><strong>Submodules</strong></header><div id="gitsubmodules"><div class="lee-git-loading"><small>reading submodules</small></div></div></section>`;
 }
+function gitScope() {
+  if (!gitUI.repo) return '';
+  return `<div class="lee-git-scope" title="The branch pill, tree badges and editor change marks still follow the file you have open."><b>${esc(gitRepoName(gitUI.repo))}</b>` +
+    `<span>pinned</span><span class="lee-spacer"></span><button id="gitscopeclear">follow active tab</button></div>`;
+}
+function gitRepoBadges(r) {
+  if (r.error) return `<i class="warn">${esc(r.error)}</i>`;
+  return [r.changed ? `<i class="warn">${r.changed} changed</i>` : '<i>clean</i>',
+    r.behind ? `<i class="warn">↓${r.behind}</i>` : '', r.ahead ? `<i>↑${r.ahead}</i>` : '',
+    r.upstream ? '' : '<i>unpublished</i>', r.off_branch ? '<i class="warn">off branch</i>' : '',
+    r.unreleased ? `<i>${r.unreleased} since ${esc(r.tag)}</i>` : '',
+    r.operation ? `<i class="warn">${esc(r.operation)} in progress</i>` : ''].filter(Boolean).join('');
+}
+function gitReposView() {
+  const d = gitUI.repos;
+  if (!d) return '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading repositories</small></div>';
+  const s = d.summary || {}, rows = d.repos || [];
+  const results = gitUI.reposResults.length ? `<details class="lee-sc-group" open><summary><span>Last run</span><b>${gitUI.reposResults.length}</b></summary>` +
+    `<div class="lee-git-repo-results">${gitUI.reposResults.map(r => `<article class="${r.ok === false ? 'failed' : r.skipped ? 'skipped' : 'done'}">` +
+      `<strong>${esc(r.name || r.spec || '')}</strong><span>${esc(r.error || r.skipped || r.output || 'done')}</span></article>`).join('')}</div></details>` : '';
+  const list = rows.length ? rows.map(r => `<article class="lee-git-repo-row${r.root === gitUI.repo ? ' active' : ''}${r.off_branch ? ' off-branch' : ''}" data-repo="${esc(r.root)}" title="${esc(r.root)}">` +
+    `<button data-repo-open title="Point source control at this repository">${r.root === gitUI.repo ? '●' : '○'}</button>` +
+    `<div class="lee-git-repo-copy"><strong>${esc(r.name)}</strong><span>${esc(r.branch || 'no branch')}${r.upstream ? ' · ' + esc(r.upstream) : ''}</span>` +
+    `<small>${esc(r.last_commit?.subject || 'no commits yet')}${r.last_commit?.timestamp ? ' · ' + gitRelative(r.last_commit.timestamp) : ''}</small>` +
+    `<div class="lee-git-badges">${gitRepoBadges(r)}<button data-repo-fetch title="Fetch this repository">fetch</button></div></div>` +
+    `<button data-repo-remove title="Stop listing this repository here" aria-label="Stop listing this repository">×</button></article>`).join('') :
+    `<div class="lee-git-empty-state"><strong>No repositories in this workspace</strong><span>Open a folder that is a checkout or holds them, clone one, or add a checkout from elsewhere.</span></div>`;
+  return `<section class="lee-git-repos-summary"><strong>${s.repos || 0} repositor${s.repos === 1 ? 'y' : 'ies'}</strong>` +
+    `${s.dirty ? `<span class="warn">${s.dirty} dirty</span>` : '<span>all clean</span>'}` +
+    `${s.behind ? `<span class="warn">${s.behind} behind</span>` : ''}${s.ahead ? `<span>${s.ahead} ahead</span>` : ''}` +
+    `${s.off_branch ? `<span class="warn">${s.off_branch} off branch</span>` : ''}` +
+    `${s.unreleased ? `<span>${s.unreleased} unreleased</span>` : ''}${s.errors ? `<span class="warn">${s.errors} unreadable</span>` : ''}</section>` +
+    `<div class="lee-sc-actions"><button data-repos-op="status">refresh</button><button data-repos-op="fetch">fetch all</button>` +
+    `<button data-repos-op="pull">pull all</button><button data-repos-op="push">push all</button>` +
+    `<button id="gitrepoclone">clone…</button><button id="gitrepoadd">add repository…</button></div>` +
+    `<div class="lee-git-filter"><input id="gitrepoexpect" class="lee-input" value="${esc(gitUI.expect)}" placeholder="Expected branch — default: ${esc(d.expected_branch || 'the one most share')}" aria-label="Expected branch"></div>` +
+    `<div class="lee-git-repo-list">${list}</div>` + results;
+}
+async function loadGitRepos() {
+  try { gitUI.repos = await api('/git/repos' + (gitUI.expect ? '?expect=' + encodeURIComponent(gitUI.expect) : '')); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);
+}
+async function gitReposDo(op, extra = {}) {
+  const started = performance.now();
+  status(`workspace ${op}…`);
+  try {
+    const d = await post('/git/repos/action', {op, expect: gitUI.expect, ...extra});
+    gitUI.repos = d; gitUI.reposResults = d.results || [];
+    const failed = gitUI.reposResults.filter(r => r.ok === false).length;
+    const skipped = gitUI.reposResults.filter(r => r.ok !== false && r.skipped).length;
+    const done = gitUI.reposResults.length - failed - skipped;
+    status(`workspace ${op}: ${done} done · ${skipped} skipped · ${failed} failed · ${Math.round(performance.now() - started)} ms`,
+           failed ? 'err' : 'ok');
+    if (gitUI.repo && !(d.repos || []).some(r => r.root === gitUI.repo)) gitUI.repo = '';
+    gitUI.snapshot = null;
+    await renderGitPanel();
+    refreshProjectPills();
+    return d;
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+// Pinning is a scope change, not a filter: every ref, commit and review already loaded
+// belongs to the repository being left, so all of it goes rather than being shown against
+// the wrong one.
+async function gitPinRepo(root, tab = 'changes') {
+  gitUI.repo = String(root || '');
+  gitUI.snapshot = null; gitUI.history = []; gitUI.review = null; gitUI.reviewFile = ''; gitUI.reviewPatch = '';
+  gitUI.reviewBase = ''; gitUI.reviewHead = ''; gitUI.compareFrom = ''; gitUI.compareTo = '';
+  gitUI.selectedCommit = null; gitUI.selectedChanges.clear();
+  gitUI.tab = tab;
+  await renderGitPanel();
+  if (!gitUI.repo) refreshProjectPills();
+}
 async function renderGitPanel(snapshot = null) {
   const host = $('#gitpanel'); if (!host) return;
-  host.dataset.features = 'Staged changes · Changes · Branches · Stashes · Remotes & tags · staged changes · working tree · fetch · pull · push · stash · tag · stage all · unstage all';
+  host.dataset.features = 'Staged changes · Changes · Branches · Stashes · Remotes & tags · All repos · staged changes · working tree · fetch · pull · push · stash · tag · stage all · unstage all · fetch all · pull all · push all · clone';
+  if (gitUI.tab === 'repos') {
+    host.innerHTML = gitScope() + gitNav() + `<main class="lee-git-view">${gitReposView()}</main>`;
+    wireGitPanel(host, gitUI.snapshot);
+    if (!gitUI.repos) loadGitRepos();
+    return;
+  }
   if (!snapshot && !gitUI.snapshot) host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading repository</small></div>';
   let d = snapshot || gitUI.snapshot;
-  try { if (!d) d = await api('/git/info'); }
-  catch (e) { host.innerHTML = `<div class="lee-git-empty-state"><strong>No Git repository</strong><span>${esc(e.message || e)}</span></div>`; return; }
+  try { if (!d) d = await api(gitUrl('/git/info')); }
+  catch (e) {
+    // Still draw the nav: a workspace whose active folder is not a checkout can have five
+    // other repositories in it, and Repos is how you reach them.
+    host.innerHTML = gitScope() + gitNav() +
+      `<main class="lee-git-view"><div class="lee-git-empty-state"><strong>No Git repository</strong><span>${esc(e.message || e)}</span></div></main>`;
+    // `null`, not `{}`: switching to another view from here must re-read the repository
+    // rather than render a snapshot-shaped object with no fields in it.
+    wireGitPanel(host, null);
+    return;
+  }
   gitUI.snapshot = d; paintGitPill(d);
   const view = gitUI.tab === 'changes' ? gitChangesView(d) : gitUI.tab === 'review' ? gitReviewView(d) : gitUI.tab === 'branches' ? gitBranchesView(d) : gitUI.tab === 'history' ? gitHistoryView(d) : gitResourcesView(d);
-  host.innerHTML = gitSummary(d) + gitNav() + `<main class="lee-git-view">${view}</main>`;
+  host.innerHTML = gitScope() + gitSummary(d) + gitNav() + `<main class="lee-git-view">${view}</main>`;
   wireGitPanel(host, d);
   if (gitUI.tab === 'history' && !gitUI.history.length) loadGitHistory();
   if (gitUI.tab === 'review' && !gitUI.review) loadGitReview();
@@ -4720,7 +4821,7 @@ async function loadGitReview() {
   const host = $('.lee-git-review-workspace');
   if (host) host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>building review</small></div>';
   try {
-    gitUI.review = await api('/git/review?base=' + encodeURIComponent(gitUI.reviewBase) + '&head=' + encodeURIComponent(gitUI.reviewHead) + '&mode=' + encodeURIComponent(gitUI.reviewMode));
+    gitUI.review = await api(gitUrl('/git/review', {base: gitUI.reviewBase, head: gitUI.reviewHead, mode: gitUI.reviewMode}));
     gitUI.reviewFile = gitUI.review.files[0]?.path || ''; gitUI.reviewPatch = '';
     renderGitPanel(gitUI.snapshot);
   } catch (e) { status(e.message || String(e), 'err'); }
@@ -4729,7 +4830,7 @@ async function loadGitReviewFile(path, asTab = false) {
   if (!gitUI.review) return;
   gitUI.reviewFile = path;
   try {
-    const d = await api('/git/review/file?base=' + encodeURIComponent(gitUI.review.base) + '&head=' + encodeURIComponent(gitUI.review.head) + '&mode=' + encodeURIComponent(gitUI.review.mode) + '&path=' + encodeURIComponent(path));
+    const d = await api(gitUrl('/git/review/file', {base: gitUI.review.base, head: gitUI.review.head, mode: gitUI.review.mode, path}));
     gitUI.reviewPatch = d.patch || '';
     if (asTab) return openGitDiffTab({...d, path, kind: 'review', baseLabel: gitUI.review.base, headLabel: gitUI.review.head, absolutePath: gitUI.snapshot.root + '/' + path, reviewKey: gitReviewKey({...gitUI.review, root: gitUI.snapshot.root}, path), allowWrite: !!d.can_apply && !path.toLowerCase().endsWith('.ipynb')});
     renderGitPanel(gitUI.snapshot);
@@ -4744,13 +4845,13 @@ async function loadGitHistory() {
   const rows = $('#githistoryrows');
   try {
     const ref = $('#githistoryref')?.value || '--all';
-    const result = await api('/git/history?limit=150&query=' + encodeURIComponent(gitUI.historyQuery) + '&ref=' + encodeURIComponent(ref));
+    const result = await api(gitUrl('/git/history', {limit: 150, query: gitUI.historyQuery, ref}));
     gitUI.history = result.commits || []; renderGitPanel(gitUI.snapshot);
   } catch (e) { if (rows) rows.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
 }
 async function loadGitResources() {
   try {
-    const r = await api('/git/resources');
+    const r = await api(gitUrl('/git/resources'));
     const worktrees = $('#gitworktrees');
     if (worktrees) worktrees.innerHTML = (r.worktrees || []).map(w => `<article class="lee-git-resource-row" data-worktree="${esc(w.path)}"><div><strong>${esc(w.branch || 'detached')}</strong><code>${esc(w.path)}</code></div>${w.path === gitUI.snapshot.root ? '<i>current</i>' : '<button data-remove-worktree class="warn">remove</button>'}</article>`).join('') || '<span class="lee-dim">No worktrees</span>';
     const submodules = $('#gitsubmodules');
@@ -4763,6 +4864,28 @@ async function loadGitResources() {
 }
 function wireGitPanel(host, d) {
   host.querySelectorAll('[data-git-tab]').forEach(b => b.onclick = () => { gitUI.tab = b.dataset.gitTab; if (gitUI.tab !== 'history') gitUI.history = []; renderGitPanel(d); });
+  host.querySelector('#gitscopeclear')?.addEventListener('click', () => gitPinRepo(''));
+  host.querySelectorAll('[data-repos-op]').forEach(b => b.onclick = () => gitReposDo(b.dataset.reposOp));
+  host.querySelectorAll('.lee-git-repo-row').forEach(row => {
+    const root = row.dataset.repo;
+    row.querySelector('[data-repo-open]').onclick = () => gitPinRepo(root === gitUI.repo ? '' : root);
+    row.querySelector('[data-repo-fetch]').onclick = () => gitReposDo('fetch', {paths: [root]});
+    row.querySelector('[data-repo-remove]').onclick = async () => {
+      if (!await confirmDialog('remove repository', `Stop listing ${gitRepoName(root)} here? The checkout is left alone.`, 'remove')) return;
+      if (gitUI.repo === root) gitUI.repo = '';
+      gitReposDo('remove', {path: root});
+    };
+  });
+  const expect = host.querySelector('#gitrepoexpect');
+  if (expect) expect.onchange = () => { gitUI.expect = expect.value.trim(); loadGitRepos(); };
+  host.querySelector('#gitrepoadd')?.addEventListener('click', async () => {
+    const path = await inputDialog('add repository', 'Path to a Git checkout', '', '/home/you/code/project');
+    if (path) gitReposDo('add', {path});
+  });
+  host.querySelector('#gitrepoclone')?.addEventListener('click', async () => {
+    const spec = await inputDialog('clone repositories', 'URLs or owner/name, one per line', '', 'AnswerDotAI/fastws');
+    if (spec) gitReposDo('clone', {urls: spec.split(/[\s,]+/).filter(Boolean)});
+  });
   const act = async (op, extra = {}) => renderGitPanel(await gitDo(op, extra));
   host.querySelectorAll('[data-operation]').forEach(b => b.onclick = async () => {
     if (b.dataset.operation === 'abort' && !await confirmDialog('abort Git operation', `Abort the active ${d.operation.active}?`)) return;
@@ -4790,7 +4913,7 @@ function wireGitPanel(host, d) {
   host.querySelectorAll('.lee-git-change').forEach(row => {
     const path = row.dataset.path, staged = row.dataset.group === 'staged';
     row.querySelector('[data-select-change]').onchange = e => { const key = `${row.dataset.group}:${path}`; if (e.target.checked) gitUI.selectedChanges.add(key); else gitUI.selectedChanges.delete(key); renderGitPanel(d); };
-    row.querySelector('.lee-git-file').onclick = async () => { const patch = await api('/git/diff?path=' + encodeURIComponent(path) + '&staged=' + staged); openGitDiffTab({kind: 'changes-' + row.dataset.group, path, absolutePath: d.root + '/' + path, base: staged ? 'HEAD' : 'index', head: staged ? 'index' : 'worktree', baseLabel: staged ? 'HEAD' : 'index', headLabel: staged ? 'staged' : 'working tree', left: patch.left || '', right: patch.right || '', patch: patch.content || patch.text || '', rawPatch: patch.text || '', notebook: !!patch.notebook, group: row.dataset.group, allowWrite: row.dataset.group === 'unstaged' && !patch.notebook}); };
+    row.querySelector('.lee-git-file').onclick = async () => { const patch = await api(gitUrl('/git/diff', {path, staged})); openGitDiffTab({kind: 'changes-' + row.dataset.group, path, absolutePath: d.root + '/' + path, base: staged ? 'HEAD' : 'index', head: staged ? 'index' : 'worktree', baseLabel: staged ? 'HEAD' : 'index', headLabel: staged ? 'staged' : 'working tree', left: patch.left || '', right: patch.right || '', patch: patch.content || patch.text || '', rawPatch: patch.text || '', notebook: !!patch.notebook, group: row.dataset.group, allowWrite: row.dataset.group === 'unstaged' && !patch.notebook}); };
     row.querySelector('[data-open]').onclick = () => leeOpenFile(d.root + '/' + path);
     row.querySelector('[data-blame]')?.addEventListener('click', () => showGitBlame(d.root, path));
     row.querySelector('[data-resolve]')?.addEventListener('click', () => showGitConflict(path));
@@ -4848,7 +4971,7 @@ async function showStagedReview(d) {
     const active = files[at];
     m.querySelector('aside').innerHTML = files.map((f, i) => `<button data-index="${i}" class="${i === at ? 'active' : ''}"><b>${esc(f.index)}</b><span>${esc(f.path)}</span></button>`).join('');
     m.querySelectorAll('[data-index]').forEach(b => b.onclick = () => paint(+b.dataset.index));
-    const detail = await api('/git/diff?path=' + encodeURIComponent(active.path) + '&staged=true');
+    const detail = await api(gitUrl('/git/diff', {path: active.path, staged: true}));
     m.querySelector('main').innerHTML = gitPatchHtml(detail.content || detail.text || '');
   };
   m.querySelector('[data-prev]').onclick = () => paint(at - 1);
@@ -4870,7 +4993,7 @@ function showReviewHunkApply(d) {
 }
 async function showMergePreview(branch, d, act) {
   try {
-    const p = await api('/git/merge-preview?incoming=' + encodeURIComponent(branch));
+    const p = await api(gitUrl('/git/merge-preview', {incoming: branch}));
     const r = p.review, relation = {'fast-forward': 'Fast-forward available', 'already-merged': 'Already contained in current', 'identical': 'Branches are identical', 'diverged': 'Branches have diverged'}[p.relation] || p.relation;
     const conflict = p.conflict_likely ? `<div class="lee-git-merge-warning"><strong>Conflicts expected</strong><span>${p.conflicts.length ? p.conflicts.map(esc).join(' · ') : 'Git reports overlapping changes.'}</span></div>` : '<div class="lee-git-merge-ok"><strong>No conflicts found in merge rehearsal</strong><span>The working tree can still change before merge.</span></div>';
     const m = modal(`<div class="lee-mhead">Merge ${esc(branch)}<span class="sub">into ${esc(p.current)}</span></div><div class="lee-git-merge-preview"><header><strong>${esc(relation)}</strong><span>${r.head_only} commits · ${r.summary.files} files · +${r.summary.additions} −${r.summary.deletions}</span></header>${p.clean ? '' : '<div class="lee-git-merge-warning"><strong>Working tree is not clean</strong><span>Commit or stash local changes before merging.</span></div>'}${conflict}<label>Strategy<select data-strategy><option value="merge">merge commit when needed</option><option value="squash">squash into working tree</option><option value="ff-only" ${p.relation === 'fast-forward' ? '' : 'disabled'}>fast-forward only</option></select></label><button class="lee-btn" data-review>review incoming files</button></div><div class="lee-mfoot"><button class="lee-btn go" data-merge ${!p.clean || p.relation === 'already-merged' || p.relation === 'identical' ? 'disabled' : ''}>merge ${esc(branch)}</button><span class="lee-dim">Merge starts only after this preview.</span></div>`);
@@ -4880,7 +5003,7 @@ async function showMergePreview(branch, d, act) {
 }
 async function showRebasePreview(branch, d, act) {
   try {
-    const p = await api('/git/rebase-preview?onto=' + encodeURIComponent(branch)), r = p.review;
+    const p = await api(gitUrl('/git/rebase-preview', {onto: branch})), r = p.review;
     const warning = p.conflict_likely ? `<div class="lee-git-merge-warning"><strong>Conflicts may occur while replaying commits</strong><span>${p.conflicts.length ? p.conflicts.map(esc).join(' · ') : 'Git reports overlapping changes.'}</span></div>` : '<div class="lee-git-merge-ok"><strong>No conflicts found in the tree rehearsal</strong><span>Rebase replays commits individually, so this remains a forecast.</span></div>';
     const m = modal(`<div class="lee-mhead">Rebase ${esc(p.current)}<span class="sub">onto ${esc(branch)}</span></div><div class="lee-git-merge-preview"><header><strong>${p.already_based ? 'Branch already contains the target history' : `${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} will be replayed`}</strong><span>${r.summary.files} proposed files · +${r.summary.additions} −${r.summary.deletions}</span></header>${p.clean ? '' : '<div class="lee-git-merge-warning"><strong>Working tree is not clean</strong><span>Commit or stash local changes before rebasing.</span></div>'}${warning}<div class="lee-git-rebase-commits">${p.commits.slice(0, 12).map(c => `<span><code>${esc(c.short)}</code>${esc(c.subject)}</span>`).join('')}</div><button class="lee-btn" data-review>review branch changes</button></div><div class="lee-mfoot"><button class="lee-btn go" data-rebase ${!p.clean || p.already_based || !p.commits.length ? 'disabled' : ''}>start rebase</button><span class="lee-dim">The operation banner will offer continue, skip, and abort if Git pauses.</span></div>`);
     m.querySelector('[data-review]').onclick = () => { m.remove(); gitUI.reviewBase = branch; gitUI.reviewHead = d.branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); };
@@ -4904,19 +5027,19 @@ async function branchActions(branch, d, act) {
   });
 }
 async function loadGitCommitInspector(ref) {
-  try { gitUI.selectedCommit = await api('/git/commit/review?ref=' + encodeURIComponent(ref)); renderGitPanel(gitUI.snapshot); }
+  try { gitUI.selectedCommit = await api(gitUrl('/git/commit/review', {ref})); renderGitPanel(gitUI.snapshot); }
   catch (e) { status(e.message || String(e), 'err'); }
 }
 async function openGitCommitFile(ref, path) {
   try {
-    const d = await api('/git/commit/file?ref=' + encodeURIComponent(ref) + '&path=' + encodeURIComponent(path));
+    const d = await api(gitUrl('/git/commit/file', {ref, path}));
     const c = gitUI.selectedCommit;
     return openGitDiffTab({...d, path, kind: 'commit', baseLabel: c?.parents?.[0]?.slice(0, 8) || 'empty tree', headLabel: c?.short || ref.slice(0, 8), absolutePath: gitUI.snapshot.root + '/' + path});
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 async function showGitCommit(ref) {
   try {
-    const c = await api('/git/commit/review?ref=' + encodeURIComponent(ref));
+    const c = await api(gitUrl('/git/commit/review', {ref}));
     const files = c.files.map(f => `<button class="lee-git-commit-file" data-path="${esc(f.path)}"><b>${esc(f.status)}</b><span>${esc(f.path)}</span><small>${f.binary ? 'binary' : `+${f.additions} −${f.deletions}`}</small></button>`).join('');
     const m = modal(`<div class="lee-mhead">${esc(c.short)}<span class="sub">${esc(c.author)} · ${new Date(c.timestamp * 1000).toLocaleString()}</span></div><article class="lee-git-commit-sheet"><h3>${esc(c.message)}</h3><section><b>${c.summary.files} files</b><span>+${c.summary.additions}</span><span>−${c.summary.deletions}</span></section><div>${files}</div></article>`);
     m.querySelectorAll('[data-path]').forEach(b => b.onclick = () => { m.remove(); gitUI.selectedCommit = c; openGitCommitFile(c.oid, b.dataset.path); });
@@ -4930,14 +5053,14 @@ async function showGitCompare(left, right) {
 }
 async function showGitReflog() {
   try {
-    const d = await api('/git/reflog?limit=150');
+    const d = await api(gitUrl('/git/reflog', {limit: 150}));
     const m = modal(`<div class="lee-mhead">reflog<span class="sub">local recovery history · newest first</span></div><div class="lee-git-history">${(d.entries || []).map(x => `<button class="lee-git-commit-row" data-commit="${x.oid}"><span class="lee-git-graph">◆</span><span><strong>${esc(x.subject)}</strong><small>${esc(x.selector)} · ${esc(x.author)} · ${gitRelative(x.timestamp)} · ${esc(x.short)}</small></span></button>`).join('') || '<div class="lee-git-empty-state"><strong>No reflog entries</strong><span>This repository has no local movement history.</span></div>'}</div>`);
     m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 async function showGitConflict(path) {
   try {
-    const d = await api('/git/conflict?path=' + encodeURIComponent(path));
+    const d = await api(gitUrl('/git/conflict', {path}));
     const version = (label, text, choice) => `<section><header><strong>${label}</strong><button data-choice="${choice}">use ${label.toLowerCase()}</button></header><pre>${esc(text || 'This side deleted the file.')}</pre></section>`;
     const m = modal(`<div class="lee-mhead">resolve ${esc(path)}<span class="sub">base, ours, and theirs</span></div><div class="lee-git-conflict">${version('Ours', d.ours, 'ours')}${version('Theirs', d.theirs, 'theirs')}<details><summary>common base</summary><pre>${esc(d.base || 'No common base content.')}</pre></details><details><summary>current worktree result</summary><pre>${esc(d.worktree || '')}</pre><button data-choice="worktree">mark current worktree resolved</button></details></div>`);
     m.querySelectorAll('[data-choice]').forEach(b => b.onclick = async () => { const choice = b.dataset.choice; if (!await confirmDialog('resolve conflict', `Use ${choice} for ${path} and stage it as resolved?`)) return; m.remove(); renderGitPanel(await gitDo('resolve_conflict', {path, choice})); });
@@ -4945,7 +5068,7 @@ async function showGitConflict(path) {
 }
 async function showGitBlame(root, path) {
   try {
-    const d = await api('/git/blame?path=' + encodeURIComponent(path));
+    const d = await api(gitUrl('/git/blame', {path}));
     const m = modal(`<div class="lee-mhead">${esc(path)}<span class="sub">line history</span></div><div class="lee-git-blame">${(d.lines || []).map(x => `<button data-commit="${x.oid}"><code>${esc(x.oid.slice(0, 8))}</code><span>${x.line}</span><strong>${esc(x.author)}</strong><small>${gitRelative(x.timestamp)}</small><pre>${esc(x.text)}</pre></button>`).join('')}</div>`);
     m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
   } catch (e) { status(e.message || String(e), 'err'); }
@@ -5390,10 +5513,10 @@ async function leeBranchMenu(anchor) {
   try {
     const d = await api('/git/info');
     const rows = (d.branches || []).map(b => ({label: b.name, detail: b.current ? 'current' : b.oid,
-      run: () => b.current ? leeLeft('git') : gitDo('checkout', {branch: b.name})}));
+      run: () => b.current ? leeLeft('git') : gitDo('checkout', {branch: b.name, repo: ''})}));
     rows.push({separator: true}, {label: 'Create branch…', run: async () => {
       const branch = await inputDialog('new branch', 'Branch name', '', 'feature/name');
-      if (branch) gitDo('create', {branch});
+      if (branch) gitDo('create', {branch, repo: ''});
     }}, {label: 'Source control', detail: `${(d.changes || []).length} changes`, run: () => leeLeft('git')});
     openChromeMenu(anchor, rows);
   } catch (e) { status(e.message || String(e), 'err'); }

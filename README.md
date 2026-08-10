@@ -196,8 +196,8 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   points the panel at any of them, or back at the notebook's kernel. See
   [watching something run](#watching-something-run).
 - **Browser source control without leaving the editor.** A vertical Project/Git activity
-  bar opens a five-part source-control workspace: Changes, Review, Branches, History, and
-  Repository. The branch pill shows changes and upstream divergence. Modified, staged,
+  bar opens a six-part source-control workspace: Changes, Review, Branches, History,
+  Repository, and All repos. The branch pill shows changes and upstream divergence. Modified, staged,
   untracked, and conflicted files are coloured in the tree; source rails open
   syntax-preserving patches. Changes include line statistics, multi-file selection, local
   changelists, pre-stage previews for untracked files, staged-only commit review, and hunk
@@ -223,6 +223,21 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   worktrees, and submodule state. Active merge/rebase/cherry-pick/revert operations expose
   continue, skip, and abort actions. Status snapshots are coalesced so one mutation does not
   launch several duplicate Git scans. Lazygit remains available for full-screen workflows.
+- **A workspace of repositories, not just one.** `leela ~/code` opens a folder of
+  checkouts as readily as a single project, and **All repos** answers the questions that only
+  exist in the plural — which are dirty, which are behind, which are still on last week's
+  branch, which have commits past their last tag — the way
+  [fastws](https://github.com/AnswerDotAI/fastws) does from the command line. Membership is
+  discovered rather than configured: an open folder is a checkout, or it holds them, or
+  both; a `repos.txt` beside it is read when present, so a workspace laid out for fastws
+  works untouched, and a checkout from anywhere else can be added or dropped from the list
+  without moving it. Fetch, pull and push run across every repository at once, each one
+  reporting its own outcome so a remote that is down cannot hide the nineteen that
+  succeeded; a bulk pull skips a repository with no upstream and a bulk push skips an
+  unpublished branch rather than guessing. Clone several at once by URL or `owner/name`.
+  Pinning a repository points the whole panel — changes, branches, history, review — at
+  that checkout, while the branch pill, tree badges and editor change marks keep following
+  the file you have open.
 - **Notebook outline and folding.** Collapse any cell to a one-line source preview. The
   sticky Contents accordion is generated from Markdown headings, jumps to a section, and
   can fold or reopen that whole section at once.
@@ -343,6 +358,8 @@ leela/
   keys.py         single-source browser keymap and the user's overrides
   buttons.py      single-source button bars, over those same actions
   fs.py           filesystem access, confined to the open folders
+  git.py          one repository, as records rather than porcelain text
+  repos.py        every repository in the workspace, and one operation across all of them
   term.py         terminals and lazygit
   research.py     web search and fetch; automatically feeds durable memory
   memory.py       litesearch document trees, hybrid recall and semantic topic clusters

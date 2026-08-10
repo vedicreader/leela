@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-__all__ = ['GitRepo', 'GitError', 'repo_root']
+__all__ = ['GitRepo', 'GitError', 'repo_root', 'clone']
 
 
 class GitError(RuntimeError):
@@ -52,6 +52,30 @@ def repo_root(path):
         return Path(r.stdout.strip()).resolve() if r.returncode == 0 and r.stdout.strip() else None
     except (OSError, GitError):
         return None
+
+
+def clone(url, parent, name=''):
+    """Clone `url` into `parent`, returning the new worktree root.
+
+    The URL is a positional argument to `git clone`, so an option-shaped one would be read
+    as a flag instead: `--` and an outright refusal keep it a URL. The folder name is
+    derived here rather than left to Git so that the caller knows where the checkout landed
+    without re-reading the directory.
+    """
+    url = str(url or '').strip()
+    if not url or url.startswith('-'):
+        raise GitError(f'not a repository URL: {url or "(empty)"}')
+    parent = Path(parent).expanduser().resolve()
+    if not parent.is_dir():
+        raise GitError(f'not a directory: {parent}')
+    name = str(name or '').strip() or re.sub(r'\.git$', '', url.rstrip('/').rpartition('/')[2])
+    if not name or '/' in name or name in ('.', '..'):
+        raise GitError(f'cannot work out a folder name for {url}')
+    target = parent/name
+    if target.exists():
+        raise GitError(f'{name} already exists in {parent.name}')
+    _run(parent, 'clone', '--', url, name, timeout=600)
+    return target
 
 
 _CACHE, _CACHE_LOCK = {}, threading.RLock()
@@ -254,6 +278,57 @@ class GitRepo:
         with _CACHE_LOCK:
             _CACHE[(str(self.root), 'changes')] = (time.monotonic(), value['changes'])
         return value
+
+    def brief(self, fresh=False):
+        """One repository as a single row: branch, drift, dirt, and how far past its last tag.
+
+        `info` walks every ref and every tag, which is the right price for the panel that
+        draws them and the wrong one multiplied by twenty repositories. This answers only
+        what a workspace list shows, so a `RepoSet` can ask all of them at once.
+
+        `fresh` is for the caller that is about to *act* on the answer. The shared snapshot
+        is invalidated by mutations through this class, not by a commit someone made in a
+        terminal a moment ago -- and deciding from a stale `ahead` is how a push silently
+        becomes "nothing to push".
+        """
+        if fresh: _invalidate(self.root)
+        def collect():
+            branch = self.run('branch', '--show-current').strip()
+            detached = not branch
+            if detached:
+                head = _run(self.root, 'rev-parse', '--short', 'HEAD', check=False)
+                branch = head.stdout.strip() if head.returncode == 0 else 'HEAD (unborn)'
+            upstream = _run(self.root, 'rev-parse', '--abbrev-ref', '@{upstream}', check=False)
+            upstream_name = upstream.stdout.strip() if upstream.returncode == 0 else ''
+            ahead = behind = 0
+            if upstream_name:
+                counts = self.run('rev-list', '--left-right', '--count', f'{upstream_name}...HEAD').split()
+                if len(counts) == 2:
+                    behind, ahead = map(int, counts)
+            changes = self._changes_uncached()
+            last = _run(self.root, 'log', '-1', '--format=%h%x00%s%x00%ct', check=False).stdout
+            short, subject, stamp = (last.strip().split('\0') + [''] * 3)[:3]
+            described = _run(self.root, 'describe', '--tags', '--abbrev=0', check=False)
+            tag = described.stdout.strip() if described.returncode == 0 else ''
+            unreleased = None
+            if tag:
+                counted = _run(self.root, 'rev-list', '--count', f'{tag}..HEAD', check=False)
+                unreleased = int(counted.stdout.strip() or 0) if counted.returncode == 0 else None
+            origin = _run(self.root, 'remote', 'get-url', 'origin', check=False).stdout.strip()
+            return {
+                'root': str(self.root), 'name': self.root.name, 'branch': branch,
+                'detached': detached, 'upstream': upstream_name, 'ahead': ahead, 'behind': behind,
+                'changed': len(changes), 'clean': not changes,
+                'staged': sum(1 for c in changes if c['staged']),
+                'unstaged': sum(1 for c in changes if c['unstaged'] and not c['untracked']),
+                'untracked': sum(1 for c in changes if c['untracked']),
+                'conflicted': sum(1 for c in changes if c['conflicted']),
+                'last_commit': {'short': short, 'subject': subject, 'timestamp': int(stamp or 0)},
+                'tag': tag, 'unreleased': unreleased, 'operation': self._operation()['active'],
+                'fetched_at': self._fetch_time(), 'remote': origin,
+                'web_url': _remote_web_url(origin),
+            }
+        return _cached(self.root, 'brief', collect)
 
     def _fetch_time(self):
         fetch_head = Path(self.run('rev-parse', '--git-path', 'FETCH_HEAD').strip())

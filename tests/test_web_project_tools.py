@@ -208,6 +208,26 @@ def test_git_is_a_first_class_vertical_project_tab(tmp_path):
         assert op in panel
 
 
+def test_source_control_can_look_at_every_repository_in_the_workspace():
+    """The plural view, and the two rules that keep it from lying.
+
+    Every panel request carries the repository it is about, and the branch pill and tree
+    badges refuse to be repainted from a repository the active tab is not in.
+    """
+    block = JS[JS.index('function gitScope'):JS.index('async function loadGitReview')]
+    assert "function gitUrl" in JS and "q.set('repo', gitUI.repo)" in JS
+    assert "post('/git/action', {op, repo: gitUI.repo" in JS
+    assert 'if (gitUI.repo) return;' in JS, 'a pinned panel must not repaint the pill or tree'
+    assert "['repos','All repos']" in JS
+    assert "api('/git/repos'" in block and "post('/git/repos/action'" in block
+    for op in ('fetch all', 'pull all', 'push all', 'clone…', 'add repository…'):
+        assert op in block
+    assert 'data-repo-open' in block and 'data-repo-remove' in block and 'data-repos-op' in block
+    assert 'off branch' in block and 'unreleased' in block and 'expected_branch' in block
+    assert 'function gitPinRepo' in JS and 'gitUI.selectedChanges.clear()' in JS
+    assert '.lee-git-repo-row' in CSS and '.lee-git-repos-summary' in CSS and '.lee-git-scope' in CSS
+
+
 def test_git_compare_has_explicit_direction_and_works_from_branch_rows():
     block = JS[JS.index('function gitBranchesView'):JS.index('async function showGitReflog')]
     assert 'From (base)' in block and 'To (target)' in block
@@ -218,7 +238,7 @@ def test_git_compare_has_explicit_direction_and_works_from_branch_rows():
     assert '.lee-git-compare-fields' in CSS and '.lee-git-compare-summary' in CSS
     assert 'function gitReviewView' in block and 'function showMergePreview' in block
     assert 'snapshot differences' in block and 'swap direction' in block
-    assert '/git/review/file?' in block and '/git/merge-preview?' in block
+    assert "gitUrl('/git/review/file'" in block and "gitUrl('/git/merge-preview'" in block
     assert '.lee-git-full-review' in CSS and '.lee-git-merge-preview' in CSS
 
 
@@ -237,8 +257,8 @@ def test_git_diffs_open_as_editor_tabs_with_unified_and_split_layouts():
 
 
 def test_git_history_inspects_commits_and_opens_each_file_without_a_full_patch_modal():
-    assert "api('/git/commit/review?ref='" in JS
-    assert "api('/git/commit/file?ref='" in JS
+    assert "gitUrl('/git/commit/review', {ref})" in JS
+    assert "gitUrl('/git/commit/file', {ref, path})" in JS
     assert 'function gitCommitInspector' in JS and 'data-history-commit' in JS
     assert 'openGitCommitFile' in JS and "kind: 'commit'" in JS
     assert '.lee-git-commit-inspector' in CSS and '.lee-git-commit-file' in CSS

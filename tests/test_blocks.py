@@ -152,6 +152,76 @@ def test_git_requires_at_least_one_path():
     with pytest.raises(GitError, match='at least one'): git_paths([])
 
 
+# -- the workspace's repositories, over HTTP ---------------------------------
+
+@pytest.fixture
+def workspace_client(tmp_path, monkeypatch):
+    """A workspace holding two checkouts, served by the real app.
+
+    `leela_cfg` is redirected first: `RepoSet` remembers added and hidden repositories
+    there, and a test must not write into the config directory of whoever runs it.
+    """
+    import subprocess
+
+    import leela.repos
+    monkeypatch.setattr(leela.repos, 'leela_cfg', tmp_path/'cfg')
+    def git(cwd, *args): subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True)
+    for name in ('one', 'two'):
+        (tmp_path/name).mkdir()
+        git(tmp_path/name, 'init', '-b', 'main')
+        git(tmp_path/name, 'config', 'user.email', 'tests@leela.local')
+        git(tmp_path/name, 'config', 'user.name', 'Leela tests')
+        (tmp_path/name/'seed.py').write_text('value = 1\n')
+        git(tmp_path/name, 'add', '.')
+        git(tmp_path/name, 'commit', '-m', 'initial')
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c: yield c, tmp_path
+
+
+def test_the_workspace_lists_every_repository_it_holds(workspace_client):
+    client, root = workspace_client
+    d = client.get('/git/repos').json()
+    assert [r['name'] for r in d['repos']] == ['one', 'two']
+    assert d['expected_branch'] == 'main' and d['summary']['repos'] == 2
+
+
+def test_a_route_can_be_pointed_at_any_repository_in_the_workspace(workspace_client):
+    "The panel asks about a checkout the active tab is not in; the answer is that checkout's."
+    client, root = workspace_client
+    d = client.get('/git/info', params={'repo': str(root/'two')}).json()
+    assert d['root'] == str(root/'two')
+
+
+def test_a_repository_outside_the_workspace_is_refused(workspace_client, tmp_path):
+    client, root = workspace_client
+    d = client.get('/git/info', params={'repo': '/etc'})
+    assert d.status_code == 400 and 'not a repository in this workspace' in d.json()['error']
+
+
+def test_a_bulk_operation_answers_for_each_repository(workspace_client):
+    client, root = workspace_client
+    d = client.post('/git/repos/action', json={'op': 'push'}).json()
+    assert {r['name']: r['skipped'] for r in d['results']} == {'one': 'unpublished branch',
+                                                               'two': 'unpublished branch'}
+    assert d['summary']['repos'] == 2, 'the refreshed overview comes back with the results'
+
+
+def test_membership_changes_come_back_as_a_refreshed_overview(workspace_client):
+    client, root = workspace_client
+    d = client.post('/git/repos/action', json={'op': 'remove', 'path': str(root/'two')}).json()
+    assert d['removed'] == str(root/'two')
+    assert [r['name'] for r in d['repos']] == ['one']
+    d = client.post('/git/repos/action', json={'op': 'add', 'path': str(root/'two')}).json()
+    assert [r['name'] for r in d['repos']] == ['one', 'two']
+    # and it was remembered in the redirected config directory, not the real one
+    assert list((root/'cfg'/'repos').glob('*.json'))
+
+
+def test_an_unknown_workspace_operation_is_refused(workspace_client):
+    client, _ = workspace_client
+    d = client.post('/git/repos/action', json={'op': 'rm -rf'})
+    assert d.status_code == 400 and 'unknown workspace operation' in d.json()['error']
+
+
 # -- capability enforcement, end to end --------------------------------------
 
 def test_a_block_reaching_past_its_caps_fails_loudly(monkeypatch):
