@@ -26,6 +26,7 @@ const lee = {
   recentTabs: [], researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
   editorPrefs: null, settingsMeta: null, filePrefs: {}, workbenchPrefs: {}, debugPrefs: {},
+  gitDiffTabs: new Map(), activeGitTab: '', gitMergeView: null,
 };
 const CODE_FONTS = [
   ['JetBrains Mono', 'Bundled · full italic support'],
@@ -771,6 +772,7 @@ async function closeTab(index = null) {
   lee.menuTab = null;
   if (i < 0) return;
   const tab = $$('.lee-tab')[i];
+  if (tab?.dataset.gitDiff) return closeGitDiffTab(tab.dataset.gitDiff);
   if (tab?.classList.contains('dirty') &&
       !await confirmDialog('close unsaved tab', `${$('.lee-tab-name', tab)?.textContent || 'This file'} has unsaved changes.`)) return;
   htmxPost('/tab/close?i=' + i);
@@ -853,6 +855,72 @@ function leeTabOverflow(anchor) {
 window.leeTabOverflow = leeTabOverflow;
 function htmxPost(url) { htmx.ajax('POST', url, {target: '#tabbar', swap: 'outerHTML'}); }
 let openFileVersion=0;
+function gitDiffTabKey(data) { return encodeURIComponent(`${data.kind || 'review'}\0${data.base || ''}\0${data.head || ''}\0${data.path}`); }
+function syncGitDiffTabs() {
+  const bar = $('#tabbar'); if (!bar) return;
+  for (const [key, data] of lee.gitDiffTabs) {
+    if ($(`.lee-tab[data-git-diff="${CSS.escape(key)}"]`, bar)) continue;
+    const tab = document.createElement('div');
+    tab.className = 'lee-tab lee-git-diff-tab' + (lee.activeGitTab === key ? ' active' : '');
+    tab.dataset.gitDiff = key; tab.dataset.kind = 'git-diff'; tab.title = `${data.base} → ${data.head} · ${data.path}`;
+    tab.setAttribute('role', 'tab'); tab.innerHTML = `<span class="lee-git-diff-dot">±</span><span class="lee-tab-name">${esc(data.path.split('/').pop())}</span><span class="lee-git-diff-ref">${esc(data.headLabel || data.head.slice(0, 8))}</span><button class="lee-tab-x" title="close diff" aria-label="close diff">×</button>`;
+    tab.onclick = e => { if (e.target.closest('.lee-tab-x')) closeGitDiffTab(key); else activateGitDiffTab(key); };
+    bar.appendChild(tab);
+  }
+  requestAnimationFrame(layoutTabs);
+}
+function closeGitDiffTab(key) {
+  const wasActive = lee.activeGitTab === key, returnTab = lee.gitDiffTabs.get(key)?.returnTab || 0;
+  lee.gitDiffTabs.delete(key); $(`.lee-tab[data-git-diff="${CSS.escape(key)}"]`)?.remove();
+  if (wasActive) { lee.activeGitTab = ''; lee.gitMergeView && LeeCM.destroyMerge(lee.gitMergeView); lee.gitMergeView = null; htmxPost('/tab/select?i=' + Math.max(0, Number(returnTab) || 0)); }
+  else layoutTabs();
+}
+async function openGitDiffTab(data) {
+  const key = gitDiffTabKey(data), existing = lee.gitDiffTabs.get(key), returnTab = $('.lee-tab.active:not([data-git-diff])')?.dataset.i || existing?.returnTab || 0;
+  lee.gitDiffTabs.set(key, {...existing, ...data, key, returnTab, view: existing?.view || data.view || 'unified'});
+  syncGitDiffTabs(); await activateGitDiffTab(key);
+}
+async function activateGitDiffTab(key) {
+  const data = lee.gitDiffTabs.get(key); if (!data) return;
+  lee.activeGitTab = key; $$('.lee-tab').forEach(t => t.classList.toggle('active', t.dataset.gitDiff === key));
+  lee.cellObserver?.disconnect(); lee.cellObserver = null;
+  lee.editors.forEach((v, k) => { if (k !== 'exec') { LeeCM.destroy(v); lee.editors.delete(k); } });
+  if (lee.gitMergeView) { LeeCM.destroyMerge(lee.gitMergeView); lee.gitMergeView = null; }
+  lee.kind = 'git-diff'; lee.path = ''; lee.tabKey = `git-diff:${key}`; updateToolbarForKind('git-diff');
+  const host = $('#editor'); if (!host) return;
+  host.innerHTML = `<section class="lee-diff-document"><header><div><strong>${esc(data.path)}</strong><span>${esc(data.baseLabel || data.base)} → ${esc(data.headLabel || data.head)}</span></div><nav aria-label="Diff layout"><button data-diff-view="unified">unified</button><button data-diff-view="split">side by side</button></nav><span class="lee-spacer"></span><span class="lee-diff-edit-state" hidden>preview changed</span>${data.allowWrite ? '<button data-apply-merge-result hidden>apply result to working tree</button>' : ''}${data.reviewKey ? '<button data-review-note>note…</button><button data-review-mark>mark reviewed</button>' : ''}${data.can_apply ? '<button data-review-apply>apply hunks…</button>' : ''}${data.group ? '<button data-diff-hunks>select hunks</button>' : ''}<button data-open-source>open working file</button></header><div class="lee-diff-document-body"></div></section>`;
+  host.querySelectorAll('[data-diff-view]').forEach(b => { b.classList.toggle('active', b.dataset.diffView === data.view); b.onclick = () => { data.view = b.dataset.diffView; activateGitDiffTab(key); }; });
+  host.querySelector('[data-open-source]').onclick = () => data.absolutePath ? leeOpenFile(data.absolutePath) : status('this historical file has no working-tree path', 'err');
+  host.querySelector('[data-diff-hunks]')?.addEventListener('click', () => showGitFileDiff(data.absolutePath || data.path, data.patch, 0, data.rawPatch || data.patch, !!data.notebook, {group: data.group, label: `${data.baseLabel} → ${data.headLabel}`}));
+  const mark = host.querySelector('[data-review-mark]'); if (mark) { mark.classList.toggle('active', !!gitUI.reviewed[data.reviewKey]); mark.textContent = gitUI.reviewed[data.reviewKey] ? 'reviewed ✓' : 'mark reviewed'; mark.onclick = () => { gitUI.reviewed[data.reviewKey] = !gitUI.reviewed[data.reviewKey]; saveGitWorkflowState(); activateGitDiffTab(key); }; }
+  host.querySelector('[data-review-note]')?.addEventListener('click', async () => { const note = await inputDialog('review note', `Note for ${data.path}`, gitUI.reviewNotes[data.reviewKey] || '', 'Question, risk, or follow-up'); if (note !== null) { if (note.trim()) gitUI.reviewNotes[data.reviewKey] = note.trim(); else delete gitUI.reviewNotes[data.reviewKey]; saveGitWorkflowState(); } });
+  host.querySelector('[data-review-apply]')?.addEventListener('click', () => { gitUI.reviewFile = data.path; gitUI.reviewPatch = data.patch; showReviewHunkApply(gitUI.snapshot); });
+  host.querySelector('[data-apply-merge-result]')?.addEventListener('click', async () => {
+    if (data.mergeResult == null) return;
+    const message = `Replace the working-tree version of ${data.path} with this reviewed result? The file will remain uncommitted.`;
+    if (!await confirmDialog('apply split diff result', message, 'apply result')) return;
+    try { const next = await gitDo('write_worktree', {path: data.path, content: data.mergeResult}), fresh = await api('/git/diff?path=' + encodeURIComponent(data.path) + '&staged=false'); data.base = 'index'; data.head = 'worktree'; data.baseLabel = 'index'; data.headLabel = 'working tree'; data.left = fresh.left || ''; data.right = fresh.right || ''; data.patch = fresh.content || fresh.text || ''; data.rawPatch = fresh.text || ''; data.group = 'unstaged'; data.mergeResult = null; gitUI.review = null; paintGitPill(next); await activateGitDiffTab(key); status(`${data.path} updated in the working tree`, 'ok'); }
+    catch (e) { status(e.message || String(e), 'err'); }
+  });
+  const body = host.querySelector('.lee-diff-document-body');
+  if (data.file?.binary) body.innerHTML = '<div class="lee-git-empty-state"><strong>Binary file changed</strong><span>Text comparison is not available for this file.</span></div>';
+  else if (data.view === 'split') {
+    body.className += ' split';
+    const changed = result => { data.mergeResult = result; const state = host.querySelector('.lee-diff-edit-state'), apply = host.querySelector('[data-apply-merge-result]'); if (state) state.hidden = false; if (apply) apply.hidden = false; };
+    lee.gitMergeView = LeeCM.createMerge(body, {left: data.left || '', right: data.mergeResult ?? data.right ?? '', lang: codeLang('', data.path), settings: lee.editorPrefs, readOnlyRight: !data.allowWrite, revertControls: data.allowWrite ? 'a-to-b' : false, onChange: data.allowWrite ? changed : null});
+  } else {
+    body.innerHTML = gitDiffNotebookHtml(data.patch, data);
+    body.querySelectorAll('[data-fold-diff]').forEach(b => b.onclick = () => { const cell = b.closest('.lee-diff-cell'), folded = cell.classList.toggle('collapsed'); b.textContent = folded ? '+' : '−'; });
+  }
+  setScope('editor'); layoutTabs();
+}
+function gitDiffNotebookHtml(patch, data) {
+  const parts = gitPatchParts(patch);
+  if (!parts.hunks.length) return `<div class="lee-git-empty-state"><strong>No textual patch</strong><span>${data.path} has no line-level changes in this comparison.</span></div>`;
+  return `<div class="lee-diff-notebook">${parts.hunks.map((h, i) => { const title = h.split('\n')[0] || `hunk ${i + 1}`; return `<article class="lee-diff-cell"><header><button data-fold-diff aria-label="collapse hunk">−</button><strong>change ${i + 1}</strong><code>${esc(title)}</code><span class="lee-spacer"></span><small>${h.split('\n').filter(x => x.startsWith('+') && !x.startsWith('+++')).length} added · ${h.split('\n').filter(x => x.startsWith('-') && !x.startsWith('---')).length} removed</small></header><div class="lee-git-patch">${gitPatchHtml(h)}</div></article>`; }).join('')}</div>`;
+}
+window.openGitDiffTab = openGitDiffTab;
+
 async function leeOpenFile(path) {
   // The absolute path is the identity. Use one versioned request rather than HTMX's
   // implicit swap: an older response must never remount a same-named file from another root.
@@ -878,6 +946,9 @@ function updateToolbarForKind(kind) {
 let mountTabVersion=0;
 async function mountTab(expectedPath = '') {
   const mountVersion=++mountTabVersion;
+  lee.activeGitTab = '';
+  if (lee.gitMergeView) { LeeCM.destroyMerge(lee.gitMergeView); lee.gitMergeView = null; }
+  syncGitDiffTabs();
   clearTimeout(lee.autoSaveTimer);
   lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab
   const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
@@ -4492,8 +4563,12 @@ function showGitFileDiff(path, patch = '', line = 0, rawPatch = '', notebook = f
 }
 function gitChangeRow(c, group) {
   const state = c.conflicted ? 'conflict' : c.untracked ? 'new file' : group === 'staged' ? 'will commit' : 'not staged';
-  return `<article class="lee-git-change ${group}" data-path="${esc(c.path)}" data-group="${group}">` +
+  const selected = gitUI.selectedChanges.has(`${group}:${c.path}`);
+  const list = gitUI.changeLists[c.path], stat = group === 'staged' ? c.staged_stat : c.unstaged_stat;
+  return `<article class="lee-git-change ${group}${selected ? ' selected' : ''}" data-path="${esc(c.path)}" data-group="${group}">` +
+    `<input type="checkbox" data-select-change aria-label="Select ${esc(c.path)}" ${selected ? 'checked' : ''}>` +
     `<button class="lee-git-file" title="review diff"><span class="lee-git-status">${esc(group === 'staged' ? c.index : c.worktree)}</span><span>${esc(c.path)}</span></button>` +
+    `${list ? `<i class="lee-git-changelist">${esc(list)}</i>` : ''}${stat ? `<small class="lee-git-line-stat">${stat.binary ? 'binary' : `+${stat.additions} −${stat.deletions}`}</small>` : ''}` +
     `<span class="sub">${state}</span><span class="lee-spacer"></span>${c.conflicted ? '<button class="lee-btn warn" data-resolve>resolve</button>' : '<button class="lee-btn" data-blame title="file history and blame">blame</button>'}` +
     `<button class="lee-btn" data-open title="open file">open</button>` +
     `${group === 'unstaged' ? '<button class="lee-btn" data-git="stage">stage</button>' : '<button class="lee-btn" data-git="unstage">unstage</button>'}` +
@@ -4506,7 +4581,13 @@ function gitRelative(stamp) {
   return 'just now';
 }
 function gitFreshness(stamp) { return stamp ? `fetched ${gitRelative(stamp)}` : 'remote refs have not been fetched'; }
-const gitUI = {tab: 'changes', snapshot: null, history: [], historyQuery: '', branchQuery: '', branchScope: 'all', busy: ''};
+let savedGitLists = {}, savedGitReviews = {}, savedGitNotes = {};
+try { savedGitLists = JSON.parse(localStorage.getItem('lee-git-changelists') || '{}'); } catch (_) {}
+try { savedGitReviews = JSON.parse(localStorage.getItem('lee-git-reviews') || '{}'); } catch (_) {}
+try { savedGitNotes = JSON.parse(localStorage.getItem('lee-git-review-notes') || '{}'); } catch (_) {}
+const gitUI = {tab: 'changes', snapshot: null, history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
+function saveGitWorkflowState() { localStorage.setItem('lee-git-changelists', JSON.stringify(gitUI.changeLists)); localStorage.setItem('lee-git-reviews', JSON.stringify(gitUI.reviewed)); localStorage.setItem('lee-git-review-notes', JSON.stringify(gitUI.reviewNotes)); }
+function gitReviewKey(d, path) { return `${d.root || gitUI.snapshot?.root || ''}\0${d.base}\0${d.head}\0${d.mode}\0${path}`; }
 function paintGitPill(d) {
   const git = $('#gitpill'); if (!git || !d) return;
   const n = (d.changes || []).length;
@@ -4532,7 +4613,7 @@ function gitOperationBanner(d) {
     `${op.can_abort ? '<button data-operation="abort" class="warn">abort</button>' : ''}</section>`;
 }
 function gitNav() {
-  return `<nav class="lee-git-nav" aria-label="Source control views">${[['changes','Changes'],['branches','Branches'],['history','History'],['resources','Repository']].map(([id, label]) =>
+  return `<nav class="lee-git-nav" aria-label="Source control views">${[['changes','Changes'],['review','Review'],['branches','Branches'],['history','History'],['resources','Repository']].map(([id, label]) =>
     `<button data-git-tab="${id}" class="${gitUI.tab === id ? 'active' : ''}">${label}</button>`).join('')}</nav>`;
 }
 function gitSummary(d) {
@@ -4542,12 +4623,15 @@ function gitSummary(d) {
 }
 function gitChangesView(d) {
   const staged = (d.changes || []).filter(c => c.staged), unstaged = (d.changes || []).filter(c => c.unstaged);
+  const allStats = [...staged.map(c => c.staged_stat), ...unstaged.map(c => c.unstaged_stat)].filter(Boolean);
+  const additions = allStats.reduce((n, x) => n + (x.additions || 0), 0), deletions = allStats.reduce((n, x) => n + (x.deletions || 0), 0);
   const rows = (items, group) => items.length ? items.map(c => gitChangeRow(c, group)).join('') :
     `<div class="lee-git-empty-state"><strong>${group === 'staged' ? 'Nothing staged' : 'Working tree clean'}</strong><span>${group === 'staged' ? 'Stage files or individual hunks to prepare a commit.' : 'There are no local file changes.'}</span></div>`;
-  return gitOperationBanner(d) + `<div class="lee-sc-actions"><button data-top="fetch">fetch</button><button data-top="pull">pull</button><button data-top="push">push</button>` +
+  return gitOperationBanner(d) + `<div class="lee-git-change-summary"><strong>${d.changes.length} changed file${d.changes.length === 1 ? '' : 's'}</strong><span>+${additions}</span><span>−${deletions}</span><small>${staged.length} staged · ${unstaged.length} unstaged</small></div>` + `<div class="lee-sc-actions"><button data-top="fetch">fetch</button><button data-top="pull">pull</button><button data-top="push">push</button>` +
     `${!d.upstream ? '<button data-top="publish">publish branch</button>' : ''}<button id="scstash">stash</button></div>` +
+    `<div class="lee-git-selection" ${gitUI.selectedChanges.size ? '' : 'hidden'}><strong>${gitUI.selectedChanges.size} selected</strong><button data-selected-action="stage">stage</button><button data-selected-action="unstage">unstage</button><button data-selected-action="changelist">move to changelist</button><button data-selected-action="clear">clear</button></div>` +
     `<form id="sccommit" class="lee-sc-commit"><label>Commit message<textarea rows="3" placeholder="Describe this change" aria-label="Commit message"></textarea></label>` +
-    `<label class="lee-git-check"><input type="checkbox" name="amend"> amend previous commit</label><button ${staged.length ? '' : 'disabled'}>commit ${staged.length || ''}</button></form>` +
+    `<label class="lee-git-check"><input type="checkbox" name="amend"> amend previous commit</label><button type="button" id="screviewstaged" ${staged.length ? '' : 'disabled'}>review staged</button><button ${staged.length ? '' : 'disabled'}>commit ${staged.length || ''}</button></form>` +
     `<details class="lee-sc-group" open><summary><span>Staged changes</span><b>${staged.length}</b>${staged.length ? '<button type="button" id="scunstageall">unstage all</button>' : ''}</summary><div>${rows(staged, 'staged')}</div></details>` +
     `<details class="lee-sc-group" open><summary><span>Changes</span><b>${unstaged.length}</b>${unstaged.length ? '<button type="button" id="scstageall">stage all</button>' : ''}</summary><div>${rows(unstaged, 'unstaged')}</div></details>` +
     `<details class="lee-sc-group"><summary><span>Stashes</span><b>${(d.stashes || []).length}</b></summary><div class="lee-sc-refs">` +
@@ -4567,15 +4651,46 @@ function gitBranchesView(d) {
       `<button data-switch ${b.current ? 'disabled' : ''} title="${b.remote ? 'create local tracking branch' : 'switch branch'}">${b.current ? '●' : '○'}</button><div class="lee-git-branch-copy"><strong>${esc(b.name)}</strong>` +
       `<span>${esc(b.subject || 'No commit subject')}</span><small>${esc(b.author)} · ${gitRelative(b.timestamp)} · ${esc(b.oid)}</small></div>` +
       `<div class="lee-git-badges">${index === 0 ? '<i>latest commit</i>' : ''}${b.default ? '<i>default</i>' : ''}${b.remote ? '<i>remote</i>' : ''}${b.merged ? '<i>merged</i>' : '<i>unmerged</i>'}${b.track ? `<i>${esc(b.track)}</i>` : ''}</div>` +
-      `${b.remote ? '' : '<button data-more title="branch actions">•••</button>'}</article>`).join('') || '<div class="lee-git-empty-state"><strong>No matching branches</strong><span>Change the filter or fetch remote refs.</span></div>'}</div>` +
+      `${b.current ? '<span></span>' : '<button data-compare title="Review changes proposed by this branch">review</button>'}${b.remote ? '<span></span>' : '<button data-more title="branch actions">•••</button>'}</article>`).join('') || '<div class="lee-git-empty-state"><strong>No matching branches</strong><span>Change the filter or fetch remote refs.</span></div>'}</div>` +
     `<details class="lee-sc-group"><summary><span>Tags</span><b>${(d.tags || []).length}</b><button id="sctag">new tag</button></summary><div class="lee-sc-meta">` +
     `${(d.tag_details || []).map(t => `<span class="lee-sc-tag" data-tag="${esc(t.name)}">${esc(t.name)} <small>${gitRelative(t.timestamp)}</small><button data-delete-tag>×</button></span>`).join('') || '<span>no tags</span>'}</div></details>`;
 }
+function gitReviewView(d) {
+  if (!gitUI.reviewBase) gitUI.reviewBase = d.branch;
+  if (!gitUI.reviewHead) gitUI.reviewHead = (d.branches || []).find(b => !b.current && !b.merged)?.name || (d.branches || []).find(b => !b.current)?.name || d.upstream || d.branch;
+  const refs = [...new Set([d.branch, ...(d.branches || []).map(b => b.name), ...(d.tags || [])])];
+  const options = refs.map(ref => `<option value="${esc(ref)}"></option>`).join('');
+  const r = gitUI.review;
+  const reviewedCount = r ? r.files.filter(f => gitUI.reviewed[gitReviewKey({...r, root: d.root}, f.path)]).length : 0;
+  const summary = r ? `<div class="lee-git-review-summary"><strong>${r.summary.files} files</strong><span class="add">+${r.summary.additions}</span><span class="del">−${r.summary.deletions}</span><span>${reviewedCount}/${r.summary.files} reviewed</span><button id="gitreviewcopynotes">copy notes</button></div>` : '';
+  const commits = r?.commits.length ? `<details class="lee-git-review-commits"><summary>${r.commits.length} incoming commit${r.commits.length === 1 ? '' : 's'}</summary>${r.commits.map(c => `<button data-commit="${esc(c.oid)}"><code>${esc(c.short)}</code><span>${esc(c.subject)}</span><small>${esc(c.author)} · ${gitRelative(c.timestamp)}</small></button>`).join('')}</details>` : '';
+  const alternative = r?.snapshot_alternative?.files ? `<div class="lee-git-review-direction"><strong>No changes are proposed by ${esc(r.head)}</strong><span>${esc(r.head)} is already contained in ${esc(r.base)}. The refs still have ${r.snapshot_alternative.files} file difference${r.snapshot_alternative.files === 1 ? '' : 's'} because ${esc(r.base)} is ${r.base_only} commit${r.base_only === 1 ? '' : 's'} ahead.</span><button id="gitreviewsnapshot">show ${r.snapshot_alternative.files} snapshot differences</button><button id="gitreviewswap">review the opposite direction</button></div>` : '';
+  const files = r?.files.length ? r.files.map((f, i) => {
+    const reviewed = !!gitUI.reviewed[gitReviewKey({...r, root: d.root}, f.path)];
+    const note = gitUI.reviewNotes[gitReviewKey({...r, root: d.root}, f.path)];
+    return `<button class="lee-git-review-file${f.path === gitUI.reviewFile ? ' active' : ''}${reviewed ? ' reviewed' : ''}" data-review-path="${esc(f.path)}" data-review-index="${i}"><b>${reviewed ? '✓' : f.status}</b><span>${f.old_path ? `${esc(f.old_path)} → ` : ''}${esc(f.path)}${note ? ' · note' : ''}</span><small>${f.binary ? 'binary' : `+${f.additions} −${f.deletions}`}</small></button>`;
+  }).join('') : r ? '<div class="lee-git-empty-state"><strong>No files in this review direction</strong><span>Swap base and branch, or use complete snapshots to see content that differs.</span></div>' : '<div class="lee-git-empty-state"><strong>Choose a branch to review</strong><span>Review proposed branch changes or compare complete snapshots.</span></div>';
+  return `<section class="lee-git-review-controls"><label>Base<input id="gitreviewbase" list="gitreviewrefs" value="${esc(gitUI.reviewBase)}"></label><label>Branch<input id="gitreviewhead" list="gitreviewrefs" value="${esc(gitUI.reviewHead)}"></label>` +
+    `<datalist id="gitreviewrefs">${options}</datalist><button id="gitreviewcontrolswap" title="Swap base and branch">swap direction</button><select id="gitreviewmode"><option value="review">proposed changes</option><option value="snapshot">complete snapshots</option></select><button id="gitreviewload">review</button></section>` + summary + alternative + commits +
+    `<div class="lee-git-review-workspace"><header><strong>Changed files</strong><span>Click a file to open its diff in an editor tab.</span></header><aside class="lee-git-review-files">${files}</aside></div>`;
+}
+function gitCommitInspector() {
+  const c = gitUI.selectedCommit; if (!c) return '';
+  const files = c.files.map(f => `<button class="lee-git-commit-file" data-commit-file="${esc(f.path)}"><b>${esc(f.status)}</b><span>${f.old_path ? `${esc(f.old_path)} → ` : ''}${esc(f.path)}</span><small>${f.binary ? 'binary' : `+${f.additions} −${f.deletions}`}</small></button>`).join('');
+  return `<article class="lee-git-commit-inspector"><header><div><strong>${esc(c.message.split('\n')[0])}</strong><span>${esc(c.author)} · ${gitRelative(c.timestamp)} · ${esc(c.short)}</span></div><button data-cherry>cherry-pick</button><button data-revert>revert</button><button data-reset>reset…</button><button data-close-commit aria-label="Close commit details">×</button></header><section class="lee-git-commit-stats"><b>${c.summary.files} files</b><span>+${c.summary.additions}</span><span>−${c.summary.deletions}</span><code>${esc(c.oid)}</code></section>${c.message.includes('\n') ? `<div class="lee-git-commit-message">${esc(c.message)}</div>` : ''}<details open><summary>changed files</summary><div>${files}</div></details></article>`;
+}
 function gitHistoryView(d) {
+  const refs = [...new Set([...(d.branches || []).map(b => b.name), ...(d.tags || [])])];
+  if (!gitUI.compareTo) gitUI.compareTo = d.branch;
+  if (!gitUI.compareFrom) gitUI.compareFrom = (d.branches || []).find(b => b.default && b.name !== d.branch)?.name || (d.branches || []).find(b => !b.current)?.name || d.upstream || d.branch;
+  const suggestions = refs.map(ref => `<option value="${esc(ref)}"></option>`).join('');
   return `<div class="lee-git-filter"><input id="githistoryfilter" class="lee-input" value="${esc(gitUI.historyQuery)}" placeholder="Search commit messages…"><button id="githistorygo">search</button>` +
     `<select id="githistoryref"><option value="--all">all refs</option>${(d.branches || []).map(b => `<option value="${esc(b.name)}">${esc(b.name)}</option>`).join('')}</select><button id="gitreflog">reflog</button></div>` +
-    `<div class="lee-git-compare"><label>Compare<input id="gitcompareleft" value="${esc(d.branch)}"></label><span>…</span><label>with<input id="gitcompareright" placeholder="branch or tag"></label><button id="gitcomparego">compare</button></div>` +
-    `<div id="githistoryrows" class="lee-git-history">${gitUI.history.length ? gitUI.history.map(c => `<button class="lee-git-commit-row" data-commit="${c.oid}"><span class="lee-git-graph">${c.parents.length > 1 ? '◆' : '●'}</span><span><strong>${esc(c.subject)}</strong><small>${esc(c.author)} · ${gitRelative(c.timestamp)} · ${esc(c.short)}${c.decoration ? ' · ' + esc(c.decoration) : ''}</small></span></button>`).join('') : '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading commit graph</small></div>'}</div>`;
+    `<section class="lee-git-compare"><header><strong>Compare snapshots</strong><span>All file changes, including branches behind current</span></header>` +
+    `<div class="lee-git-compare-fields"><label>From (base)<input id="gitcompareleft" list="gitcomparerefs" value="${esc(gitUI.compareFrom)}" autocomplete="off"></label>` +
+    `<button id="gitcompareswap" title="Swap comparison direction" aria-label="Swap comparison direction">⇄</button><label>To (target)<input id="gitcompareright" list="gitcomparerefs" value="${esc(gitUI.compareTo)}" autocomplete="off"></label>` +
+    `<datalist id="gitcomparerefs">${suggestions}</datalist><button id="gitcomparego">compare files</button></div><small>Shows the exact change needed to turn the base snapshot into the target.</small></section>` +
+    gitCommitInspector() + `<div id="githistoryrows" class="lee-git-history">${gitUI.history.length ? gitUI.history.map(c => `<button class="lee-git-commit-row${gitUI.selectedCommit?.oid === c.oid ? ' active' : ''}" data-history-commit="${c.oid}"><span class="lee-git-graph">${c.parents.length > 1 ? '◆' : '●'}</span><span><strong>${esc(c.subject)}</strong><small>${esc(c.author)} · ${gitRelative(c.timestamp)} · ${esc(c.short)}${c.decoration ? ' · ' + esc(c.decoration) : ''}</small></span></button>`).join('') : '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading commit graph</small></div>'}</div>`;
 }
 function gitResourcesView(d) {
   const hosted = (d.remotes || []).find(r => r.web_url);
@@ -4593,11 +4708,37 @@ async function renderGitPanel(snapshot = null) {
   try { if (!d) d = await api('/git/info'); }
   catch (e) { host.innerHTML = `<div class="lee-git-empty-state"><strong>No Git repository</strong><span>${esc(e.message || e)}</span></div>`; return; }
   gitUI.snapshot = d; paintGitPill(d);
-  const view = gitUI.tab === 'changes' ? gitChangesView(d) : gitUI.tab === 'branches' ? gitBranchesView(d) : gitUI.tab === 'history' ? gitHistoryView(d) : gitResourcesView(d);
+  const view = gitUI.tab === 'changes' ? gitChangesView(d) : gitUI.tab === 'review' ? gitReviewView(d) : gitUI.tab === 'branches' ? gitBranchesView(d) : gitUI.tab === 'history' ? gitHistoryView(d) : gitResourcesView(d);
   host.innerHTML = gitSummary(d) + gitNav() + `<main class="lee-git-view">${view}</main>`;
   wireGitPanel(host, d);
   if (gitUI.tab === 'history' && !gitUI.history.length) loadGitHistory();
+  if (gitUI.tab === 'review' && !gitUI.review) loadGitReview();
   if (gitUI.tab === 'resources') loadGitResources();
+}
+async function loadGitReview() {
+  if (!gitUI.reviewBase || !gitUI.reviewHead) return;
+  const host = $('.lee-git-review-workspace');
+  if (host) host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>building review</small></div>';
+  try {
+    gitUI.review = await api('/git/review?base=' + encodeURIComponent(gitUI.reviewBase) + '&head=' + encodeURIComponent(gitUI.reviewHead) + '&mode=' + encodeURIComponent(gitUI.reviewMode));
+    gitUI.reviewFile = gitUI.review.files[0]?.path || ''; gitUI.reviewPatch = '';
+    renderGitPanel(gitUI.snapshot);
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function loadGitReviewFile(path, asTab = false) {
+  if (!gitUI.review) return;
+  gitUI.reviewFile = path;
+  try {
+    const d = await api('/git/review/file?base=' + encodeURIComponent(gitUI.review.base) + '&head=' + encodeURIComponent(gitUI.review.head) + '&mode=' + encodeURIComponent(gitUI.review.mode) + '&path=' + encodeURIComponent(path));
+    gitUI.reviewPatch = d.patch || '';
+    if (asTab) return openGitDiffTab({...d, path, kind: 'review', baseLabel: gitUI.review.base, headLabel: gitUI.review.head, absolutePath: gitUI.snapshot.root + '/' + path, reviewKey: gitReviewKey({...gitUI.review, root: gitUI.snapshot.root}, path), allowWrite: !!d.can_apply && !path.toLowerCase().endsWith('.ipynb')});
+    renderGitPanel(gitUI.snapshot);
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+function moveGitReviewFile(delta) {
+  const files = gitUI.review?.files || [], at = files.findIndex(f => f.path === gitUI.reviewFile);
+  if (!files.length) return;
+  loadGitReviewFile(files[(Math.max(0, at) + delta + files.length) % files.length].path);
 }
 async function loadGitHistory() {
   const rows = $('#githistoryrows');
@@ -4632,9 +4773,24 @@ function wireGitPanel(host, d) {
   host.querySelector('#scunstageall')?.addEventListener('click', e => { e.preventDefault(); act('unstage', {paths: d.changes.filter(x => x.staged).map(x => x.path)}); });
   host.querySelector('#scstash')?.addEventListener('click', async () => { const message = await inputDialog('stash changes', 'Optional message', '', 'work in progress'); if (message !== null) act('stash', {message}); });
   host.querySelector('#sccommit')?.addEventListener('submit', e => { e.preventDefault(); const message = e.target.querySelector('textarea').value.trim(); if (message) act('commit', {message, amend: e.target.elements.amend.checked}); });
+  host.querySelector('#screviewstaged')?.addEventListener('click', () => showStagedReview(d));
+  host.querySelectorAll('[data-selected-action]').forEach(b => b.onclick = async () => {
+    const action = b.dataset.selectedAction;
+    if (action === 'clear') { gitUI.selectedChanges.clear(); return renderGitPanel(d); }
+    const selected = [...gitUI.selectedChanges].map(key => { const [group, ...parts] = key.split(':'); return {group, path: parts.join(':')}; });
+    if (action === 'changelist') {
+      const name = await inputDialog('move to changelist', 'Local changelist name', '', 'Focused change');
+      if (name !== null) { for (const x of selected) { if (name) gitUI.changeLists[x.path] = name; else delete gitUI.changeLists[x.path]; } saveGitWorkflowState(); renderGitPanel(d); }
+      return;
+    }
+    const paths = selected.filter(x => action === 'stage' ? x.group === 'unstaged' : x.group === 'staged').map(x => x.path);
+    if (!paths.length) return status(`select ${action === 'stage' ? 'unstaged' : 'staged'} files`, 'err');
+    gitUI.selectedChanges.clear(); act(action, {paths});
+  });
   host.querySelectorAll('.lee-git-change').forEach(row => {
     const path = row.dataset.path, staged = row.dataset.group === 'staged';
-    row.querySelector('.lee-git-file').onclick = async () => { const patch = await api('/git/diff?path=' + encodeURIComponent(path) + '&staged=' + staged); showGitFileDiff(d.root + '/' + path, patch.content || patch.text || '', 0, patch.text || '', !!patch.notebook, {group: row.dataset.group, label: staged ? 'staged against HEAD' : 'working tree against index'}); };
+    row.querySelector('[data-select-change]').onchange = e => { const key = `${row.dataset.group}:${path}`; if (e.target.checked) gitUI.selectedChanges.add(key); else gitUI.selectedChanges.delete(key); renderGitPanel(d); };
+    row.querySelector('.lee-git-file').onclick = async () => { const patch = await api('/git/diff?path=' + encodeURIComponent(path) + '&staged=' + staged); openGitDiffTab({kind: 'changes-' + row.dataset.group, path, absolutePath: d.root + '/' + path, base: staged ? 'HEAD' : 'index', head: staged ? 'index' : 'worktree', baseLabel: staged ? 'HEAD' : 'index', headLabel: staged ? 'staged' : 'working tree', left: patch.left || '', right: patch.right || '', patch: patch.content || patch.text || '', rawPatch: patch.text || '', notebook: !!patch.notebook, group: row.dataset.group, allowWrite: row.dataset.group === 'unstaged' && !patch.notebook}); };
     row.querySelector('[data-open]').onclick = () => leeOpenFile(d.root + '/' + path);
     row.querySelector('[data-blame]')?.addEventListener('click', () => showGitBlame(d.root, path));
     row.querySelector('[data-resolve]')?.addEventListener('click', () => showGitConflict(path));
@@ -4644,48 +4800,133 @@ function wireGitPanel(host, d) {
   const branchFilter = host.querySelector('#gitbranchfilter'); if (branchFilter) branchFilter.oninput = () => { gitUI.branchQuery = branchFilter.value; renderGitPanel(d); requestAnimationFrame(() => { const x = $('#gitbranchfilter'); x?.focus(); x?.setSelectionRange(x.value.length, x.value.length); }); };
   const branchScope = host.querySelector('#gitbranchscope'); if (branchScope) { branchScope.value = gitUI.branchScope; branchScope.onchange = () => { gitUI.branchScope = branchScope.value; renderGitPanel(d); }; }
   host.querySelector('#scbranch')?.addEventListener('click', async () => { const branch = await inputDialog('new branch', 'Branch name', '', 'feature/name'); if (branch) act('create', {branch}); });
-  host.querySelectorAll('[data-branch]').forEach(row => { const branch = row.dataset.branch; row.querySelector('[data-switch]').onclick = () => act('checkout', {branch}); row.querySelector('[data-more]')?.addEventListener('click', () => branchActions(branch, d, act)); });
+  host.querySelectorAll('[data-branch]').forEach(row => { const branch = row.dataset.branch; row.querySelector('[data-switch]').onclick = () => act('checkout', {branch}); row.querySelector('[data-compare]')?.addEventListener('click', () => { gitUI.reviewBase = d.branch; gitUI.reviewHead = branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); }); row.querySelector('[data-more]')?.addEventListener('click', () => branchActions(branch, d, act)); });
   host.querySelector('#sctag')?.addEventListener('click', async () => { const name = await inputDialog('create tag', 'Tag name', '', 'v1.0.0'); if (!name) return; const message = await inputDialog('annotated tag', 'Optional annotation', '', ''); if (message !== null) act('tag', {name, message}); });
   host.querySelectorAll('[data-delete-tag]').forEach(b => b.onclick = async () => { const name = b.closest('[data-tag]').dataset.tag; if (await confirmDialog('delete tag', `Delete local tag ${name}?`)) act('delete_tag', {name}); });
-  host.querySelector('#githistorygo')?.addEventListener('click', () => { gitUI.historyQuery = $('#githistoryfilter').value.trim(); gitUI.history = []; loadGitHistory(); });
-  host.querySelector('#githistoryfilter')?.addEventListener('keydown', e => { if (e.key === 'Enter') { gitUI.historyQuery = e.target.value.trim(); gitUI.history = []; loadGitHistory(); } });
-  host.querySelector('#githistoryref')?.addEventListener('change', () => { gitUI.history = []; loadGitHistory(); });
+  host.querySelector('#gitreviewmode') && (host.querySelector('#gitreviewmode').value = gitUI.reviewMode);
+  const swapReviewDirection = () => { const base = $('#gitreviewbase')?.value.trim() || gitUI.reviewBase; gitUI.reviewBase = $('#gitreviewhead')?.value.trim() || gitUI.reviewHead; gitUI.reviewHead = base; gitUI.review = null; loadGitReview(); };
+  host.querySelector('#gitreviewcontrolswap')?.addEventListener('click', swapReviewDirection);
+  host.querySelector('#gitreviewswap')?.addEventListener('click', swapReviewDirection);
+  host.querySelector('#gitreviewsnapshot')?.addEventListener('click', () => { gitUI.reviewMode = 'snapshot'; gitUI.review = null; loadGitReview(); });
+  host.querySelector('#gitreviewload')?.addEventListener('click', () => { gitUI.reviewBase = $('#gitreviewbase').value.trim(); gitUI.reviewHead = $('#gitreviewhead').value.trim(); gitUI.reviewMode = $('#gitreviewmode').value; gitUI.review = null; loadGitReview(); });
+  host.querySelectorAll('[data-review-path]').forEach(b => b.onclick = () => loadGitReviewFile(b.dataset.reviewPath, true));
+  host.querySelector('#gitreviewprev')?.addEventListener('click', () => moveGitReviewFile(-1));
+  host.querySelector('#gitreviewnext')?.addEventListener('click', () => moveGitReviewFile(1));
+  host.querySelector('#gitreviewmark')?.addEventListener('click', () => { const key = gitReviewKey({...gitUI.review, root: d.root}, gitUI.reviewFile); gitUI.reviewed[key] = !gitUI.reviewed[key]; saveGitWorkflowState(); renderGitPanel(d); });
+  host.querySelector('#gitreviewnote')?.addEventListener('click', async () => { const key = gitReviewKey({...gitUI.review, root: d.root}, gitUI.reviewFile), note = await inputDialog('review note', `Note for ${gitUI.reviewFile}`, gitUI.reviewNotes[key] || '', 'Question, risk, or follow-up'); if (note !== null) { if (note.trim()) gitUI.reviewNotes[key] = note.trim(); else delete gitUI.reviewNotes[key]; saveGitWorkflowState(); renderGitPanel(d); } });
+  host.querySelector('#gitreviewcopynotes')?.addEventListener('click', async () => { const prefix = `${d.root}\0${gitUI.review.base}\0${gitUI.review.head}\0${gitUI.review.mode}\0`, rows = Object.entries(gitUI.reviewNotes).filter(([key]) => key.startsWith(prefix)).map(([key, note]) => `- **${key.slice(prefix.length)}** — ${note}`); if (!rows.length) return status('this review has no notes', 'err'); const text = `# Review: ${gitUI.review.head} → ${gitUI.review.base}\n\n${rows.join('\n')}\n`; try { await navigator.clipboard.writeText(text); status(`copied ${rows.length} review note${rows.length === 1 ? '' : 's'}`, 'ok'); } catch (_) { status('clipboard access failed', 'err'); } });
+  host.querySelector('#gitreviewapply')?.addEventListener('click', () => showReviewHunkApply(d));
+  host.querySelector('#githistorygo')?.addEventListener('click', () => { gitUI.historyQuery = $('#githistoryfilter').value.trim(); gitUI.history = []; gitUI.selectedCommit = null; loadGitHistory(); });
+  host.querySelector('#githistoryfilter')?.addEventListener('keydown', e => { if (e.key === 'Enter') { gitUI.historyQuery = e.target.value.trim(); gitUI.history = []; gitUI.selectedCommit = null; loadGitHistory(); } });
+  host.querySelector('#githistoryref')?.addEventListener('change', () => { gitUI.history = []; gitUI.selectedCommit = null; loadGitHistory(); });
   host.querySelector('#gitreflog')?.addEventListener('click', showGitReflog);
+  host.querySelectorAll('[data-history-commit]').forEach(b => b.onclick = () => loadGitCommitInspector(b.dataset.historyCommit));
   host.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
-  host.querySelector('#gitcomparego')?.addEventListener('click', () => showGitCompare($('#gitcompareleft').value.trim(), $('#gitcompareright').value.trim()));
+  host.querySelectorAll('[data-commit-file]').forEach(b => b.onclick = () => openGitCommitFile(gitUI.selectedCommit.oid, b.dataset.commitFile));
+  host.querySelector('[data-close-commit]')?.addEventListener('click', () => { gitUI.selectedCommit = null; renderGitPanel(d); });
+  host.querySelector('.lee-git-commit-inspector [data-cherry]')?.addEventListener('click', () => act('cherry_pick', {ref: gitUI.selectedCommit.oid}));
+  host.querySelector('.lee-git-commit-inspector [data-revert]')?.addEventListener('click', async () => { if (await confirmDialog('revert commit', `Create a commit that reverses ${gitUI.selectedCommit.short}?`)) act('revert', {ref: gitUI.selectedCommit.oid}); });
+  host.querySelector('.lee-git-commit-inspector [data-reset]')?.addEventListener('click', async () => { const c = gitUI.selectedCommit, mode = await inputDialog('reset branch', 'Mode: soft keeps index; mixed keeps files; hard discards changes', 'mixed', 'soft, mixed, or hard'); if (!['soft','mixed','hard'].includes(mode)) return status('reset mode must be soft, mixed, or hard', 'err'); if (mode === 'hard' && !await confirmDialog('hard reset', `Discard tracked changes and reset to ${c.short}? This cannot be undone.`)) return; act('reset', {ref: c.oid, mode}); });
+  const rememberCompare = () => { gitUI.compareFrom = $('#gitcompareleft')?.value.trim() || ''; gitUI.compareTo = $('#gitcompareright')?.value.trim() || ''; };
+  host.querySelector('#gitcompareleft')?.addEventListener('change', rememberCompare);
+  host.querySelector('#gitcompareright')?.addEventListener('change', rememberCompare);
+  host.querySelector('#gitcompareswap')?.addEventListener('click', () => { const left = $('#gitcompareleft'), right = $('#gitcompareright'), value = left.value; left.value = right.value; right.value = value; rememberCompare(); });
+  host.querySelector('#gitcomparego')?.addEventListener('click', () => { rememberCompare(); showGitCompare(gitUI.compareFrom, gitUI.compareTo); });
   host.querySelector('[data-hosted-pr]')?.addEventListener('click', e => window.open(e.currentTarget.dataset.url, '_blank', 'noopener,noreferrer'));
   host.querySelector('#gitaddremote')?.addEventListener('click', async () => { const name = await inputDialog('add remote', 'Remote name', '', 'origin'); if (!name) return; const url = await inputDialog('add remote', 'Fetch URL', '', 'https://github.com/owner/repository.git'); if (url) act('add_remote', {name, url}); });
   host.querySelectorAll('[data-remote]').forEach(row => { const remote = row.dataset.remote; row.querySelector('[data-open-remote]')?.addEventListener('click', b => window.open(b.currentTarget.dataset.url, '_blank', 'noopener,noreferrer')); row.querySelector('[data-fetch-remote]').onclick = () => act('fetch', {remote}); row.querySelector('[data-edit-remote]').onclick = async () => { const url = await inputDialog('edit remote', `${remote} fetch URL`, row.querySelector('code').textContent, 'https://github.com/owner/repository.git'); if (url) act('set_remote', {name: remote, url}); }; row.querySelector('[data-remove-remote]').onclick = async () => { if (await confirmDialog('remove remote', `Remove ${remote}? Local commits and branches remain.`, 'remove')) act('remove_remote', {name: remote}); }; });
   host.querySelector('#gitaddworktree')?.addEventListener('click', async () => { const path = await inputDialog('add worktree', 'Directory path', '', '../project-feature'); if (!path) return; const branch = await inputDialog('add worktree', 'Existing branch, or a new branch name', '', 'feature/name'); if (branch) act('add_worktree', {path, branch, create: !(d.branches || []).some(b => !b.remote && b.name === branch)}); });
 }
+async function showStagedReview(d) {
+  const files = (d.changes || []).filter(c => c.staged);
+  if (!files.length) return status('stage changes before reviewing them', 'err');
+  const m = modal(`<div class="lee-mhead">Review staged changes<span class="sub">${files.length} file${files.length === 1 ? '' : 's'} will be committed</span><span class="lee-spacer"></span><button class="lee-btn" data-prev>previous</button><button class="lee-btn" data-next>next</button></div><div class="lee-git-full-review"><aside></aside><main class="lee-git-patch"></main></div><div class="lee-mfoot"><span class="lee-dim">Only the index is shown. Unstaged edits are not part of the commit.</span></div>`);
+  m.classList.add('lee-git-review-expanded');
+  let at = 0;
+  const paint = async next => {
+    at = (next + files.length) % files.length;
+    const active = files[at];
+    m.querySelector('aside').innerHTML = files.map((f, i) => `<button data-index="${i}" class="${i === at ? 'active' : ''}"><b>${esc(f.index)}</b><span>${esc(f.path)}</span></button>`).join('');
+    m.querySelectorAll('[data-index]').forEach(b => b.onclick = () => paint(+b.dataset.index));
+    const detail = await api('/git/diff?path=' + encodeURIComponent(active.path) + '&staged=true');
+    m.querySelector('main').innerHTML = gitPatchHtml(detail.content || detail.text || '');
+  };
+  m.querySelector('[data-prev]').onclick = () => paint(at - 1);
+  m.querySelector('[data-next]').onclick = () => paint(at + 1);
+  paint(0);
+}
+function showReviewHunkApply(d) {
+  if (!gitUI.reviewPatch || !gitUI.review?.can_apply) return status('partial apply requires a clean current branch that is the review base', 'err');
+  const parts = gitPatchParts(gitUI.reviewPatch);
+  if (!parts.hunks.length) return status('this file has no text hunks to apply', 'err');
+  const m = modal(`<div class="lee-mhead">Apply parts of ${esc(gitUI.reviewFile)}<span class="sub">from ${esc(gitUI.review.head)} into the current working tree</span></div><div class="lee-git-patch">${parts.hunks.map((h, i) => `<label class="lee-git-hunk"><input type="checkbox" data-hunk="${i}" checked><span>hunk ${i + 1}</span>${gitPatchHtml(h)}</label>`).join('')}</div><div class="lee-mfoot"><button class="lee-btn go" data-apply>apply selected hunks</button><span class="lee-dim">Changes remain uncommitted and can be reviewed before staging.</span></div>`);
+  m.querySelector('[data-apply]').onclick = async () => {
+    const selected = [...m.querySelectorAll('[data-hunk]:checked')].map(x => parts.hunks[+x.dataset.hunk]);
+    if (!selected.length) return status('select at least one hunk', 'err');
+    if (!await confirmDialog('apply branch hunks', `Apply ${selected.length} selected hunk${selected.length === 1 ? '' : 's'} from ${gitUI.review.head} to the working tree?`)) return;
+    try { const next = await gitDo('apply_patch', {patch: parts.header + selected.join(''), staged: false}); m.remove(); gitUI.review = null; gitUI.tab = 'changes'; renderGitPanel(next); }
+    catch (e) { status(e.message || String(e), 'err'); }
+  };
+}
+async function showMergePreview(branch, d, act) {
+  try {
+    const p = await api('/git/merge-preview?incoming=' + encodeURIComponent(branch));
+    const r = p.review, relation = {'fast-forward': 'Fast-forward available', 'already-merged': 'Already contained in current', 'identical': 'Branches are identical', 'diverged': 'Branches have diverged'}[p.relation] || p.relation;
+    const conflict = p.conflict_likely ? `<div class="lee-git-merge-warning"><strong>Conflicts expected</strong><span>${p.conflicts.length ? p.conflicts.map(esc).join(' · ') : 'Git reports overlapping changes.'}</span></div>` : '<div class="lee-git-merge-ok"><strong>No conflicts found in merge rehearsal</strong><span>The working tree can still change before merge.</span></div>';
+    const m = modal(`<div class="lee-mhead">Merge ${esc(branch)}<span class="sub">into ${esc(p.current)}</span></div><div class="lee-git-merge-preview"><header><strong>${esc(relation)}</strong><span>${r.head_only} commits · ${r.summary.files} files · +${r.summary.additions} −${r.summary.deletions}</span></header>${p.clean ? '' : '<div class="lee-git-merge-warning"><strong>Working tree is not clean</strong><span>Commit or stash local changes before merging.</span></div>'}${conflict}<label>Strategy<select data-strategy><option value="merge">merge commit when needed</option><option value="squash">squash into working tree</option><option value="ff-only" ${p.relation === 'fast-forward' ? '' : 'disabled'}>fast-forward only</option></select></label><button class="lee-btn" data-review>review incoming files</button></div><div class="lee-mfoot"><button class="lee-btn go" data-merge ${!p.clean || p.relation === 'already-merged' || p.relation === 'identical' ? 'disabled' : ''}>merge ${esc(branch)}</button><span class="lee-dim">Merge starts only after this preview.</span></div>`);
+    m.querySelector('[data-review]').onclick = () => { m.remove(); gitUI.reviewBase = d.branch; gitUI.reviewHead = branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); };
+    m.querySelector('[data-merge]').onclick = async () => { const strategy = m.querySelector('[data-strategy]').value; if (!await confirmDialog('merge branch', `Merge ${branch} into ${p.current} using ${strategy}?`)) return; m.remove(); act('merge', {branch, strategy}); };
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function showRebasePreview(branch, d, act) {
+  try {
+    const p = await api('/git/rebase-preview?onto=' + encodeURIComponent(branch)), r = p.review;
+    const warning = p.conflict_likely ? `<div class="lee-git-merge-warning"><strong>Conflicts may occur while replaying commits</strong><span>${p.conflicts.length ? p.conflicts.map(esc).join(' · ') : 'Git reports overlapping changes.'}</span></div>` : '<div class="lee-git-merge-ok"><strong>No conflicts found in the tree rehearsal</strong><span>Rebase replays commits individually, so this remains a forecast.</span></div>';
+    const m = modal(`<div class="lee-mhead">Rebase ${esc(p.current)}<span class="sub">onto ${esc(branch)}</span></div><div class="lee-git-merge-preview"><header><strong>${p.already_based ? 'Branch already contains the target history' : `${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} will be replayed`}</strong><span>${r.summary.files} proposed files · +${r.summary.additions} −${r.summary.deletions}</span></header>${p.clean ? '' : '<div class="lee-git-merge-warning"><strong>Working tree is not clean</strong><span>Commit or stash local changes before rebasing.</span></div>'}${warning}<div class="lee-git-rebase-commits">${p.commits.slice(0, 12).map(c => `<span><code>${esc(c.short)}</code>${esc(c.subject)}</span>`).join('')}</div><button class="lee-btn" data-review>review branch changes</button></div><div class="lee-mfoot"><button class="lee-btn go" data-rebase ${!p.clean || p.already_based || !p.commits.length ? 'disabled' : ''}>start rebase</button><span class="lee-dim">The operation banner will offer continue, skip, and abort if Git pauses.</span></div>`);
+    m.querySelector('[data-review]').onclick = () => { m.remove(); gitUI.reviewBase = branch; gitUI.reviewHead = d.branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); };
+    m.querySelector('[data-rebase]').onclick = async () => { if (!await confirmDialog('rebase branch', `Replay ${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} from ${p.current} onto ${branch}?`)) return; m.remove(); act('rebase', {branch}); };
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
 async function branchActions(branch, d, act) {
   const m = modal(`<div class="lee-mhead">${esc(branch)}<span class="sub">branch actions</span></div><div class="lee-branch-actions">` +
     `<button class="lee-btn" data-op="merge">merge into ${esc(d.branch)}</button><button class="lee-btn" data-op="rebase">rebase current onto branch</button>` +
-    `<button class="lee-btn" data-op="rename">rename</button><button class="lee-btn" data-op="upstream">set upstream</button><button class="lee-btn" data-op="compare">compare with current</button>` +
+    `<button class="lee-btn" data-op="rename">rename</button><button class="lee-btn" data-op="upstream">set upstream</button><button class="lee-btn" data-op="compare">review selected into current</button>` +
     `<button class="lee-btn warn" data-op="delete">delete local branch</button></div>`);
   m.querySelectorAll('[data-op]').forEach(b => b.onclick = async () => {
     const op = b.dataset.op;
     if (op === 'delete') { if (!await confirmDialog('delete branch', `Delete local branch ${branch}?`)) return; m.remove(); return act('delete', {branch}); }
     if (op === 'rename') { const name = await inputDialog('rename branch', 'New name', branch, 'feature/name'); if (name) { m.remove(); act('rename_branch', {branch, name}); } return; }
     if (op === 'upstream') { const upstream = await inputDialog('set upstream', 'Remote tracking branch', '', 'origin/' + branch); if (upstream) { m.remove(); act('set_upstream', {branch, upstream}); } return; }
-    if (op === 'compare') { m.remove(); return showGitCompare(d.branch, branch); }
+    if (op === 'compare') { m.remove(); gitUI.reviewBase = d.branch; gitUI.reviewHead = branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; return renderGitPanel(d); }
+    if (op === 'merge') { m.remove(); return showMergePreview(branch, d, act); }
+    if (op === 'rebase') { m.remove(); return showRebasePreview(branch, d, act); }
     m.remove(); act(op, {branch});
   });
 }
+async function loadGitCommitInspector(ref) {
+  try { gitUI.selectedCommit = await api('/git/commit/review?ref=' + encodeURIComponent(ref)); renderGitPanel(gitUI.snapshot); }
+  catch (e) { status(e.message || String(e), 'err'); }
+}
+async function openGitCommitFile(ref, path) {
+  try {
+    const d = await api('/git/commit/file?ref=' + encodeURIComponent(ref) + '&path=' + encodeURIComponent(path));
+    const c = gitUI.selectedCommit;
+    return openGitDiffTab({...d, path, kind: 'commit', baseLabel: c?.parents?.[0]?.slice(0, 8) || 'empty tree', headLabel: c?.short || ref.slice(0, 8), absolutePath: gitUI.snapshot.root + '/' + path});
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
 async function showGitCommit(ref) {
   try {
-    const c = await api('/git/commit?ref=' + encodeURIComponent(ref));
-    const m = modal(`<div class="lee-mhead">${esc(c.short)}<span class="sub">${esc(c.author)} · ${new Date(c.timestamp * 1000).toLocaleString()}</span><span class="lee-spacer"></span><button class="lee-btn" data-cherry>cherry-pick</button><button class="lee-btn" data-revert>revert</button><button class="lee-btn warn" data-reset>reset…</button></div>` +
-      `<article class="lee-git-commit-detail"><h3>${esc(c.message)}</h3><code>${esc(c.oid)}</code><div class="lee-git-patch">${gitPatchHtml(c.patch)}</div></article>`);
-    m.querySelector('[data-cherry]').onclick = async () => { m.remove(); renderGitPanel(await gitDo('cherry_pick', {ref: c.oid})); };
-    m.querySelector('[data-revert]').onclick = async () => { if (await confirmDialog('revert commit', `Create a commit that reverses ${c.short}?`)) { m.remove(); renderGitPanel(await gitDo('revert', {ref: c.oid})); } };
-    m.querySelector('[data-reset]').onclick = async () => { const mode = await inputDialog('reset branch', 'Mode: soft keeps index; mixed keeps files; hard discards changes', 'mixed', 'soft, mixed, or hard'); if (!['soft','mixed','hard'].includes(mode)) return status('reset mode must be soft, mixed, or hard', 'err'); if (mode === 'hard' && !await confirmDialog('hard reset', `Discard tracked changes and reset to ${c.short}? This cannot be undone.`)) return; m.remove(); renderGitPanel(await gitDo('reset', {ref: c.oid, mode})); };
+    const c = await api('/git/commit/review?ref=' + encodeURIComponent(ref));
+    const files = c.files.map(f => `<button class="lee-git-commit-file" data-path="${esc(f.path)}"><b>${esc(f.status)}</b><span>${esc(f.path)}</span><small>${f.binary ? 'binary' : `+${f.additions} −${f.deletions}`}</small></button>`).join('');
+    const m = modal(`<div class="lee-mhead">${esc(c.short)}<span class="sub">${esc(c.author)} · ${new Date(c.timestamp * 1000).toLocaleString()}</span></div><article class="lee-git-commit-sheet"><h3>${esc(c.message)}</h3><section><b>${c.summary.files} files</b><span>+${c.summary.additions}</span><span>−${c.summary.deletions}</span></section><div>${files}</div></article>`);
+    m.querySelectorAll('[data-path]').forEach(b => b.onclick = () => { m.remove(); gitUI.selectedCommit = c; openGitCommitFile(c.oid, b.dataset.path); });
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 async function showGitCompare(left, right) {
-  if (!left || !right) return status('choose two refs to compare', 'err');
-  try { const d = await api('/git/compare?left=' + encodeURIComponent(left) + '&right=' + encodeURIComponent(right)); showGitFileDiff(`${left}…${right}`, d.patch, 0, d.patch, false, {label: `${d.left_only} commits only on ${left} · ${d.right_only} only on ${right}`}); }
-  catch (e) { status(e.message || String(e), 'err'); }
+  if (!left || !right) return status('choose a base and target ref', 'err');
+  gitUI.reviewBase = left; gitUI.reviewHead = right; gitUI.reviewMode = 'snapshot';
+  gitUI.review = null; gitUI.reviewFile = ''; gitUI.reviewPatch = ''; gitUI.tab = 'review';
+  await renderGitPanel(gitUI.snapshot);
 }
 async function showGitReflog() {
   try {

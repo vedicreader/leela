@@ -174,6 +174,18 @@ class GitRepo:
                 'unstaged': xy[1] != ' ' or xy == '??', 'untracked': xy == '??',
                 'conflicted': xy in ('DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'),
             })
+        unstaged = self._diff_numstat(_run(self.root, 'diff', '--numstat', '-z', check=False).stdout)
+        staged = self._diff_numstat(_run(self.root, 'diff', '--cached', '--numstat', '-z', check=False).stdout)
+        for row in out:
+            row['staged_stat'] = staged.get(row['path'])
+            row['unstaged_stat'] = unstaged.get(row['path'])
+            if row['untracked']:
+                try:
+                    data = (self.root/row['path']).read_bytes()
+                    binary = b'\0' in data[:8192]
+                    row['unstaged_stat'] = {'additions': None if binary else len(data.decode('utf-8', 'replace').splitlines()),
+                                            'deletions': None if binary else 0, 'binary': binary}
+                except OSError: pass
         return out
 
     def changes(self):
@@ -256,6 +268,17 @@ class GitRepo:
     def unstage(self, paths): self._mutate('restore', '--staged', '--', *paths)
     def discard(self, paths): self._mutate('restore', '--worktree', '--', *paths)
 
+    def write_worktree(self, path, content):
+        target = (self.root/str(path)).resolve()
+        if not target.is_relative_to(self.root.resolve()):
+            raise GitError('file is outside the repository')
+        if target.exists() and not target.is_file():
+            raise GitError(f'{path} is not a working-tree file')
+        if not target.parent.exists():
+            raise GitError(f'the parent directory for {path} does not exist')
+        target.write_text(str(content), encoding='utf-8')
+        _invalidate(self.root)
+
     def apply_patch(self, patch, staged=True, reverse=False):
         if not str(patch).strip():
             raise GitError('select at least one diff hunk')
@@ -318,7 +341,13 @@ class GitRepo:
     def stash_pop(self, ref='stash@{0}'): return self._mutate('stash', 'pop', ref).strip()
     def stash_apply(self, ref='stash@{0}'): return self._mutate('stash', 'apply', ref).strip()
     def stash_drop(self, ref='stash@{0}'): return self._mutate('stash', 'drop', ref).strip()
-    def merge(self, branch): return self._mutate('merge', '--no-edit', branch).strip()
+    def merge(self, branch, strategy='merge'):
+        if strategy not in {'merge', 'squash', 'ff-only'}:
+            raise GitError('merge strategy must be merge, squash, or ff-only')
+        args = ['merge', '--no-edit']
+        if strategy == 'squash': args.append('--squash')
+        elif strategy == 'ff-only': args.append('--ff-only')
+        return self._mutate(*args, branch).strip()
     def rebase(self, branch): return self._mutate('rebase', branch).strip()
     def cherry_pick(self, ref): return self._mutate('cherry-pick', ref).strip()
     def revert(self, ref): return self._mutate('revert', '--no-edit', ref).strip()
@@ -391,12 +420,206 @@ class GitRepo:
                 'email': email, 'timestamp': int(stamp or 0), 'decoration': decoration,
                 'message': message.strip(), 'patch': patch}
 
+    def _resolve_ref(self, ref):
+        """Resolve a user-facing ref to a commit without allowing option-like refs."""
+        ref = str(ref or '').strip()
+        if not ref:
+            raise GitError('choose a branch, tag, or commit')
+        found = _run(self.root, 'rev-parse', '--verify', '--end-of-options',
+                     f'{ref}^{{commit}}', check=False)
+        if found.returncode:
+            raise GitError(f'unknown branch, tag, or commit: {ref}')
+        return found.stdout.strip()
+
+    @staticmethod
+    def _diff_status(raw):
+        """Parse ``git diff --name-status -z`` into rename-aware records."""
+        fields, rows, i = raw.split('\0'), [], 0
+        while i < len(fields) and fields[i]:
+            status, i = fields[i], i + 1
+            path = fields[i] if i < len(fields) else ''
+            i += 1
+            old_path = ''
+            if status[:1] in {'R', 'C'}:
+                old_path, path = path, fields[i] if i < len(fields) else path
+                i += 1
+            rows.append({'path': path, 'old_path': old_path, 'status': status[:1],
+                         'similarity': int(status[1:] or 0)})
+        return rows
+
+    @staticmethod
+    def _diff_numstat(raw):
+        """Parse ``git diff --numstat -z`` including its three-field rename form."""
+        fields, stats, i = raw.split('\0'), {}, 0
+        while i < len(fields) and fields[i]:
+            head, i = fields[i], i + 1
+            bits = head.split('\t', 2)
+            if len(bits) != 3: continue
+            added, deleted, path = bits
+            if not path and i + 1 < len(fields):
+                _old, path, i = fields[i], fields[i + 1], i + 2
+            stats[path] = {'additions': None if added == '-' else int(added or 0),
+                           'deletions': None if deleted == '-' else int(deleted or 0),
+                           'binary': added == '-' or deleted == '-'}
+        return stats
+
+    def review(self, base, head, mode='review'):
+        """Structured branch review metadata with lazy per-file patches.
+
+        ``review`` compares the merge base to ``head`` like a pull request; ``snapshot``
+        compares the complete trees at the two named refs.
+        """
+        if mode not in {'review', 'snapshot'}:
+            raise GitError('comparison mode must be review or snapshot')
+        base_name, head_name = str(base).strip(), str(head).strip()
+        base_oid, head_oid = self._resolve_ref(base_name), self._resolve_ref(head_name)
+        merge_base = _run(self.root, 'merge-base', base_oid, head_oid, check=False).stdout.strip()
+        if not merge_base:
+            raise GitError(f'{base_name} and {head_name} do not share a merge base')
+        diff_left = merge_base if mode == 'review' else base_oid
+        status = self._diff_status(self.run('diff', '--name-status', '-z', '-M',
+                                            diff_left, head_oid, '--'))
+        stats = self._diff_numstat(self.run('diff', '--numstat', '-z', '-M',
+                                            diff_left, head_oid, '--'))
+        for row in status:
+            row.update(stats.get(row['path'], {'additions': 0, 'deletions': 0, 'binary': False}))
+        counts = self.run('rev-list', '--left-right', '--count', f'{base_oid}...{head_oid}').split()
+        commits = self.history(limit=250, ref=f'{base_oid}..{head_oid}')
+        alternate = None
+        if mode == 'review' and not status and base_oid != head_oid:
+            direct_status = self._diff_status(self.run('diff', '--name-status', '-z', '-M',
+                                                       base_oid, head_oid, '--'))
+            direct_stats = self._diff_numstat(self.run('diff', '--numstat', '-z', '-M',
+                                                       base_oid, head_oid, '--'))
+            alternate = {'files': len(direct_status),
+                         'additions': sum((direct_stats.get(x['path']) or {}).get('additions') or 0
+                                          for x in direct_status),
+                         'deletions': sum((direct_stats.get(x['path']) or {}).get('deletions') or 0
+                                          for x in direct_status)}
+        head_now = _run(self.root, 'rev-parse', '--verify', 'HEAD', check=False).stdout.strip()
+        return {'base': base_name, 'head': head_name, 'base_oid': base_oid,
+                'head_oid': head_oid, 'diff_base_oid': diff_left, 'merge_base': merge_base,
+                'mode': mode, 'base_only': int(counts[0]), 'head_only': int(counts[1]),
+                'files': status, 'commits': commits, 'snapshot_alternative': alternate,
+                'summary': {'files': len(status),
+                            'additions': sum(x['additions'] or 0 for x in status),
+                            'deletions': sum(x['deletions'] or 0 for x in status),
+                            'binary': sum(bool(x['binary']) for x in status)},
+                'can_apply': base_oid == head_now and merge_base == base_oid and not self.changes()}
+
+    def _ref_file(self, ref, path):
+        if not ref or not path: return ''
+        result = _run(self.root, 'show', f'{ref}:{path}', check=False)
+        return result.stdout if result.returncode == 0 else ''
+
+    def review_file(self, base, head, path, mode='review', context=3):
+        review = self.review(base, head, mode)
+        known = next((x for x in review['files'] if x['path'] == path), None)
+        if known is None:
+            raise GitError(f'{path} is not changed in this comparison')
+        patch = self.run('diff', '--no-ext-diff', f'--unified={max(0, min(int(context), 20))}',
+                         '-M', review['diff_base_oid'], review['head_oid'], '--', path)
+        old_path = known.get('old_path') or path
+        left = self._ref_file(review['diff_base_oid'], old_path)
+        right = self._ref_file(review['head_oid'], path)
+        if str(path).lower().endswith('.ipynb'):
+            left, right = self._notebook_content(left), self._notebook_content(right)
+            patch = ''.join(difflib.unified_diff(left.splitlines(True), right.splitlines(True),
+                                                 fromfile=f'{path} ({review["base"]})',
+                                                 tofile=f'{path} ({review["head"]})', n=3))
+        return {'file': known, 'patch': patch, 'left': left, 'right': right,
+                'base': review['base'], 'head': review['head'],
+                'mode': mode, 'can_apply': review['can_apply']}
+
+    def commit_review(self, ref):
+        oid = self._resolve_ref(ref)
+        meta = self.commit_detail(oid)
+        parent = meta['parents'][0] if meta['parents'] else self.run('mktree', input='').strip()
+        status = self._diff_status(self.run('diff', '--name-status', '-z', '-M', parent, oid, '--'))
+        stats = self._diff_numstat(self.run('diff', '--numstat', '-z', '-M', parent, oid, '--'))
+        for row in status:
+            row.update(stats.get(row['path'], {'additions': 0, 'deletions': 0, 'binary': False}))
+        summary = {'files': len(status), 'additions': sum(x['additions'] or 0 for x in status),
+                   'deletions': sum(x['deletions'] or 0 for x in status),
+                   'binary': sum(bool(x['binary']) for x in status)}
+        return {k: v for k, v in meta.items() if k != 'patch'} | {
+            'base': parent, 'head': oid, 'files': status, 'summary': summary}
+
+    def commit_file(self, ref, path, context=3):
+        detail = self.commit_review(ref)
+        known = next((x for x in detail['files'] if x['path'] == path), None)
+        if known is None: raise GitError(f'{path} is not changed by this commit')
+        old_path = known.get('old_path') or path
+        patch = self.run('diff', '--no-ext-diff', f'--unified={max(0, min(int(context), 20))}',
+                         '-M', detail['base'], detail['head'], '--', path)
+        left, right = self._ref_file(detail['base'], old_path), self._ref_file(detail['head'], path)
+        if str(path).lower().endswith('.ipynb'):
+            left, right = self._notebook_content(left), self._notebook_content(right)
+            patch = ''.join(difflib.unified_diff(left.splitlines(True), right.splitlines(True),
+                                                 fromfile=f'{path} ({detail["base"][:8]})',
+                                                 tofile=f'{path} ({detail["head"][:8]})', n=3))
+        return {'file': known, 'patch': patch, 'left': left, 'right': right,
+                'base': detail['base'], 'head': detail['head']}
+
+    def merge_preview(self, incoming):
+        current = self.run('branch', '--show-current').strip() or 'HEAD'
+        current_oid, incoming_oid = self._resolve_ref('HEAD'), self._resolve_ref(incoming)
+        merge_base = _run(self.root, 'merge-base', current_oid, incoming_oid, check=False).stdout.strip()
+        if not merge_base:
+            raise GitError(f'{current} and {incoming} do not share a merge base')
+        if current_oid == incoming_oid: relation = 'identical'
+        elif merge_base == current_oid: relation = 'fast-forward'
+        elif merge_base == incoming_oid: relation = 'already-merged'
+        else: relation = 'diverged'
+        review = self.review(current, incoming, 'review')
+        rehearsal = _run(self.root, 'merge-tree', '--write-tree', '--name-only',
+                          current_oid, incoming_oid, check=False)
+        conflicts = []
+        if rehearsal.returncode:
+            lines = rehearsal.stdout.splitlines()
+            for line in lines[1:]:
+                line = line.strip()
+                if line and not line.startswith(('Auto-merging ', 'CONFLICT ')):
+                    conflicts.append(line)
+            conflicts = list(dict.fromkeys(conflicts))
+        return {'current': current, 'incoming': str(incoming), 'relation': relation,
+                'clean': not self.changes(), 'merge_base': merge_base,
+                'conflicts': conflicts, 'conflict_likely': bool(rehearsal.returncode),
+                'review': review}
+
+    def rebase_preview(self, onto):
+        """Describe replaying current-only commits on ``onto`` before mutating history."""
+        current = self.run('branch', '--show-current').strip()
+        if not current:
+            raise GitError('cannot rebase a detached HEAD')
+        current_oid, onto_oid = self._resolve_ref('HEAD'), self._resolve_ref(onto)
+        base = _run(self.root, 'merge-base', current_oid, onto_oid, check=False).stdout.strip()
+        if not base:
+            raise GitError(f'{current} and {onto} do not share a merge base')
+        commits = self.history(limit=250, ref=f'{onto_oid}..{current_oid}')
+        rehearsal = _run(self.root, 'merge-tree', '--write-tree', '--name-only',
+                          onto_oid, current_oid, check=False)
+        conflicts = []
+        if rehearsal.returncode:
+            for line in rehearsal.stdout.splitlines()[1:]:
+                line = line.strip()
+                if line and not line.startswith(('Auto-merging ', 'CONFLICT ')):
+                    conflicts.append(line)
+        return {'current': current, 'onto': str(onto), 'clean': not self.changes(),
+                'merge_base': base, 'commits': commits,
+                'conflicts': list(dict.fromkeys(conflicts)),
+                'conflict_likely': bool(rehearsal.returncode),
+                'already_based': base == onto_oid, 'review': self.review(onto, current, 'review')}
+
     def compare(self, left, right):
-        spec = f'{left}...{right}'
-        counts = self.run('rev-list', '--left-right', '--count', spec).split()
-        patch = self.run('diff', '--no-ext-diff', '--stat', '--patch', spec)
-        return {'left': left, 'right': right, 'left_only': int(counts[0]),
-                'right_only': int(counts[1]), 'patch': patch}
+        """Compare the complete snapshots at two refs, from ``left`` to ``right``."""
+        review = self.review(left, right, 'snapshot')
+        patch = self.run('diff', '--no-ext-diff', '--stat', '--patch',
+                         review['base_oid'], review['head_oid'], '--')
+        return {'left': left, 'right': right, 'left_only': review['base_only'],
+                'right_only': review['head_only'],
+                'changed_files': review['summary']['files'],
+                'merge_base': review['merge_base'], 'patch': patch}
 
     def conflict_versions(self, path):
         change = next((row for row in self.changes() if row['path'] == path), None)
@@ -502,16 +725,23 @@ class GitRepo:
         return '\n\n'.join(parts) + ('\n' if parts else '')
 
     def diff_view(self, path, staged=False):
-        raw = self.diff(path, staged)
-        if not str(path).lower().endswith('.ipynb'):
-            return {'text': raw, 'content': raw, 'notebook': False}
+        change = next((c for c in self.changes() if c['path'] == path), None)
+        if change and change['untracked'] and not staged:
+            try: raw_content = (self.root/path).read_text(errors='replace')
+            except OSError: raw_content = ''
+            raw = ''.join(difflib.unified_diff(
+                [], raw_content.splitlines(True), fromfile='/dev/null', tofile=f'b/{path}', n=3))
+        else:
+            raw = self.diff(path, staged)
         left = self._version(path, 'head' if staged else 'index')
         right = self._version(path, 'index' if staged else 'worktree')
+        if not str(path).lower().endswith('.ipynb'):
+            return {'text': raw, 'content': raw, 'notebook': False, 'left': left, 'right': right}
         before, after = self._notebook_content(left), self._notebook_content(right)
         content = ''.join(difflib.unified_diff(
             before.splitlines(True), after.splitlines(True),
             fromfile=f'{path} (before)', tofile=f'{path} (after)', n=3))
-        return {'text': raw, 'content': content, 'notebook': True}
+        return {'text': raw, 'content': content, 'notebook': True, 'left': before, 'right': after}
 
     def file_changes(self, path):
         changed = next((c for c in self.changes() if c['path'] == path), None)

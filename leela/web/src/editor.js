@@ -728,16 +728,17 @@ export function create(el, opts = {}) {
 }
 
 export function createMerge(el, opts = {}) {
-  const {left = '', right = '', lang = 'python', settings = {}, onChange = null} = opts;
+  const {left = '', right = '', lang = 'python', settings = {}, onChange = null,
+    readOnlyRight = false, revertControls = 'a-to-b'} = opts;
   const side = (readOnly = false) => [
     settingsExt(settings), langExt(lang), syntaxHighlighting(hl, {fallback: true}), theme,
-    drawSelection(), highlightSelectionMatches(), readOnly ? EditorState.readOnly.of(true) : [],
+    lineNumbers(), drawSelection(), highlightSelectionMatches(), readOnly ? EditorState.readOnly.of(true) : [],
     keymap.of([...searchKeymap, ...historyKeymap, ...defaultKeymap]),
   ];
-  const merge = new MergeView({parent: el, orientation: 'a-b', revertControls: 'a-to-b',
+  const merge = new MergeView({parent: el, orientation: 'a-b', revertControls,
     highlightChanges: true, gutter: true,
     a: {doc: left, extensions: side(true)},
-    b: {doc: right, extensions: [...side(false), history(), EditorView.updateListener.of(u => {
+    b: {doc: right, extensions: [...side(readOnlyRight), ...(readOnlyRight ? [] : [history()]), EditorView.updateListener.of(u => {
       if (u.docChanged && onChange) onChange(u.state.doc.toString());
     })]},
   });

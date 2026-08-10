@@ -2278,6 +2278,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                 if op == 'stage': repo.stage(_git_paths(d.get('paths')))
                 elif op == 'unstage': repo.unstage(_git_paths(d.get('paths')))
                 elif op == 'discard': repo.discard(_git_paths(d.get('paths')))
+                elif op == 'write_worktree': repo.write_worktree(_git_paths([d.get('path')])[0], d.get('content') or '')
                 elif op == 'resolve_conflict': repo.resolve_conflict(_git_paths([d.get('path')])[0], d.get('choice') or '')
                 elif op == 'apply_patch': repo.apply_patch(d.get('patch') or '', bool(d.get('staged', True)), bool(d.get('reverse')))
                 elif op == 'checkout': repo.checkout(d.get('branch') or '')
@@ -2295,7 +2296,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                 elif op == 'stash_pop': repo.stash_pop(d.get('ref') or 'stash@{0}')
                 elif op == 'stash_apply': repo.stash_apply(d.get('ref') or 'stash@{0}')
                 elif op == 'stash_drop': repo.stash_drop(d.get('ref') or 'stash@{0}')
-                elif op == 'merge': repo.merge(d.get('branch') or '')
+                elif op == 'merge': repo.merge(d.get('branch') or '', d.get('strategy') or 'merge')
                 elif op == 'rebase': repo.rebase(d.get('branch') or '')
                 elif op == 'cherry_pick': repo.cherry_pick(d.get('ref') or '')
                 elif op == 'revert': repo.revert(d.get('ref') or '')
@@ -2337,11 +2338,51 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         try: return await _off_loop(_repo().commit_detail, ref)
         except Exception as e: return _fail(e)
 
+    @rt('/git/commit/review')
+    async def git_commit_review(ref: str = 'HEAD'):
+        try: return await _off_loop(_repo().commit_review, ref)
+        except Exception as e: return _fail(e)
+
+    @rt('/git/commit/file')
+    async def git_commit_file(ref: str = 'HEAD', path: str = '', context: int = 3):
+        try: return await _off_loop(_repo().commit_file, ref, _git_paths([path])[0], context)
+        except Exception as e: return _fail(e)
+
     @rt('/git/compare')
     async def git_compare(left: str = 'HEAD', right: str = ''):
         try:
             if not right: raise GitError('choose two refs to compare')
             return await _off_loop(_repo().compare, left, right)
+        except Exception as e: return _fail(e)
+
+    @rt('/git/review')
+    async def git_review(base: str = 'HEAD', head: str = '', mode: str = 'review'):
+        try:
+            if not head: raise GitError('choose a branch to review')
+            return await _off_loop(_repo().review, base, head, mode)
+        except Exception as e: return _fail(e)
+
+    @rt('/git/review/file')
+    async def git_review_file(base: str = 'HEAD', head: str = '', path: str = '',
+                              mode: str = 'review', context: int = 3):
+        try:
+            clean = _git_paths([path])[0]
+            if not head: raise GitError('choose a branch to review')
+            return await _off_loop(_repo().review_file, base, head, clean, mode, context)
+        except Exception as e: return _fail(e)
+
+    @rt('/git/merge-preview')
+    async def git_merge_preview(incoming: str = ''):
+        try:
+            if not incoming: raise GitError('choose a branch to merge')
+            return await _off_loop(_repo().merge_preview, incoming)
+        except Exception as e: return _fail(e)
+
+    @rt('/git/rebase-preview')
+    async def git_rebase_preview(onto: str = ''):
+        try:
+            if not onto: raise GitError('choose a branch to rebase onto')
+            return await _off_loop(_repo().rebase_preview, onto)
         except Exception as e: return _fail(e)
 
     @rt('/git/blame')

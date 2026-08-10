@@ -212,6 +212,42 @@ def test_git_is_a_first_class_vertical_project_tab(tmp_path):
         assert op in panel
 
 
+def test_git_compare_has_explicit_direction_and_works_from_branch_rows():
+    block = JS[JS.index('function gitBranchesView'):JS.index('async function showGitReflog')]
+    assert 'From (base)' in block and 'To (target)' in block
+    assert 'gitcompareswap' in block and "gitUI.reviewMode = 'snapshot'" in block
+    assert "gitUI.reviewHead = branch" in block and "gitUI.tab = 'review'" in block
+    assert 'review selected into current' in block
+    assert "gitUI.reviewMode = 'snapshot'" in block
+    assert '.lee-git-compare-fields' in CSS and '.lee-git-compare-summary' in CSS
+    assert 'function gitReviewView' in block and 'function showMergePreview' in block
+    assert 'snapshot differences' in block and 'swap direction' in block
+    assert '/git/review/file?' in block and '/git/merge-preview?' in block
+    assert '.lee-git-full-review' in CSS and '.lee-git-merge-preview' in CSS
+
+
+def test_git_diffs_open_as_editor_tabs_with_unified_and_split_layouts():
+    assert 'function openGitDiffTab' in JS and "lee.kind = 'git-diff'" in JS
+    assert 'unified</button>' in JS and 'side by side</button>' in JS
+    assert 'gitDiffNotebookHtml' in JS and 'LeeCM.createMerge' in JS
+    assert "revertControls: data.allowWrite ? 'a-to-b' : false" in JS
+    assert 'apply result to working tree' in JS and "gitDo('write_worktree'" in JS
+    assert "row.querySelector('.lee-git-file').onclick" in JS and "kind: 'changes-'" in JS
+    assert "loadGitReviewFile(b.dataset.reviewPath, true)" in JS
+    assert '.lee-diff-document' in CSS and '.lee-diff-cell.collapsed' in CSS
+    assert '.cm-merge-a .cm-changedLine' in CSS and '.cm-merge-b .cm-changedLine' in CSS
+    assert '.cm-merge-revert button:hover' in CSS
+    assert '.lee-git-diff-tab' in CSS
+
+
+def test_git_history_inspects_commits_and_opens_each_file_without_a_full_patch_modal():
+    assert "api('/git/commit/review?ref='" in JS
+    assert "api('/git/commit/file?ref='" in JS
+    assert 'function gitCommitInspector' in JS and 'data-history-commit' in JS
+    assert 'openGitCommitFile' in JS and "kind: 'commit'" in JS
+    assert '.lee-git-commit-inspector' in CSS and '.lee-git-commit-file' in CSS
+
+
 def test_git_ui_confirms_destructive_operations_and_supports_branch_management():
     block = JS[JS.index('async function refreshProjectPills'):JS.index('/* ------------------------------------------------------------------ research')]
     for action in ('stage', 'unstage', 'discard', 'checkout', 'create', 'delete', 'commit', 'fetch', 'pull', 'push'):
