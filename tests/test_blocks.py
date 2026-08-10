@@ -222,6 +222,97 @@ def test_an_unknown_workspace_operation_is_refused(workspace_client):
     assert d.status_code == 400 and 'unknown workspace operation' in d.json()['error']
 
 
+# -- workflows and releases, over HTTP ---------------------------------------
+
+@pytest.fixture
+def project_client(tmp_path, monkeypatch):
+    "A workspace holding one project with a workflow file and a release plan."
+    import json
+    import subprocess
+
+    import leela.repos
+    monkeypatch.setattr(leela.repos, 'leela_cfg', tmp_path/'cfg')
+    root = tmp_path/'proj'
+    (root/'.github'/'workflows').mkdir(parents=True)
+    (root/'.github'/'workflows'/'ci.yml').write_text(
+        'name: ci\non:\n  push:\n    branches: [main]\n  workflow_dispatch:\n'
+        'jobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ruff check .\n'
+        '  test:\n    needs: lint\n    runs-on: ubuntu-latest\n    steps:\n      - run: pytest\n')
+    (root/'pyproject.toml').write_text('[project]\nname = "proj"\nversion = "0"\n\n[tool.nbdev]\n')
+    (root/'.leela').mkdir()
+    (root/'.leela'/'release.json').write_text(json.dumps({'steps': [
+        {'id': 'a', 'label': 'first', 'cmd': 'echo alpha'},
+        {'id': 'b', 'label': 'second', 'cmd': 'sh -c "exit 4"'}]}))
+    subprocess.run(['git', 'init', '-b', 'main'], cwd=root, check=True, capture_output=True)
+    with TestClient(ide_app(Workspace(roots=[root]))) as c: yield c, root
+
+
+def test_the_workflow_panel_reads_the_files_without_reaching_github(project_client):
+    "Opening the panel must not spend a rate-limited call or fail when offline."
+    client, root = project_client
+    d = client.get('/workflows').json()
+    assert d['root'] == str(root)
+    wf = d['workflows'][0]
+    assert wf['file'] == 'ci.yml' and wf['dispatchable']
+    assert [j['id'] for j in wf['jobs']] == ['lint', 'test']
+    assert wf['levels'] == [['lint'], ['test']]
+    assert 'gheasy' in d['status'], 'the panel is told which optional piece is missing'
+
+
+def test_an_unknown_workflow_action_is_refused(project_client):
+    client, _ = project_client
+    r = client.post('/workflows/action', json={'op': 'rm -rf'})
+    assert r.status_code == 400 and 'unknown workflow action' in r.json()['error']
+
+
+def test_the_environment_view_never_returns_a_secret_value(project_client):
+    """The one rule this panel cannot break.
+
+    A key with no schema entry is treated as a secret, so the release pipeline's own
+    `needs` come back masked rather than being shown because nobody declared them.
+    """
+    client, _ = project_client
+    d = client.get('/workflows/env').json()
+    assert all(e['value'] == '' for e in d['entries'] if e['secret'])
+    assert all(e['target'] in ('secret', 'variable') for e in d['entries'])
+
+
+def test_the_release_panel_reports_the_plan_and_what_it_needs(project_client):
+    client, root = project_client
+    d = client.get('/releases').json()
+    assert d['nbdev'] and d['configured']
+    assert [s['id'] for s in d['steps']] == ['a', 'b']
+    assert not d['running'] and d['failed'] == ''
+
+
+def test_a_release_runs_until_a_step_fails_and_then_stops(project_client):
+    "The whole point of the pipeline: green advances, red halts with the output kept."
+    import time
+    client, _ = project_client
+    started = client.post('/releases/action', json={'op': 'start'}).json()
+    assert started['running']
+    for _ in range(300):
+        state = client.get('/releases').json()
+        if not state['running']: break
+        time.sleep(.05)
+    assert [s['status'] for s in state['steps']] == ['passed', 'failed']
+    assert state['failed'] == 'b'
+    tail = client.get('/releases/tail').json()['text']
+    assert 'alpha' in tail and 'exited 4' in tail
+
+
+def test_an_unknown_release_action_is_refused(project_client):
+    client, _ = project_client
+    r = client.post('/releases/action', json={'op': 'rm -rf'})
+    assert r.status_code == 400 and 'unknown release action' in r.json()['error']
+
+
+def test_these_panels_say_to_open_a_folder_rather_than_failing_obscurely(client):
+    for path in ('/workflows', '/releases'):
+        r = client.get(path)
+        assert r.status_code == 400 and 'open a folder' in r.json()['error']
+
+
 # -- capability enforcement, end to end --------------------------------------
 
 def test_a_block_reaching_past_its_caps_fails_loudly(monkeypatch):

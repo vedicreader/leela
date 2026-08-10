@@ -4212,7 +4212,7 @@ function nextTermId(kind) {
   do { lee.termSeq += 1; } while (lee.terms.has('term-' + lee.termSeq));
   return 'term-' + lee.termSeq;
 }
-function termLabel(kind, id) { return kind === 'git' ? 'lazygit' : `terminal ${id.split('-').pop()}`; }
+function termLabel(kind, id) { return kind === 'git' ? 'lazygit' : kind === 'release' ? 'release pipeline' : `terminal ${id.split('-').pop()}`; }
 function paintTermTabs() {
   const bar = $('#termtabs'); if (!bar) return;
   bar.innerHTML = [...lee.terms.entries()].map(([id, t]) =>
@@ -4227,12 +4227,16 @@ function leeLeft(which = 'files') {
   left.classList.toggle('left-files', which === 'files');
   left.classList.toggle('left-symbols', which === 'symbols');
   left.classList.toggle('left-git', which === 'git');
+  left.classList.toggle('left-workflows', which === 'workflows');
+  left.classList.toggle('left-releases', which === 'releases');
   $$('.lee-activity-btn', left).forEach(b => {
     const active = b.dataset.left === which; b.classList.toggle('active', active);
     b.setAttribute('aria-pressed', String(active));
   });
   localStorage.setItem('lee-left-view', which);
   if (which === 'git') { setScope('files'); renderGitPanel(); }
+  else if (which === 'workflows') { setScope('files'); leeWorkflows(); }
+  else if (which === 'releases') { setScope('files'); leeReleases(); }
   else if (which === 'symbols') { setScope('files'); leeSymbols(); }
   else { setScope('files'); requestAnimationFrame(() => $('#filetree')?.focus()); }
 }
@@ -4299,6 +4303,28 @@ async function openTerm(kind = 'shell', forceNew = false) {
     token: d.token, cwd: d.cwd, kind, id,
     onStatus: m => status(`${record.label}: ${m}`),
     onExit: () => { record.exited = true; paintTermTabs(); status(`${record.label} exited`); },
+  });
+  lee.terms.set(id, record); switchTerm(id);
+}
+// The pipeline's pty is opened by the pipeline, not by whoever attaches, so this
+// terminal talks to `/release/ws` instead of `/term/ws`. Everything else -- the theme, the
+// keyboard, the dock tab -- is the same component the shell uses. `cwd` carries the project
+// root, which is the only thing that socket needs to know which pipeline is being watched.
+async function openReleaseTerm(root = '') {
+  await loadTermBundle();
+  const d = await api('/term/info');
+  if (!d.enabled) return status(d.why, 'err');
+  const id = 'release';
+  if (lee.terms.has(id)) return switchTerm(id);
+  $('#shell').classList.add('show-term');
+  const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
+  const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
+  host.dataset.term = id; parent.appendChild(host);
+  const record = {id, kind: 'release', label: termLabel('release', id), cwd: root || d.cwd, host, view: null};
+  record.view = LeeTerm.create(host, {
+    token: d.token, cwd: root || d.cwd, kind: 'release', id, url: '/release/ws',
+    onStatus: m => status(`release pipeline: ${m}`),
+    onExit: () => { record.exited = true; paintTermTabs(); },
   });
   lee.terms.set(id, record); switchTerm(id);
 }
@@ -4786,6 +4812,265 @@ async function gitPinRepo(root, tab = 'changes') {
   await renderGitPanel();
   if (!gitUI.repo) refreshProjectPills();
 }
+
+/* ------------------------------------------------- workflows and the release pipeline */
+// Both panels are about a project rather than a file, so they ask the same question the
+// source-control panel does -- which repository -- and answer it the same way: empty means
+// the one the active tab is in.
+const wfUI = {data: null, runs: null, env: null, docker: null, open: '', view: 'graph', preview: '', busy: ''};
+const relUI = {data: null, busy: '', poll: 0};
+function projectRepo() { return gitUI.repo || ''; }
+function projectQuery(params = {}) {
+  const q = new URLSearchParams(params);
+  if (projectRepo()) q.set('repo', projectRepo());
+  const query = q.toString();
+  return query ? `?${query}` : '';
+}
+function wfStatusNote(st) {
+  if (!st) return '';
+  if (!st.gheasy) return `<div class="lee-wf-note"><strong>Local only</strong><span>${esc(st.why)}</span><code>pip install "leela[github]"</code></div>`;
+  if (!st.repo) return '<div class="lee-wf-note"><strong>No GitHub remote</strong><span>Runs and secrets need one; the files below still read.</span></div>';
+  if (!st.token) return `<div class="lee-wf-note"><strong>No GITHUB_TOKEN</strong><span>Set it in Environment below and the run history appears.</span></div>`;
+  return '';
+}
+function wfJobBox(job, run) {
+  const jr = (run?.jobs || []).find(j => j.name === job.name || j.name === job.id);
+  const state = jr ? (jr.conclusion || jr.status || '') : '';
+  return `<article class="lee-wf-job ${state ? 'state-' + esc(state) : ''}" data-job="${esc(job.id)}">` +
+    `<header><strong>${esc(job.name)}</strong>${state ? `<i>${esc(state)}</i>` : ''}</header>` +
+    `<small>${esc(job.runs_on || job.uses || '')}${job.environment ? ' · ' + esc(job.environment) : ''}</small>` +
+    `${job.if ? `<code class="lee-wf-if">if ${esc(job.if)}</code>` : ''}` +
+    `<ol class="lee-wf-steps">${job.steps.map(st => `<li title="${esc(st.uses || st.run)}">${esc(st.name)}</li>`).join('')}</ol></article>`;
+}
+function wfGraph(wf, run) {
+  if (wf.error) return `<div class="lee-git-empty-state"><strong>${esc(wf.file)}</strong><span>${esc(wf.error)}</span></div>`;
+  if (!wf.jobs.length) return `<div class="lee-git-empty-state"><strong>No jobs</strong><span>${esc(wf.file)} declares no jobs.</span></div>`;
+  const byId = Object.fromEntries(wf.jobs.map(j => [j.id, j]));
+  return `<div class="lee-wf-graph">${wf.levels.map((row, i) => `<div class="lee-wf-level">` +
+    `${i ? '<span class="lee-wf-edge" aria-hidden="true"></span>' : ''}` +
+    `<div class="lee-wf-row">${row.map(id => wfJobBox(byId[id], run)).join('')}</div></div>`).join('')}</div>`;
+}
+function wfRunRow(r) {
+  const state = r.conclusion || r.status || '';
+  return `<button class="lee-wf-run state-${esc(state)}" data-run="${r.id}" data-url="${esc(r.url)}">` +
+    `<b>${state === 'success' ? '✓' : state === 'failure' ? '✗' : state === 'in_progress' ? '•' : '·'}</b>` +
+    `<span><strong>${esc(r.title || r.name || r.file)}</strong><small>${esc(r.file)} · ${esc(r.branch)} · ${esc(r.event)}${r.actor ? ' · ' + esc(r.actor) : ''}</small></span>` +
+    `<small>#${r.number || ''}</small></button>`;
+}
+function wfEnvRows(entries) {
+  if (!entries?.length) return '<div class="lee-git-empty-state"><strong>Nothing declared</strong><span>Add <code>env_schema</code> to .gheasy/config.json, or a release step that needs a key.</span></div>';
+  return entries.map(e => `<article class="lee-wf-env${e.set ? ' is-set' : ''}" data-env="${esc(e.key)}">` +
+    `<div><strong>${esc(e.key)}</strong><small>${e.target}${e.declared ? '' : ' · from a release step'}</small></div>` +
+    `<span class="lee-wf-envval">${e.secret ? (e.set ? '••••••••' : 'not set') : esc(e.value || 'not set')}</span>` +
+    `<button data-env-set>${e.set ? 'change' : 'set'}</button>${e.set ? '<button data-env-unset aria-label="remove">×</button>' : ''}</article>`).join('');
+}
+function renderWorkflowsPanel() {
+  const host = $('#workflowspanel'); if (!host) return;
+  const d = wfUI.data;
+  if (!d) { host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading workflows</small></div>'; return; }
+  const st = d.status || {};
+  const wf = d.workflows.find(w => w.file === wfUI.open) || d.workflows[0];
+  if (wf) wfUI.open = wf.file;
+  const tabs = d.workflows.map(w => `<button data-wf="${esc(w.file)}" class="${w.file === wfUI.open ? 'active' : ''}">${esc(w.name)}</button>`).join('');
+  const runsFor = (wfUI.runs || []).filter(r => !wf || !r.file || r.file === wf.file);
+  const body = wfUI.view === 'runs'
+    ? `<div class="lee-wf-runs">${runsFor.length ? runsFor.map(wfRunRow).join('')
+        : `<div class="lee-git-empty-state"><strong>No runs</strong><span>${st.token ? 'This workflow has not run yet.' : 'Connect a token to see run history.'}</span></div>`}</div>`
+    : wfUI.view === 'yaml'
+    ? `<pre class="lee-wf-yaml">${esc(wfUI.preview || 'Generate to preview the workflow gheasy would write from .gheasy/config.json.')}</pre>`
+    : wf ? wfGraph(wf, wfUI.runJobs) : '<div class="lee-git-empty-state"><strong>No workflows</strong><span>This project has no .github/workflows yet.</span></div>';
+  host.innerHTML = wfStatusNote(st) +
+    `<header class="lee-sc-branch"><div><strong>${esc(st.repo || d.root.split('/').pop())}</strong><span>${d.workflows.length} workflow${d.workflows.length === 1 ? '' : 's'}${d.config ? ' · gheasy config' : ''}</span></div></header>` +
+    `<nav class="lee-git-nav" aria-label="Workflow views">${[['graph', 'Jobs'], ['runs', 'Runs'], ['yaml', 'Generated'], ['env', 'Environment']].map(([id, label]) =>
+      `<button data-wf-view="${id}" class="${wfUI.view === id ? 'active' : ''}">${label}</button>`).join('')}</nav>` +
+    (wfUI.view === 'env'
+      ? `<div class="lee-sc-actions"><button data-wf-env="refresh">refresh</button><button data-wf-env="push">push declared to GitHub</button><button data-wf-env="add">add key…</button></div>` +
+        `<div class="lee-wf-envs">${wfEnvRows(wfUI.env?.entries)}</div>`
+      : `<div class="lee-wf-tabs">${tabs}</div>` +
+        `<div class="lee-sc-actions">${wf?.dispatchable ? '<button data-wf-op="dispatch">run workflow</button>' : ''}` +
+        `<button data-wf-op="open">open file</button><button data-wf-op="generate">generate from gheasy</button>` +
+        `${d.config ? '<button data-wf-op="write">write gheasy.yml</button>' : ''}` +
+        `<button data-wf-op="docker">Dockerfile…</button></div>` +
+        `<main class="lee-wf-body">${body}</main>`);
+  wireWorkflowsPanel(host, d, wf);
+}
+function wireWorkflowsPanel(host, d, wf) {
+  host.querySelectorAll('[data-wf-view]').forEach(b => b.onclick = () => {
+    wfUI.view = b.dataset.wfView; renderWorkflowsPanel();
+    if (wfUI.view === 'runs' && !wfUI.runs) loadWorkflowRuns();
+    if (wfUI.view === 'env' && !wfUI.env) loadWorkflowEnv();
+  });
+  host.querySelectorAll('[data-wf]').forEach(b => b.onclick = () => { wfUI.open = b.dataset.wf; wfUI.runJobs = null; renderWorkflowsPanel(); });
+  host.querySelectorAll('[data-wf-op]').forEach(b => b.onclick = () => workflowOp(b.dataset.wfOp, wf));
+  host.querySelectorAll('[data-run]').forEach(b => b.onclick = async () => {
+    try { wfUI.runJobs = {jobs: (await api('/workflows/jobs' + projectQuery({id: b.dataset.run}))).jobs};
+          wfUI.view = 'graph'; renderWorkflowsPanel();
+          status('run ' + b.dataset.run + ': job results are on the graph', 'ok'); }
+    catch (e) { status(e.message || String(e), 'err'); }
+  });
+  host.querySelectorAll('[data-env]').forEach(row => {
+    const key = row.dataset.env;
+    row.querySelector('[data-env-set]').onclick = async () => {
+      const entry = (wfUI.env?.entries || []).find(e => e.key === key) || {};
+      const value = await inputDialog(`set ${key}`, entry.secret ? 'Value (stored in your keychain, never shown again)' : 'Value',
+                                      entry.secret ? '' : (entry.value || ''), entry.secret ? 'paste the token' : 'value');
+      if (value) envOp('set', {key, value, secret: !!entry.secret});
+    };
+    row.querySelector('[data-env-unset]')?.addEventListener('click', async () => {
+      if (await confirmDialog('remove value', `Remove ${key} from the keychain and the env file?`, 'remove')) envOp('unset', {key});
+    });
+  });
+  host.querySelectorAll('[data-wf-env]').forEach(b => b.onclick = async () => {
+    const op = b.dataset.wfEnv;
+    if (op === 'refresh') return loadWorkflowEnv(true);
+    if (op === 'push') {
+      if (await confirmDialog('push to GitHub', 'Send every declared value to this repository as a secret or a variable?', 'push')) envOp('push', {});
+      return;
+    }
+    const key = await inputDialog('add key', 'Environment key', '', 'GITHUB_TOKEN');
+    if (!key) return;
+    const value = await inputDialog(`set ${key}`, 'Value (stored in your keychain)', '', 'paste the value');
+    if (value) envOp('set', {key, value, secret: true});
+  });
+}
+async function leeWorkflows() {
+  try { wfUI.data = await api('/workflows' + projectQuery()); }
+  catch (e) { const host = $('#workflowspanel'); if (host) host.innerHTML = `<div class="lee-git-empty-state"><strong>No project</strong><span>${esc(e.message || e)}</span></div>`; return; }
+  renderWorkflowsPanel();
+  if (wfUI.view === 'runs' && !wfUI.runs) loadWorkflowRuns();
+  if (wfUI.view === 'env' && !wfUI.env) loadWorkflowEnv();
+}
+window.leeWorkflows = leeWorkflows;
+async function loadWorkflowRuns() {
+  if (!wfUI.data?.status?.token) { wfUI.runs = []; return renderWorkflowsPanel(); }
+  try { wfUI.runs = (await api('/workflows/runs' + projectQuery({limit: 20}))).runs; }
+  catch (e) { wfUI.runs = []; status(e.message || String(e), 'err'); }
+  renderWorkflowsPanel();
+}
+async function loadWorkflowEnv(remote = false) {
+  try { wfUI.env = await api('/workflows/env' + projectQuery(remote ? {remote: true} : {})); }
+  catch (e) { status(e.message || String(e), 'err'); return; }
+  renderWorkflowsPanel();
+}
+async function envOp(op, extra) {
+  try {
+    const d = await post('/workflows/env/action', {op, repo: projectRepo(), ...extra});
+    wfUI.env = {...(wfUI.env || {}), entries: d.entries};
+    if (d.results) {
+      const failed = d.results.filter(r => r.ok === false).length;
+      status(`pushed ${d.results.filter(r => r.ok && !r.skipped).length} · skipped ${d.results.filter(r => r.skipped).length} · failed ${failed}`, failed ? 'err' : 'ok');
+    } else status(`${extra.key} ${op === 'unset' ? 'removed' : 'saved'}`, 'ok');
+    renderWorkflowsPanel();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function workflowOp(op, wf) {
+  try {
+    if (op === 'open') { if (wf) leeOpenFile(wf.path); return; }
+    if (op === 'docker') {
+      const d = await api('/workflows/docker' + projectQuery());
+      if (d.why) return status(d.why, 'err');
+      if (d.dockerfile) return status('this project already has a Dockerfile', 'ok');
+      if (!await confirmDialog('write Dockerfile', `dockeasy detected:\n\n${d.base}\n\nWrite this Dockerfile?`, 'write')) return;
+      op = 'dockerfile';
+    }
+    if (op === 'dispatch') {
+      const ref = await inputDialog('run workflow', 'Branch or tag to run on', '', 'leave empty for the current branch');
+      if (ref === null) return;
+      const d = await post('/workflows/action', {op, repo: projectRepo(), workflow: wf.file, ref});
+      wfUI.data = {...wfUI.data, workflows: d.workflows, status: d.status};
+      status(`dispatched ${wf.file} on ${d.ref}`, 'ok');
+      wfUI.view = 'runs'; setTimeout(loadWorkflowRuns, 1500);
+      return renderWorkflowsPanel();
+    }
+    const d = await post('/workflows/action', {op, repo: projectRepo()});
+    wfUI.data = {...wfUI.data, workflows: d.workflows, status: d.status};
+    if (d.yaml) { wfUI.preview = d.yaml; wfUI.view = 'yaml'; }
+    if (d.path) status(`wrote ${d.path}`, 'ok');
+    renderWorkflowsPanel();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+
+// -- the release pipeline ------------------------------------------------------------
+const REL_MARK = {passed: '✓', failed: '✗', running: '•', skipped: '⤼', pending: '·'};
+function relStepRow(s, d) {
+  const busy = d.running && s.status !== 'running';
+  return `<article class="lee-rel-step state-${s.status}" data-step="${esc(s.id)}">` +
+    `<b>${REL_MARK[s.status] || '·'}</b>` +
+    `<div><strong>${esc(s.label)}</strong><code>${esc(s.cmd)}</code>` +
+    `<small>${esc(s.doc || '')}${s.code !== null && s.code !== undefined ? ` · exit ${s.code}` : ''}</small>` +
+    `${s.missing.length ? `<i class="warn">needs ${s.missing.map(esc).join(', ')}</i>` : ''}</div>` +
+    `<span class="lee-rel-actions">` +
+    `${s.status === 'running' ? '<button data-rel="stop">stop</button>' :
+      `<button data-rel="step" ${busy ? 'disabled' : ''} title="run only this step">run</button>` +
+      `${s.status === 'failed' ? `<button data-rel="start" ${busy ? 'disabled' : ''} title="retry, then continue">retry</button><button data-rel="skip" title="mark done without running">skip</button>` : ''}`}` +
+    `</span></article>`;
+}
+function renderReleasesPanel() {
+  const host = $('#releasespanel'); if (!host) return;
+  const d = relUI.data;
+  if (!d) { host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the pipeline</small></div>'; return; }
+  const done = d.steps.filter(s => s.status === 'passed').length;
+  host.innerHTML =
+    `<header class="lee-sc-branch"><div><strong>${esc(d.root.split('/').pop())}</strong>` +
+    `<span>${d.nbdev ? 'nbdev project' : 'plain project'} · ${done}/${d.steps.length} done${d.configured ? ' · .leela/release.json' : ' · default pipeline'}</span></div></header>` +
+    `<div class="lee-sc-actions">` +
+    `${d.running ? '<button data-rel-top="stop" class="warn">stop</button>' : `<button data-rel-top="start">${d.failed ? 'continue' : 'run release'}</button>`}` +
+    `<button data-rel-top="terminal">terminal</button><button data-rel-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
+    `<button data-rel-top="edit">edit steps</button>${d.configured ? '<button data-rel-top="defaults">defaults</button>' : ''}</div>` +
+    `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the release terminal. Fix and retry, or skip it deliberately.</span></div>` : ''}` +
+    `<div class="lee-rel-steps">${d.steps.map(s => relStepRow(s, d)).join('')}</div>` +
+    `${d.needs.length ? `<div class="lee-rel-needs"><strong>needs</strong>${d.needs.map(k => `<i>${esc(k)}</i>`).join('')}<button data-rel-top="env">environment…</button></div>` : ''}`;
+  wireReleasesPanel(host, d);
+  relPoll(d);
+}
+function wireReleasesPanel(host, d) {
+  host.querySelectorAll('[data-rel-top]').forEach(b => b.onclick = () => releaseTop(b.dataset.relTop, d));
+  host.querySelectorAll('.lee-rel-step').forEach(row => {
+    const step = row.dataset.step;
+    row.querySelectorAll('[data-rel]').forEach(b => b.onclick = () => releaseOp(b.dataset.rel, {step}));
+  });
+}
+function relPoll(d) {
+  clearTimeout(relUI.poll);
+  // Steps finish on their own and start the next one, so the panel has to keep asking.
+  // Only while something is running: an idle pipeline costs nothing.
+  if (d.running) relUI.poll = setTimeout(() => leeReleases(), 1200);
+}
+async function leeReleases() {
+  try { relUI.data = await api('/releases' + projectQuery()); }
+  catch (e) { const host = $('#releasespanel'); if (host) host.innerHTML = `<div class="lee-git-empty-state"><strong>No project</strong><span>${esc(e.message || e)}</span></div>`; return; }
+  renderReleasesPanel();
+}
+window.leeReleases = leeReleases;
+async function releaseOp(op, extra = {}) {
+  try {
+    relUI.data = await post('/releases/action', {op, repo: projectRepo(), ...extra});
+    if (op === 'start' || op === 'step') await openReleaseTerm(relUI.data.root);
+    renderReleasesPanel();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function releaseTop(op, d) {
+  if (op === 'terminal') return openReleaseTerm(d.root);
+  if (op === 'env') { leeLeft('workflows'); wfUI.view = 'env'; wfUI.env = null; return leeWorkflows(); }
+  if (op === 'defaults') return releaseOp('reset_plan');
+  if (op === 'start') {
+    const missing = d.steps.flatMap(s => s.missing);
+    if (missing.length && !await confirmDialog('run release',
+        `These steps are missing ${[...new Set(missing)].join(', ')}. Run anyway?`, 'run')) return;
+    return releaseOp('start');
+  }
+  if (op === 'stop') { if (await confirmDialog('stop release', 'Stop the running step?', 'stop')) releaseOp('stop'); return; }
+  if (op === 'reset') { if (await confirmDialog('reset', 'Forget what ran? The commands are unchanged.', 'reset')) releaseOp('reset'); return; }
+  if (op === 'edit') {
+    const text = await textDialog('release steps', 'One step per line: id | label | command',
+                                  d.steps.map(s => `${s.id} | ${s.label} | ${s.cmd}`).join('\n'));
+    if (text === null) return;
+    const steps = text.split('\n').map(line => line.split('|').map(x => x.trim())).filter(p => p.length >= 3 && p[2])
+      .map(([id, label, cmd]) => ({id, label, cmd}));
+    releaseOp('save', {steps});
+  }
+}
+
 async function renderGitPanel(snapshot = null) {
   const host = $('#gitpanel'); if (!host) return;
   host.dataset.features = 'Staged changes · Changes · Branches · Stashes · Remotes & tags · All repos · staged changes · working tree · fetch · pull · push · stash · tag · stage all · unstage all · fetch all · pull all · push all · clone';

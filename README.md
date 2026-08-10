@@ -25,6 +25,12 @@ leela src tests            # one browser workspace with two roots
 leela --app src tests      # two independent app windows in the persistent CDP Chrome
 ```
 
+Workflows, releases and their credentials need gheasy and dockeasy:
+
+```sh
+pip install "leela[github]"
+```
+
 `--app` uses `fossick.cdp.cdp_setup` on port 9223 and reuses its persistent Chrome
 profile. Each folder gets an isolated `Workspace`, document store, agent, terminals, and
 kernel pool at `folder.localhost:5001`; it does not start another resident Chrome per
@@ -238,6 +244,38 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   Pinning a repository points the whole panel — changes, branches, history, review — at
   that checkout, while the branch pill, tree badges and editor change marks keep following
   the file you have open.
+- **Workflows you can look at.** A `.github/workflows` file is a graph pretending to be a
+  document, so the **Workflows** panel draws it: jobs as boxes, `needs` as the rows between
+  them, each one carrying its runner, its `if` guard, its environment and its steps. Recent
+  runs come back beside it, and selecting one paints its result onto the same boxes, so a
+  red workflow says *which* job is red. A `workflow_dispatch` file gets a run button. All of
+  the GitHub half is [gheasy](https://github.com/vedicreader/gheasy) — repository
+  resolution, the token, `GhApi`, and the workflow generated from `.gheasy/config.json`,
+  which you can preview before agreeing to have it written. What a docker job would build
+  comes from [dockeasy](https://github.com/Karthik777/dockeasy)'s `detect_app`, which will
+  also write the Dockerfile it detected. Without those two installed the panel still lists
+  the workflow files and says what to install: `pip install "leela[github]"`.
+- **A release pipeline that keeps each step's identity.** `nbdev_prepare && nbdev_bump_version
+  && nbdev_release_gh && nbdev_pypi` is the whole of an nbdev release, and typing it as one
+  line is what makes it unpleasant — the chain stops somewhere in the middle and the
+  scrollback holds four commands at once. The **Release** panel runs the same four commands
+  as four steps, each with its own exit code and its own output. A green step starts the
+  next one; a red one halts the run with its output on screen and offers retry or a
+  deliberate skip, because continuing past a failed `nbdev_prepare` to publish to PyPI is
+  not a convenience. nbdev is recognised from `settings.ini` *or* `[tool.nbdev]` in
+  `pyproject.toml`, and the resulting pipeline is a starting point saved to
+  `.leela/release.json`, not a special case in the code. Steps run on a real pty — progress
+  bars redraw, spinners spin, and twine can ask for a password — rendered in the same xterm
+  the shell uses, with one transcript for the whole release rather than one per step.
+- **The values they need, where dockeasy already keeps them.** `GITHUB_TOKEN` and the twine
+  credentials are read and written through dockeasy's `secret_set`/`env_get`: the OS
+  keychain, a `0600` file under `~/.config/fastops`, and `os.environ` first — so a token set
+  from a dockeasy script, from gheasy, or from the panel is one value rather than three. The
+  panel lists what the project *declares* (gheasy's `env_schema`, plus whatever the release
+  steps say they need) and never the store itself, and a secret's value is never sent to the
+  browser — only that it is set. Pushing them to GitHub goes through gheasy's `gh_push_env`,
+  so the schema that decides a key is a secret here decides it there, and an undeclared key
+  is skipped rather than guessed at.
 - **Notebook outline and folding.** Collapse any cell to a one-line source preview. The
   sticky Contents accordion is generated from Markdown headings, jumps to a section, and
   can fold or reopen that whole section at once.
@@ -360,6 +398,9 @@ leela/
   fs.py           filesystem access, confined to the open folders
   git.py          one repository, as records rather than porcelain text
   repos.py        every repository in the workspace, and one operation across all of them
+  workflows.py    GitHub Actions read into jobs and edges; the rest is gheasy's
+  releases.py     the release pipeline: nbdev's commands, one step at a time, on a pty
+  envs.py         which values a project needs; dockeasy keeps them
   term.py         terminals and lazygit
   research.py     web search and fetch; automatically feeds durable memory
   memory.py       litesearch document trees, hybrid recall and semantic topic clusters

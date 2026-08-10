@@ -36,7 +36,7 @@ from . import leela_cfg
 from .git import GitError, GitRepo, repo_root
 from .git import clone as git_clone
 
-__all__ = ['RepoSet', 'discover', 'MEMBERS', 'OPS']
+__all__ = ['RepoSet', 'discover', 'repo_for', 'MEMBERS', 'OPS']
 
 MEMBERS = 'repos.txt'          # the fastws membership file, read when a folder has one
 OPS = ('fetch', 'pull', 'push', 'status')
@@ -119,6 +119,23 @@ def discover(roots, extra=(), hidden=()):
         take(repo_root(Path(path).expanduser()))
     away = {str(Path(h)) for h in hidden}
     return [p for p in out if str(p) not in away]
+
+
+def repo_for(session, target=''):
+    """The project a panel is about: one this workspace lists, or the active tab's.
+
+    Shared by every panel that is *about a project* rather than about Git -- workflows,
+    releases, the environment file. They ask the same question the source-control panel
+    does and must answer it the same way, including refusing a path the workspace does not
+    list. Unlike `GitRepo.at`, a folder that is not a checkout is a legitimate answer: a
+    project can have a release pipeline before it has a remote.
+    """
+    if str(target or '').strip():
+        return RepoSet(session.fs.roots).require(target)
+    cwd = session.cwd_for()
+    if cwd is None:
+        raise GitError('open a folder first')
+    return repo_root(cwd) or Path(cwd)
 
 
 @dataclass

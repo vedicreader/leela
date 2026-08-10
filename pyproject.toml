@@ -38,6 +38,14 @@ dependencies = [
 # a subshell so they don't queue behind a long-running cell.
 ipymini = [] # compatibility extra; ipymini now ships with Leela
 lsp = ["pyright>=1.1.400"]
+# GitHub Actions and the release pipeline. gheasy owns the GitHub half -- repository
+# resolution, the token, GhApi, the generated workflow, secret/variable routing -- and
+# dockeasy owns the credential store and the project build detection. Leela calls them;
+# without this extra the panels still read the local files and say what to install.
+github = [
+    "gheasy>=0.0.6",
+    "dockeasy>=0.0.5",
+]
 gateway = [
     "jupygate>=0.0.1",
     "jupyasyncclient>=0.2.1",

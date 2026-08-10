@@ -4,7 +4,7 @@ from leela.term import TerminalGate
 from leela.web.app import _shell
 from leela.workspace import Workspace
 
-from tests.assets import JS, CSS
+from tests.assets import CSS, JS, SERVER
 
 
 def test_status_is_a_prominent_timed_banner_with_a_busy_state():
@@ -200,12 +200,54 @@ def test_git_is_a_first_class_vertical_project_tab(tmp_path):
     assert 'lee-activity' in html and 'data-left="files"' in html and 'data-left="git"' in html
     assert 'id="gitpanel"' in html and 'lee-source-control' in html
     assert 'function leeLeft' in JS and 'async function renderGitPanel' in JS
-    assert '.lee-activity-btn.active' in CSS and '.lee-left.left-git .lee-files' in CSS
+    assert '.lee-activity-btn.active' in CSS
+    # Each view names the panels it shows; everything else in the column is hidden by the
+    # one rule above it. The guarantee is the same -- Git does not show the file tree.
+    assert '.lee-left-content > .lee-panel { display: none; }' in CSS
+    assert '.lee-left.left-git .lee-source-control' in CSS
     panel = JS[JS.index('async function renderGitPanel'):JS.index('async function branchActions')]
     for feature in ('Staged changes', 'Changes', 'Branches', 'Stashes', 'Remotes & tags'):
         assert feature in panel
     for op in ('fetch', 'pull', 'push', 'stash', 'tag', 'stage all', 'unstage all'):
         assert op in panel
+
+
+def test_workflows_are_a_panel_with_a_job_graph_in_it():
+    """The visual half: the activity tab, the levels, and the four views.
+
+    Playwright covers the behaviour where chromium exists; this is the part that has to
+    hold everywhere, because a panel wired to a route name that no longer exists fails
+    silently in the browser and loudly nowhere.
+    """
+    block = JS[JS.index('const wfUI ='):JS.index('const REL_MARK')]
+    assert "data_left='workflows'" in SERVER and "data_left='releases'" in SERVER
+    assert "api('/workflows'" in block and "post('/workflows/action'" in block
+    assert "api('/workflows/runs'" in block and "api('/workflows/env'" in block
+    assert 'function wfGraph' in block and 'lee-wf-level' in block and 'lee-wf-edge' in block
+    for view in ('Jobs', 'Runs', 'Generated', 'Environment'):
+        assert view in block
+    for op in ('run workflow', 'generate from gheasy', 'Dockerfile'):
+        assert op in block
+    assert '.lee-wf-job' in CSS and '.lee-wf-graph' in CSS and '.lee-left.left-workflows' in CSS
+
+
+def test_the_environment_view_hides_secret_values_in_the_browser_too():
+    "The server never sends one; the client must not invent a place to show one either."
+    block = JS[JS.index('function wfEnvRows'):JS.index('function renderWorkflowsPanel')]
+    assert "'••••••••'" in block or '••••••••' in block
+    assert 'e.secret ?' in block, 'a secret and a variable are drawn differently'
+
+
+def test_the_release_pipeline_runs_steps_and_shows_them_in_a_terminal():
+    block = JS[JS.index('const REL_MARK'):JS.index('async function renderGitPanel')]
+    assert "api('/releases'" in block and "post('/releases/action'" in block
+    assert 'function openReleaseTerm' in JS and "url: '/release/ws'" in JS
+    assert "termLabel('release'" in JS or "'release pipeline'" in JS
+    for op in ('retry', 'skip', 'stop', 'reset', 'edit steps'):
+        assert op in block
+    assert 'relPoll' in block, 'steps finish on their own, so the panel keeps asking'
+    assert 'missing' in block and 'Run anyway?' in block, 'it warns before a run it expects to fail'
+    assert '.lee-rel-step.state-failed' in CSS and '.lee-left.left-releases' in CSS
 
 
 def test_source_control_can_look_at_every_repository_in_the_workspace():

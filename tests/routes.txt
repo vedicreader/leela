@@ -148,6 +148,9 @@ GET,POST /nb/run
 GET,POST /nb/run/stream
 GET,POST /nb/save
 GET,POST /outline
+GET,POST /releases
+GET,POST /releases/action
+GET,POST /releases/tail
 GET,POST /research/dig
 GET,POST /research/read
 GET,POST /research/save
@@ -186,6 +189,14 @@ GET,POST /vars/expand
 GET,POST /vars/grid
 GET,POST /vars/promote
 GET,POST /vars/set
+GET,POST /workflows
+GET,POST /workflows/action
+GET,POST /workflows/docker
+GET,POST /workflows/env
+GET,POST /workflows/env/action
+GET,POST /workflows/jobs
+GET,POST /workflows/runs
 GET,POST /workspace/info
 Mount /leestatic
+WebSocketRoute /release/ws
 WebSocketRoute /term/ws

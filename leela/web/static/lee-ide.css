@@ -268,10 +268,15 @@ body {
 .lee-activity-btn:hover { color: var(--lee-fg2); background: var(--lee-active-line); }
 .lee-activity-btn.active { color: var(--lee-fg); border-left-color: var(--lee-accent); background: var(--lee-bg1); }
 .lee-left-content { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.lee-left.left-files .lee-source-control, .lee-left.left-files .lee-structure,
-.lee-left.left-symbols .lee-files, .lee-left.left-symbols .lee-source-control, .lee-left.left-symbols .lee-keys,
-.lee-left.left-git .lee-files, .lee-left.left-git .lee-structure, .lee-left.left-git .lee-keys { display: none; }
-.lee-source-control, .lee-structure { flex: 1 1 auto; min-height: 0; }
+/* Each view says what it shows. Saying what it *hides* needs a rule per pair of panels,
+   which grows as the square of the views and is how the fourth one gets forgotten. */
+.lee-left-content > .lee-panel { display: none; }
+.lee-left.left-files .lee-files, .lee-left.left-files .lee-keys,
+.lee-left.left-symbols .lee-structure,
+.lee-left.left-git .lee-source-control,
+.lee-left.left-workflows .lee-workflows,
+.lee-left.left-releases .lee-releases { display: flex; }
+.lee-source-control, .lee-structure, .lee-workflows, .lee-releases { flex: 1 1 auto; min-height: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
            clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .lee-right { border-left: 1px solid var(--lee-border); }
@@ -1975,6 +1980,71 @@ kbd {
 .lee-git-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; max-width: 90px; gap: 2px; }
 .lee-git-badges i, .lee-git-resource-row > i { padding: 2px 4px; background: var(--lee-bg2); color: var(--lee-fg4); font: normal 7px/1 var(--lee-mono); white-space: nowrap; }
 .lee-git-branch-row.latest .lee-git-badges i:first-child { color: var(--lee-accent); }
+/* --- workflows ---------------------------------------------------------------- */
+.lee-workflows-panel, .lee-releases-panel { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--lee-bg1); }
+.lee-wf-note { display: grid; gap: 3px; padding: 7px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg2); font: 8px/1.4 var(--lee-mono); }
+.lee-wf-note strong { color: var(--lee-orange); font-size: 9px; }
+.lee-wf-note span, .lee-wf-note code { color: var(--lee-fg4); }
+.lee-wf-tabs { display: flex; flex-wrap: wrap; gap: 3px; padding: 5px 7px; border-bottom: 1px solid var(--lee-border); }
+.lee-wf-tabs button { padding: 3px 6px; border: 1px solid var(--lee-border); border-radius: 3px; background: transparent; color: var(--lee-fg4); font: 8px/1 var(--lee-mono); cursor: pointer; }
+.lee-wf-tabs button.active { color: var(--lee-accent); border-color: var(--lee-accent); }
+.lee-wf-body { padding: 6px 7px; }
+.lee-wf-graph { display: grid; gap: 2px; }
+.lee-wf-level { display: grid; gap: 2px; justify-items: center; }
+.lee-wf-edge { width: 1px; height: 12px; background: var(--lee-border); }
+.lee-wf-row { display: grid; grid-auto-flow: column; gap: 6px; width: 100%; }
+.lee-wf-job { min-width: 0; padding: 6px; border: 1px solid var(--lee-border); border-radius: 4px; background: var(--lee-bg); }
+.lee-wf-job header { display: flex; align-items: baseline; gap: 4px; }
+.lee-wf-job strong { overflow: hidden; color: var(--lee-fg); text-overflow: ellipsis; white-space: nowrap; font: 600 9px/1.3 var(--lee-mono); }
+.lee-wf-job i { margin-left: auto; color: var(--lee-fg4); font: normal 7px/1 var(--lee-mono); }
+.lee-wf-job small, .lee-wf-if { display: block; overflow: hidden; color: var(--lee-fg4); text-overflow: ellipsis; white-space: nowrap; font: 8px/1.4 var(--lee-mono); }
+.lee-wf-job.state-success { border-left: 2px solid var(--lee-green); }
+.lee-wf-job.state-failure { border-left: 2px solid var(--lee-red); }
+.lee-wf-job.state-in_progress { border-left: 2px solid var(--lee-accent); }
+.lee-wf-steps { margin: 4px 0 0; padding-left: 12px; color: var(--lee-fg2); font: 8px/1.5 var(--lee-mono); }
+.lee-wf-steps li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-wf-runs { display: grid; }
+.lee-wf-run { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 5px; align-items: center; padding: 6px 7px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 70%, transparent); background: transparent; text-align: left; cursor: pointer; }
+.lee-wf-run:hover { background: var(--lee-active-line); }
+.lee-wf-run b { color: var(--lee-fg4); font: 10px/1 var(--lee-mono); }
+.lee-wf-run.state-success b { color: var(--lee-green); }
+.lee-wf-run.state-failure b { color: var(--lee-red); }
+.lee-wf-run.state-in_progress b { color: var(--lee-accent); }
+.lee-wf-run strong, .lee-wf-run small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-wf-run strong { color: var(--lee-fg); font: 600 9px/1.3 var(--lee-mono); }
+.lee-wf-run small { color: var(--lee-fg4); font: 8px/1.3 var(--lee-mono); }
+.lee-wf-yaml { max-height: 60vh; margin: 0; padding: 7px; overflow: auto; color: var(--lee-fg2); font: 8px/1.5 var(--lee-mono); white-space: pre; }
+.lee-wf-envs { display: grid; }
+.lee-wf-env { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 5px; align-items: center; padding: 6px 7px; border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 70%, transparent); }
+.lee-wf-env strong { display: block; color: var(--lee-fg); font: 600 9px/1.3 var(--lee-mono); }
+.lee-wf-env small { color: var(--lee-fg4); font: 8px/1.3 var(--lee-mono); }
+.lee-wf-env.is-set strong { color: var(--lee-green); }
+.lee-wf-envval { color: var(--lee-fg4); font: 8px/1 var(--lee-mono); }
+.lee-wf-env button { padding: 3px 5px; border: 1px solid var(--lee-border); border-radius: 3px; background: transparent; color: var(--lee-fg4); font: 8px/1 var(--lee-mono); cursor: pointer; }
+.lee-wf-env button:hover { color: var(--lee-fg); }
+
+/* --- release pipeline --------------------------------------------------------- */
+.lee-rel-steps { display: grid; }
+.lee-rel-step { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 6px; padding: 7px; border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 70%, transparent); }
+.lee-rel-step > b { color: var(--lee-fg4); font: 11px/1.4 var(--lee-mono); }
+.lee-rel-step strong { display: block; color: var(--lee-fg); font: 600 9px/1.4 var(--lee-mono); }
+.lee-rel-step code, .lee-rel-step small { display: block; overflow: hidden; color: var(--lee-fg4); text-overflow: ellipsis; white-space: nowrap; font: 8px/1.5 var(--lee-mono); }
+.lee-rel-step i.warn { display: block; margin-top: 2px; color: var(--lee-orange); font: normal 8px/1.4 var(--lee-mono); }
+.lee-rel-step.state-passed > b { color: var(--lee-green); }
+.lee-rel-step.state-failed > b { color: var(--lee-red); }
+.lee-rel-step.state-failed { border-left: 2px solid var(--lee-red); }
+.lee-rel-step.state-running { border-left: 2px solid var(--lee-accent); }
+.lee-rel-step.state-running > b { color: var(--lee-accent); animation: lee-pulse 1.1s ease-in-out infinite; }
+.lee-rel-actions { display: flex; align-self: start; gap: 3px; }
+.lee-rel-actions button { padding: 3px 5px; border: 1px solid var(--lee-border); border-radius: 3px; background: transparent; color: var(--lee-fg4); font: 8px/1 var(--lee-mono); cursor: pointer; }
+.lee-rel-actions button:hover:not(:disabled) { color: var(--lee-accent); }
+.lee-rel-actions button:disabled { opacity: .4; cursor: default; }
+.lee-rel-needs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 7px; color: var(--lee-fg4); font: 8px/1 var(--lee-mono); }
+.lee-rel-needs i { padding: 2px 4px; background: var(--lee-bg2); font-style: normal; }
+.lee-rel-needs button { margin-left: auto; border: 1px solid var(--lee-border); border-radius: 3px; padding: 3px 5px; background: transparent; color: var(--lee-fg4); font: inherit; cursor: pointer; }
+@keyframes lee-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .lee-rel-step.state-running > b { animation: none; } }
+
 .lee-git-scope { display: flex; align-items: center; gap: 6px; padding: 5px 7px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg2); color: var(--lee-fg4); font: 8px/1.3 var(--lee-mono); }
 .lee-git-scope b { color: var(--lee-accent); font-size: 9px; }
 .lee-git-scope button { border: 1px solid var(--lee-border); border-radius: 3px; background: transparent; color: var(--lee-fg4); font: 8px/1 var(--lee-mono); padding: 3px 5px; cursor: pointer; }
