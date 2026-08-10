@@ -6,7 +6,7 @@ import pytest
 
 from leela.kernels import RuntimeBroker, KernelPool
 from leela.web.cdp import cdp_ready, open_cdp_app
-from leela.web.workspaces import LoopbackHostGuard, WorkspaceHub, WorkspaceSite, workspace_slug
+from leela.hub import LoopbackHostGuard, WorkspaceHub, WorkspaceSite, workspace_slug
 
 
 def test_workspace_slugs_are_dns_safe_and_unique():

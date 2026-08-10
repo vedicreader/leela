@@ -2378,7 +2378,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
     if not loopback:
         raise ValueError('Leela executes code and may only bind to a loopback address')
     from .. import leela_cfg
-    from .workspaces import WorkspaceHub, WorkspaceSite, workspace_slug
+    from ..hub import WorkspaceHub, WorkspaceSite, workspace_slug
 
     roots = [Path(r).expanduser().resolve() for r in roots]
     gate = TerminalGate(host=host)
@@ -2462,5 +2462,5 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
                 open_cdp_app(url, port=cdp_port)
             threading.Thread(target=open_window, daemon=True, name='leela-cdp-open').start()
     if not gate.enabled: print(f'  {gate.why}')
-    from .workspaces import LoopbackHostGuard
+    from ..hub import LoopbackHostGuard
     uvicorn.run(LoopbackHostGuard(app), host=host, port=port, log_level='warning')
