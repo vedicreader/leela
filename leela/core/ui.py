@@ -4,7 +4,7 @@ Four helpers, shared because a block's panel has to look like the rest of the ID
 knowing anything about the rest of the IDE. They live in core rather than in a block for
 the reason stated in `leela/core/__init__.py`: what two blocks both need belongs here.
 
-The buttons matter more than they look. `btn(b)` renders a row from `leela.buttons` with
+The buttons matter more than they look. `btn(b)` renders a row from `leela.core.buttons` with
 `onclick="leeAct(action)"` -- the *same* action name the keymap binds to a chord. One table,
 one code path, so a button and its keyboard shortcut cannot drift into doing different
 things, and `/keys.json` can serve both to the browser together.
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from fasthtml.common import Button, Div, NotStr
 
-from ..buttons import bar as btn_bar
+from .buttons import bar as btn_bar
 
 __all__ = ['btn', 'action_bar', 'menu_button', 'activity_icon']
 
@@ -26,7 +26,7 @@ def btn(b):
 
 
 def action_bar(name, **kw):
-    "A whole bar of them, in the order `leela.buttons` declares."
+    "A whole bar of them, in the order `leela.core.buttons` declares."
     return Div(*[btn(b) for b in btn_bar(name)], cls=f'lee-bar lee-bar-{name}', **kw)
 
 

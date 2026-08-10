@@ -55,10 +55,10 @@ def main(argv=None):
                    help='write every action and its current chord to that file, then exit — '
                         'the starting point for rebinding anything your terminal swallows')
     a = p.parse_args(argv)
-    # Set before the web app imports `leela.keys`, which loads overrides at import time.
+    # Set before the web app imports `leela.core.keys`, which loads overrides at import time.
     if a.keymap: os.environ['LEELA_KEYMAP'] = os.path.abspath(a.keymap)
     if a.write_keymap:
-        from .keys import write_keymap, keymap_path, NOTES
+        from .core.keys import write_keymap, keymap_path, NOTES
         path = write_keymap()
         print(f'wrote {path}')
         print('  action -> chord, or several chords separated by spaces; "" unbinds it.')

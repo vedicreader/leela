@@ -162,7 +162,7 @@ class Workspace:
         self.memory = build_provider('memory', kosha=getattr(self.search, '_kosha', None))
         self.research = Research(self.fs, memory=self.memory)
         self.runs = Runs(self.fs.roots[0] if self.fs.roots else None)
-        from .journal import OperationJournal
+        from .core.journal import OperationJournal
         journal_key = hashlib.sha256('\0'.join(map(str, self.fs.roots)).encode()).hexdigest()[:16]
         self.journal = OperationJournal(leela_cfg/'journals'/f'{journal_key}.json', self.fs)
         self._lsp = None

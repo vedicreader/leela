@@ -2,7 +2,7 @@
 
 import asyncio
 
-from leela.buttons import bar
+from leela.core.buttons import bar
 from leela.app import _assigned_lines, _inline_values, ide_app
 from leela.workspace import Workspace, _EnvClient
 

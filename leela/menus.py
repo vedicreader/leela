@@ -1,7 +1,7 @@
 """Single-source contextual menus for the browser IDE.
 
 Buttons answer "what is always useful here?"; menus answer "what can I do to this
-thing?".  Like :mod:`leela.buttons`, every row names an action from the shared
+thing?".  Like :mod:`leela.core.buttons`, every row names an action from the shared
 keymap.  Labels and chords are resolved from that keymap when JSON is produced,
 so a user keybinding edit is reflected in the menu without a second registry to
 keep in sync.
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from fastcore.all import L
 
-from .keys import KEYS, chord_display, lookup
+from .core.keys import KEYS, chord_display, lookup
 
 __all__ = ['MenuItem', 'MENUS', 'menu', 'web_menus']
 

@@ -1,6 +1,6 @@
 import pytest
 from leela.fs import Sandbox
-from leela.journal import OperationJournal
+from leela.core.journal import OperationJournal
 
 
 def test_workspace_journal_persists_and_undoes_only_exact_outputs(tmp_path):

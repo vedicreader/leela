@@ -1,6 +1,6 @@
 """Contextual actions stay tied to the shared operation and key registries."""
 
-from leela.keys import DEFAULTS
+from leela.core.keys import DEFAULTS
 from leela.menus import MENUS, web_menus
 
 

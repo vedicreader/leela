@@ -368,7 +368,7 @@ NOTES = L()          # what went wrong reading it, in the words the frontends sh
 
 def keymap_path(path=None):
     "Where overrides are read from: the argument, else `$LEELA_KEYMAP`, else `<config>/keys.json`."
-    from . import leela_cfg
+    from .. import leela_cfg
     return Path(path or os.environ.get('LEELA_KEYMAP') or (leela_cfg/'keys.json'))
 
 

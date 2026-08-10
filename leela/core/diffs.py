@@ -26,7 +26,7 @@ from difflib import SequenceMatcher, get_close_matches
 from fastcore.all import L
 from fastcore.xtras import str_diff
 
-from . import Dictable
+from .. import Dictable
 
 __all__ = ['DiffRow', 'udiff', 'diff_rows', 'diff_stat', 'diff_label', 'closest', 'did_you_mean',
            'fuzzy_rank']

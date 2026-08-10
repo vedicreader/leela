@@ -67,7 +67,7 @@ def test_saving_an_invalid_keymap_is_refused_with_a_readable_reason(client):
 
 def test_saving_then_resetting_the_keymap_round_trips(client, monkeypatch, tmp_path):
     "Reset exists so a keymap you cannot use is one click from gone -- so it must really restore."
-    import leela.keys as keymap
+    import leela.core.keys as keymap
     p = tmp_path/'keys.json'
     monkeypatch.setattr(keymap, 'keymap_path', lambda: p)
     monkeypatch.setattr('leela.blocks.keys.app.keymap_path', lambda: p)

@@ -95,7 +95,7 @@ def off_loop(fn, *a, **kw):
 
 def diff_payload(was, now):
     "One text-vs-text comparison in the shape every diff surface in the client consumes."
-    from ..diffs import diff_label, diff_rows, udiff
+    from .diffs import diff_label, diff_rows, udiff
     return {'label': diff_label(was, now), 'rows': [r.dict() for r in diff_rows(udiff(was, now))]}
 
 
