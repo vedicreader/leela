@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from leela.kernels import GatewayKernel, GatewayService, KernelPool
+from leela.blocks.runtime.kernels import GatewayKernel, GatewayService, KernelPool
 
 
 pytest.importorskip('jupygate')

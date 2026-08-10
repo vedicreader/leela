@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from leela.kernels import KernelPool                       # noqa: E402
+from leela.blocks.runtime.kernels import KernelPool                       # noqa: E402
 from leela.app import ide_app                          # noqa: E402
 from leela.workspace import Workspace                      # noqa: E402
 from tests.fakemodel import Step, install                  # noqa: E402

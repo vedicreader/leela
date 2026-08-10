@@ -12,7 +12,7 @@ instance would go stale exactly when someone is looking at it.
 from __future__ import annotations
 
 from ...core.web import fail
-from ...settings import Settings
+from .settings import Settings
 
 __all__ = ['CAPS', 'connect']
 

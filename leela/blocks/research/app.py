@@ -16,7 +16,7 @@ Every backend here is blocking -- network fetch, then markdown extraction, then 
 from __future__ import annotations
 
 from ...core.web import fail, off_loop
-from ...research import MAX_DOC_CHARS
+from .research import MAX_DOC_CHARS
 
 __all__ = ['CAPS', 'connect']
 
@@ -54,7 +54,7 @@ def connect(app, ctx):
             if d.get('kind') == 'notebook':
                 e = await off_loop(ctx.research.save_notebook, d['url'], d.get('path'))
             else:
-                from ...research import Doc
+                from .research import Doc
                 doc = Doc(title=d.get('title') or '', url=d.get('url') or '', text=d.get('text') or '')
                 e = await off_loop(ctx.research.save, doc, d.get('path'))
             if e is None: return fail(ctx.research.note)

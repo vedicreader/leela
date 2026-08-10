@@ -18,14 +18,14 @@ from fastcore.all import Path, L, ifnone
 
 from . import Dictable, leela_cfg
 from .ai import Assistant, Completer, notebook_approvals
-from .devserver import DevServers
-from .fs import Sandbox, Unsafe, lang_for, is_texty
-from .kernels import KernelPool
+from .blocks.runtime.devserver import DevServers
+from .blocks.fs.fs import Sandbox, Unsafe, lang_for, is_texty
+from .blocks.runtime.kernels import KernelPool
 from .nb import Notebook
-from .research import Research
-from .runs import Run, Runs
-from .search import Search
-from .term import Terminals
+from .blocks.research.research import Research
+from .blocks.runs.runs import Run, Runs
+from .blocks.search.search import Search
+from .blocks.term.term import Terminals
 
 __all__ = ['Tab', 'Workspace', 'ws_path']
 
@@ -83,7 +83,7 @@ class _EnvClient:
         means cells, files and the exec strip follow the runtime picked in the UI instead
         of silently falling back to the tab kernel.
         """
-        from .kernels import ExecOutcome
+        from .blocks.runtime.kernels import ExecOutcome
         r = await self.api('/api/exec', {'code': code, 'scope': 'global'},
                            timeout=kw.get('timeout') or 120)
         if r is None: return ExecOutcome(ok=False, error=f'{self.name} did not answer')
@@ -146,7 +146,7 @@ class Workspace:
         # Leela stays in its own environment; user code belongs to the folder's. A
         # conventional project venv is therefore the runtime default, without importing
         # or installing the IDE itself into that venv.
-        from .kernels import project_python
+        from .blocks.runtime.kernels import project_python
         runtime_python = python or project_python(self.fs.roots)
         self.pool = KernelPool(port=port, default_kernel=kernel, default_python=runtime_python,
                                transport=transport, gateway=gateway)
@@ -269,7 +269,7 @@ class Workspace:
         # Adopt a project venv only before any runtime has started. Opening another folder
         # must never restart or silently retarget a live namespace.
         if not self.pool.kernels and self.pool.default_python is None:
-            from .kernels import project_python
+            from .blocks.runtime.kernels import project_python
             if (py := project_python([r])): self.pool.choose(python=py)
         self._rebrief_agents()
         return r
@@ -591,11 +591,11 @@ class Workspace:
             try:
                 root = self.fs.root_of(t.path)
                 if t.kind == 'notebook': return Path(t.path).parent
-                from .git import repo_root
+                from .blocks.git.git import repo_root
                 return repo_root(Path(t.path).parent) or root
             except Unsafe: pass
         if self.fs.roots:
-            from .git import repo_root
+            from .blocks.git.git import repo_root
             return repo_root(self.fs.roots[0]) or self.fs.roots[0]
         return None
 
@@ -744,7 +744,7 @@ class Workspace:
         `available` is on the launcher rather than filtered out of the list, so an option
         that is missing says why instead of not being there.
         """
-        from .kernels import KERNELS, find_pythons, ipymini_available
+        from .blocks.runtime.kernels import KERNELS, find_pythons, ipymini_available
         t = tab or self.tab
         k = self.kernel_peek(t)
         cur_py = self.pool.default_python
@@ -826,7 +826,7 @@ class Workspace:
         the same file, run the way `python file.py` would run it, but *in* the kernel, so
         the variable panel has what it defined afterwards.
         """
-        from .kernels import run_file_src
+        from .blocks.runtime.kernels import run_file_src
         t = tab or self.tab
         if t is None: return None, 'nothing open'
         if t.kind == 'notebook': return None, 'this is a notebook — run its cells, or use run all'
@@ -840,7 +840,7 @@ class Workspace:
     @property
     def lsp(self):
         if self._lsp is None:
-            from .lsp import PyrightService
+            from .blocks.lsp.lsp import PyrightService
             self._lsp = PyrightService(self.fs.roots[0] if self.fs.roots else None)
         return self._lsp
 

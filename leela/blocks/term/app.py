@@ -12,7 +12,7 @@ and nowhere else is what makes "can reach the socket" different from "may have a
 
 from __future__ import annotations
 
-from ...term import LazygitMissing, lazygit_argv
+from .term import LazygitMissing, lazygit_argv
 
 __all__ = ['CAPS', 'connect', 'term_cwd']
 

@@ -110,7 +110,7 @@ def connect(app, ctx):
             if lang == 'json':
                 formatted = json.dumps(json.loads(text), indent=2, ensure_ascii=False) + '\n'
             elif lang == 'python':
-                from ...kernels import project_python
+                from ..runtime.kernels import project_python
                 python = ctx.pool.default_python or project_python(ctx.fs.roots) or sys.executable
                 cwd = str(ctx.fs.roots[0]) if ctx.fs.roots else None
                 def format_python():

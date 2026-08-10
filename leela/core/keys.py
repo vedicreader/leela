@@ -25,7 +25,7 @@ avoided outright rather than bound and silently lost on the web side.
 Notebook commands follow PyCharm/Jupyter conventions: `mod+enter` runs,
 `shift+enter` runs and selects below, and `alt+enter` runs and inserts below.
 Terminal.app cannot distinguish every modified Enter without a modern keyboard
-protocol, so nothing important is keyboard-only: `leela.buttons` gives every
+protocol, so nothing important is keyboard-only: `leela.core.buttons` gives every
 action a clickable control. Function keys are not used
 as fallbacks because stock laptop and browser settings reserve many of them.
 

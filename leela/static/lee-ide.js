@@ -1,7 +1,7 @@
 /* leela IDE client.
  *
  * The keymap is not defined here. It is fetched from /keys.json, which Python
- * generates from leela.keys, so handlers, help, and tooltips share one table.
+ * generates from leela.core.keys, so handlers, help, and tooltips share one table.
  *
  * Dispatch is scope-aware: the focused pane sets `lee.scope`, a binding fires
  * when its scope matches or is 'global', and a chord that matches nothing is
@@ -5322,7 +5322,7 @@ function confirmDialog(title, detail, action = 'delete') {
 }
 
 /* One menu renderer for every contextual surface. Labels and effective chords came from
- * leela.menus + leela.keys; the browser only positions rows and dispatches their action. */
+ * leela.blocks.keys.menus + leela.core.keys; the browser only positions rows and dispatches their action. */
 function closeMenu() { $('.lee-ctxmenu')?.remove(); }
 function openMenu(surface, x, y) {
   closeMenu();

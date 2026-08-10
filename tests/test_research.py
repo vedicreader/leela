@@ -2,8 +2,8 @@
 
 from types import SimpleNamespace
 
-from leela.fs import Sandbox
-from leela.research import Research, _url_slug
+from leela.blocks.fs.fs import Sandbox
+from leela.blocks.research.research import Research, _url_slug
 
 
 def test_arxiv_reader_uses_fossick_source_and_title(monkeypatch, tmp_path):

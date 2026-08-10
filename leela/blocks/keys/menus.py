@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from fastcore.all import L
 
-from .core.keys import KEYS, chord_display, lookup
+from ...core.keys import KEYS, chord_display, lookup
 
 __all__ = ['MenuItem', 'MENUS', 'menu', 'web_menus']
 

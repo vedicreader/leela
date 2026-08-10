@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from fastcore.all import Path, L
 
-from . import Dictable, errstr
+from ... import Dictable, errstr
 
 __all__ = ['Doc', 'Research', 'MAX_DOC_CHARS']
 

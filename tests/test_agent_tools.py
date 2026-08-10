@@ -416,7 +416,7 @@ def test_a_command_can_be_run_in_a_subdirectory(project):
 
 
 def test_a_command_cannot_be_started_outside_the_open_folders(project):
-    from leela.fs import Unsafe
+    from leela.blocks.fs.fs import Unsafe
     with pytest.raises(Unsafe):
         project.run_cmd('ls', cwd='/etc')
 

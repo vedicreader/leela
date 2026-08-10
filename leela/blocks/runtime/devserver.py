@@ -104,7 +104,7 @@ class DevServer:
     def _cmd(self):
         # -u so the child's output reaches the log pane as it happens rather than in blocks
         w = self.watch or infer_watch(self.argv)
-        return [sys.executable, '-u', '-m', 'leela.devserver', '--port', str(self.port),
+        return [sys.executable, '-u', '-m', 'leela.blocks.runtime.devserver', '--port', str(self.port),
                 '--name', self.label, *(['--watch', w] if w else []), '--', *self.argv]
 
     def _cwd(self):
@@ -208,7 +208,7 @@ class DevServers:
 
 
 # ---------------------------------------------------------------------------
-# child entry point: `python -m leela.devserver -- <command>`
+# child entry point: `python -m leela.blocks.runtime.devserver -- <command>`
 # ---------------------------------------------------------------------------
 def _script_module(script, name=None):
     """Exec a .py into a real module object *pre-registered in `sys.modules`*, and return it.

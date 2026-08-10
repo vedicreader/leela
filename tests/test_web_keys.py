@@ -23,7 +23,7 @@ import pytest
 pytest.importorskip('playwright.async_api')
 from playwright.async_api import async_playwright   # noqa: E402
 
-from leela.kernels import KernelPool                # noqa: E402
+from leela.blocks.runtime.kernels import KernelPool                # noqa: E402
 from leela.app import ide_app                   # noqa: E402
 from leela.workspace import Workspace               # noqa: E402
 from conftest import FakeKernel                     # noqa: E402
@@ -182,7 +182,7 @@ def test_bundled_code_fonts_load_and_ligatures_reach_codemirror():
 
 
 def test_user_checkbox_settings_survive_close_and_reopen(tmp_path, monkeypatch):
-    import leela.settings as settings_module
+    import leela.blocks.settings.settings as settings_module
     monkeypatch.setattr(settings_module, 'USER_SETTINGS_FILE', tmp_path/'settings.json')
     async def go(pg):
         await pg.evaluate("leeAct('settings')")

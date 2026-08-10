@@ -98,13 +98,13 @@ def build(port, *a, override=None, **kw):
 
 @provider('search', DEFAULT)
 def _leela_search(fs, **kw):
-    from ..search import Search
+    from ..blocks.search.search import Search
     return Search(fs, **kw)
 
 
 @provider('memory', DEFAULT)
 def _leela_memory(kosha=None, path=None, **kw):
-    from ..memory import Memory
+    from ..blocks.memory.memory import Memory
     return Memory(kosha=kosha, path=path, **kw)
 
 

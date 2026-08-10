@@ -20,7 +20,7 @@ from ...core import keys as keymap
 from ...core.buttons import bar as btn_bar
 from ...core.web import fail
 from ...core.keys import help_rows, keymap_json, keymap_path, web_keymap
-from ...menus import web_menus
+from .menus import web_menus
 
 __all__ = ['CAPS', 'connect']
 

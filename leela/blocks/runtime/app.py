@@ -49,8 +49,8 @@ def connect(app, ctx):
 
     @rt('/runtime/info')
     async def runtime_info():
-        from ...kernels import project_python
-        from ...runtime_support import kernel_support
+        from .kernels import project_python
+        from .support import kernel_support
         root = ctx.fs.roots[0] if ctx.fs.roots else None
         py = project_python([root]) if root else None
         support = await off_loop(kernel_support, py) if py else {}
@@ -60,7 +60,7 @@ def connect(app, ctx):
 
     @rt('/runtime/support')
     async def runtime_support(req):
-        from ...runtime_support import install_kernel_support
+        from .support import install_kernel_support
         d = await req.json()
         py = d.get('python') or ctx.pool.default_python
         if not py: return fail('choose a project interpreter first')
@@ -83,7 +83,7 @@ def connect(app, ctx):
                 subprocess.run([uv, 'venv', str(target)], check=True, env=os.environ.copy())
             else: venv.EnvBuilder(with_pip=True).create(target)
             py = target/('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
-            from ...runtime_support import install_kernel_support
+            from .support import install_kernel_support
             install_kernel_support(py)
             return str(py)
 

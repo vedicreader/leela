@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from leela.kernels import RuntimeBroker, KernelPool
+from leela.blocks.runtime.kernels import RuntimeBroker, KernelPool
 from leela.chrome import cdp_ready, open_cdp_app
 from leela.hub import LoopbackHostGuard, WorkspaceHub, WorkspaceSite, workspace_slug
 

@@ -31,7 +31,7 @@ import time
 
 import pytest
 
-from leela.kernels import Kernel, ipymini_available
+from leela.blocks.runtime.kernels import Kernel, ipymini_available
 
 KINDS = ['ipykernel'] + (['ipymini'] if ipymini_available() else [])
 

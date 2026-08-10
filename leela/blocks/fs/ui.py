@@ -17,7 +17,7 @@ from urllib.parse import quote
 from fasthtml.common import Button, Details, Div, Section, Span, Summary
 
 from ...core.ui import action_bar, menu_button
-from ...git import GitError, GitRepo
+from ..git.git import GitError, GitRepo
 
 __all__ = ['git_tree_state', 'tree_node', 'files_panel']
 

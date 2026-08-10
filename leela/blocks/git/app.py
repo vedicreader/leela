@@ -22,7 +22,7 @@ import asyncio
 from pathlib import Path
 
 from ...core.web import fail, off_loop
-from ...git import GitError, GitRepo
+from .git import GitError, GitRepo
 
 __all__ = ['CAPS', 'connect', 'git_paths']
 

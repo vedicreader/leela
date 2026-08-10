@@ -134,20 +134,20 @@ def test_the_operation_family_is_matched_by_prefix():
 
 
 def test_an_unknown_git_op_is_refused():
-    from leela.git import GitError
+    from leela.blocks.git.git import GitError
     from leela.blocks.git.app import _apply
     with pytest.raises(GitError, match='unknown Git action'): _apply(_FakeRepo(), 'rm -rf', {})
 
 
 @pytest.mark.parametrize('bad', ['/etc/passwd', '../outside', 'a/../../b'])
 def test_git_pathspecs_from_the_browser_cannot_escape_the_repository(bad):
-    from leela.git import GitError
+    from leela.blocks.git.git import GitError
     from leela.blocks.git.app import git_paths
     with pytest.raises(GitError, match='invalid repository path'): git_paths([bad])
 
 
 def test_git_requires_at_least_one_path():
-    from leela.git import GitError
+    from leela.blocks.git.git import GitError
     from leela.blocks.git.app import git_paths
     with pytest.raises(GitError, match='at least one'): git_paths([])
 

@@ -59,11 +59,11 @@ from .core.web import off_loop as _off_loop
 from .core.web import sse as _sse
 from .core.web import Assets, static_dirs
 from .core.diffs import did_you_mean, fuzzy_rank
-from .fs import lang_for
-from .git import GitRepo, GitError
+from .blocks.fs.fs import lang_for
+from .blocks.git.git import GitRepo, GitError
 from .core.keys import by_scope, chord_display, toast_rows
 from .nb import Notebook, Cell
-from .term import TerminalGate, lazygit_argv
+from .blocks.term.term import TerminalGate, lazygit_argv
 from .workspace import Workspace
 from .agent.core import model_note
 
@@ -1542,14 +1542,14 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/debug/capabilities')
     def debug_capabilities():
         from .debug import debugpy_available
-        from .kernels import project_python
+        from .blocks.runtime.kernels import project_python
         python = ws.pool.default_python or project_python(ws.fs.roots) or sys.executable
         return {'python': str(python), 'debugpy': debugpy_available(python),
                 'notebook': True, 'direct': debugpy_available(python)}
 
     @rt('/debug/install')
     async def debug_install(req):
-        from .kernels import project_python
+        from .blocks.runtime.kernels import project_python
         d = await req.json(); python = d.get('python') or ws.pool.default_python or project_python(ws.fs.roots)
         if not python: return _fail('choose a project interpreter first')
         def install():
@@ -1563,7 +1563,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     async def debug_start(req):
         "Launch a Python file/module or attach through a direct debugpy DAP session."
         from .debug import DebugSession
-        from .kernels import project_python
+        from .blocks.runtime.kernels import project_python
         d = await req.json(); name = d.get('name') or ''
         run = ws.runs.get(name) if name else None
         config = run.dict() if run else dict(d)
@@ -2387,7 +2387,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
     gateway = None
     if transport == 'gateway':
         try:
-            from .kernels import GatewayService
+            from .blocks.runtime.kernels import GatewayService
             gateway = GatewayService(port=gateway_port).start()
         except (ImportError, RuntimeError) as e:
             # App windows prefer the shared gateway, but a desktop/source install without
@@ -2397,7 +2397,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             transport = 'direct'
             print(f'  gateway unavailable; using direct kernel transport: {errstr(e)}')
     if app_window and roots:
-        from .kernels import RuntimeBroker
+        from .blocks.runtime.kernels import RuntimeBroker
         sites, used, hub, broker = [], [], None, RuntimeBroker()
         for i, root in enumerate(roots):
             slug = workspace_slug(root.name, used); used.append(slug)

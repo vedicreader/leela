@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from leela.kernels import bootstrap_src, project_python
+from leela.blocks.runtime.kernels import bootstrap_src, project_python
 from leela.workspace import Workspace
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -276,7 +276,7 @@ def test_agent_control_route_changes_checkpoint_policy_without_starting_a_model(
 def test_agent_and_variables_share_the_right_tabs_while_exec_and_terminal_share_the_bottom():
     from fasthtml.common import to_xml
     from leela.app import _shell
-    from leela.term import TerminalGate
+    from leela.blocks.term.term import TerminalGate
     from leela.workspace import Workspace
     html = to_xml(_shell(Workspace(roots=[]), TerminalGate()))
     assert 'lee-righttabs' in html and 'data-right="agent"' in html and 'data-right="vars"' in html
@@ -415,7 +415,7 @@ def test_notebook_editors_mount_lazily_near_the_viewport():
 
 def test_terminal_bundle_loads_only_when_the_terminal_opens():
     from leela.app import _asset, _shell
-    from leela.term import TerminalGate
+    from leela.blocks.term.term import TerminalGate
     from leela.workspace import Workspace
     html = str(_shell(Workspace(roots=[]), TerminalGate()))
     assert f'<script src="{_asset("lee-term.js")}">' not in html

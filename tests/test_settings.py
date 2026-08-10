@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from leela.settings import DEFAULT_SETTINGS, Settings
+from leela.blocks.settings.settings import DEFAULT_SETTINGS, Settings
 
 
 def test_settings_layer_default_user_workspace_and_language(tmp_path):
@@ -54,7 +54,7 @@ def test_legacy_snapshot_keeps_non_default_values(tmp_path):
 
 
 def test_settings_writes_are_atomic_and_leave_valid_json(tmp_path, monkeypatch):
-    import leela.settings as module
+    import leela.blocks.settings.settings as module
     user = tmp_path/'nested'/'settings.json'
     calls = []
     original = module.atomic_save

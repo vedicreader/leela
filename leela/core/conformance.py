@@ -133,7 +133,7 @@ def _sample_args(port):
     fixture.
     """
     if port == 'search':
-        from ..fs import Sandbox
+        from ..blocks.fs.fs import Sandbox
         return (Sandbox([]),), {}
     if port == 'runtime':
         from ..agent.core import resolve

@@ -2,8 +2,8 @@
 
 import importlib.util
 
-from leela.fs import Sandbox
-from leela.search import Search
+from leela.blocks.fs.fs import Sandbox
+from leela.blocks.search.search import Search
 from leela.agent.agent import Completer
 from leela.agent.core import LLAMA, available_models, resolve
 

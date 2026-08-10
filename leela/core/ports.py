@@ -6,7 +6,7 @@ the thing being swapped was written down first, so these are Protocols, extracte
 `leela/app.py` actually calls today rather than from what a memory system might
 plausibly offer.
 
-They are `runtime_checkable` but structural: `leela.memory.Memory` already satisfies
+They are `runtime_checkable` but structural: `leela.blocks.memory.memory.Memory` already satisfies
 `MemoryPort` without importing it or inheriting from anything, and so should any
 replacement. Nothing here is a base class, and nothing at runtime is required to check
 against them -- `tests/test_core_ctx.py` asserts the current implementations conform, which
@@ -29,7 +29,7 @@ __all__ = ['MemoryPort', 'SearchPort', 'RuntimePort']
 class MemoryPort(Protocol):
     """Durable prose memory: pages, research briefs, agent notes and state.
 
-    Satisfied today by `leela.memory.Memory` over litesearch. `vishalakshi.Vault` is the
+    Satisfied today by `leela.blocks.memory.memory.Memory` over litesearch. `vishalakshi.Vault` is the
     intended alternate -- it already covers ingestion (`add_dir`, `note`, `web`), retrieval
     and an entity graph (`connect`), so the adapter is mostly a naming translation.
 
@@ -68,7 +68,7 @@ class MemoryPort(Protocol):
 class SearchPort(Protocol):
     """Code search: literal, semantic, and the call graph over a project.
 
-    Satisfied by `leela.search.Search` over Kosha plus ripgrep. Split from `MemoryPort`
+    Satisfied by `leela.blocks.search.search.Search` over Kosha plus ripgrep. Split from `MemoryPort`
     on purpose -- source code is an AST-shaped corpus and prose is a document tree, and
     `leela/memory.py` says so at the top. A single "retrieval" port would force the two
     back together at exactly the moment vishalakshi is being introduced.

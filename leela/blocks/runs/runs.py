@@ -3,7 +3,7 @@
 The question this answers: *"if I run uvicorn from the terminal, does the variable panel
 pick it up?"* -- and the honest answer for a plain `uvicorn app:app` is no. Nothing about
 that process is leela's; there is no inspector inside it, so there is nothing to see. What
-*is* leela's is the command it starts itself, and `leela.devserver` puts an inspector in
+*is* leela's is the command it starts itself, and `leela.blocks.runtime.devserver` puts an inspector in
 that process before the command runs. A run configuration is that command, named and kept.
 
 Three deliberate choices:
@@ -28,7 +28,7 @@ import json
 from dataclasses import dataclass, field
 from fastcore.all import Path, L
 
-from . import Dictable
+from ... import Dictable
 
 __all__ = ['Run', 'Runs', 'RUNS_FILE']
 

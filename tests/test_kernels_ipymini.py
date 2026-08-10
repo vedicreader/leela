@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio, sys, warnings
 import pytest
 
-from leela.kernels import Kernel, KernelPool, _spec, bootstrap_src, ipymini_available, output_text
+from leela.blocks.runtime.kernels import Kernel, KernelPool, _spec, bootstrap_src, ipymini_available, output_text
 
 
 # -- unit tests: no live kernel, no ipymini required ---------------------------------
@@ -64,7 +64,7 @@ def test_pool_default_kernel_forwarded(monkeypatch):
     class Fake:
         def __init__(self, **kw): seen.update(kw); self.alive = False
         async def start(self): return self
-    monkeypatch.setattr('leela.kernels.Kernel', Fake)
+    monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
     pool = KernelPool(default_kernel='ipymini')
     asyncio.new_event_loop().run_until_complete(pool.get('k'))
     assert seen['kernel'] == 'ipymini'
@@ -191,7 +191,7 @@ def test_concurrent_pool_gets_share_one_start(monkeypatch):
             await asyncio.sleep(0.02)
             self.alive = True
             return self
-    monkeypatch.setattr('leela.kernels.Kernel', Fake)
+    monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
 
     async def go():
         pool = KernelPool()
@@ -216,7 +216,7 @@ def test_pool_does_not_expose_a_half_started_kernel(monkeypatch):
             self.kc = object()
             return self
 
-    monkeypatch.setattr('leela.kernels.Kernel', Fake)
+    monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
 
     async def go():
         pool = KernelPool()
@@ -251,7 +251,7 @@ def test_pool_peek_hides_a_kernel_until_start_is_complete(monkeypatch):
             self.alive = True
             return self
 
-    monkeypatch.setattr('leela.kernels.Kernel', Fake)
+    monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
 
     async def go():
         pool = KernelPool()
@@ -292,7 +292,7 @@ def test_pool_ignores_bad_default():
 
 def test_fallback_when_ipymini_missing(monkeypatch):
     "Asking for ipymini when it isn't installed warns and falls back."
-    monkeypatch.setattr('leela.kernels.ipymini_available', lambda: False)
+    monkeypatch.setattr('leela.blocks.runtime.kernels.ipymini_available', lambda: False)
     with warnings.catch_warnings(record=True) as ws:
         warnings.simplefilter('always')
         k = Kernel(kernel='ipymini')

@@ -1,4 +1,4 @@
-from leela.lsp import PyrightService
+from leela.blocks.lsp.lsp import PyrightService
 
 
 def test_pyright_is_optional_and_reports_status(tmp_path, monkeypatch):

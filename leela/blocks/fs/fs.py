@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from fastcore.all import Path, L, globtastic, atomic_save, mkdir as fc_mkdir
 from fastcore.shutil import move as fc_move
 
-from . import Dictable
+from ... import Dictable
 
 __all__ = ['Unsafe', 'Entry', 'SKIP_DIRS', 'LANGS', 'lang_for', 'is_texty', 'Sandbox']
 

@@ -1,6 +1,6 @@
 from fasthtml.common import to_xml
 
-from leela.term import TerminalGate
+from leela.blocks.term.term import TerminalGate
 from leela.app import _shell
 from leela.workspace import Workspace
 

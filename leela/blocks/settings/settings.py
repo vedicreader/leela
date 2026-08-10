@@ -11,7 +11,7 @@ from copy import deepcopy
 from pathlib import Path
 from fastcore.xtras import atomic_save
 
-from . import leela_cfg
+from ... import leela_cfg
 
 __all__ = ['DEFAULT_SETTINGS', 'Settings', 'USER_SETTINGS_FILE', 'WORKSPACE_SETTINGS_FILE']
 

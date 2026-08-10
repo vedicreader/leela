@@ -1,5 +1,5 @@
 import pytest
-from leela.fs import Sandbox
+from leela.blocks.fs.fs import Sandbox
 from leela.core.journal import OperationJournal
 
 

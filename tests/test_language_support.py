@@ -1,6 +1,6 @@
 """File-language detection and the browser's bundled syntax modes stay aligned."""
 
-from leela.fs import lang_for
+from leela.blocks.fs.fs import lang_for
 
 from tests.assets import EDITOR, JS as CLIENT
 

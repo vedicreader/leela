@@ -63,7 +63,7 @@ def test_a_registered_alternate_is_what_the_workspace_builds(monkeypatch):
 
 
 def test_the_default_workspace_still_builds_the_builtin(monkeypatch):
-    from leela.memory import Memory
+    from leela.blocks.memory.memory import Memory
     from leela.workspace import Workspace
     monkeypatch.delenv('LEELA_MEMORY', raising=False)
     assert isinstance(Workspace(roots=[]).memory, Memory)

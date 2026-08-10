@@ -3,7 +3,7 @@
 import asyncio
 import pytest
 
-from leela.kernels import ExecOutcome, KernelPool
+from leela.blocks.runtime.kernels import ExecOutcome, KernelPool
 from leela.workspace import Workspace
 
 FIXTURES = 'fixtures'          # relative to this file; kept short so it renders the same everywhere
@@ -36,7 +36,7 @@ DOCSTRING = ('Type:        DataFrame\n'
 
 
 class FakeKernel:
-    """Enough of `leela.kernels.Kernel` for browser tests, with stable answers."""
+    """Enough of `leela.blocks.runtime.kernels.Kernel` for browser tests, with stable answers."""
     alive = True
     base = 'http://127.0.0.1:8000'
     pid = 4242

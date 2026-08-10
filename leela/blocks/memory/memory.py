@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib, json, time, threading, uuid
 from fastcore.all import Path, L
 
-from . import leela_cfg, errstr
+from ... import leela_cfg, errstr
 
 __all__ = ['Memory', 'memory_path']
 
@@ -115,7 +115,7 @@ class Memory:
         "Store an edited conversation summary as a reusable agent starting state."
         text, title = str(text or '').strip(), str(title or '').strip() or 'Agent state'
         if not text: return None
-        from .research import Doc
+        from ..research.research import Doc
         content_hash = hashlib.sha1(text.encode()).hexdigest()
         doc = Doc(title=title, url=f'agent-state://{content_hash[:16]}', text=text, kind='agent-state')
         agent_meta = dict(meta or {})
@@ -161,7 +161,7 @@ class Memory:
         "Create or replace one editable note; return the new durable document identity."
         text, title = str(text or '').strip(), str(title or '').strip() or 'Untitled note'
         if not text: return None
-        from .research import Doc
+        from ..research.research import Doc
         doc = Doc(title=title, url=f'agent-note://{uuid.uuid4().hex}', text=text, kind='agent-note')
         saved = self.remember(doc, query='agent memory note', force=True,
                               extra_meta={'agent_note': {'author': 'user', 'edited_at': time.time()},
@@ -174,7 +174,7 @@ class Memory:
         "Store source documents plus one query-rooted brief that preserves their headings."
         saved = [self.remember(doc, query=query) for doc in docs or ()]
         if digest:
-            from .research import Doc
+            from ..research.research import Doc
             key = hashlib.sha1(query.encode()).hexdigest()[:16]
             saved.append(self.remember(Doc(title=f'Research: {query}', url=f'research://{key}',
                                            text=digest, kind='research'), query=query))

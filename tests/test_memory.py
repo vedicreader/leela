@@ -4,9 +4,9 @@ from types import SimpleNamespace
 import json
 import numpy as np
 
-from leela.memory import Memory
-from leela.research import Doc, Research
-from leela.fs import Sandbox
+from leela.blocks.memory.memory import Memory
+from leela.blocks.research.research import Doc, Research
+from leela.blocks.fs.fs import Sandbox
 
 
 class FakeKosha:
@@ -132,7 +132,7 @@ def test_workspace_persists_per_surface_memory_routing(tmp_path):
 
 
 def test_workspace_load_restores_a_remembered_agent_state_for_the_project(tmp_path, monkeypatch):
-    from leela.memory import Memory
+    from leela.blocks.memory.memory import Memory
     from leela.workspace import Workspace
     root = tmp_path/'project'; root.mkdir()
     monkeypatch.setattr(Memory, 'agent_states', lambda self: [{

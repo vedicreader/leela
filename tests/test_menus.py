@@ -1,7 +1,7 @@
 """Contextual actions stay tied to the shared operation and key registries."""
 
 from leela.core.keys import DEFAULTS
-from leela.menus import MENUS, web_menus
+from leela.blocks.keys.menus import MENUS, web_menus
 
 
 def test_every_menu_action_is_declared_once_in_the_keymap():

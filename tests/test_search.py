@@ -3,8 +3,8 @@
 import asyncio, sys, threading
 from types import SimpleNamespace
 
-from leela.fs import Sandbox
-from leela.search import Hit, Search
+from leela.blocks.fs.fs import Sandbox
+from leela.blocks.search.search import Hit, Search
 
 
 def test_default_search_uses_ripgrep_and_reports_real_lines(tmp_path):

@@ -1,6 +1,6 @@
 """Single-source button bars for the browser IDE.
 
-`leela.keys` is the same idea for the keyboard: declare a thing once, and let each
+`leela.core.keys` is the same idea for the keyboard: declare a thing once, and let each
 frontend render it. This is the other half of the promise, and it exists because a
 keyboard-only IDE is only as good as the terminal it is running in. `ctrl+enter` does
 not survive Terminal.app, `alt+<letter>` does not survive macOS at all unless Option is
@@ -8,7 +8,7 @@ configured as Meta, and a browser keeps a dozen chords for itself. None of that 
 leela's to fix -- but nothing important should be *reachable only* by a chord that a
 particular terminal happens to swallow.
 
-So every button here names an action from `leela.keys`, which is the same action the
+So every button here names an action from `leela.core.keys`, which is the same action the
 keymap dispatches, using the same browser action registry and the same
 entry in the browser's handler table. A button and a key are two doors into one room.
 The import-time check below is what keeps it that way: a button naming an action the
@@ -35,7 +35,7 @@ BARS = ('toolbar', 'cell', 'files', 'keys', 'exec', 'vars', 'agent',
 @dataclass(frozen=True)
 class Btn:
     'One clickable control: the action it runs, its face, and the bar it belongs to.'
-    action: str          # must name a `leela.keys` action
+    action: str          # must name a `leela.core.keys` action
     label: str           # the button face
     title: str = ''      # tooltip; the keymap's own label when blank
     bar: str = 'toolbar'

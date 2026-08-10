@@ -1,6 +1,6 @@
 import subprocess
 
-from leela import runtime_support as support
+from leela.blocks.runtime import support as support
 
 
 def completed(args, code=0, out='installed\n', err=''):

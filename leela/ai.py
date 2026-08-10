@@ -27,7 +27,7 @@ from __future__ import annotations
 import functools, inspect, json, threading
 
 from . import errstr, leela_cfg
-from .fs import Unsafe
+from .blocks.fs.fs import Unsafe
 from .agent.agent import (Activity, Agent, Approvals, Ask, Completer, _summary, answer_md, ask_md,
                           preview_for)
 from .agent.tools import (MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS, Hit, Host, clip,
@@ -498,7 +498,7 @@ class WorkspaceHost(Host):
 def _git_tools(host):
     """Git operations bound to an open repository and kept inside workspace roots."""
     from pathlib import Path
-    from .git import GitRepo
+    from .blocks.git.git import GitRepo
 
     def repo(path=''):
         roots = [Path(r).expanduser().resolve() for r in host.roots]

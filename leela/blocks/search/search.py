@@ -15,8 +15,8 @@ from fastcore.all import L, Path
 from fastcore.aio import athreaded
 from fastcore.parallel import threaded
 
-from . import Dictable, errstr
-from .fs import LANGS
+from ... import Dictable, errstr
+from ..fs.fs import LANGS
 
 __all__ = ['Hit', 'Cluster', 'Search']
 
