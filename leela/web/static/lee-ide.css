@@ -275,8 +275,9 @@ body {
 .lee-left.left-symbols .lee-structure,
 .lee-left.left-git .lee-source-control,
 .lee-left.left-workflows .lee-workflows,
-.lee-left.left-releases .lee-releases { display: flex; }
-.lee-source-control, .lee-structure, .lee-workflows, .lee-releases { flex: 1 1 auto; min-height: 0; }
+.lee-left.left-releases .lee-releases,
+.lee-left.left-deploys .lee-deploys { display: flex; }
+.lee-source-control, .lee-structure, .lee-workflows, .lee-releases, .lee-deploys { flex: 1 1 auto; min-height: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
            clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .lee-right { border-left: 1px solid var(--lee-border); }
@@ -2022,6 +2023,25 @@ kbd {
 .lee-wf-envval { color: var(--lee-fg4); font: 8px/1 var(--lee-mono); }
 .lee-wf-env button { padding: 3px 5px; border: 1px solid var(--lee-border); border-radius: 3px; background: transparent; color: var(--lee-fg4); font: 8px/1 var(--lee-mono); cursor: pointer; }
 .lee-wf-env button:hover { color: var(--lee-fg); }
+
+.lee-wf-detect { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 7px; border-bottom: 1px solid var(--lee-border); color: var(--lee-fg4); font: 8px/1.4 var(--lee-mono); }
+.lee-wf-detect strong { color: var(--lee-fg2); }
+.lee-wf-detect i { padding: 2px 4px; background: var(--lee-bg2); font-style: normal; }
+.lee-wf-detect code, .lee-wf-detect small { width: 100%; overflow: hidden; color: var(--lee-fg4); text-overflow: ellipsis; white-space: nowrap; }
+.lee-wf-picks { display: grid; }
+.lee-wf-pick { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 6px; padding: 7px; border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 70%, transparent); }
+.lee-wf-pick.recommended { border-left: 2px solid var(--lee-green); }
+.lee-wf-pick.present { opacity: .65; }
+.lee-wf-pick strong { display: block; color: var(--lee-fg); font: 600 9px/1.4 var(--lee-mono); }
+.lee-wf-pick small { display: block; color: var(--lee-fg4); font: 8px/1.5 var(--lee-mono); }
+.lee-wf-because { display: block; margin-top: 2px; color: var(--lee-green); font: normal 8px/1.4 var(--lee-mono); }
+.lee-wf-pickfile { grid-column: 2; grid-row: 1; align-self: start; color: var(--lee-fg4); font: 8px/1.4 var(--lee-mono); }
+.lee-wf-pick button, .lee-wf-has { grid-column: 2; justify-self: end; padding: 3px 5px; border: 1px solid var(--lee-border); border-radius: 3px; background: transparent; color: var(--lee-fg4); font: 8px/1 var(--lee-mono); cursor: pointer; }
+.lee-wf-pick button:hover { color: var(--lee-accent); }
+.lee-wf-has { border-color: transparent; cursor: default; }
+.lee-dep-files { display: flex; flex-wrap: wrap; gap: 3px; padding: 6px 7px; border-bottom: 1px solid var(--lee-border); }
+.lee-dep-files i { padding: 2px 5px; border: 1px solid var(--lee-border); border-radius: 3px; color: var(--lee-fg4); font: normal 8px/1.4 var(--lee-mono); opacity: .55; }
+.lee-dep-files i.has { border-color: var(--lee-green); color: var(--lee-green); opacity: 1; }
 
 /* --- release pipeline --------------------------------------------------------- */
 .lee-rel-steps { display: grid; }

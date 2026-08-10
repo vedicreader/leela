@@ -307,8 +307,46 @@ def test_an_unknown_release_action_is_refused(project_client):
     assert r.status_code == 400 and 'unknown release action' in r.json()['error']
 
 
+def test_the_catalogue_marks_what_this_project_wants(project_client):
+    client, _ = project_client
+    d = client.get('/workflows/catalogue').json()
+    assert d['detect']['nbdev'] and d['detect']['python']
+    rows = {r['id']: r for r in d['workflows']}
+    assert rows['nbdev']['recommended'] and not rows['ci']['recommended']
+    # `present` is about the file name, not the entry: this project already has a ci.yml,
+    # and both CI entries would write one -- which is exactly when `add` has to refuse.
+    assert rows['ci']['present'] and rows['nbdev']['present']
+    assert not rows['docker']['present']
+    refused = client.post('/workflows/action', json={'op': 'add', 'workflow': 'nbdev'})
+    assert refused.status_code == 400 and 'already exists' in refused.json()['error']
+
+
+def test_the_deploy_panel_reports_its_target_and_stages(project_client):
+    client, root = project_client
+    d = client.get('/deploys').json()
+    assert d['kind'] == 'deploy'
+    assert [s['id'] for s in d['steps']] == ['env', 'compose', 'deploy']
+    assert d['target']['script'] is False and d['target']['missing']
+
+
+def test_scaffolding_writes_the_script_the_stages_run(project_client):
+    client, root = project_client
+    d = client.post('/deploys/action', json={'op': 'scaffold', 'domain': 'example.com',
+                                             'subdomain': 'proj'}).json()
+    assert (root/'deploy.py').exists()
+    assert d['state']['target']['script'] is True
+    again = client.post('/deploys/action', json={'op': 'scaffold', 'domain': 'example.com'})
+    assert again.status_code == 400 and 'already has a deploy.py' in again.json()['error']
+
+
+def test_an_unknown_deploy_action_is_refused(project_client):
+    client, _ = project_client
+    r = client.post('/deploys/action', json={'op': 'rm -rf'})
+    assert r.status_code == 400 and 'unknown deploy action' in r.json()['error']
+
+
 def test_these_panels_say_to_open_a_folder_rather_than_failing_obscurely(client):
-    for path in ('/workflows', '/releases'):
+    for path in ('/workflows', '/releases', '/deploys'):
         r = client.get(path)
         assert r.status_code == 400 and 'open a folder' in r.json()['error']
 

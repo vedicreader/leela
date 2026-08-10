@@ -231,6 +231,45 @@ def test_workflows_are_a_panel_with_a_job_graph_in_it():
     assert '.lee-wf-job' in CSS and '.lee-wf-graph' in CSS and '.lee-left.left-workflows' in CSS
 
 
+def test_the_picker_offers_a_list_and_says_why_each_one_is_recommended():
+    """The Add view: what the project is, what it could have, and why.
+
+    A picker that only listed workflows would be a menu; the reason beside each one is what
+    makes it a recommendation, and it comes from detection rather than from a preference.
+    """
+    block = JS[JS.index('function wfPickRows'):JS.index('function wfEnvRows')]
+    assert 'lee-wf-detect' in block and 'recommended' in block
+    assert 'data-pick-preview' in block and 'data-pick-add' in block
+    assert 'already here' in block, 'a workflow that exists is not offered again'
+    assert "api('/workflows/catalogue'" in JS and "op: op === 'add' ? 'add' : 'preview'" in JS
+    assert "['add', 'Add']" in JS, 'the picker is one of the panel views'
+    assert '.lee-wf-pick.recommended' in CSS and '.lee-wf-detect' in CSS
+
+
+def test_authenticating_opens_the_real_gh_login():
+    "It is a conversation with a browser and a one-time code; a form cannot hold it."
+    assert "openTerm('gh-auth')" in JS
+    assert "gh_auth_argv() if kind == 'gh-auth'" in SERVER
+    assert "kind === 'gh-auth' ? 'gh auth'" in JS
+
+
+def test_the_deploy_panel_shows_where_it_goes_before_it_goes_there():
+    block = JS[JS.index('const depUI ='):JS.index('async function renderGitPanel')]
+    assert "api('/deploys'" in block and "post('/deploys/action'" in block
+    for f in ('deploy.py', 'Dockerfile', 'docker-compose.yml', 'Caddyfile'):
+        assert f in block, 'the target card says which pieces exist'
+    assert ' not set</strong>' in block and 'Workflows → Environment' in block
+    assert "op: 'scaffold'" in block and 'write deploy.py' in block
+    assert "openReleaseTerm(d.root, 'deploy')" in block
+    assert '.lee-dep-files i.has' in CSS and '.lee-left.left-deploys' in CSS
+
+
+def test_both_pipelines_share_one_terminal_socket():
+    "A release and a deploy differ in what they run and in nothing else, including this."
+    assert "url: '/pipeline/ws'" in JS and "openReleaseTerm(root = '', kind = 'release')" in JS
+    assert 'WebSocketRoute(\'/pipeline/ws\'' in SERVER
+
+
 def test_the_environment_view_hides_secret_values_in_the_browser_too():
     "The server never sends one; the client must not invent a place to show one either."
     block = JS[JS.index('function wfEnvRows'):JS.index('function renderWorkflowsPanel')]
@@ -241,7 +280,7 @@ def test_the_environment_view_hides_secret_values_in_the_browser_too():
 def test_the_release_pipeline_runs_steps_and_shows_them_in_a_terminal():
     block = JS[JS.index('const REL_MARK'):JS.index('async function renderGitPanel')]
     assert "api('/releases'" in block and "post('/releases/action'" in block
-    assert 'function openReleaseTerm' in JS and "url: '/release/ws'" in JS
+    assert 'function openReleaseTerm' in JS and "url: '/pipeline/ws'" in JS
     assert "termLabel('release'" in JS or "'release pipeline'" in JS
     for op in ('retry', 'skip', 'stop', 'reset', 'edit steps'):
         assert op in block

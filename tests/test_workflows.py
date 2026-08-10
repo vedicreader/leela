@@ -125,3 +125,56 @@ def test_the_docker_answer_never_raises(tmp_path):
     row = Workflows(tmp_path).docker()
     assert row['dockerfile'] is False
     assert row['why'] or row['base'], 'either it detected something or it said why not'
+
+
+def test_the_catalogue_recommends_from_what_the_project_is(tmp_path):
+    """The one judgement neither gheasy nor dockeasy can make for you.
+
+    gheasy knows how to build a Docker workflow; whether this repository has anything to put
+    in an image is a fact about the project, and that is all the catalogue decides.
+    """
+    pytest.importorskip('gheasy')
+    root = tmp_path/'p'
+    root.mkdir()
+    (root/'pyproject.toml').write_text('[project]\nname = "p"\nversion = "0"\n\n[tool.nbdev]\n')
+    rows = {r['id']: r for r in Workflows(root).catalogue()['workflows']}
+    assert rows['nbdev']['recommended'] and not rows['ci']['recommended'], 'nbdev CI, not plain CI'
+    assert not rows['pages']['recommended'], 'no node build here'
+    assert all(not r['present'] for r in rows.values())
+
+
+def test_a_catalogue_entry_previews_before_it_is_written(tmp_path):
+    pytest.importorskip('gheasy')
+    root = tmp_path/'p'
+    root.mkdir()
+    (root/'pyproject.toml').write_text('[project]\nname = "p"\nversion = "0"\n\n[tool.nbdev]\n')
+    wf = Workflows(root)
+    text = wf.preview('nbdev')
+    assert 'nbdev_test' in text and 'name:' in text
+    assert not wf.files(), 'previewing writes nothing'
+
+    written = wf.add('nbdev')
+    assert written['path'].endswith('ci.yml')
+    parsed = wf.parsed()[0]
+    assert [j['id'] for j in parsed['jobs']] == ['test'], 'and it reads back as a workflow'
+    with pytest.raises(WorkflowError, match='already exists'):
+        wf.add('nbdev')
+
+
+def test_the_deploy_workflow_is_the_projects_schema_rendered(tmp_path):
+    """lego's `gen_deploy_workflow`, with the key list read rather than written down.
+
+    A key added to `env_schema` has to appear in the workflow the next time it is generated;
+    that is the whole reason for generating it rather than editing YAML.
+    """
+    pytest.importorskip('gheasy')
+    from gheasy.core import GheasyConfig
+    root = tmp_path/'p'
+    root.mkdir()
+    (root/'pyproject.toml').write_text('[project]\nname = "p"\nversion = "0"\n')
+    GheasyConfig(app='p', env_schema={'DOMAIN': None, 'PORT': '5001'}).save(str(root))
+    text = Workflows(root).preview('deploy')
+    assert 'DOMAIN: ${{ secrets.DOMAIN }}' in text      # None in the schema means secret
+    assert 'PORT: ${{ vars.PORT }}' in text             # a default means variable
+    assert 'DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}' in text
+    assert 'python deploy.py deploy' in text

@@ -24,7 +24,8 @@ import asyncio, fcntl, os, pty, secrets, shutil, signal, struct, subprocess, ter
 from fastcore.all import Path, L
 from fastcore.ansi import strip_ansi
 
-__all__ = ['Pty', 'Terminals', 'TerminalGate', 'lazygit_argv', 'LazygitMissing', 'default_shell']
+__all__ = ['Pty', 'Terminals', 'TerminalGate', 'lazygit_argv', 'gh_auth_argv', 'ToolMissing',
+           'LazygitMissing', 'default_shell']
 
 READ_CHUNK = 65536
 DEFAULT_SHELL = '/bin/bash'
@@ -33,8 +34,12 @@ DEFAULT_SHELL = '/bin/bash'
 SCROLLBACK = 200_000
 
 
-class LazygitMissing(Exception):
-    'lazygit is not on PATH. The IDE cannot install it, so it says so instead of failing obscurely.'
+class ToolMissing(Exception):
+    'A tool the IDE runs is not on PATH. It cannot install one, so it says so instead of failing obscurely.'
+
+
+class LazygitMissing(ToolMissing):
+    'Kept as its own type: `/term/info` reports lazygit separately so the button can be hidden.'
 
 
 def default_shell():
@@ -52,6 +57,20 @@ def lazygit_argv(cwd=None):
     if not exe: raise LazygitMissing(
         'lazygit is not installed or not on PATH — see https://github.com/jesseduffield/lazygit#installation')
     return [exe] + (['--path', str(cwd)] if cwd else [])
+
+
+def gh_auth_argv():
+    """The argv for `gh auth login`, or raise `ToolMissing`.
+
+    Authenticating is a conversation -- it asks which host, offers to open a browser, and
+    waits for a one-time code to be pasted somewhere else. There is no useful way to do that
+    from a panel, and every way of trying ends in a form that reimplements a terminal
+    badly. So the button opens the real thing and gets out of the way.
+    """
+    exe = shutil.which('gh')
+    if not exe: raise ToolMissing(
+        'the GitHub CLI is not installed or not on PATH — see https://cli.github.com')
+    return [exe, 'auth', 'login']
 
 
 class Pty:

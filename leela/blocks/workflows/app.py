@@ -51,6 +51,17 @@ def connect(app, ctx):
                     'workflows': wf.parsed(), 'config': wf.config(), 'schema': wf.schema()}
         except Exception as e: return fail(e)
 
+    @rt('/workflows/catalogue')
+    async def workflows_catalogue(repo: str = ''):
+        """What this project is, and which workflows suit it.
+
+        dockeasy answers the first question and gheasy builds every answer to the second;
+        what is decided here is only which of them to mark as recommended, which is the part
+        neither library can know -- it needs the project, not the packaging.
+        """
+        try: return await off_loop(flows(repo).catalogue)
+        except Exception as e: return fail(e)
+
     @rt('/workflows/docker')
     async def workflows_docker(repo: str = ''):
         "What dockeasy would build here -- the thing a docker job in the workflow builds."
@@ -84,6 +95,8 @@ def connect(app, ctx):
                 out = await off_loop(wf.dispatch, d.get('workflow') or '', d.get('ref') or '',
                                      d.get('inputs') or {})
             elif op == 'cancel': out = await off_loop(wf.cancel, d.get('id') or 0)
+            elif op == 'preview': out = {'yaml': await off_loop(wf.preview, d.get('workflow') or '')}
+            elif op == 'add': out = await off_loop(wf.add, d.get('workflow') or '', d.get('file') or '')
             elif op == 'generate': out = {'yaml': await off_loop(wf.generate)}
             elif op == 'write': out = await off_loop(wf.write_generated)
             elif op == 'dockerfile': out = await off_loop(wf.write_dockerfile)

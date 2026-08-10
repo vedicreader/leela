@@ -32,7 +32,7 @@ from ..blocks import git as git_block
 from ..blocks import keys as keys_block
 from ..blocks import lsp as lsp_block
 from ..blocks import memory as memory_block
-from ..blocks import releases as releases_block
+from ..blocks import pipelines as pipelines_block
 from ..blocks import research as research_block
 from ..blocks import runs as runs_block
 from ..blocks import runtime as runtime_block
@@ -65,7 +65,7 @@ from ..fs import lang_for
 from ..git import GitRepo, GitError
 from ..keys import by_scope, chord_display, toast_rows
 from ..nb import Notebook, Cell
-from ..term import TerminalGate, lazygit_argv
+from ..term import TerminalGate, gh_auth_argv, lazygit_argv
 from ..workspace import Workspace
 from ..agent.core import model_note
 
@@ -80,7 +80,7 @@ __all__ = ['ide_app', 'serve_ide']
 # the extraction order and what remains.
 BLOCKS = [keys_block, settings_block, search_block, memory_block,
           research_block, term_block, runs_block, workspace_block, git_block,
-          workflows_block, releases_block,
+          workflows_block, pipelines_block,
           fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block]
 
 
@@ -401,6 +401,17 @@ def _releases_panel():
         cls='lee-panel lee-releases')
 
 
+def _deploy_panel():
+    "Where this app runs, what it is missing, and the stages that put it there."
+    return Section(
+        Div(Span('deploy', cls='lee-ptitle'), Span(cls='lee-spacer'),
+            Button('refresh', cls='lee-btn', onclick='leeDeploys()', title='reread the deploy plan'),
+            Button('−', cls='lee-pane-min', title='minimise deploy',
+                   aria_label='minimise deploy', onclick='leePane("left", false)'), cls='lee-phead'),
+        Div(Div('reading the deploy plan…', cls='lee-dim'), id='deploypanel', cls='lee-releases-panel'),
+        cls='lee-panel lee-deploys')
+
+
 def _symbols_panel():
     return Section(
         Div(Span('structure', cls='lee-ptitle'), Span(id='symbolfile', cls='lee-keyscope'),
@@ -428,9 +439,12 @@ def _left_workspace(ws):
                    onclick='leeLeft("workflows")'),
             Button(_activity_icon('releases'), Span('Release', cls='sr-only'), cls='lee-activity-btn',
                    data_left='releases', title='Release pipeline', aria_label='Release pipeline',
-                   onclick='leeLeft("releases")'), cls='lee-activity', aria_label='Project tools'),
+                   onclick='leeLeft("releases")'),
+            Button(_activity_icon('deploys'), Span('Deploy', cls='sr-only'), cls='lee-activity-btn',
+                   data_left='deploys', title='Deploy to a server', aria_label='Deploy to a server',
+                   onclick='leeLeft("deploys")'), cls='lee-activity', aria_label='Project tools'),
         Div(_files_panel(ws.fs), _symbols_panel(), _git_panel(), _workflows_panel(),
-            _releases_panel(), _toast_panel(), cls='lee-left-content'),
+            _releases_panel(), _deploy_panel(), _toast_panel(), cls='lee-left-content'),
         cls='lee-left left-files', id='left')
 
 
@@ -737,7 +751,11 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             gate.check(hello.get('token'))          # raises unless this connection may have a pty
             kind = hello.get('kind', 'shell')
             cwd = _term_cwd(hello.get('cwd'))
-            argv = lazygit_argv(cwd) if kind == 'git' else None
+            # `kind` is what a terminal *is*, and the only place argv is decided. A shell
+            # with a command typed into it would race the prompt and could not report a
+            # missing tool before the pty existed.
+            argv = (lazygit_argv(cwd) if kind == 'git' else
+                    gh_auth_argv() if kind == 'gh-auth' else None)
             key = hello.get('id') or kind
             env = None
             if kind != 'git' and (py := ws.pool.default_python):

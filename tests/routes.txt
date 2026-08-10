@@ -67,6 +67,9 @@ GET,POST /debug/start
 GET,POST /debug/state
 GET,POST /debug/stop
 GET,POST /debug/variables
+GET,POST /deploys
+GET,POST /deploys/action
+GET,POST /deploys/tail
 GET,POST /dev/list
 GET,POST /dev/log
 GET,POST /dev/start
@@ -191,6 +194,7 @@ GET,POST /vars/promote
 GET,POST /vars/set
 GET,POST /workflows
 GET,POST /workflows/action
+GET,POST /workflows/catalogue
 GET,POST /workflows/docker
 GET,POST /workflows/env
 GET,POST /workflows/env/action
@@ -198,5 +202,5 @@ GET,POST /workflows/jobs
 GET,POST /workflows/runs
 GET,POST /workspace/info
 Mount /leestatic
-WebSocketRoute /release/ws
+WebSocketRoute /pipeline/ws
 WebSocketRoute /term/ws

@@ -45,6 +45,9 @@ ICONS = {
                  '<path d="M6 9.3 14 5.7M6 10.7 14 14.3"/>',
     # a release is a tagged thing leaving: a box with an arrow out of it
     'releases': '<path d="M3 7.5 10 4l7 3.5v5L10 16l-7-3.5z"/><path d="M10 9.5 17 6M10 9.5 3 6M10 9.5V16"/>',
+    # a deploy is a thing leaving for somewhere else: a box on a wire
+    'deploys': '<rect x="2.5" y="11" width="7" height="6" rx="1"/><rect x="11.5" y="3" width="6" height="5" rx="1"/>'
+               '<path d="M9.5 12.5h3a2 2 0 0 0 2-2V8"/>',
     'git': '<circle cx="5" cy="4" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="5" cy="16" r="2"/>'
            '<path d="M5 6v8m2-7h4a4 4 0 0 1 4 4v-3"/>',
 }

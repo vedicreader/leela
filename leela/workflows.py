@@ -194,7 +194,7 @@ class Workflows:
         a blank list.
         """
         row = {'gheasy': True, 'dockeasy': _installed('dockeasy'), 'repo': '', 'token': False,
-               'gh_cli': bool(_which('gh')), 'why': ''}
+               'gh_cli': bool(_which('gh')), 'gh_auth': _gh_authed(), 'why': ''}
         try: core = _gheasy()
         except WorkflowError as e:
             return row | {'gheasy': False, 'why': str(e)}
@@ -276,6 +276,154 @@ class Workflows:
             raise WorkflowError('this project has no .gheasy/config.json to generate from')
         core.gh_workflow(path=str(self.root))
         return {'path': str(self.dir/'gheasy.yml')}
+
+    # -- the catalogue, and which of it this project wants ----------------------
+    def detect(self):
+        """What this project is, from the files that say so and from dockeasy.
+
+        The catalogue's recommendations are only as good as this, and it is deliberately
+        made of cheap, unambiguous signals: a `pyproject.toml` key, a file that exists, a
+        dependency named in the lock. dockeasy's `detect_app` is the same question asked
+        about the *build*, and it is the one that knows what `python-fasthtml` in a
+        pyproject means.
+        """
+        root = self.root
+        has = lambda *names: any((root/n).exists() for n in names)
+        text = ''
+        for name in ('pyproject.toml', 'requirements.txt'):
+            try: text += (root/name).read_text(encoding='utf-8', errors='replace').lower()
+            except OSError: pass
+        from .releases import nbdev_project
+        row = {
+            'python': has('pyproject.toml', 'requirements.txt', 'setup.py'),
+            'node': has('package.json'), 'rust': has('Cargo.toml'), 'go': has('go.mod'),
+            'nbdev': nbdev_project(root), 'docker': has('Dockerfile'),
+            'compose': has('docker-compose.yml', 'compose.yml'),
+            'deploy_script': has('deploy.py'), 'pages': has('_quarto.yml', 'nbs/_quarto.yml', 'docs'),
+            'web': 'python-fasthtml' in text or 'fastapi' in text or 'django' in text or 'flask' in text,
+            'vps': any(k in text for k in ('vpseasy', 'cfeasy', 'hcloud')),
+            'publish': 'hatchling' in text or 'setuptools' in text or 'flit' in text,
+            'build': '', 'build_why': '',
+        }
+        try:
+            from dockeasy.core import detect_app
+            built = str(detect_app(str(root)))
+            row['build'] = next((l for l in built.splitlines() if l.startswith('FROM ')), '')
+        except ImportError: row['build_why'] = 'install dockeasy to detect the build'
+        except Exception as e: row['build_why'] = f'{type(e).__name__}: {e}'
+        return row
+
+    def catalogue(self):
+        """The workflows on offer, each marked with whether this project wants it.
+
+        Every one of these is gheasy's -- three are its own presets and the rest are built
+        with its DSL, so what lands in `.github/workflows` is what the `gheasy` CLI would
+        have written. The panel's job is choosing between them, which is exactly the part
+        gheasy leaves to a person: it knows how to build a Docker workflow, not whether
+        this repository has anything to put in an image.
+        """
+        d = self.detect()
+        present = {p.name for p in self.files()}
+        rows = [
+            {'id': 'ci', 'name': 'Python CI', 'file': 'ci.yml',
+             'doc': 'ruff, then pytest, on push and pull request — uv for both.',
+             'want': d['python'] and not d['nbdev'], 'why': 'a Python project'},
+            {'id': 'nbdev', 'name': 'nbdev CI', 'file': 'ci.yml',
+             'doc': 'nbdev_test and a clean-notebook check, which is what breaks in an nbdev repo.',
+             'want': d['nbdev'], 'why': 'nbdev project'},
+            {'id': 'pypi', 'name': 'PyPI on release', 'file': 'publish.yml',
+             'doc': 'Build and publish through PyPI trusted publishing when a release is created.',
+             'want': d['publish'], 'why': 'this project builds a distribution'},
+            {'id': 'docker', 'name': 'Docker image', 'file': 'docker.yml',
+             'doc': 'Build and push to GHCR with semver and sha tags from docker/metadata-action.',
+             'want': d['docker'] or bool(d['build']), 'why': 'there is an image to build'},
+            {'id': 'deploy', 'name': 'Deploy to a VPS', 'file': 'deploy.yml',
+             'doc': 'Everything in env_schema as secrets and variables, the deploy key, then '
+                    'your deploy script — the shape lego uses.',
+             'want': d['deploy_script'] or d['vps'], 'why': 'a deploy script or a VPS dependency'},
+            {'id': 'pages', 'name': 'GitHub Pages', 'file': 'pages.yml',
+             'doc': 'Build a static site and publish it to Pages.',
+             'want': d['pages'] and d['node'], 'why': 'a static site with a node build'},
+        ]
+        for row in rows:
+            row['present'] = row['file'] in present
+            row['recommended'] = bool(row['want'])
+            row['why'] = row['why'] if row['want'] else ''
+        return {'detect': d, 'workflows': rows}
+
+    def _build(self, choice):
+        "One catalogue entry as a gheasy `WorkflowDoc`. Nothing here writes anything."
+        from gheasy.workflow import Workflow, docker_build_push, pages_deploy, uv_ci
+        cfg = self.config() or {}
+        app = str(cfg.get('app') or self.root.name)
+        if choice == 'ci':
+            return uv_ci(f'{app} CI')
+        if choice == 'nbdev':
+            wfb = Workflow(f'{app} CI')
+            wfb.on.push(branches=['main']).pull_request(branches=['main'])
+            (wfb.job('test').runs_on('ubuntu-latest').checkout().end_step()
+                .setup_uv().end_step().uv_install().end_step()
+                .uv_run('nbdev_test').end_step()
+                .step('Notebooks are clean').run('uv run nbdev_clean --check_all').end_job())
+            return wfb.build()
+        if choice == 'pypi':
+            wfb = Workflow(f'{app} publish')
+            wfb.on.release(types=['published'])
+            wfb.uv_pypi_job(needs=None)
+            return wfb.build()
+        if choice == 'docker':
+            return docker_build_push(f'{app} image')
+        if choice == 'pages':
+            return pages_deploy(f'{app} pages')
+        if choice == 'deploy':
+            return self._deploy_workflow(app, cfg)
+        raise WorkflowError(f'unknown workflow: {choice}')
+
+    def _deploy_workflow(self, app, cfg):
+        """The deploy workflow, generated from the project's own `env_schema`.
+
+        This is lego's `gen_deploy_workflow` with the key list read rather than written
+        down: gheasy's schema already says which keys exist and which are secret, so the
+        `env:` block is that schema rendered, and a key added to the schema appears in the
+        workflow the next time it is generated instead of being forgotten.
+        """
+        from gheasy.workflow import Workflow
+        schema = dict(cfg.get('env_schema') or {})
+        env = {k: (f'${{{{ secrets.{k} }}}}' if v is None else f'${{{{ vars.{k} }}}}')
+               for k, v in schema.items()}
+        env['DEPLOY_KEY'] = '${{ secrets.DEPLOY_KEY }}'
+        name_key = 'SERVER_NAME' if 'SERVER_NAME' in schema else ''
+        ssh = ('mkdir -p ~/.ssh && name="${' + (name_key or 'SERVER_NAME') + f':-{app}' + '}" '
+               '&& echo "$DEPLOY_KEY" > ~/.ssh/"$name" && chmod 600 ~/.ssh/"$name"')
+        wfb = Workflow(f'{app} deploy')
+        wfb.on.push(branches=['main'])
+        (wfb.job('deploy').runs_on('ubuntu-latest').env(**env)
+            .checkout().with_(lfs=True).end_step()
+            .setup_uv().with_(python_version='3.13').end_step()
+            .uv_install('uv sync --group dev').end_step()
+            .step('Install SSH key').if_("env.DEPLOY_KEY != ''").run(ssh).end_step()
+            .step('Deploy').run('python deploy.py deploy').end_job())
+        return wfb.build()
+
+    def preview(self, choice):
+        "The YAML a catalogue entry would write, without writing it."
+        _gheasy()
+        return self._build(str(choice)).to_yaml()
+
+    def add(self, choice, file=''):
+        "Write one catalogue entry into `.github/workflows`. Never overwrites silently."
+        _gheasy()
+        rows = {r['id']: r for r in self.catalogue()['workflows']}
+        row = rows.get(str(choice))
+        if row is None: raise WorkflowError(f'unknown workflow: {choice}')
+        name = str(file or row['file'])
+        if '/' in name or not name.endswith(('.yml', '.yaml')):
+            raise WorkflowError(f'not a workflow file name: {name}')
+        path = self.dir/name
+        if path.exists(): raise WorkflowError(f'{name} already exists — delete or rename it first')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._build(row['id']).save(path)
+        return {'path': str(path), 'workflow': row['id']}
 
     # -- what the docker job would build ---------------------------------------
     def docker(self):
@@ -364,6 +512,19 @@ class Workflows:
 def _which(name):
     from shutil import which
     return which(name)
+
+
+def _gh_authed():
+    """Is the GitHub CLI logged in? `gh auth status` is the only thing that knows.
+
+    Pushing a secret shells out to `gh`, which fails with an unhelpful message when it is
+    installed but not authenticated -- so the panel asks first and offers the login instead.
+    """
+    if not _which('gh'): return False
+    import subprocess
+    try:
+        return subprocess.run(['gh', 'auth', 'status'], capture_output=True, timeout=8).returncode == 0
+    except (OSError, subprocess.SubprocessError): return False
 
 
 def _installed(name):

@@ -203,7 +203,7 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   [watching something run](#watching-something-run).
 - **Browser source control without leaving the editor.** A vertical Project/Git activity
   bar opens a six-part source-control workspace: Changes, Review, Branches, History,
-  Repository, and All repos. The branch pill shows changes and upstream divergence. Modified, staged,
+  Repository, and All repos. Workflows, Release and Deploy sit beside it on the same bar. The branch pill shows changes and upstream divergence. Modified, staged,
   untracked, and conflicted files are coloured in the tree; source rails open
   syntax-preserving patches. Changes include line statistics, multi-file selection, local
   changelists, pre-stage previews for untracked files, staged-only commit review, and hunk
@@ -255,6 +255,21 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   comes from [dockeasy](https://github.com/Karthik777/dockeasy)'s `detect_app`, which will
   also write the Dockerfile it detected. Without those two installed the panel still lists
   the workflow files and says what to install: `pip install "leela[github]"`.
+- **A picker that knows what this project is.** *Add* lists the workflows on offer and
+  marks the ones this repository actually wants — nbdev CI rather than plain CI for an nbdev
+  project, a Docker workflow when there is something to put in an image, the VPS deploy when
+  there is a deploy script or a `vpseasy` dependency. The detection is dockeasy's
+  `detect_app` plus the files that give a project away; every workflow itself is gheasy's,
+  three of them its own presets and the rest its DSL, so what lands in `.github/workflows`
+  is what the `gheasy` CLI would have written. Preview any of them before agreeing; the one
+  judgement Leela makes is *which*, because that is the part neither library can know.
+  The VPS entry is lego's deploy workflow with its key list read rather than written down:
+  gheasy's `env_schema` becomes the `env:` block, secrets and variables sorted by the same
+  rule that decides where a value is pushed.
+- **`gh auth login`, in a terminal.** Authenticating is a conversation — which host, open a
+  browser, paste a one-time code — so the button opens the real thing in the dock rather
+  than a form pretending to be one. It appears when the CLI is installed and not logged in,
+  which is also when pushing a secret would otherwise fail for a reason nobody could see.
 - **A release pipeline that keeps each step's identity.** `nbdev_prepare && nbdev_bump_version
   && nbdev_release_gh && nbdev_pypi` is the whole of an nbdev release, and typing it as one
   line is what makes it unpleasant — the chain stops somewhere in the middle and the
@@ -267,6 +282,18 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   `.leela/release.json`, not a special case in the code. Steps run on a real pty — progress
   bars redraw, spinners spin, and twine can ask for a password — rendered in the same xterm
   the shell uses, with one transcript for the whole release rather than one per step.
+- **Deploy to a VM, the way lego does it.** The **Deploy** panel runs the project's own
+  `deploy.py`, one subcommand per stage, on the same terminal as a release: write `.env`,
+  build the stack, then the tunnel and the server. Above the stages it says where this is
+  going — domain, server name, which of `deploy.py`, `Dockerfile`, `docker-compose.yml` and
+  `Caddyfile` exist yet, and which values are still unset — because a deploy that cannot say
+  where it goes is the one nobody presses. A project with no deploy script gets offered the
+  first one: `scaffold` writes lego's pattern with this project's names in it — dockeasy's
+  `detect_app` for the image, vpseasy's `caddy_stack` and `hetzner_deploy` for the stack and
+  the server, cfeasy's `CF().setup_tunnel` for the tunnel and its DNS — together with the
+  gheasy schema those keys live in and the deploy workflow generated from it. It is a
+  starting point to edit, generated from the same libraries it imports, so there is one way
+  these deploys work rather than two.
 - **The values they need, where dockeasy already keeps them.** `GITHUB_TOKEN` and the twine
   credentials are read and written through dockeasy's `secret_set`/`env_get`: the OS
   keychain, a `0600` file under `~/.config/fastops`, and `os.environ` first — so a token set
@@ -399,7 +426,9 @@ leela/
   git.py          one repository, as records rather than porcelain text
   repos.py        every repository in the workspace, and one operation across all of them
   workflows.py    GitHub Actions read into jobs and edges; the rest is gheasy's
-  releases.py     the release pipeline: nbdev's commands, one step at a time, on a pty
+  pipelines.py    a named sequence of commands on a pty: the runner both panels share
+  releases.py     the release pipeline: nbdev's commands, one step at a time
+  deploys.py      the deploy pipeline, and the first deploy.py for a project with none
   envs.py         which values a project needs; dockeasy keeps them
   term.py         terminals and lazygit
   research.py     web search and fetch; automatically feeds durable memory
