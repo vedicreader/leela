@@ -10,14 +10,38 @@ see [Capabilities](#capabilities) for why.
 
 ```
 leela/blocks/git/
-    __init__.py
-    cfg.py        # settings and defaults this block owns
-    svc.py        # the domain service — no web imports, testable alone
+    __init__.py   # lazy `connect`/`CAPS`, and the port default if this block owns one
+    git.py        # the domain — no web imports, testable alone
     ui.py         # FastHTML fragments
     app.py        # routes + connect(app, ctx)
     git.css       # optional, block-owned
     git.js        # optional, block-owned
 ```
+
+The domain module keeps its own name — `git.py`, `fs.py`, `kernels.py` — rather than a
+uniform `svc.py`. These files were `leela/git.py` and `leela/fs.py` before they moved into
+the blocks that own them, and keeping the name means `git log --follow` still works and a
+reader looking for git code finds a file called git.
+
+`__init__.py` must not import `app.py` eagerly:
+
+```python
+# leela/blocks/git/__init__.py
+def __getattr__(name):
+    if name in ('CAPS', 'connect'):
+        from . import app
+        v = globals()[name] = getattr(app, name)
+        return v
+    raise AttributeError(name)
+```
+
+`app.py` imports fasthtml, and importing a package runs its `__init__` — so a plain
+`from .app import CAPS, connect` means that reading a git repository loads the routes that
+serve git repositories. `Workspace` composes these domains, so that cost lands on every CLI
+invocation, every test, and the dev-server child. It regressed exactly that way once, and the
+whole suite stayed green;
+`tests/test_blocks.py::test_importing_every_block_domain_never_loads_a_route_module` is what
+catches it now.
 
 ```python
 # leela/blocks/git/app.py
@@ -119,18 +143,33 @@ uv run python -m tests.test_route_inventory     # regenerate, then commit the di
 
 ## Rules
 
-1. Blocks import `leela.core`. `leela.core` imports no block. Blocks do not import each
-   other — anything two need belongs in core or in a shared service.
-2. `svc.py` has no web imports. If it needs a request, it is not a service.
-3. Declare `CAPS` once the block's routes have settled.
-4. A block owns its CSS and JS. Assets are concatenated at build time; nothing about
-   serving changes.
-5. Tests for a block construct a `Ctx` over a fake, not a whole `Workspace`.
+1. Blocks import `leela.core`. **`leela.core` imports no block.** This is the one hard
+   direction. Anything two blocks need belongs in core; anything that must name an
+   implementation belongs *above* the blocks, the way `leela/conformance.py` does.
+2. A block may import another block's **domain module** — `from ..git.git import GitRepo`.
+   Never its `app.py` or its `ui.py`: routes are a block's outside, and two blocks sharing
+   one means the thing belongs in core.
+3. The domain import graph stays acyclic. Two blocks that genuinely need each other are one
+   block.
+4. The domain module has no web imports. If it needs a request, it is not a domain.
+5. `__init__.py` resolves `connect` and `CAPS` lazily, so importing a domain never loads a
+   route module.
+6. Declare `CAPS` once the block's routes have settled.
+7. A block owning a port registers the default for it in its own `__init__.py`, beside the
+   module that satisfies it — see [Ports](#ports).
+8. A block owns its CSS and JS. Today `lee-ide.js` and `lee-ide.css` are still single
+   authored files in `leela/static/`; splitting them per block waits until the routes have
+   finished moving, since it is a rewrite rather than a relocation.
+9. Tests for a block construct a `Ctx` over a fake, not a whole `Workspace`.
+
+Rules 1–3 and 5 are enforced, not just written down, by `tests/test_blocks.py`. Each of those
+tests has been checked to fail when its rule is broken — a guard that cannot fail is worse
+than none.
 
 ## Extraction status
 
-Blocks are moved out of `ide_app` a group at a time. What has moved — 15 blocks, 93 of the 181
-registered routes:
+Blocks are moved out of `ide_app` a group at a time. What has moved — 15 connected blocks,
+99 of the 189 registered routes:
 
 | block | routes | caps |
 |---|---|---|
@@ -150,8 +189,13 @@ registered routes:
 | `tabs` | `/tab/*` | `fs`, `pool`, `tab`, `docs` |
 | `editor` | `/editor/{format,packages}` | `fs`, `pool` |
 
-`leela/web/app.py` is down from 3,539 lines to 2,466, and serves 88 routes; the blocks
-serve the other 93. To check which module is actually behind a path:
+Three more blocks exist but are not connected: `nb`, `debug` and `agent` hold their domain
+modules with no `app.py` and no entry in `BLOCKS`, so their routes land in an existing home
+when they move rather than forcing another restructure.
+
+`leela/app.py` is down from 3,539 lines to 2,466, and serves 88 routes; the blocks
+serve the other 99, and a `Mount` and a `HostRoute` account for the last two. To check which
+module is actually behind a path:
 
 ```sh
 uv run python -m tests.test_route_owners
@@ -185,6 +229,24 @@ from the original, including `buffers.get(key) or …` where the original used `
 buffers` — which would have silently fallen through to disk for a buffer holding the empty
 string.
 
+Collapsing `leela/web/` into the root added four more, and only two were caught by a test:
+
+- **A module path in a string.** `DevServer._cmd()` re-execs the child as
+  `python -m leela.devserver`. No import rewrite touches a string literal; `test_runs.py`
+  caught it. Grep for the module's dotted name, not just its import statements.
+- **A `Mount` that served the right file by accident.** Splitting `static/` from `vendor/`
+  needed one URL prefix over two directories. The first attempt read `scope['path']`, which
+  Starlette leaves absolute under a `Mount` — so nothing matched, every request fell through
+  to the authored `StaticFiles`, and authored assets kept working while every vendored one
+  404'd. The URL surface was unchanged, so `routes.txt` was silent. A test that actually
+  fetched a font caught it.
+- **An import cost nothing asserts on.** Moving the domains into the blocks made
+  `import leela.workspace` load seven route modules, because each `__init__` still imported
+  `app.py`. No test failed. Measuring `sys.modules` after an import is now a test.
+- **A packaging bug that predated the move.** `data_files` used a non-recursive `iterdir()`,
+  so frozen builds had shipped no fonts at all. Nothing tests the frozen bundle; it surfaced
+  only from reading the line while changing its path.
+
 ## Ports
 
 Selecting an alternate implementation, writing an adapter and checking it conforms are
@@ -196,18 +258,43 @@ Three subsystems are getting alternate implementations —
 writes down what Leela actually depends on, as `Protocol`s extracted from the current call
 sites rather than from the classes:
 
-| port | satisfied today by | alternate |
-|---|---|---|
-| `MemoryPort` | `leela.memory.Memory` (litesearch) | `vishalakshi.Vault` |
-| `SearchPort` | `leela.search.Search` (Kosha + ripgrep) | vishalakshi's code leg |
-| `RuntimePort` | `leela.agent.runtime.Backend` | ramabana |
+| port | owned by | satisfied today by | alternate |
+|---|---|---|---|
+| `MemoryPort` | `blocks/memory` | `blocks.memory.memory.Memory` (litesearch) | `vishalakshi.Vault` |
+| `SearchPort` | `blocks/search` | `blocks.search.search.Search` (Kosha + ripgrep) | vishalakshi's code leg |
+| `RuntimePort` | `blocks/agent` | `leela.agent.runtime.Backend` | ramabana |
 
 They are structural: the current classes satisfy them without importing or inheriting
 anything. `tests/test_core_ctx.py` asserts conformance, which is what keeps a port honest
 as the class it was extracted from changes.
 
+**The block that owns a port registers the default for it**, in its own `__init__.py`, beside
+the module that satisfies it:
+
+```python
+# leela/blocks/memory/__init__.py
+@provider('memory', DEFAULT)
+def _memory(kosha=None, path=None, **kw):
+    from .memory import Memory
+    return Memory(kosha=kosha, path=path, **kw)
+```
+
+`core/providers.py` therefore names no implementation at all — it is the registry and nothing
+else. That is what makes `LEELA_MEMORY=vishalakshi` a swap of one folder for one package: the
+built-in and the alternate arrive through an identical path, so there is no privileged route
+that only the default takes and no untested branch for the alternates.
+`leela/blocks/__init__.py` imports the three owning blocks, so the registrations exist before
+`Workspace.__init__` calls `build()`.
+
+`RuntimePort` is owned by `blocks/agent`, but the harness it wraps is not in the block.
+`leela/agent/` is a package that imports nothing from leela — enforced by
+`tests/test_agent.py::test_agent_package_does_not_import_leela` — so the whole agent loop can
+be tested against a dict rather than an IDE. `blocks/agent/` holds the adapter (`ai.py`,
+`models.py`). Porting to ramabana replaces `leela/agent/` wholesale and leaves the block as
+the wiring.
+
 Memory and search are separate ports on purpose. Source code is an AST-shaped corpus and
-prose is a document tree — `leela/memory.py` says so at the top — and a single "retrieval"
+prose is a document tree — `blocks/memory/memory.py` says so at the top — and a single "retrieval"
 port would fuse them at exactly the moment an alternate is being introduced.
 
 `RuntimePort` covers mechanism only: history, streaming, tools, cancellation. Compaction

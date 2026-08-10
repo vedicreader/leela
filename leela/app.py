@@ -2425,9 +2425,9 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
                 for _ in range(150):
                     try: urllib.request.urlopen(probe, timeout=.25).close(); break
                     except Exception: time.sleep(.1)
-                from .chrome import open_cdp_app
+                from fossick.cdp import cdp_app
                 for url in urls:
-                    result = open_cdp_app(url, port=cdp_port)
+                    result = cdp_app(url, port=cdp_port)
                     print(f"  Chrome {'reused' if result['reused'] else 'started'}: {url}")
             threading.Thread(target=open_windows, daemon=True, name='leela-cdp-open').start()
     else:
@@ -2458,8 +2458,8 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
                 for _ in range(150):
                     try: urllib.request.urlopen(url, timeout=.25).close(); break
                     except Exception: time.sleep(.1)
-                from .chrome import open_cdp_app
-                open_cdp_app(url, port=cdp_port)
+                from fossick.cdp import cdp_app
+                cdp_app(url, port=cdp_port)
             threading.Thread(target=open_window, daemon=True, name='leela-cdp-open').start()
     if not gate.enabled: print(f'  {gate.why}')
     from .hub import LoopbackHostGuard

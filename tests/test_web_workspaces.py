@@ -5,7 +5,6 @@ from unittest.mock import Mock
 import pytest
 
 from leela.blocks.runtime.kernels import RuntimeBroker, KernelPool
-from leela.chrome import cdp_ready, open_cdp_app
 from leela.hub import LoopbackHostGuard, WorkspaceHub, WorkspaceSite, workspace_slug
 
 
@@ -68,29 +67,3 @@ def test_runtime_broker_refuses_a_thirteenth_heap_without_evicting_live_state(mo
     with pytest.raises(RuntimeError, match='kernel limit reached'):
         asyncio.run(broker.admit(pool, 'second'))
     assert pool.kernels['first'] is alive
-
-
-def test_cdp_ready_reads_the_active_debug_endpoint(monkeypatch):
-    class Response:
-        def __enter__(self): return self
-        def __exit__(self, *args): pass
-        def read(self): return b'{"webSocketDebuggerUrl":"ws://127.0.0.1/devtools/browser/x"}'
-    monkeypatch.setattr('urllib.request.urlopen', lambda *a, **k: Response())
-    assert cdp_ready(9223)['webSocketDebuggerUrl'].startswith('ws://')
-
-
-def test_open_cdp_app_reuses_fossicks_profile(monkeypatch, tmp_path):
-    monkeypatch.setattr('leela.chrome.cdp_ready', lambda port: {'webSocketDebuggerUrl': 'ws://active'})
-    monkeypatch.setattr('fossick.cdp.chrome_bin', lambda: '/chrome')
-    launched = []
-    monkeypatch.setattr('subprocess.Popen', lambda args, **kw: launched.append((args, kw)) or Mock())
-
-    class Response:
-        def __enter__(self): return self
-        def __exit__(self, *args): pass
-        def read(self): return b'[{"id":"target-1","url":"http://alpha.localhost:5001/"}]'
-    monkeypatch.setattr('urllib.request.urlopen', lambda *a, **k: Response())
-    result = open_cdp_app('http://alpha.localhost:5001/', user_data_dir=tmp_path)
-    assert result['reused'] and result['target'] == 'target-1'
-    assert '--app=http://alpha.localhost:5001/' in launched[0][0]
-    assert f'--user-data-dir={tmp_path}' in launched[0][0]

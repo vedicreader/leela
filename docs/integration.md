@@ -7,8 +7,8 @@ before wiring it into anything.
 
 | port | Leela uses it for | satisfied today by | intended alternate |
 |---|---|---|---|
-| `MemoryPort` | pages, research briefs, agent notes and state | `leela.memory.Memory` (litesearch) | `vishalakshi.Vault` |
-| `SearchPort` | code search: literal, semantic, call graph | `leela.search.Search` (Kosha + ripgrep) | vishalakshi's code leg |
+| `MemoryPort` | pages, research briefs, agent notes and state | `blocks.memory.memory.Memory` (litesearch) | `vishalakshi.Vault` |
+| `SearchPort` | code search: literal, semantic, call graph | `blocks.search.search.Search` (Kosha + ripgrep) | vishalakshi's code leg |
 | `RuntimePort` | one model session: history, streaming, tools | `leela.agent.runtime.Backend` | ramabana |
 
 Definitions are in [`leela/core/ports.py`](../leela/core/ports.py). They are `Protocol`s,
@@ -45,7 +45,7 @@ Three properties are deliberate:
   nothing until it is built, and `leela.core` stays importable without pulling in a memory
   stack.
 - **Failure is loud.** An unknown, uninstalled or broken provider raises `ProviderError`.
-  It never falls back to the built-in — a workspace that quietly ran on `leela.memory`
+  It never falls back to the built-in — a workspace that quietly ran on the built-in memory
   after `LEELA_MEMORY=vishalakshi` failed would make the comparison you are running
   meaningless, because you would not know which one answered.
 - **`leela` is a provider too.** The default is registered like any other, so there is no
@@ -136,7 +136,7 @@ drift away from the thing it was extracted from.
 
 They are two ports, not one "retrieval" port, and that is not an accident of history.
 Source code is an AST-shaped corpus; prose is a document tree.
-[`leela/memory.py`](../leela/memory.py) says so at the top, and the two share an embedder
+[`leela/blocks/memory/memory.py`](../leela/blocks/memory/memory.py) says so at the top, and the two share an embedder
 while deliberately not sharing tables.
 
 vishalakshi may well satisfy both. It should still do so as two adapters, because the day
