@@ -314,6 +314,19 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   than left in the environment. Nothing here is bulk: the two deletions each name one thing,
   and there is no "remove everything unused" button, because deciding what is unused is the
   judgement that goes wrong on infrastructure someone is serving from.
+- **The same deploy, taken apart.** *Drive* is the alternative to running `deploy.py`:
+  dockeasy writes the Dockerfile, vpseasy writes the compose stack, cfeasy opens the tunnel,
+  vpseasy provisions and rsyncs, gheasy pushes the secrets — six calls, six exit codes, six
+  transcripts, each runnable on its own and re-runnable after a fix. It exists because
+  "it failed somewhere in deploy" is where the afternoon goes when five library calls share
+  one exit code. Each part shows the exact call it is about to make with this project's
+  values already substituted, so the panel explains itself and the snippet is the line you
+  paste into a REPL. They run on a pty in a subprocess like every other pipeline, because
+  `hetzner_deploy` shells out to ssh and rsync and their output goes to a file descriptor no
+  `redirect_stdout` can catch. Values hand off through dockeasy's store exactly as they do
+  inside `deploy.py` — the tunnel step writes `CF_TUNNEL_TOKEN`, and the panel draws that
+  hand-off rather than an order someone wrote down. Deploy is unchanged and still runs your
+  script; the two are meant to be compared.
 - **Which of your packages just raised.** When a release or a deploy fails, the panel names
   the deepest frame belonging to one of your packages — gheasy, dockeasy, vpseasy, cfeasy,
   the app — with the exception line and an **open** button. The path is rewritten to the
@@ -460,6 +473,7 @@ leela/
   pipelines.py    a named sequence of commands on a pty: the runner both panels share
   releases.py     the release pipeline: nbdev's commands, one step at a time
   deploys.py      the deploy pipeline, and the first deploy.py for a project with none
+  drive.py        the same deploy taken apart: one library call per step
   envs.py         which values a project needs; dockeasy keeps them
   term.py         terminals and lazygit
   research.py     web search and fetch; automatically feeds durable memory

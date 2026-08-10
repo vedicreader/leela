@@ -75,6 +75,9 @@ GET,POST /dev/log
 GET,POST /dev/start
 GET,POST /dev/stop
 GET,POST /diff
+GET,POST /drive
+GET,POST /drive/action
+GET,POST /drive/tail
 GET,POST /editor/format
 GET,POST /editor/packages
 GET,POST /envs
@@ -208,5 +211,6 @@ GET,POST /workflows/runs
 GET,POST /workflows/spec
 GET,POST /workspace/info
 Mount /leestatic
+WebSocketRoute /drive/ws
 WebSocketRoute /pipeline/ws
 WebSocketRoute /term/ws

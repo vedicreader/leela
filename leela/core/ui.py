@@ -48,6 +48,9 @@ ICONS = {
     # a deploy is a thing leaving for somewhere else: a box on a wire
     'deploys': '<rect x="2.5" y="11" width="7" height="6" rx="1"/><rect x="11.5" y="3" width="6" height="5" rx="1"/>'
                '<path d="M9.5 12.5h3a2 2 0 0 0 2-2V8"/>',
+    # driving the parts directly: three blocks stacked, each its own thing
+    'drive': '<rect x="3" y="3" width="14" height="3.5" rx="1"/><rect x="3" y="8.25" width="14" height="3.5" rx="1"/>'
+             '<rect x="3" y="13.5" width="14" height="3.5" rx="1"/>',
     'git': '<circle cx="5" cy="4" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="5" cy="16" r="2"/>'
            '<path d="M5 6v8m2-7h4a4 4 0 0 1 4 4v-3"/>',
 }

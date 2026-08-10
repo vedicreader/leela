@@ -94,3 +94,31 @@ def test_a_package_run_from_its_checkout_is_not_shadowed(tmp_path, monkeypatch):
 def test_the_family_is_the_packages_this_workspace_is_about():
     for name in ('gheasy', 'dockeasy', 'vpseasy', 'cfeasy'):
         assert name in FAMILY
+
+
+VENV_TRACEBACK = '''  File "<string>", line 4, in <module>
+  File "/home/you/code/leela/.venv/lib/python3.12/site-packages/cfeasy/core.py", line 110, in setup_tunnel
+    tid = first(t)['id']
+  File "/home/you/code/leela/.venv/lib/python3.12/site-packages/cloudflare/_client.py", line 1431, in _validate_headers
+    raise TypeError("Could not resolve authentication method.")
+TypeError: Could not resolve authentication method.
+'''
+
+
+def test_a_venv_inside_a_package_directory_does_not_capture_every_traceback():
+    """The bug this pins: a virtualenv at `~/code/leela/.venv` puts `leela` in the path of
+    every installed package, so matching a family name anywhere in the path attributes the
+    Cloudflare SDK's own error to Leela and points at the wrong repository.
+
+    Inside `site-packages` the owner is the component straight after it, and nothing else.
+    """
+    b = blame(VENV_TRACEBACK)
+    assert b['package'] == 'cfeasy', 'the deepest frame that is actually one of yours'
+    assert b['line'] == 110 and b['fn'] == 'setup_tunnel'
+    assert b['error'].startswith('TypeError')
+
+
+def test_a_third_party_frame_is_nobody_of_yours():
+    "cloudflare is not in the family, so a failure only in its code blames no package."
+    only_theirs = '\n'.join(l for l in VENV_TRACEBACK.splitlines() if 'cfeasy' not in l)
+    assert blame(only_theirs)['package'] == ''

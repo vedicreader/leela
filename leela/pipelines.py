@@ -62,9 +62,14 @@ class Step:
     cmd: str
     doc: str = ''
     needs: list = field(default_factory=list)
+    # What to actually spawn, when that is not what `cmd` reads as. A step that runs a
+    # snippet of Python is a command line nobody would want to read and a quoting problem
+    # nobody should have to solve, so it carries its argv and shows `cmd` to the person.
+    argv: list = field(default_factory=list)
+    meta: dict = field(default_factory=dict)
 
     def dict(self): return {'id': self.id, 'label': self.label, 'cmd': self.cmd,
-                            'doc': self.doc, 'needs': list(self.needs)}
+                            'doc': self.doc, 'needs': list(self.needs), 'meta': dict(self.meta)}
 
 
 class Pipeline:
@@ -118,7 +123,9 @@ class Pipeline:
             out.append(Step(id=str(row.get('id') or f'step{len(out) + 1}'),
                             label=str(row.get('label') or row.get('id') or 'step'),
                             cmd=str(row['cmd']), doc=str(row.get('doc') or ''),
-                            needs=[str(x) for x in (row.get('needs') or ())]))
+                            needs=[str(x) for x in (row.get('needs') or ())],
+                            argv=[str(x) for x in (row.get('argv') or ())],
+                            meta=dict(row.get('meta') or {})))
         return out or self.defaults(self.root)
 
     def save(self, steps):
@@ -257,7 +264,7 @@ class Pipeline:
         return argv
 
     async def _run(self, step):
-        argv = shlex.split(step.cmd)
+        argv = list(step.argv) if step.argv else shlex.split(step.cmd)
         if not argv: raise PipelineError(f'{step.id} has no command to run')
         self.active = step.id
         self.results[step.id] = {'status': 'running', 'code': None,

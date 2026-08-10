@@ -4,7 +4,7 @@ from leela.term import TerminalGate
 from leela.web.app import _shell
 from leela.workspace import Workspace
 
-from tests.assets import CSS, JS, SERVER
+from tests.assets import CSS, JS, SERVER, read
 
 
 def test_status_is_a_prominent_timed_banner_with_a_busy_state():
@@ -300,10 +300,29 @@ def test_the_deploy_panel_shows_where_it_goes_before_it_goes_there():
     assert '.lee-dep-files i.has' in CSS and '.lee-left.left-deploys' in CSS
 
 
+def test_the_drive_panel_shows_the_call_it_is_about_to_make():
+    """A button you cannot read is not a diagnostic.
+
+    The panel is the alternative to the deploy script, so it has to explain itself: the
+    package, what the call does, and the snippet with this project's values already in it.
+    """
+    block = JS[JS.index('const drvUI ='):JS.index('async function renderGitPanel')]
+    assert "api('/drive'" in block and "post('/drive/action'" in block
+    assert 'lee-drv-code' in block and '} the call</summary>' in block
+    assert 'lee-drv-pkg' in block, 'each part says which package it drives'
+    assert 'sets ' in block and 'writes ' in block, 'what a call leaves for the next one'
+    assert "openReleaseTerm(drvUI.data.root, 'drive')" in block
+    assert "data_left='drive'" in SERVER and '.lee-left.left-drive' in CSS
+    assert '.lee-drv-part.state-failed' in CSS
+
+
 def test_both_pipelines_share_one_terminal_socket():
     "A release and a deploy differ in what they run and in nothing else, including this."
-    assert "url: '/pipeline/ws'" in JS and "openReleaseTerm(root = '', kind = 'release')" in JS
-    assert 'WebSocketRoute(\'/pipeline/ws\'' in SERVER
+    assert "url: kind === 'drive' ? '/drive/ws' : '/pipeline/ws'" in JS
+    assert "openReleaseTerm(root = '', kind = 'release')" in JS
+    # one implementation of the socket, three kinds over it
+    assert 'def pipeline_socket(' in read('leela/core/web.py')
+    assert SERVER.count('pipeline_socket(app,') == 2, 'both blocks register through it'
 
 
 def test_the_environment_view_hides_secret_values_in_the_browser_too():
@@ -316,7 +335,7 @@ def test_the_environment_view_hides_secret_values_in_the_browser_too():
 def test_the_release_pipeline_runs_steps_and_shows_them_in_a_terminal():
     block = JS[JS.index('const REL_MARK'):JS.index('async function renderGitPanel')]
     assert "api('/releases'" in block and "post('/releases/action'" in block
-    assert 'function openReleaseTerm' in JS and "url: '/pipeline/ws'" in JS
+    assert 'function openReleaseTerm' in JS and "'/pipeline/ws'" in JS
     assert "termLabel('release'" in JS or "'release pipeline'" in JS
     for op in ('retry', 'skip', 'stop', 'reset', 'edit steps'):
         assert op in block

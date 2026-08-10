@@ -97,10 +97,25 @@ def frames(text):
 
 
 def _package_of(path, names):
-    "The family package a file belongs to, by the directory it sits in."
+    """The family package a file belongs to.
+
+    Inside an installed environment the answer is the component straight after
+    `site-packages` and nothing else. Matching any family name anywhere in the path looks
+    equivalent and is not: a virtualenv living at `~/code/leela/.venv` puts the string
+    `leela` in the path of *every* installed package, so a traceback from the Cloudflare SDK
+    gets attributed to Leela and the panel points at the wrong repository.
+
+    Outside a venv the last matching component wins, which is what nesting means when a
+    checkout contains its own package directory.
+    """
     parts = Path(path).parts
-    for name in names:
-        if name in parts: return name
+    for marker in ('site-packages', 'dist-packages'):
+        if marker in parts:
+            i = parts.index(marker) + 1
+            found = parts[i] if i < len(parts) else ''
+            return found if found in names else ''
+    for part in reversed(parts):
+        if part in names: return part
     return ''
 
 

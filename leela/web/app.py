@@ -26,6 +26,7 @@ from starlette.routing import WebSocketRoute
 
 from dhrishti.core import PROFILES, SORTS
 from .. import errstr
+from ..blocks import drive as drive_block
 from ..blocks import editor as editor_block
 from ..blocks import fs as fs_block
 from ..blocks import git as git_block
@@ -81,7 +82,7 @@ __all__ = ['ide_app', 'serve_ide']
 # the extraction order and what remains.
 BLOCKS = [keys_block, settings_block, search_block, memory_block,
           research_block, term_block, runs_block, workspace_block, git_block,
-          workflows_block, pipelines_block, stack_block,
+          workflows_block, pipelines_block, drive_block, stack_block,
           fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block]
 
 
@@ -413,6 +414,21 @@ def _deploy_panel():
         cls='lee-panel lee-deploys')
 
 
+def _drive_panel():
+    """The same deploy as `deploy.py`, taken apart into the library calls it makes.
+
+    A panel of its own rather than a view inside Deploy: they are alternatives, and keeping
+    them apart is what makes them comparable.
+    """
+    return Section(
+        Div(Span('drive', cls='lee-ptitle'), Span(cls='lee-spacer'),
+            Button('refresh', cls='lee-btn', onclick='leeDrive()', title='re-read the values'),
+            Button('−', cls='lee-pane-min', title='minimise drive',
+                   aria_label='minimise drive', onclick='leePane("left", false)'), cls='lee-phead'),
+        Div(Div('reading the parts…', cls='lee-dim'), id='drivepanel', cls='lee-releases-panel'),
+        cls='lee-panel lee-drive')
+
+
 def _symbols_panel():
     return Section(
         Div(Span('structure', cls='lee-ptitle'), Span(id='symbolfile', cls='lee-keyscope'),
@@ -443,9 +459,13 @@ def _left_workspace(ws):
                    onclick='leeLeft("releases")'),
             Button(_activity_icon('deploys'), Span('Deploy', cls='sr-only'), cls='lee-activity-btn',
                    data_left='deploys', title='Deploy to a server', aria_label='Deploy to a server',
-                   onclick='leeLeft("deploys")'), cls='lee-activity', aria_label='Project tools'),
+                   onclick='leeLeft("deploys")'),
+            Button(_activity_icon('drive'), Span('Drive', cls='sr-only'), cls='lee-activity-btn',
+                   data_left='drive', title='Drive the packages one call at a time',
+                   aria_label='Drive the packages one call at a time',
+                   onclick='leeLeft("drive")'), cls='lee-activity', aria_label='Project tools'),
         Div(_files_panel(ws.fs), _symbols_panel(), _git_panel(), _workflows_panel(),
-            _releases_panel(), _deploy_panel(), _toast_panel(), cls='lee-left-content'),
+            _releases_panel(), _deploy_panel(), _drive_panel(), _toast_panel(), cls='lee-left-content'),
         cls='lee-left left-files', id='left')
 
 

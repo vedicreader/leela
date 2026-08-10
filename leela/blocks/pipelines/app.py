@@ -6,24 +6,16 @@ project root and kind, because a pipeline is a *running thing*: the request that
 step and the websocket that shows its output have to be talking about the same pty, and a
 per-request object could not be.
 
-`/pipeline/ws` speaks the same protocol as `/term/ws` -- a JSON hello carrying the terminal
-token, then raw bytes both ways -- so the browser renders it with the same xterm component,
-in the same theme, with the same keyboard. It is a separate socket rather than a `kind` on
-the existing one because the pty is not opened by whoever attaches: the pipeline starts it,
-keeps pumping it whether or not anyone is watching, and replays what has already scrolled by
-to each new viewer. A pty nobody reads stops the child mid-write, and "the deploy hung
-because the panel was closed" is the failure this arrangement exists to prevent.
+`/pipeline/ws` is a separate socket from `/term/ws` rather than a `kind` on it because the
+pty is not opened by whoever attaches: the pipeline starts it, keeps pumping it whether or
+not anyone is watching, and replays what has already scrolled by to each new viewer. A pty
+nobody reads stops the child mid-write, and "the deploy hung because the panel was closed"
+is the failure that arrangement exists to prevent.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-
-from starlette.routing import WebSocketRoute
-
-from ... import errstr
-from ...core.web import fail, off_loop
+from ...core.web import fail, off_loop, pipeline_socket
 from ...deploys import Deploy
 from ...envs import EnvStore
 from ...pipelines import PipelineError
@@ -120,48 +112,8 @@ def connect(app, ctx):
         try: return {'text': await off_loop(pipeline('deploy', repo).tail, lines)}
         except Exception as e: return fail(e)
 
-    async def pipeline_ws(sock):
-        "One viewer of a pipeline terminal. Binary frames are keystrokes; text is control."
-        await sock.accept()
-        p = q = None
-        try:
-            hello = json.loads((await sock.receive()).get('text') or '{}')
-            ctx.gate.check(hello.get('token'))     # the same boundary a pty always has
-            kind = str(hello.get('kind') or 'release')
-            if kind not in KINDS: raise PipelineError(f'unknown pipeline: {kind}')
-            # `cwd` is what the terminal component sends; for these it is the project root.
-            p = pipeline(kind, hello.get('repo') or hello.get('cwd') or '')
-            p.resize(int(hello.get('cols') or 100), int(hello.get('rows') or 30))
-            q = p.subscribe()
-        except Exception as e:
-            await sock.send_text(json.dumps({'t': 'error', 'error': errstr(e)}))
-            await sock.close()
-            return
-
-        async def to_browser():
-            while True: await sock.send_bytes(await q.get())
-
-        async def from_browser():
-            while True:
-                m = await sock.receive()
-                if m['type'] == 'websocket.disconnect': return
-                if (b := m.get('bytes')) is not None: p.write(b)
-                elif (s := m.get('text')) is not None:
-                    c = json.loads(s)
-                    if c.get('t') == 'size': p.resize(c.get('cols', 100), c.get('rows', 30))
-
-        send = asyncio.create_task(to_browser())
-        recv = asyncio.create_task(from_browser())
-        try:
-            await asyncio.wait({send, recv}, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            p.unsubscribe(q)
-            for task in (send, recv):
-                if not task.done(): task.cancel()
-            try: await sock.close()
-            except Exception: pass
-
-    # A raw Starlette route, exactly as `/term/ws` is registered when the app is built.
-    # FastHTML's own `ws` wrapper injects parameters by name and would hand this handler
-    # `None` instead of the socket -- and a pty needs the socket, not a rendered response.
-    app.router.routes.append(WebSocketRoute('/pipeline/ws', pipeline_ws))
+    # One implementation, three kinds: `core.web.pipeline_socket` speaks the same protocol
+    # as `/term/ws`, so the browser renders all of them with the same xterm component.
+    pipeline_socket(app, '/pipeline/ws', ctx.gate,
+                    lambda hello: pipeline(str(hello.get('kind') or 'release'),
+                                           hello.get('repo') or hello.get('cwd') or ''))

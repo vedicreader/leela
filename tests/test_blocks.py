@@ -393,8 +393,26 @@ def test_an_unknown_infrastructure_action_is_refused(project_client):
     assert r.status_code == 400 and 'unknown infrastructure action' in r.json()['error']
 
 
+def test_the_drive_panel_offers_one_call_per_package(project_client):
+    "The alternative to the deploy script: same runner, one library call per step."
+    client, _ = project_client
+    d = client.get('/drive').json()
+    assert d['kind'] == 'drive'
+    assert d['packages'] == ['cfeasy', 'dockeasy', 'gheasy', 'vpseasy']
+    tunnel = next(s for s in d['steps'] if s['id'] == 'tunnel')
+    assert tunnel['meta']['package'] == 'cfeasy' and 'setup_tunnel' in tunnel['meta']['code']
+    assert tunnel['meta']['writes'] == ['CF_TUNNEL_TOKEN']
+    assert d['context']['app'] == 'proj'
+
+
+def test_an_unknown_drive_action_is_refused(project_client):
+    client, _ = project_client
+    r = client.post('/drive/action', json={'op': 'rm -rf'})
+    assert r.status_code == 400 and 'unknown drive action' in r.json()['error']
+
+
 def test_these_panels_say_to_open_a_folder_rather_than_failing_obscurely(client):
-    for path in ('/workflows', '/releases', '/deploys'):
+    for path in ('/workflows', '/releases', '/deploys', '/drive'):
         r = client.get(path)
         assert r.status_code == 400 and 'open a folder' in r.json()['error']
 
