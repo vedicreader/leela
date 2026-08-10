@@ -111,6 +111,15 @@ def test_file_changes_locate_modified_lines_for_the_editor(repo):
     assert detail['ranges'] == [{'from': 1, 'to': 2, 'kind': 'added'}]
 
 
+def test_untracked_text_can_be_reviewed_before_staging(repo):
+    path = repo/'new-untracked.py'
+    path.write_text('answer = 42\n')
+    view = GitRepo.at(repo).diff_view('new-untracked.py')
+    assert '+answer = 42' in view['content']
+    assert '--- /dev/null' in view['content']
+    assert not GitRepo.at(repo).info()['changes'][0]['staged']
+
+
 def test_notebook_diff_defaults_to_cell_source_instead_of_json(repo):
     nb = repo/'analysis.ipynb'
     nb.write_text('{"cells":[{"cell_type":"code","source":["value = 1\\n"],"outputs":[],"metadata":{},"id":"noise"}],"metadata":{},"nbformat":4,"nbformat_minor":5}')
@@ -175,6 +184,16 @@ def test_remote_head_is_not_a_branch_and_refs_explain_recency(repo, tmp_path):
     assert current['latest'] and current['default']
 
 
+def test_reviewed_split_result_can_replace_a_worktree_file_without_staging(repo):
+    r = GitRepo.at(repo)
+    r.write_worktree('src/app.py', 'value = 9\n')
+    assert (repo/'src'/'app.py').read_text() == 'value = 9\n'
+    change = r.info()['changes'][0]
+    assert change['unstaged'] and not change['staged']
+    with pytest.raises(GitError, match='outside the repository'):
+        r.write_worktree('../outside.py', 'unsafe\n')
+
+
 def test_partial_hunk_staging_and_reversal(repo):
     path = repo/'src'/'app.py'
     path.write_text('value = 2\n')
@@ -204,6 +223,119 @@ def test_history_commit_compare_and_blame(repo):
     assert comparison['right_only'] == 1 and '+value = 2' in comparison['patch']
     blamed = r.blame('src/app.py')
     assert blamed[0]['author'] == 'Leela tests' and blamed[0]['text'] == 'value = 2'
+
+
+def test_compare_uses_complete_ref_snapshots_when_target_branch_is_behind(repo):
+    r = GitRepo.at(repo)
+    r.create('behind')
+    r.checkout('main')
+    (repo/'main-only.txt').write_text('visible in a direct snapshot comparison\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'advance main')
+
+    # A three-dot `main...behind` patch is empty because it only considers changes made
+    # on the right after the merge base. The IDE must still show the actual file delta.
+    comparison = r.compare('main', 'behind')
+    assert comparison['left_only'] == 1 and comparison['right_only'] == 0
+    assert comparison['changed_files'] == 1
+    assert 'main-only.txt' in comparison['patch']
+    assert '-visible in a direct snapshot comparison' in comparison['patch']
+    assert comparison['merge_base']
+
+
+def test_structured_review_separates_proposed_changes_from_snapshot_drift(repo):
+    r = GitRepo.at(repo)
+    r.create('feature')
+    (repo/'feature.txt').write_text('feature\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'feature commit')
+    r.checkout('main')
+    (repo/'main.txt').write_text('main\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'main commit')
+
+    proposed = r.review('main', 'feature', 'review')
+    assert [f['path'] for f in proposed['files']] == ['feature.txt']
+    assert proposed['head_only'] == 1 and proposed['base_only'] == 1
+    assert proposed['summary']['additions'] == 1 and not proposed['can_apply']
+    detail = r.review_file('main', 'feature', 'feature.txt', 'review')
+    assert '+feature' in detail['patch']
+    assert detail['left'] == '' and detail['right'] == 'feature\n'
+
+    snapshots = r.review('main', 'feature', 'snapshot')
+    assert {f['path'] for f in snapshots['files']} == {'feature.txt', 'main.txt'}
+
+
+def test_directional_review_explains_snapshot_differences_when_head_is_ancestor(repo):
+    r = GitRepo.at(repo)
+    r.create('ahead')
+    (repo/'ahead.txt').write_text('only on ahead\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'ahead work')
+
+    result = r.review('ahead', 'main', 'review')
+    assert result['files'] == [] and result['head_only'] == 0 and result['base_only'] == 1
+    assert result['snapshot_alternative'] == {'files': 1, 'additions': 0, 'deletions': 1}
+    snapshot = r.review('ahead', 'main', 'snapshot')
+    assert [f['path'] for f in snapshot['files']] == ['ahead.txt']
+
+
+def test_merge_preview_reports_relation_conflicts_and_stats(repo):
+    r = GitRepo.at(repo)
+    r.create('incoming')
+    (repo/'src'/'app.py').write_text('incoming = True\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'incoming side')
+    r.checkout('main')
+    (repo/'src'/'app.py').write_text('main = True\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'main side')
+
+    preview = r.merge_preview('incoming')
+    assert preview['relation'] == 'diverged' and preview['clean']
+    assert preview['conflict_likely'] and 'src/app.py' in preview['conflicts']
+    assert preview['review']['head_only'] == 1
+
+
+def test_rebase_preview_lists_commits_without_moving_history(repo):
+    r = GitRepo.at(repo)
+    r.create('feature')
+    (repo/'feature.py').write_text('feature = True\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'feature work')
+    before = git(repo, 'rev-parse', 'HEAD')
+
+    preview = r.rebase_preview('main')
+    assert preview['current'] == 'feature' and preview['clean']
+    assert [c['subject'] for c in preview['commits']] == ['feature work']
+    assert preview['already_based']
+    assert git(repo, 'rev-parse', 'HEAD') == before
+
+
+def test_compare_accepts_remote_tracking_refs(repo, tmp_path):
+    remote = tmp_path.parent/f'{tmp_path.name}-compare-remote.git'
+    git(tmp_path.parent, 'init', '--bare', remote.name)
+    git(repo, 'remote', 'add', 'origin', str(remote))
+    git(repo, 'push', '-u', 'origin', 'main')
+    git(repo, 'checkout', '-b', 'remote-work')
+    (repo/'remote.txt').write_text('remote branch content\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'remote work')
+    git(repo, 'push', 'origin', 'remote-work')
+    git(repo, 'checkout', 'main')
+    git(repo, 'branch', '-D', 'remote-work')
+
+    comparison = GitRepo.at(repo).compare('main', 'origin/remote-work')
+    assert comparison['right_only'] == 1 and comparison['changed_files'] == 1
+    assert '+remote branch content' in comparison['patch']
+
+
+def test_commit_review_is_file_first_and_loads_each_diff_lazily(repo):
+    path = repo/'src'/'app.py'
+    path.write_text('value = 2\n')
+    (repo/'added.py').write_text('added = True\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'two reviewed files')
+    r = GitRepo.at(repo)
+
+    review = r.commit_review('HEAD')
+    assert review['message'] == 'two reviewed files'
+    assert review['summary'] == {'files': 2, 'additions': 2, 'deletions': 1, 'binary': 0}
+    assert {f['path'] for f in review['files']} == {'src/app.py', 'added.py'}
+    detail = r.commit_file('HEAD', 'src/app.py')
+    assert detail['left'] == 'value = 1\n' and detail['right'] == 'value = 2\n'
+    assert '-value = 1' in detail['patch'] and '+value = 2' in detail['patch']
 
 
 def test_branch_lifecycle_structured_remotes_and_worktrees(repo, tmp_path):

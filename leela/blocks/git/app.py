@@ -48,6 +48,7 @@ def _apply(repo, op, d):
         'stage': lambda: repo.stage(git_paths(d.get('paths'))),
         'unstage': lambda: repo.unstage(git_paths(d.get('paths'))),
         'discard': lambda: repo.discard(git_paths(d.get('paths'))),
+        'write_worktree': lambda: repo.write_worktree(git_paths([d.get('path')])[0], d.get('content') or ''),
         'resolve_conflict': lambda: repo.resolve_conflict(git_paths([d.get('path')])[0],
                                                           d.get('choice') or ''),
         'apply_patch': lambda: repo.apply_patch(d.get('patch') or '', bool(d.get('staged', True)),
@@ -67,7 +68,7 @@ def _apply(repo, op, d):
         'stash_pop': lambda: repo.stash_pop(d.get('ref') or 'stash@{0}'),
         'stash_apply': lambda: repo.stash_apply(d.get('ref') or 'stash@{0}'),
         'stash_drop': lambda: repo.stash_drop(d.get('ref') or 'stash@{0}'),
-        'merge': lambda: repo.merge(d.get('branch') or ''),
+        'merge': lambda: repo.merge(d.get('branch') or '', d.get('strategy') or 'merge'),
         'rebase': lambda: repo.rebase(d.get('branch') or ''),
         'cherry_pick': lambda: repo.cherry_pick(d.get('ref') or ''),
         'revert': lambda: repo.revert(d.get('ref') or ''),
@@ -143,11 +144,50 @@ def connect(app, ctx):
         try: return await off_loop(repo().commit_detail, ref)
         except Exception as e: return fail(e)
 
+    @rt('/git/commit/review')
+    async def git_commit_review(ref: str = 'HEAD'):
+        try: return await off_loop(repo().commit_review, ref)
+        except Exception as e: return fail(e)
+
+    @rt('/git/commit/file')
+    async def git_commit_file(ref: str = 'HEAD', path: str = '', context: int = 3):
+        try: return await off_loop(repo().commit_file, ref, git_paths([path])[0], context)
+        except Exception as e: return fail(e)
+
     @rt('/git/compare')
     async def git_compare(left: str = 'HEAD', right: str = ''):
         try:
             if not right: raise GitError('choose two refs to compare')
             return await off_loop(repo().compare, left, right)
+        except Exception as e: return fail(e)
+
+    @rt('/git/review')
+    async def git_review(base: str = 'HEAD', head: str = '', mode: str = 'review'):
+        try:
+            if not head: raise GitError('choose a branch to review')
+            return await off_loop(repo().review, base, head, mode)
+        except Exception as e: return fail(e)
+
+    @rt('/git/review/file')
+    async def git_review_file(base: str = 'HEAD', head: str = '', path: str = '',
+                              mode: str = 'review', context: int = 3):
+        try:
+            if not head: raise GitError('choose a branch to review')
+            return await off_loop(repo().review_file, base, head, git_paths([path])[0], mode, context)
+        except Exception as e: return fail(e)
+
+    @rt('/git/merge-preview')
+    async def git_merge_preview(incoming: str = ''):
+        try:
+            if not incoming: raise GitError('choose a branch to merge')
+            return await off_loop(repo().merge_preview, incoming)
+        except Exception as e: return fail(e)
+
+    @rt('/git/rebase-preview')
+    async def git_rebase_preview(onto: str = ''):
+        try:
+            if not onto: raise GitError('choose a branch to rebase')
+            return await off_loop(repo().rebase_preview, onto)
         except Exception as e: return fail(e)
 
     @rt('/git/blame')

@@ -1898,9 +1898,34 @@ kbd {
 ::-webkit-scrollbar-thumb { background: var(--lee-bg3); border-radius: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
+/* Git diffs are editor documents, not transient dialogs. Unified review borrows the
+   notebook's calm stack of independently collapsible cells; split review uses CodeMirror's
+   synchronized merge surface and keeps both revisions read-only. */
+.lee-git-diff-tab .lee-save-state { display: none; }.lee-git-diff-dot { color: var(--lee-accent); font: 700 10px/1 var(--lee-mono); }.lee-git-diff-ref { max-width: 62px; overflow: hidden; color: var(--lee-fg4); font: 8px/1 var(--lee-mono); text-overflow: ellipsis; white-space: nowrap; }
+.lee-editor:has(.lee-diff-document) { overflow: hidden; }.lee-diff-document { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--lee-bg); }
+.lee-diff-document > header { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 8px; min-height: 43px; padding: 6px 10px; border-bottom: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-bg1) 96%, transparent); backdrop-filter: blur(10px); }
+.lee-diff-document > header > div { display: grid; min-width: 0; gap: 2px; }.lee-diff-document > header strong, .lee-diff-document > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.lee-diff-document > header strong { font: 600 11px/1.2 var(--lee-mono); }.lee-diff-document > header span { color: var(--lee-fg4); font: 8px/1 var(--lee-mono); }
+.lee-diff-document > header nav { display: flex; padding: 2px; border: 1px solid var(--lee-border); border-radius: 4px; background: var(--lee-bg); }.lee-diff-document > header button { padding: 5px 8px; border: 0; border-radius: 3px; background: transparent; color: var(--lee-fg4); cursor: pointer; font: 9px/1 var(--lee-mono); }.lee-diff-document > header button:hover, .lee-diff-document > header button.active { background: var(--lee-bg2); color: var(--lee-fg); }.lee-diff-document > header nav button.active { color: var(--lee-accent); }
+.lee-diff-document-body { min-height: 0; flex: 1; overflow: auto; }.lee-diff-document-body.split { overflow: hidden; }.lee-diff-document-body.split .cm-mergeView { height: 100%; }.lee-diff-document-body.split .cm-editor { height: 100%; }
+/* CodeMirror's stock merge wash is intentionally faint. Review needs a decisive scan path:
+   red is the source being replaced, green is the target result, and changed tokens get a
+   stronger underline without reducing syntax contrast. */
+.lee-diff-document-body.split .cm-merge-a .cm-changedLine, .lee-diff-document-body.split .cm-deletedChunk { background: color-mix(in srgb, var(--lee-red) 16%, transparent) !important; box-shadow: inset 3px 0 color-mix(in srgb, var(--lee-red) 72%, transparent); }
+.lee-diff-document-body.split .cm-merge-b .cm-changedLine, .lee-diff-document-body.split .cm-inlineChangedLine { background: color-mix(in srgb, var(--lee-green) 17%, transparent) !important; box-shadow: inset 3px 0 color-mix(in srgb, var(--lee-green) 72%, transparent); }
+.lee-diff-document-body.split .cm-merge-a .cm-changedText, .lee-diff-document-body.split .cm-deletedChunk .cm-deletedText { background: linear-gradient(color-mix(in srgb, var(--lee-red) 88%, transparent), color-mix(in srgb, var(--lee-red) 88%, transparent)) bottom/100% 2px no-repeat !important; }
+.lee-diff-document-body.split .cm-merge-b .cm-changedText { background: linear-gradient(color-mix(in srgb, var(--lee-green) 92%, transparent), color-mix(in srgb, var(--lee-green) 92%, transparent)) bottom/100% 2px no-repeat !important; }
+.lee-diff-document-body.split .cm-changedLineGutter, .lee-diff-document-body.split .cm-deletedLineGutter { opacity: 1; filter: saturate(1.3); }
+.lee-diff-document-body.split .cm-merge-revert { width: 28px; border-inline: 1px solid var(--lee-border); background: var(--lee-bg1); }
+.lee-diff-document-body.split .cm-merge-revert button { width: 22px; min-height: 22px; margin-inline: 2px; border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg2); color: var(--lee-fg2); font: 11px/1 var(--lee-mono); transition: background .16s ease, color .16s ease, border-color .16s ease; }
+.lee-diff-document-body.split .cm-merge-revert button:hover { border-color: var(--lee-accent); background: var(--lee-active-line); color: var(--lee-accent); }
+.lee-diff-edit-state { color: var(--lee-orange) !important; }
+.lee-diff-notebook { max-width: 1180px; margin: 0 auto; padding: 12px 10px 80px; }
+.lee-diff-cell { margin-bottom: 8px; border: 1px solid var(--lee-border); border-radius: 5px; background: var(--lee-bg1); overflow: hidden; }.lee-diff-cell > header { display: flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 7px; border-bottom: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-bg2) 40%, var(--lee-bg1)); }.lee-diff-cell > header button { width: 20px; padding: 0; border: 0; background: transparent; color: var(--lee-fg4); cursor: pointer; }.lee-diff-cell > header strong { color: var(--lee-fg2); font: 600 9px/1 var(--lee-mono); }.lee-diff-cell > header code { overflow: hidden; color: var(--lee-aqua); font: 8px/1 var(--lee-mono); text-overflow: ellipsis; white-space: nowrap; }.lee-diff-cell > header small { color: var(--lee-fg4); font: 8px/1 var(--lee-mono); white-space: nowrap; }.lee-diff-cell .lee-git-patch { max-height: none; }.lee-diff-cell.collapsed .lee-git-patch { display: none; }.lee-diff-cell.collapsed > header { border-bottom: 0; }
+@media (max-width: 760px) { .lee-diff-document > header { flex-wrap: wrap; }.lee-diff-document > header > div { width: 100%; }.lee-diff-document > header .lee-spacer { display: none; }.lee-diff-notebook { padding-inline: 4px; }.lee-diff-cell > header small { display: none; } }
+
 /* Source control workspace: dense, date-led, and deliberately free of generic cards. */
 .lee-sc-branch > small { color: var(--lee-fg4); font: 9px/1.2 var(--lee-mono); white-space: nowrap; }
-.lee-git-nav { position: sticky; top: 0; z-index: 1; display: grid; grid-template-columns: repeat(4, 1fr); background: color-mix(in srgb, var(--lee-bg1) 94%, transparent); border-bottom: 1px solid var(--lee-border); backdrop-filter: blur(10px); }
+.lee-git-nav { position: sticky; top: 0; z-index: 1; display: grid; grid-template-columns: repeat(5, 1fr); background: color-mix(in srgb, var(--lee-bg1) 94%, transparent); border-bottom: 1px solid var(--lee-border); backdrop-filter: blur(10px); }
 .lee-git-nav button { position: relative; min-width: 0; padding: 8px 3px 7px; border: 0; background: transparent; color: var(--lee-fg4); cursor: pointer; font: 600 9px/1 var(--lee-mono); transition: color .2s ease, background .2s ease, transform .15s ease; }
 .lee-git-nav button:hover { color: var(--lee-fg); background: var(--lee-active-line); }
 .lee-git-nav button:active { transform: translateY(1px); }
@@ -1915,20 +1940,32 @@ kbd {
 .lee-git-operation button:hover, .lee-git-filter button:hover, .lee-git-compare button:hover, .lee-git-resource button:hover { background: var(--lee-active-line); color: var(--lee-fg); }
 .lee-git-operation button:active, .lee-git-filter button:active, .lee-git-compare button:active, .lee-git-resource button:active { transform: translateY(1px); }
 .lee-git-operation button.warn, .lee-git-resource button.warn { color: var(--lee-red); }
-.lee-sc-commit { grid-template-columns: minmax(0, 1fr) auto; }
+.lee-sc-commit { grid-template-columns: minmax(0, 1fr) auto auto; }
+.lee-sc-commit #screviewstaged { background: var(--lee-bg2); color: var(--lee-fg2); border: 1px solid var(--lee-border); }
 .lee-sc-commit label:first-child { display: grid; gap: 4px; color: var(--lee-fg4); font: 9px/1 var(--lee-mono); }
 .lee-sc-commit .lee-git-check { grid-column: 1 / -1; display: flex; align-items: center; gap: 5px; color: var(--lee-fg4); font-size: 9px; }
 .lee-git-file { display: flex; align-items: center; text-align: left; }
+.lee-git-change > input { flex: none; margin: 0 3px 0 1px; accent-color: var(--lee-accent); }
+.lee-git-change.selected { background: var(--lee-sel); }
+.lee-git-changelist { max-width: 74px; overflow: hidden; padding: 2px 4px; background: var(--lee-bg2); color: var(--lee-fg4); font: normal 7px/1 var(--lee-mono); text-overflow: ellipsis; white-space: nowrap; }
+.lee-git-line-stat { color: var(--lee-fg4); font: 7px/1 var(--lee-mono); white-space: nowrap; }
+.lee-git-change-summary { display: flex; align-items: center; gap: 7px; padding: 6px 7px; border-bottom: 1px solid var(--lee-border); color: var(--lee-fg4); font: 8px/1 var(--lee-mono); }.lee-git-change-summary strong { color: var(--lee-fg2); }.lee-git-change-summary span:first-of-type { color: var(--lee-green); }.lee-git-change-summary span:nth-of-type(2) { color: var(--lee-red); }.lee-git-change-summary small { margin-left: auto; color: var(--lee-fg4); font: inherit; }
+.lee-git-selection { position: sticky; top: 27px; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 7px; border-bottom: 1px solid var(--lee-accent); background: var(--lee-bg1); }
+.lee-git-selection[hidden] { display: none; }
+.lee-git-selection strong { margin-right: auto; color: var(--lee-accent); font: 600 9px/1 var(--lee-mono); }
+.lee-git-selection button { border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg2); color: var(--lee-fg2); cursor: pointer; font: 8px/1 var(--lee-mono); padding: 4px 5px; }
 .lee-git-file > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lee-git-filter { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; padding: 7px; border-bottom: 1px solid var(--lee-border); }
 .lee-git-filter .lee-input { min-width: 0; padding: 6px 7px; font: 10px/1.2 var(--lee-mono); }
 .lee-git-filter select, .lee-git-compare select { min-width: 0; border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg2); color: var(--lee-fg2); font: 9px/1 var(--lee-mono); }
 .lee-git-branch-list { display: grid; }
-.lee-git-branch-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto 24px; gap: 5px; align-items: center; min-width: 0; padding: 8px 6px; border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 70%, transparent); transition: background .2s ease, transform .2s ease; animation: lee-git-enter .24s cubic-bezier(.16, 1, .3, 1) both; }
+.lee-git-branch-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 24px; gap: 5px; align-items: center; min-width: 0; padding: 8px 6px; border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 70%, transparent); transition: background .2s ease, transform .2s ease; animation: lee-git-enter .24s cubic-bezier(.16, 1, .3, 1) both; }
 .lee-git-branch-row:hover { background: var(--lee-active-line); }
 .lee-git-branch-row.current { border-left: 2px solid var(--lee-green); }
 .lee-git-branch-row.latest:not(.current) { border-left: 2px solid var(--lee-accent); }
 .lee-git-branch-row > button { border: 0; background: transparent; color: var(--lee-fg4); cursor: pointer; }
+.lee-git-branch-row > button[data-compare] { padding: 4px 5px; border: 1px solid transparent; border-radius: 3px; font: 8px/1 var(--lee-mono); opacity: 0; transition: opacity .15s ease, border-color .15s ease, color .15s ease; }
+.lee-git-branch-row:hover > button[data-compare], .lee-git-branch-row > button[data-compare]:focus-visible { border-color: var(--lee-border); color: var(--lee-accent); opacity: 1; }
 .lee-git-branch-row > button:disabled { color: var(--lee-green); cursor: default; }
 .lee-git-branch-copy { display: grid; min-width: 0; gap: 2px; }
 .lee-git-branch-copy strong, .lee-git-branch-copy span, .lee-git-branch-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1941,10 +1978,61 @@ kbd {
 .lee-sc-tag { display: flex; align-items: center; gap: 4px; }
 .lee-sc-tag small { color: var(--lee-fg4); }
 .lee-sc-tag button { border: 0; background: transparent; color: var(--lee-fg4); cursor: pointer; }
-.lee-git-compare { display: grid; grid-template-columns: 1fr auto 1fr auto; align-items: end; gap: 5px; padding: 7px; border-bottom: 1px solid var(--lee-border); }
+.lee-git-compare { display: grid; gap: 7px; padding: 9px 7px 10px; border-bottom: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-bg2) 42%, transparent); }
+.lee-git-compare > header { display: flex; align-items: baseline; gap: 7px; }
+.lee-git-compare > header strong { color: var(--lee-fg); font: 600 10px/1 var(--lee-mono); }
+.lee-git-compare > header span, .lee-git-compare > small { color: var(--lee-fg4); font: 8px/1.35 var(--lee-mono); }
+.lee-git-compare-fields { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; align-items: end; gap: 5px; }
 .lee-git-compare label { display: grid; gap: 3px; min-width: 0; color: var(--lee-fg4); font: 8px/1 var(--lee-mono); }
-.lee-git-compare input { min-width: 0; padding: 5px; border: 1px solid var(--lee-border); background: var(--lee-bg); color: var(--lee-fg); font: 9px/1 var(--lee-mono); }
+.lee-git-compare input { min-width: 0; padding: 6px; border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg); color: var(--lee-fg); font: 9px/1 var(--lee-mono); }
+.lee-git-compare input:focus { outline: 1px solid var(--lee-accent); outline-offset: 1px; }
+.lee-git-compare-head > span { overflow: hidden; max-width: 30vw; text-overflow: ellipsis; white-space: nowrap; }
+.lee-git-compare-head > b { color: var(--lee-accent); font-weight: 500; }
+.lee-git-compare-head > small { color: var(--lee-fg4); font: 9px/1 var(--lee-mono); white-space: nowrap; }
+.lee-git-compare-summary { display: flex; gap: 12px; padding: 7px 11px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg2); color: var(--lee-fg4); font: 9px/1 var(--lee-mono); }
+.lee-git-compare-summary b { color: var(--lee-fg); font-weight: 600; }
+.lee-git-review-controls { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 5px; padding: 7px; border-bottom: 1px solid var(--lee-border); }
+.lee-git-review-controls label { display: grid; gap: 3px; min-width: 0; color: var(--lee-fg4); font: 8px/1 var(--lee-mono); }
+.lee-git-review-controls input, .lee-git-review-controls select, .lee-git-review-controls button { min-width: 0; padding: 5px; border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg); color: var(--lee-fg); font: 9px/1 var(--lee-mono); }
+.lee-git-review-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 7px; border-bottom: 1px solid var(--lee-border); color: var(--lee-fg4); font: 8px/1 var(--lee-mono); }
+.lee-git-review-summary strong { color: var(--lee-fg); }.lee-git-review-summary .add { color: var(--lee-green); }.lee-git-review-summary .del { color: var(--lee-red); }
+.lee-git-review-summary button { margin-left: auto; border: 0; background: transparent; color: var(--lee-accent); cursor: pointer; font: inherit; }
+.lee-git-review-summary button + button { margin-left: 0; }
+.lee-git-review-direction { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 5px 9px; padding: 9px 8px; border-bottom: 1px solid var(--lee-border); border-left: 2px solid var(--lee-orange); background: color-mix(in srgb, var(--lee-orange) 6%, transparent); }.lee-git-review-direction strong, .lee-git-review-direction span { grid-column: 1; }.lee-git-review-direction strong { color: var(--lee-fg); font-size: 10px; }.lee-git-review-direction span { color: var(--lee-fg4); font-size: 9px; line-height: 1.45; }.lee-git-review-direction button { grid-column: 2; padding: 5px 7px; border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg2); color: var(--lee-accent); cursor: pointer; font: 8px/1 var(--lee-mono); }.lee-git-review-direction button:first-of-type { grid-row: 1 / span 2; align-self: center; }.lee-git-review-direction button + button { grid-row: 3; }
+.lee-git-review-commits { border-bottom: 1px solid var(--lee-border); }.lee-git-review-commits > summary { padding: 6px 8px; color: var(--lee-fg4); cursor: pointer; font: 8px/1 var(--lee-mono); }.lee-git-review-commits > button { display: grid; grid-template-columns: 54px minmax(0,1fr); width: 100%; gap: 3px 6px; padding: 5px 8px; border: 0; border-top: 1px solid color-mix(in srgb, var(--lee-border) 60%, transparent); background: transparent; color: var(--lee-fg2); cursor: pointer; text-align: left; }.lee-git-review-commits > button:hover { background: var(--lee-active-line); }.lee-git-review-commits code { grid-row: 1 / 3; color: var(--lee-fg4); }.lee-git-review-commits span, .lee-git-review-commits small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.lee-git-review-commits small { color: var(--lee-fg4); font-size: 8px; }
+.lee-git-review-workspace { display: grid; min-height: 300px; }
+.lee-git-review-workspace > header { display: grid; gap: 3px; padding: 8px 7px; border-bottom: 1px solid var(--lee-border); }.lee-git-review-workspace > header strong { font-size: 10px; }.lee-git-review-workspace > header span { color: var(--lee-fg4); font-size: 9px; }.lee-git-review-workspace .lee-git-review-files { max-height: none; }
+.lee-git-review-files { max-height: 210px; overflow: auto; border-bottom: 1px solid var(--lee-border); }
+.lee-git-review-file { display: grid; grid-template-columns: 16px minmax(0,1fr) auto; align-items: center; width: 100%; gap: 4px; padding: 6px 7px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 65%, transparent); background: transparent; color: var(--lee-fg2); cursor: pointer; text-align: left; }
+.lee-git-review-file:hover, .lee-git-review-file.active { background: var(--lee-active-line); }.lee-git-review-file.active { border-left: 2px solid var(--lee-accent); }
+.lee-git-review-file.reviewed { opacity: .62; }.lee-git-review-file.reviewed b { color: var(--lee-green); }
+.lee-git-review-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 9px/1.2 var(--lee-mono); }.lee-git-review-file small { color: var(--lee-fg4); font: 8px/1 var(--lee-mono); }
+.lee-git-review-diff { min-height: 0; }.lee-git-review-diff > header { display: flex; align-items: center; gap: 3px; padding: 5px 7px; border-bottom: 1px solid var(--lee-border); }
+.lee-git-review-diff > header strong { overflow: hidden; font: 600 9px/1 var(--lee-mono); text-overflow: ellipsis; white-space: nowrap; }
+.lee-git-review-diff > header button { padding: 3px 5px; border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg2); color: var(--lee-fg2); cursor: pointer; font: 8px/1 var(--lee-mono); }
+.lee-git-review-diff .lee-git-patch { max-height: 420px; }
+.lee-modal.lee-git-review-expanded { padding: 2vh 2vw; align-items: stretch; }.lee-modal.lee-git-review-expanded .lee-modalbox { width: 96vw; height: 96vh; max-height: 96vh; margin: auto; }
+.lee-git-full-review { display: grid; grid-template-columns: minmax(220px, 25%) minmax(0, 1fr); min-height: 0; flex: 1; }
+.lee-git-full-review > aside { overflow: auto; border-right: 1px solid var(--lee-border); }.lee-git-full-review > main { max-height: none; }
+.lee-git-full-review aside button { display: grid; grid-template-columns: 18px minmax(0,1fr) auto; width: 100%; gap: 5px; padding: 7px; border: 0; border-bottom: 1px solid var(--lee-border); background: transparent; color: var(--lee-fg2); cursor: pointer; text-align: left; }
+.lee-git-full-review aside button:hover, .lee-git-full-review aside button.active { background: var(--lee-active-line); }.lee-git-full-review aside button.active { border-left: 2px solid var(--lee-accent); }.lee-git-full-review aside button.reviewed { opacity: .6; }
+.lee-git-full-review aside span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.lee-git-full-review aside small { color: var(--lee-fg4); }
+.lee-git-merge-preview { display: grid; gap: 9px; padding: 12px; }.lee-git-merge-preview > header { display: grid; gap: 3px; }.lee-git-merge-preview > header span { color: var(--lee-fg4); font-size: 10px; }
+.lee-git-merge-preview > label { display: grid; gap: 4px; color: var(--lee-fg4); font-size: 9px; }.lee-git-merge-preview select { padding: 6px; border: 1px solid var(--lee-border); background: var(--lee-bg); color: var(--lee-fg); }
+.lee-git-merge-warning, .lee-git-merge-ok { display: grid; gap: 3px; padding: 8px; border-left: 2px solid var(--lee-red); background: color-mix(in srgb, var(--lee-red) 7%, transparent); }.lee-git-merge-ok { border-left-color: var(--lee-green); background: color-mix(in srgb, var(--lee-green) 6%, transparent); }
+.lee-git-merge-warning span, .lee-git-merge-ok span { color: var(--lee-fg4); font-size: 9px; }
+.lee-git-rebase-commits { display: grid; max-height: 180px; overflow: auto; border-block: 1px solid var(--lee-border); }.lee-git-rebase-commits span { display: grid; grid-template-columns: 62px minmax(0,1fr); gap: 7px; padding: 5px 2px; color: var(--lee-fg2); font-size: 10px; }.lee-git-rebase-commits code { color: var(--lee-fg4); }
 .lee-git-history { display: grid; }
+.lee-git-commit-row.active { border-left: 2px solid var(--lee-accent); background: var(--lee-active-line); }
+.lee-git-commit-inspector { border-bottom: 1px solid var(--lee-border); background: var(--lee-bg); }
+.lee-git-commit-inspector > header { display: flex; align-items: center; gap: 4px; padding: 8px 7px; border-bottom: 1px solid var(--lee-border); }
+.lee-git-commit-inspector > header > div { display: grid; min-width: 0; flex: 1; gap: 2px; }.lee-git-commit-inspector > header strong, .lee-git-commit-inspector > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.lee-git-commit-inspector > header strong { font-size: 10px; }.lee-git-commit-inspector > header span { color: var(--lee-fg4); font: 8px/1 var(--lee-mono); }
+.lee-git-commit-inspector button { padding: 4px 5px; border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg2); color: var(--lee-fg2); cursor: pointer; font: 8px/1 var(--lee-mono); }
+.lee-git-commit-stats { display: flex; gap: 8px; padding: 6px 8px; color: var(--lee-fg4); font: 8px/1 var(--lee-mono); }.lee-git-commit-stats span:first-of-type { color: var(--lee-green); }.lee-git-commit-stats span:nth-of-type(2) { color: var(--lee-red); }.lee-git-commit-stats code { margin-left: auto; overflow: hidden; text-overflow: ellipsis; }
+.lee-git-commit-message { max-height: 100px; overflow: auto; padding: 7px 8px; border-top: 1px solid var(--lee-border); color: var(--lee-fg2); font-size: 9px; white-space: pre-wrap; }
+.lee-git-commit-inspector details { border-top: 1px solid var(--lee-border); }.lee-git-commit-inspector summary { padding: 6px 8px; color: var(--lee-fg4); cursor: pointer; font: 8px/1 var(--lee-mono); }
+.lee-git-commit-file { display: grid; grid-template-columns: 16px minmax(0,1fr) auto; align-items: center; width: 100%; gap: 5px; padding: 6px 8px !important; border: 0 !important; border-top: 1px solid color-mix(in srgb, var(--lee-border) 60%, transparent) !important; border-radius: 0 !important; background: transparent !important; text-align: left; }.lee-git-commit-file:hover { background: var(--lee-active-line) !important; }.lee-git-commit-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.lee-git-commit-file small { color: var(--lee-fg4); }
+.lee-git-commit-sheet { min-height: 0; overflow: auto; }.lee-git-commit-sheet h3 { margin: 0; padding: 12px; font-size: 13px; white-space: pre-wrap; }.lee-git-commit-sheet > section { display: flex; gap: 8px; padding: 7px 12px; border-block: 1px solid var(--lee-border); color: var(--lee-fg4); font: 9px/1 var(--lee-mono); }
 .lee-git-commit-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 5px; padding: 8px 7px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 70%, transparent); background: transparent; color: var(--lee-fg2); cursor: pointer; text-align: left; transition: background .2s ease, transform .15s ease; }
 .lee-git-commit-row:hover { background: var(--lee-active-line); }
 .lee-git-commit-row:active { transform: translateY(1px); }
@@ -1974,7 +2062,7 @@ kbd {
 .lee-git-resource-row code { overflow: hidden; color: var(--lee-fg4); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes lee-git-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .lee-git-branch-row { animation: none; } }
-@media (max-width: 760px) { .lee-git-badges { display: none; } .lee-git-branch-row { grid-template-columns: 22px minmax(0, 1fr) 24px; } .lee-git-compare { grid-template-columns: 1fr; } .lee-git-blame > button { grid-template-columns: 54px 26px minmax(180px, 1fr); } .lee-git-blame strong, .lee-git-blame small { display: none; } }
+@media (max-width: 760px) { .lee-git-badges { display: none; } .lee-git-branch-row { grid-template-columns: 22px minmax(0, 1fr) auto 24px; } .lee-git-branch-row > button[data-compare] { opacity: 1; } .lee-git-compare-fields { grid-template-columns: minmax(0, 1fr) auto; } .lee-git-compare-fields label { grid-column: 1; } .lee-git-compare-fields #gitcompareswap { grid-column: 2; grid-row: 1 / span 2; align-self: center; } .lee-git-compare-fields #gitcomparego { grid-column: 1 / -1; } .lee-git-blame > button { grid-template-columns: 54px 26px minmax(180px, 1fr); } .lee-git-blame strong, .lee-git-blame small { display: none; } }
 
 .lee-git-conflict { display: grid; grid-template-columns: 1fr 1fr; min-width: min(84vw, 1100px); max-height: 76vh; overflow: auto; }
 .lee-git-conflict > section, .lee-git-conflict > details { min-width: 0; border-right: 1px solid var(--lee-border); border-bottom: 1px solid var(--lee-border); }

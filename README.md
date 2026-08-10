@@ -196,17 +196,29 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   points the panel at any of them, or back at the notebook's kernel. See
   [watching something run](#watching-something-run).
 - **Browser source control without leaving the editor.** A vertical Project/Git activity
-  bar opens a four-part source-control workspace: Changes, Branches, History, and Repository.
-  The branch pill shows changes and upstream divergence. Modified, staged, untracked, and
-  conflicted files are coloured in the tree; source rails open syntax-preserving patches.
-  Review can move whole files or selected hunks through the index, inspect notebook cell
-  content without JSON noise, blame individual lines, and choose ours/theirs/current content
-  in a three-way conflict view. The searchable branch view sorts visibly by commit time and
+  bar opens a five-part source-control workspace: Changes, Review, Branches, History, and
+  Repository. The branch pill shows changes and upstream divergence. Modified, staged,
+  untracked, and conflicted files are coloured in the tree; source rails open
+  syntax-preserving patches. Changes include line statistics, multi-file selection, local
+  changelists, pre-stage previews for untracked files, staged-only commit review, and hunk
+  staging. Every changed file opens as a normal editor diff tab with collapsible
+  notebook-style unified hunks or a synchronized side-by-side view with high-contrast
+  change bands. Safe working-tree comparisons expose per-chunk revert arrows and require an
+  explicit apply before replacing the uncommitted file; historical sides remain read-only. Branch review
+  separates pull-request-style proposed changes from complete snapshot comparisons, lazily
+  loads per-file patches, remembers reviewed files and notes,
+  exports notes as Markdown, and can apply selected incoming hunks to a clean base branch.
+  Notebook review shows cell content without JSON noise; blame and three-way conflict tools
+  remain available. The searchable branch view sorts visibly by commit time and
   identifies latest, default, local/remote, merged/unmerged, upstream, and tracking state;
   remote freshness is always explicit rather than implied. It supports create, switch,
-  publish, rename, track, compare, merge, rebase, safe delete, fetch/pull/push, amend,
-  annotated tags, and complete stash handling. History provides a commit graph, search,
-  signatures, patches, compare, cherry-pick, revert, reset with mode-specific safeguards,
+  publish, rename, track, compare, safe delete, fetch/pull/push, and amend. Merge and rebase
+  now open non-mutating plans first: incoming commits, file statistics, ancestry, working-tree
+  safety, conflict rehearsal, and merge strategy are visible before history changes.
+  Annotated tags and complete stash handling remain in the same workspace. History provides
+  a searchable commit graph and a compact file-first inspector; selecting a file opens the
+  same diff tab instead of rendering an entire commit patch in a dialog. Signatures,
+  comparisons, cherry-pick, revert, and reset retain mode-specific safeguards,
   blame, and reflog recovery. Repository tools manage remote URLs, host pull-request links,
   worktrees, and submodule state. Active merge/rebase/cherry-pick/revert operations expose
   continue, skip, and abort actions. Status snapshots are coalesced so one mutation does not
