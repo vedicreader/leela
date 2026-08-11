@@ -2300,3 +2300,34 @@ kbd {
    question a fan-out across several checkouts always raises */
 .lee-git-repo-row.working { opacity: .75; }
 .lee-git-repo-row.working strong::after { content: ' · working…'; font-weight: 400; opacity: .7; font-size: 11px; }
+
+/* -------------------------------------------------------------- the logs pane
+   Detail a status line cannot hold: git's multi-line refusals, and what a running app prints. */
+.lee-bottomdock.dock-logs .lee-execstrip,
+.lee-bottomdock.dock-logs .lee-termpanel { display: none; }
+.lee-bottomdock.dock-logs .lee-logpanel { display: flex; }
+.lee-logpanel { display: none; flex-direction: column; min-height: 0; flex: 1; }
+.lee-logbody { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 10px; font-size: 12px; }
+.lee-logempty { padding: 14px; }
+.lee-logrow { padding: 5px 10px; border-bottom: 1px solid var(--lee-rule, rgba(128,128,128,.16)); }
+.lee-logrow.err { background: rgba(220, 60, 60, .07); }
+.lee-loghead { display: flex; gap: 8px; align-items: baseline; }
+.lee-loghead time { opacity: .55; font-variant-numeric: tabular-nums; font-size: 11px; }
+.lee-logsource { text-transform: uppercase; font-size: 10px; letter-spacing: .06em; opacity: .7; min-width: 34px; }
+.lee-logrow.err .lee-logsource { opacity: 1; }
+/* the whole point: git prints the list of files it would overwrite, and it must not be clipped */
+.lee-logdetail { margin: 4px 0 0 42px; white-space: pre-wrap; overflow-wrap: anywhere;
+                 font-size: 11.5px; opacity: .85; max-height: 40vh; overflow: auto; }
+.lee-logfilter { font-size: 11px; padding: 1px 7px; opacity: .6; }
+.lee-logfilter.active { opacity: 1; text-decoration: underline; }
+.lee-docktab.has-error::after { content: ' •'; color: rgb(220, 90, 90); }
+
+/* the terminal tab owns its close control: one × in the header could only ever shut the
+   active terminal, so closing a background one meant selecting it first */
+.lee-termtab { display: inline-flex; align-items: center; gap: 2px; padding: 0; }
+.lee-termtab-name { background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+                    padding: 3px 2px 3px 8px; }
+.lee-termtab-x { background: none; border: 0; color: inherit; cursor: pointer; font-size: 13px;
+                 line-height: 1; padding: 3px 6px 3px 2px; opacity: 0; }
+.lee-termtab:hover .lee-termtab-x, .lee-termtab.active .lee-termtab-x { opacity: .55; }
+.lee-termtab-x:hover { opacity: 1; }

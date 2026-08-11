@@ -579,22 +579,42 @@ def _term_panel(gate):
             Button('expand', id='termexpand', cls='lee-icon', title='expand or restore terminal',
                    onclick='leeTermExpand()'),
             Button('lazygit', cls='lee-icon', title='open lazygit tab', onclick='leeAct("git")'),
-            Button('×', cls='lee-icon', title='close active terminal', onclick='leeAct("term_close")'),
             cls='lee-phead'),
         body,
         cls='lee-panel lee-termpanel', id='termwrap', data_term_src=_asset('lee-term.js'))
 
 
+def _log_panel():
+    """Where the detail a toast cannot hold goes: git output, and what a running app prints.
+
+    Two things drove this. Git's refusals are multi-line -- the list of files a checkout would
+    overwrite is the useful part -- and a status line shows one clipped sentence of it. And
+    `/dev/log` has always kept what dev servers print, with nothing in the browser reading it.
+    """
+    return Section(
+        Div(Span('logs', cls='lee-ptitle'),
+            Button('all', cls='lee-logfilter active', data_log_filter='', onclick='leeLogFilter("")'),
+            Button('git', cls='lee-logfilter', data_log_filter='git', onclick='leeLogFilter("git")'),
+            Button('runs', cls='lee-logfilter', data_log_filter='runs', onclick='leeLogFilter("runs")'),
+            Span(cls='lee-spacer'),
+            Button('copy', cls='lee-icon', title='copy the visible log', onclick='leeLogCopy()'),
+            Button('clear', cls='lee-icon', title='clear the log', onclick='leeLogClear()'),
+            cls='lee-phead'),
+        Div(cls='lee-logbody', id='loglist'),
+        cls='lee-panel lee-logpanel', id='logwrap')
+
+
 def _bottom_dock(ws, gate):
-    "One bounded lower workspace: Exec and Terminal switch in place instead of stacking."
+    "One bounded lower workspace: Exec, Terminal and Logs switch in place instead of stacking."
     return Section(
         Div(Button('exec', cls='lee-docktab active', data_dock='exec', onclick='leeDock("exec")'),
             Button('terminal', cls='lee-docktab', data_dock='term', onclick='leeDock("term")'),
+            Button('logs', cls='lee-docktab', data_dock='logs', onclick='leeDock("logs")'),
             Span(cls='lee-spacer'),
             Button('−', cls='lee-pane-min', title='minimise bottom tools', aria_label='minimise bottom tools',
                    onclick='leePane("bottom", false)'),
             cls='lee-docktabs', role='tablist', aria_label='bottom tools'),
-        Div(_exec_strip(), _term_panel(gate), cls='lee-dockbody'),
+        Div(_exec_strip(), _term_panel(gate), _log_panel(), cls='lee-dockbody'),
         cls='lee-bottomdock dock-exec', id='bottomdock')
 
 
@@ -807,7 +827,12 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                 env['UV_PROJECT_ENVIRONMENT'] = venv
                 env['PATH'] = bindir + os.pathsep + env.get('PATH', '')
                 env.pop('PYTHONHOME', None)
-            t = ws.terms.open(key, argv=argv, cwd=cwd, env=env,
+            # `env` alone is not enough for an interactive shell: its rc file runs afterwards,
+            # and `pyenv init -` (or conda, or asdf) prepends shims over the project venv. So the
+            # same prepend is also typed into the shell once it is up, where nothing re-orders it.
+            # A leading space keeps it out of history in shells configured to honour that.
+            prelude = (f' export PATH="{Path(py).parent}:$PATH"' if kind != 'git' and env else '')
+            t = ws.terms.open(key, argv=argv, cwd=cwd, env=env, prelude=prelude,
                               cols=int(hello.get('cols') or 80), rows=int(hello.get('rows') or 24))
         except Exception as e:
             await sock.send_text(json.dumps({'t': 'error', 'error': errstr(e)}))

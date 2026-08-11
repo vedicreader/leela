@@ -4229,10 +4229,18 @@ function nextTermId(kind) {
 function termLabel(kind, id) { return kind === 'git' ? 'lazygit' : kind === 'release' ? 'release pipeline' : kind === 'deploy' ? 'deploy' : kind === 'drive' ? 'drive' : kind === 'gh-auth' ? 'gh auth' : `terminal ${id.split('-').pop()}`; }
 function paintTermTabs() {
   const bar = $('#termtabs'); if (!bar) return;
+  /* The close control belongs to the tab, not to the header. One × over there always shut
+     the *active* terminal, so closing a background one meant selecting it first, and which
+     tab it would close was never visible from the tab itself. */
   bar.innerHTML = [...lee.terms.entries()].map(([id, t]) =>
-    `<button role="tab" aria-selected="${id === lee.activeTerm}" class="lee-termtab${id === lee.activeTerm ? ' active' : ''}" ` +
-    `data-term="${esc(id)}" title="${esc(t.cwd || '')}">${esc(t.label)}</button>`).join('');
-  bar.querySelectorAll('.lee-termtab').forEach(b => b.onclick = () => switchTerm(b.dataset.term));
+    `<span role="tab" aria-selected="${id === lee.activeTerm}" class="lee-termtab${id === lee.activeTerm ? ' active' : ''}" ` +
+    `data-term="${esc(id)}" title="${esc(t.cwd || '')}"><button class="lee-termtab-name" data-term-pick="${esc(id)}">${esc(t.label)}</button>` +
+    `<button class="lee-termtab-x" data-term-close="${esc(id)}" title="Close ${esc(t.label)}" aria-label="Close ${esc(t.label)}">×</button></span>`).join('');
+  bar.querySelectorAll('[data-term-pick]').forEach(b => b.onclick = () => switchTerm(b.dataset.termPick));
+  bar.querySelectorAll('[data-term-close]').forEach(b => b.onclick = e => {
+    e.stopPropagation();            // closing a tab must not also select it
+    closeTerm(b.dataset.termClose);
+  });
   $('#termempty')?.toggleAttribute('hidden', lee.terms.size > 0);
 }
 function leeLeft(which = 'files') {
@@ -4276,12 +4284,92 @@ function leePane(which, show = null) {
   if (!hidden && which === 'bottom') requestAnimationFrame(() => lee.term?.refit());
 }
 window.leePane = leePane;
+/* ------------------------------------------------------------------ logs
+
+   The detail a status line cannot hold. Git's refusals are the motivating case: the useful
+   part of "cannot switch branch" is the list of files it would overwrite, and a toast shows
+   one clipped sentence of it. Runs are the other: `/dev/log` has always kept what a dev
+   server prints, and nothing in the browser read it.
+
+   Kept in memory for this session on purpose. This answers "what just happened", and a store
+   that outlives the question would need retention rules to go with it. */
+const LOG_MAX = 500;
+lee.logs = [];
+
+function leeLog(source, title, detail = '', kind = '') {
+  lee.logs.push({at: new Date(), source, title: String(title || ''), detail: String(detail || ''), kind});
+  if (lee.logs.length > LOG_MAX) lee.logs.splice(0, lee.logs.length - LOG_MAX);
+  const dock = $('#bottomdock');
+  if (dock?.classList.contains('dock-logs')) renderLogs();
+  else if (kind === 'err') $$('.lee-docktab').forEach(b => {
+    if (b.dataset.dock === 'logs') b.classList.add('has-error');   // a failure you have not read
+  });
+}
+window.leeLog = leeLog;
+
+function renderLogs() {
+  const el = $('#loglist'); if (!el) return;
+  const want = lee.logFilter || '';
+  const rows = lee.logs.filter(r => !want || r.source === want);
+  el.innerHTML = rows.length ? rows.map(r =>
+    `<article class="lee-logrow${r.kind ? ' ' + r.kind : ''}">` +
+    `<div class="lee-loghead"><time>${r.at.toTimeString().slice(0, 8)}</time>` +
+    `<span class="lee-logsource">${esc(r.source)}</span><strong>${esc(r.title)}</strong></div>` +
+    (r.detail ? `<pre class="lee-logdetail">${esc(r.detail)}</pre>` : '') + `</article>`).join('')
+    : `<div class="lee-dim lee-logempty">nothing logged${want ? ' for ' + esc(want) : ''} yet</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function leeLogFilter(which) {
+  lee.logFilter = which || '';
+  $$('.lee-logfilter').forEach(b => b.classList.toggle('active', (b.dataset.logFilter || '') === lee.logFilter));
+  renderLogs();
+}
+function leeLogClear() { lee.logs = []; renderLogs(); }
+async function leeLogCopy() {
+  const want = lee.logFilter || '';
+  const text = lee.logs.filter(r => !want || r.source === want)
+    .map(r => `${r.at.toTimeString().slice(0, 8)} ${r.source} ${r.title}` + (r.detail ? '\n' + r.detail : '')).join('\n');
+  try { await navigator.clipboard.writeText(text); status('log copied', 'ok'); }
+  catch (e) { status('could not copy the log', 'err'); }
+}
+window.leeLogFilter = leeLogFilter; window.leeLogClear = leeLogClear; window.leeLogCopy = leeLogCopy;
+
+/* Dev servers already keep what they print; `/dev/log` has served it all along with nothing
+   reading it. Tailed only while the pane is open -- an app's output is worth watching when you
+   are looking at it, and not worth a request every five seconds when you are not. */
+lee.runSeen = new Map();
+async function pollRunLogs() {
+  const dock = $('#bottomdock');
+  if (!dock?.classList.contains('dock-logs')) return;
+  if (lee.logFilter && lee.logFilter !== 'runs') return;
+  let servers = [];
+  try { servers = (await api('/dev/list')).servers || []; } catch (_) { return; }
+  for (const srv of servers) {
+    const path = srv.path || srv.script || '';
+    if (!path) continue;
+    let lines = [];
+    try { lines = (await api('/dev/log?n=200&path=' + encodeURIComponent(path))).log || []; }
+    catch (_) { continue; }
+    const seen = lee.runSeen.get(path) || 0;
+    if (lines.length <= seen) { if (lines.length < seen) lee.runSeen.set(path, lines.length); continue; }
+    const fresh = lines.slice(seen);
+    lee.runSeen.set(path, lines.length);
+    leeLog('runs', srv.name || path.split('/').pop(), fresh.join('\n'), srv.alive === false ? 'err' : '');
+  }
+}
+
 function leeDock(which) {
   const dock = $('#bottomdock'); if (!dock) return;
   leePane('bottom', true);
   const centre = $('.lee-centre');
   dock.classList.toggle('dock-exec', which === 'exec');
   dock.classList.toggle('dock-term', which === 'term');
+  dock.classList.toggle('dock-logs', which === 'logs');
+  if (which === 'logs') {
+    $$('.lee-docktab').forEach(b => { if (b.dataset.dock === 'logs') b.classList.remove('has-error'); });
+    renderLogs();
+  }
   $$('.lee-docktab', dock).forEach(b => {
     const active = b.dataset.dock === which; b.classList.toggle('active', active);
     b.setAttribute('aria-selected', String(active));
@@ -4661,12 +4749,18 @@ async function gitDo(op, extra = {}) {
     const d = await post('/git/action', {op, repo: gitUI.repo, ...extra});
     gitUI.snapshot = d; paintGitPill(d);
     status(`git ${name} complete · ${Math.round(performance.now() - started)} ms`, 'ok');
+    leeLog('git', `${name} · ${gitRepoName(gitUI.repo || d.root || '')}`,
+           [extra.branch, extra.ref, extra.message].filter(Boolean).join(' ') || '', 'ok');
     return d;
   } catch (e) {
     /* Without this the status line kept saying "git checkout…" for ever. Git refusing a
        switch because local changes would be overwritten is a normal, fast answer, and it
-       looked identical to a hang -- the one thing a progress message must never do. */
-    status(`git ${name} failed · ${e.message || String(e)}`, 'err');
+       looked identical to a hang -- the one thing a progress message must never do.
+       The message itself goes to the log: git's refusals are multi-line, and the list of
+       files it would overwrite is the part worth reading. */
+    const detail = e.message || String(e);
+    leeLog('git', `${name} failed`, detail, 'err');
+    status(`git ${name} failed — see logs`, 'err');
     throw e;
   } finally { gitUI.busy = ''; }
 }
@@ -4827,12 +4921,19 @@ async function gitReposDo(op, extra = {}) {
     const done = gitUI.reposResults.length - failed - skipped;
     status(`workspace ${op}: ${done} done · ${skipped} skipped · ${failed} failed · ${Math.round(performance.now() - started)} ms`,
            failed ? 'err' : 'ok');
+    for (const r of gitUI.reposResults) {
+      leeLog('git', `${op} · ${r.name}${r.skipped ? ' — ' + r.skipped : ''}`,
+             r.ok === false ? (r.error || 'failed') : (r.output || ''), r.ok === false ? 'err' : '');
+    }
     if (gitUI.repo && !(d.repos || []).some(r => r.root === gitUI.repo)) gitUI.repo = '';
     gitUI.snapshot = null;
     await renderGitPanel();
     refreshProjectPills();
     return d;
-  } catch (e) { status(`workspace ${op} failed · ${e.message || String(e)}`, 'err'); }
+  } catch (e) {
+    leeLog('git', `workspace ${op} failed`, e.message || String(e), 'err');
+    status(`workspace ${op} failed — see logs`, 'err');
+  }
   finally {
     gitUI.reposBusy = null;
     if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);
@@ -7345,6 +7446,7 @@ async function boot() {
   refreshProjectPills();
   setInterval(refreshKernelPill, 5000);
   setInterval(refreshProjectPills, 5000);
+  setInterval(pollRunLogs, 2000);      // only does anything while the logs pane is open
   status('ready', 'ok');
 }
 

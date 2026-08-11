@@ -76,10 +76,11 @@ def gh_auth_argv():
 class Pty:
     "One command on a pseudo-terminal: bytes in, bytes out, and a size."
 
-    def __init__(self, argv=None, cwd=None, env=None, cols=80, rows=24):
+    def __init__(self, argv=None, cwd=None, env=None, cols=80, rows=24, prelude=''):
         self.argv = list(argv) if argv else [default_shell()]
         self.cwd = str(cwd) if cwd else None
         self.env = env
+        self.prelude = str(prelude or '')
         self.cols, self.rows = cols, rows
         self.proc = self.fd = None
         self._reader = None
@@ -117,6 +118,12 @@ class Pty:
                 self.argv, cwd=self.cwd, env=env,
                 stdin=slave, stdout=slave, stderr=slave,
                 preexec_fn=_setctty, close_fds=True)
+            # Typed into the shell rather than set in `env`, because an interactive shell reads
+            # its rc file *after* inheriting the environment, and a line like `eval "$(pyenv
+            # init -)"` then prepends its shims over whatever we chose. Everything set before
+            # the shell starts loses that race; a command run after it does not.
+            if self.prelude:
+                os.write(master, self.prelude.encode() + b'\n')
         finally:
             os.close(slave)             # the parent must not hold the slave open, or reads never EOF
         self.fd = master
@@ -217,10 +224,11 @@ class Terminals:
 
     def __init__(self, cwd=None): self.cwd, self.terms = cwd, {}
 
-    def open(self, key, argv=None, cwd=None, env=None, cols=80, rows=24):
+    def open(self, key, argv=None, cwd=None, env=None, cols=80, rows=24, prelude=''):
         "The terminal for `key`, spawning it on first use."
         if (t := self.terms.get(key)) is not None and t.alive: return t
-        t = self.terms[key] = Pty(argv=argv, cwd=cwd or self.cwd, env=env, cols=cols, rows=rows)
+        t = self.terms[key] = Pty(argv=argv, cwd=cwd or self.cwd, env=env, cols=cols, rows=rows,
+                                  prelude=prelude)
         return t.start()
 
     def get(self, key): return self.terms.get(key)

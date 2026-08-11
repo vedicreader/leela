@@ -14,7 +14,7 @@ from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.runtime.kernels import project_python
 from leela.workspace import Workspace
-from tests.assets import CSS, JS
+from tests.assets import CSS, JS, SERVER
 
 
 def _client(root):
@@ -288,3 +288,49 @@ def test_a_workspace_operation_names_the_repositories_it_is_working_on():
     assert 'finally' in block and 'gitUI.reposBusy = null' in block, 'always cleared'
     assert "gitUI.reposBusy?.has(r.root)" in JS, 'the row renders it'
     assert '.lee-git-repo-row.working' in CSS
+
+
+# ---------------------------------------------------------------- logs, terminals
+
+def test_the_logs_pane_holds_what_a_status_line_cannot():
+    """Git's refusals are multi-line and the useful part is the file list; a toast clips it.
+
+    `/dev/log` had also been serving what dev servers print since it was written, with
+    nothing in the browser reading it.
+    """
+    assert 'lee-logpanel' in SERVER and "data_dock='logs'" in SERVER, 'a third dock tab'
+    assert 'function leeLog(' in JS and 'renderLogs' in JS
+    assert "leeLog('git'" in JS, 'git actions log their detail'
+    assert "api('/dev/log" in JS, 'and the run log route finally has a reader'
+    assert 'see logs' in JS, 'the toast points at the detail instead of carrying it'
+    assert '.lee-logdetail' in CSS and 'pre-wrap' in CSS, 'the detail is not clipped'
+
+
+def test_the_run_log_tail_costs_nothing_while_the_pane_is_closed():
+    block = JS[JS.index('async function pollRunLogs'):]
+    block = block[:block.index('function leeDock')]
+    assert "classList.contains('dock-logs')" in block and 'return' in block
+    assert 'lee.runSeen' in block, 'and only new lines are appended'
+
+
+def test_a_terminal_tab_closes_itself():
+    "One × in the header could only shut the active terminal; closing a background one meant selecting it."
+    block = JS[JS.index('function paintTermTabs'):]
+    block = block[:block.index('function leeLeft')]
+    assert 'data-term-close' in block and 'data-term-pick' in block
+    assert 'e.stopPropagation()' in block, 'closing a tab must not also select it'
+    assert 'closeTerm(b.dataset.termClose)' in block
+    assert "close active terminal" not in SERVER, 'the header control is gone'
+
+
+def test_the_terminal_corrects_its_path_after_the_shell_reads_its_rc():
+    """`env=` alone loses to the rc file.
+
+    An interactive shell inherits the environment and *then* runs `.zshrc`, where
+    `eval "$(pyenv init -)"` prepends its shims over the project venv. Measured: with leela's
+    env set correctly, `python` still resolved to ~/.pyenv/shims/python. The same prepend is
+    typed into the shell once it is up, where nothing re-orders it.
+    """
+    assert 'prelude' in SERVER, 'the pty takes one'
+    assert 'os.write(master, self.prelude.encode()' in SERVER, 'written after the shell starts'
+    assert 'export PATH=' in SERVER and '$PATH' in SERVER
