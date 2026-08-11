@@ -122,6 +122,29 @@ Requires `vishalakshi>=0.1.2`. Earlier releases rebuilt the encoder for every sh
 measured) and did not carry `offline=True` into a new shelf; both were fixed upstream as part of
 this work.
 
+## Two things the migration settled
+
+Written and run before the adapter, and both change how the adapter should open a vault.
+
+**Open the store directly, not through the root.** `Vault(path).shelf(name)` instantiates the root
+store on the way, so a vault whose main store was written by a different encoder warns about mixed
+distances on every open — about a store leela is not touching. `Vault(path, store=name,
+encoder=…)` reaches the same store and never builds the root. Verified warning-free under
+`-W error::UserWarning`.
+
+**A store's own encoder outranks the caller's preference.** The encoder is recorded per store, and
+two in one store is exactly what that warning is about. The adapter reads the registry (cheap, no
+Vault needed) and adopts what wrote the store, falling back to `retrieval` only when the store is
+new.
+
+**Open question the migration exposed.** The old memory was global — one `web.db` for every
+workspace — and the four documents in it are global by nature (three system prompts and a working
+state). They migrated into a single `leela` shelf. But this design says one shelf *per workspace*,
+which leaves no home for memory that belongs to leela rather than to a project. Either global notes
+live in a `leela` shelf beside the per-project ones, or the per-workspace split should be dropped
+for agent notes and state specifically. Deciding that is a prerequisite for the adapter, not for
+the migration.
+
 ## Migration
 
 `python -m leela.migrate_memory`, following the `python -m leela.conformance` precedent rather than
