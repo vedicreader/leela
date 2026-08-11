@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .envs import EnvStore
+from ...core.envs import EnvStore
 from .pipelines import Pipeline, PipelineError, Step
 
 __all__ = ['Deploy', 'DeployError', 'DEPLOY_FILE', 'DEPLOY_KEYS', 'deploy_template',
@@ -425,7 +425,7 @@ class Deploy(Pipeline):
         except ImportError:
             pass                                  # gheasy is optional; the script still stands
         try:
-            from .workflows import Workflows
+            from ..workflows.workflows import Workflows
             written.append(Workflows(self.root).add('deploy')['path'])
         except Exception:
             pass                                  # a workflow that already exists is not a failure

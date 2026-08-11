@@ -4,7 +4,7 @@ Both answers are about paths, so both are tested against made-up ones: a real en
 would make the interesting cases (a checkout shadowed by a wheel) impossible to arrange.
 """
 
-from leela.packages import FAMILY, blame, checkout_for, frames, survey
+from leela.blocks.stack.packages import FAMILY, blame, checkout_for, frames, survey
 
 TRACEBACK = '''
 ❯ python deploy.py deploy
@@ -74,7 +74,7 @@ def test_a_checkout_shadowed_by_an_installed_copy_is_the_row_worth_seeing(tmp_pa
     Nothing else in the survey is as expensive to not know, so it is a flag of its own
     rather than something to infer from two paths.
     """
-    import leela.packages as pkg
+    import leela.blocks.stack.packages as pkg
     checkout = make_checkout(tmp_path, 'cfeasy')
     monkeypatch.setattr(pkg, '_origin', lambda n: tmp_path/'venv'/'site-packages'/n if n == 'cfeasy' else None)
     rows = {r['name']: r for r in survey(['cfeasy', 'vpseasy'], [checkout])}
@@ -84,7 +84,7 @@ def test_a_checkout_shadowed_by_an_installed_copy_is_the_row_worth_seeing(tmp_pa
 
 
 def test_a_package_run_from_its_checkout_is_not_shadowed(tmp_path, monkeypatch):
-    import leela.packages as pkg
+    import leela.blocks.stack.packages as pkg
     checkout = make_checkout(tmp_path, 'cfeasy')
     monkeypatch.setattr(pkg, '_origin', lambda n: checkout/'cfeasy')
     row = survey(['cfeasy'], [checkout])[0]

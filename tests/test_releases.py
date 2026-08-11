@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from leela.releases import Release, ReleaseError, default_steps, nbdev_project
+from leela.blocks.pipelines.releases import Release, ReleaseError, default_steps, nbdev_project
 
 
 def project(root, steps=None, nbdev=False):

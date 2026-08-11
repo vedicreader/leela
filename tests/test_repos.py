@@ -10,7 +10,7 @@ import subprocess
 import pytest
 
 from leela.blocks.git.git import GitError, GitRepo
-from leela.repos import MEMBERS, RepoSet, clone_url, discover
+from leela.blocks.git.repos import MEMBERS, RepoSet, clone_url, discover
 
 
 def git(path, *args):

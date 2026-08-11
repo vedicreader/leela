@@ -12,9 +12,9 @@ this one shows lives in this closure. `core.web.pipeline_socket` is the one impl
 from __future__ import annotations
 
 from ...core.web import fail, off_loop, pipeline_socket
-from ...drive import Drive, DriveError
-from ...envs import EnvStore
-from ...repos import RepoSet, repo_for
+from .drive import Drive, DriveError
+from ...core.envs import EnvStore
+from ..git.repos import RepoSet, repo_for
 
 __all__ = ['CAPS', 'connect']
 

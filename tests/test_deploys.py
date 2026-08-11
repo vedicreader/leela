@@ -10,7 +10,7 @@ import ast
 
 import pytest
 
-from leela.deploys import DEPLOY_KEYS, Deploy, DeployError, deploy_template
+from leela.blocks.pipelines.deploys import DEPLOY_KEYS, Deploy, DeployError, deploy_template
 
 
 def project(root, name='app'):

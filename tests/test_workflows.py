@@ -8,7 +8,7 @@ usable answer instead of a stack trace.
 
 import pytest
 
-from leela.workflows import WorkflowError, Workflows, levels
+from leela.blocks.workflows.workflows import WorkflowError, Workflows, levels
 
 
 def workflow(root, name='ci.yml', text=''):

@@ -14,12 +14,12 @@ panel costs one `status`, which is four `find_spec` calls and two lookups in doc
 from __future__ import annotations
 
 from ...core.web import fail, off_loop
-from ...deploys import Deploy
-from ...envs import EnvStore
-from ...infra import Infra, InfraError
-from ...packages import FAMILY, survey
-from ...releases import Release
-from ...repos import RepoSet, repo_for
+from ..pipelines.deploys import Deploy
+from ...core.envs import EnvStore
+from .infra import Infra, InfraError
+from .packages import FAMILY, survey
+from ..pipelines.releases import Release
+from ..git.repos import RepoSet, repo_for
 
 __all__ = ['CAPS', 'connect']
 

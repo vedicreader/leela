@@ -18,10 +18,10 @@ them go through `off_loop`.
 from __future__ import annotations
 
 from ...core.web import fail, off_loop
-from ...envs import EnvStore
-from ...releases import Release
-from ...repos import repo_for
-from ...workflows import WorkflowError, Workflows
+from ...core.envs import EnvStore
+from ..pipelines.releases import Release
+from ..git.repos import repo_for
+from .workflows import WorkflowError, Workflows
 
 __all__ = ['CAPS', 'connect']
 
@@ -70,7 +70,7 @@ def connect(app, ctx):
         `leela.wfbuild` appears in the browser without a line of frontend. It is also the
         teaching surface -- the form is the list of decisions a workflow actually has.
         """
-        from ...wfbuild import preset_rows
+        from .wfbuild import preset_rows
         return preset_rows()
 
     @rt('/workflows/spec')

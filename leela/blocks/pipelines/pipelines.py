@@ -39,8 +39,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .envs import EnvStore
-from .blocks.term.term import SCROLLBACK, Pty, strip_ansi
+from ...core.envs import EnvStore
+from ..term.term import SCROLLBACK, Pty, strip_ansi
 
 __all__ = ['Pipeline', 'PipelineError', 'Step']
 
@@ -314,7 +314,7 @@ class Pipeline:
         checkout this workspace has open, so the fix lands in the repository rather than in
         a copy under `.venv`.
         """
-        from .packages import blame as attribute
+        from ..stack.packages import blame as attribute
         if not any((self.results.get(s.id) or {}).get('status') == 'failed' for s in self.steps):
             return {}
         return attribute(self.tail(400), checkouts=checkouts)

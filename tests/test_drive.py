@@ -8,7 +8,7 @@ already works.
 
 import pytest
 
-from leela.drive import PARTS, Drive, context, parts
+from leela.blocks.drive.drive import PARTS, Drive, context, parts
 
 
 def project(root, name='kalpa'):

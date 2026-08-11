@@ -32,9 +32,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import leela_cfg
-from .blocks.git.git import GitError, GitRepo, repo_root
-from .blocks.git.git import clone as git_clone
+from ... import leela_cfg
+from ..git.git import GitError, GitRepo, repo_root
+from ..git.git import clone as git_clone
 
 __all__ = ['RepoSet', 'discover', 'repo_for', 'MEMBERS', 'OPS']
 

@@ -29,7 +29,7 @@ from pathlib import Path
 
 from ...core.web import fail, off_loop
 from .git import GitError, GitRepo
-from ...repos import RepoSet
+from .repos import RepoSet
 
 __all__ = ['CAPS', 'connect', 'git_paths']
 

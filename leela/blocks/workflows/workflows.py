@@ -293,7 +293,7 @@ class Workflows:
         for name in ('pyproject.toml', 'requirements.txt'):
             try: text += (root/name).read_text(encoding='utf-8', errors='replace').lower()
             except OSError: pass
-        from .releases import nbdev_project
+        from ..pipelines.releases import nbdev_project
         row = {
             'python': has('pyproject.toml', 'requirements.txt', 'setup.py'),
             'node': has('package.json'), 'rust': has('Cargo.toml'), 'go': has('go.mod'),

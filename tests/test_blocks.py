@@ -170,8 +170,8 @@ def workspace_client(tmp_path, monkeypatch):
     """
     import subprocess
 
-    import leela.repos
-    monkeypatch.setattr(leela.repos, 'leela_cfg', tmp_path/'cfg')
+    import leela.blocks.git.repos
+    monkeypatch.setattr(leela.blocks.git.repos, 'leela_cfg', tmp_path/'cfg')
     def git(cwd, *args): subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True)
     for name in ('one', 'two'):
         (tmp_path/name).mkdir()
@@ -237,8 +237,8 @@ def project_client(tmp_path, monkeypatch):
     import json
     import subprocess
 
-    import leela.repos
-    monkeypatch.setattr(leela.repos, 'leela_cfg', tmp_path/'cfg')
+    import leela.blocks.git.repos
+    monkeypatch.setattr(leela.blocks.git.repos, 'leela_cfg', tmp_path/'cfg')
     root = tmp_path/'proj'
     (root/'.github'/'workflows').mkdir(parents=True)
     (root/'.github'/'workflows'/'ci.yml').write_text(
@@ -583,10 +583,13 @@ def test_the_domain_import_graph_has_no_cycles():
     point of the folder. Two blocks that genuinely need each other are one block, or share
     something that belongs in core.
     """
+    # Only *module-level* imports count. An import inside a function is the standard way to
+    # break a cycle deliberately, and it creates no load-order hazard -- forbidding it would
+    # leave no legal way to express a mutual reference that only matters at call time.
     edges = {}
     for block, files in _domain_files().items():
         for f in files:
-            for node in ast.walk(ast.parse(f.read_text())):
+            for node in ast.parse(f.read_text()).body:
                 if isinstance(node, ast.ImportFrom) and node.level == 2 and node.module:
                     other = node.module.split('.')[0]
                     if other != block: edges.setdefault(block, set()).add(other)

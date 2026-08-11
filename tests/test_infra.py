@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from leela.infra import Infra, InfraError
+from leela.blocks.stack.infra import Infra, InfraError
 
 
 class FakeStore:
@@ -48,7 +48,7 @@ def test_the_token_does_not_outlive_the_call(monkeypatch):
         def __init__(self): seen['env'] = os.environ.get('HCLOUD_TOKEN')
         def servers(self): return [{'name': 'kalpa', 'ip': '1.2.3.4', 'status': 'running'}]
 
-    import leela.infra as mod
+    import leela.blocks.stack.infra as mod
     monkeypatch.setattr(mod.Infra, '_hetzner', lambda self: FakeHetzner())
     assert infra.servers()[0]['name'] == 'kalpa'
     assert os.environ.get('HCLOUD_TOKEN') is None

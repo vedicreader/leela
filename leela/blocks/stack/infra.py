@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 
-from .envs import EnvStore
+from ...core.envs import EnvStore
 
 __all__ = ['Infra', 'InfraError']
 

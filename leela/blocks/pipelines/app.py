@@ -16,11 +16,11 @@ is the failure that arrangement exists to prevent.
 from __future__ import annotations
 
 from ...core.web import fail, off_loop, pipeline_socket
-from ...deploys import Deploy
-from ...envs import EnvStore
-from ...pipelines import PipelineError
-from ...releases import Release
-from ...repos import RepoSet, repo_for
+from .deploys import Deploy
+from ...core.envs import EnvStore
+from .pipelines import PipelineError
+from .releases import Release
+from ..git.repos import RepoSet, repo_for
 
 __all__ = ['CAPS', 'connect']
 

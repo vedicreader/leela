@@ -7,7 +7,7 @@ and each of those has one correct reading.
 
 import pytest
 
-from leela.wfbuild import PRESETS, TRIGGERS, compose, load_spec, preset_rows, save_spec
+from leela.blocks.workflows.wfbuild import PRESETS, TRIGGERS, compose, load_spec, preset_rows, save_spec
 
 pytestmark = pytest.mark.skipif(__import__('importlib.util', fromlist=['x']).find_spec('gheasy') is None,
                                 reason='the builder composes with gheasy')

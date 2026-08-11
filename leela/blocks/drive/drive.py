@@ -37,8 +37,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .envs import EnvStore
-from .pipelines import Pipeline, PipelineError, Step
+from ...core.envs import EnvStore
+from ..pipelines.pipelines import Pipeline, PipelineError, Step
 
 __all__ = ['Drive', 'DriveError', 'Part', 'PARTS', 'DRIVE_FILE', 'context', 'parts']
 
