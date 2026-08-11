@@ -26,20 +26,24 @@ from starlette.routing import WebSocketRoute
 
 from dhrishti.core import PROFILES, SORTS
 from . import errstr
+from .blocks import drive as drive_block
 from .blocks import editor as editor_block
 from .blocks import fs as fs_block
 from .blocks import git as git_block
 from .blocks import keys as keys_block
 from .blocks import lsp as lsp_block
 from .blocks import memory as memory_block
+from .blocks import pipelines as pipelines_block
 from .blocks import research as research_block
 from .blocks import runs as runs_block
 from .blocks import runtime as runtime_block
 from .blocks import search as search_block
 from .blocks import settings as settings_block
+from .blocks import stack as stack_block
 from .blocks import term as term_block
 from .blocks import tabs as tabs_block
 from .blocks import vars as vars_block
+from .blocks import workflows as workflows_block
 from .blocks import workspace as workspace_block
 from .blocks.term.app import term_cwd
 from .core.buttons import bar as btn_bar
@@ -63,7 +67,7 @@ from .blocks.fs.fs import lang_for
 from .blocks.git.git import GitRepo, GitError
 from .core.keys import by_scope, chord_display, toast_rows
 from .blocks.nb.nb import Notebook, Cell
-from .blocks.term.term import TerminalGate, lazygit_argv
+from .blocks.term.term import TerminalGate, gh_auth_argv, lazygit_argv
 from .workspace import Workspace
 from .agent.core import model_note
 
@@ -78,6 +82,7 @@ __all__ = ['ide_app', 'serve_ide']
 # the extraction order and what remains.
 BLOCKS = [keys_block, settings_block, search_block, memory_block,
           research_block, term_block, runs_block, workspace_block, git_block,
+          workflows_block, pipelines_block, drive_block, stack_block,
           fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block]
 
 
@@ -371,6 +376,59 @@ def _git_panel():
         cls='lee-panel lee-source-control')
 
 
+def _workflows_panel():
+    """GitHub Actions for this project, read locally and reached through gheasy.
+
+    The panel is deliberately useful before it is connected: the workflow files are on disk,
+    so the graph draws with no token, no network and no `gheasy` installed, and the run
+    history is the part that asks for those.
+    """
+    return Section(
+        Div(Span('workflows', cls='lee-ptitle'), Span(cls='lee-spacer'),
+            Button('refresh', cls='lee-btn', onclick='leeWorkflows()', title='reread the workflow files'),
+            Button('−', cls='lee-pane-min', title='minimise workflows',
+                   aria_label='minimise workflows', onclick='leePane("left", false)'), cls='lee-phead'),
+        Div(Div('reading workflows…', cls='lee-dim'), id='workflowspanel', cls='lee-workflows-panel'),
+        cls='lee-panel lee-workflows')
+
+
+def _releases_panel():
+    "The release pipeline, its state, and the terminal the steps run on."
+    return Section(
+        Div(Span('release', cls='lee-ptitle'), Span(cls='lee-spacer'),
+            Button('refresh', cls='lee-btn', onclick='leeReleases()', title='reread the pipeline'),
+            Button('−', cls='lee-pane-min', title='minimise release',
+                   aria_label='minimise release', onclick='leePane("left", false)'), cls='lee-phead'),
+        Div(Div('reading the pipeline…', cls='lee-dim'), id='releasespanel', cls='lee-releases-panel'),
+        cls='lee-panel lee-releases')
+
+
+def _deploy_panel():
+    "Where this app runs, what it is missing, and the stages that put it there."
+    return Section(
+        Div(Span('deploy', cls='lee-ptitle'), Span(cls='lee-spacer'),
+            Button('refresh', cls='lee-btn', onclick='leeDeploys()', title='reread the deploy plan'),
+            Button('−', cls='lee-pane-min', title='minimise deploy',
+                   aria_label='minimise deploy', onclick='leePane("left", false)'), cls='lee-phead'),
+        Div(Div('reading the deploy plan…', cls='lee-dim'), id='deploypanel', cls='lee-releases-panel'),
+        cls='lee-panel lee-deploys')
+
+
+def _drive_panel():
+    """The same deploy as `deploy.py`, taken apart into the library calls it makes.
+
+    A panel of its own rather than a view inside Deploy: they are alternatives, and keeping
+    them apart is what makes them comparable.
+    """
+    return Section(
+        Div(Span('drive', cls='lee-ptitle'), Span(cls='lee-spacer'),
+            Button('refresh', cls='lee-btn', onclick='leeDrive()', title='re-read the values'),
+            Button('−', cls='lee-pane-min', title='minimise drive',
+                   aria_label='minimise drive', onclick='leePane("left", false)'), cls='lee-phead'),
+        Div(Div('reading the parts…', cls='lee-dim'), id='drivepanel', cls='lee-releases-panel'),
+        cls='lee-panel lee-drive')
+
+
 def _symbols_panel():
     return Section(
         Div(Span('structure', cls='lee-ptitle'), Span(id='symbolfile', cls='lee-keyscope'),
@@ -392,8 +450,22 @@ def _left_workspace(ws):
                    onclick='leeLeft("symbols")'),
             Button(_activity_icon('git'), Span('Git', cls='sr-only'), cls='lee-activity-btn',
                    data_left='git', title='Git source control', aria_label='Git source control',
-                   onclick='leeLeft("git")'), cls='lee-activity', aria_label='Project tools'),
-        Div(_files_panel(ws.fs), _symbols_panel(), _git_panel(), _toast_panel(), cls='lee-left-content'),
+                   onclick='leeLeft("git")'),
+            Button(_activity_icon('workflows'), Span('Workflows', cls='sr-only'), cls='lee-activity-btn',
+                   data_left='workflows', title='GitHub workflows', aria_label='GitHub workflows',
+                   onclick='leeLeft("workflows")'),
+            Button(_activity_icon('releases'), Span('Release', cls='sr-only'), cls='lee-activity-btn',
+                   data_left='releases', title='Release pipeline', aria_label='Release pipeline',
+                   onclick='leeLeft("releases")'),
+            Button(_activity_icon('deploys'), Span('Deploy', cls='sr-only'), cls='lee-activity-btn',
+                   data_left='deploys', title='Deploy to a server', aria_label='Deploy to a server',
+                   onclick='leeLeft("deploys")'),
+            Button(_activity_icon('drive'), Span('Drive', cls='sr-only'), cls='lee-activity-btn',
+                   data_left='drive', title='Drive the packages one call at a time',
+                   aria_label='Drive the packages one call at a time',
+                   onclick='leeLeft("drive")'), cls='lee-activity', aria_label='Project tools'),
+        Div(_files_panel(ws.fs), _symbols_panel(), _git_panel(), _workflows_panel(),
+            _releases_panel(), _deploy_panel(), _drive_panel(), _toast_panel(), cls='lee-left-content'),
         cls='lee-left left-files', id='left')
 
 
@@ -700,7 +772,11 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             gate.check(hello.get('token'))          # raises unless this connection may have a pty
             kind = hello.get('kind', 'shell')
             cwd = _term_cwd(hello.get('cwd'))
-            argv = lazygit_argv(cwd) if kind == 'git' else None
+            # `kind` is what a terminal *is*, and the only place argv is decided. A shell
+            # with a command typed into it would race the prompt and could not report a
+            # missing tool before the pty existed.
+            argv = (lazygit_argv(cwd) if kind == 'git' else
+                    gh_auth_argv() if kind == 'gh-auth' else None)
             key = hello.get('id') or kind
             env = None
             if kind != 'git' and (py := ws.pool.default_python):

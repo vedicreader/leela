@@ -386,3 +386,109 @@ def test_conflict_versions_resolution_operation_state_and_reflog(repo):
 def test_git_errors_are_readable(tmp_path):
     with pytest.raises(GitError, match='not inside a Git repository'):
         GitRepo.at(tmp_path)
+
+
+NOTEBOOK = {
+    'cells': [
+        {'cell_type': 'markdown', 'id': 'a1', 'metadata': {}, 'source': ['# title\n', '\n', 'prose\n']},
+        {'cell_type': 'code', 'id': 'b2', 'metadata': {}, 'execution_count': None, 'outputs': [],
+         'source': ['def add(a, b):\n', '    return a + b\n']},
+    ],
+    'metadata': {'kernelspec': {'display_name': 'python3', 'language': 'python', 'name': 'python3'}},
+    'nbformat': 4, 'nbformat_minor': 5,
+}
+
+
+def write_nb(path, cells):
+    import json
+    doc = {**NOTEBOOK, 'cells': cells}
+    path.write_text(json.dumps(doc, indent=1) + '\n')
+    return path
+
+
+def test_blaming_a_notebook_reports_cells_of_source_not_lines_of_json(repo):
+    """The whole point: `git blame` on an .ipynb blames `"source": [` and escaped newlines.
+
+    Each cell's source lines are matched back to the file lines that hold them, so the text
+    is the code you wrote and the attribution beside it is the one Git gave that line.
+    """
+    write_nb(repo/'nb.ipynb', NOTEBOOK['cells'])
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'add the notebook')
+
+    d = GitRepo.at(repo).blame_notebook('nb.ipynb')
+    assert d['notebook'] and not d['error']
+    assert [c['kind'] for c in d['cells']] == ['markdown', 'code']
+    assert [c['index'] for c in d['cells']] == [1, 2]
+    code = d['cells'][1]
+    assert [l['text'] for l in code['lines']] == ['def add(a, b):', '    return a + b']
+    assert [l['n'] for l in code['lines']] == [1, 2], 'numbered within the cell'
+    assert all(l['author'] == 'Leela tests' for l in code['lines'])
+    assert code['touched']['summary'] == 'add the notebook'
+    assert code['id'] == 'b2' and code['mapped']
+
+
+def test_a_notebook_cell_edited_later_shows_the_newer_commit(repo):
+    "The reason to blame a notebook at all: which cell is the recent one."
+    import os
+    # Distinct commit dates on purpose: author time has one-second resolution, and two
+    # commits made in the same second cannot be ordered from blame output at all.
+    write_nb(repo/'nb.ipynb', NOTEBOOK['cells'])
+    git(repo, 'add', '.')
+    old_env = os.environ.get('GIT_AUTHOR_DATE'), os.environ.get('GIT_COMMITTER_DATE')
+    os.environ['GIT_AUTHOR_DATE'] = os.environ['GIT_COMMITTER_DATE'] = '2024-01-01T09:00:00'
+    git(repo, 'commit', '-m', 'first')
+    changed = [NOTEBOOK['cells'][0],
+               {**NOTEBOOK['cells'][1], 'source': ['def add(a, b):\n', '    return a + b + 0\n']}]
+    write_nb(repo/'nb.ipynb', changed)
+    git(repo, 'add', '.')
+    os.environ['GIT_AUTHOR_DATE'] = os.environ['GIT_COMMITTER_DATE'] = '2024-02-02T09:00:00'
+    git(repo, 'commit', '-m', 'second')
+    for key, value in zip(('GIT_AUTHOR_DATE', 'GIT_COMMITTER_DATE'), old_env):
+        if value is None: os.environ.pop(key, None)
+        else: os.environ[key] = value
+
+    cells = GitRepo.at(repo).blame_notebook('nb.ipynb')['cells']
+    assert cells[0]['touched']['summary'] == 'first', 'the markdown cell was not touched'
+    assert cells[1]['touched']['summary'] == 'second'
+    # the unchanged line in the changed cell still belongs to the first commit
+    assert {l['summary'] for l in cells[1]['lines']} == {'first', 'second'}
+    assert len(cells[1]['commits']) == 2
+
+
+def test_an_uncommitted_notebook_line_is_marked_rather_than_attributed(repo):
+    """Working-tree lines are marked, not attributed to whoever came last.
+
+    This also pins the one limitation inherited from blaming JSON: appending to a cell
+    rewrites the line *before* it, because that entry gains a trailing comma. So the
+    previous last line is reported as uncommitted too. Documented in `blame_notebook`,
+    asserted here so it cannot change silently.
+    """
+    write_nb(repo/'nb.ipynb', NOTEBOOK['cells'])
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'first')
+    edited = [NOTEBOOK['cells'][0],
+              {**NOTEBOOK['cells'][1], 'source': ['def add(a, b):\n', '    return a + b\n', '    # new\n']}]
+    write_nb(repo/'nb.ipynb', edited)
+
+    cells = GitRepo.at(repo).blame_notebook('nb.ipynb')['cells']
+    fresh = [l['text'] for l in cells[1]['lines'] if l['uncommitted']]
+    assert '    # new' in fresh, 'the line that was actually added'
+    assert fresh == ['    return a + b', '    # new'], 'and the comma-touched one before it'
+    assert not any(l['uncommitted'] for l in cells[0]['lines']), 'the untouched cell is clean'
+    assert cells[1]['touched']['uncommitted']
+
+
+def test_a_notebook_that_cannot_be_mapped_says_so_instead_of_guessing(repo):
+    "A wrong line here attributes someone else's code to you, so it reports nothing instead."
+    import json
+    (repo/'min.ipynb').write_text(json.dumps(NOTEBOOK))       # one line, no indentation
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'minified')
+
+    d = GitRepo.at(repo).blame_notebook('min.ipynb')
+    assert d['notebook'] and len(d['cells']) == 2
+    # everything landed on the single physical line, so at most one cell can be mapped
+    assert sum(1 for c in d['cells'] if c['lines']) <= 1
+
+
+def test_a_file_that_is_not_a_notebook_falls_back_to_lines(repo):
+    d = GitRepo.at(repo).blame_notebook('src/app.py')
+    assert not d['notebook'] and d['error'] and d['lines'], 'the raw blame is still returned'

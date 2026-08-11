@@ -4,7 +4,7 @@ from leela.blocks.term.term import TerminalGate
 from leela.app import _shell
 from leela.workspace import Workspace
 
-from tests.assets import JS, CSS
+from tests.assets import CSS, JS, SERVER, read
 
 
 def test_status_is_a_prominent_timed_banner_with_a_busy_state():
@@ -200,12 +200,189 @@ def test_git_is_a_first_class_vertical_project_tab(tmp_path):
     assert 'lee-activity' in html and 'data-left="files"' in html and 'data-left="git"' in html
     assert 'id="gitpanel"' in html and 'lee-source-control' in html
     assert 'function leeLeft' in JS and 'async function renderGitPanel' in JS
-    assert '.lee-activity-btn.active' in CSS and '.lee-left.left-git .lee-files' in CSS
+    assert '.lee-activity-btn.active' in CSS
+    # Each view names the panels it shows; everything else in the column is hidden by the
+    # one rule above it. The guarantee is the same -- Git does not show the file tree.
+    assert '.lee-left-content > .lee-panel { display: none; }' in CSS
+    assert '.lee-left.left-git .lee-source-control' in CSS
     panel = JS[JS.index('async function renderGitPanel'):JS.index('async function branchActions')]
     for feature in ('Staged changes', 'Changes', 'Branches', 'Stashes', 'Remotes & tags'):
         assert feature in panel
     for op in ('fetch', 'pull', 'push', 'stash', 'tag', 'stage all', 'unstage all'):
         assert op in panel
+
+
+def test_workflows_are_a_panel_with_a_job_graph_in_it():
+    """The visual half: the activity tab, the levels, and the four views.
+
+    Playwright covers the behaviour where chromium exists; this is the part that has to
+    hold everywhere, because a panel wired to a route name that no longer exists fails
+    silently in the browser and loudly nowhere.
+    """
+    block = JS[JS.index('const wfUI ='):JS.index('const REL_MARK')]
+    assert "data_left='workflows'" in SERVER and "data_left='releases'" in SERVER
+    assert "api('/workflows'" in block and "post('/workflows/action'" in block
+    assert "api('/workflows/runs'" in block and "api('/workflows/env'" in block
+    assert 'function wfGraph' in block and 'lee-wf-level' in block and 'lee-wf-edge' in block
+    for view in ('Jobs', 'Add', 'Build', 'Runs', 'Environment'):
+        assert view in block
+    for op in ('run workflow', 'edit in builder', 'from gheasy config', 'Dockerfile'):
+        assert op in block
+    assert '.lee-wf-job' in CSS and '.lee-wf-graph' in CSS and '.lee-left.left-workflows' in CSS
+
+
+def test_the_picker_offers_a_list_and_says_why_each_one_is_recommended():
+    """The Add view: what the project is, what it could have, and why.
+
+    A picker that only listed workflows would be a menu; the reason beside each one is what
+    makes it a recommendation, and it comes from detection rather than from a preference.
+    """
+    block = JS[JS.index('function wfPickRows'):JS.index('function wfEnvRows')]
+    assert 'lee-wf-detect' in block and 'recommended' in block
+    assert 'data-pick-preview' in block and 'data-pick-add' in block
+    assert 'already here' in block, 'a workflow that exists is not offered again'
+    assert "api('/workflows/catalogue'" in JS and "op: op === 'add' ? 'add' : 'preview'" in JS
+    assert "['add', 'Add']" in JS, 'the picker is one of the panel views'
+    assert '.lee-wf-pick.recommended' in CSS and '.lee-wf-detect' in CSS
+
+
+def test_the_builder_is_a_form_rendered_from_the_servers_vocabulary():
+    """The answer to "I am not good at Actions": choose, do not type.
+
+    The form is generated from `/workflows/presets`, so the set of decisions a workflow has
+    is defined once in Python. Hard-coding any of it here in JS would be the bug.
+    """
+    block = JS[JS.index('const bldUI ='):JS.index('// -- the release pipeline')]
+    assert "api('/workflows/presets')" in block, 'the vocabulary is fetched, not hard-coded'
+    assert 'bldTrigger' in block and 'bldOption' in block and 'bldJob' in block
+    assert "o.type === 'flag'" in block and "o.type === 'lines'" in block
+    assert "op: 'build'" in block and "op: 'write_spec'" in block
+    assert 'scheduleBuild' in block, 'the YAML follows the form as it changes'
+    assert 'data-needs' in block, 'jobs wire to each other by needs'
+    assert 'The file has been edited' in block, 'a hand edit is not overwritten silently'
+    assert '.lee-bld-job' in CSS and '.lee-bld-trigger' in CSS
+
+
+def test_a_failure_names_the_package_and_opens_your_copy_of_it():
+    block = JS[JS.index('function blameRow'):JS.index('function relStepRow')]
+    assert 'your checkout' in block and 'installed copy' in block
+    assert 'data-blame-open' in block and 'leeOpenFile' in JS
+    assert 'scrollIntoView: true' in JS, 'landing on a line you cannot see is not landing on it'
+    assert '.lee-blame' in CSS
+
+
+def test_the_deploy_panel_shows_the_servers_and_tunnels_it_deploys_onto():
+    block = JS[JS.index('function depInfraRows'):JS.index('function renderDeployPanel')]
+    assert "api('/infra')" in block and "api('/infra/records?zone=" in block and "api('/stack'" in block
+    for word in ('servers', 'tunnels', 'zones'):
+        assert word in block
+    assert 'data-server-del' in block and 'data-tunnel-del' in block
+    assert 'delete this server' in block and 'confirmDialog' in JS
+    assert 'edits in your checkout are not what runs' in block, 'the shadowed package warning'
+    assert '.lee-inf-row' in CSS and '.lee-pkg.shadowed' in CSS
+
+
+def test_authenticating_opens_the_real_gh_login():
+    "It is a conversation with a browser and a one-time code; a form cannot hold it."
+    assert "openTerm('gh-auth')" in JS
+    assert "gh_auth_argv() if kind == 'gh-auth'" in SERVER
+    assert "kind === 'gh-auth' ? 'gh auth'" in JS
+
+
+def test_the_deploy_panel_shows_where_it_goes_before_it_goes_there():
+    block = JS[JS.index('const depUI ='):JS.index('async function renderGitPanel')]
+    assert "api('/deploys'" in block and "post('/deploys/action'" in block
+    for f in ('deploy.py', 'Dockerfile', 'docker-compose.yml', 'Caddyfile'):
+        assert f in block, 'the target card says which pieces exist'
+    assert ' not set</strong>' in block and 'Workflows → Environment' in block
+    assert "op: 'scaffold'" in block and 'write deploy.py' in block
+    assert "openReleaseTerm(d.root, 'deploy')" in block
+    assert '.lee-dep-files i.has' in CSS and '.lee-left.left-deploys' in CSS
+
+
+def test_blame_is_reachable_from_anywhere_and_groups_a_notebook_into_cells():
+    """Two separate things it needs to be useful.
+
+    Reach: it was only ever on a changed-file row, so a clean file -- almost every file --
+    had no way in at all. It is an action now, which means a chord, the palette, and the
+    four context menus that name it.
+
+    Shape: a notebook blamed as text is a list of `"source": [`, so the cell view shows the
+    decoded source with per-line attribution inside a per-cell summary.
+    """
+    block = JS[JS.index('function blameRelative'):JS.index('async function showGitBlame')]
+    assert 'function blameSelectionRange' in block, 'a text file blames what you selected'
+    assert 'function blameCells' in block and 'lee-blame-bar' in block
+    assert 'blameHue' in block, 'a cell made of three commits reads as three bands'
+    assert 'git_blame:' in JS and 'function leeBlame' in JS, 'it is a dispatchable action'
+    assert "Key('git_blame'" in read('leela/core/keys.py'), 'so it has a chord and a palette entry'
+    assert read('leela/blocks/keys/menus.py').count("S('git_blame')") >= 4, 'file, editor, cell and tab'
+    assert 'blame the whole file' in JS, 'the range answer is one button from the whole one'
+    assert '.lee-blame-cell' in CSS and '.lee-blame-legend' in CSS
+
+
+def test_the_drive_panel_shows_the_call_it_is_about_to_make():
+    """A button you cannot read is not a diagnostic.
+
+    The panel is the alternative to the deploy script, so it has to explain itself: the
+    package, what the call does, and the snippet with this project's values already in it.
+    """
+    block = JS[JS.index('const drvUI ='):JS.index('async function renderGitPanel')]
+    assert "api('/drive'" in block and "post('/drive/action'" in block
+    assert 'lee-drv-code' in block and '} the call</summary>' in block
+    assert 'lee-drv-pkg' in block, 'each part says which package it drives'
+    assert 'sets ' in block and 'writes ' in block, 'what a call leaves for the next one'
+    assert "openReleaseTerm(drvUI.data.root, 'drive')" in block
+    assert "data_left='drive'" in SERVER and '.lee-left.left-drive' in CSS
+    assert '.lee-drv-part.state-failed' in CSS
+
+
+def test_both_pipelines_share_one_terminal_socket():
+    "A release and a deploy differ in what they run and in nothing else, including this."
+    assert "url: kind === 'drive' ? '/drive/ws' : '/pipeline/ws'" in JS
+    assert "openReleaseTerm(root = '', kind = 'release')" in JS
+    # one implementation of the socket, three kinds over it
+    assert 'def pipeline_socket(' in read('leela/core/web.py')
+    assert SERVER.count("pipeline_socket(app, '") == 2, 'both blocks register through it'
+
+
+def test_the_environment_view_hides_secret_values_in_the_browser_too():
+    "The server never sends one; the client must not invent a place to show one either."
+    block = JS[JS.index('function wfEnvRows'):JS.index('function renderWorkflowsPanel')]
+    assert "'••••••••'" in block or '••••••••' in block
+    assert 'e.secret ?' in block, 'a secret and a variable are drawn differently'
+
+
+def test_the_release_pipeline_runs_steps_and_shows_them_in_a_terminal():
+    block = JS[JS.index('const REL_MARK'):JS.index('async function renderGitPanel')]
+    assert "api('/releases'" in block and "post('/releases/action'" in block
+    assert 'function openReleaseTerm' in JS and "'/pipeline/ws'" in JS
+    assert "termLabel('release'" in JS or "'release pipeline'" in JS
+    for op in ('retry', 'skip', 'stop', 'reset', 'edit steps'):
+        assert op in block
+    assert 'relPoll' in block, 'steps finish on their own, so the panel keeps asking'
+    assert 'missing' in block and 'Run anyway?' in block, 'it warns before a run it expects to fail'
+    assert '.lee-rel-step.state-failed' in CSS and '.lee-left.left-releases' in CSS
+
+
+def test_source_control_can_look_at_every_repository_in_the_workspace():
+    """The plural view, and the two rules that keep it from lying.
+
+    Every panel request carries the repository it is about, and the branch pill and tree
+    badges refuse to be repainted from a repository the active tab is not in.
+    """
+    block = JS[JS.index('function gitScope'):JS.index('async function loadGitReview')]
+    assert "function gitUrl" in JS and "q.set('repo', gitUI.repo)" in JS
+    assert "post('/git/action', {op, repo: gitUI.repo" in JS
+    assert 'if (gitUI.repo) return;' in JS, 'a pinned panel must not repaint the pill or tree'
+    assert "['repos','All repos']" in JS
+    assert "api('/git/repos'" in block and "post('/git/repos/action'" in block
+    for op in ('fetch all', 'pull all', 'push all', 'clone…', 'add repository…'):
+        assert op in block
+    assert 'data-repo-open' in block and 'data-repo-remove' in block and 'data-repos-op' in block
+    assert 'off branch' in block and 'unreleased' in block and 'expected_branch' in block
+    assert 'function gitPinRepo' in JS and 'gitUI.selectedChanges.clear()' in JS
+    assert '.lee-git-repo-row' in CSS and '.lee-git-repos-summary' in CSS and '.lee-git-scope' in CSS
 
 
 def test_git_compare_has_explicit_direction_and_works_from_branch_rows():
@@ -218,7 +395,7 @@ def test_git_compare_has_explicit_direction_and_works_from_branch_rows():
     assert '.lee-git-compare-fields' in CSS and '.lee-git-compare-summary' in CSS
     assert 'function gitReviewView' in block and 'function showMergePreview' in block
     assert 'snapshot differences' in block and 'swap direction' in block
-    assert '/git/review/file?' in block and '/git/merge-preview?' in block
+    assert "gitUrl('/git/review/file'" in block and "gitUrl('/git/merge-preview'" in block
     assert '.lee-git-full-review' in CSS and '.lee-git-merge-preview' in CSS
 
 
@@ -237,8 +414,8 @@ def test_git_diffs_open_as_editor_tabs_with_unified_and_split_layouts():
 
 
 def test_git_history_inspects_commits_and_opens_each_file_without_a_full_patch_modal():
-    assert "api('/git/commit/review?ref='" in JS
-    assert "api('/git/commit/file?ref='" in JS
+    assert "gitUrl('/git/commit/review', {ref})" in JS
+    assert "gitUrl('/git/commit/file', {ref, path})" in JS
     assert 'function gitCommitInspector' in JS and 'data-history-commit' in JS
     assert 'openGitCommitFile' in JS and "kind: 'commit'" in JS
     assert '.lee-git-commit-inspector' in CSS and '.lee-git-commit-file' in CSS

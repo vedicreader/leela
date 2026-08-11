@@ -22,7 +22,7 @@ from starlette.staticfiles import StaticFiles
 from .. import errstr
 
 __all__ = ['asset_dir', 'static_dirs', 'Assets', 'asset', 'fail', 'sse', 'off_loop',
-           'diff_payload', 'found']
+           'diff_payload', 'found', 'pipeline_socket']
 
 
 def asset_dir(name):
@@ -91,6 +91,71 @@ def sse(event, data):
 def off_loop(fn, *a, **kw):
     "Run blocking research, indexing and model work on fastcore's worker thread."
     return fn(*a, **kw)
+
+
+def pipeline_socket(app, path, gate, resolve):
+    """Register a websocket that shows one pipeline's terminal.
+
+    Shared because a release, a deploy and a driven part are the same thing on the wire: a
+    JSON hello carrying the terminal token, then raw bytes both ways, which is exactly what
+    `/term/ws` speaks and therefore what the browser's xterm already knows how to render.
+
+    `resolve(hello)` returns the pipeline the connection is about. It is a callback rather
+    than an object because the pipelines are per project and per kind, and which one a viewer
+    wants is in the hello it has not sent yet.
+
+    A raw Starlette route on purpose: FastHTML's own `ws` wrapper injects parameters by name
+    and would hand the handler `None` instead of the socket, and a pty needs the socket.
+    """
+    import asyncio
+    import json
+
+    from starlette.routing import WebSocketRoute
+
+    async def handler(sock):
+        # Imported here rather than closed over: `tests/test_route_owners` reads a route's
+        # owner out of its closure, and a module-level helper captured here would make this
+        # socket look as though `leela` itself served it instead of the block that
+        # registered it.
+        from .. import errstr
+        await sock.accept()
+        pipeline = q = None
+        try:
+            hello = json.loads((await sock.receive()).get('text') or '{}')
+            gate.check(hello.get('token'))          # the same boundary a pty always has
+            pipeline = resolve(hello)
+            pipeline.resize(int(hello.get('cols') or 100), int(hello.get('rows') or 30))
+            q = pipeline.subscribe()
+        except Exception as e:
+            await sock.send_text(json.dumps({'t': 'error', 'error': errstr(e)}))
+            await sock.close()
+            return
+
+        async def to_browser():
+            while True: await sock.send_bytes(await q.get())
+
+        async def from_browser():
+            while True:
+                m = await sock.receive()
+                if m['type'] == 'websocket.disconnect': return
+                if (b := m.get('bytes')) is not None: pipeline.write(b)
+                elif (text := m.get('text')) is not None:
+                    c = json.loads(text)
+                    if c.get('t') == 'size': pipeline.resize(c.get('cols', 100), c.get('rows', 30))
+
+        send = asyncio.create_task(to_browser())
+        recv = asyncio.create_task(from_browser())
+        try:
+            await asyncio.wait({send, recv}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            pipeline.unsubscribe(q)
+            for task in (send, recv):
+                if not task.done(): task.cancel()
+            try: await sock.close()
+            except Exception: pass
+
+    app.router.routes.append(WebSocketRoute(path, handler))
+    return handler
 
 
 def diff_payload(was, now):

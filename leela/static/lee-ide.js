@@ -700,6 +700,7 @@ const ACTIONS = {
   ai_complete:  aiComplete,
   show_docs:    showDocs,
   show_diff:    showDiff,
+  git_blame:    leeBlame,
   find_similar: findSimilar,
   code_map:     codeMap,
 
@@ -899,7 +900,7 @@ async function activateGitDiffTab(key) {
     if (data.mergeResult == null) return;
     const message = `Replace the working-tree version of ${data.path} with this reviewed result? The file will remain uncommitted.`;
     if (!await confirmDialog('apply split diff result', message, 'apply result')) return;
-    try { const next = await gitDo('write_worktree', {path: data.path, content: data.mergeResult}), fresh = await api('/git/diff?path=' + encodeURIComponent(data.path) + '&staged=false'); data.base = 'index'; data.head = 'worktree'; data.baseLabel = 'index'; data.headLabel = 'working tree'; data.left = fresh.left || ''; data.right = fresh.right || ''; data.patch = fresh.content || fresh.text || ''; data.rawPatch = fresh.text || ''; data.group = 'unstaged'; data.mergeResult = null; gitUI.review = null; paintGitPill(next); await activateGitDiffTab(key); status(`${data.path} updated in the working tree`, 'ok'); }
+    try { const next = await gitDo('write_worktree', {path: data.path, content: data.mergeResult}), fresh = await api(gitUrl('/git/diff', {path: data.path, staged: false})); data.base = 'index'; data.head = 'worktree'; data.baseLabel = 'index'; data.headLabel = 'working tree'; data.left = fresh.left || ''; data.right = fresh.right || ''; data.patch = fresh.content || fresh.text || ''; data.rawPatch = fresh.text || ''; data.group = 'unstaged'; data.mergeResult = null; gitUI.review = null; paintGitPill(next); await activateGitDiffTab(key); status(`${data.path} updated in the working tree`, 'ok'); }
     catch (e) { status(e.message || String(e), 'err'); }
   });
   const body = host.querySelector('.lee-diff-document-body');
@@ -4212,7 +4213,7 @@ function nextTermId(kind) {
   do { lee.termSeq += 1; } while (lee.terms.has('term-' + lee.termSeq));
   return 'term-' + lee.termSeq;
 }
-function termLabel(kind, id) { return kind === 'git' ? 'lazygit' : `terminal ${id.split('-').pop()}`; }
+function termLabel(kind, id) { return kind === 'git' ? 'lazygit' : kind === 'release' ? 'release pipeline' : kind === 'deploy' ? 'deploy' : kind === 'drive' ? 'drive' : kind === 'gh-auth' ? 'gh auth' : `terminal ${id.split('-').pop()}`; }
 function paintTermTabs() {
   const bar = $('#termtabs'); if (!bar) return;
   bar.innerHTML = [...lee.terms.entries()].map(([id, t]) =>
@@ -4227,12 +4228,20 @@ function leeLeft(which = 'files') {
   left.classList.toggle('left-files', which === 'files');
   left.classList.toggle('left-symbols', which === 'symbols');
   left.classList.toggle('left-git', which === 'git');
+  left.classList.toggle('left-workflows', which === 'workflows');
+  left.classList.toggle('left-releases', which === 'releases');
+  left.classList.toggle('left-deploys', which === 'deploys');
+  left.classList.toggle('left-drive', which === 'drive');
   $$('.lee-activity-btn', left).forEach(b => {
     const active = b.dataset.left === which; b.classList.toggle('active', active);
     b.setAttribute('aria-pressed', String(active));
   });
   localStorage.setItem('lee-left-view', which);
   if (which === 'git') { setScope('files'); renderGitPanel(); }
+  else if (which === 'workflows') { setScope('files'); leeWorkflows(); }
+  else if (which === 'releases') { setScope('files'); leeReleases(); }
+  else if (which === 'deploys') { setScope('files'); leeDeploys(); }
+  else if (which === 'drive') { setScope('files'); leeDrive(); }
   else if (which === 'symbols') { setScope('files'); leeSymbols(); }
   else { setScope('files'); requestAnimationFrame(() => $('#filetree')?.focus()); }
 }
@@ -4299,6 +4308,29 @@ async function openTerm(kind = 'shell', forceNew = false) {
     token: d.token, cwd: d.cwd, kind, id,
     onStatus: m => status(`${record.label}: ${m}`),
     onExit: () => { record.exited = true; paintTermTabs(); status(`${record.label} exited`); },
+  });
+  lee.terms.set(id, record); switchTerm(id);
+}
+// The pipeline's pty is opened by the pipeline, not by whoever attaches, so this
+// terminal talks to `/release/ws` instead of `/term/ws`. Everything else -- the theme, the
+// keyboard, the dock tab -- is the same component the shell uses. `cwd` carries the project
+// root, which is the only thing that socket needs to know which pipeline is being watched.
+async function openReleaseTerm(root = '', kind = 'release') {
+  await loadTermBundle();
+  const d = await api('/term/info');
+  if (!d.enabled) return status(d.why, 'err');
+  const id = kind;
+  if (lee.terms.has(id)) return switchTerm(id);
+  $('#shell').classList.add('show-term');
+  const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
+  const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
+  host.dataset.term = id; parent.appendChild(host);
+  const record = {id, kind, label: termLabel(kind, id), cwd: root || d.cwd, host, view: null};
+  record.view = LeeTerm.create(host, {
+    token: d.token, cwd: root || d.cwd, kind, id,
+    url: kind === 'drive' ? '/drive/ws' : '/pipeline/ws',
+    onStatus: m => status(`${termLabel(kind, id)}: ${m}`),
+    onExit: () => { record.exited = true; paintTermTabs(); },
   });
   lee.terms.set(id, record); switchTerm(id);
 }
@@ -4585,10 +4617,23 @@ let savedGitLists = {}, savedGitReviews = {}, savedGitNotes = {};
 try { savedGitLists = JSON.parse(localStorage.getItem('lee-git-changelists') || '{}'); } catch (_) {}
 try { savedGitReviews = JSON.parse(localStorage.getItem('lee-git-reviews') || '{}'); } catch (_) {}
 try { savedGitNotes = JSON.parse(localStorage.getItem('lee-git-review-notes') || '{}'); } catch (_) {}
-const gitUI = {tab: 'changes', snapshot: null, history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
+const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResults: [], expect: '', history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
+// Which repository a panel request is about. Empty means the one the active tab lives in,
+// which is what the branch pill, the file tree and the editor's change marks always mean.
+function gitUrl(path, params = {}) {
+  const q = new URLSearchParams(params);
+  if (gitUI.repo) q.set('repo', gitUI.repo);
+  const query = q.toString();
+  return query ? `${path}?${query}` : path;
+}
+function gitRepoName(root) { return String(root || '').split('/').filter(Boolean).pop() || root; }
 function saveGitWorkflowState() { localStorage.setItem('lee-git-changelists', JSON.stringify(gitUI.changeLists)); localStorage.setItem('lee-git-reviews', JSON.stringify(gitUI.reviewed)); localStorage.setItem('lee-git-review-notes', JSON.stringify(gitUI.reviewNotes)); }
 function gitReviewKey(d, path) { return `${d.root || gitUI.snapshot?.root || ''}\0${d.base}\0${d.head}\0${d.mode}\0${path}`; }
 function paintGitPill(d) {
+  // The pill and the tree badges belong to the repository the active tab is in. A panel
+  // pinned to another repository in the workspace must not repaint them from a snapshot
+  // that is not theirs -- a clean pill over a dirty file tree is worse than no pill.
+  if (gitUI.repo) return;
   const git = $('#gitpill'); if (!git || !d) return;
   const n = (d.changes || []).length;
   git.textContent = `${d.branch}${n ? ' · ' + n : ''}${d.ahead ? ' · ↑' + d.ahead : ''}${d.behind ? ' · ↓' + d.behind : ''}`;
@@ -4599,8 +4644,8 @@ function paintGitPill(d) {
 async function gitDo(op, extra = {}) {
   const started = performance.now(); gitUI.busy = op; status(`git ${op.replaceAll('_', ' ')}…`);
   try {
-    const d = await post('/git/action', {op, ...extra});
-    gitUI.snapshot = d; paintGitPill(d); paintGitTree(d);
+    const d = await post('/git/action', {op, repo: gitUI.repo, ...extra});
+    gitUI.snapshot = d; paintGitPill(d);
     status(`git ${op.replaceAll('_', ' ')} complete · ${Math.round(performance.now() - started)} ms`, 'ok');
     return d;
   } finally { gitUI.busy = ''; }
@@ -4613,7 +4658,7 @@ function gitOperationBanner(d) {
     `${op.can_abort ? '<button data-operation="abort" class="warn">abort</button>' : ''}</section>`;
 }
 function gitNav() {
-  return `<nav class="lee-git-nav" aria-label="Source control views">${[['changes','Changes'],['review','Review'],['branches','Branches'],['history','History'],['resources','Repository']].map(([id, label]) =>
+  return `<nav class="lee-git-nav" aria-label="Source control views">${[['changes','Changes'],['review','Review'],['branches','Branches'],['history','History'],['resources','Repository'],['repos','All repos']].map(([id, label]) =>
     `<button data-git-tab="${id}" class="${gitUI.tab === id ? 'active' : ''}">${label}</button>`).join('')}</nav>`;
 }
 function gitSummary(d) {
@@ -4700,16 +4745,817 @@ function gitResourcesView(d) {
     `<section class="lee-git-resource"><header><strong>Worktrees</strong><button id="gitaddworktree">add worktree</button></header><div id="gitworktrees"><div class="lee-git-loading"><small>reading worktrees</small></div></div></section>` +
     `<section class="lee-git-resource"><header><strong>Submodules</strong></header><div id="gitsubmodules"><div class="lee-git-loading"><small>reading submodules</small></div></div></section>`;
 }
+function gitScope() {
+  if (!gitUI.repo) return '';
+  return `<div class="lee-git-scope" title="The branch pill, tree badges and editor change marks still follow the file you have open."><b>${esc(gitRepoName(gitUI.repo))}</b>` +
+    `<span>pinned</span><span class="lee-spacer"></span><button id="gitscopeclear">follow active tab</button></div>`;
+}
+function gitRepoBadges(r) {
+  if (r.error) return `<i class="warn">${esc(r.error)}</i>`;
+  return [r.changed ? `<i class="warn">${r.changed} changed</i>` : '<i>clean</i>',
+    r.behind ? `<i class="warn">↓${r.behind}</i>` : '', r.ahead ? `<i>↑${r.ahead}</i>` : '',
+    r.upstream ? '' : '<i>unpublished</i>', r.off_branch ? '<i class="warn">off branch</i>' : '',
+    r.unreleased ? `<i>${r.unreleased} since ${esc(r.tag)}</i>` : '',
+    r.operation ? `<i class="warn">${esc(r.operation)} in progress</i>` : ''].filter(Boolean).join('');
+}
+function gitReposView() {
+  const d = gitUI.repos;
+  if (!d) return '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading repositories</small></div>';
+  const s = d.summary || {}, rows = d.repos || [];
+  const results = gitUI.reposResults.length ? `<details class="lee-sc-group" open><summary><span>Last run</span><b>${gitUI.reposResults.length}</b></summary>` +
+    `<div class="lee-git-repo-results">${gitUI.reposResults.map(r => `<article class="${r.ok === false ? 'failed' : r.skipped ? 'skipped' : 'done'}">` +
+      `<strong>${esc(r.name || r.spec || '')}</strong><span>${esc(r.error || r.skipped || r.output || 'done')}</span></article>`).join('')}</div></details>` : '';
+  const list = rows.length ? rows.map(r => `<article class="lee-git-repo-row${r.root === gitUI.repo ? ' active' : ''}${r.off_branch ? ' off-branch' : ''}" data-repo="${esc(r.root)}" title="${esc(r.root)}">` +
+    `<button data-repo-open title="Point source control at this repository">${r.root === gitUI.repo ? '●' : '○'}</button>` +
+    `<div class="lee-git-repo-copy"><strong>${esc(r.name)}</strong><span>${esc(r.branch || 'no branch')}${r.upstream ? ' · ' + esc(r.upstream) : ''}</span>` +
+    `<small>${esc(r.last_commit?.subject || 'no commits yet')}${r.last_commit?.timestamp ? ' · ' + gitRelative(r.last_commit.timestamp) : ''}</small>` +
+    `<div class="lee-git-badges">${gitRepoBadges(r)}<button data-repo-fetch title="Fetch this repository">fetch</button></div></div>` +
+    `<button data-repo-remove title="Stop listing this repository here" aria-label="Stop listing this repository">×</button></article>`).join('') :
+    `<div class="lee-git-empty-state"><strong>No repositories in this workspace</strong><span>Open a folder that is a checkout or holds them, clone one, or add a checkout from elsewhere.</span></div>`;
+  return `<section class="lee-git-repos-summary"><strong>${s.repos || 0} repositor${s.repos === 1 ? 'y' : 'ies'}</strong>` +
+    `${s.dirty ? `<span class="warn">${s.dirty} dirty</span>` : '<span>all clean</span>'}` +
+    `${s.behind ? `<span class="warn">${s.behind} behind</span>` : ''}${s.ahead ? `<span>${s.ahead} ahead</span>` : ''}` +
+    `${s.off_branch ? `<span class="warn">${s.off_branch} off branch</span>` : ''}` +
+    `${s.unreleased ? `<span>${s.unreleased} unreleased</span>` : ''}${s.errors ? `<span class="warn">${s.errors} unreadable</span>` : ''}</section>` +
+    `<div class="lee-sc-actions"><button data-repos-op="status">refresh</button><button data-repos-op="fetch">fetch all</button>` +
+    `<button data-repos-op="pull">pull all</button><button data-repos-op="push">push all</button>` +
+    `<button id="gitrepoclone">clone…</button><button id="gitrepoadd">add repository…</button></div>` +
+    `<div class="lee-git-filter"><input id="gitrepoexpect" class="lee-input" value="${esc(gitUI.expect)}" placeholder="Expected branch — default: ${esc(d.expected_branch || 'the one most share')}" aria-label="Expected branch"></div>` +
+    `<div class="lee-git-repo-list">${list}</div>` + results;
+}
+async function loadGitRepos() {
+  try { gitUI.repos = await api('/git/repos' + (gitUI.expect ? '?expect=' + encodeURIComponent(gitUI.expect) : '')); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);
+}
+async function gitReposDo(op, extra = {}) {
+  const started = performance.now();
+  status(`workspace ${op}…`);
+  try {
+    const d = await post('/git/repos/action', {op, expect: gitUI.expect, ...extra});
+    gitUI.repos = d; gitUI.reposResults = d.results || [];
+    const failed = gitUI.reposResults.filter(r => r.ok === false).length;
+    const skipped = gitUI.reposResults.filter(r => r.ok !== false && r.skipped).length;
+    const done = gitUI.reposResults.length - failed - skipped;
+    status(`workspace ${op}: ${done} done · ${skipped} skipped · ${failed} failed · ${Math.round(performance.now() - started)} ms`,
+           failed ? 'err' : 'ok');
+    if (gitUI.repo && !(d.repos || []).some(r => r.root === gitUI.repo)) gitUI.repo = '';
+    gitUI.snapshot = null;
+    await renderGitPanel();
+    refreshProjectPills();
+    return d;
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+// Pinning is a scope change, not a filter: every ref, commit and review already loaded
+// belongs to the repository being left, so all of it goes rather than being shown against
+// the wrong one.
+async function gitPinRepo(root, tab = 'changes') {
+  gitUI.repo = String(root || '');
+  gitUI.snapshot = null; gitUI.history = []; gitUI.review = null; gitUI.reviewFile = ''; gitUI.reviewPatch = '';
+  gitUI.reviewBase = ''; gitUI.reviewHead = ''; gitUI.compareFrom = ''; gitUI.compareTo = '';
+  gitUI.selectedCommit = null; gitUI.selectedChanges.clear();
+  gitUI.tab = tab;
+  await renderGitPanel();
+  if (!gitUI.repo) refreshProjectPills();
+}
+
+/* ------------------------------------------------- workflows and the release pipeline */
+// Both panels are about a project rather than a file, so they ask the same question the
+// source-control panel does -- which repository -- and answer it the same way: empty means
+// the one the active tab is in.
+const wfUI = {data: null, runs: null, env: null, catalogue: null, docker: null, open: '', view: 'graph', preview: '', busy: ''};
+const relUI = {data: null, busy: '', poll: 0};
+function projectRepo() { return gitUI.repo || ''; }
+function projectQuery(params = {}) {
+  const q = new URLSearchParams(params);
+  if (projectRepo()) q.set('repo', projectRepo());
+  const query = q.toString();
+  return query ? `?${query}` : '';
+}
+function wfStatusNote(st) {
+  if (!st) return '';
+  if (!st.gheasy) return `<div class="lee-wf-note"><strong>Local only</strong><span>${esc(st.why)}</span><code>pip install "leela[github]"</code></div>`;
+  if (!st.repo) return '<div class="lee-wf-note"><strong>No GitHub remote</strong><span>Runs and secrets need one; the files below still read.</span></div>';
+  if (!st.token) return `<div class="lee-wf-note"><strong>No GITHUB_TOKEN</strong><span>Set it in Environment below and the run history appears.</span></div>`;
+  return '';
+}
+function wfJobBox(job, run) {
+  const jr = (run?.jobs || []).find(j => j.name === job.name || j.name === job.id);
+  const state = jr ? (jr.conclusion || jr.status || '') : '';
+  return `<article class="lee-wf-job ${state ? 'state-' + esc(state) : ''}" data-job="${esc(job.id)}">` +
+    `<header><strong>${esc(job.name)}</strong>${state ? `<i>${esc(state)}</i>` : ''}</header>` +
+    `<small>${esc(job.runs_on || job.uses || '')}${job.environment ? ' · ' + esc(job.environment) : ''}</small>` +
+    `${job.if ? `<code class="lee-wf-if">if ${esc(job.if)}</code>` : ''}` +
+    `<ol class="lee-wf-steps">${job.steps.map(st => `<li title="${esc(st.uses || st.run)}">${esc(st.name)}</li>`).join('')}</ol></article>`;
+}
+function wfGraph(wf, run) {
+  if (wf.error) return `<div class="lee-git-empty-state"><strong>${esc(wf.file)}</strong><span>${esc(wf.error)}</span></div>`;
+  if (!wf.jobs.length) return `<div class="lee-git-empty-state"><strong>No jobs</strong><span>${esc(wf.file)} declares no jobs.</span></div>`;
+  const byId = Object.fromEntries(wf.jobs.map(j => [j.id, j]));
+  return `<div class="lee-wf-graph">${wf.levels.map((row, i) => `<div class="lee-wf-level">` +
+    `${i ? '<span class="lee-wf-edge" aria-hidden="true"></span>' : ''}` +
+    `<div class="lee-wf-row">${row.map(id => wfJobBox(byId[id], run)).join('')}</div></div>`).join('')}</div>`;
+}
+function wfRunRow(r) {
+  const state = r.conclusion || r.status || '';
+  return `<button class="lee-wf-run state-${esc(state)}" data-run="${r.id}" data-url="${esc(r.url)}">` +
+    `<b>${state === 'success' ? '✓' : state === 'failure' ? '✗' : state === 'in_progress' ? '•' : '·'}</b>` +
+    `<span><strong>${esc(r.title || r.name || r.file)}</strong><small>${esc(r.file)} · ${esc(r.branch)} · ${esc(r.event)}${r.actor ? ' · ' + esc(r.actor) : ''}</small></span>` +
+    `<small>#${r.number || ''}</small></button>`;
+}
+function wfPickRows(cat) {
+  if (!cat) return '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the project</small></div>';
+  const d = cat.detect || {};
+  const tags = Object.entries(d).filter(([k, v]) => v === true).map(([k]) => `<i>${esc(k)}</i>`).join('');
+  const rows = (cat.workflows || []).map(w => `<article class="lee-wf-pick${w.recommended ? ' recommended' : ''}${w.present ? ' present' : ''}" data-pick="${esc(w.id)}">` +
+    `<div><strong>${esc(w.name)}</strong><small>${esc(w.doc)}</small>` +
+    `${w.recommended ? `<i class="lee-wf-because">recommended · ${esc(w.why)}</i>` : ''}</div>` +
+    `<span class="lee-wf-pickfile">${esc(w.file)}</span>` +
+    `<button data-pick-preview>preview</button>` +
+    `${w.present ? '<span class="lee-wf-has">already here</span>' : '<button data-pick-add>add</button>'}</article>`).join('');
+  return `<div class="lee-wf-detect"><strong>detected</strong>${tags || '<i>nothing conclusive</i>'}` +
+    `${d.build ? `<code>${esc(d.build)}</code>` : d.build_why ? `<small>${esc(d.build_why)}</small>` : ''}</div>` +
+    `<div class="lee-wf-picks">${rows}</div>`;
+}
+function wfEnvRows(entries) {
+  if (!entries?.length) return '<div class="lee-git-empty-state"><strong>Nothing declared</strong><span>Add <code>env_schema</code> to .gheasy/config.json, or a release step that needs a key.</span></div>';
+  return entries.map(e => `<article class="lee-wf-env${e.set ? ' is-set' : ''}" data-env="${esc(e.key)}">` +
+    `<div><strong>${esc(e.key)}</strong><small>${e.target}${e.declared ? '' : ' · from a release step'}</small></div>` +
+    `<span class="lee-wf-envval">${e.secret ? (e.set ? '••••••••' : 'not set') : esc(e.value || 'not set')}</span>` +
+    `<button data-env-set>${e.set ? 'change' : 'set'}</button>${e.set ? '<button data-env-unset aria-label="remove">×</button>' : ''}</article>`).join('');
+}
+function renderWorkflowsPanel() {
+  const host = $('#workflowspanel'); if (!host) return;
+  const d = wfUI.data;
+  if (!d) { host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading workflows</small></div>'; return; }
+  const st = d.status || {};
+  const wf = d.workflows.find(w => w.file === wfUI.open) || d.workflows[0];
+  if (wf) wfUI.open = wf.file;
+  const tabs = d.workflows.map(w => `<button data-wf="${esc(w.file)}" class="${w.file === wfUI.open ? 'active' : ''}">${esc(w.name)}</button>`).join('');
+  const runsFor = (wfUI.runs || []).filter(r => !wf || !r.file || r.file === wf.file);
+  const body = wfUI.view === 'runs'
+    ? `<div class="lee-wf-runs">${runsFor.length ? runsFor.map(wfRunRow).join('')
+        : `<div class="lee-git-empty-state"><strong>No runs</strong><span>${st.token ? 'This workflow has not run yet.' : 'Connect a token to see run history.'}</span></div>`}</div>`
+    : wfUI.view === 'add'
+    ? wfPickRows(wfUI.catalogue)
+    : wfUI.view === 'build'
+    ? renderBuilder()
+    : wfUI.view === 'yaml'
+    ? `<pre class="lee-wf-yaml">${esc(wfUI.preview || 'Generate to preview the workflow gheasy would write from .gheasy/config.json.')}</pre>`
+    : wf ? wfGraph(wf, wfUI.runJobs) : '<div class="lee-git-empty-state"><strong>No workflows</strong><span>This project has no .github/workflows yet.</span></div>';
+  host.innerHTML = wfStatusNote(st) +
+    `<header class="lee-sc-branch"><div><strong>${esc(st.repo || d.root.split('/').pop())}</strong><span>${d.workflows.length} workflow${d.workflows.length === 1 ? '' : 's'}${d.config ? ' · gheasy config' : ''}</span></div></header>` +
+    `<nav class="lee-git-nav" aria-label="Workflow views">${[['graph', 'Jobs'], ['add', 'Add'], ['build', 'Build'], ['runs', 'Runs'], ['env', 'Environment']].map(([id, label]) =>
+      `<button data-wf-view="${id}" class="${wfUI.view === id ? 'active' : ''}">${label}</button>`).join('')}</nav>` +
+    (wfUI.view === 'add' || wfUI.view === 'build'
+      ? `<main class="lee-wf-body">${body}</main>`
+      : wfUI.view === 'env'
+      ? `<div class="lee-sc-actions"><button data-wf-env="refresh">refresh</button>` +
+        `${st.gh_cli && !st.gh_auth ? '<button data-wf-env="auth">gh auth login…</button>' : ''}` +
+        `<button data-wf-env="push" ${st.gh_auth ? '' : 'title="pushing uses the GitHub CLI"'}>push declared to GitHub</button>` +
+        `<button data-wf-env="add">add key…</button></div>` +
+        `<div class="lee-wf-envs">${wfEnvRows(wfUI.env?.entries)}</div>`
+      : `<div class="lee-wf-tabs">${tabs}</div>` +
+        `<div class="lee-sc-actions">${wf?.dispatchable ? '<button data-wf-op="dispatch">run workflow</button>' : ''}` +
+        `<button data-wf-op="open">open file</button><button data-wf-op="edit">edit in builder</button>` +
+        `<button data-wf-op="generate">from gheasy config</button>` +
+        `${d.config ? '<button data-wf-op="write">write gheasy.yml</button>' : ''}` +
+        `<button data-wf-op="docker">Dockerfile…</button></div>` +
+        `<main class="lee-wf-body">${body}</main>`);
+  wireWorkflowsPanel(host, d, wf);
+  if (wfUI.view === 'build') wireBuilder(host);
+}
+function wireWorkflowsPanel(host, d, wf) {
+  host.querySelectorAll('[data-wf-view]').forEach(b => b.onclick = () => {
+    wfUI.view = b.dataset.wfView; renderWorkflowsPanel();
+    if (wfUI.view === 'runs' && !wfUI.runs) loadWorkflowRuns();
+    if (wfUI.view === 'add' && !wfUI.catalogue) loadWorkflowCatalogue();
+    if (wfUI.view === 'build' && !bldUI.vocab) loadBuilder(wfUI.open);
+    if (wfUI.view === 'env' && !wfUI.env) loadWorkflowEnv();
+  });
+  host.querySelectorAll('[data-wf]').forEach(b => b.onclick = () => { wfUI.open = b.dataset.wf; wfUI.runJobs = null; renderWorkflowsPanel(); });
+  host.querySelectorAll('[data-wf-op]').forEach(b => b.onclick = () => workflowOp(b.dataset.wfOp, wf));
+  host.querySelector('[data-wf-op="edit"]')?.addEventListener('click', () => { wfUI.view = 'build'; loadBuilder(wf?.file); });
+  host.querySelectorAll('.lee-wf-pick').forEach(row => {
+    const id = row.dataset.pick;
+    row.querySelector('[data-pick-preview]').onclick = () => pickWorkflow('preview', id);
+    row.querySelector('[data-pick-add]')?.addEventListener('click', () => pickWorkflow('add', id));
+  });
+  host.querySelectorAll('[data-run]').forEach(b => b.onclick = async () => {
+    try { wfUI.runJobs = {jobs: (await api('/workflows/jobs' + projectQuery({id: b.dataset.run}))).jobs};
+          wfUI.view = 'graph'; renderWorkflowsPanel();
+          status('run ' + b.dataset.run + ': job results are on the graph', 'ok'); }
+    catch (e) { status(e.message || String(e), 'err'); }
+  });
+  host.querySelectorAll('[data-env]').forEach(row => {
+    const key = row.dataset.env;
+    row.querySelector('[data-env-set]').onclick = async () => {
+      const entry = (wfUI.env?.entries || []).find(e => e.key === key) || {};
+      const value = await inputDialog(`set ${key}`, entry.secret ? 'Value (stored in your keychain, never shown again)' : 'Value',
+                                      entry.secret ? '' : (entry.value || ''), entry.secret ? 'paste the token' : 'value');
+      if (value) envOp('set', {key, value, secret: !!entry.secret});
+    };
+    row.querySelector('[data-env-unset]')?.addEventListener('click', async () => {
+      if (await confirmDialog('remove value', `Remove ${key} from the keychain and the env file?`, 'remove')) envOp('unset', {key});
+    });
+  });
+  host.querySelectorAll('[data-wf-env]').forEach(b => b.onclick = async () => {
+    const op = b.dataset.wfEnv;
+    if (op === 'refresh') return loadWorkflowEnv(true);
+    // Authenticating is a conversation with a browser and a one-time code in it, so the
+    // button opens the real `gh auth login` rather than a form pretending to be one.
+    if (op === 'auth') { await openTerm('gh-auth'); return status('finish the login in the terminal, then refresh', 'ok'); }
+    if (op === 'push') {
+      if (await confirmDialog('push to GitHub', 'Send every declared value to this repository as a secret or a variable?', 'push')) envOp('push', {});
+      return;
+    }
+    const key = await inputDialog('add key', 'Environment key', '', 'GITHUB_TOKEN');
+    if (!key) return;
+    const value = await inputDialog(`set ${key}`, 'Value (stored in your keychain)', '', 'paste the value');
+    if (value) envOp('set', {key, value, secret: true});
+  });
+}
+async function leeWorkflows() {
+  try { wfUI.data = await api('/workflows' + projectQuery()); }
+  catch (e) { const host = $('#workflowspanel'); if (host) host.innerHTML = `<div class="lee-git-empty-state"><strong>No project</strong><span>${esc(e.message || e)}</span></div>`; return; }
+  renderWorkflowsPanel();
+  if (wfUI.view === 'runs' && !wfUI.runs) loadWorkflowRuns();
+  if (wfUI.view === 'add' && !wfUI.catalogue) loadWorkflowCatalogue();
+  if (wfUI.view === 'env' && !wfUI.env) loadWorkflowEnv();
+}
+window.leeWorkflows = leeWorkflows;
+async function loadWorkflowCatalogue() {
+  try { wfUI.catalogue = await api('/workflows/catalogue' + projectQuery()); }
+  catch (e) { status(e.message || String(e), 'err'); return; }
+  renderWorkflowsPanel();
+}
+async function pickWorkflow(op, id) {
+  try {
+    const d = await post('/workflows/action', {op: op === 'add' ? 'add' : 'preview', repo: projectRepo(), workflow: id});
+    if (d.yaml) { wfUI.preview = d.yaml; wfUI.view = 'yaml'; }
+    if (d.path) { status(`wrote ${d.path}`, 'ok'); wfUI.catalogue = null; loadWorkflowCatalogue(); }
+    if (d.workflows) wfUI.data = {...wfUI.data, workflows: d.workflows, status: d.status};
+    renderWorkflowsPanel();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function loadWorkflowRuns() {
+  if (!wfUI.data?.status?.token) { wfUI.runs = []; return renderWorkflowsPanel(); }
+  try { wfUI.runs = (await api('/workflows/runs' + projectQuery({limit: 20}))).runs; }
+  catch (e) { wfUI.runs = []; status(e.message || String(e), 'err'); }
+  renderWorkflowsPanel();
+}
+async function loadWorkflowEnv(remote = false) {
+  try { wfUI.env = await api('/workflows/env' + projectQuery(remote ? {remote: true} : {})); }
+  catch (e) { status(e.message || String(e), 'err'); return; }
+  renderWorkflowsPanel();
+}
+async function envOp(op, extra) {
+  try {
+    const d = await post('/workflows/env/action', {op, repo: projectRepo(), ...extra});
+    wfUI.env = {...(wfUI.env || {}), entries: d.entries};
+    if (d.results) {
+      const failed = d.results.filter(r => r.ok === false).length;
+      status(`pushed ${d.results.filter(r => r.ok && !r.skipped).length} · skipped ${d.results.filter(r => r.skipped).length} · failed ${failed}`, failed ? 'err' : 'ok');
+    } else status(`${extra.key} ${op === 'unset' ? 'removed' : 'saved'}`, 'ok');
+    renderWorkflowsPanel();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function workflowOp(op, wf) {
+  try {
+    if (op === 'open') { if (wf) leeOpenFile(wf.path); return; }
+    if (op === 'edit') return;                       // wired separately: it changes view, not state
+    if (op === 'docker') {
+      const d = await api('/workflows/docker' + projectQuery());
+      if (d.why) return status(d.why, 'err');
+      if (d.dockerfile) return status('this project already has a Dockerfile', 'ok');
+      if (!await confirmDialog('write Dockerfile', `dockeasy detected:\n\n${d.base}\n\nWrite this Dockerfile?`, 'write')) return;
+      op = 'dockerfile';
+    }
+    if (op === 'dispatch') {
+      const ref = await inputDialog('run workflow', 'Branch or tag to run on', '', 'leave empty for the current branch');
+      if (ref === null) return;
+      const d = await post('/workflows/action', {op, repo: projectRepo(), workflow: wf.file, ref});
+      wfUI.data = {...wfUI.data, workflows: d.workflows, status: d.status};
+      status(`dispatched ${wf.file} on ${d.ref}`, 'ok');
+      wfUI.view = 'runs'; setTimeout(loadWorkflowRuns, 1500);
+      return renderWorkflowsPanel();
+    }
+    const d = await post('/workflows/action', {op, repo: projectRepo()});
+    wfUI.data = {...wfUI.data, workflows: d.workflows, status: d.status};
+    if (d.yaml) { wfUI.preview = d.yaml; wfUI.view = 'yaml'; }
+    if (d.path) status(`wrote ${d.path}`, 'ok');
+    renderWorkflowsPanel();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+
+// -- the workflow builder ---------------------------------------------------------------
+// A form over gheasy's DSL. The vocabulary comes from the server as data, so a preset added
+// in leela/wfbuild.py appears here without a line of frontend -- and the form is the list of
+// decisions a workflow actually has, which is the part that is hard to learn from YAML.
+const bldUI = {vocab: null, spec: null, yaml: '', file: '', stale: false, timer: 0};
+function blankSpec() {
+  return {name: 'ci', file: 'ci.yml', on: {push: 'main', pull_request: 'main', workflow_dispatch: true},
+          jobs: [{preset: 'uv_test', needs: []}]};
+}
+function bldTrigger(t, on) {
+  const v = on[t.id];
+  const checked = t.kind === 'flag' ? !!v : (v !== undefined && v !== false && v !== '');
+  const field = t.kind === 'flag' ? '' :
+    `<input class="lee-input" data-trigger-value="${t.id}" value="${esc(checked ? String(v ?? t.default) : t.default)}" ` +
+    `placeholder="${esc(t.kind === 'cron' ? 'minute hour day month weekday' : 'main, release')}" ${checked ? '' : 'disabled'}>`;
+  return `<article class="lee-bld-trigger"><label><input type="checkbox" data-trigger="${t.id}" ${checked ? 'checked' : ''}>` +
+    `<strong>${esc(t.label)}</strong></label><small>${esc(t.doc)}</small>${field}</article>`;
+}
+function bldOption(o, job, i) {
+  const value = (job.options || {})[o.key] ?? o.default;
+  const field = o.type === 'flag'
+    ? `<input type="checkbox" data-opt="${o.key}" data-job="${i}" ${value ? 'checked' : ''}>`
+    : o.type === 'lines'
+    ? `<textarea class="lee-keyedit" rows="3" data-opt="${o.key}" data-job="${i}">${esc(value)}</textarea>`
+    : `<input class="lee-input" data-opt="${o.key}" data-job="${i}" value="${esc(value)}">`;
+  return `<label class="lee-bld-opt"><span>${esc(o.label)}</span>${field}${o.doc ? `<small>${esc(o.doc)}</small>` : ''}</label>`;
+}
+function bldJob(job, i, presets, spec) {
+  const preset = presets.find(p => p.id === job.preset) || presets[0];
+  const others = spec.jobs.map((j, n) => n === i ? null : (j.id || (presets.find(p => p.id === j.preset) || {}).job))
+                         .filter(Boolean);
+  const needs = (job.needs || []).join(', ');
+  return `<article class="lee-bld-job" data-job="${i}">` +
+    `<header><select data-preset="${i}">${presets.map(p => `<option value="${p.id}" ${p.id === job.preset ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>` +
+    `<button data-job-up="${i}" title="move earlier" ${i ? '' : 'disabled'}>↑</button>` +
+    `<button data-job-del="${i}" title="remove" aria-label="remove job">×</button></header>` +
+    `<small>${esc(preset.doc)}</small>` +
+    (others.length ? `<label class="lee-bld-opt"><span>waits for</span>` +
+      `<input class="lee-input" data-needs="${i}" value="${esc(needs)}" placeholder="${esc(others.join(', '))}"></label>` : '') +
+    preset.options.map(o => bldOption(o, job, i)).join('') + `</article>`;
+}
+function renderBuilder() {
+  const v = bldUI.vocab;
+  if (!v) return '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the presets</small></div>';
+  const spec = bldUI.spec || (bldUI.spec = blankSpec());
+  return `<div class="lee-bld">` +
+    `<div class="lee-bld-head"><label class="lee-bld-opt"><span>file</span><input class="lee-input" id="bldfile" value="${esc(spec.file || 'ci.yml')}"></label>` +
+    `<label class="lee-bld-opt"><span>name</span><input class="lee-input" id="bldname" value="${esc(spec.name || 'ci')}"></label></div>` +
+    `${bldUI.stale ? '<div class="lee-wf-note"><strong>The file has been edited</strong><span>Writing replaces those edits with what this form says.</span></div>' : ''}` +
+    `<section class="lee-bld-section"><header>when it runs</header>${v.triggers.map(t => bldTrigger(t, spec.on || {})).join('')}</section>` +
+    `<section class="lee-bld-section"><header>what it does<button id="bldaddjob">add job</button></header>` +
+    `${spec.jobs.map((j, i) => bldJob(j, i, v.presets, spec)).join('')}</section>` +
+    `<div class="lee-sc-actions"><button id="bldwrite">write ${esc(spec.file || 'ci.yml')}</button><button id="bldyaml">show YAML</button></div>` +
+    `${bldUI.yaml ? `<pre class="lee-wf-yaml">${esc(bldUI.yaml)}</pre>` : ''}</div>`;
+}
+function wireBuilder(host) {
+  const spec = bldUI.spec;
+  const touch = () => { renderWorkflowsPanel(); scheduleBuild(); };
+  host.querySelector('#bldfile')?.addEventListener('change', e => { spec.file = e.target.value.trim(); touch(); });
+  host.querySelector('#bldname')?.addEventListener('change', e => { spec.name = e.target.value.trim(); touch(); });
+  host.querySelectorAll('[data-trigger]').forEach(b => b.onchange = () => {
+    const id = b.dataset.trigger, t = bldUI.vocab.triggers.find(x => x.id === id);
+    spec.on = spec.on || {};
+    if (!b.checked) delete spec.on[id];
+    else spec.on[id] = t.kind === 'flag' ? true : t.default;
+    touch();
+  });
+  host.querySelectorAll('[data-trigger-value]').forEach(i => i.onchange = () => {
+    spec.on[i.dataset.triggerValue] = i.value.trim(); touch();
+  });
+  host.querySelector('#bldaddjob')?.addEventListener('click', () => { spec.jobs.push({preset: 'run', needs: []}); touch(); });
+  host.querySelectorAll('[data-preset]').forEach(sel => sel.onchange = () => {
+    const i = Number(sel.dataset.preset);
+    spec.jobs[i] = {preset: sel.value, needs: spec.jobs[i].needs || []};
+    touch();
+  });
+  host.querySelectorAll('[data-job-del]').forEach(b => b.onclick = () => { spec.jobs.splice(Number(b.dataset.jobDel), 1); touch(); });
+  host.querySelectorAll('[data-job-up]').forEach(b => b.onclick = () => {
+    const i = Number(b.dataset.jobUp); if (!i) return;
+    [spec.jobs[i - 1], spec.jobs[i]] = [spec.jobs[i], spec.jobs[i - 1]]; touch();
+  });
+  host.querySelectorAll('[data-needs]').forEach(i => i.onchange = () => {
+    spec.jobs[Number(i.dataset.needs)].needs = i.value.split(',').map(x => x.trim()).filter(Boolean);
+    touch();
+  });
+  host.querySelectorAll('[data-opt]').forEach(el => el.onchange = () => {
+    const job = spec.jobs[Number(el.dataset.job)];
+    job.options = job.options || {};
+    job.options[el.dataset.opt] = el.type === 'checkbox' ? el.checked : el.value;
+    scheduleBuild();
+  });
+  host.querySelector('#bldyaml')?.addEventListener('click', () => buildYaml(true));
+  host.querySelector('#bldwrite')?.addEventListener('click', async () => {
+    try {
+      const d = await post('/workflows/action', {op: 'write_spec', repo: projectRepo(), spec: bldUI.spec, file: bldUI.spec.file});
+      status(`wrote ${d.path}`, 'ok');
+      wfUI.data = {...wfUI.data, workflows: d.workflows, status: d.status};
+      wfUI.catalogue = null; bldUI.stale = false; wfUI.view = 'graph';
+      wfUI.open = bldUI.spec.file;
+      renderWorkflowsPanel();
+    } catch (e) { status(e.message || String(e), 'err'); }
+  });
+}
+function scheduleBuild() { clearTimeout(bldUI.timer); bldUI.timer = setTimeout(() => buildYaml(false), 350); }
+async function buildYaml(show) {
+  try {
+    const d = await post('/workflows/action', {op: 'build', repo: projectRepo(), spec: bldUI.spec});
+    if (show || bldUI.yaml) { bldUI.yaml = d.yaml; renderWorkflowsPanel(); }
+    else bldUI.yaml = '';
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function loadBuilder(file = '') {
+  if (!bldUI.vocab) { try { bldUI.vocab = await api('/workflows/presets'); } catch (e) { return status(e.message || String(e), 'err'); } }
+  if (file) {
+    try {
+      const d = await api('/workflows/spec' + projectQuery({file}));
+      if (d.spec) { bldUI.spec = d.spec; bldUI.stale = !!d.stale; }
+    } catch (e) {}
+  }
+  if (!bldUI.spec) bldUI.spec = blankSpec();
+  renderWorkflowsPanel();
+}
+
+// -- the release pipeline ------------------------------------------------------------
+const REL_MARK = {passed: '✓', failed: '✗', running: '•', skipped: '⤼', pending: '·'};
+// A failed step's traceback belongs to *someone*, and in a stack you own that is the whole
+// question. The server rewrote the path to the checkout in this workspace, so "open" lands
+// in the repository rather than in a copy under .venv that the next sync overwrites.
+function blameRow(b) {
+  if (!b || !b.package) return '';
+  const where = b.file ? `${b.package}/${b.file.split('/').slice(-1)[0]}:${b.line}` : b.package;
+  return `<div class="lee-blame"><strong>${esc(b.package)}</strong>` +
+    `<span>${esc(b.error || 'raised here')}</span>` +
+    `<code>${esc(where)}${b.fn ? ' in ' + esc(b.fn) : ''}</code>` +
+    `${b.checkout ? '<i>your checkout</i>' : '<i class="warn">installed copy</i>'}` +
+    `${b.open ? `<button data-blame-open="${esc(b.open)}" data-blame-line="${b.line}">open</button>` : ''}</div>`;
+}
+function wireBlame(host) {
+  host.querySelectorAll('[data-blame-open]').forEach(b => b.onclick = async () => {
+    try { await leeOpenFile(b.dataset.blameOpen); } catch (e) { return status(e.message || String(e), 'err'); }
+    // The line the traceback named, once the editor has actually mounted the file.
+    const line = Number(b.dataset.blameLine) || 0;
+    if (!line) return;
+    setTimeout(() => {
+      const view = lee.editors.get('file'); if (!view) return;
+      const doc = view.state.doc, at = doc.line(Math.max(1, Math.min(line, doc.lines)));
+      // `setCursor` deliberately does not scroll, so the move is dispatched with the
+      // scroll asked for -- landing on a line you cannot see is not landing on it.
+      view.dispatch({selection: {anchor: at.from}, scrollIntoView: true});
+      LeeCM.focus?.(view);
+    }, 350);
+  });
+}
+function relStepRow(s, d) {
+  const busy = d.running && s.status !== 'running';
+  return `<article class="lee-rel-step state-${s.status}" data-step="${esc(s.id)}">` +
+    `<b>${REL_MARK[s.status] || '·'}</b>` +
+    `<div><strong>${esc(s.label)}</strong><code>${esc(s.cmd)}</code>` +
+    `<small>${esc(s.doc || '')}${s.code !== null && s.code !== undefined ? ` · exit ${s.code}` : ''}</small>` +
+    `${s.missing.length ? `<i class="warn">needs ${s.missing.map(esc).join(', ')}</i>` : ''}</div>` +
+    `<span class="lee-rel-actions">` +
+    `${s.status === 'running' ? '<button data-rel="stop">stop</button>' :
+      `<button data-rel="step" ${busy ? 'disabled' : ''} title="run only this step">run</button>` +
+      `${s.status === 'failed' ? `<button data-rel="start" ${busy ? 'disabled' : ''} title="retry, then continue">retry</button><button data-rel="skip" title="mark done without running">skip</button>` : ''}`}` +
+    `</span></article>`;
+}
+function renderReleasesPanel() {
+  const host = $('#releasespanel'); if (!host) return;
+  const d = relUI.data;
+  if (!d) { host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the pipeline</small></div>'; return; }
+  const done = d.steps.filter(s => s.status === 'passed').length;
+  host.innerHTML =
+    `<header class="lee-sc-branch"><div><strong>${esc(d.root.split('/').pop())}</strong>` +
+    `<span>${d.nbdev ? 'nbdev project' : 'plain project'} · ${done}/${d.steps.length} done${d.configured ? ' · .leela/release.json' : ' · default pipeline'}</span></div></header>` +
+    `<div class="lee-sc-actions">` +
+    `${d.running ? '<button data-rel-top="stop" class="warn">stop</button>' : `<button data-rel-top="start">${d.failed ? 'continue' : 'run release'}</button>`}` +
+    `<button data-rel-top="terminal">terminal</button><button data-rel-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
+    `<button data-rel-top="edit">edit steps</button>${d.configured ? '<button data-rel-top="defaults">defaults</button>' : ''}</div>` +
+    `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the release terminal. Fix and retry, or skip it deliberately.</span></div>` : ''}` +
+    blameRow(d.blame) +
+    `<div class="lee-rel-steps">${d.steps.map(s => relStepRow(s, d)).join('')}</div>` +
+    `${d.needs.length ? `<div class="lee-rel-needs"><strong>needs</strong>${d.needs.map(k => `<i>${esc(k)}</i>`).join('')}<button data-rel-top="env">environment…</button></div>` : ''}`;
+  wireReleasesPanel(host, d);
+  wireBlame(host);
+  relPoll(d);
+}
+function wireReleasesPanel(host, d) {
+  host.querySelectorAll('[data-rel-top]').forEach(b => b.onclick = () => releaseTop(b.dataset.relTop, d));
+  host.querySelectorAll('.lee-rel-step').forEach(row => {
+    const step = row.dataset.step;
+    row.querySelectorAll('[data-rel]').forEach(b => b.onclick = () => releaseOp(b.dataset.rel, {step}));
+  });
+}
+function relPoll(d) {
+  clearTimeout(relUI.poll);
+  // Steps finish on their own and start the next one, so the panel has to keep asking.
+  // Only while something is running: an idle pipeline costs nothing.
+  if (d.running) relUI.poll = setTimeout(() => leeReleases(), 1200);
+}
+async function leeReleases() {
+  try { relUI.data = await api('/releases' + projectQuery()); }
+  catch (e) { const host = $('#releasespanel'); if (host) host.innerHTML = `<div class="lee-git-empty-state"><strong>No project</strong><span>${esc(e.message || e)}</span></div>`; return; }
+  renderReleasesPanel();
+}
+window.leeReleases = leeReleases;
+async function releaseOp(op, extra = {}) {
+  try {
+    relUI.data = await post('/releases/action', {op, repo: projectRepo(), ...extra});
+    if (op === 'start' || op === 'step') await openReleaseTerm(relUI.data.root, 'release');
+    renderReleasesPanel();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function releaseTop(op, d) {
+  if (op === 'terminal') return openReleaseTerm(d.root, 'release');
+  if (op === 'env') { leeLeft('workflows'); wfUI.view = 'env'; wfUI.env = null; return leeWorkflows(); }
+  if (op === 'defaults') return releaseOp('reset_plan');
+  if (op === 'start') {
+    const missing = d.steps.flatMap(s => s.missing);
+    if (missing.length && !await confirmDialog('run release',
+        `These steps are missing ${[...new Set(missing)].join(', ')}. Run anyway?`, 'run')) return;
+    return releaseOp('start');
+  }
+  if (op === 'stop') { if (await confirmDialog('stop release', 'Stop the running step?', 'stop')) releaseOp('stop'); return; }
+  if (op === 'reset') { if (await confirmDialog('reset', 'Forget what ran? The commands are unchanged.', 'reset')) releaseOp('reset'); return; }
+  if (op === 'edit') {
+    const text = await textDialog('release steps', 'One step per line: id | label | command',
+                                  d.steps.map(s => `${s.id} | ${s.label} | ${s.cmd}`).join('\n'));
+    if (text === null) return;
+    const steps = text.split('\n').map(line => line.split('|').map(x => x.trim())).filter(p => p.length >= 3 && p[2])
+      .map(([id, label, cmd]) => ({id, label, cmd}));
+    releaseOp('save', {steps});
+  }
+}
+
+// -- deploy ---------------------------------------------------------------------------
+// The same pipeline as a release, with a target above it: a deploy that cannot say where it
+// is going is the one nobody presses.
+const depUI = {data: null, poll: 0, view: 'stages', infra: null, stack: null, zone: '', records: null};
+function depTargetCard(t) {
+  const files = [['deploy.py', t.script], ['setup.py', t.setup], ['Dockerfile', t.dockerfile],
+                 ['docker-compose.yml', t.compose], ['Caddyfile', t.caddyfile]];
+  return `<header class="lee-sc-branch"><div><strong>${esc(t.domain || t.app)}</strong>` +
+    `<span>${esc(t.server || 'no server named')} · ${esc(t.user)}@:${esc(t.port)}</span></div></header>` +
+    `<div class="lee-dep-files">${files.map(([n, has]) => `<i class="${has ? 'has' : ''}">${esc(n)}</i>`).join('')}</div>` +
+    (t.missing.length ? `<div class="lee-wf-note"><strong>${t.missing.length} value${t.missing.length === 1 ? '' : 's'} not set</strong>` +
+      `<span>${t.missing.map(esc).join(', ')}</span><code>set them in Workflows → Environment</code></div>` : '');
+}
+
+function depInfraRows() {
+  const d = depUI.infra;
+  if (!d) return '<div class="lee-git-loading"><span></span><span></span><span></span><small>asking Hetzner and Cloudflare</small></div>';
+  const st = d.status || {};
+  const half = (title, part, render) => `<section class="lee-inf-group"><header>${title}</header>` +
+    (part.error ? `<div class="lee-wf-note"><span>${esc(part.error)}</span></div>`
+                : (part.rows.length ? part.rows.map(render).join('')
+                                    : '<div class="lee-dim lee-git-empty">none</div>')) + '</section>';
+  return `<div class="lee-inf-status">${['vpseasy', 'cfeasy'].map(k => `<i class="${st[k] ? 'has' : ''}">${k}</i>`).join('')}` +
+    `<i class="${st.hcloud_token ? 'has' : ''}">HCLOUD_TOKEN</i><i class="${st.cf_token ? 'has' : ''}">CLOUDFLARE_API_TOKEN</i></div>` +
+    half('servers', d.servers || {rows: [], error: ''}, s =>
+      `<article class="lee-inf-row" data-server="${esc(s.name)}"><div><strong>${esc(s.name)}</strong><small>${esc(s.ip || '')} · ${esc(s.status || '')}</small></div>` +
+      `<button data-server-del title="delete this server">delete</button></article>`) +
+    half('tunnels', d.tunnels || {rows: [], error: ''}, t =>
+      `<article class="lee-inf-row" data-tunnel="${esc(t.id)}"><div><strong>${esc(t.name)}</strong><small>${esc(t.status || '')} · ${t.connections} connection${t.connections === 1 ? '' : 's'}</small></div>` +
+      `<button data-tunnel-del title="delete this tunnel">delete</button></article>`) +
+    half('zones', d.zones || {rows: [], error: ''}, z =>
+      `<article class="lee-inf-row" data-zone="${esc(z.name)}"><div><strong>${esc(z.name)}</strong><small>${esc(z.status || '')}</small></div>` +
+      `<button data-zone-dns>records</button></article>`) +
+    (depUI.records ? `<section class="lee-inf-group"><header>${esc(depUI.zone)}</header>` +
+      depUI.records.map(r => `<article class="lee-inf-row"><div><strong>${esc(r.name)}</strong>` +
+        `<small>${esc(r.type)} · ${esc(r.content)}${r.proxied ? ' · proxied' : ''}</small></div>` +
+        `${r.tunnel ? '<i class="lee-inf-tag">tunnel</i>' : ''}</article>`).join('') + '</section>' : '');
+}
+function depStackRows() {
+  const d = depUI.stack;
+  if (!d) return '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the stack</small></div>';
+  return `<div class="lee-inf-status"><i>${d.checkouts.length} checkouts open</i></div>` +
+    `<div class="lee-pkgs">${d.packages.map(p => `<article class="lee-pkg${p.shadowed ? ' shadowed' : ''}">` +
+      `<div><strong>${esc(p.name)}</strong><small>${p.installed ? esc(p.version || 'no version') + ' · ' + esc(p.source) : 'not installed'}</small>` +
+      `${p.shadowed ? '<i class="warn">edits in your checkout are not what runs — reinstall it editable</i>' : ''}</div>` +
+      `${p.checkout ? `<button data-pkg-open="${esc(p.checkout)}">open</button>` : ''}</article>`).join('')}</div>`;
+}
+async function loadInfra(force = false) {
+  if (depUI.infra && !force) return renderDeployPanel();
+  try { depUI.infra = await api('/infra'); } catch (e) { status(e.message || String(e), 'err'); return; }
+  renderDeployPanel();
+}
+async function loadStack() {
+  try { depUI.stack = await api('/stack' + projectQuery()); } catch (e) { status(e.message || String(e), 'err'); return; }
+  renderDeployPanel();
+}
+async function infraOp(op, extra = {}) {
+  try {
+    depUI.infra = await post('/infra/action', {op, ...extra});
+    status(`${op.replace('_', ' ')} done`, 'ok');
+    renderDeployPanel();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+function wireInfra(host) {
+  host.querySelectorAll('[data-server-del]').forEach(b => b.onclick = async () => {
+    const name = b.closest('[data-server]').dataset.server;
+    if (await confirmDialog('delete server', `Delete ${name}? The machine and everything on it goes.`, 'delete'))
+      infraOp('delete_server', {name});
+  });
+  host.querySelectorAll('[data-tunnel-del]').forEach(b => b.onclick = async () => {
+    const row = b.closest('[data-tunnel]');
+    if (await confirmDialog('delete tunnel', `Delete this tunnel? Anything routed through it stops answering.`, 'delete'))
+      infraOp('delete_tunnel', {id: row.dataset.tunnel});
+  });
+  host.querySelectorAll('[data-zone-dns]').forEach(b => b.onclick = async () => {
+    const zone = b.closest('[data-zone]').dataset.zone;
+    try { depUI.zone = zone; depUI.records = (await api('/infra/records?zone=' + encodeURIComponent(zone))).records; }
+    catch (e) { return status(e.message || String(e), 'err'); }
+    renderDeployPanel();
+  });
+  host.querySelectorAll('[data-pkg-open]').forEach(b => b.onclick = () => leeOpenFile(b.dataset.pkgOpen));
+}
+function renderDeployPanel() {
+  const host = $('#deploypanel'); if (!host) return;
+  const d = depUI.data;
+  if (!d) { host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the deploy plan</small></div>'; return; }
+  const t = d.target;
+  const nav = `<nav class="lee-git-nav" aria-label="Deploy views">${[['stages', 'Stages'], ['infra', 'Servers'], ['stack', 'Stack']].map(([id, label]) =>
+    `<button data-dep-view="${id}" class="${depUI.view === id ? 'active' : ''}">${label}</button>`).join('')}</nav>`;
+  if (depUI.view !== 'stages') {
+    host.innerHTML = depTargetCard(t) + nav +
+      `<main class="lee-wf-body">${depUI.view === 'infra' ? depInfraRows() : depStackRows()}</main>`;
+    host.querySelectorAll('[data-dep-view]').forEach(b => b.onclick = () => { depUI.view = b.dataset.depView; renderDeployPanel(); });
+    wireInfra(host);
+    if (depUI.view === 'infra' && !depUI.infra) loadInfra();
+    if (depUI.view === 'stack' && !depUI.stack) loadStack();
+    return;
+  }
+  host.innerHTML = depTargetCard(t) + nav +
+    `<div class="lee-sc-actions">` +
+    `${t.script ? (d.running ? '<button data-dep-top="stop" class="warn">stop</button>'
+                             : `<button data-dep-top="start">${d.failed ? 'continue' : 'deploy'}</button>`)
+                : '<button data-dep-top="scaffold">write deploy.py…</button>'}` +
+    `<button data-dep-top="terminal">terminal</button>` +
+    `<button data-dep-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
+    `<button data-dep-top="edit">edit steps</button>` +
+    `${t.script ? '<button data-dep-top="open">open deploy.py</button>' : ''}</div>` +
+    `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the deploy terminal. The stages are idempotent — fix and continue.</span></div>` : ''}` +
+    blameRow(d.blame) +
+    `<div class="lee-rel-steps">${d.steps.map(s => relStepRow(s, d)).join('')}</div>`;
+  host.querySelectorAll('[data-dep-view]').forEach(b => b.onclick = () => { depUI.view = b.dataset.depView; renderDeployPanel(); });
+  host.querySelectorAll('[data-dep-top]').forEach(b => b.onclick = () => deployTop(b.dataset.depTop, d));
+  wireBlame(host);
+  host.querySelectorAll('.lee-rel-step').forEach(row => {
+    const step = row.dataset.step;
+    row.querySelectorAll('[data-rel]').forEach(b => b.onclick = () => deployOp(b.dataset.rel, {step}));
+  });
+  clearTimeout(depUI.poll);
+  if (d.running) depUI.poll = setTimeout(() => leeDeploys(), 1200);
+}
+async function leeDeploys() {
+  try { depUI.data = await api('/deploys' + projectQuery()); }
+  catch (e) { const host = $('#deploypanel'); if (host) host.innerHTML = `<div class="lee-git-empty-state"><strong>No project</strong><span>${esc(e.message || e)}</span></div>`; return; }
+  renderDeployPanel();
+}
+window.leeDeploys = leeDeploys;
+async function deployOp(op, extra = {}) {
+  try {
+    depUI.data = await post('/deploys/action', {op, repo: projectRepo(), ...extra});
+    if (op === 'start' || op === 'step') await openReleaseTerm(depUI.data.root, 'deploy');
+    renderDeployPanel();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function deployTop(op, d) {
+  const t = d.target;
+  if (op === 'terminal') return openReleaseTerm(d.root, 'deploy');
+  if (op === 'open') return leeOpenFile(d.root + '/deploy.py');
+  if (op === 'reset') { if (await confirmDialog('reset', 'Forget what ran? The stages are unchanged.', 'reset')) deployOp('reset'); return; }
+  if (op === 'stop') { if (await confirmDialog('stop deploy', 'Stop the running stage?', 'stop')) deployOp('stop'); return; }
+  if (op === 'scaffold') {
+    const domain = await inputDialog('write deploy.py', 'Domain this app answers on', t.domain || '', 'example.com');
+    if (!domain) return;
+    const sub = await inputDialog('write deploy.py', 'Subdomain, or empty for the apex', '', 'app');
+    if (sub === null) return;
+    const second = await inputDialog('write deploy.py', 'A second hostname on the same container, or empty',
+                                     '', 'the apex, as lego serves it');
+    if (second === null) return;
+    const r = await post('/deploys/action', {op: 'scaffold', repo: projectRepo(), domain,
+                                             subdomain: sub, second_host: second})
+                    .catch(e => { status(e.message || String(e), 'err'); });
+    if (!r) return;
+    depUI.data = r.state;
+    status(`wrote ${(r.written || []).map(p => p.split('/').pop()).join(', ')}`, 'ok');
+    return renderDeployPanel();
+  }
+  if (op === 'start') {
+    if (t.missing.length && !await confirmDialog('deploy',
+        `These are not set: ${t.missing.join(', ')}. Deploy anyway?`, 'deploy')) return;
+    return deployOp('start');
+  }
+  if (op === 'edit') {
+    const text = await textDialog('deploy stages', 'One stage per line: id | label | command',
+                                  d.steps.map(s => `${s.id} | ${s.label} | ${s.cmd}`).join('\n'));
+    if (text === null) return;
+    const steps = text.split('\n').map(l => l.split('|').map(x => x.trim())).filter(p => p.length >= 3 && p[2])
+      .map(([id, label, cmd]) => ({id, label, cmd}));
+    deployOp('save', {steps});
+  }
+}
+
+// -- driving the packages one call at a time --------------------------------------------
+// The alternative to the deploy script, kept as its own panel so the two can be compared:
+// same runner, same terminal, same blame on a failure -- six library calls instead of three
+// subcommands. The snippet is on screen because a button you cannot read is not a diagnostic.
+const drvUI = {data: null, open: '', poll: 0};
+function drvPart(s, d) {
+  const m = s.meta || {}, busy = d.running && s.status !== 'running';
+  const flow = [...(m.produces || []).map(f => `<i>writes ${esc(f)}</i>`),
+                ...(m.writes || []).map(k => `<i class="writes">sets ${esc(k)}</i>`),
+                ...(s.missing || []).map(k => `<i class="warn">needs ${esc(k)}</i>`)].join('');
+  const open = drvUI.open === s.id;
+  return `<article class="lee-drv-part state-${s.status}" data-part="${esc(s.id)}">` +
+    `<b>${REL_MARK[s.status] || '·'}</b>` +
+    `<div><strong><span class="lee-drv-pkg">${esc(m.package || '')}</span>${esc(m.title || s.label)}</strong>` +
+    `<small>${esc(s.doc || '')}${s.code !== null && s.code !== undefined ? ` · exit ${s.code}` : ''}</small>` +
+    `${flow ? `<div class="lee-drv-flow">${flow}</div>` : ''}` +
+    `<details ${open ? 'open' : ''}><summary>${open ? 'hide' : 'show'} the call</summary>` +
+    `<pre class="lee-drv-code">${esc(m.code || '')}</pre></details></div>` +
+    `<span class="lee-drv-actions">` +
+    `${s.status === 'running' ? '<button data-drv="stop">stop</button>'
+                              : `<button data-drv="step" ${busy ? 'disabled' : ''}>run</button>`}` +
+    `</span></article>`;
+}
+function renderDrivePanel() {
+  const host = $('#drivepanel'); if (!host) return;
+  const d = drvUI.data;
+  if (!d) { host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the parts</small></div>'; return; }
+  const c = d.context || {};
+  const done = d.steps.filter(s => s.status === 'passed').length;
+  host.innerHTML =
+    `<header class="lee-sc-branch"><div><strong>${esc(c.host || c.app || '')}</strong>` +
+    `<span>${esc(d.packages.join(' · '))} · ${done}/${d.steps.length} run</span></div></header>` +
+    `<div class="lee-drv-ctx"><b>values</b><i>app ${esc(c.app || '')}</i>` +
+    `${c.domain ? `<i>domain ${esc(c.domain)}</i>` : '<i class="warn">DOMAIN not set</i>'}` +
+    `${c.subdomain ? `<i>sub ${esc(c.subdomain)}</i>` : ''}<i>tunnel ${esc(c.tunnel || '')}</i></div>` +
+    `<div class="lee-sc-actions">` +
+    `${d.running ? '<button data-drv-top="stop" class="warn">stop</button>'
+                 : '<button data-drv-top="start">run all</button>'}` +
+    `<button data-drv-top="terminal">terminal</button>` +
+    `<button data-drv-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
+    `<button data-drv-top="values">values…</button></div>` +
+    blameRow(d.blame) +
+    `<div class="lee-rel-steps">${d.steps.map(s => drvPart(s, d)).join('')}</div>`;
+  host.querySelectorAll('[data-drv-top]').forEach(b => b.onclick = () => driveTop(b.dataset.drvTop, d));
+  host.querySelectorAll('.lee-drv-part').forEach(row => {
+    const step = row.dataset.part;
+    row.querySelectorAll('[data-drv]').forEach(b => b.onclick = () => driveOp(b.dataset.drv, {step}));
+    row.querySelector('details')?.addEventListener('toggle', e => { drvUI.open = e.target.open ? step : ''; });
+  });
+  wireBlame(host);
+  clearTimeout(drvUI.poll);
+  if (d.running) drvUI.poll = setTimeout(() => leeDrive(), 1200);
+}
+async function leeDrive() {
+  try { drvUI.data = await api('/drive' + projectQuery()); }
+  catch (e) { const host = $('#drivepanel'); if (host) host.innerHTML = `<div class="lee-git-empty-state"><strong>No project</strong><span>${esc(e.message || e)}</span></div>`; return; }
+  renderDrivePanel();
+}
+window.leeDrive = leeDrive;
+async function driveOp(op, extra = {}) {
+  try {
+    drvUI.data = await post('/drive/action', {op, repo: projectRepo(), ...extra});
+    if (op === 'step' || op === 'start') await openReleaseTerm(drvUI.data.root, 'drive');
+    renderDrivePanel();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function driveTop(op, d) {
+  if (op === 'terminal') return openReleaseTerm(d.root, 'drive');
+  if (op === 'values') { leeLeft('workflows'); wfUI.view = 'env'; wfUI.env = null; return leeWorkflows(); }
+  if (op === 'stop') { if (await confirmDialog('stop', 'Stop the running call?', 'stop')) driveOp('stop'); return; }
+  if (op === 'reset') { if (await confirmDialog('reset', 'Forget what ran? The calls are unchanged.', 'reset')) driveOp('reset'); return; }
+  if (op === 'start') {
+    const missing = [...new Set(d.steps.flatMap(s => s.missing))];
+    if (missing.length && !await confirmDialog('run every call',
+        `These are not set: ${missing.join(', ')}. Run anyway?`, 'run')) return;
+    return driveOp('start');
+  }
+}
+
 async function renderGitPanel(snapshot = null) {
   const host = $('#gitpanel'); if (!host) return;
-  host.dataset.features = 'Staged changes · Changes · Branches · Stashes · Remotes & tags · staged changes · working tree · fetch · pull · push · stash · tag · stage all · unstage all';
+  host.dataset.features = 'Staged changes · Changes · Branches · Stashes · Remotes & tags · All repos · staged changes · working tree · fetch · pull · push · stash · tag · stage all · unstage all · fetch all · pull all · push all · clone';
+  if (gitUI.tab === 'repos') {
+    host.innerHTML = gitScope() + gitNav() + `<main class="lee-git-view">${gitReposView()}</main>`;
+    wireGitPanel(host, gitUI.snapshot);
+    if (!gitUI.repos) loadGitRepos();
+    return;
+  }
   if (!snapshot && !gitUI.snapshot) host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading repository</small></div>';
   let d = snapshot || gitUI.snapshot;
-  try { if (!d) d = await api('/git/info'); }
-  catch (e) { host.innerHTML = `<div class="lee-git-empty-state"><strong>No Git repository</strong><span>${esc(e.message || e)}</span></div>`; return; }
+  try { if (!d) d = await api(gitUrl('/git/info')); }
+  catch (e) {
+    // Still draw the nav: a workspace whose active folder is not a checkout can have five
+    // other repositories in it, and Repos is how you reach them.
+    host.innerHTML = gitScope() + gitNav() +
+      `<main class="lee-git-view"><div class="lee-git-empty-state"><strong>No Git repository</strong><span>${esc(e.message || e)}</span></div></main>`;
+    // `null`, not `{}`: switching to another view from here must re-read the repository
+    // rather than render a snapshot-shaped object with no fields in it.
+    wireGitPanel(host, null);
+    return;
+  }
   gitUI.snapshot = d; paintGitPill(d);
   const view = gitUI.tab === 'changes' ? gitChangesView(d) : gitUI.tab === 'review' ? gitReviewView(d) : gitUI.tab === 'branches' ? gitBranchesView(d) : gitUI.tab === 'history' ? gitHistoryView(d) : gitResourcesView(d);
-  host.innerHTML = gitSummary(d) + gitNav() + `<main class="lee-git-view">${view}</main>`;
+  host.innerHTML = gitScope() + gitSummary(d) + gitNav() + `<main class="lee-git-view">${view}</main>`;
   wireGitPanel(host, d);
   if (gitUI.tab === 'history' && !gitUI.history.length) loadGitHistory();
   if (gitUI.tab === 'review' && !gitUI.review) loadGitReview();
@@ -4720,7 +5566,7 @@ async function loadGitReview() {
   const host = $('.lee-git-review-workspace');
   if (host) host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>building review</small></div>';
   try {
-    gitUI.review = await api('/git/review?base=' + encodeURIComponent(gitUI.reviewBase) + '&head=' + encodeURIComponent(gitUI.reviewHead) + '&mode=' + encodeURIComponent(gitUI.reviewMode));
+    gitUI.review = await api(gitUrl('/git/review', {base: gitUI.reviewBase, head: gitUI.reviewHead, mode: gitUI.reviewMode}));
     gitUI.reviewFile = gitUI.review.files[0]?.path || ''; gitUI.reviewPatch = '';
     renderGitPanel(gitUI.snapshot);
   } catch (e) { status(e.message || String(e), 'err'); }
@@ -4729,7 +5575,7 @@ async function loadGitReviewFile(path, asTab = false) {
   if (!gitUI.review) return;
   gitUI.reviewFile = path;
   try {
-    const d = await api('/git/review/file?base=' + encodeURIComponent(gitUI.review.base) + '&head=' + encodeURIComponent(gitUI.review.head) + '&mode=' + encodeURIComponent(gitUI.review.mode) + '&path=' + encodeURIComponent(path));
+    const d = await api(gitUrl('/git/review/file', {base: gitUI.review.base, head: gitUI.review.head, mode: gitUI.review.mode, path}));
     gitUI.reviewPatch = d.patch || '';
     if (asTab) return openGitDiffTab({...d, path, kind: 'review', baseLabel: gitUI.review.base, headLabel: gitUI.review.head, absolutePath: gitUI.snapshot.root + '/' + path, reviewKey: gitReviewKey({...gitUI.review, root: gitUI.snapshot.root}, path), allowWrite: !!d.can_apply && !path.toLowerCase().endsWith('.ipynb')});
     renderGitPanel(gitUI.snapshot);
@@ -4744,13 +5590,13 @@ async function loadGitHistory() {
   const rows = $('#githistoryrows');
   try {
     const ref = $('#githistoryref')?.value || '--all';
-    const result = await api('/git/history?limit=150&query=' + encodeURIComponent(gitUI.historyQuery) + '&ref=' + encodeURIComponent(ref));
+    const result = await api(gitUrl('/git/history', {limit: 150, query: gitUI.historyQuery, ref}));
     gitUI.history = result.commits || []; renderGitPanel(gitUI.snapshot);
   } catch (e) { if (rows) rows.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
 }
 async function loadGitResources() {
   try {
-    const r = await api('/git/resources');
+    const r = await api(gitUrl('/git/resources'));
     const worktrees = $('#gitworktrees');
     if (worktrees) worktrees.innerHTML = (r.worktrees || []).map(w => `<article class="lee-git-resource-row" data-worktree="${esc(w.path)}"><div><strong>${esc(w.branch || 'detached')}</strong><code>${esc(w.path)}</code></div>${w.path === gitUI.snapshot.root ? '<i>current</i>' : '<button data-remove-worktree class="warn">remove</button>'}</article>`).join('') || '<span class="lee-dim">No worktrees</span>';
     const submodules = $('#gitsubmodules');
@@ -4763,6 +5609,28 @@ async function loadGitResources() {
 }
 function wireGitPanel(host, d) {
   host.querySelectorAll('[data-git-tab]').forEach(b => b.onclick = () => { gitUI.tab = b.dataset.gitTab; if (gitUI.tab !== 'history') gitUI.history = []; renderGitPanel(d); });
+  host.querySelector('#gitscopeclear')?.addEventListener('click', () => gitPinRepo(''));
+  host.querySelectorAll('[data-repos-op]').forEach(b => b.onclick = () => gitReposDo(b.dataset.reposOp));
+  host.querySelectorAll('.lee-git-repo-row').forEach(row => {
+    const root = row.dataset.repo;
+    row.querySelector('[data-repo-open]').onclick = () => gitPinRepo(root === gitUI.repo ? '' : root);
+    row.querySelector('[data-repo-fetch]').onclick = () => gitReposDo('fetch', {paths: [root]});
+    row.querySelector('[data-repo-remove]').onclick = async () => {
+      if (!await confirmDialog('remove repository', `Stop listing ${gitRepoName(root)} here? The checkout is left alone.`, 'remove')) return;
+      if (gitUI.repo === root) gitUI.repo = '';
+      gitReposDo('remove', {path: root});
+    };
+  });
+  const expect = host.querySelector('#gitrepoexpect');
+  if (expect) expect.onchange = () => { gitUI.expect = expect.value.trim(); loadGitRepos(); };
+  host.querySelector('#gitrepoadd')?.addEventListener('click', async () => {
+    const path = await inputDialog('add repository', 'Path to a Git checkout', '', '/home/you/code/project');
+    if (path) gitReposDo('add', {path});
+  });
+  host.querySelector('#gitrepoclone')?.addEventListener('click', async () => {
+    const spec = await inputDialog('clone repositories', 'URLs or owner/name, one per line', '', 'AnswerDotAI/fastws');
+    if (spec) gitReposDo('clone', {urls: spec.split(/[\s,]+/).filter(Boolean)});
+  });
   const act = async (op, extra = {}) => renderGitPanel(await gitDo(op, extra));
   host.querySelectorAll('[data-operation]').forEach(b => b.onclick = async () => {
     if (b.dataset.operation === 'abort' && !await confirmDialog('abort Git operation', `Abort the active ${d.operation.active}?`)) return;
@@ -4790,9 +5658,9 @@ function wireGitPanel(host, d) {
   host.querySelectorAll('.lee-git-change').forEach(row => {
     const path = row.dataset.path, staged = row.dataset.group === 'staged';
     row.querySelector('[data-select-change]').onchange = e => { const key = `${row.dataset.group}:${path}`; if (e.target.checked) gitUI.selectedChanges.add(key); else gitUI.selectedChanges.delete(key); renderGitPanel(d); };
-    row.querySelector('.lee-git-file').onclick = async () => { const patch = await api('/git/diff?path=' + encodeURIComponent(path) + '&staged=' + staged); openGitDiffTab({kind: 'changes-' + row.dataset.group, path, absolutePath: d.root + '/' + path, base: staged ? 'HEAD' : 'index', head: staged ? 'index' : 'worktree', baseLabel: staged ? 'HEAD' : 'index', headLabel: staged ? 'staged' : 'working tree', left: patch.left || '', right: patch.right || '', patch: patch.content || patch.text || '', rawPatch: patch.text || '', notebook: !!patch.notebook, group: row.dataset.group, allowWrite: row.dataset.group === 'unstaged' && !patch.notebook}); };
+    row.querySelector('.lee-git-file').onclick = async () => { const patch = await api(gitUrl('/git/diff', {path, staged})); openGitDiffTab({kind: 'changes-' + row.dataset.group, path, absolutePath: d.root + '/' + path, base: staged ? 'HEAD' : 'index', head: staged ? 'index' : 'worktree', baseLabel: staged ? 'HEAD' : 'index', headLabel: staged ? 'staged' : 'working tree', left: patch.left || '', right: patch.right || '', patch: patch.content || patch.text || '', rawPatch: patch.text || '', notebook: !!patch.notebook, group: row.dataset.group, allowWrite: row.dataset.group === 'unstaged' && !patch.notebook}); };
     row.querySelector('[data-open]').onclick = () => leeOpenFile(d.root + '/' + path);
-    row.querySelector('[data-blame]')?.addEventListener('click', () => showGitBlame(d.root, path));
+    row.querySelector('[data-blame]')?.addEventListener('click', () => showGitBlame(d.root, path, null));
     row.querySelector('[data-resolve]')?.addEventListener('click', () => showGitConflict(path));
     row.querySelectorAll('[data-git]').forEach(b => b.onclick = async () => { const op = b.dataset.git; if (op === 'discard' && !await confirmDialog('discard changes', `Restore ${path} from the index? This cannot be undone.`)) return; act(op, {paths: [path]}); });
   });
@@ -4848,7 +5716,7 @@ async function showStagedReview(d) {
     const active = files[at];
     m.querySelector('aside').innerHTML = files.map((f, i) => `<button data-index="${i}" class="${i === at ? 'active' : ''}"><b>${esc(f.index)}</b><span>${esc(f.path)}</span></button>`).join('');
     m.querySelectorAll('[data-index]').forEach(b => b.onclick = () => paint(+b.dataset.index));
-    const detail = await api('/git/diff?path=' + encodeURIComponent(active.path) + '&staged=true');
+    const detail = await api(gitUrl('/git/diff', {path: active.path, staged: true}));
     m.querySelector('main').innerHTML = gitPatchHtml(detail.content || detail.text || '');
   };
   m.querySelector('[data-prev]').onclick = () => paint(at - 1);
@@ -4870,7 +5738,7 @@ function showReviewHunkApply(d) {
 }
 async function showMergePreview(branch, d, act) {
   try {
-    const p = await api('/git/merge-preview?incoming=' + encodeURIComponent(branch));
+    const p = await api(gitUrl('/git/merge-preview', {incoming: branch}));
     const r = p.review, relation = {'fast-forward': 'Fast-forward available', 'already-merged': 'Already contained in current', 'identical': 'Branches are identical', 'diverged': 'Branches have diverged'}[p.relation] || p.relation;
     const conflict = p.conflict_likely ? `<div class="lee-git-merge-warning"><strong>Conflicts expected</strong><span>${p.conflicts.length ? p.conflicts.map(esc).join(' · ') : 'Git reports overlapping changes.'}</span></div>` : '<div class="lee-git-merge-ok"><strong>No conflicts found in merge rehearsal</strong><span>The working tree can still change before merge.</span></div>';
     const m = modal(`<div class="lee-mhead">Merge ${esc(branch)}<span class="sub">into ${esc(p.current)}</span></div><div class="lee-git-merge-preview"><header><strong>${esc(relation)}</strong><span>${r.head_only} commits · ${r.summary.files} files · +${r.summary.additions} −${r.summary.deletions}</span></header>${p.clean ? '' : '<div class="lee-git-merge-warning"><strong>Working tree is not clean</strong><span>Commit or stash local changes before merging.</span></div>'}${conflict}<label>Strategy<select data-strategy><option value="merge">merge commit when needed</option><option value="squash">squash into working tree</option><option value="ff-only" ${p.relation === 'fast-forward' ? '' : 'disabled'}>fast-forward only</option></select></label><button class="lee-btn" data-review>review incoming files</button></div><div class="lee-mfoot"><button class="lee-btn go" data-merge ${!p.clean || p.relation === 'already-merged' || p.relation === 'identical' ? 'disabled' : ''}>merge ${esc(branch)}</button><span class="lee-dim">Merge starts only after this preview.</span></div>`);
@@ -4880,7 +5748,7 @@ async function showMergePreview(branch, d, act) {
 }
 async function showRebasePreview(branch, d, act) {
   try {
-    const p = await api('/git/rebase-preview?onto=' + encodeURIComponent(branch)), r = p.review;
+    const p = await api(gitUrl('/git/rebase-preview', {onto: branch})), r = p.review;
     const warning = p.conflict_likely ? `<div class="lee-git-merge-warning"><strong>Conflicts may occur while replaying commits</strong><span>${p.conflicts.length ? p.conflicts.map(esc).join(' · ') : 'Git reports overlapping changes.'}</span></div>` : '<div class="lee-git-merge-ok"><strong>No conflicts found in the tree rehearsal</strong><span>Rebase replays commits individually, so this remains a forecast.</span></div>';
     const m = modal(`<div class="lee-mhead">Rebase ${esc(p.current)}<span class="sub">onto ${esc(branch)}</span></div><div class="lee-git-merge-preview"><header><strong>${p.already_based ? 'Branch already contains the target history' : `${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} will be replayed`}</strong><span>${r.summary.files} proposed files · +${r.summary.additions} −${r.summary.deletions}</span></header>${p.clean ? '' : '<div class="lee-git-merge-warning"><strong>Working tree is not clean</strong><span>Commit or stash local changes before rebasing.</span></div>'}${warning}<div class="lee-git-rebase-commits">${p.commits.slice(0, 12).map(c => `<span><code>${esc(c.short)}</code>${esc(c.subject)}</span>`).join('')}</div><button class="lee-btn" data-review>review branch changes</button></div><div class="lee-mfoot"><button class="lee-btn go" data-rebase ${!p.clean || p.already_based || !p.commits.length ? 'disabled' : ''}>start rebase</button><span class="lee-dim">The operation banner will offer continue, skip, and abort if Git pauses.</span></div>`);
     m.querySelector('[data-review]').onclick = () => { m.remove(); gitUI.reviewBase = branch; gitUI.reviewHead = d.branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); };
@@ -4904,19 +5772,19 @@ async function branchActions(branch, d, act) {
   });
 }
 async function loadGitCommitInspector(ref) {
-  try { gitUI.selectedCommit = await api('/git/commit/review?ref=' + encodeURIComponent(ref)); renderGitPanel(gitUI.snapshot); }
+  try { gitUI.selectedCommit = await api(gitUrl('/git/commit/review', {ref})); renderGitPanel(gitUI.snapshot); }
   catch (e) { status(e.message || String(e), 'err'); }
 }
 async function openGitCommitFile(ref, path) {
   try {
-    const d = await api('/git/commit/file?ref=' + encodeURIComponent(ref) + '&path=' + encodeURIComponent(path));
+    const d = await api(gitUrl('/git/commit/file', {ref, path}));
     const c = gitUI.selectedCommit;
     return openGitDiffTab({...d, path, kind: 'commit', baseLabel: c?.parents?.[0]?.slice(0, 8) || 'empty tree', headLabel: c?.short || ref.slice(0, 8), absolutePath: gitUI.snapshot.root + '/' + path});
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 async function showGitCommit(ref) {
   try {
-    const c = await api('/git/commit/review?ref=' + encodeURIComponent(ref));
+    const c = await api(gitUrl('/git/commit/review', {ref}));
     const files = c.files.map(f => `<button class="lee-git-commit-file" data-path="${esc(f.path)}"><b>${esc(f.status)}</b><span>${esc(f.path)}</span><small>${f.binary ? 'binary' : `+${f.additions} −${f.deletions}`}</small></button>`).join('');
     const m = modal(`<div class="lee-mhead">${esc(c.short)}<span class="sub">${esc(c.author)} · ${new Date(c.timestamp * 1000).toLocaleString()}</span></div><article class="lee-git-commit-sheet"><h3>${esc(c.message)}</h3><section><b>${c.summary.files} files</b><span>+${c.summary.additions}</span><span>−${c.summary.deletions}</span></section><div>${files}</div></article>`);
     m.querySelectorAll('[data-path]').forEach(b => b.onclick = () => { m.remove(); gitUI.selectedCommit = c; openGitCommitFile(c.oid, b.dataset.path); });
@@ -4930,24 +5798,90 @@ async function showGitCompare(left, right) {
 }
 async function showGitReflog() {
   try {
-    const d = await api('/git/reflog?limit=150');
+    const d = await api(gitUrl('/git/reflog', {limit: 150}));
     const m = modal(`<div class="lee-mhead">reflog<span class="sub">local recovery history · newest first</span></div><div class="lee-git-history">${(d.entries || []).map(x => `<button class="lee-git-commit-row" data-commit="${x.oid}"><span class="lee-git-graph">◆</span><span><strong>${esc(x.subject)}</strong><small>${esc(x.selector)} · ${esc(x.author)} · ${gitRelative(x.timestamp)} · ${esc(x.short)}</small></span></button>`).join('') || '<div class="lee-git-empty-state"><strong>No reflog entries</strong><span>This repository has no local movement history.</span></div>'}</div>`);
     m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 async function showGitConflict(path) {
   try {
-    const d = await api('/git/conflict?path=' + encodeURIComponent(path));
+    const d = await api(gitUrl('/git/conflict', {path}));
     const version = (label, text, choice) => `<section><header><strong>${label}</strong><button data-choice="${choice}">use ${label.toLowerCase()}</button></header><pre>${esc(text || 'This side deleted the file.')}</pre></section>`;
     const m = modal(`<div class="lee-mhead">resolve ${esc(path)}<span class="sub">base, ours, and theirs</span></div><div class="lee-git-conflict">${version('Ours', d.ours, 'ours')}${version('Theirs', d.theirs, 'theirs')}<details><summary>common base</summary><pre>${esc(d.base || 'No common base content.')}</pre></details><details><summary>current worktree result</summary><pre>${esc(d.worktree || '')}</pre><button data-choice="worktree">mark current worktree resolved</button></details></div>`);
     m.querySelectorAll('[data-choice]').forEach(b => b.onclick = async () => { const choice = b.dataset.choice; if (!await confirmDialog('resolve conflict', `Use ${choice} for ${path} and stage it as resolved?`)) return; m.remove(); renderGitPanel(await gitDo('resolve_conflict', {path, choice})); });
   } catch (e) { status(e.message || String(e), 'err'); }
 }
-async function showGitBlame(root, path) {
+
+// Blame, reachable from wherever you are rather than only from a changed-file row. A text
+// file blames the lines you have selected -- "who wrote these six" is the question, and the
+// whole-file answer is one button away. A notebook blames its cells, because blaming its
+// JSON tells you about `"source": [` and nothing about your code.
+function blameRelative(root, path) {
+  const p = String(path || '');
+  if (!root) return p;
+  return p.startsWith(root + '/') ? p.slice(root.length + 1) : p;
+}
+function blameSelectionRange() {
+  const view = curEditor(); if (!view || lee.kind === 'notebook') return null;
+  const sel = view.state.selection.main;
+  if (sel.empty) return null;
+  const doc = view.state.doc;
+  return {start: doc.lineAt(sel.from).number, end: doc.lineAt(sel.to).number};
+}
+async function leeBlame() {
+  if (!lee.path) return status('open a file to blame it', 'err');
+  let root = gitUI.snapshot?.root;
+  if (!root) { try { root = (await api(gitUrl('/git/info'))).root; } catch (e) { return status(e.message || String(e), 'err'); } }
+  showGitBlame(root, blameRelative(root, lee.path), blameSelectionRange());
+}
+window.leeBlame = leeBlame;
+function blameHue(oid, commits) {
+  // Colour by commit so a cell made of three commits reads as three bands. Position in the
+  // recency-sorted legend, not a hash: the newest change is the one being looked for.
+  const i = commits.findIndex(c => c.oid === oid);
+  return i < 0 ? 'var(--lee-fg4)' : `hsl(${(i * 47) % 360} 55% 55%)`;
+}
+function blameLineRows(lines, commits, showN) {
+  return lines.map(l => `<button class="lee-blame-line${l.uncommitted ? ' uncommitted' : ''}" data-commit="${esc(l.oid)}" ` +
+    `title="${esc(l.author)} · ${esc(l.summary || '')}">` +
+    `<i style="background:${blameHue(l.oid, commits)}"></i>` +
+    `<code>${l.uncommitted ? 'working' : esc(l.oid.slice(0, 8))}</code>` +
+    `<span class="lee-blame-who">${esc(l.author || '')}</span>` +
+    `<small>${l.timestamp ? gitRelative(l.timestamp) : ''}</small>` +
+    `<em>${showN ? l.n : l.line}</em><pre>${esc(l.text)}</pre></button>`).join('');
+}
+function blameCells(d) {
+  const commits = d.commits || [];
+  const legend = commits.length ? `<div class="lee-blame-legend">${commits.map(c =>
+    `<i style="border-color:${blameHue(c.oid, commits)}">${c.uncommitted ? 'working tree' : esc(c.oid.slice(0, 8))} · ${esc(c.author || '')}</i>`).join('')}</div>` : '';
+  const cells = d.cells.map(c => {
+    const t = c.touched || {};
+    const made = c.commits.length;
+    return `<details class="lee-blame-cell" data-cell="${c.index}">` +
+      `<summary><b>${c.index}</b><span class="lee-blame-kind">${esc(c.kind)}</span>` +
+      `<strong>${esc(t.author || 'never committed')}</strong>` +
+      `<small>${t.timestamp ? gitRelative(t.timestamp) : ''}${made > 1 ? ` · ${made} commits` : ''}` +
+      `${c.mapped ? '' : ' · lines not located'}</small>` +
+      `<span class="lee-blame-bar">${c.commits.map(x =>
+        `<i style="background:${blameHue(x.oid, commits)};flex:${x.lines}"></i>`).join('')}</span></summary>` +
+      `<div class="lee-git-blame">${blameLineRows(c.lines, commits, true)}</div></details>`;
+  }).join('');
+  return legend + `<div class="lee-blame-cells">${cells}</div>`;
+}
+async function showGitBlame(root, path, range = null) {
   try {
-    const d = await api('/git/blame?path=' + encodeURIComponent(path));
-    const m = modal(`<div class="lee-mhead">${esc(path)}<span class="sub">line history</span></div><div class="lee-git-blame">${(d.lines || []).map(x => `<button data-commit="${x.oid}"><code>${esc(x.oid.slice(0, 8))}</code><span>${x.line}</span><strong>${esc(x.author)}</strong><small>${gitRelative(x.timestamp)}</small><pre>${esc(x.text)}</pre></button>`).join('')}</div>`);
+    const params = range ? {path, start: range.start, end: range.end} : {path};
+    const d = await api(gitUrl('/git/blame', params));
+    const scope = d.notebook ? `${d.cells.length} cells`
+                             : range ? `lines ${range.start}–${range.end}` : 'whole file';
+    const commits = d.commits || [];
+    const body = d.notebook ? blameCells(d)
+      : `<div class="lee-git-blame">${blameLineRows((d.lines || []).map(x => ({...x, uncommitted: /^0+$/.test(x.oid)})), commits, false)}</div>`;
+    const m = modal(`<div class="lee-mhead">${esc(path)}<span class="sub">who wrote this · ${esc(scope)}</span></div>` +
+      `${d.error ? `<div class="lee-dialogcopy">${esc(d.error)}</div>` : ''}${body}` +
+      `${range ? '<div class="lee-mfoot"><button class="lee-btn" id="blameall">blame the whole file</button></div>' : ''}`);
     m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
+    m.querySelector('#blameall')?.addEventListener('click', () => { m.remove(); showGitBlame(root, path, null); });
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 function leeGit() { leeLeft('git'); }
@@ -5390,10 +6324,10 @@ async function leeBranchMenu(anchor) {
   try {
     const d = await api('/git/info');
     const rows = (d.branches || []).map(b => ({label: b.name, detail: b.current ? 'current' : b.oid,
-      run: () => b.current ? leeLeft('git') : gitDo('checkout', {branch: b.name})}));
+      run: () => b.current ? leeLeft('git') : gitDo('checkout', {branch: b.name, repo: ''})}));
     rows.push({separator: true}, {label: 'Create branch…', run: async () => {
       const branch = await inputDialog('new branch', 'Branch name', '', 'feature/name');
-      if (branch) gitDo('create', {branch});
+      if (branch) gitDo('create', {branch, repo: ''});
     }}, {label: 'Source control', detail: `${(d.changes || []).length} changes`, run: () => leeLeft('git')});
     openChromeMenu(anchor, rows);
   } catch (e) { status(e.message || String(e), 'err'); }

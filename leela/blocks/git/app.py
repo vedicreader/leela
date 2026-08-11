@@ -13,6 +13,12 @@ so absolute paths and `..` are refused outright rather than resolved; a reposito
 path is the only shape that can reach Git. `/git/file` additionally converts an absolute
 editor path through the sandbox and refuses anything outside the repository.
 
+`repo` is the second boundary, and a different one. Every route here takes an optional
+repository root so the panel can look at any checkout in the workspace rather than only the
+active tab's, and that root is an absolute path from the browser — so it goes through
+`RepoSet.require`, which answers only for repositories the workspace already discovered.
+Omitting it keeps the original behaviour: the repository containing whatever is open.
+
 Every call is a subprocess, so all of them go through `off_loop`.
 """
 
@@ -23,6 +29,7 @@ from pathlib import Path
 
 from ...core.web import fail, off_loop
 from .git import GitError, GitRepo
+from ...repos import RepoSet
 
 __all__ = ['CAPS', 'connect', 'git_paths']
 
@@ -95,14 +102,18 @@ def _apply(repo, op, d):
 def connect(app, ctx):
     rt = app.route
 
-    def repo():
+    def repos(): return RepoSet(ctx.fs.roots)
+
+    def repo_at(target=''):
+        "The repository a request names, or the one containing whatever is open."
+        if str(target or '').strip(): return GitRepo(repos().require(target))
         cwd = ctx.session.cwd_for()
         if cwd is None: raise GitError('open a folder first')
         return GitRepo.at(cwd)
 
     @rt('/git/info')
-    async def git_info():
-        try: return await off_loop(lambda: repo().info())
+    async def git_info(repo: str = ''):
+        try: return await off_loop(lambda: repo_at(repo).info())
         except Exception as e: return fail(e)
 
     @rt('/git/action')
@@ -116,105 +127,161 @@ def connect(app, ctx):
         d = await req.json()
         try:
             def act():
-                r = repo()
+                r = repo_at(d.get('repo') or '')
                 _apply(r, str(d.get('op') or ''), d)
                 return r.info()
             return await off_loop(act)
         except Exception as e: return fail(e)
 
+    @rt('/git/repos')
+    async def git_repos(expect: str = ''):
+        """Every repository in the workspace as one row, and the workspace as a whole.
+
+        The list is discovered per request from the open folders rather than held, so a
+        folder opened, closed, or cloned into is reflected by the next refresh with nothing
+        to invalidate. `expect` names the branch the workspace is supposed to be on; without
+        it the branch most repositories already share is used, which is the answer in every
+        workspace where one repository has been left behind.
+        """
+        try: return await off_loop(repos().overview, expect)
+        except Exception as e: return fail(e)
+
+    @rt('/git/repos/action')
+    async def git_repos_action(req):
+        """One operation across many repositories, answered per repository.
+
+        Membership changes (`add`, `remove`) and `clone` return the refreshed overview along
+        with their own result, for the same reason `/git/action` returns a snapshot: the
+        browser renders this response directly.
+        """
+        d = await req.json()
+        op, paths = str(d.get('op') or ''), [str(p) for p in (d.get('paths') or ())]
+        try:
+            def act():
+                set_ = repos()
+                if op == 'add': return {'added': str(set_.add(d.get('path') or '')), 'results': []}
+                if op == 'remove': return {'removed': str(set_.remove(d.get('path') or '')), 'results': []}
+                if op == 'clone': return {'results': set_.clone(d.get('urls') or (), d.get('into') or None)}
+                return {'results': set_.run(op, paths)}
+            outcome = await off_loop(act)
+            return outcome | await off_loop(repos().overview, str(d.get('expect') or ''))
+        except Exception as e: return fail(e)
+
     @rt('/git/history')
-    async def git_history(limit: int = 100, skip: int = 0, query: str = '', ref: str = '--all', path: str = ''):
+    async def git_history(limit: int = 100, skip: int = 0, query: str = '', ref: str = '--all',
+                          path: str = '', repo: str = ''):
         try:
             clean = git_paths([path])[0] if path else ''
-            return {'commits': await off_loop(repo().history, limit, skip, query, ref, clean)}
+            return {'commits': await off_loop(repo_at(repo).history, limit, skip, query, ref, clean)}
         except Exception as e: return fail(e)
 
     @rt('/git/reflog')
-    async def git_reflog(limit: int = 100):
-        try: return {'entries': await off_loop(repo().reflog, limit)}
+    async def git_reflog(limit: int = 100, repo: str = ''):
+        try: return {'entries': await off_loop(repo_at(repo).reflog, limit)}
         except Exception as e: return fail(e)
 
     @rt('/git/conflict')
-    async def git_conflict(path: str = ''):
-        try: return await off_loop(repo().conflict_versions, git_paths([path])[0])
+    async def git_conflict(path: str = '', repo: str = ''):
+        try: return await off_loop(repo_at(repo).conflict_versions, git_paths([path])[0])
         except Exception as e: return fail(e)
 
     @rt('/git/commit')
-    async def git_commit_detail(ref: str = 'HEAD'):
-        try: return await off_loop(repo().commit_detail, ref)
+    async def git_commit_detail(ref: str = 'HEAD', repo: str = ''):
+        try: return await off_loop(repo_at(repo).commit_detail, ref)
         except Exception as e: return fail(e)
 
     @rt('/git/commit/review')
-    async def git_commit_review(ref: str = 'HEAD'):
-        try: return await off_loop(repo().commit_review, ref)
+    async def git_commit_review(ref: str = 'HEAD', repo: str = ''):
+        try: return await off_loop(repo_at(repo).commit_review, ref)
         except Exception as e: return fail(e)
 
     @rt('/git/commit/file')
-    async def git_commit_file(ref: str = 'HEAD', path: str = '', context: int = 3):
-        try: return await off_loop(repo().commit_file, ref, git_paths([path])[0], context)
+    async def git_commit_file(ref: str = 'HEAD', path: str = '', context: int = 3, repo: str = ''):
+        try: return await off_loop(repo_at(repo).commit_file, ref, git_paths([path])[0], context)
         except Exception as e: return fail(e)
 
     @rt('/git/compare')
-    async def git_compare(left: str = 'HEAD', right: str = ''):
+    async def git_compare(left: str = 'HEAD', right: str = '', repo: str = ''):
         try:
             if not right: raise GitError('choose two refs to compare')
-            return await off_loop(repo().compare, left, right)
+            return await off_loop(repo_at(repo).compare, left, right)
         except Exception as e: return fail(e)
 
     @rt('/git/review')
-    async def git_review(base: str = 'HEAD', head: str = '', mode: str = 'review'):
+    async def git_review(base: str = 'HEAD', head: str = '', mode: str = 'review', repo: str = ''):
         try:
             if not head: raise GitError('choose a branch to review')
-            return await off_loop(repo().review, base, head, mode)
+            return await off_loop(repo_at(repo).review, base, head, mode)
         except Exception as e: return fail(e)
 
     @rt('/git/review/file')
     async def git_review_file(base: str = 'HEAD', head: str = '', path: str = '',
-                              mode: str = 'review', context: int = 3):
+                              mode: str = 'review', context: int = 3, repo: str = ''):
         try:
             if not head: raise GitError('choose a branch to review')
-            return await off_loop(repo().review_file, base, head, git_paths([path])[0], mode, context)
+            return await off_loop(repo_at(repo).review_file, base, head, git_paths([path])[0], mode, context)
         except Exception as e: return fail(e)
 
     @rt('/git/merge-preview')
-    async def git_merge_preview(incoming: str = ''):
+    async def git_merge_preview(incoming: str = '', repo: str = ''):
         try:
             if not incoming: raise GitError('choose a branch to merge')
-            return await off_loop(repo().merge_preview, incoming)
+            return await off_loop(repo_at(repo).merge_preview, incoming)
         except Exception as e: return fail(e)
 
     @rt('/git/rebase-preview')
-    async def git_rebase_preview(onto: str = ''):
+    async def git_rebase_preview(onto: str = '', repo: str = ''):
         try:
             if not onto: raise GitError('choose a branch to rebase')
-            return await off_loop(repo().rebase_preview, onto)
+            return await off_loop(repo_at(repo).rebase_preview, onto)
         except Exception as e: return fail(e)
 
     @rt('/git/blame')
-    async def git_blame(path: str = '', start: int = 1, end: int = 0):
-        try: return {'lines': await off_loop(repo().blame, git_paths([path])[0], start, end)}
+    async def git_blame(path: str = '', start: int = 1, end: int = 0, repo: str = '',
+                        cells: bool = True):
+        """Who wrote these lines -- grouped into cells when the file is a notebook.
+
+        A `.ipynb` blamed as text is a list of `"source": [` and escaped newlines, which is a
+        result rather than an answer, so by default a notebook comes back as cells with their
+        real source beside the attribution. `cells=false` asks for the raw file lines, which
+        is the honest fallback when a notebook is in a shape the mapping cannot read.
+        """
+        try:
+            clean = git_paths([path])[0]
+            repository = repo_at(repo)
+            if cells and clean.lower().endswith('.ipynb') and not end:
+                return await off_loop(repository.blame_notebook, clean)
+            rows = await off_loop(repository.blame, clean, start, end)
+            return {'lines': rows, 'notebook': False, 'cells': [], 'path': clean,
+                    'start': start, 'end': end}
         except Exception as e: return fail(e)
 
     @rt('/git/resources')
-    async def git_resources():
+    async def git_resources(repo: str = ''):
         try:
-            r = repo()
+            r = repo_at(repo)
             worktrees, submodules = await asyncio.gather(off_loop(r.worktrees), off_loop(r.submodules))
             return {'worktrees': worktrees, 'submodules': submodules}
         except Exception as e: return fail(e)
 
     @rt('/git/diff')
-    async def git_diff(path: str = '', staged: bool = False):
+    async def git_diff(path: str = '', staged: bool = False, repo: str = ''):
         try:
             clean = git_paths([path])[0]
-            view = await off_loop(lambda: repo().diff_view(clean, staged))
+            view = await off_loop(lambda: repo_at(repo).diff_view(clean, staged))
             return {'path': path, 'staged': staged, **view}
         except Exception as e: return fail(e)
 
     @rt('/git/file')
     async def git_file(path: str = ''):
+        """The active editor file's Git state, always in *its own* repository.
+
+        Deliberately not repository-targeted: this answers for the file the editor has open,
+        and the panel looking at another checkout must not repaint that file's change marks
+        from a repository it does not belong to.
+        """
         try:
-            r = repo()
+            r = repo_at()
             absolute = ctx.fs._check(path, must_exist=False)
             try: relative = str(absolute.relative_to(r.root))
             except ValueError: raise GitError('the active file is outside this repository')

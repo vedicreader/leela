@@ -33,7 +33,7 @@ MENUS = {
     # meaningful operation on a folder row, whose disclosure arrow already expands it.
     'files': L(S('quick_open'), S('add_root'), S(), S('new_file'), S('new_notebook'),
                S('new_dir'), S(), S('code_search'), S('refresh_files')),
-    'file': L(S('open'), S(), S('new_file'), S('new_dir'), S(), S('rename'),
+    'file': L(S('open'), S('git_blame'), S(), S('new_file'), S('new_dir'), S(), S('rename'),
               S('delete', 'warn')),
     'folder': L(S('new_file'), S('new_dir'), S(), S('rename'), S('delete', 'warn'),
                 S(), S('add_root'), S('refresh_files')),
@@ -43,7 +43,7 @@ MENUS = {
     # Plain files use editor; notebooks use cell. Cell includes the symbol operations
     # because a code cell is still an editor under the pointer.
     'editor': L(S('complete'), S('ai_complete'), S('show_docs'), S(), S('find_similar'),
-                S('code_map'), S(), S('run_selection'), S('comment')),
+                S('code_map'), S('git_blame'), S(), S('run_selection'), S('comment')),
     'cell': L(S('run_cell'), S('run_advance'), S('run_insert'), S(), S('run_above'),
               S('run_below'), S('run_all'), S('restart_run_all'), S(),
               S('cell_select_above'), S('cell_select_below'), S('cell_move_up'),
@@ -51,10 +51,10 @@ MENUS = {
               S('cell_copy'), S('cell_cut'), S('cell_paste_above'), S('cell_paste_below'), S(),
               S('cell_merge_above'), S('cell_merge_below'), S('cell_type'), S('cell_split'),
               S(), S('clear_cell_output'), S('clear_all_outputs'), S(), S('show_docs'),
-              S('find_similar'), S('run_selection'), S(), S('cell_delete', 'warn')),
+              S('find_similar'), S('git_blame'), S('run_selection'), S(), S('cell_delete', 'warn')),
     'variable': L(S('expand'), S('grid'), S(), S('edit_value'), S('promote'),
                   S(), S('copy_value'), S('copy_path')),
-    'tab': L(S('save'), S('show_diff'), S(), S('close_tab')),
+    'tab': L(S('save'), S('show_diff'), S('git_blame'), S(), S('close_tab')),
     'kernel': L(S('pick_kernel'), S('switch_env'), S(), S('interrupt', 'warn'),
                 S('restart', 'warn')),
     'exec': L(S('exec_run'), S('exec_promote'), S('toggle_scope'), S(), S('exec_clear')),

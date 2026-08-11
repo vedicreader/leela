@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-__all__ = ['GitRepo', 'GitError', 'repo_root']
+__all__ = ['GitRepo', 'GitError', 'repo_root', 'clone']
 
 
 class GitError(RuntimeError):
@@ -52,6 +52,30 @@ def repo_root(path):
         return Path(r.stdout.strip()).resolve() if r.returncode == 0 and r.stdout.strip() else None
     except (OSError, GitError):
         return None
+
+
+def clone(url, parent, name=''):
+    """Clone `url` into `parent`, returning the new worktree root.
+
+    The URL is a positional argument to `git clone`, so an option-shaped one would be read
+    as a flag instead: `--` and an outright refusal keep it a URL. The folder name is
+    derived here rather than left to Git so that the caller knows where the checkout landed
+    without re-reading the directory.
+    """
+    url = str(url or '').strip()
+    if not url or url.startswith('-'):
+        raise GitError(f'not a repository URL: {url or "(empty)"}')
+    parent = Path(parent).expanduser().resolve()
+    if not parent.is_dir():
+        raise GitError(f'not a directory: {parent}')
+    name = str(name or '').strip() or re.sub(r'\.git$', '', url.rstrip('/').rpartition('/')[2])
+    if not name or '/' in name or name in ('.', '..'):
+        raise GitError(f'cannot work out a folder name for {url}')
+    target = parent/name
+    if target.exists():
+        raise GitError(f'{name} already exists in {parent.name}')
+    _run(parent, 'clone', '--', url, name, timeout=600)
+    return target
 
 
 _CACHE, _CACHE_LOCK = {}, threading.RLock()
@@ -94,6 +118,40 @@ def _remote_web_url(raw):
     if raw.startswith(('http://', 'https://')):
         return raw.removesuffix('.git').rstrip('/')
     return ''
+
+
+def _unborn(oid):
+    "Git's all-zero oid: this line is in the working tree and in no commit yet."
+    return set(str(oid)) == {'0'}
+
+
+def _source_spans(text, cells):
+    """The 1-based line numbers in the file that hold each cell's source strings.
+
+    nbformat writes one JSON string per source line, in cell order, which is what makes this
+    a scan rather than a parse: find each `"source"` key in turn and take the next `n` lines,
+    where `n` is how many strings that cell's source has. A cell whose value is inline (one
+    short line, or the plain-string form) is the head line itself.
+
+    `None` for a cell whose lines could not be located -- a hand-minified notebook, say. The
+    caller reports that rather than guessing, because a wrong line here attributes someone
+    else's code to you.
+    """
+    lines, spans, idx = text.splitlines(), [], 0
+    for cell in cells:
+        source = cell.get('source')
+        count = len(source) if isinstance(source, list) else max(1, len(str(source or '').splitlines()))
+        while idx < len(lines) and '"source"' not in lines[idx]: idx += 1
+        if idx >= len(lines):
+            spans.append(None)
+            continue
+        head, idx = lines[idx], idx + 1            # idx is now the head line's 1-based number
+        after = head.split('"source"', 1)[1]
+        if ']' in after or '[' not in after: spans.append((idx, idx))
+        else:
+            spans.append((idx + 1, idx + count))
+            idx += count
+    return spans
 
 
 @dataclass
@@ -254,6 +312,57 @@ class GitRepo:
         with _CACHE_LOCK:
             _CACHE[(str(self.root), 'changes')] = (time.monotonic(), value['changes'])
         return value
+
+    def brief(self, fresh=False):
+        """One repository as a single row: branch, drift, dirt, and how far past its last tag.
+
+        `info` walks every ref and every tag, which is the right price for the panel that
+        draws them and the wrong one multiplied by twenty repositories. This answers only
+        what a workspace list shows, so a `RepoSet` can ask all of them at once.
+
+        `fresh` is for the caller that is about to *act* on the answer. The shared snapshot
+        is invalidated by mutations through this class, not by a commit someone made in a
+        terminal a moment ago -- and deciding from a stale `ahead` is how a push silently
+        becomes "nothing to push".
+        """
+        if fresh: _invalidate(self.root)
+        def collect():
+            branch = self.run('branch', '--show-current').strip()
+            detached = not branch
+            if detached:
+                head = _run(self.root, 'rev-parse', '--short', 'HEAD', check=False)
+                branch = head.stdout.strip() if head.returncode == 0 else 'HEAD (unborn)'
+            upstream = _run(self.root, 'rev-parse', '--abbrev-ref', '@{upstream}', check=False)
+            upstream_name = upstream.stdout.strip() if upstream.returncode == 0 else ''
+            ahead = behind = 0
+            if upstream_name:
+                counts = self.run('rev-list', '--left-right', '--count', f'{upstream_name}...HEAD').split()
+                if len(counts) == 2:
+                    behind, ahead = map(int, counts)
+            changes = self._changes_uncached()
+            last = _run(self.root, 'log', '-1', '--format=%h%x00%s%x00%ct', check=False).stdout
+            short, subject, stamp = (last.strip().split('\0') + [''] * 3)[:3]
+            described = _run(self.root, 'describe', '--tags', '--abbrev=0', check=False)
+            tag = described.stdout.strip() if described.returncode == 0 else ''
+            unreleased = None
+            if tag:
+                counted = _run(self.root, 'rev-list', '--count', f'{tag}..HEAD', check=False)
+                unreleased = int(counted.stdout.strip() or 0) if counted.returncode == 0 else None
+            origin = _run(self.root, 'remote', 'get-url', 'origin', check=False).stdout.strip()
+            return {
+                'root': str(self.root), 'name': self.root.name, 'branch': branch,
+                'detached': detached, 'upstream': upstream_name, 'ahead': ahead, 'behind': behind,
+                'changed': len(changes), 'clean': not changes,
+                'staged': sum(1 for c in changes if c['staged']),
+                'unstaged': sum(1 for c in changes if c['unstaged'] and not c['untracked']),
+                'untracked': sum(1 for c in changes if c['untracked']),
+                'conflicted': sum(1 for c in changes if c['conflicted']),
+                'last_commit': {'short': short, 'subject': subject, 'timestamp': int(stamp or 0)},
+                'tag': tag, 'unreleased': unreleased, 'operation': self._operation()['active'],
+                'fetched_at': self._fetch_time(), 'remote': origin,
+                'web_url': _remote_web_url(origin),
+            }
+        return _cached(self.root, 'brief', collect)
 
     def _fetch_time(self):
         fetch_head = Path(self.run('rev-parse', '--git-path', 'FETCH_HEAD').strip())
@@ -658,6 +767,73 @@ class GitRepo:
                 rows.append(current)
                 current = None
         return rows
+
+    def blame_notebook(self, path):
+        """`git blame` for a notebook, grouped into the cells you actually wrote.
+
+        Blaming a `.ipynb` blames its JSON: `"source": [`, `"execution_count": null`, and
+        every code line wrapped in quotes with its newline escaped. That is a result and not
+        an answer. So the file is blamed as usual, and each cell's source lines are matched
+        back to the file lines that hold them -- the text shown is the decoded source, and the
+        attribution beside it is the one Git gave that line.
+
+        Per cell you get who touched it last and which commits it is made of; per line you
+        get the real blame. Both, because "this cell is Karthik's from March" is the summary
+        and "this line is not" is the reason you looked.
+
+        One inherited limitation, worth knowing rather than hiding: the blame is still of the
+        JSON, and JSON needs commas. Appending a line to a cell rewrites the line *before* it
+        -- the previous last entry gains a trailing comma -- so that line is attributed to the
+        commit that appended after it. Fixing it properly means blaming a flattened notebook
+        through history rather than the file, which is a different and much larger thing.
+        """
+        rows = self.blame(path)
+        by_line = {r['line']: r for r in rows}
+        raw = self._version(path, 'worktree')
+        if not raw:
+            try: raw = (self.root/path).read_text(errors='replace')
+            except OSError: raw = ''
+        try: cells = (json.loads(raw) or {}).get('cells') or []
+        except (TypeError, json.JSONDecodeError):
+            return {'notebook': False, 'path': path, 'cells': [], 'lines': rows,
+                    'error': 'this file is not a notebook Leela can read'}
+        spans = _source_spans(raw, cells)
+        out, seen = [], {}
+        for i, (cell, span) in enumerate(zip(cells, spans), 1):
+            source = cell.get('source') or ''
+            source = source if isinstance(source, list) else str(source).splitlines(True)
+            lines = []
+            if span:
+                for n, text in zip(range(span[0], span[1] + 1), source):
+                    r = by_line.get(n)
+                    if r is None: continue
+                    lines.append({'line': n, 'n': n - span[0] + 1, 'text': str(text).rstrip('\n'),
+                                  'oid': r['oid'], 'author': r['author'], 'summary': r['summary'],
+                                  'timestamp': r['timestamp'], 'uncommitted': _unborn(r['oid'])})
+                    seen.setdefault(r['oid'], {'oid': r['oid'], 'author': r['author'],
+                                               'summary': r['summary'], 'timestamp': r['timestamp'],
+                                               'uncommitted': _unborn(r['oid'])})
+            commits, last = {}, None
+            for row in lines:
+                commits[row['oid']] = commits.get(row['oid'], 0) + 1
+                # `>=` so that lines committed in the same second resolve to the later one in
+                # the cell. Author time has one-second resolution and an edit is usually
+                # further down than what it followed; there is nothing better available from
+                # blame alone, so the tie-break is at least deterministic.
+                if last is None or row['timestamp'] >= last['timestamp']: last = row
+            out.append({
+                'index': i, 'id': str(cell.get('id') or ''), 'kind': str(cell.get('cell_type') or 'code'),
+                'first': span[0] if span else 0, 'last': span[1] if span else 0,
+                'lines': lines, 'commits': [{'oid': k, 'lines': v} for k, v in commits.items()],
+                'authors': sorted({row['author'] for row in lines if row['author']}),
+                'touched': last and {k: last[k] for k in ('oid', 'author', 'summary', 'timestamp',
+                                                          'uncommitted')} or {},
+                # A cell whose lines could not be located is reported rather than dropped:
+                # the file is in a shape this cannot read, and saying so beats a blank row.
+                'mapped': bool(span),
+            })
+        return {'notebook': True, 'path': path, 'cells': out, 'lines': rows,
+                'commits': sorted(seen.values(), key=lambda c: -c['timestamp']), 'error': ''}
 
     def worktrees(self):
         rows, current = [], None
