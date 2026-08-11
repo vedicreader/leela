@@ -12,10 +12,19 @@
 # resolves to the real `memory/web.db`, and `/agent/memory/save` appends a row that is never
 # cleaned up. One run of the suite left fifteen copies of a test's note in a real user's
 # memory panel, plus a journal per run, `workspace.json` and `agent-history.jsonl`.
+#
+# The dir is remembered in `LEELA_TEST_CONFIG_HOME` rather than recomputed, because pytest
+# imports this file as `conftest` and a test importing `tests.conftest` gets a second module
+# object -- so a bare `mkdtemp()` here runs twice and the two copies disagree about where the
+# config went. Reading `XDG_CONFIG_HOME` back instead would be worse: a developer with it
+# legitimately set would silently get their real directory, which is the bug being fixed.
 import os as _os
 import tempfile as _tempfile
 
-TEST_CONFIG_HOME = _tempfile.mkdtemp(prefix='leela-test-cfg-')
+TEST_CONFIG_HOME = _os.environ.get('LEELA_TEST_CONFIG_HOME')
+if not TEST_CONFIG_HOME:
+    TEST_CONFIG_HOME = _tempfile.mkdtemp(prefix='leela-test-cfg-')
+    _os.environ['LEELA_TEST_CONFIG_HOME'] = TEST_CONFIG_HOME
 _os.environ['XDG_CONFIG_HOME'] = TEST_CONFIG_HOME
 
 import asyncio
