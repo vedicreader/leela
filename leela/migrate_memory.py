@@ -17,9 +17,15 @@ so the original file is never opened at all, and stays exactly as leela left it.
 
 The default target is a `leela` shelf rather than the vault's main store. A store records the
 encoder that wrote it, and mixing two in one store makes distances across them meaningless -- a
-personal vault read with `potion-science-32M` should not quietly acquire documents embedded with
-something else. A shelf is a partition, so leela's memory keeps its own encoder and stops diluting
-the ranking of a corpus it has nothing to do with.
+personal vault read with one encoder should not quietly acquire documents embedded with another. A
+shelf is a partition, so leela's memory keeps its own store and stops diluting the ranking of a
+corpus it has nothing to do with.
+
+`encoder=None` means vishalakshi's default, `potion-multilingual-128M`. Not the English-only
+`retrieval` alias, which is faster to load but cannot read Devanagari -- and a vault holding both
+source code commentary and Sanskrit wants one encoder across all of it. Code is the deliberate
+exception: kosha embeds identifiers with a code-trained model, and leela's search block owns that
+index.
 """
 
 from __future__ import annotations
@@ -89,7 +95,7 @@ def read_old(path):
         return out
 
 
-def migrate(shelf='leela', vault_path=None, old=None, apply=False, encoder='retrieval', offline=False):
+def migrate(shelf='leela', vault_path=None, old=None, apply=False, encoder=None, offline=False):
     """Re-add every old document into `shelf`. Returns what was moved, skipped and why.
 
     Idempotent: a document whose `source` is already in the shelf is left alone, so running this

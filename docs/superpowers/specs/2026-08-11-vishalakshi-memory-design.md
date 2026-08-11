@@ -1,7 +1,8 @@
 # Memory on a vishalakshi vault
 
-Design for replacing leela's litesearch-backed `Memory` with a `vishalakshi.Vault`, partitioned by
-a shelf per workspace, on the file ramabana will later share.
+Design for replacing leela's litesearch-backed `Memory` with a `vishalakshi.Vault`: a global
+`leela` shelf for the agent's own notes and state, a shelf per workspace for project memory, on the
+file ramabana will later share.
 
 ## Why
 
@@ -25,9 +26,9 @@ argues against in both directions.
 | question | decision |
 |---|---|
 | vault file | `$VISHALAKSHI_VAULT`, else `~/.vishalakshi/vault.db` — the same file the CLI and MCP use |
-| partitioning | one shelf per workspace, named by `hub.workspace_slug()` |
+| partitioning | a global `leela` shelf for agent notes and state; a shelf per workspace, named by `hub.workspace_slug()`, for project memory |
 | default | the Vault is the default; the litesearch `Memory` is deleted |
-| encoder | `'retrieval'` (`potion-retrieval-32M`) — 0.487s load vs 1.220s, 0.4ms vs 1.0ms per query |
+| encoder | vishalakshi's default, `potion-multilingual-128M` — one encoder for prose, whatever the language |
 | migration | a separate one-off command, not implicit at startup |
 | kosha | leela's `Search` block keeps sole ownership; the vault indexes no code |
 
@@ -38,26 +39,40 @@ the one real conflict: `MemoryPort.note` is a status string every leela surface 
 `Vault.note()` is a method that files a note. Wrapping keeps both.
 
 ```python
-class VaultMemory:
-    "MemoryPort over one shelf of a vishalakshi vault."
-    def __init__(self, shelf='main', path=None, encoder='retrieval', offline=False):
-        self.shelf_name, self.path, self.encoder, self.offline = shelf, path, encoder, offline
-        self._v, self.note = None, 'vault not opened yet'
+GLOBAL = 'leela'          # the agent's own notes and state, whatever project is open
 
-    def _open(self):
-        "Deferred: opening a vault loads an encoder, and Workspace.__init__ must stay cheap."
-        if self._v is None:
+class VaultMemory:
+    "MemoryPort over a vishalakshi vault: one store per project, one shared by all of them."
+    def __init__(self, shelf=GLOBAL, path=None, encoder=None, offline=False):
+        self.shelf_name, self.path, self.encoder, self.offline = shelf, path, encoder, offline
+        self._stores, self.note = {}, 'vault not opened yet'
+
+    def _store(self, name):
+        """One store, opened directly rather than through the root vault.
+
+        `Vault(path).shelf(name)` builds the root store on the way, and a vault whose main store
+        was written by another encoder then warns about mixed distances -- for a store this is not
+        touching. Opening `store=` reaches the same partition and never builds the root.
+        """
+        if name not in self._stores:
             from vishalakshi import Vault
-            v = Vault(self.path, encoder=self.encoder, offline=self.offline)
-            self._v = v.shelf(self.shelf_name)
-            self.note = f'vault at {v.path} · shelf {self.shelf_name}'
-        return self._v
+            self._stores[name] = v = Vault(self.path, store=name, encoder=self.encoder,
+                                           offline=self.offline)
+            self.note = f'vault at {v.path} · {self.shelf_name}'
+        return self._stores[name]
+
+    def _open(self): return self._store(self.shelf_name)     # this workspace's project memory
+    def _agent(self): return self._store(GLOBAL)             # notes and state, shared
 
     @property
     def vault(self):
-        "The underlying shelf, for handing to ramabana's VaultHost."
+        "The project store, for handing to ramabana's VaultHost."
         return self._open()
 ```
+
+`agent_notes`, `agent_states` and their `remember_*` counterparts address `_agent()`; everything
+else addresses `_open()`. A workspace whose slug *is* `leela` gets one store for both, which is
+harmless — the `kind` filter already separates notes and state from project reading.
 
 Laziness is not an optimisation. `Workspace.__init__` builds memory eagerly, and opening a vault
 loads an encoder; leela's current `Memory` defers the same way with `_open()`.
@@ -104,6 +119,17 @@ panel — "search other projects" — just not an implicit default. This is the 
 `docs/blocks.md` already draws for `RuntimePort`: vishalakshi supplies mechanism, leela decides how
 to use it.
 
+### One encoder for prose, and code excepted
+
+`potion-retrieval-32M` loads in 0.408s against 0.877s for the multilingual default, and is tuned
+for search rather than similarity. It is also English-only, and this vault is meant to hold
+Sanskrit alongside notes about kernels — so the default is the multilingual one, and the extra half
+second is paid lazily, once per process.
+
+The exception is code, deliberately. kosha embeds identifiers with a code-trained model because
+code embeds badly under a prose encoder, and leela's `Search` block owns that index. The vault
+never indexes code, which is what `code=0` above enforces.
+
 ## Registration and lifecycle
 
 `blocks/memory/__init__.py` registers it as the port's default, beside the module that satisfies
@@ -137,13 +163,11 @@ two in one store is exactly what that warning is about. The adapter reads the re
 Vault needed) and adopts what wrote the store, falling back to `retrieval` only when the store is
 new.
 
-**Open question the migration exposed.** The old memory was global — one `web.db` for every
-workspace — and the four documents in it are global by nature (three system prompts and a working
-state). They migrated into a single `leela` shelf. But this design says one shelf *per workspace*,
-which leaves no home for memory that belongs to leela rather than to a project. Either global notes
-live in a `leela` shelf beside the per-project ones, or the per-workspace split should be dropped
-for agent notes and state specifically. Deciding that is a prerequisite for the adapter, not for
-the migration.
+**Agent notes and state are global, and live in the `leela` shelf.** The old memory was one file
+for every workspace, and what was in it — three system prompts and a working state — is about how
+leela works, not about any project. Per-workspace shelves hold project memory: what was read while
+working on *this* repository. So the adapter opens two stores, not one, and `agent_notes`,
+`agent_states` and their `remember_*` counterparts always address the global shelf.
 
 ## Migration
 
