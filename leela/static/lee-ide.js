@@ -2865,8 +2865,8 @@ async function leeAddModel() {
   const saved = (d.saved || []).map(x => `<div class="lee-krow"><span><strong>${esc(x.name)}</strong> · ${esc(x.runtime)}<br><small>${esc(x.model_id)}</small></span><button class="lee-btn warn" data-remove="${esc(x.name)}">remove</button></div>`).join('');
   const m = modal(`<div class="lee-mhead">Add model<span class="sub">saved in Leela · API keys stay in environment variables</span></div>
     <label>name<input class="lee-input" id="modelalias" placeholder="ornith-test"></label>
-    <label>model ID or Hugging Face URL<input class="lee-input" id="modelid" placeholder="https://huggingface.co/mlx-community/… or openai/model-id"></label>
-    <label>runtime<select class="lee-select" id="modelruntime"><option value="mlx">MLX</option><option value="litert">LiteRT</option><option value="llama">llama.cpp</option><option value="remote">hosted API / FastLLM</option></select></label>
+    <label>model ID or Hugging Face URL<input class="lee-input" id="modelid" placeholder="https://huggingface.co/litert-community/… or openai/model-id"></label>
+    <label>runtime<select class="lee-select" id="modelruntime"><option value="litert">LiteRT</option><option value="remote">hosted API / FastLLM</option></select></label>
     <label>context tokens<input class="lee-input" id="modelctx" type="number" value="128000" min="1024"></label>
     <details><summary>hosted API settings</summary><label>base URL<input class="lee-input" id="modelbase" placeholder="https://api.example.com/v1"></label><label>API key environment variable<input class="lee-input" id="modelkeyenv" placeholder="OPENAI_API_KEY"></label><label>FastLLM vendor<input class="lee-input" id="modelvendor" placeholder="openai"></label><label>FastLLM API transport<input class="lee-input" id="modelapi" placeholder="openai"></label></details>
     <button class="lee-btn go" id="modelsave">save model</button>

@@ -4,7 +4,9 @@ from fastcore.all import Path
 from ... import leela_cfg
 
 __all__=['model_path','load_models','save_model','delete_model']
-_RUNTIMES=('mlx','litert','llama','remote')
+# Kept in step with `register_model` in ramabana.core, which rejects anything else. MLX and
+# llama.cpp were dropped there, so offering them here would fail only at save time.
+_RUNTIMES=('litert','remote')
 
 def model_path(path=None): return Path(path or leela_cfg/'models.json')
 
