@@ -15,6 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
+    "ramabana>=0.2.0",         # the agent core. `leela.agent` is an alias for it, not a copy of it
     "fastcore>=1.7.0",         # Path, L, patch, docments: the vocabulary leela.agent is written in
     "rishi>=0.1.1",            # on-device model execution (litert / llama.cpp) for leela.agent
     "python-fastllm>=0.0.36",  # cloud model execution for leela.agent
@@ -30,6 +31,7 @@ dependencies = [
     "mdhtml>=0.1.21",          # bounded, paste-safe Markdown -> structural MDHTML
     "python-fasthtml>=0.14.9", # the web frontend
     "dhrishti>=0.1.2",         # the inspection engine: namespace -> node tree, as a JSON API in-kernel
+    "vishalakshi>=0.1.2",   # the vault behind memory; 0.1.2 is the first importable release
 ]
 
 [project.optional-dependencies]
@@ -77,3 +79,7 @@ testpaths = ["tests"]
 
 [tool.uv.sources]
 leela = { workspace = true }
+# The agent core is developed alongside leela rather than released ahead of it, so a
+# checkout resolves it from the sibling directory. The `ramabana>=0.2.0` requirement above
+# is what anyone installing leela from an index gets instead.
+ramabana = { path = "../ramabana", editable = true }
