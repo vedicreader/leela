@@ -2289,3 +2289,9 @@ kbd {
 .lee-folderwhere { margin-left: auto; padding-left: 12px; font-size: 11px; opacity: .65;
                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
 .lee-foundhead { padding: 8px 8px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+
+/* the open-folder dialog says when it is searching: a slow walk and an empty result look the same */
+.lee-searching { display: flex; align-items: center; gap: 8px; padding: 10px 8px; font-size: 12px; opacity: .7; }
+.lee-spin { width: 11px; height: 11px; border: 2px solid currentColor; border-right-color: transparent;
+            border-radius: 50%; animation: lee-spin .7s linear infinite; flex: none; }
+@keyframes lee-spin { to { transform: rotate(360deg); } }

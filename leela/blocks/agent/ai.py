@@ -24,7 +24,7 @@ call them by name, and renaming things that work is not a feature.
 
 from __future__ import annotations
 
-import functools, inspect, json, threading
+import functools, inspect, json, os, threading
 
 from ... import errstr, leela_cfg
 from ..fs.fs import  Unsafe
@@ -642,6 +642,29 @@ class Assistant(Agent):
     two things the application wants to add -- a workspace-flavoured note, and the
     conversation-in-the-notebook approval -- have somewhere to live that is not the harness.
     """
+
+    LITERT_BACKENDS = ('cpu', 'gpu')
+
+    def set_litert_backend(self, which):
+        """Choose the accelerator LiteRT engines are built on. Releases the loaded ones.
+
+        ramabana reads `$LEELA_LITERT_BACKEND` when it builds an engine and maps it to
+        `litert_lm.Backend`, so this sets the variable rather than reaching past it -- the CLI
+        agent sharing this machine then agrees with the IDE about which accelerator to use.
+
+        The choice belongs to the engine, not a conversation, so loaded LiteRT backends are
+        released and rebuilt lazily. Cloud and llama.cpp backends are untouched. Same shape and
+        the same reasoning as `set_local_multimodal`, which this deliberately mirrors.
+        """
+        which = str(which or '').strip().lower()
+        if which not in self.LITERT_BACKENDS:
+            raise ValueError(f'litert backend must be one of {", ".join(self.LITERT_BACKENDS)}')
+        if self.busy: raise RuntimeError('cannot change the LiteRT backend while the assistant is working')
+        os.environ['LEELA_LITERT_BACKEND'] = which
+        for key in [k for k in self._backends if k[0] == 'litert']:
+            self._backends.pop(key).close()
+        self.note = f'LiteRT backend {which}'
+        return which
 
     def __init__(self, ws, session=None, model=None, sp=None, approve=None, surface='agent', **kw):
         from .models import load_models

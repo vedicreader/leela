@@ -1806,7 +1806,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/agent/models')
     def agent_models(legacy: bool = True):
         from .agent.core import DFLT_LOCAL, available_models, auth_status, resolve
-        from .blocks.agent.models import load_models
+        from .blocks.agent.models import load_models, runtimes
         saved=load_models()
         rows = available_models(include_legacy=legacy)
         rows += [{'value':x['name'],'label':x['name'],'provider':x['runtime'],
@@ -1831,7 +1831,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                 mid = resolve(current).model_id
                 return next((r['value'] for r in rows if resolve(r['value']).model_id == mid), current)
             except Exception: return current
-        return {'models': rows, 'saved':saved, 'auth': auth_status(),
+        return {'models': rows, 'saved':saved, 'auth': auth_status(), 'runtimes': runtimes(),
                 'selected': {'agent': selected(agent), 'inline': selected(inline),
                              'completion': selected(completion)}}
 
@@ -1852,6 +1852,26 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     async def agent_settings(req):
         "Set engine-level agent options. LiteRT engines reload lazily after a change."
         d = await req.json()
+        if 'litert_backend' in d:
+            # ramabana reads $LEELA_LITERT_BACKEND when it builds an engine, so the assistants
+            # set it and release what they have loaded. GPU is materially faster than CPU on
+            # this hardware, and the choice is the engine's rather than a conversation's.
+            try:
+                from .blocks.agent.ai import Assistant
+                which = str(d.get('litert_backend') or '').strip().lower()
+                # Validated here, not only in `set_litert_backend`: with no assistant built yet
+                # that loop is empty, and an unchecked value would be written to the environment
+                # and the workspace to fail later, at the first local request.
+                if which not in Assistant.LITERT_BACKENDS:
+                    raise ValueError(f'litert backend must be one of {", ".join(Assistant.LITERT_BACKENDS)}')
+                live = [a for a in (ws._ai, ws._inline_ai) if a is not None]
+                for a in live: a.set_litert_backend(which)
+                if not live: os.environ['LEELA_LITERT_BACKEND'] = which
+                ws.litert_backend = which
+                ws.save()
+                return {'ok': True, 'litert_backend': which,
+                        'note': f'LiteRT runs on the {which.upper()}; engines reload on the next request'}
+            except Exception as e: return _fail(e)
         try:
             enabled = d.get('local_multimodal')
             if not isinstance(enabled, bool): raise ValueError('local_multimodal must be true or false')

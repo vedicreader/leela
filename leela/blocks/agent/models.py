@@ -3,10 +3,17 @@ import json, re
 from fastcore.all import Path
 from ... import leela_cfg
 
-__all__=['model_path','load_models','save_model','delete_model']
-# Kept in step with `register_model` in ramabana.core, which rejects anything else. MLX and
-# llama.cpp were dropped there, so offering them here would fail only at save time.
-_RUNTIMES=('litert','remote')
+__all__=['model_path','load_models','save_model','delete_model','runtimes']
+# Asked of ramabana rather than duplicated. `register_model` rejects an unknown runtime and
+# refuses an uninstalled one, and this list drifted out of step with it once already -- leela
+# was still offering MLX and llama.cpp after they were dropped, so the picker had two choices
+# that could only fail at save time.
+_RUNTIMES=('litert','mlx','llama','remote')
+
+def runtimes():
+    "Every runtime, and whether rishi's optional dependency for it is importable."
+    from ...agent.core import runtime_available
+    return [{'value': r, 'available': bool(runtime_available(r))} for r in _RUNTIMES]
 
 def model_path(path=None): return Path(path or leela_cfg/'models.json')
 

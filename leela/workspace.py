@@ -12,7 +12,7 @@ and pretending otherwise would be a lie about what is live.
 """
 
 from __future__ import annotations
-import hashlib, time
+import hashlib, os, time
 from dataclasses import dataclass
 from fastcore.all import Path, L, ifnone
 
@@ -140,6 +140,7 @@ class Workspace:
                  inline_model=None,       # prompt cells default to GPT-5.6 Luna
                  completion_model=None,   # code completion defaults to GPT-4.1
                  local_multimodal=False,  # opt in to LiteRT vision/audio encoders
+                 litert_backend='',       # 'gpu' or 'cpu'; '' leaves ramabana's default alone
                  approvals='ask',         # 'ask' | 'auto' (approve every write) | 'off' (refuse them)
                  agent_scope='overlay',   # widest scope `inspect_python` may use: 'overlay' | 'isolated'
                  python=None,             # interpreter kernels launch under; None is leela's own
@@ -191,6 +192,10 @@ class Workspace:
         self.inline_model = inline_model or model_env('MODEL_INLINE') or 'gpt-mini'
         self.completion_model = completion_model or model_env('MODEL_COMPLETION') or 'gpt-4.1'
         self.local_multimodal = bool(local_multimodal)
+        # ramabana reads this when it builds a LiteRT engine, so it has to be in the
+        # environment before the first one is, not just recorded on the workspace.
+        self.litert_backend = str(litert_backend or '').lower()
+        if self.litert_backend: os.environ['LEELA_LITERT_BACKEND'] = self.litert_backend
         self.compact_auto, self.compact_strategy = True, 'surgical'
         self.agent_state = ''             # compatibility alias for the task layer
         self.agent_state_layers = {name: {'text': '', 'enabled': True, 'source': 'workspace'} for name in
@@ -899,7 +904,8 @@ class Workspace:
                 'tabs': [saved_tab(t) for t in self.tabs if not t.scratch],
                 'active': self.active, 'model': self.model, 'inline_model': self.inline_model,
                 'completion_model': self.completion_model,
-                'local_multimodal': self.local_multimodal, 'agent_state': self.agent_state,
+                'local_multimodal': self.local_multimodal, 'litert_backend': self.litert_backend,
+                'agent_state': self.agent_state,
                 'agent_state_layers': self.agent_state_layers,
                 'agent_memory_selection': self.agent_memory_selection,
                 'compact_auto': self.compact_auto, 'compact_strategy': self.compact_strategy,
@@ -915,6 +921,7 @@ class Workspace:
     @classmethod
     def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel',
              model=None, inline_model=None, completion_model=None, local_multimodal=None,
+             litert_backend=None,
              approvals='ask', agent_scope='overlay', python=None, transport='direct', gateway=None):
         "Restore a saved workspace, dropping any folder or file that has since gone away."
         p = Path(path or ws_path())
@@ -928,6 +935,8 @@ class Workspace:
                                    d.get('completion_model') or 'gpt-4.1'),
                  local_multimodal=(local_multimodal if local_multimodal is not None else
                                    d.get('local_multimodal', False)),
+                 litert_backend=(litert_backend if litert_backend is not None else
+                                 d.get('litert_backend', '')),
                  approvals=approvals, agent_scope=agent_scope, python=python,
                  transport=transport, gateway=gateway)
         ws._state_path = p

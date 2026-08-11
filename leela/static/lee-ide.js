@@ -2868,11 +2868,23 @@ async function leeAddModel() {
   const m = modal(`<div class="lee-mhead">Add model<span class="sub">saved in Leela · API keys stay in environment variables</span></div>
     <label>name<input class="lee-input" id="modelalias" placeholder="ornith-test"></label>
     <label>model ID or Hugging Face URL<input class="lee-input" id="modelid" placeholder="https://huggingface.co/litert-community/… or openai/model-id"></label>
-    <label>runtime<select class="lee-select" id="modelruntime"><option value="litert">LiteRT</option><option value="remote">hosted API / FastLLM</option></select></label>
+    <label>runtime<select class="lee-select" id="modelruntime"></select></label>
     <label>context tokens<input class="lee-input" id="modelctx" type="number" value="128000" min="1024"></label>
     <details><summary>hosted API settings</summary><label>base URL<input class="lee-input" id="modelbase" placeholder="https://api.example.com/v1"></label><label>API key environment variable<input class="lee-input" id="modelkeyenv" placeholder="OPENAI_API_KEY"></label><label>FastLLM vendor<input class="lee-input" id="modelvendor" placeholder="openai"></label><label>FastLLM API transport<input class="lee-input" id="modelapi" placeholder="openai"></label></details>
     <button class="lee-btn go" id="modelsave">save model</button>
     <h4>saved models</h4><div class="lee-modallist">${saved || '<div class="lee-dim">none yet</div>'}</div>`);
+  /* The runtimes ramabana will accept, and which of them rishi can load here -- `d.runtimes`
+     rather than a list in this file, which drifted out of step once already and left the
+     picker offering MLX after it had been dropped. An unavailable one stays visible but
+     disabled and says what to install: "MLX needs rishi[mlx]" beats a silently missing row. */
+  const RUNTIME_LABELS = {litert: 'LiteRT', mlx: 'MLX', llama: 'llama.cpp', remote: 'hosted API / FastLLM'};
+  const rtsel = m.querySelector('#modelruntime');
+  rtsel.innerHTML = (d.runtimes || [{value: 'remote', available: true}]).map(r =>
+    `<option value="${esc(r.value)}"${r.available ? '' : ' disabled'}>${esc(RUNTIME_LABELS[r.value] || r.value)}` +
+    `${r.available ? '' : ' — needs pip install rishi[' + esc(r.value) + ']'}</option>`).join('');
+  const firstrt = rtsel.querySelector('option:not([disabled])');
+  if (firstrt) rtsel.value = firstrt.value;
+
   $('#modelsave', m).onclick = async () => {
     status('validating and saving model…');
     const r = await post('/agent/models/add', {name: $('#modelalias',m).value.trim(), model_id: $('#modelid',m).value.trim(), runtime: $('#modelruntime',m).value, ctx: Number($('#modelctx',m).value), base_url: $('#modelbase',m).value.trim(), api_key_env: $('#modelkeyenv',m).value.trim(), vendor_name: $('#modelvendor',m).value.trim(), api_name: $('#modelapi',m).value.trim()});
@@ -7054,22 +7066,36 @@ async function addRoot(find = false) {
      browser, because they are already here. Repositories *below* it come from ripgrep through
      /git/find, because a directory of checkouts is deeper than one level and walking it in JS
      would be slow and wrong. */
-  let seq = 0;
-  const draw = async () => {
-    const q = filter.value.trim();
-    const near = dirs.filter(x => !q || x.name.toLowerCase().includes(q.toLowerCase()));
-    show(near.map(x => row(x.path, x.name)).join(''));
-    if (!q) return;
-    const mine = ++seq;
+  let seq = 0, timer = null;
+  const near = q => dirs.filter(x => !q || x.name.toLowerCase().includes(q.toLowerCase()));
+  /* Local filtering is instant and happens on every keystroke. The search underneath is not:
+     it walks a directory tree, and from a home directory that is most of a second. Firing one
+     per keystroke made typing a five-letter name queue five of them behind one worker, which
+     is what made this feel broken. Debounced, so a word costs one search. */
+  const search = async q => {
+    const mine = ++seq, listed = near(q);
     try {
       const r = await api(`/git/find?base=${encodeURIComponent(current)}&q=${encodeURIComponent(q)}`);
       if (mine !== seq) return;                       // a later keystroke already answered
-      const found = (r.repos || []).filter(x => !near.some(n => n.path === x.path));
-      if (!found.length && !near.length) return show('<div class="lee-dim">no folders or repositories match</div>');
-      show(near.map(x => row(x.path, x.name)).join('') +
+      const found = (r.repos || []).filter(x => !listed.some(n => n.path === x.path));
+      if (!found.length && !listed.length) return show('<div class="lee-dim">no folders or repositories match</div>');
+      show(listed.map(x => row(x.path, x.name)).join('') +
            (found.length ? '<div class="lee-dim lee-foundhead">repositories below here</div>' : '') +
            found.map(x => row(x.path, x.name, x.parent)).join(''));
-    } catch (_) { /* the filter still works on what is already listed */ }
+    } catch (_) {
+      if (mine === seq) show(listed.map(x => row(x.path, x.name)).join(''));   // keep what we have
+    }
+  };
+  const draw = () => {
+    const q = filter.value.trim();
+    const listed = near(q);
+    clearTimeout(timer);
+    if (!q) { ++seq; return show(listed.map(x => row(x.path, x.name)).join('')); }
+    // What is already loaded, immediately, with the search announced under it rather than a
+    // frozen list: an empty result and a running search look identical otherwise.
+    show(listed.map(x => row(x.path, x.name)).join('') +
+         `<div class="lee-searching"><span class="lee-spin"></span>searching ${esc(current)} for repositories…</div>`);
+    timer = setTimeout(() => search(q), 200);
   };
   filter.oninput = draw;
   const open = () => {

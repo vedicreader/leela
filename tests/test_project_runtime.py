@@ -14,7 +14,7 @@ from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.runtime.kernels import project_python
 from leela.workspace import Workspace
-from tests.assets import JS
+from tests.assets import CSS, JS
 
 
 def _client(root):
@@ -180,3 +180,85 @@ def test_finding_a_repository_is_reachable_from_any_panel():
     assert chord_display('find_repo') and 'o' in chord_display('find_repo')
     assert [k.scope for k in KEYS if k.action == 'add_root'] == ['files'], 'browsing stays where it was'
     assert 'find_repo:' in JS and 'async function findRepo' in JS, 'and it is dispatchable'
+
+
+# ---------------------------------------------------------------- runtimes and accelerators
+
+def test_the_runtime_list_is_asked_of_ramabana_not_duplicated(tmp_path):
+    """leela's copy of the runtime list drifted once already.
+
+    ramabana dropped MLX and llama.cpp; leela kept offering both, so the picker had two
+    choices that could only fail at save time. `runtimes()` asks instead, and reports which
+    ones rishi can actually load here.
+    """
+    from leela.blocks.agent.models import runtimes
+    from leela.agent.core import runtime_available
+    got = {r['value']: r['available'] for r in runtimes()}
+    assert set(got) == {'litert', 'mlx', 'llama', 'remote'}, 'everything register_model accepts'
+    for name, avail in got.items():
+        assert avail is bool(runtime_available(name)), f'{name} must report what rishi says'
+    assert got['remote'] is True
+
+
+def test_the_model_dialog_is_told_which_runtimes_exist(tmp_path):
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as c: d = c.get('/agent/models').json()
+    assert [r['value'] for r in d['runtimes']] == ['litert', 'mlx', 'llama', 'remote']
+    assert 'd.runtimes' in JS, 'and it builds the select from that rather than a hardcoded list'
+    assert 'rishi[' in JS, 'saying what to install for the ones that are missing'
+
+
+def test_choosing_the_litert_accelerator_is_remembered_and_exported(tmp_path, monkeypatch):
+    """ramabana reads $LEELA_LITERT_BACKEND when it builds an engine.
+
+    So the setting has to reach the environment, not just the workspace -- and it has to
+    survive a reload, since the whole point is that GPU is materially faster here.
+    """
+    monkeypatch.delenv('LEELA_LITERT_BACKEND', raising=False)
+    ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'ws.json'
+    with TestClient(ide_app(ws)) as c:
+        assert c.post('/agent/settings', json={'litert_backend': 'gpu'}).json()['litert_backend'] == 'gpu'
+    import os
+    assert os.environ['LEELA_LITERT_BACKEND'] == 'gpu' and ws.litert_backend == 'gpu'
+    assert ws.state()['litert_backend'] == 'gpu', 'and it is written to the workspace'
+
+    monkeypatch.delenv('LEELA_LITERT_BACKEND', raising=False)
+    again = Workspace.load(path=ws._state_path)
+    assert again.litert_backend == 'gpu'
+    assert os.environ['LEELA_LITERT_BACKEND'] == 'gpu', 'restored before any engine is built'
+
+
+def test_an_accelerator_leela_cannot_offer_is_refused_before_it_reaches_an_engine(tmp_path):
+    "Validated even with no assistant built, or it would be stored to fail at the first request."
+    ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'ws.json'
+    with TestClient(ide_app(ws)) as c:
+        r = c.post('/agent/settings', json={'litert_backend': 'tpu'})
+    assert r.status_code == 400 and 'cpu, gpu' in r.json()['error']
+    assert ws.litert_backend != 'tpu'
+
+
+def test_the_repository_search_is_debounced_and_says_it_is_running():
+    """One search per word, not per keystroke, and a banner while it runs.
+
+    Searching from a home directory takes most of a second. Firing one per keystroke queued
+    five of them behind a single worker for a five-letter name, which is what made this feel
+    broken. A running search and an empty result also look identical without the banner.
+    """
+    block = JS[JS.index('async function addRoot'):]
+    block = block[:block.index('\ndocument.addEventListener')]
+    assert 'setTimeout(() => search(q), 200)' in block, 'debounced, not per keystroke'
+    assert 'clearTimeout(timer)' in block, 'and the pending one is dropped'
+    assert 'lee-searching' in block and 'searching' in block, 'it says a search is running'
+    assert 'if (mine !== seq) return' in block, 'a late answer never overwrites a newer one'
+    assert '.lee-searching' in CSS and '.lee-spin' in CSS
+
+
+def test_the_finder_skips_the_directories_that_made_it_slow(tmp_path):
+    "Object stores, virtualenvs and caches never hold a checkout worth opening."
+    from leela.blocks.git.repos import find_repos
+    good = tmp_path/'work'/'real-repo'
+    (good/'.git').mkdir(parents=True); (good/'.git'/'HEAD').write_text('ref: x')
+    for junk in ('node_modules/vendored', '.venv/src/pkg', '.cache/thing'):
+        d = tmp_path/junk
+        (d/'.git').mkdir(parents=True); (d/'.git'/'HEAD').write_text('ref: x')
+    assert [p.name for p in find_repos(tmp_path)] == ['real-repo']
