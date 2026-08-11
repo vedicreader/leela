@@ -52,7 +52,9 @@ class _EnvClient:
         except Exception: return None
 
     async def api(self, path, params=None, timeout=15):
-        import httpx
+        # httpx2, like the sync path below and every other caller in leela: fasthtml already
+        # brings it, and one HTTP client in the process rather than two.
+        import httpx2 as httpx
         h = {'X-Dhrishti-Token': t} if (t := self.token) else {}
         try:
             async with httpx.AsyncClient(base_url=self.base, timeout=timeout, headers=h) as c:
