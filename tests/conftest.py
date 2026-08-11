@@ -1,5 +1,23 @@
 """Deterministic workspace and kernel fixtures for the IDE tests."""
 
+# -- config isolation, before leela is imported ------------------------------
+# `leela_cfg` is computed at import (`leela/__init__.py`), and modules bind it at import
+# too -- `settings.py` derives `USER_SETTINGS_FILE` there and never looks again. So the
+# environment has to be set *here*, above the imports; monkeypatching `leela.leela_cfg`
+# afterwards would leave every module that already captured it pointing at the real
+# directory.
+#
+# Without this, anything that builds a `Workspace` writes into the developer's own
+# `~/.config/leela`: `Workspace.__init__` builds memory with no path, so `memory_path(None)`
+# resolves to the real `memory/web.db`, and `/agent/memory/save` appends a row that is never
+# cleaned up. One run of the suite left fifteen copies of a test's note in a real user's
+# memory panel, plus a journal per run, `workspace.json` and `agent-history.jsonl`.
+import os as _os
+import tempfile as _tempfile
+
+TEST_CONFIG_HOME = _tempfile.mkdtemp(prefix='leela-test-cfg-')
+_os.environ['XDG_CONFIG_HOME'] = TEST_CONFIG_HOME
+
 import asyncio
 import pytest
 
