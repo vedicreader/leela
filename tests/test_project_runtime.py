@@ -125,3 +125,58 @@ def test_a_terminal_outside_any_checkout_still_gets_the_workspace_environment(tm
     elsewhere = tmp_path/'scratch'; elsewhere.mkdir()
     ws = Workspace(roots=[root])
     assert _term_python(ws, elsewhere) == str(py)
+
+
+# ---------------------------------------------------------------- finding a checkout
+
+def test_find_repos_searches_deeper_than_discover_and_filters_by_name(tmp_path):
+    """`discover` is one level deep by design; finding a checkout you half-remember is not.
+
+    The dialog's filter is the whole point of this: a directory of clones is nested, and
+    `discover` would only ever see the first level of it.
+    """
+    from leela.blocks.git.repos import find_repos
+    for rel in ('work/alpha-service', 'work/beta-service', 'play/deep/gamma-tool'):
+        (tmp_path/rel/'.git').mkdir(parents=True)
+        (tmp_path/rel/'.git'/'HEAD').write_text('ref: refs/heads/main\n')
+    (tmp_path/'work'/'not-a-repo').mkdir(parents=True)
+
+    names = {p.name for p in find_repos(tmp_path)}
+    assert names == {'alpha-service', 'beta-service', 'gamma-tool'}, 'three levels down, and no plain folder'
+    assert {p.name for p in find_repos(tmp_path, 'service')} == {'alpha-service', 'beta-service'}
+    assert {p.name for p in find_repos(tmp_path, 'gamma')} == {'gamma-tool'}
+
+
+def test_find_repos_matches_a_linked_worktree_whose_git_is_a_file(tmp_path):
+    "A worktree's `.git` is a file pointing at the real one. It is still somewhere to open."
+    from leela.blocks.git.repos import find_repos
+    wt = tmp_path/'checkouts'/'feature-branch'
+    wt.mkdir(parents=True)
+    (wt/'.git').write_text('gitdir: /elsewhere/.git/worktrees/feature-branch\n')
+    assert [p.name for p in find_repos(tmp_path)] == ['feature-branch']
+
+
+def test_the_finder_route_answers_for_a_folder_not_yet_open(tmp_path):
+    "The dialog searches a directory you have not opened, which is why it takes a base."
+    (tmp_path/'elsewhere'/'zeta-app'/'.git').mkdir(parents=True)
+    (tmp_path/'elsewhere'/'zeta-app'/'.git'/'HEAD').write_text('ref: refs/heads/main\n')
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as c:
+        d = c.get(f'/git/find?base={tmp_path}&q=zeta').json()
+    assert [r['name'] for r in d['repos']] == ['zeta-app']
+    assert d['repos'][0]['path'].endswith('elsewhere/zeta-app')
+
+
+def test_finding_a_repository_is_reachable_from_any_panel():
+    """Browsing is `o` in the files panel; this is the other way in and must be global.
+
+    A bare letter cannot bind globally -- it would fire while typing -- so this is its own
+    action with a modifier rather than a second chord on add_root, which the keymap forbids
+    anyway: one entry per action.
+    """
+    from leela.core.keys import KEYS, chord_display
+    find = [k for k in KEYS if k.action == 'find_repo']
+    assert len(find) == 1 and find[0].scope == 'global'
+    assert chord_display('find_repo') and 'o' in chord_display('find_repo')
+    assert [k.scope for k in KEYS if k.action == 'add_root'] == ['files'], 'browsing stays where it was'
+    assert 'find_repo:' in JS and 'async function findRepo' in JS, 'and it is dispatchable'

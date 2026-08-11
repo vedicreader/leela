@@ -2283,3 +2283,9 @@ kbd {
 .lee-git-conflict pre { min-height: 180px; margin: 0; overflow: auto; padding: 10px; color: var(--lee-fg2); font: 10px/1.5 var(--lee-mono); white-space: pre; }
 .lee-git-conflict summary { padding: 8px; color: var(--lee-fg4); cursor: pointer; font: 9px/1 var(--lee-mono); }
 @media (max-width: 760px) { .lee-git-conflict { grid-template-columns: 1fr; min-width: 0; } }
+
+/* the open-folder dialog's one box: filters what is listed, and finds repositories below it */
+.lee-folderfilter { width: 100%; margin: 6px 0 4px; }
+.lee-folderwhere { margin-left: auto; padding-left: 12px; font-size: 11px; opacity: .65;
+                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
+.lee-foundhead { padding: 8px 8px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }

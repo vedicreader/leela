@@ -29,7 +29,7 @@ from pathlib import Path
 
 from ...core.web import fail, off_loop
 from .git import GitError, GitRepo
-from .repos import RepoSet
+from .repos import RepoSet, find_repos
 
 __all__ = ['CAPS', 'connect', 'git_paths']
 
@@ -131,6 +131,20 @@ def connect(app, ctx):
                 _apply(r, str(d.get('op') or ''), d)
                 return r.info()
             return await off_loop(act)
+        except Exception as e: return fail(e)
+
+    @rt('/git/find')
+    async def git_find(base: str = '', q: str = '', limit: int = 60):
+        """Repositories anywhere under `base`, so the open-folder dialog can be typed at.
+
+        Separate from `/git/repos`, which reports the workspace. This one searches a folder
+        you have not opened yet -- the directory of checkouts you keep everything in -- and is
+        why it goes deep and takes a query.
+        """
+        try:
+            found = await off_loop(find_repos, base or (ctx.fs.roots[0] if ctx.fs.roots else ''), q, limit)
+            return {'base': str(base or ''), 'q': q,
+                    'repos': [{'path': str(p), 'name': p.name, 'parent': str(p.parent)} for p in found]}
         except Exception as e: return fail(e)
 
     @rt('/git/repos')

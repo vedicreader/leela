@@ -163,6 +163,10 @@ DEFAULTS = L(
     # recent-files gesture; the browser switcher itself is MRU rather than positional.
     Key('recent_tabs',      'mod+e',         'global', 'recent files',        'toast'),
     Key('code_search',      'mod+shift+f',    'global', 'search code',        'toast'),
+    # Browsing for a folder is `o` in the files panel. This is the other way in: you know the
+    # directory your checkouts live in and want the one whose name you half-remember, from
+    # whichever panel you happen to be in. Opens the same dialog with the filter focused.
+    Key('find_repo',        'mod+shift+o',    'global', 'find repository',    'toast'),
     Key('find_definition',  'mod+b',          'global', 'go to definition',   'toast'),
     Key('find_usages',      'hyper+u',        'global', 'find usages',        'toast'),
     Key('rename_symbol',    '',               'global', 'rename symbol'),

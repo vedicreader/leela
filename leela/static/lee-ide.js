@@ -721,6 +721,7 @@ const ACTIONS = {
   rename:       renameEntry,
   delete:       deleteEntry,
   add_root:     addRoot,
+  find_repo:    findRepo,
   remove_root:  removeRoot,
   refresh_files: () => refreshFileTree(),
   up_dir:       treeCollapse,
@@ -7019,24 +7020,58 @@ async function removeRoot() {
   await refreshFileTree();
   status(name + ' removed from the workspace; files were not deleted', 'ok');
 }
-async function addRoot() {
+/* `find` opens the same dialog with the repository filter focused. Browsing and searching are
+   the two ways people actually find a checkout, and they want the same confirm button. */
+async function findRepo() { return addRoot(true); }
+
+async function addRoot(find = false) {
   let current = '';
   const m = modal(`<div class="lee-mhead">open folder<span class="sub">choose a project root</span></div>
     <div class="lee-pathbar"><button class="lee-btn" id="folderup" title="parent folder">↑</button>
     <input class="lee-input" id="folderpath" aria-label="folder path"></div>
+    <input class="lee-input lee-folderfilter" id="folderfilter" autocomplete="off"
+      aria-label="find a repository below this folder"
+      placeholder="filter subfolders, or type to find a repository below here">
     <div class="lee-modallist lee-folderlist" id="folderlist"></div>
     <div class="lee-mfoot"><button class="lee-btn go" id="folderopen">open this folder</button>
     <span class="lee-dim">choose a subfolder, then confirm</span></div>`);
   const list = m.querySelector('#folderlist'), path = m.querySelector('#folderpath'), up = m.querySelector('#folderup');
+  const filter = m.querySelector('#folderfilter');
+  let dirs = [];
+  const row = (p, name, sub) =>
+    `<button class="lee-folderrow" data-path="${esc(p)}"><span class="lee-folderglyph">▸</span>${esc(name)}` +
+    (sub ? `<span class="lee-dim lee-folderwhere">${esc(sub)}</span>` : '') + `</button>`;
+  const show = html => { list.innerHTML = html || '<div class="lee-dim">nothing here</div>'; };
   const load = async p => {
     try {
       const d = await api('/fs/browse?path=' + encodeURIComponent(p || ''));
       current = d.path; path.value = current; up.disabled = !d.parent; up.dataset.path = d.parent || '';
-      list.innerHTML = d.dirs.length ? d.dirs.map(x =>
-        `<button class="lee-folderrow" data-path="${esc(x.path)}"><span class="lee-folderglyph">▸</span>${esc(x.name)}</button>`
-      ).join('') : '<div class="lee-dim">no subfolders</div>';
+      dirs = d.dirs || [];
+      draw();
     } catch (e) { status(String(e.message || e), 'err'); }
   };
+  /* Two answers to one box. Subfolders of the folder you are looking at are filtered in the
+     browser, because they are already here. Repositories *below* it come from ripgrep through
+     /git/find, because a directory of checkouts is deeper than one level and walking it in JS
+     would be slow and wrong. */
+  let seq = 0;
+  const draw = async () => {
+    const q = filter.value.trim();
+    const near = dirs.filter(x => !q || x.name.toLowerCase().includes(q.toLowerCase()));
+    show(near.map(x => row(x.path, x.name)).join(''));
+    if (!q) return;
+    const mine = ++seq;
+    try {
+      const r = await api(`/git/find?base=${encodeURIComponent(current)}&q=${encodeURIComponent(q)}`);
+      if (mine !== seq) return;                       // a later keystroke already answered
+      const found = (r.repos || []).filter(x => !near.some(n => n.path === x.path));
+      if (!found.length && !near.length) return show('<div class="lee-dim">no folders or repositories match</div>');
+      show(near.map(x => row(x.path, x.name)).join('') +
+           (found.length ? '<div class="lee-dim lee-foundhead">repositories below here</div>' : '') +
+           found.map(x => row(x.path, x.name, x.parent)).join(''));
+    } catch (_) { /* the filter still works on what is already listed */ }
+  };
+  filter.oninput = draw;
   const open = () => {
     if (!current) return;
     m.remove();
@@ -7047,7 +7082,12 @@ async function addRoot() {
   up.onclick = () => { if (up.dataset.path) load(up.dataset.path); };
   path.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); load(path.value); } };
   m.querySelector('#folderopen').onclick = open;
+  filter.onkeydown = e => {
+    if (e.key === 'Enter') { e.preventDefault(); const r = list.querySelector('.lee-folderrow'); if (r) load(r.dataset.path); }
+    if (e.key === 'Escape') { e.preventDefault(); m.remove(); }
+  };
   await load('');
+  if (find) filter.focus();          // opened as "find repository": start typing, do not browse
 }
 
 document.addEventListener('keydown', e => {

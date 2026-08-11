@@ -26,15 +26,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
+import subprocess
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
 from ... import leela_cfg
-from ..git.git import GitError, GitRepo, repo_root
-from ..git.git import clone as git_clone
+from .git import GitError, GitRepo, repo_root
+from .git import clone as git_clone
 
 __all__ = ['RepoSet', 'discover', 'repo_for', 'MEMBERS', 'OPS']
 
@@ -315,3 +318,55 @@ class RepoSet:
             except (GitError, OSError) as e:
                 return row | {'ok': False, 'error': str(e)}
         return self._fan(specs, act)
+
+
+def find_repos(base, query='', limit=60, depth=6):
+    """Repositories anywhere under `base`, for picking one out of a directory of checkouts.
+
+    `discover` deliberately looks one level down, because it runs on every repository-targeted
+    request. This is the opposite case: you know the folder holds checkouts somewhere and want
+    the one whose name you half-remember, so going deep once, on demand, is the whole point.
+
+    ripgrep does the walking when it is installed -- it is already how `search` reads the tree,
+    it skips nothing when told not to, and it is enormously faster than Python at this. The
+    fallback is a bounded walk that prunes at each repository, since the interesting thing about
+    a checkout is the checkout, not its submodules.
+
+    `.git` is a directory in a clone and a *file* in a linked worktree, so both are matched.
+    """
+    base = Path(base or '').expanduser()
+    if not base.is_dir(): return []
+    q, out, seen = str(query or '').strip().lower(), [], set()
+
+    def take(repo):
+        key = str(repo)
+        if key in seen or (q and q not in repo.name.lower() and q not in key.lower()): return
+        seen.add(key); out.append(repo)
+
+    exe = shutil.which('rg')
+    if exe:
+        # `--files` lists paths rather than searching contents, which is what finding a
+        # directory needs; `.git/HEAD` identifies a clone and a bare `.git` a worktree.
+        cmd = [exe, '--files', '--hidden', '--no-ignore', '--no-messages',
+               '--max-depth', str(int(depth)), '-g', '**/.git/HEAD', '-g', '**/.git', str(base)]
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+            for line in (p.stdout or '').splitlines():
+                hit = Path(line)
+                repo = hit.parent.parent if hit.name == 'HEAD' else hit.parent
+                if repo.is_dir(): take(repo)
+        except Exception:
+            exe = None          # fall through to the walk rather than returning nothing
+    if not exe:
+        for cur, dirs, files in os.walk(base):
+            here = Path(cur)
+            if len(here.relative_to(base).parts) > depth: dirs[:] = []; continue
+            # The same evidence ripgrep is asked for, so the two paths cannot disagree: a clone
+            # has `.git/HEAD`, a linked worktree has `.git` as a file. A bare `.git` directory
+            # with nothing in it is not a checkout.
+            if (here/'.git'/'HEAD').is_file() or (here/'.git').is_file():
+                take(here); dirs[:] = []       # a repository's insides are not more repositories
+                continue
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in {'node_modules', '__pycache__'}]
+    out.sort(key=lambda p: (p.name.lower(), str(p)))
+    return out[:max(1, int(limit))]

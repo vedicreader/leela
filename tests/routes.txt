@@ -102,6 +102,7 @@ GET,POST /git/compare
 GET,POST /git/conflict
 GET,POST /git/diff
 GET,POST /git/file
+GET,POST /git/find
 GET,POST /git/history
 GET,POST /git/info
 GET,POST /git/merge-preview
