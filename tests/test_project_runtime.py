@@ -83,3 +83,45 @@ def test_creating_twice_refuses_rather_than_overwriting(tmp_path):
     with client as c: r = c.post('/runtime/create')
     assert r.status_code == 400
     assert 'already exists' in r.json()['error']
+
+
+def _venv(root):
+    "A venv whose `python` is executable, since /runtime/info really runs it."
+    py = root/'.venv'/'bin'/'python'
+    py.parent.mkdir(parents=True, exist_ok=True)
+    py.write_text('#!/bin/sh\nexit 1\n'); py.chmod(0o755)
+    return py
+
+
+def test_a_terminal_uses_the_venv_of_the_folder_it_opened_in(tmp_path):
+    """One workspace, several checkouts, one environment each.
+
+    `/git/repos` exists because a workspace holds more than one repository, and each has its
+    own venv. Keying the shell to `pool.default_python` put every terminal in the *first*
+    root's environment no matter where it was opened.
+    """
+    from leela.app import _term_python
+    a, b = tmp_path/'repo-a', tmp_path/'repo-b'
+    pa, pb = _venv(a), _venv(b)
+    ws = Workspace(roots=[a, b])
+    assert ws.pool.default_python == str(pa), 'precondition: the pool holds the first root'
+    assert _term_python(ws, b) == str(pb), 'a terminal in repo-b belongs in repo-b'
+    assert _term_python(ws, a) == str(pa)
+
+
+def test_a_terminal_finds_a_venv_that_appeared_after_the_workspace_was_built(tmp_path):
+    "default_python is None until something chooses; a shell must not fall back to PATH."
+    from leela.app import _term_python
+    ws = Workspace(roots=[tmp_path])
+    assert ws.pool.default_python is None
+    py = _venv(tmp_path)
+    assert _term_python(ws, tmp_path) == str(py)
+    assert _term_python(ws, None) == str(py), 'discovery over the roots, not the bare PATH'
+
+
+def test_a_terminal_outside_any_checkout_still_gets_the_workspace_environment(tmp_path):
+    from leela.app import _term_python
+    root = tmp_path/'repo'; py = _venv(root)
+    elsewhere = tmp_path/'scratch'; elsewhere.mkdir()
+    ws = Workspace(roots=[root])
+    assert _term_python(ws, elsewhere) == str(py)

@@ -86,6 +86,23 @@ BLOCKS = [keys_block, settings_block, search_block, memory_block,
           fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block]
 
 
+def _term_python(ws, cwd=None):
+    """The interpreter a terminal opened at `cwd` should be inside.
+
+    The folder the terminal is actually in wins. A workspace can hold several checkouts --
+    `/git/repos` exists for exactly that -- and each has its own environment, so keying the
+    shell to `pool.default_python` put every terminal in the *first* root's venv regardless of
+    where it was opened.
+
+    Falling back through discovery rather than stopping at `default_python` matters too: that
+    attribute is None until something chooses, so a folder whose venv appeared after the
+    workspace was built used to get the bare PATH -- and a shell on PATH's `python3` is the
+    system one, which is the 3.8 nobody asked for.
+    """
+    from .blocks.runtime.kernels import project_python
+    return (project_python([cwd]) if cwd else None) or ws.pool.default_python or project_python(ws.fs.roots)
+
+
 def _found(ws, hits):
     "A hit list plus the backend that produced it -- an empty result is never a mystery."
     return {'backend': ws.search.backend, 'note': ws.search.note, 'hits': [h.dict() for h in hits]}
@@ -779,7 +796,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                     gh_auth_argv() if kind == 'gh-auth' else None)
             key = hello.get('id') or kind
             env = None
-            if kind != 'git' and (py := ws.pool.default_python):
+            if kind != 'git' and (py := _term_python(ws, cwd)):
                 # Start the shell *inside* the project's uv/venv rather than asking the
                 # user to activate it in every terminal tab. VIRTUAL_ENV is what uv reads;
                 # UV_PROJECT_ENVIRONMENT also keeps `uv run/sync` pointed at this exact env.
