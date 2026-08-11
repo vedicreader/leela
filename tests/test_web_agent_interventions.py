@@ -1,5 +1,10 @@
 """Browser-level contracts for editable agent execution and explicit starting state."""
 
+# drives a real browser through playwright, so it is out of the default run. `pytest -m slow` or `-m ""` includes it.
+import pytest
+
+pytestmark = pytest.mark.slow
+
 import socket, threading, time
 from contextlib import contextmanager
 

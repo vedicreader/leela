@@ -26,6 +26,11 @@ Everything skips without ipymini so the comparison can be made; the single-kerne
 behaviour is asserted for ipykernel too, since that is what most people run.
 """
 
+# starts real kernels, so it is out of the default run. `pytest -m slow` or `-m ""` includes it.
+import pytest
+
+pytestmark = pytest.mark.slow
+
 import asyncio
 import time
 

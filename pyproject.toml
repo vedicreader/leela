@@ -110,6 +110,12 @@ test = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 108 of 857 tests take 81% of the runtime: playwright browsers, real kernels, a real model.
+# They are excluded by default so the working loop is ~54s instead of ~290s, and nothing is
+# deleted to get there -- `pytest -m slow` runs exactly those, `pytest -m ""` runs everything,
+# and CI should use the latter.
+addopts = "-m 'not slow'"
+markers = ["slow: drives a browser, starts a kernel, or loads a model"]
 
 [tool.uv.sources]
 leela = { workspace = true }

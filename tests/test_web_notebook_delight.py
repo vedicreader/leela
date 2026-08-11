@@ -1,5 +1,10 @@
 """Notebook execution feedback stays tied to the kernel and source that produced it."""
 
+# drives a real browser through playwright, so it is out of the default run. `pytest -m slow` or `-m ""` includes it.
+import pytest
+
+pytestmark = pytest.mark.slow
+
 import asyncio
 
 from leela.core.buttons import bar

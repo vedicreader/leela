@@ -5,7 +5,13 @@ when LEELA_RUN_RISHI_INTEGRATION=1 explicitly permits a download). Nothing here 
 Rishi, Chat, Engine, Conversation, the tokenizer, Leela's tools, or prompt composition.
 """
 
+
 from __future__ import annotations
+
+# loads a real LiteRT model, so it is out of the default run. `pytest -m slow` or `-m ""` includes it.
+import pytest
+
+pytestmark = pytest.mark.slow
 
 import asyncio
 import os

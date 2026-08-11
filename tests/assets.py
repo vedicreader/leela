@@ -46,6 +46,19 @@ def read(rel):
 def _static(glob): return tree_text('leela/static', glob) + '\n' + tree_text('leela/vendor', glob)
 
 @cache
+def _agent():
+    """The harness's source, which is `ramabana` and no longer a copy of it in this tree.
+
+    `leela/agent` is now five files that alias the ramabana modules, so reading it would
+    find the aliases and none of the behaviour. The assertions here mean "the harness does
+    this", not "this tree contains this text", so they follow the code to where it lives.
+    """
+    import ramabana
+    d = Path(ramabana.__file__).parent
+    return '\n'.join(p.read_text() for p in sorted(d.rglob('*.py')))
+
+
+@cache
 def _server():
     # Every Python module leela ships: the shell in `leela/app.py`, the blocks, and core.
     # Reading the whole tree rather than named files is the point -- a route can move from
@@ -72,7 +85,7 @@ _CORPORA = {'JS':     _authored_js,
             'EDITOR': lambda: read('frontend/editor.js'),
             'TERM':   lambda: read('frontend/term.js'),
             'SERVER': _server,
-            'AGENT':  lambda: tree_text('leela/agent', '*.py')}
+            'AGENT':  _agent}
 
 
 def __getattr__(name):

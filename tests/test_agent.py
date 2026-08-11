@@ -826,8 +826,12 @@ def test_a_question_gets_the_answer_first_notice():
 
 
 def test_write_tools_are_the_ones_approval_draws_its_line_around():
+    # The core is shared with ramabana, so the set also covers the tools leela does not
+    # offer: deleting a standing reminder and spending money in a trolley are both things
+    # a person should get to see before they happen.
     assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
-            'run_shell', 'memory_forget', 'create_skill'} == set(WRITE_TOOLS)
+            'run_shell', 'memory_forget', 'create_skill',
+            'cancel_watch', 'cart_add', 'cart_remove'} == set(WRITE_TOOLS)
 
 
 # ---------------------------------------------------------------------------

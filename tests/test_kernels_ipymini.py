@@ -334,6 +334,9 @@ def test_cli_refuses_non_loopback_bind_before_starting_server(monkeypatch):
 
 # -- live-kernel tests, gated on ipymini ---------------------------------------------
 
+# starts real kernels, so it is out of the default run: `pytest -m slow` or `-m ""` includes it
+pytestmark = pytest.mark.slow
+
 pytestmark_live = pytest.mark.skipif(not ipymini_available(),
                                      reason='ipymini not installed')
 

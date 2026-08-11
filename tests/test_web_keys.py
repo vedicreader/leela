@@ -14,6 +14,11 @@ These boot the actual app with a fake kernel and drive it with Playwright, which
 only place the JS runs at all.
 """
 
+# drives a real browser through playwright, so it is out of the default run. `pytest -m slow` or `-m ""` includes it.
+import pytest
+
+pytestmark = pytest.mark.slow
+
 import asyncio
 import socket
 import threading
