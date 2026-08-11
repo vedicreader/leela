@@ -54,9 +54,14 @@ def connect(app, ctx):
         root = ctx.fs.roots[0] if ctx.fs.roots else None
         py = project_python([root]) if root else None
         support = await off_loop(kernel_support, py) if py else {}
+        # `uv` decides whether a missing environment can be created without asking. With it,
+        # `.venv` is one command and reversible by deleting a directory; without it the client
+        # still asks, because `venv.EnvBuilder` plus `ensurepip` is slower and likelier to fail
+        # part-way, and a half-built environment is worse than no environment.
         return {'root': str(root or ''), 'python': py or '', 'needs_create': bool(root and not py),
                 'needs_support': bool(py and not support.get('ipykernel', {}).get('available')),
-                'support': support, 'active': ctx.pool.default_python or ''}
+                'support': support, 'active': ctx.pool.default_python or '',
+                'uv': bool(shutil.which('uv'))}
 
     @rt('/runtime/support')
     async def runtime_support(req):

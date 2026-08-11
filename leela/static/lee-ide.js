@@ -7187,6 +7187,21 @@ async function checkProjectRuntime() {
   try { d = await api('/runtime/info'); } catch (_) { return; }
   if ((!d.needs_create && !d.needs_support) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
   sessionStorage.setItem('lee-runtime-asked:' + d.root, '1');
+  /* A folder with no environment at all gets one, without being asked. Opening a project and
+     landing on whatever `python3` happens to be on PATH is never what anyone wanted, and with uv
+     the fix is one command that a deleted directory undoes. Only for a *missing* environment:
+     installing packages into an environment you built yourself is your decision, so needs_support
+     below still asks. Without uv it also still asks, because a half-built venv is worse than
+     none. */
+  if (d.needs_create && d.uv) {
+    status('no project environment — creating .venv with uv…');
+    try {
+      const r = await post('/runtime/create');
+      status(`project runtime ready: ${r.python}`, 'ok'); refreshKernelPill();
+      return;
+    } catch (e) { status(`could not create .venv — ${String(e.message || e)}`, 'err'); }
+    /* fall through to the dialog, which offers choosing an interpreter instead */
+  }
   if (d.needs_support) {
     const m = modal(`<div class="lee-mhead">enable project runtime<span class="sub">${esc(d.python)}</span></div>` +
       `<div class="lee-dialogcopy">Leela found this folder’s environment, but it needs ` +
