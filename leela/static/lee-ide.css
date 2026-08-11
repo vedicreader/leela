@@ -2295,3 +2295,8 @@ kbd {
 .lee-spin { width: 11px; height: 11px; border: 2px solid currentColor; border-right-color: transparent;
             border-radius: 50%; animation: lee-spin .7s linear infinite; flex: none; }
 @keyframes lee-spin { to { transform: rotate(360deg); } }
+
+/* a repository the workspace operation is currently working on: "which one is slow" is the
+   question a fan-out across several checkouts always raises */
+.lee-git-repo-row.working { opacity: .75; }
+.lee-git-repo-row.working strong::after { content: ' · working…'; font-weight: 400; opacity: .7; font-size: 11px; }

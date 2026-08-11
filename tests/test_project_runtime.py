@@ -262,3 +262,29 @@ def test_the_finder_skips_the_directories_that_made_it_slow(tmp_path):
         d = tmp_path/junk
         (d/'.git').mkdir(parents=True); (d/'.git'/'HEAD').write_text('ref: x')
     assert [p.name for p in find_repos(tmp_path)] == ['real-repo']
+
+
+def test_a_failed_git_action_says_so_instead_of_looking_stalled():
+    """A refused checkout is a fast, normal answer. It must not read as a hang.
+
+    `gitDo` had a try/finally and no catch, so a rejected operation left the status line
+    saying "git checkout…" for ever while the exception went past it -- indistinguishable
+    from a git subprocess that never returned. `gitReposDo` beside it already caught, which
+    is why fetching every repository behaved and switching a branch appeared to stall.
+    """
+    block = JS[JS.index('async function gitDo('):]
+    block = block[:block.index('\nfunction gitOperationBanner')]
+    assert 'catch (e)' in block, 'a failure has to reach the status line'
+    assert 'failed' in block and "'err'" in block
+    assert block.index('catch (e)') < block.index('finally'), 'caught before busy is cleared'
+
+
+def test_a_workspace_operation_names_the_repositories_it_is_working_on():
+    "A fan-out over several checkouts always raises the question of which one is slow."
+    block = JS[JS.index('async function gitReposDo('):]
+    block = block[:block.index('// Pinning is a scope change')]
+    assert 'reposBusy' in block, 'the rows are marked while the operation runs'
+    assert "'repositories'" in block and 'targets.length' in block, 'and the status says how many'
+    assert 'finally' in block and 'gitUI.reposBusy = null' in block, 'always cleared'
+    assert "gitUI.reposBusy?.has(r.root)" in JS, 'the row renders it'
+    assert '.lee-git-repo-row.working' in CSS

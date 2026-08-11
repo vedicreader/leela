@@ -4655,12 +4655,19 @@ function paintGitPill(d) {
   paintGitTree(d);
 }
 async function gitDo(op, extra = {}) {
-  const started = performance.now(); gitUI.busy = op; status(`git ${op.replaceAll('_', ' ')}…`);
+  const started = performance.now(), name = op.replaceAll('_', ' ');
+  gitUI.busy = op; status(`git ${name}…`);
   try {
     const d = await post('/git/action', {op, repo: gitUI.repo, ...extra});
     gitUI.snapshot = d; paintGitPill(d);
-    status(`git ${op.replaceAll('_', ' ')} complete · ${Math.round(performance.now() - started)} ms`, 'ok');
+    status(`git ${name} complete · ${Math.round(performance.now() - started)} ms`, 'ok');
     return d;
+  } catch (e) {
+    /* Without this the status line kept saying "git checkout…" for ever. Git refusing a
+       switch because local changes would be overwritten is a normal, fast answer, and it
+       looked identical to a hang -- the one thing a progress message must never do. */
+    status(`git ${name} failed · ${e.message || String(e)}`, 'err');
+    throw e;
   } finally { gitUI.busy = ''; }
 }
 function gitOperationBanner(d) {
@@ -4778,8 +4785,8 @@ function gitReposView() {
   const results = gitUI.reposResults.length ? `<details class="lee-sc-group" open><summary><span>Last run</span><b>${gitUI.reposResults.length}</b></summary>` +
     `<div class="lee-git-repo-results">${gitUI.reposResults.map(r => `<article class="${r.ok === false ? 'failed' : r.skipped ? 'skipped' : 'done'}">` +
       `<strong>${esc(r.name || r.spec || '')}</strong><span>${esc(r.error || r.skipped || r.output || 'done')}</span></article>`).join('')}</div></details>` : '';
-  const list = rows.length ? rows.map(r => `<article class="lee-git-repo-row${r.root === gitUI.repo ? ' active' : ''}${r.off_branch ? ' off-branch' : ''}" data-repo="${esc(r.root)}" title="${esc(r.root)}">` +
-    `<button data-repo-open title="Point source control at this repository">${r.root === gitUI.repo ? '●' : '○'}</button>` +
+  const list = rows.length ? rows.map(r => `<article class="lee-git-repo-row${r.root === gitUI.repo ? ' active' : ''}${r.off_branch ? ' off-branch' : ''}${gitUI.reposBusy?.has(r.root) ? ' working' : ''}" data-repo="${esc(r.root)}" title="${esc(r.root)}">` +
+    `<button data-repo-open title="Point source control at this repository">${gitUI.reposBusy?.has(r.root) ? '<span class="lee-spin"></span>' : (r.root === gitUI.repo ? '●' : '○')}</button>` +
     `<div class="lee-git-repo-copy"><strong>${esc(r.name)}</strong><span>${esc(r.branch || 'no branch')}${r.upstream ? ' · ' + esc(r.upstream) : ''}</span>` +
     `<small>${esc(r.last_commit?.subject || 'no commits yet')}${r.last_commit?.timestamp ? ' · ' + gitRelative(r.last_commit.timestamp) : ''}</small>` +
     `<div class="lee-git-badges">${gitRepoBadges(r)}<button data-repo-fetch title="Fetch this repository">fetch</button></div></div>` +
@@ -4803,7 +4810,15 @@ async function loadGitRepos() {
 }
 async function gitReposDo(op, extra = {}) {
   const started = performance.now();
-  status(`workspace ${op}…`);
+  const targets = (extra.paths && extra.paths.length ? extra.paths
+                   : ((gitUI.repos && gitUI.repos.repos) || []).map(r => r.root));
+  /* The fan-out answers all at once, so there is no per-repository progress to stream. What
+     there is: which repositories are in flight. Naming them beats "workspace fetch…" when one
+     of them is slow, because the question you have is always *which one*. */
+  gitUI.reposBusy = new Set(targets);
+  gitUI.reposResults = [];
+  if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);
+  status(`workspace ${op} · ${targets.length} ${targets.length === 1 ? 'repository' : 'repositories'}…`);
   try {
     const d = await post('/git/repos/action', {op, expect: gitUI.expect, ...extra});
     gitUI.repos = d; gitUI.reposResults = d.results || [];
@@ -4817,7 +4832,11 @@ async function gitReposDo(op, extra = {}) {
     await renderGitPanel();
     refreshProjectPills();
     return d;
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { status(`workspace ${op} failed · ${e.message || String(e)}`, 'err'); }
+  finally {
+    gitUI.reposBusy = null;
+    if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);
+  }
 }
 // Pinning is a scope change, not a filter: every ref, commit and review already loaded
 // belongs to the repository being left, so all of it goes rather than being shown against
