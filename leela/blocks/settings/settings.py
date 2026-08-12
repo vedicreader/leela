@@ -25,7 +25,7 @@ DEFAULT_SETTINGS = {
         'wordWrap': 'off', 'wrapIndent': 'same', 'lineLength': 100,
         'guideColumns': '88', 'visualGuides': True, 'bracketMatching': True,
         'bracketColors': False, 'closeBrackets': True, 'activeLine': True,
-        'minimapMode': 'long', 'minimapThreshold': 120, 'stickyNavigation': True,
+        'overviewMode': 'long', 'overviewThreshold': 120, 'stickyNavigation': True,
         'lineNumbers': 'absolute', 'renderWhitespace': 'selection', 'indentGuides': True,
         'highlightSelection': True, 'methodSeparators': False, 'cursorStyle': 'line',
         'cursorBlinking': 'blink', 'scrollPastEnd': False, 'smoothScrolling': True,
@@ -52,7 +52,7 @@ DEFAULT_SETTINGS = {
 _ENUMS = {
     ('editor', 'wordWrap'): {'off', 'viewport', 'column'},
     ('editor', 'wrapIndent'): {'none', 'same', 'indent', 'deepIndent'},
-    ('editor', 'minimapMode'): {'off', 'long', 'always'},
+    ('editor', 'overviewMode'): {'off', 'long', 'always'},
     ('editor', 'lineNumbers'): {'off', 'absolute', 'relative', 'hybrid'},
     ('editor', 'renderWhitespace'): {'none', 'selection', 'trailing', 'all'},
     ('editor', 'cursorStyle'): {'line', 'block', 'underline'},
@@ -64,7 +64,7 @@ _ENUMS = {
 _RANGES = {
     ('editor', 'fontSize'): (9, 28), ('editor', 'lineHeight'): (1, 2.4),
     ('editor', 'tabSize'): (1, 8), ('editor', 'lineLength'): (40, 240),
-    ('editor', 'minimapThreshold'): (20, 5000), ('editor', 'scrollMargin'): (0, 20),
+    ('editor', 'overviewThreshold'): (20, 5000), ('editor', 'scrollMargin'): (0, 20),
     ('files', 'autoSaveDelay'): (100, 60000),
 }
 

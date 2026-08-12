@@ -87,20 +87,9 @@ BLOCKS = [keys_block, settings_block, search_block, memory_block,
 
 
 def _term_python(ws, cwd=None):
-    """The interpreter a terminal opened at `cwd` should be inside.
-
-    The folder the terminal is actually in wins. A workspace can hold several checkouts --
-    `/git/repos` exists for exactly that -- and each has its own environment, so keying the
-    shell to `pool.default_python` put every terminal in the *first* root's venv regardless of
-    where it was opened.
-
-    Falling back through discovery rather than stopping at `default_python` matters too: that
-    attribute is None until something chooses, so a folder whose venv appeared after the
-    workspace was built used to get the bare PATH -- and a shell on PATH's `python3` is the
-    system one, which is the 3.8 nobody asked for.
-    """
-    from .blocks.runtime.kernels import project_python
-    return (project_python([cwd]) if cwd else None) or ws.pool.default_python or project_python(ws.fs.roots)
+    "The interpreter a terminal opened at `cwd` should be inside. See `python_for`."
+    from .blocks.runtime.kernels import python_for
+    return python_for(cwd, ws)
 
 
 def _found(ws, hits):
@@ -815,23 +804,20 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             argv = (lazygit_argv(cwd) if kind == 'git' else
                     gh_auth_argv() if kind == 'gh-auth' else None)
             key = hello.get('id') or kind
-            env = None
-            if kind != 'git' and (py := _term_python(ws, cwd)):
-                # Start the shell *inside* the project's uv/venv rather than asking the
-                # user to activate it in every terminal tab. VIRTUAL_ENV is what uv reads;
-                # UV_PROJECT_ENVIRONMENT also keeps `uv run/sync` pointed at this exact env.
-                bindir = str(Path(py).parent)
-                venv = str(Path(bindir).parent)
-                env = os.environ.copy()
-                env['VIRTUAL_ENV'] = venv
-                env['UV_PROJECT_ENVIRONMENT'] = venv
-                env['PATH'] = bindir + os.pathsep + env.get('PATH', '')
-                env.pop('PYTHONHOME', None)
+            # Every pty is started *inside* the project's uv/venv rather than asking the user
+            # to activate it in each tab -- lazygit included, because a commit runs the
+            # project's hooks and `gh` shells out too. What a tab runs differs; which
+            # environment it runs in does not.
+            from .blocks.runtime.kernels import venv_env
+            py = _term_python(ws, cwd)
+            env = venv_env(py) if py else None
             # `env` alone is not enough for an interactive shell: its rc file runs afterwards,
             # and `pyenv init -` (or conda, or asdf) prepends shims over the project venv. So the
             # same prepend is also typed into the shell once it is up, where nothing re-orders it.
             # A leading space keeps it out of history in shells configured to honour that.
-            prelude = (f' export PATH="{Path(py).parent}:$PATH"' if kind != 'git' and env else '')
+            # Only a shell, though: `argv` means this pty is a program, and the export line
+            # would be keystrokes into lazygit's UI or `gh auth login`'s prompt.
+            prelude = (f' export PATH="{Path(py).parent}:$PATH"' if argv is None and py else '')
             t = ws.terms.open(key, argv=argv, cwd=cwd, env=env, prelude=prelude,
                               cols=int(hello.get('cols') or 80), rows=int(hello.get('rows') or 24))
         except Exception as e:

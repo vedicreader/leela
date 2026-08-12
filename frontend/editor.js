@@ -18,7 +18,7 @@ import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap,
         startCompletion as cmStartCompletion} from "@codemirror/autocomplete";
 import {syntaxHighlighting, HighlightStyle, indentUnit, bracketMatching,
         foldGutter, foldKeymap, indentOnInput, StreamLanguage, syntaxTree} from "@codemirror/language";
-import {linter} from "@codemirror/lint";
+import {linter, forEachDiagnostic} from "@codemirror/lint";
 import {tags as t} from "@lezer/highlight";
 import {MergeView} from "@codemirror/merge";
 
@@ -494,32 +494,92 @@ function appKeymap(binds) {
   }));
 }
 
-function minimapPlugin(mode = 'off', threshold = 120) {
+const OVERVIEW_W = 14;
+
+/* The overview stripe: the scrollbar, marked up.
+
+   It replaced a compressed picture of the text, which was 72px of unreadable grey that
+   answered no question anyone had -- you cannot read it, and the thing you actually want
+   from a full-file view is *where the problems and the changes are*, which a picture of the
+   letters cannot tell you. So the stripe carries the two things worth seeing at file scale:
+   a tick across it for each diagnostic, and a bar down its edge for each uncommitted line.
+
+   It is the scroll bar rather than a panel beside one. The native bar is hidden while it is
+   shown and this takes over the job, so it never becomes a second thing to scroll -- there
+   is one document and one place that says where you are in it. */
+function overviewPlugin(mode = 'off', threshold = 120) {
   return ViewPlugin.fromClass(class {
     constructor(view) {
-      this.view = view; this.dom = document.createElement('canvas'); this.dom.className = 'cm-lee-minimap';
-      this.dom.setAttribute('aria-label', 'code overview minimap');
-      view.dom.appendChild(this.dom); this.dom.onclick = e => {
-        const line = Math.max(1, Math.min(view.state.doc.lines, Math.round((e.offsetY / this.dom.clientHeight) * view.state.doc.lines)));
-        view.dispatch({selection:{anchor:view.state.doc.line(line).from}, scrollIntoView:true}); view.focus();
-      }; this.draw();
+      this.view = view;
+      this.dom = document.createElement('canvas'); this.dom.className = 'cm-lee-overview';
+      this.dom.setAttribute('aria-label', 'overview: diagnostics and uncommitted lines');
+      view.dom.appendChild(this.dom);
+      const drag = e => { if (e.buttons & 1) { e.preventDefault(); this.seek(e); } };
+      this.dom.addEventListener('pointerdown', e => {
+        this.dom.setPointerCapture(e.pointerId); e.preventDefault(); this.seek(e);
+      });
+      this.dom.addEventListener('pointermove', drag);
+      this.draw();
     }
-    update(update) { if (update.docChanged || update.viewportChanged || update.geometryChanged) this.draw(); }
+    update(u) {
+      // Diagnostics and change marks both arrive as effects on a transaction that touches
+      // neither the document nor the viewport, so those alone are not enough to redraw on.
+      if (u.docChanged || u.viewportChanged || u.geometryChanged ||
+          u.transactions.some(tr => tr.effects.length)) this.draw();
+    }
+    seek(e) {
+      // The clicked fraction of the file becomes the middle of the viewport -- the same
+      // gesture whether you are dragging the thumb or jumping to a mark you spotted.
+      const box = this.dom.getBoundingClientRect(), s = this.view.scrollDOM;
+      const at = Math.max(0, Math.min(1, (e.clientY - box.top) / (box.height || 1)));
+      s.scrollTop = Math.max(0, at * s.scrollHeight - s.clientHeight / 2);
+    }
+    colour(name, fallback) {
+      const v = getComputedStyle(this.view.dom).getPropertyValue(name).trim();
+      return v || fallback;
+    }
     draw() {
-      const lines=this.view.state.doc.lines, shown=mode === 'always' || (mode === 'long' && lines >= threshold);
-      this.dom.hidden=!shown; this.view.dom.classList.toggle('cm-lee-has-minimap', shown); if(!shown)return;
-      const dpr = devicePixelRatio || 1, w = 72, h = Math.max(80, this.view.dom.clientHeight);
-      this.dom.width = w*dpr; this.dom.height = h*dpr; this.dom.style.width=w+'px'; this.dom.style.height=h+'px';
-      const ctx=this.dom.getContext('2d'); ctx.scale(dpr,dpr); ctx.clearRect(0,0,w,h);
-      const step=Math.max(1,Math.ceil(lines/h));
-      for(let n=1;n<=lines;n+=step){const text=this.view.state.doc.line(n).text.trim();if(!text)continue;
-        const y=(n-1)/lines*h;ctx.fillStyle=/^(class|def|async def)\b/.test(text)?'rgba(90,150,220,.68)':
-          text.startsWith('#')?'rgba(103,166,107,.58)':'rgba(127,127,127,.42)';ctx.fillRect(2,y,Math.min(66,4+text.length*.55),1);}
-      const top=this.view.viewportLineBlocks[0]?.from||0,bottom=this.view.viewportLineBlocks.at(-1)?.to||0;
-      const a=this.view.state.doc.lineAt(top).number/lines*h,b=this.view.state.doc.lineAt(bottom).number/lines*h;
-      ctx.fillStyle='rgba(90,150,220,.18)';ctx.fillRect(0,a,w,Math.max(4,b-a));
+      const doc = this.view.state.doc, lines = doc.lines;
+      const shown = mode === 'always' || (mode === 'long' && lines >= threshold);
+      this.dom.hidden = !shown;
+      this.view.dom.classList.toggle('cm-lee-has-overview', shown);
+      if (!shown) return;
+      const dpr = devicePixelRatio || 1, w = OVERVIEW_W, h = Math.max(40, this.view.dom.clientHeight);
+      this.dom.width = w * dpr; this.dom.height = h * dpr;
+      this.dom.style.width = w + 'px'; this.dom.style.height = h + 'px';
+      const ctx = this.dom.getContext('2d'); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+      const y = n => (n - 1) / Math.max(1, lines) * h;
+
+      // Uncommitted lines, down the inner edge: the same colours the lines themselves carry.
+      const changes = {modified: this.colour('--lee-orange', '#d29922'),
+                       added: this.colour('--lee-green', '#3fb950'),
+                       deleted: this.colour('--lee-red', '#f85149')};
+      const marks = this.view.state.field(changesField, false);
+      if (marks) marks.between(0, doc.length, (from, to, deco) => {
+        const kind = /cm-lee-change-(\w+)/.exec(deco.spec?.class || '')?.[1] || 'modified';
+        const at = y(doc.lineAt(from).number);
+        ctx.fillStyle = changes[kind] || changes.modified;
+        ctx.fillRect(0, at, 2, Math.max(2, y(doc.lineAt(to).number) - at));
+      });
+
+      // Diagnostics, straight across: a tick you can hit, at the severity's colour.
+      const severity = {error: this.colour('--lee-red', '#f85149'),
+                        warning: this.colour('--lee-orange', '#d29922'),
+                        info: this.colour('--lee-accent', '#4493f8'),
+                        hint: this.colour('--lee-fg4', '#6e7681')};
+      forEachDiagnostic(this.view.state, (d, from) => {
+        ctx.fillStyle = severity[d.severity] || severity.info;
+        ctx.fillRect(3, Math.min(h - 2, y(doc.lineAt(from).number)), w - 5, 2);
+      });
+
+      // Where you are. Drawn last so a viewport over a dense patch still reads as the thumb.
+      const top = this.view.viewportLineBlocks[0]?.from || 0;
+      const bottom = this.view.viewportLineBlocks.at(-1)?.to || 0;
+      const a = y(doc.lineAt(top).number), b = y(doc.lineAt(bottom).number);
+      ctx.fillStyle = this.colour('--lee-fg4', '#6e7681');
+      ctx.globalAlpha = .28; ctx.fillRect(0, a, w, Math.max(6, b - a)); ctx.globalAlpha = 1;
     }
-    destroy(){this.view.dom.classList.remove('cm-lee-has-minimap');this.dom.remove();}
+    destroy() { this.view.dom.classList.remove('cm-lee-has-overview'); this.dom.remove(); }
   });
 }
 
@@ -574,8 +634,9 @@ function normalizedSettings(settings = {}) {
     bracketColors: Boolean(settings.bracketColors),
     closeBrackets: settings.closeBrackets !== false,
     activeLine: settings.activeLine !== false,
-    minimapMode: settings.minimapMode || (settings.minimap ? 'always' : 'off'),
-    minimapThreshold: Math.max(20, Number(settings.minimapThreshold) || 120),
+    // `minimapMode` is what this was called while it drew a picture of the text.
+    overviewMode: settings.overviewMode || settings.minimapMode || (settings.minimap ? 'always' : 'off'),
+    overviewThreshold: Math.max(20, Number(settings.overviewThreshold || settings.minimapThreshold) || 120),
     stickyNavigation: settings.stickyNavigation !== false,
     lineNumbers: settings.lineNumbers || 'absolute',
     renderWhitespace: settings.renderWhitespace || 'selection',
@@ -659,7 +720,7 @@ function settingsExt(settings = {}, lineNums = false) {
   if (value.bracketMatching) out.push(bracketMatching());
   if (value.closeBrackets) out.push(closeBrackets());
   if (value.activeLine) out.push(highlightActiveLine());
-  if (value.minimapMode !== 'off') out.push(minimapPlugin(value.minimapMode, value.minimapThreshold));
+  if (value.overviewMode !== 'off') out.push(overviewPlugin(value.overviewMode, value.overviewThreshold));
   if (value.stickyNavigation) out.push(stickyPlugin);
   if (lineNums && value.lineNumbers !== 'off') out.push(lineNumbers({formatNumber:(n,state)=>{
     if(value.lineNumbers==='absolute')return String(n);const current=state.doc.lineAt(state.selection.main.head).number;

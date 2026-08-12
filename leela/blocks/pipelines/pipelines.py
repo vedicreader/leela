@@ -168,14 +168,8 @@ class Pipeline:
         value exported before Leela started keeps winning -- the same precedence every other
         dockeasy caller sees, rather than one invented here.
         """
-        env = os.environ.copy()
-        if self.python:
-            bindir = str(Path(self.python).parent)
-            venv = str(Path(bindir).parent)
-            env['VIRTUAL_ENV'] = venv
-            env['UV_PROJECT_ENVIRONMENT'] = venv
-            env['PATH'] = bindir + os.pathsep + env.get('PATH', '')
-            env.pop('PYTHONHOME', None)
+        from ..runtime.kernels import venv_env
+        env = venv_env(self.python)     # the same environment a terminal in this project gets
         try: env.update({k: str(v) for k, v in self.env.values(self.needs()).items()})
         except Exception: pass                  # dockeasy is optional; the step may not need it
         env.setdefault('PYTHONUNBUFFERED', '1')

@@ -42,7 +42,7 @@ const EDITOR_DEFAULTS = {fontFamily: 'JetBrains Mono', fontSize: 13, lineHeight:
   lineLength: 100, guideColumns: '88', visualGuides: true, ligatures: true, tabSize: 4,
   useTabs: false, detectIndentation: true, wordWrap: 'off', wrapIndent: 'same',
   bracketMatching: true, bracketColors: false, closeBrackets: true, activeLine: true,
-  minimapMode: 'long', minimapThreshold: 120, stickyNavigation: true,
+  overviewMode: 'long', overviewThreshold: 120, stickyNavigation: true,
   lineNumbers: 'absolute', renderWhitespace: 'selection', indentGuides: true,
   highlightSelection: true, methodSeparators: false, cursorStyle: 'line',
   cursorBlinking: 'blink', scrollPastEnd: false, smoothScrolling: true, scrollMargin: 3,
@@ -55,7 +55,11 @@ function readEditorPrefs() {
       old.fontFamily = match || 'System monospace';
     }
     if (typeof old.wordWrap === 'boolean') old.wordWrap = old.wordWrap ? 'viewport' : 'off';
+    // Two renames of the same setting: the boolean it started as, and the name it had
+    // while it drew a picture of the text rather than marking up the scrollbar.
     if ('minimap' in old && !old.minimapMode) old.minimapMode = old.minimap ? 'always' : 'off';
+    if (old.minimapMode && !old.overviewMode) old.overviewMode = old.minimapMode;
+    if (old.minimapThreshold && !old.overviewThreshold) old.overviewThreshold = old.minimapThreshold;
     return {...EDITOR_DEFAULTS, ...old};
   } catch (_) { return {...EDITOR_DEFAULTS}; }
 }
@@ -73,7 +77,7 @@ function applyEditorPrefs(prefs = lee.editorPrefs, persist = false) {
   root.style.setProperty('--lee-code-size', p.fontSize + 'px');
   root.style.setProperty('--lee-code-line-height', String(p.lineHeight));
   root.dataset.editorLigatures = p.ligatures ? 'on' : 'off';
-  for (const [key,view] of lee.editors) LeeCM.configure?.(view, ['file','secondary'].includes(key)?p:{...p,minimapMode:'off'});
+  for (const [key,view] of lee.editors) LeeCM.configure?.(view, ['file','secondary'].includes(key)?p:{...p,overviewMode:'off'});
   if (persist) localStorage.setItem('lee-editor-settings', JSON.stringify(p));
   return p;
 }
@@ -743,8 +747,15 @@ const ACTIONS = {
   agent_stop:   stopAgent,
   agent_tools:  agentTools,
 
+  close_others: () => closeTabs('others'),
+  close_right:  () => closeTabs('right'),
+  close_saved:  () => closeTabs('saved'),
+
   terminal:     () => openTerm('shell'),
   git:          () => openTerm('git'),
+  panel_git:      () => leeLeft('git'),
+  panel_releases: () => leeLeft('releases'),
+  panel_deploys:  () => leeLeft('deploys'),
   term_new:     leeNewTerm,
   term_next:    () => cycleTerm(1),
   term_prev:    () => cycleTerm(-1),
@@ -780,6 +791,30 @@ async function closeTab(index = null) {
   htmxPost('/tab/close?i=' + i);
 }
 window.leeCloseTab = closeTab;
+async function closeTabs(which) {
+  // `others`, `right` and `saved`, the three a browser offers after a morning of opening
+  // files. The reference point is the tab the menu was opened on, not the active one -- a
+  // right-click on a background tab selects it first, but the menu is still about that tab.
+  const at = lee.menuTab == null ? activeTabIndex() : lee.menuTab;
+  lee.menuTab = null;
+  if (at < 0) return;
+  const tabs = $$('.lee-tab');
+  const keep = i => which === 'others' ? i === at : which === 'right' ? i <= at
+                  : tabs[i].classList.contains('dirty');
+  // Git diff tabs live only in the browser and are appended after the real ones, so they
+  // are left alone and cannot shift an index. Highest first, for the same reason.
+  const doomed = tabs.map((_, i) => i).filter(i => !keep(i) && !tabs[i].dataset.gitDiff).reverse();
+  if (!doomed.length) return status('nothing to close');
+  const unsaved = doomed.filter(i => tabs[i].classList.contains('dirty')).length;
+  if (unsaved && !await confirmDialog('close unsaved tabs',
+      `${unsaved} of ${doomed.length} tabs have unsaved changes.`)) return;
+  for (const i of doomed) await htmxPost('/tab/close?i=' + i);
+  status(`closed ${doomed.length} tab${doomed.length === 1 ? '' : 's'}`);
+}
+function moveTab(from, to) {
+  if (from === to || from < 0 || to < 0) return;
+  htmxPost(`/tab/move?i=${from}&j=${to}`);
+}
 function rememberRecentTab(st) {
   const key = st.path || st.title || '';
   if (!key) return;
@@ -855,7 +890,9 @@ function leeTabOverflow(anchor) {
   openChromeMenu(anchor, rows);
 }
 window.leeTabOverflow = leeTabOverflow;
-function htmxPost(url) { htmx.ajax('POST', url, {target: '#tabbar', swap: 'outerHTML'}); }
+// Returns htmx's promise: closing several tabs has to await each swap, because the server
+// addresses tabs by index and the next index is only true once the strip has been rebuilt.
+function htmxPost(url) { return htmx.ajax('POST', url, {target: '#tabbar', swap: 'outerHTML'}); }
 let openFileVersion=0;
 function gitDiffTabKey(data) { return encodeURIComponent(`${data.kind || 'review'}\0${data.base || ''}\0${data.head || ''}\0${data.path}`); }
 function syncGitDiffTabs() {
@@ -1178,6 +1215,9 @@ function mountNotebook(host, st) {
   st.cells.forEach((c, i) => host.appendChild(cellEl(c, i)));
   selectCell(Math.min(lee.sel, st.cells.length - 1));
   observeNotebookCells(host, st.cells);
+  lee.notebookGit = {};       // marks belong to the notebook that was open, not the next one
+  paintNotebookGitMarks();
+  queueNotebookOverview();    // a notebook outside a repository still gets its viewport thumb
 }
 
 function patchNotebook(host, before, cells, op = '') {
@@ -1220,6 +1260,10 @@ function patchNotebook(host, before, cells, op = '') {
   });
   paintSel();
   observeNotebookCells(host, cells);
+  // `className` is rewritten above for every reused cell, so the marks are reapplied from
+  // what was last read rather than refetched -- the disk has not moved, only the DOM.
+  repaintNotebookGitMarks();
+  queueNotebookOverview();
 }
 
 function ensureCellMounted(i) {
@@ -1249,6 +1293,7 @@ function setCellState(c, state, label = '') {
   badge.title = label || ({done: 'ran successfully in the current kernel', error: 'run failed in the current kernel',
     previous: 'saved output from a previous kernel; run this cell to restore its variables', running: 'running'}[state] || 'not run');
   badge.setAttribute('aria-label', badge.title);
+  queueNotebookOverview();      // a failure is one of the two things the stripe reports
 }
 function markPreviousRuns() {
   for (const c of lee.cells) {
@@ -1434,8 +1479,11 @@ function mountCell(c, i) {
     completeUrl: c.cell_type === 'code' ? '/complete' : null,
     onDefinition: c.cell_type === 'code' ? name => findDefinition(name) : null,
     breakpoints: lee.breakpoints.get(c.id) || [],
+    // Line numbers relative to this cell, which is the only place they are drawn. A cell
+    // mounted after the marks arrived would otherwise stay unmarked until the next save.
+    changedLines: (lee.notebookGit?.lines || {})[c.id] || [],
     onBreakpoint: c.cell_type === 'code' ? lines => rememberBreakpoints(c.id, lines) : null,
-    settings: {minimapMode:'off'},
+    settings: {overviewMode:'off'},
     onSelection: () => { clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120); },
     onChange: (txt) => {
       const at = lee.cells.findIndex(cell => cell.id === c.id); if (at < 0) return;
@@ -2521,7 +2569,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     setTabSaveState(saveTabEl, 'saved');
     if (!quiet) status('saved', 'ok');
     refreshProjectPills();
-    if (lee.kind === 'text') refreshOpenGitMarks();
+    refreshOpenGitMarks();      // a notebook's marks are per cell, a file's per line
     if (lee.path?.endsWith('/pyproject.toml')) refreshPackageVersions();
     return true;
   } catch (e) {
@@ -4539,8 +4587,8 @@ async function editorSettings(languageScope = null) {
     select('editor','renderWhitespace','Whitespace',[['none','None'],['selection','Selection'],['trailing','Trailing'],['all','All']]) +
     select('editor','cursorStyle','Caret',[['line','Line'],['block','Block'],['underline','Underline']]) +
     select('editor','cursorBlinking','Blinking',[['off','Off'],['blink','Blink'],['smooth','Smooth']]) +
-    select('editor','minimapMode','Code overview',[['off','Off'],['long','Long files only'],['always','Always']], 'Compressed file map; click it to jump. Long-file mode keeps it out of notebook cells.') +
-    field('editor','minimapThreshold','Long file threshold',`<input class="lee-input" data-setting type="number" min="20" max="5000" value="${lee.editorPrefs.minimapThreshold}">`) + `</div>` +
+    select('editor','overviewMode','Overview stripe',[['off','Off'],['long','Long files only'],['always','Always']], 'The scrollbar, marked up: a tick for each problem and a bar for each uncommitted line. Long-file mode keeps it out of notebook cells.') +
+    field('editor','overviewThreshold','Long file threshold',`<input class="lee-input" data-setting type="number" min="20" max="5000" value="${lee.editorPrefs.overviewThreshold}">`) + `</div>` +
     `<div class="lee-settings-checks">${check('editor','indentGuides','Indent guides')}${check('editor','methodSeparators','Function separators')}${check('editor','bracketColors','Bracket-pair colors')}${check('editor','highlightSelection','Highlight selected occurrences')}</div></div>` +
     `<div class="lee-settings-group"><h4>Navigation</h4><div class="lee-settings-grid">` +
     select('workbench','breadcrumbs','Breadcrumbs',[['off','Off'],['path','File path'],['symbols','Symbols'],['pathAndSymbols','Path and symbols']]) +
@@ -4596,12 +4644,112 @@ function paintGitTree(d) {
   }
 }
 async function refreshOpenGitMarks() {
+  if (lee.kind === 'notebook') return paintNotebookGitMarks();
   if (lee.kind !== 'text' || !lee.path) return;
   try {
     lee.fileGit = await api('/git/file?path=' + encodeURIComponent(lee.path));
     const view = lee.editors.get('file'); if (view) LeeCM.setChangedLines(view, lee.fileGit.ranges || []);
   } catch (_) {}
 }
+// The same mark a file gets, at the unit a notebook has. Line numbers cannot say anything
+// useful about an .ipynb -- it is JSON, and editing one cell moves every line below it -- so
+// the server answers per cell id and the whole cell carries the bar.
+async function paintNotebookGitMarks() {
+  if (lee.kind !== 'notebook' || !lee.path) return;
+  try { lee.notebookGit = await api('/git/notebook?path=' + encodeURIComponent(lee.path)); }
+  catch (_) { return; }
+  repaintNotebookGitMarks();
+}
+function repaintNotebookGitMarks() {
+  const cells = lee.notebookGit?.cells || {}, lines = lee.notebookGit?.lines || {};
+  $$('.lee-cell').forEach(el => {
+    const kind = cells[el.dataset.id] || '';
+    el.classList.toggle('changed', !!kind);
+    el.classList.toggle('changed-added', kind === 'added');
+    // The bar on the cell says *that* it differs; the lines inside say where. A mounted
+    // editor is told directly -- `mountCell` only reads these once, when it is created.
+    const view = lee.editors.get(el.dataset.id);
+    if (view) LeeCM.setChangedLines(view, lines[el.dataset.id] || []);
+  });
+  paintNotebookOverview();
+}
+
+/* The notebook's overview stripe.
+
+   A file gets one from CodeMirror, because a file *is* the editor and the editor owns the
+   scrollbar. A notebook scrolls as a page of cells, so its scrollbar belongs to `#editor`
+   and nothing inside any one cell can mark it -- which left the per-cell change marks
+   invisible until you had already scrolled to them, and knowing where the changes are
+   without scrolling is the entire point of an overview.
+
+   Same rules as the editor's: it stands where the scrollbar was, it maps the whole document
+   onto its height, and it is never a second thing to scroll. */
+const NB_OVERVIEW_W = 14;
+function nbOverview() {
+  const stage = $('#editorstage'); if (!stage) return null;
+  let c = $('#nboverview');
+  if (!c) {
+    c = document.createElement('canvas'); c.id = 'nboverview'; c.className = 'lee-nb-overview';
+    c.setAttribute('aria-label', 'notebook overview: uncommitted cells and failures');
+    const seek = e => {
+      const host = $('#editor'); if (!host) return;
+      const box = c.getBoundingClientRect();
+      const at = Math.max(0, Math.min(1, (e.clientY - box.top) / (box.height || 1)));
+      host.scrollTop = Math.max(0, at * host.scrollHeight - host.clientHeight / 2);
+    };
+    c.addEventListener('pointerdown', e => { c.setPointerCapture(e.pointerId); e.preventDefault(); seek(e); });
+    c.addEventListener('pointermove', e => { if (e.buttons & 1) { e.preventDefault(); seek(e); } });
+    stage.appendChild(c);
+  }
+  return c;
+}
+function paintNotebookOverview() {
+  const host = $('#editor'), stage = $('#editorstage'), c = nbOverview();
+  if (!c || !host || !stage) return;
+  // Nothing to overview when the whole notebook already fits: the stripe would be a bar
+  // saying "you can see all of this", and it would take the scrollbar away to say it.
+  const on = lee.kind === 'notebook' && host.scrollHeight > host.clientHeight + 4;
+  c.hidden = !on; host.classList.toggle('has-overview', on);
+  if (!on) return;
+  const stageBox = stage.getBoundingClientRect(), box = host.getBoundingClientRect();
+  // Measured rather than pinned to the stage, so a split editor puts it on the notebook's
+  // own right edge instead of the pane beside it.
+  c.style.left = (box.right - stageBox.left - NB_OVERVIEW_W) + 'px';
+  c.style.top = (box.top - stageBox.top) + 'px';
+  const dpr = devicePixelRatio || 1, w = NB_OVERVIEW_W, h = Math.max(40, host.clientHeight);
+  c.width = w * dpr; c.height = h * dpr; c.style.width = w + 'px'; c.style.height = h + 'px';
+  const ctx = c.getContext('2d'); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+  const css = getComputedStyle(document.documentElement);
+  const colour = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
+  const total = host.scrollHeight || 1, changed = lee.notebookGit?.cells || {};
+  const y = px => px / total * h;
+  for (const el of $$('.lee-cell', host)) {
+    const top = y(el.getBoundingClientRect().top - box.top + host.scrollTop);
+    const tall = Math.max(2, y(el.offsetHeight));
+    const kind = changed[el.dataset.id];
+    if (kind) {
+      ctx.fillStyle = kind === 'added' ? colour('--lee-green', '#3fb950') : colour('--lee-orange', '#d29922');
+      ctx.fillRect(0, top, 2, tall);
+    }
+    // A failed run is the other thing worth seeing from the top of a long notebook.
+    if ($('.lee-cell-state.error', el)) {
+      ctx.fillStyle = colour('--lee-red', '#f85149');
+      ctx.fillRect(3, Math.min(h - 2, top), w - 5, 2);
+    }
+  }
+  ctx.fillStyle = colour('--lee-fg4', '#6e7681'); ctx.globalAlpha = .28;
+  ctx.fillRect(0, y(host.scrollTop), w, Math.max(6, y(host.clientHeight)));
+  ctx.globalAlpha = 1;
+}
+let nbOverviewFrame = 0;
+function queueNotebookOverview() {
+  cancelAnimationFrame(nbOverviewFrame);
+  nbOverviewFrame = requestAnimationFrame(paintNotebookOverview);
+}
+document.addEventListener('scroll', e => {
+  if (e.target?.id === 'editor') queueNotebookOverview();
+}, true);
+addEventListener('resize', queueNotebookOverview);
 async function refreshProjectPills() {
   try {
     const d = await api('/workspace/info');
@@ -6434,6 +6582,22 @@ function openChromeMenu(anchor, rows) {
   menu.tabIndex = -1; menu.focus();
 }
 
+// Choosing a folder is choosing a project: source control, releases, deploys and the branch
+// pill all follow it. Selecting the folder in the tree without saying so left every one of
+// them describing whichever folder had been opened first.
+async function activateRoot(path) {
+  try { await post('/workspace/activate', {path}); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  leeLeft('files');
+  const node = $$('.lee-root').find(n => n.dataset.path === path);
+  if (node) { selectTreeNode(node); await loadTreeDir(node); node.scrollIntoView({block: 'nearest'}); }
+  gitUI.repo = '';                  // the panel follows the workspace again, not a pinned repo
+  refreshProjectPills();
+  if ($('#left')?.classList.contains('left-git')) renderGitPanel();
+  status(`project · ${path.split('/').pop() || path}`);
+}
+window.leeActivateRoot = activateRoot;
+
 async function leeWorkspaceMenu(anchor) {
   const d = await api('/workspace/info');
   const sites = d.workspaces || [];
@@ -6442,11 +6606,7 @@ async function leeWorkspaceMenu(anchor) {
   }}));
   if (sites.length && (d.roots || []).length) rows.push({separator: true});
   rows.push(...(d.roots || []).map(root => ({label: sites.length ? `Folder: ${root.name}` : root.name,
-    detail: root.path, run: async () => {
-      leeLeft('files');
-      const node = $$('.lee-root').find(n => n.dataset.path === root.path);
-      if (node) { selectTreeNode(node); await loadTreeDir(node); node.scrollIntoView({block: 'nearest'}); }
-    }})));
+    detail: root.path, run: () => activateRoot(root.path)})));
   if (rows.length) rows.push({separator: true});
   rows.push({label: 'Add folder…', detail: 'to this workspace', run: addRoot});
   openChromeMenu(anchor, rows);
@@ -7156,84 +7316,111 @@ async function removeRoot() {
    the two ways people actually find a checkout, and they want the same confirm button. */
 async function findRepo() { return addRoot(true); }
 
+/* One box, the way a shell has one.
+
+   The picker used to be a path bar, a separate filter box, a list and an up button -- four
+   controls for "which folder", and the path bar was the only one that took a path. Typing
+   into it now completes folders under what is already typed, Tab takes the completion,
+   and Enter opens. Repositories deeper down still answer to a bare name, because a
+   directory of checkouts is more than one level deep and that was the other thing the
+   second box was for. */
 async function addRoot(find = false) {
-  let current = '';
-  const m = modal(`<div class="lee-mhead">open folder<span class="sub">choose a project root</span></div>
-    <div class="lee-pathbar"><button class="lee-btn" id="folderup" title="parent folder">↑</button>
-    <input class="lee-input" id="folderpath" aria-label="folder path"></div>
-    <input class="lee-input lee-folderfilter" id="folderfilter" autocomplete="off"
-      aria-label="find a repository below this folder"
-      placeholder="filter subfolders, or type to find a repository below here">
-    <div class="lee-modallist lee-folderlist" id="folderlist"></div>
+  const m = modal(`<div class="lee-mhead">open folder<span class="sub">type a path · Tab completes · Enter opens</span></div>
+    <input class="lee-input lee-pathinput" id="folderpath" autocomplete="off" spellcheck="false"
+      aria-label="folder path" aria-autocomplete="list" aria-controls="folderlist"
+      placeholder="~/code/  ·  or the name of a repository below it">
+    <div class="lee-modallist lee-folderlist" id="folderlist" role="listbox"></div>
     <div class="lee-mfoot"><button class="lee-btn go" id="folderopen">open this folder</button>
-    <span class="lee-dim">choose a subfolder, then confirm</span></div>`);
-  const list = m.querySelector('#folderlist'), path = m.querySelector('#folderpath'), up = m.querySelector('#folderup');
-  const filter = m.querySelector('#folderfilter');
-  let dirs = [];
-  const row = (p, name, sub) =>
-    `<button class="lee-folderrow" data-path="${esc(p)}"><span class="lee-folderglyph">▸</span>${esc(name)}` +
-    (sub ? `<span class="lee-dim lee-folderwhere">${esc(sub)}</span>` : '') + `</button>`;
-  const show = html => { list.innerHTML = html || '<div class="lee-dim">nothing here</div>'; };
-  const load = async p => {
+    <span class="lee-dim" id="folderhint"></span></div>`);
+  const input = m.querySelector('#folderpath'), list = m.querySelector('#folderlist');
+  const hint = m.querySelector('#folderhint'), openBtn = m.querySelector('#folderopen');
+  let base = '', dirs = [], rows = [], sel = 0, lastDir = null, seq = 0, timer = null;
+
+  const dirOf = v => { const i = v.lastIndexOf('/'); return i < 0 ? '' : v.slice(0, i + 1); };
+  const fragOf = v => { const i = v.lastIndexOf('/'); return i < 0 ? v : v.slice(i + 1); };
+  const row = (r, i) =>
+    `<button class="lee-folderrow${i === sel ? ' sel' : ''}" role="option" aria-selected="${i === sel}" ` +
+    `data-path="${esc(r.path)}"><span class="lee-folderglyph">▸</span>${esc(r.name)}` +
+    (r.where ? `<span class="lee-dim lee-folderwhere">${esc(r.where)}</span>` : '') + `</button>`;
+  const paint = (extra = '') => {
+    list.innerHTML = rows.map(row).join('') + extra ||
+      '<div class="lee-dim">no folders match — Enter still opens what you typed, if it exists</div>';
+    list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});
+    hint.textContent = base ? `in ${base}` : '';
+  };
+  // Prefix matches first: completing `pe` should offer `personal` before `home/spec`.
+  const rank = frag => {
+    const f = frag.toLowerCase();
+    const starts = dirs.filter(x => x.name.toLowerCase().startsWith(f));
+    return starts.concat(dirs.filter(x => !starts.includes(x) && x.name.toLowerCase().includes(f)));
+  };
+  const repos = async frag => {
+    const mine = ++seq;
     try {
-      const d = await api('/fs/browse?path=' + encodeURIComponent(p || ''));
-      current = d.path; path.value = current; up.disabled = !d.parent; up.dataset.path = d.parent || '';
-      dirs = d.dirs || [];
-      draw();
+      const r = await api(`/git/find?base=${encodeURIComponent(base)}&q=${encodeURIComponent(frag)}`);
+      if (mine !== seq) return;                        // a later keystroke already answered
+      const found = (r.repos || []).filter(x => !rows.some(n => n.path === x.path));
+      if (!found.length) return paint();
+      rows = rows.concat(found.map(x => ({name: x.name, path: x.path, where: x.parent})));
+      paint();
+    } catch (_) { paint(); }
+  };
+  const draw = async () => {
+    const v = input.value, dir = dirOf(v), frag = fragOf(v);
+    if (dir !== lastDir) {
+      lastDir = dir;
+      try {
+        const d = await api('/fs/browse?path=' + encodeURIComponent(dir || v));
+        base = d.path; dirs = d.dirs || [];
+      } catch (_) { dirs = []; base = ''; }
+    }
+    rows = rank(frag); sel = 0;
+    clearTimeout(timer);
+    if (frag.length < 2) return paint();
+    // The search below walks a tree, so it is debounced: a five-letter name is one search,
+    // not five queued behind one worker.
+    paint(`<div class="lee-searching"><span class="lee-spin"></span>searching ${esc(base)} for repositories…</div>`);
+    timer = setTimeout(() => repos(frag), 200);
+  };
+  const complete = () => {
+    const r = rows[sel]; if (!r) return false;
+    input.value = r.path + '/'; draw(); return true;
+  };
+  const open = async path => {
+    const target = path || input.value.trim(); if (!target) return;
+    m.remove();
+    try {
+      await post('/fs/add-root', {path: target});
+      // The tree is redrawn *before* the folder is activated: activating selects the new
+      // root's node, and a tree that has not been rebuilt does not have one yet -- which
+      // left a folder that was open on the server and absent from the panel until reload.
+      await refreshFileTree(target);
+      await activateRoot(target);           // the folder you just opened is the one you mean
     } catch (e) { status(String(e.message || e), 'err'); }
   };
-  /* Two answers to one box. Subfolders of the folder you are looking at are filtered in the
-     browser, because they are already here. Repositories *below* it come from ripgrep through
-     /git/find, because a directory of checkouts is deeper than one level and walking it in JS
-     would be slow and wrong. */
-  let seq = 0, timer = null;
-  const near = q => dirs.filter(x => !q || x.name.toLowerCase().includes(q.toLowerCase()));
-  /* Local filtering is instant and happens on every keystroke. The search underneath is not:
-     it walks a directory tree, and from a home directory that is most of a second. Firing one
-     per keystroke made typing a five-letter name queue five of them behind one worker, which
-     is what made this feel broken. Debounced, so a word costs one search. */
-  const search = async q => {
-    const mine = ++seq, listed = near(q);
-    try {
-      const r = await api(`/git/find?base=${encodeURIComponent(current)}&q=${encodeURIComponent(q)}`);
-      if (mine !== seq) return;                       // a later keystroke already answered
-      const found = (r.repos || []).filter(x => !listed.some(n => n.path === x.path));
-      if (!found.length && !listed.length) return show('<div class="lee-dim">no folders or repositories match</div>');
-      show(listed.map(x => row(x.path, x.name)).join('') +
-           (found.length ? '<div class="lee-dim lee-foundhead">repositories below here</div>' : '') +
-           found.map(x => row(x.path, x.name, x.parent)).join(''));
-    } catch (_) {
-      if (mine === seq) show(listed.map(x => row(x.path, x.name)).join(''));   // keep what we have
-    }
+  input.oninput = draw;
+  input.onkeydown = e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); if (!rows.length) return;
+      sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length; paint();
+    } else if (e.key === 'Tab') { e.preventDefault(); complete(); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      const v = input.value.trim(), frag = fragOf(v);
+      // A path that names a folder is a folder to open. Anything else is half-typed, so the
+      // first Enter completes it and the second opens it -- Tab, for people who press Enter.
+      if (v && (!frag || dirs.some(x => x.path === v.replace(/\/$/, '')))) return open(v);
+      if (!complete()) if (v) open(v);
+    } else if (e.key === 'Escape') { e.preventDefault(); m.remove(); }
   };
-  const draw = () => {
-    const q = filter.value.trim();
-    const listed = near(q);
-    clearTimeout(timer);
-    if (!q) { ++seq; return show(listed.map(x => row(x.path, x.name)).join('')); }
-    // What is already loaded, immediately, with the search announced under it rather than a
-    // frozen list: an empty result and a running search look identical otherwise.
-    show(listed.map(x => row(x.path, x.name)).join('') +
-         `<div class="lee-searching"><span class="lee-spin"></span>searching ${esc(current)} for repositories…</div>`);
-    timer = setTimeout(() => search(q), 200);
+  list.onclick = e => {
+    const r = e.target.closest('.lee-folderrow'); if (!r) return;
+    input.value = r.dataset.path + '/'; input.focus(); draw();
   };
-  filter.oninput = draw;
-  const open = () => {
-    if (!current) return;
-    m.remove();
-    post('/fs/add-root', {path: current}).then(() => refreshFileTree(current))
-      .catch(e => status(String(e.message || e), 'err'));
-  };
-  list.onclick = e => { const row = e.target.closest('.lee-folderrow'); if (row) load(row.dataset.path); };
-  up.onclick = () => { if (up.dataset.path) load(up.dataset.path); };
-  path.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); load(path.value); } };
-  m.querySelector('#folderopen').onclick = open;
-  filter.onkeydown = e => {
-    if (e.key === 'Enter') { e.preventDefault(); const r = list.querySelector('.lee-folderrow'); if (r) load(r.dataset.path); }
-    if (e.key === 'Escape') { e.preventDefault(); m.remove(); }
-  };
-  await load('');
-  if (find) filter.focus();          // opened as "find repository": start typing, do not browse
+  openBtn.onclick = () => open();
+  input.value = find ? '' : (await api('/fs/browse?path=').catch(() => ({path: ''}))).path + '/';
+  input.focus(); input.setSelectionRange(input.value.length, input.value.length);
+  await draw();
 }
 
 document.addEventListener('keydown', e => {
@@ -7254,6 +7441,46 @@ document.addEventListener('click', (e) => {
 document.addEventListener('toggle', e => {
   if (e.target.matches?.('.lee-dir')) e.target.setAttribute('aria-expanded', e.target.open ? 'true' : 'false');
 }, true);
+
+// Middle-click closes a tab, as it does in every browser. Delegated because both strips are
+// re-rendered whole -- the document strip by htmx, the terminal strip by `paintTermTabs`.
+document.addEventListener('auxclick', e => {
+  if (e.button !== 1) return;
+  const term = e.target.closest?.('.lee-termtab');
+  if (term) { e.preventDefault(); return closeTerm(term.dataset.term); }
+  const tab = e.target.closest?.('.lee-tab');
+  if (!tab) return;
+  e.preventDefault();                     // some platforms paste or autoscroll on button 1
+  if (tab.dataset.gitDiff) return closeGitDiffTab(tab.dataset.gitDiff);
+  closeTab(+tab.dataset.i);
+});
+
+// Drag to reorder. The order is the user's arrangement of their own work, so the drop is
+// posted rather than kept in the browser: it has to survive a reload like the tabs do.
+document.addEventListener('dragstart', e => {
+  const tab = e.target.closest?.('.lee-tab');
+  if (!tab || tab.dataset.gitDiff) return;
+  lee.dragTab = +tab.dataset.i;
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', tab.dataset.i); } catch (_) {}
+});
+document.addEventListener('dragover', e => {
+  if (lee.dragTab == null) return;
+  const tab = e.target.closest?.('.lee-tab');
+  if (!tab || tab.dataset.gitDiff) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+  $$('.lee-tab').forEach(t => t.classList.toggle('drop', t === tab));
+});
+document.addEventListener('drop', e => {
+  if (lee.dragTab == null) return;
+  const tab = e.target.closest?.('.lee-tab');
+  $$('.lee-tab').forEach(t => t.classList.remove('drop'));
+  if (tab && !tab.dataset.gitDiff) { e.preventDefault(); moveTab(lee.dragTab, +tab.dataset.i); }
+  lee.dragTab = null;
+});
+document.addEventListener('dragend', () => {
+  lee.dragTab = null; $$('.lee-tab').forEach(t => t.classList.remove('drop'));
+});
 
 document.addEventListener('contextmenu', e => {
   // Shift+right-click remains the browser's native copy/paste/spellcheck menu.
@@ -7289,7 +7516,9 @@ document.addEventListener('contextmenu', e => {
 /* ------------------------------------------------------------------ splitters */
 function initSplits() {
   const savedLeft = localStorage.getItem('lee-left-view');
-  leeLeft(['git', 'symbols'].includes(savedLeft) ? savedLeft : 'files');
+  // Every panel is saved on switch, so every panel is restorable. Restoring only two of them
+  // meant a reload silently moved you back to the file tree from the one you were working in.
+  leeLeft(['git', 'symbols', 'workflows', 'releases', 'deploys', 'drive'].includes(savedLeft) ? savedLeft : 'files');
   for (const pane of ['left', 'right', 'bottom'])
     if (localStorage.getItem('lee-pane-' + pane) === 'hidden') leePane(pane, false);
   if (matchMedia('(max-width: 1100px)').matches) {

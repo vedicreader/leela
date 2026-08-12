@@ -6,7 +6,9 @@ None, and the kernel launches under whatever `python3` resolves to on PATH -- of
 nobody chose.
 """
 
+import os
 import shutil
+from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
@@ -125,6 +127,64 @@ def test_a_terminal_outside_any_checkout_still_gets_the_workspace_environment(tm
     elsewhere = tmp_path/'scratch'; elsewhere.mkdir()
     ws = Workspace(roots=[root])
     assert _term_python(ws, elsewhere) == str(py)
+
+
+def test_the_environment_of_a_project_is_what_uv_and_a_console_script_read(tmp_path):
+    "One builder for every child Leela spawns, so a release step and a shell agree."
+    from leela.blocks.runtime.kernels import venv_env
+    py = _venv(tmp_path)
+    env = venv_env(str(py), {'PATH': '/usr/bin', 'PYTHONHOME': '/somewhere/else'})
+    assert env['VIRTUAL_ENV'] == str(tmp_path/'.venv') == env['UV_PROJECT_ENVIRONMENT']
+    assert env['PATH'].split(os.pathsep)[0] == str(py.parent), 'the venv resolves console scripts first'
+    assert 'PYTHONHOME' not in env, 'inherited from a frozen app, it would override the venv'
+    assert venv_env(None, {'PATH': '/usr/bin'}) == {'PATH': '/usr/bin'}, 'nothing found, nothing claimed'
+
+
+def test_a_release_runs_in_the_venv_of_the_project_being_released(tmp_path):
+    """The reported failure: `nbdev_prepare` from a system Python 3.8.
+
+    A release step is a console script resolved by PATH, so a pipeline holding
+    `pool.default_python` -- the *first* root's venv, or None until something chose -- ran the
+    wrong one. It resolves the interpreter from the project root, exactly as a terminal does.
+    """
+    from leela.blocks.pipelines.releases import Release
+    from leela.blocks.runtime.kernels import python_for
+    a, b = tmp_path/'repo-a', tmp_path/'repo-b'
+    pa, pb = _venv(a), _venv(b)
+    ws = Workspace(roots=[a, b])
+    assert ws.pool.default_python == str(pa), 'precondition: the pool holds the first root'
+    assert python_for(b, ws) == str(pb), 'a release of repo-b belongs in repo-b'
+
+    p = Release(b, python=python_for(b, ws))
+    env = p._env()
+    assert env['PATH'].split(os.pathsep)[0] == str(pb.parent)
+    assert env['VIRTUAL_ENV'] == str(b/'.venv')
+
+
+def test_every_pipeline_resolves_its_interpreter_from_the_project(tmp_path):
+    "Release, deploy and drive are one pipeline with three plans; none may key off the first root."
+    from leela.blocks.drive import app as drive_app
+    from leela.blocks.pipelines import app as pipe_app
+    for mod in (pipe_app, drive_app):
+        src = Path(mod.__file__).read_text(encoding='utf-8')
+        assert 'python_for(root, ctx.session)' in src, mod.__name__
+        assert 'ctx.session.pool.default_python' not in src, f'{mod.__name__} still keys off the first root'
+
+
+def test_a_git_terminal_gets_the_project_environment_too(tmp_path):
+    "lazygit commits, and a commit runs the project's hooks -- a tab that is not a shell still needs the venv."
+    assert "env = venv_env(py) if py else None" in SERVER, 'no kind is excluded'
+    assert "if argv is None and py else ''" in SERVER, 'but only a shell is typed into'
+
+
+def test_git_itself_runs_with_the_checkouts_environment(tmp_path):
+    "A hook is a console script of the repository being committed to, not of Leela."
+    from leela.blocks.git.git import _project_env
+    root = tmp_path/'proj'; py = _venv(root); (root/'.git').mkdir()
+    env = _project_env(root/'sub'/'deeper')
+    assert env['PATH'].split(os.pathsep)[0] == str(py.parent), 'found by searching upwards'
+    bare = tmp_path/'bare'; (bare/'.git').mkdir(parents=True)
+    assert _project_env(bare) is None, 'no venv, nothing claimed -- git inherits what Leela has'
 
 
 # ---------------------------------------------------------------- finding a checkout
@@ -246,7 +306,7 @@ def test_the_repository_search_is_debounced_and_says_it_is_running():
     """
     block = JS[JS.index('async function addRoot'):]
     block = block[:block.index('\ndocument.addEventListener')]
-    assert 'setTimeout(() => search(q), 200)' in block, 'debounced, not per keystroke'
+    assert 'setTimeout(() => repos(frag), 200)' in block, 'debounced, not per keystroke'
     assert 'clearTimeout(timer)' in block, 'and the pending one is dropped'
     assert 'lee-searching' in block and 'searching' in block, 'it says a search is running'
     assert 'if (mine !== seq) return' in block, 'a late answer never overwrites a newer one'
@@ -334,3 +394,44 @@ def test_the_terminal_corrects_its_path_after_the_shell_reads_its_rc():
     assert 'prelude' in SERVER, 'the pty takes one'
     assert 'os.write(master, self.prelude.encode()' in SERVER, 'written after the shell starts'
     assert 'export PATH=' in SERVER and '$PATH' in SERVER
+
+
+def test_the_folder_picker_is_one_box_that_completes_as_you_type():
+    "A path bar, a filter box, a list and an up button were four controls for one question."
+    block = JS[JS.index('async function addRoot'):]
+    block = block[:block.index('\ndocument.addEventListener')]
+    assert 'lee-pathinput' in block and 'folderfilter' not in block, 'one box, not two'
+    assert "e.key === 'Tab'" in block and 'const complete = ()' in block, 'Tab completes'
+    assert "e.key === 'Enter'" in block and 'return open(v)' in block, 'Enter opens'
+    assert "e.key === 'ArrowDown'" in block, 'and the list is reachable from the keyboard'
+    assert 'dirs.some(x => x.path === v.replace' in block, \
+        'a path that names a folder opens; a half-typed one completes first'
+    assert 'activateRoot(target)' in block, 'opening a folder is also choosing that project'
+    assert '.lee-folderrow.sel' in CSS
+
+
+def test_a_half_typed_path_browses_what_exists_and_returns_the_rest(tmp_path):
+    "The normal state of a box you are completing in is a path that does not exist yet."
+    (tmp_path/'personal').mkdir(); (tmp_path/'.hidden').mkdir()
+    client, _ = _client(tmp_path)
+    with client as c:
+        d = c.get('/fs/browse', params={'path': str(tmp_path/'per')}).json()
+        assert d['path'] == str(tmp_path) and d['partial'] == 'per'
+        assert 'personal' in [x['name'] for x in d['dirs']]
+        assert '.hidden' not in [x['name'] for x in d['dirs']], 'hidden folders stay out of the way'
+        asked = c.get('/fs/browse', params={'path': str(tmp_path/'.hid')}).json()
+        assert '.hidden' in [x['name'] for x in asked['dirs']], 'until they are asked for by name'
+
+
+def test_opening_a_folder_redraws_the_tree_before_selecting_the_new_root():
+    """Order matters: activating selects the new root's node, which must exist by then.
+
+    Redrawing after, or not at all, left the folder open on the server and absent from the
+    panel until a browser reload.
+    """
+    block = JS[JS.index('async function addRoot'):]
+    block = block[:block.index('\ndocument.addEventListener')]
+    body = block[block.index('const open = async path =>'):block.index('input.oninput = draw')]
+    assert "await post('/fs/add-root'" in body
+    assert body.index('refreshFileTree(target)') < body.index('activateRoot(target)'), \
+        'the tree is rebuilt before the new root is selected in it'

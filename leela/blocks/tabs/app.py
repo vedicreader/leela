@@ -74,6 +74,12 @@ def connect(app, ctx):
         if private and key: await ctx.pool.close(key)
         return tab_bar(session)
 
+    @rt('/tab/move')
+    def tab_move(i: int, j: int):
+        "Reorder by drag. The strip is the user's ordering of their own work, so it persists."
+        session.move_tab(i, j); session.save()
+        return tab_bar(session)
+
     @rt('/tab/new')
     def tab_new(kind: str = 'notebook'):
         session.new_scratch(kind)

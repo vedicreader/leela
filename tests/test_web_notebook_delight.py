@@ -179,3 +179,4 @@ def test_large_outputs_are_folded_before_the_browser_parses_them():
 def test_inline_values_disappear_as_soon_as_the_source_changes():
     field = EDITOR[EDITOR.index('const inlineField'):EDITOR.index('export function setInlineValues')]
     assert 'if (tr.docChanged) values = Decoration.none' in field
+

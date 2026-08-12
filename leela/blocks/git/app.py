@@ -105,8 +105,15 @@ def connect(app, ctx):
     def repos(): return RepoSet(ctx.fs.roots)
 
     def repo_at(target=''):
-        "The repository a request names, or the one containing whatever is open."
+        """The repository a request names, else the chosen folder's, else the open file's.
+
+        The chosen folder comes first because choosing it is the more recent and more
+        deliberate statement of which project this is about -- and opening a file in another
+        checkout re-chooses that one, so the two gestures cannot disagree for long.
+        """
         if str(target or '').strip(): return GitRepo(repos().require(target))
+        root = ctx.session.active_root
+        if root is not None and root in ctx.fs.roots: return GitRepo.at(root)
         cwd = ctx.session.cwd_for()
         if cwd is None: raise GitError('open a folder first')
         return GitRepo.at(cwd)
@@ -286,18 +293,32 @@ def connect(app, ctx):
             return {'path': path, 'staged': staged, **view}
         except Exception as e: return fail(e)
 
+    def repo_of(path):
+        """The repository one file belongs to, whatever the panels are pointed at.
+
+        Not `repo_at`: that answers "which project is this about", which the person chooses.
+        A file's change marks are not a matter of opinion -- they come from the checkout the
+        file is actually in, or there are none.
+        """
+        absolute = ctx.fs._check(path, must_exist=False)
+        return GitRepo.at(absolute.parent), absolute
+
     @rt('/git/file')
     async def git_file(path: str = ''):
-        """The active editor file's Git state, always in *its own* repository.
-
-        Deliberately not repository-targeted: this answers for the file the editor has open,
-        and the panel looking at another checkout must not repaint that file's change marks
-        from a repository it does not belong to.
-        """
+        "The active editor file's Git state, always in *its own* repository."
         try:
-            r = repo_at()
-            absolute = ctx.fs._check(path, must_exist=False)
+            r, absolute = repo_of(path)
             try: relative = str(absolute.relative_to(r.root))
             except ValueError: raise GitError('the active file is outside this repository')
             return await off_loop(r.file_changes, relative)
+        except Exception as e: return fail(e)
+
+    @rt('/git/notebook')
+    async def git_notebook(path: str = ''):
+        "The open notebook's changed cells, by cell id. Same repository rule as `/git/file`."
+        try:
+            r, absolute = repo_of(path)
+            try: relative = str(absolute.relative_to(r.root))
+            except ValueError: raise GitError('the active notebook is outside this repository')
+            return await off_loop(r.notebook_changes, relative)
         except Exception as e: return fail(e)

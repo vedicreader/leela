@@ -197,6 +197,12 @@ class Workspace:
         self.litert_backend = str(litert_backend or '').lower()
         if self.litert_backend: os.environ['LEELA_LITERT_BACKEND'] = self.litert_backend
         self.compact_auto, self.compact_strategy = True, 'surgical'
+        # Which of several open folders the person means right now. A workspace holds more
+        # than one checkout, and "the project" was answered by `roots[0]` -- so adding a
+        # second folder and switching to it left every project-scoped surface, the branch
+        # pill included, describing the first one. Set by choosing a folder, and by opening
+        # a file in another one, because both say the same thing about where you are.
+        self.active_root = None
         self.agent_state = ''             # compatibility alias for the task layer
         self.agent_state_layers = {name: {'text': '', 'enabled': True, 'source': 'workspace'} for name in
                                    ('organization', 'project', 'task', 'preferences', 'branch', 'ephemeral')}
@@ -297,10 +303,27 @@ class Workspace:
         p = str(Path(path).expanduser().resolve())
         return next((i for i, t in enumerate(self.tabs) if t.path == p), None)
 
+    def activate_root(self, path):
+        "Point the project-scoped surfaces at one of the open folders."
+        p = self.fs._check(path, must_exist=True)
+        if not p.is_dir(): p = p.parent
+        root = self.fs.root_of(p)          # raises unless it is one this workspace lists
+        self.active_root = root
+        return root
+
+    @property
+    def project_root(self):
+        "The folder the project surfaces are about: the chosen one, else the first open folder."
+        if self.active_root and self.active_root in self.fs.roots: return self.active_root
+        return self.fs.roots[0] if self.fs.roots else None
+
     def open(self, path, kind=None):
         "Open a file, focusing it if it is already open. Refuses anything outside the open folders."
         p = self.fs._check(path, must_exist=True)
         if not is_texty(p) and p.suffix.lower() != '.ipynb': raise Unsafe(f'{p.name} is not a text file')
+        # Opening a file in another checkout is the other way of saying which project you mean.
+        try: self.active_root = self.fs.root_of(p)
+        except Unsafe: pass
         if (i := self.find(p)) is not None:
             self.active = i
             self.watch_env(None)
@@ -341,6 +364,16 @@ class Workspace:
         self.active = max(0, min(self.active if i > self.active else self.active-1, len(self.tabs)-1))
         self.watch_env(None)
         return t
+
+    def move_tab(self, i, j):
+        "Drag a tab to a new position, keeping the same document active afterwards."
+        if not (0 <= i < len(self.tabs)): return self.tab
+        j = max(0, min(int(j), len(self.tabs) - 1))
+        if i == j: return self.tab
+        held = self.tabs[self.active] if 0 <= self.active < len(self.tabs) else None
+        self.tabs.insert(j, self.tabs.pop(i))
+        if held is not None: self.active = self.tabs.index(held)
+        return self.tab
 
     def activate(self, i):
         if 0 <= i < len(self.tabs):
@@ -601,9 +634,9 @@ class Workspace:
                 from .blocks.git.git import repo_root
                 return repo_root(Path(t.path).parent) or root
             except Unsafe: pass
-        if self.fs.roots:
+        if (root := self.project_root) is not None:
             from .blocks.git.git import repo_root
-            return repo_root(self.fs.roots[0]) or self.fs.roots[0]
+            return repo_root(root) or root
         return None
 
     def set_cwd(self, path=None, tab=None):
@@ -909,6 +942,7 @@ class Workspace:
                 'agent_state_layers': self.agent_state_layers,
                 'agent_memory_selection': self.agent_memory_selection,
                 'compact_auto': self.compact_auto, 'compact_strategy': self.compact_strategy,
+                'active_root': str(self.active_root or ''),
                 'saved': time.time()}
 
     def save(self, path=None):
@@ -971,5 +1005,10 @@ class Workspace:
                 tab.cwd = str(t.get('cwd') or '')
             except Exception: pass
         ws.active = min(d.get('active', 0), max(0, len(ws.tabs)-1))
+        # After the tabs, because restoring them sets it as a side effect of opening files.
+        ws.active_root = None
+        if saved_root := str(d.get('active_root') or ''):
+            try: ws.activate_root(saved_root)
+            except Exception: pass
         if ws.restore_remembered_agent_state(): ws.save()
         return ws

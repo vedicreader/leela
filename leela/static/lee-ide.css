@@ -105,6 +105,9 @@ body {
 }
 .lee-tab:hover { background: var(--lee-bg2); color: var(--lee-fg2); }
 .lee-tab.overflowed { display: none; }
+/* Where a dragged tab would land. A left edge rather than a highlight: the tab under the
+   pointer is not the one being changed, its position is. */
+.lee-tab.drop { box-shadow: inset 2px 0 0 var(--lee-accent); }
 .lee-tab-overflow { flex: none; min-width: 28px; height: 24px; padding: 0 6px; border: 0; border-radius: 4px;
   background: transparent; color: var(--lee-fg4); cursor: pointer; font: 10px/1 var(--lee-mono); }
 .lee-tab-overflow:hover { background: var(--lee-bg2); color: var(--lee-fg); }
@@ -373,13 +376,22 @@ kbd {
 
 /* ---- centre ---- */
 .lee-centre { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.lee-editor-stage { flex:1 1 auto; min-height:240px; display:grid; overflow:hidden; background:var(--lee-bg); }
+/* `relative` so the notebook overview stripe can be positioned against the stage and still
+   be measured onto the notebook's own right edge when the editor is split. */
+.lee-editor-stage { position:relative; flex:1 1 auto; min-height:240px; display:grid; overflow:hidden; background:var(--lee-bg); }
 .lee-editor-stage:not(.split) { grid-template-columns:minmax(0,1fr); }
 .lee-editor-stage.split-vertical { grid-template-columns:minmax(0,1fr) 1px minmax(0,1fr); }
 .lee-editor-stage.split-horizontal { grid-template-rows:minmax(0,1fr) 1px minmax(0,1fr); }
 .lee-editor-stage.split-vertical .lee-editor-splitter { background:var(--lee-border); grid-column:2; }
 .lee-editor-stage.split-horizontal .lee-editor-splitter { background:var(--lee-border); grid-row:2; }
 .lee-editor { overflow:auto; min-width:0; min-height:0; background:var(--lee-bg); }
+/* The notebook's overview stripe stands where its scrollbar was, so the whole notebook's
+   changed cells and failures are readable without scrolling to find them. */
+.lee-nb-overview { position:absolute; z-index:3; width:14px; cursor:default; touch-action:none;
+  border-left:1px solid var(--lee-border); background:color-mix(in srgb, var(--lee-bg) 92%, transparent); }
+.lee-nb-overview[hidden] { display:none; }
+.lee-editor.has-overview { scrollbar-width:none; }
+.lee-editor.has-overview::-webkit-scrollbar { width:0; height:0; }
 .lee-editor-secondary { border:0; }
 .lee-split-head { height:28px; display:flex; align-items:center; gap:8px; padding:0 8px; border-bottom:1px solid var(--lee-border); color:var(--lee-fg3); font:11px var(--lee-mono); }
 .lee-split-head span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
@@ -953,6 +965,11 @@ kbd {
 .lee-cell.running { border-left-color: var(--lee-yellow); }
 .lee-cell.dragging { opacity: .45; }
 .lee-cell.drag-target { box-shadow: inset 0 2px var(--lee-accent); }
+/* Uncommitted cells, marked the way uncommitted lines are in a file. The bar goes on the
+   cell body rather than the cell's own border, which selection and the running state already
+   own -- a changed cell that is also selected has to be able to say both. */
+.lee-cell.changed .lee-cellmain { box-shadow: inset 2px 0 0 var(--lee-orange); }
+.lee-cell.changed-added .lee-cellmain { box-shadow: inset 2px 0 0 var(--lee-green); }
 .lee-cell .lee-cm:empty { min-height: calc(var(--lee-cell-lines, 2) * 19.5px + 10px); }
 .lee-gutter[draggable="true"] { cursor: grab; }
 .lee-gutter[draggable="true"]:active { cursor: grabbing; }
@@ -1159,9 +1176,14 @@ kbd {
 .cm-lee-tab-mark { border-bottom: 1px dotted var(--lee-fg4); }
 .cm-lee-bracket-0 { color: var(--lee-yellow); }.cm-lee-bracket-1 { color: var(--lee-aqua); }.cm-lee-bracket-2 { color: var(--lee-orange); }
 .cm-lee-inlay-hint { margin: 0 2px; padding: 0 3px; border-radius: 3px; background: color-mix(in srgb, var(--lee-bg2) 72%, transparent); color: var(--lee-fg4); font-size: .82em; font-style: italic; }
-.cm-lee-minimap { position: absolute; top: 0; right: 0; z-index: 2; height: 100%; border-left: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-bg) 92%, transparent); cursor: pointer; opacity: .85; }
-.cm-lee-minimap[hidden] { display: none; }
-.cm-editor.cm-lee-has-minimap .cm-scroller { padding-right: 73px; }
+/* The overview stripe stands where the scrollbar was, and the native bar is hidden while it
+   is up: two bars down one edge, one of them inert, is the arrangement this replaced. */
+.cm-lee-overview { position: absolute; top: 0; right: 0; z-index: 2; height: 100%;
+  border-left: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-bg) 92%, transparent);
+  cursor: default; touch-action: none; }
+.cm-lee-overview[hidden] { display: none; }
+.cm-editor.cm-lee-has-overview .cm-scroller { padding-right: 15px; scrollbar-width: none; }
+.cm-editor.cm-lee-has-overview .cm-scroller::-webkit-scrollbar { width: 0; height: 0; }
 .cm-lee-sticky { position: absolute; top: 0; left: 0; right: 0; z-index: 3; overflow: hidden; padding: 3px 8px; border-bottom: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-bg1) 94%, transparent); color: var(--lee-fg2); font: 9.5px/1.35 var(--lee-mono); text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 .lee-code-editor .cm-content { padding-bottom: 7px; }
 .lee-code-editor .cm-scroller { overflow: auto; }
@@ -1863,8 +1885,9 @@ kbd {
 .lee-fieldlabel { display: grid; gap: 5px; padding: 12px; color: var(--lee-fg2); font-size: 11px; }
 .lee-fieldlabel .lee-input { margin: 0; font-family: var(--lee-mono); }
 .lee-dialogcopy { padding: 14px 12px 16px; color: var(--lee-fg2); }
-.lee-pathbar { display: flex; gap: 5px; padding: 8px; border-bottom: 1px solid var(--lee-border); }
-.lee-pathbar .lee-input { margin: 0; font-family: var(--lee-mono); }
+/* One box for the whole picker: it holds a path, so it is set in the code font and the
+   completions below it are the list that used to be a second control. */
+.lee-pathinput { width: 100%; margin: 8px 0 4px; font-family: var(--lee-mono); }
 .lee-folderlist { min-height: 260px; max-height: 48vh; padding: 4px; }
 .lee-folderrow {
   width: 100%; display: flex; align-items: center; gap: 7px; padding: 5px 8px; border: 0;
@@ -1872,6 +1895,8 @@ kbd {
   font: inherit; text-align: left;
 }
 .lee-folderrow:hover { background: var(--lee-bg2); color: var(--lee-fg); }
+/* The keyboard's place in the list, which Tab and Enter both act on. */
+.lee-folderrow.sel { background: var(--lee-sel); color: var(--lee-fg); }
 .lee-folderglyph { color: var(--lee-fg4); }
 .lee-gridwrap { overflow: auto; min-height: 180px; max-height: 56vh; }
 .lee-grid { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font: 11px/1.4 var(--lee-mono); }
@@ -2285,7 +2310,6 @@ kbd {
 @media (max-width: 760px) { .lee-git-conflict { grid-template-columns: 1fr; min-width: 0; } }
 
 /* the open-folder dialog's one box: filters what is listed, and finds repositories below it */
-.lee-folderfilter { width: 100%; margin: 6px 0 4px; }
 .lee-folderwhere { margin-left: auto; padding-left: 12px; font-size: 11px; opacity: .65;
                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
 .lee-foundhead { padding: 8px 8px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }

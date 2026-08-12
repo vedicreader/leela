@@ -23,11 +23,26 @@ CAPS = ('fs', 'tab', 'catalog')
 def connect(app, ctx):
     rt = app.route
 
+    @rt('/workspace/activate')
+    async def workspace_activate(req):
+        """Point the project surfaces -- source control, releases, deploys -- at one folder.
+
+        A workspace holds several checkouts. Choosing one here is the answer to "which
+        project", and it is remembered: `roots[0]` was standing in for that answer, so adding
+        a second folder and switching to it left the branch pill on the first one.
+        """
+        d = await req.json()
+        try:
+            root = ctx.session.activate_root(d.get('path') or '')
+            ctx.session.save()
+            return {'ok': True, 'active': str(root)}
+        except Exception as e: return fail(e)
+
     @rt('/workspace/info')
     def workspace_info():
         "The current multi-root project plus independently hosted workspace windows."
         tab, fs = ctx.tab, ctx.fs
-        active = fs.root_of(tab.path) if tab and tab.path else (fs.roots[0] if fs.roots else None)
+        active = ctx.session.project_root
         catalog = ctx.catalog
         sites = catalog() if callable(catalog) else list(catalog or ())
         return {'active': str(active or ''),
@@ -38,7 +53,7 @@ def connect(app, ctx):
     def cwd_info():
         t, fs = ctx.tab, ctx.fs
         return {'cwd': str(ctx.session.cwd_for() or ''), 'explicit': bool(t and t.cwd),
-                'root': str(fs.root_of(t.path) if t and t.path else (fs.roots[0] if fs.roots else ''))}
+                'root': str(fs.root_of(t.path) if t and t.path else (ctx.session.project_root or ''))}
 
     @rt('/cwd/set')
     async def cwd_set(req):

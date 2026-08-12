@@ -38,7 +38,7 @@ def tab_bar(ws):
             Span(label(t),cls='lee-tab-name'),
             Button('×', cls='lee-tab-x', title=f'close {t.title}', aria_label=f'close {t.title}',
                    onclick=f'event.stopPropagation();leeCloseTab({i})'),
-            cls=cls,title=t.path or t.title,data_i=i,data_kind=t.kind,role='tab',
+            cls=cls,title=t.path or t.title,data_i=i,data_kind=t.kind,role='tab',draggable='true',
             aria_selected='true' if i == ws.active else 'false', tabindex='0' if i == ws.active else '-1',
             hx_post=f'/tab/select?i={i}', hx_target='#tabbar', hx_swap='outerHTML'))
     return Div(*kids, id='tabbar', cls='lee-tabbar', role='tablist', aria_label='open files')

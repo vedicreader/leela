@@ -37,7 +37,7 @@ from dhrishti.serving import reg_dir, active
 
 __all__ = ['ExecOutcome', 'Kernel', 'GatewayKernel', 'GatewayService', 'KernelPool', 'RuntimeBroker',
            'bootstrap_src', 'output_text', 'ipymini_available', 'find_pythons', 'project_python',
-           'run_file_src']
+           'python_for', 'venv_env', 'run_file_src']
 
 KERNELS = ('ipykernel', 'ipymini')
 
@@ -55,6 +55,42 @@ def project_python(roots=()):
             for b in ('bin/python', 'Scripts/python.exe'):
                 if (p := root/d/b).exists(): return str(p)
     return None
+
+
+def python_for(cwd=None, session=None):
+    """The interpreter anything Leela spawns for `cwd` should be inside.
+
+    The folder the work is happening in wins. A workspace can hold several checkouts --
+    `/git/repos` exists for exactly that -- and each has its own environment, so keying a
+    child to `pool.default_python` put it in the *first* root's venv regardless of which
+    project it was for.
+
+    Falling back through discovery rather than stopping at `default_python` matters too: that
+    attribute is None until something chooses, so a folder whose venv appeared after the
+    workspace was built used to get the bare PATH -- and PATH's `python3` is the system one,
+    which is the 3.8 nobody asked for.
+    """
+    if (py := project_python([cwd]) if cwd else None): return py
+    if session is None: return None
+    return session.pool.default_python or project_python(session.fs.roots)
+
+
+def venv_env(python, env=None):
+    """`env` (this process's, by default) with `python`'s environment in front of it.
+
+    `VIRTUAL_ENV` is what uv reads and `UV_PROJECT_ENVIRONMENT` keeps `uv run`/`uv sync`
+    pointed at this exact env. The PATH prepend is what the console scripts need: a release
+    step spelled `nbdev_prepare` is resolved by PATH, and without this it finds whichever
+    one the system has rather than the one the project depends on.
+    """
+    env = dict(os.environ if env is None else env)
+    if not python: return env
+    bindir = str(Path(python).parent)
+    env['VIRTUAL_ENV'] = str(Path(bindir).parent)
+    env['UV_PROJECT_ENVIRONMENT'] = env['VIRTUAL_ENV']
+    env['PATH'] = bindir + os.pathsep + env.get('PATH', '')
+    env.pop('PYTHONHOME', None)
+    return env
 
 
 def find_pythons(roots=()):

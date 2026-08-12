@@ -46,7 +46,7 @@ def test_lint_endpoint_checks_unsaved_python_without_an_external_linter():
 
 def test_codemirror_lint_source_covers_errors_warnings_and_readonly_surfaces():
     assert '"@codemirror/lint"' in PACKAGE
-    assert 'import {linter} from "@codemirror/lint"' in EDITOR
+    assert 'import {linter, forEachDiagnostic} from "@codemirror/lint"' in EDITOR
     assert 'node.type.isError' in EDITOR
     assert 'severity: "error"' in EDITOR
     assert 'data.diagnostics' in EDITOR

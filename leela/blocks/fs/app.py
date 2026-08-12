@@ -58,12 +58,21 @@ def connect(app, ctx):
     def fs_browse(path: str = ''):
         "Directories for the in-app folder picker. Files are intentionally never exposed here."
         try:
-            p = Path(path or Path.home()).expanduser().resolve()
+            p = Path(path or Path.home()).expanduser()
+            # A half-typed path is the normal state of a box someone is completing in, so the
+            # part that exists is browsed and the rest is handed back as `partial` rather than
+            # the whole thing being refused for naming a folder that is not there yet.
+            partial = ''
+            if not p.is_dir() and not str(path).endswith('/'): partial, p = p.name, p.parent
+            p = p.resolve()
             if not p.is_dir(): raise NotADirectoryError(str(p))
-            dirs = sorted((x for x in p.iterdir() if x.is_dir() and not x.name.startswith('.')),
+            # Hidden folders stay out of the way until they are asked for by name: nobody
+            # scrolling a list wants `.cache`, and everybody typing `.ven` wants `.venv`.
+            hidden = partial.startswith('.')
+            dirs = sorted((x for x in p.iterdir() if x.is_dir() and (hidden or not x.name.startswith('.'))),
                           key=lambda x: x.name.lower())
             parent = p.parent if p.parent != p else None
-            return {'path': str(p), 'parent': str(parent) if parent else '',
+            return {'path': str(p), 'parent': str(parent) if parent else '', 'partial': partial,
                     'dirs': [{'name': x.name, 'path': str(x)} for x in dirs]}
         except Exception as e: return fail(e)
 

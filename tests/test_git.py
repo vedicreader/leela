@@ -492,3 +492,142 @@ def test_a_notebook_that_cannot_be_mapped_says_so_instead_of_guessing(repo):
 def test_a_file_that_is_not_a_notebook_falls_back_to_lines(repo):
     d = GitRepo.at(repo).blame_notebook('src/app.py')
     assert not d['notebook'] and d['error'] and d['lines'], 'the raw blame is still returned'
+
+
+# ---------------------------------------------------------- notebook change marks
+
+def _ipynb(cells):
+    import json
+    return json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {}, 'cells': [
+        {'cell_type': 'code', 'source': src, 'metadata': {}, 'outputs': [],
+         'execution_count': None, 'id': cid} for cid, src in cells]}) + '\n'
+
+
+def test_a_notebooks_marks_are_per_cell_because_its_line_numbers_mean_nothing(repo):
+    """An .ipynb is JSON: editing one cell moves every line below it.
+
+    `file_changes` would answer "the whole document changed", which is true of the file and
+    useless about the work. Cells carry nbformat ids that survive edits above them.
+    """
+    nb = repo/'work.ipynb'
+    nb.write_text(_ipynb([('a', 'first = 1'), ('b', 'second = 2'), ('c', 'third = 3')]))
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'notebook')
+    r = GitRepo(repo)
+    assert r.notebook_changes('work.ipynb') == {'path': 'work.ipynb', 'changed': False,
+                                                'cells': {}, 'lines': {}}
+
+    nb.write_text(_ipynb([('a', 'first = 1'), ('b', 'second = 22'), ('c', 'third = 3'),
+                          ('d', 'fourth = 4')]))
+    out = r.notebook_changes('work.ipynb')
+    assert out['changed'] is True
+    assert out['cells'] == {'b': 'modified', 'd': 'added'}, 'the untouched cells stay unmarked'
+
+
+def test_an_untracked_notebook_is_added_cell_by_cell(repo):
+    (repo/'fresh.ipynb').write_text(_ipynb([('a', 'x = 1'), ('b', 'y = 2')]))
+    assert GitRepo(repo).notebook_changes('fresh.ipynb')['cells'] == {'a': 'added', 'b': 'added'}
+
+
+def test_notebook_changes_declines_anything_that_is_not_a_notebook(repo):
+    (repo/'src'/'app.py').write_text('value = 2\n')
+    out = GitRepo(repo).notebook_changes('src/app.py')
+    assert out['changed'] is False and out['cells'] == {}, 'a .py file is answered by file_changes'
+
+
+def test_a_modified_cell_says_which_of_its_own_lines_moved(repo):
+    "Line numbers inside one cell's editor, which is the only place they are ever drawn."
+    nb = repo/'work.ipynb'
+    nb.write_text(_ipynb([('a', 'one\ntwo\nthree'), ('b', 'kept')]))
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'notebook')
+    nb.write_text(_ipynb([('a', 'one\nTWO\nthree\nfour'), ('b', 'kept')]))
+    out = GitRepo(repo).notebook_changes('work.ipynb')
+    assert out['cells'] == {'a': 'modified'}
+    assert out['lines']['a'] == [{'from': 2, 'to': 2, 'kind': 'modified'},
+                                 {'from': 4, 'to': 4, 'kind': 'added'}]
+    assert 'b' not in out['lines'], 'an untouched cell has nothing to draw'
+
+
+def test_a_deleted_line_is_reported_where_the_text_closed_over_it(repo):
+    "It has no line of its own in the new source, which is what git's `+n,0` hunk also means."
+    nb = repo/'work.ipynb'
+    nb.write_text(_ipynb([('a', 'one\ntwo\nthree')]))
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'notebook')
+    nb.write_text(_ipynb([('a', 'one\nthree')]))
+    ranges = GitRepo(repo).notebook_changes('work.ipynb')['lines']['a']
+    assert ranges == [{'from': 2, 'to': 2, 'kind': 'deleted'}]
+
+
+def test_every_line_of_a_new_cell_is_added(repo):
+    nb = repo/'work.ipynb'
+    nb.write_text(_ipynb([('a', 'kept')]))
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'notebook')
+    nb.write_text(_ipynb([('a', 'kept'), ('b', 'x = 1\ny = 2')]))
+    out = GitRepo(repo).notebook_changes('work.ipynb')
+    assert out['cells']['b'] == 'added'
+    assert out['lines']['b'] == [{'from': 1, 'to': 2, 'kind': 'added'}]
+
+
+# ------------------------------------------------- which project the panels are about
+
+def _repo(path, name):
+    path.mkdir(parents=True, exist_ok=True)
+    git(path, 'init', '-b', name)
+    git(path, 'config', 'user.email', 'tests@leela.local')
+    git(path, 'config', 'user.name', 'Leela tests')
+    (path/'readme.md').write_text(f'# {name}\n')
+    git(path, 'add', '.'); git(path, 'commit', '-m', 'initial')
+    return path
+
+
+def test_choosing_a_folder_moves_source_control_to_that_checkout(tmp_path):
+    """The reported bug: open leela on one repo, add a second, switch -- git stayed behind.
+
+    `roots[0]` was standing in for "which project is this about", so every project-scoped
+    surface described the folder that happened to be opened first.
+    """
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    a, b = _repo(tmp_path/'ramabana', 'main'), _repo(tmp_path/'rishi', 'dev')
+    ws = Workspace(roots=[a, b])
+    with TestClient(ide_app(ws)) as client:
+        assert client.get('/git/info').json()['branch'] == 'main', 'precondition: the first folder'
+        assert client.post('/workspace/activate', json={'path': str(b)}).json()['ok'] is True
+        assert client.get('/git/info').json()['branch'] == 'dev', 'the chosen folder, not the first'
+        assert client.get('/workspace/info').json()['active'] == str(b)
+        assert client.get('/cwd').json()['cwd'] == str(b)
+    assert ws.state()['active_root'] == str(b), 'and it survives a restart'
+
+
+def test_opening_a_file_in_another_checkout_says_which_project_too(tmp_path):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    a, b = _repo(tmp_path/'ramabana', 'main'), _repo(tmp_path/'rishi', 'dev')
+    ws = Workspace(roots=[a, b])
+    ws.activate_root(b)
+    ws.open(a/'readme.md')
+    with TestClient(ide_app(ws)) as client:
+        assert client.get('/git/info').json()['branch'] == 'main', 'the file you opened re-chooses'
+
+
+def test_a_files_change_marks_come_from_its_own_repository_not_the_chosen_one(tmp_path):
+    "Which project the panels are about is a choice; where a file's diff comes from is not."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    a, b = _repo(tmp_path/'ramabana', 'main'), _repo(tmp_path/'rishi', 'dev')
+    (a/'readme.md').write_text('# ramabana\nchanged\n')
+    ws = Workspace(roots=[a, b])
+    ws.activate_root(b)                      # panels point at rishi
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/git/file', params={'path': str(a/'readme.md')}).json()
+    assert d.get('changed') is True and d['ranges'], 'the marks still come from ramabana'
+
+
+def test_activating_a_folder_the_workspace_does_not_list_is_refused(tmp_path):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    a = _repo(tmp_path/'ramabana', 'main')
+    outside = tmp_path/'elsewhere'; outside.mkdir()
+    ws = Workspace(roots=[a])
+    with TestClient(ide_app(ws)) as client:
+        assert 'error' in client.post('/workspace/activate', json={'path': str(outside)}).json()
+    assert ws.project_root == a

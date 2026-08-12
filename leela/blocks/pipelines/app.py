@@ -16,6 +16,7 @@ is the failure that arrangement exists to prevent.
 from __future__ import annotations
 
 from ...core.web import fail, off_loop, pipeline_socket
+from ..runtime.kernels import python_for
 from .deploys import Deploy
 from ...core.envs import EnvStore
 from .pipelines import PipelineError
@@ -40,8 +41,12 @@ def connect(app, ctx):
         if key not in live:
             live[key] = KINDS[kind](root, env=EnvStore())
         # The interpreter can change after the pipeline was made -- picking a project venv
-        # in the kernel picker must retarget the next step, not the next restart.
-        live[key].python = ctx.session.pool.default_python
+        # in the kernel picker must retarget the next step, not the next restart. It is
+        # resolved from `root` for the same reason a terminal resolves it from its cwd: a
+        # workspace holds several checkouts, and a release runs the *project's* console
+        # scripts. `pool.default_python` alone released repo B with repo A's venv, or with
+        # none at all, which is how `nbdev_prepare` reached a system Python 3.8.
+        live[key].python = python_for(root, ctx.session)
         return live[key]
 
     async def act(kind, d):

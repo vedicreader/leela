@@ -102,6 +102,7 @@ GET,POST /git/compare
 GET,POST /git/conflict
 GET,POST /git/diff
 GET,POST /git/file
+GET,POST /git/notebook
 GET,POST /git/find
 GET,POST /git/history
 GET,POST /git/info
@@ -184,6 +185,7 @@ GET,POST /stack
 GET,POST /tab/buffer
 GET,POST /tab/close
 GET,POST /tab/disk
+GET,POST /tab/move
 GET,POST /tab/new
 GET,POST /tab/open
 GET,POST /tab/reload
@@ -210,6 +212,7 @@ GET,POST /workflows/jobs
 GET,POST /workflows/presets
 GET,POST /workflows/runs
 GET,POST /workflows/spec
+GET,POST /workspace/activate
 GET,POST /workspace/info
 Mount /leestatic
 WebSocketRoute /drive/ws

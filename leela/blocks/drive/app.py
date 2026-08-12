@@ -15,6 +15,7 @@ from ...core.web import fail, off_loop, pipeline_socket
 from .drive import Drive, DriveError
 from ...core.envs import EnvStore
 from ..git.repos import RepoSet, repo_for
+from ..runtime.kernels import python_for
 
 __all__ = ['CAPS', 'connect']
 
@@ -30,7 +31,7 @@ def connect(app, ctx):
         root = repo_for(ctx.session, target)
         key = str(root)
         if key not in live: live[key] = Drive(root, env=EnvStore())
-        live[key].python = ctx.session.pool.default_python
+        live[key].python = python_for(root, ctx.session)   # this project's venv, not the first root's
         return live[key]
 
     def state(target=''):

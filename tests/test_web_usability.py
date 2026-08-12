@@ -97,12 +97,14 @@ def test_switching_runtime_does_not_destroy_existing_terminal_tabs():
 
 
 def test_terminal_starts_inside_the_project_uv_environment():
+    "One builder, used by the pty and by every release, deploy and drive step alike."
+    import inspect, os
     from leela.app import ide_app
-    import inspect
-    source = inspect.getsource(ide_app)
-    assert "env['VIRTUAL_ENV'] = venv" in source
-    assert "env['UV_PROJECT_ENVIRONMENT'] = venv" in source
-    assert "env['PATH'] = bindir + os.pathsep" in source
+    from leela.blocks.runtime.kernels import venv_env
+    env = venv_env('/proj/.venv/bin/python', {'PATH': '/usr/bin'})
+    assert env['VIRTUAL_ENV'] == env['UV_PROJECT_ENVIRONMENT'] == '/proj/.venv'
+    assert env['PATH'] == '/proj/.venv/bin' + os.pathsep + '/usr/bin'
+    assert 'env = venv_env(py) if py else None' in inspect.getsource(ide_app)
 
 
 def test_codemirror_preferences_are_live_reconfigurable_and_have_a_settings_workbench():
@@ -132,8 +134,34 @@ def test_indent_detection_copies_tabs_or_space_units_without_treating_alignment_
 
 def test_codemirror_navigation_extensions_are_optional_live_preferences():
     editor = EDITOR
-    assert 'function minimapPlugin' in editor and 'const stickyPlugin' in editor
-    assert "'editor','minimapMode'" in JS and "'editor','stickyNavigation'" in JS
+    assert 'function overviewPlugin' in editor and 'const stickyPlugin' in editor
+    assert "'editor','overviewMode'" in JS and "'editor','stickyNavigation'" in JS
+
+
+def test_the_overview_is_the_scrollbar_marked_up_rather_than_a_picture_of_the_text():
+    """A compressed image of the letters answers no question you can act on.
+
+    What a full-file view is for is where the problems and the changes are, so the stripe
+    carries a tick per diagnostic and a bar per uncommitted line -- and it takes the
+    scrollbar's place rather than sitting beside it, so there is never a second thing to
+    scroll or two bars down one edge.
+    """
+    stripe = EDITOR[EDITOR.index('function overviewPlugin'):EDITOR.index('const stickyPlugin')]
+    assert 'forEachDiagnostic(this.view.state' in stripe, 'ticks come from the real diagnostics'
+    assert 'this.view.state.field(changesField, false)' in stripe, 'bars come from the git marks'
+    assert 'cm-lee-change-(\\w+)' in stripe, 'a change bar is coloured by its kind'
+    assert 's.scrollTop =' in stripe and 'pointermove' in stripe, 'it scrolls, and it drags'
+    assert 'viewportLineBlocks' in stripe, 'and it says where you are'
+    assert 'scrollbar-width: none' in CSS and '.cm-lee-has-overview .cm-scroller' in CSS
+    assert 'cm-lee-minimap' not in CSS, 'the old canvas is gone, not merely hidden'
+
+
+def test_the_overview_setting_carries_its_two_older_names_forward():
+    "A stored preference must not silently reset because the feature was renamed twice."
+    prefs = JS[JS.index('function readEditorPrefs'):JS.index('lee.editorPrefs = readEditorPrefs()')]
+    assert "if ('minimap' in old && !old.minimapMode)" in prefs
+    assert 'if (old.minimapMode && !old.overviewMode) old.overviewMode = old.minimapMode;' in prefs
+    assert 'settings.overviewMode || settings.minimapMode' in EDITOR, 'and on the editor side too'
 
 
 def test_codemirror_merge_view_is_used_for_external_file_conflicts():
@@ -293,7 +321,7 @@ def test_terminal_can_expand_and_refits_its_pty():
 
 
 def test_lower_panels_cannot_consume_the_editor():
-    assert '.lee-editor-stage { flex:1 1 auto; min-height:240px' in CSS
+    assert '.lee-editor-stage { position:relative; flex:1 1 auto; min-height:240px' in CSS
     assert 'max-height: min(900px, calc(100% - 240px))' in CSS
     assert 'const limit = () => Math.min(900, Math.max(110, centreHeight() - 240))' in JS
     assert "['exec-h', 80]" in JS and "['agent-h', 110]" in JS

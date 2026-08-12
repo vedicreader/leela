@@ -186,6 +186,13 @@ DEFAULTS = L(
     Key('show_docs',        'alt+shift+h',   'global', 'docs for symbol',     'toast'),
     Key('capture',          'alt+shift+p',   'global', 'screenshot for the assistant', 'toast'),
     Key('close_tab',        'alt+w',         'global', 'close tab',           'toast'),
+    # The bulk closes are menu-first, the way a browser has them: middle-click closes one,
+    # and the right-click menu is where you say "just this one, then" after opening twelve.
+    # Unbound by default rather than given a chord nobody asked for -- both are still
+    # rebindable, because every action in this table is.
+    Key('close_others',     '',              'global', 'close other tabs'),
+    Key('close_right',      '',              'global', 'close tabs to the right'),
+    Key('close_saved',      '',              'global', 'close saved tabs'),
     Key('next_tab',         'alt+]',         'global', 'next tab'),
     Key('prev_tab',         'alt+[',         'global', 'previous tab'),
     Key('toggle_left',      'alt+shift+b hyper+left', 'global', 'toggle file pane'),
@@ -208,6 +215,14 @@ DEFAULTS = L(
     Key('run_app',          'alt+shift+a',   'global', 'run app under inspector', 'toast'),
     Key('terminal',         'ctrl+`',        'global', 'terminal',            'toast'),
     Key('git',              'alt+shift+g',   'global', 'lazygit',             'toast'),
+    # The activity panels, reachable without the mouse. `git` above is lazygit in a pty --
+    # a different thing from the source-control panel, which is why both are bound. They are
+    # a `hyper` family because the mnemonic `alt+shift` letters are taken (`s` saves all,
+    # `d` diffs, `p` screenshots) and moving a binding somebody has in their fingers to make
+    # room for a new one is the worse trade.
+    Key('panel_git',        'hyper+g',       'global', 'source control panel', 'toast'),
+    Key('panel_releases',   'hyper+p',       'global', 'releases panel',      'toast'),
+    Key('panel_deploys',    'hyper+l',       'global', 'deploys panel',       'toast'),
     Key('web_search',       'alt+shift+w',   'global', 'search the web',      'toast'),
     Key('research',         'alt+shift+q',   'global', 'research a question'),
     Key('read_url',         'alt+shift+u',   'global', 'read a url'),

@@ -25,6 +25,22 @@ class GitError(RuntimeError):
     pass
 
 
+def _project_env(cwd):
+    """The checkout's own environment, or None to inherit Leela's.
+
+    Git itself does not care, but the hooks do: a commit made from the source-control panel
+    runs `pre-commit`, or nbdev's clean filter, and those are console scripts of the project
+    being committed to. Searching upwards from `cwd` rather than asking the workspace keeps
+    this usable from `repo_root`, which is what would otherwise answer the question.
+    """
+    from ..runtime.kernels import project_python, venv_env
+    p = Path(cwd).expanduser().resolve()
+    for d in (p, *p.parents):
+        if (py := project_python([d])): return venv_env(py)
+        if (d/'.git').exists(): return None
+    return None
+
+
 def _run(cwd, *args, check=True, input=None, timeout=30):
     exe = shutil.which('git')
     if not exe:
@@ -33,7 +49,7 @@ def _run(cwd, *args, check=True, input=None, timeout=30):
         p = subprocess.run(
             [exe, *map(str, args)], cwd=str(cwd), input=input, text=True,
             encoding='utf-8', errors='replace', stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, timeout=timeout,
+            stderr=subprocess.PIPE, timeout=timeout, env=_project_env(cwd),
         )
     except subprocess.TimeoutExpired as e:
         raise GitError(f'git {args[0] if args else "command"} timed out after {timeout}s') from e
@@ -918,6 +934,62 @@ class GitRepo:
             before.splitlines(True), after.splitlines(True),
             fromfile=f'{path} (before)', tofile=f'{path} (after)', n=3))
         return {'text': raw, 'content': content, 'notebook': True, 'left': before, 'right': after}
+
+    @staticmethod
+    def _cells(raw):
+        "id -> source for one notebook's cells, in order. A cell with no id is keyed by position."
+        try: cells = (json.loads(raw) or {}).get('cells') or []
+        except (TypeError, json.JSONDecodeError): return {}
+        out = {}
+        for i, c in enumerate(cells):
+            src = c.get('source') or ''
+            if isinstance(src, list): src = ''.join(src)
+            out[str(c.get('id') or f'#{i}')] = src
+        return out
+
+    @staticmethod
+    def _line_ranges(before, after):
+        """Lines of `after` that differ from `before`, 1-based, in `file_changes`'s shape.
+
+        A deletion has no line of its own in the new text, so it is reported at the line that
+        closed over it -- the same thing git's `@@ ... +n,0 @@` means, and what the editor
+        needs to put a mark somewhere the reader can see.
+        """
+        old, new = before.splitlines(), after.splitlines()
+        out = []
+        for tag, _, _, b1, b2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
+            if tag == 'equal': continue
+            if tag == 'delete':
+                at = max(1, min(b1 + 1, len(new) or 1))
+                out.append({'from': at, 'to': at, 'kind': 'deleted'})
+            else:
+                out.append({'from': b1 + 1, 'to': max(b1 + 1, b2), 'kind': 'added' if tag == 'insert' else 'modified'})
+        return out
+
+    def notebook_changes(self, path):
+        """Which cells of a notebook differ from HEAD, and which lines within them.
+
+        The document's own line numbers are the wrong unit: the file is JSON, so a
+        one-character edit to a cell's source moves every line after it and `file_changes`
+        would mark the whole notebook. Cells carry nbformat ids, which survive edits above
+        them, so the comparison is per cell -- a cell whose id is new is `added`, one whose
+        source moved is `modified` -- and each modified cell is then diffed against its own
+        previous source, giving line numbers that mean something *inside that editor*, which
+        is the only place they are ever drawn.
+        """
+        out = {'path': path, 'changed': False, 'cells': {}, 'lines': {}}
+        if not str(path).lower().endswith('.ipynb'): return out
+        changed = next((c for c in self.changes() if c['path'] == path), None)
+        if changed is None: return out
+        now = self._cells(self._version(path, 'worktree'))
+        # An untracked notebook has no previous version at all, so every cell is new.
+        was = {} if changed['untracked'] else self._cells(self._version(path, 'head'))
+        for cid, src in now.items():
+            if was.get(cid) == src: continue
+            out['cells'][cid] = 'added' if cid not in was else 'modified'
+            out['lines'][cid] = self._line_ranges(was.get(cid, ''), src)
+        out['changed'] = bool(out['cells'])
+        return out
 
     def file_changes(self, path):
         changed = next((c for c in self.changes() if c['path'] == path), None)
