@@ -4368,6 +4368,23 @@ function renderLogs() {
   el.scrollTop = el.scrollHeight;
 }
 
+/* "See logs" has to end with you seeing the log.
+
+   The reason a failure writes a detail line at all is that the toast cannot hold it -- so
+   sending the reader off to find it, through a dock that is showing something else and a
+   filter they set an hour ago for something unrelated, loses the very thing that was worth
+   keeping. A failure now opens the log it just wrote, on a filter that can show it. */
+function showLog(source = '') {
+  if (lee.logFilter && lee.logFilter !== source) leeLogFilter('');
+  leeDock('logs');
+}
+// The first line of git's refusal is usually the whole story ("would be overwritten by
+// checkout"), and the files it names are the part that needs the pane.
+function firstLine(text, max = 96) {
+  const line = String(text || '').replace(/^\w*Error:\s*/, '').split('\n').find(x => x.trim()) || '';
+  return line.length > max ? line.slice(0, max - 1) + '…' : line;
+}
+
 function leeLogFilter(which) {
   lee.logFilter = which || '';
   $$('.lee-logfilter').forEach(b => b.classList.toggle('active', (b.dataset.logFilter || '') === lee.logFilter));
@@ -4908,7 +4925,8 @@ async function gitDo(op, extra = {}) {
        files it would overwrite is the part worth reading. */
     const detail = e.message || String(e);
     leeLog('git', `${name} failed`, detail, 'err');
-    status(`git ${name} failed — see logs`, 'err');
+    showLog('git');
+    status(`git ${name} failed — ${firstLine(detail)}`, 'err');
     throw e;
   } finally { gitUI.busy = ''; }
 }
@@ -5073,14 +5091,17 @@ async function gitReposDo(op, extra = {}) {
       leeLog('git', `${op} · ${r.name}${r.skipped ? ' — ' + r.skipped : ''}`,
              r.ok === false ? (r.error || 'failed') : (r.output || ''), r.ok === false ? 'err' : '');
     }
+    if (failed) showLog('git');       // one repository refusing is the reason to read the log
     if (gitUI.repo && !(d.repos || []).some(r => r.root === gitUI.repo)) gitUI.repo = '';
     gitUI.snapshot = null;
     await renderGitPanel();
     refreshProjectPills();
     return d;
   } catch (e) {
-    leeLog('git', `workspace ${op} failed`, e.message || String(e), 'err');
-    status(`workspace ${op} failed — see logs`, 'err');
+    const detail = e.message || String(e);
+    leeLog('git', `workspace ${op} failed`, detail, 'err');
+    showLog('git');
+    status(`workspace ${op} failed — ${firstLine(detail)}`, 'err');
   }
   finally {
     gitUI.reposBusy = null;

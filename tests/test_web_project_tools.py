@@ -431,3 +431,30 @@ def test_git_ui_confirms_destructive_operations_and_supports_branch_management()
     assert 'showGitFileDiff' in block and 'gitPatchHtml' in block
     assert 'gitcontent' in block and 'gitraw' in block
     assert 'lee-git-diff-expanded' in block and '.lee-modal.lee-git-diff-expanded' in CSS
+
+
+def test_a_failed_git_action_opens_the_log_it_just_wrote():
+    """"See logs" has to end with the reader seeing the log.
+
+    The detail line exists because the toast cannot hold it, so sending someone to find it --
+    past a dock showing something else and a filter set an hour ago for something unrelated --
+    loses the one thing worth keeping. Verified in chromium: from the dock on `term` with the
+    `runs` filter set, a refused checkout lands on the log row that names the files.
+    """
+    show = JS[JS.index('function showLog('):JS.index('function firstLine(')]
+    assert "if (lee.logFilter && lee.logFilter !== source) leeLogFilter('')" in show, \
+        'a filter that would hide the new row is cleared'
+    assert "leeDock('logs')" in show
+    failed = JS[JS.index('async function gitDo('):JS.index('function gitOperationBanner')]
+    assert failed.index("leeLog('git'") < failed.index("showLog('git')"), 'written, then shown'
+    assert 'status(`git ${name} failed — ${firstLine(detail)}`' in failed, \
+        "git's first line is usually the whole story, so the toast carries it"
+    assert 'see logs' not in JS, 'nothing tells you to go and look any more'
+
+
+def test_the_toast_reports_gits_first_line_without_the_exception_class():
+    "`GitError: error: The following untracked...` reads as noise before it reads as a reason."
+    fn = JS[JS.index('function firstLine('):JS.index('function leeLogFilter(')]
+    assert "replace(/^\\w*Error:\\s*/, '')" in fn, 'the class name is not the message'
+    assert "split('\\n').find(x => x.trim())" in fn, 'the first line that says anything'
+    assert 'max - 1' in fn and '…' in fn, 'and it is clipped for a status line'

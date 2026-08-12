@@ -362,7 +362,9 @@ def test_the_logs_pane_holds_what_a_status_line_cannot():
     assert 'function leeLog(' in JS and 'renderLogs' in JS
     assert "leeLog('git'" in JS, 'git actions log their detail'
     assert "api('/dev/log" in JS, 'and the run log route finally has a reader'
-    assert 'see logs' in JS, 'the toast points at the detail instead of carrying it'
+    # The toast used to say "see logs" and leave you to find them. It now carries git's first
+    # line and the failure opens the pane itself; see test_web_project_tools.py.
+    assert 'showLog(' in JS and 'firstLine(detail)' in JS
     assert '.lee-logdetail' in CSS and 'pre-wrap' in CSS, 'the detail is not clipped'
 
 
