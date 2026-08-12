@@ -245,9 +245,10 @@ def test_overlay_gives_the_real_interpreter_while_a_cell_runs(tmp_path, kind):
                 dt, out = await _inspect(k, code, 'overlay')
                 assert out.get('ok'), f'{kind}: overlay should allow {code}: {out}'
                 assert dt < 1.5, f'{kind}: {code} took {dt:.2f}s beside a running cell'
+                # safepyrun now allows these pandas reads in isolated too; the scopes differ
+                # in persistence and escape surface, not in basic DataFrame inspection.
                 _, sandboxed = await _inspect(k, code, 'isolated')
-                assert not sandboxed.get('ok'), (
-                    f'{code} is allowed in the sandbox now; the tool docstring says otherwise')
+                assert sandboxed.get('ok'), f'{kind}: isolated should allow {code}: {sandboxed}'
 
             assert not busy.done(), 'the cell finished first, so this proved nothing'
             await busy
@@ -357,28 +358,21 @@ def test_the_briefing_says_what_is_true_of_both_kernels():
 def test_the_isolated_sandbox_is_narrower_than_it_looks(tmp_path, kind):
     """The boundary, measured, because it changes what the tool is good for.
 
-    `inspect_python` runs in safepyrun's allowlist sandbox, and the allowlist is strict:
-    attribute reads and builtins go through, but most *library method calls* are refused by
-    fastaudit — `df.shape` and `len(df)` work, `list(df.columns)` and `df.head(2).to_dict()`
-    do not. So the tool answers "what shape / how many / what type", not "show me the data".
-
-    Written down as a test because the alternative is an agent that discovers it one failed
-    call at a time, and because loosening it is a real design decision (a per-sub-agent
-    overlay session would allow real calls at the cost of a scratch layer to manage) rather
-    than something to slip in.
+    Isolated is a throwaway safepyrun sandbox: common pandas reads work, but writes do not
+    land in the owner namespace. Overlay is the real interpreter with a persistent agent
+    layer. Pinning both keeps the docstrings honest when safepyrun's allowlist moves.
     """
     async def go():
         k = await _kernel(tmp_path, kind, port=8680)
         try:
             await k.execute('import pandas as pd\n'
                             'df = pd.DataFrame({"a": range(200), "b": range(200)})\n', timeout=20)
-            for code in ('df.shape', 'len(df)', 'df.size'):
+            for code in ('df.shape', 'len(df)', 'df.size', 'list(df.columns)', 'df.head(2).to_dict()'):
                 _, out = await _inspect(k, code)
                 assert out.get('ok'), f'{code} should be allowed: {out}'
-            for code in ('list(df.columns)', 'df.head(2).to_dict()'):
-                _, out = await _inspect(k, code)
-                assert not out.get('ok'), f'{code} is allowed now; update the docstring on inspect_python'
-                assert 'sandbox' in str(out.get('error')).lower(), out
+            # Owner mutation is refused before the sandbox even runs.
+            _, wrote = await _inspect(k, 'df["a"] = -1')
+            assert not wrote.get('ok') and 'cannot modify owner' in str(wrote.get('error')).lower(), wrote
         finally:
             await k.shutdown()
     _run(go())

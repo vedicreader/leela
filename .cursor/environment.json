@@ -1,0 +1,10 @@
+{
+  "name": "leela",
+  "install": "export PATH=\"$HOME/.local/bin:$PATH\"; command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; uv venv .venv --python 3.12; . .venv/bin/activate; uv pip install -e \".[gateway]\" --group test --group dev; python -m playwright install chromium; (command -v rg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep)); sudo apt-get update -qq && sudo apt-get install -y -qq libsqlite3-0 >/dev/null",
+  "terminals": [
+    {
+      "name": "pytest",
+      "command": ". .venv/bin/activate && pytest tests -q"
+    }
+  ]
+}

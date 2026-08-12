@@ -24,7 +24,7 @@ from tools.shots import NB, STEPS, fake_kernels           # noqa: E402
 OUT = Path(__file__).resolve().parent.parent/'docs'/'screenshots'
 ROOT = Path(__file__).resolve().parent.parent
 PORT = 5177
-CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'
+CHROME = None  # playwright's bundled chromium; set to an absolute path to override
 
 
 def serve(ws):
@@ -50,7 +50,8 @@ async def shoot():
 
     from playwright.async_api import async_playwright
     async with async_playwright() as pw:
-        b = await pw.chromium.launch(executable_path=CHROME)
+        launch = {'executable_path': CHROME} if CHROME else {}
+        b = await pw.chromium.launch(**launch)
         pg = await b.new_page(viewport={'width': 1600, 'height': 950}, device_scale_factor=2)
         await pg.goto(f'http://127.0.0.1:{PORT}/', wait_until='networkidle')
         await pg.wait_for_timeout(800)
@@ -64,18 +65,23 @@ async def shoot():
         await pg.wait_for_timeout(1600)
         await pg.screenshot(path=str(OUT/'web-stream-2-answer.png'))
 
-        # Settled: wait for the `done` event to have landed its status line.
         for _ in range(60):
             await pg.wait_for_timeout(200)
             if not ws.ai.busy: break
         await pg.wait_for_timeout(600)
         await pg.screenshot(path=str(OUT/'web-stream-3-done.png'))
 
+        # Memory sources view — vault-backed research memory.
+        await pg.click('[data-right="memory"]')
+        await pg.click('[data-memory-view="sources"]')
+        await pg.wait_for_timeout(800)
+        await pg.screenshot(path=str(OUT/'web-memory-sources.png'))
+
         log = (await pg.inner_text('#agentlog')).strip()
         await b.close()
 
     nbp.unlink(missing_ok=True)
-    for n in ('web-stream-1-tools', 'web-stream-2-answer', 'web-stream-3-done'):
+    for n in ('web-stream-1-tools', 'web-stream-2-answer', 'web-stream-3-done', 'web-memory-sources'):
         print(OUT/f'{n}.png')
     print('\n--- #agentlog ---')
     print(log[:1200])

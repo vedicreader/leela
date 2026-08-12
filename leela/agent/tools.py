@@ -249,13 +249,13 @@ class Host:
         Two scopes, and the difference is the interpreter you get rather than the safety you
         get -- both protect the owner's variables, by different means:
 
-        - `'isolated'` runs in an allowlist sandbox on a *copy*. Attribute reads and builtins
-          work; most library method calls are refused. Nothing can reach the real namespace
-          at all, which is why it is the default and why it needs no trust.
+        - `'isolated'` runs in a safepyrun allowlist sandbox on a *copy*. Common pandas and
+          builtin reads go through; writes are discarded with the copy. Nothing reaches the
+          real namespace, which is why it is the default and why it needs no trust.
         - `'overlay'` runs the real interpreter against the real namespace under an AST
           policy: the agent may read anything and bind its own names, which persist in its
-          own layer, and cannot delete, rebind in place, or mutate the owner's. `list(df.columns)`
-          and `df.head().to_dict()` work here; in the sandbox they do not.
+          own layer, and cannot delete, rebind in place, or mutate the owner's. Use it when
+          the sandbox still refuses a call, or when bindings must survive across inspections.
 
         A host may refuse `'overlay'` (see `scopes`) and fall back to isolated, which is what
         a locked-down deployment does. Under a concurrent kernel either scope runs *alongside*
@@ -1084,17 +1084,17 @@ def session_tools(host, mx=MAX_TOOL_CHARS):
         Two scopes. Both leave the user's variables exactly as they were; they differ in
         how much Python you get, so pick by what the question needs:
 
-        - `scope='isolated'` (default) runs in an allowlist sandbox on a copy. Attribute
-          reads and builtins work — `df.shape`, `len(df)`, `type(x).__name__` — and most
-          library method calls are refused. Costs nothing to be wrong about.
-        - `scope='overlay'` runs the real interpreter against the real namespace. Library
-          calls work: `list(df.columns)`, `df.head(3).to_dict()`, `model.summary()`. Names
-          you bind persist into your own layer for later calls. You still cannot delete,
-          rebind or mutate anything the user made — that is refused, with an explanation.
+        - `scope='isolated'` (default) runs in a safepyrun allowlist sandbox on a copy.
+          Common reads work — `df.shape`, `list(df.columns)`, `df.head(3).to_dict()` — and
+          every write is discarded with the copy. Costs nothing to be wrong about.
+        - `scope='overlay'` runs the real interpreter against the real namespace. Names you
+          bind persist into your own layer for later calls. You still cannot delete, rebind
+          or mutate anything the user made — that is refused, with an explanation.
 
-        Start isolated; move to overlay when the sandbox refuses something you need. Neither
-        needs approval, and both run while one of the user's cells is still going. For work
-        that must land in the *user's* namespace, use `run_python` instead.
+        Start isolated; move to overlay when the sandbox refuses something you need, or when
+        you want bindings to survive. Neither needs approval, and both run while one of the
+        user's cells is still going. For work that must land in the *user's* namespace, use
+        `run_python` instead.
         """
         try: return clip(host.inspect_python(code, scope=scope), mx)
         except NotImplementedError: raise
@@ -1229,8 +1229,8 @@ question to you because answering it takes many tool calls and the answer is sho
 worse than "no matches, and here is what I searched for".
 - You cannot edit anything. If the answer implies a change, describe the change and stop.
 - `inspect_python` answers questions about the user's live variables without changing them. \
-Its default scope is a sandbox that refuses most library calls; pass `scope='overlay'` to \
-get the real interpreter. Use it rather than guessing at what is in memory."""
+Its default scope is a throwaway sandbox (writes discarded); pass `scope='overlay'` when you \
+need bindings to persist or a call the sandbox still refuses. Use it rather than guessing."""
 
 
 # A sub-agent does not get to spawn sub-agents. Not a safety rule so much as an economic

@@ -152,10 +152,10 @@ class Workspace:
                                transport=transport, gateway=gateway)
         self.dev = DevServers(port=dev_port)
         self.search = Search(self.fs)
-        from .memory import Memory
-        # Web memory reuses Kosha's already-resident embedder but owns a document-tree DB;
-        # code ASTs and prose headings are different corpora and should not share tables.
-        self.memory = Memory(kosha=self.search._kosha)
+        from .memory import Memory, memory_shelf
+        # Prose memory is a vishalakshi vault shelf; kosha stays the code index.
+        root = self.fs.roots[0] if self.fs.roots else None
+        self.memory = Memory(shelf=memory_shelf(root))
         self.research = Research(self.fs, memory=self.memory)
         self.runs = Runs(self.fs.roots[0] if self.fs.roots else None)
         from .journal import OperationJournal

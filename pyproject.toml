@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-    "fastcore>=1.7.0",         # Path, L, patch, docments: the vocabulary leela.agent is written in
+    "fastcore>=1.7.0",         # Path, L, patch, docments: the vocabulary leela is written in
     "rishi>=0.1.1",            # on-device model execution (litert / llama.cpp) for leela.agent
     "python-fastllm>=0.0.36",  # cloud model execution for leela.agent
     "exhash>=0.4.10",          # hash-verified line and cell edits behind edit_file/edit_cell
@@ -25,8 +25,9 @@ dependencies = [
     "ipymini>=0.0.1",          # concurrent lightweight kernel launcher
     "ipython>=9.15.0",         # dhrishti reads the live kernel through IPython's namespace
     "jupyter-client>=8.9.1",   # leela <-> kernel: execute, complete, interrupt, restart
-    "koshas>=0.0.29",          # code index behind search: FTS5 + embeddings + call graph
-    "litesearch>=0.1.7",
+    "koshas>=0.1.0",          # code index: FTS5 + embeddings + call graph; similar/peers when released
+    "litesearch>=0.1.27",      # store.ann_neighbors / peers / clusters under Search and the vault
+    "vishalakshi>=0.1.2",      # vault behind Memory: prose shelves, topics, federated recall
     "mdhtml>=0.1.21",          # bounded, paste-safe Markdown -> structural MDHTML
     "python-fasthtml>=0.14.9", # the web frontend
     "dhrishti>=0.1.2",         # the inspection engine: namespace -> node tree, as a JSON API in-kernel
@@ -70,6 +71,7 @@ dev = [
 test = [
     "pytest>=8.0.0",
     "nbformat>=5.10.0",                 # to assert the notebooks leela writes stay valid for Jupyter
+    "playwright>=1.40.0",               # browser evidence for tools/webshots.py
 ]
 
 [tool.pytest.ini_options]

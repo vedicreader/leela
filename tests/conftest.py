@@ -14,6 +14,13 @@ def fixture_dir(request):
     return str((request.path.parent / FIXTURES).resolve())
 
 
+@pytest.fixture(autouse=True)
+def _isolate_vault(monkeypatch, tmp_path_factory):
+    "Keep vault I/O out of ~/.vishalakshi and skip real encoders in the suite."
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path_factory.mktemp('vault')/'vault.db'))
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+
+
 # The namespace every test sees in the variable panel. Shaped exactly like the payload
 # `/api/rows` returns, so the panel's own grouping and formatting are what is under test.
 ROWS = {

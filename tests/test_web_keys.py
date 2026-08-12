@@ -198,7 +198,8 @@ def test_user_checkbox_settings_survive_close_and_reopen(tmp_path, monkeypatch):
                 await pg.is_checked('[data-pref="useTabs"]'))
     assert _run(go) == (False, True)
     saved = settings_module.Settings(user_path=tmp_path/'settings.json').raw('user')
-    assert saved['languages']['python']['editor'] == {'ligatures': False, 'useTabs': True}
+    # Settings default to All languages; only deviations from defaults are persisted.
+    assert saved.get('editor', {}) == {'ligatures': False, 'useTabs': True}
 
 
 def test_function_keys_are_left_to_the_os_and_browser():
@@ -519,6 +520,8 @@ def test_research_memory_is_a_first_class_right_panel():
           "items":[{"id":"abc","title":"Agent memory","source":"https://example.com","kind":"page","pages":1,"meta":{}}]
         }'''))
         await pg.click('[data-right="memory"]')
+        # Memory opens on agent notes; research sources are the adjacent view.
+        await pg.click('[data-memory-view="sources"]')
         await pg.wait_for_selector('.lee-memory-doc')
         return await pg.locator('#memorystatus').inner_text(), await pg.locator('#memorybody').inner_text()
     status_text, body = _run(go)
@@ -533,8 +536,10 @@ def test_memory_purge_can_select_bad_results_or_clear_the_corpus():
             {"id":"bad","title":"Bad result","source":"https://bad.example","kind":"page","pages":1,"meta":{}},
             {"id":"good","title":"Useful result","source":"https://good.example","kind":"page","pages":1,"meta":{}}
           ]}'''))
-        await pg.click('[data-right="memory"]'); await pg.wait_for_selector('.lee-memory-doc')
-        await pg.click('.lee-memory .lee-phead .warn'); await pg.wait_for_selector('.lee-memory-purge-list')
+        await pg.click('[data-right="memory"]')
+        await pg.click('[data-memory-view="sources"]')
+        await pg.wait_for_selector('.lee-memory-doc')
+        await pg.click('.lee-memory-nav .warn'); await pg.wait_for_selector('.lee-memory-purge-list')
         return await pg.locator('.lee-memory-purge-list').inner_text(), await pg.locator('[data-all]').inner_text()
     rows, all_label = _run(go)
     assert 'Bad result' in rows and 'Useful result' in rows
