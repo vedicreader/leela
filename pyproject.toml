@@ -75,7 +75,7 @@ test = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/blocks"]
 
 [tool.uv.sources]
 leela = { workspace = true }

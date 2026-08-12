@@ -857,12 +857,18 @@ async function leeOpenFile(path) {
   // The absolute path is the identity. Use one versioned request rather than HTMX's
   // implicit swap: an older response must never remount a same-named file from another root.
   path=String(path||'');const version=++openFileVersion;lee.pendingFocusPath=path;
+  // File rows stopPropagation on their own onclick, so the document listener never paints
+  // `.sel`. Keyboard navigation already calls selectTreeNode; keep mouse opens in sync.
+  const treeNode = $$('.lee-node').find(n => n.dataset.path === path);
+  if (treeNode) selectTreeNode(treeNode);
   const response=await fetch('/tab/open?path='+encodeURIComponent(path),{method:'POST',headers:{'HX-Request':'true'}});
   if(!response.ok)throw new Error(await response.text());const html=await response.text();
   if(version!==openFileVersion)return;
   const doc=new DOMParser().parseFromString(html,'text/html'),fresh=doc.querySelector('#tabbar'),old=$('#tabbar');
   if(!fresh||!old)throw new Error('tab open returned no tab bar');old.replaceWith(fresh);htmx.process(fresh);
   await mountTab(path);await leeVars();refreshProjectPills();requestAnimationFrame(layoutTabs);
+  const after = $$('.lee-node').find(n => n.dataset.path === path);
+  if (after) selectTreeNode(after);
 }
 window.leeOpenFile = leeOpenFile;
 
@@ -4267,13 +4273,13 @@ function closeTerm(id = lee.activeTerm) {
 }
 
 /* ---------------------------------------------------------- web preferences */
-const THEMES = ['system', 'dark', 'light'];
+const THEMES = ['system', 'dark', 'light', 'cursor'];
 function applyTheme(theme) {
-  theme = THEMES.includes(theme) ? theme : 'system';
+  theme = THEMES.includes(theme) ? theme : 'cursor';
   localStorage.setItem('lee-theme', theme);
   if (theme === 'system') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = theme;
-  document.documentElement.style.colorScheme = theme === 'system' ? 'light dark' : theme;
+  document.documentElement.style.colorScheme = theme === 'system' ? 'light dark' : theme === 'cursor' ? 'light' : theme;
   const pill = $('#themepill'); if (pill) pill.textContent = theme;
   for (const t of lee.terms.values()) t.view.retheme();
 }
@@ -4292,7 +4298,7 @@ async function editorSettings(languageScope = null) {
   await loadSettings(languageScope);
   const original = {...lee.editorPrefs}, originalFiles = {...lee.filePrefs},
         originalWorkbench = {...lee.workbenchPrefs}, originalDebug = {...lee.debugPrefs},
-        originalTheme = localStorage.getItem('lee-theme') || 'system';
+        originalTheme = localStorage.getItem('lee-theme') || 'cursor';
   let saved = false, previewView = null;
   const selected = (value, current) => value === current ? ' selected' : '';
   const checked = (section, key) => (section === 'editor' ? lee.editorPrefs : section === 'files' ? lee.filePrefs :
@@ -4303,6 +4309,7 @@ async function editorSettings(languageScope = null) {
   const check = (section, key, label, help='') => `<label class="lee-settings-toggle"><input type="checkbox" data-pref-section="${section}" data-pref="${key}"${checked(section,key)}><span>${label}${help ? `<small>${help}</small>` : ''}</span></label>`;
   const select = (section, key, label, values, help='') => field(section,key,label,
     `<select class="lee-select" data-setting>${values.map(([value,text]) => `<option value="${value}"${selected(value,(section==='editor'?lee.editorPrefs:section==='files'?lee.filePrefs:section==='workbench'?lee.workbenchPrefs:lee.debugPrefs)[key])}>${text}</option>`).join('')}</select>`,help);
+  const themeBlurb = t => t === 'system' ? 'follow your device' : t === 'cursor' ? 'thin light chrome' : t + ' interface';
   const m = modal(`<div class="lee-mhead">settings<span class="sub">user · workspace · language-aware</span></div>` +
     `<div class="lee-settings-scope"><label>Save to <select class="lee-select" data-settings-scope><option value="user"${selected('user',rememberedScope)}>User</option><option value="workspace"${selected('workspace',rememberedScope)}>Workspace</option></select></label>` +
     `<label>Apply to <select class="lee-select" data-settings-language><option value=""${selected('',languageScope)}>All languages</option><option value="python"${selected('python',languageScope)}>Python</option><option value="markdown"${selected('markdown',languageScope)}>Markdown</option></select></label>` +
@@ -4329,7 +4336,7 @@ async function editorSettings(languageScope = null) {
     `${check('editor','stickyNavigation','Sticky Python symbol')}${check('editor','scrollPastEnd','Scroll past end')}${check('editor','smoothScrolling','Smooth scrolling')}</div>` +
     `<div class="lee-settings-preview" id="settingspreview"></div><div class="lee-setting-row"><span><strong>Python language service</strong><small>Pyright diagnostics and code intelligence</small></span><span class="lee-setting-state" data-lsp-state>checking…</span></div></section>` +
     `<section data-settings-section="appearance" hidden><h3>Appearance</h3><p>Reduce navigation friction without crowding the editor.</p>` +
-    `<div class="lee-theme-options">${THEMES.map(t=>`<button class="lee-theme-choice${t===originalTheme?' active':''}" data-theme="${t}"><span class="lee-theme-swatch ${t}"></span><strong>${t}</strong><span>${t==='system'?'follow your device':t+' interface'}</span></button>`).join('')}</div>` +
+    `<div class="lee-theme-options">${THEMES.map(t=>`<button class="lee-theme-choice${t===originalTheme?' active':''}" data-theme="${t}"><span class="lee-theme-swatch ${t}"></span><strong>${t}</strong><span>${themeBlurb(t)}</span></button>`).join('')}</div>` +
     `<div class="lee-settings-group"><h4>Editor chrome</h4><div class="lee-settings-grid">` +
     select('editor','lineNumbers','Line numbers',[['off','Off'],['absolute','Absolute'],['relative','Relative'],['hybrid','Hybrid']]) +
     select('editor','renderWhitespace','Whitespace',[['none','None'],['selection','Selection'],['trailing','Trailing'],['all','All']]) +
@@ -4398,10 +4405,21 @@ async function refreshOpenGitMarks() {
     const view = lee.editors.get('file'); if (view) LeeCM.setChangedLines(view, lee.fileGit.ranges || []);
   } catch (_) {}
 }
+function gitInfoUrl() {
+  const root = gitUI.repoRoot || '';
+  return '/git/info' + (root ? '?root=' + encodeURIComponent(root) : '');
+}
+function scmPanelOpen() { return !!$('#left')?.classList.contains('left-git'); }
+function refreshScmIfOpen(snapshot = null) {
+  if (!scmPanelOpen()) return;
+  if (snapshot) renderGitPanel(snapshot);
+  else leeGitRefresh();
+}
+
 async function refreshProjectPills() {
   try {
     const d = await api('/workspace/info');
-    const active = (d.roots || []).find(r => r.path === d.active) || (d.roots || [])[0];
+    const active = (d.roots || []).find(r => r.path === (gitUI.repoRoot || d.active)) || (d.roots || [])[0];
     const name = $('#workspacename'); if (name) name.textContent = active?.name || 'open workspace';
     const workspace = $('#workspacepill'); if (workspace) workspace.title = active?.path || 'open workspace';
   } catch (_) {}
@@ -4412,13 +4430,18 @@ async function refreshProjectPills() {
                cwd.title = d.cwd || 'choose a working directory'; }
   } catch (_) {}
   try {
-    const d = await api('/git/info');
+    const d = await api(gitInfoUrl());
+    const prevRoot = gitUI.snapshot?.root, prevBranch = gitUI.snapshot?.branch;
     const git = $('#gitpill'); if (!git) return;
     const n = (d.changes || []).length;
     git.textContent = `${d.branch}${n ? ' · ' + n : ''}`;
     git.className = 'lee-branch-switcher ' + (n ? 'lee-pill-warn' : 'lee-pill-on');
     git.title = `${d.root}${d.upstream ? ' · ' + d.upstream : ''}${d.ahead ? ' · ahead ' + d.ahead : ''}${d.behind ? ' · behind ' + d.behind : ''}`;
     paintGitTree(d);
+    // Switching an added root (or its branch) must not leave Source Control on a stale snapshot.
+    const switched = gitUI.snapshot && (prevRoot !== d.root || prevBranch !== d.branch);
+    gitUI.snapshot = d;
+    if (scmPanelOpen() && switched) { gitUI.history = []; renderGitPanel(d); }
   } catch (_) {
     const git = $('#gitpill'); if (git) { git.textContent = 'no git'; git.className = 'lee-branch-switcher'; }
   }
@@ -4430,8 +4453,10 @@ async function leeCwd() {
                                   'Leave empty to use the Git repository root');
   if (value === null) return;
   const r = await post('/cwd/set', {path: value});
+  gitUI.repoRoot = r.cwd || '';
   status(`${r.explicit ? 'working directory' : 'automatic repository root'}: ${r.cwd}`, 'ok');
   refreshProjectPills();
+  refreshScmIfOpen();
 }
 window.leeCwd = leeCwd;
 
@@ -4506,7 +4531,7 @@ function gitRelative(stamp) {
   return 'just now';
 }
 function gitFreshness(stamp) { return stamp ? `fetched ${gitRelative(stamp)}` : 'remote refs have not been fetched'; }
-const gitUI = {tab: 'changes', snapshot: null, history: [], historyQuery: '', branchQuery: '', branchScope: 'all', busy: ''};
+const gitUI = {tab: 'changes', snapshot: null, history: [], historyQuery: '', branchQuery: '', branchScope: 'all', busy: '', repoRoot: ''};
 function paintGitPill(d) {
   const git = $('#gitpill'); if (!git || !d) return;
   const n = (d.changes || []).length;
@@ -4518,8 +4543,10 @@ function paintGitPill(d) {
 async function gitDo(op, extra = {}) {
   const started = performance.now(); gitUI.busy = op; status(`git ${op.replaceAll('_', ' ')}…`);
   try {
-    const d = await post('/git/action', {op, ...extra});
+    const payload = gitUI.repoRoot ? {op, root: gitUI.repoRoot, ...extra} : {op, ...extra};
+    const d = await post('/git/action', payload);
     gitUI.snapshot = d; paintGitPill(d); paintGitTree(d);
+    if (scmPanelOpen()) renderGitPanel(d);
     status(`git ${op.replaceAll('_', ' ')} complete · ${Math.round(performance.now() - started)} ms`, 'ok');
     return d;
   } finally { gitUI.busy = ''; }
@@ -4590,9 +4617,9 @@ async function renderGitPanel(snapshot = null) {
   host.dataset.features = 'Staged changes · Changes · Branches · Stashes · Remotes & tags · staged changes · working tree · fetch · pull · push · stash · tag · stage all · unstage all';
   if (!snapshot && !gitUI.snapshot) host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading repository</small></div>';
   let d = snapshot || gitUI.snapshot;
-  try { if (!d) d = await api('/git/info'); }
+  try { if (!d) d = await api(gitInfoUrl()); }
   catch (e) { host.innerHTML = `<div class="lee-git-empty-state"><strong>No Git repository</strong><span>${esc(e.message || e)}</span></div>`; return; }
-  gitUI.snapshot = d; paintGitPill(d);
+  gitUI.snapshot = d; if (d.root) gitUI.repoRoot = d.root; paintGitPill(d);
   const view = gitUI.tab === 'changes' ? gitChangesView(d) : gitUI.tab === 'branches' ? gitBranchesView(d) : gitUI.tab === 'history' ? gitHistoryView(d) : gitResourcesView(d);
   host.innerHTML = gitSummary(d) + gitNav() + `<main class="lee-git-view">${view}</main>`;
   wireGitPanel(host, d);
@@ -4712,6 +4739,17 @@ async function showGitBlame(root, path) {
 function leeGit() { leeLeft('git'); }
 function leeGitRefresh() { gitUI.snapshot = null; gitUI.history = []; renderGitPanel(); refreshProjectPills(); }
 window.leeGit = leeGit; window.leeGitRefresh = leeGitRefresh;
+
+async function leeNbdevPrepare() {
+  status('nbdev prepare…', 'busy');
+  try {
+    const r = await post('/project/nbdev_prepare', {});
+    status(`nbdev prepare · ${PathName(r.root)}${r.nbs_path ? ' · ' + r.nbs_path : ''}`, 'ok');
+    refreshFileTree(undefined, false).catch(() => {});
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+function PathName(path) { return String(path || '').split('/').pop() || path || ''; }
+window.leeNbdevPrepare = leeNbdevPrepare;
 
 /* ------------------------------------------------------------------ research */
 function researchDomain(url) {
@@ -5138,6 +5176,11 @@ async function leeWorkspaceMenu(anchor) {
       leeLeft('files');
       const node = $$('.lee-root').find(n => n.dataset.path === root.path);
       if (node) { selectTreeNode(node); await loadTreeDir(node); node.scrollIntoView({block: 'nearest'}); }
+      // Point Source Control (and cwd, when a tab is open) at the chosen added root.
+      gitUI.repoRoot = root.path; gitUI.snapshot = null; gitUI.history = [];
+      try { if (lee.path) await post('/cwd/set', {path: root.path}); } catch (_) {}
+      refreshProjectPills();
+      if (scmPanelOpen()) renderGitPanel();
     }})));
   if (rows.length) rows.push({separator: true});
   rows.push({label: 'Add folder…', detail: 'to this workspace', run: addRoot});
@@ -5147,12 +5190,16 @@ window.leeWorkspaceMenu = leeWorkspaceMenu;
 
 async function leeBranchMenu(anchor) {
   try {
-    const d = await api('/git/info');
+    const d = await api(gitInfoUrl());
     const rows = (d.branches || []).map(b => ({label: b.name, detail: b.current ? 'current' : b.oid,
-      run: () => b.current ? leeLeft('git') : gitDo('checkout', {branch: b.name})}));
+      run: async () => {
+        if (b.current) return leeLeft('git');
+        await gitDo('checkout', {branch: b.name});
+        refreshScmIfOpen(gitUI.snapshot);
+      }}));
     rows.push({separator: true}, {label: 'Create branch…', run: async () => {
       const branch = await inputDialog('new branch', 'Branch name', '', 'feature/name');
-      if (branch) gitDo('create', {branch});
+      if (branch) await gitDo('create', {branch});
     }}, {label: 'Source control', detail: `${(d.changes || []).length} changes`, run: () => leeLeft('git')});
     openChromeMenu(anchor, rows);
   } catch (e) { status(e.message || String(e), 'err'); }
@@ -5183,6 +5230,7 @@ function leeToolsMenu(anchor) {
     {label: 'Read webpage…', run: () => leeAct('read_url')},
     {label: 'Kernel and interpreter…', run: () => leeAct('pick_kernel')},
     {label: 'Working directory…', run: leeCwd},
+    {label: 'nbdev prepare…', detail: 'uv + settings.ini', run: leeNbdevPrepare},
     {separator: true},
     {label: 'Settings…', detail: displayChord(lee.keys.find(k => k.action === 'settings')?.key || 'mod+,'), run: editorSettings},
     {label: 'Workspace history…', detail: 'conflict-safe undo', run: operationHistory},
@@ -5743,6 +5791,7 @@ function selectTreeNode(n) {
   n.classList.add('sel'); n.setAttribute('aria-selected', 'true');
   n.scrollIntoView({block: 'nearest'});
 }
+window.selectTreeNode = selectTreeNode;
 function highlightTree() { if (!treeSel()) selectTreeNode(visibleTreeNodes()[0]); }
 function moveTreeSelection(d) {
   const nodes = visibleTreeNodes(); if (!nodes.length) return;
@@ -6066,7 +6115,7 @@ async function boot() {
   setInterval(watchOpenFile, 1000);    // agent, terminal and git writes appear without a page refresh
   pollApproval();
   setInterval(pollApproval, 750);       // catches Rishi approvals raised outside an agent SSE stream
-  applyTheme(localStorage.getItem('lee-theme') || 'system');
+  applyTheme(localStorage.getItem('lee-theme') || 'cursor');
   refreshProjectPills();
   setInterval(refreshKernelPill, 5000);
   setInterval(refreshProjectPills, 5000);

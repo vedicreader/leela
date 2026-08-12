@@ -521,7 +521,10 @@ def _tree_node(e, git_state=None):
     return Div(Span(e.name, cls='lee-fname'), Span(state[:1].upper(), cls='lee-tree-git') if state else '',
                cls='lee-node lee-file' + (f' git-{state}' if state else ''), data_path=e.path, data_lang=e.lang or '',
                role='treeitem',aria_selected='false',
-               onclick=f'event.preventDefault();event.stopPropagation();leeOpenFile({json.dumps(e.path)})')
+               # stopPropagation keeps the click off parent <details>, but then the document
+               # listener never paints `.sel`. selectTreeNode keeps mouse opens aligned with keys.
+               onclick=(f'event.preventDefault();event.stopPropagation();'
+                        f'selectTreeNode(this);leeOpenFile({json.dumps(e.path)})'))
 
 
 def _activity_icon(kind):
@@ -1151,6 +1154,47 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         except Exception as e: return _fail(f'could not create .venv — {errstr(e)}')
         ws.pool.choose(python=py)
         return {'ok': True, 'python': py}
+
+    @rt('/project/nbdev_prepare')
+    async def project_nbdev_prepare():
+        """Run `nbdev_prepare` against the open project's settings.ini, creating a uv venv first if needed.
+
+        Releases/export flows stall when the project has no `.venv` or when prepare runs outside the
+        folder that owns `settings.ini`. This keeps both aligned without asking the user to leave
+        the IDE.
+        """
+        if not ws.fs.roots: return _fail('open a folder first')
+        root = next((r for r in ws.fs.roots if (r/'settings.ini').exists()), ws.fs.roots[0])
+        def prepare():
+            import configparser
+            settings = root/'settings.ini'
+            if not settings.exists(): raise ValueError(f'no settings.ini in {root} — not an nbdev project')
+            cfg = configparser.ConfigParser(); cfg.read(settings)
+            defaults = cfg.defaults()
+            nbs_path, lib_path = defaults.get('nbs_path', 'nbs'), defaults.get('lib_path', defaults.get('lib_name', ''))
+            venv = root/'.venv'
+            uv = shutil.which('uv')
+            env = os.environ.copy()
+            if not venv.exists():
+                if not uv: raise ValueError('uv is not on PATH; install uv so Leela can create .venv')
+                subprocess.run([uv, 'venv', str(venv)], check=True, cwd=str(root), env=env)
+            env['VIRTUAL_ENV'] = str(venv)
+            env['UV_PROJECT_ENVIRONMENT'] = str(venv)
+            bindir = str(venv/('Scripts' if os.name == 'nt' else 'bin'))
+            env['PATH'] = bindir + os.pathsep + env.get('PATH', '')
+            if uv:
+                cmd = [uv, 'run', '--directory', str(root), 'nbdev_prepare']
+            else:
+                exe = Path(bindir)/('nbdev_prepare.exe' if os.name == 'nt' else 'nbdev_prepare')
+                if not exe.exists(): raise ValueError('nbdev_prepare is not installed in the project environment')
+                cmd = [str(exe)]
+            result = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=900, env=env)
+            if result.returncode:
+                raise RuntimeError((result.stderr or result.stdout or 'nbdev_prepare failed').strip()[-4000:])
+            return {'ok': True, 'root': str(root), 'nbs_path': nbs_path, 'lib_path': lib_path,
+                    'log': (result.stdout or '')[-2000:]}
+        try: return await _off_loop(prepare)
+        except Exception as e: return _fail(e)
 
     # -- files -------------------------------------------------------------
     @rt('/tree')
@@ -2219,7 +2263,13 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         return {'note': ws.search.note, 'clusters': [c.dict() for c in cs[:limit]]}
 
     # -- working directory & git ------------------------------------------
-    def _repo():
+    def _repo(root=None):
+        "Git repo for the active cwd, or an explicitly chosen open-folder root."
+        if root:
+            p = Path(root)
+            try: ws.fs.root_of(p)
+            except Exception as e: raise GitError(f'folder is not open: {root}') from e
+            return GitRepo.at(p)
         cwd = ws.cwd_for()
         if cwd is None: raise GitError('open a folder first')
         return GitRepo.at(cwd)
@@ -2259,8 +2309,8 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         except Exception as e: return _fail(e)
 
     @rt('/git/info')
-    async def git_info():
-        try: return await _off_loop(lambda: _repo().info())
+    async def git_info(root: str = ''):
+        try: return await _off_loop(lambda: _repo(root or None).info())
         except Exception as e: return _fail(e)
 
     @rt('/git/action')
@@ -2274,7 +2324,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         d = await req.json()
         try:
             def act():
-                repo, op = _repo(), str(d.get('op') or '')
+                repo, op = _repo(d.get('root') or None), str(d.get('op') or '')
                 if op == 'stage': repo.stage(_git_paths(d.get('paths')))
                 elif op == 'unstage': repo.unstage(_git_paths(d.get('paths')))
                 elif op == 'discard': repo.discard(_git_paths(d.get('paths')))

@@ -56,6 +56,13 @@ async def shoot():
         await pg.goto(f'http://127.0.0.1:{PORT}/', wait_until='networkidle')
         await pg.wait_for_timeout(800)
 
+        # Cursor theme evidence: agent + files chrome before the prompt is filled.
+        await pg.evaluate("applyTheme('cursor')")
+        await pg.evaluate("leeAct('focus_agent')")
+        await pg.wait_for_timeout(250)
+        await pg.screenshot(path=str(OUT/'web-theme-cursor.png'))
+
+        await pg.evaluate("leeAct('focus_agent')")
         await pg.fill('#agentprompt', 'where is approval handled, and how does the reason get back to the model?')
         await pg.evaluate("leeAct('agent_send')")
 
@@ -81,7 +88,7 @@ async def shoot():
         await b.close()
 
     nbp.unlink(missing_ok=True)
-    for n in ('web-stream-1-tools', 'web-stream-2-answer', 'web-stream-3-done', 'web-memory-sources'):
+    for n in ('web-theme-cursor', 'web-stream-1-tools', 'web-stream-2-answer', 'web-stream-3-done', 'web-memory-sources'):
         print(OUT/f'{n}.png')
     print('\n--- #agentlog ---')
     print(log[:1200])
