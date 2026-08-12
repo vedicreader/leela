@@ -1,4 +1,5 @@
 import subprocess
+import time
 
 import pytest
 
@@ -631,3 +632,19 @@ def test_activating_a_folder_the_workspace_does_not_list_is_refused(tmp_path):
     with TestClient(ide_app(ws)) as client:
         assert 'error' in client.post('/workspace/activate', json={'path': str(outside)}).json()
     assert ws.project_root == a
+
+
+def test_info_reports_the_head_a_watcher_needs_to_see_a_commit(repo):
+    "Commit everything and the branch, the counts and the file list all read the same after."
+    r = GitRepo.at(repo)
+    before = r.info()
+    (repo/'src'/'app.py').write_text('value = 2\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'second')
+    # Committed by hand, the way lazygit or the agent would: nothing invalidated the shared
+    # snapshot, so this waits out its half-second TTL rather than reaching past it.
+    time.sleep(0.5)
+    after = GitRepo.at(repo).info()
+    assert before['branch'] == after['branch'] and before['clean'] == after['clean']
+    assert len(before['changes']) == len(after['changes']) == 0
+    assert before['head'] and after['head'] and before['head'] != after['head'], \
+        'without this a commit is invisible to anything watching the snapshot'

@@ -458,3 +458,31 @@ def test_the_toast_reports_gits_first_line_without_the_exception_class():
     assert "replace(/^\\w*Error:\\s*/, '')" in fn, 'the class name is not the message'
     assert "split('\\n').find(x => x.trim())" in fn, 'the first line that says anything'
     assert 'max - 1' in fn and '…' in fn, 'and it is clipped for a status line'
+
+
+def test_a_branch_change_reaches_every_surface_that_was_derived_from_it():
+    """The pill and the tree badges were repainted by the poll; nothing else was.
+
+    So a checkout -- from the panel, from lazygit in the terminal, or from the agent -- left
+    the editor's change marks describing the branch you came from, History and Branches
+    showing what they showed before, and the release panel counting against the old tag.
+    """
+    sig = JS[JS.index('function gitSignature('):JS.index('function noticeGitState(')]
+    assert 'd.head' in sig, 'a commit moves nothing else: branch, counts and files all read the same'
+    assert 'd.branch' in sig and 'd.ahead' in sig and "(d.operation || {}).active" in sig
+    notice = JS[JS.index('function noticeGitState('):JS.index('function gitChanged()')]
+    assert 'if (had && had !== sig) gitChanged()' in notice, 'the first poll is not a change'
+    fan = JS[JS.index('function gitChanged()'):JS.index('window.leeGitChanged')]
+    assert 'refreshOpenGitMarks()' in fan, 'the open file or notebook is re-marked'
+    assert 'gitUI.snapshot = null; gitUI.history = []' in fan, 'History and Branches reload'
+    assert 'leeReleases()' in fan and 'leeDeploys()' in fan
+    # The poll that already asks git every five seconds is what notices; nothing new is added.
+    pills = JS[JS.index('async function refreshProjectPills'):JS.index('async function leeCwd')]
+    assert 'noticeGitState(d)' in pills
+    assert 'setInterval(refreshProjectPills, 5000)' in JS
+
+
+def test_our_own_git_action_updates_at_once_without_the_poll_repeating_it():
+    done = JS[JS.index('async function gitDo('):JS.index('function gitOperationBanner')]
+    assert "lee.gitSignature = ''; gitChanged();" in done, \
+        'immediately, and the next poll does not treat our own mutation as news'

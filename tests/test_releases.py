@@ -7,6 +7,7 @@ kept, and the transcript survives the pty the step was running on.
 """
 
 import asyncio
+import os
 
 import pytest
 
@@ -176,3 +177,24 @@ def test_the_keys_a_step_needs_are_reported_before_it_runs(tmp_path, monkeypatch
     assert r.state()['steps'][0]['missing'] == ['LEELA_TEST_TOKEN']
     monkeypatch.setenv('LEELA_TEST_TOKEN', 'set-in-the-environment')
     assert r.state()['steps'][0]['missing'] == []
+
+
+def test_the_projects_own_console_script_beats_a_system_one_with_the_other_spelling(tmp_path):
+    """The reported failure, exactly: `nbdev_prepare` from a Python 3.8.
+
+    A venv ships `nbdev-prepare`; an old system-wide install ships `nbdev_prepare`. Trying
+    the spellings in order and taking the first that matched anywhere on PATH picked the
+    system one -- while the venv's, two entries later in the same loop, was the project's.
+    """
+    venv_bin = tmp_path/'proj'/'.venv'/'bin'; venv_bin.mkdir(parents=True)
+    hyphen = venv_bin/'nbdev-prepare'; hyphen.write_text('#!/bin/sh\nexit 0\n'); hyphen.chmod(0o755)
+    system = tmp_path/'system'; system.mkdir()
+    underscore = system/'nbdev_prepare'; underscore.write_text('#!/bin/sh\nexit 0\n'); underscore.chmod(0o755)
+
+    root = project(tmp_path/'proj', steps=[{'id': 'p', 'label': 'prepare', 'cmd': 'nbdev_prepare'}])
+    p = Release(root, python=str(venv_bin/'python'))
+    env = {'PATH': str(system) + os.pathsep + str(venv_bin)}
+    assert p._resolve(['nbdev_prepare'], env) == [str(hyphen)], 'the project answers first'
+
+    # And with no project interpreter at all, PATH still answers rather than nothing.
+    assert Release(root)._resolve(['nbdev_prepare'], env) == [str(underscore)]

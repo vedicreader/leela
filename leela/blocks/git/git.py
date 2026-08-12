@@ -297,9 +297,10 @@ class GitRepo:
     def info(self):
         def collect():
             branch = self.run('branch', '--show-current').strip()
+            head = _run(self.root, 'rev-parse', '--short', 'HEAD', check=False)
+            oid = head.stdout.strip() if head.returncode == 0 else ''
             if not branch:
-                head = _run(self.root, 'rev-parse', '--short', 'HEAD', check=False)
-                branch = (head.stdout.strip() + ' (detached)') if head.returncode == 0 else 'HEAD (unborn)'
+                branch = (oid + ' (detached)') if oid else 'HEAD (unborn)'
             upstream = _run(self.root, 'rev-parse', '--abbrev-ref', '@{upstream}', check=False)
             upstream_name = upstream.stdout.strip() if upstream.returncode == 0 else ''
             ahead = behind = 0
@@ -318,7 +319,10 @@ class GitRepo:
                 name, oid, stamp, subject = (line.split('\0') + [''] * 4)[:4]
                 tag_details.append({'name': name, 'oid': oid, 'timestamp': int(stamp or 0), 'subject': subject})
             return {
-                'root': str(self.root), 'branch': branch, 'upstream': upstream_name,
+                # `head` is what makes a commit visible to a watcher: committing the whole
+                # working tree leaves the branch, the counts and the file list all saying
+                # what they said before, and the one thing that moved is this.
+                'root': str(self.root), 'branch': branch, 'head': oid, 'upstream': upstream_name,
                 'ahead': ahead, 'behind': behind, 'clean': not changes, 'changes': changes,
                 'branches': self._branches(), 'remotes': self._remotes(), 'stashes': stashes,
                 'tags': [tag['name'] for tag in tag_details], 'tag_details': tag_details,

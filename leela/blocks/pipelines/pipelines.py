@@ -249,12 +249,21 @@ class Pipeline:
         nbdev 3, and every document ever written about releasing an nbdev project uses the
         first. A pipeline that fails with "no such file" because the project upgraded is
         not telling anyone anything they can act on, so both spellings are tried.
+
+        The project's own environment is searched first, and every spelling within it, before
+        PATH is consulted at all. Taking the first spelling that matched *anywhere* meant a
+        machine with an old system-wide nbdev answered `nbdev_prepare` from a Python 3.8 that
+        knew nothing about this project -- while the venv's `nbdev-prepare`, two entries later
+        in the same loop, was the one being asked for.
         """
         from shutil import which
         name = argv[0]
-        path = env.get('PATH')
-        for candidate in (name, name.replace('_', '-'), name.replace('-', '_')):
-            if which(candidate, path=path): return [candidate, *argv[1:]]
+        spellings = (name, name.replace('_', '-'), name.replace('-', '_'))
+        bindir = str(Path(self.python).parent) if self.python else ''
+        for path in (bindir, env.get('PATH')):
+            if not path: continue
+            for candidate in spellings:
+                if hit := which(candidate, path=path): return [hit, *argv[1:]]
         return argv
 
     async def _run(self, step):

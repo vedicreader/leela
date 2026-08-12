@@ -4767,6 +4767,39 @@ document.addEventListener('scroll', e => {
   if (e.target?.id === 'editor') queueNotebookOverview();
 }, true);
 addEventListener('resize', queueNotebookOverview);
+/* Everything downstream of a branch, without a page refresh.
+
+   The pill and the tree badges were repainted by this poll; nothing else was. So a checkout
+   -- from the panel, from lazygit in the terminal, or from the agent -- left the editor's
+   change marks describing the branch you came from, the History and Branches lists showing
+   what they showed before, and the release panel counting against the old tag.
+
+   `head` is in the signature because a commit is the case the others miss: branch, counts
+   and file list all read the same afterwards, and the only thing that moved is the sha. */
+function gitSignature(d) {
+  return [d.root, d.branch, d.head, d.upstream, d.ahead, d.behind, (d.changes || []).length,
+          (d.stashes || []).length, (d.operation || {}).active || ''].join('|');
+}
+function noticeGitState(d) {
+  const sig = gitSignature(d), had = lee.gitSignature;
+  lee.gitSignature = sig;
+  if (had && had !== sig) gitChanged();     // `had` empty on the first poll: nothing has moved yet
+}
+function gitChanged() {
+  refreshOpenGitMarks();                    // the file's lines, or the notebook's cells
+  const left = $('#left');
+  if (left?.classList.contains('left-git')) {
+    // The snapshot and the loaded history are both about the commit we were on.
+    gitUI.snapshot = null; gitUI.history = [];
+    renderGitPanel();
+  }
+  // A release is measured from the last tag on this branch, and a deploy from what is
+  // committed, so both are answers about the branch rather than about the panel.
+  if (left?.classList.contains('left-releases')) leeReleases();
+  if (left?.classList.contains('left-deploys')) leeDeploys();
+}
+window.leeGitChanged = gitChanged;
+
 async function refreshProjectPills() {
   try {
     const d = await api('/workspace/info');
@@ -4788,6 +4821,7 @@ async function refreshProjectPills() {
     git.className = 'lee-branch-switcher ' + (n ? 'lee-pill-warn' : 'lee-pill-on');
     git.title = `${d.root}${d.upstream ? ' · ' + d.upstream : ''}${d.ahead ? ' · ahead ' + d.ahead : ''}${d.behind ? ' · behind ' + d.behind : ''}`;
     paintGitTree(d);
+    noticeGitState(d);
   } catch (_) {
     const git = $('#gitpill'); if (git) { git.textContent = 'no git'; git.className = 'lee-branch-switcher'; }
   }
@@ -4913,6 +4947,9 @@ async function gitDo(op, extra = {}) {
   try {
     const d = await post('/git/action', {op, repo: gitUI.repo, ...extra});
     gitUI.snapshot = d; paintGitPill(d);
+    // Immediately, rather than up to one poll later -- and the signature is cleared so the
+    // poll that follows does not treat our own mutation as news and do it all again.
+    lee.gitSignature = ''; gitChanged();
     status(`git ${name} complete · ${Math.round(performance.now() - started)} ms`, 'ok');
     leeLog('git', `${name} · ${gitRepoName(gitUI.repo || d.root || '')}`,
            [extra.branch, extra.ref, extra.message].filter(Boolean).join(' ') || '', 'ok');
