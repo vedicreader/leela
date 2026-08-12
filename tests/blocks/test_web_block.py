@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fasthtml.common import to_xml
+from fasthtml.common import first, to_xml
 from starlette.testclient import TestClient
 
 from leela.term import TerminalGate
-from leela.web.app import _files_panel, _shell, ide_app
+from leela.web.app import _shell, ide_app
 from leela.workspace import Workspace
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -31,9 +31,11 @@ def test_cursor_theme_is_default_and_keeps_light_dark_system():
 
 def test_file_click_sets_the_same_selected_state_as_keyboard_navigation(tmp_path):
     """Mouse opens used to stopPropagation without painting `.sel`; keys already did."""
+    from leela.web.app import _tree_node
     (tmp_path / 'alpha.py').write_text('x = 1\n')
     ws = Workspace(roots=[tmp_path])
-    html = to_xml(_files_panel(ws))
+    file_entry = first(ws.fs.ls(str(tmp_path)))
+    html = to_xml(_tree_node(file_entry))
     assert 'selectTreeNode(this)' in html
     assert 'leeOpenFile(' in html
     open_fn = JS[JS.index('async function leeOpenFile'):JS.index('window.leeOpenFile')]

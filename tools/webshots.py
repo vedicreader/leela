@@ -55,6 +55,8 @@ async def shoot():
         pg = await b.new_page(viewport={'width': 1600, 'height': 950}, device_scale_factor=2)
         await pg.goto(f'http://127.0.0.1:{PORT}/', wait_until='networkidle')
         await pg.wait_for_timeout(800)
+        # Project-runtime prompts are useful in the IDE, but they steal the shot.
+        await pg.evaluate("document.querySelectorAll('.lee-modal').forEach(m => m.remove())")
 
         # Cursor theme evidence: agent + files chrome before the prompt is filled.
         await pg.evaluate("applyTheme('cursor')")
@@ -67,6 +69,7 @@ async def shoot():
         await pg.evaluate("leeAct('agent_send')")
 
         await pg.wait_for_timeout(1700)
+        await pg.evaluate("document.querySelectorAll('.lee-modal').forEach(m => m.remove())")
         await pg.screenshot(path=str(OUT/'web-stream-1-tools.png'))
 
         await pg.wait_for_timeout(1600)
@@ -76,9 +79,11 @@ async def shoot():
             await pg.wait_for_timeout(200)
             if not ws.ai.busy: break
         await pg.wait_for_timeout(600)
+        await pg.evaluate("document.querySelectorAll('.lee-modal').forEach(m => m.remove())")
         await pg.screenshot(path=str(OUT/'web-stream-3-done.png'))
 
         # Memory sources view — vault-backed research memory.
+        await pg.evaluate("document.querySelectorAll('.lee-modal').forEach(m => m.remove())")
         await pg.click('[data-right="memory"]')
         await pg.click('[data-memory-view="sources"]')
         await pg.wait_for_timeout(800)
