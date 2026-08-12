@@ -690,6 +690,17 @@ class GitRepo:
         return {'file': known, 'patch': patch, 'left': left, 'right': right,
                 'base': detail['base'], 'head': detail['head']}
 
+    def _blocking_changes(self):
+        """Tracked files with uncommitted work: what actually stops a merge or a rebase.
+
+        Not `changes()`, which counts untracked files too. Git merges perfectly well beside
+        an untracked `notes.md` -- it refuses only when the merge would *overwrite* one, and
+        it says so at the time. Treating them as dirt meant a repository with a stray
+        `uv.lock` could never merge anything again, and the button that would have said why
+        was the one being disabled.
+        """
+        return [c for c in self.changes() if not c.get('untracked')]
+
     def merge_preview(self, incoming):
         current = self.run('branch', '--show-current').strip() or 'HEAD'
         current_oid, incoming_oid = self._resolve_ref('HEAD'), self._resolve_ref(incoming)
@@ -711,8 +722,11 @@ class GitRepo:
                 if line and not line.startswith(('Auto-merging ', 'CONFLICT ')):
                     conflicts.append(line)
             conflicts = list(dict.fromkeys(conflicts))
+        blocking = self._blocking_changes()
         return {'current': current, 'incoming': str(incoming), 'relation': relation,
-                'clean': not self.changes(), 'merge_base': merge_base,
+                'clean': not blocking, 'dirty': [c['path'] for c in blocking][:20],
+                'untracked': sum(1 for c in self.changes() if c.get('untracked')),
+                'merge_base': merge_base,
                 'conflicts': conflicts, 'conflict_likely': bool(rehearsal.returncode),
                 'review': review}
 
@@ -734,7 +748,10 @@ class GitRepo:
                 line = line.strip()
                 if line and not line.startswith(('Auto-merging ', 'CONFLICT ')):
                     conflicts.append(line)
-        return {'current': current, 'onto': str(onto), 'clean': not self.changes(),
+        blocking = self._blocking_changes()
+        return {'current': current, 'onto': str(onto), 'clean': not blocking,
+                'dirty': [c['path'] for c in blocking][:20],
+                'untracked': sum(1 for c in self.changes() if c.get('untracked')),
                 'merge_base': base, 'commits': commits,
                 'conflicts': list(dict.fromkeys(conflicts)),
                 'conflict_likely': bool(rehearsal.returncode),

@@ -6080,18 +6080,39 @@ async function showMergePreview(branch, d, act) {
     const p = await api(gitUrl('/git/merge-preview', {incoming: branch}));
     const r = p.review, relation = {'fast-forward': 'Fast-forward available', 'already-merged': 'Already contained in current', 'identical': 'Branches are identical', 'diverged': 'Branches have diverged'}[p.relation] || p.relation;
     const conflict = p.conflict_likely ? `<div class="lee-git-merge-warning"><strong>Conflicts expected</strong><span>${p.conflicts.length ? p.conflicts.map(esc).join(' · ') : 'Git reports overlapping changes.'}</span></div>` : '<div class="lee-git-merge-ok"><strong>No conflicts found in merge rehearsal</strong><span>The working tree can still change before merge.</span></div>';
-    const m = modal(`<div class="lee-mhead">Merge ${esc(branch)}<span class="sub">into ${esc(p.current)}</span></div><div class="lee-git-merge-preview"><header><strong>${esc(relation)}</strong><span>${r.head_only} commits · ${r.summary.files} files · +${r.summary.additions} −${r.summary.deletions}</span></header>${p.clean ? '' : '<div class="lee-git-merge-warning"><strong>Working tree is not clean</strong><span>Commit or stash local changes before merging.</span></div>'}${conflict}<label>Strategy<select data-strategy><option value="merge">merge commit when needed</option><option value="squash">squash into working tree</option><option value="ff-only" ${p.relation === 'fast-forward' ? '' : 'disabled'}>fast-forward only</option></select></label><button class="lee-btn" data-review>review incoming files</button></div><div class="lee-mfoot"><button class="lee-btn go" data-merge ${!p.clean || p.relation === 'already-merged' || p.relation === 'identical' ? 'disabled' : ''}>merge ${esc(branch)}</button><span class="lee-dim">Merge starts only after this preview.</span></div>`);
+    // Untracked files are not dirt: git merges beside them and refuses only when the merge
+    // would overwrite one, at which point it says so itself. Only tracked work blocks.
+    const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
+    const blocked = !p.clean ? `commit or stash ${p.dirty.length} changed file${p.dirty.length === 1 ? '' : 's'} first`
+                  : p.relation === 'already-merged' ? `${p.current} already contains ${branch}`
+                  : p.relation === 'identical' ? 'the two branches are identical' : '';
+    const m = modal(`<div class="lee-mhead">Merge ${esc(branch)}<span class="sub">into ${esc(p.current)}</span></div><div class="lee-git-merge-preview"><header><strong>${esc(relation)}</strong><span>${r.head_only} commits · ${r.summary.files} files · +${r.summary.additions} −${r.summary.deletions}</span></header>${dirty}${conflict}<label>Strategy<select data-strategy><option value="merge">merge commit when needed</option><option value="squash">squash into working tree</option><option value="ff-only" ${p.relation === 'fast-forward' ? '' : 'disabled'}>fast-forward only</option></select></label><button class="lee-btn" data-review>review incoming files</button></div><div class="lee-mfoot"><button class="lee-btn go" data-merge>merge ${esc(branch)}</button><span class="lee-dim">${blocked ? esc(blocked) : 'Merge starts only after this preview.'}</span></div>`);
     m.querySelector('[data-review]').onclick = () => { m.remove(); gitUI.reviewBase = d.branch; gitUI.reviewHead = branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); };
-    m.querySelector('[data-merge]').onclick = async () => { const strategy = m.querySelector('[data-strategy]').value; if (!await confirmDialog('merge branch', `Merge ${branch} into ${p.current} using ${strategy}?`)) return; m.remove(); act('merge', {branch, strategy}); };
+    // Never a disabled button: one that cannot be pressed cannot say why, and "I clicked
+    // merge and nothing happened" is the report that came back from exactly that.
+    m.querySelector('[data-merge]').onclick = async () => {
+      if (blocked) return status(`cannot merge — ${blocked}`, 'err');
+      const strategy = m.querySelector('[data-strategy]').value;
+      if (!await confirmDialog('merge branch', `Merge ${branch} into ${p.current} using ${strategy}?`)) return;
+      m.remove(); act('merge', {branch, strategy});
+    };
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 async function showRebasePreview(branch, d, act) {
   try {
     const p = await api(gitUrl('/git/rebase-preview', {onto: branch})), r = p.review;
     const warning = p.conflict_likely ? `<div class="lee-git-merge-warning"><strong>Conflicts may occur while replaying commits</strong><span>${p.conflicts.length ? p.conflicts.map(esc).join(' · ') : 'Git reports overlapping changes.'}</span></div>` : '<div class="lee-git-merge-ok"><strong>No conflicts found in the tree rehearsal</strong><span>Rebase replays commits individually, so this remains a forecast.</span></div>';
-    const m = modal(`<div class="lee-mhead">Rebase ${esc(p.current)}<span class="sub">onto ${esc(branch)}</span></div><div class="lee-git-merge-preview"><header><strong>${p.already_based ? 'Branch already contains the target history' : `${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} will be replayed`}</strong><span>${r.summary.files} proposed files · +${r.summary.additions} −${r.summary.deletions}</span></header>${p.clean ? '' : '<div class="lee-git-merge-warning"><strong>Working tree is not clean</strong><span>Commit or stash local changes before rebasing.</span></div>'}${warning}<div class="lee-git-rebase-commits">${p.commits.slice(0, 12).map(c => `<span><code>${esc(c.short)}</code>${esc(c.subject)}</span>`).join('')}</div><button class="lee-btn" data-review>review branch changes</button></div><div class="lee-mfoot"><button class="lee-btn go" data-rebase ${!p.clean || p.already_based || !p.commits.length ? 'disabled' : ''}>start rebase</button><span class="lee-dim">The operation banner will offer continue, skip, and abort if Git pauses.</span></div>`);
+    const rbDirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
+    const rbBlocked = !p.clean ? `commit or stash ${p.dirty.length} changed file${p.dirty.length === 1 ? '' : 's'} first`
+                    : p.already_based ? `${p.current} already contains ${branch}`
+                    : !p.commits.length ? 'there is nothing to replay' : '';
+    const m = modal(`<div class="lee-mhead">Rebase ${esc(p.current)}<span class="sub">onto ${esc(branch)}</span></div><div class="lee-git-merge-preview"><header><strong>${p.already_based ? 'Branch already contains the target history' : `${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} will be replayed`}</strong><span>${r.summary.files} proposed files · +${r.summary.additions} −${r.summary.deletions}</span></header>${rbDirty}${warning}<div class="lee-git-rebase-commits">${p.commits.slice(0, 12).map(c => `<span><code>${esc(c.short)}</code>${esc(c.subject)}</span>`).join('')}</div><button class="lee-btn" data-review>review branch changes</button></div><div class="lee-mfoot"><button class="lee-btn go" data-rebase>start rebase</button><span class="lee-dim">The operation banner will offer continue, skip, and abort if Git pauses.</span></div>`);
     m.querySelector('[data-review]').onclick = () => { m.remove(); gitUI.reviewBase = branch; gitUI.reviewHead = d.branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); };
-    m.querySelector('[data-rebase]').onclick = async () => { if (!await confirmDialog('rebase branch', `Replay ${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} from ${p.current} onto ${branch}?`)) return; m.remove(); act('rebase', {branch}); };
+    m.querySelector('[data-rebase]').onclick = async () => {
+      if (rbBlocked) return status(`cannot rebase — ${rbBlocked}`, 'err');
+      if (!await confirmDialog('rebase branch', `Replay ${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} from ${p.current} onto ${branch}?`)) return;
+      m.remove(); act('rebase', {branch});
+    };
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 async function branchActions(branch, d, act) {

@@ -486,3 +486,21 @@ def test_our_own_git_action_updates_at_once_without_the_poll_repeating_it():
     done = JS[JS.index('async function gitDo('):JS.index('function gitOperationBanner')]
     assert "lee.gitSignature = ''; gitChanged();" in done, \
         'immediately, and the next poll does not treat our own mutation as news'
+
+
+def test_the_merge_button_always_answers_instead_of_being_disabled():
+    """"I clicked merge and nothing happened" was a disabled button.
+
+    It was disabled whenever `clean` was false, and `clean` counted untracked files -- so a
+    repository holding a stray `uv.lock` could never merge, and the control that would have
+    explained that was the one being switched off.
+    """
+    fn = JS[JS.index('async function showMergePreview('):JS.index('async function showRebasePreview(')]
+    assert 'data-merge>' in fn and "data-merge ${" not in fn, 'the button is never disabled'
+    assert "if (blocked) return status(`cannot merge — ${blocked}`, 'err')" in fn, \
+        'a press that cannot proceed says why'
+    assert 'commit or stash ${p.dirty.length} changed file' in fn, 'and names the real blocker'
+    assert 'p.dirty.map(esc).join' in fn, 'listing the tracked files, not a count of everything'
+    rb = JS[JS.index('async function showRebasePreview('):JS.index('async function branchActions(')]
+    assert 'data-rebase>' in rb and "data-rebase ${" not in rb
+    assert "if (rbBlocked) return status(`cannot rebase — ${rbBlocked}`, 'err')" in rb

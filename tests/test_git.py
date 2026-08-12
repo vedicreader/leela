@@ -648,3 +648,33 @@ def test_info_reports_the_head_a_watcher_needs_to_see_a_commit(repo):
     assert len(before['changes']) == len(after['changes']) == 0
     assert before['head'] and after['head'] and before['head'] != after['head'], \
         'without this a commit is invisible to anything watching the snapshot'
+
+
+def test_an_untracked_file_does_not_block_a_merge(repo):
+    """The reported bug: click merge, nothing happens.
+
+    `clean` counted untracked files, so a repository holding a stray `uv.lock` reported a
+    dirty tree for ever, the merge button rendered disabled, and a disabled button cannot
+    say why. Git merges beside untracked files and refuses only when the merge would
+    overwrite one -- at which point it says so itself.
+    """
+    git(repo, 'checkout', '-b', 'feature')
+    (repo/'src'/'lib.py').write_text('added = True\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'feature work')
+    git(repo, 'checkout', 'main')
+    (repo/'uv.lock').write_text('never committed\n')          # the stray file
+    p = GitRepo.at(repo).merge_preview('feature')
+    assert p['clean'] is True, 'an untracked file is not uncommitted work'
+    assert p['untracked'] == 1 and p['dirty'] == []
+    assert p['relation'] == 'fast-forward'
+
+
+def test_uncommitted_work_on_a_tracked_file_still_blocks_and_names_the_files(repo):
+    git(repo, 'checkout', '-b', 'feature')
+    (repo/'src'/'lib.py').write_text('added = True\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'feature work')
+    git(repo, 'checkout', 'main')
+    (repo/'src'/'app.py').write_text('value = 99\n')          # tracked, modified
+    for p in (GitRepo.at(repo).merge_preview('feature'), GitRepo.at(repo).rebase_preview('feature')):
+        assert p['clean'] is False
+        assert p['dirty'] == ['src/app.py'], 'and the dialog can say which'
