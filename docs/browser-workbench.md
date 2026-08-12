@@ -1,148 +1,80 @@
-# Browser workbench guide
+# Browser workbench
 
-The interaction model of the browser IDE: what draws what, where focus lives, and how
-running code reaches the page.
+Leela is a browser-only IDE. Its workbench keeps project files, notebooks, live Python
+state, terminals, source control, research, and the coding agent in one loopback-only app.
 
-## The split: server owns structure, browser owns text
+## Settings
 
-One rule explains most of the frontend:
+Open **Tools → Settings** or press `Command+,` (`Control+,` elsewhere). Editing settings are
+layered in this order: Leela defaults, `~/.config/leela/settings.json`, the project's
+`.leela/settings.json`, and user/workspace language overrides. Browser-only geometry remains
+in local storage. The settings header chooses User or Workspace scope and all languages,
+Python, or Markdown.
 
-> The server owns state and structure. The browser owns anything with a text cursor.
+JetBrains Mono and Fira Code variable fonts are bundled as WOFF2 assets, so selecting them
+works offline and does not silently fall back to the system font. The ligature proof row
+shows `!=`, `->`, `=>`, `<=`, `>=`, `===`, and `::` while toggling OpenType `liga` and `calt`.
+Typography, wrapping, visual columns, whitespace, indentation guides, relative/hybrid line
+numbers, bracket colors, cursor style, sticky symbols, and the long-file code overview update
+open CodeMirror editors without remounting them.
 
-Everything with a caret — notebook cells, file editors, the exec strip, the agent composer
-— is CodeMirror 6, talking JSON to routes. Everything else — the file tree, the variable
-tree, the tab bar, the git panel, the status line — is server-rendered htmx that reuses the
-same fragment builders Leela already has (`_tab_bar`, `_files_panel`, `_vars_panel`, and
-friends in `leela/web/app.py`).
+File settings control autosave timing, final newlines, trailing whitespace, delete
+confirmation, and format-on-save. Python formatting uses Ruff or Black from the selected
+project environment; JSON uses Leela's structural formatter. IndexedDB recovery and external
+write conflict review remain enabled independently of autosave.
 
-That split is why there is no client-side store and no rendering framework. A panel changes
-because a route returned new markup for it, not because a model updated and a view reacted.
-The consequence worth knowing: after any mutation, the server's fragment is the truth, and
-the browser's job is to swap it in — not to predict it.
+## Notebook cells
 
-## Layout
+Use the cell gutter to drag a cell. The cell menu includes run above/below/all, insert,
+move, duplicate, copy, cut, paste above/below, split, merge, change type, clear output,
+and delete. Structural operations have notebook-level undo and redo; text editing keeps
+CodeMirror's character-level history. Shift-click selects a cell range, and copy, cut,
+paste, delete, and gutter dragging operate on that range as one undoable operation.
 
-```
-┌───────────────────────────────────────────────────────────────┐
-│ header — tabs · kernel pill · menus · action bar               │
-├──────────┬─────────────────────────────────────────┬───────────┤
-│ left     │ editor stage                            │ right     │
-│          │   primary  [ · secondary when split ]   │           │
-│ files    │                                         │ vars      │
-│ git      ├─────────────────────────────────────────┤ memory    │
-│ symbols  │ exec strip — live / isolated            │ agent     │
-├──────────┴─────────────────────────────────────────┴───────────┤
-│ bottom dock — terminal                                          │
-├─────────────────────────────────────────────────────────────────┤
-│ footer — status · toasts                                        │
-└─────────────────────────────────────────────────────────────────┘
-```
+## Runtime and debugging configuration
 
-Both side workspaces and the dock collapse. The editor stage splits vertically or
-horizontally into `primary` and `secondary` views; the split, the open panels and the
-per-tab buffers survive a reload because they are persisted client-side (localStorage, and
-IndexedDB for editor drafts).
+The kernel picker chooses the launcher and Python interpreter. Run configurations provide
+a structured UI for command, working directory, watched module, inspector attachment,
+explicit environment values, and a project-relative dotenv file such as `.env.local`.
+Keep secrets in an ignored dotenv file rather than `.leela/runs.json`.
 
-## Focus is a scope, and scope decides the keymap
+A run configuration can instead launch or attach with debugpy. Direct sessions support files,
+modules, tests and applications, arguments, environment, `justMyCode`, stop-on-entry,
+subprocesses, Django/Jinja/gevent options, loopback attach host/port, source breakpoints,
+conditions, hit counts, logpoints, exception policy, call stacks, locals, evaluation, and
+continue/step-over/step-in/step-out. Leela offers to install debugpy into the selected project
+environment; it never exposes a non-loopback attach port by default. Notebook cells retain
+their ipykernel Jupyter-DAP path and use the same debugger UI.
 
-The keymap is not global. A binding fires when its scope is the focused pane, or when its
-scope is `global` (`leela/keys.py`):
+## Workspace history
 
-```
-global · files · editor · exec · vars · agent · term
-```
+Every successful file save creates a persistent checkpoint outside the repository. Open
+**Tools → Workspace history** to inspect and undo checkpoints. Undo is atomic and refused
+when any affected file no longer matches the recorded output, so it cannot overwrite a
+newer external change.
 
-Four of those are *editing* scopes — `editor`, `exec`, `agent`, `term` — where a bare
-letter belongs to the text field, not to a command. `Key` enforces this at import: a bare
-character cannot be bound in an editing scope or in `global`, so a binding that would eat
-typing cannot be added by accident. Bindings that fire inside text entry must carry a
-modifier or be a function key.
+## File conflicts
 
-The keymap is data, served to the browser as `/keys.json` and rendered into the help toast
-and the context bar, so the page never hardcodes a chord. `mod+` displays as `⌘` on Apple
-platforms and `ctrl+` elsewhere.
+Autosave uses disk-version checks and IndexedDB recovery. If the file changed externally,
+choose **merge changes** to open CodeMirror's two-pane merge view: current disk content is
+on the left and the editable result is on the right. Saving the result creates a new, explicit disk version instead of silently replacing
+either side. Notebooks use the same merge engine cell by cell, preserving their structural
+boundaries while resolving source conflicts.
 
-`ctrl+tab` is deliberately *not* the recent-files gesture: browsers reserve it and it
-cannot be intercepted reliably. The JetBrains-style MRU switcher is `mod+e`; `alt+[` and
-`alt+]` still move positionally through the tab strip.
+## Python language service
 
-## Running things
+When `pyright-langserver` is available, Leela starts and owns it lazily for the open
+project. Unsaved `.py` buffers are synchronized through LSP and Pyright diagnostics join
+Python compiler diagnostics in CodeMirror. Settings reports whether Pyright is optional,
+available, or connected.
 
-Three gestures, three different runtimes:
+## Navigation aids
 
-| gesture | what runs | where |
-|---|---|---|
-| `▶ cell` | one notebook cell | the tab's kernel |
-| `▶ file` (`mod+alt+enter`) | the whole `.py` file as a **script** | the tab's kernel, with `__main__` and an argv |
-| `▶ sel` | the current selection | the tab's kernel |
-| exec strip, `live` | typed expression | the tab's kernel, sharing the notebook namespace |
-| exec strip, `isolated` | typed expression | the agent session's safepyrun sandbox |
+Editor settings can enable a lightweight CodeMirror minimap with a viewport overview.
+Sticky navigation follows the nearest Python class or function while the document scrolls.
+Both are isolated editor extensions and can be changed without remounting open documents.
 
-The exec strip's two scopes are genuinely different runtimes rather than a flag. `live`
-shares the notebook's namespace. `isolated` routes through the sandbox, where writes are
-discarded and escapes refused — which is what makes the label true. An earlier
-`scope='isolated'` that shallow-copied the namespace dict was not isolated at all, because
-a mutating call still reached the real object.
+## Kernel failures
 
-Scripts start at the containing Git repository root by default. The `cwd` pill sets a
-per-tab directory or returns to automatic discovery.
-
-## Streaming
-
-Anything long-running is Server-Sent Events over a POST, not polling. Three streams matter:
-
-- `/nb/run/stream` — cell outputs as they are emitted, plus execution state.
-- `/nb/ask/stream` — agent tokens, tool calls, approvals and compaction notices.
-- `/nb/debug/stream` — debugger state and output while stopped at a breakpoint.
-
-`postEvents` in `lee-ide.js` is the single reader: it POSTs, then parses `event:`/`data:`
-frames off the response body, buffering on `\n\n` boundaries. Frames carry JSON, and the
-handler decides what to swap.
-
-The reason for POST-with-SSE rather than `EventSource`: the request bodies are large
-(notebook context, attachments, selections) and `EventSource` is GET-only.
-
-## Markdown and the raw-HTML rule
-
-Markdown reaches the page from three places, and they are not equally trusted:
-
-- **Fetched pages and model output** — cannot execute raw-HTML fences. Research digests and
-  agent responses go through `mdhtml`'s bounded conversion.
-- **Authored notebook Markdown** — may still use raw HTML, because you wrote it.
-
-This is a per-source decision (`renderMarkdown(el, text, allowRaw)`), not a global setting,
-so pasting a web page into a notebook does not silently gain privileges.
-
-## Variables
-
-The variable panel is dhrishti's node tree over the live kernel namespace, proxied through
-the workspace's own app rather than fetched from the kernel's inspector port directly. See
-[Multi-workspace architecture](multi-workspace-architecture.md#kernel-transports) for why.
-
-Values expand lazily, grids render in place, and `vars/promote` lifts a value into a new
-cell. A script run populates the panel with everything it defined when it finishes, which
-is the main reason running a `.py` file as a script is a first-class gesture rather than a
-notebook workaround.
-
-## Persistence in the browser
-
-| what | where | why |
-|---|---|---|
-| editor drafts | IndexedDB (`leela-editor-drafts`) | survives a crash before save |
-| tab buffers | localStorage | unsaved text across reloads |
-| breakpoints | localStorage | per path, with condition details |
-| split layout, open panels | localStorage | restores the workspace shape |
-| editor prefs (font, size) | localStorage | applied before first paint |
-| recent-tab order | in-memory + localStorage | drives the `mod+e` MRU switcher |
-
-None of it is authoritative. Everything here is a convenience over server state, and losing
-it costs a reload, not work.
-
-## Where this is going
-
-`lee-ide.js` is one 6,000-line file with ~200 top-level functions and ~40 `window.lee*`
-globals, most of which exist because server-rendered markup calls them from inline
-`onclick` handlers. The planned split mirrors the Python blocks — one module per block,
-bundled by the existing esbuild setup in `leela/web/src/` so what gets served does not
-change. `tests/assets.py` already reads the whole static tree rather than one file, so that
-split does not require touching the assertions that describe this behaviour.
+The kernel pill changes to a warning when its authenticated inspector cannot be reached.
+Open the kernel picker to see the transport error and restart the exact kernel.
