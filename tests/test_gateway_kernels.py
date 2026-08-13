@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from leela.blocks.runtime.kernels import GatewayKernel, GatewayService, KernelPool
+from leela.blocks.runtime.kernels import SHUTDOWN_WAIT, GatewayKernel, GatewayService, KernelPool
 
 
 pytest.importorskip('jupygate')
@@ -34,3 +34,28 @@ def test_kernel_pool_selects_gateway_transport_without_changing_workspace_caller
     gateway = GatewayService(port=0)
     pool = KernelPool(transport='gateway', gateway=gateway)
     assert pool.transport == 'gateway' and pool.gateway is gateway
+
+
+def test_a_gateway_that_stops_answering_cannot_hold_a_shutdown_open():
+    """A local kernel's graceful shutdown is bounded by jupyter_client's own escalation.
+
+    A gateway kernel's is a DELETE over HTTP with nothing behind it, so the deadline is leela's.
+    One budget covers both calls: two would make the worst case twice a local kernel's.
+    """
+    class Gateway:
+        def __init__(self, hang): self.hang, self.told, self.closed = hang, False, False
+        async def shutdown_kernel(self):
+            self.told = True
+            if self.hang: await asyncio.Event().wait()
+        async def aclose(self): self.closed = True
+
+    def shut(hang):
+        k = GatewayKernel.__new__(GatewayKernel)
+        k.kc, k.base, k._alive = Gateway(hang), 'http://127.0.0.1:8787', True
+        asyncio.run(asyncio.wait_for(k.shutdown(), timeout=SHUTDOWN_WAIT * 2))
+        return k
+
+    healthy = shut(False)
+    assert (healthy.kc, healthy.base, healthy._alive) == (None, None, False)
+    dead = shut(True)
+    assert (dead.kc, dead.base, dead._alive) == (None, None, False), 'released anyway'

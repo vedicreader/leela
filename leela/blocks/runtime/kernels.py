@@ -19,6 +19,16 @@ __all__ = ['ExecOutcome', 'Kernel', 'GatewayKernel', 'GatewayService', 'KernelPo
 
 KERNELS = ('ipykernel', 'ipymini')
 
+#: jupyter_client's own `shutdown_wait_time`, so a gateway kernel gives up no later than a local one.
+SHUTDOWN_WAIT = 5.0
+
+
+async def _give_up_after(coro, timeout=SHUTDOWN_WAIT):
+    "Await `coro`, then stop waiting rather than hold the caller open. Failing to close is not news."
+    try: await asyncio.wait_for(coro, timeout=timeout)
+    except Exception: pass
+
+
 def ipymini_available():
     "True when the ipymini package can be imported in this interpreter."
     return importlib.util.find_spec('ipymini') is not None
@@ -724,12 +734,16 @@ class GatewayKernel(_Inspector):
         await self.kc.restart_kernel(); await self.kc.wait_for_ready(timeout=60)
         if self.inspect: await self.bootstrap()
 
+    async def _release(self):
+        await self.kc.shutdown_kernel()
+        await self.kc.aclose()
+
     async def shutdown(self):
-        if self.kc:
-            try: await self.kc.shutdown_kernel()
-            except Exception: pass
-            try: await self.kc.aclose()
-            except Exception: pass
+        # A DELETE over HTTP has none of jupyter_client's escalation behind it, so the deadline is
+        # here: a gateway that stops answering must not hold a tab close or an app teardown open.
+        # One deadline for both calls, not one each, or the worst case is twice a local kernel's.
+        # Dropping the client without closing it leaks a socket until GC, which is the better trade.
+        if self.kc: await _give_up_after(self._release())
         self.kc, self.base, self._alive = None, None, False
 
 
