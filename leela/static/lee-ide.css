@@ -425,6 +425,32 @@ kbd {
 .cm-line.cm-lee-change-added { box-shadow: inset 3px 0 0 var(--lee-green); }
 .cm-line.cm-lee-change-deleted { box-shadow: inset 3px 0 0 var(--lee-red); }
 .cm-line.cm-lee-change:hover { background: color-mix(in srgb, var(--lee-orange) 8%, transparent); }
+/* The mark thickens only while the pointer is on the mark itself, which is what makes it read as
+   a button rather than as a decoration the whole line happens to carry. The class is put on by
+   the page, not the editor bundle, so the 12px target lives in one place: `armChangeGutter`. */
+.cm-line.cm-lee-change.lee-change-hot { box-shadow: inset 8px 0 0 var(--lee-orange); }
+.cm-line.cm-lee-change-added.lee-change-hot { box-shadow: inset 8px 0 0 var(--lee-green); }
+.cm-line.cm-lee-change-deleted.lee-change-hot { box-shadow: inset 8px 0 0 var(--lee-red); }
+.lee-change-pop { position: fixed; z-index: 72; max-width: min(760px, calc(100vw - 16px));
+                  border: 1px solid var(--lee-border); border-radius: 8px; background: var(--lee-bg1);
+                  box-shadow: 12px 18px 30px rgba(0,0,0,.24); overflow: hidden; }
+.lee-change-tools { display: flex; align-items: center; gap: 4px; padding: 5px 6px;
+                    border-bottom: 1px solid var(--lee-border); background: var(--lee-bg2); }
+.lee-change-icon { min-width: 24px; min-height: 24px; padding: 0 4px; border: 0; border-radius: 5px;
+                   background: transparent; color: var(--lee-fg2); cursor: pointer;
+                   font: 13px/1 var(--lee-mono); }
+.lee-change-icon:hover { color: var(--lee-accent); background: var(--lee-active-line); }
+.lee-change-count { margin: 0 4px 0 2px; color: var(--lee-fg4); font: 11px/1 var(--lee-mono); white-space: nowrap; }
+.lee-change-msg { flex: 1 1 160px; min-width: 120px; }
+.lee-change-old, .lee-change-new { margin: 0; padding: 7px 10px; max-height: 40vh; overflow: auto;
+                                   background: var(--lee-bg); color: var(--lee-fg2);
+                                   font: 12px/1.5 var(--lee-mono); white-space: pre; }
+.lee-change-new { color: var(--lee-fg4); white-space: normal; }
+/* The words the new version no longer has, boxed rather than merely coloured: the line is already
+   the removed one, so colour alone would say nothing about which part of it moved. */
+.lee-change-old mark { border-radius: 3px; padding: 0 1px; color: var(--lee-red);
+                       background: color-mix(in srgb, var(--lee-red) 18%, transparent);
+                       outline: 1px solid color-mix(in srgb, var(--lee-red) 45%, transparent); }
 /* Exec and Terminal are lower-workspace tabs. The agent remains visible beside the editor. */
 .lee-bottomdock { height: var(--lee-dock-h); max-height: min(900px, calc(100% - 240px)); flex: none;
                   min-height: 110px; overflow: hidden; border-top: 1px solid var(--lee-border); }
@@ -1747,6 +1773,13 @@ kbd {
   .lee-git-grid > section + section { border-left: 0; border-top: 1px solid var(--lee-border); min-height: 220px; }
 }
 .lee-searchbar { display: flex; align-items: center; gap: 4px; padding-right: 8px; }
+/* Scope and extensions: a second row, because they qualify every mode above rather than being
+   one more of them. */
+.lee-searchfilters { display: flex; align-items: center; gap: 10px; padding: 5px 10px; border-bottom: 1px solid var(--lee-border); }
+.lee-searchfilters label { display: flex; align-items: center; gap: 5px; color: var(--lee-fg4); font: 9px/1 var(--lee-mono); }
+.lee-searchfilters select { border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg1); color: var(--lee-fg2); font: 9px/1 var(--lee-mono); padding: 3px 4px; }
+.lee-searchfilters #csexts { width: 150px; padding: 3px 6px; font: 9px/1.3 var(--lee-mono); }
+.lee-searchfilters #csscopenote { margin-left: auto; font: 9px/1 var(--lee-mono); }
 .lee-code-search-modal { padding: 5vh 4vw; align-items: stretch; }
 .lee-code-search-modal .lee-modalbox { width: min(1180px, 92vw); height: min(720px, 88vh); max-height: 88vh; margin: auto; }
 .lee-kosha-status { display: flex; align-items: center; gap: 12px; min-height: 28px; padding: 4px 10px;
@@ -1754,7 +1787,17 @@ kbd {
   color: var(--lee-fg4); font: 9.5px/1 var(--lee-mono); white-space: nowrap; }
 .lee-kosha-status .ok { color: var(--lee-green); }
 .lee-kosha-status .warn { color: var(--lee-orange); }
-.lee-code-search-body { display: grid; grid-template-columns: minmax(280px, 38%) minmax(0, 1fr); min-height: 0; flex: 1 1 auto; }
+.lee-code-search-body { display: grid; grid-template-columns: auto minmax(240px, 34%) minmax(0, 1fr); min-height: 0; flex: 1 1 auto; }
+/* The mode rail: a column because each mode carries a count, and the counts read as a list. */
+.lee-searchrail { display: flex; flex-direction: column; gap: 1px; min-width: 96px; padding: 4px; border-right: 1px solid var(--lee-border); background: var(--lee-bg2); }
+.lee-searchrail-mode { display: flex; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 3px; background: none; color: var(--lee-fg3); cursor: pointer; font: 10px/1 var(--lee-mono); padding: 6px 7px; text-align: left; }
+.lee-searchrail-mode span { flex: 1; }
+.lee-searchrail-mode b { color: var(--lee-fg4); font-weight: 600; }
+.lee-searchrail-mode b.zero { opacity: .45; }
+.lee-searchrail-mode:hover { border-color: var(--lee-border); color: var(--lee-fg); }
+.lee-searchrail-mode.active { border-color: color-mix(in srgb, var(--lee-accent) 55%, var(--lee-border)); background: var(--lee-bg1); color: var(--lee-fg); }
+.lee-searchrail-mode.active b { color: var(--lee-accent); }
+.lee-searchrail-hint { margin-top: auto; padding: 6px 7px 2px; font: 8px/1.2 var(--lee-mono); }
 .lee-code-search-body > .lee-modallist { min-height: 0; border-right: 1px solid var(--lee-border); padding: 4px; }
 .lee-search-result { width: 100%; display: grid; grid-template-columns: 34px minmax(0,1fr) auto; align-items: center;
   gap: 8px; min-height: 48px; padding: 5px 8px; border: 0; border-radius: 4px; background: transparent;
@@ -1798,7 +1841,9 @@ kbd {
 @media (max-width: 760px) {
   .lee-code-search-modal { padding: 0; }
   .lee-code-search-modal .lee-modalbox { width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; }
-  .lee-code-search-body { grid-template-columns: 1fr; grid-template-rows: minmax(180px, 42%) minmax(0,1fr); }
+  .lee-code-search-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(180px, 42%) minmax(0,1fr); }
+  .lee-searchrail { flex-direction: row; flex-wrap: wrap; min-width: 0; border-right: 0; border-bottom: 1px solid var(--lee-border); }
+  .lee-searchrail-hint { display: none; }
   .lee-code-search-body > .lee-modallist { border-right: 0; border-bottom: 1px solid var(--lee-border); }
   .lee-searchbar { flex-wrap: wrap; padding: 5px 34px 5px 0; }
   .lee-searchbar .lee-searchmodes { margin-left: 8px; }
@@ -2308,6 +2353,38 @@ kbd {
 .lee-git-conflict pre { min-height: 180px; margin: 0; overflow: auto; padding: 10px; color: var(--lee-fg2); font: 10px/1.5 var(--lee-mono); white-space: pre; }
 .lee-git-conflict summary { padding: 8px; color: var(--lee-fg4); cursor: pointer; font: 9px/1 var(--lee-mono); }
 @media (max-width: 760px) { .lee-git-conflict { grid-template-columns: 1fr; min-width: 0; } }
+
+/* Why files will not stay staged, and the way back from the last thing that moved. */
+.lee-git-filters span { white-space: pre-wrap; }
+.lee-git-undo { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-bottom: 1px solid var(--lee-border); color: var(--lee-fg4); font: 9px/1.4 var(--lee-mono); }
+.lee-git-undo button { border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg1); color: var(--lee-accent); cursor: pointer; font: 9px/1 var(--lee-mono); padding: 4px 8px; }
+.lee-git-undo button:hover { border-color: var(--lee-accent); }
+
+/* Three-pane conflict resolution. The result pane is the widest of the three because it is
+   the one being written in; the sides are for reading. */
+.lee-modal-merge3 .lee-modalbox { width: min(96vw, 1600px); height: min(88vh, 900px); }
+.lee-git-merge3 { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
+.lee-merge3-bar { display: flex; align-items: center; gap: 6px; padding: 7px 9px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg2); }
+.lee-merge3-count { min-width: 120px; color: var(--lee-fg3); font: 600 10px/1 var(--lee-mono); }
+.lee-merge3-take { display: flex; gap: 4px; margin-left: auto; }
+.lee-merge3-bar .lee-btn[disabled] { opacity: .4; cursor: default; }
+.lee-merge3-panes { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); min-height: 0; }
+.lee-merge3-panes > section { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; border-right: 1px solid var(--lee-border); }
+.lee-merge3-panes > section:last-child { border-right: 0; }
+.lee-merge3-panes > section[data-pane="result"] { background: color-mix(in srgb, var(--lee-accent) 4%, transparent); }
+.lee-merge3-panes header { display: flex; align-items: baseline; gap: 6px; padding: 6px 9px; border-bottom: 1px solid var(--lee-border); }
+.lee-merge3-panes header strong { font: 600 10px/1 var(--lee-mono); }
+.lee-merge3-panes header small { color: var(--lee-fg4); font: 9px/1 var(--lee-mono); }
+.lee-merge3-editor { min-height: 0; overflow: hidden; }
+.lee-merge3-editor .cm-editor { height: 100%; }
+.lee-merge3-foot { display: flex; align-items: center; gap: 10px; padding: 8px 9px; border-top: 1px solid var(--lee-border); }
+.lee-merge3-foot [data-resolve] { margin-left: auto; }
+
+/* A contested block, and the one being worked on. Both are backgrounds rather than edge bars:
+   a conflict is a region you read, not a line you glance at. */
+.cm-line.cm-lee-change-conflict { background: color-mix(in srgb, var(--lee-orange) 12%, transparent); box-shadow: inset 3px 0 0 var(--lee-orange); }
+.cm-line.cm-lee-change-conflict-active { background: color-mix(in srgb, var(--lee-orange) 24%, transparent); box-shadow: inset 3px 0 0 var(--lee-orange); }
+@media (max-width: 980px) { .lee-merge3-panes { grid-auto-flow: row; grid-auto-columns: auto; overflow: auto; } .lee-merge3-panes > section { min-height: 220px; border-right: 0; border-bottom: 1px solid var(--lee-border); } }
 
 /* the open-folder dialog's one box: filters what is listed, and finds repositories below it */
 .lee-folderwhere { margin-left: auto; padding-left: 12px; font-size: 11px; opacity: .65;

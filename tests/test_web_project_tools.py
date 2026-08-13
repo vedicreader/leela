@@ -89,11 +89,85 @@ def test_modified_files_and_lines_are_visible_before_opening_source_control(tmp_
     assert 'changedLines: git.ranges' in mount and 'onChangeClick' in mount
 
 
+def test_a_change_mark_thickens_under_the_pointer_and_opens_the_committed_version(tmp_path):
+    """Clicking one gutter mark has to answer with that change, not with the whole file's diff.
+
+    The thickening is the affordance for the click, so the two share one hit target: the page adds
+    the class, the editor bundle answers the click, and both use 12px.
+    """
+    mount = JS[JS.index('async function mountFile'):JS.index('function notebookHeadings')]
+    assert 'showChangePopup(st.path, line)' in mount and "armChangeGutter($('#filecm'))" in mount
+    arm = JS[JS.index('function armChangeGutter'):JS.index('function changePopupBody')]
+    assert "closest?.('.cm-lee-change')" in arm and 'getBoundingClientRect().left + 12' in arm
+    assert "line.classList.add('lee-change-hot')" in arm
+    assert '.cm-line.cm-lee-change.lee-change-hot' in CSS and '.lee-change-pop' in CSS
+
+    pop = JS[JS.index('function showChangePopup'):JS.index('async function copyChangeHunk')]
+    # The hunk, not the file: every button acts on the one hunk the click resolved to.
+    assert 'hunkAtLine(line)' in pop and 'Commit this change' in pop
+    for act in ('prev', 'next', 'revert', 'diff', 'copy', 'commit'):
+        assert f'data-act="{act}"' in pop
+    assert 'changePopupBody(h)' in pop and "e.key === 'Escape'" in pop
+    # An untracked file has no committed version of any hunk, so it falls back to the file diff.
+    assert 'if (at < 0) return showGitFileDiff' in pop
+
+
+def test_one_change_can_be_reverted_or_committed_without_touching_the_rest_of_the_file():
+    """Both operations are one server-built patch and nothing else -- no patch text is assembled
+    here, and neither touches the file without first settling what is unsaved in the editor."""
+    revert = JS[JS.index('async function revertChangeHunk'):JS.index('async function commitChangeHunk')]
+    assert "gitDo('apply_patch', {patch: h.patch, staged: false, reverse: true})" in revert
+    assert "$('.lee-tab.active.dirty') && !await saveTab(true)" in revert
+    assert 'confirmDialog(' in revert and 'refreshFileChanges(path, true)' in revert
+
+    commit = JS[JS.index('async function commitChangeHunk'):JS.index('function gitChangeRow')]
+    assert "gitDo('apply_patch', {patch: h.patch, staged: true, reverse: false})" in commit
+    assert "gitDo('commit', {message: text})" in commit
+    # Git commits the index, so anything already staged would ride along. That is said out loud
+    # rather than silently widening a one-hunk commit or silently unstaging someone's work.
+    assert "filter(c => c.staged && c.path !== path)" in commit
+    assert 'commit anyway' in commit
+
+    refresh = JS[JS.index('async function refreshFileChanges'):JS.index('async function revertChangeHunk')]
+    assert 'LeeCM.setDoc(v, st.text)' in refresh and 'LeeCM.setChangedLines(v, git.ranges' in refresh
+
+    diff = JS[JS.index('function tokenDiffHtml'):JS.index('function closeChangePopup')]
+    assert '<mark>' in diff, 'the words the new version dropped are marked inside the old line'
+    assert '.lee-change-old mark' in CSS
+
+
 def test_left_activity_bar_has_a_pycharm_style_file_structure(tmp_path):
     html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
     assert 'data-left="symbols"' in html and 'id="symbols"' in html
     assert 'async function leeSymbols()' in JS and "api('/outline?path='" in JS
     assert '.lee-symbol-row' in CSS and '.lee-left.left-symbols' in CSS
+
+
+def test_a_hit_in_a_notebook_opens_the_cell_that_holds_it():
+    """A notebook has no single file editor, so a location in one has to name a cell.
+
+    Its `line` is a line of the .ipynb JSON, which is true and unopenable: the column of
+    per-cell editors each start again at line 1. So the server places a notebook hit in a cell
+    and the three places that navigate -- go-to-definition, the search box and the structure
+    panel -- all carry that through `openLocation` to the consumer in `mountTab`.
+    """
+    open_at = JS[JS.index('function openLocation'):JS.index('async function stopCell')]
+    assert 'hit.cell_line' in open_at and 'cellId: hit.cell' in open_at
+    assert 'cell_index' in open_at, 'a notebook before nbformat 4.5 has no cell ids, only order'
+    assert 'is in no cell' in open_at, 'an unplaceable notebook hit says so instead of scrolling somewhere'
+
+    landing = JS[JS.index('if (lee.pendingLocation'):JS.index('refreshKernelPill();')]
+    assert '(loc.cellId || loc.cellIndex >= 0)' in landing
+    assert 'loc.cellIndex < lee.cells.length) i = loc.cellIndex' in landing
+    assert 'selectCell(i)' in landing and 'ensureCellMounted(i)' in landing and 'jumpToLine(loc.line)' in landing
+    # The debug decorations belong to the debugger. A search result is somewhere to go, not
+    # the line a paused kernel is executing.
+    assert 'if (loc.debug) {' in landing
+
+    outline = JS[JS.index('async function leeSymbols()'):JS.index('window.leeSymbols')]
+    assert "lee.kind !== 'notebook'" in outline, 'a notebook has structure worth outlining'
+    assert 'data-cell-index=' in outline and 'data-cell-line=' in outline
+    assert 'cell_line: +row.dataset.cellLine' in outline
 
 
 def test_agent_model_and_reasoning_live_below_the_growing_prompt(tmp_path):
@@ -504,3 +578,79 @@ def test_the_merge_button_always_answers_instead_of_being_disabled():
     rb = JS[JS.index('async function showRebasePreview('):JS.index('async function branchActions(')]
     assert 'data-rebase>' in rb and "data-rebase ${" not in rb
     assert "if (rbBlocked) return status(`cannot rebase — ${rbBlocked}`, 'err')" in rb
+
+
+def test_the_conflict_resolver_is_three_panes_over_gits_own_markers():
+    """Reading the conflicts out of the markers Git wrote, not re-diffing the three versions.
+
+    The markers are Git's own account of what it could not decide, so `scanConflicts` is the
+    load-bearing part: an unterminated marker must stay text, and the sides must be
+    reconstructable from the blocks it finds.
+    """
+    block = JS[JS.index('const CONFLICT_OPEN'):JS.index('// Blame, reachable from wherever')]
+    assert 'function scanConflicts' in block and 'function conflictSide' in block
+    assert 'if (block.end < 0) continue' in block, 'an unclosed marker is text, not a conflict'
+    assert "for (const key of ['base', 'ours', 'theirs'])" in block
+    assert 'data-pane="${key}"' in block and "pane('result', 'result', 'editable')" in block
+    assert 'onChange:' in block, 'the result pane is the editable one'
+    for control in ('data-take="ours"', 'data-take="theirs"', 'data-take="both"',
+                    'data-nav="prev"', 'data-nav="next"', 'data-base-toggle', 'data-resolve'):
+        assert control in block, control
+    # Dispatching inside CodeMirror's own update is not allowed, and a button's setDoc must not
+    # come back round as a user edit.
+    assert 'setTimeout(() => refresh(text, false), 0)' in block
+    assert 'programmatic = true' in block
+    assert "choice: 'resolved'" in block, 'the assembled text is what gets staged'
+    assert 'showWholeSideConflict' in block, 'delete/modify has no lines to work through'
+    assert '.lee-merge3-panes' in CSS and '.cm-line.cm-lee-change-conflict-active' in CSS
+
+
+def test_the_panel_explains_a_dirtying_filter_and_offers_the_way_back():
+    block = JS[JS.index('function gitFilterBanner'):JS.index('function gitSummary')]
+    assert 'f.ok !== false' in block and 'f.explain' in block
+    assert 'may not stay staged' in block
+    assert 'data-git-undo' in block and 'point.describe' in block
+    assert 'gitFilterBanner(d) + gitUndoBanner(d)' in JS, 'both sit with the file list'
+    assert '.lee-git-undo' in CSS
+
+
+def test_a_mutation_reports_what_it_left_behind_rather_than_how_long_it_took():
+    block = JS[JS.index('async function gitDo'):JS.index('function gitOperationBanner')]
+    assert 'd.outcome?.summary' in block
+    assert "d.outcome?.note ? ' — ' + d.outcome.note : ''" in block, 'one call, so neither is dropped'
+
+
+def test_choosing_a_folder_reloads_every_project_panel_not_just_git():
+    """The backend answering correctly is half of it: the open panel has to ask again.
+
+    `gitChanged` reloads what depends on the branch. Choosing another folder changes which
+    project the panels are *about*, so drive and workflows are in this one too, and every
+    cached answer is dropped whether or not its panel is showing.
+    """
+    block = JS[JS.index('function projectChanged'):JS.index('async function refreshProjectPills')]
+    assert 'gitUI.snapshot = null' in block and 'relUI.data = drvUI.data = null' in block
+    assert "Object.assign(wfUI, {data: null" in block and "Object.assign(depUI, {data: null" in block
+    assert "left-drive')) leeDrive()" in block and "left-workflows')) leeWorkflows()" in block
+    # And the folder switch calls it instead of refreshing the Git panel alone.
+    activate = JS[JS.index("await post('/workspace/activate'"):]
+    assert 'projectChanged();' in activate[:600]
+    assert 'renderGitPanel();' not in activate[:600], 'superseded by projectChanged'
+
+
+def test_search_leads_with_all_and_walks_its_modes_from_a_rail():
+    """`all` ranks every backend together, so it is the mode that answers without you first
+    having to know which store the thing you half-remember is in -- hence the default, and
+    hence first in the order Tab walks."""
+    modes = JS[JS.index('const SEARCH_MODES'):JS.index('async function codeSearch')]
+    assert modes.index("['all'") < modes.index("['rg'") < modes.index("['context'")
+    block = JS[JS.index('async function codeSearch'):JS.index('function cursorWord')]
+    assert "localStorage.getItem('lee-search-mode') || 'all'" in block
+    assert "if (!SEARCH_MODES.some(([id]) => id === mode)) mode = 'all'" in block, 'a stale mode falls back'
+    # Tab cycles the modes instead of the focus; the dialog traps Tab anyway.
+    assert "e.key === 'Tab'" in block and 'cycleMode(e.shiftKey ? -1 : 1)' in block
+    assert 'const cycleMode = step =>' in block and '% SEARCH_MODES.length' in block, 'and it wraps'
+    # A count that has not been measured must not read as nought.
+    assert "counts[id] == null ? '' : counts[id]" in block
+    assert 'counts[mode] = hits.length' in block
+    assert '.lee-searchrail' in CSS and '.lee-searchrail-mode.active' in CSS
+    assert 'lee-searchmodes' not in block, 'the old horizontal segbar is gone, not just hidden'

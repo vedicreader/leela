@@ -787,7 +787,7 @@ async function closeTab(index = null) {
   const tab = $$('.lee-tab')[i];
   if (tab?.dataset.gitDiff) return closeGitDiffTab(tab.dataset.gitDiff);
   if (tab?.classList.contains('dirty') &&
-      !await confirmDialog('close unsaved tab', `${$('.lee-tab-name', tab)?.textContent || 'This file'} has unsaved changes.`)) return;
+      !await confirmDialog('close unsaved tab', `${$('.lee-tab-name', tab)?.textContent || 'This file'} has unsaved changes.`, 'close')) return;
   htmxPost('/tab/close?i=' + i);
 }
 window.leeCloseTab = closeTab;
@@ -807,7 +807,7 @@ async function closeTabs(which) {
   if (!doomed.length) return status('nothing to close');
   const unsaved = doomed.filter(i => tabs[i].classList.contains('dirty')).length;
   if (unsaved && !await confirmDialog('close unsaved tabs',
-      `${unsaved} of ${doomed.length} tabs have unsaved changes.`)) return;
+      `${unsaved} of ${doomed.length} tabs have unsaved changes.`, 'close')) return;
   for (const i of doomed) await htmxPost('/tab/close?i=' + i);
   status(`closed ${doomed.length} tab${doomed.length === 1 ? '' : 's'}`);
 }
@@ -1025,11 +1025,20 @@ async function mountTab(expectedPath = '') {
   if (lee.pendingLocation && (!lee.pendingLocation.path || lee.pendingLocation.path === st.path)) {
     const loc = lee.pendingLocation; lee.pendingLocation = null;
     requestAnimationFrame(() => {
-      if (loc.cellId && lee.kind === 'notebook') {
-        const i = lee.cells.findIndex(c => c.id === loc.cellId);
+      // A notebook is a column of editors, each with its own line 1, so a location in one has
+      // to name the cell. `cellIndex` is the fallback for a notebook whose cells carry no ids
+      // of their own (anything written before nbformat 4.5), and the debug decorations are only
+      // for the debugger: a search result is somewhere to go, not the line being executed.
+      if ((loc.cellId || loc.cellIndex >= 0) && lee.kind === 'notebook') {
+        let i = loc.cellId ? lee.cells.findIndex(c => c.id === loc.cellId) : -1;
+        if (i < 0 && loc.cellIndex >= 0 && loc.cellIndex < lee.cells.length) i = loc.cellIndex;
         if (i >= 0) {
-          selectCell(i); const view = ensureCellMounted(i); LeeCM.setDebugLine(view, loc.line);
-          paintDebugInlineValues(view, loc.line, lee.debugState?.variables); jumpToLine(loc.line);
+          selectCell(i); const view = ensureCellMounted(i);
+          if (loc.debug) {
+            LeeCM.setDebugLine(view, loc.line);
+            paintDebugInlineValues(view, loc.line, lee.debugState?.variables);
+          }
+          jumpToLine(loc.line);
         }
       } else {
         jumpToLine(loc.line);
@@ -1085,7 +1094,7 @@ async function mountFile(host, st) {
     lang: st.lang || 'python', lineNums: true, lintPath: st.path || '',
     completeUrl: '/complete', changedLines: git.ranges || [], breakpoints: lee.breakpoints.get(st.path)||[],
     onBreakpoint: st.lang==='python' ? lines=>{rememberBreakpoints(st.path,lines);if(lee.directDebug)post('/debug/breakpoints',{path:st.path,breakpoints:lines}).catch(e=>status(e.message||String(e),'err'));} : null,
-    onChangeClick: line => showGitFileDiff(st.path, lee.fileGit?.diff || '', line),
+    onChangeClick: line => showChangePopup(st.path, line),
     onDefinition: name => findDefinition(name), onSelection: () => {
       clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120);
     },
@@ -1095,6 +1104,7 @@ async function mountFile(host, st) {
   if(st.lang==='python'&&st.path&&lee.editorPrefs.inlayHints)api('/lsp/inlay-hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>LeeCM.setInlayHints?.(v,d.hints||[])).catch(()=>{});
   if(st.lang==='python'&&st.path&&['symbols','pathAndSymbols'].includes(crumbMode))api('/lsp/symbols',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>{const el=$('#editorcrumbs');if(el){const names=(d.symbols||[]).slice(0,40).map(s=>`<button data-line="${(s.range?.start?.line||0)+1}">${esc(s.name)}</button>`).join('');el.insertAdjacentHTML('beforeend',`<i>›</i><span class="lee-breadcrumb-symbols">${names}</span>`);el.onclick=e=>{const b=e.target.closest('[data-line]');if(b)jumpToLine(b.dataset.line);};}}).catch(()=>{});
   if (packages) paintPackageVersions(v, packages);
+  closeChangePopup(); armChangeGutter($('#filecm'));
   $('#filecm').addEventListener('focusin', () => { lee.activeEditor='primary'; setScope('editor'); });
 }
 
@@ -1744,9 +1754,24 @@ function jumpToLine(line) {
   v.dispatch({selection: {anchor: pos}, scrollIntoView: true}); v.focus();
 }
 function openLocation(hit) {
-  lee.pendingLocation = {path: hit.path, line: hit.line};
+  // A hit in a notebook reports two coordinates: `line` in the .ipynb JSON, which is what
+  // ripgrep and blame speak, and the cell plus the line inside it, which is the only pair an
+  // editor can open. Prefer the second when the server placed the hit; a notebook hit it could
+  // not place keeps the file line, and lands nowhere, rather than opening a cell chosen at random.
+  const name = hit.path.split('/').pop();
+  const inCell = Number(hit.cell_line) > 0;
+  if (!inCell && /\.ipynb$/i.test(hit.path)) {
+    // Nowhere to scroll to: the JSON line is not a line of any cell's editor, and jumping to
+    // it inside whichever cell happens to be selected would look like an answer.
+    leeOpenFile(hit.path);
+    return status(`${name} — line ${hit.line} of the notebook file is in no cell`, 'info');
+  }
+  const line = inCell ? Number(hit.cell_line) : hit.line;
+  lee.pendingLocation = {path: hit.path, line,
+                         cellId: hit.cell || '',
+                         cellIndex: Number.isFinite(hit.cell_index) ? Number(hit.cell_index) : -1};
   leeOpenFile(hit.path);
-  status(`${hit.path.split('/').pop()}:${hit.line}`);
+  status(`${name}${inCell ? ` · cell ${Number(hit.cell_index) + 1}` : ''}:${line}`);
 }
 
 async function stopCell(i) {
@@ -3137,7 +3162,7 @@ async function leeAgentMemory(focusId = '', draft = {}) {
       } catch (e) { button.disabled = false; button.textContent = 'Save note'; status(e.message || String(e), 'err'); }
     };
     $('[data-delete-note]', box).onclick = async () => {
-      if (!active?.id || !await confirmDialog('delete memory note', `Delete “${active.title || 'Untitled note'}” from memory and every model route?`)) return;
+      if (!active?.id || !await confirmDialog('delete memory note', `Delete “${active.title || 'Untitled note'}” from memory and every model route?`, 'delete')) return;
       await post('/agent/memory/delete', {id: active.id}); box.remove(); lee.memoryLoaded = false; status('memory note deleted', 'ok'); leeMemoryNotes();
     };
     paint();
@@ -3180,11 +3205,11 @@ async function leeMemoryPurge() {
   $('[data-selected]', m).onclick = async () => {
     const ids = $$('input:checked', m).map(x => x.value);
     if (!ids.length) return status('select at least one source to purge', 'err');
-    if (!await confirmDialog('purge selected memory', `Remove ${ids.length} document${ids.length === 1 ? '' : 's'} and all indexed sections?`)) return;
+    if (!await confirmDialog('purge selected memory', `Remove ${ids.length} document${ids.length === 1 ? '' : 's'} and all indexed sections?`, 'purge')) return;
     await post('/memory/purge', {ids}); m.remove(); lee.memoryLoaded = false; lee.memoryDocs = null; leeMemoryHome();
   };
   $('[data-all]', m).onclick = async () => {
-    if (!await confirmDialog('purge all research memory', `Remove all ${docs.length} documents, trees, chunks and vectors?`)) return;
+    if (!await confirmDialog('purge all research memory', `Remove all ${docs.length} documents, trees, chunks and vectors?`, 'purge')) return;
     await post('/memory/purge', {ids: null}); m.remove(); lee.memoryLoaded = false; lee.memoryDocs = null; leeMemoryHome();
   };
 }
@@ -3217,7 +3242,7 @@ async function leeMemoryTree(doc) {
   $$('[data-node]', body).forEach(row => row.onclick = () => leeMemoryRead(row.dataset.node));
   const forget = $('[data-forget]', body);
   if (forget) forget.onclick = async () => {
-    if (!await confirmDialog('forget research document', `Remove ${document.title} and all of its remembered sections?`)) return;
+    if (!await confirmDialog('forget research document', `Remove ${document.title} and all of its remembered sections?`, 'forget')) return;
     await post('/memory/forget', {id: document.doc_id}); lee.memoryLoaded = false; leeMemoryHome();
   };
 }
@@ -4269,9 +4294,15 @@ function loadTermBundle() {
 }
 // Multiple xterm instances keep their websocket/pty alive while hidden. The 285kb bundle
 // still loads only on the first terminal action, never during ordinary notebook startup.
-function nextTermId(kind) {
+// `taken` is the set of ids the *server* is holding. A pty deliberately outlives its websocket
+// so that reloading the page can reattach to it -- but this counter restarts at zero on reload,
+// so it handed out `term-1` again, `terms.open` found a live pty under that key and returned it,
+// and a brand new terminal came up showing an old session's scrollback with its process still
+// running in it. Both halves of that are the same bug.
+function nextTermId(kind, taken = []) {
   if (kind === 'git') return 'git';
-  do { lee.termSeq += 1; } while (lee.terms.has('term-' + lee.termSeq));
+  const used = new Set([...lee.terms.keys(), ...taken]);
+  do { lee.termSeq += 1; } while (used.has('term-' + lee.termSeq));
   return 'term-' + lee.termSeq;
 }
 function termLabel(kind, id) { return kind === 'git' ? 'lazygit' : kind === 'release' ? 'release pipeline' : kind === 'deploy' ? 'deploy' : kind === 'drive' ? 'drive' : kind === 'gh-auth' ? 'gh auth' : `terminal ${id.split('-').pop()}`; }
@@ -4459,11 +4490,20 @@ async function openTerm(kind = 'shell', forceNew = false) {
   const d = await api('/term/info');
   if (!d.enabled) return status(d.why, 'err');
   if (kind === 'git' && !d.lazygit) return status(d.lazygit_why, 'err');
+  const external = $('#termexternal');
+  if (external) external.hidden = !(d.external || []).length;
+  const live = (d.open || []).filter(t => t.alive).map(t => t.id).filter(Boolean);
   if (!forceNew) {
     const existing = [...lee.terms.entries()].find(([, t]) => t.kind === kind);
     if (existing) return switchTerm(existing[0]);
+    // A session this page has never seen, still running from before a reload. Reattaching is
+    // the point of letting a pty outlive its socket -- and it has to be *visible* to be
+    // closable, or its process is orphaned where nobody can see it to stop it.
+    const orphan = live.find(id => !lee.terms.has(id) && (kind === 'git' ? id === 'git'
+                                                                        : id.startsWith('term-')));
+    if (orphan) return adoptTerm(orphan, kind, d);
   }
-  const id = nextTermId(kind);
+  const id = nextTermId(kind, live);
   if (lee.terms.has(id)) return switchTerm(id);
   $('#shell').classList.add('show-term');
   const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
@@ -4500,6 +4540,36 @@ async function openReleaseTerm(root = '', kind = 'release') {
   });
   lee.terms.set(id, record); switchTerm(id);
 }
+// Reconnect to a pty that is already running, rather than starting one. Same component and the
+// same id, so the server hands back the session it still has -- which is what makes the process
+// inside it visible in a tab, and therefore closable.
+function adoptTerm(id, kind, d) {
+  $('#shell').classList.add('show-term');
+  const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
+  const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
+  host.dataset.term = id; parent.appendChild(host);
+  const record = {id, kind, label: termLabel(kind, id), cwd: d.cwd, host, view: null};
+  record.view = LeeTerm.create(host, {
+    token: d.token, cwd: d.cwd, kind, id,
+    onStatus: m => status(`${record.label}: ${m}`),
+    onExit: () => { record.exited = true; paintTermTabs(); status(`${record.label} exited`); },
+  });
+  lee.terms.set(id, record); switchTerm(id);
+  status(`${record.label} was still running — reattached`);
+}
+
+// xterm.js cannot be attached to a terminal application that is already running: that program is
+// itself an emulator with its own pty, and a browser pane has no way to adopt its window. What it
+// can do is hand the project over, which is what this is -- and the button stays hidden unless
+// the server found a terminal to hand it to, so it is never one that fails when pressed.
+async function leeExternalTerm() {
+  try {
+    const d = await post('/term/external');
+    status(`opened ${(d.argv || []).includes('-a') ? d.argv[d.argv.indexOf('-a') + 1] : (d.argv || [])[0] || 'terminal'}`, 'ok');
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+window.leeExternalTerm = leeExternalTerm;
+
 function leeNewTerm() { return openTerm('shell', true); }
 window.leeNewTerm = leeNewTerm;
 
@@ -4800,6 +4870,26 @@ function gitChanged() {
 }
 window.leeGitChanged = gitChanged;
 
+// Choosing another folder is a bigger change than a commit, and needs its own refresh.
+// `gitChanged` reloads what depends on the *branch*; this reloads what depends on which
+// project it is at all -- so drive and workflows are here and not there, because a commit does
+// not change where a project deploys to or which workflows it has, and a different project
+// certainly does. Without this, the open panel kept describing the folder left behind, which
+// looked exactly like the backend still being pinned to the first repository.
+function projectChanged() {
+  // Every cached answer describes the folder we just left, whether or not its panel is on
+  // screen. They all go: otherwise opening one of these panels a minute later shows the old
+  // project's state, which is the same bug arriving later and harder to explain.
+  gitUI.snapshot = null; gitUI.history = [];
+  relUI.data = drvUI.data = null;
+  Object.assign(wfUI, {data: null, runs: null, env: null, catalogue: null, docker: null});
+  Object.assign(depUI, {data: null, infra: null, stack: null, records: null});
+  gitChanged();
+  const left = $('#left');
+  if (left?.classList.contains('left-drive')) leeDrive();
+  if (left?.classList.contains('left-workflows')) leeWorkflows();
+}
+
 async function refreshProjectPills() {
   try {
     const d = await api('/workspace/info');
@@ -4893,6 +4983,205 @@ function showGitFileDiff(path, patch = '', line = 0, rawPatch = '', notebook = f
     e.target.textContent = expanded ? 'restore' : 'expand';
   };
 }
+
+/* ---------------------------------------------------------------- change gutter popup
+ * PyCharm's gutter, which is the one people mean: the mark thickens under the pointer, and
+ * clicking it shows what the line used to say next to the four things you want at that moment --
+ * step to the next change, put this one back, copy the old text, or commit only this.
+ *
+ * The hunks come from /git/file, where they are cut out of a three-context diff so that each one
+ * is a patch Git can place by its own context. The browser never assembles a patch of its own:
+ * a hand-built hunk with the wrong line numbers is applied silently in the wrong place, and this
+ * surface's whole job is to change one change and nothing else.
+ */
+const fileHunks = () => lee.fileGit?.hunks || [];
+
+function hunkAtLine(line) {
+  const hunks = fileHunks();
+  const inside = hunks.findIndex(h => line >= h.from && line <= h.to);
+  if (inside >= 0) return inside;
+  // Three context lines can merge two changes into one hunk, so a mark drawn from the exact
+  // zero-context ranges can sit just outside the span of the hunk that carries it. The nearest
+  // change is then the right answer, and is certainly better than the click doing nothing.
+  let best = -1, gap = Infinity;
+  hunks.forEach((h, i) => {
+    const d = Math.min(Math.abs(line - h.from), Math.abs(line - h.to));
+    if (d < gap) { gap = d; best = i; }
+  });
+  return best;
+}
+
+/* Which words of the old line the new one no longer has. PyCharm boxes them, and it is the
+ * difference between reading "the line changed" and seeing what changed in it. A plain LCS over
+ * words is enough at one line's length, and costs nothing at it. */
+function tokenDiffHtml(before, after) {
+  const a = String(before ?? '').match(/\w+|\s+|[^\w\s]/g) || [];
+  const b = String(after ?? '').match(/\w+|\s+|[^\w\s]/g) || [];
+  if (!a.length) return '';
+  if (!b.length) return `<mark>${esc(before)}</mark>`;
+  const n = a.length, m = b.length;
+  const dp = Array.from({length: n + 1}, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  let out = '', run = '', i = 0, j = 0;
+  const flush = () => { if (run) out += `<mark>${esc(run)}</mark>`; run = ''; };
+  while (i < n) {
+    if (j < m && a[i] === b[j]) { flush(); out += esc(a[i]); i++; j++; }
+    else if (j < m && dp[i + 1][j] < dp[i][j + 1]) j++;
+    else run += a[i++];
+  }
+  flush();
+  return out;
+}
+
+function closeChangePopup() {
+  const pop = $('.lee-change-pop');
+  if (!pop) return;
+  pop._leeOff?.(); pop.remove();
+}
+
+/* The mark widens only while the pointer is actually on it. 12px is the editor bundle's own
+ * click target for a change mark; if this number and that one disagreed, the gutter would
+ * advertise an affordance it does not answer. */
+function armChangeGutter(host) {
+  if (!host || host._leeGutterArmed) return;
+  host._leeGutterArmed = true;
+  let hot = null;
+  const cool = () => { hot?.classList.remove('lee-change-hot'); hot = null; };
+  host.addEventListener('mousemove', e => {
+    const line = e.target.closest?.('.cm-lee-change');
+    if (!line || e.clientX > line.getBoundingClientRect().left + 12) return cool();
+    if (line === hot) return;
+    cool(); hot = line; line.classList.add('lee-change-hot');
+  });
+  host.addEventListener('mouseleave', cool);
+}
+
+function changePopupBody(h) {
+  if (!h.old) return '<div class="lee-change-new">These lines are new — there is no committed version of them.</div>';
+  const old = h.old.replace(/\n$/, '').split('\n'), now = (h.new || '').replace(/\n$/, '').split('\n');
+  return `<pre class="lee-change-old">${old.map((l, k) => tokenDiffHtml(l, now[k])).join('\n')}</pre>`;
+}
+
+function showChangePopup(path, line) {
+  closeChangePopup();
+  const hunks = fileHunks(), at = hunkAtLine(line);
+  // An untracked file has no committed version of anything, so there is nothing for this popup
+  // to show; the whole-file diff is the honest answer there.
+  if (at < 0) return showGitFileDiff(path, lee.fileGit?.diff || '', line);
+  const h = hunks[at], name = String(path || '').split('/').pop();
+  const pop = document.createElement('div');
+  pop.className = 'lee-change-pop'; pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', `change ${at + 1} of ${hunks.length} in ${name}, line ${h.from}`);
+  pop.innerHTML =
+    `<div class="lee-change-tools">` +
+    `<button class="lee-change-icon" data-act="prev" title="previous change" aria-label="previous change">↑</button>` +
+    `<button class="lee-change-icon" data-act="next" title="next change" aria-label="next change">↓</button>` +
+    `<button class="lee-change-icon" data-act="revert" title="revert this change" aria-label="revert this change">⟲</button>` +
+    `<button class="lee-change-icon" data-act="diff" title="show this file's whole diff" aria-label="show diff">◫</button>` +
+    `<button class="lee-change-icon" data-act="copy" title="copy the previous version" aria-label="copy the previous version">⧉</button>` +
+    `<span class="lee-change-count">${at + 1} / ${hunks.length}</span>` +
+    `<input class="lee-input lee-change-msg" placeholder="Commit this change" aria-label="commit message for this change">` +
+    `<button class="lee-btn go" data-act="commit">commit</button></div>` + changePopupBody(h);
+  document.body.appendChild(pop);
+  const anchor = $(`#filecm .cm-lee-change[data-change-line="${h.from}"]`) ||
+                 $(`#filecm .cm-lee-change[data-change-line="${line}"]`) || $('#filecm');
+  const rect = anchor.getBoundingClientRect(), size = pop.getBoundingClientRect();
+  pop.style.left = Math.max(4, Math.min(rect.left, innerWidth - size.width - 4)) + 'px';
+  pop.style.top = Math.max(4, Math.min(rect.bottom + 4, innerHeight - size.height - 4)) + 'px';
+
+  const away = e => { if (!pop.contains(e.target)) closeChangePopup(); };
+  const key = e => { if (e.key === 'Escape') { e.stopPropagation(); closeChangePopup(); } };
+  // Deferred by a tick: the click that opened this popup is still on its way up.
+  setTimeout(() => document.addEventListener('mousedown', away), 0);
+  document.addEventListener('keydown', key, true);
+  pop._leeOff = () => {
+    document.removeEventListener('mousedown', away);
+    document.removeEventListener('keydown', key, true);
+  };
+
+  pop.addEventListener('click', e => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (!act) return;
+    if (act === 'prev' || act === 'next') {
+      const next = hunks[(at + (act === 'next' ? 1 : hunks.length - 1)) % hunks.length];
+      jumpToLine(next.from);
+      // The line has to be laid out before it can be measured, and the editor only renders the
+      // lines it has scrolled to.
+      return requestAnimationFrame(() => showChangePopup(path, next.from));
+    }
+    if (act === 'diff') { closeChangePopup(); return showGitFileDiff(path, lee.fileGit?.diff || '', h.from); }
+    if (act === 'copy') return copyChangeHunk(h);
+    if (act === 'revert') return revertChangeHunk(path, h);
+    if (act === 'commit') return commitChangeHunk(path, h, pop.querySelector('.lee-change-msg').value);
+  });
+  return pop;
+}
+
+async function copyChangeHunk(h) {
+  try { await navigator.clipboard.writeText(h.old || h.new || ''); status('previous version copied', 'ok'); }
+  catch (_) { status('clipboard access failed', 'err'); }
+}
+
+/* Git reads and writes the file on disk, and this editor may be holding a newer version of it.
+ * Both directions of that are silent data loss -- the revert overwrites the unsaved edit, or the
+ * next autosave writes the reverted lines back -- so the file is saved first and the buffer is
+ * reloaded after, rather than either being guessed at. */
+async function refreshFileChanges(path, fromDisk = false) {
+  const v = lee.editors.get('file');
+  if (!v) return;
+  if (fromDisk) {
+    const st = await api('/tab/state?path=' + encodeURIComponent(path)).catch(() => null);
+    if (typeof st?.text === 'string') {
+      lee.dirtyBuffers.delete(path); lee.buffers.delete(path);
+      if (st.text !== LeeCM.getDoc(v)) LeeCM.setDoc(v, st.text);
+      $$('.lee-tab').find(x => x.title === path)?.classList.remove('dirty');
+    }
+  }
+  const git = await api('/git/file?path=' + encodeURIComponent(path)).catch(() => null);
+  if (!git) return;
+  lee.fileGit = git; LeeCM.setChangedLines(v, git.ranges || []);
+}
+
+async function revertChangeHunk(path, h) {
+  if ($('.lee-tab.active.dirty') && !await saveTab(true)) return;
+  const ok = await confirmDialog('Revert this change?',
+    `Lines ${h.from}–${h.to} of ${String(path).split('/').pop()} go back to their committed ` +
+    `version. Every other change in the file is left alone.`, 'revert');
+  if (!ok) return;
+  closeChangePopup();
+  // reverse against the working tree, not the index: this is an edit to the file, and the
+  // index is not involved in it at all.
+  try { await gitDo('apply_patch', {patch: h.patch, staged: false, reverse: true}); }
+  catch (_) { return; }
+  await refreshFileChanges(path, true);
+}
+
+async function commitChangeHunk(path, h, message) {
+  const text = String(message || '').trim();
+  if (!text) return status('write a message to commit this change', 'err');
+  if ($('.lee-tab.active.dirty') && !await saveTab(true)) return;
+  /* PyCharm commits the one change and nothing else. Git can only commit what is in the index, so
+   * this stages the hunk and commits -- which means anything already staged rides along. Rather
+   * than quietly widening a one-hunk commit, or quietly unstaging work someone deliberately
+   * staged, the choice is put to whoever is looking at it. */
+  const snapshot = gitUI.snapshot || await api('/git/info').catch(() => null);
+  const staged = (snapshot?.changes || []).filter(c => c.staged && c.path !== path).map(c => c.path);
+  if (staged.length) {
+    const shown = staged.slice(0, 3).join(', ') + (staged.length > 3 ? `, and ${staged.length - 3} more` : '');
+    const ok = await confirmDialog('Something else is already staged',
+      `${shown} ${staged.length === 1 ? 'is' : 'are'} staged and would be committed together with ` +
+      `this change. Unstage first to commit this change on its own.`, 'commit anyway');
+    if (!ok) return;
+  }
+  closeChangePopup();
+  try {
+    await gitDo('apply_patch', {patch: h.patch, staged: true, reverse: false});
+    await gitDo('commit', {message: text});
+  } catch (_) { return; }
+  await refreshFileChanges(path);
+}
+
 function gitChangeRow(c, group) {
   const state = c.conflicted ? 'conflict' : c.untracked ? 'new file' : group === 'staged' ? 'will commit' : 'not staged';
   const selected = gitUI.selectedChanges.has(`${group}:${c.path}`);
@@ -4950,7 +5239,14 @@ async function gitDo(op, extra = {}) {
     // Immediately, rather than up to one poll later -- and the signature is cleared so the
     // poll that follows does not treat our own mutation as news and do it all again.
     lee.gitSignature = ''; gitChanged();
-    status(`git ${name} complete · ${Math.round(performance.now() - started)} ms`, 'ok');
+    // What the operation *left behind* beats how long it took. A squash that staged twelve
+    // files and a merge that stopped at a conflict both "complete", and saying only that is
+    // how an index full of someone else's changes came to look like a bug in Leela.
+    // One call, not two: a second `status` replaces the first, and the note is the half that
+    // must not be the one dropped.
+    const said = d.outcome?.summary || `complete · ${Math.round(performance.now() - started)} ms`;
+    status(`git ${name} · ${said}${d.outcome?.note ? ' — ' + d.outcome.note : ''}`,
+           d.outcome?.note ? 'err' : 'ok');
     leeLog('git', `${name} · ${gitRepoName(gitUI.repo || d.root || '')}`,
            [extra.branch, extra.ref, extra.message].filter(Boolean).join(' ') || '', 'ok');
     return d;
@@ -4974,6 +5270,24 @@ function gitOperationBanner(d) {
     `<span class="lee-spacer"></span>${op.can_continue ? '<button data-operation="continue">continue</button>' : ''}${op.can_skip ? '<button data-operation="skip">skip</button>' : ''}` +
     `${op.can_abort ? '<button data-operation="abort" class="warn">abort</button>' : ''}</section>`;
 }
+// Why a file will not stay staged, said once, where the file list is. Git treats a filter it
+// cannot run as nothing having gone wrong, so this is the only place the reason can come from.
+function gitFilterBanner(d) {
+  const f = d.filters || {};
+  if (f.ok !== false || !f.explain) return '';
+  return `<section class="lee-git-operation lee-git-filters"><div>` +
+    `<strong>files here may not stay staged</strong><span>${esc(f.explain)}</span></div></section>`;
+}
+
+// The way back from the last thing that moved this branch. Offered whenever there is one,
+// rather than only after a failure: "that merge was not what I wanted" arrives a minute later.
+function gitUndoBanner(d) {
+  const point = (d.safepoints || [])[0];
+  if (!point) return '';
+  return `<section class="lee-git-undo"><span>last: ${esc(point.describe)}</span>` +
+    `<span class="lee-spacer"></span><button data-git-undo="${esc(point.token)}">undo</button></section>`;
+}
+
 function gitNav() {
   return `<nav class="lee-git-nav" aria-label="Source control views">${[['changes','Changes'],['review','Review'],['branches','Branches'],['history','History'],['resources','Repository'],['repos','All repos']].map(([id, label]) =>
     `<button data-git-tab="${id}" class="${gitUI.tab === id ? 'active' : ''}">${label}</button>`).join('')}</nav>`;
@@ -4989,7 +5303,7 @@ function gitChangesView(d) {
   const additions = allStats.reduce((n, x) => n + (x.additions || 0), 0), deletions = allStats.reduce((n, x) => n + (x.deletions || 0), 0);
   const rows = (items, group) => items.length ? items.map(c => gitChangeRow(c, group)).join('') :
     `<div class="lee-git-empty-state"><strong>${group === 'staged' ? 'Nothing staged' : 'Working tree clean'}</strong><span>${group === 'staged' ? 'Stage files or individual hunks to prepare a commit.' : 'There are no local file changes.'}</span></div>`;
-  return gitOperationBanner(d) + `<div class="lee-git-change-summary"><strong>${d.changes.length} changed file${d.changes.length === 1 ? '' : 's'}</strong><span>+${additions}</span><span>−${deletions}</span><small>${staged.length} staged · ${unstaged.length} unstaged</small></div>` + `<div class="lee-sc-actions"><button data-top="fetch">fetch</button><button data-top="pull">pull</button><button data-top="push">push</button>` +
+  return gitOperationBanner(d) + gitFilterBanner(d) + gitUndoBanner(d) + `<div class="lee-git-change-summary"><strong>${d.changes.length} changed file${d.changes.length === 1 ? '' : 's'}</strong><span>+${additions}</span><span>−${deletions}</span><small>${staged.length} staged · ${unstaged.length} unstaged</small></div>` + `<div class="lee-sc-actions"><button data-top="fetch">fetch</button><button data-top="pull">pull</button><button data-top="push">push</button>` +
     `${!d.upstream ? '<button data-top="publish">publish branch</button>' : ''}<button id="scstash">stash</button></div>` +
     `<div class="lee-git-selection" ${gitUI.selectedChanges.size ? '' : 'hidden'}><strong>${gitUI.selectedChanges.size} selected</strong><button data-selected-action="stage">stage</button><button data-selected-action="unstage">unstage</button><button data-selected-action="changelist">move to changelist</button><button data-selected-action="clear">clear</button></div>` +
     `<form id="sccommit" class="lee-sc-commit"><label>Commit message<textarea rows="3" placeholder="Describe this change" aria-label="Commit message"></textarea></label>` +
@@ -5972,8 +6286,16 @@ function wireGitPanel(host, d) {
   });
   const act = async (op, extra = {}) => renderGitPanel(await gitDo(op, extra));
   host.querySelectorAll('[data-operation]').forEach(b => b.onclick = async () => {
-    if (b.dataset.operation === 'abort' && !await confirmDialog('abort Git operation', `Abort the active ${d.operation.active}?`)) return;
+    if (b.dataset.operation === 'abort' && !await confirmDialog('abort Git operation', `Abort the active ${d.operation.active}?`, 'abort')) return;
     act('operation_' + b.dataset.operation);
+  });
+  host.querySelectorAll('[data-git-undo]').forEach(b => b.onclick = async () => {
+    const point = (d.safepoints || [])[0];
+    if (!await confirmDialog('undo Git operation',
+        `Put this repository back where it was before ${point?.describe || 'the last operation'}?` +
+        `\n\nHEAD returns to ${point?.head || 'the recorded commit'}` +
+        `${point?.dirty ? ` and ${point.dirty} uncommitted file(s) are restored` : ''}.`, 'undo')) return;
+    act('undo', {token: b.dataset.gitUndo});
   });
   host.querySelectorAll('[data-top]').forEach(b => b.onclick = () => b.dataset.top === 'publish' ? act('push', {publish: true}) : act(b.dataset.top));
   host.querySelector('#scstageall')?.addEventListener('click', e => { e.preventDefault(); act('stage', {paths: d.changes.filter(x => x.unstaged).map(x => x.path)}); });
@@ -6001,15 +6323,15 @@ function wireGitPanel(host, d) {
     row.querySelector('[data-open]').onclick = () => leeOpenFile(d.root + '/' + path);
     row.querySelector('[data-blame]')?.addEventListener('click', () => showGitBlame(d.root, path, null));
     row.querySelector('[data-resolve]')?.addEventListener('click', () => showGitConflict(path));
-    row.querySelectorAll('[data-git]').forEach(b => b.onclick = async () => { const op = b.dataset.git; if (op === 'discard' && !await confirmDialog('discard changes', `Restore ${path} from the index? This cannot be undone.`)) return; act(op, {paths: [path]}); });
+    row.querySelectorAll('[data-git]').forEach(b => b.onclick = async () => { const op = b.dataset.git; if (op === 'discard' && !await confirmDialog('discard changes', `Restore ${path} from the index? This cannot be undone.`, 'discard')) return; act(op, {paths: [path]}); });
   });
-  host.querySelectorAll('[data-stash]').forEach(row => { const ref = row.dataset.stash; row.querySelector('[data-apply]').onclick = () => act('stash_apply', {ref}); row.querySelector('[data-pop]').onclick = () => act('stash_pop', {ref}); row.querySelector('[data-drop]').onclick = async () => { if (await confirmDialog('drop stash', `Delete ${ref}?`)) act('stash_drop', {ref}); }; });
+  host.querySelectorAll('[data-stash]').forEach(row => { const ref = row.dataset.stash; row.querySelector('[data-apply]').onclick = () => act('stash_apply', {ref}); row.querySelector('[data-pop]').onclick = () => act('stash_pop', {ref}); row.querySelector('[data-drop]').onclick = async () => { if (await confirmDialog('drop stash', `Delete ${ref}?`, 'drop')) act('stash_drop', {ref}); }; });
   const branchFilter = host.querySelector('#gitbranchfilter'); if (branchFilter) branchFilter.oninput = () => { gitUI.branchQuery = branchFilter.value; renderGitPanel(d); requestAnimationFrame(() => { const x = $('#gitbranchfilter'); x?.focus(); x?.setSelectionRange(x.value.length, x.value.length); }); };
   const branchScope = host.querySelector('#gitbranchscope'); if (branchScope) { branchScope.value = gitUI.branchScope; branchScope.onchange = () => { gitUI.branchScope = branchScope.value; renderGitPanel(d); }; }
   host.querySelector('#scbranch')?.addEventListener('click', async () => { const branch = await inputDialog('new branch', 'Branch name', '', 'feature/name'); if (branch) act('create', {branch}); });
   host.querySelectorAll('[data-branch]').forEach(row => { const branch = row.dataset.branch; row.querySelector('[data-switch]').onclick = () => act('checkout', {branch}); row.querySelector('[data-compare]')?.addEventListener('click', () => { gitUI.reviewBase = d.branch; gitUI.reviewHead = branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); }); row.querySelector('[data-more]')?.addEventListener('click', () => branchActions(branch, d, act)); });
   host.querySelector('#sctag')?.addEventListener('click', async () => { const name = await inputDialog('create tag', 'Tag name', '', 'v1.0.0'); if (!name) return; const message = await inputDialog('annotated tag', 'Optional annotation', '', ''); if (message !== null) act('tag', {name, message}); });
-  host.querySelectorAll('[data-delete-tag]').forEach(b => b.onclick = async () => { const name = b.closest('[data-tag]').dataset.tag; if (await confirmDialog('delete tag', `Delete local tag ${name}?`)) act('delete_tag', {name}); });
+  host.querySelectorAll('[data-delete-tag]').forEach(b => b.onclick = async () => { const name = b.closest('[data-tag]').dataset.tag; if (await confirmDialog('delete tag', `Delete local tag ${name}?`, 'delete')) act('delete_tag', {name}); });
   host.querySelector('#gitreviewmode') && (host.querySelector('#gitreviewmode').value = gitUI.reviewMode);
   const swapReviewDirection = () => { const base = $('#gitreviewbase')?.value.trim() || gitUI.reviewBase; gitUI.reviewBase = $('#gitreviewhead')?.value.trim() || gitUI.reviewHead; gitUI.reviewHead = base; gitUI.review = null; loadGitReview(); };
   host.querySelector('#gitreviewcontrolswap')?.addEventListener('click', swapReviewDirection);
@@ -6032,8 +6354,8 @@ function wireGitPanel(host, d) {
   host.querySelectorAll('[data-commit-file]').forEach(b => b.onclick = () => openGitCommitFile(gitUI.selectedCommit.oid, b.dataset.commitFile));
   host.querySelector('[data-close-commit]')?.addEventListener('click', () => { gitUI.selectedCommit = null; renderGitPanel(d); });
   host.querySelector('.lee-git-commit-inspector [data-cherry]')?.addEventListener('click', () => act('cherry_pick', {ref: gitUI.selectedCommit.oid}));
-  host.querySelector('.lee-git-commit-inspector [data-revert]')?.addEventListener('click', async () => { if (await confirmDialog('revert commit', `Create a commit that reverses ${gitUI.selectedCommit.short}?`)) act('revert', {ref: gitUI.selectedCommit.oid}); });
-  host.querySelector('.lee-git-commit-inspector [data-reset]')?.addEventListener('click', async () => { const c = gitUI.selectedCommit, mode = await inputDialog('reset branch', 'Mode: soft keeps index; mixed keeps files; hard discards changes', 'mixed', 'soft, mixed, or hard'); if (!['soft','mixed','hard'].includes(mode)) return status('reset mode must be soft, mixed, or hard', 'err'); if (mode === 'hard' && !await confirmDialog('hard reset', `Discard tracked changes and reset to ${c.short}? This cannot be undone.`)) return; act('reset', {ref: c.oid, mode}); });
+  host.querySelector('.lee-git-commit-inspector [data-revert]')?.addEventListener('click', async () => { if (await confirmDialog('revert commit', `Create a commit that reverses ${gitUI.selectedCommit.short}?`, 'revert')) act('revert', {ref: gitUI.selectedCommit.oid}); });
+  host.querySelector('.lee-git-commit-inspector [data-reset]')?.addEventListener('click', async () => { const c = gitUI.selectedCommit, mode = await inputDialog('reset branch', 'Mode: soft keeps index; mixed keeps files; hard discards changes', 'mixed', 'soft, mixed, or hard'); if (!['soft','mixed','hard'].includes(mode)) return status('reset mode must be soft, mixed, or hard', 'err'); if (mode === 'hard' && !await confirmDialog('hard reset', `Discard tracked changes and reset to ${c.short}? This cannot be undone.`, 'reset')) return; act('reset', {ref: c.oid, mode}); });
   const rememberCompare = () => { gitUI.compareFrom = $('#gitcompareleft')?.value.trim() || ''; gitUI.compareTo = $('#gitcompareright')?.value.trim() || ''; };
   host.querySelector('#gitcompareleft')?.addEventListener('change', rememberCompare);
   host.querySelector('#gitcompareright')?.addEventListener('change', rememberCompare);
@@ -6070,7 +6392,7 @@ function showReviewHunkApply(d) {
   m.querySelector('[data-apply]').onclick = async () => {
     const selected = [...m.querySelectorAll('[data-hunk]:checked')].map(x => parts.hunks[+x.dataset.hunk]);
     if (!selected.length) return status('select at least one hunk', 'err');
-    if (!await confirmDialog('apply branch hunks', `Apply ${selected.length} selected hunk${selected.length === 1 ? '' : 's'} from ${gitUI.review.head} to the working tree?`)) return;
+    if (!await confirmDialog('apply branch hunks', `Apply ${selected.length} selected hunk${selected.length === 1 ? '' : 's'} from ${gitUI.review.head} to the working tree?`, 'apply')) return;
     try { const next = await gitDo('apply_patch', {patch: parts.header + selected.join(''), staged: false}); m.remove(); gitUI.review = null; gitUI.tab = 'changes'; renderGitPanel(next); }
     catch (e) { status(e.message || String(e), 'err'); }
   };
@@ -6093,7 +6415,7 @@ async function showMergePreview(branch, d, act) {
     m.querySelector('[data-merge]').onclick = async () => {
       if (blocked) return status(`cannot merge — ${blocked}`, 'err');
       const strategy = m.querySelector('[data-strategy]').value;
-      if (!await confirmDialog('merge branch', `Merge ${branch} into ${p.current} using ${strategy}?`)) return;
+      if (!await confirmDialog('merge branch', `Merge ${branch} into ${p.current} using ${strategy}?`, 'merge')) return;
       m.remove(); act('merge', {branch, strategy});
     };
   } catch (e) { status(e.message || String(e), 'err'); }
@@ -6110,7 +6432,7 @@ async function showRebasePreview(branch, d, act) {
     m.querySelector('[data-review]').onclick = () => { m.remove(); gitUI.reviewBase = branch; gitUI.reviewHead = d.branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); };
     m.querySelector('[data-rebase]').onclick = async () => {
       if (rbBlocked) return status(`cannot rebase — ${rbBlocked}`, 'err');
-      if (!await confirmDialog('rebase branch', `Replay ${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} from ${p.current} onto ${branch}?`)) return;
+      if (!await confirmDialog('rebase branch', `Replay ${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} from ${p.current} onto ${branch}?`, 'rebase')) return;
       m.remove(); act('rebase', {branch});
     };
   } catch (e) { status(e.message || String(e), 'err'); }
@@ -6122,7 +6444,7 @@ async function branchActions(branch, d, act) {
     `<button class="lee-btn warn" data-op="delete">delete local branch</button></div>`);
   m.querySelectorAll('[data-op]').forEach(b => b.onclick = async () => {
     const op = b.dataset.op;
-    if (op === 'delete') { if (!await confirmDialog('delete branch', `Delete local branch ${branch}?`)) return; m.remove(); return act('delete', {branch}); }
+    if (op === 'delete') { if (!await confirmDialog('delete branch', `Delete local branch ${branch}?`, 'delete')) return; m.remove(); return act('delete', {branch}); }
     if (op === 'rename') { const name = await inputDialog('rename branch', 'New name', branch, 'feature/name'); if (name) { m.remove(); act('rename_branch', {branch, name}); } return; }
     if (op === 'upstream') { const upstream = await inputDialog('set upstream', 'Remote tracking branch', '', 'origin/' + branch); if (upstream) { m.remove(); act('set_upstream', {branch, upstream}); } return; }
     if (op === 'compare') { m.remove(); gitUI.reviewBase = d.branch; gitUI.reviewHead = branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; return renderGitPanel(d); }
@@ -6163,13 +6485,230 @@ async function showGitReflog() {
     m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
   } catch (e) { status(e.message || String(e), 'err'); }
 }
+// Three-pane conflict resolution: ours, an editable result, and theirs.
+//
+// The conflicts are read from the markers Git already wrote into the working-tree file, not
+// diffed back out of the three versions. Git's own account of what it could not decide is
+// better than anything reconstructed from the sides afterwards -- it knows which lines it
+// tried to merge and gave up on, and a re-diff only guesses at it.
+//
+// The result pane is that file, markers and all, and it is re-scanned after every change.
+// That is what lets the buttons and hand-editing coexist without either being a mode:
+// "which conflicts are left" is answered by looking at the text rather than by remembering
+// what was clicked, so an edit that removes a marker block counts as resolving it.
+
+const CONFLICT_OPEN = /^<{7}(?:\s|$)/, CONFLICT_MID = /^={7}(?:\s|$)/,
+      CONFLICT_BASE = /^\|{7}(?:\s|$)/, CONFLICT_CLOSE = /^>{7}(?:\s|$)/;
+
+function scanConflicts(text) {
+  const lines = String(text ?? '').split('\n'), blocks = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!CONFLICT_OPEN.test(lines[i])) continue;
+    const block = {start: i, end: -1, ours: [], theirs: [], base: []};
+    let side = block.ours, j = i + 1;
+    for (; j < lines.length; j++) {
+      if (CONFLICT_BASE.test(lines[j])) { side = block.base; continue; }
+      if (CONFLICT_MID.test(lines[j])) { side = block.theirs; continue; }
+      if (CONFLICT_CLOSE.test(lines[j])) { block.end = j; break; }
+      side.push(lines[j]);
+    }
+    // An opening marker with no close is a line of text that happens to look like one --
+    // in a file *about* merge conflicts, say. Not a conflict, and not ours to rewrite.
+    if (block.end < 0) continue;
+    blocks.push(block); i = block.end;
+  }
+  return {lines, blocks};
+}
+
+// One whole side of a conflicted file, as it would read if every contested block went that
+// way. `ranges` are the 1-based line spans of the contested parts, for marking them.
+function conflictSide(scan, pick) {
+  const out = [], ranges = [];
+  let at = 0;
+  for (const block of scan.blocks) {
+    out.push(...scan.lines.slice(at, block.start));
+    const from = out.length + 1;
+    out.push(...(block[pick] || []));
+    // A side that deleted these lines contributes none, so the marker goes on the seam.
+    ranges.push(out.length >= from ? {from, to: out.length}
+                                   : {from: Math.max(1, from - 1), to: Math.max(1, from - 1)});
+    at = block.end + 1;
+  }
+  out.push(...scan.lines.slice(at));
+  return {text: out.join('\n'), ranges};
+}
+
+function replaceConflict(scan, index, lines) {
+  const block = scan.blocks[index];
+  if (!block) return null;
+  return [...scan.lines.slice(0, block.start), ...lines,
+          ...scan.lines.slice(block.end + 1)].join('\n');
+}
+
 async function showGitConflict(path) {
   try {
     const d = await api(gitUrl('/git/conflict', {path}));
-    const version = (label, text, choice) => `<section><header><strong>${label}</strong><button data-choice="${choice}">use ${label.toLowerCase()}</button></header><pre>${esc(text || 'This side deleted the file.')}</pre></section>`;
-    const m = modal(`<div class="lee-mhead">resolve ${esc(path)}<span class="sub">base, ours, and theirs</span></div><div class="lee-git-conflict">${version('Ours', d.ours, 'ours')}${version('Theirs', d.theirs, 'theirs')}<details><summary>common base</summary><pre>${esc(d.base || 'No common base content.')}</pre></details><details><summary>current worktree result</summary><pre>${esc(d.worktree || '')}</pre><button data-choice="worktree">mark current worktree resolved</button></details></div>`);
-    m.querySelectorAll('[data-choice]').forEach(b => b.onclick = async () => { const choice = b.dataset.choice; if (!await confirmDialog('resolve conflict', `Use ${choice} for ${path} and stage it as resolved?`)) return; m.remove(); renderGitPanel(await gitDo('resolve_conflict', {path, choice})); });
+    const original = scanConflicts(d.worktree || '');
+    if (!original.blocks.length && (d.ours || d.theirs)) {
+      // Add/add or delete/modify: there are no marked lines to work through, so the choice
+      // is which whole side to keep, and pretending otherwise would be a worse dialog.
+      return showWholeSideConflict(path, d);
+    }
+    const lang = codeLang('', path);
+    const pane = (key, label, note) =>
+      `<section data-pane="${key}"${key === 'base' ? ' hidden' : ''}>` +
+      `<header><strong>${label}</strong>${note ? `<small>${note}</small>` : ''}</header>` +
+      `<div class="lee-merge3-editor" data-editor></div></section>`;
+    const m = modal(
+      `<div class="lee-mhead">resolve ${esc(path)}<span class="sub">ours · result · theirs</span></div>` +
+      `<div class="lee-git-merge3">` +
+      `<div class="lee-merge3-bar">` +
+      `<span class="lee-merge3-count" data-count></span>` +
+      `<button class="lee-btn" data-nav="prev" title="previous conflict">‹</button>` +
+      `<button class="lee-btn" data-nav="next" title="next conflict">›</button>` +
+      `<span class="lee-merge3-take">` +
+      `<button class="lee-btn" data-take="ours">take ours</button>` +
+      `<button class="lee-btn" data-take="theirs">take theirs</button>` +
+      `<button class="lee-btn" data-take="both">both</button></span>` +
+      `<button class="lee-btn" data-base-toggle>show base</button></div>` +
+      `<div class="lee-merge3-panes">${pane('base', 'base', 'common ancestor')}` +
+      `${pane('ours', 'ours', 'this branch')}` +
+      `${pane('result', 'result', 'editable')}` +
+      `${pane('theirs', 'theirs', 'incoming')}</div>` +
+      `<div class="lee-merge3-foot"><span class="lee-dim" data-state></span>` +
+      `<button class="lee-btn go" data-resolve>resolve &amp; stage</button></div></div>`,
+      null, () => teardown(), {className: 'lee-modal-merge3', storageKey: 'git-conflict'});
+
+    const views = {};
+    const editorFor = key => m.querySelector(`[data-pane="${key}"] [data-editor]`);
+    const teardown = () => Object.values(views).forEach(v => { try { LeeCM.destroy(v); } catch {} });
+    let live = original, active = 0;
+
+    const marks = (ranges, current) => ranges.map((r, i) =>
+      ({...r, kind: i === current ? 'conflict-active' : 'conflict'}));
+
+    for (const key of ['base', 'ours', 'theirs']) {
+      const {text, ranges} = conflictSide(original, key);
+      views[key] = LeeCM.create(editorFor(key), {
+        doc: text, lang, readOnly: true, lineNums: true, settings: lee.editorPrefs});
+      views[key]._ranges = ranges;
+      LeeCM.setChangedLines(views[key], marks(ranges, 0));
+    }
+    // `onChange` runs inside CodeMirror's own update, where dispatching again is not allowed,
+    // and `refresh` dispatches marks -- hence the deferral. `programmatic` is why a button's own
+    // `setDoc` does not come back round here and refresh a second time from stale text.
+    let programmatic = false;
+    views.result = LeeCM.create(editorFor('result'), {
+      doc: d.worktree || '', lang, lineNums: true, settings: lee.editorPrefs,
+      onChange: text => { if (!programmatic) setTimeout(() => refresh(text, false), 0); }});
+
+    // Which of the original blocks a remaining one is, matched on its contested text. Indices
+    // cannot be used: resolving the second of three leaves two, and the sides still show three.
+    // Two identical conflicts in one file align to the first of them, which is harmless.
+    const originalIndex = block => original.blocks.findIndex(b =>
+      b.ours.join('\n') === block.ours.join('\n') && b.theirs.join('\n') === block.theirs.join('\n'));
+
+    // The side panes are read-only and CodeMirror only builds the lines it is showing, so
+    // there is no element to scroll to for a conflict that is off screen. Proportional
+    // scrolling gets there regardless, and lands close enough to read.
+    const align = () => {
+      const block = live.blocks[active];
+      const index = block ? originalIndex(block) : -1;
+      for (const key of ['base', 'ours', 'theirs']) {
+        const view = views[key], range = index >= 0 ? view._ranges[index] : null;
+        LeeCM.setChangedLines(view, marks(view._ranges, index));
+        const scroller = view.dom.querySelector('.cm-scroller');
+        if (!range || !scroller) continue;
+        const total = Math.max(1, LeeCM.lineCount(view));
+        scroller.scrollTop = Math.max(0, (range.from - 1) / total * scroller.scrollHeight
+                                         - scroller.clientHeight / 3);
+      }
+    };
+
+    const refresh = (text, move = true) => {
+      live = scanConflicts(text ?? LeeCM.getDoc(views.result));
+      const total = live.blocks.length;
+      active = Math.max(0, Math.min(active, total - 1));
+      const done = original.blocks.length - total;
+      m.querySelector('[data-count]').textContent = total
+        ? `conflict ${active + 1} of ${total}` : 'no conflicts left';
+      m.querySelector('[data-state]').textContent = total
+        ? `${done} of ${original.blocks.length} resolved`
+        : `all ${original.blocks.length} resolved — staging marks this file merged`;
+      m.querySelectorAll('[data-take],[data-nav]').forEach(b => b.disabled = !total);
+      m.querySelector('[data-resolve]').classList.toggle('go', !total);
+      LeeCM.setChangedLines(views.result, marks(
+        live.blocks.map(b => ({from: b.start + 1, to: b.end + 1})), active));
+      if (move) align();
+    };
+
+    const jumpTo = index => {
+      const total = live.blocks.length;
+      if (!total) return;
+      active = (index + total) % total;
+      const block = live.blocks[active];
+      const at = live.lines.slice(0, block.start).reduce((n, l) => n + l.length + 1, 0);
+      refresh(null, true);
+      LeeCM.setSelection(views.result, at, at);
+    };
+
+    const take = which => {
+      const block = live.blocks[active];
+      if (!block) return;
+      const lines = which === 'both' ? [...block.ours, ...block.theirs] : block[which];
+      const next = replaceConflict(live, active, lines);
+      if (next == null) return;
+      programmatic = true;
+      try { LeeCM.setDoc(views.result, next); } finally { programmatic = false; }
+      refresh(next, true);
+      if (live.blocks.length) jumpTo(Math.min(active, live.blocks.length - 1));
+    };
+
+    m.querySelectorAll('[data-take]').forEach(b => b.onclick = () => take(b.dataset.take));
+    m.querySelector('[data-nav="prev"]').onclick = () => jumpTo(active - 1);
+    m.querySelector('[data-nav="next"]').onclick = () => jumpTo(active + 1);
+    m.querySelector('[data-base-toggle]').onclick = e => {
+      const section = m.querySelector('[data-pane="base"]');
+      section.hidden = !section.hidden;
+      e.currentTarget.textContent = section.hidden ? 'show base' : 'hide base';
+      if (!section.hidden) align();
+    };
+    m.querySelector('[data-resolve]').onclick = async () => {
+      const content = LeeCM.getDoc(views.result);
+      const left = scanConflicts(content).blocks.length;
+      if (left && !await confirmDialog('stage an unresolved file',
+          `${left} conflict marker block${left === 1 ? '' : 's'} are still in ${path}. Stage it ` +
+          `anyway, markers and all?`, 'stage anyway')) return;
+      const next = await gitDo('resolve_conflict', {path, choice: 'resolved', content});
+      m.remove();
+      renderGitPanel(next);
+      status(next.outcome?.summary || `${path} staged as resolved`, 'ok');
+    };
+    refresh(d.worktree || '', true);
+    jumpTo(0);
   } catch (e) { status(e.message || String(e), 'err'); }
+}
+
+// Add/add and delete/modify conflicts have no contested lines to work through -- one side has
+// no file at all -- so the only question is which side to keep.
+async function showWholeSideConflict(path, d) {
+  const side = (label, text, choice) =>
+    `<section><header><strong>${label}</strong>` +
+    `<button class="lee-btn" data-choice="${choice}">use ${label}</button></header>` +
+    `<pre>${esc(text || 'This side does not have this file.')}</pre></section>`;
+  const m = modal(
+    `<div class="lee-mhead">resolve ${esc(path)}<span class="sub">one side has no file to merge</span></div>` +
+    `<div class="lee-git-conflict">${side('ours', d.ours, 'ours')}${side('theirs', d.theirs, 'theirs')}` +
+    `<details><summary>common base</summary><pre>${esc(d.base || 'No common base content.')}</pre></details></div>`,
+    null, null, {storageKey: 'git-conflict-side'});
+  m.querySelectorAll('[data-choice]').forEach(b => b.onclick = async () => {
+    const choice = b.dataset.choice;
+    if (!await confirmDialog('resolve conflict', `Use ${choice} for ${path} and stage it as resolved?`, 'resolve')) return;
+    m.remove();
+    const next = await gitDo('resolve_conflict', {path, choice});
+    renderGitPanel(next);
+    status(next.outcome?.summary || `${path} staged as resolved`, 'ok');
+  });
 }
 
 // Blame, reachable from wherever you are rather than only from a changed-file row. A text
@@ -6408,7 +6947,7 @@ function researchWorkspace(mode = 'search', value = '') {
   };
   $('[data-forget]', m).onclick = async () => {
     if (!activeDoc?.memory_id) return;
-    if (!await confirmDialog('forget research source', `Remove ${activeDoc.title || activeDoc.url} from durable memory?`)) return;
+    if (!await confirmDialog('forget research source', `Remove ${activeDoc.title || activeDoc.url} from durable memory?`, 'forget')) return;
     await post('/memory/forget', {id: activeDoc.memory_id}); activeDoc.memory_id = '';
     setActions(activeDoc); lee.memoryLoaded = false; status('source removed from memory', 'ok');
   };
@@ -6602,7 +7141,7 @@ function textDialog(title, label, value = '') {
   });
 }
 
-function confirmDialog(title, detail, action = 'delete') {
+function confirmDialog(title, detail, action = 'confirm') {
   return new Promise(resolve => {
     let settled = false;
     const done = value => { if (settled) return; settled = true; m.remove(); resolve(value); };
@@ -6670,9 +7209,9 @@ async function activateRoot(path) {
   leeLeft('files');
   const node = $$('.lee-root').find(n => n.dataset.path === path);
   if (node) { selectTreeNode(node); await loadTreeDir(node); node.scrollIntoView({block: 'nearest'}); }
-  gitUI.repo = '';                  // the panel follows the workspace again, not a pinned repo
+  gitUI.repo = '';                  // the panels follow the workspace again, not a pinned repo
   refreshProjectPills();
-  if ($('#left')?.classList.contains('left-git')) renderGitPanel();
+  projectChanged();
   status(`project · ${path.split('/').pop() || path}`);
 }
 window.leeActivateRoot = activateRoot;
@@ -6825,21 +7364,44 @@ async function quickOpen(searchMode) {
   paint(); setTimeout(() => input.focus(), 0);
 }
 
+// The modes, in the order Tab walks them. `all` leads and is the default: it ranks every backend
+// together, so it is the one that answers without you having to know which store the thing you
+// half-remember is in. A rail rather than a row because each one carries a count, and a count is
+// the thing that tells you where to look next when the mode you picked came back empty.
+const SEARCH_MODES = [
+  ['all', 'all', 'rank ripgrep, symbols, FTS and semantic results together'],
+  ['rg', 'rg', 'ripgrep: literal search over current files, fastest'],
+  ['context', 'context', 'Kosha composed retrieval across repository code and installed packages'],
+  ['repo', 'repo', 'Kosha repository code store'],
+  ['env', 'packages', 'Kosha installed-package environment store'],
+  ['symbols', 'symbols', 'Kosha symbols: repository and indexed packages'],
+  ['ann', 'ANN', 'Kosha embedding ANN'],
+];
+
 async function codeSearch() {
-  let hits = [], sel = 0, backend = '', mode = 'context', previewView = null, searchSeq = 0;
+  let hits = [], sel = 0, backend = '', previewView = null, searchSeq = 0;
+  let mode = localStorage.getItem('lee-search-mode') || 'all';
+  if (!SEARCH_MODES.some(([id]) => id === mode)) mode = 'all';
+  const counts = {};
   const m = modal(
     `<div class="lee-searchbar"><input class="lee-input" id="cs" placeholder="search code, symbols and meaning…" autofocus>
-     <div class="lee-segbar lee-searchmodes" aria-label="search mode">
-       <button class="lee-seg active" data-mode="context" title="Kosha composed retrieval across repository code and installed packages">context</button>
-       <button class="lee-seg" data-mode="repo" title="Kosha repository code store">repo</button>
-       <button class="lee-seg" data-mode="env" title="Kosha installed-package environment store">packages</button>
-       <button class="lee-seg" data-mode="all" title="rank ripgrep, symbols, FTS and semantic repo results together">all</button>
-       <button class="lee-seg" data-mode="rg" title="ripgrep: literal search over current files">rg</button>
-       <button class="lee-seg" data-mode="symbols" title="Kosha symbols: repository and indexed packages">symbols</button>
-       <button class="lee-seg" data-mode="ann" title="Kosha embedding ANN">ANN</button>
-     </div><button class="lee-btn" id="kosharefresh" type="button">sync</button></div>` +
+     <button class="lee-btn" id="kosharefresh" type="button">sync</button></div>` +
+    // Where and what, beside which backend. A workspace holds several checkouts, so "this
+    // project" is the useful default and "everything open" is the deliberate widening.
+    `<div class="lee-searchfilters">
+       <label>in<select id="csscope">
+         <option value="project">this project</option>
+         <option value="workspace">every open folder</option></select></label>
+       <label>files<input class="lee-input" id="csexts" placeholder="py, ts — blank for all"
+              aria-label="restrict to file extensions"></label>
+       <span class="lee-dim" id="csscopenote"></span></div>` +
     `<div class="lee-kosha-status" id="koshastatus"><span>Opening Kosha…</span></div>
-     <div class="lee-code-search-body"><div class="lee-modallist" id="cslist"><div class="lee-dim">type to search repository + environment context</div></div>
+     <div class="lee-code-search-body">
+       <nav class="lee-searchrail" id="csrail" aria-label="search mode">${SEARCH_MODES.map(([id, label, tip]) =>
+         `<button class="lee-searchrail-mode" data-mode="${id}" title="${esc(tip)}">` +
+         `<span>${esc(label)}</span><b data-count-for="${id}"></b></button>`).join('')}
+         <span class="lee-dim lee-searchrail-hint">tab / shift+tab</span></nav>
+       <div class="lee-modallist" id="cslist"><div class="lee-dim">type to search repository + environment context</div></div>
        <aside class="lee-search-preview"><header><div><strong id="cspreviewtitle">Code preview</strong>` +
        `<span id="cspreviewmeta">Select a result</span></div><button class="lee-btn go" id="csopen" disabled>Open file</button></header>` +
        `<div id="cspreview"><div class="lee-search-preview-empty">Matches open here with syntax highlighting.</div></div>` +
@@ -6848,9 +7410,41 @@ async function codeSearch() {
       if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, hits.length - 1); paint(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); paint(); }
       else if (e.key === 'Enter') { e.preventDefault(); go(); }
+      // Tab walks the modes rather than the focus. The dialog traps Tab anyway, so the only
+      // thing given up is a focus order over four controls, and what is bought is trying the
+      // same query against another backend without leaving the keyboard.
+      else if (e.key === 'Tab') { e.preventDefault(); cycleMode(e.shiftKey ? -1 : 1); }
     }, () => { if (previewView) LeeCM.destroy(previewView); });
   m.classList.add('lee-code-search-modal');
   const list = $('#cslist', m), input = $('#cs', m), preview = $('#cspreview', m), open = $('#csopen', m);
+  const scopeEl = $('#csscope', m), extsEl = $('#csexts', m);
+  // Remembered, because a person who works in Python does not want to retype `py` every time
+  // they open this box -- and the scope they chose is a statement about how they work.
+  scopeEl.value = localStorage.getItem('lee-search-scope') || 'project';
+  extsEl.value = localStorage.getItem('lee-search-exts') || '';
+  const paintRail = () => {
+    $$('.lee-searchrail-mode', m).forEach(b =>
+      b.classList.toggle('active', b.dataset.mode === mode));
+    // A count only means something once that mode has actually run. Blank is "not asked yet",
+    // which is a different thing from nought and must not look like it.
+    SEARCH_MODES.forEach(([id]) => {
+      const el = $(`[data-count-for="${id}"]`, m); if (!el) return;
+      el.textContent = counts[id] == null ? '' : counts[id];
+      el.classList.toggle('zero', counts[id] === 0);
+    });
+  };
+  const setMode = next => {
+    if (!next || next === mode) return;
+    mode = next; localStorage.setItem('lee-search-mode', mode);
+    paintRail();
+    if (input.value.trim()) search(); else paint();
+    input.focus();
+  };
+  const cycleMode = step => {
+    const at = SEARCH_MODES.findIndex(([id]) => id === mode);
+    const next = SEARCH_MODES[(at + step + SEARCH_MODES.length) % SEARCH_MODES.length];
+    setMode(next[0]);
+  };
   const showPreview = () => {
     if (previewView) { LeeCM.destroy(previewView); previewView = null; }
     const h = hits[sel];
@@ -6870,10 +7464,10 @@ async function codeSearch() {
     const relations = $('#csrelations', m), callers = h.callers || [];
     relations.innerHTML = callers.length ? `<span>called by</span>` + callers.map(name =>
       `<button data-symbol="${esc(name)}">${esc(name.split('.').pop())}</button>`).join('') : '';
+    // Following a caller is a graph question, so it switches to the mode that answers one.
     $$('[data-symbol]', relations).forEach(button => button.onclick = () => {
-      input.value = button.dataset.symbol; mode = 'context';
-      $$('.lee-searchmodes .lee-seg', m).forEach(x => x.classList.toggle('active', x.dataset.mode === mode));
-      search();
+      input.value = button.dataset.symbol;
+      if (mode === 'context') search(); else setMode('context');
     });
   };
   const paint = () => {
@@ -6908,11 +7502,13 @@ async function codeSearch() {
     }
     m.remove(); openLocation(h);
   };
+  // One click opens at the line, because that is what the box is *for*. It used to select on the
+  // first click and need a second one on the same row to go anywhere, so the obvious gesture
+  // landed in a preview pane and looked like the result was not clickable. The preview is still
+  // reachable without committing: arrow keys move the selection and paint it.
   list.onclick = e => {
     const row = e.target.closest('[data-i]'); if (!row) return;
-    const next = +row.dataset.i;
-    if (next === sel) { if (e.detail > 1) go(); else showPreview(); return; }
-    sel = next; paint();
+    sel = +row.dataset.i; paint(); go();
   };
   open.onclick = go;
   let timer;
@@ -6923,9 +7519,16 @@ async function codeSearch() {
       if (!q) { hits = []; backend = ''; paint(); return; }
       list.innerHTML = `<div class="lee-search-progress"><span></span>searching ${esc(mode === 'context' ? 'Kosha repo + environment context' : mode === 'all' ? 'rg, symbols, FTS and ANN' : mode)}…</div>`;
       try {
-        const d = await api('/search?q=' + encodeURIComponent(q) + '&mode=' + mode);
+        const d = await api('/search?q=' + encodeURIComponent(q) + '&mode=' + mode +
+                            '&scope=' + encodeURIComponent(scopeEl.value) +
+                            '&exts=' + encodeURIComponent(extsEl.value.trim()));
         if (seq !== searchSeq) return;
         hits = d.hits || []; backend = d.backend + (d.note ? ' · ' + d.note : ''); sel = 0;
+        // Which folders were actually walked, because "no matches" and "no matches *here*" are
+        // different answers and only one of them means the thing is not in your code.
+        const where = (d.searched || []).map(p => p.split('/').pop()).join(', ');
+        $('#csscopenote', m).textContent = where ? `searched ${where}` : '';
+        counts[mode] = hits.length; paintRail();
         paint(); status(`search: ${d.backend}${d.note ? ' — ' + d.note : ''}`);
       } catch (e) {
         if (seq !== searchSeq) return;
@@ -6934,6 +7537,14 @@ async function codeSearch() {
     }, mode === 'rg' ? 120 : mode === 'all' || mode === 'context' ? 360 : 280);
   };
   input.addEventListener('input', search);
+  scopeEl.addEventListener('change', () => {
+    localStorage.setItem('lee-search-scope', scopeEl.value);
+    if (input.value.trim()) search();
+  });
+  extsEl.addEventListener('input', () => {
+    localStorage.setItem('lee-search-exts', extsEl.value.trim());
+    if (input.value.trim()) search();
+  });
   api('/code/status').then(d => {
     const el = $('#koshastatus', m); if (!el) return;
     el.innerHTML = d.ok ? `<span class="ok">Kosha connected</span><span>${Number(d.files || 0).toLocaleString()} files</span>` +
@@ -6946,12 +7557,11 @@ async function codeSearch() {
     catch (e) { button.textContent = 'retry sync'; status(e.message || String(e), 'err'); }
     finally { button.disabled = false; }
   };
-  $('.lee-searchmodes', m).onclick = e => {
+  $('#csrail', m).onclick = e => {
     const b = e.target.closest('[data-mode]'); if (!b) return;
-    e.preventDefault(); mode = b.dataset.mode;
-    $$('.lee-searchmodes .lee-seg', m).forEach(x => x.classList.toggle('active', x === b));
-    search(); input.focus();
+    e.preventDefault(); setMode(b.dataset.mode);
   };
+  paintRail();
   setTimeout(() => input.focus(), 0);
 }
 
@@ -6995,8 +7605,11 @@ async function syncCodeIndex() {
 async function leeSymbols() {
   const host = $('#symbols'), label = $('#symbolfile'); if (!host) return;
   const name = compactPath(lee.path || ''); if (label) label.textContent = name ? '· ' + name : '';
-  if (!lee.path || lee.kind !== 'text') {
-    host.innerHTML = '<div class="lee-dim">Open a source file to see its symbols.</div>'; return;
+  // Notebooks are included: their defs and classes are real structure, and the server reads
+  // them out of the cells rather than out of the JSON. The outline is of the file on disk, so
+  // a def typed and not yet saved appears once autosave has run.
+  if (!lee.path || (lee.kind !== 'text' && lee.kind !== 'notebook')) {
+    host.innerHTML = '<div class="lee-dim">Open a source file or notebook to see its symbols.</div>'; return;
   }
   host.innerHTML = '<div class="lee-symbol-loading">Reading structure…</div>';
   try {
@@ -7005,12 +7618,19 @@ async function leeSymbols() {
     host.innerHTML = rows.length ? rows.map((s, i) => {
       const depth = Math.max(0, Math.floor(Number(s.score || 0) / 4));
       const kind = /^class\s/.test(s.text || '') ? 'class' : 'function';
+      // A notebook symbol is addressed by cell, and the JSON line it also carries would be a
+      // meaningless number to show: the row says which cell and where in it instead.
+      const cellLine = Number(s.cell_line || 0), cellIndex = Number(s.cell_index ?? -1);
+      const where = cellLine > 0 ? `${cellIndex + 1}:${cellLine}` : String(Number(s.line || 1));
       return `<button class="lee-symbol-row" role="treeitem" style="--depth:${depth}" ` +
-        `data-line="${Number(s.line || 1)}"><span class="lee-symbol-kind">${kind === 'class' ? 'C' : 'ƒ'}</span>` +
-        `<span>${esc(s.symbol)}</span><small>${Number(s.line || 1)}</small></button>`;
+        `data-line="${Number(s.line || 1)}" data-cell="${esc(s.cell || '')}" ` +
+        `data-cell-index="${cellIndex}" data-cell-line="${cellLine}">` +
+        `<span class="lee-symbol-kind">${kind === 'class' ? 'C' : 'ƒ'}</span>` +
+        `<span>${esc(s.symbol)}</span><small>${esc(where)}</small></button>`;
     }).join('') : '<div class="lee-dim">No functions or classes in this file.</div>';
     $$('.lee-symbol-row', host).forEach(row => row.onclick = () => {
-      openLocation({path: lee.path, line: +row.dataset.line});
+      openLocation({path: lee.path, line: +row.dataset.line, cell: row.dataset.cell,
+                    cell_index: +row.dataset.cellIndex, cell_line: +row.dataset.cellLine});
       if (matchMedia('(max-width: 1100px)').matches) leePane('left', false);
     });
   } catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
@@ -7377,7 +7997,7 @@ async function deleteEntry() {
   const warning = folder
     ? 'This permanently deletes the folder and everything inside it from disk.'
     : 'This permanently deletes the file from disk.';
-  if (lee.filePrefs.confirmDelete !== false && !await confirmDialog('delete ' + name + ' from disk', warning)) return;
+  if (lee.filePrefs.confirmDelete !== false && !await confirmDialog('delete ' + name + ' from disk', warning, 'delete')) return;
   const parent = sel.parentElement?.closest('.lee-node.lee-dir')?.dataset.path;
   await post('/fs/delete', {path: sel.dataset.path});
   await refreshFileTree(parent);
@@ -7386,7 +8006,7 @@ async function removeRoot() {
   const sel = treeSel();
   if (!sel?.classList.contains('lee-root')) return status('select an open project root first', 'err');
   const name = sel.dataset.path.split('/').pop();
-  if (!await confirmDialog('remove ' + name + ' from workspace', 'Files stay on disk. Open tabs inside it will close.')) return;
+  if (!await confirmDialog('remove ' + name + ' from workspace', 'Files stay on disk. Open tabs inside it will close.', 'remove')) return;
   await post('/fs/remove-root', {path: sel.dataset.path});
   await refreshFileTree();
   status(name + ' removed from the workspace; files were not deleted', 'ok');
