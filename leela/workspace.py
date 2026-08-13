@@ -173,6 +173,13 @@ class Workspace:
         from .core.journal import OperationJournal
         journal_key = hashlib.sha256('\0'.join(map(str, self.fs.roots)).encode()).hexdigest()[:16]
         self.journal = OperationJournal(leela_cfg/'journals'/f'{journal_key}.json', self.fs)
+        # Queued work, keyed the same way: a job row outlives the request that made it, and the
+        # runner owns threads, so it is built once per workspace rather than per request. Clip
+        # kinds are registered here because this is where the vault and the code index both are.
+        from .blocks.jobs.clip import register_all
+        from .blocks.jobs.jobs import Jobs
+        self.jobs = Jobs(leela_cfg/'jobs'/f'{journal_key}.db', memory=self.memory)
+        register_all(self.jobs, self.memory, search=self.search, cwd=root)
         self._lsp = None
         # Which live inspector the variable panel is looking at, when it is not the tab's
         # own kernel. A base URL, because that is what identifies an env across processes.

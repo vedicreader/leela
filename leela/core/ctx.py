@@ -34,7 +34,7 @@ __all__ = ['Ctx', 'CAPABILITIES', 'EAGER', 'LAZY', 'APP']
 
 # Bound at construction: cheap attribute reads on an already-built Workspace.
 EAGER = ('fs', 'pool', 'search', 'memory', 'research', 'runs', 'journal', 'terms', 'dev',
-         'approvals')
+         'approvals', 'jobs')
 
 # Resolved on access. `ai`/`inline_ai`/`completer`/`lsp` construct something expensive on
 # first touch; `tab`/`pending_approval` are cheap but read mutable session state, so

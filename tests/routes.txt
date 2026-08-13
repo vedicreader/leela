@@ -45,6 +45,7 @@ GET,POST /agent/stream
 GET,POST /agent/tool-preview
 GET,POST /agent/transcript
 GET,POST /agent/turn-transaction
+GET,POST /clip
 GET,POST /clusters
 GET,POST /code/definition
 GET,POST /code/package-api
@@ -122,6 +123,9 @@ GET,POST /infra
 GET,POST /infra/action
 GET,POST /infra/records
 GET,POST /inspect
+GET,POST /jobs
+GET,POST /jobs/{jid}
+GET,POST /jobs/{jid}/retry
 GET,POST /kernel/cwd
 GET,POST /kernel/info
 GET,POST /kernel/interrupt
@@ -209,6 +213,14 @@ GET,POST /vars/expand
 GET,POST /vars/grid
 GET,POST /vars/promote
 GET,POST /vars/set
+GET,POST /vault/noisy
+GET,POST /vault/pii
+GET,POST /vault/poll
+GET,POST /vault/shelves
+GET,POST /vault/tidy
+GET,POST /vault/unwatch
+GET,POST /vault/watch
+GET,POST /vault/watches
 GET,POST /workflows
 GET,POST /workflows/action
 GET,POST /workflows/catalogue

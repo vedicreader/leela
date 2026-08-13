@@ -30,6 +30,7 @@ from .blocks import drive as drive_block
 from .blocks import editor as editor_block
 from .blocks import fs as fs_block
 from .blocks import git as git_block
+from .blocks import jobs as jobs_block
 from .blocks import keys as keys_block
 from .blocks import lsp as lsp_block
 from .blocks import memory as memory_block
@@ -81,7 +82,7 @@ __all__ = ['ide_app', 'serve_ide']
 #
 # Everything not listed here is still a closure inside `ide_app`; see `docs/blocks.md` for
 # the extraction order and what remains.
-BLOCKS = [keys_block, settings_block, search_block, memory_block,
+BLOCKS = [keys_block, settings_block, search_block, memory_block, jobs_block,
           research_block, term_block, runs_block, workspace_block, git_block,
           workflows_block, pipelines_block, drive_block, stack_block,
           fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block]
@@ -2579,6 +2580,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             broker.register(ws.pool)
             if root not in ws.fs.roots: ws.add_root(root)
             if ws.restore_remembered_agent_state(): ws.save()
+            ws.jobs.tick()
             app = ide_app(ws, gate, workspace_catalog=lambda: hub.catalog())
             sites.append(WorkspaceSite(slug, root.name, str(root), app))
         hub = WorkspaceHub(sites, port)
@@ -2618,6 +2620,9 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             ws.add_root(Path.home() if getattr(sys, 'frozen', False) else os.getcwd())
         if ws.restore_remembered_agent_state(): ws.save()
         app = ide_app(ws, gate)
+        # Watches only come due if something asks. Started here rather than in the block, so
+        # building an app in a test does not leave a polling thread behind. `$LEELA_POLL_SECONDS`.
+        if (secs := ws.jobs.tick()): print(f'  vault watches polled every {secs}s')
         print(f'leela  http://{host}:{port}   folders: ' + ', '.join(p.name for p in ws.fs.roots))
         if app_window:
             import threading, time, urllib.request
