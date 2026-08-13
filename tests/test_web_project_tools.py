@@ -734,8 +734,11 @@ def test_markdown_renders_beside_its_source_without_giving_up_the_editor(tmp_pat
     # CodeMirror measures wrongly while display:none, so it re-measures on the way back.
     assert 'requestAnimationFrame(() => LeeCM.focus(v))' in mount
 
+    # The PDF viewer shares `.lee-doc-*` with this, which is the only reason it is asserted here;
+    # its own behaviour, including the named URL, belongs to
+    # `test_a_pdf_is_served_under_its_own_name_and_fills_the_pane`.
     pdf = JS[JS.index('function mountPdf'):JS.index('async function mountFile')]
-    assert "'/file/raw?path='" in pdf and 'lee-pdf' in pdf
+    assert "'?path='" in pdf and 'lee-pdf' in pdf
     assert 'download' in pdf and 'open externally' in pdf
     assert '.lee-pdf' in CSS and '.lee-doc-body' in CSS
     save = JS[JS.index('async function saveTab'):JS.index('async function saveAllTabs')]
@@ -1003,3 +1006,57 @@ def test_the_rendered_markdown_pane_carries_the_change_marks_of_the_gutter_besid
     mount = JS[JS.index('async function mountFile'):JS.index('async function mountSecondary')]
     assert 'paintMarkdownFileChanges(el, git.ranges || [])' in mount
     assert "if (isMd) renderMarkdown($('#mdpreview'), txt);" in mount, 'a keystroke re-render carries no marks'
+
+
+def test_a_pdf_is_served_under_its_own_name_and_fills_the_pane(tmp_path):
+    """Two things were wrong with the viewer: it was short, and every document was called "raw".
+
+    The browser's PDF viewer titles itself from the last path segment, so the filename has to be
+    in the path. That collides with FastHTML's static-asset catch-all, `/{fname:path}.{ext:static}`,
+    which is registered ahead of every block and matches anything ending in a known extension --
+    so the request 404ed from the static handler and never reached this route. A name without a dot
+    worked, which is what made it look like the dot was at fault rather than the ordering.
+    """
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    pdf = tmp_path/'2306.14881.pdf'; pdf.write_bytes(b'%PDF-1.4\n%%EOF\n')
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c:
+        named = c.get('/file/raw/2306.14881.pdf', params={'path': str(pdf)})
+        assert named.status_code == 200 and named.headers['content-type'] == 'application/pdf'
+        assert 'inline; filename="2306.14881.pdf"' in named.headers['content-disposition']
+        assert c.get('/file/raw', params={'path': str(pdf)}).status_code == 200, 'both spellings'
+        # Reordering must not have cost the real static route its own paths.
+        assert c.get('/leestatic/lee-ide.css').status_code == 200
+        # The name in the URL is decoration; it must never be a second way to ask for a file.
+        assert c.get('/file/raw/passwd.pdf', params={'path': '/etc/passwd'}).status_code == 400
+
+    mount = JS[JS.index('function mountPdf'):JS.index('async function mountFile')]
+    assert "'/file/raw/' + encodeURIComponent(name) + '?path='" in mount
+    assert 'class="lee-doc"' in mount, 'a column that fills the pane'
+    # A grid with no height resolves to its content, and an iframe has no intrinsic height, so the
+    # body sized itself to the iframe minimum and left the rest of the tab blank.
+    assert '.lee-doc { display: flex; flex-direction: column; height: 100%' in CSS
+    assert '.lee-doc-body { display: grid; flex: 1 1 auto; min-height: 0;' in CSS
+
+
+def test_source_control_notices_an_edit_and_not_only_a_new_file():
+    """The reported bug: the panel only refreshed when refreshed by hand.
+
+    The poll was running the whole time. Its change signature carried the *count* of changed files,
+    and the count is identical before and after almost every edit anyone actually makes -- typing in
+    a file that was already modified moves no count, so nothing was ever considered to have
+    changed. The per-file status codes and line counts are what differ, and `/git/info` was already
+    returning them on every poll.
+    """
+    block = JS[JS.index('function gitSignature'):JS.index('function noticeGitState')]
+    for field in ('c.path', 'c.index', 'c.worktree', 'staged_stat', 'unstaged_stat'):
+        assert field in block, field
+    assert '(d.changes || []).length' not in block, 'the count alone was the bug'
+
+    # Saving already repaints the pills, so with the signature fixed a save refreshes at once
+    # rather than waiting for the next poll.
+    save = JS[JS.index('async function saveTab'):JS.index('async function saveAllTabs')]
+    assert 'refreshProjectPills' in save
+    pills = JS[JS.index('async function refreshProjectPills'):JS.index('function projectRepo')]
+    assert 'noticeGitState(d)' in pills and "api('/git/info')" in pills
+    assert 'setInterval(refreshProjectPills, 5000)' in JS, 'and an external change lands by poll'

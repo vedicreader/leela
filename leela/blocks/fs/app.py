@@ -134,8 +134,7 @@ def connect(app, ctx):
             return {'ok': True}
         except Exception as e: return fail(e)
 
-    @rt('/file/raw')
-    def file_raw(path: str = '', download: bool = False):
+    def _serve_raw(path, download):
         """One file's bytes, for the documents the browser renders better than we could.
 
         A PDF is the case this exists for: Chrome and Safari ship a viewer, and the honest thing
@@ -158,6 +157,38 @@ def connect(app, ctx):
                 'Content-Disposition': f'{disposition}; filename="{p.name}"',
                 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store'})
         except Exception as e: return fail(e)
+
+    @rt('/file/raw')
+    def file_raw(path: str = '', download: bool = False):
+        return _serve_raw(path, download)
+
+    @rt('/file/raw/{name}')
+    def file_raw_named(name: str, path: str = '', download: bool = False):
+        """The same bytes, with the filename in the URL so a viewer has something to call it.
+
+        The browser's PDF viewer titles itself from the last path segment, so every document
+        reached at `/file/raw?path=…` was called "raw" on screen. `name` is decoration and is
+        deliberately never resolved against the disk -- the file comes from `path` through
+        `ctx.fs._check`, exactly as before, because a name in a URL that could select a file would
+        be a second way in with no boundary on it.
+        """
+        return _serve_raw(path, download)
+
+    # FastHTML registers a static-asset catch-all, `/{fname:path}.{ext:static}`, ahead of every
+    # block's routes, and it matches any path whose last segment ends in a known asset extension --
+    # `.pdf` among them. So `/file/raw/2306.14881.pdf` was answered by the static handler, which
+    # looked for that file beside the launcher and returned 404, and the route above was never
+    # reached. `/file/raw/x` worked, which is what made it look like the dot was the problem rather
+    # than the ordering.
+    #
+    # Moving this one route in front of it is the narrowest fix available: the alternative is a URL
+    # whose last segment is not a filename, and a URL whose last segment *is* the filename is the
+    # entire reason this route exists.
+    _routes = app.router.routes
+    _named = _routes.pop(next(i for i, r in enumerate(_routes)
+                              if getattr(r, 'path', '') == '/file/raw/{name}'))
+    _routes.insert(next((i for i, r in enumerate(_routes)
+                         if '{ext:static}' in getattr(r, 'path', '')), len(_routes)), _named)
 
     @rt('/fs/find')
     def fs_find(q: str = '', limit: int = 200):

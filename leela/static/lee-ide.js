@@ -1289,13 +1289,19 @@ function rememberBuffer(key, payload) {
 // feature is an `<iframe>` pointed at the bytes, plus the two things an iframe cannot do for
 // itself: open the file outside Leela, and say something useful if the viewer is disabled.
 function mountPdf(host, st) {
-  const raw = '/file/raw?path=' + encodeURIComponent(st.path);
+  // The filename goes in the *path* as well as the query, because the browser's own viewer titles
+  // itself from the last path segment -- so `/file/raw?path=…` opened every document called
+  // "raw". The segment is decoration: the server still resolves the file from `path` alone, and
+  // must, or a name in a URL would become a way to ask for a different file.
+  const name = (st.path || '').split('/').pop() || 'document.pdf';
+  const raw = '/file/raw/' + encodeURIComponent(name) + '?path=' + encodeURIComponent(st.path);
   host.innerHTML =
+    `<div class="lee-doc">` +
     `<div class="lee-doc-head"><span>${esc(compactPath(st.path))}</span><span class="lee-spacer"></span>` +
     `<a class="lee-btn" href="${esc(raw)}" target="_blank" rel="noopener noreferrer">open externally</a>` +
     `<a class="lee-btn" href="${esc(raw)}&download=true" download>download</a></div>` +
     `<div class="lee-doc-body"><iframe class="lee-pdf" title="${esc(st.title || 'PDF')}" src="${esc(raw)}"></iframe>` +
-    `<noscript class="lee-dim">This view needs the browser's PDF viewer.</noscript></div>`;
+    `<noscript class="lee-dim">This view needs the browser's PDF viewer.</noscript></div></div>`;
 }
 
 async function mountFile(host, st) {
@@ -5109,7 +5115,20 @@ addEventListener('resize', queueNotebookOverview);
    `head` is in the signature because a commit is the case the others miss: branch, counts
    and file list all read the same afterwards, and the only thing that moved is the sha. */
 function gitSignature(d) {
-  return [d.root, d.branch, d.head, d.upstream, d.ahead, d.behind, (d.changes || []).length,
+  /* Each changed file's own state, not merely how many there are. The count is the same before
+     and after almost every edit a person actually makes -- typing in a file that was already
+     modified moves no count, so the signature did not move and the panel went on showing the
+     stats it drew when the file first changed. That is the "source control does not refresh until
+     I refresh it" report: the poll was running the whole time and finding nothing to say.
+
+     The staged/worktree status codes and the line counts are what actually differ, so they are
+     what goes in. Cheap: `/git/info` already returns all of it on every poll, so this reads a
+     payload that was being fetched and thrown away. */
+  const changes = (d.changes || []).map(c =>
+    [c.path, c.index, c.worktree,
+     (c.staged_stat || {}).additions, (c.staged_stat || {}).deletions,
+     (c.unstaged_stat || {}).additions, (c.unstaged_stat || {}).deletions].join(':')).join(',');
+  return [d.root, d.branch, d.head, d.upstream, d.ahead, d.behind, changes,
           (d.stashes || []).length, (d.operation || {}).active || ''].join('|');
 }
 function noticeGitState(d) {
