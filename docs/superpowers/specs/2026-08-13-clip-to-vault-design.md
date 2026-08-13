@@ -14,8 +14,8 @@ last, over the settled result, and is not specified here.
 Cursor branched from `0f77fdc`, 66 commits behind. Its change is 31 files, +1203/-484:
 
 - `Collapse Search and Memory onto kosha/litesearch/vishalakshi primitives` — the wiring that puts
-  `memory.py` on `vishalakshi.Vault`. Leela declares `vishalakshi>=0.1.2` and registers no
-  provider, so this commit is what first makes the dependency real.
+  `memory.py` on `vishalakshi.Vault`. Leela declares `vishalakshi>=0.1.2` and imports it only in
+  the migration CLI, so this commit is what first makes the dependency real at runtime.
 - `Polish Cursor theme` / `Tighten Cursor chrome` — `lee-ide.css` +111, `lee-ide.js` +79.
 - Adds `tests/blocks/`, `tools/shots.py`.
 
@@ -33,35 +33,62 @@ Resolutions:
   it, because a theme name is not a valid `color-scheme` value. Map name → `color-scheme` instead.
 - Remaining 7 files: ordinary resolution.
 
-### 2. Library catch-up
+### 2. Library catch-up, including ramabana
 
 | library | leela pins | actual | what leela gains |
 |---|---|---|---|
 | `vishalakshi` | `>=0.1.2` | 0.1.6 | `pii`, `quality`, `doc_marks`, `watch`/`poll`, `use_chat` |
 | `fossick` | `>=0.1.8` | 0.1.11 | `search` RRF fusion, `research` `dropped`/`focus`, `pages=` |
-| `rishi` | test-only | 0.1.7 | nothing directly; ramabana owns it |
+| `ramabana` | `>=0.1.0` | 0.1.1 | `vault.VaultHost`, `spec.SpecHost` |
+| `rishi` | test-only | 0.1.7 | reached through ramabana, not directly |
 
 `fossick.rsearch` does not exist. The function is `research(q, n=5, pages=1, ...)` returning
 `dict(query, sources, digest, dropped, region, curation, plan)`, each source carrying
 `title, href, tier, date, queries, md`. `blocks/research/research.py` calls `f.search` and reads
 only `digest` from research; it should surface `dropped` (with reasons) and `plan`.
 
-Deferred to their own jobs, in the ramabana repo:
+ramabana is upgraded in the same pass rather than worked around. Its own floors are stale enough to
+be wrong: `rishi>=0.1.1` against 0.1.7, `fossick>=0.1.0` against 0.1.11, and `vishalakshi>=0.0.1`
+while `vault.py` calls `federate`, `web`, `ask(instruction=)` and `acquire.ACTIONS` — none of which
+a 0.0.1 has. Raising them is part of the work.
 
-- **Cursor models.** ramabana has no knowledge of the `cursor` runtime. Four gates in
-  `ramabana/core.py`: `register_model` rejects the runtime it just inferred; `runtime_available`
-  has no probe (rishi probes with `cursor_bin`/`sdk_available`, not an importable module);
-  `resolve('cursor/grok-4.5')` returns `backend='remote'` and builds a `RemoteChat` for a Cursor
-  model — a silent wrong-backend bug, not a missing feature; `MODELS` has no cursor entries. Side
-  effects once `backend == 'cursor'` exists: `ModelSpec.local` is `backend != 'remote'`, so a
-  cursor spec reports local and reaches engine-sharing in `RishiBackend.spawn` and
-  `Agent.lend_model`, which a subprocess CLI cannot satisfy; `_runtime_kw` applies
-  `tool_mode='tags'` only for `'remote'`, and Cursor requires the tag protocol.
-  `leela/blocks/agent/models.py:11` mirrors the same `_RUNTIMES` tuple and has drifted again.
-- **`ramabana.spec`.** `fastspec` is undeclared, present only transitively via `ghapi` and
-  `python-fastllm`. `SpecHost` is instantiated nowhere and has no tests. The API-spec clip below is
-  designed against it but does not ship until ramabana declares the dependency and provides a host
-  combining vault and spec.
+Three ramabana changes come with it:
+
+- **Shelf routing on `VaultHost`.** Fixed upstream so leela subclasses less. `VaultHost` currently
+  names no shelf: `read_url` files `kind='web'`, `KIND_SHELF` has no `'web'` entry, so every write
+  lands on the default `'store'`. Reads already fuse across shelves via `federate(shelves=True)`.
+- **`fastspec` declared, and a host that reaches `SpecHost`.** `fastspec` is currently present only
+  transitively via `ghapi` and `python-fastllm`, so `spec_ops`/`api_call` work by accident. Neither
+  `cli.mk_host` nor `mcp.main` ever builds a `SpecHost`, and there are no tests. The API-spec clip
+  below depends on this.
+- **The `cursor` runtime.** Four gates in `ramabana/core.py`: `register_model` rejects the runtime
+  it just inferred from the model id; `runtime_available` has no probe, and a `find_spec` check is
+  the wrong shape because rishi probes with `cursor_bin`/`sdk_available` rather than an importable
+  module; `resolve('cursor/grok-4.5')` returns `backend='remote'` and `RishiBackend._start` then
+  builds a `RemoteChat` for a Cursor model, which is a silent wrong-backend bug rather than a
+  missing feature; `MODELS` carries no cursor entries so the picker offers none. Two side effects
+  once `backend == 'cursor'` exists: `ModelSpec.local` is `backend != 'remote'`, so a cursor spec
+  reports local and reaches engine sharing in `RishiBackend.spawn` and `Agent.lend_model`, which a
+  subprocess-backed CLI cannot satisfy; and `_runtime_kw` applies `tool_mode='tags'` only for
+  `'remote'`, while Cursor requires the tag protocol. `leela/blocks/agent/models.py:11` mirrors the
+  same `_RUNTIMES` tuple and has drifted out of step again.
+
+### The provider socket is live
+
+`Workspace.__init__` builds two subsystems through the registry — `workspace.py:166` for search,
+`:169` for memory, importing `core.providers.build` as `build_provider`. So `LEELA_MEMORY` and
+`LEELA_SEARCH` are read by `selected()` today; `LEELA_MEMORY=vishalakshi` raises
+`ProviderError("unknown memory provider 'vishalakshi'; available: leela")`, which is the module's
+documented "failure is loud" behaviour. The socket is wired and read, and nothing is plugged in.
+
+Two defects in the same layer, both deferred to workstream 3 rather than fixed here:
+
+- `@provider('runtime', DEFAULT)` registers but `build('runtime', …)` is never called, so
+  `LEELA_RUNTIME` does nothing. Either wire it or drop the registration and the `ENV` entry.
+- `conformance.CALLS` is a hand-maintained table of keyword names that must be updated by hand
+  whenever a call site changes — the same failure mode as the drifted `_RUNTIMES` tuple. It does
+  catch real signature breaks that `isinstance` would pass, so the decision is how to keep it
+  honest, not simply whether to delete it.
 
 ## Architecture
 
@@ -78,9 +105,42 @@ Inherited unchanged: `VaultHost.ask` strips `pii` from kwargs, so a tool argumen
 retrieved private sections to a hosted model. Leela does not re-decide this and does not expose it
 as a setting.
 
-What the subclass adds is shelf routing. `VaultHost` never names a shelf — `read_url` files
-`kind='web'`, `KIND_SHELF` has no `'web'` entry, so every write lands on the default `'store'`.
-Reads already fuse across shelves through `federate(shelves=True)`; only writes need a destination.
+Shelf routing itself is fixed upstream in `VaultHost` (prerequisite 2), so the subclass carries
+leela's policy — which shelf a workspace uses — rather than the mechanism.
+
+### `LeelaVault` satisfies `MemoryPort`
+
+`LeelaVault` registers as `@provider('memory', 'vishalakshi')`, so `LEELA_MEMORY=vishalakshi`
+selects it and the two prose stores become comparable on equal terms. This is what the socket was
+built for.
+
+That requires the naming adapter `ports.py:34` predicts. `VaultHost` speaks `memory_search`,
+`memory_read`, `memory_tree`, `memory_topics`, `memory_forget`; `MemoryPort` wants:
+
+| `MemoryPort` | over `Vault` |
+|---|---|
+| `search(query, limit)` | `Vault.search` |
+| `context(query, sections, related, max_read)` | `Vault.context` |
+| `clusters(limit)` | `topic_tree` / `show_topics` |
+| `toc(doc, depth)` | `memory_tree`, `_trim` at `depth` |
+| `read(node_id, max_chars)` | `Vault.read` |
+| `exact_text(doc_id)` | `Vault.document` |
+| `remember(doc, query, force, extra_meta)` | `Vault.add` with `meta` |
+| `remember_research(query, docs, digest)` | `Vault.add` per source + a digest note |
+| `agent_notes` / `agent_states` / `agent_state_text` | the global `leela` shelf, filtered by `kind` |
+| `remember_agent_note` / `remember_agent_state` | `Vault.note` on the `leela` shelf |
+| `documents(limit)` | `Vault.sources` |
+| `forget(doc_id)` | `Vault.forget` |
+| `purge(ids)` | `forget` per id, or `drop_shelf` when unbounded |
+| `status()` | `Vault.stats` |
+| `note` (attribute) | vault path, or why it is not open |
+
+The Protocol stays narrow. `shelf`, `watch`, `suggest_noisy`, `pii` and `set_meta` are not added to
+it — they are called by the vault block's own routes, not by the shared surfaces, which is the split
+`ports.py` argues for: a port names what the browser routes need, not everything the class can do.
+
+`tests/test_providers.py` already asserts `conformance.check('memory', ws.memory) == []`; the same
+check must pass with `LEELA_MEMORY=vishalakshi`.
 
 ```python
 def safe_shelf(name):
@@ -171,7 +231,8 @@ Already structured and signed by `fastcore.apisurface`. Storing per-operation se
 endpoints individually retrievable and keeps `api_call` reachable from the same reference.
 `MAX_OPS = 400` — beyond that a spec is a catalogue, not a working surface.
 
-Designed, not shipped, pending the ramabana prerequisites above.
+`load_spec` is JSON only: a URL, a path, or an already-parsed dict. There is no YAML path, so a
+`.yaml` OpenAPI document fails at `json.loads`. The clip surface must say so, or convert.
 
 ## Tidying and PII
 
@@ -188,9 +249,22 @@ This is what stops a clipped codebase's changelogs and licence files diluting re
 `kinds` and `density`, and `mark_not_pii` clears a false positive. `has_pii` is true only for
 `IDENTIFYING` kinds, so an IP or a bare medical cue is reported without being called private.
 
-The badge must state its limits: `redact()` masks pattern kinds only. **Names and addresses are
-never masked.** Validators are real for the kinds it does cover — Luhn for cards, mod-97 for IBAN,
-mod-11 for NHS.
+The badge states its limits, because today `redact()` masks pattern kinds only and **names and
+addresses are never masked**. Validators are real for the kinds it does cover — Luhn for cards,
+mod-97 for IBAN, mod-11 for NHS.
+
+That gap is closed in vishalakshi, in parallel, and leela tightens the badge when it releases. The
+mechanism is already half there: `pii.py` is pure regex, but `extract.py` has `Vault.ner`,
+`NER_CHARS` and the cue-scoring machinery. Wiring NER into the PII path needs three constraints:
+
+- **Optional.** `pii_report` runs on every document at ingest with `MAX_SCAN = 200_000`; NER over
+  that is far too slow to be unconditional. `ner=False` by default, `NER_CHARS` as the cap when on.
+- **`IDENTIFYING` must not change meaning with a flag.** If `person` counts toward `has_pii` only
+  when NER ran, the same document is private or not depending on an argument. The report carries
+  `scanned_ner: bool` so a caller can never read "no names found" as "names not looked for".
+- **Not on code.** A false `person` span over identifiers would over-redact source. Gate by `kind`.
+
+Until then, leela's badge is honest rather than silent: it names the kinds it checked.
 
 `ask(pii='local')` is not turned on. It refuses whenever the answering model's runtime is not
 local, and leela routes to hosted models routinely; the refusal would read as a bug. The protection
@@ -251,6 +325,9 @@ Flows to cover:
    resurface in `suggest_noisy`.
 6. **A shelf name is sanitised and refs are composite.** A workspace named with dots and hyphens
    opens a valid shelf; two shelves holding the same source produce distinct `store|doc_id` refs.
+7. **The provider swap is real.** `LEELA_MEMORY=vishalakshi` builds `LeelaVault`,
+   `conformance.check('memory', ws.memory) == []` still passes, and the memory routes answer from
+   the vault. An unknown provider name still raises `ProviderError` naming what is available.
 
 Fixtures run offline (`VISHALAKSHI_OFFLINE=true`) so no test downloads a model. Per the known
 baseline, TUI snapshots pass only in CI; do not `--snapshot-update` locally. Run via
@@ -260,6 +337,7 @@ baseline, TUI snapshots pass only in CI; do not `--snapshot-update` locally. Run
 
 - Splitting `lee-ide.js`. Collapsing the 451 asset assertions unpins the architecture and makes the
   split possible later; the split itself is a separate job.
-- Cursor-model support in ramabana. Documented above, reported only.
-- Shipping the API-spec clip. Designed above, blocked on ramabana.
-- The leanness pass. Runs after this, as one sweep.
+- NER-backed PII in vishalakshi. Designed above, runs in parallel in its own repo; leela ships an
+  honest badge and tightens it on release.
+- The dead `runtime` port and `conformance.CALLS`. Recorded above, decided in workstream 3.
+- The leanness pass itself. Runs after this, as one sweep.
