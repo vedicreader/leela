@@ -379,7 +379,17 @@ kbd {
 /* `relative` so the notebook overview stripe can be positioned against the stage and still
    be measured onto the notebook's own right edge when the editor is split. */
 .lee-editor-stage { position:relative; flex:1 1 auto; min-height:240px; display:grid; overflow:hidden; background:var(--lee-bg); }
-.lee-editor-stage:not(.split) { grid-template-columns:minmax(0,1fr); }
+/* One row, and it takes the height, or the pane is only as tall as whatever is in it: the rows here
+   are implicit and auto-sized, so a stretched grid item is not a filled one. Measured on a 900px
+   window, the stage was 577px and `#editor` inside it 425px.
+
+   And the splitter is hidden rather than merely unstyled when nothing is split. It is a child of
+   this grid in every mode, so without this it claims a row of its own -- 151px of the stage in that
+   same measurement, sitting under the editor as a band of bare background. Invisible behind a
+   CodeMirror that had scrolled to fill; obvious behind a document viewer, which is where it was
+   finally noticed. */
+.lee-editor-stage:not(.split) { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr); }
+.lee-editor-stage:not(.split) .lee-editor-splitter { display:none; }
 .lee-editor-stage.split-vertical { grid-template-columns:minmax(0,1fr) 1px minmax(0,1fr); }
 .lee-editor-stage.split-horizontal { grid-template-rows:minmax(0,1fr) 1px minmax(0,1fr); }
 .lee-editor-stage.split-vertical .lee-editor-splitter { background:var(--lee-border); grid-column:2; }

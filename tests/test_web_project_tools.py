@@ -1063,3 +1063,24 @@ def test_source_control_notices_an_edit_and_not_only_a_new_file():
     pills = JS[JS.index('async function refreshProjectPills'):JS.index('function projectRepo')]
     assert 'noticeGitState(d)' in pills and "api('/git/info')" in pills
     assert 'setInterval(refreshProjectPills, 5000)' in JS, 'and an external change lands by poll'
+
+
+def test_the_editor_pane_fills_its_stage_and_the_splitter_only_exists_when_split():
+    """Measured in a browser, not reasoned about: on a 900px window the stage was 577px and the
+    pane inside it 425px, with 151px of `.lee-editor-splitter` under it as bare background.
+
+    The stage is a one-column grid whose rows were implicit and auto-sized, so a stretched grid
+    item was not a filled one -- and the splitter is a child of that grid in every mode, so outside
+    a split it claimed a row of its own. Invisible behind a CodeMirror that had scrolled to fill;
+    plain behind a document viewer.
+    """
+    assert '.lee-editor-stage:not(.split) { grid-template-columns:minmax(0,1fr); ' \
+           'grid-template-rows:minmax(0,1fr); }' in CSS
+    assert '.lee-editor-stage:not(.split) .lee-editor-splitter { display:none; }' in CSS
+    # `:not(.split)` is the right guard only because both classes go on together.
+    split = JS[JS.index('function mountSecondary'):JS.index('function leeSplit')]
+    assert "classList.add('split',`split-${direction}`)" in split
+    # And the split modes still declare their own tracks, so scoping the rows above to non-split
+    # cannot take a split layout with it.
+    assert '.lee-editor-stage.split-vertical { grid-template-columns:' in CSS
+    assert '.lee-editor-stage.split-horizontal { grid-template-rows:' in CSS
