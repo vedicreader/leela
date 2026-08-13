@@ -10,7 +10,6 @@ Every result reports its backend.
 from __future__ import annotations
 import json, re, shutil, subprocess
 from dataclasses import dataclass, field
-import numpy as np
 from fastcore.all import L, Path
 from fastcore.aio import athreaded
 from fastcore.parallel import threaded
@@ -30,10 +29,7 @@ _DEF_RE = re.compile(r'^(\s*)(?:async\s+)?(def|class)\s+(\w+)')
 
 def _is_nb(path): return str(path).lower().endswith('.ipynb')
 
-# usearch builds clusters out of the HNSW graph's upper levels, so a small index has
-# no structure to cut and raises outright. Measured: ~300 vectors still fails, ~1000
-# succeeds. Below this we do not even try, and fall back to plain k-NN.
-MIN_CLUSTERABLE = 1000
+_SIM_COLS = ['content', 'path', 'metadata']
 
 
 def _receiver(code, pos):
@@ -52,9 +48,15 @@ def _receiver(code, pos):
     return typ,frag,m.start(2)
 
 
+def _get(row, key, default=None):
+    "Dict or attribute row — kosha returns AttrDict/SimpleNamespace, store rows are dicts."
+    if isinstance(row, dict): return row.get(key, default)
+    return getattr(row, key, default)
+
+
 def _meta(row):
     "Chunk metadata as a dict. kosha's `repo_context` decodes the JSON column; raw row reads do not."
-    m = row.get('metadata') or {}
+    m = _get(row, 'metadata') or {}
     if isinstance(m, str):
         try: m = json.loads(m)
         except Exception: m = {}
@@ -92,16 +94,16 @@ class Cluster:
     centroid: int
     size: int
     members: list = field(default_factory=list)
+    label: str = ''
 
-    @property
-    def label(self):
-        "A name for the cluster: the shortest symbol in it usually reads as the family name."
-        syms = [m.symbol.rsplit('.', 1)[-1] for m in self.members if m.symbol]
-        return min(syms, key=len) if syms else f'cluster {self.centroid}'
+    def __post_init__(self):
+        if not self.label:
+            syms = [m.symbol.rsplit('.', 1)[-1] for m in self.members if m.symbol]
+            self.label = min(syms, key=len) if syms else f'cluster {self.centroid}'
 
     @property
     def files(self):
-        "Distinct files the cluster spans -- a cluster crossing many files is the interesting kind."
+        "Distinct files the cluster spans — a cluster crossing many files is the interesting kind."
         return sorted({m.path for m in self.members})
 
     def dict(self):
@@ -494,142 +496,113 @@ class Search:
         return self._indexed_hits(rows, 'ann', 'pagerank')
 
     # -- ANN: nearest neighbours and cluster peers ---------------------------
-    def _store(self):
-        "kosha's repo store and its usearch index, or (None, None). Index keys are store rowids."
-        k = self._kosha()
-        if k is None:
-            # say why *now*, or a stale note from an earlier call answers for us
-            self.note = f'{self._k_note}; no vector index'
-            return None, None
-        try:
-            st = k.code_st
-            idx = st.db.get_index(st.name)
-            if not idx.size: self.note = 'vector index is empty; run kosha sync'
-            return (st, idx) if idx.size else (st, None)
-        except Exception as e:
-            self.note = f'no vector index ({errstr(e)})'
-            return None, None
-
-    @staticmethod
-    def _rows(st, keys):
-        "Store rows for a list of usearch keys (rowids), keyed by rowid."
-        if not keys: return {}
-        ks = ','.join(str(int(k)) for k in keys)
-        rows = st.rows_where(f'rowid in ({ks})', select='rowid as rowid, content, metadata, path')
-        return {r['rowid']: r for r in rows}
-
+    # Similarity/clustering live in litesearch (`ann_neighbors` / `peers` / `clusters`)
+    # and, when present, kosha (`anchor` / `similar` / `peers` / `code_clusters`). Leela
+    # only formats hits and keeps the grep path for unsaved buffers.
     @staticmethod
     def _hit(row, kind, score=0.0):
         m = _meta(row)
-        return Hit(path=str(row.get('path') or m.get('path') or ''),
-                   line=int(m.get('lineno') or 1),
-                   text=(row.get('content') or '').strip().split('\n')[0][:200],
-                   kind=kind, symbol=str(m.get('mod_name') or ''), score=float(score))
+        return Hit(path=str(_get(row, 'path') or m.get('path') or ''),
+                   line=int(m.get('lineno') or _get(row, 'lineno') or _get(row, 'line') or 1),
+                   text=str(_get(row, 'content') or _get(row, 'sig') or '').strip().split('\n')[0][:200],
+                   kind=kind or _get(row, 'kind') or 'ann',
+                   symbol=str(m.get('mod_name') or _get(row, 'mod_name') or ''),
+                   score=float(score if score else (_get(row, '_dist') or _get(row, 'dist') or 0.0)))
 
     def _anchor(self, path, line):
-        """The store rowid whose chunk covers `path:line`, plus the store and index behind it.
-
-        Every similarity query starts here, so the three lookups are done once together
-        rather than each caller re-opening the store. Key is None when nothing covers it.
-        """
-        st, idx = self._store()
-        if st is None: return None, None, None
-        try: rows = st.rows_where('path = ?', [str(path)], select='rowid as rowid, metadata')
-        except Exception: return None, None, None
+        "Store rowid covering `path:line`, preferring `Kosha.anchor` when the release has it."
+        k = self._kosha()
+        if k is None:
+            self.note = f'{self._k_note}; no vector index'
+            return None, None
+        if hasattr(k, 'anchor'):
+            try:
+                key = k.anchor(path, line)
+                return (int(key), k.code_st) if key is not None else (None, k.code_st)
+            except Exception as e:
+                self.note = f'anchor failed ({errstr(e)})'
+        st = k.code_st
+        p = Path(path)
+        cand = str(p.resolve()) if p.exists() else str(p)
+        try:
+            rows = list(st.rows_where('path = ?', [cand], select='rowid as rowid, metadata'))
+            if not rows:
+                rows = list(st.rows_where('path like ?', [f'%/{p.name}'],
+                                          select='rowid as rowid, metadata'))
+        except Exception: return None, st
         best, best_line = None, -1
         for r in rows:
             ln = int(_meta(r).get('lineno') or 0)
             if ln <= line and ln > best_line: best, best_line = r['rowid'], ln
-        return best, st, idx
+        return best, st
 
-    @staticmethod
-    def _cluster(idx, min_count, max_count):
-        "usearch clustering with only the bounds the caller actually set."
-        return idx.cluster(**{k: v for k, v in (('min_count', min_count), ('max_count', max_count)) if v})
+    def _hits_from(self, rows, kind='ann'):
+        return L(self._hit(r, getattr(r, 'kind', None) or kind) for r in (rows or ()))
 
     def similar(self, path, line=1, limit=15):
-        """Functions nearest this one in embedding space -- 'what else looks like this'.
-
-        Straight k-NN over kosha's HNSW index: take the vector already stored for the
-        chunk covering `path:line` and ask usearch for its neighbours. No re-embedding,
-        so this is cheap enough to run from a keystroke.
-        """
-        key, st, idx = self._anchor(path, line)
+        "Code nearest the chunk at `path:line` — reuses the stored vector, never re-embeds."
+        k = self._kosha()
+        if k is None: return L()
+        if hasattr(k, 'similar'):
+            try:
+                hits = k.similar(path, line, limit=limit, graph=True)
+                self.backend, self.note = 'ann', f'{len(hits)} neighbours by embedding distance'
+                return self._hits_from(hits, 'ann')
+            except Exception as e:
+                self.note = f'similarity failed ({errstr(e)})'; return L()
+        key, st = self._anchor(path, line)
         if key is None:
-            self.note = 'no indexed chunk at that location'
-            return L()
-        if idx is None: return L()
+            self.note = 'no indexed chunk at that location'; return L()
+        try: rows = st.ann_neighbors(key, limit=limit, columns=_SIM_COLS)
+        except Exception as e:
+            self.note = f'similarity failed ({errstr(e)})'; return L()
+        self.backend, self.note = 'ann', f'{len(rows)} neighbours by embedding distance'
+        return self._hits_from(rows, 'ann')
+
+    def clusters(self, min_count=None, max_count=None, limit=None):
+        "Indexed repo grouped by embedding shape; labels come from litesearch c-TF-IDF."
+        k = self._kosha()
+        if k is None: return L()
+        if hasattr(k, 'code_clusters'):
+            try:
+                res = k.code_clusters(limit=limit, min_count=min_count, max_count=max_count)
+                self.backend, self.note = res.method or 'cluster', res.note
+                return L(Cluster(centroid=c.centroid, size=c.size, label=getattr(c, 'label', '') or '',
+                                 members=self._hits_from(c.members, 'cluster'))
+                         for c in (res.clusters or ()))
+            except Exception as e:
+                self.note = f'clustering failed ({errstr(e)})'; return L()
         try:
-            res = idx.search(idx[key], count=limit + 1)
-            rkeys = np.atleast_1d(res.keys).tolist()
-            dists = dict(zip(rkeys, np.atleast_1d(res.distances).tolist()))
-            keys = [k for k in rkeys if k != key][:limit]
+            res = k.code_st.clusters(min_count=min_count, max_count=max_count, columns=_SIM_COLS)
         except Exception as e:
-            self.note = f'similarity failed ({errstr(e)})'
-            return L()
-        rows = self._rows(st, keys)
-        self.backend, self.note = 'ann', f'{len(keys)} neighbours by embedding distance'
-        return self._place(L(self._hit(rows[k], 'ann', dists.get(k, 0.0)) for k in keys if k in rows))
-
-    def clusters(self, min_count=None, max_count=None):
-        """Cluster the whole indexed corpus with usearch, returning `Cluster`s.
-
-        usearch clusters by cutting the HNSW graph's upper levels rather than running
-        k-means, which is what makes it fast enough to do over a whole codebase. It
-        needs a graph with levels to cut, so a small index raises `Index too small to
-        cluster!` -- guarded here rather than left to surface as a crash.
-        """
-        st, idx = self._store()
-        if idx is None: return L()
-        if idx.size < MIN_CLUSTERABLE:
-            self.note = f'index has {idx.size} chunks; clustering needs ~{MIN_CLUSTERABLE}'
-            return L()
-        try: cl = self._cluster(idx, min_count, max_count)
-        except Exception as e:
-            self.note = f'clustering failed ({errstr(e)})'
-            return L()
-        centroids, sizes = cl.centroids_popularity
-        out = L()
-        for c, n in zip(np.atleast_1d(centroids).tolist(), np.atleast_1d(sizes).tolist()):
-            members = np.atleast_1d(cl.members_of(c)).tolist()
-            rows = self._rows(st, members[:40])
-            out.append(Cluster(centroid=c, size=n,
-                               members=L(self._hit(rows[m], 'cluster') for m in members[:40] if m in rows)))
-        self.backend, self.note = 'cluster', f'{len(out)} clusters over {idx.size} chunks'
-        return out.sorted(key=lambda c: -c.size)
+            self.note = f'clustering failed ({errstr(e)})'; return L()
+        cs = res.clusters[:limit] if limit else res.clusters
+        self.backend, self.note = res.method or 'cluster', res.note
+        return L(Cluster(centroid=c.centroid, size=c.size, label=c.label or '',
+                         members=self._hits_from(c.members, 'cluster')) for c in cs)
 
     def peers(self, path, line=1, limit=25, min_count=None, max_count=None):
-        """The cluster this function belongs to -- its family, not a ranked list.
-
-        k-NN answers "the 10 closest things"; a cluster answers "the group this belongs
-        to", which is the more useful question when you are looking for every place a
-        pattern was already implemented. Falls back to `similar()` when the index is too
-        small to cluster, so the feature degrades instead of disappearing.
-        """
-        key, st, idx = self._anchor(path, line)
+        "The cluster this chunk belongs to; degrades to nearest neighbours when too small."
+        k = self._kosha()
+        if k is None: return L()
+        kw = {n: v for n, v in (('min_count', min_count), ('max_count', max_count)) if v is not None}
+        if hasattr(k, 'peers'):
+            try:
+                res = k.peers(path, line, limit=limit, graph=True, **kw)
+                self.backend, self.note = res.method or 'cluster', res.note
+                return self._hits_from(res.hits, res.method or 'cluster')
+            except Exception as e:
+                self.note = f'clustering failed ({errstr(e)}); showing nearest neighbours'
+                return self.similar(path, line, limit)
+        key, st = self._anchor(path, line)
         if key is None:
-            self.note = 'no indexed chunk at that location'
-            return L()
-        if idx is None or idx.size < MIN_CLUSTERABLE:
-            if idx is not None: self.note = f'index too small to cluster ({idx.size}); showing nearest neighbours'
-            return self.similar(path, line, limit)
-        try:
-            cl = self._cluster(idx, min_count, max_count)
-            # queries[i] is a point, matches.keys[i] its centroid: one pass gives the whole map
-            assign = dict(zip(np.atleast_1d(cl.queries).tolist(),
-                              np.atleast_1d(cl.matches.keys).flatten().tolist()))
+            self.note = 'no indexed chunk at that location'; return L()
+        try: res = st.peers(key, limit=limit, columns=_SIM_COLS, **kw)
         except Exception as e:
-            self.note = f'clustering failed ({type(e).__name__}); showing nearest neighbours'
+            self.note = f'clustering failed ({errstr(e)}); showing nearest neighbours'
             return self.similar(path, line, limit)
-        centroid = assign.get(key)
-        if centroid is None:
-            self.note = 'chunk is not in any cluster; showing nearest neighbours'
-            return self.similar(path, line, limit)
-        members = [m for m in np.atleast_1d(cl.members_of(centroid)).tolist() if m != key][:limit]
-        rows = self._rows(st, members)
-        self.backend = 'cluster'
-        self.note = f'cluster {centroid} · {len(members) + 1} members'
-        return self._place(L(self._hit(rows[m], 'cluster') for m in members if m in rows))
+        self.backend, self.note = res.method or 'cluster', res.note
+        return self._hits_from(res.hits, res.method or 'cluster')
 
     # -- code intelligence ---------------------------------------------------
     def definitions(self, name, path=None, limit=30):

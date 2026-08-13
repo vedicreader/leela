@@ -468,3 +468,57 @@ def test_the_stream_says_so_when_there_is_nothing_to_search_for(tmp_path):
             body = r.read().decode()
     assert 'event: start' in body and 'event: done' in body and 'event: leg' not in body
     assert 'nothing to search for' in body
+
+
+def test_similar_and_peers_prefer_kosha_primitives_when_present(monkeypatch, tmp_path):
+    "Search is an adapter: kosha owns similarity; leela only formats hits."
+    path = str(tmp_path/'core.py')
+    class FakeKosha:
+        def similar(self, p, line=1, limit=15, graph=False):
+            assert (p, line, limit, graph) == (path, 3, 5, True)
+            return [SimpleNamespace(path=path, lineno=10, mod_name='core.peer',
+                                    sig='def peer():', content='def peer():', kind='ann', dist=0.1)]
+        def peers(self, p, line=1, limit=25, graph=False, **kw):
+            return SimpleNamespace(hits=[SimpleNamespace(path=path, lineno=12, mod_name='core.family',
+                                                         sig='def family():', content='def family():',
+                                                         kind='usearch', dist=None)],
+                                   method='usearch', note='cluster of 4 (usearch)')
+        def code_clusters(self, limit=None, min_size=2, **kw):
+            return SimpleNamespace(clusters=[SimpleNamespace(centroid=1, size=4, label='family',
+                                                             members=[SimpleNamespace(path=path, lineno=12,
+                                                                                      mod_name='core.family',
+                                                                                      content='def family():')])],
+                                   method='usearch', note='1 clusters over 4 vectors (usearch)')
+    s = Search(Sandbox([tmp_path])); s._k = FakeKosha(); s._k_tried = True
+    sim = s.similar(path, 3, limit=5)
+    assert [(h.path, h.line, h.symbol) for h in sim] == [(path, 10, 'core.peer')]
+    peer = s.peers(path, 3)
+    assert s.backend == 'usearch' and 'cluster of 4' in s.note
+    assert peer[0].symbol == 'core.family'
+    cs = s.clusters()
+    assert cs[0].label == 'family' and cs[0].members[0].path == path
+
+
+def test_similar_uses_litesearch_ann_neighbors_without_kosha_helpers(monkeypatch, tmp_path):
+    path = str(tmp_path/'a.py')
+    class Store:
+        def ann_neighbors(self, key, limit=15, columns=None, **kw):
+            assert key == 7 and limit == 3
+            return [{'rowid': 8, 'path': path, 'content': 'def neighbour():\n    pass',
+                     'metadata': {'lineno': 4, 'mod_name': 'a.neighbour'}, '_dist': 0.2}]
+        def peers(self, key, limit=25, columns=None, **kw):
+            return SimpleNamespace(hits=[{'rowid': 9, 'path': path, 'content': 'def cousin():\n    pass',
+                                          'metadata': {'lineno': 8, 'mod_name': 'a.cousin'}}],
+                                   method='knn', note='index holds 3 vectors; showing nearest neighbours')
+        def clusters(self, **kw):
+            return SimpleNamespace(clusters=[SimpleNamespace(centroid=1, size=2, label='cousin',
+                                                             members=[{'path': path, 'content': 'def cousin():',
+                                                                       'metadata': {'lineno': 8, 'mod_name': 'a.cousin'}}])],
+                                   method='knn', note='1 clusters over 3 vectors (knn)')
+    class FakeKosha:
+        code_st = Store()
+    s = Search(Sandbox([tmp_path])); s._k = FakeKosha(); s._k_tried = True
+    monkeypatch.setattr(s, '_anchor', lambda p, line: (7, s._k.code_st))
+    assert s.similar(path, 1, limit=3)[0].symbol == 'a.neighbour'
+    assert s.peers(path, 1)[0].symbol == 'a.cousin' and s.backend == 'knn'
+    assert s.clusters()[0].label == 'cousin'

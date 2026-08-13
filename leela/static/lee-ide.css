@@ -50,6 +50,19 @@
   --lee-active-line: rgba(0,0,0,.03); --lee-bracket: rgba(9,105,218,.2);
 }
 
+/* Cursor: thin light chrome. Hairline borders, quiet panels, near-black primaries —
+   deliberately not card-y or blocky. Keeps the same structural selectors as light/dark. */
+:root[data-theme="cursor"] {
+  --lee-bg: #fbfbfb; --lee-bg1: #f4f4f4; --lee-bg2: #ececec; --lee-bg3: #e2e2e2;
+  --lee-fg: #1a1a1a; --lee-fg2: #3d3d3d; --lee-fg4: #6f6f6f;
+  --lee-border: #ebebeb; --lee-accent: #171717; --lee-sel: #e7e7e7; --lee-selection-fg: #111111;
+  --lee-red: #c23b22; --lee-green: #2f6f4e; --lee-yellow: #8a6d1b; --lee-orange: #b35c1e;
+  --lee-blue: #3b5bdb; --lee-purple: #5b4b8a; --lee-aqua: #0b6e99;
+  --lee-output: #161616; --lee-warning: #8a6d1b; --lee-log: #b4232d;
+  --lee-active-line: rgba(0,0,0,.028); --lee-bracket: rgba(23,23,23,.16);
+  --lee-guide: rgba(0,0,0,.08);
+}
+
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
@@ -1701,7 +1714,7 @@ kbd {
   .lee-research-content { padding: 22px 16px; }
 }
 .lee-mrow:focus-visible, .lee-folderrow:focus-visible { outline: 1px solid var(--lee-accent); outline-offset: -1px; background: var(--lee-sel); }
-.lee-theme-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 12px; }
+.lee-theme-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; padding: 12px; }
 .lee-theme-choice { display: grid; grid-template-columns: 34px 1fr; grid-template-rows: auto auto;
                     gap: 2px 9px; align-items: center; min-width: 130px; padding: 10px; text-align: left;
                     border: 1px solid var(--lee-border); border-radius: 6px; background: var(--lee-bg1);
@@ -1763,6 +1776,7 @@ kbd {
 .lee-theme-swatch.dark { background: linear-gradient(135deg, #0d1117 50%, #58a6ff 50%); }
 .lee-theme-swatch.light { background: linear-gradient(135deg, #f6f8fa 50%, #0969da 50%); }
 .lee-theme-swatch.system { background: linear-gradient(135deg, #f6f8fa 0 50%, #161b22 50%); }
+.lee-theme-swatch.cursor { background: linear-gradient(135deg, #f3f3f3 55%, #171717 55%); }
 .lee-setting-row { display: flex; align-items: center; gap: 18px; padding: 11px 14px;
                    border-top: 1px solid var(--lee-border); cursor: pointer; }
 .lee-setting-row > span { display: flex; flex: 1; flex-direction: column; }
@@ -2522,3 +2536,98 @@ kbd {
                  line-height: 1; padding: 3px 6px 3px 2px; opacity: 0; }
 .lee-termtab:hover .lee-termtab-x, .lee-termtab.active .lee-termtab-x { opacity: .55; }
 .lee-termtab-x:hover { opacity: 1; }
+
+/* ---- cursor theme chrome: quieter, thinner, less blocky ---- */
+:root[data-theme="cursor"] body {
+  font-family: "Segoe UI", "Helvetica Neue", ui-sans-serif, sans-serif;
+}
+:root[data-theme="cursor"] .lee-app { grid-template-rows: 30px auto 1fr 22px; }
+:root[data-theme="cursor"] .lee-header,
+:root[data-theme="cursor"] .lee-toolbar,
+:root[data-theme="cursor"] .lee-left,
+:root[data-theme="cursor"] .lee-right,
+:root[data-theme="cursor"] .lee-phead,
+:root[data-theme="cursor"] .lee-righttabs,
+:root[data-theme="cursor"] .lee-activity {
+  background: var(--lee-bg1);
+}
+:root[data-theme="cursor"] .lee-header,
+:root[data-theme="cursor"] .lee-toolbar,
+:root[data-theme="cursor"] .lee-phead,
+:root[data-theme="cursor"] .lee-righttabs,
+:root[data-theme="cursor"] .lee-footer,
+:root[data-theme="cursor"] .lee-left,
+:root[data-theme="cursor"] .lee-right,
+:root[data-theme="cursor"] .lee-activity,
+:root[data-theme="cursor"] .lee-keys,
+:root[data-theme="cursor"] .lee-sc-branch,
+:root[data-theme="cursor"] .lee-sc-actions,
+:root[data-theme="cursor"] .lee-sc-commit,
+:root[data-theme="cursor"] .lee-sc-group {
+  border-color: color-mix(in srgb, var(--lee-border) 88%, transparent);
+}
+:root[data-theme="cursor"] .lee-header { padding: 0 6px; gap: 6px; }
+:root[data-theme="cursor"] .lee-toolbar { min-height: 26px; padding: 2px 5px; }
+:root[data-theme="cursor"] .lee-phead { min-height: 26px; padding: 2px 6px; gap: 4px; }
+:root[data-theme="cursor"] .lee-ptitle { font-size: 10px; letter-spacing: .08em; font-weight: 550; }
+:root[data-theme="cursor"] .lee-righttabs { height: 28px; }
+:root[data-theme="cursor"] .lee-righttab { font-weight: 550; letter-spacing: .03em; }
+:root[data-theme="cursor"] .lee-activity { width: 34px; }
+:root[data-theme="cursor"] .lee-activity-btn { height: 34px; padding: 7px; border-left-width: 1.5px; }
+:root[data-theme="cursor"] .lee-activity-btn.active { background: transparent; }
+:root[data-theme="cursor"] .lee-btn {
+  background: transparent; border: 1px solid transparent; border-radius: 3px;
+  padding: 1px 7px; font-size: 11px; color: var(--lee-fg2);
+}
+:root[data-theme="cursor"] .lee-btn:hover { background: var(--lee-bg2); border-color: transparent; }
+:root[data-theme="cursor"] .lee-btn.go {
+  background: var(--lee-accent); color: #f7f7f7; border-color: var(--lee-accent); font-weight: 550;
+}
+:root[data-theme="cursor"] .lee-btn.go:hover { filter: brightness(1.08); color: #fff; }
+:root[data-theme="cursor"] .lee-btn.warn { background: transparent; }
+:root[data-theme="cursor"] .lee-phead .lee-btn { padding: 1px 4px; }
+:root[data-theme="cursor"] .lee-agent-head { min-height: 28px; padding: 2px 7px; background: var(--lee-bg1); border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 88%, transparent); }
+:root[data-theme="cursor"] .lee-agent-head-actions .lee-btn { min-height: 20px; padding-inline: 5px; border-radius: 2px; background: transparent; }
+:root[data-theme="cursor"] .lee-agent .lee-btn.active { background: var(--lee-sel); color: var(--lee-fg); border-color: transparent; }
+:root[data-theme="cursor"] .lee-right .lee-agent .lee-agentlog { padding: 8px 10px 14px; }
+:root[data-theme="cursor"] .lee-empty {
+  width: min(360px, calc(100% - 28px)); justify-content: flex-start; padding-top: 28px;
+  border: 0; background: transparent; box-shadow: none;
+}
+:root[data-theme="cursor"] .lee-empty-mark {
+  width: 28px; height: 28px; margin-bottom: 12px; border-radius: 6px; border-width: 1px;
+}
+:root[data-theme="cursor"] .lee-empty strong { font-size: 15px; font-weight: 600; }
+:root[data-theme="cursor"] .lee-empty p { margin: 5px 0 12px; font-size: 12px; }
+:root[data-theme="cursor"] .lee-node { border-radius: 2px; padding: 1px 6px 1px 8px; }
+:root[data-theme="cursor"] .lee-node.sel { background: var(--lee-sel); color: var(--lee-selection-fg); }
+:root[data-theme="cursor"] .lee-node:hover { background: color-mix(in srgb, var(--lee-bg2) 80%, transparent); }
+:root[data-theme="cursor"] .lee-kids { border-left-color: color-mix(in srgb, var(--lee-border) 75%, transparent); }
+:root[data-theme="cursor"] .lee-tab {
+  border-radius: 0; border-color: transparent; background: transparent; max-width: 180px;
+}
+:root[data-theme="cursor"] .lee-tab.active {
+  background: var(--lee-bg); border-color: transparent; box-shadow: inset 0 -1px 0 var(--lee-accent);
+}
+:root[data-theme="cursor"] .lee-sc-commit button {
+  background: var(--lee-accent); color: #f7f7f7; border-radius: 3px; font-weight: 550;
+}
+:root[data-theme="cursor"] .lee-sc-commit button:disabled { background: var(--lee-bg2); color: var(--lee-fg4); }
+:root[data-theme="cursor"] .lee-git-change.staged,
+:root[data-theme="cursor"] .lee-git-change.unstaged { border-left-width: 2px; }
+:root[data-theme="cursor"] .lee-approval {
+  border-radius: 0; box-shadow: none; background: var(--lee-bg);
+  border: 1px solid color-mix(in srgb, var(--lee-border) 90%, transparent);
+}
+:root[data-theme="cursor"] .lee-memory .lee-mrow,
+:root[data-theme="cursor"] .lee-varspanel .lee-vrow { border-radius: 2px; }
+:root[data-theme="cursor"] .lee-brand { color: var(--lee-fg); font-weight: 650; }
+:root[data-theme="cursor"] .lee-modalbox {
+  border-radius: 4px; border-color: color-mix(in srgb, var(--lee-border) 92%, transparent);
+  box-shadow: 0 10px 28px rgba(0,0,0,.12);
+}
+:root[data-theme="cursor"] .lee-composer-send,
+:root[data-theme="cursor"] #agentsend,
+:root[data-theme="cursor"] .lee-agent .lee-btn.go {
+  min-height: 26px; border-radius: 3px; padding: 0 10px; font-weight: 550;
+}

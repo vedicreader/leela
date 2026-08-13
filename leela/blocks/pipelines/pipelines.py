@@ -42,11 +42,35 @@ from pathlib import Path
 from ...core.envs import EnvStore
 from ..term.term import SCROLLBACK, Pty, strip_ansi
 
-__all__ = ['Pipeline', 'PipelineError', 'Step']
+__all__ = ['Pipeline', 'PipelineError', 'Step', 'resolve_script']
 
 
 class PipelineError(RuntimeError):
     pass
+
+
+def resolve_script(argv, python=None, env=None):
+    """The executable to spawn, accepting either spelling of a hyphenated command.
+
+    nbdev's console scripts are `nbdev_prepare` in nbdev 2 and `nbdev-prepare` in nbdev 3, and
+    every document ever written about releasing an nbdev project uses the first, so both are
+    tried rather than failing with "no such file" when a project upgrades.
+
+    `python`'s own bin directory is searched first, and every spelling within it, before PATH is
+    consulted at all. Taking the first spelling that matched *anywhere* meant a machine with an
+    old system-wide nbdev answered `nbdev_prepare` from a Python 3.8 that knew nothing about this
+    project -- while the venv's `nbdev-prepare`, two entries later in the same loop, was the one
+    being asked for.
+    """
+    from shutil import which
+    name = argv[0]
+    spellings = (name, name.replace('_', '-'), name.replace('-', '_'))
+    bindir = str(Path(python).parent) if python else ''
+    for path in (bindir, (env or os.environ).get('PATH')):
+        if not path: continue
+        for candidate in spellings:
+            if hit := which(candidate, path=path): return [hit, *argv[1:]]
+    return argv
 
 
 @dataclass
@@ -243,28 +267,8 @@ class Pipeline:
         return self.steps[i + 1] if i + 1 < len(self.steps) else None
 
     def _resolve(self, argv, env):
-        """The executable to spawn, accepting either spelling of a hyphenated command.
-
-        nbdev's console scripts are `nbdev_prepare` in nbdev 2 and `nbdev-prepare` in
-        nbdev 3, and every document ever written about releasing an nbdev project uses the
-        first. A pipeline that fails with "no such file" because the project upgraded is
-        not telling anyone anything they can act on, so both spellings are tried.
-
-        The project's own environment is searched first, and every spelling within it, before
-        PATH is consulted at all. Taking the first spelling that matched *anywhere* meant a
-        machine with an old system-wide nbdev answered `nbdev_prepare` from a Python 3.8 that
-        knew nothing about this project -- while the venv's `nbdev-prepare`, two entries later
-        in the same loop, was the one being asked for.
-        """
-        from shutil import which
-        name = argv[0]
-        spellings = (name, name.replace('_', '-'), name.replace('-', '_'))
-        bindir = str(Path(self.python).parent) if self.python else ''
-        for path in (bindir, env.get('PATH')):
-            if not path: continue
-            for candidate in spellings:
-                if hit := which(candidate, path=path): return [hit, *argv[1:]]
-        return argv
+        "The executable to spawn, from this pipeline's interpreter. See `resolve_script`."
+        return resolve_script(argv, self.python, env)
 
     async def _run(self, step):
         argv = list(step.argv) if step.argv else shlex.split(step.cmd)

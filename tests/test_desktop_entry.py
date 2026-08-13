@@ -1,8 +1,11 @@
 import asyncio
 import threading
 
+import pytest
+
 import leela.cli
-import leela_app
+
+leela_app = pytest.importorskip('leela_app')
 
 
 def test_desktop_entry_runs_inline_without_an_event_loop(monkeypatch, tmp_path):

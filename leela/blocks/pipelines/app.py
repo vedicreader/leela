@@ -15,11 +15,13 @@ is the failure that arrangement exists to prevent.
 
 from __future__ import annotations
 
+from fastcore.basics import first
+
 from ...core.web import fail, off_loop, pipeline_socket
 from ..runtime.kernels import python_for
 from .deploys import Deploy
 from ...core.envs import EnvStore
-from .pipelines import PipelineError
+from .pipelines import PipelineError, resolve_script
 from .releases import Release
 from ..git.repos import RepoSet, repo_for
 
@@ -28,6 +30,31 @@ __all__ = ['CAPS', 'connect']
 CAPS = ('fs', 'gate')
 
 KINDS = {'release': Release, 'deploy': Deploy}
+
+
+def nbdev_prepare(session, target=''):
+    """nbdev's prepare, run in the folder that owns `settings.ini` and in that folder's venv.
+
+    Both halves matter: prepare reads `settings.ini` relative to its cwd, and a workspace holding
+    several checkouts must not run one project's prepare with another's interpreter. The venv
+    itself is not created here -- opening a folder already does that.
+    """
+    import configparser, subprocess
+    if not session.fs.roots: raise PipelineError('open a folder first')
+    root = repo_for(session, target)
+    settings = first(r/'settings.ini' for r in (root, *session.fs.roots) if (r/'settings.ini').exists())
+    if settings is None: raise PipelineError('no settings.ini in any open folder — not an nbdev project')
+    root = settings.parent
+    argv = resolve_script(['nbdev_prepare'], python_for(root, session))
+    # `resolve_script` hands back what it was given when neither spelling exists anywhere.
+    if argv[0] == 'nbdev_prepare': raise PipelineError(f'nbdev is not installed in {root.name}')
+    r = subprocess.run(argv, cwd=str(root), capture_output=True, text=True, timeout=900)
+    if r.returncode: raise PipelineError((r.stderr or r.stdout or 'nbdev prepare failed').strip()[-4000:])
+    d = configparser.ConfigParser(); d.read(settings)
+    defaults = d.defaults()
+    return dict(ok=True, root=str(root), nbs_path=defaults.get('nbs_path', 'nbs'),
+                lib_path=defaults.get('lib_path', defaults.get('lib_name', '')),
+                log=(r.stdout or '')[-2000:])
 
 
 def connect(app, ctx):
@@ -115,6 +142,12 @@ def connect(app, ctx):
     @rt('/deploys/tail')
     async def deploys_tail(repo: str = '', lines: int = 80):
         try: return {'text': await off_loop(pipeline('deploy', repo).tail, lines)}
+        except Exception as e: return fail(e)
+
+    @rt('/project/nbdev_prepare')
+    async def project_nbdev_prepare(repo: str = ''):
+        "Run nbdev's prepare in the project that owns `settings.ini`, in that project's venv."
+        try: return await off_loop(nbdev_prepare, ctx.session, repo)
         except Exception as e: return fail(e)
 
     # One implementation, three kinds: `core.web.pipeline_socket` speaks the same protocol

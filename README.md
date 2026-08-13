@@ -66,15 +66,13 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   Markdown cannot execute explicit raw-HTML fences; authored notebook Markdown can still use
   deliberate `{=html}` passthrough.
 - **Durable research memory.** Every page Leela reads and every source in a research brief is
-  ingested automatically into a persistent litesearch database. It reuses Kosha's resident
-  embedder, but stores prose as document trees rather than mixing it into the AST-shaped code
-  index. The Memory tab browses recent documents, heading trees, whole sections, hybrid
-  FTS/ANN retrieval and labelled semantic clusters. The agent gets the same `memory_search`,
-  `memory_tree`, `memory_read` and `memory_topics` tools, so an earlier investigation can be
-  recalled before paying to search the live web again. Memory is controllable rather than an
-  indiscriminate archive: turn off **remember** before a read/research run, forget the active
-  source from its reader, purge selected bad results, or purge the complete corpus. Purging
-  removes the document tree, chunks and ANN entries together.
+  ingested into a [vishalakshi](https://github.com/vedicreader/vishalakshi) vault — prose shelves
+  over litesearch, separate from Kosha's AST-shaped code index. A global `leela` shelf holds
+  agent notes and saved state; each workspace has its own shelf for project reading. The Memory
+  tab browses documents, heading trees, sections, hybrid retrieval and topics. The agent gets
+  `memory_search`, `memory_tree`, `memory_read` and `memory_topics`, so an earlier investigation
+  can be recalled before paying to search the live web again. Turn off **remember** before a
+  read, forget a source from its reader, or purge selected results / the whole corpus.
 - **Buttons for everything, and keys you can change.** Every action has a toolbar or
   panel button, a command-palette entry, and a chord you can rebind — see
   [keys and buttons](#keys-and-buttons). `hyper` means Command+Control+Option+Shift in

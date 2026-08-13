@@ -19,16 +19,18 @@ classifiers = [
 # leela never does, and `starlette`, `uvicorn`, `numpy`, `packaging` and `httpx2` went in
 # because leela imports them and was relying on fasthtml and kosha to supply them.
 dependencies = [
-    "ramabana>=0.1.0",         # the agent core. `leela.agent` is an alias for it, not a copy of it.
+    "ramabana>=0.1.1",         # the agent core. `leela.agent` is an alias for it, not a copy of it.
                                # It owns rishi and fastllm; leela imports neither directly.
     "fastcore>=1.7.0",         # Path, L, patch, docments: the vocabulary leela is written in
     "exhash>=0.4.10",          # hash-verified line and cell edits behind edit_file/edit_cell
-    "fossick>=0.1.8",          # web search and page-to-markdown for research; cdp_app for --app windows
+    "fossick>=0.1.11",         # web search and page-to-markdown for research; cdp_app for --app windows.
+                               # 0.1.11 is the RRF-fused `search` and the `research` that reports
+                               # what it could not read, rather than counting it as a source.
     "ipykernel>=7.3.0",        # standard kernel launcher. Not imported: launched as a subprocess,
     "ipymini>=0.0.1",          # and kept here so leela's own venv is a usable kernel target
     "jupyter-client>=8.9.1",   # leela <-> kernel: execute, complete, interrupt, restart
-    "koshas>=0.0.29",          # code index behind search: FTS5 + embeddings + call graph
-    "litesearch>=0.1.7",       # the document tree and hybrid retrieval under the vault
+    "koshas>=0.1.0",           # code index behind search: FTS5 + embeddings + call graph, similar/peers
+    "litesearch>=0.1.27",      # store.ann_neighbors / peers / clusters under Search and the vault
     "mdhtml>=0.1.21",          # bounded, paste-safe Markdown -> structural MDHTML
     "python-fasthtml>=0.14.9", # the web frontend
     "starlette>=0.40.0",       # Mount, StaticFiles, WebSocketRoute, TestClient. Via fasthtml, but
@@ -37,7 +39,8 @@ dependencies = [
     "numpy>=1.26",             # search reads Kosha's embedding vectors as arrays
     "packaging>=24.0",         # comparing installed versions for the editor's package hints
     "dhrishti>=0.1.2",         # the inspection engine: namespace -> node tree, as a JSON API in-kernel
-    "vishalakshi>=0.1.2",      # the vault behind memory; 0.1.2 is the first importable release
+    "vishalakshi>=0.1.6",      # the vault behind memory: prose shelves, topics, federated recall,
+                               # doc_marks, pii and the noise ranker
 ]
 
 [project.optional-dependencies]
@@ -105,7 +108,7 @@ test = [
     "nbformat>=5.10.0",                 # to assert the notebooks leela writes stay valid for Jupyter
     "playwright>=1.40",                 # the browser tests in test_web_keys and friends
     "pandas>=2.0",                      # a DataFrame in the variable panel fixtures
-    "rishi>=0.1.1",                     # leela does not import it; these tests reach past ramabana
+    "rishi>=0.1.7",                     # leela does not import it; these tests reach past ramabana
 ]
 
 [tool.pytest.ini_options]

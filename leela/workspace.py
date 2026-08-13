@@ -160,13 +160,14 @@ class Workspace:
         self.dev = DevServers(port=dev_port)
         # Both go through the provider registry rather than being constructed directly, so
         # an alternate implementation is `LEELA_SEARCH=…` / `LEELA_MEMORY=…` rather than an
-        # edit here. `leela` is registered like any other provider, so the default takes
-        # exactly the same path an alternate does. See `leela/core/providers.py`.
+        # edit here. See `leela/core/providers.py`.
         from .core.providers import build as build_provider
+        from .blocks.memory.memory import memory_shelf
         self.search = build_provider('search', self.fs)
-        # Web memory reuses Kosha's already-resident embedder but owns a document-tree DB;
-        # code ASTs and prose headings are different corpora and should not share tables.
-        self.memory = build_provider('memory', kosha=getattr(self.search, '_kosha', None))
+        # Prose memory is a vishalakshi vault shelf, one per project; kosha stays the code index.
+        root = self.fs.roots[0] if self.fs.roots else None
+        self.memory = build_provider('memory', shelf=memory_shelf(root),
+                                     kosha=getattr(self.search, '_kosha', None))
         self.research = Research(self.fs, memory=self.memory)
         self.runs = Runs(self.fs.roots[0] if self.fs.roots else None)
         from .core.journal import OperationJournal
