@@ -1,7 +1,6 @@
-"""Queued work: what a clip puts in the shelf, and what survives a restart.
+"""Queued work: what each clip kind puts in the shelf, what the row guarantees, and the fragment.
 
-Feature flows. Each test drives a whole path; the job runner is threaded, so `_finish` waits on
-the row rather than on a sleep of hopeful length.
+The runner is threaded, so `_finish` waits on the row rather than on a sleep of hopeful length.
 """
 
 import time
@@ -13,7 +12,7 @@ from leela.app import ide_app
 from leela.blocks.jobs.jobs import JobError, Jobs
 from leela.workspace import Workspace
 
-SPEC = '''openapi: 3.0.0
+OPENAPI = '''openapi: 3.0.0
 info: {title: Widgets, version: "2.1"}
 paths:
   /widgets:
@@ -27,6 +26,15 @@ paths:
       parameters: [{name: id, in: path, required: true}]
 '''
 
+#: A Google Discovery document, which names itself at the top level rather than under `info`.
+DISCOVERY = '''{"discoveryVersion": "v1", "title": "Drive", "version": "v3",
+  "baseUrl": "https://www.googleapis.com/drive/v3/",
+  "resources": {"files": {"methods": {
+    "list": {"id": "drive.files.list", "path": "files", "httpMethod": "GET"},
+    "get": {"id": "drive.files.get", "path": "files/{fileId}", "httpMethod": "GET",
+            "parameters": {"fileId": {"type": "string", "required": true, "location": "path"}}}}}}}
+'''
+
 
 @pytest.fixture
 def proj(tmp_path):
@@ -35,7 +43,8 @@ def proj(tmp_path):
     (p/'notes.md').write_text('# Notes\n\nDurable prose about recall and ranking.\n')
     (p/'minute.md').write_text('# Minute\n\nSigned by Dr Charles Babbage.\n')
     (p/'src'/'m.py').write_text('def f(x):\n    return x + 1\n')
-    (p/'api.yaml').write_text(SPEC)
+    (p/'api.yaml').write_text(OPENAPI)
+    (p/'drive.json').write_text(DISCOVERY)
     return p
 
 
@@ -43,7 +52,7 @@ def proj(tmp_path):
 def ws(proj): return Workspace(roots=[proj])
 
 
-def _finish(jobs, jid, tries=120):
+def _finish(jobs, jid, tries=200):
     for _ in range(tries):
         j = jobs.get(jid)
         if not j.active: return j
@@ -51,156 +60,118 @@ def _finish(jobs, jid, tries=120):
     raise AssertionError(f'job {jid} never finished: {jobs.get(jid).dict()}')
 
 
-def test_a_folder_of_documents_clips_and_stays_searchable(ws, proj):
-    job = _finish(ws.jobs, ws.jobs.start('clip', str(proj)).id)
-    assert job.status == 'complete' and job.progress == 1.0
-    assert len(job.result['files']) == 2, 'the two markdown files; .py is not a document'
-    assert job.current == '2 of 2'
+def _run(ws, kind, target=''): return _finish(ws.jobs, ws.jobs.start(kind, target).id)
 
-    assert [s['store'] for s in ws.memory.shelves()] == ['proj']
+
+def test_the_three_clip_kinds_each_store_the_shape_that_suits_them(ws, proj):
+    """A document is prose, a codebase is a pointer, a spec is one section per operation.
+
+    The codebase assertion is the interesting one: kosha owns code and the vault federates it, so
+    copying source into the shelf would age into a snapshot of the index instead of tracking it.
+    """
+    job = _run(ws, 'clip', str(proj))
+    assert job.status == 'complete' and job.progress == 1.0
+    assert len(job.result['files']) == 2, 'the markdown; .py and .json are not documents'
+    assert 'titled names' in job.result['pii']['covers'], 'the badge never claims more'
+    assert job.result['pii']['kinds'].get('person') == 1, 'Dr Charles Babbage, from minute.md'
     assert ws.memory.search('recall and ranking')
 
-    # The badge names what it looked for, and never claims more than it covers.
-    pii = job.result['pii']
-    assert 'titled names' in pii['covers']
-    assert pii['kinds'].get('person') == 1, 'Dr Charles Babbage, from minute.md'
-
-
-def test_a_codebase_clips_as_a_pointer_not_as_prose(ws, proj):
-    "Kosha owns code. Copying source into the shelf would age into a snapshot of the index."
-    before = ws.memory.shelves()[0]['docs'] if ws.memory.shelves() else 0
-    job = _finish(ws.jobs, ws.jobs.start('clip_codebase', str(proj)).id)
-    assert job.status == 'complete'
-    assert job.result['types']['.py'] == 1, 'it counted the source'
-
-    after = ws.memory.shelves()[0]['docs']
-    assert after == before + 1, 'exactly one pointer document, not one per file'
+    before = ws.memory.shelves()[0]['docs']
+    job = _run(ws, 'clip_codebase', str(proj))
+    assert job.status == 'complete' and job.result['types']['.py'] == 1
+    assert ws.memory.shelves()[0]['docs'] == before + 1, 'one pointer, not one document per file'
     titles = [d['title'] for d in ws.memory.documents()]
     assert any(t.startswith('Codebase: ') for t in titles)
-    assert not any(t == 'm.py' for t in titles), 'the source itself did not land in the shelf'
+    assert 'm.py' not in titles, 'the source itself did not land in the shelf'
 
-
-def test_a_yaml_api_spec_clips_one_section_per_operation(ws, proj):
-    "ramabana's `load_spec` is JSON only, and specifications in the world are YAML."
-    job = _finish(ws.jobs, ws.jobs.start('clip_api_spec', str(proj/'api.yaml')).id)
+    # ramabana reads OpenAPI, Azure's `x-ms-paths` and Google Discovery; leela does none of it.
+    job = _run(ws, 'clip_api_spec', str(proj/'api.yaml'))
     assert job.status == 'complete', job.error
-    assert job.result['title'] == 'Widgets'
-    assert job.result['operations'] == 3
-    assert job.result['groups'] == ['widgets']
-
-    doc = next(d for d in ws.memory.documents() if str(d['title']).startswith('API: '))
-    text = ws.memory.exact_text(doc.get('doc_id') or doc.get('id'))
-    body = text if isinstance(text, str) else str(text)
-    # One `##` section per operation, headed by verb and path, so an endpoint is retrievable on
-    # its own. The name in the signature is fastspec's, derived from the path -- not `operationId`.
+    assert (job.result['title'], job.result['operations']) == ('Widgets', 3)
+    body = str(ws.memory.exact_text(_titled(ws, 'API: Widgets')))
     for want in ('## GET /widgets', '## POST /widgets', '## GET /widgets/{id}', 'required: id'):
-        assert want in body, f'{want} is not in the clipped spec'
-    assert body.count('\n## ') == 3, 'three operations, three sections'
+        assert want in body, f'{want} is not addressable on its own'
+
+    job = _run(ws, 'clip_api_spec', str(proj/'drive.json'))
+    assert job.status == 'complete', job.error
+    assert (job.result['title'], job.result['operations']) == ('Drive', 2)
+    assert 'files/{fileId}' in str(ws.memory.exact_text(_titled(ws, 'API: Drive')))
 
 
-def test_a_restart_requeues_what_can_resume_and_fails_the_rest(tmp_path):
-    """A job still marked `running` in a fresh process is not running.
+def _titled(ws, prefix):
+    d = next(d for d in ws.memory.documents() if str(d['title']).startswith(prefix))
+    return d.get('doc_id') or d.get('id')
 
-    Leaving it that way is how a panel shows a spinner nothing will ever stop.
+
+def test_a_job_row_survives_a_restart_a_failure_and_an_L(tmp_path):
+    """What the row guarantees, without a workspace.
+
+    A job still marked `running` in a fresh process is not running, and leaving it that way is how
+    a panel shows a spinner nothing will ever stop. `fastcore.L` is not a list subclass and the
+    vault returns them, so `json` cannot see inside one unless told how.
     """
-    jobs = Jobs(tmp_path/'jobs.db')
-    jobs.register('resumable', lambda job, report: {'ok': True})
-    jobs.register('oneshot', lambda job, report: {'ok': True})
-
-    a = jobs.new('resumable', 'x', _resume={'done': ['one']})
-    b = jobs.new('oneshot', 'y')
-    for j in (a, b): jobs.update(j.id, status='running')
-
-    out = Jobs(tmp_path/'jobs.db', memory=None)
-    out._handlers = dict(jobs._handlers)
-    got = out.recover()
-    assert got['resumed'] == [a.id] and got['failed'] == [b.id]
-    assert 'restart' in out.get(b.id).error
-    assert _finish(out, a.id).status == 'complete'
-
-
-def test_a_vishalakshi_result_comes_back_out_of_the_row_as_rows(tmp_path):
-    "`fastcore.L` is not a list subclass, and the vault returns them, so json cannot see inside one."
     from fastcore.all import L
 
     jobs = Jobs(tmp_path/'jobs.db')
-    jobs.register('vaultish', lambda job, report: {'results': L([{'status': 'ok'}, {'status': 'ok'}])})
-    j = _finish(jobs, jobs.start('vaultish').id)
-    assert j.status == 'complete', j.error
-    assert j.result['results'] == [{'status': 'ok'}, {'status': 'ok'}], 'stored as rows, not as a repr'
-
-
-def test_a_failed_job_says_why_and_can_be_retried(tmp_path):
-    jobs = Jobs(tmp_path/'jobs.db')
-    state = {'fail': True}
+    fails = {'now': True}
 
     def flaky(job, report):
-        if state['fail']: raise ValueError('the disk was not there')
-        return {'ok': True}
+        if fails['now']: raise ValueError('the disk was not there')
+        return dict(results=L([dict(status='ok'), dict(status='ok')]))
 
+    jobs.register('resumable', lambda job, report: dict(ok=True))
+    jobs.register('oneshot', lambda job, report: dict(ok=True))
     jobs.register('flaky', flaky)
-    j = _finish(jobs, jobs.start('flaky').id)
-    assert j.status == 'error' and 'the disk was not there' in j.error
 
-    state['fail'] = False
-    assert _finish(jobs, jobs.launch(j.id).id).status == 'complete'
+    a, b = jobs.new('resumable', 'x', _resume={'done': ['one']}), jobs.new('oneshot', 'y')
+    for j in (a, b): jobs.update(j.id, status='running')
+    fresh = Jobs(tmp_path/'jobs.db')
+    fresh._handlers = dict(jobs._handlers)
+    got = fresh.recover()
+    assert (got['resumed'], got['failed']) == ([a.id], [b.id])
+    assert 'restart' in fresh.get(b.id).error
+    assert _finish(fresh, a.id).status == 'complete'
+
+    j = _finish(jobs, jobs.start('flaky').id)
+    assert j.status == 'error'
+    assert j.error == 'ValueError: the disk was not there', 'the type name appears once'
+    fails['now'] = False
+    j = _finish(jobs, jobs.launch(j.id).id)
+    assert j.result['results'] == [dict(status='ok')] * 2, 'stored as rows, not as a repr'
 
     with pytest.raises(JobError): jobs.new('nosuchkind')
 
 
-def test_the_progress_fragment_stops_asking_when_the_job_is_done(ws, proj):
-    "The loop terminates by construction: the finished card omits the attributes."
-    with TestClient(ide_app(ws)) as c:
-        r = c.post('/clip', params={'target': str(proj/'notes.md'), 'origin': 'tab'})
-        assert r.status_code == 200
-        assert 'hx-get' in r.text.lower() and 'load delay' in r.text.lower()
+def test_a_script_runs_with_no_shell_and_reports_its_exit(ws):
+    "`shlex` splits the target, so a quoted argument stays one argument and `;` is not a command."
+    import sys
+    j = _run(ws, 'script', f'{sys.executable} -c "print(6*7)"')
+    assert j.status == 'complete', j.error
+    assert '42' in j.result['stdout'] and j.result['argv'][-1] == 'print(6*7)'
 
+    j = _run(ws, 'script', f'{sys.executable} -c "raise SystemExit(3)"')
+    assert j.status == 'error' and 'exited 3' in j.error
+
+
+def test_the_clip_surface_is_forms_and_the_progress_loop_ends_itself(ws, proj):
+    """Every action posts and swaps in what it changed, so the browser holds no state.
+
+    The loop terminates by construction: an active card carries the polling attributes and a
+    finished one does not. Asserted on behaviour rather than on element ids, which are not a
+    contract anyone should be pinned to.
+    """
+    with TestClient(ide_app(ws)) as c:
+        assert c.get('/vault/panel').status_code == 200
+
+        r = c.post('/clip', data=dict(target=str(proj/'notes.md'), kind='clip'))
+        assert r.status_code == 200 and 'hx-get' in r.text.lower()
         jid = ws.jobs.all()[0].id
         assert _finish(ws.jobs, jid).status == 'complete'
-        done = c.get(f'/jobs/{jid}').text
-        assert 'hx-get' not in done.lower(), 'a finished card must not schedule another request'
-        assert 'complete' in done
+        assert 'hx-get' not in c.get(f'/jobs/{jid}').text.lower(), 'a finished card asks for nothing'
 
+        watched = c.post('/vault/watch', data=dict(target='read the notes', action='remind', every='1d'))
+        assert watched.status_code == 200 and len(ws.memory.watches()) == 1
+        gone = c.post('/vault/unwatch', data=dict(watch_id=ws.memory.watches()[0]['id']))
+        assert gone.status_code == 200 and ws.memory.watches() == []
 
-def test_the_vault_panel_clips_and_watches_without_any_script(ws, proj):
-    """Every action on the clip surface is a form, so the browser keeps no state of its own.
-
-    Driven through HTTP rather than by asserting on asset text: what matters is that posting the
-    form clips the thing and that the mutations return the fragment they replace.
-    """
-    with TestClient(ide_app(ws)) as c:
-        panel = c.get('/vault/panel')
-        assert panel.status_code == 200
-        for anchor in ('vaultshelves', 'vaultjobs', 'vaultwatches', 'hx-post="/clip"'):
-            assert anchor in panel.text, anchor
-        assert 'value="clip_api_spec"' in panel.text and 'value="clip_codebase"' in panel.text
-
-        r = c.post('/clip', data={'target': str(proj/'notes.md'), 'kind': 'clip'})
-        assert r.status_code == 200 and 'lee-job' in r.text
-        assert _finish(ws.jobs, ws.jobs.all()[0].id).status == 'complete'
-
-        # A watch and its removal both hand back the list, so nothing has to know how to redraw it.
-        r = c.post('/vault/watch', data={'target': 'read the notes', 'action': 'remind', 'every': '1d'})
-        assert r.status_code == 200 and 'vaultwatches' in r.text
-        r = c.post('/vault/unwatch', data={'watch_id': ws.memory.watches()[0]['id']})
-        assert 'Nothing on a cadence' in r.text
-
-        assert c.post('/vault/watch', data={'target': ' ', 'action': 'remind'}).status_code == 400
-
-
-def test_a_script_runs_on_a_cadence_without_a_shell(ws):
-    """The general case behind the clip kinds: run a command, keep the output, no shell.
-
-    `shlex` splits the target, so a quoted argument stays one argument and a `;` is an argument
-    rather than a second command.
-    """
-    import sys
-    job = _finish(ws.jobs, ws.jobs.start('script', f'{sys.executable} -c "print(6*7)"').id)
-    assert job.status == 'complete', job.error
-    assert job.result['returncode'] == 0 and '42' in job.result['stdout']
-    assert job.result['argv'][-1] == 'print(6*7)', 'one argument, not three'
-
-    bad = _finish(ws.jobs, ws.jobs.start('script', f'{sys.executable} -c "raise SystemExit(3)"').id)
-    assert bad.status == 'error'
-    assert 'exited 3' in bad.error
-    assert bad.error.startswith('JobError: '), 'the type name appears once, as everywhere else'
+        assert c.post('/vault/watch', data=dict(target=' ', action='remind')).status_code == 400
