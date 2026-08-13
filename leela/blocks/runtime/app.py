@@ -1,33 +1,8 @@
-"""Which interpreter runs the code, and what is currently running in it.
-
-Four related things live here because they are four views of one decision.
-
-**The project runtime.** Leela stays in its own environment; user code belongs to the
-folder's. So a conventional project venv is the default, discovered rather than configured,
-and `/runtime/create` will make one — installing *only* the kernel transport into it, never
-Leela itself. That is the whole reason this is not simply "run in my environment".
-
-**Kernels.** `/kernel/select` restarts, and restarting loses the namespace. The client says
-so before it posts rather than this route deciding on the user's behalf that it was
-acceptable. Selecting also closes the shell terminal, because a shell cannot change its
-inherited `VIRTUAL_ENV` after it starts — reopening is how it picks up the new one.
-
-**Live envs.** A process appears in `/envs` only if it has an inspector *in* it. That is the
-complete answer to "will you pick up the uvicorn I started in a terminal": not unless it
-says `dhrishti.serving.serve()`, or Leela started it from a run configuration.
-
-**Dev servers.** Started under that same inspector, which is what makes a running server's
-module namespace watchable in the variable panel while it serves.
-
-`ctx.docs.mark_all_stale()` is called after anything that resets a namespace. Saved outputs
-stay useful but stop claiming to be fresh, which is the difference between a stale number
-and a lie.
-"""
+"Routes for the project runtime, its kernels, the live envs, and the dev servers."
 
 from __future__ import annotations
 
-import os
-import shutil
+import os, shutil
 
 from ... import errstr
 from ...core.web import fail, off_loop
@@ -51,19 +26,14 @@ def connect(app, ctx):
     async def runtime_info():
         from .kernels import project_python
         from .support import kernel_support
-        # The chosen folder, not the first one open: with two checkouts listed this reported
-        # the other project's interpreter, and the picker is where you go to find that out.
+        # `project_root`, not `roots[0]`: with two checkouts open the first one is the wrong answer.
         root = session.project_root
         py = project_python([root]) if root else None
         support = await off_loop(kernel_support, py) if py else {}
-        # `uv` decides whether a missing environment can be created without asking. With it,
-        # `.venv` is one command and reversible by deleting a directory; without it the client
-        # still asks, because `venv.EnvBuilder` plus `ensurepip` is slower and likelier to fail
-        # part-way, and a half-built environment is worse than no environment.
         return {'root': str(root or ''), 'python': py or '', 'needs_create': bool(root and not py),
-                'needs_support': bool(py and not support.get('ipykernel', {}).get('available')),
-                'support': support, 'active': ctx.pool.default_python or '',
-                'uv': bool(shutil.which('uv'))}
+            'needs_support': bool(py and not support.get('ipykernel', {}).get('available')),
+            'support': support, 'active': ctx.pool.default_python or '',
+            'uv': bool(shutil.which('uv'))}
 
     @rt('/runtime/support')
     async def runtime_support(req):
@@ -71,30 +41,20 @@ def connect(app, ctx):
         d = await req.json()
         py = d.get('python') or ctx.pool.default_python
         if not py: return fail('choose a project interpreter first')
-        try:
-            # The selected launcher becomes available immediately; no Leela restart needed.
-            return await off_loop(install_kernel_support, py)
+        try: return await off_loop(install_kernel_support, py)
         except Exception as e: return fail(f'could not install project kernel support — {errstr(e)}')
 
     @rt('/runtime/create')
     async def runtime_create():
-        """Create an explicit .venv for the project and install only its kernel transport.
-
-        In the folder this workspace is currently about, which is `project_root` rather than
-        `roots[0]`: creating the second project's environment inside the first project's
-        directory is a mess to find and a worse one to undo, and the path is reported back so
-        the answer is never implicit.
-        """
+        "Create a .venv in `project_root` and install only its kernel transport, never Leela itself."
         root = session.project_root
         if root is None: return fail('open a folder first')
         target = root/'.venv'
         if target.exists(): return fail(f'{target} already exists')
 
         def create():
-            import subprocess
-            import venv
-            if uv := shutil.which('uv'):
-                subprocess.run([uv, 'venv', str(target)], check=True, env=os.environ.copy())
+            import subprocess, venv
+            if uv := shutil.which('uv'): subprocess.run([uv, 'venv', str(target)], check=True, env=os.environ.copy())
             else: venv.EnvBuilder(with_pip=True).create(target)
             py = target/('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
             from .support import install_kernel_support
@@ -127,12 +87,12 @@ def connect(app, ctx):
         from pathlib import Path
         k = await session.runtime()
         return {'alive': bool(k and k.alive), 'base': k.base if k else None,
-                'pid': k.pid if k else None,
-                'key': getattr(k, 'name', '') or Path(session.kernel_key()).name or 'kernel',
-                'boot_error': k.boot_error if k else None,
-                'api_error': getattr(k, 'last_api_error', '') if k else '',
-                'cwd': str(session.cwd_for() or ''),
-                'tabs': [{'running': t.running, 'dirty': t.dirty} for t in session.tabs]}
+            'pid': k.pid if k else None,
+            'key': getattr(k, 'name', '') or Path(session.kernel_key()).name or 'kernel',
+            'boot_error': k.boot_error if k else None,
+            'api_error': getattr(k, 'last_api_error', '') if k else '',
+            'cwd': str(session.cwd_for() or ''),
+            'tabs': [{'running': t.running, 'dirty': t.dirty} for t in session.tabs]}
 
     @rt('/kernel/options')
     def k_options():
@@ -161,19 +121,13 @@ def connect(app, ctx):
 
     @rt('/kernel/select')
     async def k_select(req):
-        """Choose a launcher and/or an interpreter, and start the kernel on it.
-
-        This restarts, and restarting loses the namespace -- so the client says so before
-        it posts, rather than this route deciding on the user's behalf that it was fine.
-        """
+        "Choose a launcher and/or an interpreter, and start the kernel on it."
         d = await req.json()
         try:
             o = await session.set_kernel(kind=d.get('kind'),
-                                         python=d['python'] if 'python' in d else False,
-                                         private=d.get('private'))
-            # A shell cannot change its inherited VIRTUAL_ENV after it starts. Closing it
-            # lets the client reopen immediately with the newly selected project runtime.
-            ctx.terms.close('shell')
+                python=d['python'] if 'python' in d else False,
+                private=d.get('private'))
+            ctx.terms.close('shell')   # a shell cannot change its inherited VIRTUAL_ENV after it starts
             ctx.docs.mark_all_stale()
         except Exception as e: return fail(e)
         return {'ok': True, **o}
@@ -181,14 +135,9 @@ def connect(app, ctx):
     # -- live envs ---------------------------------------------------------
     @rt('/envs')
     def envs_route():
-        """Everything the variable panel could point at, and what it is pointing at now.
-
-        A process only appears here if it has an inspector in it. That is the whole answer
-        to "will you pick up the uvicorn I started in a terminal": not unless it says
-        `dhrishti.serving.serve()`, or leela started it from a run configuration.
-        """
+        "Everything the variable panel could point at: a process appears only if it has an inspector in it."
         return {'envs': session.envs(), 'watching': session.env_base,
-                'hint': 'import dhrishti.serving as ds; ds.serve(name="api")'}
+            'hint': 'import dhrishti.serving as ds; ds.serve(name="api")'}
 
     @rt('/envs/watch')
     async def envs_watch(req):
@@ -201,12 +150,7 @@ def connect(app, ctx):
 
     @rt('/dev/start')
     async def dev_start(path: str = '', name: str = ''):
-        """Start a run configuration, or a file, under a live inspector.
-
-        The inspector is in the process the command runs in -- that is what makes its
-        module namespace watchable while it serves. `name` picks a configuration; `path`
-        runs a file directly.
-        """
+        "Start a run configuration (`name`) or a file (`path`) under a live inspector."
         try:
             s = await session.run(name or path)
             return {'ok': s.alive, **s.state(), 'log': s.tail(20)}
