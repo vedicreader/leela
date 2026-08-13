@@ -39,8 +39,9 @@ dependencies = [
     "numpy>=1.26",             # search reads Kosha's embedding vectors as arrays
     "packaging>=24.0",         # comparing installed versions for the editor's package hints
     "dhrishti>=0.1.2",         # the inspection engine: namespace -> node tree, as a JSON API in-kernel
-    "vishalakshi>=0.1.6",      # the vault behind memory: prose shelves, topics, federated recall,
-                               # doc_marks, pii and the noise ranker
+    "vishalakshi>=0.1.7",      # the vault behind memory: prose shelves, topics, federated recall,
+                               # doc_marks, the noise ranker, and the pii report whose `ner=` and
+                               # `scanned_ner` the vault block's badge reads
 ]
 
 [project.optional-dependencies]
