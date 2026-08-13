@@ -4138,6 +4138,8 @@ dependencies = [
     { name = "fastllm-claude-code" },
     { name = "fossick" },
     { name = "koshas" },
+    { name = "litesearch" },
+    { name = "rgapi" },
     { name = "rishi" },
     { name = "vishalakshi" },
 ]
@@ -4155,6 +4157,7 @@ requires-dist = [
     { name = "jupyter-client", marker = "extra == 'dev'", specifier = ">=8.9.1" },
     { name = "jupyter-client", marker = "extra == 'pyrepl'", specifier = ">=8.9.1" },
     { name = "koshas", specifier = ">=0.0.31" },
+    { name = "litesearch", specifier = ">=0.1.1" },
     { name = "mcp", marker = "extra == 'all'", specifier = ">=1.2" },
     { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.2" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2" },
@@ -4163,12 +4166,15 @@ requires-dist = [
     { name = "pyghostty", marker = "extra == 'all'", specifier = ">=0.1.0" },
     { name = "pyghostty", marker = "extra == 'cli'", specifier = ">=0.1.0" },
     { name = "pyghostty", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "pyghostty", marker = "extra == 'pyrepl'", specifier = ">=0.1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "rgapi", specifier = ">=0.1.19" },
     { name = "rishi", specifier = ">=0.1.1" },
     { name = "rishi", extras = ["all"], marker = "extra == 'dev'", specifier = ">=0.1.1" },
     { name = "teleprint", marker = "extra == 'all'", specifier = ">=0.1.1" },
     { name = "teleprint", marker = "extra == 'cli'", specifier = ">=0.1.1" },
     { name = "teleprint", marker = "extra == 'dev'", specifier = ">=0.1.1" },
+    { name = "teleprint", marker = "extra == 'pyrepl'", specifier = ">=0.1.1" },
     { name = "vishalakshi", specifier = ">=0.0.1" },
 ]
 provides-extras = ["all", "cli", "dev", "mcp", "pyrepl"]
@@ -4179,7 +4185,7 @@ dev = [
     { name = "nbdev", specifier = ">=3.3.11" },
     { name = "notebook", specifier = ">=7.6.1" },
     { name = "pytest", specifier = ">=8.0.0" },
-    { name = "ramabana", extras = ["cli", "mcp", "pyrepl"] },
+    { name = "ramabana", extras = ["all"] },
     { name = "rishi", extras = ["all"], specifier = ">=0.1.1" },
     { name = "rishi", extras = ["all"], specifier = ">=0.1.2" },
 ]
