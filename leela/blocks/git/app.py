@@ -29,7 +29,7 @@ from pathlib import Path
 
 from ...core.web import fail, off_loop
 from .git import GitError, GitRepo
-from .repos import RepoSet, find_repos
+from .repos import RepoSet, find_repos, repo_for
 
 __all__ = ['CAPS', 'connect', 'git_paths']
 
@@ -57,7 +57,9 @@ def _apply(repo, op, d):
         'discard': lambda: repo.discard(git_paths(d.get('paths'))),
         'write_worktree': lambda: repo.write_worktree(git_paths([d.get('path')])[0], d.get('content') or ''),
         'resolve_conflict': lambda: repo.resolve_conflict(git_paths([d.get('path')])[0],
-                                                          d.get('choice') or ''),
+                                                          d.get('choice') or '',
+                                                          d.get('content')),
+        'undo': lambda: repo.undo(str(d.get('token') or '')),
         'apply_patch': lambda: repo.apply_patch(d.get('patch') or '', bool(d.get('staged', True)),
                                                 bool(d.get('reverse'))),
         'checkout': lambda: repo.checkout(d.get('branch') or ''),
@@ -110,13 +112,15 @@ def connect(app, ctx):
         The chosen folder comes first because choosing it is the more recent and more
         deliberate statement of which project this is about -- and opening a file in another
         checkout re-chooses that one, so the two gestures cannot disagree for long.
+
+        Deferring to `repo_for` rather than repeating its three steps is deliberate: every
+        project panel has to answer this identically, and the one time these two spellings of
+        it existed side by side they drifted -- source control followed the chosen folder and
+        releases, deploys and drive stayed on the first one. The only difference left is the
+        one that is real: this surface is about Git, so a folder that is not a checkout is an
+        error here and merely unremarkable there.
         """
-        if str(target or '').strip(): return GitRepo(repos().require(target))
-        root = ctx.session.active_root
-        if root is not None and root in ctx.fs.roots: return GitRepo.at(root)
-        cwd = ctx.session.cwd_for()
-        if cwd is None: raise GitError('open a folder first')
-        return GitRepo.at(cwd)
+        return GitRepo.at(repo_for(ctx.session, target))
 
     @rt('/git/info')
     async def git_info(repo: str = ''):
@@ -135,8 +139,12 @@ def connect(app, ctx):
         try:
             def act():
                 r = repo_at(d.get('repo') or '')
-                _apply(r, str(d.get('op') or ''), d)
-                return r.info()
+                outcome = _apply(r, str(d.get('op') or ''), d)
+                # Mutations that can leave the repository somewhere unexpected report what they
+                # did; the snapshot alone cannot distinguish "squash staged your merge" from
+                # "something dirtied your index". Ops that cannot surprise return nothing.
+                snapshot = r.info()
+                return snapshot | {'outcome': outcome} if isinstance(outcome, dict) else snapshot
             return await off_loop(act)
         except Exception as e: return fail(e)
 

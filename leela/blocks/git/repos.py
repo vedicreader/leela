@@ -128,13 +128,23 @@ def repo_for(session, target=''):
     """The project a panel is about: one this workspace lists, or the active tab's.
 
     Shared by every panel that is *about a project* rather than about Git -- workflows,
-    releases, the environment file. They ask the same question the source-control panel
-    does and must answer it the same way, including refusing a path the workspace does not
-    list. Unlike `GitRepo.at`, a folder that is not a checkout is a legitimate answer: a
-    project can have a release pipeline before it has a remote.
+    releases, deploys, drive, the environment file. They ask the same question the
+    source-control panel does and must answer it the same way, including refusing a path the
+    workspace does not list. Unlike `GitRepo.at`, a folder that is not a checkout is a
+    legitimate answer: a project can have a release pipeline before it has a remote.
+
+    The chosen folder comes before the open tab's, and that order is the whole function.
+    `cwd_for` prefers the active tab's own checkout -- correctly, because that is where code
+    should *run* from -- so consulting it first meant a file left open in the first repository
+    pinned every project panel there however deliberately another folder had been chosen.
+    Choosing a folder and opening a file in another one both set `active_root`, so asking it
+    first honours either gesture and needs no third rule.
     """
     if str(target or '').strip():
         return RepoSet(session.fs.roots).require(target)
+    chosen = session.active_root
+    if chosen is not None and chosen in session.fs.roots:
+        return repo_root(chosen) or chosen
     cwd = session.cwd_for()
     if cwd is None:
         raise GitError('open a folder first')
@@ -284,7 +294,7 @@ class RepoSet:
                         return row | {'skipped': 'no upstream'}
                     if not state['behind']:
                         return row | {'skipped': 'already current'}
-                    return row | {'output': repo.pull()}
+                    return row | {'output': repo.pull()['summary']}
                 state = repo.brief(fresh=True)
                 if not state['upstream']:
                     return row | {'skipped': 'unpublished branch'}

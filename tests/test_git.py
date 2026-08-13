@@ -110,6 +110,47 @@ def test_file_changes_locate_modified_lines_for_the_editor(repo):
     detail = GitRepo.at(repo).file_changes('new.py')
     assert detail['status']['untracked']
     assert detail['ranges'] == [{'from': 1, 'to': 2, 'kind': 'added'}]
+    assert detail['hunks'] == [], 'an untracked file has no committed version to patch against'
+
+
+def test_each_gutter_change_carries_its_own_appliable_patch(repo):
+    """One click on a gutter mark has to be able to revert or stage exactly that change.
+
+    So each hunk arrives with the text it replaced, the span the editor drew the mark on, and a
+    patch Git can place by its own context -- and the last of those is checked the only way that
+    means anything: by applying it and looking at what moved.
+    """
+    (repo/'src'/'app.py').write_text('value = 1\nadded = True\n')
+    (repo/'src'/'other.py').write_text('kept = 1\n')
+    git(repo, 'add', 'src/other.py'), git(repo, 'commit', '-m', 'other')
+    r = GitRepo.at(repo)
+    hunks = r.file_changes('src/app.py')['hunks']
+    assert len(hunks) == 1
+    h = hunks[0]
+    assert h['kind'] == 'added' and h['from'] == 2 and h['to'] == 2
+    assert h['old'] == '' and h['new'] == 'added = True\n'
+    assert h['patch'].startswith('diff --git') and '+added = True' in h['patch']
+
+    # Reverting one hunk puts the working tree back without touching the rest of the file.
+    r.apply_patch(h['patch'], staged=False, reverse=True)
+    assert (repo/'src'/'app.py').read_text() == 'value = 1\n'
+
+    # A modification reports the removed text, and a deletion reports the line it followed.
+    (repo/'src'/'app.py').write_text('value = 2\ntail = 3\n')
+    h = r.file_changes('src/app.py')['hunks'][0]
+    assert h['kind'] == 'modified' and h['old'] == 'value = 1\n' and 'tail = 3' in h['new']
+
+    (repo/'src'/'app.py').write_text('')
+    h = r.file_changes('src/app.py')['hunks'][0]
+    assert h['kind'] == 'deleted' and h['old'] == 'value = 1\n' and h['from'] == 1
+
+    # Staging one hunk and committing is how "commit this change" is built, so it has to work
+    # with `apply_patch(staged=True)` alone -- no `git add` of the whole file anywhere in it.
+    (repo/'src'/'app.py').write_text('value = 1\nonly = "this"\n')
+    h = r.file_changes('src/app.py')['hunks'][0]
+    r.apply_patch(h['patch'], staged=True)
+    r.commit('just this change')
+    assert 'only = "this"' in r.run('show', 'HEAD:src/app.py')
 
 
 def test_untracked_text_can_be_reviewed_before_staging(repo):
@@ -678,3 +719,71 @@ def test_uncommitted_work_on_a_tracked_file_still_blocks_and_names_the_files(rep
     for p in (GitRepo.at(repo).merge_preview('feature'), GitRepo.at(repo).rebase_preview('feature')):
         assert p['clean'] is False
         assert p['dirty'] == ['src/app.py'], 'and the dialog can say which'
+
+
+def test_choosing_a_folder_moves_releases_deploys_and_drive_too(tmp_path):
+    """The reported bug, one layer down: source control followed the choice, releases did not.
+
+    `repo_for` is shared by every panel that is *about a project* rather than about Git, and
+    its docstring says it must answer the same question the same way. It did not: it went
+    straight to `cwd_for`, which prefers the open tab's own checkout, so a file open in the
+    first repo pinned releases, deploys, drive, workflows and the environment panel there
+    however deliberately another folder had been chosen.
+    """
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    a, b = _repo(tmp_path/'ramabana', 'main'), _repo(tmp_path/'rishi', 'dev')
+    ws = Workspace(roots=[a, b])
+    ws.open(a/'readme.md')                      # a tab in the first checkout, as in the report
+    with TestClient(ide_app(ws)) as client:
+        for url in ('/releases', '/deploys', '/drive'):
+            assert client.get(url).json()['root'] == str(a), f'precondition for {url}'
+        assert client.post('/workspace/activate', json={'path': str(b)}).json()['ok'] is True
+        assert client.get('/git/info').json()['branch'] == 'dev', 'source control already did this'
+        for url in ('/releases', '/deploys', '/drive'):
+            assert client.get(url).json()['root'] == str(b), f'{url} stayed on the first repo'
+
+
+def test_a_project_panel_still_follows_the_tab_when_no_folder_was_chosen(tmp_path):
+    "Opening a file is the other way of saying which project you mean, so it must still count."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    a, b = _repo(tmp_path/'ramabana', 'main'), _repo(tmp_path/'rishi', 'dev')
+    ws = Workspace(roots=[a, b])
+    ws.open(b/'readme.md')
+    with TestClient(ide_app(ws)) as client:
+        assert client.get('/releases').json()['root'] == str(b)
+        assert client.get('/git/info').json()['branch'] == 'dev', 'and the two agree'
+
+
+def test_a_named_repository_still_wins_over_the_chosen_one(tmp_path):
+    "The panels can be pointed at any listed checkout explicitly; that must outrank the choice."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    a, b = _repo(tmp_path/'ramabana', 'main'), _repo(tmp_path/'rishi', 'dev')
+    ws = Workspace(roots=[a, b]); ws.activate_root(b)
+    with TestClient(ide_app(ws)) as client:
+        assert client.get('/releases', params={'repo': str(a)}).json()['root'] == str(a)
+        assert client.get('/releases').json()['root'] == str(b), 'and it did not become sticky'
+
+
+def test_choosing_a_folder_moves_the_agent_and_the_kernel_fallback_too(tmp_path):
+    """Two more project surfaces that were answering about the first folder.
+
+    The agent's shell already followed the choice, but its *briefing* is discovered once and
+    cached -- so it went on describing the project you left while running commands in the one you
+    chose. And `kernel_key` falls back to a folder whenever a tab has no file of its own, which is
+    what the exec box and the variable panel use.
+    """
+    a, b = _repo(tmp_path/'ramabana', 'main'), _repo(tmp_path/'rishi', 'dev')
+    ws = Workspace(roots=[a, b])
+    assert ws.kernel_key() == str(a), 'precondition: the first folder'
+
+    rebriefed = []
+    ws._rebrief_agents = lambda: rebriefed.append(True)
+    ws.activate_root(b)
+    assert ws.kernel_key() == str(b), 'the exec box and variables follow the chosen project'
+    assert rebriefed, 'and a live assistant is told the project changed'
+
+    from leela.blocks.agent.ai import WorkspaceHost
+    assert WorkspaceHost(ws).project == str(b), 'as does where its commands run'
