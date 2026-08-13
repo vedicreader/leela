@@ -1,13 +1,4 @@
-"""The tab strip.
-
-Titles disambiguate only when they have to. Two files called `app.py` would be
-indistinguishable, so a duplicated title is shown as `root/relative/path` while a unique
-one stays short — the panel is narrow, and widening every label to disambiguate the rare
-collision would cost the common case.
-
-Each tab carries two independent states: `running` (cells executing) and `dirty` (unsaved).
-They are separate spans because they answer different questions and can both be true.
-"""
+'The tab strip. A duplicated title widens to `root/relative/path`; a unique one stays short.'
 
 from __future__ import annotations
 

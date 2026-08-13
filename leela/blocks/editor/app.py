@@ -1,25 +1,12 @@
 """Editor services that are neither the kernel's job nor Pyright's.
 
-Formatting never writes. The browser gets the formatted text back and decides whether to
-save it, so a formatter that mangles something is an undo away rather than a commit away.
-ruff is tried before black, both from the *project* interpreter -- formatting has to match
-what the project's own CI will do, not what leela happens to have installed.
-
-`project_package_rows` annotates a pyproject with installed versions. Two decisions in it
-are load-bearing:
-
-- Versions come from one short subprocess running `importlib.metadata` in the project
-  interpreter. Nothing is imported from the project and no package code executes.
-- A requirement is located by matching its **complete quoted declaration**, not its package
-  name. A name also occurs in keywords, comments and URLs, and annotating that nearest text
-  is exactly the kind of plausible-looking wrong answer an editor must never give.
+Formatting never writes; the browser saves the returned text. ruff then black, both from the
+*project* interpreter, so the result matches what the project's own CI does.
 """
 
 from __future__ import annotations
 
-import json
-import subprocess
-import sys
+import json, subprocess, sys
 from pathlib import Path
 
 from ...core.web import fail, off_loop
@@ -30,12 +17,7 @@ CAPS = ('fs', 'pool')
 
 
 def project_package_rows(path, python=None):
-    """Declared pyproject requirements with installed versions and source-line addresses.
-
-    The selected project interpreter is queried in one short subprocess. Nothing is
-    imported from the project and no package code executes: importlib.metadata reads only
-    installed distribution metadata.
-    """
+    "Declared pyproject requirements with installed versions and source-line addresses."
     import tomllib
     p = Path(path)
     source = p.read_text(encoding='utf-8')
@@ -48,13 +30,10 @@ def project_package_rows(path, python=None):
     try:
         from packaging.requirements import Requirement
         parsed = [(Requirement(x), x) for x in declared]
-    except Exception:
-        parsed = []
+    except Exception: parsed = []
     names = list(dict.fromkeys(r.name for r, _raw in parsed))
     versions = {}
     if names:
-        # Keep the child snippet explicit and exception-safe; a missing distribution is
-        # data for a pill, not a failed endpoint.
         script = ('import importlib.metadata as m,json,sys\n'
                   'out={}\n'
                   'for n in json.loads(sys.argv[1]):\n'
@@ -72,10 +51,7 @@ def project_package_rows(path, python=None):
         try:
             if req.marker and not req.marker.evaluate(): continue
         except Exception: pass
-        # Match the complete declaration, not merely the package name. A package name may
-        # also occur in keywords, comments or URLs; annotating that nearest text is exactly
-        # the kind of plausible-looking wrong answer an editor must avoid. The address is
-        # immediately after the closing quote, before a trailing comma/comment.
+        # The whole quoted declaration, not the bare name: that also occurs in keywords and URLs.
         found = None
         for i, line in enumerate(lines, 1):
             for quote in ('"', "'"):
@@ -123,10 +99,7 @@ def connect(app, ctx):
             elif lang == 'python':
                 from ..runtime.kernels import project_python
                 python = ctx.pool.default_python or project_python(ctx.fs.roots) or sys.executable
-                # `cwd` is what makes ruff find a `pyproject.toml`, so it has to be the folder
-                # the *file* is in -- the first open folder formatted a second checkout's file to
-                # the first checkout's line length. A file's formatting is not a matter of
-                # opinion, so this follows the file rather than the chosen project.
+                # ruff finds `pyproject.toml` from `cwd`, so it must be the folder the *file* is in.
                 cwd = _format_cwd(ctx, d.get('path'))
                 def format_python():
                     choices = [[str(python), '-m', 'ruff', 'format', '-'], [str(python), '-m', 'black', '-q', '-']]

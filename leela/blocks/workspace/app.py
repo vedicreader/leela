@@ -1,14 +1,8 @@
 """The open folders, the working directory, and the other windows.
 
-`/workspace/info` reports two different things that are easy to confuse. `roots` are the
-folders open in *this* workspace; `workspaces` are the independently hosted sibling
-windows, each with its own `Workspace`, kernels and agent, reached at
-`<slug>.localhost`. See `docs/multi-workspace-architecture.md`.
-
-The working directory is per tab, with automatic discovery as the default: a script runs
-from its containing Git repository root unless someone pinned a directory with the `cwd`
-pill. `explicit` is what the pill uses to show which of the two is in force -- without it
-the browser cannot tell a pinned directory from a discovered one that happens to match.
+`roots` are folders open in this workspace; `workspaces` are independently hosted sibling
+windows at `<slug>.localhost` (see `docs/multi-workspace-architecture.md`). The working
+directory is per tab: a script runs from its Git repository root unless `explicit` is set.
 """
 
 from __future__ import annotations
@@ -25,12 +19,7 @@ def connect(app, ctx):
 
     @rt('/workspace/activate')
     async def workspace_activate(req):
-        """Point the project surfaces -- source control, releases, deploys -- at one folder.
-
-        A workspace holds several checkouts. Choosing one here is the answer to "which
-        project", and it is remembered: `roots[0]` was standing in for that answer, so adding
-        a second folder and switching to it left the branch pill on the first one.
-        """
+        "Point the project surfaces -- source control, releases, deploys -- at one folder."
         d = await req.json()
         try:
             root = ctx.session.activate_root(d.get('path') or '')
@@ -41,12 +30,10 @@ def connect(app, ctx):
     @rt('/workspace/info')
     def workspace_info():
         "The current multi-root project plus independently hosted workspace windows."
-        tab, fs = ctx.tab, ctx.fs
-        active = ctx.session.project_root
         catalog = ctx.catalog
         sites = catalog() if callable(catalog) else list(catalog or ())
-        return {'active': str(active or ''),
-                'roots': [{'path': str(root), 'name': root.name} for root in fs.roots],
+        return {'active': str(ctx.session.project_root or ''),
+                'roots': [{'path': str(root), 'name': root.name} for root in ctx.fs.roots],
                 'workspaces': sites}
 
     @rt('/cwd')

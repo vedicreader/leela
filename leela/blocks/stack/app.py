@@ -1,31 +1,16 @@
-"""The stack under a deploy: the servers and tunnels it lands on, and the packages that run it.
-
-Two views, one block, because they answer halves of the same question. When a deploy fails,
-either the infrastructure is not what you thought -- no server, a tunnel from last month, a
-record pointing somewhere else -- or one of your own packages raised. `Infra` reads the first
-from Hetzner and Cloudflare through vpseasy and cfeasy; `packages` answers the second from
-the pipeline's own transcript.
-
-Nothing here is bulk and nothing is implicit. Every listing is a read, the two deletions name
-exactly one thing each, and no route reaches a provider unless it was called -- opening the
-panel costs one `status`, which is four `find_spec` calls and two lookups in dockeasy's store.
-"""
+'The stack under a deploy: the servers and tunnels it lands on, and the packages that run it.'
 
 from __future__ import annotations
 
 from ...core.web import fail, off_loop
-from ..pipelines.deploys import Deploy
 from ...core.envs import EnvStore
 from .infra import Infra, InfraError
 from .packages import FAMILY, survey
-from ..pipelines.releases import Release
 from ..git.repos import RepoSet, repo_for
 
 __all__ = ['CAPS', 'connect']
 
 CAPS = ('fs',)
-
-KINDS = {'release': Release, 'deploy': Deploy}
 
 
 def connect(app, ctx):
@@ -39,12 +24,7 @@ def connect(app, ctx):
 
     @rt('/stack')
     def stack_info(repo: str = ''):
-        """The family: installed, which version, which copy runs, and whether it is yours.
-
-        `shadowed` is the row worth the whole view -- a package checked out in this
-        workspace but imported from site-packages means an edit here changes nothing there,
-        which is a half-hour lost every time it goes unnoticed.
-        """
+        "The family: installed, which version, which copy runs, and whether it is yours."
         try:
             return {'packages': survey(FAMILY, checkouts()), 'checkouts': checkouts(),
                     'root': str(repo_for(ctx.session, repo))}
@@ -63,12 +43,7 @@ def connect(app, ctx):
 
     @rt('/infra/action')
     async def infra_action(req):
-        """The two destructive things, each naming exactly one target.
-
-        There is deliberately no "delete everything unused": deciding what is unused is the
-        judgement that goes wrong, and it goes wrong on infrastructure someone is serving
-        from.
-        """
+        "The two destructive things, each naming exactly one target."
         d = await req.json()
         op = str(d.get('op') or '')
         try:

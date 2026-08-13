@@ -1,20 +1,8 @@
-"""Live variables, proxied from the kernel's own inspector.
+"""Live variables, proxied from each kernel's own dhrishti inspector.
 
-Nothing here reads a namespace directly. Each kernel hosts a dhrishti inspector on its own
-port, and every route below goes through `kernel_api`, which resolves the *same* runtime
-`Run` uses. Two consequences worth keeping in mind when editing this:
-
-- The page stays single-origin. Letting the browser call those kernel ports directly would
-  mean CORS on every kernel and the owner token sitting in the browser.
-- Variables can never disagree with execution about which kernel it is looking at. A
-  selected venv may restart or replace the tab kernel; resolving `Workspace.runtime` on
-  every request is what makes them cross the same boundary rather than merely agreeing
-  while a stale kernel is still cached.
-
-`scope` picks which namespace answers: `live` is the tab's kernel, `agent` is the agent
-session's overlay. They are different runtimes, not a filter over one — the `/agent/api/*`
-prefix is a different inspector, and `identity` in `/vars` carries which one replied so the
-panel can tell them apart.
+Nothing here reads a namespace: every route goes through `kernel_api`, resolving the runtime
+per request so a restarted or replaced kernel cannot be answered from a stale one. `scope`
+picks the inspector -- `live` is the tab's kernel, `agent` its overlay under `/agent/api/*`.
 """
 
 from __future__ import annotations

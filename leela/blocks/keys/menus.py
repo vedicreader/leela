@@ -1,11 +1,4 @@
-"""Single-source contextual menus for the browser IDE.
-
-Buttons answer "what is always useful here?"; menus answer "what can I do to this
-thing?".  Like :mod:`leela.core.buttons`, every row names an action from the shared
-keymap.  Labels and chords are resolved from that keymap when JSON is produced,
-so a user keybinding edit is reflected in the menu without a second registry to
-keep in sync.
-"""
+'Contextual menus, as rows naming actions from the shared keymap; labels and chords come from it.'
 
 from dataclasses import dataclass
 
@@ -29,8 +22,6 @@ class MenuItem:
 
 S = MenuItem
 MENUS = {
-    # File-pane background, files, and folders deliberately differ: "open" is not a
-    # meaningful operation on a folder row, whose disclosure arrow already expands it.
     'files': L(S('quick_open'), S('add_root'), S(), S('new_file'), S('new_notebook'),
                S('new_dir'), S(), S('code_search'), S('refresh_files')),
     'file': L(S('open'), S('git_blame'), S(), S('new_file'), S('new_dir'), S(), S('rename'),
@@ -40,8 +31,6 @@ MENUS = {
     'root': L(S('new_file'), S('new_dir'), S(), S('remove_root', 'warn'),
               S(), S('add_root'), S('refresh_files')),
 
-    # Plain files use editor; notebooks use cell. Cell includes the symbol operations
-    # because a code cell is still an editor under the pointer.
     'editor': L(S('complete'), S('ai_complete'), S('show_docs'), S(), S('find_similar'),
                 S('code_map'), S('git_blame'), S(), S('run_selection'), S('comment')),
     'cell': L(S('run_cell'), S('run_advance'), S('run_insert'), S(), S('run_above'),

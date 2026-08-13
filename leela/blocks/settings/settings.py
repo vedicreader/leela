@@ -1,15 +1,9 @@
-"""Layered, validated IDE settings.
-
-Settings have deterministic precedence: Leela defaults, user preferences, workspace
-preferences, then language-specific values from those same files. Browser-only geometry
-stays in localStorage; editing behavior belongs in these portable JSON files.
-"""
+'Layered, validated IDE settings: defaults, then user, then workspace, then language.'
 from __future__ import annotations
 
 import json
 from copy import deepcopy
-from pathlib import Path
-from fastcore.xtras import atomic_save
+from fastcore.all import Path, atomic_save
 
 from ... import leela_cfg
 
@@ -48,17 +42,10 @@ DEFAULT_SETTINGS = {
         'breakOnRaised': False, 'breakOnUncaught': True,
     },
     'terminal': {
-        # Empty means `$SHELL`, which is the right default and the only one that can be. A path
-        # here overrides it, for the case where Leela was launched from somewhere that sets
-        # `SHELL` to something other than the shell you actually use.
-        'shell': '', 'shellArgs': [],
-        # A login shell, as macOS terminals and VS Code default to: on this platform PATH and
-        # tool setup usually live in login configuration, and an IDE terminal that skips it is
-        # the one where `uv` is mysteriously not found.
-        'loginShell': True,
-        # The external terminal the "open externally" button hands the project to. Empty means
-        # the first one of `EXTERNAL_TERMINALS` that is actually installed.
-        'external': '',
+        'shell': '',            # '' means $SHELL
+        'shellArgs': [],
+        'loginShell': True,     # macOS puts PATH and tool setup in login config
+        'external': '',         # '' means the first installed of EXTERNAL_TERMINALS
     },
 }
 
@@ -84,27 +71,20 @@ _RANGES = {
 
 def _read(path):
     try:
-        value = json.loads(Path(path).read_text(encoding='utf-8'))
+        value = Path(path).read_json(encoding='utf-8')
         return value if isinstance(value, dict) else {}
-    except (OSError, ValueError, TypeError):
-        return {}
+    except (OSError, ValueError, TypeError): return {}
 
 
 def _write(path, data):
-    """Replace a settings document atomically, never leaving a half-written JSON file."""
+    "Replace a settings document atomically, never leaving a half-written JSON file."
     path = Path(path)
     text = json.dumps(data, indent=2, sort_keys=True) + '\n'
     with atomic_save(path, mode='w', encoding='utf-8') as file: file.write(text)
 
 
 def _compact_legacy_snapshot(data):
-    """Remove default-valued keys dumped by the first settings UI.
-
-    That UI wrote every effective value into the chosen scope. A later User change could
-    therefore appear to revert because an accidental full Workspace snapshot (including
-    default values) won precedence. A section containing every known key is recognisably
-    one of those snapshots; retain only its meaningful deviations from Leela defaults.
-    """
+    "Strip defaults from legacy full-section snapshots, which else outrank a later user change."
     data = deepcopy(data or {})
     def compact(target):
         for section, defaults in DEFAULT_SETTINGS.items():
@@ -122,10 +102,8 @@ def _compact_legacy_snapshot(data):
 def _merge(base, overlay):
     out = deepcopy(base)
     for section, values in (overlay or {}).items():
-        if section == 'languages' or not isinstance(values, dict):
-            continue
-        if section in out:
-            out[section].update({k: v for k, v in values.items() if k in out[section]})
+        if section == 'languages' or not isinstance(values, dict): continue
+        if section in out: out[section].update({k: v for k, v in values.items() if k in out[section]})
     return out
 
 
@@ -134,8 +112,7 @@ def _validated(section, values):
         raise ValueError(f'unknown settings section {section!r}')
     out = {}
     for key, value in values.items():
-        if key not in DEFAULT_SETTINGS[section]:
-            raise ValueError(f'unknown setting {section}.{key}')
+        if key not in DEFAULT_SETTINGS[section]: raise ValueError(f'unknown setting {section}.{key}')
         default = DEFAULT_SETTINGS[section][key]
         if (section, key) in _ENUMS:
             if value not in _ENUMS[section, key]:
@@ -152,14 +129,13 @@ def _validated(section, values):
 
 
 class Settings:
-    """Read and write user/workspace settings without allowing arbitrary paths or keys."""
+    "Read and write user/workspace settings without allowing arbitrary paths or keys."
     def __init__(self, root=None, user_path=None):
         self.root = Path(root).resolve() if root else None
         self.user_path = Path(user_path or USER_SETTINGS_FILE)
 
     @property
-    def workspace_path(self):
-        return self.root/WORKSPACE_SETTINGS_FILE if self.root else None
+    def workspace_path(self): return self.root/WORKSPACE_SETTINGS_FILE if self.root else None
 
     def raw(self, scope):
         if scope == 'user': return _compact_legacy_snapshot(_read(self.user_path))

@@ -1,4 +1,4 @@
-"""Small managed Language Server Protocol client for optional Pyright diagnostics."""
+'Small managed Language Server Protocol client for optional Pyright diagnostics.'
 from __future__ import annotations
 import json, os, queue, shutil, subprocess, threading, time
 from pathlib import Path

@@ -1,13 +1,4 @@
-"""Driving dockeasy, vpseasy, cfeasy and gheasy a call at a time.
-
-A block of its own, beside the deploy rather than inside it. The two are alternatives --
-`deploy.py` run as three subcommands, or the same work as six library calls with six exit
-codes -- and keeping them apart is what makes them comparable: same runner, same terminal,
-same attribution on a failure, different driver.
-
-`/drive/ws` is the same socket the other pipelines use, registered here because the pipeline
-this one shows lives in this closure. `core.web.pipeline_socket` is the one implementation.
-"""
+'Driving dockeasy, vpseasy, cfeasy and gheasy a call at a time.'
 
 from __future__ import annotations
 
@@ -50,12 +41,7 @@ def connect(app, ctx):
 
     @rt('/drive/action')
     async def drive_action(req):
-        """Run one part, or the lot. `step` with `auto` off is the normal move here.
-
-        The point of this panel is a single library call at a time, so unlike the deploy the
-        default is *not* to carry on into the next one -- you ran `tunnel` to find out about
-        the tunnel.
-        """
+        "Run one part, or the lot; `step` does not carry on into the next one."
         d = await req.json()
         op, target = str(d.get('op') or ''), d.get('repo') or ''
         try:

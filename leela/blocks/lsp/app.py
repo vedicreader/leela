@@ -1,18 +1,6 @@
-"""Pyright, for the things a kernel cannot answer.
+"""Pyright, for the static questions a kernel cannot answer.
 
-The kernel knows what is *loaded*; Pyright knows what is *written*. Hover, inlay hints and
-symbol outlines are static questions, and asking a running interpreter would either execute
-something or return nothing for code that has not run yet.
-
-`/lsp/rename` is the one that writes. It computes the full preview server-side — every
-affected file, before and after — and only applies when the client asks explicitly with
-`apply`. That split exists because a workspace rename is the one editor operation that can
-silently touch a dozen files, so the browser gets to show them before anything is written.
-Each file goes through `fs._check` first, so an edit Pyright proposes outside the open
-roots is refused rather than applied, and the whole set is journalled as one operation so
-`/history/undo` reverses the rename rather than one file of it.
-
-LSP requests are a subprocess round-trip, so all of them go through `off_loop`.
+Every request is a subprocess round-trip, so all of them go through `off_loop`.
 """
 
 from __future__ import annotations
@@ -91,7 +79,7 @@ def connect(app, ctx):
                     row = max(0, min(int(pos.get('line', 0)), len(ls)-1))
                     return starts[row] + min(int(pos.get('character', 0)), len(ls[row].rstrip('\r\n')))
 
-                # Applied last-first so that an earlier edit's offsets stay valid.
+                # Last-first, so an earlier edit cannot invalidate a later one's offsets.
                 replacements = sorted([(offset(x['range']['start']), offset(x['range']['end']),
                                         x.get('newText', '')) for x in edits], reverse=True)
                 after = before

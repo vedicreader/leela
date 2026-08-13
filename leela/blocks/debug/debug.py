@@ -1,18 +1,11 @@
 """A small Debug Adapter Protocol client for direct Python/debugpy sessions.
 
-Notebook debugging stays on ipykernel's Jupyter debug channel. This client covers ordinary
-files, modules, tests, web applications, and attach endpoints while presenting the same
-normalized state to the browser.
+Notebooks stay on ipykernel's Jupyter debug channel; this covers files, modules, tests, web
+apps and attach endpoints, normalized to the same state.
 """
 from __future__ import annotations
 
-import json
-import os
-import queue
-import shlex
-import subprocess
-import threading
-import time
+import json, queue, subprocess, threading, time
 from pathlib import Path
 
 __all__ = ['DebugSession', 'debugpy_available']
@@ -26,7 +19,7 @@ def debugpy_available(python):
 
 
 class DebugSession:
-    """One debugpy adapter process and its request/event state."""
+    'One debugpy adapter process and its request/event state.'
     def __init__(self, python, cwd=None):
         self.python = str(Path(python).expanduser().absolute())  # keep a venv symlink: resolving it loses site-packages
         self.cwd = str(Path(cwd or Path.cwd()).resolve())

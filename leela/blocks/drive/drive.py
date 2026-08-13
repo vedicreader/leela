@@ -1,39 +1,13 @@
 """The deploy taken apart: one library call per step, each with its own output.
 
-`leela.deploys` runs the project's `deploy.py`, which is the right thing when the deploy
-works -- it is the file CI runs, so what you see is what ships. It is the wrong thing when
-the deploy *does not* work, because five library calls share one exit code and one stream of
-output, and "it failed somewhere in deploy" is where the afternoon goes.
-
-So this is the same deploy with the seams left in. dockeasy writes the Dockerfile; vpseasy
-writes the compose stack; cfeasy opens the tunnel; vpseasy provisions and rsyncs; gheasy
-pushes the secrets. Five steps, five exit codes, five transcripts, each runnable on its own
-and re-runnable after a fix. Nothing is sequenced implicitly -- `Pipeline` will run them in
-order if asked, and the panel's normal move is to run one.
-
-Two decisions make it a diagnostic rather than a second deploy system.
-
-**Each step is a snippet, and the snippet is on screen.** The panel shows the exact call it
-is about to make, with this project's values already substituted --
-`CF(token=...).setup_tunnel('sankalpa.sh', 'lego', tunnel_name='lego_sankalpa.sh')`. That is
-the difference between a button and an explanation, and it is also the line you paste into a
-REPL when you want to poke at it yourself.
-
-**They run in a subprocess, on a pty, like every other pipeline.** In-process calls would be
-shorter to write and would lose exactly what matters: `hetzner_deploy` shells out to ssh and
-rsync, and their output goes to a file descriptor no `redirect_stdout` can catch. A pty gets
-the progress, the prompts and the colour -- and a traceback that `leela.packages` can then
-attribute to whichever of your packages raised.
-
-Values flow through dockeasy's store, not through this module: a step that produces
-`CF_TUNNEL_TOKEN` writes it with `env_set`, and the next step reads it with `env_get`, which
-is what the same steps do inside `deploy.py`.
+Steps run in a subprocess on a pty: `hetzner_deploy` shells out to ssh and rsync, whose
+output goes to a file descriptor `redirect_stdout` cannot catch. Values flow between steps
+through dockeasy's store (`env_set`/`env_get`), as they do inside `deploy.py`.
 """
 
 from __future__ import annotations
 
-import json
-import sys
+import json, sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -48,13 +22,7 @@ DriveError = PipelineError
 
 @dataclass
 class Part:
-    """One library call, as a step you can run on its own.
-
-    `code` is a template rendered with the project's context, so what runs and what the panel
-    shows are the same string. `writes` is what the call leaves in dockeasy's store for the
-    next one -- the panel draws the arrow between two steps from it rather than from an order
-    someone wrote down.
-    """
+    "One library call, as a step you can run on its own."
     id: str
     package: str
     label: str
@@ -129,21 +97,12 @@ PARTS = [
 
 
 def context(root, env=None):
-    """The values every snippet is rendered with, resolved once.
-
-    Read from the same two places the deploy reads: gheasy's config for the app name and the
-    schema, dockeasy's store for the host and the rest. Nothing is invented here -- an
-    unset `DOMAIN` renders as an empty string and the step says so when it runs, rather than
-    being quietly replaced by a guess.
-    """
+    "The values every snippet is rendered with, resolved once."
     root = Path(root).expanduser().resolve()
     store = env or EnvStore()
     def value(key, default=''):
         try: return store.get(key, secret=False) or default
         except Exception: return default
-    # gheasy's config is the declared answer; `[project] name` is the one every Python
-    # project already has, which is what gheasy itself bootstraps from. The directory name
-    # is the last resort and is right often enough to be worth having.
     app, schema = '', {}
     try:
         from gheasy.core import GheasyConfig
@@ -177,21 +136,15 @@ def parts(root, env=None, python=''):
     out = []
     for part in PARTS:
         code = part.code.format(**ctx)
-        out.append(Step(
-            id=part.id, label=f'{part.package} · {part.label}', doc=part.doc,
-            cmd=f'python -c … {part.package}', argv=[exe, '-c', code], needs=list(part.needs),
-            meta={'package': part.package, 'code': code, 'writes': list(part.writes),
-                  'produces': list(part.produces), 'title': part.label}))
+        out.append(Step(id=part.id, label=f'{part.package} · {part.label}', doc=part.doc,
+                        cmd=f'python -c … {part.package}', argv=[exe, '-c', code], needs=list(part.needs),
+                        meta={'package': part.package, 'code': code, 'writes': list(part.writes),
+                              'produces': list(part.produces), 'title': part.label}))
     return out
 
 
 class Drive(Pipeline):
-    """The deploy, driven a library at a time.
-
-    Deliberately the same `Pipeline` the script-driven deploy uses: same pty, same transcript,
-    same halting rules, same package attribution on a failure. The only difference is what a
-    step *is*, which is the thing being compared.
-    """
+    "The deploy, driven a library at a time."
 
     FILE = DRIVE_FILE
     KIND = 'drive'
@@ -204,12 +157,7 @@ class Drive(Pipeline):
     def defaults(root): return parts(root)
 
     def refresh(self):
-        """Re-render the snippets against the current values.
-
-        The store changes while the panel is open -- setting `DOMAIN` is often the fix for
-        the step that just failed -- and a snippet showing the old value would be a lie about
-        what the next run does.
-        """
+        "Re-render the snippets against the current values."
         if self.path.exists(): return self.steps          # an edited plan is the user's
         key = json.dumps(context(self.root, self.env), sort_keys=True)
         if key != self._rendered:

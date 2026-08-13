@@ -1,12 +1,6 @@
 """Layered settings: defaults, then user, then workspace, then language.
 
-Every reply reports the *origin* of each effective value, not just the value, because the
-question a settings panel actually has to answer is "why is it this" -- and with four
-layers, the value alone cannot say.
-
-`Settings` is rebuilt per request rather than cached. It reads files that the user may be
-editing in the very editor this serves, and one of them is workspace-scoped, so a cached
-instance would go stale exactly when someone is looking at it.
+`Settings` is rebuilt per request: it reads files the user may be editing in this very editor.
 """
 
 from __future__ import annotations
@@ -22,9 +16,7 @@ CAPS = ('fs',)
 def connect(app, ctx):
     rt = app.route
 
-    # Workspace settings belong to the folder that holds them, so this follows the chosen one:
-    # with two checkouts open, `.leela/settings.json` was read from and written to the first of
-    # them whichever project you were working in.
+    # The chosen project, not roots[0]: with two checkouts open the wrong `.leela/settings.json` wins.
     def _settings(): return Settings(ctx.session.project_root)
 
     @rt('/settings')

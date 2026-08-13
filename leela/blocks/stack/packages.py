@@ -1,21 +1,4 @@
-"""Which of your packages is installed, where from, and which one just raised.
-
-When a deploy fails, the useful question is not "what is the traceback" -- it is on screen
--- but *whose code is that*. In a stack where you own dockeasy, vpseasy, cfeasy, gheasy and
-the app, the answer decides which repository you open next, and reading it off a path in
-`site-packages` is a small tax paid every single time.
-
-So this does two things. `survey` reports the family: installed or not, version, where the
-import actually resolves to, and whether that is an editable install pointing at a checkout
-you have open. Version drift and a stale wheel shadowing a local edit are the two failures
-that waste the most time, and both are visible in that one list.
-
-`blame` reads a traceback out of a pipeline transcript and names the deepest frame belonging
-to one of those packages -- then rewrites the path to the checkout in this workspace when
-there is one. That is the whole point: a failed `cfeasy.setup_tunnel` should open
-`cfeasy/core.py` in the repository you can fix, not the copy under `.venv` that the next
-`uv sync` will overwrite.
-"""
+'Which of your packages is installed, where from, and which one just raised.'
 
 from __future__ import annotations
 
@@ -24,8 +7,6 @@ from pathlib import Path
 
 __all__ = ['FAMILY', 'survey', 'blame', 'frames', 'checkout_for']
 
-# The packages this workspace is about. Anything else in a traceback is somebody else's
-# code, and pointing at it would be a worse answer than pointing at nothing.
 FAMILY = ['gheasy', 'dockeasy', 'vpseasy', 'cfeasy', 'leela', 'dhrishti', 'nbdev']
 
 _FRAME = re.compile(r'File "([^"]+)", line (\d+), in (\S+)')
@@ -55,12 +36,7 @@ def _vendored(path):
 
 
 def checkout_for(name, checkouts):
-    """The workspace checkout that *is* this package, if one is open.
-
-    Matched by the package directory it contains rather than by the repository's name: a
-    repo can be called anything, and `<root>/<name>/__init__.py` is what makes it the source
-    of `import <name>`.
-    """
+    "The open checkout that *is* this package, matched by `<root>/<name>/__init__.py`, not repo name."
     for root in checkouts:
         root = Path(root).expanduser().resolve()
         for inner in (root/name, root/'src'/name):
@@ -69,14 +45,7 @@ def checkout_for(name, checkouts):
 
 
 def survey(names=(), checkouts=()):
-    """One row per package: is it installed, which version, which copy runs, and is it yours.
-
-    Two different facts, kept apart because confusing them is the failure. `source` is where
-    an import *resolves* -- a wheel in site-packages or a working tree. `checkout` is whether
-    this workspace has that package open. When both exist and disagree, an edit in the
-    checkout does nothing at all until the environment is reinstalled, and that is precisely
-    the half-hour this row is here to save.
-    """
+    "One row each: installed, version, the copy an import resolves to, and whether a checkout is shadowed."
     roots = [Path(c).expanduser().resolve() for c in checkouts]
     rows = []
     for name in (list(names) or FAMILY):
@@ -99,14 +68,9 @@ def frames(text):
 def _package_of(path, names):
     """The family package a file belongs to.
 
-    Inside an installed environment the answer is the component straight after
-    `site-packages` and nothing else. Matching any family name anywhere in the path looks
-    equivalent and is not: a virtualenv living at `~/code/leela/.venv` puts the string
-    `leela` in the path of *every* installed package, so a traceback from the Cloudflare SDK
-    gets attributed to Leela and the panel points at the wrong repository.
-
-    Outside a venv the last matching component wins, which is what nesting means when a
-    checkout contains its own package directory.
+    Inside an environment it is the component right after `site-packages` and nothing else: a
+    venv at `~/code/leela/.venv` puts `leela` in every installed package's path, so matching
+    anywhere blames Leela for the Cloudflare SDK. Outside one, the last match wins.
     """
     parts = Path(path).parts
     for marker in ('site-packages', 'dist-packages'):
@@ -120,17 +84,7 @@ def _package_of(path, names):
 
 
 def blame(text, names=(), checkouts=()):
-    """Which package raised, and where to open it.
-
-    The *deepest* family frame, not the first: a deploy fails inside `cfeasy.setup_tunnel`
-    called from your `deploy.py`, and both are yours -- the one worth opening is the one that
-    actually raised. When the raising frame is in an installed copy and the same package is
-    checked out in this workspace, the path is rewritten to the checkout, because that is the
-    file an edit survives in.
-
-    `error` is the exception line, which is usually the whole story and is what a panel can
-    show in one row.
-    """
+    "Which package raised (the deepest family frame) and where to open it, preferring a checkout."
     text = str(text or '')
     names = list(names) or FAMILY
     roots = [Path(c).expanduser().resolve() for c in checkouts]
@@ -149,7 +103,6 @@ def blame(text, names=(), checkouts=()):
     open_at = found['file']
     checkout = checkout_for(found['package'], roots)
     if checkout and not str(open_at).startswith(str(checkout)):
-        # site-packages/cfeasy/core.py -> <checkout>/cfeasy/core.py
         parts = Path(found['file']).parts
         i = parts.index(found['package'])
         candidate = Path(checkout).joinpath(*parts[i:])
