@@ -549,13 +549,13 @@ To rebuild them:
 cd frontend && npm install && npm run build
 ```
 
-IDE client sources live in `leela/static/js/` and concatenate to `leela/static/lee-ide.js`:
+The IDE client is authored as modules in `leela/static/js/` and concatenated into the served
+`leela/static/lee-ide.js`, which is committed so an install needs no build step:
 
 ```sh
-python tools/build_ide_js.py
+python tools/build_ide_js.py            # rebuild after editing a module
+python tools/build_ide_js.py --check    # fail if the bundle and its modules disagree
 ```
-
-Surreal.js (and css-scope-inline) are vendored under `leela/vendor/` with htmx, so the IDE stays offline-capable.
 
 ## License
 

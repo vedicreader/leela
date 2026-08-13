@@ -146,10 +146,9 @@ class Research:
             self.note = 'empty query'
             return L()
         f = self._fossick()
-        hits = self._try(f'{category} search', lambda: list(f.search(q, category=category, n=n)))
+        hits = self._try(f'{category} search', f.search, q, category=category, n=n)
         if hits is None: return L()
-        out = L(Doc(title=(h.get('title') or h.get('href') or '').strip(), kind='hit',
-            url=h.get('href') or h.get('url') or '') for h in hits[:n])
+        out = L(hits)[:n].map(_hit)
         self.note = f'{len(out)} results for {q!r}'
         return out
 
@@ -196,16 +195,15 @@ class Research:
             self.note = 'empty query'
             return L(), ''
         f = self._fossick()
-        # focused=False keeps full pages; `read` still owns the thin-page cascade.
+        # focused=False keeps whole pages rather than query-relevant passages; `read` still owns
+        # the thin-page escalation.
         limit = min(MAX_DOC_CHARS, max(1, int(chars)))
         result = self._try('research', f.research, q, n=n, chars=limit, focused=False, auto=True)
-        if result is None: return L(), ''
-        docs = L()
-        for s in result.get('sources') or []:
-            url = s.get('href') or s.get('url') or ''
-            text = str(s.get('md') or '')[:limit]
-            docs.append(Doc(title=s.get('title') or _title(text, url), url=url, kind='page', text=text))
-        digest = str(result.get('digest') or '')[:MAX_RESEARCH_DIGEST_CHARS]
+        if not result: return L(), ''
+        docs = L(result.get('sources')).map(_source_doc, chars=limit)
+        digest = str(result.get('digest') or '')
+        if len(digest) > MAX_RESEARCH_DIGEST_CHARS:   # say so, rather than ending mid-sentence
+            digest = digest[:MAX_RESEARCH_DIGEST_CHARS] + '\n\n*[brief clipped; open a source for its full text]*'
         dropped = result.get('dropped') or []
         self.note = f'read {len(docs)} complete sources for {q!r}'
         if dropped: self.note += f' · {len(dropped)} unread'
@@ -252,3 +250,17 @@ def _title(md, url):
     for line in str(md).split('\n', 40)[:40]:
         if line.startswith('#'): return line.lstrip('#').strip()[:120]
     return Path(url.rstrip('/')).name or url
+
+
+def _url(row): return row.get('href') or row.get('url') or ''
+
+
+def _hit(row):
+    "One search result as a bodyless `Doc`."
+    return Doc(title=(row.get('title') or _url(row)).strip(), url=_url(row), kind='hit')
+
+
+def _source_doc(row, chars=MAX_DOC_CHARS):
+    "One `fossick.research` source as a `Doc`, clipped to `chars`."
+    text = str(row.get('md') or '')[:chars]
+    return Doc(title=row.get('title') or _title(text, _url(row)), url=_url(row), kind='page', text=text)

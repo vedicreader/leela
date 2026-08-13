@@ -1,7 +1,8 @@
 /* leela IDE client.
  *
  * Sources live in `leela/static/js/` and concatenate via `tools/build_ide_js.py`.
- * Surreal.js is loaded before this bundle (vendored); `$`/`$$` here stay local.
+ * One bundle, one script tag: the modules share a scope, so `$`, `esc` and `lee`
+ * are defined here once and used by every later module.
  *
  * The keymap is fetched from /keys.json (leela.core.keys). Dispatch is scope-aware:
  * `lee.scope` must match or be 'global', else the browser/CodeMirror keep the chord.

@@ -1,18 +1,27 @@
-"OpenAPI / Google Discovery → operation rows. Prefer `ramabana.spec` when installed."
+"""OpenAPI / Google Discovery documents as operation rows.
+
+`ramabana.spec` owns this when the installed ramabana has it; the fallback below is the
+same three names over the two document shapes leela actually clips.
+"""
 
 from __future__ import annotations
 import json
-from fastcore.all import Path, L
+from fastcore.all import Path, L, first, risinstance
 
 __all__ = ['load_spec', 'op_row', 'spec_ops']
 
 
-def load_spec(target):
-    "Parse a YAML/JSON OpenAPI or Discovery document from a path or string."
+def _ramabana(name):
+    "`ramabana.spec.<name>`, or None on a ramabana that does not ship the parser."
     try:
-        from ramabana.spec import load_spec as _load
-        return _load(target)
-    except ImportError: pass
+        import ramabana.spec as spec
+    except ImportError: return None
+    return getattr(spec, name, None)
+
+
+def load_spec(target):
+    "Parse a YAML/JSON OpenAPI or Discovery document from a path or a literal string."
+    if (fn := _ramabana('load_spec')): return fn(target)
     p = Path(target)
     raw = p.read_text() if p.is_file() else str(target)
     if p.suffix.lower() in ('.yaml', '.yml') or raw.lstrip().startswith(('openapi:', 'swagger:')):
@@ -22,54 +31,62 @@ def load_spec(target):
 
 
 def op_row(o):
-    "Normalise one operation dict for vault sections / UI."
-    try:
-        from ramabana.spec import op_row as _row
-        return _row(o)
-    except ImportError: pass
+    "One operation as the flat row `clip_api_spec` writes a section from."
+    if (fn := _ramabana('op_row')): return fn(o)
     return dict(o)
 
 
 def spec_ops(spec):
-    "Yield operation dicts with verb, path, summary, group, required, signature."
-    try:
-        from ramabana.spec import spec_ops as _ops
-        return list(_ops(spec))
-    except ImportError: pass
-    if not isinstance(spec, dict): return []
+    "Every operation in `spec`: verb, path, summary, group, required, signature."
+    if (fn := _ramabana('spec_ops')): return list(fn(spec))
+    if not isinstance(spec, dict): return L()
     if 'paths' in spec: return _openapi_ops(spec)
     if 'resources' in spec or spec.get('discoveryVersion'): return _discovery_ops(spec)
-    return []
+    return L()
+
+
+def _row(verb, path, summary, group, required, signature):
+    "One operation, flattened the way `clip_api_spec` writes a section from it."
+    return dict(verb=verb.upper(), path=path, summary=summary or '', group=group or '',
+        required=list(required), signature=signature, docs_url='')
+
+
+def _params(o):
+    "The parameter dicts on an operation or a path item, ignoring anything else in there."
+    return L(o.get('parameters')).filter(risinstance(dict))
+
+
+def _required(params):
+    return params.filter(lambda p: p.get('required') and p.get('name')).itemgot('name')
 
 
 def _openapi_ops(spec):
+    "OpenAPI `paths`. Path-level parameters apply to every method under that path."
     out = L()
     for path, methods in (spec.get('paths') or {}).items():
         if not isinstance(methods, dict): continue
+        shared = _params(methods)
         for verb, op in methods.items():
-            if verb.startswith('x-') or not isinstance(op, dict): continue
-            params = list(op.get('parameters') or [])
-            required = [p['name'] for p in params if isinstance(p, dict) and p.get('required') and p.get('name')]
-            tags = op.get('tags') or []
-            out.append(dict(verb=verb.upper(), path=path, summary=op.get('summary') or '',
-                group=tags[0] if tags else '', required=required,
-                signature=op.get('operationId') or f'{verb.upper()} {path}', docs_url=''))
+            if verb == 'parameters' or verb.startswith('x-') or not isinstance(op, dict): continue
+            out.append(_row(verb, path, op.get('summary'), first(op.get('tags') or []),
+                _required(shared + _params(op)), op.get('operationId') or f'{verb.upper()} {path}'))
     return out
 
 
 def _discovery_ops(spec):
+    "Google Discovery nests methods under `resources`, which nest arbitrarily deep."
     out = L()
-    def walk(resources, prefix=''):
+    def walk(resources, group=''):
         for name, body in (resources or {}).items():
             if not isinstance(body, dict): continue
             for method, op in (body.get('methods') or {}).items():
                 if not isinstance(op, dict): continue
-                params = op.get('parameters') or {}
-                required = [k for k, v in params.items() if isinstance(v, dict) and v.get('required')]
-                path, verb = op.get('path') or method, (op.get('httpMethod') or 'GET').upper()
-                out.append(dict(verb=verb, path=path, summary=op.get('description') or '',
-                    group=prefix or name, required=required,
-                    signature=op.get('id') or f'{verb} {path}', docs_url=''))
+                # Discovery keys parameters by name, where OpenAPI lists them.
+                required = [k for k, v in (op.get('parameters') or {}).items()
+                    if isinstance(v, dict) and v.get('required')]
+                path, verb = op.get('path') or method, op.get('httpMethod') or 'GET'
+                out.append(_row(verb, path, op.get('description'), group or name, required,
+                    op.get('id') or f'{verb.upper()} {path}'))
             walk(body.get('resources') or {}, name)
     walk(spec.get('resources') or {})
     return out

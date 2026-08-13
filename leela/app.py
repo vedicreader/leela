@@ -801,12 +801,9 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     # from a CDN, which would make a local IDE need the network to start -- and fail
     # outright behind a proxy or on a plane. `default_hdrs=False` plus the vendored
     # bundles keeps it self-contained, the same reason CodeMirror is vendored.
-    # htmx + surreal are vendored: the IDE must start without a CDN (offline / proxy / plane).
     # JS sources live in `leela/static/js/` and concatenate to `lee-ide.js` via tools/build_ide_js.py.
     hdrs = (Link(rel='icon', href=_asset('favicon.svg'), type='image/svg+xml'),
             Script(src=_asset('htmx.min.js')),
-            Script(src=_asset('surreal.js')),
-            Script(src=_asset('css-scope-inline.js')),
             Script("""try { const t = localStorage.getItem('lee-theme') || 'system';
 if (t !== 'system') document.documentElement.dataset.theme = t;
 document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; } catch (_) {}"""),
@@ -1909,7 +1906,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         def selected(current):
             try:
                 mid = resolve(current).model_id
-                return first(r['value'] for r in rows if resolve(r['value']).model_id == mid) or current
+                return ifnone(first(r['value'] for r in rows if resolve(r['value']).model_id == mid), current)
             except Exception: return current
         return {'models': rows, 'saved':saved, 'auth': auth_status(), 'runtimes': runtimes(),
                 'selected': {'agent': selected(agent), 'inline': selected(inline),

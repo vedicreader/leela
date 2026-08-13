@@ -38,6 +38,7 @@ dependencies = [
     "httpx2>=2.10.0",          # the HTTP client: dhrishti's inspector API, gateway, model listing
     "numpy>=1.26",             # search reads Kosha's embedding vectors as arrays
     "packaging>=24.0",         # comparing installed versions for the editor's package hints
+    "pyyaml>=6.0",             # reading a YAML OpenAPI spec, and the workflow files on disk
     "dhrishti>=0.1.2",         # the inspection engine: namespace -> node tree, as a JSON API in-kernel
     "vishalakshi>=0.1.7",      # the vault behind memory: prose shelves, topics, federated recall,
                                # doc_marks, the noise ranker, and the pii report whose `ner=` and
@@ -88,6 +89,9 @@ leela = "leela.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["leela"]
+# `static/js/` is the source the committed `static/lee-ide.js` is built from, so shipping it
+# would put the same ~570 KB in the wheel twice. `tools/build_ide_js.py --check` keeps them equal.
+exclude = ["leela/static/js"]
 
 [tool.hatch.build.targets.sdist]
 include = ["/leela", "/README.md", "/pyproject.toml"]
