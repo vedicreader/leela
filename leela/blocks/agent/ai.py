@@ -1,51 +1,32 @@
 """Binding a `Workspace` to the agent harness.
 
-This file used to be the assistant. It is now the *adapter*: `leela.agent` is the brain
-and knows nothing about the rest of leela, and everything it needs arrives through `Host`.
-What is left here is the part that genuinely belongs to the application -- how a leela
-workspace answers the harness's questions, and how an approval turns into a conversation
-in a notebook.
-
-Two application-side decisions live here rather than in the harness:
-
-**Approval reads as a conversation, in the document.** `notebook_approvals` writes each
-request and each answer into the notebook as markdown cells beside the prompt cell that
-caused them. So a refusal and its reason are saved with the work, read in order with
-everything else, and legible next week -- and in plain Jupyter, where they are just
-markdown. The harness supplies the queue and the rendering; the notebook is leela's idea
-of where a conversation lives.
-
-**Activity is saved with the answer.** A prompt cell's reply gets the tool calls folded
-underneath it, so a notebook read later still shows which files the answer came from.
-
-`Assistant` and `ide_tools` survive as thin aliases because the web app and tests
-call them by name, and renaming things that work is not a feature.
+The adapter: ramabana is the brain and knows nothing about leela, and everything it needs
+arrives through `Host`. What is here is the application's half -- how a leela workspace answers
+the harness's questions, and how an approval turns into a conversation in a notebook.
 """
 
 from __future__ import annotations
 
 import functools, inspect, json, os, threading
 
-from fastcore.all import L
+from fastcore.all import L, Path, delegates, first
 
 from ... import errstr, leela_cfg
-from ..fs.fs import  Unsafe
-from ...agent.agent import (Activity, Agent, Approvals, Ask, Completer, _summary, answer_md, ask_md,
-                          preview_for)
-from ...agent.tools import (MAX_HITS, MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS, Hit, Host,
-                          clip, tools_for)
+from ..fs.fs import Unsafe
+from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, preview_for
+from ...agent.tools import MAX_HITS, MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS
+from ...agent.tools import Host, clip, tools_for
 
 GIT_WRITE_TOOLS = frozenset({'git_fetch', 'git_checkout', 'git_pull', 'git_push'})
 # The blend legs that answer in tens of milliseconds; `ann` has to embed the query first.
 FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
 WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS
 
-__all__ = ['WorkspaceHost', 'Assistant', 'Completer', 'Interventions', 'ide_tools',
+__all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools',
            'notebook_approvals', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
 
-# The web teleprompter has three levels. Guided adds checkpoints for calls that cross a
-# process boundary; ordinary repository reads remain automatic. Directed stops at every
-# locally executed tool. The original write policy remains in force in all three modes.
+# Guided checkpoints calls that cross a process boundary; directed stops at every locally
+# executed tool. The write policy is in force in all three.
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
 GUIDED_TOOLS = WRITE_TOOLS | frozenset({'web_search', 'read_url', 'research'})
 
@@ -118,10 +99,10 @@ class Intervention(Ask):
 
     def dict(self):
         return {**super().dict(), 'args': self.args, 'control': self.control, 'edited': self.edited,
-                'original_tool': self.original_tool, 'original_args': self.original_args,
-                'action_id': self.id, 'revision': self.revision, 'branch_id': self.branch_id,
-                'parent_action_id': self.parent_action_id,
-                'rollback': self.before is not None and self.after is not None and self.before != self.after}
+            'original_tool': self.original_tool, 'original_args': self.original_args,
+            'action_id': self.id, 'revision': self.revision, 'branch_id': self.branch_id,
+            'parent_action_id': self.parent_action_id,
+            'rollback': self.before is not None and self.after is not None and self.before != self.after}
 
 
 class Interventions(Approvals):
@@ -138,8 +119,7 @@ class Interventions(Approvals):
 
     def set_control(self, control):
         if control not in CONTROL_MODES: raise ValueError(f'unknown agent control mode {control!r}')
-        with self._state_lock:
-            self.control, self.run_policy, self.pause_next = control, None, False
+        with self._state_lock: self.control, self.run_policy, self.pause_next = control, None, False
         return control
 
     def set_run_policy(self, policy='once', count=1):
@@ -178,7 +158,7 @@ class Interventions(Approvals):
 
     def rollback(self, id):
         "Restore one file call only when no later write has changed its resolved output."
-        a = next((x for x in reversed(self.history) if x.id == id), None)
+        a = first(reversed(self.history), lambda x: x.id == id)
         if a is None or a.before is None or a.after is None: raise ValueError('that call has no file snapshot')
         path = a.args.get('path')
         if self.host.text_at(path) != a.after: raise ValueError('the file changed after this call; rollback refused')
@@ -208,26 +188,26 @@ class Interventions(Approvals):
     def state(self):
         with self._state_lock:
             return {'control': self.control, 'run_policy': dict(self.run_policy) if self.run_policy else None,
-                    'pause_next': self.pause_next, 'queued_steer': self.queued_steer}
+                'pause_next': self.pause_next, 'queued_steer': self.queued_steer}
 
     def request(self, name, args, force=False, timeout=None, action_id='', revision=0,
-                branch_id='main', parent_action_id=''):
+        branch_id='main', parent_action_id=''):
         args = dict(args or {})
         required = name in self.tools
         bypassed = not force and self._policy_bypasses(name)
         control_checkpoint = not bypassed and (self.control == 'directed' or
-                                                (self.control == 'guided' and name in GUIDED_TOOLS))
+            (self.control == 'guided' and name in GUIDED_TOOLS))
         checkpoint = force or (required and not bypassed) or control_checkpoint
         a = Intervention(tool=name, args=args, summary=_summary(name, args),
-                         preview=preview_for(name, args, self.host), control=self.control)
+            preview=preview_for(name, args, self.host), control=self.control)
         if action_id: a.id = str(action_id)
         a.revision, a.branch_id, a.parent_action_id = int(revision or 0), branch_id, parent_action_id
         if self.host is not None and name in {'edit_file', 'create_file'} and args.get('path'):
             a.before = self.host.text_at(args['path'])
         self.history.append(a)
         if not checkpoint: return a.resolve(True)
-        # The write policy and the teleprompter policy are independent. “Approve later
-        # writes” must not accidentally disable directed mode or guided network checks.
+        # Independent policies: “approve later writes” must not disable directed mode or the
+        # guided network checks.
         if required and self.mode == 'auto' and self.control != 'directed': return a.resolve(True)
         if required and self.mode == 'off':
             return a.resolve(False, 'approval is switched off for this session')
@@ -245,10 +225,8 @@ class Interventions(Approvals):
         "Resolve a checkpoint; only approval may replace the call that will execute."
         a = self.current
         if a is None or a.id != id or not a.pending: return None
-        # Approval and rejection are deliberately separate workflows. An approval owns a
-        # live call, so its edited arguments must become that call. A rejection executes
-        # nothing: retaining the original proposal preserves attribution and, importantly,
-        # lets a person reject a malformed call without first repairing its form.
+        # A rejection executes nothing, so it keeps the original proposal: that is what lets a
+        # person reject a malformed call without first repairing its form.
         if ok:
             if tool: a.tool = str(tool)
             if args is not None: a.args = dict(args)
@@ -270,16 +248,14 @@ class Interventions(Approvals):
                 fn['name'], fn['arguments'] = a.tool, a.args
                 with self._state_lock:
                     self._execution_meta.append({'action_id': a.id, 'revision': a.revision,
-                                                 'branch_id': a.branch_id,
-                                                 'parent_action_id': a.parent_action_id,
-                                                 'tool': a.tool, 'args': dict(a.args)})
+                        'branch_id': a.branch_id,
+                        'parent_action_id': a.parent_action_id,
+                        'tool': a.tool, 'args': dict(a.args)})
             elif tool_call.get('id'):
-                # A bare backend denial is too weak: models commonly interpret it as a
-                # transient permission failure and immediately propose the same call again.
-                # Resolve through a harmless result that records rejection as a durable
-                # instruction. A human note adds direction, but is not required for “no”.
+                # A bare backend denial reads to a model as a transient permission failure and
+                # it proposes the same call again, so “no” resolves as a durable instruction.
                 instruction = ('The user rejected this tool call. Do not retry this call or an '
-                               'equivalent action unless the user explicitly asks for it later.')
+                    'equivalent action unless the user explicitly asks for it later.')
                 if a.note: instruction += f' User direction: {a.note}'
                 fn['name'], fn['arguments'] = 'user_steering', {'instruction': instruction}
                 return True
@@ -289,22 +265,18 @@ class Interventions(Approvals):
         "Consume identity recorded by the approval hook before the wrapped tool executes."
         with self._state_lock:
             i = next((i for i, row in enumerate(self._execution_meta)
-                      if row['tool'] == name and row['args'] == dict(args or {})), None)
+                if row['tool'] == name and row['args'] == dict(args or {})), None)
             return self._execution_meta.pop(i) if i is not None else {}
 
 
 class WorkspaceHost(Host):
     """A `Workspace`, answering the harness's questions.
 
-    Almost every method is one line, which is the point: `Workspace` already had all of
-    this, it was simply reachable only by importing it. Anything the workspace cannot do
-    raises `NotImplementedError`, and the harness responds by not offering that tool at
-    all -- so an IDE with no kernel bound yet has an agent that reads and edits and does
-    not keep trying to run Python.
+    Anything the workspace cannot do raises `NotImplementedError`, and the harness responds by
+    not offering that tool at all.
     """
 
-    def __init__(self, ws, session=None):
-        self.ws, self.session = ws, session
+    def __init__(self, ws, session=None): self.ws, self.session = ws, session
 
     # -- where it is allowed to be -------------------------------------------
     @property
@@ -312,22 +284,16 @@ class WorkspaceHost(Host):
 
     @property
     def project(self):
-        """The folder the agent's commands should run in: the chosen one, else the first open.
-
-        `roots[0]` is where the agent is *allowed* to be, which is a different question. With two
-        checkouts open it ran every shell command in the first of them and said so in
-        `shell_note`, so the agent and the person were talking about different repositories while
-        both believed they had said which.
-        """
+        "The folder the agent's commands run in: the chosen one, else the first open."
+        # Not `roots[0]`, which is only where the agent is *allowed* to be.
         root = self.ws.project_root
         return str(root) if root else (self.roots[0] if self.roots else '')
 
     def check(self, path, must_exist=False):
         try: return self.ws.fs._check(path, must_exist=must_exist)
         except Unsafe as e:
-            # Keep the sandbox refusal, but tell the model what is actually open. A local
-            # model can copy an absolute path with one wrong digit; without this context it
-            # retries guesses even though the intended notebook is visibly open in Leela.
+            # The refusal names what is open: a local model that mistypes one digit of an
+            # absolute path otherwise retries guesses instead of reading the hint.
             opened = [t.path for t in self.ws.tabs if t.path]
             hint = f'; open files: {", ".join(opened[-5:])}' if opened else ''
             raise Unsafe(f'{e}{hint}') from e
@@ -379,9 +345,8 @@ class WorkspaceHost(Host):
         p = self.check(path)
         nb = Notebook.load(p) if p.exists() else Notebook.blank(p)
         c = nb.insert(len(nb) if index < 0 else int(index), Cell(source=source, cell_type=cell_type))
-        # `Notebook.blank` seeds one empty cell so a human always has somewhere to type.
-        # Filling a notebook by tool call does not need that, and leaving it behind means
-        # every agent-created notebook opens with a stray blank cell at the top.
+        # `Notebook.blank` seeds an empty cell for a human to type in; drop it here, or every
+        # agent-created notebook opens with a stray blank cell at the top.
         if len(nb) == 2 and not nb[0].source.strip() and nb[1] is c: nb.delete(0)
         nb.save(p, sandbox=self.ws.fs)
         return c.id
@@ -410,25 +375,15 @@ class WorkspaceHost(Host):
             out = r.stdout or ''
             if r.result is not None: out += ('\n' if out else '') + r.result.value
             return out or '(ok)'
-        # The web agent lives outside the kernel. Its approved write tool reaches the
-        # owner namespace through the authenticated inspector, exactly like the exec bar.
+        # The web agent lives outside the kernel, and reaches the owner namespace through the
+        # authenticated inspector, exactly like the exec bar.
         return self._exec_text(self._kernel().api_sync('/api/exec', {'code': code, 'scope': 'global'}))
 
     def inspect_python(self, code, scope='isolated'):
-        """Read-only execution: `AgentSession`'s own scopes, which leela already had.
-
-        Neither scope can change what the user made -- `isolated` because it runs on a copy
-        in a safepyrun allowlist, `overlay` because the AST policy refuses to delete,
-        rebind or mutate an owner name and sends the agent's own bindings to its layer
-        instead. So both are safe to hand to an agent nobody is watching, and the choice is
-        about how much Python the question needs rather than how much trust it gets.
-
-        A workspace opened with `agent_scope='isolated'` refuses overlay and says so, which
-        is the setting for a machine where the agent's own scratch layer is not wanted.
-        """
+        "Read-only execution in one of `AgentSession`'s scopes; neither can change what the user made."
         if scope not in self.scopes:
             return (f'scope {scope!r} is not available here (allowed: {", ".join(self.scopes)}); '
-                    'the workspace was opened with a narrower agent scope')
+                'the workspace was opened with a narrower agent scope')
         if self.session is not None:
             r = self.session.run(code, scope=scope)
             if r.error: return r.error
@@ -450,7 +405,7 @@ class WorkspaceHost(Host):
             return '\n'.join(f'{v.name}: {v.type} = {v.value}' for _, vs in self.session.view('minimal') for v in vs)
         r = self._kernel().api_sync('/api/rows', {'profile': 'minimal', 'sort': 'name'}) or {}
         return '\n'.join(f"{v.get('name')}: {v.get('type')} = {v.get('value')}"
-                         for g in r.get('groups', []) for v in g.get('nodes', []))
+            for g in r.get('groups', []) for v in g.get('nodes', []))
 
     def terminal_text(self, lines=200):
         terms = self.ws.terms.all()
@@ -462,30 +417,20 @@ class WorkspaceHost(Host):
     def run_cmd(self, command, cwd=None, timeout=120):
         """Run one command in the project, the way the user would run it in leela's terminal.
 
-        A subprocess rather than the kernel: `pytest`, `git` and `ruff` are programs, not
-        Python, and running them through the user's kernel would mean the agent's test run
-        shares a process with the user's variables. The terminal is the right model, and
-        `read_terminal` already showed the agent the *other half* of this -- what the user
-        ran. This is its own half.
-
-        Confinement is the working directory, which `check` resolves and refuses outside
-        the open folders. That is honestly all it is: a shell can name any path, so a
-        command is a *write* everywhere it matters and goes to a person for approval like
-        one. The sandbox that matters here is the human.
+        Confinement is the working directory only: a shell can name any path, so a command is a
+        write everywhere it matters and goes to a person for approval like one.
         """
-        import os, signal, subprocess
+        import signal, subprocess
         if not str(command or '').strip(): return 0, ''      # the capability probe
-        roots = self.roots
-        if not roots: raise NotImplementedError('no folder is open')
+        if not self.roots: raise NotImplementedError('no folder is open')
         d = self.check(cwd) if cwd else self.check(self.project)
         if not d.is_dir(): d = d.parent
-        # Its own session, so a timeout can kill the whole tree. `pytest -n 4` or anything
-        # behind a pipe leaves children that outlive the shell, and a leaked test runner
-        # holding a port is a failure the *next* run reports, in a way nobody can trace.
+        # Its own session, so a timeout kills the whole tree: anything behind a pipe leaves
+        # children that outlive the shell.
         new_session = os.name == 'posix'
         p = subprocess.Popen(str(command), shell=True, cwd=str(d), text=True, errors='replace',
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             start_new_session=new_session)
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            start_new_session=new_session)
         try:
             out, _ = p.communicate(timeout=max(1, int(timeout)))
             return p.returncode, out or ''
@@ -499,8 +444,7 @@ class WorkspaceHost(Host):
 
     @property
     def shell_note(self):
-        roots = self.roots
-        return f'commands run in {self.project}' if roots else 'no folder is open'
+        return f'commands run in {self.project}' if self.roots else 'no folder is open'
 
     # -- the person ----------------------------------------------------------
     @property
@@ -517,32 +461,26 @@ class WorkspaceHost(Host):
 # application tools
 # ---------------------------------------------------------------------------
 def _git_tools(host):
-    """Git operations bound to an open repository and kept inside workspace roots."""
-    from pathlib import Path
+    "Git operations bound to an open repository and kept inside workspace roots."
     from ..git.git import GitRepo
 
     def repo(path=''):
         roots = [Path(r).expanduser().resolve() for r in host.roots]
         if not roots: raise ValueError('open a project folder first')
-        # The chosen project when the model does not name one, so `git_status` with no argument
-        # describes the repository the person is looking at.
         selected = host.check(path or getattr(host, 'project', '') or roots[0], must_exist=True)
         found = GitRepo.at(selected)
-        # Git can discover a worktree above an opened subfolder. The IDE may show that
-        # repository, but an agent checkout must not modify siblings outside its sandbox.
+        # Git discovers a worktree above an opened subfolder, but an agent checkout must not
+        # modify siblings outside its sandbox.
         if not any(found.root == root or found.root.is_relative_to(root) for root in roots):
             raise ValueError(f'Git root {found.root} is outside the open folders; open the repository root first')
         return found
 
     def result(r, output=''):
-        # Mutations report a structured outcome rather than Git's stdout; its `summary` is the
-        # sentence written for a reader, which is exactly what a tool result wants.
-        if isinstance(output, dict):
-            output = output.get('summary') or output.get('message') or ''
+        if isinstance(output, dict): output = output.get('summary') or output.get('message') or ''
         info = r.info()
         summary = {'root': info['root'], 'branch': info['branch'], 'upstream': info['upstream'],
-                   'ahead': info['ahead'], 'behind': info['behind'], 'clean': info['clean'],
-                   'branches': info['branches'], 'changes': info['changes']}
+            'ahead': info['ahead'], 'behind': info['behind'], 'clean': info['clean'],
+            'branches': info['branches'], 'changes': info['changes']}
         return ((output.strip() + '\n') if output and output.strip() else '') + json.dumps(summary, indent=2)
 
     def git_status(path: str = '') -> str:
@@ -605,12 +543,7 @@ def _git_tools(host):
 
 
 def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
-    """Leela's blended search, as one tool.
-
-    The harness's `search_code` is one engine's best answer. This fans out over symbols,
-    ripgrep, keywords and embeddings, merges the same location into one row, and says which
-    engines agreed -- a hit three of them found is stronger than one only the embedder liked.
-    """
+    "Leela's blended search as one tool: every backend at once, each hit stamped with what agreed."
     def search_all(query: str) -> str:
         """Search every code backend at once: exact symbols, literal text, keywords, and meaning.
 
@@ -625,7 +558,7 @@ def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
         except Exception as e: return f'search_all failed: {errstr(e)}'
         if not hits: return f'no matches ({host.search_note})'
         rows = L(hits).map(lambda h: f'{h.path}:{h.line}  {h.symbol or ""}  {h.text}'
-                                     f'  [{"+".join(getattr(h, "sources", None) or [])}]')
+            f'  [{"+".join(getattr(h, "sources", None) or [])}]')
         return clip(f'[{host.search_note}]\n' + '\n'.join(rows), mx)
 
     return [search_all]
@@ -637,18 +570,9 @@ def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
 def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, host=None):
     """An `Approvals` that writes the whole exchange into the notebook.
 
-    `get_target` returns `(notebook, index)` for the cell the current turn belongs to, or
-    None when the turn did not come from a notebook -- a question typed into the prompt bar
-    still needs approving, it just has nowhere to be written down, and the queue works the
-    same either way.
-
-    The cells go in *below* the prompt cell and in order, so reading the notebook top to
-    bottom reads as: the question, then what the agent wanted to do, then what you said
-    back, then the answer. Which is what happened.
-
-    They are markdown cells carrying `metadata.leela.kind = 'approval'`, the same trick
-    prompt cells use: valid nbformat, legible in plain Jupyter, and recognisable to leela
-    when the file is reopened.
+    `get_target` returns `(notebook, index)` for the cell the turn belongs to, or None when the
+    turn did not come from a notebook. The cells are markdown carrying
+    `metadata.leela.kind = 'approval'`, so they stay legible in plain Jupyter.
     """
     from ..nb.nb import Cell
 
@@ -666,19 +590,18 @@ def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, h
     def on_answer(a):
         md = answer_md(a)
         if getattr(a, 'edited', False):
-            import json
             md += (f'\n\nEdited `{a.original_tool}` into `{a.tool}` before execution.'
-                   f'\n\n```json\n{json.dumps(a.args, indent=2, default=str)}\n```')
+                f'\n\n```json\n{json.dumps(a.args, indent=2, default=str)}\n```')
         _add(md, {'kind': 'approval', 'id': a.id, 'tool': a.tool,
-                  'state': 'approved' if a.answer else 'refused',
-                  'edited': bool(getattr(a, 'edited', False))})
+            'state': 'approved' if a.answer else 'refused',
+            'edited': bool(getattr(a, 'edited', False))})
 
     return Interventions(tools=tools, mode=mode, timeout=timeout, host=host,
-                         on_ask=on_ask, on_answer=on_answer)
+        on_ask=on_ask, on_answer=on_answer)
 
 
 def _n_approvals(nb, i):
-    "How many approval cells already sit below the prompt cell at `i`, so the next one lands after them."
+    "How many approval cells already sit below the prompt cell at `i`."
     n = 0
     for c in nb.cells[i + 1:]:
         if getattr(c, 'approval', None) is None: break
@@ -690,56 +613,49 @@ def _n_approvals(nb, i):
 # what the frontends hold
 # ---------------------------------------------------------------------------
 class Assistant(Agent):
-    """The IDE's agent, built over a `Workspace`.
-
-    A subclass rather than a factory so the frontends' `ws.ai` keeps its shape, and so the
-    two things the application wants to add -- a workspace-flavoured note, and the
-    conversation-in-the-notebook approval -- have somewhere to live that is not the harness.
-    """
+    "The IDE's agent, built over a `Workspace`."
 
     LITERT_BACKENDS = ('cpu', 'gpu')
 
     def set_litert_backend(self, which):
-        """Choose the accelerator LiteRT engines are built on. Releases the loaded ones.
-
-        ramabana reads `$LEELA_LITERT_BACKEND` when it builds an engine and maps it to
-        `litert_lm.Backend`, so this sets the variable rather than reaching past it -- the CLI
-        agent sharing this machine then agrees with the IDE about which accelerator to use.
-
-        The choice belongs to the engine, not a conversation, so loaded LiteRT backends are
-        released and rebuilt lazily. Cloud and llama.cpp backends are untouched. Same shape and
-        the same reasoning as `set_local_multimodal`, which this deliberately mirrors.
-        """
+        "Choose the accelerator LiteRT engines are built on, and release the loaded ones."
+        # ramabana reads `$LEELA_LITERT_BACKEND` when it builds an engine, so setting the
+        # variable is what keeps a CLI agent on this machine agreeing with the IDE.
         which = str(which or '').strip().lower()
         if which not in self.LITERT_BACKENDS:
             raise ValueError(f'litert backend must be one of {", ".join(self.LITERT_BACKENDS)}')
         if self.busy: raise RuntimeError('cannot change the LiteRT backend while the assistant is working')
         os.environ['LEELA_LITERT_BACKEND'] = which
-        for key in [k for k in self._backends if k[0] == 'litert']:
-            self._backends.pop(key).close()
+        for key in [k for k in self._backends if k[0] == 'litert']: self._backends.pop(key).close()
         self.note = f'LiteRT backend {which}'
         return which
 
-    def __init__(self, ws, session=None, model=None, sp=None, approve=None, surface='agent', **kw):
+    @delegates(Agent.__init__)
+    def __init__(self,
+        ws,                    # the `Workspace` the agent acts on
+        session=None,          # an `AgentSession` for read-only Python, when there is one
+        model=None,            # the turn model; None takes the routing default
+        sp=None,               # override the whole briefing
+        approve=None,          # a plain `approve(tool_call) -> bool`, wrapped in an `Approvals`
+        surface='agent',       # 'agent' for the panel, 'inline' for a prompt cell
+        **kwargs
+    ):
         from .models import load_models
         load_models()  # saved aliases work in prompt cells and the web dropdown alike
         host = WorkspaceHost(ws, session)
-        kw.setdefault('cfg', leela_cfg)
-        kw.setdefault('approvals', getattr(ws, 'approvals', None))
-        kw.setdefault('compact', getattr(ws, 'compact_auto', True))
-        kw.setdefault('compact_strategy', getattr(ws, 'compact_strategy', 'surgical'))
-        # `approve` used to be a rishi policy passed straight through. An `Approvals` now
-        # owns that decision, so a policy handed in here is honoured by wrapping it.
-        if approve is not None and kw.get('approvals') is None:
-            kw['approvals'] = _PolicyApprovals(approve)
+        kwargs.setdefault('cfg', leela_cfg)
+        kwargs.setdefault('approvals', getattr(ws, 'approvals', None))
+        kwargs.setdefault('compact', getattr(ws, 'compact_auto', True))
+        kwargs.setdefault('compact_strategy', getattr(ws, 'compact_strategy', 'surgical'))
+        if approve is not None and kwargs.get('approvals') is None:
+            kwargs['approvals'] = _PolicyApprovals(approve)
         self.ws, self.surface = ws, surface
         self.session_state = str(getattr(ws, 'agent_state', '') or '')
         self._git_toolset = _git_tools(host)
-        # The panel agent gets the whole blend. A prompt cell is answered while someone waits on
-        # the line they are typing, and the embedding leg answers in seconds, so inline searches
-        # the three legs that answer in milliseconds and still reports their agreement.
+        # Inline searches only the legs that answer in milliseconds: a prompt cell is answered
+        # while someone waits on the line they are typing, and the embedding leg takes seconds.
         self._search_toolset = _search_tools(host, legs=None if surface == 'agent' else FAST_SEARCH_LEGS)
-        super().__init__(host, model=model, sp=sp, **kw)
+        super().__init__(host, model=model, sp=sp, **kwargs)
 
         def user_steering(instruction: str) -> str:
             "Return a user's intervention after a skipped tool call so the agent can redirect its next step."
@@ -752,12 +668,11 @@ class Assistant(Agent):
         if self._tools is None:
             registered = {f.__name__ for f in self.registry.tools}
             self.registry.tools.extend(f for f in [*self._git_toolset, *self._search_toolset]
-                                       if f.__name__ not in registered)
+                if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             built = super().tools
-            # Ramabana's delegated agents inherit the parent's plain tools and only know
-            # the harness's generic write set. Keep application-specific Git writes out
-            # of that read-only delegation surface altogether.
+            # Delegated agents inherit `_plain` and only know the harness's generic write set,
+            # so leela's Git writes must not reach that read-only delegation surface.
             self._plain = [f for f in self._plain if f.__name__ not in GIT_WRITE_TOOLS]
             return built
         return super().tools
@@ -766,14 +681,14 @@ class Assistant(Agent):
         base = super().system_prompt()
         layers = getattr(self.ws, 'agent_state_layers', {})
         enabled = [(name, row.get('text', '')) for name, row in layers.items()
-                   if row.get('enabled', True) and str(row.get('text', '')).strip()]
+            if row.get('enabled', True) and str(row.get('text', '')).strip()]
         if not enabled and self.session_state: enabled = [('task', self.session_state)]
         if enabled:
             base += '\n\n## User-owned starting state\n' + ''.join(
                 f'\n### {name.title()} state\n\n{text.strip()}\n' for name, text in enabled)
         if memory := self.ws.agent_memory_context(self.surface):
             base += ('\n\n## User-selected memory notes\n'
-                     'Treat these as durable user context. If a note conflicts with the current request or code, ask rather than guessing.\n\n' + memory)
+                'Treat these as durable user context. If a note conflicts with the current request or code, ask rather than guessing.\n\n' + memory)
         return base
 
     def set_state(self, text, layer='task', enabled=True, source='user'):
@@ -794,18 +709,16 @@ class Assistant(Agent):
             if not (action.done and action.ok): continue
             if action.tool == 'memory_forget':
                 irreversible.append(f"memory_forget ({action.args.get('doc_id', 'unknown document')})")
-            elif action.tool == 'run_python':
-                irreversible.append('run_python (live kernel state)')
+            elif action.tool == 'run_python': irreversible.append('run_python (live kernel state)')
             elif action.tool == 'run_shell':
                 irreversible.append(f"run_shell ({action.args.get('command', 'command')})")
-            elif action.tool in GIT_WRITE_TOOLS:
-                irreversible.append(action.tool)
+            elif action.tool in GIT_WRITE_TOOLS: irreversible.append(action.tool)
         self.turn_transactions[self.current_turn_id] = {
             'turn_id': self.current_turn_id, 'branch_id': self.current_branch_id,
             'files': {p: {'before': before, 'after': after} for p, (before, after) in changes.items()},
             'irreversible': irreversible, 'rolled_back': False}
         self.ws.journal.record('Agent turn', [(p, before, after) for p, (before, after) in changes.items()],
-                               kind='agent', irreversible=irreversible)
+            kind='agent', irreversible=irreversible)
         return out
 
     def turn_capabilities(self, turn_id):
@@ -813,11 +726,11 @@ class Assistant(Agent):
         checkpoint = self.checkpoints.get(str(turn_id), {})
         after = checkpoint.get('after') or []
         revisable = any(isinstance(m, dict) and m.get('role') == 'assistant' and
-                        not m.get('tool_calls') and str(m.get('content') or '').strip() for m in after)
+            not m.get('tool_calls') and str(m.get('content') or '').strip() for m in after)
         tx = self.turn_transactions.get(str(turn_id)) or {}
         files = list((tx.get('files') or {}).keys())
         return {'revisable': revisable, 'undoable': bool(files) and not tx.get('rolled_back'),
-                'files': files, 'irreversible': list(tx.get('irreversible') or [])}
+            'files': files, 'irreversible': list(tx.get('irreversible') or [])}
 
     def rollback_turn(self, turn_id):
         "Atomically restore every unchanged artifact from a completed turn."
@@ -833,9 +746,8 @@ class Assistant(Agent):
     def _action_meta(self, name, args):
         base = super()._action_meta(name, args)
         if self.approvals is not None:
-            # execution_meta also retains tool/args for matching the approval to the later
-            # wrapper call. They are lookup fields, not Activity.start keyword arguments;
-            # passing them alongside start(name, args) produces “multiple values for tool”.
+            # `tool` and `args` are `execution_meta`'s lookup fields, not `Activity.start`
+            # arguments: forwarding them gives “multiple values for tool”.
             approved = self.approvals.execution_meta(name, args)
             base.update({k: v for k, v in approved.items() if k not in {'tool', 'args'}})
         base['branch_id'] = self.current_branch_id
@@ -862,8 +774,8 @@ class Assistant(Agent):
                 if approvals is not None: approvals.observe_result(False)
                 raise
             ok = not str(out).startswith(('edit failed', 'write failed', 'could not',
-                                          'git status failed', 'git fetch failed',
-                                          'git checkout failed', 'git pull failed', 'git push failed'))
+                'git status failed', 'git fetch failed',
+                'git checkout failed', 'git pull failed', 'git push failed'))
             if approvals is not None: approvals.observe_result(ok)
             return out
         return wrapper
@@ -872,8 +784,8 @@ class Assistant(Agent):
         out = super().status()
         if self.approvals is not None: out.update(self.approvals.state())
         out['compaction'] = {'auto': self.compactor.auto, 'strategy': self.compactor.strategy,
-                             'count': self.compactor.count, 'note': self.compactor.note,
-                             'threshold': self.compactor.due(self.backend)}
+            'count': self.compactor.count, 'note': self.compactor.note,
+            'threshold': self.compactor.due(self.backend)}
         return out
 
     @property
@@ -881,14 +793,13 @@ class Assistant(Agent):
 
 
 class _PolicyApprovals(Approvals):
-    "An `Approvals` wrapping a plain `approve(tool_call) -> bool`, for a caller that brought its own."
+    "An `Approvals` wrapping a plain `approve(tool_call) -> bool`."
 
     def __init__(self, approve):
         super().__init__(tools=WRITE_TOOLS, mode='ask')
         self._approve = approve
 
     def request(self, name, args):
-        from ...agent.agent import Ask, preview_for, _summary
         a = Ask(tool=name, args=args, summary=_summary(name, args), preview=preview_for(name, args))
         self.history.append(a)
         try: ok = self._approve({'function': {'name': name, 'arguments': args}})
@@ -897,6 +808,6 @@ class _PolicyApprovals(Approvals):
 
 
 def ide_tools(ws, session=None):
-    "Every tool the agent gets, bound to one `Workspace`. Kept for callers that want the list alone."
+    "Every tool the agent gets, bound to one `Workspace`."
     host = WorkspaceHost(ws, session)
     return tools_for(host, extra=_git_tools(host) + _search_tools(host))

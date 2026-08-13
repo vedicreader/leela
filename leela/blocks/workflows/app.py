@@ -1,18 +1,9 @@
 """GitHub Actions as a panel: the files, the graph, the runs, and the values they need.
 
-Every route here is a thin call into `leela.workflows`, which is itself a thin call into
-gheasy and dockeasy. That layering is the point -- the panel must not know how a token is
-resolved, how `owner/repo` is parsed, or which of a project's keys is a secret, because
-gheasy already decides all three and a second opinion is a bug waiting to happen.
-
-Two boundaries. `repo` is the same one the source-control panel uses: an absolute path from
-the browser, resolved only against repositories the workspace already lists. And nothing
-here reaches GitHub unless it was asked to -- `/workflows` reads local files and reports
-whether the remote half is usable, so opening the panel never spends a rate-limited call or
-fails because someone is offline.
-
-Every GitHub call is network-bound and every generated workflow shells out to git, so all of
-them go through `off_loop`.
+Every route is a thin call into `leela.workflows`, which is itself a thin call into gheasy and
+dockeasy. `repo` is the same absolute path the source-control panel takes, resolved only
+against repositories the workspace lists. `/workflows` reads local files only, so opening the
+panel never spends a rate-limited call. Every GitHub call goes through `off_loop`.
 """
 
 from __future__ import annotations
@@ -34,12 +25,7 @@ def connect(app, ctx):
     def flows(target=''): return Workflows(repo_for(ctx.session, target))
 
     def env_keys(root):
-        """The keys this panel lists: gheasy's schema plus whatever the release steps need.
-
-        The store is dockeasy's and shared across projects, so the panel never enumerates
-        it. What a project declares is the only thing worth showing, and the release
-        pipeline's `needs` is the other half of that declaration.
-        """
+        "The keys the release steps declare; dockeasy's store is shared and never enumerated."
         return Release(root).needs()
 
     @rt('/workflows')
@@ -48,28 +34,18 @@ def connect(app, ctx):
         try:
             wf = flows(repo)
             return {'root': str(wf.root), 'dir': str(wf.dir), 'status': wf.status(),
-                    'workflows': wf.parsed(), 'config': wf.config(), 'schema': wf.schema()}
+                'workflows': wf.parsed(), 'config': wf.config(), 'schema': wf.schema()}
         except Exception as e: return fail(e)
 
     @rt('/workflows/catalogue')
     async def workflows_catalogue(repo: str = ''):
-        """What this project is, and which workflows suit it.
-
-        dockeasy answers the first question and gheasy builds every answer to the second;
-        what is decided here is only which of them to mark as recommended, which is the part
-        neither library can know -- it needs the project, not the packaging.
-        """
+        "What this project is, and which workflows suit it."
         try: return await off_loop(flows(repo).catalogue)
         except Exception as e: return fail(e)
 
     @rt('/workflows/presets')
     def workflows_presets():
-        """The builder's vocabulary: triggers and job presets, with their options.
-
-        Data rather than markup, so the panel renders a form from it and a preset gained in
-        `leela.wfbuild` appears in the browser without a line of frontend. It is also the
-        teaching surface -- the form is the list of decisions a workflow actually has.
-        """
+        "The builder's vocabulary: triggers and job presets, with their options, as data."
         from .wfbuild import preset_rows
         return preset_rows()
 
@@ -99,18 +75,14 @@ def connect(app, ctx):
 
     @rt('/workflows/action')
     async def workflows_action(req):
-        """One explicit thing, and the refreshed local view with it.
-
-        `generate` and `write` are separate on purpose: seeing the workflow gheasy would
-        produce is not the same as agreeing to have it written into the repository.
-        """
+        "One explicit thing, and the refreshed local view with it."
         d = await req.json()
         op = str(d.get('op') or '')
         try:
             wf = flows(d.get('repo') or '')
             if op == 'dispatch':
                 out = await off_loop(wf.dispatch, d.get('workflow') or '', d.get('ref') or '',
-                                     d.get('inputs') or {})
+                    d.get('inputs') or {})
             elif op == 'cancel': out = await off_loop(wf.cancel, d.get('id') or 0)
             elif op == 'preview': out = {'yaml': await off_loop(wf.preview, d.get('workflow') or '')}
             elif op == 'add': out = await off_loop(wf.add, d.get('workflow') or '', d.get('file') or '')
@@ -127,11 +99,7 @@ def connect(app, ctx):
 
     @rt('/workflows/env')
     async def workflows_env(repo: str = '', remote: bool = False):
-        """What each declared key is, and whether it is set -- never what a secret is set to.
-
-        `remote` is opt-in because it is a GitHub call: the panel opens on the local answer
-        and asks for the other one when someone wants to compare.
-        """
+        "What each declared key is, and whether it is set -- never what a secret is set to."
         try:
             wf = flows(repo)
             schema = wf.schema()
@@ -143,12 +111,7 @@ def connect(app, ctx):
 
     @rt('/workflows/env/action')
     async def workflows_env_action(req):
-        """Set a value, remove it, or send declared ones to GitHub.
-
-        Pushing goes through gheasy's `gh_push_env`, so the same schema that decides a key
-        is a secret here decides it there, and an undeclared key is skipped rather than
-        guessed at.
-        """
+        "Set a value, remove it, or send declared ones to GitHub through gheasy's `gh_push_env`."
         d = await req.json()
         op, key = str(d.get('op') or ''), str(d.get('key') or '')
         try:

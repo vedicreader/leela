@@ -1,46 +1,22 @@
 """One command at a time, with the terminal it needs to be believed.
 
-`a && b && c` is how a release or a deploy gets typed, and typing it that way is exactly
-what makes it unpleasant: the chain stops somewhere in the middle, the scrollback holds
-three commands' output at once, and working out *which* of them failed and what it left
-half-done is the actual work. A pipeline runs the same commands but keeps their identity --
-this step, that exit code, that output -- so the same failure becomes a red box with a retry
-button beside it.
-
-`leela.releases` and `leela.deploys` are the two that exist; both are this class plus a list
-of commands and the project file they are saved in.
-
-Three decisions worth stating.
-
-**The steps are a project file, not a hard-coded list.** They live beside `.leela/runs.json`
-for the same reason: how a project ships is a fact about the project. What a project gets
-before anyone has configured it is a *default*, not a special case in the code -- editable,
-and saved the moment it is edited.
-
-**Each step runs on a pseudo-terminal.** `nbdev_prepare` prints progress in place, `uv`
-draws a spinner, rsync redraws a percentage, and twine asks for a password. All four need a
-tty; a captured pipe turns the first three into noise and hangs on the fourth. The pty is
-Leela's own `Pty`, so the browser renders it in the same xterm the shell uses.
-
-**Success advances; failure stops.** A green step starts the next one without being asked,
-because that is the sequence someone was typing anyway. A red one halts with its output on
-screen: continuing past a failed build to publish, or past a failed tunnel to point DNS at
-it, is not a convenience. `skip` exists for when the person reading the output decides the
-failure did not matter -- but it is theirs to decide, one press at a time.
+`a && b && c` taken apart, so each step keeps its identity: this step, that exit code, that
+output. The steps are a project file, not a hard-coded list. Each runs on a pty, because
+`nbdev_prepare`, `uv`, rsync and twine all need a tty. Success advances to the next step;
+failure stops with its output on screen, and `skip` is the reader's judgement call.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-import os
-import shlex
-import time
+import asyncio, json, os, shlex, time
 from dataclasses import dataclass, field
-from pathlib import Path
+from shutil import which
+
+from fastcore.all import Path, first
+from fastcore.xtras import strip_ansi
 
 from ...core.envs import EnvStore
-from ..term.term import SCROLLBACK, Pty, strip_ansi
+from ..term.term import SCROLLBACK, Pty
 
 __all__ = ['Pipeline', 'PipelineError', 'Step', 'resolve_script']
 
@@ -50,19 +26,10 @@ class PipelineError(RuntimeError):
 
 
 def resolve_script(argv, python=None, env=None):
-    """The executable to spawn, accepting either spelling of a hyphenated command.
-
-    nbdev's console scripts are `nbdev_prepare` in nbdev 2 and `nbdev-prepare` in nbdev 3, and
-    every document ever written about releasing an nbdev project uses the first, so both are
-    tried rather than failing with "no such file" when a project upgrades.
-
-    `python`'s own bin directory is searched first, and every spelling within it, before PATH is
-    consulted at all. Taking the first spelling that matched *anywhere* meant a machine with an
-    old system-wide nbdev answered `nbdev_prepare` from a Python 3.8 that knew nothing about this
-    project -- while the venv's `nbdev-prepare`, two entries later in the same loop, was the one
-    being asked for.
-    """
-    from shutil import which
+    "The executable to spawn, accepting either spelling of a hyphenated command."
+    # nbdev's console script is `nbdev_prepare` in nbdev 2 and `nbdev-prepare` in nbdev 3, so
+    # both are tried. `python`'s own bin dir is exhausted before PATH, or a system Python's
+    # stale nbdev answers the first spelling and the project's venv is never reached.
     name = argv[0]
     spellings = (name, name.replace('_', '-'), name.replace('-', '_'))
     bindir = str(Path(python).parent) if python else ''
@@ -75,39 +42,24 @@ def resolve_script(argv, python=None, env=None):
 
 @dataclass
 class Step:
-    """One command in a pipeline.
-
-    `needs` names the environment keys the command cannot work without. It is not
-    enforcement -- the command is what fails or succeeds -- it is so the panel can say
-    "this needs HCLOUD_TOKEN" *before* anyone watches a step fail for want of one.
-    """
+    "One command in a pipeline."
     id: str
     label: str
     cmd: str
     doc: str = ''
-    needs: list = field(default_factory=list)
-    # What to actually spawn, when that is not what `cmd` reads as. A step that runs a
-    # snippet of Python is a command line nobody would want to read and a quoting problem
-    # nobody should have to solve, so it carries its argv and shows `cmd` to the person.
-    argv: list = field(default_factory=list)
+    needs: list = field(default_factory=list)   # environment keys it cannot work without; advisory
+    argv: list = field(default_factory=list)    # what to spawn, when `cmd` is prose rather than a command line
     meta: dict = field(default_factory=dict)
 
     def dict(self): return {'id': self.id, 'label': self.label, 'cmd': self.cmd,
-                            'doc': self.doc, 'needs': list(self.needs), 'meta': dict(self.meta)}
+        'doc': self.doc, 'needs': list(self.needs), 'meta': dict(self.meta)}
 
 
 class Pipeline:
     """A named sequence of commands for one project: its steps, its state, and its pty.
 
-    Subclasses supply two things -- `FILE`, the project file the plan is saved in, and
-    `defaults`, the plan to use before anyone has saved one. Everything else is shared,
-    because a release and a deploy differ in what they run and in nothing else: both are a
-    line someone used to type as `a && b && c`, and both are worth breaking apart for the
-    same reason.
-
-    One pipeline per project and one step at a time, on purpose. Two of the same running at
-    once is never what anyone meant, and a single running step is what lets the terminal,
-    the state and the exit code refer to the same thing without anybody having to say which.
+    Subclasses supply `FILE`, the project file the plan is saved in, and `defaults`, the plan to
+    use before one is saved. One pipeline per project and one step at a time.
     """
 
     FILE = '.leela/pipeline.json'
@@ -127,11 +79,7 @@ class Pipeline:
         self._pump = None
         self._subs = set()
         self._auto = True
-        # One transcript for the whole release, not one per step. Each step is a new pty
-        # with its own scrollback, so without this a terminal opened during step three
-        # would show step three and nothing about the failure in step two -- which is the
-        # only thing anybody opens it to read.
-        self.log = bytearray()
+        self.log = bytearray()                   # one transcript for the run; each step is a new pty
 
     # -- the plan --------------------------------------------------------------
     @property
@@ -145,11 +93,11 @@ class Pipeline:
         for row in steps or ():
             if not isinstance(row, dict) or not row.get('cmd'): continue
             out.append(Step(id=str(row.get('id') or f'step{len(out) + 1}'),
-                            label=str(row.get('label') or row.get('id') or 'step'),
-                            cmd=str(row['cmd']), doc=str(row.get('doc') or ''),
-                            needs=[str(x) for x in (row.get('needs') or ())],
-                            argv=[str(x) for x in (row.get('argv') or ())],
-                            meta=dict(row.get('meta') or {})))
+                label=str(row.get('label') or row.get('id') or 'step'),
+                cmd=str(row['cmd']), doc=str(row.get('doc') or ''),
+                needs=[str(x) for x in (row.get('needs') or ())],
+                argv=[str(x) for x in (row.get('argv') or ())],
+                meta=dict(row.get('meta') or {})))
         return out or self.defaults(self.root)
 
     def save(self, steps):
@@ -167,7 +115,7 @@ class Pipeline:
         return self.state()
 
     def step(self, step_id):
-        found = next((s for s in self.steps if s.id == str(step_id)), None)
+        found = first(self.steps, lambda s: s.id == str(step_id))
         if found is None: raise PipelineError(f'unknown release step: {step_id}')
         return found
 
@@ -181,17 +129,12 @@ class Pipeline:
         return seen
 
     def missing(self, step):
-        "Keys this step names that dockeasy's store cannot produce -- the reason to look before running."
+        "Keys this step names that dockeasy's store cannot produce."
         try: return [k for k in step.needs if not self.env.get(k)]
         except Exception: return [k for k in step.needs if not os.environ.get(k)]
 
     def _env(self):
-        """The child's environment: this process, the project venv, then `.env` on top.
-
-        dockeasy resolves each key itself, `os.environ` first and its store second, so a
-        value exported before Leela started keeps winning -- the same precedence every other
-        dockeasy caller sees, rather than one invented here.
-        """
+        "The child's environment: this process, the project venv, then `.env` on top."
         from ..runtime.kernels import venv_env
         env = venv_env(self.python)     # the same environment a terminal in this project gets
         try: env.update({k: str(v) for k, v in self.env.values(self.needs()).items()})
@@ -209,26 +152,19 @@ class Pipeline:
                 'code': r.get('code'), 'started': r.get('started', 0), 'finished': r.get('finished', 0),
                 'missing': self.missing(s),
             })
-        failed = next((r for r in rows if r['status'] == 'failed'), None)
+        failed = first(rows, lambda r: r['status'] == 'failed')
         return {'root': str(self.root), 'kind': self.KIND, 'path': str(self.path),
-                'configured': self.path.exists(), 'steps': rows, 'active': self.active,
-                'running': bool(self.active), 'auto': self._auto,
-                'failed': failed['id'] if failed else '',
-                'done': bool(rows) and all(r['status'] in ('passed', 'skipped') for r in rows),
-                'needs': self.needs()}
+            'configured': self.path.exists(), 'steps': rows, 'active': self.active,
+            'running': bool(self.active), 'auto': self._auto,
+            'failed': failed['id'] if failed else '',
+            'done': bool(rows) and all(r['status'] in ('passed', 'skipped') for r in rows),
+            'needs': self.needs()}
 
     # -- running ---------------------------------------------------------------
     def subscribe(self):
-        """A queue of terminal frames for one viewer, primed with what has already scrolled by.
-
-        Replaying the scrollback is what makes a panel opened *after* a step started show
-        the same thing as one that was open the whole time -- and the pump below is the only
-        reader of the pty, so a viewer arriving late can never have missed bytes that are
-        now unrecoverable.
-        """
+        "A queue of terminal frames for one viewer, primed with what has already scrolled by."
         q = asyncio.Queue()
-        if self.log:
-            q.put_nowait(bytes(self.log))
+        if self.log: q.put_nowait(bytes(self.log))
         self._subs.add(q)
         return q
 
@@ -242,7 +178,7 @@ class Pipeline:
             except Exception: self._subs.discard(q)
 
     def write(self, data):
-        "Keystrokes into the running step -- twine asks for a password, and someone has to answer."
+        "Keystrokes into the running step -- twine asks for a password."
         if self.pty is not None and self.pty.alive: self.pty.write(data)
 
     def resize(self, cols, rows):
@@ -259,15 +195,15 @@ class Pipeline:
 
     def _next(self):
         "The first step that has not passed or been skipped."
-        return next((s for s in self.steps
-                     if (self.results.get(s.id) or {}).get('status') not in ('passed', 'skipped')), None)
+        done = ('passed', 'skipped')
+        return first(self.steps, lambda s: (self.results.get(s.id) or {}).get('status') not in done)
 
     def _after(self, step):
         i = [s.id for s in self.steps].index(step.id)
         return self.steps[i + 1] if i + 1 < len(self.steps) else None
 
     def _resolve(self, argv, env):
-        "The executable to spawn, from this pipeline's interpreter. See `resolve_script`."
+        "The executable to spawn, from this pipeline's interpreter."
         return resolve_script(argv, self.python, env)
 
     async def _run(self, step):
@@ -275,64 +211,46 @@ class Pipeline:
         if not argv: raise PipelineError(f'{step.id} has no command to run')
         self.active = step.id
         self.results[step.id] = {'status': 'running', 'code': None,
-                                 'started': int(time.time()), 'finished': 0}
+            'started': int(time.time()), 'finished': 0}
         banner = f'\r\n\x1b[1;36m❯ {step.cmd}\x1b[0m\r\n'
         env = self._env()
         self.pty = Pty(argv=self._resolve(argv, env), cwd=str(self.root), env=env, cols=100, rows=30)
         self._broadcast(banner.encode())
-        try:
-            self.pty.start()
+        try: self.pty.start()
         except OSError as e:
             self.active = ''
             self.results[step.id] = {'status': 'failed', 'code': None, 'started': int(time.time()),
-                                     'finished': int(time.time()), 'error': str(e)}
+                'finished': int(time.time()), 'error': str(e)}
             self._broadcast(f'\r\n\x1b[31m{step.cmd}: {e}\x1b[0m\r\n'.encode())
             return
         self._pump = asyncio.create_task(self._drain(step))
 
     async def _drain(self, step):
-        """Pump the pty to every viewer, then record how the step ended and decide what next.
-
-        The pump runs whether or not anyone is watching. A pty nobody reads fills its buffer
-        and stops the child mid-write, so "the browser is closed" would otherwise mean "the
-        release hangs" -- the failure mode most worth designing out of a background runner.
-        """
-        try:
-            await self.pty.stream(self._broadcast)
+        "Pump the pty to every viewer, then record how the step ended and decide what next."
+        # The pump runs whether or not anyone is watching: a pty nobody reads fills its buffer
+        # and stops the child mid-write.
+        try: await self.pty.stream(self._broadcast)
         except Exception as e:
             self._broadcast(f'\r\n\x1b[31m{type(e).__name__}: {e}\x1b[0m\r\n'.encode())
         code = self.pty.proc.returncode if self.pty.proc else None
         ok = code == 0
         self.results[step.id] = {'status': 'passed' if ok else 'failed', 'code': code,
-                                 'started': (self.results.get(step.id) or {}).get('started', 0),
-                                 'finished': int(time.time())}
+            'started': (self.results.get(step.id) or {}).get('started', 0),
+            'finished': int(time.time())}
         self.active = ''
         note = '\x1b[32m✓ ' if ok else '\x1b[31m✗ '
         self._broadcast(f'\r\n{note}{step.label} exited {code}\x1b[0m\r\n'.encode())
-        if ok and self._auto and (nxt := self._after(step)) is not None:
-            await self._run(nxt)
+        if ok and self._auto and (nxt := self._after(step)) is not None: await self._run(nxt)
 
     def blame(self, checkouts=()):
-        """Which of your packages raised in the last failure, and where to open it.
-
-        A pipeline is where the family's code actually runs, so it is where a traceback
-        actually appears -- and the useful question about one is never "what does it say"
-        but *whose code is that*. `leela.packages` answers it and rewrites the path to the
-        checkout this workspace has open, so the fix lands in the repository rather than in
-        a copy under `.venv`.
-        """
+        "Which of your packages raised in the last failure, with the path rewritten to your checkout."
         from ..stack.packages import blame as attribute
         if not any((self.results.get(s.id) or {}).get('status') == 'failed' for s in self.steps):
             return {}
         return attribute(self.tail(400), checkouts=checkouts)
 
     def tail(self, lines=80):
-        """The end of the release transcript as plain text, for a summary or for the agent.
-
-        Undoes what a terminal does, the same two ways `Pty.text` does: the escapes go, and
-        a bare carriage return becomes a newline so a progress bar is lines rather than one
-        enormous one.
-        """
+        "The end of the transcript as plain text, escapes gone and bare returns made newlines."
         text = strip_ansi(bytes(self.log).decode('utf-8', 'replace'))
         rows = text.replace('\r\n', '\n').replace('\r', '\n').rstrip('\n').split('\n')
         return '\n'.join(rows[-max(1, int(lines)):])
@@ -349,17 +267,17 @@ class Pipeline:
         return self.state()
 
     def skip(self, step_id):
-        "Mark a step done without running it -- the judgement call after reading a failure."
+        "Mark a step done without running it."
         step = self.step(step_id)
         if self.active == step.id: raise PipelineError(f'{step.id} is still running')
         self.results[step.id] = {'status': 'skipped', 'code': None,
-                                 'started': 0, 'finished': int(time.time())}
+            'started': 0, 'finished': int(time.time())}
         return self.state()
 
     def reset(self):
-        "Forget what ran. The commands are unchanged; only this attempt's history goes."
+        "Forget what ran. The commands are unchanged."
         if self.active: raise PipelineError(f'{self.active} is still running')
         self.results.clear()
         self.log.clear()
-        self._broadcast(b'\x1b[2J\x1b[H')      # a fresh attempt gets a fresh terminal
+        self._broadcast(b'\x1b[2J\x1b[H')
         return self.state()

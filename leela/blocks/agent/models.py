@@ -1,14 +1,11 @@
-"""Persistent user-added local and hosted model aliases."""
+"Persistent user-added local and hosted model aliases."
 import json, re
 from fastcore.all import Path
 from ... import leela_cfg
 
 __all__=['model_path','load_models','save_model','delete_model','runtimes']
 
-# Read from ramabana rather than restated. The comment here used to claim it was asked for and
-# then list it anyway, which is how it drifted twice: once still offering MLX and llama.cpp after
-# they were dropped, and once missing `cursor` after it was added. The fallback is the shape
-# ramabana had before it exported the name, so an older core still gives a working picker.
+# Never restate this list: the copy that used to live here drifted twice from ramabana's.
 def _runtimes():
     from ...agent.core import RUNTIMES
     return tuple(RUNTIMES)

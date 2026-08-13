@@ -1,103 +1,88 @@
 """Building a workflow by choosing, not by typing YAML.
 
-The catalogue in `leela.workflows` answers "which workflow does this project want"; this
-answers the next question, which is the one that actually stops people: *now change it*.
-Add a lint job before the tests. Publish on a release instead of on every push. Run it on
-Mondays. Every one of those is one line of YAML in the right place and an afternoon of
-guessing at indentation, `needs`, and which of `on:`'s three shapes applies.
-
-So the panel edits a **spec** -- triggers, and a list of jobs with their options -- and
-`compose` turns that spec into gheasy's `WorkflowBuilder` calls. Nothing here writes YAML:
-every job is a gheasy preset or gheasy's DSL, so the file is the one the `gheasy` CLI would
-have produced and stays readable to gheasy's own tools.
-
-`PRESETS` is the whole vocabulary, and it is *data* -- each entry declares its options with
-a type and a default, so the browser renders a form from it and a preset gained here appears
-in the panel without a line of frontend. That is what makes this teachable rather than
-merely convenient: the form is the list of decisions a workflow actually has.
-
-The spec is saved beside the file it produced (`.leela/workflows/<file>.json`), because
-reading a workflow back into a spec is lossy -- someone edits the YAML by hand and the
-builder would either lose the edit or refuse to open. Keeping the spec means reopening what
-*you built*, and the panel says plainly when the file on disk has moved on from it.
+The panel edits a **spec** -- triggers, and a list of jobs with their options -- and `compose`
+turns it into gheasy's `WorkflowBuilder` calls. Nothing here writes YAML. `PRESETS` and
+`TRIGGERS` are data, so the browser renders a form from them and a preset gained here needs no
+frontend change. The spec is saved beside the file it produced, in `.leela/workflows`, because
+reading a workflow back into a spec is lossy.
 """
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-__all__ = ['PRESETS', 'TRIGGERS', 'compose', 'spec_path', 'load_spec', 'save_spec', 'preset_rows']
+from fastcore.all import Path
+
+__all__ = ['PRESETS', 'TRIGGERS', 'compose', 'deploy_job', 'spec_path', 'load_spec', 'save_spec',
+           'preset_rows']
 
 SPEC_DIR = '.leela/workflows'
 
-# Every trigger the panel offers, in the shape gheasy's `TriggerBuilder` takes them. `kind`
-# is what the form renders: a checkbox, a comma list of branches, or a cron string.
+# `kind` is what the form renders: a checkbox, a comma list of branches, or a cron string.
 TRIGGERS = [
     {'id': 'push', 'label': 'on push', 'kind': 'branches', 'default': 'main',
-     'doc': 'Every push to these branches.'},
+        'doc': 'Every push to these branches.'},
     {'id': 'pull_request', 'label': 'on pull request', 'kind': 'branches', 'default': 'main',
-     'doc': 'Every pull request targeting these branches.'},
+        'doc': 'Every pull request targeting these branches.'},
     {'id': 'workflow_dispatch', 'label': 'run button', 'kind': 'flag', 'default': True,
-     'doc': 'Adds a Run button, here and on GitHub. Worth having on almost everything.'},
+        'doc': 'Adds a Run button, here and on GitHub. Worth having on almost everything.'},
     {'id': 'release', 'label': 'on release', 'kind': 'flag', 'default': False,
-     'doc': 'When a GitHub release is published — what a PyPI publish job waits for.'},
+        'doc': 'When a GitHub release is published — what a PyPI publish job waits for.'},
     {'id': 'schedule', 'label': 'on a schedule', 'kind': 'cron', 'default': '0 9 * * 1',
-     'doc': 'A cron expression in UTC. `0 9 * * 1` is Mondays at 09:00.'},
+        'doc': 'A cron expression in UTC. `0 9 * * 1` is Mondays at 09:00.'},
 ]
 
-# Each preset is one job. `options` are rendered as a form; `id` is the job id gheasy gives
-# it, which is what other jobs name in `needs`.
+# One job each. `job` is the job id gheasy gives it, which is what other jobs name in `needs`.
 PRESETS = [
     {'id': 'uv_test', 'job': 'test', 'name': 'Test (uv)',
-     'doc': 'Checkout, install with uv, run the tests.',
-     'options': [
-         {'key': 'test_cmd', 'label': 'test command', 'type': 'text', 'default': 'pytest',
-          'doc': 'Run through `uv run`, so `pytest -x` becomes `uv run pytest -x`.'},
-         {'key': 'python_versions', 'label': 'python versions', 'type': 'list', 'default': '',
-          'doc': 'Comma separated. More than one adds a matrix; empty runs once.'}]},
+        'doc': 'Checkout, install with uv, run the tests.',
+        'options': [
+            {'key': 'test_cmd', 'label': 'test command', 'type': 'text', 'default': 'pytest',
+                'doc': 'Run through `uv run`, so `pytest -x` becomes `uv run pytest -x`.'},
+            {'key': 'python_versions', 'label': 'python versions', 'type': 'list', 'default': '',
+                'doc': 'Comma separated. More than one adds a matrix; empty runs once.'}]},
     {'id': 'uv_lint', 'job': 'lint', 'name': 'Lint (ruff)',
-     'doc': 'ruff check and a formatting check.',
-     'options': [{'key': 'lint_cmd', 'label': 'lint command', 'type': 'text',
-                  'default': 'uv run ruff check . && uv run ruff format --check .', 'doc': ''}]},
+        'doc': 'ruff check and a formatting check.',
+        'options': [{'key': 'lint_cmd', 'label': 'lint command', 'type': 'text',
+            'default': 'uv run ruff check . && uv run ruff format --check .', 'doc': ''}]},
     {'id': 'nbdev_test', 'job': 'test', 'name': 'Test (nbdev)',
-     'doc': 'nbdev_test, and a check that the notebooks are clean — what breaks in an nbdev repo.',
-     'options': []},
+        'doc': 'nbdev_test, and a check that the notebooks are clean — what breaks in an nbdev repo.',
+        'options': []},
     {'id': 'uv_pypi', 'job': 'publish', 'name': 'Publish to PyPI',
-     'doc': 'Build and publish through trusted publishing. Only runs on a release event, so '
-            'pair it with the release trigger.',
-     'options': []},
+        'doc': 'Build and publish through trusted publishing. Only runs on a release event, so '
+        'pair it with the release trigger.',
+        'options': []},
     {'id': 'docker', 'job': 'docker', 'name': 'Docker image',
-     'doc': 'Build and push to GHCR as :latest.',
-     'options': [{'key': 'app_name', 'label': 'image name', 'type': 'text', 'default': '',
-                  'doc': 'Defaults to the project name.'}]},
+        'doc': 'Build and push to GHCR as :latest.',
+        'options': [{'key': 'app_name', 'label': 'image name', 'type': 'text', 'default': '',
+            'doc': 'Defaults to the project name.'}]},
     {'id': 'node', 'job': 'frontend', 'name': 'Node build', 'doc': 'npm ci, build, test.',
-     'options': []},
+        'options': []},
     {'id': 'rust', 'job': 'build', 'name': 'Rust build', 'doc': 'cargo build, test, clippy.',
-     'options': []},
+        'options': []},
     {'id': 'go', 'job': 'build', 'name': 'Go build', 'doc': 'go build, test, vet.', 'options': []},
     {'id': 'deploy', 'job': 'deploy', 'name': 'Deploy to a VPS',
-     'doc': 'Every key in env_schema as a secret or a variable, the deploy key, then your '
-            'deploy command. The shape lego uses.',
-     'options': [
-         {'key': 'cmd', 'label': 'deploy command', 'type': 'text', 'default': 'python deploy.py deploy',
-          'doc': ''},
-         {'key': 'lfs', 'label': 'checkout LFS files', 'type': 'flag', 'default': True, 'doc': ''}]},
+        'doc': 'Every key in env_schema as a secret or a variable, the deploy key, then your '
+        'deploy command. The shape lego uses.',
+        'options': [
+            {'key': 'cmd', 'label': 'deploy command', 'type': 'text', 'default': 'python deploy.py deploy',
+                'doc': ''},
+            {'key': 'lfs', 'label': 'checkout LFS files', 'type': 'flag', 'default': True, 'doc': ''}]},
     {'id': 'run', 'job': 'run', 'name': 'Anything else',
-     'doc': 'Checkout, install with uv, then the commands you give it — one per line.',
-     'options': [
-         {'key': 'job_id', 'label': 'job id', 'type': 'text', 'default': 'run',
-          'doc': 'What other jobs name in `needs`.'},
-         {'key': 'cmds', 'label': 'commands', 'type': 'lines', 'default': 'echo hello',
-          'doc': 'One step per line.'},
-         {'key': 'install', 'label': 'install dependencies first', 'type': 'flag', 'default': True,
-          'doc': ''}]},
+        'doc': 'Checkout, install with uv, then the commands you give it — one per line.',
+        'options': [
+            {'key': 'job_id', 'label': 'job id', 'type': 'text', 'default': 'run',
+                'doc': 'What other jobs name in `needs`.'},
+            {'key': 'cmds', 'label': 'commands', 'type': 'lines', 'default': 'echo hello',
+                'doc': 'One step per line.'},
+            {'key': 'install', 'label': 'install dependencies first', 'type': 'flag', 'default': True,
+                'doc': ''}]},
 ]
 
 
 def preset_rows():
-    "The vocabulary, as the panel renders it. Data, so a new preset needs no frontend change."
-    return {'presets': PRESETS, 'triggers': TRIGGERS}
+    "The vocabulary, as the panel renders it."
+    return dict(presets=PRESETS, triggers=TRIGGERS)
 
 
 def _listy(value):
@@ -111,11 +96,7 @@ def _lines(value):
 
 
 def _triggers(wfb, on):
-    """Apply the trigger part of a spec.
-
-    `on:` has three shapes in the file format and one builder here, which is the point of
-    the spec: a checkbox cannot produce the wrong one.
-    """
+    "Apply the trigger part of a spec, whose one shape gheasy renders into `on:`'s three."
     used = False
     push = on.get('push')
     if push not in (None, False):
@@ -135,26 +116,24 @@ def _triggers(wfb, on):
     if cron:
         wfb.on.schedule(str(cron).strip())
         used = True
-    if not used:
-        # A workflow with no triggers can only ever be started by hand, so say so in the
-        # file rather than producing one that silently never runs.
-        wfb.on.workflow_dispatch()
+    # A workflow with no triggers would silently never run, so it says so in the file.
+    if not used: wfb.on.workflow_dispatch()
 
 
-def _deploy_job(wfb, job_id, opts, schema, app):
+def deploy_job(wfb, job_id, opts, schema, app):
     "lego's deploy job: the schema as `env:`, the key, then the command."
     env = {k: (f'${{{{ secrets.{k} }}}}' if v is None else f'${{{{ vars.{k} }}}}')
-           for k, v in (schema or {}).items()}
+        for k, v in (schema or {}).items()}
     env['DEPLOY_KEY'] = '${{ secrets.DEPLOY_KEY }}'
     ssh = ('mkdir -p ~/.ssh && name="${SERVER_NAME:-' + app + '}" '
-           '&& echo "$DEPLOY_KEY" > ~/.ssh/"$name" && chmod 600 ~/.ssh/"$name"')
+        '&& echo "$DEPLOY_KEY" > ~/.ssh/"$name" && chmod 600 ~/.ssh/"$name"')
     job = wfb.job(job_id, needs=opts.get('needs') or None).runs_on('ubuntu-latest').env(**env)
     step = job.checkout()
     if opts.get('lfs', True): step = step.with_(lfs=True)
     (step.end_step().setup_uv().with_(python_version='3.13').end_step()
-         .uv_install('uv sync --group dev').end_step()
-         .step('Install SSH key').if_("env.DEPLOY_KEY != ''").run(ssh).end_step()
-         .step('Deploy').run(str(opts.get('cmd') or 'python deploy.py deploy')).end_job())
+        .uv_install('uv sync --group dev').end_step()
+        .step('Install SSH key').if_("env.DEPLOY_KEY != ''").run(ssh).end_step()
+        .step('Deploy').run(str(opts.get('cmd') or 'python deploy.py deploy')).end_job())
 
 
 def _run_job(wfb, job_id, opts):
@@ -169,12 +148,7 @@ def _run_job(wfb, job_id, opts):
 
 
 def compose(spec, schema=None, app=''):
-    """A spec as YAML, built entirely with gheasy.
-
-    Job ids are made unique as they are added: two "Anything else" jobs are a normal thing
-    to want, and a builder that produced two jobs with the same id would emit a file GitHub
-    rejects for a reason the person who clicked "add" could not be expected to see.
-    """
+    "A spec as YAML, built entirely with gheasy. Job ids are made unique as they are added."
     from gheasy.workflow import Workflow
     spec = spec or {}
     app = str(app or spec.get('app') or 'app')
@@ -195,11 +169,11 @@ def compose(spec, schema=None, app=''):
         pid = preset['id']
         if pid == 'uv_test':
             wfb.uv_test_job(test_cmd=str(opts.get('test_cmd') or 'pytest'), needs=opts['needs'],
-                            python_versions=_listy(opts.get('python_versions')) or None)
+                python_versions=_listy(opts.get('python_versions')) or None)
         elif pid == 'uv_lint':
             wfb.uv_lint_job(lint_cmd=str(opts.get('lint_cmd') or
-                                         'uv run ruff check . && uv run ruff format --check .'),
-                            needs=opts['needs'])
+                'uv run ruff check . && uv run ruff format --check .'),
+                needs=opts['needs'])
         elif pid == 'uv_pypi': wfb.uv_pypi_job(needs=opts['needs'])
         elif pid == 'docker': wfb.docker_job(str(opts.get('app_name') or app), needs=opts['needs'])
         elif pid == 'node': wfb.node_job()
@@ -210,13 +184,12 @@ def compose(spec, schema=None, app=''):
                 .checkout().end_step().setup_uv().end_step().uv_install().end_step()
                 .uv_run('nbdev_test').end_step()
                 .step('Notebooks are clean').run('uv run nbdev_clean --check_all').end_job())
-        elif pid == 'deploy': _deploy_job(wfb, job_id, opts, schema, app)
+        elif pid == 'deploy': deploy_job(wfb, job_id, opts, schema, app)
         elif pid == 'run': _run_job(wfb, job_id, opts)
     return wfb.build().to_yaml()
 
 
-def spec_path(root, file):
-    return Path(root)/SPEC_DIR/(str(file).rsplit('.', 1)[0] + '.json')
+def spec_path(root, file): return Path(root)/SPEC_DIR/Path(file).with_suffix('.json')
 
 
 def load_spec(root, file):

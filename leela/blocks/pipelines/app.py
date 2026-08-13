@@ -1,16 +1,10 @@
 """The release and deploy pipelines, and the one terminal they run on.
 
-Both are `leela.pipelines.Pipeline`, so both are served from here rather than from two
-blocks that would differ only in a noun. The state lives in this closure, one object per
-project root and kind, because a pipeline is a *running thing*: the request that starts a
-step and the websocket that shows its output have to be talking about the same pty, and a
-per-request object could not be.
-
-`/pipeline/ws` is a separate socket from `/term/ws` rather than a `kind` on it because the
-pty is not opened by whoever attaches: the pipeline starts it, keeps pumping it whether or
-not anyone is watching, and replays what has already scrolled by to each new viewer. A pty
-nobody reads stops the child mid-write, and "the deploy hung because the panel was closed"
-is the failure that arrangement exists to prevent.
+Both are a `Pipeline`, so both are served from here. The state lives in this closure, one object
+per project root and kind, because the request that starts a step and the websocket that shows
+its output have to be talking about the same pty. `/pipeline/ws` is separate from `/term/ws`
+because the pipeline, not the viewer, opens the pty and keeps pumping it: a pty nobody reads
+stops the child mid-write.
 """
 
 from __future__ import annotations
@@ -33,12 +27,7 @@ KINDS = {'release': Release, 'deploy': Deploy}
 
 
 def nbdev_prepare(session, target=''):
-    """nbdev's prepare, run in the folder that owns `settings.ini` and in that folder's venv.
-
-    Both halves matter: prepare reads `settings.ini` relative to its cwd, and a workspace holding
-    several checkouts must not run one project's prepare with another's interpreter. The venv
-    itself is not created here -- opening a folder already does that.
-    """
+    "nbdev's prepare, run in the folder that owns `settings.ini` and in that folder's venv."
     import configparser, subprocess
     if not session.fs.roots: raise PipelineError('open a folder first')
     root = repo_for(session, target)
@@ -53,8 +42,8 @@ def nbdev_prepare(session, target=''):
     d = configparser.ConfigParser(); d.read(settings)
     defaults = d.defaults()
     return dict(ok=True, root=str(root), nbs_path=defaults.get('nbs_path', 'nbs'),
-                lib_path=defaults.get('lib_path', defaults.get('lib_name', '')),
-                log=(r.stdout or '')[-2000:])
+        lib_path=defaults.get('lib_path', defaults.get('lib_name', '')),
+        log=(r.stdout or '')[-2000:])
 
 
 def connect(app, ctx):
@@ -65,29 +54,20 @@ def connect(app, ctx):
         "The pipeline for one project and kind, made once and then kept -- it has a process in it."
         root = repo_for(ctx.session, target)
         key = (kind, str(root))
-        if key not in live:
-            live[key] = KINDS[kind](root, env=EnvStore())
-        # The interpreter can change after the pipeline was made -- picking a project venv
-        # in the kernel picker must retarget the next step, not the next restart. It is
-        # resolved from `root` for the same reason a terminal resolves it from its cwd: a
-        # workspace holds several checkouts, and a release runs the *project's* console
-        # scripts. `pool.default_python` alone released repo B with repo A's venv, or with
-        # none at all, which is how `nbdev_prepare` reached a system Python 3.8.
+        if key not in live: live[key] = KINDS[kind](root, env=EnvStore())
+        # Re-resolved every time from `root`, not from `pool.default_python`: a workspace holds
+        # several checkouts, and a release must run the *project's* console scripts.
         live[key].python = python_for(root, ctx.session)
         return live[key]
 
     async def act(kind, d):
-        """One explicit move: start, retry a step, skip it, stop, forget, or edit the plan.
-
-        `start` returns as soon as the first step is *running*, not when the pipeline
-        finishes. The state it returns says which step that is, and the terminal says the
-        rest -- a deploy that took four minutes must not be a four-minute request.
-        """
+        "One explicit move: start, retry a step, skip it, stop, forget, or edit the plan."
+        # `start` returns as soon as the first step is running, not when the pipeline finishes.
         op, target = str(d.get('op') or ''), d.get('repo') or ''
         p = pipeline(kind, target)
         if op == 'scaffold' and kind == 'deploy':
             out = await off_loop(p.scaffold, d.get('domain') or '', d.get('subdomain') or '',
-                                 d.get('app') or '', bool(d.get('force')), d.get('second_host') or '')
+                d.get('app') or '', bool(d.get('force')), d.get('second_host') or '')
             return out | {'state': state(kind, target)}
         if op == 'start': await p.start(d.get('step') or '', bool(d.get('auto', True)))
         elif op == 'step': await p.start(d.get('step') or '', False)
@@ -100,12 +80,7 @@ def connect(app, ctx):
         return state(kind, target)
 
     def state(kind, target):
-        """The pipeline's state, and on a failure, which package raised.
-
-        Attribution is attached here rather than computed by the panel because it needs the
-        workspace's checkouts to rewrite a `site-packages` path to the repository you can
-        actually fix, and the workspace is what this block has.
-        """
+        "The pipeline's state, and on a failure, which package raised."
         p = pipeline(kind, target)
         out = p.state()
         if out.get('failed'):
@@ -125,7 +100,7 @@ def connect(app, ctx):
 
     @rt('/releases/tail')
     async def releases_tail(repo: str = '', lines: int = 80):
-        "The end of the output as plain text -- for a summary, or for the agent to read."
+        "The end of the output as plain text."
         try: return {'text': await off_loop(pipeline('release', repo).tail, lines)}
         except Exception as e: return fail(e)
 
@@ -150,8 +125,8 @@ def connect(app, ctx):
         try: return await off_loop(nbdev_prepare, ctx.session, repo)
         except Exception as e: return fail(e)
 
-    # One implementation, three kinds: `core.web.pipeline_socket` speaks the same protocol
-    # as `/term/ws`, so the browser renders all of them with the same xterm component.
+    # `pipeline_socket` speaks the same protocol as `/term/ws`, so the browser renders both
+    # with the same xterm component.
     pipeline_socket(app, '/pipeline/ws', ctx.gate,
-                    lambda hello: pipeline(str(hello.get('kind') or 'release'),
-                                           hello.get('repo') or hello.get('cwd') or ''))
+        lambda hello: pipeline(str(hello.get('kind') or 'release'),
+            hello.get('repo') or hello.get('cwd') or ''))
