@@ -1112,6 +1112,15 @@ wheels = [
 ]
 
 [[package]]
+name = "fastaistyle"
+version = "0.0.17"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/1d/3e974aa1007af7c4bfd5e27014db4066c6c4a785ff75c38e7824aab081fa/fastaistyle-0.0.17.tar.gz", hash = "sha256:f1267423f75e5cad6156ff515059b17ac9c5337cf363317b681fafda06f48fa6", size = 28929, upload-time = "2026-06-12T09:27:32.018Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/70/56a6edaa927034751a1ae35d8786e7d46fb5cfef7a160990a69667b4851b/fastaistyle-0.0.17-py3-none-any.whl", hash = "sha256:12943da955c9681de419c5427c68dc20db19132118996efcc044ed9c57117eaa", size = 20120, upload-time = "2026-06-12T09:27:30.78Z" },
+]
+
+[[package]]
 name = "fastaudit"
 version = "0.2.9"
 source = { registry = "https://pypi.org/simple" }
@@ -2377,6 +2386,7 @@ windows = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "fastaistyle" },
     { name = "leela", extra = ["all"] },
     { name = "nbformat" },
     { name = "pandas" },
@@ -2441,6 +2451,7 @@ provides-extras = ["all", "gateway", "github", "ipymini", "lsp", "macapp", "wind
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "fastaistyle", specifier = ">=0.0.17" },
     { name = "leela", extras = ["all"], editable = "." },
     { name = "nbformat", specifier = ">=5.10.0" },
     { name = "pandas", specifier = ">=2.0" },
@@ -4222,9 +4233,11 @@ dependencies = [
     { name = "exhash" },
     { name = "fastcore" },
     { name = "fastllm-claude-code" },
+    { name = "fastspec" },
     { name = "fossick" },
     { name = "koshas" },
     { name = "litesearch" },
+    { name = "pyyaml" },
     { name = "rgapi" },
     { name = "rishi" },
     { name = "vishalakshi" },
@@ -4238,7 +4251,8 @@ requires-dist = [
     { name = "exhash", specifier = ">=0.4.9" },
     { name = "fastcore", specifier = ">=2.1.16" },
     { name = "fastllm-claude-code", specifier = ">=0.0.7" },
-    { name = "fossick", specifier = ">=0.1.0" },
+    { name = "fastspec", specifier = ">=0.2.1" },
+    { name = "fossick", specifier = ">=0.1.11" },
     { name = "jupyter-client", marker = "extra == 'all'", specifier = ">=8.9.1" },
     { name = "jupyter-client", marker = "extra == 'dev'", specifier = ">=8.9.1" },
     { name = "jupyter-client", marker = "extra == 'pyrepl'", specifier = ">=8.9.1" },
@@ -4254,6 +4268,7 @@ requires-dist = [
     { name = "pyghostty", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "pyghostty", marker = "extra == 'pyrepl'", specifier = ">=0.1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "rgapi", specifier = ">=0.1.19" },
     { name = "rishi", specifier = ">=0.1.8" },
     { name = "rishi", extras = ["all"], marker = "extra == 'dev'", specifier = ">=0.1.8" },
@@ -4261,7 +4276,7 @@ requires-dist = [
     { name = "teleprint", marker = "extra == 'cli'", specifier = ">=0.1.1" },
     { name = "teleprint", marker = "extra == 'dev'", specifier = ">=0.1.1" },
     { name = "teleprint", marker = "extra == 'pyrepl'", specifier = ">=0.1.1" },
-    { name = "vishalakshi", specifier = ">=0.0.1" },
+    { name = "vishalakshi", specifier = ">=0.1.7" },
 ]
 provides-extras = ["all", "cli", "dev", "mcp", "pyrepl"]
 

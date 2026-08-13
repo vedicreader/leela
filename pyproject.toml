@@ -100,6 +100,7 @@ path = "leela/__init__.py"
 # command for a checkout, and the same rule as the runtime dependencies -- what the tests
 # import is declared, rather than arriving because something else happened to pull it in.
 dev = [
+    "fastaistyle>=0.0.17",
     "leela[all]",
     {include-group = "test"},
 ]
