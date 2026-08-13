@@ -17,7 +17,7 @@ is skipped and reported in `NOTES`, so a broken config file cannot stop the IDE 
 
 import json, os
 from dataclasses import dataclass, asdict, replace
-from fastcore.all import L, Path, first
+from fastcore.all import L, Path, first, ifnone
 
 __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'WEB_ONLY_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
            'parse_key', 'web_key', 'by_scope', 'web_keymap',
@@ -156,10 +156,6 @@ DEFAULTS = L(
     Key('pick_kernel',      'alt+shift+k',   'global', 'choose kernel',       'toast'),
     Key('switch_env',       'alt+shift+e',   'global', 'watch another env',   'toast'),
     Key('edit_runs',        '',              'global', 'run configurations'),
-    # Running a *file* is its own thing, and not the same as running the cell the cursor is
-    # in: it runs the whole buffer as a script, in the tab's kernel, so what it defines is
-    # in the variable panel afterwards. `run_app` below is the third thing again -- a
-    # long-lived server under an inspector rather than a script that finishes.
     Key('run_file',         'mod+alt+enter',  'global', 'run this file',      'toast'),
     Key('run_selection',    'hyper+s',       'global', 'run the selection'),
     Key('new_notebook',     'hyper+n',       'global', 'new notebook'),
@@ -167,11 +163,6 @@ DEFAULTS = L(
     Key('run_app',          'alt+shift+a',   'global', 'run app under inspector', 'toast'),
     Key('terminal',         'ctrl+`',        'global', 'terminal',            'toast'),
     Key('git',              'alt+shift+g',   'global', 'lazygit',             'toast'),
-    # The activity panels, reachable without the mouse. `git` above is lazygit in a pty --
-    # a different thing from the source-control panel, which is why both are bound. They are
-    # a `hyper` family because the mnemonic `alt+shift` letters are taken (`s` saves all,
-    # `d` diffs, `p` screenshots) and moving a binding somebody has in their fingers to make
-    # room for a new one is the worse trade.
     Key('panel_git',        'hyper+g',       'global', 'source control panel', 'toast'),
     Key('panel_releases',   'hyper+p',       'global', 'releases panel',      'toast'),
     Key('panel_deploys',    'hyper+l',       'global', 'deploys panel',       'toast'),
@@ -202,16 +193,15 @@ DEFAULTS = L(
     Key('cell_above',       'mod+alt+up',      'editor', 'insert cell above'),
     Key('cell_below',       'mod+alt+down',    'editor', 'insert cell below'),
     Key('cell_delete',      'mod+alt+backspace', 'editor', 'delete cell'),
-    # Keep mod+z/mod+shift+z for character undo in the focused text editor. These two
-    # operate on whole-cell structure, including restoring an accidentally deleted cell.
+    # mod+z/mod+shift+z stay with the focused text editor; these operate on cell structure.
     Key('notebook_undo',    'mod+alt+z',       'editor', 'undo cell operation', 'toast'),
     Key('notebook_redo',    'mod+alt+shift+z', 'editor', 'redo cell operation'),
     Key('cell_type',        'alt+shift+m',     'editor', 'code / markdown / prompt', 'toast'),
     Key('cell_split',       'alt+shift+-',     'editor', 'split cell'),
     Key('cell_collapse',    'hyper+c',         'editor', 'collapse / expand cell'),
     Key('cell_duplicate',   'hyper+d',         'editor', 'duplicate cell below'),
-    # Standard copy/cut become whole-cell operations only when there is no source selection;
-    # the browser router leaves selected text to CodeMirror and the system clipboard.
+    # Whole-cell operations only when there is no source selection; the browser router leaves
+    # selected text to CodeMirror and the system clipboard.
     Key('cell_copy',        'mod+c',           'editor', 'copy cell'),
     Key('cell_cut',         'mod+x',           'editor', 'cut cell'),
     Key('cell_paste_above', '',                'editor', 'paste cell above'),
@@ -266,9 +256,7 @@ DEFAULTS = L(
     Key('agent_stop',       'alt+shift+c',   'agent',  'stop agent'),
     Key('agent_tools',      'alt+shift+t',   'agent',  'what the agent did'),
 
-    # -- terminal: a real pty, so almost every chord belongs to the child process.
-    # Only what the pty must not swallow is bound here; `git` and the focus keys are
-    # global and already reach this pane.
+    # -- terminal: a real pty, so only what it must not swallow is bound here ----------
     Key('term_new',         'ctrl+shift+`',  'term',   'new terminal',        'toast'),
     Key('term_next',        'ctrl+shift+]',  'term',   'next terminal'),
     Key('term_prev',        'ctrl+shift+[',  'term',   'previous terminal'),
@@ -283,8 +271,8 @@ def _dupes(keys):
     for k in keys:
         for c in k.keys:
             mods, base = parse_key(c)
-            # Outside macOS, `mod` is Control. Treat the two as colliding so a keymap
-            # accepted on one platform cannot become ambiguous on another.
+            # Outside macOS `mod` is Control, so the two must collide: a keymap accepted on one
+            # platform cannot be allowed to become ambiguous on another.
             if 'mod' in mods: mods = (mods - {'mod'}) | {'ctrl'}
             sig = (k.scope, tuple(sorted(mods)), base)
             if sig in seen: bad.append(f'{c} is bound by both {seen[sig]} and {k.action} in scope {k.scope}')
@@ -325,18 +313,13 @@ def help_rows():
 
 
 def toast_rows():
-    """The short cheatsheet for the left sidebar: keys that earn space but are not in the footer.
-
-    Alternatives are separated by a space rather than ` / ` because this list is rendered
-    in a sidebar a few characters wider than the longest chord in it, and the fallback
-    chord is exactly what a reader on a terminal that eats the first one needs to see.
-    """
+    "The short cheatsheet for the left sidebar: keys that earn space but are not in the footer."
+    # `sep=' '` rather than ` / `: the sidebar is only a few characters wider than its longest
+    # chord, and the fallback chord still has to fit.
     return [(chord_display(k, sep=' '), k.label) for k in KEYS if k.show == 'toast']
 
 
-# ---------------------------------------------------------------------------
-# the user's own keymap
-# ---------------------------------------------------------------------------
+# -- the user's own keymap ---------------------------------------------------
 NOTES = L()          # what went wrong reading it, in the words the frontends show
 
 
@@ -347,9 +330,8 @@ def keymap_path(path=None):
 
 
 _GENERATED_DEFAULT_MIGRATIONS = {
-    # Exact defaults written by older versions of `--write-keymap`. A genuinely custom
-    # chord is never touched; this only prevents a generated snapshot pinning known-bad
-    # browser/system bindings forever.
+    # Exact defaults written by older versions of `--write-keymap`, so a generated snapshot
+    # cannot pin known-bad browser/system bindings forever. A custom chord is never touched.
     'focus_files': ('ctrl+b', 'alt+shift+1'),
     'focus_editor': ('ctrl+j', 'alt+shift+2'),
     'focus_exec': ('ctrl+e', 'alt+shift+3'),
@@ -405,15 +387,11 @@ _GENERATED_DEFAULT_MIGRATIONS = {
 
 
 def read_overrides(path=None, notes=None):
-    """`{action: chord}` from the user's keymap file. Never raises -- a broken file is a note.
-
-    Two shapes are accepted, because both are things people write: the mapping at the top
-    level, or under a `keys` key alongside whatever else they keep in the file. Anything
-    starting with `_` is treated as a comment, so the template can explain itself in the
-    file it is explaining.
-    """
+    "`{action: chord}` from the user's keymap file. Never raises -- a broken file is a note."
+    # Two shapes are accepted: the mapping at the top level, or under a `keys` key. Anything
+    # starting with `_` is a comment, so the written template can explain itself.
     p = Path(path or keymap_path())
-    notes = NOTES if notes is None else notes
+    notes = ifnone(notes, NOTES)
     try: d = json.loads(p.read_text())
     except FileNotFoundError: return {}
     except Exception as e:
@@ -422,9 +400,8 @@ def read_overrides(path=None, notes=None):
     if not isinstance(d, dict):
         notes.append(f'{p}: expected an object of action -> chord — using the default keys')
         return {}
-    # The old in-app editor wrote every default into the file. Without this narrow migration,
-    # that generated snapshot would permanently defeat the new Mac-aware `mod` defaults. Only
-    # exact old defaults migrate; a user's genuinely custom Control chord remains untouched.
+    # The old in-app editor wrote every default into the file, and that snapshot would pin the
+    # pre-`mod` defaults forever. Only exact old defaults migrate; a custom chord is untouched.
     help_text = ' '.join(map(str, d.get('_help') or ()))
     generated_snapshot = isinstance(d.get('keys'), dict) and len(d['keys']) > 50 and 'leela keymap' in help_text
     legacy_generated = generated_snapshot and 'mod is Command' not in help_text
@@ -434,8 +411,6 @@ def read_overrides(path=None, notes=None):
         for action, (old, new) in _GENERATED_DEFAULT_MIGRATIONS.items():
             if d.get(action) == old: d[action] = new
     if generated_snapshot:
-        # A full map written by `--write-keymap` pins the defaults that existed that day.
-        # Migrate exact old values only; any genuinely customised chord remains untouched.
         d = dict(d)
         current = {
             'restart': ('alt+shift+r', 'alt+shift+r hyper+r'),
@@ -455,20 +430,14 @@ def read_overrides(path=None, notes=None):
 
 
 def apply_overrides(keys, over, notes=None):
-    """`keys` with the user's chords applied, entry by entry, skipping what cannot work.
-
-    Applied one at a time and conflict-checked against the map as it stands, rather than
-    all at once and validated at the end: a single typo should cost that one binding, not
-    the whole file. What is skipped goes into `notes` and is shown in the IDE, because a
-    keymap that silently ignores half of what you wrote is worse than no keymap at all.
-    """
-    notes = NOTES if notes is None else notes
-    # `L(an_L)` hands back the *same* object (fastcore's NewChkMeta), so both of these
-    # copy through a plain list -- otherwise a rejected override would still have been
-    # written into the map it was being trialled against, defaults included.
+    "`keys` with the user's chords applied one at a time, skipping what cannot work."
+    notes = ifnone(notes, NOTES)
+    # `L(an_L)` hands back the *same* object (fastcore's NewChkMeta), so both of these copy
+    # through a plain list -- otherwise a rejected override would still have been written into
+    # the map it was being trialled against.
     out = L(list(keys))
     for a, c in (over or {}).items():
-        i = next((j for j, k in enumerate(out) if k.action == a), None)
+        i = out.argfirst(lambda k: k.action == a)
         if i is None:
             notes.append(f'keymap: no action named {a!r}')
             continue
@@ -486,7 +455,7 @@ def apply_overrides(keys, over, notes=None):
 
 def keymap_json(keys=None):
     "The effective map as the JSON a user would edit, with a comment explaining the format."
-    ks = KEYS if keys is None else L(keys)
+    ks = L(ifnone(keys, KEYS))
     return {'_help': ['leela keymap: action -> chord, or several chords separated by spaces.',
                       'A chord is [mod+][ctrl+][alt+][shift+]base; hyper is Command+Control+Option+Shift on macOS; mod is Command on macOS and Control elsewhere; base is a character or a name '
                       '(enter, escape, tab, space, up, f1..f12).',

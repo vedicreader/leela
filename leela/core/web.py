@@ -27,7 +27,7 @@ def asset_dir(name):
     if getattr(sys, 'frozen', False):
         exe = Path(sys.executable).resolve()
         candidates += [exe.parent/'leela'/name, exe.parent.parent/'Resources'/'leela'/name]
-    return next((p for p in candidates if p.exists()), candidates[0])
+    return first(p for p in candidates if p.exists()) or candidates[0]
 
 
 def static_dirs():
@@ -80,8 +80,7 @@ def pipeline_socket(app, path, gate, resolve):
     "Register a websocket that shows one pipeline's terminal; `resolve(hello)` names which one."
     # A raw Starlette route on purpose: FastHTML's `ws` wrapper injects parameters by name and
     # would hand the handler `None` instead of the socket, and a pty needs the socket.
-    import asyncio
-    import json
+    import asyncio, json
 
     from starlette.routing import WebSocketRoute
 
@@ -117,8 +116,7 @@ def pipeline_socket(app, path, gate, resolve):
 
         send = asyncio.create_task(to_browser())
         recv = asyncio.create_task(from_browser())
-        try:
-            await asyncio.wait({send, recv}, return_when=asyncio.FIRST_COMPLETED)
+        try: await asyncio.wait({send, recv}, return_when=asyncio.FIRST_COMPLETED)
         finally:
             pipeline.unsubscribe(q)
             for task in (send, recv):
