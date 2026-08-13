@@ -41,13 +41,16 @@ Measure recall accuracy and latency for every agent memory design.
 def test_research_automatically_remembers_sources_and_query_brief(monkeypatch, tmp_path):
     mem = _mem(tmp_path)
     research = Research(Sandbox([tmp_path]), memory=mem)
-    hits = [{'title': 'One', 'href': 'https://one.example'}, {'title': 'Two', 'href': 'https://two.example'}]
-    pages = [object(), object()]
-    fake = SimpleNamespace(
-        search=lambda *a, **k: hits,
-        fetch_all=lambda *a, **k: pages,
-        to_md=lambda page, **kw: '# Findings\n\nAgent memory evidence ' * 100,
-    )
+    body = '# Findings\n\nAgent memory evidence ' * 100
+    fake = SimpleNamespace(research=lambda q, n=5, **kw: {
+        'query': q,
+        'sources': [
+            {'title': 'One', 'href': 'https://one.example', 'md': body},
+            {'title': 'Two', 'href': 'https://two.example', 'md': body},
+        ],
+        'digest': f'## One\nhttps://one.example\n\n{body}\n\n---\n\n## Two\nhttps://two.example\n\n{body}',
+        'dropped': [], 'plan': [q],
+    })
     monkeypatch.setattr(research, '_fossick', lambda: fake)
     docs, digest = research.dig('agent memory evidence', n=2)
     assert len(docs) == 2 and digest

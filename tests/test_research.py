@@ -84,23 +84,24 @@ def test_thin_static_pages_retry_with_rendering_and_independent_extract(monkeypa
     assert 'rendered main' in research.note
 
 
-def test_research_fetches_complete_sources_in_parallel(monkeypatch, tmp_path):
-    hits = [
-        {'title': 'First', 'href': 'https://one.example/article'},
-        {'title': 'Second', 'href': 'https://two.example/article'},
-    ]
-    pages = {url: object() for url in [h['href'] for h in hits]}
-    fake = SimpleNamespace(
-        search=lambda *a, **k: hits,
-        fetch_all=lambda urls, **kw: [pages[u] for u in urls],
-        to_md=lambda page, sel=None, multi=False: ('full source text ' * 200) if sel == 'article' else 'lead',
-    )
+def test_research_dig_uses_fossick_research(monkeypatch, tmp_path):
+    "dig is a thin adapter over fossick.research, not a second fetch pipeline."
+    body = 'full source text ' * 200
+    fake = SimpleNamespace(research=lambda q, n=5, **kw: {
+        'query': q, 'sources': [
+            {'title': 'First', 'href': 'https://one.example/article', 'md': body},
+            {'title': 'Second', 'href': 'https://two.example/article', 'md': body},
+        ],
+        'digest': f'## First\nhttps://one.example/article\n\n{body}\n\n---\n\n## Second\nhttps://two.example/article\n\n{body}',
+        'dropped': [{'title': 'Thin', 'href': 'https://thin.example', 'reason': 'empty'}],
+        'plan': [q],
+    })
     research = Research(Sandbox([tmp_path]))
     monkeypatch.setattr(research, '_fossick', lambda: fake)
     docs, digest = research.dig('complete sources', n=2)
     assert len(docs) == 2 and all(len(doc.text) > 2000 for doc in docs)
     assert 'First' in digest and 'Second' in digest
-    assert 'complete sources' in research.note
+    assert 'complete sources' in research.note and '1 unread' in research.note
 
 
 def test_url_notebooks_get_distinct_meaningful_default_names(monkeypatch, tmp_path):

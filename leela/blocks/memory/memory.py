@@ -6,11 +6,14 @@ this module is the adapter that keeps leela's `note` status string and workspace
 """
 
 from __future__ import annotations
-import hashlib, os, time, uuid
+import hashlib, os, re, time, uuid
 from fastcore.all import Path, first
-from ramabana.vault import safe_shelf as _safe_shelf
 
 from ... import errstr
+
+try: from ramabana.vault import safe_shelf as _safe_shelf
+except ImportError:  # ramabana < shelf helper; keep one local sanitiser
+    def _safe_shelf(name=None, default='main'): return re.sub(r'[^a-z0-9_]+', '_', str(name or default).lower()).strip('_') or default
 
 __all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'GLOBAL']
 
@@ -25,7 +28,7 @@ def memory_path(path=None):
 
 
 def safe_shelf(name=None):
-    "ramabana's shelf-name sanitiser, defaulting to leela's unnamed shelf."
+    "SQL-safe shelf id; prefers ramabana's helper when present."
     return _safe_shelf(name, 'main')
 
 
@@ -88,24 +91,24 @@ class Memory:
         return str(getattr(doc, 'text', '') or '')
 
     def remember(self, doc, query='', force=False, extra_meta=None):
-        "Ingest one fetched document; repeat URLs are no-ops until content changes."
+        "Ingest one document; Vault content-addresses `source|title`."
         text = self._text(doc).strip()
         if doc is None or not text: return None
         content_hash = hashlib.sha1(text.encode()).hexdigest()
         source = getattr(doc, 'url', '') or f'memory:{content_hash}'
         title = getattr(doc, 'title', '') or source or 'Web page'
-        # a dict literal, not `dict(...)`: `extra_meta` must be able to override these keys
+        # dict literal so `extra_meta` can override these keys
         meta = {'url': getattr(doc, 'url', ''), 'query': query, 'remembered_at': time.time(), 'source_text': text,
             'sections': len(getattr(doc, 'sections', None) or []), 'content_hash': content_hash, **(extra_meta or {})}
         kind = getattr(doc, 'kind', '') or 'web'
         try:
             v = self._open()
-            previous = [d for d in v.sources() if str(d.get('source')) == source]
-            if previous and not force:
-                prev = previous[0]
-                old_meta = dict(prev.get('meta') or {})
-                if prev.get('title') != title: v.forget(prev['id'])
-                elif old_meta.get('content_hash') != content_hash or v.document(prev['id']).text.strip() != text: force = True
+            # Title change under the same source: drop the old id so Vault's address can move.
+            if not force:
+                prev = first(d for d in v.sources() if str(d.get('source')) == source)
+                if prev and prev.get('title') != title: v.forget(prev['id'])
+                elif prev and (dict(prev.get('meta') or {}).get('content_hash') != content_hash
+                               or v.document(prev['id']).text.strip() != text): force = True
             out = v.add(text, title, source=source, kind=kind, meta=meta, force=force)
             self.note = ('already remembered' if out.get('skipped') else
                 f"remembered {out.get('nodes', 0)} sections · {out.get('chunks', 0)} chunks")

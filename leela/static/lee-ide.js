@@ -1,11 +1,10 @@
 /* leela IDE client.
  *
- * The keymap is not defined here. It is fetched from /keys.json, which Python
- * generates from leela.core.keys, so handlers, help, and tooltips share one table.
+ * Sources live in `leela/static/js/` and concatenate via `tools/build_ide_js.py`.
+ * Surreal.js is loaded before this bundle (vendored); `$`/`$$` here stay local.
  *
- * Dispatch is scope-aware: the focused pane sets `lee.scope`, a binding fires
- * when its scope matches or is 'global', and a chord that matches nothing is
- * left alone so the browser and CodeMirror keep their own behaviour.
+ * The keymap is fetched from /keys.json (leela.core.keys). Dispatch is scope-aware:
+ * `lee.scope` must match or be 'global', else the browser/CodeMirror keep the chord.
  */
 "use strict";
 
@@ -1221,12 +1220,22 @@ async function mountTab(expectedPath = '') {
   // Tab navigation always returns Run and Variables to that tab's private kernel.
   paintEnv('');
   if (!st.kind) {
-    host.innerHTML = `<section class="lee-empty"><span class="lee-empty-mark">L</span>` +
-      `<strong>Start with a file</strong><p>Open a file from this workspace, or create a notebook for exploratory work.</p>` +
+    host.innerHTML = `<section class="lee-empty"><span class="lee-empty-mark">leela</span>` +
+      `<strong>Creative workspace that starts with coding</strong>` +
+      `<p>Notebooks, files, live variables, research memory, and an agent that sees what you see.</p>` +
+      `<ul class="lee-empty-features">` +
+      `<li><strong>Notebooks &amp; files</strong><span>CodeMirror 6 beside runnable cells; scripts get their own kernel.</span></li>` +
+      `<li><strong>Live variables</strong><span>Inspect the kernel namespace while cells run — expand nested values.</span></li>` +
+      `<li><strong>Research &amp; memory</strong><span>Fossick digests into a Vishalakshi vault; recall before re-fetching.</span></li>` +
+      `<li><strong>Code search</strong><span>Kosha FTS5 + embeddings + call graph; peers and clusters when you need them.</span></li>` +
+      `<li><strong>Agent</strong><span>Ramabana sees the index, open files, and live namespace.</span></li>` +
+      `<li><strong>Git, release, deploy</strong><span>Source control and pipelines without leaving the workspace.</span></li>` +
+      `</ul>` +
       `<div class="lee-empty-actions"><button class="lee-btn go" onclick="leeAct('quick_open')">Open file</button>` +
       `<button class="lee-btn" onclick="leeAct('new_notebook')">New notebook</button>` +
-      `<button class="lee-btn" onclick="leeAct('research')">Research a topic</button></div>` +
-      `<small>Press <kbd>ctrl+p</kbd> to open files without leaving the keyboard.</small></section>`;
+      `<button class="lee-btn" onclick="leeAct('research')">Research a topic</button>` +
+      `<button class="lee-btn" onclick="leeAct('focus_agent')">Ask the agent</button></div>` +
+      `<small>Keyboard: <kbd>ctrl+p</kbd> open · <kbd>ctrl+shift+p</kbd> commands · <kbd>mod+e</kbd> recent files</small></section>`;
     return;
   }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }

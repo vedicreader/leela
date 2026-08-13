@@ -1,6 +1,6 @@
 {
   "name": "leela",
-  "install": "export PATH=\"$HOME/.local/bin:$PATH\"; command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; uv venv .venv --python 3.12; . .venv/bin/activate; uv pip install -e \".[gateway]\" --group test --group dev; python -m playwright install chromium; (command -v rg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep)); sudo apt-get update -qq && sudo apt-get install -y -qq libsqlite3-0 libsqlite3-dev >/dev/null",
+  "install": "export PATH=\"$HOME/.local/bin:$PATH\"\ncommand -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh\nif [ ! -f ../ramabana/pyproject.toml ]; then git clone --depth 1 https://github.com/vedicreader/ramabana.git ../ramabana; fi\n[ -d .venv ] || uv venv .venv --python 3.12\n. .venv/bin/activate\nuv pip install -e \".[gateway]\" --group test --group dev\npython -m playwright install chromium\ncommand -v rg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep)\nsudo apt-get update -qq && sudo apt-get install -y -qq libsqlite3-0 libsqlite3-dev >/dev/null",
   "terminals": [
     {
       "name": "pytest",

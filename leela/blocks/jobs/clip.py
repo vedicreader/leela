@@ -99,7 +99,7 @@ def clip_codebase(memory, search, job, report):
 
 def clip_api_spec(memory, job, report):
     "One document per spec, one section per operation, so an endpoint stays addressable."
-    from ramabana.spec import load_spec, op_row, spec_ops
+    from .spec import load_spec, op_row, spec_ops
     report(current='reading the specification', progress=0.1)
     spec, src = load_spec(job.target), str(job.target)
     ops = [dict(op_row(o)) for o in spec_ops(spec)]

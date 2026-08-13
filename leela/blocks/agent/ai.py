@@ -264,8 +264,8 @@ class Interventions(Approvals):
     def execution_meta(self, name, args):
         "Consume identity recorded by the approval hook before the wrapped tool executes."
         with self._state_lock:
-            i = next((i for i, row in enumerate(self._execution_meta)
-                if row['tool'] == name and row['args'] == dict(args or {})), None)
+            i = first(i for i, row in enumerate(self._execution_meta)
+                if row['tool'] == name and row['args'] == dict(args or {}))
             return self._execution_meta.pop(i) if i is not None else {}
 
 

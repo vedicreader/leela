@@ -14,7 +14,7 @@ and pretending otherwise would be a lie about what is live.
 from __future__ import annotations
 import hashlib, os, time
 from dataclasses import dataclass
-from fastcore.all import Path, L, ifnone
+from fastcore.all import Path, L, first, ifnone
 
 from . import Dictable, leela_cfg
 from .agent.agent import Completer
@@ -314,7 +314,7 @@ class Workspace:
 
     def find(self, path):
         p = str(Path(path).expanduser().resolve())
-        return next((i for i, t in enumerate(self.tabs) if t.path == p), None)
+        return first(i for i, t in enumerate(self.tabs) if t.path == p)
 
     def activate_root(self, path):
         """Point the project-scoped surfaces at one of the open folders.
@@ -703,8 +703,8 @@ class Workspace:
     def watched_kernel(self):
         "The managed kernel selected in the env picker, if that is what is being watched."
         if not self.env_base: return None
-        return next((k for k in self.pool.kernels.values()
-                     if k is not None and getattr(k, 'base', None) == self.env_base), None)
+        return first(k for k in self.pool.kernels.values()
+                     if k is not None and getattr(k, 'base', None) == self.env_base)
 
     async def runtime(self, tab=None):
         """Where Run executes: the explicitly picked runtime, else the tab's kernel.
@@ -781,7 +781,7 @@ class Workspace:
         blank and staying blank.
         """
         if self.env_base:
-            e = next((x for x in self.envs() if x['base'] == self.env_base), None)
+            e = first(x for x in self.envs() if x['base'] == self.env_base)
             if e is None: self.env_base = None
             else: return _EnvClient(e['base'], e['name'])
         return self.kernel_peek(tab)

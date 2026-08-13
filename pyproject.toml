@@ -125,6 +125,6 @@ markers = ["slow: drives a browser, starts a kernel, or loads a model"]
 [tool.uv.sources]
 leela = { workspace = true }
 # The agent core is developed alongside leela rather than released ahead of it, so a
-# checkout resolves it from the sibling directory. The `ramabana>=0.2.0` requirement above
-# is what anyone installing leela from an index gets instead.
+# checkout resolves it from the sibling directory. The `ramabana>=0.1.1` requirement above is what an index install gets;
+# cloud/agent installs clone the sibling when `../ramabana` is missing.
 ramabana = { path = "../ramabana", editable = true }

@@ -1,8 +1,6 @@
-"""Web research inside the editor: search, read a page as markdown, save it into the project.
+"""Web research: fossick fetch/extract, Sandbox writes, optional vault remember.
 
-fossick does the fetching and extraction; this module confines the results, writing only
-through `Sandbox`. Nothing here is async -- every call is blocking I/O that the web app moves
-to a worker thread.
+Blocking I/O; the web layer moves calls onto a worker thread.
 """
 
 from __future__ import annotations
@@ -142,13 +140,13 @@ class Research:
         return text, strategy, sections
 
     def search(self, q, n=10, category='text'):
-        "Search hits for `q` -- titles and urls, no page bodies. Cheap enough to run from a keystroke."
+        "Search hits for `q` — titles and urls, no page bodies."
         q = (q or '').strip()
         if not q:
             self.note = 'empty query'
             return L()
         f = self._fossick()
-        hits = self._try(f'{category} search', lambda: list(f.search(q, category=category, max_results=n)))
+        hits = self._try(f'{category} search', lambda: list(f.search(q, category=category, n=n)))
         if hits is None: return L()
         out = L(Doc(title=(h.get('title') or h.get('href') or '').strip(), kind='hit',
             url=h.get('href') or h.get('url') or '') for h in hits[:n])
@@ -192,38 +190,26 @@ class Research:
         return doc
 
     def dig(self, q, n=5, chars=MAX_DOC_CHARS, remember=True):
-        "Search, then read the top `n` results into one cited corpus. `n` page fetches, so never on a keystroke."
+        "Cited corpus via `fossick.research`. `n` page fetches — never on a keystroke."
         q = (q or '').strip()
         if not q:
             self.note = 'empty query'
             return L(), ''
         f = self._fossick()
-        hits = self.search(q, n)
-        if not hits: return L(), ''
-        urls = [d.url for d in hits if d.url]
-        pages = self._try('fetch research sources', f.fetch_all, urls, auto=True)
-        if pages is None: return L(), ''
+        # focused=False keeps full pages; `read` still owns the thin-page cascade.
+        limit = min(MAX_DOC_CHARS, max(1, int(chars)))
+        result = self._try('research', f.research, q, n=n, chars=limit, focused=False, auto=True)
+        if result is None: return L(), ''
         docs = L()
-        strategies = []
-        for hit, page in zip([d for d in hits if d.url], pages):
-            text, strategy, sections = self._page_text(f, page)
-            # A thin parallel fetch goes back through the full escalation path, as `read` does.
-            if len(text) < 800: text, strategy, sections = self._read_page(f, hit.url)
-            docs.append(Doc(title=hit.title or _title(text, hit.url), url=hit.url, kind='page',
-                text=text[:min(MAX_DOC_CHARS, max(1, int(chars)))], sections=sections))
-            strategies.append(strategy)
-        parts, used = [], 0
-        for doc in docs:
-            head = f'## {doc.title}\n<{doc.url}>\n\n'
-            room = MAX_RESEARCH_DIGEST_CHARS - used - len(head)
-            if room <= 0: break
-            body = doc.text[:room]
-            clipped = '\n\n*[source clipped in combined brief; open it for the full text]*'
-            parts.append(head + body + (clipped if len(body) < len(doc.text) else ''))
-            used += len(parts[-1]) + 9
-        digest = '\n\n---\n\n'.join(parts)
+        for s in result.get('sources') or []:
+            url = s.get('href') or s.get('url') or ''
+            text = str(s.get('md') or '')[:limit]
+            docs.append(Doc(title=s.get('title') or _title(text, url), url=url, kind='page', text=text))
+        digest = str(result.get('digest') or '')[:MAX_RESEARCH_DIGEST_CHARS]
+        dropped = result.get('dropped') or []
         self.note = f'read {len(docs)} complete sources for {q!r}'
-        if remember and self.memory is not None:
+        if dropped: self.note += f' · {len(dropped)} unread'
+        if remember and self.memory is not None and docs:
             try:
                 saved = self.memory.remember_research(q, docs, digest)
                 by_url = {row.get('source'): row.get('doc_id') for row in saved}

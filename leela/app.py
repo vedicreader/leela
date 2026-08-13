@@ -95,11 +95,6 @@ def _term_python(ws, cwd=None):
     return python_for(cwd, ws)
 
 
-def _found(ws, hits):
-    "A hit list plus the backend that produced it -- an empty result is never a mystery."
-    return {'backend': ws.search.backend, 'note': ws.search.note, 'hits': [h.dict() for h in hits]}
-
-
 def _python_diagnostics(source, filename='<cell>'):
     """Compile without executing and return Python's own errors and warnings as editor ranges."""
     source = str(source or '')
@@ -292,7 +287,7 @@ def _inline_values(source, groups, outputs=(), result_info=None):
                         'accessor': row.get('accessor') or [name]})
     # Jupyter's useful last-expression result belongs beside that expression too. Keep the
     # marker tiny (the root name, e.g. ``df`` for ``df.dtypes``); clicking reveals the repr.
-    output_result = next((o for o in reversed(outputs or ()) if o.get('output_type') == 'execute_result'), None)
+    output_result = first(o for o in reversed(outputs or ()) if o.get('output_type') == 'execute_result')
     if output_result:
         try:
             expr = ast.parse(source or '').body[-1]
@@ -528,20 +523,40 @@ def _vars_panel(ws):
         cls='lee-panel lee-varspanel')
 
 
+def _empty_editor():
+    "First paint with no tab: brand + one path into each main surface."
+    features = (
+        ('Notebooks & files', 'CodeMirror 6 beside runnable cells; scripts get their own kernel.'),
+        ('Live variables', 'Inspect the kernel namespace while cells run — expand nested values.'),
+        ('Research & memory', 'Fossick web digests into a Vishalakshi vault; recall before re-fetching.'),
+        ('Code search', 'Kosha FTS5 + embeddings + call graph; peers and clusters when you need them.'),
+        ('Agent', 'Ramabana sees the index, open files, and live namespace — local or cloud models.'),
+        ('Git, release, deploy', 'Source control and pipeline panels without leaving the workspace.'),
+    )
+    return Section(
+        Span('leela', cls='lee-empty-mark'),
+        Strong('Creative workspace that starts with coding'),
+        P('Notebooks, files, live variables, research memory, and an agent that sees what you see.'),
+        Ul(*[Li(Strong(title), Span(blurb)) for title, blurb in features], cls='lee-empty-features'),
+        Div(Button('Open file', cls='lee-btn go', onclick='leeAct("quick_open")'),
+            Button('New notebook', cls='lee-btn', onclick='leeAct("new_notebook")'),
+            Button('Research a topic', cls='lee-btn', onclick='leeAct("research")'),
+            Button('Ask the agent', cls='lee-btn', onclick='leeAct("focus_agent")'),
+            cls='lee-empty-actions'),
+        Small('Keyboard: ', Kbd('ctrl+p'), ' open · ', Kbd('ctrl+shift+p'), ' commands · ',
+              Kbd('mod+e'), ' recent files'),
+        cls='lee-empty')
+
+
 def _editor_pane(ws):
-    "The primary editor plus an optional second file editor mounted entirely by the client."
-    t=ws.tab
-    if t is None:
-        primary=Div(Section(Span('L',cls='lee-empty-mark'),Strong('Start with a file'),
-                    P('Open a file from this workspace, or create a notebook for exploratory work.'),
-                    Div(Button('Open file',cls='lee-btn go',onclick='leeAct("quick_open")'),
-                        Button('New notebook',cls='lee-btn',onclick='leeAct("new_notebook")'),
-                        Button('Research a topic',cls='lee-btn',onclick='leeAct("research")'),cls='lee-empty-actions'),
-                    Small('Press ',Kbd('ctrl+p'),' to open files without leaving the keyboard.'),cls='lee-empty'),
-                    id='editor',cls='lee-editor',tabindex='-1')
-    else: primary=Div(id='editor',cls='lee-editor',data_kind=t.kind,data_path=t.path,data_lang=t.lang or '',tabindex='-1')
-    return Div(primary,Div(cls='lee-editor-splitter'),Div(id='editor2',cls='lee-editor lee-editor-secondary',hidden=True),
-               cls='lee-editor-stage',id='editorstage')
+    "Primary editor plus an optional client-mounted second pane."
+    t = ws.tab
+    primary = (Div(_empty_editor(), id='editor', cls='lee-editor', tabindex='-1') if t is None else
+               Div(id='editor', cls='lee-editor', data_kind=t.kind, data_path=t.path,
+                   data_lang=t.lang or '', tabindex='-1'))
+    return Div(primary, Div(cls='lee-editor-splitter'),
+               Div(id='editor2', cls='lee-editor lee-editor-secondary', hidden=True),
+               cls='lee-editor-stage', id='editorstage')
 
 
 def _exec_strip():
@@ -786,8 +801,12 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     # from a CDN, which would make a local IDE need the network to start -- and fail
     # outright behind a proxy or on a plane. `default_hdrs=False` plus the vendored
     # bundles keeps it self-contained, the same reason CodeMirror is vendored.
+    # htmx + surreal are vendored: the IDE must start without a CDN (offline / proxy / plane).
+    # JS sources live in `leela/static/js/` and concatenate to `lee-ide.js` via tools/build_ide_js.py.
     hdrs = (Link(rel='icon', href=_asset('favicon.svg'), type='image/svg+xml'),
             Script(src=_asset('htmx.min.js')),
+            Script(src=_asset('surreal.js')),
+            Script(src=_asset('css-scope-inline.js')),
             Script("""try { const t = localStorage.getItem('lee-theme') || 'system';
 if (t !== 'system') document.documentElement.dataset.theme = t;
 document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; } catch (_) {}"""),
@@ -933,7 +952,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     def _run_owner(d):
         "Resolve a notebook request to the tab that submitted it, even after a tab switch."
         ref = str(d.get('path') or '')
-        tab = next((t for t in ws.tabs if (t.path or t.title) == ref), None) if ref else ws.tab
+        tab = (first(t for t in ws.tabs if (t.path or t.title) == ref) if ref else ws.tab)
         if tab is None or tab.kind != 'notebook': return None, None, None
         nb = _docs.get(tab.path or tab.title)
         key = ws.kernel_key(tab)
@@ -1203,7 +1222,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         if k is None: return _fail('no ipykernel debugger is active')
         try:
             state = await k.debug_state(frame_id=frame_id)
-            frame = next((f for f in state.get('frames', []) if f.get('id') == frame_id), None)
+            frame = first(f for f in state.get('frames', []) if f.get('id') == frame_id)
             if frame is None: return _fail('debug frame is no longer available')
             source = frame.get('source') or {}
             reply = await k.debug_request('source', {'source': source,
@@ -1396,7 +1415,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/nb/save')
     async def nb_save(req):
         d=await req.json();path=str(d.get('path') or '')
-        t=next((x for x in ws.tabs if x.path==path),None) if path else ws.tab
+        t=(first(x for x in ws.tabs if x.path==path) if path else ws.tab)
         if t is None:return _fail('nothing open')
         current_version = _disk_version(t.path)
         base_version = str(d.get('base_disk_version') or '')
@@ -1463,7 +1482,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             d = await req.json(); op = ws.journal.undo(d.get('id', ''))
             for path in (r['path'] for r in op.get('resources', [])):
                 _buffers.pop(path, None); _docs.pop(path, None)
-                if (tab := next((t for t in ws.tabs if t.path == path), None)): tab.dirty = False
+                if (tab := first(t for t in ws.tabs if t.path == path)): tab.dirty = False
             return {'ok': True, 'operation': op}
         except Exception as e: return _fail(e, 409)
 
@@ -1890,7 +1909,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         def selected(current):
             try:
                 mid = resolve(current).model_id
-                return next((r['value'] for r in rows if resolve(r['value']).model_id == mid), current)
+                return first(r['value'] for r in rows if resolve(r['value']).model_id == mid) or current
             except Exception: return current
         return {'models': rows, 'saved':saved, 'auth': auth_status(), 'runtimes': runtimes(),
                 'selected': {'agent': selected(agent), 'inline': selected(inline),

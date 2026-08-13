@@ -157,9 +157,11 @@ uv run python -m tests.test_route_inventory     # regenerate, then commit the di
 6. Declare `CAPS` once the block's routes have settled.
 7. A block owning a port registers the default for it in its own `__init__.py`, beside the
    module that satisfies it — see [Ports](#ports).
-8. A block owns its CSS and JS. Today `lee-ide.js` and `lee-ide.css` are still single
-   authored files in `leela/static/`; splitting them per block waits until the routes have
-   finished moving, since it is a rewrite rather than a relocation.
+8. A block owns its CSS and JS. `lee-ide.css` is still one authored file. Client JS is
+   split under `leela/static/js/` and concatenated to `leela/static/lee-ide.js` by
+   `tools/build_ide_js.py` (edit modules, then rebuild). Surreal.js and css-scope-inline
+   are vendored beside htmx. Per-block `*.js` relocation still waits until remaining
+   routes leave `ide_app`.
 9. Tests for a block construct a `Ctx` over a fake, not a whole `Workspace`.
 
 Rules 1–3 and 5 are enforced, not just written down, by `tests/test_blocks.py`. Each of those

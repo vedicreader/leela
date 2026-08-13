@@ -549,6 +549,14 @@ To rebuild them:
 cd frontend && npm install && npm run build
 ```
 
+IDE client sources live in `leela/static/js/` and concatenate to `leela/static/lee-ide.js`:
+
+```sh
+python tools/build_ide_js.py
+```
+
+Surreal.js (and css-scope-inline) are vendored under `leela/vendor/` with htmx, so the IDE stays offline-capable.
+
 ## License
 
 Apache-2.0

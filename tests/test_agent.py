@@ -162,10 +162,10 @@ def test_cheap_jobs_stay_local_when_the_turn_goes_to_the_cloud(monkeypatch):
     # Asserted against the policy rather than against model names: which small model is
     # cheapest here depends on the machine, and the claim being tested is that the turn
     # moving does not move anything else. `None` in the policy is not "unset" but "whatever
-    # `oneshot` says", so that is what the job has to still be on.
+    # `DFLT_LOCAL` says", so that is what the job has to still be on.
     for job, name in models.DEFAULT_POLICY.items():
         if job == 'turn': continue
-        assert r.spec(job).name == (name or models.DEFAULT_POLICY['oneshot']), job
+        assert r.spec(job).name == (name or models.DFLT_LOCAL), job
         assert r.spec(job).local, job
 
 
@@ -173,7 +173,7 @@ def test_env_overrides_a_single_job(monkeypatch):
     monkeypatch.setenv('LEELA_MODEL_SUMMARY', 'gemma-12b')
     r = models.Routing(turn='gemma-e2b')
     assert r.spec('summary').name == 'gemma-12b'
-    assert r.spec('classify').name == models.DEFAULT_POLICY['oneshot'], 'the other cheap jobs stay put'
+    assert r.spec('classify').name == models.DFLT_LOCAL, 'the other cheap jobs stay put'
 
 
 def test_unknown_bare_name_is_an_error_not_a_guess():

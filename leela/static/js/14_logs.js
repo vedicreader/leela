@@ -1,0 +1,242 @@
+/* ------------------------------------------------------------------ logs
+
+   The detail a status line cannot hold. Git's refusals are the motivating case: the useful
+   part of "cannot switch branch" is the list of files it would overwrite, and a toast shows
+   one clipped sentence of it. Runs are the other: `/dev/log` has always kept what a dev
+   server prints, and nothing in the browser read it.
+
+   Kept in memory for this session on purpose. This answers "what just happened", and a store
+   that outlives the question would need retention rules to go with it. */
+const LOG_MAX = 500;
+lee.logs = [];
+
+function leeLog(source, title, detail = '', kind = '') {
+  lee.logs.push({at: new Date(), source, title: String(title || ''), detail: String(detail || ''), kind});
+  if (lee.logs.length > LOG_MAX) lee.logs.splice(0, lee.logs.length - LOG_MAX);
+  const dock = $('#bottomdock');
+  if (dock?.classList.contains('dock-logs')) renderLogs();
+  else if (kind === 'err') $$('.lee-docktab').forEach(b => {
+    if (b.dataset.dock === 'logs') b.classList.add('has-error');   // a failure you have not read
+  });
+}
+window.leeLog = leeLog;
+
+function renderLogs() {
+  const el = $('#loglist'); if (!el) return;
+  const want = lee.logFilter || '';
+  const rows = lee.logs.filter(r => !want || r.source === want);
+  el.innerHTML = rows.length ? rows.map(r =>
+    `<article class="lee-logrow${r.kind ? ' ' + r.kind : ''}">` +
+    `<div class="lee-loghead"><time>${r.at.toTimeString().slice(0, 8)}</time>` +
+    `<span class="lee-logsource">${esc(r.source)}</span><strong>${esc(r.title)}</strong></div>` +
+    (r.detail ? `<pre class="lee-logdetail">${esc(r.detail)}</pre>` : '') + `</article>`).join('')
+    : `<div class="lee-dim lee-logempty">nothing logged${want ? ' for ' + esc(want) : ''} yet</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+/* "See logs" has to end with you seeing the log.
+
+   The reason a failure writes a detail line at all is that the toast cannot hold it -- so
+   sending the reader off to find it, through a dock that is showing something else and a
+   filter they set an hour ago for something unrelated, loses the very thing that was worth
+   keeping. A failure now opens the log it just wrote, on a filter that can show it. */
+function showLog(source = '') {
+  if (lee.logFilter && lee.logFilter !== source) leeLogFilter('');
+  leeDock('logs');
+}
+// The first line of git's refusal is usually the whole story ("would be overwritten by
+// checkout"), and the files it names are the part that needs the pane.
+function firstLine(text, max = 96) {
+  const line = String(text || '').replace(/^\w*Error:\s*/, '').split('\n').find(x => x.trim()) || '';
+  return line.length > max ? line.slice(0, max - 1) + '…' : line;
+}
+
+function leeLogFilter(which) {
+  lee.logFilter = which || '';
+  $$('.lee-logfilter').forEach(b => b.classList.toggle('active', (b.dataset.logFilter || '') === lee.logFilter));
+  renderLogs();
+}
+function leeLogClear() { lee.logs = []; renderLogs(); }
+async function leeLogCopy() {
+  const want = lee.logFilter || '';
+  const text = lee.logs.filter(r => !want || r.source === want)
+    .map(r => `${r.at.toTimeString().slice(0, 8)} ${r.source} ${r.title}` + (r.detail ? '\n' + r.detail : '')).join('\n');
+  try { await navigator.clipboard.writeText(text); status('log copied', 'ok'); }
+  catch (e) { status('could not copy the log', 'err'); }
+}
+window.leeLogFilter = leeLogFilter; window.leeLogClear = leeLogClear; window.leeLogCopy = leeLogCopy;
+
+/* Dev servers already keep what they print; `/dev/log` has served it all along with nothing
+   reading it. Tailed only while the pane is open -- an app's output is worth watching when you
+   are looking at it, and not worth a request every five seconds when you are not. */
+lee.runSeen = new Map();
+async function pollRunLogs() {
+  const dock = $('#bottomdock');
+  if (!dock?.classList.contains('dock-logs')) return;
+  if (lee.logFilter && lee.logFilter !== 'runs') return;
+  let servers = [];
+  try { servers = (await api('/dev/list')).servers || []; } catch (_) { return; }
+  for (const srv of servers) {
+    const path = srv.path || srv.script || '';
+    if (!path) continue;
+    let lines = [];
+    try { lines = (await api('/dev/log?n=200&path=' + encodeURIComponent(path))).log || []; }
+    catch (_) { continue; }
+    const seen = lee.runSeen.get(path) || 0;
+    if (lines.length <= seen) { if (lines.length < seen) lee.runSeen.set(path, lines.length); continue; }
+    const fresh = lines.slice(seen);
+    lee.runSeen.set(path, lines.length);
+    leeLog('runs', srv.name || path.split('/').pop(), fresh.join('\n'), srv.alive === false ? 'err' : '');
+  }
+}
+
+function leeDock(which) {
+  const dock = $('#bottomdock'); if (!dock) return;
+  leePane('bottom', true);
+  const centre = $('.lee-centre');
+  dock.classList.toggle('dock-exec', which === 'exec');
+  dock.classList.toggle('dock-term', which === 'term');
+  dock.classList.toggle('dock-logs', which === 'logs');
+  if (which === 'logs') {
+    $$('.lee-docktab').forEach(b => { if (b.dataset.dock === 'logs') b.classList.remove('has-error'); });
+    renderLogs();
+  }
+  $$('.lee-docktab', dock).forEach(b => {
+    const active = b.dataset.dock === which; b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', String(active));
+  });
+  if (which === 'term') requestAnimationFrame(() => lee.term?.refit());
+}
+window.leeDock = leeDock;
+function switchTerm(id) {
+  const t = lee.terms.get(id); if (!t) return;
+  leeDock('term'); lee.activeTerm = id; lee.term = t.view;
+  $$('.lee-term-session').forEach(x => x.hidden = x.dataset.term !== id);
+  paintTermTabs(); $('#shell').classList.add('show-term'); setScope('term');
+  requestAnimationFrame(() => { t.view.refit(); t.view.focus(); });
+}
+function cycleTerm(d) {
+  const ids = [...lee.terms.keys()]; if (!ids.length) return;
+  const at = Math.max(0, ids.indexOf(lee.activeTerm));
+  switchTerm(ids[(at + d + ids.length) % ids.length]);
+}
+async function openTerm(kind = 'shell', forceNew = false) {
+  await loadTermBundle();
+  const d = await api('/term/info');
+  if (!d.enabled) return status(d.why, 'err');
+  if (kind === 'git' && !d.lazygit) return status(d.lazygit_why, 'err');
+  const external = $('#termexternal');
+  if (external) external.hidden = !(d.external || []).length;
+  const live = (d.open || []).filter(t => t.alive).map(t => t.id).filter(Boolean);
+  if (!forceNew) {
+    const existing = [...lee.terms.entries()].find(([, t]) => t.kind === kind);
+    if (existing) return switchTerm(existing[0]);
+    // A session this page has never seen, still running from before a reload. Reattaching is
+    // the point of letting a pty outlive its socket -- and it has to be *visible* to be
+    // closable, or its process is orphaned where nobody can see it to stop it.
+    const orphan = live.find(id => !lee.terms.has(id) && (kind === 'git' ? id === 'git'
+                                                                        : id.startsWith('term-')));
+    if (orphan) return adoptTerm(orphan, kind, d);
+  }
+  const id = nextTermId(kind, live);
+  if (lee.terms.has(id)) return switchTerm(id);
+  $('#shell').classList.add('show-term');
+  const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
+  const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
+  host.dataset.term = id; parent.appendChild(host);
+  const record = {id, kind, label: termLabel(kind, id), cwd: d.cwd, host, view: null};
+  record.view = LeeTerm.create(host, {
+    token: d.token, cwd: d.cwd, kind, id,
+    onStatus: m => status(`${record.label}: ${m}`),
+    onExit: () => { record.exited = true; paintTermTabs(); status(`${record.label} exited`); },
+  });
+  lee.terms.set(id, record); switchTerm(id);
+}
+// The pipeline's pty is opened by the pipeline, not by whoever attaches, so this
+// terminal talks to `/release/ws` instead of `/term/ws`. Everything else -- the theme, the
+// keyboard, the dock tab -- is the same component the shell uses. `cwd` carries the project
+// root, which is the only thing that socket needs to know which pipeline is being watched.
+async function openReleaseTerm(root = '', kind = 'release') {
+  await loadTermBundle();
+  const d = await api('/term/info');
+  if (!d.enabled) return status(d.why, 'err');
+  const id = kind;
+  if (lee.terms.has(id)) return switchTerm(id);
+  $('#shell').classList.add('show-term');
+  const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
+  const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
+  host.dataset.term = id; parent.appendChild(host);
+  const record = {id, kind, label: termLabel(kind, id), cwd: root || d.cwd, host, view: null};
+  record.view = LeeTerm.create(host, {
+    token: d.token, cwd: root || d.cwd, kind, id,
+    url: kind === 'drive' ? '/drive/ws' : '/pipeline/ws',
+    onStatus: m => status(`${termLabel(kind, id)}: ${m}`),
+    onExit: () => { record.exited = true; paintTermTabs(); },
+  });
+  lee.terms.set(id, record); switchTerm(id);
+}
+// Reconnect to a pty that is already running, rather than starting one. Same component and the
+// same id, so the server hands back the session it still has -- which is what makes the process
+// inside it visible in a tab, and therefore closable.
+function adoptTerm(id, kind, d) {
+  $('#shell').classList.add('show-term');
+  const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
+  const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
+  host.dataset.term = id; parent.appendChild(host);
+  const record = {id, kind, label: termLabel(kind, id), cwd: d.cwd, host, view: null};
+  record.view = LeeTerm.create(host, {
+    token: d.token, cwd: d.cwd, kind, id,
+    onStatus: m => status(`${record.label}: ${m}`),
+    onExit: () => { record.exited = true; paintTermTabs(); status(`${record.label} exited`); },
+  });
+  lee.terms.set(id, record); switchTerm(id);
+  status(`${record.label} was still running — reattached`);
+}
+
+// xterm.js cannot be attached to a terminal application that is already running: that program is
+// itself an emulator with its own pty, and a browser pane has no way to adopt its window. What it
+// can do is hand the project over, which is what this is -- and the button stays hidden unless
+// the server found a terminal to hand it to, so it is never one that fails when pressed.
+async function leeExternalTerm() {
+  try {
+    const d = await post('/term/external');
+    status(`opened ${(d.argv || []).includes('-a') ? d.argv[d.argv.indexOf('-a') + 1] : (d.argv || [])[0] || 'terminal'}`, 'ok');
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+window.leeExternalTerm = leeExternalTerm;
+
+function leeNewTerm() { return openTerm('shell', true); }
+window.leeNewTerm = leeNewTerm;
+
+// The IDE follows the system's light/dark setting through a media query; the terminal
+// reads its colours from CSS once, when it is created, so it has to be told.
+try {
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    for (const t of lee.terms.values()) t.view.retheme();
+  });
+} catch (e) {}
+
+function leeTermExpand() {
+  const centre = $('.lee-centre'); if (!centre) return;
+  leeDock('term');
+  centre.classList.toggle('term-expanded');
+  const expanded = centre.classList.contains('term-expanded');
+  $('#termexpand').textContent = expanded ? 'restore' : 'expand';
+  requestAnimationFrame(() => { lee.term?.refit(); lee.term?.focus(); });
+}
+window.leeTermExpand = leeTermExpand;
+
+function closeTerm(id = lee.activeTerm) {
+  const t = lee.terms.get(id); if (!t) return;
+  t.view.dispose(); t.host.remove(); lee.terms.delete(id); post('/term/close?id=' + encodeURIComponent(id));
+  const next = [...lee.terms.keys()].at(-1);
+  lee.term = null; lee.activeTerm = '';
+  if (next) switchTerm(next);
+  else {
+    paintTermTabs(); $('#shell').classList.remove('show-term'); leeDock('exec');
+    $('.lee-centre')?.classList.remove('term-expanded'); setScope('editor');
+  }
+  // A shell or lazygit may have changed the working tree under us.
+  refreshFileTree(undefined, false).catch(e => status(String(e.message || e), 'err'));
+}
+
