@@ -1,22 +1,8 @@
 """Single-source button bars for the browser IDE.
 
-`leela.core.keys` is the same idea for the keyboard: declare a thing once, and let each
-frontend render it. This is the other half of the promise, and it exists because a
-keyboard-only IDE is only as good as the terminal it is running in. `ctrl+enter` does
-not survive Terminal.app, `alt+<letter>` does not survive macOS at all unless Option is
-configured as Meta, and a browser keeps a dozen chords for itself. None of that is
-leela's to fix -- but nothing important should be *reachable only* by a chord that a
-particular terminal happens to swallow.
-
-So every button here names an action from `leela.core.keys`, which is the same action the
-keymap dispatches, using the same browser action registry and the same
-entry in the browser's handler table. A button and a key are two doors into one room.
-The import-time check below is what keeps it that way: a button naming an action the
-keymap does not declare stops the package from importing, exactly as a duplicate chord
-does.
-
-Labels are short on purpose. A terminal toolbar is one row and the panes it sits above
-matter more than it does; glyphs are kept to ones a monospace font reliably has.
+Every button names an action from `leela.core.keys`, so nothing important is reachable only
+by a chord some terminal or browser swallows. The import-time check at the bottom refuses a
+button naming an action the keymap does not declare.
 """
 
 from dataclasses import dataclass
@@ -26,8 +12,7 @@ from .keys import KEYS, chord_display, lookup
 
 __all__ = ['Btn', 'BARS', 'BUTTONS', 'bar', 'tip']
 
-# Where a bar is drawn. `cell` is per-cell and only the browser has room for it; the
-# terminal puts the same three actions in the main toolbar, acting on the selected cell.
+# Where a bar is drawn.
 BARS = ('toolbar', 'cell', 'files', 'keys', 'exec', 'vars', 'agent',
         'web_editor', 'web_files', 'web_vars')
 
@@ -113,8 +98,6 @@ BUTTONS = L(
     Btn('agent_tools',  'what it did', 'tool calls and diffs',         'agent'),
 
     # -- browser-only discoverability -------------------------------------------------
-    # The browser can scroll and has contextual menus, so these actions keep permanent
-    # mouse targets without crowding the primary toolbar.
     Btn('show_docs',    'docs',     'docs for the symbol at the cursor','web_editor'),
     Btn('find_similar', 'similar',  'code like the symbol at the cursor','web_editor'),
     Btn('code_map',     'map',      'code clusters across this project','web_editor'),

@@ -1,12 +1,9 @@
-"""Persistent, conflict-safe workspace operation history.
-
-The journal stores text snapshots outside the repository. Undo is conditional: every
-resource must still equal the operation's recorded ``after`` value, otherwise the whole
-operation is refused before any file is touched.
-"""
+"""Persistent workspace operation history; undo is refused unless every resource still
+equals the operation's recorded `after` value."""
 from __future__ import annotations
 import json, time, uuid
 from pathlib import Path
+from fastcore.basics import first
 
 MAX_OPERATIONS = 200
 
@@ -45,8 +42,9 @@ class OperationJournal:
                 for op in reversed(self.operations[-int(limit):])]
 
     def undo(self, operation_id=''):
-        op = next((x for x in reversed(self.operations) if x['id'] == operation_id), None) if operation_id else \
-             next((x for x in reversed(self.operations) if x.get('resources') and not x.get('undone')), None)
+        back = reversed(self.operations)
+        op = (first(x for x in back if x['id'] == operation_id) if operation_id else
+              first(x for x in back if x.get('resources') and not x.get('undone')))
         if op is None: raise ValueError('no reversible workspace operation')
         if op.get('undone'): raise ValueError('that operation was already undone')
         conflicts = []

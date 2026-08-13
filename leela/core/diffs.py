@@ -1,22 +1,7 @@
 """Text comparison for the IDE: difflib, reached through fastcore where fastcore has it.
 
-Three questions the IDE keeps asking turn out to be the same question, so they
-live together:
-
-- **what changed** -- `udiff` and `diff_rows`, over `fastcore.xtras.str_diff`.
-  The IDE shows a diff in three places (unsaved edits, what the assistant did to
-  a file, what lazygit moved underneath an open tab) and all three should look
-  alike, which means one parser and one row shape rather than three renderers
-  each doing their own `startswith('+')`.
-- **did you mean** -- `did_you_mean`, for a `NameError` raised in a namespace the
-  inspector can already see. The traceback knows the name that failed and the
-  variable panel knows every name that exists; they only needed introducing.
-- **is this the file I meant** -- `fuzzy_rank`, so quick-open ranks by how well a
-  name matches instead of listing every substring hit in directory order.
-
-Rendering deliberately stays in the frontends. This module hands back rows;
-The browser paints them with CSS classes, and
-neither has to know how a unified diff is spelled.
+`udiff`/`diff_rows` are what changed, `did_you_mean` suggests a name for a `NameError`, and
+`fuzzy_rank` ranks quick-open hits. Rendering stays in the frontends; this returns rows.
 """
 
 from __future__ import annotations
@@ -49,13 +34,7 @@ _HUNK = re.compile(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 
 
 def diff_rows(d):
-    """A unified diff as rows a frontend can paint, each carrying its line number in the new text.
-
-    That line number is what makes a diff clickable -- jump from a changed line to the
-    place it lives. `str_diff` returns text, and the only place the new-side numbering
-    appears is the hunk header, so it is tracked here once instead of being re-derived
-    by every renderer.
-    """
+    "A unified diff as rows a frontend can paint, each carrying its line number in the new text."
     out, n = L(), 0
     for line in (d or '').split('\n'):
         if not line and not out: continue                    # str_diff of equal texts is ''
@@ -92,13 +71,7 @@ _NAMEERR = re.compile(r"name '([^']+)' is not defined")
 
 
 def did_you_mean(err, names):
-    """`err` with a suggestion appended, when it is a `NameError` and `names` holds something close.
-
-    CPython prints its own suggestion, but only as part of a rendered traceback. The exec
-    strip shows a single line -- `NameError: name 'df2' is not defined` -- which is exactly
-    where the hint is missing and exactly where the IDE has the namespace to hand.
-    Anything that is not a `NameError` comes back untouched.
-    """
+    "`err` with a suggestion appended, when it is a `NameError` and `names` holds something close."
     if not err or not (m := _NAMEERR.search(err)): return err
     hits = closest(m.group(1), names)
     return err if not hits else f"{err}  ·  did you mean {' or '.join(repr(h) for h in hits)}?"
@@ -111,14 +84,9 @@ def _subseq(q, s):
 
 
 def fuzzy_rank(q, items, key=str, limit=None):
-    """`items` ranked by how well `q` matches, best first; anything that does not match at all is dropped.
-
-    Quick-open should behave like a fuzzy finder -- `wapp` ought to find `web/app.py` --
-    so membership is subsequence containment rather than substring. Ranking is then
-    difflib's ratio against the *basename*, because a query almost always names the file
-    and not the folders above it: that is what puts `app.py` above
-    `some_long_app_helper.py` for `app`.
-    """
+    "`items` ranked by how well `q` matches, best first; a non-match is dropped."
+    # Membership is subsequence containment, not substring, so `wapp` finds `web/app.py`;
+    # ranking is difflib's ratio against the basename, since a query names the file.
     q = (q or '').strip().lower()
     items = L(items)
     if not q: return items if limit is None else items[:limit]

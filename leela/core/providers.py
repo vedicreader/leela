@@ -1,27 +1,8 @@
-"""Choosing which implementation satisfies a port.
+"""Choosing which implementation satisfies a port, e.g. `LEELA_MEMORY=vishalakshi leela .`
 
-`ports.py` says what leela needs. This says how an alternative gets selected, and it exists
-so that trying `vishalakshi` or `ramabana` is a configuration change rather than an edit.
-
-    LEELA_MEMORY=vishalakshi leela .
-
-Three properties matter more than the mechanism:
-
-**Selection is late.** A provider is a zero-argument factory, resolved when the workspace
-builds the subsystem, not at import. Naming a provider therefore costs nothing until it is
-used, and a provider whose package is not installed fails at the moment you asked for it,
-naming what to install.
-
-**Failure is loud.** An unknown or broken provider raises. Silently falling back to the
-built-in would make an A/B comparison meaningless -- you would not know which one answered,
-which is precisely the question being asked.
-
-**The built-in is a provider too.** `leela` is registered like any other, so there is no
-privileged path that only the default takes and no untested branch for the alternates.
-
-Registration happens at import of the block that owns the port, or from a plugin calling
-`register`. Nothing here imports vishalakshi or ramabana; the entries below are lazy, so
-they resolve only if selected.
+A provider is a zero-argument factory resolved when the workspace builds the subsystem, so
+naming one costs nothing until it is used. An unknown or broken provider raises rather than
+falling back to the built-in, which is registered like any other provider.
 """
 
 from __future__ import annotations
@@ -44,11 +25,7 @@ class ProviderError(RuntimeError):
 
 
 def register(port, name, factory):
-    """Make `name` available for `port`. `factory` takes whatever the port's builder passes.
-
-    Re-registering the same name replaces it, which is what lets a test install a fake
-    without unregistering first.
-    """
+    "Make `name` available for `port`; re-registering the same name replaces it."
     _REGISTRY.setdefault(port, {})[name] = factory
     return factory
 
@@ -72,11 +49,7 @@ def selected(port, override=None):
 
 
 def build(port, *a, override=None, **kw):
-    """Construct the implementation selected for `port`.
-
-    Raises rather than falling back. A workspace that quietly ran on the built-in after
-    `LEELA_MEMORY=vishalakshi` failed to load would produce a comparison that means nothing.
-    """
+    "Construct the implementation selected for `port`, raising rather than falling back."
     name = selected(port, override)
     factories = _REGISTRY.get(port, {})
     if name not in factories:
@@ -91,12 +64,6 @@ def build(port, *a, override=None, **kw):
         raise ProviderError(f'{port} provider {name!r} failed to start: {type(e).__name__}: {e}') from e
 
 
-# There are deliberately no built-in registrations here. `core` names no implementation at
-# all: each block registers the default for the port it owns, beside the module that
-# satisfies it -- `blocks/search/__init__.py`, `blocks/memory/__init__.py`,
-# `blocks/agent/__init__.py`. `leela/blocks/__init__.py` imports those three so the
-# registrations exist before `Workspace.__init__` calls `build`.
-#
-# That is what makes `LEELA_MEMORY=vishalakshi` a swap of one folder for one package: the
-# built-in and the alternate register through an identical path, so there is no privileged
-# route that only the default takes.
+# No built-in registrations here: `core` names no implementation. Each block registers the
+# default for the port it owns, and `leela/blocks/__init__.py` imports `search`, `memory` and
+# `agent` so those registrations exist before `Workspace.__init__` calls `build`.

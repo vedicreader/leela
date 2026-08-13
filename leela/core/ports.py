@@ -1,21 +1,7 @@
 """The interfaces leela depends on, rather than the classes that currently satisfy them.
 
-leela is about to grow alternates for three of its subsystems -- `vishalakshi` for memory
-and retrieval, `ramabana` for agent runtimes. Swapping an implementation is only cheap if
-the thing being swapped was written down first, so these are Protocols, extracted from what
-`leela/app.py` actually calls today rather than from what a memory system might
-plausibly offer.
-
-They are `runtime_checkable` but structural: `leela.blocks.memory.memory.Memory` already satisfies
-`MemoryPort` without importing it or inheriting from anything, and so should any
-replacement. Nothing here is a base class, and nothing at runtime is required to check
-against them -- `tests/test_core_ctx.py` asserts the current implementations conform, which
-is what keeps the Protocols honest as the real classes change.
-
-Method sets are deliberately *narrow*: they name what the browser routes need, not
-everything the class can do. `Memory` has eighteen public methods; fifteen of them reach a
-route, and only those are in `MemoryPort`. A port that mirrors an implementation is not a
-port, it is a second copy of it.
+Structural `runtime_checkable` Protocols, extracted from what the routes actually call.
+Nothing here is a base class; `tests/test_core_ctx.py` asserts the implementations conform.
 """
 
 from __future__ import annotations
@@ -27,15 +13,8 @@ __all__ = ['MemoryPort', 'SearchPort', 'RuntimePort']
 
 @runtime_checkable
 class MemoryPort(Protocol):
-    """Durable prose memory: pages, research briefs, agent notes and state.
-
-    Satisfied today by `leela.blocks.memory.memory.Memory` over litesearch. `vishalakshi.Vault` is the
-    intended alternate -- it already covers ingestion (`add_dir`, `note`, `web`), retrieval
-    and an entity graph (`connect`), so the adapter is mostly a naming translation.
-
-    `note` is a plain string attribute, not a method: every surface reads it to report
-    where the store lives, or why it is not open.
-    """
+    "Durable prose memory: pages, research briefs, agent notes and state."
+    # A plain attribute, not a method: every surface reads it to report where the store lives.
     note: str
 
     # -- retrieval
@@ -66,15 +45,8 @@ class MemoryPort(Protocol):
 
 @runtime_checkable
 class SearchPort(Protocol):
-    """Code search: literal, semantic, and the call graph over a project.
-
-    Satisfied by `leela.blocks.search.search.Search` over Kosha plus ripgrep. Split from `MemoryPort`
-    on purpose -- source code is an AST-shaped corpus and prose is a document tree, and
-    `leela/memory.py` says so at the top. A single "retrieval" port would force the two
-    back together at exactly the moment vishalakshi is being introduced.
-    """
-    # Both are values, not calls: `core.web.found` puts them straight into the reply so
-    # that an empty hit list always says which backend produced it.
+    "Code search: literal, semantic, and the call graph over a project."
+    # Values, not calls: `core.web.found` puts them straight into the reply.
     note: str
     backend: str
 
@@ -97,21 +69,9 @@ class SearchPort(Protocol):
 
 @runtime_checkable
 class RuntimePort(Protocol):
-    """One conversational model session: history, streaming, tools, cancellation.
-
-    Satisfied by `leela.agent.runtime.Backend`. This is the seam `ramabana` implements --
-    and since ramabana is currently an empty nbdev skeleton, leela's `Backend` *is* the
-    specification. Writing it down here rather than waiting means the extraction can
-    proceed now and ramabana has a target to build against.
-
-    Note what is absent. Compaction (`Compactor`), token accounting (`Usage`) and model
-    resolution (`ModelSpec`, `Routing`) are leela's policy about how to *use* a runtime,
-    not things a runtime must provide. A ramabana backend supplying its own compaction
-    would be substituting policy for mechanism; keeping the port at mechanism is what
-    lets the two be compared on equal terms.
-    """
-    # Attributes, not calls. `ready`/`busy`/`hist` are properties on `Backend`, and the
-    # port says so -- a runtime that made them methods would break every call site.
+    "One conversational model session: history, streaming, tools, cancellation."
+    # Attributes, not calls: `ready`/`busy`/`hist` are properties on `Backend`, and a runtime
+    # that made them methods would break every call site.
     spec: Any
     ready: bool
     busy: bool

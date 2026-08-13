@@ -1,21 +1,7 @@
 """The values a workflow or a release needs, kept where dockeasy already keeps them.
 
-Leela does not own a credential store and should not grow one. dockeasy has the whole of
-it: `secret_set` writes to the OS keychain and falls back to a `0600` dotenv under
-`~/.config/fastops`, `env_set` does the non-secret half, and `secret_get`/`env_get` read
-back through `os.environ` first so a value exported before Leela started still wins. This
-module is the thin layer above that pair which the panels need and dockeasy has no reason
-to care about: *which* keys are worth showing, and what may be shown of them.
-
-Which keys: gheasy's `env_schema` says what this project sends to GitHub and whether each
-one is a secret or a variable, and the release pipeline's steps name what they cannot run
-without. Together those are the list; nothing enumerates the store itself, because a shared
-`fastops` file holds other projects' values and this panel is not a place to browse them.
-
-What may be shown: a secret's value never reaches the browser -- only that it is set, and
-where from. A variable's value does, because a GitHub Actions variable is not a secret and
-seeing it is the entire point of listing it. The store outside the repository is also why
-there is nothing here about `.gitignore`: the value was never in the project to begin with.
+Which keys come from gheasy's `env_schema` plus what the release steps declare; the store
+itself is never enumerated. A secret's value never reaches the browser, only that it is set.
 """
 
 from __future__ import annotations
@@ -33,20 +19,16 @@ def _dockeasy():
     except ImportError as e:
         raise EnvError('environment values are stored by dockeasy: pip install "leela[github]"') from e
     # python-dotenv warns for every key it does not find, and "not set yet" is the normal
-    # answer to most of the questions this panel asks. A panel refresh must not fill the
-    # log with it.
+    # answer here, so a panel refresh would otherwise fill the log.
     import logging
     logging.getLogger('dotenv.main').setLevel(logging.ERROR)
     return env_get, env_set, secret_get, secret_set
 
 
 class EnvStore:
-    """The environment keys one project cares about, read and written through dockeasy.
-
-    `service` is dockeasy's keychain service name. It stays at dockeasy's default so a
-    token set from a `dockeasy`/`gheasy` script and one set from this panel are the same
-    value, rather than two that disagree depending on which tool you last used.
-    """
+    "The environment keys one project cares about, read and written through dockeasy."
+    # `service` stays at dockeasy's keychain default, so a token set from a `dockeasy`/`gheasy`
+    # script and one set from this panel are the same value rather than two that disagree.
 
     def __init__(self, service='fastops', path=None):
         self.service, self.path = service, path
@@ -67,12 +49,9 @@ class EnvStore:
         return {'key': key, 'secret': bool(secret)}
 
     def unset(self, key):
-        """Remove a value from every place `set` put it.
-
-        dockeasy has no opposite of `set_key`, so this reaches for the two libraries it
-        stores through rather than editing the file by hand -- python-dotenv owns the file
-        format and keyring owns the keychain entry, and neither is Leela's to reimplement.
-        """
+        "Remove a value from every place `set` put it."
+        # dockeasy has no opposite of `set_key`, so this goes through the two libraries it
+        # stores with: python-dotenv owns the file format, keyring owns the keychain entry.
         import os
 
         from dockeasy.core import _FASTOPS_ENV
@@ -94,13 +73,9 @@ class EnvStore:
         return {'key': key, 'removed': gone}
 
     def entries(self, schema=None, needed=()):
-        """Every key this project names, with a value only where one is safe to show.
-
-        `schema` is gheasy's: `{KEY: None}` is a secret, `{KEY: 'default'}` is a variable.
-        `needed` are keys the release steps declared. A key that appears only in `needed` is
-        assumed to be a secret, because the safe reading of an unknown credential is that it
-        is one.
-        """
+        "Every key this project names, with a value only where one is safe to show."
+        # `schema` is gheasy's: `{KEY: None}` is a secret, `{KEY: 'default'}` a variable. A key
+        # appearing only in `needed` (declared by a release step) is assumed to be a secret.
         schema = dict(schema or {})
         rows = []
         for key in list(schema) + [k for k in needed if k not in schema]:

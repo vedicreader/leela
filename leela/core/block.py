@@ -1,37 +1,12 @@
 """The block contract, and the ordered wiring that applies it.
 
-A block is a folder with a `connect(app, ctx)` function, in the shape lego uses:
-
-    leela/blocks/git/
-        cfg.py      # settings and defaults this block owns
-        svc.py      # the domain service -- no web imports, testable on its own
-        ui.py       # FastHTML fragments
-        app.py      # routes + connect(app, ctx)
-        git.css     # optional, block-owned
-        git.js      # optional, block-owned
-
-and a module-level declaration of what it needs:
-
-    CAPS = ('fs', 'journal')
-
-    def connect(app, ctx):
-        rt = app.route
-        @rt('/git/info')
-        def git_info(): return ui.info(ctx.fs, ...)
-
-`connect` receives a `Ctx` already narrowed to `CAPS`, so a block that reaches for
-something it did not declare fails loudly the first time that route runs, rather than
-quietly re-coupling to the whole workspace.
-
-Order matters here for the same reason it does in lego, but for a different mechanism.
-lego's auth block reads a skip list that earlier blocks append to. Leela has no such
-handshake; what it has is Starlette's router, where the *first* matching route wins. A
-block registering `/{fname:path}` before the specific routes would shadow all of them. So
-`connect_all` preserves the order it is given, and the route inventory test in
-`tests/test_route_inventory.py` is what catches a block that shadows another's path.
+A block is a folder with a `connect(app, ctx)` function and a module-level `CAPS` tuple
+declaring what it needs. `connect` receives a `Ctx` already narrowed to `CAPS`.
 """
 
 from __future__ import annotations
+
+from fastcore.basics import store_attr
 
 from .ctx import CAPABILITIES, Ctx
 
@@ -39,16 +14,10 @@ __all__ = ['Block', 'connect_all', 'block_caps']
 
 
 class Block:
-    """One connected feature, as recorded by `connect_all`.
-
-    Kept deliberately thin -- a block is a *module*, not an instance of this. This is the
-    receipt: what was connected, in what order, with which capabilities, so the wiring is
-    inspectable at runtime and assertable in tests.
-    """
+    "One connected feature, as recorded by `connect_all`."
     __slots__ = ('name', 'module', 'caps', 'order')
 
-    def __init__(self, name, module, caps, order):
-        self.name, self.module, self.caps, self.order = name, module, caps, order
+    def __init__(self, name, module, caps, order): store_attr()
 
     def __repr__(self): return f'Block({self.name!r}, order={self.order}, caps={list(self.caps)})'
 
@@ -69,13 +38,9 @@ def block_name(module):
 
 
 def connect_all(app, session, blocks, **services):
-    """Connect `blocks` to `app` in order, each with its own narrowed `Ctx`.
-
-    Returns the `Block` receipts. `session` is the `Workspace`; `services` are the
-    application-scoped capabilities (`docs`, `debug`, `running`, `gate`, `catalog`) that
-    `ide_app` owns. Every block gets a `Ctx` over the same session and the same services,
-    differing only in what it is allowed to see.
-    """
+    "Connect `blocks` to `app` in order, each with its own narrowed `Ctx`; returns `Block` receipts."
+    # Order is load-bearing: Starlette's first matching route wins, so a block registering
+    # `/{fname:path}` before the specific routes would shadow them all.
     out = []
     for i, m in enumerate(blocks):
         name, caps = block_name(m), block_caps(m)

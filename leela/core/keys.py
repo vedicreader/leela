@@ -1,44 +1,18 @@
-"""The browser IDE's single-source keymap.
+"""The browser IDE's single-source keymap, shipped to the browser by `web_keymap()`.
 
-Every binding is declared once as a `Key`. The table is shipped to the browser
-as JSON via `web_keymap()` and drives its handler, help overlay, and tooltips.
+Chord syntax is `[mod+][ctrl+][alt+][shift+]base`, base being one printable character or a
+name (`enter`, `tab`, `up`, `f1`, ...). `mod` is Command on macOS and Control elsewhere;
+`hyper+` is Command+Control+Option+Shift on macOS and Control+Alt+Shift elsewhere;
+`shift+<letter>` is written as the bare uppercase letter. An empty `key` means unbound.
 
-Canonical key syntax is `[mod+][ctrl+][alt+][shift+]base`, base being a single
-printable character or a name (`enter`, `escape`, `tab`, `up`, `f1`, ...). `mod`
-is Command in a macOS browser and Control in other browsers. `hyper+` is shorthand
-for Command+Control+Option+Shift on macOS and Control+Alt+Shift elsewhere, intended
-for a Caps Lock remapped to that modifier combination. `shift+<letter>` is written
-as the bare uppercase letter (`X`). An empty `key` is legal and means *unbound*: the
-action still exists, is still clickable, and can still be given a chord in the
-user's own keymap.
+A binding fires when its scope is the focused pane, or when its scope is `global`.
 
-Scopes form a stack: a binding fires when its scope is the focused pane, or when
-its scope is `global`. Two rules keep the map honest, enforced in `Key`:
-
-- `global` bindings fire even while a cell editor has the cursor, so they must
-  always carry a modifier -- a bare letter would type a letter.
-- the same holds inside any `EDITING_SCOPES` pane.
-
-Chords the browser refuses to hand over (ctrl+w, ctrl+tab, ctrl+n, ...) are
-avoided outright rather than bound and silently lost on the web side.
-
-Notebook commands follow PyCharm/Jupyter conventions: `mod+enter` runs,
-`shift+enter` runs and selects below, and `alt+enter` runs and inserts below.
-Terminal.app cannot distinguish every modified Enter without a modern keyboard
-protocol, so nothing important is keyboard-only: `leela.core.buttons` gives every
-action a clickable control. Function keys are not used
-as fallbacks because stock laptop and browser settings reserve many of them.
-
-**And the map is the user's to change.** `keys.json` in leela's config dir (or
-wherever `$LEELA_KEYMAP` points) maps an action to the chord -- or chords -- it
-should answer to:
+`keys.json` in leela's config dir (or `$LEELA_KEYMAP`) overrides the defaults per action:
 
     {"run_cell": "mod+enter ctrl+y", "quit": ""}
 
-It is applied over the defaults at import, one entry at a time; anything
-unparseable, unknown or in conflict with the rest of the map is skipped and
-reported in `NOTES`, which the settings UI shows. A broken config file must not
-be able to stop the IDE from starting.
+Overrides are applied one at a time at import; anything unparseable, unknown or conflicting
+is skipped and reported in `NOTES`, so a broken config file cannot stop the IDE starting.
 """
 
 import json, os
@@ -50,15 +24,13 @@ __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'WEB_ONLY_SCOPES', 'KEYS', 'DEFAUL
            'help_rows', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
            'apply_overrides', 'keymap_json', 'write_keymap', 'reload']
 
-# Panes that own a text cursor. Bare-letter bindings are refused in these.
-# `term` is the strictest of them: a pty consumes every keystroke, so anything bound
-# here is a chord deliberately withheld from the child process.
+# Panes that own a text cursor. Bare-letter bindings are refused in these; anything bound in
+# `term` is a chord deliberately withheld from the pty's child process.
 EDITING_SCOPES = ('editor', 'exec', 'agent', 'term')
 # Focusable panes, outermost first. `global` bindings fire from any of them.
 SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term')
 
-# Retained as a compatibility export for extensions that used it to filter browser-only
-# actions. The browser is now the only frontend, so every scope is native.
+# Compatibility export; the browser is now the only frontend, so every scope is native.
 WEB_ONLY_SCOPES = ()
 
 _NAMED = {'enter', 'escape', 'tab', 'backspace', 'delete', 'space', 'up', 'down', 'left', 'right',
@@ -106,7 +78,8 @@ class Key:
     def __post_init__(self):
         if self.scope not in SCOPES: raise ValueError(f'{self.action}: unknown scope {self.scope!r}')
         if self.show not in ('footer', 'toast', 'help'): raise ValueError(f'{self.action}: bad show {self.show!r}')
-        # A binding that can fire while a cell editor holds the cursor must carry a modifier.
+        # A binding that can fire while a cell editor holds the cursor must carry a modifier,
+        # or it would type a character instead.
         if self.scope in EDITING_SCOPES or self.scope == 'global':
             for c in self.keys:
                 mods, base = parse_key(c)
@@ -132,40 +105,25 @@ def web_key(k):
             'ctrl': 'ctrl' in mods, 'alt': 'alt' in mods, 'shift': 'shift' in mods}
 
 
-# ---------------------------------------------------------------------------
 # The map. Order within a scope is the order shown in help and the toast.
 #
-# Deliberately avoided, because Chrome will not release them: ctrl+w, ctrl+t,
-# ctrl+n, ctrl+tab, ctrl+shift+w. Tab motion uses alt+[ / alt+] instead.
-#
-# Also avoided, because macOS grabs them before any app -- terminal or browser -- when
-# Mission Control's default shortcuts are on: ctrl+up (Mission Control), ctrl+down (App
-# Exposé), ctrl+left / ctrl+right (move between Spaces). What wanted ctrl+up / ctrl+down
-# (exec history) uses the shift variants, which the OS leaves alone.
-#
-# Function keys are not defaults: on stock Mac laptops many are media/system keys, while
-# browsers reserve others. Notebook execution follows the PyCharm/Jupyter gestures instead:
-# platform-modified Enter runs, Shift+Enter runs and advances, and Alt+Enter runs and inserts.
-# ---------------------------------------------------------------------------
+# Unusable, so never bound here:
+# - Chrome will not release ctrl+w, ctrl+t, ctrl+n, ctrl+tab, ctrl+shift+w.
+# - macOS Mission Control takes ctrl+up/down/left/right before any app sees them.
+# - Function keys are media/system keys on stock Mac laptops, or reserved by the browser.
 DEFAULTS = L(
     # -- global: reachable from any pane, including from inside a cell editor ----------
-    # One positional family, clear of macOS text editing and Chrome: left-to-right panes 1–5.
     Key('focus_files',      'alt+shift+1',   'global', 'files',               'footer'),
     Key('focus_editor',     'alt+shift+2',   'global', 'editor',              'footer'),
     Key('focus_exec',       'alt+shift+3',   'global', 'exec',                'footer'),
     Key('focus_vars',       'alt+shift+4',   'global', 'variables',           'footer'),
     Key('focus_agent',      'alt+shift+5',   'global', 'agent',               'footer'),
     Key('palette',          'mod+shift+p',   'global', 'command palette',     'footer'),
-    # The platform-standard preferences gesture: Command+, on macOS, Control+, elsewhere.
     Key('settings',         'mod+,',         'global', 'settings',             'toast'),
     Key('quick_open',       'mod+p',         'global', 'open file',           'toast'),
-    # Chrome owns Ctrl+Tab even in an app window. Mod+E is the reliable JetBrains-style
-    # recent-files gesture; the browser switcher itself is MRU rather than positional.
+    # Chrome owns Ctrl+Tab even in an app window, hence mod+e for recent files.
     Key('recent_tabs',      'mod+e',         'global', 'recent files',        'toast'),
     Key('code_search',      'mod+shift+f',    'global', 'search code',        'toast'),
-    # Browsing for a folder is `o` in the files panel. This is the other way in: you know the
-    # directory your checkouts live in and want the one whose name you half-remember, from
-    # whichever panel you happen to be in. Opens the same dialog with the filter focused.
     Key('find_repo',        'mod+shift+o',    'global', 'find repository',    'toast'),
     Key('find_definition',  'mod+b',          'global', 'go to definition',   'toast'),
     Key('find_usages',      'hyper+u',        'global', 'find usages',        'toast'),
@@ -174,22 +132,16 @@ DEFAULTS = L(
     Key('save',             'mod+s',         'global', 'save',                'toast'),
     Key('save_all',         'alt+shift+s',   'global', 'save all'),
     Key('show_diff',        'alt+shift+d',   'global', 'what changed',        'toast'),
-    # Blame is about the lines under the cursor, so it is global rather than editor-scoped:
-    # it has to reach a notebook cell and the file editor alike.
+    # Blame, completion and docs are global rather than editor-scoped so they reach a notebook
+    # cell, the file editor and the exec strip alike; each resolves the cursor from whichever
+    # editor holds it.
     Key('git_blame',        'hyper+b',       'global', 'who wrote this',      'toast'),
-    # Both completions and the docstring lookup are global rather than editor-scoped, so
-    # they also reach the exec strip -- a half-remembered attribute name is just as likely
-    # to need looking up there, and all three handlers already resolve the cursor from
-    # whichever editor holds it.
     Key('complete',         'alt+/ ctrl+space', 'global', 'complete',         'toast'),
     Key('ai_complete',      'alt+shift+space', 'global', 'ai completion',     'toast'),
     Key('show_docs',        'alt+shift+h',   'global', 'docs for symbol',     'toast'),
     Key('capture',          'alt+shift+p',   'global', 'screenshot for the assistant', 'toast'),
     Key('close_tab',        'alt+w',         'global', 'close tab',           'toast'),
-    # The bulk closes are menu-first, the way a browser has them: middle-click closes one,
-    # and the right-click menu is where you say "just this one, then" after opening twelve.
-    # Unbound by default rather than given a chord nobody asked for -- both are still
-    # rebindable, because every action in this table is.
+    # The bulk closes are menu-first, and unbound by default; every action here is rebindable.
     Key('close_others',     '',              'global', 'close other tabs'),
     Key('close_right',      '',              'global', 'close tabs to the right'),
     Key('close_saved',      '',              'global', 'close saved tabs'),

@@ -1,50 +1,18 @@
-"""What a block is allowed to touch.
-
-`ide_app` is one 2,600-line closure over a `Workspace`, and its routes reach into roughly
-thirty attributes of it -- `ws.fs` fifty times, `ws.ai` forty-six, `ws.memory` thirty-three.
-Moving those routes into separate modules without changing that does not buy modularity: it
-buys thirty files that each need the whole `Workspace` to exist before they can be
-imported, constructed or tested. `Ctx` is the seam that makes the move worth making.
-
-Two kinds of thing hang off a workspace, and the distinction is the whole design:
-
-- **capabilities** -- `fs`, `pool`, `memory`, `search`: services a block *uses*. These are
-  what a block should declare, and what `vishalakshi` and `ramabana` will substitute.
-- **session state** -- `tabs`, `active`, `model`, `agent_state`: mutable facts about this
-  particular workspace. Shared, not injected. Blocks reach these through `ctx.session`.
-
-Capabilities are bound at construction, so `ctx.fs` is one slot read -- the same machine
-work as `ws.fs`, with no descriptor and no `__getattr__` in the path. The four expensive
-ones (`ai`, `inline_ai`, `completer`, `lsp`) stay lazy, because binding them eagerly would
-build an `Assistant` and load a model for every workspace at startup, including the ones
-whose user never opens the agent pane.
-
-`narrow` is how a block declares its dependencies:
-
-    ctx.narrow('fs', 'pool')      # a Ctx where `.memory` raises AttributeError
-
-Undeclared *eager* capabilities are simply never assigned, so the enforcement is CPython's
-own unset-slot `AttributeError` and costs nothing at runtime. Lazy ones check a frozenset,
-which is one hash lookup on a path that is about to call a model.
-"""
+"""What a block is allowed to touch: capabilities it uses, session state it shares."""
 
 from __future__ import annotations
 
 __all__ = ['Ctx', 'CAPABILITIES', 'EAGER', 'LAZY', 'APP']
 
-# Bound at construction: cheap attribute reads on an already-built Workspace.
+# Bound at construction.
 EAGER = ('fs', 'pool', 'search', 'memory', 'research', 'runs', 'journal', 'terms', 'dev',
          'approvals', 'jobs')
 
-# Resolved on access. `ai`/`inline_ai`/`completer`/`lsp` construct something expensive on
-# first touch; `tab`/`pending_approval` are cheap but read mutable session state, so
-# capturing them once would hand blocks a stale answer.
+# Resolved on access. `ai`/`inline_ai`/`completer`/`lsp` are expensive to build; `tab` and
+# `pending_approval` read mutable session state, so capturing them once would go stale.
 LAZY = ('ai', 'inline_ai', 'completer', 'lsp', 'tab', 'pending_approval')
 
-# Owned by the application rather than the workspace: one set per `ide_app`, supplied at
-# construction. These are the closure variables blocks could not otherwise share -- see
-# `leela/core/session.py`. `gate` and `catalog` come in the same way because they are also
-# per-app, handed to `ide_app` by `serve_ide`.
+# Owned by the application rather than the workspace: one set per `ide_app`.
 APP = ('docs', 'debug', 'running', 'gate', 'catalog')
 
 CAPABILITIES = EAGER + LAZY + APP
@@ -73,10 +41,8 @@ class Ctx:
         unknown = sorted(set(app) - set(APP))
         if unknown: raise TypeError(f'unknown application capabilities: {unknown}')
         self.session, self.name, self._app = session, name, app
-        # None means "everything", which is what the un-narrowed workspace-wide Ctx is.
-        # A declared set narrows all three halves: eager and app slots below, lazy via
-        # `_lazy`. An undeclared slot is simply never assigned, so the refusal is CPython's
-        # own unset-slot AttributeError and costs nothing to enforce.
+        # `caps=None` means "everything". An undeclared slot is simply never assigned, so the
+        # refusal is CPython's own unset-slot AttributeError and costs nothing to enforce.
         want = None if caps is None else frozenset(caps)
         self._lazy = want
         for c in EAGER:
@@ -91,18 +57,10 @@ class Ctx:
         return type(self)(self.session, self.name, caps=caps, **self._app)
 
     def __getattr__(self, name):
-        """Explain an undeclared capability instead of reporting a missing attribute.
-
-        Only *called* when normal lookup has already failed -- an unset slot, i.e. exactly
-        the narrowing case. Merely defining it is not quite free, though: CPython switches
-        the type to the hooked attribute path, which measures at ~0ns on an eager
-        capability (one slot read) and ~32ns on a lazy one, whose property body makes
-        several reads of its own. `tools/bench_ctx.py` breaks that out.
-
-        Worth it: the eager path is 90% of access and is unaffected, while the lazy path
-        is about to call a model. The alternative was CPython's bare "object has no
-        attribute 'memory'", which names neither the block nor the fix.
-        """
+        "Explain an undeclared capability instead of reporting a missing attribute."
+        # Only reached once normal lookup fails, i.e. exactly the narrowing case. Defining it
+        # at all moves the type onto CPython's hooked attribute path; `tools/bench_ctx.py`
+        # measures the cost as ~0ns eager, ~32ns lazy.
         if name in APP and name not in self._app:
             raise AttributeError(
                 f'block {self.name!r} asked for {name!r}, which this application does not '

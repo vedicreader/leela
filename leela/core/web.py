@@ -1,12 +1,7 @@
 """The web vocabulary every block shares: error shape, streaming frames, static URLs.
 
-These were module-level helpers in `leela/app.py` with leading underscores, which was
-right while there was one web module. Blocks need them, and a block importing a private
-name out of the module it is being extracted from is not an improvement -- so they move
-here and lose the underscore.
-
-`leela/app.py` re-exports the old names, because `tests/` and any external caller
-import some of them from there.
+`leela/app.py` re-exports the old underscored names, which `tests/` and external callers
+still import from there.
 """
 
 from __future__ import annotations
@@ -36,14 +31,7 @@ def asset_dir(name):
 
 
 def static_dirs():
-    """The asset dirs behind `/leestatic`, in lookup order: authored first, vendored second.
-
-    `static/` is leela's own hand-written `lee-ide.js` and `lee-ide.css`; `vendor/` is what
-    esbuild produced or npm supplied -- CodeMirror, xterm, htmx, the woff2 faces. Separating
-    them means a search of leela's browser code cannot hit 2MB of minified third-party
-    output, and `.gitignore` and the packaging manifests describe directories instead of
-    listing filenames.
-    """
+    "The asset dirs behind `/leestatic`, in lookup order: authored `static/`, vendored `vendor/`."
     return [asset_dir('static'), asset_dir('vendor')]
 
 
@@ -54,23 +42,18 @@ def asset(name):
 
 
 class Assets:
-    """Serve one URL prefix from several directories, first match winning.
-
-    Starlette's `Mount` does not fall through when the app behind it 404s, so two mounts on
-    `/leestatic` would shadow rather than combine. Resolving the directory here keeps every
-    asset URL -- including the `/leestatic/fonts/*.woff2` that `lee-ide.css` names -- exactly
-    as it was when both trees lived in one folder.
-    """
+    "Serve one URL prefix from several directories, first match winning."
+    # Starlette's `Mount` does not fall through when the app behind it 404s, so two mounts on
+    # `/leestatic` would shadow rather than combine.
 
     def __init__(self, *dirs):
         self.dirs = [Path(d) for d in dirs]
         self.apps = [StaticFiles(directory=str(d)) for d in self.dirs]
 
     async def __call__(self, scope, receive, send):
-        # `Mount` leaves `scope['path']` absolute and reports the matched prefix as `root_path`,
-        # which is what `StaticFiles` strips to find the file. Removing the prefix here agrees
-        # with it either way: if a Starlette version rewrites `path` to be mount-relative
-        # instead, `removeprefix` finds nothing to remove and the result is the same.
+        # `Mount` leaves `scope['path']` absolute and reports the matched prefix as `root_path`.
+        # `removeprefix` agrees either way: a Starlette that rewrites `path` to be mount-relative
+        # leaves nothing to remove.
         rel = scope['path'].removeprefix(scope.get('root_path') or '').lstrip('/')
         served = first(a for d, a in zip(self.dirs, self.apps) if (d/rel).is_file())
         return await (served or self.apps[0])(scope, receive, send)   # else the first one 404s
@@ -94,29 +77,18 @@ def off_loop(fn, *a, **kw):
 
 
 def pipeline_socket(app, path, gate, resolve):
-    """Register a websocket that shows one pipeline's terminal.
-
-    Shared because a release, a deploy and a driven part are the same thing on the wire: a
-    JSON hello carrying the terminal token, then raw bytes both ways, which is exactly what
-    `/term/ws` speaks and therefore what the browser's xterm already knows how to render.
-
-    `resolve(hello)` returns the pipeline the connection is about. It is a callback rather
-    than an object because the pipelines are per project and per kind, and which one a viewer
-    wants is in the hello it has not sent yet.
-
-    A raw Starlette route on purpose: FastHTML's own `ws` wrapper injects parameters by name
-    and would hand the handler `None` instead of the socket, and a pty needs the socket.
-    """
+    "Register a websocket that shows one pipeline's terminal; `resolve(hello)` names which one."
+    # A raw Starlette route on purpose: FastHTML's `ws` wrapper injects parameters by name and
+    # would hand the handler `None` instead of the socket, and a pty needs the socket.
     import asyncio
     import json
 
     from starlette.routing import WebSocketRoute
 
     async def handler(sock):
-        # Imported here rather than closed over: `tests/test_route_owners` reads a route's
-        # owner out of its closure, and a module-level helper captured here would make this
-        # socket look as though `leela` itself served it instead of the block that
-        # registered it.
+        # Imported here rather than closed over: `tests/test_route_owners` reads a route's owner
+        # out of its closure, and a captured module-level helper would name `leela` as the owner
+        # instead of the block that registered this socket.
         from .. import errstr
         await sock.accept()
         pipeline = q = None
@@ -165,10 +137,5 @@ def diff_payload(was, now):
 
 
 def found(search, hits):
-    """A hit list plus the backend that produced it -- an empty result is never a mystery.
-
-    Takes the search service rather than the workspace: a block that only searches should
-    not need a whole `Workspace` to shape its reply, and this is the seam `SearchPort`
-    substitutes at.
-    """
+    "A hit list plus the backend that produced it -- an empty result is never a mystery."
     return {'backend': search.backend, 'note': search.note, 'hits': [h.dict() for h in hits]}
