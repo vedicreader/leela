@@ -98,6 +98,17 @@ def project_package_rows(path, python=None):
     return rows
 
 
+def _format_cwd(ctx, path=''):
+    "The directory whose formatter configuration applies to `path`, else the chosen project's."
+    if str(path or '').strip():
+        try:
+            p = ctx.fs._check(path, must_exist=False)
+            return str(ctx.fs.root_of(p))
+        except Exception: pass
+    root = ctx.session.project_root
+    return str(root) if root else None
+
+
 def connect(app, ctx):
     rt = app.route
 
@@ -112,7 +123,11 @@ def connect(app, ctx):
             elif lang == 'python':
                 from ..runtime.kernels import project_python
                 python = ctx.pool.default_python or project_python(ctx.fs.roots) or sys.executable
-                cwd = str(ctx.fs.roots[0]) if ctx.fs.roots else None
+                # `cwd` is what makes ruff find a `pyproject.toml`, so it has to be the folder
+                # the *file* is in -- the first open folder formatted a second checkout's file to
+                # the first checkout's line length. A file's formatting is not a matter of
+                # opinion, so this follows the file rather than the chosen project.
+                cwd = _format_cwd(ctx, d.get('path'))
                 def format_python():
                     choices = [[str(python), '-m', 'ruff', 'format', '-'], [str(python), '-m', 'black', '-q', '-']]
                     failures=[]

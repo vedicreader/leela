@@ -102,11 +102,11 @@ GET,POST /git/compare
 GET,POST /git/conflict
 GET,POST /git/diff
 GET,POST /git/file
-GET,POST /git/notebook
 GET,POST /git/find
 GET,POST /git/history
 GET,POST /git/info
 GET,POST /git/merge-preview
+GET,POST /git/notebook
 GET,POST /git/rebase-preview
 GET,POST /git/reflog
 GET,POST /git/repos
@@ -194,6 +194,7 @@ GET,POST /tab/state
 GET,POST /tab/watch
 GET,POST /tabs/save-all
 GET,POST /term/close
+GET,POST /term/external
 GET,POST /term/info
 GET,POST /tree
 GET,POST /vars

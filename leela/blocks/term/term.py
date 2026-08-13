@@ -20,12 +20,13 @@ websocket machinery implemented here.
 """
 
 from __future__ import annotations
-import asyncio, fcntl, os, pty, secrets, shutil, signal, struct, subprocess, termios
+import asyncio, fcntl, os, pty, secrets, shlex, shutil, signal, struct, subprocess, sys, termios
 from fastcore.all import Path, L
 from fastcore.ansi import strip_ansi
 
 __all__ = ['Pty', 'Terminals', 'TerminalGate', 'lazygit_argv', 'gh_auth_argv', 'ToolMissing',
-           'LazygitMissing', 'default_shell']
+           'LazygitMissing', 'default_shell', 'path_prelude', 'shell_argv',
+           'external_terminal_argv', 'EXTERNAL_TERMINALS']
 
 READ_CHUNK = 65536
 DEFAULT_SHELL = '/bin/bash'
@@ -45,6 +46,71 @@ class LazygitMissing(ToolMissing):
 def default_shell():
     "The user's shell, falling back to bash then sh."
     return os.environ.get('SHELL') or (DEFAULT_SHELL if Path(DEFAULT_SHELL).exists() else '/bin/sh')
+
+
+# Terminals worth handing a project to, best first. A GUI application on macOS is launched
+# through `open -a` rather than by running its binary: started directly from a server process it
+# inherits this process's session and, for several of these, simply fails to show a window.
+EXTERNAL_TERMINALS = (
+    ('Kaku', 'kaku'), ('WezTerm', 'wezterm'), ('kitty', 'kitty'), ('Alacritty', 'alacritty'),
+    ('Ghostty', 'ghostty'), ('iTerm', 'iterm2'), ('Terminal', None),
+)
+
+
+def shell_argv(shell='', args=(), login=True):
+    """How to start the user's shell: which one, and whether as a login shell.
+
+    `-l` is what makes an IDE terminal behave like the one in the dock. On macOS a login shell is
+    where PATH and tool setup usually live, so skipping it is how `uv` comes to be missing in
+    here and present everywhere else. Explicit `args` replace the flag rather than adding to it,
+    because someone who has spelled out the arguments has said what they want.
+    """
+    exe = str(shell or '').strip() or default_shell()
+    extra = [str(a) for a in (args or ())]
+    if extra: return [exe, *extra]
+    return [exe, '-l'] if login else [exe]
+
+
+def external_terminal_argv(cwd, command=''):
+    """The argv that opens a real terminal application at `cwd`, or None if there is none.
+
+    `command` is a template with `{dir}` in it, for a terminal that wants particular arguments.
+    Without one, the first installed entry of `EXTERNAL_TERMINALS` wins -- so this is a button
+    that appears when it can work and stays hidden when it cannot, rather than one that fails.
+    """
+    cwd = str(cwd or Path.home())
+    if str(command or '').strip():
+        template = str(command).strip()
+        parts = shlex.split(template if '{dir}' in template else f'{template} {{dir}}')
+        return [cwd if p == '{dir}' else p.replace('{dir}', cwd) for p in parts]
+    darwin = sys.platform == 'darwin'
+    for app, binary in EXTERNAL_TERMINALS:
+        if darwin and Path(f'/Applications/{app}.app').exists():
+            return ['open', '-a', app, cwd]
+        if binary and (exe := shutil.which(binary)):
+            return [exe, cwd] if not darwin else ['open', '-a', app, cwd]
+    return None
+
+
+def path_prelude(py, shell=None):
+    """The line that puts a project's venv first on PATH, in the language of the user's shell.
+
+    Setting it in the child's environment is not enough on its own: an interactive shell reads
+    its rc file *afterwards*, and `pyenv init -` or conda or asdf then prepends their shims over
+    whatever we chose. So the same prepend is typed in once the shell is up, where nothing
+    re-orders it.
+
+    Which means it has to be a command *that shell* understands. `export FOO=bar` is not fish,
+    which has no `export` at all -- so every terminal under fish opened with
+    `fish: Unknown command: export` printed over the first prompt. A leading space keeps the line
+    out of history in the shells that honour that, fish included.
+    """
+    if not py: return ''
+    bindir = Path(py).parent
+    name = Path(str(shell or default_shell())).name
+    if name in ('fish',): return f' set -gx PATH {bindir} $PATH'
+    if name in ('csh', 'tcsh'): return f' setenv PATH "{bindir}:$PATH"'
+    return f' export PATH="{bindir}:$PATH"'
 
 
 def lazygit_argv(cwd=None):
@@ -233,6 +299,16 @@ class Terminals:
 
     def get(self, key): return self.terms.get(key)
     def all(self): return L(self.terms.values())
+
+    def states(self):
+        """Every terminal this process is holding, *with its key*.
+
+        `Pty.state` cannot say: a pty does not know what it was filed under. The key is the part
+        the browser actually needs -- it picks the id for a new terminal, and without knowing
+        which ids are taken it reused one, whereupon `open` handed back the *existing* pty and a
+        new terminal came up holding an old session's scrollback and running process.
+        """
+        return [{'id': k, **t.state()} for k, t in self.terms.items()]
 
     def close(self, key):
         if (t := self.terms.pop(key, None)) is not None: t.kill()

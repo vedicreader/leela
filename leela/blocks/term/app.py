@@ -12,7 +12,8 @@ and nowhere else is what makes "can reach the socket" different from "may have a
 
 from __future__ import annotations
 
-from .term import LazygitMissing, lazygit_argv
+from ...core.web import fail
+from .term import LazygitMissing, external_terminal_argv, lazygit_argv
 
 __all__ = ['CAPS', 'connect', 'term_cwd']
 
@@ -43,9 +44,45 @@ def connect(app, ctx):
         gate = ctx.gate
         return {'enabled': gate.enabled, 'why': gate.why, 'token': gate.token if gate.enabled else '',
                 'cwd': str(term_cwd(ctx.session) or ''), 'lazygit': git, 'lazygit_why': git_why,
-                'open': [t.state() for t in ctx.terms.all()]}
+                # With ids, so the client can avoid the ones already taken and reattach to a
+                # session that outlived its page rather than silently inheriting it.
+                'open': ctx.terms.states(),
+                # The button is offered only when it can work; `argv[-1]` is the directory, so
+                # `argv` also names which terminal is about to open.
+                'external': (_external() or [])}
 
     @rt('/term/close')
     def term_close(id: str = 'shell'):
         ctx.terms.close(id)
         return {'ok': True}
+
+    def _external():
+        "The configured external terminal, or the first installed one -- `None` if neither."
+        from ..settings.settings import Settings
+        try: configured = Settings(ctx.session.project_root).effective().get('terminal', {}).get('external', '')
+        except Exception: configured = ''
+        return external_terminal_argv(term_cwd(ctx.session), configured)
+
+    @rt('/term/external')
+    def term_external():
+        """Hand the project to a real terminal application.
+
+        xterm.js cannot be *connected* to one: an already-running terminal is itself an emulator
+        with its own pty, and there is no way for a browser pane to adopt its window. What is
+        possible is this -- launching it at the project directory, so the embedded terminal and
+        the one you actually live in are both a click away rather than one pretending to be the
+        other.
+
+        Detached deliberately: this is a GUI application which will outlive the request, and
+        holding it would tie its lifetime to a web handler.
+        """
+        argv = _external()
+        if not argv:
+            return fail('no external terminal found — set terminal.external in settings')
+        import subprocess
+        try:
+            subprocess.Popen(argv, start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            return fail(f'could not open {argv[0]} — {e}')
+        return {'ok': True, 'argv': argv}

@@ -304,11 +304,18 @@ class Workspace:
         return next((i for i, t in enumerate(self.tabs) if t.path == p), None)
 
     def activate_root(self, path):
-        "Point the project-scoped surfaces at one of the open folders."
+        """Point the project-scoped surfaces at one of the open folders.
+
+        A live assistant is one of those surfaces. `add_root` re-briefs it because a folder it
+        can suddenly reach but has never been told about is worse than useless -- and choosing a
+        different folder is the same problem in the other direction: the agent goes on describing
+        the project you left, while its shell has already moved to the one you chose.
+        """
         p = self.fs._check(path, must_exist=True)
         if not p.is_dir(): p = p.parent
         root = self.fs.root_of(p)          # raises unless it is one this workspace lists
         self.active_root = root
+        self._rebrief_agents()
         return root
 
     @property
@@ -653,11 +660,18 @@ class Workspace:
 
     def kernel_key(self, tab=None):
         """Which kernel a tab uses. Notebooks are private by default; source files share
-        their open root. ``private_kernel`` is the explicit attachment choice."""
+        their open root. ``private_kernel`` is the explicit attachment choice.
+
+        A tab that has no file of its own -- the exec box, and whatever the variable panel is
+        looking at when nothing is open -- falls back to the *chosen* project rather than the
+        first folder. With two checkouts listed that fallback is the difference between running
+        in the project you are working in and running in the one you happened to open first.
+        """
         t = tab or self.tab
-        if t is None: return str(self.fs.roots[0]) if self.fs.roots else 'default'
+        fallback = str(self.project_root) if self.project_root is not None else 'default'
+        if t is None: return fallback
         if t.private_kernel: return f'tab:{t.path or t.title}'
-        if not t.path: return str(self.fs.roots[0]) if self.fs.roots else 'default'
+        if not t.path: return fallback
         try: return str(self.fs.root_of(t.path))
         except Unsafe: return 'default'
 
@@ -771,7 +785,7 @@ class Workspace:
             p = self.fs._check(name_or_path, must_exist=True)
             r = self.runs.for_file(p)
             if save: self.runs.add(r)
-        root = self.fs.roots[0] if self.fs.roots else None
+        root = self.project_root   # a dev server serves the chosen project, not the first folder
         return await self.dev.start(r.cmd, cwd=r.resolved_cwd(root) if root else None,
                                     name=r.name, watch=r.watch, env=r.resolved_env(root))
 

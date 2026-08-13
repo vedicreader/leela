@@ -47,6 +47,19 @@ DEFAULT_SETTINGS = {
         'showInlineValues': True, 'showBreakpointsInOverview': True,
         'breakOnRaised': False, 'breakOnUncaught': True,
     },
+    'terminal': {
+        # Empty means `$SHELL`, which is the right default and the only one that can be. A path
+        # here overrides it, for the case where Leela was launched from somewhere that sets
+        # `SHELL` to something other than the shell you actually use.
+        'shell': '', 'shellArgs': [],
+        # A login shell, as macOS terminals and VS Code default to: on this platform PATH and
+        # tool setup usually live in login configuration, and an IDE terminal that skips it is
+        # the one where `uv` is mysteriously not found.
+        'loginShell': True,
+        # The external terminal the "open externally" button hands the project to. Empty means
+        # the first one of `EXTERNAL_TERMINALS` that is actually installed.
+        'external': '',
+    },
 }
 
 _ENUMS = {

@@ -22,7 +22,10 @@ CAPS = ('fs',)
 def connect(app, ctx):
     rt = app.route
 
-    def _settings(): return Settings(ctx.fs.roots[0] if ctx.fs.roots else None)
+    # Workspace settings belong to the folder that holds them, so this follows the chosen one:
+    # with two checkouts open, `.leela/settings.json` was read from and written to the first of
+    # them whichever project you were working in.
+    def _settings(): return Settings(ctx.session.project_root)
 
     @rt('/settings')
     def settings_get(language: str = ''):

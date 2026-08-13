@@ -306,6 +306,18 @@ class WorkspaceHost(Host):
     @property
     def roots(self): return [str(r) for r in self.ws.fs.roots]
 
+    @property
+    def project(self):
+        """The folder the agent's commands should run in: the chosen one, else the first open.
+
+        `roots[0]` is where the agent is *allowed* to be, which is a different question. With two
+        checkouts open it ran every shell command in the first of them and said so in
+        `shell_note`, so the agent and the person were talking about different repositories while
+        both believed they had said which.
+        """
+        root = self.ws.project_root
+        return str(root) if root else (self.roots[0] if self.roots else '')
+
     def check(self, path, must_exist=False):
         try: return self.ws.fs._check(path, must_exist=must_exist)
         except Unsafe as e:
@@ -456,7 +468,7 @@ class WorkspaceHost(Host):
         if not str(command or '').strip(): return 0, ''      # the capability probe
         roots = self.roots
         if not roots: raise NotImplementedError('no folder is open')
-        d = self.check(cwd) if cwd else self.check(roots[0])
+        d = self.check(cwd) if cwd else self.check(self.project)
         if not d.is_dir(): d = d.parent
         # Its own session, so a timeout can kill the whole tree. `pytest -n 4` or anything
         # behind a pipe leaves children that outlive the shell, and a leaked test runner
@@ -479,7 +491,7 @@ class WorkspaceHost(Host):
     @property
     def shell_note(self):
         roots = self.roots
-        return f'commands run in {roots[0]}' if roots else 'no folder is open'
+        return f'commands run in {self.project}' if roots else 'no folder is open'
 
     # -- the person ----------------------------------------------------------
     @property
@@ -503,7 +515,9 @@ def _git_tools(host):
     def repo(path=''):
         roots = [Path(r).expanduser().resolve() for r in host.roots]
         if not roots: raise ValueError('open a project folder first')
-        selected = host.check(path or roots[0], must_exist=True)
+        # The chosen project when the model does not name one, so `git_status` with no argument
+        # describes the repository the person is looking at.
+        selected = host.check(path or getattr(host, 'project', '') or roots[0], must_exist=True)
         found = GitRepo.at(selected)
         # Git can discover a worktree above an opened subfolder. The IDE may show that
         # repository, but an agent checkout must not modify siblings outside its sandbox.
@@ -512,6 +526,10 @@ def _git_tools(host):
         return found
 
     def result(r, output=''):
+        # Mutations report a structured outcome rather than Git's stdout; its `summary` is the
+        # sentence written for a reader, which is exactly what a tool result wants.
+        if isinstance(output, dict):
+            output = output.get('summary') or output.get('message') or ''
         info = r.info()
         summary = {'root': info['root'], 'branch': info['branch'], 'upstream': info['upstream'],
                    'ahead': info['ahead'], 'behind': info['behind'], 'clean': info['clean'],

@@ -51,7 +51,9 @@ def connect(app, ctx):
     async def runtime_info():
         from .kernels import project_python
         from .support import kernel_support
-        root = ctx.fs.roots[0] if ctx.fs.roots else None
+        # The chosen folder, not the first one open: with two checkouts listed this reported
+        # the other project's interpreter, and the picker is where you go to find that out.
+        root = session.project_root
         py = project_python([root]) if root else None
         support = await off_loop(kernel_support, py) if py else {}
         # `uv` decides whether a missing environment can be created without asking. With it,
@@ -76,9 +78,16 @@ def connect(app, ctx):
 
     @rt('/runtime/create')
     async def runtime_create():
-        "Create an explicit .venv for the project and install only its kernel transport."
-        if not ctx.fs.roots: return fail('open a folder first')
-        target = ctx.fs.roots[0]/'.venv'
+        """Create an explicit .venv for the project and install only its kernel transport.
+
+        In the folder this workspace is currently about, which is `project_root` rather than
+        `roots[0]`: creating the second project's environment inside the first project's
+        directory is a mess to find and a worse one to undo, and the path is reported back so
+        the answer is never implicit.
+        """
+        root = session.project_root
+        if root is None: return fail('open a folder first')
+        target = root/'.venv'
         if target.exists(): return fail(f'{target} already exists')
 
         def create():
@@ -95,7 +104,7 @@ def connect(app, ctx):
         try: py = await off_loop(create)
         except Exception as e: return fail(f'could not create .venv — {errstr(e)}')
         ctx.pool.choose(python=py)
-        return {'ok': True, 'python': py}
+        return {'ok': True, 'python': py, 'root': str(root)}
 
     # -- kernels -----------------------------------------------------------
     @rt('/kernel/interrupt')

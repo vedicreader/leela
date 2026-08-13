@@ -67,7 +67,7 @@ from .blocks.fs.fs import lang_for
 from .blocks.git.git import GitRepo, GitError
 from .core.keys import by_scope, chord_display, toast_rows
 from .blocks.nb.nb import Notebook, Cell
-from .blocks.term.term import TerminalGate, gh_auth_argv, lazygit_argv
+from .blocks.term.term import TerminalGate, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
 from .workspace import Workspace
 from .agent.core import model_note
 
@@ -351,7 +351,10 @@ def _header(ws):
     workspace switcher. The former wall of run/editor controls now has named doors; the
     command palette remains the exhaustive surface.
     """
-    root = ws.fs.roots[0] if ws.fs.roots else None
+    # The chosen folder, like the branch pill beside it. These two name the same project and
+    # looked like they did -- but only the branch actually followed the choice, so the name next
+    # to it went on saying whichever folder happened to be opened first.
+    root = ws.project_root
     return Header(
         Button(Span('leela', cls='lee-brand'), Span(Path(root).name if root else 'open workspace',
                id='workspacename', cls='lee-workspace-name'), cls='lee-workspace-switcher',
@@ -567,6 +570,12 @@ def _term_panel(gate):
             Span(cls='lee-spacer'),
             Button('expand', id='termexpand', cls='lee-icon', title='expand or restore terminal',
                    onclick='leeTermExpand()'),
+            # Hidden until `/term/info` says a terminal application is actually installed: an
+            # embedded terminal cannot *become* the one you live in, so the honest offer is to
+            # hand the project over to it rather than to imitate it.
+            Button('external', id='termexternal', cls='lee-icon', hidden=True,
+                   title='open this project in your terminal application',
+                   onclick='leeExternalTerm()'),
             Button('lazygit', cls='lee-icon', title='open lazygit tab', onclick='leeAct("git")'),
             cls='lee-phead'),
         body,
@@ -784,6 +793,17 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     # it cannot reach the term block's Ctx. It shares the block's definition instead.
     def _term_cwd(ref=None): return term_cwd(ws, ref)
 
+    def _term_settings(session):
+        """The `terminal` settings block, layered user-then-workspace as everything else is.
+
+        Read per terminal rather than held: changing your shell should apply to the next terminal
+        you open, not the next time Leela starts. A missing or malformed file is the defaults,
+        which is what `Settings` already answers with.
+        """
+        from .blocks.settings.settings import Settings
+        try: return Settings(session.project_root).effective().get('terminal', {}) or {}
+        except Exception: return {}
+
     async def term_ws(sock):
         """One websocket, one pty. Binary frames are keystrokes; text frames are control.
 
@@ -803,6 +823,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             # missing tool before the pty existed.
             argv = (lazygit_argv(cwd) if kind == 'git' else
                     gh_auth_argv() if kind == 'gh-auth' else None)
+            shell = _term_settings(ws)
             key = hello.get('id') or kind
             # Every pty is started *inside* the project's uv/venv rather than asking the user
             # to activate it in each tab -- lazygit included, because a commit runs the
@@ -811,13 +832,12 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             from .blocks.runtime.kernels import venv_env
             py = _term_python(ws, cwd)
             env = venv_env(py) if py else None
-            # `env` alone is not enough for an interactive shell: its rc file runs afterwards,
-            # and `pyenv init -` (or conda, or asdf) prepends shims over the project venv. So the
-            # same prepend is also typed into the shell once it is up, where nothing re-orders it.
-            # A leading space keeps it out of history in shells configured to honour that.
-            # Only a shell, though: `argv` means this pty is a program, and the export line
-            # would be keystrokes into lazygit's UI or `gh auth login`'s prompt.
-            prelude = (f' export PATH="{Path(py).parent}:$PATH"' if argv is None and py else '')
+            # Only a shell gets a prelude: `argv` means this pty is a program, and the line
+            # would be keystrokes into lazygit's UI or `gh auth login`'s prompt. `path_prelude`
+            # writes it in the user's own shell language, because `export` is not fish.
+            prelude = path_prelude(py, shell.get('shell')) if argv is None else ''
+            if argv is None:
+                argv = shell_argv(shell.get('shell'), shell.get('shellArgs'), shell.get('loginShell'))
             t = ws.terms.open(key, argv=argv, cwd=cwd, env=env, prelude=prelude,
                               cols=int(hello.get('cols') or 80), rows=int(hello.get('rows') or 24))
         except Exception as e:
@@ -1671,7 +1691,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         d = await req.json(); name = d.get('name') or ''
         run = ws.runs.get(name) if name else None
         config = run.dict() if run else dict(d)
-        root = ws.fs.roots[0] if ws.fs.roots else Path.cwd()
+        root = ws.project_root or Path.cwd()   # a run configuration belongs to the chosen project
         python = d.get('python') or ws.pool.default_python or project_python(ws.fs.roots) or sys.executable
         cwd = config.get('cwd') or str(root)
         if cwd and not Path(cwd).is_absolute(): cwd = str((root/str(cwd)).resolve())

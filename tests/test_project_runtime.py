@@ -6,6 +6,7 @@ None, and the kernel launches under whatever `python3` resolves to on PATH -- of
 nobody chose.
 """
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -174,17 +175,27 @@ def test_every_pipeline_resolves_its_interpreter_from_the_project(tmp_path):
 def test_a_git_terminal_gets_the_project_environment_too(tmp_path):
     "lazygit commits, and a commit runs the project's hooks -- a tab that is not a shell still needs the venv."
     assert "env = venv_env(py) if py else None" in SERVER, 'no kind is excluded'
-    assert "if argv is None and py else ''" in SERVER, 'but only a shell is typed into'
+    # Only a shell is typed into: keystrokes would land in lazygit's UI or gh's prompt. The line
+    # itself is `path_prelude`'s job, because what to type depends on which shell is reading it.
+    assert "prelude = path_prelude(py, shell.get('shell')) if argv is None else ''" in SERVER
 
 
 def test_git_itself_runs_with_the_checkouts_environment(tmp_path):
-    "A hook is a console script of the repository being committed to, not of Leela."
-    from leela.blocks.git.git import _project_env
+    """A hook is a console script of the repository being committed to, not of Leela.
+
+    The gateway owns this because it is the only thing that runs Git, and because the same
+    environment decides whether a clean filter can run at all -- which is what `filter_health`
+    asks it about.
+    """
+    from leela.blocks.git.safety import GitGateway
+    g = GitGateway()
     root = tmp_path/'proj'; py = _venv(root); (root/'.git').mkdir()
-    env = _project_env(root/'sub'/'deeper')
+    env = g.env(root/'sub'/'deeper')
     assert env['PATH'].split(os.pathsep)[0] == str(py.parent), 'found by searching upwards'
     bare = tmp_path/'bare'; (bare/'.git').mkdir(parents=True)
-    assert _project_env(bare) is None, 'no venv, nothing claimed -- git inherits what Leela has'
+    assert g.env(bare) is None, 'no venv, nothing claimed -- git inherits what Leela has'
+    # And the probe that explains a dirtying filter asks about *that* PATH, not Leela's.
+    assert g.resolves(root/'sub', 'definitely-not-installed-anywhere') == ''
 
 
 # ---------------------------------------------------------------- finding a checkout
@@ -437,3 +448,145 @@ def test_opening_a_folder_redraws_the_tree_before_selecting_the_new_root():
     assert "await post('/fs/add-root'" in body
     assert body.index('refreshFileTree(target)') < body.index('activateRoot(target)'), \
         'the tree is rebuilt before the new root is selected in it'
+
+
+def test_the_interpreter_and_a_new_venv_follow_the_chosen_folder(tmp_path):
+    """With two folders open, the picker described the first one and created into it.
+
+    Worse than a stale panel: `/runtime/create` put the second project's environment inside
+    the first project's directory, which is hard to notice and annoying to undo. Both routes
+    now use `project_root`, so the picker, the release pipeline and the terminals agree about
+    which project they are in.
+    """
+    a, b = tmp_path/'first', tmp_path/'second'
+    for d in (a, b): (d/'src').mkdir(parents=True)
+    py = a/'.venv'/'bin'/'python'                     # only the first folder has an environment
+    py.parent.mkdir(parents=True)
+    py.write_text('#!/bin/sh\nexit 1\n'); py.chmod(0o755)
+    ws = Workspace(roots=[a, b])
+    with TestClient(ide_app(ws)) as c:
+        assert c.get('/runtime/info').json()['root'] == str(a), 'precondition: the first folder'
+        ws.activate_root(b)
+        info = c.get('/runtime/info').json()
+        assert info['root'] == str(b), 'the chosen folder, not the first'
+        assert info['needs_create'] is True, "and it reports b's absence, not a's venv"
+
+        created = c.post('/runtime/create').json()
+        assert created['root'] == str(b) and created['python'].startswith(str(b))
+        assert (b/'.venv').is_dir() and not (a/'.venv'/'pyvenv.cfg').exists(), 'nothing landed in a'
+
+
+def test_the_path_prelude_is_written_in_the_users_own_shell():
+    """`export FOO=bar` is not fish, and fish has no `export` at all.
+
+    The prelude is *typed into* the shell rather than set in its environment, because an rc file
+    running `pyenv init -` afterwards would otherwise prepend its shims over the project venv. So
+    it has to be a command that shell understands -- under fish every terminal opened with
+    `fish: Unknown command: export` printed over the first prompt.
+    """
+    from leela.blocks.term.term import path_prelude
+    assert path_prelude('/p/.venv/bin/python', '/opt/homebrew/bin/fish') == \
+        ' set -gx PATH /p/.venv/bin $PATH'
+    assert path_prelude('/p/.venv/bin/python', '/bin/bash') == ' export PATH="/p/.venv/bin:$PATH"'
+    assert path_prelude('/p/.venv/bin/python', '/bin/zsh') == ' export PATH="/p/.venv/bin:$PATH"'
+    assert path_prelude('/p/.venv/bin/python', '/bin/tcsh') == ' setenv PATH "/p/.venv/bin:$PATH"'
+    assert path_prelude('', '/bin/bash') == '', 'no interpreter, nothing to prepend'
+    for shell in ('/bin/bash', '/opt/homebrew/bin/fish'):
+        assert path_prelude('/p/.venv/bin/python', shell).startswith(' '), 'kept out of history'
+
+
+def test_terminals_report_the_key_each_pty_is_filed_under(tmp_path):
+    """The browser picks terminal ids, so it has to know which are taken.
+
+    A pty outlives its websocket on purpose, so that reloading the page can reattach. But the
+    client's counter restarts at zero on reload, and `Pty.state` did not say what key anything
+    was under -- so `term-1` was handed out again, `open` returned the *existing* pty, and a new
+    terminal came up holding an old session's scrollback and its running process.
+    """
+    from leela.blocks.term.term import Terminals
+    terms = Terminals(cwd=tmp_path)
+    terms.open('term-1', argv=['/bin/sh', '-c', 'sleep 30'])
+    try:
+        states = terms.states()
+        assert [s['id'] for s in states] == ['term-1']
+        assert states[0]['alive'] is True and states[0]['pid']
+    finally:
+        terms.close_all()
+    assert terms.states() == [], 'and closing takes the process with it'
+
+
+def test_the_shell_is_a_login_shell_unless_told_otherwise():
+    """`-l` is what makes an IDE terminal behave like the one in the dock.
+
+    On macOS PATH and tool setup live in login configuration, so a terminal that skips it is the
+    one where `uv` is mysteriously missing. Explicit arguments replace the flag rather than adding
+    to it: someone who spelled the arguments out has said what they want.
+    """
+    from leela.blocks.term.term import default_shell, shell_argv
+    assert shell_argv('/opt/homebrew/bin/fish') == ['/opt/homebrew/bin/fish', '-l']
+    assert shell_argv('/bin/bash', login=False) == ['/bin/bash']
+    assert shell_argv('/bin/bash', ['-i', '-c', 'true']) == ['/bin/bash', '-i', '-c', 'true']
+    assert shell_argv('', (), True) == [default_shell(), '-l'], 'empty means $SHELL'
+
+
+def test_an_external_terminal_is_offered_only_when_one_is_installed(tmp_path, monkeypatch):
+    """xterm.js cannot be attached to a running terminal, so the honest offer is to launch one.
+
+    A configured command wins, `{dir}` is where the project goes, and a template that forgot to
+    say gets it appended -- otherwise the button would silently open someone's home directory.
+    """
+    from leela.blocks.term import term as T
+    assert T.external_terminal_argv(tmp_path, 'kaku {dir}') == ['kaku', str(tmp_path)]
+    assert T.external_terminal_argv(tmp_path, 'kaku') == ['kaku', str(tmp_path)]
+    assert T.external_terminal_argv(tmp_path, 'wezterm start --cwd {dir}') == \
+        ['wezterm', 'start', '--cwd', str(tmp_path)]
+
+    # Nothing configured and nothing installed: the button must be absent, not broken.
+    monkeypatch.setattr(T.shutil, 'which', lambda n: None)
+    monkeypatch.setattr(T, 'EXTERNAL_TERMINALS', (('NoSuchTerminal', 'no-such-terminal'),))
+    assert T.external_terminal_argv(tmp_path) is None, 'no terminal, no button'
+
+
+def test_the_external_terminal_button_is_offered_only_when_one_exists():
+    """Hidden until the server says it found a terminal, so it never fails when pressed.
+
+    The honest framing matters here: this hands the project to a real terminal rather than
+    pretending the embedded one is it, because an already-running emulator owns its own pty and a
+    browser pane cannot adopt its window.
+    """
+    assert "id='termexternal'" in SERVER and 'leeExternalTerm()' in SERVER
+    block = JS[JS.index('async function leeExternalTerm'):JS.index('function leeNewTerm')]
+    assert "post('/term/external')" in block
+    open_block = JS[JS.index('async function openTerm'):JS.index('async function openReleaseTerm')]
+    assert "external.hidden = !(d.external || []).length" in open_block
+
+
+def test_opening_a_terminal_really_builds_its_argv_from_the_settings(tmp_path):
+    """Actually open the pty, because nothing else here does.
+
+    The regression this exists for was a missing import: `shell_argv` was used in the websocket
+    handler and never imported, so every terminal failed with `NameError` -- and the whole suite
+    stayed green, because the terminal was only ever asserted about as *source text*. The handler
+    reports a failed setup as an error frame rather than a traceback, which is exactly what makes
+    this checkable: connect, say hello, and require that the first frame is not that.
+
+    `/bin/echo` as the shell keeps it deterministic: it prints its arguments and exits, so the
+    bytes coming back prove the argv was assembled from the settings and handed to a real pty.
+    """
+    settings = tmp_path/'.leela'/'settings.json'
+    settings.parent.mkdir()
+    settings.write_text(json.dumps({'terminal': {
+        'shell': '/bin/echo', 'shellArgs': ['leela-terminal-ok'], 'loginShell': False}}))
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as c:
+        info = c.get('/term/info').json()
+        if not info['enabled']: pytest.skip(info['why'])
+        try:
+            with c.websocket_connect('/term/ws') as sock:
+                sock.send_json({'token': info['token'], 'kind': 'shell', 'id': 'probe',
+                                'cwd': str(tmp_path), 'cols': 80, 'rows': 24})
+                first = sock.receive()
+                assert 'bytes' in first, f'setup failed instead of starting a pty: {first}'
+                assert b'leela-terminal-ok' in first['bytes']
+        finally:
+            ws.terms.close_all()
