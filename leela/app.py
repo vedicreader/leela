@@ -72,6 +72,7 @@ from .blocks.nb.nb import Notebook, Cell
 from .blocks.term.term import TerminalGate, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
 from .workspace import Workspace
 from .agent.core import model_note
+from .agent.runtime import estimate_tokens
 
 __all__ = ['ide_app', 'serve_ide']
 
@@ -2022,7 +2023,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         if assistant is not None: assistant.refresh()
         tokens = 0
         for value in selected:
-            tokens += max(1, len(await _off_loop(ws.memory.exact_text, value)) // 4)
+            tokens += estimate_tokens(await _off_loop(ws.memory.exact_text, value))
         return {'ok': True, 'target': target, 'ids': selected, 'tokens': tokens}
 
     @rt('/agent/memory/delete')
@@ -2115,7 +2116,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         "Token budget, stale paths, and duplicate/conflicting headings for edited state."
         import re
         d = await req.json(); text = str(d.get('text') or '')
-        tokens = ws.ai.backend.count_tokens(text) if ws._ai is not None else max(1, len(text)//4)
+        tokens = estimate_tokens(text, ws.ai.backend.count_tokens if ws._ai is not None else None)
         paths = set(re.findall(r'(?<![\w.-])(?:[\w.-]+/)+[\w.-]+', text))
         missing = []
         for path in paths:

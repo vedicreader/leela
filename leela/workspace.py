@@ -17,7 +17,8 @@ from dataclasses import dataclass
 from fastcore.all import Path, L, ifnone
 
 from . import Dictable, leela_cfg
-from .blocks.agent.ai import Assistant, Completer, notebook_approvals
+from .agent.agent import Completer
+from .blocks.agent.ai import Assistant, notebook_approvals
 from .blocks.runtime.devserver import DevServers
 from .blocks.fs.fs import Sandbox, Unsafe, lang_for, is_texty
 from .blocks.runtime.kernels import KernelPool
