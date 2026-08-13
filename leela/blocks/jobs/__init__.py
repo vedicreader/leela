@@ -1,4 +1,4 @@
-"""Queued work with a visible state, and the cadence for the work that repeats."""
+"Queued work with a visible state, and the cadence for the work that repeats."
 
 __all__ = ['connect', 'CAPS']
 

@@ -119,6 +119,17 @@ def test_a_restart_requeues_what_can_resume_and_fails_the_rest(tmp_path):
     assert _finish(out, a.id).status == 'complete'
 
 
+def test_a_vishalakshi_result_comes_back_out_of_the_row_as_rows(tmp_path):
+    "`fastcore.L` is not a list subclass, and the vault returns them, so json cannot see inside one."
+    from fastcore.all import L
+
+    jobs = Jobs(tmp_path/'jobs.db')
+    jobs.register('vaultish', lambda job, report: {'results': L([{'status': 'ok'}, {'status': 'ok'}])})
+    j = _finish(jobs, jobs.start('vaultish').id)
+    assert j.status == 'complete', j.error
+    assert j.result['results'] == [{'status': 'ok'}, {'status': 'ok'}], 'stored as rows, not as a repr'
+
+
 def test_a_failed_job_says_why_and_can_be_retried(tmp_path):
     jobs = Jobs(tmp_path/'jobs.db')
     state = {'fail': True}
