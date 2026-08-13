@@ -17,11 +17,18 @@ from fastcore.parallel import threaded
 
 from ... import Dictable, errstr
 from ..fs.fs import LANGS
+from ..nb.spans import cell_at, cell_lines, cell_of, read_cells, source_spans
 
 __all__ = ['Hit', 'Cluster', 'Search']
 
 _CODE_SUFFIXES = frozenset(LANGS) | {'.txt', '.rst', '.cfg', '.ini'}
 MAX_SCAN_BYTES = 2_000_000
+
+# One pattern for every outline, notebook or not, so a method in a cell nests exactly as a
+# method in a module does -- group 1 is the indent the UI reads as depth.
+_DEF_RE = re.compile(r'^(\s*)(?:async\s+)?(def|class)\s+(\w+)')
+
+def _is_nb(path): return str(path).lower().endswith('.ipynb')
 
 # usearch builds clusters out of the HNSW graph's upper levels, so a small index has
 # no structure to cut and raises outright. Measured: ~300 vectors still fails, ~1000
@@ -56,7 +63,15 @@ def _meta(row):
 
 @dataclass
 class Hit(Dictable):
-    'One search result. `line` is 1-indexed; `kind` names the backend that produced it.'
+    """One search result. `line` is 1-indexed; `kind` names the backend that produced it.
+
+    A hit in a notebook needs three more numbers, because `line` there is a line of JSON and
+    there is no editor showing the file: `cell` and `cell_index` say which cell to select and
+    `cell_line` where to go inside it. `cell` is empty for a notebook older than nbformat 4.5,
+    whose cells have no ids, which is why the index is carried as well. All three stay at their
+    defaults for an ordinary file and for a notebook hit that could not be placed -- an
+    unplaceable hit says so instead of sending the reader to a line chosen at random.
+    """
     path: str
     line: int
     text: str
@@ -66,6 +81,9 @@ class Hit(Dictable):
     callers: list = None
     package: str = ''
     sources: list = field(default_factory=list)  # backends that independently found this location
+    cell: str = ''
+    cell_index: int = -1
+    cell_line: int = 0
 
 
 @dataclass
@@ -288,15 +306,65 @@ class Search:
         self.backend, self.note = 'kosha', 'semantic repo + installed packages · existing paths only'
         return out
 
+    # -- scope and extensions ------------------------------------------------
+    @staticmethod
+    def clean_exts(exts):
+        """`['py', '.TS']` -> `{'.py', '.ts'}`. Anything unusable is dropped, not guessed at.
+
+        Accepting both spellings because a person types `py` and a glob says `*.py`, and being
+        strict about the dot would only ever produce an empty result set with no explanation.
+        """
+        out = set()
+        for raw in (exts if isinstance(exts, (list, tuple, set)) else str(exts or '').split(',')):
+            e = str(raw or '').strip().lower().lstrip('*')
+            if not e or e in ('.',): continue
+            out.add(e if e.startswith('.') else '.' + e)
+        return out
+
+    def _within(self, path, roots):
+        "Whether a hit belongs to the searched scope. Roots are resolved; hits may not be."
+        if not roots: return True
+        try: p = Path(path).resolve()
+        except OSError: return False
+        return any(p == r or r in p.parents for r in roots)
+
+    def _keep(self, hits, exts=(), roots=None):
+        """Apply the extension and scope filters to hits an index produced.
+
+        Applied *after* the fact for the indexed backends because Kosha answers about its whole
+        corpus and cannot be asked to narrow. `_rg` gets the same restrictions as arguments
+        instead, where ripgrep can act on them and skip the files entirely.
+        """
+        exts = self.clean_exts(exts)
+        roots = [Path(r).resolve() for r in (roots or [])]
+        if not exts and not roots: return hits
+
+        def keep(h):
+            if exts and Path(h.path).suffix.lower() not in exts: return False
+            # An installed package lives outside every open folder by definition, so narrowing
+            # the scope must never reach it: `merge dict` has to keep answering with
+            # `fastcore.basics.merge` whether or not the search is confined to this checkout.
+            # Scope is about which of *your* checkouts to look in, not about excluding the
+            # environment -- that is what the mode buttons are for.
+            if h.package or h.kind.startswith('env-'): return True
+            return self._within(h.path, roots)
+
+        out = L(h for h in hits if keep(h))
+        dropped = len(hits) - len(out)
+        if dropped: self.note = f'{self.note} · {dropped} filtered out'.lstrip(' ·')
+        return out
+
     # -- literal search ------------------------------------------------------
-    def _scan(self, q, limit, regex=False):
+    def _scan(self, q, limit, regex=False, exts=(), roots=None):
         "Python fallback when ripgrep is unavailable."
         try: pat = re.compile(q if regex else re.escape(q), re.I)
         except re.error as e:
             self.note = f'bad pattern: {e}'
             return L()
+        want = self.clean_exts(exts) or _CODE_SUFFIXES
+        scope = [Path(r).resolve() for r in (roots or [])]
         out = L()
-        for p in self.fs.walk().filter(lambda p: p.suffix.lower() in _CODE_SUFFIXES):
+        for p in self.fs.walk().filter(lambda p: p.suffix.lower() in want and self._within(p, scope)):
             try:
                 if p.stat().st_size > MAX_SCAN_BYTES: continue
                 text = p.read_text(encoding='utf-8', errors='ignore')
@@ -307,16 +375,23 @@ class Search:
                     if len(out) >= limit: return out
         return out
 
-    def _rg(self, q, limit, regex=False):
-        "Fast, current-disk search. JSON output keeps colons and non-UTF8 paths unambiguous."
+    def _rg(self, q, limit, regex=False, exts=(), roots=None):
+        """Fast, current-disk search. JSON output keeps colons and non-UTF8 paths unambiguous.
+
+        `roots` narrows *which* folders are walked at all, rather than filtering the results
+        afterwards -- with one checkout of any size that is the difference between a search that
+        answers and one that times out. Extensions become `--glob` for the same reason.
+        """
         exe = shutil.which('rg')
         if not exe:
             self.backend, self.note = 'scan', 'ripgrep is not installed; Python fallback'
-            return self._scan(q, limit, regex)
+            return self._scan(q, limit, regex, exts, roots)
+        globs = [f'*{e}' for e in sorted(self.clean_exts(exts))]
         out = L()
-        for root in self.fs.roots:
+        for root in (roots if roots is not None else self.fs.roots):
             cmd = [exe, '--json', '--ignore-case', '--max-filesize', str(MAX_SCAN_BYTES),
                    '--glob', '!{.git,.hg,.svn,.venv,venv,node_modules,__pycache__,dist,build}/**']
+            for g in globs: cmd += ['--glob', g]
             if not regex: cmd.append('--fixed-strings')
             cmd += ['--', q, str(root)]
             try:
@@ -340,6 +415,7 @@ class Search:
                     self.backend, self.note = 'rg', f'first {limit} matches on disk'
                     return out
         self.backend, self.note = 'rg', 'ripgrep · current files on disk'
+        if globs: self.note += ' · ' + ' '.join(globs)
         return out
 
     def _indexed_hits(self, rows, kind, score_key=''):
@@ -493,7 +569,7 @@ class Search:
             return L()
         rows = self._rows(st, keys)
         self.backend, self.note = 'ann', f'{len(keys)} neighbours by embedding distance'
-        return L(self._hit(rows[k], 'ann', dists.get(k, 0.0)) for k in keys if k in rows)
+        return self._place(L(self._hit(rows[k], 'ann', dists.get(k, 0.0)) for k in keys if k in rows))
 
     def clusters(self, min_count=None, max_count=None):
         """Cluster the whole indexed corpus with usearch, returning `Cluster`s.
@@ -553,7 +629,7 @@ class Search:
         rows = self._rows(st, members)
         self.backend = 'cluster'
         self.note = f'cluster {centroid} · {len(members) + 1} members'
-        return L(self._hit(rows[m], 'cluster') for m in members if m in rows)
+        return self._place(L(self._hit(rows[m], 'cluster') for m in members if m in rows))
 
     # -- code intelligence ---------------------------------------------------
     def definitions(self, name, path=None, limit=30):
@@ -579,13 +655,13 @@ class Search:
         here = str(Path(path).resolve()) if path else ''
         out = out.sorted(key=lambda h: (str(Path(h.path).resolve()) != here, h.line))
         self.backend, self.note = ('kosha', 'exact symbol metadata + code graph') if out else ('scan', 'no definition found')
-        return out[:limit]
+        return self._place(out[:limit])
 
     def usages(self, name, limit=200):
         """Exact on-disk token occurrences; unlike the index this includes unsaved-to-index files."""
         name = (name or '').strip()
         if not re.match(r'^[_A-Za-z]\w*$', name): return L()
-        return self._rg(rf'\b{re.escape(name)}\b', limit, regex=True)
+        return self._place(self._rg(rf'\b{re.escape(name)}\b', limit, regex=True))
 
     @athreaded
     def async_sync(self, notebooks=True, graph=True):
@@ -652,10 +728,10 @@ class Search:
         q = (q or '').strip()
         if not q: return L()
         hits = self._kosha_hits(q, limit)
-        if hits: return hits
+        if hits: return self._place(hits)
         fallback = self._rg(q, limit)
         self.note = f'Kosha returned no existing paths; {self.note}'
-        return fallback
+        return self._place(fallback)
 
     def _all(self, q, limit, regex=False):
         "Search every available leg and rank one deduplicated result set."
@@ -705,46 +781,104 @@ class Search:
         if notes and not used: self.note += ' · ' + '; '.join(notes[:2])
         return out[:limit]
 
-    def search(self, q, limit=60, regex=False, force_scan=False, mode='rg'):
+    def search(self, q, limit=60, regex=False, force_scan=False, mode='rg', exts=(), roots=None):
         """Search explicitly: ripgrep by default, optional Kosha FTS or ANN.
 
         Search mode is never inferred from query length. That old policy made the same box
         silently switch corpora and ranking algorithms while a person typed. `rg` is simple,
         sees current files, and always wins unless the caller deliberately asks for an index.
+
+        `exts` and `roots` narrow *what is searched* without changing which backend answers, so
+        "only .py" and "only this checkout" mean the same thing in every mode. `roots` is the
+        caller's to decide and is never taken from the browser directly: the sandbox is still the
+        boundary, and this is a scope inside it. `env` is exempt from the scope, because installed
+        packages live outside every root by definition and narrowing them to one would return
+        nothing at all.
         """
         q = (q or '').strip()
         if not q: return L()
         if force_scan: mode = 'rg'
-        if mode == 'context':
-            hits = self._context(q, limit)
-            return hits if hits is not None else L()
-        if mode == 'repo':
-            hits = self._repo_context(q, limit)
-            return hits if hits is not None else L()
-        if mode == 'env':
-            hits = self._env_context(q, limit)
-            return hits if hits is not None else L()
-        if mode == 'all': return self._all(q, limit, regex)
-        if mode == 'fts':
-            hits = self._fts(q, limit)
-            return hits if hits is not None else L()
-        if mode == 'ann':
-            hits = self._ann(q, limit)
-            return hits if hits is not None else L()
-        if mode == 'symbols':
-            hits = self._symbols(q, limit)
-            return hits if hits is not None else L()
-        return self._rg(q, limit, regex)
+        # rg is asked to narrow; the index backends are told about it afterwards.
+        if mode == 'rg': return self._place(self._rg(q, limit, regex, exts, roots))
+        if mode == 'all': return self._place(self._keep(self._all(q, limit, regex), exts, roots))
+        legs = {'context': self._context, 'repo': self._repo_context, 'env': self._env_context,
+                'fts': self._fts, 'ann': self._ann, 'symbols': self._symbols}
+        if mode in legs:
+            hits = legs[mode](q, limit)
+            if hits is None: return L()
+            # Every mode passes the scope: `_keep` exempts package hits per *hit*, which is more
+            # precise than exempting a whole mode -- `context` returns both kinds at once.
+            return self._place(self._keep(hits, exts, roots))
+        return self._place(self._rg(q, limit, regex, exts, roots))
 
     def symbols(self, path):
         """Defs and classes in one file, for an outline. Methods are included, not just
         top-level names -- an outline that stops at the class line is not an outline.
         `score` carries the indent depth so the UI can nest them."""
+        if _is_nb(path): return self._nb_symbols(path)
         try: text = self.fs.read(path)
         except Exception: return L()
         out = L()
         for i, line in enumerate(text.split('\n'), 1):
-            if (m := re.match(r'^(\s*)(?:async\s+)?(def|class)\s+(\w+)', line)):
+            if (m := _DEF_RE.match(line)):
                 out.append(Hit(path=str(path), line=i, text=line.strip()[:200],
                                kind='symbol', symbol=m.group(3), score=float(len(m.group(1)))))
         return out
+
+    def _nb_symbols(self, path):
+        """Defs and classes in a notebook's code cells, addressed by cell as well as by file line.
+
+        A notebook read as text has no symbols at all: the line is `    "def f(x):\\n",` and the
+        JSON quote defeats any anchored pattern, which is why every notebook used to look empty
+        to ctrl+B, to Find Usages and to the structure panel. So the cells are read as cells and
+        each one's source scanned as the code it is.
+
+        Both coordinate systems are reported. The file line keeps callers that think in file
+        lines working -- `/similar` anchors a Kosha chunk that way, and a diff is still of the
+        file -- while the cell and the line inside it are what an editor can actually open.
+        A cell whose file lines cannot be found is still returned when it has an id, because the
+        cell coordinates are exact and only the file line is unknown; a cell with neither is
+        dropped, since nothing could be done with it.
+        """
+        try: text = self.fs.read(path)
+        except Exception: return L()
+        cells = read_cells(text)
+        if cells is None: return L()
+        spans, out = source_spans(text, cells), L()
+        for i, (cell, span) in enumerate(zip(cells, spans)):
+            if str(cell.get('cell_type') or 'code') != 'code': continue
+            cid = str(cell.get('id') or '')
+            if not span and not cid: continue
+            for n, line in enumerate(cell_lines(cell), 1):
+                if (m := _DEF_RE.match(str(line))):
+                    out.append(Hit(path=str(path), line=(span[0] + n - 1) if span else 0,
+                                   text=str(line).strip()[:200], kind='symbol', symbol=m.group(3),
+                                   score=float(len(m.group(1))), cell=cid, cell_index=i, cell_line=n))
+        return out
+
+    def _place(self, hits):
+        """Give every notebook hit the cell and in-cell line that make it openable.
+
+        Any backend can return a hit in a `.ipynb` and none of them knows what a notebook is:
+        ripgrep matched a line of JSON, and Kosha chunks a notebook by cell but records no line
+        at all, so all of its notebook rows arrive as line 1. Both are corrected here, in one
+        place, rather than in each of the five legs -- a hit only becomes openable at the point
+        it is about to be handed to the browser.
+
+        A line inside a cell's source is mapped by position; a hit with no usable line is placed
+        by its text, and only when exactly one cell contains it. Anything else is left as it came
+        in: the reader is shown an unplaced notebook hit rather than a confidently wrong one.
+        """
+        cache = {}
+        for h in hits:
+            if not _is_nb(h.path) or h.cell_index >= 0: continue
+            if h.path not in cache:
+                try: cache[h.path] = self.fs.read(h.path)
+                except Exception: cache[h.path] = ''
+            text = cache[h.path]
+            at = cell_at(text, h.line) if int(h.line or 0) > 1 else None
+            if at is None: at = cell_of(text, h.text)
+            if at is None: continue
+            h.cell, h.cell_index, h.cell_line = at['id'], at['index'], at['line']
+            if int(h.line or 0) <= 1 and at['file_line']: h.line = at['file_line']
+        return hits
