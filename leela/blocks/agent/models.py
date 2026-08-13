@@ -4,16 +4,19 @@ from fastcore.all import Path
 from ... import leela_cfg
 
 __all__=['model_path','load_models','save_model','delete_model','runtimes']
-# Asked of ramabana rather than duplicated. `register_model` rejects an unknown runtime and
-# refuses an uninstalled one, and this list drifted out of step with it once already -- leela
-# was still offering MLX and llama.cpp after they were dropped, so the picker had two choices
-# that could only fail at save time.
-_RUNTIMES=('litert','mlx','llama','remote')
+
+# Read from ramabana rather than restated. The comment here used to claim it was asked for and
+# then list it anyway, which is how it drifted twice: once still offering MLX and llama.cpp after
+# they were dropped, and once missing `cursor` after it was added. The fallback is the shape
+# ramabana had before it exported the name, so an older core still gives a working picker.
+def _runtimes():
+    from ...agent.core import RUNTIMES
+    return tuple(RUNTIMES)
 
 def runtimes():
-    "Every runtime, and whether rishi's optional dependency for it is importable."
+    "Every runtime, and whether rishi can reach it on this machine."
     from ...agent.core import runtime_available
-    return [{'value': r, 'available': bool(runtime_available(r))} for r in _RUNTIMES]
+    return [{'value': r, 'available': bool(runtime_available(r))} for r in _runtimes()]
 
 def model_path(path=None): return Path(path or leela_cfg/'models.json')
 
@@ -40,7 +43,7 @@ def save_model(row,path=None):
     name=str(row.get('name') or '').strip(); model_id=str(row.get('model_id') or '').strip()
     runtime=str(row.get('runtime') or '').strip()
     if not re.match(r'^[A-Za-z0-9][\w.-]{0,63}$',name):raise ValueError('name must use letters, numbers, _, . or -')
-    if runtime not in _RUNTIMES:raise ValueError(f'runtime must be one of {", ".join(_RUNTIMES)}')
+    if runtime not in (rts:=_runtimes()):raise ValueError(f'runtime must be one of {", ".join(rts)}')
     if name in MODELS and name not in CUSTOM:raise ValueError(f'{name!r} is a built-in model name')
     ctx=int(row.get('ctx') or 128_000)
     if not 1024<=ctx<=10_000_000:raise ValueError('context must be between 1,024 and 10,000,000 tokens')
