@@ -10,13 +10,14 @@ threads and a SQLite file, so it lives beside the kernel pool rather than being 
 
 from __future__ import annotations
 
-from fasthtml.common import A, Div, Form, Progress, Span, Button, Details, Summary, Pre
+from fasthtml.common import (A, Button, Details, Div, Form, Hidden, Input, Nav, Option, Pre,
+                             Progress, Section, Select, Span, Summary)
 
 from ...core.web import fail, off_loop
 
-__all__ = ['CAPS', 'connect', 'job_card']
+__all__ = ['CAPS', 'connect', 'job_card', 'vault_panel']
 
-CAPS = ('fs', 'memory', 'search', 'jobs')
+CAPS = ('fs', 'memory', 'search', 'jobs', 'tab')
 
 POLL_MS = 1200
 
@@ -56,6 +57,75 @@ def _summarise(result, mx=40):
         else: out.append(f'{k}: {v}')
         if len(out) >= mx: break
     return '\n'.join(out)
+
+
+def _clip_form(target, kind, label, hint):
+    "One clip action. HTMX posts it and swaps the returned card in, so no script drives this."
+    return Form(Input(name='target', cls='lee-input', value=target or '', placeholder=hint,
+                      autocomplete='off'),
+                Hidden(name='kind', value=kind),
+                Button(label, cls='lee-btn go', type='submit'),
+                cls='lee-clip-form', hx_post='/clip', hx_target='#vaultjobs',
+                hx_swap='afterbegin')
+
+
+def _shelf_rows(shelves, mine):
+    if not shelves: return [Div('No shelf yet. Clip something and it appears here.', cls='lee-vault-empty')]
+    return [Div(Span(s.get('store', ''), cls='lee-shelf-name' + (' mine' if s.get('store') == mine else '')),
+                Span(f"{s.get('docs', 0)} docs", cls='lee-shelf-count'), cls='lee-shelf-row')
+            for s in shelves]
+
+
+def _watch_rows(watches):
+    if not watches: return [Div('Nothing on a cadence.', cls='lee-vault-empty')]
+    out = []
+    for w in watches:
+        every = w.get('every') or 0
+        out.append(Div(Span(w.get('action', ''), cls='lee-watch-action'),
+                       Span(str(w.get('target', ''))[:60], cls='lee-watch-target',
+                            title=str(w.get('target', ''))),
+                       Span(f'every {round(every / 3600, 1)}h' if every else '', cls='lee-watch-every'),
+                       Form(Hidden(name='watch_id', value=w.get('id', '')),
+                            Button('stop', cls='lee-btn warn', type='submit'),
+                            hx_post='/vault/unwatch', hx_target='#vaultwatches',
+                            hx_swap='outerHTML'),
+                       cls='lee-watch-row'))
+    return out
+
+
+def vault_panel(memory, jobs, active_path='', root=''):
+    """The clip surface: what is in the vault, what is being clipped, and what repeats.
+
+    Server-rendered so the browser needs no state of its own -- every action is a form, and the
+    job cards that come back carry their own polling.
+    """
+    shelves, mine = memory.shelves(), (memory.shelf_name or 'main')
+    return Section(
+        Div(Span('vault', cls='lee-ptitle'), Span(memory.note or '', cls='lee-keyscope'),
+            cls='lee-phead'),
+        Div(*_shelf_rows(shelves, mine), id='vaultshelves', cls='lee-vault-shelves'),
+        Div(Span('clip', cls='lee-vault-legend'),
+            _clip_form(active_path, 'clip', 'document', 'a file or folder of documents'),
+            _clip_form(root, 'clip_codebase', 'codebase', 'a repository root'),
+            _clip_form('', 'clip_api_spec', 'api spec', 'an OpenAPI url or path (JSON or YAML)'),
+            cls='lee-vault-clip'),
+        Div(Span('jobs', cls='lee-vault-legend'),
+            *[job_card(j) for j in jobs.all(limit=8)], id='vaultjobs', cls='lee-vault-jobs'),
+        Div(Span('cadence', cls='lee-vault-legend'),
+            Form(Input(name='target', cls='lee-input', placeholder='a url to re-read, or a reminder',
+                       autocomplete='off'),
+                 Select(*[Option(a, value=a) for a in ('url', 'remind', 'web', 'crawl')],
+                        name='action', cls='lee-input'),
+                 Input(name='every', cls='lee-input lee-every', value='1d', size='4'),
+                 Button('watch', cls='lee-btn go', type='submit'),
+                 cls='lee-clip-form', hx_post='/vault/watch', hx_target='#vaultwatches',
+                 hx_swap='outerHTML'),
+            Div(*_watch_rows(memory.watches()), id='vaultwatches', cls='lee-vault-watches'),
+            cls='lee-vault-cadence'),
+        Form(Button('tidy', cls='lee-btn', type='submit', title='what the vault thinks dilutes search'),
+             hx_post='/vault/tidy', hx_target='#vaultjobs', hx_swap='afterbegin',
+             cls='lee-vault-tidy'),
+        cls='lee-panel lee-vault', id='vaultpanel')
 
 
 def connect(app, ctx):
@@ -101,6 +171,15 @@ def connect(app, ctx):
             return job_card(job)
         except Exception as e: return fail(e)
 
+    @rt('/vault/panel')
+    def panel():
+        "The whole clip surface as one fragment. The tab's own path pre-fills the document form."
+        try:
+            t, roots = ctx.tab, ctx.fs.roots
+            return vault_panel(ctx.memory, jobs(), active_path=getattr(t, 'path', '') or '',
+                               root=str(roots[0]) if roots else '')
+        except Exception as e: return fail(e)
+
     @rt('/vault/shelves')
     def shelves():
         try: return {'shelves': ctx.memory.shelves(), 'note': ctx.memory.note}
@@ -132,17 +211,27 @@ def connect(app, ctx):
                      'actions': ('url', 'web', 'crawl', 'arxiv', 'youtube', 'remind')}
         except Exception as e: return fail(e)
 
+    def _watch_list(shelf=''):
+        "The cadence list, as the fragment both mutations swap themselves out for."
+        return Div(*_watch_rows(ctx.memory.watches(shelf=shelf or None)), id='vaultwatches',
+                   cls='lee-vault-watches')
+
     @rt('/vault/watch')
     async def watch(target: str, action: str = 'url', every: str = '1d', note: str = '',
                     shelf: str = ''):
         "Keep something fresh, or come back to it. The cadence is a vault watch row."
-        try: return await off_loop(lambda: ctx.memory.watch(target, action=action, every=every,
-                                                            note=note or None, shelf=shelf or None))
+        try:
+            if not (target or '').strip(): raise ValueError('nothing to watch')
+            await off_loop(lambda: ctx.memory.watch(target, action=action, every=every,
+                                                    note=note or None, shelf=shelf or None))
+            return _watch_list(shelf)
         except Exception as e: return fail(e)
 
     @rt('/vault/unwatch')
     async def unwatch(watch_id: str, shelf: str = ''):
-        try: return {'removed': await off_loop(ctx.memory.unwatch, watch_id, shelf or None)}
+        try:
+            await off_loop(ctx.memory.unwatch, watch_id, shelf or None)
+            return _watch_list(shelf)
         except Exception as e: return fail(e)
 
     @rt('/vault/poll')

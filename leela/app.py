@@ -626,6 +626,10 @@ def _memory_panel():
         Nav(Button('notes', cls='active', data_memory_view='notes', onclick='leeMemoryNotes()'),
             Button('sources', data_memory_view='sources', onclick='leeMemoryHome()'),
             Button('topics', data_memory_view='topics', onclick='leeMemoryTopics()'),
+            # The vault view is entirely server-rendered: one GET, and every action inside it is a
+            # form. Nothing here has client state to keep in step.
+            Button('vault', data_memory_view='vault', hx_get='/vault/panel',
+                   hx_target='#memorybody', hx_swap='innerHTML'),
             Span(cls='lee-spacer'), Button('manage', cls='warn', title='remove remembered items', onclick='leeMemoryPurge()'),
             cls='lee-memory-nav', aria_label='memory views'),
         Form(Input(id='memoryquery', cls='lee-input', placeholder='search remembered research…',

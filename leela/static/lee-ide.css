@@ -2631,3 +2631,39 @@ kbd {
 :root[data-theme="cursor"] .lee-agent .lee-btn.go {
   min-height: 26px; border-radius: 3px; padding: 0 10px; font-weight: 550;
 }
+
+/* ---- the vault: shelves, clip, jobs and cadence ---- */
+.lee-vault { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; }
+.lee-vault-legend { display: block; padding: 2px 0; color: var(--lee-fg4); font: 600 9px/1 var(--lee-mono);
+                    text-transform: uppercase; letter-spacing: .06em; }
+.lee-vault-empty { padding: 6px 2px; color: var(--lee-fg4); font: 10px/1.4 var(--lee-mono); }
+.lee-shelf-row, .lee-watch-row { display: flex; align-items: center; gap: 8px; padding: 4px 2px;
+                                 border-bottom: 1px solid var(--lee-border); }
+.lee-shelf-name { flex: 1; color: var(--lee-fg2); font: 10px/1.3 var(--lee-mono); }
+.lee-shelf-name.mine { color: var(--lee-accent); font-weight: 600; }
+.lee-shelf-count, .lee-watch-every { color: var(--lee-fg4); font: 9px/1 var(--lee-mono); }
+.lee-watch-action { color: var(--lee-accent); font: 600 9px/1 var(--lee-mono); }
+.lee-watch-target { flex: 1; overflow: hidden; color: var(--lee-fg3); font: 10px/1.3 var(--lee-mono);
+                    text-overflow: ellipsis; white-space: nowrap; }
+.lee-clip-form { display: flex; gap: 4px; align-items: center; margin: 3px 0; }
+.lee-clip-form .lee-input { flex: 1; min-width: 0; }
+.lee-clip-form .lee-every { flex: 0 0 44px; }
+
+/* A job card. The bar and the note only exist while it runs; the finished card drops both, which
+   is also how it stops asking for itself. */
+.lee-job { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 2px;
+           border-bottom: 1px solid var(--lee-border); font: 10px/1.4 var(--lee-mono); }
+.lee-job-kind { color: var(--lee-fg2); font-weight: 600; }
+.lee-job-status { padding: 1px 5px; border-radius: 3px; background: var(--lee-bg2);
+                  color: var(--lee-fg4); font: 9px/1.4 var(--lee-mono); }
+.lee-job-status.running, .lee-job-status.queued { color: var(--lee-orange); }
+.lee-job-status.complete { color: var(--lee-green); }
+.lee-job-status.error { color: var(--lee-red); }
+.lee-job-target { flex: 1; overflow: hidden; color: var(--lee-fg4); text-overflow: ellipsis;
+                  white-space: nowrap; }
+.lee-job-bar { flex: 0 0 100%; height: 3px; accent-color: var(--lee-accent); }
+.lee-job-current { color: var(--lee-fg3); }
+.lee-job-note { flex: 0 0 100%; color: var(--lee-fg4); font-size: 9px; }
+.lee-job-error { flex: 0 0 100%; color: var(--lee-red); white-space: pre-wrap; }
+.lee-job-result { max-height: 200px; margin: 4px 0 0; overflow: auto; color: var(--lee-fg3);
+                  font: 9px/1.4 var(--lee-mono); white-space: pre-wrap; }

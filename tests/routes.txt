@@ -214,6 +214,7 @@ GET,POST /vars/grid
 GET,POST /vars/promote
 GET,POST /vars/set
 GET,POST /vault/noisy
+GET,POST /vault/panel
 GET,POST /vault/pii
 GET,POST /vault/poll
 GET,POST /vault/shelves

@@ -151,6 +151,32 @@ def test_the_progress_fragment_stops_asking_when_the_job_is_done(ws, proj):
         assert 'complete' in done
 
 
+def test_the_vault_panel_clips_and_watches_without_any_script(ws, proj):
+    """Every action on the clip surface is a form, so the browser keeps no state of its own.
+
+    Driven through HTTP rather than by asserting on asset text: what matters is that posting the
+    form clips the thing and that the mutations return the fragment they replace.
+    """
+    with TestClient(ide_app(ws)) as c:
+        panel = c.get('/vault/panel')
+        assert panel.status_code == 200
+        for anchor in ('vaultshelves', 'vaultjobs', 'vaultwatches', 'hx-post="/clip"'):
+            assert anchor in panel.text, anchor
+        assert 'value="clip_api_spec"' in panel.text and 'value="clip_codebase"' in panel.text
+
+        r = c.post('/clip', data={'target': str(proj/'notes.md'), 'kind': 'clip'})
+        assert r.status_code == 200 and 'lee-job' in r.text
+        assert _finish(ws.jobs, ws.jobs.all()[0].id).status == 'complete'
+
+        # A watch and its removal both hand back the list, so nothing has to know how to redraw it.
+        r = c.post('/vault/watch', data={'target': 'read the notes', 'action': 'remind', 'every': '1d'})
+        assert r.status_code == 200 and 'vaultwatches' in r.text
+        r = c.post('/vault/unwatch', data={'watch_id': ws.memory.watches()[0]['id']})
+        assert 'Nothing on a cadence' in r.text
+
+        assert c.post('/vault/watch', data={'target': ' ', 'action': 'remind'}).status_code == 400
+
+
 def test_a_script_runs_on_a_cadence_without_a_shell(ws):
     """The general case behind the clip kinds: run a command, keep the output, no shell.
 
