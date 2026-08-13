@@ -19,6 +19,7 @@
 # config went. Reading `XDG_CONFIG_HOME` back instead would be worse: a developer with it
 # legitimately set would silently get their real directory, which is the bug being fixed.
 import os as _os
+import pathlib as _pathlib
 import tempfile as _tempfile
 
 TEST_CONFIG_HOME = _os.environ.get('LEELA_TEST_CONFIG_HOME')
@@ -43,8 +44,15 @@ def fixture_dir(request):
 
 @pytest.fixture(autouse=True)
 def _isolate_vault(monkeypatch, tmp_path_factory):
-    "Keep vault I/O out of ~/.vishalakshi and skip real encoders in the suite."
-    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path_factory.mktemp('vault')/'vault.db'))
+    """Keep vault I/O out of ~/.vishalakshi and skip real encoders in the suite.
+
+    Under `TEST_CONFIG_HOME`, not a bare tmp dir: `test_config_isolation` asserts that everything
+    derived from the config dir stays inside it, and the vault is now one of those things. A
+    per-test subdirectory, so one test's shelves are never another's.
+    """
+    vault = _pathlib.Path(TEST_CONFIG_HOME)/'vaults'/tmp_path_factory.mktemp('v').name
+    vault.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(vault/'vault.db'))
     monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
 
 

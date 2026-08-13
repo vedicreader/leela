@@ -6,12 +6,12 @@ this module is the adapter that keeps leela's `note` status string and workspace
 """
 
 from __future__ import annotations
-import hashlib, os, time, uuid
+import hashlib, os, re, time, uuid
 from fastcore.all import Path
 
 from ... import leela_cfg, errstr
 
-__all__ = ['Memory', 'memory_path', 'memory_shelf', 'GLOBAL']
+__all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'GLOBAL']
 
 GLOBAL = 'leela'
 
@@ -23,10 +23,20 @@ def memory_path(path=None):
     return Path(env) if env else Path.home()/'.vishalakshi'/'vault.db'
 
 
+def safe_shelf(name=None):
+    """A shelf name as a SQL identifier, sanitised once here rather than at every use.
+
+    A shelf is a table-name prefix, so the name reaches raw SQL -- and litesearch's entity
+    resolution has one unquoted statement, which a hyphen breaks. Folder names carry hyphens
+    and dots routinely, so `my-repo` and `my_repo` are the same shelf.
+    """
+    return re.sub(r'[^a-z0-9_]+', '_', str(name or 'main').lower()).strip('_') or 'main'
+
+
 def memory_shelf(root=None):
     "Per-workspace shelf name; falls back to `main` with no project open."
     if root is None: return 'main'
-    name = Path(root).resolve().name.strip() or 'main'
+    name = safe_shelf(Path(root).resolve().name)
     return 'main' if name == GLOBAL else name
 
 
@@ -60,7 +70,7 @@ class Memory:
         "Open one shelf directly — never via the root vault, which would load another encoder."
         if name not in self._stores:
             from vishalakshi import Vault
-            store = 'store' if name in (None, '', 'main') else name
+            store = 'store' if name in (None, '', 'main') else safe_shelf(name)
             enc = None if self.offline else (_registered_encoder(self.path, store) or self.encoder)
             self._stores[name] = Vault(self.path, store=store, encoder=enc, offline=self.offline)
             self.note = f'vault at {self.path} · {self.shelf_name}'
@@ -276,3 +286,79 @@ class Memory:
                     'nodes': st.get('nodes', 0), 'chunks': st.get('chunks', 0), 'note': self.note}
         except Exception:
             return {'path': str(self.path), 'documents': 0, 'nodes': 0, 'chunks': 0, 'note': self.note}
+
+    # -- the vault surface behind clip. Not in `MemoryPort`: these reach the vault block's own
+    # routes, not the shared memory ones, so the port stays what the browser needs.
+
+    def shelves(self):
+        "Every shelf in the vault with its document count, this workspace's first."
+        try:
+            rows = [dict(s) for s in self._open().shelves()]
+        except Exception as e:
+            self.note = f'vault shelves unavailable ({errstr(e)})'; return []
+        mine = safe_shelf(self.shelf_name)
+        return sorted(rows, key=lambda r: (str(r.get('store')) != mine, str(r.get('store'))))
+
+    def ref(self, doc_id, shelf=None):
+        "`store|doc_id` — a doc id is content-addressed per shelf, so it is not unique alone."
+        return f'{safe_shelf(shelf or self.shelf_name)}|{doc_id}'
+
+    def clip(self, paths, shelf=None, meta=None, force=False):
+        "Ingest files into a shelf as prose. Returns one row per file, skips included."
+        paths = [str(p) for p in ([paths] if isinstance(paths, (str, Path)) else paths)]
+        if not paths: return []
+        v = self._store(shelf or self.shelf_name)
+        try: out = v.add_files(paths, meta=dict(meta or {}), force=force)
+        except Exception as e:
+            self.note = f'clip failed ({errstr(e)})'; return []
+        self.note = f'clipped {len(paths)} file(s) into {v.name}'
+        return [dict(r) for r in (out or [])]
+
+    def note_pointer(self, title, text, shelf=None, meta=None):
+        "One document standing for something not stored as prose — a code index, an API spec."
+        v = self._store(shelf or self.shelf_name)
+        return dict(v.note(text, title=title) if meta is None else
+                    v.add(text, title, source=f'pointer:{uuid.uuid4().hex[:12]}', meta=dict(meta)))
+
+    def set_meta(self, doc_id, shelf=None, **kv):
+        return self._store(shelf or self.shelf_name).set_meta(doc_id, **kv)
+
+    def pii(self, doc_id, shelf=None, ner=True):
+        """The PII report for one document, or why there is none.
+
+        Covers pattern kinds plus *titled* names -- `Dr Charles Babbage`, not `Ada Lovelace` --
+        and never masks a bare name or an unstructured address. Any surface showing this says so.
+        """
+        try: return dict(self._store(shelf or self.shelf_name).pii(doc_id, ner=ner))
+        except Exception as e: return {'note': f'pii unavailable ({errstr(e)})', 'has_pii': False}
+
+    def noisy_candidates(self, shelf=None, k=20, min_score=1.0):
+        "Documents the vault thinks are diluting retrieval, ranked, with the features that say so."
+        try: return [dict(r) for r in self._store(shelf or self.shelf_name)
+                     .suggest_noisy(k=k, min_score=min_score)]
+        except Exception as e:
+            self.note = f'noise ranking unavailable ({errstr(e)})'; return []
+
+    def mark_noisy(self, doc_id, shelf=None, noisy=True, reason=''):
+        "Judgements live in `doc_marks`, keyed (doc_id, store), so re-ingesting cannot erase them."
+        return dict(self._store(shelf or self.shelf_name).mark_noisy(doc_id, noisy=noisy, reason=reason))
+
+    def watch(self, target, action='url', every='1d', note=None, shelf=None, **params):
+        # A mutable page is content-addressed on `source|title`, so without `force` it reports
+        # "already ingested" for ever and the watch never refreshes anything.
+        if action in ('url', 'arxiv', 'youtube'): params.setdefault('force', True)
+        return dict(self._store(shelf or self.shelf_name)
+                    .watch(target, action=action, every=every, note=note, **params))
+
+    def watches(self, shelf=None, due_only=False):
+        try: return [dict(w) for w in self._store(shelf or self.shelf_name).watches(due_only=due_only)]
+        except Exception as e:
+            self.note = f'watches unavailable ({errstr(e)})'; return []
+
+    def unwatch(self, watch_id, shelf=None):
+        return self._store(shelf or self.shelf_name).unwatch(watch_id)
+
+    def poll(self, shelf=None):
+        "Run every watch that has come due. The tick a scheduler calls."
+        try: return dict(self._store(shelf or self.shelf_name).poll())
+        except Exception as e: return {'note': f'poll failed ({errstr(e)})', 'ran': 0, 'checked': 0}
