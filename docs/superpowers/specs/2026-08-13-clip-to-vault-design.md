@@ -1,5 +1,13 @@
 # Clip to vault: a research workspace on the vishalakshi vault
 
+> **Status.** Prerequisite 1 (merge) is done at `5e0774a`. The vault surface and clip pipelines are
+> done at `8cc89a6` and `c119e20`: `leela/blocks/jobs/` with the job row, restart recovery, the
+> cadence tick and all three clip kinds; `Memory` carrying the vault surface; 13 flow tests in
+> `tests/test_vault.py` and `tests/test_jobs.py`; 12 new routes pinned in `tests/routes.txt`.
+> **Not done: the browser surface** — the clip affordance on a tab and in the tree, the tidy
+> review list, the shelf rail, the PII badge. Every route it needs exists and is tested.
+> Deviations from this design are marked inline below.
+
 Click a document, a codebase or an API spec into the workspace's vault shelf. Jobs carry the work,
 watches keep it fresh, and `suggest_noisy` keeps it worth searching.
 
@@ -108,7 +116,16 @@ as a setting.
 Shelf routing itself is fixed upstream in `VaultHost` (prerequisite 2), so the subclass carries
 leela's policy — which shelf a workspace uses — rather than the mechanism.
 
-### `LeelaVault` satisfies `MemoryPort`
+> **Built differently, and less.** The merge had already made `Memory` a vault-backed `MemoryPort`
+> with a per-shelf `_store` and a `vault` property, so the adapter below was already written and
+> `LeelaVault` was never needed. The extra vault surface — `shelves`, `clip`, `note_pointer`,
+> `set_meta`, `pii`, `noisy_candidates`, `mark_noisy`, `watch`/`watches`/`unwatch`/`poll` — went
+> onto `Memory`, which owns the connection and the shelf cache. `MemoryPort` is untouched at 17
+> methods, which is the outcome this section was arguing for. Subclassing ramabana's `VaultHost`
+> also proved unnecessary: `Memory` reaches the `Vault` directly, so nothing here waits on a
+> ramabana release. The table below is kept because it records what `Memory` must keep satisfying.
+
+### The adapter, which the merge already provided
 
 `LeelaVault` registers as `@provider('memory', 'vishalakshi')`, so `LEELA_MEMORY=vishalakshi`
 selects it and the two prose stores become comparable on equal terms. This is what the socket was
@@ -232,7 +249,13 @@ endpoints individually retrievable and keeps `api_call` reachable from the same 
 `MAX_OPS = 400` — beyond that a spec is a catalogue, not a working surface.
 
 `load_spec` is JSON only: a URL, a path, or an already-parsed dict. There is no YAML path, so a
-`.yaml` OpenAPI document fails at `json.loads`. The clip surface must say so, or convert.
+`.yaml` OpenAPI document fails at `json.loads`.
+
+> **Built:** it converts. `clip._load_spec` tries ramabana first and falls back to `yaml.safe_load`,
+> and `_spec_ops` falls back to reading `paths` directly when `fastspec` cannot be reached — so the
+> spec leg works today rather than waiting on ramabana. `pyyaml`, not gheasy: gheasy's YAML is a
+> *writer* for round-tripping workflow files, and depending on it would pull `ghapi`, `cyclopts`
+> and `tomlkit` in for one `safe_load`.
 
 ## Tidying and PII
 
