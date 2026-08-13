@@ -1100,10 +1100,18 @@ kbd {
 /* A PDF, rendered by the browser's own viewer. */
 .lee-doc-head { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid var(--lee-border); border-bottom: 0; border-radius: 5px 5px 0 0; background: var(--lee-bg2); color: var(--lee-fg4); font: 9px/1 var(--lee-mono); }
 .lee-doc-head .lee-btn { font: 9px/1 var(--lee-mono); padding: 4px 8px; text-decoration: none; }
-/* A column that fills the editor pane, so the viewer is as tall as the tab. Without this the
-   body sized itself to the iframe's minimum and left the rest of the pane blank -- a grid with no
-   height resolves to its content, and an iframe has no intrinsic height to give it. */
-.lee-doc { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+/* A column that fills the editor pane, so the viewer is as tall as the tab. Without this the body
+   sized itself to the iframe's minimum and left the rest of the pane blank -- a grid with no
+   height resolves to its content, and an iframe has no intrinsic height to give it.
+
+   The pane is made a flex column *from here*, rather than the document being given `height:100%`.
+   A percentage needs a definite height to resolve against, and `.lee-editor` is a stretched grid
+   item with `overflow:auto` -- stretched is not the same as definite, so the percentage collapsed
+   back to content and left the tab's own background showing beneath the viewer. `flex:1` needs no
+   such resolution. Scoped by `:has` so it applies only to the tabs that hold a document, leaving
+   the scrolling behaviour of every editor tab alone. */
+.lee-editor:has(> .lee-doc) { display: flex; flex-direction: column; overflow: hidden; }
+.lee-doc { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .lee-doc-body { display: grid; flex: 1 1 auto; min-height: 0; border: 1px solid var(--lee-border); border-radius: 0 0 5px 5px; background: var(--lee-bg1); overflow: hidden; }
 .lee-pdf { width: 100%; height: 100%; min-height: 240px; border: 0; background: var(--lee-bg1); }
 

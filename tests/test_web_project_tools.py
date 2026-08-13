@@ -1033,10 +1033,13 @@ def test_a_pdf_is_served_under_its_own_name_and_fills_the_pane(tmp_path):
     mount = JS[JS.index('function mountPdf'):JS.index('async function mountFile')]
     assert "'/file/raw/' + encodeURIComponent(name) + '?path='" in mount
     assert 'class="lee-doc"' in mount, 'a column that fills the pane'
-    # A grid with no height resolves to its content, and an iframe has no intrinsic height, so the
-    # body sized itself to the iframe minimum and left the rest of the tab blank.
-    assert '.lee-doc { display: flex; flex-direction: column; height: 100%' in CSS
+    # The height chain, every link of it, because one indefinite parent anywhere along it puts the
+    # tab's own background back under the viewer. Flex rather than percentages: `.lee-editor` is a
+    # *stretched* grid item, and stretched is not definite, so `height: 100%` collapsed to content.
+    assert '.lee-editor:has(> .lee-doc) { display: flex; flex-direction: column;' in CSS
+    assert '.lee-doc { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }' in CSS
     assert '.lee-doc-body { display: grid; flex: 1 1 auto; min-height: 0;' in CSS
+    assert '.lee-pdf { width: 100%; height: 100%;' in CSS
 
 
 def test_source_control_notices_an_edit_and_not_only_a_new_file():
