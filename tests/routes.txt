@@ -84,6 +84,7 @@ GET,POST /envs
 GET,POST /envs/watch
 GET,POST /exec
 GET,POST /exec/history
+GET,POST /file/raw
 GET,POST /files/panel
 GET,POST /fs/add-root
 GET,POST /fs/add_root

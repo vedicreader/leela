@@ -1015,7 +1015,8 @@ async function mountTab(expectedPath = '') {
     return;
   }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
-  if (st.kind === 'notebook') mountNotebook(host, st);
+  if (st.kind === 'pdf') mountPdf(host, st);
+  else if (st.kind === 'notebook') mountNotebook(host, st);
   else await mountFile(host, st);
   if (recoveredDraft) {
     const tab = $('.lee-tab.active'); tab?.classList.add('dirty'); setTabSaveState(tab, 'pending');
@@ -1074,11 +1075,38 @@ function rememberBuffer(key, payload) {
   }, 120));
 }
 
+// A PDF, in the viewer the browser already ships. Reimplementing one on a canvas would be a
+// worse viewer and a large amount of code, and we are in a browser after all -- so the whole
+// feature is an `<iframe>` pointed at the bytes, plus the two things an iframe cannot do for
+// itself: open the file outside Leela, and say something useful if the viewer is disabled.
+function mountPdf(host, st) {
+  const raw = '/file/raw?path=' + encodeURIComponent(st.path);
+  host.innerHTML =
+    `<div class="lee-doc-head"><span>${esc(compactPath(st.path))}</span><span class="lee-spacer"></span>` +
+    `<a class="lee-btn" href="${esc(raw)}" target="_blank" rel="noopener noreferrer">open externally</a>` +
+    `<a class="lee-btn" href="${esc(raw)}&download=true" download>download</a></div>` +
+    `<div class="lee-doc-body"><iframe class="lee-pdf" title="${esc(st.title || 'PDF')}" src="${esc(raw)}"></iframe>` +
+    `<noscript class="lee-dim">This view needs the browser's PDF viewer.</noscript></div>`;
+}
+
 async function mountFile(host, st) {
   const isProject = st.path?.endsWith('/pyproject.toml') || st.title === 'pyproject.toml';
   const crumbMode=lee.workbenchPrefs.breadcrumbs||'pathAndSymbols',crumb=crumbMode==='off'?'':`<nav class="lee-breadcrumbs" id="editorcrumbs" aria-label="File and symbol path"><span>${esc(compactPath(st.path||st.title||''))}</span></nav>`;
+  // Markdown gets a rendered pane beside the editor. The editor stays mounted in every view and
+  // is merely hidden by CSS when only the rendering is showing -- everything that reaches for
+  // `lee.editors.get('file')` (saving, autosave, blame, the change gutter, jump-to-line) keeps
+  // working, and "rendered" is a way of *looking* at the file rather than a different kind of tab.
+  const isMd = (st.lang || '') === 'markdown';
+  const view = isMd ? (localStorage.getItem('lee-md-view') || 'split') : '';
   host.innerHTML = crumb + (isProject ? '<div class="lee-package-summary" id="packagebar" hidden></div>' : '') +
-                   '<div class="lee-cm" id="filecm"></div>';
+    (isMd ? `<div class="lee-doc-head lee-md-bar"><div class="lee-segbar" id="mdview" aria-label="markdown view">` +
+            ['edit', 'split', 'rendered'].map(v =>
+              `<button class="lee-seg${v === view ? ' active' : ''}" data-md-view="${v}">${v}</button>`).join('') +
+            `</div><span class="lee-spacer"></span>` +
+            `<span class="lee-dim">the change gutter and blame stay on the source</span></div>` : '') +
+    (isMd ? `<div class="lee-md-stage" data-view="${view}"><div class="lee-cm" id="filecm"></div>` +
+            `<div class="lee-md-preview" id="mdpreview" data-markdown=""></div></div>`
+          : '<div class="lee-cm" id="filecm"></div>');
   let git = {ranges: []}, packages = null;
   if (st.path) {
     const requests = [api('/git/file?path=' + encodeURIComponent(st.path)).catch(() => git)];
@@ -1098,9 +1126,27 @@ async function mountFile(host, st) {
     onDefinition: name => findDefinition(name), onSelection: () => {
       clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120);
     },
-    onChange: txt => { rememberBuffer(key, {path: key, kind: 'text', text: txt}); markDirty(); },
+    onChange: txt => {
+      rememberBuffer(key, {path: key, kind: 'text', text: txt}); markDirty();
+      // The preview follows the buffer, not the file: `renderMarkdown` is already debounced and
+      // drops superseded renders, so this is safe to call on every keystroke.
+      if (isMd) renderMarkdown($('#mdpreview'), txt);
+    },
   });
   lee.editors.set('file', v);
+  if (isMd) {
+    renderMarkdown($('#mdpreview'), LeeCM.getDoc(v));
+    $('#mdview').onclick = e => {
+      const b = e.target.closest('[data-md-view]'); if (!b) return;
+      const next = b.dataset.mdView;
+      localStorage.setItem('lee-md-view', next);
+      $('.lee-md-stage').dataset.view = next;
+      $$('#mdview .lee-seg').forEach(x => x.classList.toggle('active', x === b));
+      // The editor was display:none a moment ago, so CodeMirror has stale measurements and will
+      // draw the cursor in the wrong place until it re-measures.
+      if (next !== 'rendered') requestAnimationFrame(() => LeeCM.focus(v));
+    };
+  }
   if(st.lang==='python'&&st.path&&lee.editorPrefs.inlayHints)api('/lsp/inlay-hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>LeeCM.setInlayHints?.(v,d.hints||[])).catch(()=>{});
   if(st.lang==='python'&&st.path&&['symbols','pathAndSymbols'].includes(crumbMode))api('/lsp/symbols',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>{const el=$('#editorcrumbs');if(el){const names=(d.symbols||[]).slice(0,40).map(s=>`<button data-line="${(s.range?.start?.line||0)+1}">${esc(s.name)}</button>`).join('');el.insertAdjacentHTML('beforeend',`<i>›</i><span class="lee-breadcrumb-symbols">${names}</span>`);el.onclick=e=>{const b=e.target.closest('[data-line]');if(b)jumpToLine(b.dataset.line);};}}).catch(()=>{});
   if (packages) paintPackageVersions(v, packages);
@@ -2544,6 +2590,10 @@ function showSaveConflict(message) {
   $('[data-disk]', box).onclick = async () => { lee.heldSaveConflicts.delete(lee.path); box.remove(); await takeDiskVersion(lee.path); status('loaded disk version; browser draft discarded', 'ok'); };
 }
 async function saveTab(quiet = false, expectedVersion = null, force = false) {
+  // A document the browser renders has no editor behind it, so there is nothing to write and
+  // `getDoc` would be called on nothing. Reporting success is honest here: the file on disk is
+  // exactly what is being shown.
+  if (lee.kind === 'pdf') { if (!quiet) status('a PDF is read-only here'); return true; }
   let saveTabEl = $('.lee-tab.active');
   setTabSaveState(saveTabEl, 'saving');
   try {

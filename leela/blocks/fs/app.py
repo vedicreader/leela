@@ -26,7 +26,15 @@ from ...core.diffs import fuzzy_rank
 from .fs import lang_for
 from .ui import files_panel, git_tree_state, tree_node
 
-__all__ = ['CAPS', 'connect']
+__all__ = ['CAPS', 'connect', 'SERVED_TYPES']
+
+# What `/file/raw` will hand over, and as what. An allowlist rather than `mimetypes.guess_type`:
+# this route returns bytes the browser is about to *render*, so the set of things it will claim
+# are renderable is a decision, not a lookup. `nosniff` plus a fixed type is what keeps a
+# mislabelled file from being interpreted as something it is not.
+SERVED_TYPES = {'.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp',
+                '.svg': 'image/svg+xml', '.ico': 'image/x-icon'}
 
 CAPS = ('fs', 'journal')
 
@@ -124,6 +132,31 @@ def connect(app, ctx):
                 ctx.journal.record(f'Delete {p.name}', [(p, before, None)], kind='delete')
             if (i := ctx.session.find(d['path'])) is not None: ctx.session.close(i)
             return {'ok': True}
+        except Exception as e: return fail(e)
+
+    @rt('/file/raw')
+    def file_raw(path: str = '', download: bool = False):
+        """One file's bytes, for the documents the browser renders better than we could.
+
+        A PDF is the case this exists for: Chrome and Safari ship a viewer, and the honest thing
+        in a browser-based IDE is to hand the file over rather than reimplement one badly. So the
+        response is the file, and the `<iframe>` in the tab is the whole feature.
+
+        `ctx.fs._check` is the boundary, exactly as for every other path from the browser. Two
+        headers beyond the type matter: `Content-Disposition: inline` so the viewer opens it
+        instead of the browser downloading it, and `X-Content-Type-Options: nosniff` so a file
+        whose suffix lies cannot be re-interpreted as something executable.
+        """
+        from starlette.responses import FileResponse
+        try:
+            p = ctx.fs._check(path, must_exist=True)
+            if not p.is_file(): return fail(f'{p.name} is not a file')
+            kind = SERVED_TYPES.get(p.suffix.lower())
+            if kind is None: return fail(f'{p.suffix or p.name} is not served as a raw document')
+            disposition = 'attachment' if download else 'inline'
+            return FileResponse(p, media_type=kind, headers={
+                'Content-Disposition': f'{disposition}; filename="{p.name}"',
+                'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store'})
         except Exception as e: return fail(e)
 
     @rt('/fs/find')

@@ -126,6 +126,10 @@ class Tab(Dictable):
     def __post_init__(self):
         if not self.title: self.title = Path(self.path).name or 'untitled'
         if self.path.endswith('.ipynb'): self.kind = 'notebook'
+        # A PDF is a document, not text, and the browser already renders one better than any
+        # viewer worth writing. It gets its own kind so nothing downstream tries to put it in an
+        # editor, diff it, or hand it to a linter.
+        elif self.path.lower().endswith('.pdf'): self.kind = 'pdf'
         if self.private_kernel is None: self.private_kernel = self.kind == 'notebook'
 
     @property
@@ -327,7 +331,8 @@ class Workspace:
     def open(self, path, kind=None):
         "Open a file, focusing it if it is already open. Refuses anything outside the open folders."
         p = self.fs._check(path, must_exist=True)
-        if not is_texty(p) and p.suffix.lower() != '.ipynb': raise Unsafe(f'{p.name} is not a text file')
+        if not is_texty(p) and p.suffix.lower() not in ('.ipynb', '.pdf'):
+            raise Unsafe(f'{p.name} is not a text file')
         # Opening a file in another checkout is the other way of saying which project you mean.
         try: self.active_root = self.fs.root_of(p)
         except Unsafe: pass
@@ -335,7 +340,8 @@ class Workspace:
             self.active = i
             self.watch_env(None)
             return self.tabs[i]
-        t = Tab(path=str(p), kind=ifnone(kind, 'notebook' if p.suffix == '.ipynb' else 'text'))
+        t = Tab(path=str(p), kind=ifnone(kind, 'notebook' if p.suffix == '.ipynb' else
+                                              'pdf' if p.suffix.lower() == '.pdf' else 'text'))
         self.tabs.append(t)
         self.active = len(self.tabs) - 1
         self.watch_env(None)

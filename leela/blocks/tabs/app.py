@@ -102,6 +102,11 @@ def connect(app, ctx):
             docs.docs[key] = nb
             return {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
                     'disk_version': disk_version(t.path), 'cells': [c.dict() for c in nb.cells]}
+        if t.kind == 'pdf':
+            # No contents: the browser fetches the bytes itself from `/file/raw`, which is the
+            # only way its own PDF viewer can be the thing that renders them.
+            return {'kind': 'pdf', 'path': t.path, 'title': t.title,
+                    'disk_version': disk_version(t.path)}
         try:
             key = t.path or t.title
             # `in` rather than `.get(...) or`: a buffer holding the empty string is a real
