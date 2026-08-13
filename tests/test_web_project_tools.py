@@ -680,3 +680,97 @@ def test_the_search_stream_route_fans_its_legs_out_concurrently():
     assert 'off_loop(ctx.search.leg, name' in src, 'each leg on its own worker thread'
     assert 'await req.is_disconnected()' in src and 't.cancel()' in src
     assert "sse('leg'" in src and "sse('done'" in src and "sse('start'" in src
+
+
+def test_a_pdf_opens_in_the_browsers_own_viewer(tmp_path):
+    """We are in a browser, so the viewer already exists -- the feature is handing the bytes over.
+
+    A PDF was refused outright by the texty check, so it could not be opened at all. It is its own
+    tab kind rather than a text tab with binary in it, so nothing downstream tries to edit, diff or
+    lint it.
+    """
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    pdf = tmp_path/'paper.pdf'
+    pdf.write_bytes(b'%PDF-1.4\ntrailer\n%%EOF\n')
+    ws = Workspace(roots=[tmp_path])
+    tab = ws.open(pdf)
+    assert tab.kind == 'pdf' and tab.private_kernel is False
+
+    with TestClient(ide_app(ws)) as c:
+        st = c.get('/tab/state', params={'path': str(pdf)}).json()
+        assert st['kind'] == 'pdf' and 'text' not in st, 'the bytes are fetched by the viewer, not inlined'
+
+        r = c.get('/file/raw', params={'path': str(pdf)})
+        assert r.status_code == 200 and r.content.startswith(b'%PDF')
+        assert r.headers['content-type'] == 'application/pdf'
+        assert 'inline' in r.headers['content-disposition'], 'inline, or the browser downloads it'
+        assert r.headers['x-content-type-options'] == 'nosniff'
+
+        down = c.get('/file/raw', params={'path': str(pdf), 'download': 'true'})
+        assert 'attachment' in down.headers['content-disposition']
+
+        # An allowlist, because this route returns bytes a browser is about to render.
+        (tmp_path/'x.py').write_text('x = 1\n')
+        assert c.get('/file/raw', params={'path': str(tmp_path/'x.py')}).json()['error']
+        assert c.get('/file/raw', params={'path': '/etc/passwd'}).json()['error']
+
+
+def test_markdown_renders_beside_its_source_without_giving_up_the_editor(tmp_path):
+    """Rendered, split and edit are ways of *looking* at the file, not different kinds of tab.
+
+    The editor is hidden by CSS and never unmounted, which is what keeps saving, autosave, blame
+    and the change gutter working while the rendering is on screen.
+    """
+    mount = JS[JS.index('async function mountFile'):JS.index('async function mountSecondary')]
+    assert "const isMd = (st.lang || '') === 'markdown'" in mount
+    assert "localStorage.getItem('lee-md-view') || 'split'" in mount
+    assert "['edit', 'split', 'rendered']" in mount
+    assert "renderMarkdown($('#mdpreview'), txt)" in mount, 'the preview follows the buffer'
+    assert 'id="filecm"' in mount, 'and the editor is mounted in every view'
+    # Hidden, not unmounted -- the distinction the whole approach rests on.
+    assert '.lee-md-stage[data-view="rendered"] .lee-cm { display: none; }' in CSS
+    assert '.lee-md-stage[data-view="edit"] .lee-md-preview { display: none; }' in CSS
+    # CodeMirror measures wrongly while display:none, so it re-measures on the way back.
+    assert 'requestAnimationFrame(() => LeeCM.focus(v))' in mount
+
+    pdf = JS[JS.index('function mountPdf'):JS.index('async function mountFile')]
+    assert "'/file/raw?path='" in pdf and 'lee-pdf' in pdf
+    assert 'download' in pdf and 'open externally' in pdf
+    assert '.lee-pdf' in CSS and '.lee-doc-body' in CSS
+    save = JS[JS.index('async function saveTab'):JS.index('async function saveAllTabs')]
+    assert "lee.kind === 'pdf'" in save, 'a PDF tab has no editor to read a document out of'
+
+
+def test_a_markdown_file_gets_the_same_change_hunks_as_code(tmp_path):
+    "The gutter popup is language-agnostic; this pins that markdown really does feed it."
+    import subprocess
+    def git(*a): subprocess.run(['git', *a], cwd=tmp_path, check=True, capture_output=True)
+    git('init', '-q', '-b', 'main', '.')
+    git('config', 'user.email', 'tests@leela.local'); git('config', 'user.name', 'Leela tests')
+    (tmp_path/'readme.md').write_text('# Title\n\nfirst para\n')
+    git('add', '.'); git('commit', '-qm', 'init')
+    (tmp_path/'readme.md').write_text('# Title\n\nfirst para edited\n')
+
+    from leela.blocks.git.git import GitRepo
+    fc = GitRepo.at(tmp_path).file_changes('readme.md')
+    assert fc['ranges'] == [{'from': 3, 'to': 3, 'kind': 'modified'}]
+    hunk = fc['hunks'][0]
+    assert hunk['old'] == 'first para\n' and 'first para edited' in hunk['new']
+    assert hunk['patch'].startswith('diff --git'), 'so revert and commit-this-change work on prose too'
+
+
+def test_a_bar_with_a_control_at_its_right_edge_clears_the_modal_corner_buttons():
+    """The modal's close and expand sit *over* the top-right corner, absolutely positioned.
+
+    `sync` used to be pushed left by the mode buttons between it and the input; the moment those
+    became a rail it slid under the ×. Reserved on the bar rather than by nudging `sync`, so the
+    next control added to the end of that row does not rediscover the collision.
+    """
+    import re
+    close_r = re.search(r'\.lee-modal-close \{ right: (\d+)px', CSS)
+    expand_r = re.search(r'\.lee-modal-expand \{ right: (\d+)px', CSS)
+    bar = re.search(r'\.lee-searchbar \{[^}]*padding-right: (\d+)px', CSS)
+    assert close_r and expand_r and bar, 'the three rules this depends on still exist'
+    # 24px wide each, so the far edge of `expand` is its right offset plus its width.
+    assert int(bar.group(1)) >= int(expand_r.group(1)) + 24
