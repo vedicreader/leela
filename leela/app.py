@@ -63,6 +63,7 @@ from .core.web import off_loop as _off_loop
 from .core.web import sse as _sse
 from .core.web import Assets, static_dirs
 from .core.diffs import did_you_mean, fuzzy_rank
+from .core.markdown import md_block_diff, md_blocks, md_change_kinds
 from .blocks.fs.fs import lang_for
 from .blocks.git.git import GitRepo, GitError
 from .core.keys import by_scope, chord_display, toast_rows
@@ -973,6 +974,29 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             warnings = list(getattr(symbolic, 'warnings', ())) + list(getattr(rendered, 'warnings', ()))
             return {'html': str(rendered), 'warnings': list(dict.fromkeys(map(str, warnings)))}
         except Exception as e: return _fail(e)
+
+    # The two routes below deliberately return *records about* Markdown and never HTML. A
+    # rendered document still comes from `/markdown/render` above and nowhere else, so its
+    # sanitisation is the only sanitisation in play; these say which source lines each block
+    # came from and which blocks changed, which is what a rendering needs to be read as a
+    # diff. See `leela/core/markdown.py` for why blocks, and not lines, are the unit.
+    @rt('/markdown/blocks')
+    async def markdown_blocks(req):
+        "Top-level block spans of one Markdown document, for placing change marks."
+        d = await req.json()
+        text = str(d.get('text') or '')
+        if len(text) > 1_000_000: return _fail('markdown fragment is larger than 1 MB')
+        blocks = md_blocks(text)
+        ranges = d.get('ranges') or ()
+        return {'blocks': blocks, 'kinds': md_change_kinds(blocks, ranges) if ranges else []}
+
+    @rt('/markdown/diff')
+    async def markdown_diff(req):
+        "Two versions of a Markdown document paired block against block, in the new order."
+        d = await req.json()
+        left, right = str(d.get('left') or ''), str(d.get('right') or '')
+        if max(len(left), len(right)) > 1_000_000: return _fail('markdown fragment is larger than 1 MB')
+        return md_block_diff(left, right)
 
     # `keys` and `settings` are connected as blocks at the end of this function.
 

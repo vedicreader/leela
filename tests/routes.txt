@@ -137,6 +137,8 @@ GET,POST /lsp/inlay-hints
 GET,POST /lsp/rename
 GET,POST /lsp/status
 GET,POST /lsp/symbols
+GET,POST /markdown/blocks
+GET,POST /markdown/diff
 GET,POST /markdown/render
 GET,POST /memory/clusters
 GET,POST /memory/forget

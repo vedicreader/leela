@@ -774,3 +774,232 @@ def test_a_bar_with_a_control_at_its_right_edge_clears_the_modal_corner_buttons(
     assert close_r and expand_r and bar, 'the three rules this depends on still exist'
     # 24px wide each, so the far edge of `expand` is its right offset plus its width.
     assert int(bar.group(1)) >= int(expand_r.group(1)) + 24
+
+
+# ---------------------------------------------------------------- markdown, read as a diff
+# The rendered reading of a Markdown diff turns on one question: which element did each
+# source block become? These tests hold both halves of the answer -- the records the server
+# hands over, and the browser's refusal to draw anything when they do not line up.
+
+def _md_render(text):
+    "One document through the real renderer, exactly as the browser asks for it."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    with TestClient(ide_app(Workspace(roots=[]))) as client:
+        r = client.post('/markdown/render', json={'text': text, 'allow_raw': False})
+    assert r.status_code == 200, r.text
+    return r.json()['html']
+
+
+def _md_carriers(html):
+    "The top-level nodes the browser counts as block carriers, mirroring `markdownCarriers`."
+    import fast5ever
+    out = []
+    for n in fast5ever.parse_fragment(html).children:
+        if isinstance(n, fast5ever.Text): continue
+        if isinstance(n, fast5ever.Element) and n.name == 'section' \
+           and 'footnotes' in (n.attrs.get('class') or ''): continue
+        out.append(n.name)
+    return out
+
+
+def _md_align(html, blocks):
+    """`alignMarkdownBlocks`, in Python: the pairs, or None where the browser draws nothing.
+
+    Kept in the same shape as the browser's copy on purpose -- it is the rule under test, and
+    node is not available here to run the original.
+    """
+    nodes, pairs, at = _md_carriers(html), [], 0
+    for b in blocks:
+        # A removed block is answered before `renders`, exactly as the browser does it: it has
+        # source lines and a type, but no element in the document being read.
+        if b.get('status') == 'removed': pairs.append((b, None)); continue
+        if not b['renders']: continue
+        if at >= len(nodes): return None
+        node = nodes[at]; at += 1
+        if b['tags'] and node not in b['tags']: return None
+        pairs.append((b, node))
+    return pairs if at == len(nodes) else None
+
+
+README = '''# rishi
+
+<!-- a note to the reader -->
+
+Prose with `code`, a [link][home] and a footnote[^1].
+
+```bash
+uv add rishi
+```
+
+## Install
+
+- one
+- two
+
+| a | b |
+|---|---|
+| 1 | 2 |
+
+> a quotation
+
+---
+
+![a picture](p.png)
+
+[home]: https://example.com
+[^1]: the note
+'''
+
+
+def test_every_markdown_block_maps_to_the_element_it_rendered_as():
+    from leela.core.markdown import md_blocks
+    blocks = md_blocks(README)
+    pairs = _md_align(_md_render(README), blocks)
+    assert pairs is not None, 'a rendered diff of an ordinary README can be marked'
+    assert [n for _, n in pairs] == ['h1', '#comment', 'p', 'pre', 'h2', 'ul', 'table',
+                                     'blockquote', 'hr', 'figure']
+    # The two definitions hold source lines but render nothing, so they consume no element.
+    assert [b['type'] for b in blocks if not b['renders']] == ['link_ref', 'footnote_def']
+    fence = next(b for b in blocks if b['type'] == 'code_block')
+    assert (fence['from'], fence['to']) == (7, 9) and fence['code'] == 'uv add rishi\n'
+
+
+def test_a_block_that_cannot_be_placed_costs_the_bars_rather_than_moving_them():
+    "One raw HTML block that renders as two elements shifts every block after it."
+    from leela.core.markdown import md_blocks
+    doc = 'para one\n\n<p>a</p><p>b</p>\n\n## heading\n'
+    assert _md_align(_md_render(doc), md_blocks(doc)) is None
+    assert _md_align('<p>only</p>', md_blocks('para\n\npara two\n')) is None, 'a block with no element'
+    assert _md_align('<p>a</p><p>b</p>', md_blocks('para\n')) is None, 'an element no block claimed'
+
+
+def test_a_markdown_diff_pairs_blocks_and_refuses_to_pair_across_types():
+    from leela.core.markdown import md_block_diff
+    old = '# t\n\nold prose\n\n```sh\nold cmd\n```\n\ngone entirely\n'
+    new = '# t\n\nnew prose\n\n```sh\nnew cmd\n```\n\n## Install\n\nfresh\n'
+    d = md_block_diff(old, new)
+    rows = [(r['status'], r['type']) for r in d['blocks']]
+    assert rows[:3] == [('equal', 'heading'), ('modified', 'paragraph'), ('modified', 'code_block')]
+    # The new heading is not the old closing paragraph at the same offset. Blocks pair by
+    # construct, so the heading is new and the paragraph is matched with the paragraph.
+    assert ('modified', 'heading') not in rows, 'a paragraph did not become a heading'
+    assert ('added', 'heading') in rows
+    assert (d['blocks'][-1]['status'], d['blocks'][-1]['old']) == ('modified', 'gone entirely')
+    fence = next(r for r in d['blocks'] if r['type'] == 'code_block')
+    assert fence['old_code'] == 'old cmd\n' and fence['code'] == 'new cmd\n'
+    assert d['changed'] and (d['added'], d['removed']) == (5, 3)
+
+
+def test_the_diff_records_still_line_up_with_the_document_being_read():
+    """The records the rendered view actually receives, against the rendering it actually gets.
+
+    A removed block is interleaved among them and has no element, so this is where an off-by-one
+    would show up: the paragraph after a deletion must still pair with its own paragraph.
+    """
+    from leela.core.markdown import md_block_diff
+    old = README.replace('## Install', 'A paragraph that this change deletes.\n\n## Setup')
+    d = md_block_diff(old, README)
+    pairs = _md_align(_md_render(README), d['blocks'])
+    assert pairs is not None
+    assert [n for _, n in pairs if n] == ['h1', '#comment', 'p', 'pre', 'h2', 'ul', 'table',
+                                          'blockquote', 'hr', 'figure']
+    heading = next(b for b, n in pairs if n == 'h2')
+    assert heading['status'] == 'modified' and heading['old'] == '## Setup'
+    gone = [b for b in d['blocks'] if b['status'] == 'removed']
+    assert [b['source'] for b in gone] == ['A paragraph that this change deletes.']
+
+
+def test_a_line_range_from_git_lands_on_the_block_that_holds_it():
+    from leela.core.markdown import md_blocks, md_change_kinds
+    blocks = md_blocks('# t\n\nprose\n\n```sh\na\nb\n```\n')
+    # Git reports a pure deletion at the line that closed over it, which is inside the fence.
+    kinds = md_change_kinds(blocks, [{'from': 3, 'to': 3, 'kind': 'added'},
+                                     {'from': 6, 'to': 6, 'kind': 'deleted'}])
+    assert kinds == [None, 'added', 'removed']
+    both = md_change_kinds(blocks, [{'from': 1, 'to': 8, 'kind': 'modified'}])
+    assert both == ['modified', 'modified', 'modified']
+    # And the browser gets both answers from one request, over the route it actually calls.
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    with TestClient(ide_app(Workspace(roots=[]))) as client:
+        got = client.post('/markdown/blocks', json={'text': '# t\n\nprose\n',
+                                                    'ranges': [{'from': 3, 'to': 3, 'kind': 'added'}]}).json()
+        diff = client.post('/markdown/diff', json={'left': '# t\n', 'right': '# t\n\nnew\n'}).json()
+    assert got['kinds'] == [None, 'added'] and got['blocks'][1]['tags'] == ['p']
+    assert [b['status'] for b in diff['blocks']] == ['equal', 'added']
+
+
+def test_a_markdown_diff_reads_as_a_rendering_beside_unified_and_split():
+    tab = JS[JS.index('async function activateGitDiffTab'):JS.index('function gitDiffNotebookHtml')]
+    assert 'data-diff-view="unified"' in tab and 'data-diff-view="split"' in tab, 'a third reading, not a replacement'
+    assert 'isMarkdownPath(data.path) ?' in tab and 'data-diff-view="rendered">rendered' in tab
+    assert "data.view === 'rendered' && isMarkdownPath(data.path)) await mountMarkdownDiff(body, data)" in tab
+    block = JS[JS.index('const MARKDOWN_PATH'):JS.index('async function leeOpenFile')]
+    assert "post('/markdown/diff', {left: data.left || '', right: data.right || ''})" in block
+    # One renderer, and repository Markdown stays untrusted in it.
+    assert "renderMarkdown(doc, data.right || '', false, () => paintMarkdownDiff(doc, rows))" in block
+    assert 'allow_raw: true' not in block and "'/markdown/render'" not in block
+    assert '.lee-md-diff-doc' in CSS and '.lee-md-change::before' in CSS
+    for kind in ('added', 'modified', 'code'):
+        assert f'.lee-md-change[data-change="{kind}"]::before' in CSS
+
+
+def test_the_annotation_sees_the_fragment_before_the_code_upgrade_replaces_it():
+    render = JS[JS.index('function renderMarkdown('):JS.index('async function api(')]
+    assert 'onRender = null' in render
+    assert render.index('onRender(el)') < render.index('enhanceCodeBlocks(el)'), 'the pre is still a pre'
+    assert 'try { onRender(el); } catch' in render, 'a mapping bug cannot cost the reader the rendering'
+
+
+def test_a_block_that_cannot_be_matched_leaves_the_rendering_unmarked_and_says_so():
+    block = JS[JS.index('function alignMarkdownBlocks'):JS.index('function markdownCodeDiffHtml')]
+    assert 'if (!row.renders) continue' in block, 'a definition consumes no element'
+    assert 'if (at >= tags.length) return null' in block, 'a block with no element voids the mapping'
+    assert 'if (want.length && !want.includes(tag)) return null' in block, 'and so does the wrong element'
+    assert 'return at === tags.length ? pairs : null' in block, 'and so does an element nobody claimed'
+    # Positions rather than nodes, because the code-block upgrade swaps each `<pre>` afterwards.
+    assert 'pairs.push({row, at: at - 1})' in block
+    paint = JS[JS.index('function paintMarkdownDiff'):JS.index('async function mountMarkdownDiff')]
+    assert 'if (!pairs) { if (note) note.hidden = false; return false; }' in paint
+    assert 'data-md-diff-note' in JS and '.lee-md-diff-note' in CSS
+    carriers = JS[JS.index('function markdownCarriers'):JS.index('/* Which element each block became')]
+    assert "n.nodeType === 8" in carriers, 'a comment is a carrier, so it cannot shift the sequence'
+    assert "classList.contains('footnotes')" in carriers
+
+
+def test_a_changed_code_fence_shows_its_line_diff_inside_the_rendering():
+    block = JS[JS.index('function markdownCodeDiffHtml'):JS.index('// Pink for text that changed')]
+    assert 'dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1' in block, 'lines are matched, not zipped'
+    assert 'tokenDiffHtml(r.old, twin.now)' in block and 'tokenDiffHtml(r.now, prior.old)' in block
+    assert 'a.length > 600 || b.length > 600' in block, 'a huge fence falls back rather than allocating'
+    paint = JS[JS.index('function paintMarkdownDiff'):JS.index('async function mountMarkdownDiff')]
+    assert "row.type === 'code_block'" in paint and "node.tagName === 'PRE'" in paint
+    assert 'node.replaceWith(host)' in paint
+    # The code upgrade replaces every `pre > code` just after this runs, so a fence that is
+    # wholly new keeps its rendering inside a wrapper the upgrade cannot take away.
+    assert "host.className = 'lee-md-code-host'; host.appendChild(node)" in paint
+    assert '.lee-md-code-host' in CSS
+    assert '.lee-md-code-line.del' in CSS and 'text-decoration: line-through' in CSS
+    assert '.lee-md-code-line.add' in CSS
+
+
+def test_text_that_was_removed_is_reported_on_the_block_that_closed_over_it():
+    paint = JS[JS.index('function paintMarkdownDiff'):JS.index('async function mountMarkdownDiff')]
+    assert "if (row.status === 'removed') { removed.push(row); continue; }" in paint
+    assert 'host.dataset.removedAbove' in paint and 'last.dataset.removedBelow' in paint
+    assert 'removed.map(r => r.source).join' in paint, 'the old text is readable without another request'
+    assert '.lee-md-change[data-removed-above]::after' in CSS
+
+
+def test_the_rendered_markdown_pane_carries_the_change_marks_of_the_gutter_beside_it():
+    """The file's own preview places `/git/file` line ranges by block: the other route to the
+    same question, and the one that has to survive a request landing after the render."""
+    block = JS[JS.index('async function paintMarkdownFileChanges'):JS.index('async function leeOpenFile')]
+    assert "post('/markdown/blocks', {text, ranges})" in block
+    assert 'tags = markdownCarriers(el).map(markdownTagOf)' in block, 'tags read before the request goes out'
+    assert 'if (!el.isConnected || el.dataset.markdown !== text) return' in block, 'a superseded render draws nothing'
+    assert 'if (!pairs) return' in block
+    mount = JS[JS.index('async function mountFile'):JS.index('async function mountSecondary')]
+    assert 'paintMarkdownFileChanges(el, git.ranges || [])' in mount
+    assert "if (isMd) renderMarkdown($('#mdpreview'), txt);" in mount, 'a keystroke re-render carries no marks'
