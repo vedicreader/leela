@@ -10,7 +10,7 @@ Every result reports its backend.
 from __future__ import annotations
 import json, re, shutil, subprocess
 from dataclasses import dataclass, field
-from fastcore.all import L, Path
+from fastcore.all import L, Path, ifnone
 from fastcore.aio import athreaded
 from fastcore.parallel import threaded
 
@@ -762,17 +762,19 @@ class Search:
             h.sources = [name]
         return L(sorted(hits, key=lambda h: (-h.score, h.path, h.line))), ''
 
-    def _all(self, q, limit, regex=False):
-        "Search every available leg and rank one deduplicated result set."
+    def _all(self, q, limit, regex=False, legs=None):
+        """Search every available leg and rank one deduplicated result set.
+
+        `legs` narrows the fan-out. A caller that cannot wait seconds for the embedding index
+        asks for the fast three and still gets the agreement signal from those.
+        """
         per = max(12, min(limit, 40))
+        runners = {'rg': lambda: self._rg(q, per, regex), 'symbols': lambda: self._symbols(q, per),
+                   'fts': lambda: self._fts(q, per), 'ann': lambda: self._ann(q, per)}
+        wanted = L(ifnone(legs, self.ALL_LEGS)).filter(lambda n: n in runners)
         legs, notes = [], []
-        for name, fn in (
-            ('rg', lambda: self._rg(q, per, regex)),
-            ('symbols', lambda: self._symbols(q, per)),
-            ('fts', lambda: self._fts(q, per)),
-            ('ann', lambda: self._ann(q, per)),
-        ):
-            try: rows = fn()
+        for name in wanted:
+            try: rows = runners[name]()
             except Exception as e:
                 notes.append(f'{name} failed: {errstr(e)}')
                 continue
@@ -801,7 +803,7 @@ class Search:
         if notes and not used: self.note += ' · ' + '; '.join(notes[:2])
         return out[:limit]
 
-    def search(self, q, limit=60, regex=False, force_scan=False, mode='rg', exts=(), roots=None):
+    def search(self, q, limit=60, regex=False, force_scan=False, mode='rg', exts=(), roots=None, legs=None):
         """Search explicitly: ripgrep by default, optional Kosha FTS or ANN.
 
         Search mode is never inferred from query length. That old policy made the same box
@@ -820,7 +822,7 @@ class Search:
         if force_scan: mode = 'rg'
         # rg is asked to narrow; the index backends are told about it afterwards.
         if mode == 'rg': return self._place(self._rg(q, limit, regex, exts, roots))
-        if mode == 'all': return self._place(self._keep(self._all(q, limit, regex), exts, roots))
+        if mode == 'all': return self._place(self._keep(self._all(q, limit, regex, legs), exts, roots))
         legs = {'context': self._context, 'repo': self._repo_context, 'env': self._env_context,
                 'fts': self._fts, 'ann': self._ann, 'symbols': self._symbols}
         if mode in legs:

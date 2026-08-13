@@ -26,14 +26,18 @@ from __future__ import annotations
 
 import functools, inspect, json, os, threading
 
+from fastcore.all import L
+
 from ... import errstr, leela_cfg
 from ..fs.fs import  Unsafe
 from ...agent.agent import (Activity, Agent, Approvals, Ask, Completer, _summary, answer_md, ask_md,
                           preview_for)
-from ...agent.tools import (MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS, Hit, Host, clip,
-                          tools_for)
+from ...agent.tools import (MAX_HITS, MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS, Hit, Host,
+                          clip, tools_for)
 
 GIT_WRITE_TOOLS = frozenset({'git_fetch', 'git_checkout', 'git_pull', 'git_push'})
+# The blend legs that answer in tens of milliseconds; `ann` has to embed the query first.
+FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
 WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Completer', 'Interventions', 'ide_tools',
@@ -334,6 +338,11 @@ class WorkspaceHost(Host):
 
     # -- seeing the code -----------------------------------------------------
     def search(self, query, limit=20): return self.ws.search.agent_search(query, limit=limit)
+
+    def search_blend(self, query, limit=20, legs=None):
+        "Leela's own blend: every backend at once, each hit stamped with the legs that agreed."
+        return self.ws.search.search(query, limit=limit, mode='all', legs=legs)
+
     def peers(self, path, line, limit=20): return self.ws.search.peers(path, line, limit=limit)
     def symbols(self, path): return self.ws.search.symbols(path)
 
@@ -595,6 +604,33 @@ def _git_tools(host):
     return [git_status, git_fetch, git_checkout, git_pull, git_push]
 
 
+def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
+    """Leela's blended search, as one tool.
+
+    The harness's `search_code` is one engine's best answer. This fans out over symbols,
+    ripgrep, keywords and embeddings, merges the same location into one row, and says which
+    engines agreed -- a hit three of them found is stronger than one only the embedder liked.
+    """
+    def search_all(query: str) -> str:
+        """Search every code backend at once: exact symbols, literal text, keywords, and meaning.
+
+        Each row ends with the engines that agreed on it, such as `[symbols+rg+ann]`; more
+        engines means more confidence. Use this when you want the exact definition and the
+        conceptually related code in one answer, or when one search's ranking looked wrong.
+
+        For a wide sweep whose rows you do not need to keep, give the question to
+        `delegate_search` instead: the sub-agent has this tool and reports only its conclusion.
+        """
+        try: hits = host.search_blend(query, limit=MAX_HITS, legs=legs)
+        except Exception as e: return f'search_all failed: {errstr(e)}'
+        if not hits: return f'no matches ({host.search_note})'
+        rows = L(hits).map(lambda h: f'{h.path}:{h.line}  {h.symbol or ""}  {h.text}'
+                                     f'  [{"+".join(getattr(h, "sources", None) or [])}]')
+        return clip(f'[{host.search_note}]\n' + '\n'.join(rows), mx)
+
+    return [search_all]
+
+
 # ---------------------------------------------------------------------------
 # approval, as a conversation in the notebook
 # ---------------------------------------------------------------------------
@@ -699,6 +735,10 @@ class Assistant(Agent):
         self.ws, self.surface = ws, surface
         self.session_state = str(getattr(ws, 'agent_state', '') or '')
         self._git_toolset = _git_tools(host)
+        # The panel agent gets the whole blend. A prompt cell is answered while someone waits on
+        # the line they are typing, and the embedding leg answers in seconds, so inline searches
+        # the three legs that answer in milliseconds and still reports their agreement.
+        self._search_toolset = _search_tools(host, legs=None if surface == 'agent' else FAST_SEARCH_LEGS)
         super().__init__(host, model=model, sp=sp, **kw)
 
         def user_steering(instruction: str) -> str:
@@ -711,7 +751,8 @@ class Assistant(Agent):
     def tools(self):
         if self._tools is None:
             registered = {f.__name__ for f in self.registry.tools}
-            self.registry.tools.extend(f for f in self._git_toolset if f.__name__ not in registered)
+            self.registry.tools.extend(f for f in [*self._git_toolset, *self._search_toolset]
+                                       if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             built = super().tools
             # Ramabana's delegated agents inherit the parent's plain tools and only know
@@ -858,4 +899,4 @@ class _PolicyApprovals(Approvals):
 def ide_tools(ws, session=None):
     "Every tool the agent gets, bound to one `Workspace`. Kept for callers that want the list alone."
     host = WorkspaceHost(ws, session)
-    return tools_for(host, extra=_git_tools(host))
+    return tools_for(host, extra=_git_tools(host) + _search_tools(host))
