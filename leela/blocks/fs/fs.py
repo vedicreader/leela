@@ -1,17 +1,12 @@
 """Filesystem access for the IDE, confined to the open folders.
 
-Everything the IDE reads, writes, renames or deletes goes through `Sandbox`.
-The rule is one line -- `_check` -- and it is deliberately the only way in: a
-path is resolved (which collapses `..` *and* follows symlinks) and must land
-inside one of the open roots, or the operation raises `Unsafe`.
-
-Refs are plain absolute paths. Mapping roots to short ids would be prettier in
-a URL, but ids drift as roots are added and removed, and a stale id silently
-addressing the wrong file is a worse failure than a long query parameter.
+Every read, write, rename and delete goes through `Sandbox._check`, which resolves the path
+(collapsing `..` and following symlinks) and refuses anything outside an open root. Refs are
+plain absolute paths, not root ids, which drift as roots are added and removed.
 """
 
 from __future__ import annotations
-import os
+import os, re
 from dataclasses import dataclass
 from fastcore.all import Path, L, globtastic, atomic_save, mkdir as fc_mkdir
 from fastcore.shutil import move as fc_move
@@ -22,28 +17,22 @@ __all__ = ['Unsafe', 'Entry', 'SKIP_DIRS', 'LANGS', 'lang_for', 'is_texty', 'San
 
 # Directories never worth walking in a project tree; shown only if explicitly opened as a root.
 SKIP_DIRS = {'.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', 'node_modules', '.mypy_cache',
-             '.pytest_cache', '.ruff_cache', '.ipynb_checkpoints', '.tox', 'dist', 'build', '.idea'}
-_SKIP_RE = '^(' + '|'.join(d.replace('.', r'\.') for d in sorted(SKIP_DIRS)) + ')$'
+    '.pytest_cache', '.ruff_cache', '.ipynb_checkpoints', '.tox', 'dist', 'build', '.idea'}
+_SKIP_RE = r'^(' + '|'.join(re.escape(d) for d in sorted(SKIP_DIRS)) + r')$'
 
 # suffix -> CodeMirror 6 language id.
-LANGS = {'.py': 'python', '.pyi': 'python', '.ipynb': 'python', '.js': 'javascript',
-         '.mjs': 'javascript', '.cjs': 'javascript', '.jsx': 'jsx',
-         '.ts': 'typescript', '.mts': 'typescript', '.cts': 'typescript', '.tsx': 'tsx',
-         '.json': 'json', '.jsonc': 'json', '.json5': 'json',
-         '.md': 'markdown', '.markdown': 'markdown', '.html': 'html', '.htm': 'html',
-         '.css': 'css', '.scss': 'css', '.yaml': 'yaml', '.yml': 'yaml',
-         '.toml': 'toml', '.sh': 'bash', '.bash': 'bash', '.zsh': 'bash', '.fish': 'bash',
-         '.sql': 'sql', '.rs': 'rust', '.go': 'go', '.c': 'cpp', '.h': 'cpp',
-         '.cc': 'cpp', '.cpp': 'cpp', '.cxx': 'cpp', '.hpp': 'cpp', '.java': 'java',
-         '.xml': 'xml', '.svg': 'xml', '.properties': 'properties', '.gradle': 'java',
-         '.txt': None, '.cfg': 'toml', '.ini': 'properties'}
+LANGS = {'.py': 'python', '.pyi': 'python', '.ipynb': 'python', '.js': 'javascript', '.mjs': 'javascript',
+    '.cjs': 'javascript', '.jsx': 'jsx', '.ts': 'typescript', '.mts': 'typescript', '.cts': 'typescript', '.tsx': 'tsx',
+    '.json': 'json', '.jsonc': 'json', '.json5': 'json', '.md': 'markdown', '.markdown': 'markdown', '.html': 'html',
+    '.htm': 'html', '.css': 'css', '.scss': 'css', '.yaml': 'yaml', '.yml': 'yaml', '.toml': 'toml', '.sh': 'bash',
+    '.bash': 'bash', '.zsh': 'bash', '.fish': 'bash', '.sql': 'sql', '.rs': 'rust', '.go': 'go', '.c': 'cpp',
+    '.h': 'cpp', '.cc': 'cpp', '.cpp': 'cpp', '.cxx': 'cpp', '.hpp': 'cpp', '.java': 'java', '.xml': 'xml',
+    '.svg': 'xml', '.properties': 'properties', '.gradle': 'java', '.txt': None, '.cfg': 'toml', '.ini': 'properties'}
 
-NAME_LANGS = {'Dockerfile': 'bash', 'Makefile': 'bash', 'Procfile': 'bash',
-              'Cargo.lock': 'toml', 'Pipfile': 'toml'}
+NAME_LANGS = {'Dockerfile': 'bash', 'Makefile': 'bash', 'Procfile': 'bash', 'Cargo.lock': 'toml', 'Pipfile': 'toml'}
 
-_BINARY = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.gz', '.tar',
-           '.whl', '.so', '.dylib', '.dll', '.pyc', '.parquet', '.db', '.sqlite', '.woff',
-           '.woff2', '.ttf', '.mp4', '.mp3', '.npy', '.npz', '.pkl'}
+_BINARY = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.gz', '.tar', '.whl', '.so', '.dylib',
+    '.dll', '.pyc', '.parquet', '.db', '.sqlite', '.woff', '.woff2', '.ttf', '.mp4', '.mp3', '.npy', '.npz', '.pkl'}
 
 MAX_EDIT_BYTES = 4_000_000   # above this the editor opens read-only rather than choking
 
@@ -84,14 +73,14 @@ class Sandbox:
 
     # -- roots ----------------------------------------------------------------
     def covers(self, p):
-        "Is `p` inside an open root (or one of them)? `is_relative_to` is true for the root itself."
+        "Is `p` inside an open root, or one of them itself?"
         return any(p.is_relative_to(r) for r in self.roots)
 
     def add_root(self, p):
         "Open a folder. Returns its resolved path; adding a folder already covered is a no-op."
         p = Path(p).expanduser().resolve()
         if not p.is_dir(): raise Unsafe(f'not a directory: {p}')
-        if self.covers(p): return p                                      # already reachable
+        if self.covers(p): return p
         self.roots = L([r for r in self.roots if p not in r.parents]) + [p]  # a new parent subsumes its children
         return p
 
@@ -102,11 +91,7 @@ class Sandbox:
 
     # -- the gate -------------------------------------------------------------
     def _check(self, ref, must_exist=False):
-        """Resolve `ref` and refuse it unless it lands inside an open root.
-
-        `resolve()` does the real work: it collapses `..` and follows symlinks, so neither
-        a traversal nor a symlink planted inside a root can address anything outside one.
-        """
+        "Resolve `ref` and refuse it unless it lands inside an open root."
         if not self.roots: raise Unsafe('no folder is open')
         p = Path(ref).expanduser()
         if not p.is_absolute(): p = self.roots[0]/p
@@ -125,10 +110,8 @@ class Sandbox:
         try: st = p.stat()
         except OSError: st = None
         d = p.is_dir()
-        return Entry(name=p.name or str(p), path=str(p), is_dir=d,
-                     size=0 if d or st is None else st.st_size,
-                     mtime=0.0 if st is None else st.st_mtime,
-                     lang=None if d else lang_for(p), is_root=is_root)
+        return Entry(name=p.name or str(p), path=str(p), is_dir=d, is_root=is_root, lang=None if d else lang_for(p),
+            size=0 if d or st is None else st.st_size, mtime=0.0 if st is None else st.st_mtime)
 
     # -- reading --------------------------------------------------------------
     def ls(self, ref=None, hidden=False, skip=True):
@@ -136,18 +119,15 @@ class Sandbox:
         if ref is None: return L(self.entry(r, is_root=True) for r in self.roots)
         p = self._check(ref, must_exist=True)
         if not p.is_dir(): raise NotADirectoryError(str(p))
-        keep = lambda c: ((hidden or not c.name.startswith('.'))
-                          and not (skip and c.is_dir() and c.name in SKIP_DIRS))
-        return (L(p.ls()).filter(keep)
-                         .sorted(key=lambda c: (not c.is_dir(), c.name.lower()))
-                         .map(self.entry))
+        keep = lambda c: (hidden or not c.name.startswith('.')) and (not (skip and c.is_dir() and (c.name in SKIP_DIRS)))
+        return L(p.ls()).filter(keep).sorted(key=lambda c: (not c.is_dir(), c.name.lower())).map(self.entry)
 
     def walk(self, ref=None, hidden=False, limit=20000):
-        "Every file under `ref` (or all roots), for quick-open. Capped, because a home directory is not a project."
+        "Every file under `ref` (or all roots), for quick-open, capped at `limit`."
         out = L()
         for r in (self.roots if ref is None else [self._check(ref, must_exist=True)]):
             out += globtastic(r, skip_folder_re=_SKIP_RE, skip_file_re=None if hidden else r'^\.',
-                              folder_re=None if hidden else r'^[^.]', func=Path)
+                folder_re=None if hidden else r'^[^.]', func=Path)
             if len(out) >= limit: break
         return out[:limit]
 
@@ -165,7 +145,7 @@ class Sandbox:
 
     # -- writing --------------------------------------------------------------
     def write(self, ref, text):
-        "Write text atomically, so a crash mid-save leaves the previous file intact rather than a truncated one."
+        "Write text atomically, so a crash mid-save leaves the previous file intact."
         p = self._check(ref)
         with atomic_save(p, mode='w', encoding='utf-8') as f: f.write(text)
         return self.entry(p)
@@ -184,10 +164,9 @@ class Sandbox:
         return self.entry(fc_mkdir(p, parents=True))
 
     def rename(self, ref, name):
-        "Rename in place. `name` is a bare filename -- a path here would be a way to write outside the folder."
+        "Rename in place. `name` must be a bare filename: a path here would write outside the folder."
         p = self._check(ref, must_exist=True)
-        if '/' in name or os.sep in name or name in ('', '.', '..'):
-            raise Unsafe(f'{name!r} is not a bare filename')
+        if '/' in name or os.sep in name or name in ('', '.', '..'): raise Unsafe(f'{name!r} is not a bare filename')
         dst = self._check(p.parent/name)
         if dst.exists(): raise FileExistsError(str(dst))
         p.rename(dst)
@@ -205,8 +184,8 @@ class Sandbox:
         return self.entry(dst)
 
     def delete(self, ref):
-        "Delete a file, or a directory and its contents. Refuses to delete an open root outright."
+        "Delete a file, or a directory and its contents. Refuses to delete an open root."
         p = self._check(ref, must_exist=True)
         if p in self.roots: raise Unsafe('close the folder instead of deleting an open root')
-        p.delete()          # fastcore's Path.delete unlinks a file and rmtree's a directory
+        p.delete()
         return str(p)

@@ -6,10 +6,11 @@ this module is the adapter that keeps leela's `note` status string and workspace
 """
 
 from __future__ import annotations
-import hashlib, os, re, time, uuid
-from fastcore.all import Path
+import hashlib, os, time, uuid
+from fastcore.all import Path, first
+from ramabana.vault import safe_shelf as _safe_shelf
 
-from ... import leela_cfg, errstr
+from ... import errstr
 
 __all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'GLOBAL']
 
@@ -24,13 +25,8 @@ def memory_path(path=None):
 
 
 def safe_shelf(name=None):
-    """A shelf name as a SQL identifier, sanitised once here rather than at every use.
-
-    A shelf is a table-name prefix, so the name reaches raw SQL -- and litesearch's entity
-    resolution has one unquoted statement, which a hyphen breaks. Folder names carry hyphens
-    and dots routinely, so `my-repo` and `my_repo` are the same shelf.
-    """
-    return re.sub(r'[^a-z0-9_]+', '_', str(name or 'main').lower()).strip('_') or 'main'
+    "ramabana's shelf-name sanitiser, defaulting to leela's unnamed shelf."
+    return _safe_shelf(name, 'main')
 
 
 def memory_shelf(root=None):
@@ -40,8 +36,7 @@ def memory_shelf(root=None):
     return 'main' if name == GLOBAL else name
 
 
-def _offline():
-    return os.getenv('LEELA_MEMORY_OFFLINE', '').lower() in ('1', 'true', 'yes')
+def _offline(): return os.getenv('LEELA_MEMORY_OFFLINE', '').lower() in ('1', 'true', 'yes')
 
 
 def _registered_encoder(path, store):
@@ -89,7 +84,7 @@ class Memory:
         sections = list(getattr(doc, 'sections', None) or [])
         if sections:
             return '\n\n'.join(f"## {s.get('title') or f'Article {i + 1}'}\n\n{s.get('text') or ''}"
-                               for i, s in enumerate(sections))
+                for i, s in enumerate(sections))
         return str(getattr(doc, 'text', '') or '')
 
     def remember(self, doc, query='', force=False, extra_meta=None):
@@ -99,9 +94,9 @@ class Memory:
         content_hash = hashlib.sha1(text.encode()).hexdigest()
         source = getattr(doc, 'url', '') or f'memory:{content_hash}'
         title = getattr(doc, 'title', '') or source or 'Web page'
-        meta = {'url': getattr(doc, 'url', ''), 'query': query, 'remembered_at': time.time(),
-                'sections': len(getattr(doc, 'sections', None) or []), 'content_hash': content_hash,
-                'source_text': text, **dict(extra_meta or {})}
+        # a dict literal, not `dict(...)`: `extra_meta` must be able to override these keys
+        meta = {'url': getattr(doc, 'url', ''), 'query': query, 'remembered_at': time.time(), 'source_text': text,
+            'sections': len(getattr(doc, 'sections', None) or []), 'content_hash': content_hash, **(extra_meta or {})}
         kind = getattr(doc, 'kind', '') or 'web'
         try:
             v = self._open()
@@ -109,13 +104,11 @@ class Memory:
             if previous and not force:
                 prev = previous[0]
                 old_meta = dict(prev.get('meta') or {})
-                if prev.get('title') != title:
-                    v.forget(prev['id'])
-                elif old_meta.get('content_hash') != content_hash or v.document(prev['id']).text.strip() != text:
-                    force = True
+                if prev.get('title') != title: v.forget(prev['id'])
+                elif old_meta.get('content_hash') != content_hash or v.document(prev['id']).text.strip() != text: force = True
             out = v.add(text, title, source=source, kind=kind, meta=meta, force=force)
             self.note = ('already remembered' if out.get('skipped') else
-                         f"remembered {out.get('nodes', 0)} sections · {out.get('chunks', 0)} chunks")
+                f"remembered {out.get('nodes', 0)} sections · {out.get('chunks', 0)} chunks")
             return dict(out, source=source)
         except Exception as e:
             self.note = f'memory ingest failed ({errstr(e)})'
@@ -133,8 +126,7 @@ class Memory:
         if previous: agent_meta.setdefault('parent_revision', previous[0]['id'])
         agent_meta.setdefault('author', 'user')
         agent_meta.setdefault('revision', len(self.agent_states(10_000)) + 1)
-        return self._remember_agent(doc, query='agent starting state',
-                                    extra_meta={'agent': agent_meta, 'source_text': text})
+        return self._remember_agent(doc, query='agent starting state', extra_meta={'agent': agent_meta, 'source_text': text})
 
     def remember_agent_note(self, title, text, previous_id=''):
         "Create or replace one editable note; return the new durable document identity."
@@ -142,11 +134,9 @@ class Memory:
         if not text: return None
         from ..research.research import Doc
         doc = Doc(title=title, url=f'agent-note://{uuid.uuid4().hex}', text=text, kind='agent-note')
-        saved = self._remember_agent(doc, query='agent memory note',
-                                     extra_meta={'agent_note': {'author': 'user', 'edited_at': time.time()},
-                                                 'source_text': text})
-        if saved and previous_id and str(previous_id) != str(saved.get('doc_id')):
-            self.forget(previous_id)
+        note_meta = {'agent_note': {'author': 'user', 'edited_at': time.time()}, 'source_text': text}
+        saved = self._remember_agent(doc, query='agent memory note', extra_meta=note_meta)
+        if saved and previous_id and str(previous_id) != str(saved.get('doc_id')): self.forget(previous_id)
         return saved
 
     def _remember_agent(self, doc, query='', extra_meta=None):
@@ -162,22 +152,19 @@ class Memory:
         if digest:
             from ..research.research import Doc
             key = hashlib.sha1(query.encode()).hexdigest()[:16]
-            saved.append(self.remember(Doc(title=f'Research: {query}', url=f'research://{key}',
-                                           text=digest, kind='research'), query=query))
+            brief = Doc(title=f'Research: {query}', url=f'research://{key}', text=digest, kind='research')
+            saved.append(self.remember(brief, query=query))
         return [x for x in saved if x]
 
-    def agent_states(self, limit=40):
-        rows = [dict(d) for d in self._agent().sources(kind='agent-state')]
-        return sorted(rows, key=lambda d: d.get('added_at') or '', reverse=True)[:max(1, int(limit))]
+    @staticmethod
+    def _newest(rows, limit):
+        return sorted((dict(d) for d in rows), key=lambda d: d.get('added_at') or '', reverse=True)[:max(1, int(limit))]
 
-    def agent_notes(self, limit=200):
-        rows = [dict(d) for d in self._agent().sources(kind='agent-note')]
-        return sorted(rows, key=lambda d: d.get('added_at') or '', reverse=True)[:max(1, int(limit))]
+    def agent_states(self, limit=40): return self._newest(self._agent().sources(kind='agent-state'), limit)
+    def agent_notes(self, limit=200): return self._newest(self._agent().sources(kind='agent-note'), limit)
 
     def documents(self, limit=80):
-        try:
-            rows = [dict(d) for d in self._open().sources()]
-            return sorted(rows, key=lambda d: d.get('added_at') or '', reverse=True)[:max(1, int(limit))]
+        try: return self._newest(self._open().sources(), limit)
         except Exception as e:
             self.note = f'could not list memory ({errstr(e)})'
             return []
@@ -194,8 +181,7 @@ class Memory:
         "Authored Markdown when stored; otherwise the reconstructed document text."
         doc_id = str(doc_id)
         for src in (self._agent, self._open):
-            try:
-                note = next((d for d in src().sources() if str(d.get('id')) == doc_id), None)
+            try: note = first(d for d in src().sources() if str(d.get('id')) == doc_id)
             except Exception: note = None
             if note is None: continue
             exact = (note.get('meta') or {}).get('source_text')
@@ -221,13 +207,13 @@ class Memory:
 
     def purge(self, ids=None):
         docs = [*self.documents(limit=100_000), *self.agent_notes(10_000), *self.agent_states(10_000)]
-        seen, wanted = set(), ({str(x) for x in ids} if ids is not None
-                               else {str(d['id']) for d in docs})
-        removed = 0
+        wanted = {str(x) for x in (ids if ids is not None else [d['id'] for d in docs])}
+        seen, removed = set(), 0
         for doc in docs:
             i = str(doc['id'])
             if i in wanted and i not in seen and self.forget(i):
-                seen.add(i); removed += 1
+                seen.add(i)
+                removed += 1
         suffix = '' if removed == 1 else 's'
         self.note = f'purged {removed} remembered document{suffix}'
         return removed
@@ -260,42 +246,37 @@ class Memory:
     def context(self, query, sections=6, related=6, max_read=6000):
         "Whole sections plus related paths; never leaks other shelves or kosha code."
         try:
-            result = self._open().context(query, sections=sections, related=related,
-                                          max_read=max_read, shelves=0, code=0)
-            self.note = f'{len(result.results)} memory sections'
-            return {'query': query, 'results': [dict(x) for x in result.results],
-                    'related': [dict(x) for x in result.related]}
+            r = self._open().context(query, sections=sections, related=related, max_read=max_read, shelves=0, code=0)
+            self.note = f'{len(r.results)} memory sections'
+            return dict(query=query, results=[dict(x) for x in r.results], related=[dict(x) for x in r.related])
         except Exception as e:
             self.note = f'memory context failed ({errstr(e)})'
-            return {'query': query, 'results': [], 'related': []}
+            return dict(query=query, results=[], related=[])
 
     def clusters(self, limit=20):
         try:
             rows = self._open().topic_tree(limit=max(1, int(limit)))
             self.note = f'{len(rows)} topics' if rows else 'no topics yet'
-            return {'note': self.note, 'method': 'topic_tree' if rows else None,
-                    'clusters': [dict(c) for c in rows]}
+            return dict(note=self.note, method='topic_tree' if rows else None, clusters=[dict(c) for c in rows])
         except Exception as e:
             self.note = f'memory clustering unavailable ({errstr(e)})'
-            return {'note': self.note, 'method': None, 'clusters': []}
+            return dict(note=self.note, method=None, clusters=[])
 
     def status(self):
-        try:
-            st = self._open().stats()
-            return {'path': str(self.path), 'documents': st.get('docs', 0),
-                    'nodes': st.get('nodes', 0), 'chunks': st.get('chunks', 0), 'note': self.note}
-        except Exception:
-            return {'path': str(self.path), 'documents': 0, 'nodes': 0, 'chunks': 0, 'note': self.note}
+        try: st = self._open().stats()
+        except Exception: st = {}
+        return dict(path=str(self.path), documents=st.get('docs', 0), nodes=st.get('nodes', 0),
+            chunks=st.get('chunks', 0), note=self.note)
 
     # -- the vault surface behind clip. Not in `MemoryPort`: these reach the vault block's own
     # routes, not the shared memory ones, so the port stays what the browser needs.
 
     def shelves(self):
         "Every shelf in the vault with its document count, this workspace's first."
-        try:
-            rows = [dict(s) for s in self._open().shelves()]
+        try: rows = [dict(s) for s in self._open().shelves()]
         except Exception as e:
-            self.note = f'vault shelves unavailable ({errstr(e)})'; return []
+            self.note = f'vault shelves unavailable ({errstr(e)})'
+            return []
         mine = safe_shelf(self.shelf_name)
         return sorted(rows, key=lambda r: (str(r.get('store')) != mine, str(r.get('store'))))
 
@@ -310,34 +291,35 @@ class Memory:
         v = self._store(shelf or self.shelf_name)
         try: out = v.add_files(paths, meta=dict(meta or {}), force=force)
         except Exception as e:
-            self.note = f'clip failed ({errstr(e)})'; return []
+            self.note = f'clip failed ({errstr(e)})'
+            return []
         self.note = f'clipped {len(paths)} file(s) into {v.name}'
         return [dict(r) for r in (out or [])]
 
     def note_pointer(self, title, text, shelf=None, meta=None):
         "One document standing for something not stored as prose — a code index, an API spec."
         v = self._store(shelf or self.shelf_name)
-        return dict(v.note(text, title=title) if meta is None else
-                    v.add(text, title, source=f'pointer:{uuid.uuid4().hex[:12]}', meta=dict(meta)))
+        if meta is None: return dict(v.note(text, title=title))
+        return dict(v.add(text, title, source=f'pointer:{uuid.uuid4().hex[:12]}', meta=dict(meta)))
 
-    def set_meta(self, doc_id, shelf=None, **kv):
-        return self._store(shelf or self.shelf_name).set_meta(doc_id, **kv)
+    def set_meta(self, doc_id, shelf=None, **kv): return self._store(shelf or self.shelf_name).set_meta(doc_id, **kv)
 
     def pii(self, doc_id, shelf=None, ner=True):
         """The PII report for one document, or why there is none.
 
-        Covers pattern kinds plus *titled* names -- `Dr Charles Babbage`, not `Ada Lovelace` --
-        and never masks a bare name or an unstructured address. Any surface showing this says so.
+        Coverage is pattern kinds plus *titled* names -- `Dr Charles Babbage`, not `Ada Lovelace`.
+        A bare name or unstructured address is never masked; surfaces showing this must say so.
         """
         try: return dict(self._store(shelf or self.shelf_name).pii(doc_id, ner=ner))
-        except Exception as e: return {'note': f'pii unavailable ({errstr(e)})', 'has_pii': False}
+        except Exception as e: return dict(note=f'pii unavailable ({errstr(e)})', has_pii=False)
 
     def noisy_candidates(self, shelf=None, k=20, min_score=1.0):
         "Documents the vault thinks are diluting retrieval, ranked, with the features that say so."
-        try: return [dict(r) for r in self._store(shelf or self.shelf_name)
-                     .suggest_noisy(k=k, min_score=min_score)]
+        v = self._store(shelf or self.shelf_name)
+        try: return [dict(r) for r in v.suggest_noisy(k=k, min_score=min_score)]
         except Exception as e:
-            self.note = f'noise ranking unavailable ({errstr(e)})'; return []
+            self.note = f'noise ranking unavailable ({errstr(e)})'
+            return []
 
     def mark_noisy(self, doc_id, shelf=None, noisy=True, reason=''):
         "Judgements live in `doc_marks`, keyed (doc_id, store), so re-ingesting cannot erase them."
@@ -347,18 +329,18 @@ class Memory:
         # A mutable page is content-addressed on `source|title`, so without `force` it reports
         # "already ingested" for ever and the watch never refreshes anything.
         if action in ('url', 'arxiv', 'youtube'): params.setdefault('force', True)
-        return dict(self._store(shelf or self.shelf_name)
-                    .watch(target, action=action, every=every, note=note, **params))
+        v = self._store(shelf or self.shelf_name)
+        return dict(v.watch(target, action=action, every=every, note=note, **params))
 
     def watches(self, shelf=None, due_only=False):
         try: return [dict(w) for w in self._store(shelf or self.shelf_name).watches(due_only=due_only)]
         except Exception as e:
-            self.note = f'watches unavailable ({errstr(e)})'; return []
+            self.note = f'watches unavailable ({errstr(e)})'
+            return []
 
-    def unwatch(self, watch_id, shelf=None):
-        return self._store(shelf or self.shelf_name).unwatch(watch_id)
+    def unwatch(self, watch_id, shelf=None): return self._store(shelf or self.shelf_name).unwatch(watch_id)
 
     def poll(self, shelf=None):
         "Run every watch that has come due. The tick a scheduler calls."
         try: return dict(self._store(shelf or self.shelf_name).poll())
-        except Exception as e: return {'note': f'poll failed ({errstr(e)})', 'ran': 0, 'checked': 0}
+        except Exception as e: return dict(note=f'poll failed ({errstr(e)})', ran=0, checked=0)

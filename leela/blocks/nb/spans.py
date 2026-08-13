@@ -1,20 +1,8 @@
-"""Where each cell's source lives in the `.ipynb` file, and the way back out again.
+"""Mapping between file lines of an `.ipynb` and (cell, line-in-cell) coordinates.
 
-A notebook on disk is JSON, so everything that works in file lines -- `git blame`, ripgrep,
-a symbol scan -- reports a line of that JSON: `    "def f(x):\\n",`. The number is true and
-useless, because nobody reads the file, and there is no single editor to scroll: a notebook
-is a column of per-cell editors, each with its own line 1. Translating between the two
-coordinate systems is what these functions are for.
-
-They live here, in the notebook block, because there is only one correct mapping and two
-implementations of it would eventually disagree about a notebook someone actually has. Git's
-notebook blame was the first caller and search is the second; neither owns the format. The
-scan is deliberately over the raw text rather than a parse: the whole question is *which line
-of this file*, which a parsed notebook has already thrown away.
-
-Nothing here guesses. A notebook that cannot be read, or a cell whose lines cannot be found
-in the file, is reported as unknown -- a plausible-looking wrong line is worse than no line,
-because the caller has no way to tell it is wrong.
+The scan is over the raw text, not a parse: the question is *which line of this file*, which a
+parsed notebook has already thrown away. Anything that cannot be located is reported as
+unknown rather than guessed.
 """
 
 from __future__ import annotations
@@ -34,17 +22,7 @@ def read_cells(text):
 
 
 def source_spans(text, cells):
-    """The 1-based line numbers in the file that hold each cell's source strings.
-
-    nbformat writes one JSON string per source line, in cell order, which is what makes this
-    a scan rather than a parse: find each `"source"` key in turn and take the next `n` lines,
-    where `n` is how many strings that cell's source has. A cell whose value is inline (one
-    short line, or the plain-string form) is the head line itself.
-
-    `None` for a cell whose lines could not be located -- a hand-minified notebook, say. The
-    caller reports that rather than guessing, because a wrong line here attributes someone
-    else's code to you.
-    """
+    "The 1-based file line numbers holding each cell's source strings, or `None` where they cannot be located."
     lines, spans, idx = (text or '').splitlines(), [], 0
     for cell in cells:
         source = cell.get('source')
@@ -69,15 +47,10 @@ def cell_lines(cell):
 
 
 def _at(cells, spans, i, line_in_cell):
-    """The address of a line inside cell `i`: id, index, in-cell line, and the file line.
-
-    `id` is `''` for a notebook written before nbformat 4.5, which gave cells no identity of
-    their own; the index is what stays addressable there, so both are always reported.
-    """
+    "The address of a line inside cell `i`. `id` is `''` before nbformat 4.5, so the index is always reported too."
     span = spans[i]
-    return {'index': i, 'id': str(cells[i].get('id') or ''), 'line': line_in_cell,
-            'file_line': (span[0] + line_in_cell - 1) if span else 0,
-            'kind': str(cells[i].get('cell_type') or 'code')}
+    return dict(index=i, id=str(cells[i].get('id') or ''), line=line_in_cell,
+        file_line=(span[0] + line_in_cell - 1) if span else 0, kind=str(cells[i].get('cell_type') or 'code'))
 
 
 def cell_at(text, line, cells=None):
@@ -93,13 +66,7 @@ def cell_at(text, line, cells=None):
 
 
 def cell_of(text, snippet, cells=None):
-    """The cell holding `snippet`, when exactly one does.
-
-    For a hit whose only trustworthy coordinate is its text -- an index that chunks a notebook
-    by cell knows which *cell* it matched and reports line 1 of the file for all of them. One
-    matching cell is an answer; none or several is not, and returns `None` rather than the
-    first of them.
-    """
+    "The cell holding `snippet`, when exactly one does; `None` for none or several."
     needle = str(snippet or '').strip().split('\n')[0].strip()
     if not needle: return None
     cells = read_cells(text) if cells is None else cells

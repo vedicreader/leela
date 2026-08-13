@@ -1,28 +1,15 @@
 """Real terminals for the IDE, and the lazygit bridge built on them.
 
-A pseudo-terminal is the only honest way to host a full-screen terminal app like lazygit
-inside another program: it needs a tty to size itself against, raw keystrokes
-including the ones a browser would otherwise eat, and somewhere to put escape
-sequences. `Pty` is that -- a command attached to a real pty, read as bytes and
-written as bytes, with no interpretation in between. xterm.js on the other end
-does the interpreting, which is exactly the division of labour a terminal
-emulator expects.
-
-The terminal is *not* inside the `Sandbox`, and pretending otherwise would be a
-lie: a shell can go anywhere the user can. The sandbox confines the IDE's own
-file API, which is a different promise. What is confined here is the starting
-directory (an open root) and, more importantly, *who may connect*: see
-`TerminalGate` below, because an unauthenticated pty over a websocket is a
+`Pty` is a command on a real pty, bytes in and bytes out with no interpretation; xterm.js does
+the interpreting. Terminals are *not* inside the `Sandbox` -- a shell can go anywhere the user
+can -- so the boundary here is `TerminalGate`: an unauthenticated pty over a websocket is a
 remote shell.
-
-The browser cannot hand control back to a parent terminal, so it needs the PTY and
-websocket machinery implemented here.
 """
 
 from __future__ import annotations
 import asyncio, fcntl, os, pty, secrets, shlex, shutil, signal, struct, subprocess, sys, termios
-from fastcore.all import Path, L
-from fastcore.ansi import strip_ansi
+from fastcore.all import Path, L, store_attr
+from fastcore.xtras import clean_cli_output
 
 __all__ = ['Pty', 'Terminals', 'TerminalGate', 'lazygit_argv', 'gh_auth_argv', 'ToolMissing',
            'LazygitMissing', 'default_shell', 'path_prelude', 'shell_argv',
@@ -36,11 +23,11 @@ SCROLLBACK = 200_000
 
 
 class ToolMissing(Exception):
-    'A tool the IDE runs is not on PATH. It cannot install one, so it says so instead of failing obscurely.'
+    'A tool the IDE runs is not on PATH.'
 
 
 class LazygitMissing(ToolMissing):
-    'Kept as its own type: `/term/info` reports lazygit separately so the button can be hidden.'
+    'Its own type because `/term/info` reports lazygit separately, so the button can be hidden.'
 
 
 def default_shell():
@@ -48,77 +35,58 @@ def default_shell():
     return os.environ.get('SHELL') or (DEFAULT_SHELL if Path(DEFAULT_SHELL).exists() else '/bin/sh')
 
 
-# Terminals worth handing a project to, best first. A GUI application on macOS is launched
-# through `open -a` rather than by running its binary: started directly from a server process it
-# inherits this process's session and, for several of these, simply fails to show a window.
-EXTERNAL_TERMINALS = (
-    ('Kaku', 'kaku'), ('WezTerm', 'wezterm'), ('kitty', 'kitty'), ('Alacritty', 'alacritty'),
-    ('Ghostty', 'ghostty'), ('iTerm', 'iterm2'), ('Terminal', None),
-)
+# Terminals worth handing a project to, best first. On macOS these are launched via `open -a`:
+# run directly from a server process they inherit its session and several show no window.
+EXTERNAL_TERMINALS = (('Kaku', 'kaku'), ('WezTerm', 'wezterm'), ('kitty', 'kitty'),
+    ('Alacritty', 'alacritty'), ('Ghostty', 'ghostty'), ('iTerm', 'iterm2'), ('Terminal', None))
 
 
-def shell_argv(shell='', args=(), login=True):
-    """How to start the user's shell: which one, and whether as a login shell.
-
-    `-l` is what makes an IDE terminal behave like the one in the dock. On macOS a login shell is
-    where PATH and tool setup usually live, so skipping it is how `uv` comes to be missing in
-    here and present everywhere else. Explicit `args` replace the flag rather than adding to it,
-    because someone who has spelled out the arguments has said what they want.
-    """
+def shell_argv(
+    shell='',       # shell executable; `default_shell()` when blank
+    args=(),        # explicit arguments, which replace `-l` rather than adding to it
+    login=True,     # pass `-l`, without which macOS PATH setup never runs
+):
+    "How to start the user's shell."
     exe = str(shell or '').strip() or default_shell()
     extra = [str(a) for a in (args or ())]
     if extra: return [exe, *extra]
     return [exe, '-l'] if login else [exe]
 
 
-def external_terminal_argv(cwd, command=''):
-    """The argv that opens a real terminal application at `cwd`, or None if there is none.
-
-    `command` is a template with `{dir}` in it, for a terminal that wants particular arguments.
-    Without one, the first installed entry of `EXTERNAL_TERMINALS` wins -- so this is a button
-    that appears when it can work and stays hidden when it cannot, rather than one that fails.
-    """
+def external_terminal_argv(
+    cwd,            # directory to open the terminal at
+    command='',     # argv template containing `{dir}`; without one the first installed EXTERNAL_TERMINALS entry wins
+):
+    "The argv that opens a real terminal application at `cwd`, or None if none is installed."
     cwd = str(cwd or Path.home())
-    if str(command or '').strip():
-        template = str(command).strip()
+    if template := str(command or '').strip():
         parts = shlex.split(template if '{dir}' in template else f'{template} {{dir}}')
         return [cwd if p == '{dir}' else p.replace('{dir}', cwd) for p in parts]
     darwin = sys.platform == 'darwin'
     for app, binary in EXTERNAL_TERMINALS:
-        if darwin and Path(f'/Applications/{app}.app').exists():
-            return ['open', '-a', app, cwd]
-        if binary and (exe := shutil.which(binary)):
-            return [exe, cwd] if not darwin else ['open', '-a', app, cwd]
+        if darwin and Path(f'/Applications/{app}.app').exists(): return ['open', '-a', app, cwd]
+        if binary and (exe := shutil.which(binary)): return ['open', '-a', app, cwd] if darwin else [exe, cwd]
     return None
 
 
 def path_prelude(py, shell=None):
     """The line that puts a project's venv first on PATH, in the language of the user's shell.
 
-    Setting it in the child's environment is not enough on its own: an interactive shell reads
-    its rc file *afterwards*, and `pyenv init -` or conda or asdf then prepends their shims over
-    whatever we chose. So the same prepend is typed in once the shell is up, where nothing
-    re-orders it.
-
-    Which means it has to be a command *that shell* understands. `export FOO=bar` is not fish,
-    which has no `export` at all -- so every terminal under fish opened with
-    `fish: Unknown command: export` printed over the first prompt. A leading space keeps the line
-    out of history in the shells that honour that, fish included.
+    Typed into the shell, not set in its environment: an interactive shell reads its rc file
+    afterwards and `pyenv init -`/conda/asdf prepend their shims over anything set before it. So
+    it must be syntax that shell understands -- fish has no `export`. The leading space keeps the
+    line out of history where that is honoured.
     """
     if not py: return ''
     bindir = Path(py).parent
     name = Path(str(shell or default_shell())).name
-    if name in ('fish',): return f' set -gx PATH {bindir} $PATH'
+    if name == 'fish': return f' set -gx PATH {bindir} $PATH'
     if name in ('csh', 'tcsh'): return f' setenv PATH "{bindir}:$PATH"'
     return f' export PATH="{bindir}:$PATH"'
 
 
 def lazygit_argv(cwd=None):
-    """The argv to run lazygit against `cwd`, or raise `LazygitMissing`.
-
-    Resolved at call time rather than import time: a user who installs lazygit while
-    the IDE is open should not have to restart it.
-    """
+    "The argv to run lazygit against `cwd`, or raise `LazygitMissing`. Resolved at call time, not import time."
     exe = shutil.which('lazygit')
     if not exe: raise LazygitMissing(
         'lazygit is not installed or not on PATH — see https://github.com/jesseduffield/lazygit#installation')
@@ -126,13 +94,7 @@ def lazygit_argv(cwd=None):
 
 
 def gh_auth_argv():
-    """The argv for `gh auth login`, or raise `ToolMissing`.
-
-    Authenticating is a conversation -- it asks which host, offers to open a browser, and
-    waits for a one-time code to be pasted somewhere else. There is no useful way to do that
-    from a panel, and every way of trying ends in a form that reimplements a terminal
-    badly. So the button opens the real thing and gets out of the way.
-    """
+    "The argv for `gh auth login`, or raise `ToolMissing`."
     exe = shutil.which('gh')
     if not exe: raise ToolMissing(
         'the GitHub CLI is not installed or not on PATH — see https://cli.github.com')
@@ -162,12 +124,8 @@ class Pty:
     def start(self):
         """Spawn the command on a fresh pty.
 
-        `_setctty` is the part that is easy to leave out and painful to debug without.
-        A new session alone is not enough: the child must also *claim* the pty as its
-        controlling terminal, or the kernel gives it no job control -- `sh` says as much
-        on startup, Ctrl-C reaches nothing, and a full-screen app like lazygit cannot
-        put the terminal in the mode it needs. `TIOCSCTTY` on fd 0 (already the slave by
-        the time `preexec_fn` runs) is what claims it.
+        `setsid` alone gives no job control: the child must also claim the pty as its controlling
+        terminal, via `TIOCSCTTY` on fd 0 (already the slave by the time `preexec_fn` runs).
         """
         if self.alive: return self
         master, slave = pty.openpty()
@@ -180,16 +138,11 @@ class Pty:
             fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
         try:
-            self.proc = subprocess.Popen(
-                self.argv, cwd=self.cwd, env=env,
-                stdin=slave, stdout=slave, stderr=slave,
-                preexec_fn=_setctty, close_fds=True)
-            # Typed into the shell rather than set in `env`, because an interactive shell reads
-            # its rc file *after* inheriting the environment, and a line like `eval "$(pyenv
-            # init -)"` then prepends its shims over whatever we chose. Everything set before
-            # the shell starts loses that race; a command run after it does not.
-            if self.prelude:
-                os.write(master, self.prelude.encode() + b'\n')
+            self.proc = subprocess.Popen(self.argv, cwd=self.cwd, env=env, stdin=slave,
+                stdout=slave, stderr=slave, preexec_fn=_setctty, close_fds=True)
+            # Typed in, not set in `env`: the shell reads its rc file after inheriting the
+            # environment, and pyenv/conda shims would then be prepended over it.
+            if self.prelude: os.write(master, self.prelude.encode() + b'\n')
         finally:
             os.close(slave)             # the parent must not hold the slave open, or reads never EOF
         self.fd = master
@@ -212,12 +165,7 @@ class Pty:
         except OSError: return 0
 
     async def stream(self, on_data):
-        """Pump the child's output into `on_data(bytes)` until it exits.
-
-        Uses the loop's reader rather than a thread: a pty read is exactly what
-        `add_reader` is for, and a thread here would need its own wakeup plumbing to
-        stop cleanly when the websocket goes away.
-        """
+        "Pump the child's output into `on_data(bytes)` until it exits."
         loop = asyncio.get_running_loop()
         q = asyncio.Queue()
 
@@ -251,18 +199,10 @@ class Pty:
         if len(self.scrollback) > SCROLLBACK: del self.scrollback[:-SCROLLBACK]
 
     def text(self, n=200):
-        """The last `n` lines the child printed, as plain text.
-
-        This is what lets the assistant read a failing build instead of being told about
-        one. Two passes of undoing what a terminal does: `strip_ansi` removes the colour
-        and cursor escapes, and a bare `\\r` is turned into a newline -- a pty uses it to
-        redraw a line in place, so a progress bar would otherwise come back as one
-        enormous line.
-        """
-        s = strip_ansi(bytes(self.scrollback).decode('utf-8', 'replace'))
+        "The last `n` lines the child printed, rendered as they appear on screen."
+        s = clean_cli_output(bytes(self.scrollback).decode('utf-8', 'replace'))
         # trailing newlines are stripped first, or "the last line" is the empty one after it
-        lines = s.replace('\r\n', '\n').replace('\r', '\n').rstrip('\n').split('\n')
-        return '\n'.join(lines[-max(1, n):])
+        return '\n'.join(s.rstrip('\n').split('\n')[-max(1, n):])
 
     def kill(self, grace=2.0):
         "Terminate the whole process group -- a shell usually has children of its own."
@@ -281,8 +221,8 @@ class Pty:
             self.fd = None
 
     def state(self):
-        return {'pid': self.pid, 'alive': self.alive, 'argv': self.argv, 'cwd': self.cwd,
-                'cols': self.cols, 'rows': self.rows, 'exit': self.exit_note}
+        return dict(pid=self.pid, alive=self.alive, argv=self.argv, cwd=self.cwd, cols=self.cols,
+            rows=self.rows, exit=self.exit_note)
 
 
 class Terminals:
@@ -293,21 +233,15 @@ class Terminals:
     def open(self, key, argv=None, cwd=None, env=None, cols=80, rows=24, prelude=''):
         "The terminal for `key`, spawning it on first use."
         if (t := self.terms.get(key)) is not None and t.alive: return t
-        t = self.terms[key] = Pty(argv=argv, cwd=cwd or self.cwd, env=env, cols=cols, rows=rows,
-                                  prelude=prelude)
+        t = Pty(argv=argv, cwd=cwd or self.cwd, env=env, cols=cols, rows=rows, prelude=prelude)
+        self.terms[key] = t
         return t.start()
 
     def get(self, key): return self.terms.get(key)
     def all(self): return L(self.terms.values())
 
     def states(self):
-        """Every terminal this process is holding, *with its key*.
-
-        `Pty.state` cannot say: a pty does not know what it was filed under. The key is the part
-        the browser actually needs -- it picks the id for a new terminal, and without knowing
-        which ids are taken it reused one, whereupon `open` handed back the *existing* pty and a
-        new terminal came up holding an old session's scrollback and running process.
-        """
+        "Every terminal this process is holding, with its key -- which `Pty.state` cannot know."
         return [{'id': k, **t.state()} for k, t in self.terms.items()]
 
     def close(self, key):
@@ -319,29 +253,20 @@ class Terminals:
 
 
 class TerminalGate:
-    """Who is allowed to open a terminal, and why the answer is not 'anyone'.
+    """Who is allowed to open a terminal.
 
-    Two independent checks, because they stop different attacks:
-
-    - **the token.** Websockets are not subject to the same-origin policy, so *any*
-      page the user visits can open a socket to `127.0.0.1:5001`. Loopback binding
-      alone therefore protects nothing here. A secret the page only gets by being
-      served by this app is what makes the connection prove it came from the IDE.
-    - **the bind address.** A token is a secret, and secrets leak. Serving a pty on a
-      routable interface turns a leak into a remote shell, so that combination is
-      refused outright unless the operator asks for it by name.
-
-    The rest of the IDE does not need this: those routes proxy an inspector that has
-    its own owner token, and they cannot spawn a shell.
+    Two independent checks. The token, because websockets are exempt from the same-origin policy
+    so loopback binding alone protects nothing: any page can open the socket, only the IDE can
+    read the token. And the bind address, because a leaked token on a routable interface is a
+    remote shell.
     """
 
     def __init__(self, host='127.0.0.1', allow_remote=False):
-        self.host, self.allow_remote = host, allow_remote
+        store_attr()
         self.token = secrets.token_urlsafe(24)
 
     @property
-    def loopback(self):
-        return self.host in ('127.0.0.1', 'localhost', '::1', '')
+    def loopback(self): return self.host in ('127.0.0.1', 'localhost', '::1', '')
 
     @property
     def enabled(self):
@@ -351,12 +276,11 @@ class TerminalGate:
     @property
     def why(self):
         if self.enabled: return ''
-        return (f'terminal disabled: the IDE is bound to {self.host}, which is reachable from the '
-                'network. Leela supports terminals on loopback addresses only.')
+        return (f'terminal disabled: the IDE is bound to {self.host}, which is reachable from the network. '
+            'Leela supports terminals on loopback addresses only.')
 
     def check(self, token):
         "Raise unless this connection may have a pty."
         if not self.enabled: raise PermissionError(self.why)
-        if not token or not secrets.compare_digest(str(token), self.token):
-            raise PermissionError('bad or missing terminal token')
+        if not token or not secrets.compare_digest(str(token), self.token): raise PermissionError('bad or missing terminal token')
         return True

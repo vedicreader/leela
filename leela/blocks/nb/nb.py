@@ -1,30 +1,16 @@
 """The notebook document: cells, outputs, and running them against a kernel.
 
-Outputs are kept in nbformat shape all the way through -- the kernel's iopub
-messages are normalised into nbformat dicts in `kernels.py`, held as-is here,
-and written straight out as `.ipynb`. Nothing translates between an internal
-representation and a file format, so a round-trip cannot lose anything the
-kernel actually sent.
-
-The document knows how to mutate itself and how to run a cell; it does not know
-about FastHTML or CodeMirror. The browser and persistence layers drive the same object.
-
-There is a third cell type here that Jupyter does not have: `prompt`. A prompt
-cell is a question for the assistant, living in the notebook rather than in a
-chat panel off to one side, and `context()` is what makes that worth doing --
-running one sends the cells *above* it, so the code, what it printed, and the
-prose around it are the conversation. The answer is stored in the cell, which
-means it is saved with the document, read in order like everything else, and
-re-runnable. (The idea is borrowed from Solveit, whose dialogs are notebooks of
-`code`/`note`/`prompt` messages.)
+Outputs stay in nbformat shape end to end, so a round-trip loses nothing. There is a third
+cell type Jupyter does not have: `prompt`, a question for the assistant whose context is the
+cells above it and whose answer is stored in the cell.
 """
 
 from __future__ import annotations
-import json, time, uuid
+import time, uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
-from fastcore.all import L, ifnone
-from fastcore.nbio import read_nb, write_nb, new_nb
+from fastcore.all import L, Path, ifnone
+from fastcore.nbio import read_nb, write_nb, new_nb, nb2str
 
 from ... import Dictable
 from ..runtime.kernels import output_text
@@ -34,9 +20,7 @@ __all__ = ['CELL_TYPES', 'Cell', 'Notebook', 'cell_id']
 # The order `ctrl+alt+m` cycles through.
 CELL_TYPES = ('code', 'markdown', 'prompt')
 
-# Context is complete by default. A prompt cell is a view over the notebook above it, not
-# a twelve-kilobyte excerpt of that notebook. Callers may still pass explicit limits for a
-# constrained model; cells marked ``keep`` survive that compaction before ordinary cells.
+# `None` means context is uncapped; callers pass explicit limits for a constrained model.
 MAX_CONTEXT = None
 MAX_CELL_OUT = None
 CONTEXT_MODES = ('auto', 'keep', 'discard')
@@ -59,14 +43,8 @@ class Cell(Dictable):
     reply: str = ''                                # a prompt cell's answer
     calls: list = field(default_factory=list)      # and the tools used to reach it
     usage: dict = field(default_factory=dict)      # per-answer token and estimated cost accounting
-    # An approval exchange the agent raised while answering a prompt cell: the request, or
-    # the person's answer to it, saved as an ordinary markdown cell so the negotiation is
-    # read in order with everything else. `None` on every other cell.
-    approval: dict | None = None
-    # Compaction policy for this cell. ``keep`` means preserve its details when notebook
-    # context has to be reduced; ``discard`` makes it the first candidate to remove. All
-    # three modes are sent in full before compaction is necessary.
-    context_mode: str = 'auto'                  # 'auto' | 'keep' | 'discard'
+    approval: dict | None = None                # an agent approval exchange; `None` on every other cell
+    context_mode: str = 'auto'                  # 'auto' | 'keep' | 'discard' compaction policy
     fresh: bool = False                         # ran in this live kernel; deliberately not persisted
 
     def __post_init__(self):
@@ -90,15 +68,8 @@ class Cell(Dictable):
         return self
 
     def nbcell(self):
-        """This cell in nbformat v4 shape.
-
-        nbformat has no prompt cell, so one is written as *markdown* carrying its answer
-        in metadata. That keeps the file valid and legible in plain Jupyter -- the
-        question reads as prose -- while leela still round-trips the reply and the
-        tool calls. Inventing a `cell_type` would have made the notebook unopenable
-        everywhere else, which is too high a price for a nicer-looking file.
-        """
-        c = {'cell_type': self.cell_type, 'source': self.source, 'metadata': {}, 'id': self.id}
+        "This cell in nbformat v4 shape; nbformat has no prompt cell, so one is written as markdown with its answer in metadata."
+        c = dict(cell_type=self.cell_type, source=self.source, metadata={}, id=self.id)
         meta = {} if self.context_mode == 'auto' else {'context': self.context_mode}
         if self.cell_type == 'code':
             c['outputs'] = list(self.outputs)
@@ -108,10 +79,7 @@ class Cell(Dictable):
             c['cell_type'] = 'markdown'
             meta.update(kind='prompt', reply=self.reply, calls=list(self.calls), usage=dict(self.usage))
             if self.execution_ms is not None: meta['execution_ms'] = round(self.execution_ms, 3)
-        elif self.approval is not None:
-            # Same trick as a prompt cell, for the same reason: the exchange is prose, so
-            # it is written as markdown and only the structure lives in metadata.
-            meta.update(self.approval, kind='approval')
+        elif self.approval is not None: meta.update(self.approval, kind='approval')
         if meta: c['metadata'] = {'leela': meta}
         return c
 
@@ -120,16 +88,11 @@ class Cell(Dictable):
         src = c.get('source', '')
         if isinstance(src, list): src = ''.join(src)
         meta = (c.get('metadata') or {}).get('leela') or {}
-        return cls(source=src,
-                   cell_type='prompt' if meta.get('kind') == 'prompt' else c.get('cell_type', 'code'),
-                   outputs=list(c.get('outputs') or []),
-                   execution_count=c.get('execution_count'),
-                   execution_ms=meta.get('execution_ms'),
-                   id=str(c.get('id') or cell_id()),
-                   reply=str(meta.get('reply') or ''), calls=list(meta.get('calls') or []),
-                   usage=dict(meta.get('usage') or {}),
-                   approval=dict(meta) if meta.get('kind') == 'approval' else None,
-                   context_mode=str(meta.get('context') or 'auto'))
+        return cls(source=src, outputs=list(c.get('outputs') or []), id=str(c.get('id') or cell_id()),
+            cell_type='prompt' if meta.get('kind') == 'prompt' else c.get('cell_type', 'code'),
+            execution_count=c.get('execution_count'), execution_ms=meta.get('execution_ms'),
+            reply=str(meta.get('reply') or ''), calls=list(meta.get('calls') or []), usage=dict(meta.get('usage') or {}),
+            context_mode=str(meta.get('context') or 'auto'), approval=dict(meta) if meta.get('kind') == 'approval' else None)
 
 
 class Notebook:
@@ -139,9 +102,7 @@ class Notebook:
         self.cells = L(ifnone(cells, [Cell()]))
         self.path = str(path) if path else ''
         self.dirty = False
-        # Text editors own character-level undo. This history owns notebook operations:
-        # deleting, moving, splitting, merging, changing type, and clearing output.
-        self._undo, self._redo = [], []
+        self._undo, self._redo = [], []   # structural operations only; editors own character-level undo
 
     def __len__(self): return len(self.cells)
     def __getitem__(self, i): return self.cells[i]
@@ -149,11 +110,7 @@ class Notebook:
     # -- io --------------------------------------------------------------------
     @classmethod
     def load(cls, path):
-        # A file picker traditionally creates files with `touch`. Treat a zero-byte
-        # notebook as a new document rather than surfacing a JSONDecodeError; saving it
-        # will replace the placeholder with valid nbformat JSON. Non-empty malformed
-        # notebooks still raise, because silently replacing their contents would lose data.
-        from pathlib import Path
+        "Open an `.ipynb`. A zero-byte file (what `touch` leaves) is a new document, not a parse error."
         p = Path(path)
         if p.exists() and p.stat().st_size == 0: return cls.blank(path)
         nb = read_nb(str(path))
@@ -164,22 +121,17 @@ class Notebook:
     def blank(cls, path=None): return cls([Cell()], path)
 
     def save(self, path=None, sandbox=None):
-        """Write the notebook. `sandbox` routes the write through `Sandbox.write`, so a
-        notebook cannot be saved outside the open folders."""
+        "Write the notebook; `sandbox` confines the write to the open folders."
         p = str(path or self.path)
         if not p: raise ValueError('notebook has no path')
-        nb = new_nb([])
-        nb['cells'] = [c.nbcell() for c in self.cells]
-        if sandbox is not None:
-            sandbox.write(p, json.dumps(nb, indent=1) + '\n')
-        else:
-            write_nb(nb, p)
+        nb = new_nb([c.nbcell() for c in self.cells])
+        if sandbox is not None: sandbox.write(p, nb2str(nb))
+        else: write_nb(nb, p)
         self.path, self.dirty = p, False
         return p
 
     # -- structure -------------------------------------------------------------
-    def _snapshot(self, i=0):
-        return {'cells': deepcopy(list(self.cells)), 'dirty': self.dirty, 'index': i}
+    def _snapshot(self, i=0): return dict(cells=deepcopy(list(self.cells)), dirty=self.dirty, index=i)
 
     def _checkpoint(self, i=0):
         self._undo.append(self._snapshot(i))
@@ -210,7 +162,7 @@ class Notebook:
         return c
 
     def delete(self, i):
-        "Remove a cell. A notebook always keeps at least one, so there is somewhere to type."
+        "Remove a cell; a notebook always keeps at least one."
         if not (0 <= i < len(self.cells)): return None
         self._checkpoint(i)
         c = self.cells.pop(i)
@@ -236,11 +188,10 @@ class Notebook:
         return c
 
     def cycle_type(self, i):
-        "Advance a cell through `CELL_TYPES`, so one key reaches all three instead of three keys."
+        "Advance a cell through `CELL_TYPES`."
         c = self.cells[i]
-        nxt = (CELL_TYPES[(CELL_TYPES.index(c.cell_type) + 1) % len(CELL_TYPES)]
-               if c.cell_type in CELL_TYPES else 'code')
-        return self.set_type(i, nxt)
+        if c.cell_type not in CELL_TYPES: return self.set_type(i, 'code')
+        return self.set_type(i, CELL_TYPES[(CELL_TYPES.index(c.cell_type) + 1) % len(CELL_TYPES)])
 
     def split(self, i, offset):
         "Split cell `i` at a character offset, keeping outputs with the first half."
@@ -261,7 +212,7 @@ class Notebook:
         return n
 
     def paste(self, i, cell):
-        "Insert a detached copy at `i`; the clipboard remains reusable across notebooks."
+        "Insert a copy of `cell` at `i`, leaving the clipboard reusable."
         if not isinstance(cell, Cell): raise TypeError('cell clipboard must contain a Cell')
         n = deepcopy(cell)
         n.id, n.running, n.fresh = cell_id(), False, False
@@ -292,8 +243,10 @@ class Notebook:
         out = []
         for raw in cells:
             if not isinstance(raw, Cell): raise TypeError('cell clipboard must contain Cells')
-            n = deepcopy(raw); n.id, n.running, n.fresh = cell_id(), False, False
-            self.cells.insert(i + len(out), n); out.append(n)
+            n = deepcopy(raw)
+            n.id, n.running, n.fresh = cell_id(), False, False
+            self.cells.insert(i + len(out), n)
+            out.append(n)
         self.dirty = True
         return out
 
@@ -333,14 +286,11 @@ class Notebook:
 
     # -- execution -------------------------------------------------------------
     async def run(self, i, kernel, on_output=None):
-        """Run cell `i` against `kernel`, replacing its outputs.
-
-        Markdown cells are a no-op rather than an error -- 'run' on a markdown cell means
-        'render and move on', which is what the frontends do with the returned cell.
-        """
+        "Run cell `i` against `kernel`, replacing its outputs. Non-code cells are a no-op."
         c = self.cells[i]
         if c.cell_type != 'code': return c
-        c.clear(); c.running = True
+        c.clear()
+        c.running = True
         started = time.perf_counter()
         try:
             display_at = {}
@@ -353,8 +303,8 @@ class Notebook:
                     if display_id: display_at[display_id] = len(c.outputs) - 1
                 if on_output: on_output(i, row)
             r = await kernel.execute(c.source, on_output=receive)
-            # Persist Kernel's reconciled final list as well. This strips callback-only
-            # display metadata and covers kernels that do not emit incremental callbacks.
+            # Kernel's reconciled list, not the callback's: it strips callback-only display
+            # metadata and covers kernels that emit no incremental callbacks at all.
             c.outputs = r.outputs
             c.execution_count = r.execution_count
         finally:
@@ -365,7 +315,7 @@ class Notebook:
         return c
 
     async def run_all(self, kernel, on_output=None, stop_on_error=True):
-        "Run every code cell in order. Stops at the first error by default, as Jupyter's 'run all' does."
+        "Run every code cell in order, stopping at the first error by default."
         done = L()
         for i, c in enumerate(self.cells):
             if c.cell_type != 'code' or not c.source.strip(): continue
@@ -379,17 +329,11 @@ class Notebook:
 
     # -- prompt cells ----------------------------------------------------------
     def prompt_start(self, i):
-        """Prompt cells always read from the top of the document.
-
-        The document is the source of truth, and an earlier cell may have been edited
-        since its last prompt ran. Reusing only backend chat history makes that edit
-        invisible. This mirrors dialoghelper/Solveit: every message above the current
-        prompt is already-visible context.
-        """
+        "Prompt cells always read from the top of the document, not from backend chat history."
         return 0
 
     def _context_cell(self, c, out_chars=None):
-        """One cell as explicit, compaction-aware context markup."""
+        "One cell as explicit, compaction-aware context markup."
         src = c.source.strip()
         if not src and not c.reply: return ''
         attr = f'id="{c.id}" type="{c.cell_type}" compact="{c.context_mode}"'
@@ -403,15 +347,9 @@ class Notebook:
         return '\n'.join(body)
 
     def context(self, i, since=0, max_chars=MAX_CONTEXT, out_chars=MAX_CELL_OUT):
-        """Every cell above `i`, including complete outputs and replies, in document order.
-
-        Nothing is silently clipped in the normal path. If an explicit ``max_chars`` is
-        supplied, ``discard`` cells are removed first, then old ``auto`` cells; ``keep``
-        cells are retained ahead of both. The ``compact`` attributes also travel into the
-        agent history so later conversation compaction can make the same choice.
-        """
-        rows = [(c.context_mode, self._context_cell(c, out_chars))
-                for c in self.cells[max(0, since):max(0, i)]]
+        "Every cell above `i` in document order; under an explicit `max_chars`, `discard` cells go first and `keep` last."
+        above = self.cells[max(0, since):max(0, i)]
+        rows = [(c.context_mode, self._context_cell(c, out_chars)) for c in above]
         rows = [(mode, text) for mode, text in rows if text]
         txt = '\n'.join(text for _, text in rows)
         if max_chars is None or len(txt) <= max_chars: return txt
@@ -423,12 +361,5 @@ class Notebook:
         return '\n'.join([*kept, tail] if tail else kept)
 
     def source_text(self):
-        """The whole notebook as one diffable document: every cell's source under a marker line.
-
-        Diffing the raw `.ipynb` would be useless -- it is JSON, and a one-character edit
-        shows up as a rewritten line buried among outputs and execution counts. Cell
-        sources under jupytext's `# %%` markers diff the way the user thinks about the
-        document, and the marker carries the cell type and id so a hunk can be traced
-        back to the cell it came from.
-        """
+        "The whole notebook as one diffable document: every cell's source under a jupytext `# %%` marker."
         return '\n'.join(f'# %% {c.cell_type} {c.id}\n{c.source.rstrip()}' for c in self.cells)

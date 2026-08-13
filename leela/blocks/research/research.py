@@ -1,22 +1,13 @@
 """Web research inside the editor: search, read a page as markdown, save it into the project.
 
-fossick does the actual work -- ddgs metasearch, escalating fetchers for pages that
-fight back, HTML/PDF to markdown, arxiv and GitHub readers. This module's job is the
-part fossick cannot know about: keeping the results *confined*. Anything written to
-disk goes through `Sandbox`, so a page pulled off the web lands inside an open folder
-or not at all.
-
-Nothing here is async, deliberately. Every call is blocking network I/O, and the web
-app moves it to a worker thread. The implementation therefore owns no event loop and
-never wraps a coroutine that was only going to block.
-
-fossick is imported lazily for the same reason kosha is: it pulls in a browser
-automation stack, and an editor that opens a file should not pay for that.
+fossick does the fetching and extraction; this module confines the results, writing only
+through `Sandbox`. Nothing here is async -- every call is blocking I/O that the web app moves
+to a worker thread.
 """
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from fastcore.all import Path, L
+from fastcore.all import Path, L, first
 
 from ... import Dictable, errstr
 
@@ -25,20 +16,13 @@ __all__ = ['Doc', 'Research', 'MAX_DOC_CHARS']
 MAX_DOC_CHARS = 200_000   # retain a whole article while bounding one source in memory/the browser
 MAX_RESEARCH_DIGEST_CHARS = 900_000  # stays below the web Markdown renderer's 1 MB boundary
 
-# Ordered broad-to-specific extraction surfaces. Fossick's default readability pass is
-# excellent when a page has conventional article markup, but some sites expose only the
-# lead paragraph to it. These selectors ask Fossick to convert every matching content
-# block and let us keep the richest clean candidate rather than silently accepting a stub.
-_CONTENT_SELECTORS = (
-    'article', 'main', '[role="main"]',
-    '.article-body', '.article-content', '.post-content', '.entry-content',
-)
-_BLOCK_SELECTOR = ('article h1, article h2, article h3, article h4, article p, article pre, '
-                   'article blockquote, article li, article table, main h1, main h2, main h3, '
-                   'main h4, main p, main pre, main blockquote, main li, main table, '
-                   '[role="main"] h1, [role="main"] h2, [role="main"] h3, '
-                   '[role="main"] p, [role="main"] pre, [role="main"] blockquote, '
-                   '[role="main"] li, [role="main"] table')
+# Extra extraction surfaces for pages whose markup defeats fossick's readability pass, which
+# then yields only the lead paragraph. The richest clean candidate wins; see `_page_text`.
+_CONTENT_SELECTORS = ('article', 'main', '[role="main"]', '.article-body', '.article-content', '.post-content', '.entry-content')
+_BLOCK_SELECTOR = ('article h1, article h2, article h3, article h4, article p, article pre, article blockquote, '
+    'article li, article table, main h1, main h2, main h3, main h4, main p, main pre, main blockquote, main li, '
+    'main table, [role="main"] h1, [role="main"] h2, [role="main"] h3, [role="main"] p, [role="main"] pre, '
+    '[role="main"] blockquote, [role="main"] li, [role="main"] table')
 
 
 @dataclass
@@ -73,10 +57,9 @@ class Research:
             return saved
         except Exception: return None  # reading remains useful if optional indexing is unavailable
 
-    # -- the dependency -------------------------------------------------------
     @staticmethod
     def _fossick():
-        "The fossick module. Imported here, not at module scope: it drags in a browser stack."
+        "The fossick module, imported here rather than at module scope: it drags in a browser stack."
         import fossick
         return fossick
 
@@ -101,27 +84,19 @@ class Research:
                 heading = element.css('h1, h2, h3').first
                 title = heading.get_all_text().strip() if heading is not None else ''
                 text = str(f.to_md(str(element.get())) or '').strip()
-                # Some feeds wrap every story in one outer <article>. Readability reduces
-                # that wrapper to its first story, so its page-level h1 is not that story's
-                # title; derive a truthful title from the extracted text instead.
+                # A wrapper <article> around several stories keeps the page h1, which is not the
+                # first story's title; take the title from the extracted text instead.
                 if len(list(element.css('article'))) > 1:
-                    title = next((line.strip().lstrip('#').strip()[:120] for line in text.splitlines()
-                                  if line.strip()), '')
+                    title = first(ln.strip().lstrip('#').strip()[:120] for ln in text.splitlines() if ln.strip()) or ''
             except Exception: continue
-            # A parent article containing nested cards can convert to one of those cards;
-            # content-based deduplication removes that aggregate duplicate.
-            key = ' '.join(text.lower().split())
+            key = ' '.join(text.lower().split())   # dedupes a wrapper that converted to one of its cards
             if len(text) < 80 or key in seen: continue
             seen.add(key)
             out.append({'title': title or _title(text, ''), 'text': text[:MAX_DOC_CHARS]})
         return out if len(out) > 1 else []
 
     def _page_text(self, f, page, sel=None):
-        """Best whole-page Markdown candidate using Fossick's explicit extraction modes.
-
-        `multi=True` is essential: without it a selector intentionally returns its first
-        match, which is exactly how a page with many paragraph nodes became one paragraph.
-        """
+        "Best whole-page Markdown candidate. `multi=True` throughout: without it a selector returns only its first match."
         candidates = []
         sections = self._article_sections(f, page) if not sel else []
         def take(label, **kw):
@@ -134,9 +109,7 @@ class Research:
         for selector in _CONTENT_SELECTORS: take(selector, sel=selector, multi=True)
         take('semantic blocks', sel=_BLOCK_SELECTOR, multi=True)
         if not candidates: return '', 'no extraction matched', sections
-        # Prefer complete content, but discount navigation-shaped candidates. Broad
-        # semantic-block extraction can include a Wikipedia language/sidebar list; its
-        # raw length is large while its ratio of bullet rows makes it a worse article.
+        # Length, discounted by bullet ratio: a long sidebar or language list is not an article.
         def quality(row):
             lines = [x for x in row[1].splitlines() if x.strip()]
             bullets = sum(x.lstrip().startswith(('* ', '- ')) for x in lines)
@@ -149,16 +122,14 @@ class Research:
         page = self._try('fetch page', f.fetch, url, auto=True)
         if page is None: return '', ''
         text, strategy, sections = self._page_text(f, page, sel)
-        # `auto` escalates bot walls, not ordinary 200 responses whose article is filled by
-        # JavaScript later. A suspiciously thin result gets one explicit rendered retry.
+        # `auto` escalates bot walls, not a 200 whose article JavaScript fills in later.
         if len(text) < 800:
             rendered = self._try('render page', f.fetch, url, heavy=True, network_idle=True)
             if rendered is not None:
                 richer, rendered_strategy, rendered_sections = self._page_text(f, rendered, sel)
                 if len(richer) > len(text): text, strategy = richer, f'rendered {rendered_strategy}'
                 if len(rendered_sections) > len(sections): sections = rendered_sections
-        # DDGS extraction is a cheap independent fallback for pages whose DOM remains a
-        # shell or whose content is encoded in awkward site-specific markup.
+        # Last resort for a DOM that is still a shell: DDGS extraction, independent of the DOM.
         if len(text) < 800 and hasattr(f, 'extract'):
             extracted = self._try('extract page', f.extract, url)
             rows = extracted if isinstance(extracted, list) else [extracted]
@@ -179,9 +150,8 @@ class Research:
         f = self._fossick()
         hits = self._try(f'{category} search', lambda: list(f.search(q, category=category, max_results=n)))
         if hits is None: return L()
-        out = L(Doc(title=(h.get('title') or h.get('href') or '').strip(),
-                    url=h.get('href') or h.get('url') or '', kind='hit')
-                for h in hits[:n])
+        out = L(Doc(title=(h.get('title') or h.get('href') or '').strip(), kind='hit',
+            url=h.get('href') or h.get('url') or '') for h in hits[:n])
         self.note = f'{len(out)} results for {q!r}'
         return out
 
@@ -192,15 +162,13 @@ class Research:
             self.note = 'no url'
             return None
         f = self._fossick()
-        title = ''
-        if 'github.com' in url and '/blob/' in url:
-            md, kind = self._try('read github file', f.read_gh_file, url), 'repo'
+        title, strategy, sections = '', '', []
+        if 'github.com' in url and '/blob/' in url: md, kind = self._try('read github file', f.read_gh_file, url), 'repo'
         elif 'arxiv.org' in url:
             paper = self._try('read arxiv', f.read_arxiv, url, save_pdf=False)
-            # Fossick returns the paper's source and summary. Older releases used `md`
-            # or `abstract`, so retain those fallbacks for compatible environments.
-            md = None if paper is None else (paper.get('source') or paper.get('summary') or
-                                              paper.get('md') or paper.get('abstract') or '')
+            # `md`/`abstract` are the pre-`source`/`summary` fossick keys, kept for older installs.
+            md = None if paper is None else (paper.get('source') or paper.get('summary')
+                or paper.get('md') or paper.get('abstract') or '')
             title = '' if paper is None else str(paper.get('title') or '')
             kind = 'paper'
         elif 'youtube.com/' in url or 'youtu.be/' in url:
@@ -209,29 +177,22 @@ class Research:
             title = '' if video is None else str(video.get('title') or '')
             kind = 'page'
         else:
-            # Fetch the full response. Passing a selector into `fetch` narrows `.html` to
-            # its first match before conversion; selectors belong in `_page_text`, where
-            # multi=True can retain every matching paragraph/block.
+            # `sel` is not passed to `fetch`, which would narrow `.html` to its first match;
+            # `_page_text` applies it with multi=True instead.
             md, strategy, sections = self._read_page(f, url, sel)
             kind = 'page'
         if not md:
-            # `_try` only knows about exceptions. A fetcher that returns nothing without
-            # raising would otherwise leave the *success* note standing over a None result.
+            # `_try` sees only exceptions, so a fetcher returning nothing leaves a success note.
             if 'failed' not in self.note: self.note = f'no content at {url}'
             return None
-        doc = Doc(title=title or _title(md, url), url=url, text=str(md)[:MAX_DOC_CHARS], kind=kind,
-                  sections=sections if 'sections' in locals() else [])
-        detail = f' via {strategy}' if kind == 'page' and 'strategy' in locals() and strategy else ''
+        doc = Doc(title=title or _title(md, url), url=url, text=str(md)[:MAX_DOC_CHARS], kind=kind, sections=sections)
+        detail = f' via {strategy}' if kind == 'page' and strategy else ''
         self.note = f'{len(doc.text)} chars from {url}{detail}'
         if remember: self._remember(doc)
         return doc
 
     def dig(self, q, n=5, chars=MAX_DOC_CHARS, remember=True):
-        """Search, then read the top `n` results into one cited corpus.
-
-        This is the expensive one -- `n` page fetches -- so it is a deliberate action in
-        the browser rather than something that fires while you type.
-        """
+        "Search, then read the top `n` results into one cited corpus. `n` page fetches, so never on a keystroke."
         q = (q or '').strip()
         if not q:
             self.note = 'empty query'
@@ -246,13 +207,10 @@ class Research:
         strategies = []
         for hit, page in zip([d for d in hits if d.url], pages):
             text, strategy, sections = self._page_text(f, page)
-            # Research receives the same complete-source treatment as Read URL. A thin
-            # parallel fetch is retried through the full escalation path for that source.
-            if len(text) < 800:
-                text, strategy, sections = self._read_page(f, hit.url)
-            docs.append(Doc(title=hit.title or _title(text, hit.url), url=hit.url,
-                            text=text[:min(MAX_DOC_CHARS, max(1, int(chars)))], kind='page',
-                            sections=sections))
+            # A thin parallel fetch goes back through the full escalation path, as `read` does.
+            if len(text) < 800: text, strategy, sections = self._read_page(f, hit.url)
+            docs.append(Doc(title=hit.title or _title(text, hit.url), url=hit.url, kind='page',
+                text=text[:min(MAX_DOC_CHARS, max(1, int(chars)))], sections=sections))
             strategies.append(strategy)
         parts, used = [], 0
         for doc in docs:
@@ -260,8 +218,8 @@ class Research:
             room = MAX_RESEARCH_DIGEST_CHARS - used - len(head)
             if room <= 0: break
             body = doc.text[:room]
-            parts.append(head + body + ('\n\n*[source clipped in combined brief; open it for the full text]*'
-                                        if len(body) < len(doc.text) else ''))
+            clipped = '\n\n*[source clipped in combined brief; open it for the full text]*'
+            parts.append(head + body + (clipped if len(body) < len(doc.text) else ''))
             used += len(parts[-1]) + 9
         digest = '\n\n---\n\n'.join(parts)
         self.note = f'read {len(docs)} complete sources for {q!r}'
@@ -284,15 +242,8 @@ class Research:
         return e
 
     def save_notebook(self, url, ref=None):
-        """A url as a runnable notebook, via fossick's `url2nb` (it handles PDFs and arxiv too).
-
-        `url2nb` writes the file itself, so the path is gated through `Sandbox` *first* --
-        the check is what keeps a downloaded paper from landing outside the open folders.
-        """
+        "A url as a runnable notebook via fossick's `url2nb`. It writes the file itself, so the path is checked first."
         f = self._fossick()
-        # A blank-title Doc always slugged to "untitled", making every URL collide.
-        # Derive the no-prompt filename from the host/path while still allowing callers
-        # to choose an exact destination.
         p = self.fs._check(ref or f'{_url_slug(url)}.ipynb')
         if p.suffix != '.ipynb': p = p.with_suffix('.ipynb')
         out = self._try('url to notebook', f.url2nb, url, nb_path=str(p))
