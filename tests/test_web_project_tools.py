@@ -654,3 +654,29 @@ def test_search_leads_with_all_and_walks_its_modes_from_a_rail():
     assert 'counts[mode] = hits.length' in block
     assert '.lee-searchrail' in CSS and '.lee-searchrail-mode.active' in CSS
     assert 'lee-searchmodes' not in block, 'the old horizontal segbar is gone, not just hidden'
+
+
+def test_all_streams_its_backends_into_stable_slots():
+    """rg answers in tens of milliseconds and the embedding leg in seconds, so `all` fills in as
+    each reports rather than waiting for the slowest. The slots are stable on purpose: a list
+    that re-ranked on every arrival would reshuffle under the cursor while it was being read."""
+    block = JS[JS.index('const streamAll'):JS.index('let timer, liveStream')]
+    assert "new EventSource('/search/stream?q='" in block
+    assert "for (const leg of d.legs || []) slots.set(leg, [])" in block, 'order fixed once, up front'
+    # A hit a later leg finds again joins the row that already exists rather than appearing twice.
+    assert 'already.sources = [...new Set([...(already.sources || []), d.leg])]' in block
+    assert 'if (sel >= hits.length)' in block, 'the selection survives a list that grew at the end'
+    # A stale stream is closed rather than left running for a question nobody is asking.
+    assert 'liveStream = es' in block
+    search = JS[JS.index('let timer, liveStream'):JS.index('input.addEventListener(\'input\', search)')]
+    assert 'if (liveStream) { try { liveStream.close(); }' in search
+    assert "if (mode === 'all')" in search and 'return streamAll(q, seq)' in search
+
+
+def test_the_search_stream_route_fans_its_legs_out_concurrently():
+    from tests.assets import read
+    src = read('leela/blocks/search/app.py')
+    assert 'asyncio.as_completed(tasks)' in src, 'completion order is the entire point'
+    assert 'off_loop(ctx.search.leg, name' in src, 'each leg on its own worker thread'
+    assert 'await req.is_disconnected()' in src and 't.cancel()' in src
+    assert "sse('leg'" in src and "sse('done'" in src and "sse('start'" in src

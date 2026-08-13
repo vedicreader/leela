@@ -733,6 +733,62 @@ class Search:
         self.note = f'Kosha returned no existing paths; {self.note}'
         return self._place(fallback)
 
+    # The legs `all` is made of, best-first. Order is the tie-break the frontend shows them in
+    # when they arrive out of order, which they will: rg answers in tens of milliseconds and the
+    # embedding leg in seconds.
+    ALL_LEGS = ('symbols', 'rg', 'fts', 'ann')
+    LEG_PRIORITY = {'symbols': 100, 'rg': 80, 'fts': 60, 'ann': 40}
+
+    @staticmethod
+    def hit_key(hit):
+        "What makes two hits the same hit, so two engines finding one location merge into one row."
+        return (hit.path, int(hit.line), hit.package if hit.kind == 'env-symbol' else '')
+
+    def relevance(self, source, hit, q):
+        """How `all` ranks one hit. Extracted so a leg reported on its own scores identically.
+
+        A streamed result that ranked differently from the same result in a batch answer would
+        make the list reorder for no reason the moment the last leg landed.
+
+        One-shot: the last term folds in the backend's own score as a small tie-breaker, and both
+        callers then *replace* `hit.score` with what this returns. Applying it twice to the same
+        hit therefore counts that tie-breaker again. Compute it once per hit, as they both do.
+        """
+        query, leaf = q.lower(), re.split(r'::|\\|->|\.', q)[-1].lower()
+        symbol, text, filename = hit.symbol.lower(), hit.text.lower(), Path(hit.path).name.lower()
+        relevance = self.LEG_PRIORITY.get(source, 40)
+        if symbol and symbol.rsplit('.', 1)[-1] == leaf: relevance += 120
+        elif leaf and leaf in symbol: relevance += 55
+        if query and query in text: relevance += 40
+        if leaf and leaf in filename: relevance += 20
+        # Preserve an ANN/FTS score only as a small tie-breaker; their scales differ.
+        return relevance + min(10.0, abs(float(hit.score or 0.0)))
+
+    def leg(self, name, q, limit=40, regex=False, exts=(), roots=None):
+        """One backend of `all`, run alone and scored the way `all` scores it.
+
+        Split out so the legs can run concurrently and be reported as each finishes. Making
+        ripgrep's answer wait for the embedding index is the whole reason `all` felt slow, and
+        nothing about the ranking required it -- the legs never depended on each other, they were
+        merely written as one loop.
+
+        Returns `(hits, note)`. A leg that is unavailable returns an empty list and says why,
+        rather than raising: one absent index must not take the other three down with it.
+        """
+        runners = {'rg': lambda: self._rg(q, limit, regex, exts, roots),
+                   'symbols': lambda: self._symbols(q, limit),
+                   'fts': lambda: self._fts(q, limit),
+                   'ann': lambda: self._ann(q, limit)}
+        if name not in runners: return L(), f'unknown search leg {name!r}'
+        try: rows = runners[name]()
+        except Exception as e: return L(), f'{name} failed: {errstr(e)}'
+        if rows is None: return L(), f'{name} unavailable'
+        hits = self._place(self._keep(L(rows), exts, roots))
+        for h in hits:
+            h.score = self.relevance(name, h, q)
+            h.sources = [name]
+        return L(sorted(hits, key=lambda h: (-h.score, h.path, h.line))), ''
+
     def _all(self, q, limit, regex=False):
         "Search every available leg and rank one deduplicated result set."
         per = max(12, min(limit, 40))
@@ -752,21 +808,12 @@ class Search:
                 continue
             legs.extend((name, h) for h in rows)
 
-        query, leaf = q.lower(), re.split(r'::|\\|->|\.', q)[-1].lower()
-        priority = {'symbols': 100, 'rg': 80, 'fts': 60, 'ann': 40}
         merged = {}
         for source, hit in legs:
             # Environment symbols have no workspace path to open, so package participates
             # in identity. Repo hits deduplicate when multiple engines found one location.
-            key = (hit.path, int(hit.line), hit.package if hit.kind == 'env-symbol' else '')
-            symbol, text, filename = hit.symbol.lower(), hit.text.lower(), Path(hit.path).name.lower()
-            relevance = priority[source]
-            if symbol and symbol.rsplit('.', 1)[-1] == leaf: relevance += 120
-            elif leaf and leaf in symbol: relevance += 55
-            if query and query in text: relevance += 40
-            if leaf and leaf in filename: relevance += 20
-            # Preserve an ANN/FTS score only as a small tie-breaker; their scales differ.
-            relevance += min(10.0, abs(float(hit.score or 0.0)))
+            key = self.hit_key(hit)
+            relevance = self.relevance(source, hit, q)
             if key not in merged or relevance > merged[key][0]:
                 old_sources = merged[key][1].sources if key in merged else []
                 hit.sources = list(dict.fromkeys([*old_sources, source]))

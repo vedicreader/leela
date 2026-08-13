@@ -397,3 +397,74 @@ def test_context_mode_keeps_both_halves_under_a_project_scope(tmp_path):
     hits = s.search('merge dict', mode='context', roots=[tmp_path])
     assert [h.kind for h in hits] == ['context', 'env-context']
     assert any(h.symbol == 'fastcore.basics.merge' for h in hits)
+
+
+def test_a_leg_is_scored_exactly_as_the_batch_answer_scores_it(tmp_path):
+    """A streamed hit that ranked differently from the same hit in `all` would make the list
+    reorder for no reason the moment the last backend landed."""
+    p = tmp_path/'core.py'; p.write_text('def merge_dicts(a, b):\n    return a | b\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    hits, note = s.leg('rg', 'merge_dicts', 20)
+    assert note == '' and [h.line for h in hits] == [1]
+    assert hits[0].sources == ['rg']
+    # The same hit, scored the way `all` scores it: leg priority 80 plus 40 for the query being
+    # in the matched text. Computed from a pristine hit, because `relevance` folds the backend's
+    # raw score in as a tie-breaker and both `leg` and `_all` then *replace* `score` with the
+    # result -- so it is a one-shot calculation, not one to re-apply to an already-scored hit.
+    from dataclasses import replace
+    pristine = replace(hits[0], score=0.0, sources=[])
+    assert hits[0].score == s.relevance('rg', pristine, 'merge_dicts') == 120.0
+    assert s.relevance('rg', hits[0], 'merge_dicts') == 130.0, 'documented: not idempotent'
+    # Best-first within the leg, so the frontend can append without re-sorting.
+    assert [h.score for h in hits] == sorted((h.score for h in hits), reverse=True)
+
+
+def test_an_unavailable_leg_says_so_instead_of_taking_the_others_down(tmp_path):
+    "One absent index must not cost the other three their answers."
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    hits, note = s.leg('ann', 'anything', 10)
+    assert hits == [] and 'unavailable' in note
+
+    def boom(*a, **kw): raise RuntimeError('index is corrupt')
+    s._fts = boom
+    hits, note = s.leg('fts', 'anything', 10)
+    assert hits == [] and 'fts failed' in note and 'corrupt' in note
+    assert s.leg('nonsense', 'x', 10)[1].startswith('unknown search leg')
+
+
+def test_the_streaming_search_reports_each_backend_as_it_finishes(tmp_path):
+    """The legs never depended on each other; they were merely written as one loop, so the
+    answer cost the *sum* of their times. Each one now arrives on its own."""
+    import json as _json
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    (tmp_path/'core.py').write_text('def merge_dicts(a, b):\n    return a | b\n')
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as c:
+        with c.stream('GET', '/search/stream', params={'q': 'merge_dicts'}) as r:
+            assert r.status_code == 200
+            events, name = [], ''
+            for line in r.iter_lines():
+                if line.startswith('event: '): name = line[7:].strip()
+                elif line.startswith('data: '): events.append((name, _json.loads(line[6:])))
+    kinds = [n for n, _ in events]
+    assert kinds[0] == 'start' and kinds[-1] == 'done'
+    start = events[0][1]
+    assert start['legs'] == list(Search.ALL_LEGS) and start['searched'] == [str(tmp_path)]
+    legs = {d['leg']: d for n, d in events if n == 'leg'}
+    assert set(legs) == set(Search.ALL_LEGS), 'every leg reports, even the ones with no index'
+    assert any(h['line'] == 1 for h in legs['rg']['hits']), 'and rg found the definition'
+    assert legs['ann']['hits'] == [] and 'unavailable' in legs['ann']['note']
+
+
+def test_the_stream_says_so_when_there_is_nothing_to_search_for(tmp_path):
+    import json as _json
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c:
+        with c.stream('GET', '/search/stream', params={'q': '  '}) as r:
+            body = r.read().decode()
+    assert 'event: start' in body and 'event: done' in body and 'event: leg' not in body
+    assert 'nothing to search for' in body

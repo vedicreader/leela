@@ -177,6 +177,7 @@ GET,POST /runtime/info
 GET,POST /runtime/support
 GET,POST /screen
 GET,POST /search
+GET,POST /search/stream
 GET,POST /settings
 GET,POST /settings/reset
 GET,POST /settings/save

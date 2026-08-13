@@ -7414,7 +7414,12 @@ async function codeSearch() {
       // thing given up is a focus order over four controls, and what is bought is trying the
       // same query against another backend without leaving the keyboard.
       else if (e.key === 'Tab') { e.preventDefault(); cycleMode(e.shiftKey ? -1 : 1); }
-    }, () => { if (previewView) LeeCM.destroy(previewView); });
+    }, () => {
+      if (previewView) LeeCM.destroy(previewView);
+      // Closing the dialog must stop the search too, or four backends go on working for a
+      // question whose answer has nowhere left to be drawn.
+      if (liveStream) { try { liveStream.close(); } catch {} liveStream = null; }
+    });
   m.classList.add('lee-code-search-modal');
   const list = $('#cslist', m), input = $('#cs', m), preview = $('#cspreview', m), open = $('#csopen', m);
   const scopeEl = $('#csscope', m), extsEl = $('#csexts', m);
@@ -7511,12 +7516,72 @@ async function codeSearch() {
     sel = +row.dataset.i; paint(); go();
   };
   open.onclick = go;
-  let timer;
+  // `all` streamed: one section per backend, in the server's best-first leg order, each filling
+  // in as that backend reports. Slots are stable on purpose -- rg answers in tens of milliseconds
+  // and the embedding leg in seconds, and a list that re-ranked on every arrival would reshuffle
+  // under the cursor precisely while someone was reading it. A hit a later leg finds again is not
+  // shown twice; it adds its name to the row the first leg already produced, which is the same
+  // merge the batch answer does.
+  const streamAll = (q, seq) => new Promise(resolve => {
+    const slots = new Map(), seen = new Map();
+    let notes = [];
+    const es = new EventSource('/search/stream?q=' + encodeURIComponent(q) +
+                               '&scope=' + encodeURIComponent(scopeEl.value) +
+                               '&exts=' + encodeURIComponent(extsEl.value.trim()));
+    // Held so the next keystroke can close it. A stream left open keeps four backends working on
+    // a question nobody is asking any more, and the server only notices when it next tries to
+    // write -- which for the slow legs is seconds away.
+    liveStream = es;
+    const stop = () => { try { es.close(); } catch {} if (liveStream === es) liveStream = null; resolve(); };
+    const recount = () => {
+      hits = [];
+      for (const leg of slots.keys()) hits.push(...slots.get(leg));
+      counts.all = hits.length; paintRail();
+    };
+    es.addEventListener('start', e => {
+      const d = JSON.parse(e.data);
+      for (const leg of d.legs || []) slots.set(leg, []);      // fixes the order once
+      const where = (d.searched || []).map(p => p.split('/').pop()).join(', ');
+      $('#csscopenote', m).textContent = where ? `searched ${where}` : '';
+    });
+    es.addEventListener('leg', e => {
+      if (seq !== searchSeq) return stop();
+      const d = JSON.parse(e.data);
+      if (d.note) notes.push(d.note);
+      const kept = [];
+      for (const h of d.hits || []) {
+        const key = `${h.path}:${h.line}:${h.package || ''}`;
+        const already = seen.get(key);
+        if (already) { already.sources = [...new Set([...(already.sources || []), d.leg])]; continue; }
+        seen.set(key, h); kept.push(h);
+      }
+      slots.set(d.leg, kept);
+      recount();
+      backend = `all · ${[...slots.keys()].filter(k => slots.get(k).length).join(' + ') || 'searching'}`;
+      // The selection is an index into a list that just grew at the end, so it still points at
+      // the row it pointed at. Only an empty list needs resetting.
+      if (sel >= hits.length) sel = Math.max(0, hits.length - 1);
+      paint();
+    });
+    es.addEventListener('done', e => {
+      if (notes.length) backend += ' · ' + notes.slice(0, 2).join('; ');
+      paint(); stop();
+    });
+    es.onerror = () => { backend = backend || 'search stream failed'; paint(); stop(); };
+  });
+
+  let timer, liveStream = null;
   const search = () => {
     clearTimeout(timer); const seq = ++searchSeq;
+    if (liveStream) { try { liveStream.close(); } catch {} liveStream = null; }
     timer = setTimeout(async () => {
       const q = input.value.trim();
       if (!q) { hits = []; backend = ''; paint(); return; }
+      if (mode === 'all') {
+        hits = []; sel = 0; backend = 'all · searching';
+        list.innerHTML = `<div class="lee-search-progress"><span></span>every backend, fastest first…</div>`;
+        return streamAll(q, seq);
+      }
       list.innerHTML = `<div class="lee-search-progress"><span></span>searching ${esc(mode === 'context' ? 'Kosha repo + environment context' : mode === 'all' ? 'rg, symbols, FTS and ANN' : mode)}…</div>`;
       try {
         const d = await api('/search?q=' + encodeURIComponent(q) + '&mode=' + mode +

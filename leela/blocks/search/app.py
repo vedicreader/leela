@@ -16,6 +16,8 @@ under it.
 
 from __future__ import annotations
 
+import asyncio
+
 from ...core.web import fail, found, off_loop
 
 __all__ = ['CAPS', 'connect']
@@ -60,6 +62,54 @@ def connect(app, ctx):
         return found(ctx.search, hits) | {
             'scope': scope, 'exts': exts,
             'searched': [str(r) for r in (roots if roots is not None else ctx.fs.roots)]}
+
+    @rt('/search/stream')
+    async def search_stream(req, q: str = '', regex: bool = False, limit: int = 60,
+                            exts: str = '', scope: str = 'project'):
+        """`all`, but each backend reports the moment it finishes instead of last.
+
+        The legs never depended on each other -- they were merely written as one loop, so the
+        answer took the *sum* of their times and ripgrep's fifty milliseconds sat behind the
+        embedding index's several seconds. Here they are dispatched together and streamed as they
+        land, so the list fills from the fastest backend forwards.
+
+        `asyncio.as_completed` rather than `gather`, because arriving in completion order is the
+        entire point. `off_loop` really does run them in parallel -- each call gets its own worker
+        thread -- which is what makes this worth doing rather than merely tidier.
+        """
+        from starlette.responses import StreamingResponse
+        from ...core.web import sse
+        if scope not in SCOPES: return fail(f'unknown search scope {scope!r}')
+        roots = None
+        if scope == 'project':
+            root = ctx.session.project_root
+            roots = [root] if root is not None else None
+        per = max(12, min(limit, 40))
+
+        async def events():
+            yield sse('start', {'legs': list(ctx.search.ALL_LEGS), 'scope': scope,
+                                'searched': [str(r) for r in (roots if roots is not None else ctx.fs.roots)]})
+            if not (q or '').strip():
+                yield sse('done', {'note': 'nothing to search for'})
+                return
+            async def run(name):
+                hits, note = await off_loop(ctx.search.leg, name, q, per, regex, exts, roots)
+                return name, hits, note
+            tasks = [asyncio.ensure_future(run(name)) for name in ctx.search.ALL_LEGS]
+            try:
+                for done in asyncio.as_completed(tasks):
+                    # A browser that navigated away leaves the remaining legs running for nothing.
+                    if await req.is_disconnected(): break
+                    name, hits, note = await done
+                    yield sse('leg', {'leg': name, 'note': note,
+                                      'hits': [h.dict() for h in hits]})
+            finally:
+                for t in tasks:
+                    if not t.done(): t.cancel()
+            yield sse('done', {'note': 'every backend reported'})
+
+        return StreamingResponse(events(), media_type='text/event-stream',
+                                 headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
     @rt('/code/status')
     async def code_status():
