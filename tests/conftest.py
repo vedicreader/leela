@@ -42,6 +42,21 @@ def fixture_dir(request):
     return str((request.path.parent / FIXTURES).resolve())
 
 
+#: Credentials a developer's shell really does export. Every test that asks "is this
+#: configured?" means the store it was handed, not this machine -- and `Infra.token`,
+#: `EnvStore.get` and `auth_status` all read `os.environ` as a legitimate source, so with
+#: these set the suite tests the developer's account. One of them made a live Hetzner call.
+CREDENTIAL_KEYS = ('HCLOUD_TOKEN CLOUDFLARE_API_TOKEN CF_API_TOKEN CF_TUNNEL_TOKEN GITHUB_TOKEN GH_TOKEN '
+    'OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY GOOGLE_API_KEY CURSOR_API_KEY CODEX_AUTH_TOKEN '
+    'AWS_ACCESS_KEY AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN').split()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_credentials(monkeypatch):
+    "Run as if none of the machine's real credentials were exported; a test that needs one sets it."
+    for key in CREDENTIAL_KEYS: monkeypatch.delenv(key, raising=False)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_vault(monkeypatch, tmp_path_factory):
     """Keep vault I/O out of ~/.vishalakshi and skip real encoders in the suite.

@@ -196,7 +196,9 @@ def test_agent_vocabulary_exposes_commands_tools_and_project_skills(tmp_path):
     skill.write_text('---\nname: notebook-tests\ndescription: How this project tests notebooks.\n---\n\nDo it carefully.\n')
     from starlette.testclient import TestClient
     from leela.app import ide_app
-    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+    # A named model: the tool list is sized to the turn model's window, and the frugal
+    # briefing a small local one gets withholds the web group `research` belongs to.
+    with TestClient(ide_app(Workspace(roots=[tmp_path], model='sonnet'))) as client:
         vocabulary = client.get('/agent/commands').json()
     assert {'commands', 'tools', 'skills'} <= vocabulary.keys()
     assert any(x['name'] == 'research' for x in vocabulary['tools'])

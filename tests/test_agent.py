@@ -161,10 +161,11 @@ def test_cheap_jobs_stay_local_when_the_turn_goes_to_the_cloud(monkeypatch):
     assert r.spec('turn').name == 'gemma-12b'
     # Asserted against the policy rather than against model names: which small model is
     # cheapest here depends on the machine, and the claim being tested is that the turn
-    # moving does not move anything else.
+    # moving does not move anything else. `None` in the policy is not "unset" but "whatever
+    # `oneshot` says", so that is what the job has to still be on.
     for job, name in models.DEFAULT_POLICY.items():
         if job == 'turn': continue
-        assert r.spec(job).name == name, job
+        assert r.spec(job).name == (name or models.DEFAULT_POLICY['oneshot']), job
         assert r.spec(job).local, job
 
 
@@ -172,7 +173,7 @@ def test_env_overrides_a_single_job(monkeypatch):
     monkeypatch.setenv('LEELA_MODEL_SUMMARY', 'gemma-12b')
     r = models.Routing(turn='gemma-e2b')
     assert r.spec('summary').name == 'gemma-12b'
-    assert r.spec('classify').name == models.DEFAULT_POLICY['classify']
+    assert r.spec('classify').name == models.DEFAULT_POLICY['oneshot'], 'the other cheap jobs stay put'
 
 
 def test_unknown_bare_name_is_an_error_not_a_guess():
@@ -552,7 +553,10 @@ def test_available_models_follow_environment_and_codex_login(monkeypatch, tmp_pa
     monkeypatch.setattr(models, '_oai_cache', (float('inf'), []))
     rows = models.available_models()
     providers = {r['provider'] for r in rows}
-    assert {'local', 'openai', 'codex', 'gemini'} <= providers
+    assert {'openai', 'codex', 'gemini'} <= providers
+    # On-device models are grouped by the runtime that runs them, and which runtimes are
+    # installed is a property of the machine; that any of them is offered is not.
+    assert any('on device' in r['source'] for r in rows)
     assert 'anthropic' not in providers
     assert any(r['value'].startswith('codex/') for r in rows)
     # Only provenance is exposed; no credential value is returned to the browser.
@@ -573,7 +577,9 @@ def test_explicit_research_uses_only_the_request_not_composed_notebook_context()
         def __init__(self): super().__init__(); self.queries = []
         def research(self, query): self.queries.append(query); return 'grounded research'
     host = ResearchHost()
-    a, be = fake_agent(host=host, replies=['done'])
+    # A named model, because `research` is one of the tools a small window gives up: left on
+    # the default local model this asserts nothing about directives and everything about ctx.
+    a, be = fake_agent(host=host, replies=['done'], model='sonnet')
     composed = a.compose('add tests /research nbdev test cells', context='<cell>implementation details</cell>',
                          context_path='/proj/nbs/core.ipynb')
     assert a.ask(composed) == 'done'
@@ -820,9 +826,11 @@ def test_a_turn_records_its_activity_and_usage():
 
 
 def test_a_question_gets_the_answer_first_notice():
+    "A question is routed to an answer, not to the work it implies."
     a, be = fake_agent(replies=['because x'])
     a.ask('why does this break?')
-    assert '<system-reminder>' in str(be.sent[0]) and 'question' in str(be.sent[0])
+    assert a.history[-1]['plan']['route'] == 'direct'
+    assert 'Answer directly' in str(be.sent[0])
 
 
 def test_write_tools_are_the_ones_approval_draws_its_line_around():

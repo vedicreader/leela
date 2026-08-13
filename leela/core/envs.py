@@ -6,6 +6,8 @@ itself is never enumerated. A secret's value never reaches the browser, only tha
 
 from __future__ import annotations
 
+import os
+
 __all__ = ['EnvStore', 'EnvError']
 
 
@@ -34,9 +36,14 @@ class EnvStore:
         self.service, self.path = service, path
 
     def get(self, key, secret=True):
+        # `os.environ` last, and explicitly: dockeasy's `secret_get` documents "keychain →
+        # os.environ → default" but only reaches the environment when keyring *raises*, so on
+        # a machine with a working keychain an exported token read as unset. `unset` removes
+        # one from the process, and `Pipeline._env` passes it to the child, so a step whose
+        # token is exported must not be reported as missing it.
         env_get, _set, secret_get, _sset = _dockeasy()
-        return (secret_get(key, service=self.service, path=self.path) if secret
-                else env_get(key, path=self.path)) or ''
+        stored = secret_get(key, service=self.service, path=self.path) if secret else env_get(key, path=self.path)
+        return stored or os.environ.get(key) or ''
 
     def set(self, key, value, secret=True):
         "Store one value. A secret goes to the keychain as well as the file; a variable does not."
@@ -52,8 +59,6 @@ class EnvStore:
         "Remove a value from every place `set` put it."
         # dockeasy has no opposite of `set_key`, so this goes through the two libraries it
         # stores with: python-dotenv owns the file format, keyring owns the keychain entry.
-        import os
-
         from dockeasy.core import _FASTOPS_ENV
         from dotenv import unset_key
         key, gone = str(key), []
