@@ -24,7 +24,11 @@ def test_prompt_notice_motion_respects_accessibility_preferences():
 
 
 def test_prompt_replies_use_the_server_mdhtml_renderer():
-    assert 'function renderMarkdown(el, text, allowRaw = false)' in JS
+    # A prefix rather than the whole signature: optional parameters get added to this function
+    # (an `onRender` callback, for one), and breaking on that is noise. What must not drift is the
+    # first three and that `allowRaw` defaults to *false* -- raw HTML from a document is an
+    # explicit opt-in at each call site, never what you get by not thinking about it.
+    assert 'function renderMarkdown(el, text, allowRaw = false' in JS
     assert "fetch('/markdown/render'" in JS
     assert 'window.leeMarkdown' not in JS
     assert "renderMarkdown(reply, c.reply)" in JS
