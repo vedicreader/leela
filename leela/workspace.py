@@ -138,14 +138,15 @@ IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'}
 class Tab(Dictable):
     'One open editor tab.'
     path: str                       # absolute path; '' for an unsaved buffer
-    kind: str = 'text'              # 'notebook' | 'text' | 'pdf' | 'vault'
+    kind: str = 'text'              # 'notebook' | 'text' | 'pdf' | 'image' | 'vault' | 'web'
     title: str = ''
     dirty: bool = False
     private_kernel: bool | None = None  # notebooks own one by default; files use the folder kernel
     scratch: bool = False               # never written to disk
     running: int = 0                    # in-flight cells; transient tab-bar feedback
     cwd: str = ''                       # optional per-tab working-directory override
-    ref: str = ''                       # `vault|shelf|doc_id` for a vault tab, which has no path
+    ref: str = ''                       # `vault|shelf|doc_id` for a vault tab, or the CDP target
+                                        # id for a web tab. Neither kind has a path.
 
     def __post_init__(self):
         if not self.title: self.title = Path(self.path).name or 'untitled'
@@ -175,7 +176,8 @@ class Workspace:
                  approvals='ask',         # 'ask' | 'auto' (approve every write) | 'off' (refuse them)
                  agent_scope='overlay',   # widest scope `inspect_python` may use: 'overlay' | 'isolated'
                  python=None,             # interpreter kernels launch under; None is leela's own
-                 transport='direct', gateway=None):
+                 transport='direct', gateway=None,
+                 cdp_port=9223):          # the CDP Chrome the inline browser renders into
         self.fs = Sandbox(roots)
         # Leela stays in its own environment; user code belongs to the folder's. A
         # conventional project venv is therefore the runtime default, without importing
@@ -200,6 +202,10 @@ class Workspace:
         from .blocks.memory.vaults import Vaults
         self.vaults = Vaults(shelf=memory_shelf(root), own=self.memory)
         self.research = Research(self.fs, memory=self.memory)
+        # The inline browser. Constructed eagerly because it is a capability, but it holds
+        # nothing until a page is opened: Chrome is contacted on first use, not here.
+        from .blocks.browser.browser import Browser
+        self.browser = Browser(port=cdp_port)
         self.runs = Runs(first(self.fs.roots))
         from .core.journal import OperationJournal
         journal_key = hashlib.sha256('\0'.join(map(str, self.fs.roots)).encode()).hexdigest()[:16]
@@ -404,6 +410,20 @@ class Workspace:
             return self.tabs[i]
         return self._add_tab(Tab(path='', kind='vault', ref=ref, scratch=True,
                                  title=title or doc_id, private_kernel=False))
+
+    def open_web(self, target, title=''):
+        """Open a page in the CDP Chrome as a tab. `target` is the CDP target id.
+
+        Like a vault tab it has no path and no kernel: the document lives in Chrome, and this
+        tab is the surface Leela draws it on. Re-opening the same target focuses the tab
+        rather than casting the same page twice.
+        """
+        if (i := first(i for i, t in enumerate(self.tabs)
+                       if t.kind == 'web' and t.ref == target)) is not None:
+            self.active = i
+            return self.tabs[i]
+        return self._add_tab(Tab(path='', kind='web', ref=target, scratch=True,
+                                 title=title or 'page', private_kernel=False))
 
     def new_scratch(self, kind='notebook'):
         "An unsaved buffer -- what the IDE opens when there is nothing to open yet."

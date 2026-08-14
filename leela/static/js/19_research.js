@@ -2,9 +2,15 @@
 function researchDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch (_) { return 'source'; }
 }
-function openWebpage(url) {
+// The original page, in a Leela tab rather than a browser Leela cannot see. The fallback is
+// not a formality: a source install without a Chrome to drive still has to be able to open a
+// link, and it opens it the way it always did.
+async function openWebpage(url) {
   if (!url) return status('choose a source first', 'err');
-  window.open(url, '_blank', 'noopener,noreferrer');
+  let ready = false;
+  try { ready = (await api('/browser/ready')).ok; } catch (_) {}
+  if (!ready) return window.open(url, '_blank', 'noopener,noreferrer');
+  return openWebTab(url);
 }
 async function saveDoc(doc, kind) {
   doc = doc || lee.lastDoc; if (!doc) return status('nothing fetched yet', 'err');

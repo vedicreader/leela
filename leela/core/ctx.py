@@ -6,7 +6,7 @@ __all__ = ['Ctx', 'CAPABILITIES', 'EAGER', 'LAZY', 'APP']
 
 # Bound at construction.
 EAGER = ('fs', 'pool', 'search', 'memory', 'research', 'runs', 'journal', 'terms', 'dev',
-         'approvals', 'jobs', 'vaults')
+         'approvals', 'jobs', 'vaults', 'browser')
 
 # Resolved on access. `ai`/`inline_ai`/`completer`/`lsp` are expensive to build; `tab` and
 # `pending_approval` read mutable session state, so capturing them once would go stale.

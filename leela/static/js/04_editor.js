@@ -49,6 +49,9 @@ async function mountTab(expectedPath = '') {
   // to the tab, and destroying it here would silently leave the box unmounted.
   lee.cellObserver?.disconnect(); lee.cellObserver = null;
   lee.editors.forEach((v, k) => { if (k !== 'exec') { LeeCM.destroy(v); lee.editors.delete(k); } });
+  // A screencast is a live encode in Chrome for as long as it is running, so leaving the tab
+  // has to stop it. The page itself stays open; the tab reattaches to it on the way back.
+  closeWebView();
   const host = $('#editor'); if (!host) return;
   lee.kind = st.kind; lee.path = st.path || ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
   await loadSettings(st.lang || (st.kind === 'notebook' ? 'python' : ''));
@@ -61,6 +64,7 @@ async function mountTab(expectedPath = '') {
   if (!st.kind) { host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? ''); return; }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
   if (st.kind === 'vault') await mountVault(host, st);
+  else if (st.kind === 'web') mountWeb(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'image') mountImage(host, st);
   else if (st.kind === 'notebook') mountNotebook(host, st);

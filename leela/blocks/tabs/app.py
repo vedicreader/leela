@@ -93,6 +93,10 @@ def connect(app, ctx):
             # Same shape as pdf: the tab names a document, the reader fetches it from `/vault/doc`.
             vault, shelf, doc = (t.ref.split('|') + ['', '', ''])[:3]
             return {'kind': 'vault', 'title': t.title, 'vault': vault, 'shelf': shelf, 'doc': doc}
+        if t.kind == 'web':
+            # The document is a live page in Chrome, so the payload is only its address; the
+            # panel opens `/browser/ws` and everything after that is frames and input events.
+            return {'kind': 'web', 'title': t.title, 'target': t.ref}
         try:
             key = t.path or t.title
             # `in`, not `.get(...) or`: an empty buffer is a real answer, not a miss.

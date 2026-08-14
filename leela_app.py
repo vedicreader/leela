@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""The entry point py2app and py2exe freeze: Leela as a desktop application.
+
+Nothing here is a second implementation of Leela. It picks a free port, starts the ordinary
+`leela --app` server on a daemon thread, and then spends the rest of its life owning the main
+thread on behalf of the native window in `leela.desktop`. That order is forced by macOS,
+where Cocoa will not create a window anywhere but the main thread, and it is the reason this
+file exists at all rather than the app bundle simply calling `leela.cli.main`.
+
+Ports are chosen rather than fixed. A frozen app is double-clicked, sometimes twice, and
+sometimes while a `leela` from a terminal already holds 5001; a desktop application that
+refuses to start because of that is a bug report, not a diagnostic.
+
+    python leela_app.py              # the saved workspace, in a native window
+    python leela_app.py ~/src/proj   # one folder
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import socket
+import sys
+import threading
+
+__all__ = ['free_port', 'folders', 'leela_args', 'serve', 'main', 'run']
+
+
+def free_port(preferred=5001):
+    "`preferred` if nothing holds it, else whatever the OS hands out."
+    for port in (preferred, 0):
+        with socket.socket() as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(('127.0.0.1', port))
+                return s.getsockname()[1]
+            except OSError: continue
+    raise OSError('no loopback port available')
+
+
+def folders(argv=None):
+    "Directory arguments passed to the app; a Finder/Explorer launch supplies none."
+    args = sys.argv[1:] if argv is None else list(argv)
+    return [a for a in args if os.path.isdir(a)]
+
+
+def leela_args(port, dirs=(), extra=()):
+    """The `leela` command line a desktop launch is.
+
+    `--app` for one independent workspace per folder, and `--gateway-port 0` so several
+    copies of the app can run without arguing over 8787 -- jupygate takes an ephemeral port.
+    """
+    return ['--app', '--port', str(port), '--gateway-port', '0', *extra, *dirs]
+
+
+def _loop_running():
+    try: asyncio.get_running_loop(); return True
+    except RuntimeError: return False
+
+
+def serve(args, background=False):
+    """Run `leela.cli.main(args)`, on this thread or a daemon one.
+
+    Imported at call time and reached through the module, so a test can replace
+    `leela.cli.main` and so the frozen app pays for the web stack only once it is needed.
+    """
+    import leela.cli
+
+    def go(): leela.cli.main(args)
+
+    if background or _loop_running():
+        t = threading.Thread(target=go, daemon=True, name='leela-server')
+        t.start()
+        return t
+    go()
+    return None
+
+
+def main():
+    """Serve the workspace: inline, or on a daemon thread when a loop already owns this one.
+
+    This is the server half on its own, which is what `python -m leela_app`-style embedding
+    and the tests want. `run()` is the whole application.
+    """
+    return serve(leela_args(free_port(), folders()))
+
+
+def run():
+    "The application: server on a thread, CDP Chrome beside it, native window on this thread."
+    from leela.desktop import run_shell, shell_ready, start_cdp
+
+    port, dirs = free_port(), folders()
+    cdp_port = int(os.environ.get('LEELA_CDP_PORT', 9223))
+    ok, why = shell_ready()
+    if not ok:
+        # No webview here, but Chrome is the shell Leela shipped with before this one and is
+        # already a dependency of the inline browser. Falling back to it beats refusing to open.
+        print(f'leela: {why}; opening the workspace in Chrome instead')
+        return serve(leela_args(port, dirs, ('--shell', 'chrome', '--cdp-port', str(cdp_port))))
+
+    serve(leela_args(port, dirs, ('--shell', 'none', '--cdp-port', str(cdp_port))), background=True)
+    # Headless on purpose: with a native window as the shell, this Chrome is a renderer for
+    # the tabs Leela draws inside itself, and a second visible browser would be clutter.
+    start_cdp(cdp_port, headless=True)
+    run_shell([f'http://127.0.0.1:{port}/'], titles=[_title(dirs)], icon=_icon())
+
+
+def _title(dirs):
+    return f'leela — {os.path.basename(os.path.abspath(dirs[0]))}' if len(dirs) == 1 else 'leela'
+
+
+def _icon():
+    "The window icon, for the backends that take one. macOS reads the bundle's ICNS instead."
+    from pathlib import Path
+    here = Path(getattr(sys, '_MEIPASS', '') or Path(__file__).resolve().parent)
+    for c in (here/'packaging'/'assets'/'Leela.png', here/'Leela.png', here/'leela'/'Leela.png'):
+        if c.is_file(): return str(c)
+    return None
+
+
+if __name__ == '__main__': run()
