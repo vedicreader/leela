@@ -17,8 +17,16 @@ __all__ = ['Unsafe', 'Entry', 'SKIP_DIRS', 'LANGS', 'lang_for', 'is_texty', 'San
 
 # Directories never worth walking in a project tree; shown only if explicitly opened as a root.
 SKIP_DIRS = {'.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', 'node_modules', '.mypy_cache',
-    '.pytest_cache', '.ruff_cache', '.ipynb_checkpoints', '.tox', 'dist', 'build', '.idea'}
-_SKIP_RE = r'^(' + '|'.join(re.escape(d) for d in sorted(SKIP_DIRS)) + r')$'
+    '.pytest_cache', '.ruff_cache', '.ipynb_checkpoints', '.tox', 'dist', 'build', '.idea',
+    # An interpreter's libraries are not the project. Without this, 98% of what a walk of this
+    # repo returned was somebody else's code, the fuzzy match was picking `libxslt/keys.h` over
+    # `leela/core/keys.py`, and the 20k cap was being spent before the project was reached.
+    'site-packages', 'site-python', '.eggs', '.gradle', '.next', '.turbo'}
+# A virtualenv is not always called `.venv`: this repo has `packaging/.app-venv`, and an exact
+# name match walked all of it. `site-packages` above prunes the inside of any of them whatever
+# the outer folder is called; this catches the folder itself so the walk never descends at all.
+_SKIP_RE = (r'^(' + '|'.join(re.escape(d) for d in sorted(SKIP_DIRS))
+            + r'|[^/]*[-_.]venv|venv[-_.][^/]*)$')
 
 # suffix -> CodeMirror 6 language id.
 LANGS = {'.py': 'python', '.pyi': 'python', '.ipynb': 'python', '.js': 'javascript', '.mjs': 'javascript',
