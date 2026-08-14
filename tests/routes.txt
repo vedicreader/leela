@@ -102,7 +102,9 @@ GET,POST /fs/add_root
 GET,POST /fs/browse
 GET,POST /fs/delete
 GET,POST /fs/find
+GET,POST /fs/forget-recent
 GET,POST /fs/new
+GET,POST /fs/recent
 GET,POST /fs/remove-root
 GET,POST /fs/rename
 GET,POST /git/action

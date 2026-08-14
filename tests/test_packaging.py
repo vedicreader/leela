@@ -107,6 +107,18 @@ def test_the_bundle_follows_the_system_appearance(mac):
     assert mac.PLIST['NSRequiresAquaSystemAppearance'] is False
 
 
+def test_a_folder_is_a_document_the_app_opens(mac):
+    """What makes "Open With → Leela" appear on a folder, and a Dock drop mean something.
+
+    Without a declared document type the packaged app can only ever be opened on its own, and
+    the only way into a project is to type its path.
+    """
+    doc, = mac.PLIST['CFBundleDocumentTypes']
+    assert doc['LSItemContentTypes'] == ['public.folder']
+    # Not `Owner`: Finder stays the default handler for folders and Leela is merely offered.
+    assert doc['LSHandlerRank'] == 'Alternate'
+
+
 def test_the_bundle_is_versioned_from_the_package(mac):
     from leela import __version__
     assert mac.PLIST['CFBundleShortVersionString'] == __version__

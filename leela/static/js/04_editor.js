@@ -64,7 +64,11 @@ async function mountTab(expectedPath = '') {
   // Tab navigation always returns Run and Variables to that tab's private kernel.
   paintEnv('');
   // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
-  if (!st.kind) { host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? ''); return; }
+  if (!st.kind) {
+    host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? '');
+    paintRecent();
+    return;
+  }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
   if (st.kind === 'vault') await mountVault(host, st);
   else if (st.kind === 'web') mountWeb(host, st);

@@ -1309,7 +1309,11 @@ async function mountTab(expectedPath = '') {
   // Tab navigation always returns Run and Variables to that tab's private kernel.
   paintEnv('');
   // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
-  if (!st.kind) { host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? ''); return; }
+  if (!st.kind) {
+    host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? '');
+    paintRecent();
+    return;
+  }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
   if (st.kind === 'vault') await mountVault(host, st);
   else if (st.kind === 'web') mountWeb(host, st);
@@ -8855,9 +8859,20 @@ async function addRoot(find = false) {
       placeholder="~/code/  ·  or the name of a repository below it">
     <div class="lee-modallist lee-folderlist" id="folderlist" role="listbox"></div>
     <div class="lee-mfoot"><button class="lee-btn go" id="folderopen">open this folder</button>
+    <button class="lee-btn" id="folderbrowse" hidden>browse…</button>
     <span class="lee-dim" id="folderhint"></span></div>`);
   const input = m.querySelector('#folderpath'), list = m.querySelector('#folderlist');
   const hint = m.querySelector('#folderhint'), openBtn = m.querySelector('#folderopen');
+  // In the packaged app the platform's own chooser is the obvious way to find a folder, and
+  // the only one that does not require knowing the path. In a browser tab there is none.
+  const browse = m.querySelector('#folderbrowse');
+  if (inShell()) {
+    browse.hidden = false;
+    browse.onclick = async () => {
+      const picked = await nativeFolder();
+      if (picked) { m.remove(); openFolder(picked); }
+    };
+  }
   let base = '', dirs = [], rows = [], sel = 0, lastDir = null, seq = 0, timer = null;
 
   const dirOf = v => { const i = v.lastIndexOf('/'); return i < 0 ? '' : v.slice(0, i + 1); };
@@ -9224,6 +9239,9 @@ async function boot() {
   pollApproval();
   setInterval(pollApproval, 750);       // catches Rishi approvals raised outside an agent SSE stream
   applyTheme(readTheme());   // also rewrites a pre-family value into `family:mode`
+  // The first paint is server-rendered, so the welcome screen is already on the page when
+  // Leela opens on no folder; only its recent list needs filling in.
+  if ($('#leerecent')) paintRecent();
   refreshProjectPills();
   setInterval(refreshKernelPill, 5000);
   setInterval(refreshProjectPills, 5000);
@@ -9795,6 +9813,7 @@ function closeWebView() {
   if (!webView) return;
   const v = webView; webView = null;
   v.resizer?.disconnect();
+  v.unwatch?.();
   try { v.sock.close(); } catch (_) {}
 }
 
@@ -9822,7 +9841,10 @@ function mountWeb(host, st) {
   const canvas = el('canvas'), note = el('note'), body = el('body'), urlBox = el('url');
   const ctx = canvas.getContext('2d', {alpha: false});
   const sock = new WebSocket(wsURL('/browser/ws'));
-  const view = {sock, canvas, target: st.target, resizer: null, size: [0, 0]};
+  // Frames arrive as raw JPEG rather than base64 in JSON: a third fewer bytes, and no data:
+  // URL to parse before drawing. Everything else on this socket is still JSON.
+  sock.binaryType = 'arraybuffer';
+  const view = {sock, canvas, target: st.target, resizer: null, size: [0, 0], drawing: false};
   webView = view;
 
   const say = (msg, kind) => { note.textContent = msg || ''; note.hidden = !msg;
@@ -9843,11 +9865,11 @@ function mountWeb(host, st) {
   sock.onclose = () => { if (webView === view) say('the browser disconnected — reopen the tab', 'err'); };
 
   sock.onmessage = ev => {
+    if (typeof ev.data !== 'string') return drawFrame(ctx, canvas, view, ev.data);
     const m = JSON.parse(ev.data);
     if (m.t === 'error') return say(m.error, 'err');
     if (m.t === 'ready') { view.size = [m.w, m.h]; sizeCanvas(canvas, m.w, m.h); paintNav(host, m); say(''); }
     else if (m.t === 'nav') paintNav(host, m);
-    else if (m.t === 'frame') drawFrame(ctx, canvas, m.data);
   };
 
   // Chrome only emits a frame when something changes, so a resize has to re-ask for one; the
@@ -9861,7 +9883,22 @@ function mountWeb(host, st) {
 
   wireToolbar(host, view, urlBox, say);
   wireInput(canvas, view);
+  wireVisibility(view);
   canvas.focus();
+}
+
+/* A minimised or hidden window is still a window with a live screencast behind it, and Chrome
+   goes on encoding a JPEG per animation frame for a canvas nobody can see. Stopping the cast
+   while hidden is the difference between a background Leela costing nothing and costing a
+   core; the page itself stays open, and resuming re-requests a frame immediately. */
+function wireVisibility(view) {
+  const onChange = () => {
+    if (webView !== view || view.sock.readyState !== 1) return;
+    if (document.visibilityState === 'hidden') view.send({t: 'pause'});
+    else view.send({t: 'resume', w: view.size[0], h: view.size[1], scale: 1});
+  };
+  document.addEventListener('visibilitychange', onChange);
+  view.unwatch = () => document.removeEventListener('visibilitychange', onChange);
 }
 
 function sizeCanvas(canvas, w, h) {
@@ -9871,11 +9908,21 @@ function sizeCanvas(canvas, w, h) {
   canvas.style.width = `${w}px`; canvas.style.height = `${h}px`;
 }
 
-function drawFrame(ctx, canvas, b64) {
-  if (!b64) return;
-  const img = new Image();
-  img.onload = () => { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); img.onload = null; };
-  img.src = `data:image/jpeg;base64,${b64}`;
+/* Draw one JPEG. `createImageBitmap` decodes off the main thread and hands back something
+   `drawImage` can take directly, where an `<img>` with a data: URL would parse a URL, decode
+   on the main thread, and fire an event. A frame that arrives while the previous one is still
+   decoding is dropped rather than queued: on a page that is animating faster than the canvas
+   can keep up, a backlog only adds latency to a picture nobody will see. */
+function drawFrame(ctx, canvas, view, buf) {
+  if (!buf || view.drawing) return;
+  view.drawing = true;
+  createImageBitmap(new Blob([buf], {type: 'image/jpeg'}))
+    .then(bmp => {
+      ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      bmp.close();
+    })
+    .catch(() => {})
+    .finally(() => { view.drawing = false; });
 }
 
 function paintNav(host, m) {
@@ -10049,3 +10096,70 @@ async function pickWebTab(anchor) {
   })));
 }
 window.leePickWeb = pickWebTab;
+/* Opening a project when there is no command line to type one on.
+ *
+ * A packaged Leela is double-clicked. Nothing tells it which folder you meant, so the ways in
+ * are: the folders it had open last time (the server restores those before the page loads),
+ * the recent list on the welcome screen, and the picker. In the native shell the picker is the
+ * platform's own folder chooser, because a web page cannot produce a directory path however
+ * hard it tries -- a file input hands over contents, never a location.
+ */
+
+// True inside the desktop shell. `window.pywebview` is injected by the native window, and its
+// `api` object is `leela.desktop.ShellApi`.
+const inShell = () => Boolean(window.pywebview?.api?.pick_folder);
+
+/* The platform folder chooser, or null when there is none or the user cancelled.
+   pywebview injects `window.pywebview` asynchronously, so a click arriving in the first
+   moments after load waits briefly rather than falling back to typing a path. */
+async function nativeFolder(waitMs = 1500) {
+  const deadline = Date.now() + waitMs;
+  while (!inShell() && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+  if (!inShell()) return null;
+  try { return await window.pywebview.api.pick_folder(); }
+  catch (e) { status(`folder chooser: ${e.message || e}`, 'err'); return null; }
+}
+
+// Open a folder as a workspace root, from wherever it was chosen.
+async function openFolder(path) {
+  if (!path) return;
+  status(`opening ${path.split('/').pop()}…`);
+  await htmx.ajax('POST', '/fs/add_root?path=' + encodeURIComponent(path),
+                  {target: 'body', swap: 'outerHTML'});
+}
+window.leeOpenFolder = openFolder;
+
+/* The welcome screen's recent list. Only drawn when there is something to draw and no tab is
+   open, so it never competes with the editor -- but when Leela opens on nothing, it is the
+   first thing there is. */
+async function paintRecent() {
+  const host = $('#leerecent');
+  if (!host) return;
+  let d;
+  try { d = await api('/fs/recent'); } catch (_) { return; }
+  lee.home = d.home || '';
+  const rows = (d.recent || []).filter(r => !r.open);
+  if (!rows.length) { host.hidden = true; return; }
+  host.hidden = false;
+  host.innerHTML =
+    `<h3>Recent projects</h3><ul class="lee-recentlist">` +
+    rows.map(r =>
+      `<li><button class="lee-recent" data-path="${esc(r.path)}">` +
+      `<span class="lee-recent-name">${esc(r.name)}</span>` +
+      `<span class="lee-recent-path lee-dim">${esc(shortHome(r.path))}</span></button>` +
+      `<button class="lee-recent-x" data-forget="${esc(r.path)}" title="forget this project"` +
+      ` aria-label="forget ${esc(r.name)}">×</button></li>`).join('') +
+    `</ul>`;
+  host.querySelectorAll('.lee-recent').forEach(b =>
+    b.onclick = () => openFolder(b.dataset.path));
+  host.querySelectorAll('[data-forget]').forEach(b => b.onclick = async () => {
+    await post('/fs/forget-recent', {path: b.dataset.forget});
+    paintRecent();
+  });
+}
+window.leePaintRecent = paintRecent;
+
+const shortHome = p => {
+  const home = (lee.home || '');
+  return home && p.startsWith(home) ? '~' + p.slice(home.length) : p;
+};

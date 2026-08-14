@@ -91,6 +91,15 @@ PLIST = {
     # HTTP by default -- including to loopback. This is the narrow exemption for exactly that,
     # rather than `NSAllowsArbitraryLoads`, which would also permit the open internet.
     'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
+    # A folder is the document Leela opens, which is what makes "Open With → Leela" appear on
+    # one and what lets a folder be dropped on the Dock icon. `Alternate` rank on purpose:
+    # Finder stays the default handler for folders, and Leela is offered rather than assumed.
+    'CFBundleDocumentTypes': [{
+        'CFBundleTypeName': 'Folder',
+        'CFBundleTypeRole': 'Viewer',
+        'LSItemContentTypes': ['public.folder'],
+        'LSHandlerRank': 'Alternate',
+    }],
 }
 
 OPTIONS = {

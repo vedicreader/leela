@@ -597,11 +597,16 @@ def _empty_editor():
         Strong('Creative workspace that starts with coding'),
         P('Notebooks, files, live variables, research memory, and an agent that sees what you see.'),
         Ul(*[Li(Strong(title), Span(blurb)) for title, blurb in features], cls='lee-empty-features'),
-        Div(Button('Open file', cls='lee-btn go', onclick='leeAct("quick_open")'),
+        Div(Button('Open a folder', cls='lee-btn go', onclick='leeAct("add_root")'),
+            Button('Open file', cls='lee-btn', onclick='leeAct("quick_open")'),
             Button('New notebook', cls='lee-btn', onclick='leeAct("new_notebook")'),
             Button('Research a topic', cls='lee-btn', onclick='leeAct("research")'),
             Button('Ask the agent', cls='lee-btn', onclick='leeAct("focus_agent")'),
             cls='lee-empty-actions'),
+        # Filled by the client from `/fs/recent`. A packaged app is launched with no arguments,
+        # so for someone coming back to a project this list *is* the way in, and it has to be
+        # live rather than baked into the shell at build time.
+        Div(id='leerecent', cls='lee-empty-recent', hidden=True),
         Small('Keyboard: ', Kbd('ctrl+p'), ' open · ', Kbd('ctrl+shift+p'), ' commands · ',
               Kbd('mod+e'), ' recent files'),
         cls='lee-empty')
@@ -1129,7 +1134,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     # re-renders the whole shell, which is the last thing left in this function.
     @rt('/fs/add_root')
     def add_root(path: str):
-        try: ws.add_root(path); ws.save()
+        from .core.projects import note_folder
+        try:
+            ws.add_root(path); ws.save()
+            # So the application reopens it next launch, and offers it on the welcome screen.
+            note_folder(path)
         except Exception as e: return _fail(str(e))
         return _shell(ws, gate)
 
@@ -2770,14 +2779,18 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             kw['completion_model'] = remembered.get('completion_model') or 'gpt-4.1'
             ws = Workspace(**kw)
         for r in roots: ws.add_root(r)
-        if not ws.fs.roots:
-            ws.add_root(Path.home() if getattr(sys, 'frozen', False) else os.getcwd())
+        # A terminal launch means "here", and the shell already chose where here is. A
+        # double-clicked application has no such answer, and the old one -- the home directory
+        # -- was a bad guess with teeth: Kosha would index every file the user owns, and the
+        # watcher would follow them. Opening on nothing shows the welcome screen instead.
+        if not ws.fs.roots and not getattr(sys, 'frozen', False): ws.add_root(os.getcwd())
         if ws.restore_remembered_agent_state(): ws.save()
         app = ide_app(ws, gate)
         # Watches only come due if something asks. Started here rather than in the block, so
         # building an app in a test does not leave a polling thread behind. `$LEELA_POLL_SECONDS`.
         if (secs := ws.jobs.tick()): print(f'  vault watches polled every {secs}s')
-        print(f'leela  http://{host}:{port}   folders: ' + ', '.join(p.name for p in ws.fs.roots))
+        where = ', '.join(p.name for p in ws.fs.roots) or 'no folder open yet'
+        print(f'leela  http://{host}:{port}   folders: {where}')
         if shell == 'chrome':
             import threading, time, urllib.request
             def open_window():

@@ -21,9 +21,13 @@ import threading
 import time
 
 from . import errstr, leela_cfg
+# The folder memory lives in `core` because the server writes it too -- adding a root in the
+# app is the same event as launching with one. Re-exported here because it is a desktop idea.
+from .core.projects import last_folders, recent_folders, remember, session  # noqa: F401
 
 __all__ = ['BACKENDS', 'backend', 'shell_ready', 'wait_for_http', 'start_cdp', 'window_size',
-           'run_shell']
+           'run_shell', 'watch_open_events', 'ShellApi',
+           'session', 'remember', 'last_folders', 'recent_folders']
 
 # pywebview's own name for each platform's webview. macOS gets WKWebView through pyobjc,
 # Windows gets the Edge/Chromium WebView2 runtime through pythonnet, and Linux -- which is
@@ -40,6 +44,29 @@ MIN_SIZE = (900, 560)
 # `localStorage` -- which is where Leela puts the pane layout, the recent-files order and the
 # editor preferences -- from being wiped between launches, exactly as a browser profile would.
 STORAGE = leela_cfg/'webview'
+
+class ShellApi:
+    """What the page may ask the native window for, as `window.pywebview.api.*`.
+
+    Only the things a web page genuinely cannot do for itself. A folder picker is the whole
+    list: a browser file input yields file contents, never a directory path, so without this
+    the only way to open a project in a packaged app is to type its path.
+    """
+
+    def pick_folder(self):
+        "The platform's own folder chooser. Returns a path, or None if it was cancelled."
+        import webview
+        window = webview.active_window()
+        if window is None: return None
+        try: picked = window.create_file_dialog(webview.FileDialog.FOLDER)
+        except Exception as e:
+            print(f'  folder dialog: {errstr(e)}')
+            return None
+        return str(picked[0]) if picked else None
+
+    def recent(self):
+        "The recent folder list, so the welcome screen has it before the server is up."
+        return recent_folders()
 
 
 def backend(platform=None):
@@ -121,12 +148,18 @@ i{font-style:normal;font-size:13px;opacity:.6}</style>
 <div><b>leela</b><i>starting the workspace…</i></div>"""
 
 
-def run_shell(urls, titles=(), url_wait=90, gui=None, icon=None, size=None, on_ready=None):
+def run_shell(urls, titles=(), url_wait=90, gui=None, icon=None, size=None, on_ready=None,
+              on_open_folder=None):
     """Open one native window per workspace URL and run the GUI loop until they all close.
 
     Blocks, and must be called on the main thread. Each window opens immediately on a splash
     document and swaps to its real URL once the server answers, so a slow first import shows
     a window rather than a bouncing dock icon.
+
+    `on_open_folder(path)` is called when the desktop hands the *running* application a folder
+    -- dropped on the Dock icon, or opened with it from Finder. Without it, the second folder
+    you open goes nowhere, because macOS delivers it to the process that is already running
+    instead of starting another one.
     """
     import webview
 
@@ -138,10 +171,13 @@ def run_shell(urls, titles=(), url_wait=90, gui=None, icon=None, size=None, on_r
     w, h = size or window_size()
     STORAGE.mkdir(parents=True, exist_ok=True)
 
+    api = ShellApi()
     windows = [webview.create_window(t or 'leela', html=LOADING, width=w, height=h,
                                      min_size=MIN_SIZE, background_color='#171b20',
-                                     text_select=True, zoomable=True, easy_drag=False)
+                                     text_select=True, zoomable=True, easy_drag=False,
+                                     js_api=api)
                for t in titles]
+    if on_open_folder is not None: watch_open_events(on_open_folder)
 
     def load(*_):
         "Runs once the GUI loop is up: wait for the server, then point each window at it."
@@ -160,3 +196,62 @@ def _unreachable(url):
     return (LOADING.replace('starting the workspace…',
                             f'the workspace at {url} did not answer')
                    .replace('<i>', '<i style="color:#e06c75">'))
+
+
+def watch_open_events(on_folder):
+    """Answer the desktop when it hands a running Leela a folder to open.
+
+    macOS only, and best-effort. Opening a folder with an application that is already running
+    does not start a second copy and does not go through argv: the Finder sends the running
+    process an `odoc` Apple Event, and a process that does not answer one simply ignores the
+    request. Registering the handler is what turns "Open With → Leela" and a Dock-icon drop
+    into a folder appearing in the workspace.
+
+    Windows has no equivalent to answer -- Explorer starts a new process with the path in
+    argv, which `leela_app.folders()` already reads.
+    """
+    if sys.platform != 'darwin': return None
+    try:
+        from Foundation import NSAppleEventManager, NSURL          # noqa: F401
+        from AppKit import NSApplication                            # noqa: F401
+    except ImportError:
+        return None
+
+    # 'aevt'/'odoc' — the Open Documents event, as four-character codes packed into ints.
+    def code(s): return int.from_bytes(s.encode(), 'big')
+
+    def handle(event, _reply):
+        try:
+            items = event.paramDescriptorForKeyword_(code('----'))
+            for i in range(1, (items.numberOfItems() or 0) + 1):
+                url = items.descriptorAtIndex_(i).stringValue()
+                if not url: continue
+                p = NSURL.URLWithString_(url).path() if url.startswith('file:') else url
+                if p and os.path.isdir(str(p)): on_folder(str(p))
+        except Exception as e: print(f'  open-folder event: {errstr(e)}')
+
+    try:
+        mgr = NSAppleEventManager.sharedAppleEventManager()
+        mgr.setEventHandler_andSelector_forEventClass_andEventID_(
+            _OpenHandler.alloc().init_with(handle), b'handleEvent:reply:',
+            code('aevt'), code('odoc'))
+        return handle
+    except Exception as e:
+        print(f'  could not register the open-folder handler: {errstr(e)}')
+        return None
+
+
+try:                                     # pragma: no cover - macOS only
+    from Foundation import NSObject
+
+    class _OpenHandler(NSObject):
+        "An Objective-C object, because an Apple Event handler must be a selector on one."
+
+        def init_with(self, fn):
+            self = super().init()
+            self._fn = fn
+            return self
+
+        def handleEvent_reply_(self, event, reply): self._fn(event, reply)
+except Exception:                        # pragma: no cover - everywhere else
+    _OpenHandler = None

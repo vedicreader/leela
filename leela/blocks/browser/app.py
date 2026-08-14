@@ -8,6 +8,7 @@ Leela tab with one CDP target: frames out, input in, for as long as the tab is o
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 
 from fasthtml.common import Div
@@ -121,13 +122,16 @@ def _socket(app, ctx, browser):
         async def say(**m):
             async with writing: await sock.send_text(json.dumps(m))
 
-        tid = cast = None
+        # This socket owns the stream for as long as it is open, through every pause for a
+        # hidden window and every resize. A reopened tab is a different owner.
+        tid, cast, mine = None, False, object()
         try:
             hello = json.loads((await sock.receive()).get('text') or '{}')
             tid = hello.get('id') or ''
             if not tid: raise ValueError('no page id')
-            w, h, cast = await browser.start_cast(tid, hello.get('w'), hello.get('h'),
-                                                  scale=hello.get('scale') or 1)
+            w, h, _ = await browser.start_cast(tid, hello.get('w'), hello.get('h'),
+                                               scale=hello.get('scale') or 1, owner=mine)
+            cast = True
             await say(t='ready', w=w, h=h, **await browser.state(tid))
         except Exception as e:
             await say(t='error', error=errstr(e))
@@ -138,13 +142,23 @@ def _socket(app, ctx, browser):
         page = await browser.page(tid)
 
         async def to_client():
-            "Screencast frames for this page only, acked so Chrome keeps sending them."
+            """Screencast frames for this page only, acked so Chrome keeps sending them.
+
+            Frames go as binary. Chrome hands them over base64-encoded and the obvious thing
+            is to forward that inside the JSON envelope everything else uses, which costs a
+            third more bytes on every frame and makes the client decode a data: URL before it
+            can draw. Decoding here instead and sending the JPEG itself is smaller on the wire
+            and lets the client go straight to `createImageBitmap`.
+            """
             async with cdp.on('Page.screencastFrame') as q:
                 while True:
                     m = await q.get()
                     if m.get('sessionId') != page.sid: continue
                     p = m.get('params') or {}
-                    await say(t='frame', data=p.get('data', ''), meta=p.get('metadata') or {})
+                    try: jpeg = base64.b64decode(p.get('data') or '')
+                    except (ValueError, TypeError): jpeg = b''
+                    if jpeg:
+                        async with writing: await sock.send_bytes(jpeg)
                     # The frame's own `sessionId` is Chrome's ack token and has nothing to do
                     # with the CDP session above; not acking stops the stream after one frame.
                     try: await _whole(browser.ack(tid, p.get('sessionId')))
@@ -169,7 +183,7 @@ def _socket(app, ctx, browser):
                 # Shielded: closing the tab cancels this task, and a command cancelled between
                 # writing its frame and reading the reply leaves the shared CDP connection
                 # unusable for every other tab. Started means finished.
-                try: await _whole(_drive(browser, tid, json.loads(text), say))
+                try: await _whole(_drive(browser, tid, json.loads(text), say, mine))
                 except asyncio.CancelledError: raise
                 except Exception as e:
                     try: await say(t='error', error=errstr(e))
@@ -186,7 +200,7 @@ def _socket(app, ctx, browser):
             # shares, wedged for all of them. So the stop is detached: it runs to completion
             # on the loop after this handler is gone, and its token keeps it from switching
             # off a stream that a reopened tab has started in the meantime.
-            if cast: _detach(browser.stop_cast(tid, cast))
+            if cast: _detach(browser.stop_cast(tid, mine))
             try: await sock.close()
             except Exception: pass
 
@@ -217,7 +231,7 @@ def _detach(coro):
     return t
 
 
-async def _drive(browser, tid, c, say):
+async def _drive(browser, tid, c, say, owner=None):
     "One client command against the attached page. `say(**msg)` is the serialised writer."
     t = c.get('t')
     if t == 'mouse':
@@ -228,7 +242,12 @@ async def _drive(browser, tid, c, say):
         await browser.key(tid, c['kind'], **{k: v for k, v in c.items()
                                              if k in _KEY_FIELDS and v not in (None, '')})
     elif t == 'text': await browser.insert(tid, c.get('text', ''))
-    elif t == 'resize': await browser.start_cast(tid, c.get('w'), c.get('h'), scale=c.get('scale') or 1)
+    elif t in ('resize', 'resume'):
+        await browser.start_cast(tid, c.get('w'), c.get('h'), scale=c.get('scale') or 1,
+                                 owner=owner)
+    # The tab is still open, the page is still loaded; only the encoding stops. A hidden
+    # window that goes on receiving frames costs a core for a picture nobody can see.
+    elif t == 'pause': await browser.stop_cast(tid, owner)
     elif t == 'goto':
         await browser.goto(tid, c.get('url', ''))
         await say(t='nav', **await browser.state(tid))

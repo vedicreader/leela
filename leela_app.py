@@ -86,10 +86,18 @@ def main():
 
 
 def run():
-    "The application: server on a thread, CDP Chrome beside it, native window on this thread."
-    from leela.desktop import run_shell, shell_ready, start_cdp
+    """The application: server on a thread, CDP Chrome beside it, native window on this thread.
 
-    port, dirs = free_port(), folders()
+    A desktop app is double-clicked, so the folders come from three places in order: the ones
+    the desktop passed (Finder's "Open With", Explorer's context menu, or a command line), the
+    ones this app had open when it was last closed, and failing both, none at all -- which
+    opens on the welcome screen rather than guessing.
+    """
+    from leela.desktop import last_folders, remember, run_shell, shell_ready, start_cdp
+    from leela.hub import workspace_urls
+
+    dirs = remember(folders() or last_folders())
+    port = free_port()
     cdp_port = int(os.environ.get('LEELA_CDP_PORT', 9223))
     ok, why = shell_ready()
     if not ok:
@@ -102,11 +110,36 @@ def run():
     # Headless on purpose: with a native window as the shell, this Chrome is a renderer for
     # the tabs Leela draws inside itself, and a second visible browser would be clutter.
     start_cdp(cdp_port, headless=True)
-    run_shell([f'http://127.0.0.1:{port}/'], titles=[_title(dirs)], icon=_icon())
+    # `--app` gives each folder its own workspace behind a host-dispatching hub, so each one
+    # needs its own window. Opening a single window on the bare loopback host would show the
+    # first folder and silently strand the rest.
+    urls = workspace_urls(dirs, port) if dirs else [f'http://127.0.0.1:{port}/']
+    run_shell(urls, titles=titles_for(dirs), icon=_icon(),
+              on_open_folder=lambda p: open_folder(port, p))
 
 
-def _title(dirs):
-    return f'leela — {os.path.basename(os.path.abspath(dirs[0]))}' if len(dirs) == 1 else 'leela'
+def titles_for(dirs):
+    "One window title per workspace, named after its folder."
+    return [f'leela — {os.path.basename(d)}' for d in dirs] or ['leela']
+
+
+def open_folder(port, path, host='127.0.0.1'):
+    """Add a folder to the running workspace, for one the desktop handed us after startup.
+
+    Goes through the HTTP route rather than the `Workspace` object because the server owns
+    that object on another thread and another event loop; this is the same call the in-app
+    folder picker makes.
+    """
+    import urllib.parse
+    import urllib.request
+
+    from leela.desktop import remember, session
+    url = f'http://{host}:{port}/fs/add_root?path=' + urllib.parse.quote(str(path), safe='')
+    try:
+        urllib.request.urlopen(url, timeout=30).close()
+        remember(session()['folders'] + [str(path)])
+    except Exception as e:
+        print(f'  could not open {path}: {type(e).__name__}: {e}')
 
 
 def _icon():

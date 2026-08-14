@@ -238,8 +238,8 @@ class Browser:
             width=w, height=h, deviceScaleFactor=float(scale or 1), mobile=False)
         return w, h
 
-    async def start_cast(self, tid, width, height, quality=62, scale=1):
-        """Begin streaming frames for `tid`. Returns `(width, height, token)`.
+    async def start_cast(self, tid, width, height, quality=62, scale=1, owner=None):
+        """Begin streaming frames for `tid`. Returns `(width, height, owner)`.
 
         Chrome only composites a page it believes is visible, and a target opened in the
         background is not: without these two calls `startScreencast` succeeds and then never
@@ -247,8 +247,9 @@ class Browser:
         once the next inline tab takes the front, which is what lets two Leela tabs hold live
         pages at the same time.
 
-        The token identifies this cast. Hand it back to `stop_cast` so that a slow teardown
-        arriving after the tab has been reopened cannot switch off the new stream.
+        `owner` says who the stream belongs to -- the socket, for its whole life, across the
+        stops and starts of pausing for a hidden window. Handing it back to `stop_cast` is what
+        stops a slow teardown from switching off a stream that a reopened tab has just started.
         """
         w, h = await self.resize(tid, width, height, scale)
         p = await self.page(tid)
@@ -258,12 +259,12 @@ class Browser:
         except Exception: pass
         await p.page.startScreencast(format='jpeg', quality=int(quality),
                                      maxWidth=w, maxHeight=h, everyNthFrame=1)
-        token = self._casts[tid] = object()
-        return w, h, token
+        owner = self._casts[tid] = owner if owner is not None else object()
+        return w, h, owner
 
-    async def stop_cast(self, tid, token=None):
-        "Stop streaming and hand the page's viewport back to Chrome."
-        if token is not None and self._casts.get(tid) is not token: return False
+    async def stop_cast(self, tid, owner=None):
+        "Stop streaming and hand the page's viewport back to Chrome. `owner=None` stops any."
+        if owner is not None and self._casts.get(tid) is not owner: return False
         self._casts.pop(tid, None)
         try:
             p = await self.page(tid)

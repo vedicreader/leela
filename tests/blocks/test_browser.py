@@ -207,6 +207,39 @@ def test_an_unknown_command_is_refused_rather_than_ignored():
     with pytest.raises(ValueError): drive({'t': 'summon'})
 
 
+def test_hiding_the_window_stops_the_encoding_and_showing_it_starts_again():
+    "A minimised app should not keep Chrome producing a JPEG per frame for nobody."
+    assert [c[0] for c in drive({'t': 'pause'})] == ['stop_cast']
+    assert [c[0] for c in drive({'t': 'resume', 'w': 800, 'h': 600})] == ['start_cast']
+
+
+def test_the_stream_belongs_to_the_socket_rather_than_to_each_start(ws):
+    """Pausing and resuming must not orphan the cast.
+
+    Teardown stops the stream by owner. If `resume` took a fresh identity, the socket's own
+    teardown would no longer match and a closed tab would leave Chrome encoding forever.
+    """
+    b = Browser(port=1)
+    started = []
+
+    async def fake_start(tid, w, h, quality=62, scale=1, owner=None):
+        started.append(owner)
+        b._casts[tid] = owner
+        return w, h, owner
+
+    b.start_cast = fake_start
+    mine = object()
+    asyncio.run(_drive_owned(b, {'t': 'resume', 'w': 800, 'h': 600}, mine))
+    assert started == [mine] and b._casts['T1'] is mine
+
+
+async def _drive_owned(browser, cmd, owner):
+    from leela.blocks.browser.app import _drive
+
+    async def say(**kw): pass
+    await _drive(browser, 'T1', cmd, say, owner)
+
+
 # -- against a real browser ---------------------------------------------------
 # The page reports what reached it by renaming itself, so both input paths can be checked
 # through `/browser/state` -- and listening on the document means the assertion does not
@@ -269,12 +302,13 @@ def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, 
             assert ready['url'].startswith('http://127.0.0.1:')
             assert ready['title'] == 'idle'
 
-            frame = json.loads(sock.receive_text())
-            # A JPEG, not an empty string. The screencast only emits for a page Chrome
-            # believes is visible, which is why `start_cast` brings the target to the front;
-            # without that this frame never arrives at all.
-            assert frame['t'] == 'frame', frame
-            assert base64.b64decode(frame['data'])[:2] == b'\xff\xd8'
+            # Raw JPEG bytes, not base64 in JSON: a third fewer on the wire, and the client
+            # can hand them straight to `createImageBitmap`. The screencast only emits for a
+            # page Chrome believes is visible, which is why `start_cast` brings the target to
+            # the front; without that this frame never arrives at all.
+            frame = sock.receive()
+            assert frame.get('bytes'), f'expected a binary frame, got {frame}'
+            assert frame['bytes'][:2] == b'\xff\xd8', 'not a JPEG'
 
             for kind in ('mousePressed', 'mouseReleased'):
                 sock.send_text(json.dumps({'t': 'mouse', 'kind': kind, 'x': 400, 'y': 300,
@@ -301,9 +335,10 @@ def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, 
 def _reply(sock, kind, tries=40):
     "Read past any frames the page painted meanwhile, to the reply that must be coming."
     for _ in range(tries):
-        m = json.loads(sock.receive_text())
-        if m['t'] == kind: return m
-        assert m['t'] == 'frame', m
+        m = sock.receive()
+        if m.get('bytes') is not None: continue      # a frame; keep looking for the reply
+        d = json.loads(m['text'])
+        if d['t'] == kind: return d
     raise AssertionError(f'no {kind!r} reply arrived')
 
 

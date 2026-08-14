@@ -42,6 +42,9 @@ async function boot() {
   pollApproval();
   setInterval(pollApproval, 750);       // catches Rishi approvals raised outside an agent SSE stream
   applyTheme(readTheme());   // also rewrites a pre-family value into `family:mode`
+  // The first paint is server-rendered, so the welcome screen is already on the page when
+  // Leela opens on no folder; only its recent list needs filling in.
+  if ($('#leerecent')) paintRecent();
   refreshProjectPills();
   setInterval(refreshKernelPill, 5000);
   setInterval(refreshProjectPills, 5000);

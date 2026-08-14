@@ -21,6 +21,7 @@ function closeWebView() {
   if (!webView) return;
   const v = webView; webView = null;
   v.resizer?.disconnect();
+  v.unwatch?.();
   try { v.sock.close(); } catch (_) {}
 }
 
@@ -48,7 +49,10 @@ function mountWeb(host, st) {
   const canvas = el('canvas'), note = el('note'), body = el('body'), urlBox = el('url');
   const ctx = canvas.getContext('2d', {alpha: false});
   const sock = new WebSocket(wsURL('/browser/ws'));
-  const view = {sock, canvas, target: st.target, resizer: null, size: [0, 0]};
+  // Frames arrive as raw JPEG rather than base64 in JSON: a third fewer bytes, and no data:
+  // URL to parse before drawing. Everything else on this socket is still JSON.
+  sock.binaryType = 'arraybuffer';
+  const view = {sock, canvas, target: st.target, resizer: null, size: [0, 0], drawing: false};
   webView = view;
 
   const say = (msg, kind) => { note.textContent = msg || ''; note.hidden = !msg;
@@ -69,11 +73,11 @@ function mountWeb(host, st) {
   sock.onclose = () => { if (webView === view) say('the browser disconnected — reopen the tab', 'err'); };
 
   sock.onmessage = ev => {
+    if (typeof ev.data !== 'string') return drawFrame(ctx, canvas, view, ev.data);
     const m = JSON.parse(ev.data);
     if (m.t === 'error') return say(m.error, 'err');
     if (m.t === 'ready') { view.size = [m.w, m.h]; sizeCanvas(canvas, m.w, m.h); paintNav(host, m); say(''); }
     else if (m.t === 'nav') paintNav(host, m);
-    else if (m.t === 'frame') drawFrame(ctx, canvas, m.data);
   };
 
   // Chrome only emits a frame when something changes, so a resize has to re-ask for one; the
@@ -87,7 +91,22 @@ function mountWeb(host, st) {
 
   wireToolbar(host, view, urlBox, say);
   wireInput(canvas, view);
+  wireVisibility(view);
   canvas.focus();
+}
+
+/* A minimised or hidden window is still a window with a live screencast behind it, and Chrome
+   goes on encoding a JPEG per animation frame for a canvas nobody can see. Stopping the cast
+   while hidden is the difference between a background Leela costing nothing and costing a
+   core; the page itself stays open, and resuming re-requests a frame immediately. */
+function wireVisibility(view) {
+  const onChange = () => {
+    if (webView !== view || view.sock.readyState !== 1) return;
+    if (document.visibilityState === 'hidden') view.send({t: 'pause'});
+    else view.send({t: 'resume', w: view.size[0], h: view.size[1], scale: 1});
+  };
+  document.addEventListener('visibilitychange', onChange);
+  view.unwatch = () => document.removeEventListener('visibilitychange', onChange);
 }
 
 function sizeCanvas(canvas, w, h) {
@@ -97,11 +116,21 @@ function sizeCanvas(canvas, w, h) {
   canvas.style.width = `${w}px`; canvas.style.height = `${h}px`;
 }
 
-function drawFrame(ctx, canvas, b64) {
-  if (!b64) return;
-  const img = new Image();
-  img.onload = () => { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); img.onload = null; };
-  img.src = `data:image/jpeg;base64,${b64}`;
+/* Draw one JPEG. `createImageBitmap` decodes off the main thread and hands back something
+   `drawImage` can take directly, where an `<img>` with a data: URL would parse a URL, decode
+   on the main thread, and fire an event. A frame that arrives while the previous one is still
+   decoding is dropped rather than queued: on a page that is animating faster than the canvas
+   can keep up, a backlog only adds latency to a picture nobody will see. */
+function drawFrame(ctx, canvas, view, buf) {
+  if (!buf || view.drawing) return;
+  view.drawing = true;
+  createImageBitmap(new Blob([buf], {type: 'image/jpeg'}))
+    .then(bmp => {
+      ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      bmp.close();
+    })
+    .catch(() => {})
+    .finally(() => { view.drawing = false; });
 }
 
 function paintNav(host, m) {
