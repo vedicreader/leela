@@ -107,13 +107,35 @@ def test_every_hyper_default_matches_its_physical_browser_event():
     rows = _run(go)
     assert rows and all(r['code'] and r['matches'] for r in rows), rows
 
-def test_typing_in_a_filter_box_types_rather_than_firing_actions():
-    "The reported bug: focus the variable filter, type keys that are vars-scope bindings, get text."
+def test_results_are_folded_marked_and_dropped_when_they_go_stale():
+    from inspect import getsource
     async def go(pg):
         await pg.evaluate("leeAct('focus_vars')")
         await pg.type('#varfilter', 'og/123')
         return await pg.input_value('#varfilter')
     assert _run(go) == 'og/123'
+    async def go(pg):
+        await pg.evaluate("leeAct('research')")
+        await pg.wait_for_selector('.lee-research-body')
+        return await pg.locator('.lee-research-command').inner_text()
+    text = _run(go)
+    assert 'Search' in text and 'Read URL' in text and 'Research' in text
+    outputs = [{'output_type': 'execute_result', 'data': {'text/plain': 'x    int64\ny    object'}}]
+    values = _inline_values('df.dtypes', [], outputs)
+    assert values == [{'line': 1, 'name': 'df', 'value': 'x    int64\ny    object',
+                       'type': 'result', 'shape': None, 'dtype': None,
+                       'is_grid': False, 'is_container': False, 'accessor': ['_']}]
+    assert 'MAX_OUTPUT_CHARS = 60000' in JS
+    assert 'render large rich output' in JS
+    assert 'show ${(text.length - MAX_OUTPUT_CHARS).toLocaleString()} more characters' in JS
+    field = EDITOR[EDITOR.index('const inlineField'):EDITOR.index('export function setInlineValues')]
+    assert 'if (tr.docChanged) values = Decoration.none' in field
+    source = getsource(ide_app)
+    for route in ('/agent/branches', '/agent/fork', '/agent/revise', '/agent/rollback-turn',
+                  '/agent/state/template', '/agent/state/bootstrap', '/agent/state/suggest',
+                  '/agent/state/diagnostics', '/agent/state/update', '/agent/compaction'):
+        assert route in source
+
 
 def test_a_scoped_letter_still_fires_when_no_text_field_has_it():
     "The other half of contextual: a bare letter in the pane (not an input) still runs its action."
@@ -506,13 +528,6 @@ def test_memory_purge_can_select_bad_results_or_clear_the_corpus():
     assert 'Bad result' in rows and 'Useful result' in rows
     assert all_label == 'purge everything'
 
-def test_research_actions_open_the_in_app_workspace_not_native_prompts():
-    async def go(pg):
-        await pg.evaluate("leeAct('research')")
-        await pg.wait_for_selector('.lee-research-body')
-        return await pg.locator('.lee-research-command').inner_text()
-    text = _run(go)
-    assert 'Search' in text and 'Read URL' in text and 'Research' in text
 
 def test_open_folder_is_an_in_app_browser_not_a_native_prompt():
     async def go(pg):
@@ -775,19 +790,27 @@ def test_inline_values_are_the_inspectors_real_display_values():
         (2, 'frame', 'DataFrame', 'DataFrame [17×4]'),
     ]
 
-def test_final_expression_gets_a_minimal_inline_result_marker():
-    outputs = [{'output_type': 'execute_result', 'data': {'text/plain': 'x    int64\ny    object'}}]
-    values = _inline_values('df.dtypes', [], outputs)
-    assert values == [{'line': 1, 'name': 'df', 'value': 'x    int64\ny    object',
-                       'type': 'result', 'shape': None, 'dtype': None,
-                       'is_grid': False, 'is_container': False, 'accessor': ['_']}]
 
-def test_the_runtime_picker_controls_execution_not_only_the_variable_tree():
+def test_the_variable_panel_follows_the_runtime_the_picker_chose():
     ws = Workspace(roots=[])
     picked = type('Picked', (), {'base': 'http://picked'})()
     ws.pool.kernels['picked'] = picked
     ws.watch_env(picked.base)
     assert asyncio.run(ws.runtime()) is picked
+    assert 'sort' not in {b.action for b in bar('vars')}
+    assert "id='varsort'" in SERVER
+    ws = Workspace(roots=[])
+    ws.watch_env('http://127.0.0.1:9999')
+    asyncio.run(ws.set_kernel(kind='ipykernel', restart=False))
+    assert ws.env_base is None
+    run_app = JS[JS.index('async function runApp'):JS.index('/* Which live namespace')]
+    assert "await post('/envs/watch', {base: s.base})" in run_app
+    assert 'paintEnv(s.label)' in run_app
+    vars_fn = JS[JS.index('async function leeVars'):JS.index('function varRow')]
+    assert 'if (lee.varsBusy)' in vars_fn
+    assert 'lee.varsPending = true' in vars_fn
+    assert 'finally {' in vars_fn and 'queueMicrotask(leeVars)' in vars_fn
+
 
 def test_external_inspected_runtimes_normalise_execution_as_notebook_output(monkeypatch):
     env = _EnvClient('http://picked', 'picked')
@@ -801,9 +824,6 @@ def test_external_inspected_runtimes_normalise_execution_as_notebook_output(monk
     assert result.outputs[0]['text'] == 'ready\n'
     assert result.outputs[1]['data']['text/plain'] == '42'
 
-def test_variable_header_does_not_duplicate_the_sort_dropdown_with_a_button():
-    assert 'sort' not in {b.action for b in bar('vars')}
-    assert "id='varsort'" in SERVER
 
 def test_switching_tabs_returns_variables_to_that_notebooks_kernel(tmp_path):
     import json
@@ -817,11 +837,6 @@ def test_switching_tabs_returns_variables_to_that_notebooks_kernel(tmp_path):
         client.post('/tab/select', params={'i': 0})
     assert ws.active == 0 and ws.env_base is None
 
-def test_picking_a_kernel_returns_variables_to_that_kernel():
-    ws = Workspace(roots=[])
-    ws.watch_env('http://127.0.0.1:9999')
-    asyncio.run(ws.set_kernel(kind='ipykernel', restart=False))
-    assert ws.env_base is None
 
 def test_runtime_repairs_a_missing_dhrishti_inspector_without_restarting_namespace(tmp_path):
     path = tmp_path/'code.py'; path.write_text('kept = 42\n')
@@ -860,10 +875,6 @@ def test_variable_route_uses_the_same_selected_runtime_as_execution(tmp_path):
     assert result['inspector'] == 'dhrishti' and result['python'] == selected.python
     assert result['groups'][0]['nodes'][0]['name'] == 'answer'
 
-def test_run_picker_connects_the_variable_panel_to_the_started_runtime():
-    run_app = JS[JS.index('async function runApp'):JS.index('/* Which live namespace')]
-    assert "await post('/envs/watch', {base: s.base})" in run_app
-    assert 'paintEnv(s.label)' in run_app
 
 def test_code_cells_show_run_state_and_inline_pills():
     assert 'setCellState(c, \'running\')' in JS
@@ -875,11 +886,6 @@ def test_code_cells_show_run_state_and_inline_pills():
     assert 'openValueLens' in JS and 'copy value' in JS
     assert 'lee-inline-popover' in JS and '.lee-value-lens' in CSS
 
-def test_variable_polling_coalesces_slow_refreshes_instead_of_flooding_the_page():
-    vars_fn = JS[JS.index('async function leeVars'):JS.index('function varRow')]
-    assert 'if (lee.varsBusy)' in vars_fn
-    assert 'lee.varsPending = true' in vars_fn
-    assert 'finally {' in vars_fn and 'queueMicrotask(leeVars)' in vars_fn
 
 def test_rishi_markdown_display_outputs_stream_render_and_can_become_cells():
     output = JS[JS.index('function outputEl'):JS.index('function paintSel')]
@@ -890,14 +896,7 @@ def test_rishi_markdown_display_outputs_stream_render_and_can_become_cells():
     assert "postEvents('/nb/run/stream'" in run and "event === 'output'" in run
     assert 'edit as markdown cell' in JS
 
-def test_large_outputs_are_folded_before_the_browser_parses_them():
-    assert 'MAX_OUTPUT_CHARS = 60000' in JS
-    assert 'render large rich output' in JS
-    assert 'show ${(text.length - MAX_OUTPUT_CHARS).toLocaleString()} more characters' in JS
 
-def test_inline_values_disappear_as_soon_as_the_source_changes():
-    field = EDITOR[EDITOR.index('const inlineField'):EDITOR.index('export function setInlineValues')]
-    assert 'if (tr.docChanged) values = Decoration.none' in field
 
 pytestmark = pytest.mark.slow
 
@@ -1007,11 +1006,3 @@ def test_agent_state_markdown_lint_reports_missing_charter_sections(tmp_path):
     assert any('Hard boundaries' in m for m in messages)
     assert any('Tool practices' in m for m in messages)
     assert all(d['severity'] in {'info', 'warning', 'error'} for d in diagnostics)
-
-def test_action_protocol_routes_and_response_revision_are_present():
-    from inspect import getsource
-    source = getsource(ide_app)
-    for route in ('/agent/branches', '/agent/fork', '/agent/revise', '/agent/rollback-turn',
-                  '/agent/state/template', '/agent/state/bootstrap', '/agent/state/suggest',
-                  '/agent/state/diagnostics', '/agent/state/update', '/agent/compaction'):
-        assert route in source

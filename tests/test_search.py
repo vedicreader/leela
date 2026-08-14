@@ -460,18 +460,17 @@ def vault(tmp_path):
     m.clip([tmp_path/'a.md', tmp_path/'b.md'])
     return m, tmp_path
 
-def test_added_at_is_read_as_utc():
-    "The stored stamp is naive but is UTC. Read as local time it is hours out, every row looks"
+def test_a_result_says_what_it_is_and_when_it_arrived():
     from datetime import datetime, timezone
     naive = '2026-08-14 09:43:14'
     assert _added_epoch(naive) == datetime(2026, 8, 14, 9, 43, 14, tzinfo=timezone.utc).timestamp()
     assert _added_epoch(1786664594.0) == 1786664594.0
     assert _added_epoch('not a date') == float('inf')
-
-def test_source_kind_tells_a_file_from_a_page_from_an_invention():
     assert source_kind('/a/b.md') == 'file'
     assert source_kind('https://example.com/p') == 'url'
     for s in ('memory:ab12', 'pointer:ff01', '', None): assert source_kind(s) == 'synthetic'
+
+
 
 def test_an_untouched_vault_is_not_reindexed(vault):
     m, _ = vault
@@ -509,42 +508,28 @@ import build_ide_js as builder  # noqa: E402
 JS = builder.OUT.read_text()
 CSS = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
 
-def test_a_jump_centres_rather_than_merely_revealing():
-    "`scrollIntoView` moves the minimum distance, so a hit below the fold lands on the last"
+def test_a_jump_or_an_undo_centres_the_span_it_changed():
     block = JS[JS.index('function centreOnPos'):JS.index('function openLocation')]
     assert 'coordsAtPos' in block and 'scrollTop +=' in block
     assert "scrollHeight - own.clientHeight > 4 ? own : $('#editor')" in block
     assert 'requestAnimationFrame(() => centreOnPos(v, pos))' in JS, 'measured after the layout it caused'
-
-def test_the_span_an_undo_changed_is_selected_and_centred():
     block = JS[JS.index('function changedSpan'):JS.index('async function workspaceHistoryRedo')]
     assert 'while (s < A.length' in block and 'while (a >= s' in block, 'first and last differing lines'
     assert 'selection: {anchor, head}' in block, 'the change is selected, not just scrolled to'
     assert 'centreOnPos(v, anchor)' in block
-
-def test_undo_and_redo_read_the_texts_the_right_way_round():
-    "After an undo the file holds `before`; after a redo it holds `after`. Swapping them lies."
     block = JS[JS.index('async function afterHistory'):JS.index('async function workspaceHistoryRedo')]
     assert 'undone ? row.before : row.after, undone ? row.after : row.before' in block
     assert "afterHistory(result.operation, 'workspace operation redone', false)" in JS
     assert "`workspace operation ${redo ? 'redone' : 'undone'}`, !redo)" in JS
-
-def test_a_notebook_undo_shows_which_cell_moved():
     assert "d.op === 'undo' || d.op === 'redo'" in JS
     assert "block: 'center'" in JS and 'lee-cell-changed' in JS
     assert '.lee-cell-changed' in CSS and '@keyframes lee-cell-flash' in CSS
     assert 'prefers-reduced-motion' in CSS, 'a flash is decoration; it must be optional'
-
-def test_the_editors_re_measure_when_their_width_changes():
-    "CodeMirror caches its width; nothing was telling it when the layout changed it."
     block = JS[JS.index('function observeEditorWidth'):JS.index('async function boot')]
     assert 'requestMeasure' in block and 'ResizeObserver' in block
     assert 'cancelAnimationFrame' in block, 'a splitter drag fires this every frame'
     for host in ("'#editor'", "'#shell'", "'#bottomdock'"): assert host in block, host
     assert 'observeEditorWidth();' in JS, 'and it is actually started'
-
-def test_the_overview_stripe_cannot_lay_out_at_the_canvas_default_width():
-    "A <canvas> with no width attribute is 300px wide, which is the band, not the stripe."
     rule = CSS[CSS.index('.cm-lee-overview {'):CSS.index('.cm-lee-overview[hidden]')]
     assert 'width: 14px' in rule
     assert 'padding-right: 15px' in CSS, 'the scroller still reserves room for it'

@@ -34,15 +34,22 @@ from fastcore.all import Path
 def client():
     with TestClient(ide_app(Workspace(roots=[]))) as c: yield c
 
-def test_every_listed_block_exposes_the_contract():
+def test_every_block_declares_and_serves_what_it_wires():
     for m in BLOCKS:
         assert callable(getattr(m, 'connect', None)), f'{m!r} has no connect()'
         assert isinstance(getattr(m, 'CAPS', ()), tuple), f'{m!r} CAPS must be a tuple'
-
-def test_blocks_declare_only_what_they_use():
-    "A block whose CAPS grew without its routes growing is the failure mode this catches."
     assert keys_block.CAPS == (), 'the keymap is served from files; it needs no workspace'
     assert settings_block.CAPS == ('fs',)
+    by_module = {}
+    for path, m in owners().items(): by_module.setdefault(m, []).append(path)
+    for mod in BLOCKS:
+        name = f'{mod.__name__}.app'
+        assert by_module.get(name), f'{name} connects but no live route resolves to it'
+    rows = inventory()
+    dupes = sorted({r for r in rows if rows.count(r) > 1})
+    assert not dupes, 'the same method+path is registered twice:\n  ' + '\n  '.join(dupes)
+
+
 
 def test_keymap_is_served_as_data_so_the_frontend_hardcodes_no_chord(client):
     d = client.get('/keys.json').json()
@@ -107,18 +114,18 @@ def test_every_git_op_still_dispatches(op):
                       'ref': 'HEAD', 'url': 'u', 'message': 'm', 'choice': 'ours'})
     assert repo.calls, f'{op} reached no repository method'
 
-def test_the_operation_family_is_matched_by_prefix():
-    "continue/skip/abort are sent as operation_* rather than being enumerated."
+def test_a_git_operation_is_matched_by_family_and_needs_a_path():
     from leela.blocks.git.app import _apply
+    from leela.blocks.git.git import GitError
+    from leela.blocks.git.app import git_paths
     for suffix in ('continue', 'skip', 'abort'):
         repo = _FakeRepo()
         _apply(repo, f'operation_{suffix}', {})
         assert repo.calls == ['operation_action']
-
-def test_an_unknown_git_op_is_refused():
-    from leela.blocks.git.git import GitError
-    from leela.blocks.git.app import _apply
     with pytest.raises(GitError, match='unknown Git action'): _apply(_FakeRepo(), 'rm -rf', {})
+    with pytest.raises(GitError, match='at least one'): git_paths([])
+
+
 
 @pytest.mark.parametrize('bad', ['/etc/passwd', '../outside', 'a/../../b'])
 def test_git_pathspecs_from_the_browser_cannot_escape_the_repository(bad):
@@ -126,10 +133,6 @@ def test_git_pathspecs_from_the_browser_cannot_escape_the_repository(bad):
     from leela.blocks.git.app import git_paths
     with pytest.raises(GitError, match='invalid repository path'): git_paths([bad])
 
-def test_git_requires_at_least_one_path():
-    from leela.blocks.git.git import GitError
-    from leela.blocks.git.app import git_paths
-    with pytest.raises(GitError, match='at least one'): git_paths([])
 
 @pytest.fixture
 def workspace_client(tmp_path, monkeypatch):
@@ -667,77 +670,61 @@ def test_the_agent_backend_conforms_to_the_runtime_port():
 A = 'def f(x):\n    return x\n\nz = 1\n'
 B = 'def f(x, y=0):\n    return x + y\n\nz = 1\nw = 2\n'
 
-def test_identical_texts_have_no_diff():
+def test_diff_rows_carry_line_numbers_stats_and_serialise():
     assert udiff(A, A) == ''
     assert list(diff_rows(udiff(A, A))) == []
     assert diff_label(A, A) == ''
-
-def test_rows_carry_the_new_side_line_numbers():
-    "Added and context rows number into the *new* text; deletions have no line there."
     rows = diff_rows(udiff(A, B))
     added = [(r.line, r.text) for r in rows if r.kind == 'add']
     assert added == [(1, 'def f(x, y=0):'), (2, '    return x + y'), (5, 'w = 2')]
     assert all(r.line == 0 for r in rows if r.kind == 'del')
     assert [(r.line, r.text) for r in rows if r.kind == 'ctx'] == [(3, ''), (4, 'z = 1')]
-
-def test_markers_are_stripped_so_frontends_can_paint_them():
-    "No row's text starts with its own +/- marker; that is the renderer's job, not the parser's."
     for r in diff_rows(udiff(A, B)):
         if r.kind in ('add', 'del', 'ctx'):
             assert not r.text.startswith(('+', '-')) or r.text == ''
-
-def test_stat_and_label():
     assert diff_stat(A, B) == (3, 2)
     assert diff_label(A, B) == '+3 −2'
     assert diff_label('', 'one\ntwo\n') == '+2'
     assert diff_label('one\ntwo\n', '') == '−2'
-
-def test_rows_are_serialisable():
-    "Routes hand these to JSON, so `.dict()` has to be the whole row."
     assert diff_rows(udiff(A, B))[0].dict().keys() == {'kind', 'text', 'line'}
-
-def test_names_add_a_header():
     assert udiff(A, B, names=('old', 'new')).startswith('--- old\n+++ new\n')
     assert not udiff(A, B).startswith('---')
-
-def test_none_is_treated_as_empty():
-    "Reading a file that does not exist yet gives None; a diff against it is a pure addition."
     assert diff_stat(None, 'x\n') == (1, 0)
 
-def test_nameerror_gets_a_suggestion():
+
+
+
+
+
+
+
+def test_fuzzy_ranking_orders_by_what_a_person_meant():
     got = did_you_mean("NameError: name 'df2' is not defined", ['df_2', 'ns', 'x'])
     assert "did you mean 'df_2'?" in got
-
-def test_no_suggestion_when_nothing_is_close():
     err = "NameError: name 'zzzz' is not defined"
     assert did_you_mean(err, ['df_2', 'total']) == err
+    assert closest('dfram', ['df', 'dframe', 'frame'])[0] == 'dframe'
+    assert list(fuzzy_rank('app', FILES))[0] == 'a/web/app.py'
+    assert list(fuzzy_rank('wapp', FILES)) == ['a/web/app.py']
+    assert list(fuzzy_rank('zzz', FILES)) == []
+    assert list(fuzzy_rank('', FILES)) == FILES
+    assert len(fuzzy_rank('', FILES, limit=2)) == 2
+    assert list(fuzzy_rank('README', FILES))[0] == 'a/README.md'
+
+
 
 @pytest.mark.parametrize('err', [None, '', 'TypeError: unsupported operand', 'ZeroDivisionError: x'])
 def test_other_errors_are_untouched(err):
     assert did_you_mean(err, ['df']) == err
 
-def test_closest_is_ordered_best_first():
-    assert closest('dfram', ['df', 'dframe', 'frame'])[0] == 'dframe'
 
 FILES = ['a/web/app.py', 'a/some_long_app_helper.py', 'a/ide/panels/app.py',
          'a/README.md', 'a/apple/pie.txt']
 
-def test_exact_basename_beats_a_scattered_match():
-    assert list(fuzzy_rank('app', FILES))[0] == 'a/web/app.py'
 
-def test_subsequence_spans_directories():
-    "A fuzzy finder should let `wapp` mean web/app.py."
-    assert list(fuzzy_rank('wapp', FILES)) == ['a/web/app.py']
 
-def test_no_match_returns_nothing():
-    assert list(fuzzy_rank('zzz', FILES)) == []
 
-def test_empty_query_keeps_everything_in_order():
-    assert list(fuzzy_rank('', FILES)) == FILES
-    assert len(fuzzy_rank('', FILES, limit=2)) == 2
 
-def test_ranking_is_case_insensitive():
-    assert list(fuzzy_rank('README', FILES))[0] == 'a/README.md'
 
 def test_workspace_journal_persists_and_undoes_only_exact_outputs(tmp_path):
     root = tmp_path/'project'; root.mkdir(); path = root/'a.py'; path.write_text('before\n')
@@ -795,10 +782,33 @@ def clean_registry():
     yield
     providers._REGISTRY.clear(); providers._REGISTRY.update(saved)
 
-def test_the_builtin_is_registered_like_any_other_provider():
-    "No privileged path for the default means no untested branch for the alternates."
+def test_conformance_checks_a_port_without_constructing_it():
+    from leela.agent.runtime import Backend
+    from leela.workspace import Workspace
+    from leela.core import MemoryPort
     for port in ('memory', 'search', 'runtime'):
         assert 'leela' in providers_for(port)
+    ws = Workspace(roots=[])
+    assert conformance.check('memory', ws.memory) == []
+    assert conformance.check('search', ws.search) == []
+    assert conformance.check('runtime', Backend) == []
+    obj = _stub('memory', search=lambda self, q, n=8: [])()
+    assert isinstance(obj, MemoryPort), 'isinstance is satisfied, which is the problem'
+    problems = conformance.check('memory', obj)
+    assert any("search: leela passes ['query', 'limit']" in p for p in problems)
+    obj = _stub('runtime', ready=lambda self: True)()
+    problems = conformance.check('runtime', obj)
+    assert any('ready: port declares an attribute' in p for p in problems)
+    obj = _stub('memory', search='not callable')()
+    assert any('search: port declares a method' in p for p in conformance.check('memory', obj))
+    assert conformance.check('memory', _stub('memory')()) == []
+    assert 'missing: spec' not in conformance.check('runtime', Backend)
+    ok = conformance.report('memory', Workspace(roots=[]).memory)
+    assert ok.startswith('memory <- Memory: OK')
+    bad = conformance.report('memory', object(), label='nothing')
+    assert 'problem(s)' in bad and '  - missing:' in bad
+    with pytest.raises(ValueError, match='unknown port'): conformance.check('telepathy', object())
+
 
 def test_selection_prefers_an_explicit_override_then_the_environment(monkeypatch):
     monkeypatch.delenv('LEELA_MEMORY', raising=False)
@@ -839,13 +849,6 @@ def test_the_default_workspace_still_builds_the_builtin(monkeypatch):
     monkeypatch.delenv('LEELA_MEMORY', raising=False)
     assert isinstance(Workspace(roots=[]).memory, Memory)
 
-def test_the_shipped_implementations_conform_to_their_ports():
-    from leela.agent.runtime import Backend
-    from leela.workspace import Workspace
-    ws = Workspace(roots=[])
-    assert conformance.check('memory', ws.memory) == []
-    assert conformance.check('search', ws.search) == []
-    assert conformance.check('runtime', Backend) == []
 
 def _stub(port, **overrides):
     "A class with every member the port names, as real attributes."
@@ -856,42 +859,12 @@ def _stub(port, **overrides):
     ns.update(overrides)
     return type(f'Stub{port.title()}', (), ns)
 
-def test_conformance_catches_a_signature_that_isinstance_would_pass():
-    "The check that earns the module."
-    from leela.core import MemoryPort
-    obj = _stub('memory', search=lambda self, q, n=8: [])()
-    assert isinstance(obj, MemoryPort), 'isinstance is satisfied, which is the problem'
-    problems = conformance.check('memory', obj)
-    assert any("search: leela passes ['query', 'limit']" in p for p in problems)
 
-def test_conformance_reports_a_member_of_the_wrong_kind():
-    "A runtime that made `ready` a method would break every call site."
-    obj = _stub('runtime', ready=lambda self: True)()
-    problems = conformance.check('runtime', obj)
-    assert any('ready: port declares an attribute' in p for p in problems)
 
-def test_conformance_reports_a_method_supplied_as_a_value():
-    obj = _stub('memory', search='not callable')()
-    assert any('search: port declares a method' in p for p in conformance.check('memory', obj))
 
-def test_conformance_accepts_kwargs_as_accepting_everything():
-    "An adapter that forwards **kw is conforming; requiring named params would forbid that."
-    assert conformance.check('memory', _stub('memory')()) == []
 
-def test_a_class_is_checkable_without_constructing_it():
-    "Checking `Backend` must not require starting a model, so init params count as present."
-    from leela.agent.runtime import Backend
-    assert 'missing: spec' not in conformance.check('runtime', Backend)
 
-def test_report_is_readable_both_ways():
-    from leela.workspace import Workspace
-    ok = conformance.report('memory', Workspace(roots=[]).memory)
-    assert ok.startswith('memory <- Memory: OK')
-    bad = conformance.report('memory', object(), label='nothing')
-    assert 'problem(s)' in bad and '  - missing:' in bad
 
-def test_an_unknown_port_is_rejected():
-    with pytest.raises(ValueError, match='unknown port'): conformance.check('telepathy', object())
 
 @pytest.mark.parametrize('port', ['memory', 'search', 'runtime'])
 def test_every_port_can_be_checked_from_the_command_line(port, capsys):
@@ -990,13 +963,17 @@ def test_env_store_reads_async_ops_inside_an_event_loop(monkeypatch):
     async def read(): return EnvStore().get('TOKEN')
     assert asyncio.run(read()) == 'value'
 
-def test_leela_cfg_and_everything_derived_from_it_stay_in_the_temp_dir():
+def test_the_config_dir_stays_inside_the_temp_dir():
     from leela import leela_cfg
     from leela.blocks.memory.memory import memory_path
     from leela.blocks.settings.settings import USER_SETTINGS_FILE
     from leela.workspace import ws_path
     for p in (leela_cfg, memory_path(), USER_SETTINGS_FILE, ws_path()):
         assert str(p).startswith(TEST_CONFIG_HOME), f'{p} escapes the test config dir'
+    real = Path.home()/'.config'/'leela'
+    assert not str(real).startswith(TEST_CONFIG_HOME)
+    assert Path(leela_cfg) != real
+
 
 def test_a_workspace_writes_its_memory_and_journal_under_the_temp_dir(tmp_path):
     "The two a `Workspace` opens on construction, which is how the real store got polluted."
@@ -1005,12 +982,6 @@ def test_a_workspace_writes_its_memory_and_journal_under_the_temp_dir(tmp_path):
     assert str(ws.memory.path).startswith(TEST_CONFIG_HOME)
     assert str(ws.journal.path).startswith(TEST_CONFIG_HOME)
 
-def test_the_real_config_dir_is_not_touched_by_importing_leela():
-    "A guard against someone reintroducing a module-level write to the real directory."
-    real = Path.home()/'.config'/'leela'
-    assert not str(real).startswith(TEST_CONFIG_HOME)
-    from leela import leela_cfg
-    assert Path(leela_cfg) != real
 
 CLOSURE = 'leela.app'
 
@@ -1028,13 +999,6 @@ def owners(app=None):
     app = app or ide_app(Workspace(roots=[]))
     return {getattr(r, 'path', ''): owner(r) for r in app.router.routes}
 
-def test_every_connected_block_actually_serves_something():
-    "A block that connects but owns no live route is decoration."
-    by_module = {}
-    for path, m in owners().items(): by_module.setdefault(m, []).append(path)
-    for mod in BLOCKS:
-        name = f'{mod.__name__}.app'
-        assert by_module.get(name), f'{name} connects but no live route resolves to it'
 
 def test_no_extracted_path_is_still_handled_by_the_closure():
     "The inverse: a path a block claims must not also be defined in ide_app, shadowing it."
@@ -1053,18 +1017,6 @@ def test_the_split_is_reported_accurately_in_the_docs():
     assert in_blocks > 0 and in_closure > 0
     assert in_blocks + in_closure == len([m for m in served.values()
                                           if m.startswith('leela.blocks') or m == CLOSURE])
-
-if __name__ == '__main__':
-    from collections import Counter
-    served = owners()
-    counts = Counter(served.values())
-    width = max(len(m) for m in counts)
-    print('WHAT SERVES EACH ROUTE\n')
-    for m, n in counts.most_common():
-        tag = 'BLOCK  ' if m.startswith('leela.blocks') else ('closure' if m == CLOSURE else '       ')
-        print(f'{n:>4}  {tag} {m:<{width}}')
-    blocks = sum(n for m, n in counts.items() if m.startswith('leela.blocks'))
-    print(f'\n{blocks} routes served by blocks, {counts.get(CLOSURE, 0)} still by the ide_app closure')
 
 INVENTORY = Path(__file__).parent/'routes.txt'
 
@@ -1088,15 +1040,6 @@ def test_the_browser_url_surface_is_unchanged():
     assert not new, ('routes appeared that are not in the inventory:\n  ' + '\n  '.join(new) +
                      '\n\nIf this is deliberate, regenerate: python -m tests.test_route_inventory')
 
-def test_every_route_is_registered_once():
-    "A block registering a path a second time silently shadows the first one."
-    rows = inventory()
-    dupes = sorted({r for r in rows if rows.count(r) > 1})
-    assert not dupes, 'the same method+path is registered twice:\n  ' + '\n  '.join(dupes)
-
-if __name__ == '__main__':
-    INVENTORY.write_text('\n'.join(inventory()) + '\n')
-    print(f'wrote {INVENTORY} ({len(inventory())} routes)')
 
 sys.path.insert(0, str(ROOT/'tools'))
 import build_ide_js as builder  # noqa: E402
@@ -1123,3 +1066,18 @@ def test_a_site_packages_under_an_oddly_named_venv_is_still_skipped(tmp_path):
     (tmp_path/'mine.py').write_text('y = 2\n')
     ws = Workspace(roots=[tmp_path])
     assert [p.name for p in ws.fs.walk(tmp_path)] == ['mine.py']
+
+if __name__ == '__main__':
+    if '--routes' in sys.argv:
+        INVENTORY.write_text('\n'.join(inventory()) + '\n')
+        print(f'wrote {INVENTORY} ({len(inventory())} routes)')
+    else:
+        from collections import Counter
+        counts = Counter(owners().values())
+        width = max(len(m) for m in counts)
+        print('WHAT SERVES EACH ROUTE\n')
+        for m, n in counts.most_common():
+            tag = 'BLOCK  ' if m.startswith('leela.blocks') else ('closure' if m == CLOSURE else '       ')
+            print(f'{n:>4}  {tag} {m:<{width}}')
+        blocks = sum(n for m, n in counts.items() if m.startswith('leela.blocks'))
+        print(f'\n{blocks} routes served by blocks, {counts.get(CLOSURE, 0)} still by the ide_app closure')

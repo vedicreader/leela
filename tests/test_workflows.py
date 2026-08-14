@@ -64,16 +64,15 @@ def test_on_is_read_even_though_yaml_turns_it_into_a_boolean(tmp_path):
     wf = Workflows(tmp_path).parsed()[0]
     assert [t['event'] for t in wf['triggers']] == ['push']
 
-def test_jobs_are_laid_out_below_the_last_thing_they_wait_for():
+def test_a_workflow_is_drawn_as_jobs_and_the_edges_between_them():
     jobs = [{'id': 'a', 'needs': []}, {'id': 'b', 'needs': ['a']},
             {'id': 'c', 'needs': []}, {'id': 'd', 'needs': ['b', 'c']}]
     assert levels(jobs) == [['a', 'c'], ['b'], ['d']]
-
-def test_a_needs_cycle_is_drawn_rather_than_refused():
-    "GitHub rejects the file; a panel that renders nothing tells you less than one that does."
     jobs = [{'id': 'a', 'needs': ['b']}, {'id': 'b', 'needs': ['a']}, {'id': 'ok', 'needs': []}]
     rows = levels(jobs)
     assert rows[0] == ['ok'] and sorted(rows[-1]) == ['a', 'b']
+
+
 
 def test_a_broken_file_reports_its_error_instead_of_losing_the_others(tmp_path):
     workflow(tmp_path, 'good.yml', CI)
@@ -333,58 +332,45 @@ def test_the_vocabulary_is_data_so_the_form_needs_no_frontend_change():
             assert 'default' in o and 'label' in o
 
 @pytest.mark.skipif(__import__('importlib.util', fromlist=['x']).find_spec('gheasy') is None, reason='the builder composes with gheasy')
-def test_triggers_come_out_in_the_shape_the_file_format_wants():
+def test_a_built_spec_becomes_the_yaml_gheasy_would_have_written():
     text = yaml_of({'name': 'ci', 'on': {'push': 'main, release', 'workflow_dispatch': True,
                                          'release': True, 'schedule': '0 9 * * 1'}, 'jobs': []})
     assert 'branches:\n      - main\n      - release' in text
     assert 'workflow_dispatch:' in text
     assert 'types:\n      - published' in text
     assert "cron: 0 9 * * 1" in text or "- cron: '0 9 * * 1'" in text or '0 9 * * 1' in text
-
-@pytest.mark.skipif(__import__('importlib.util', fromlist=['x']).find_spec('gheasy') is None, reason='the builder composes with gheasy')
-def test_a_workflow_with_no_triggers_gets_a_run_button_rather_than_never_running():
-    "A file that nothing can start is a file that silently does nothing."
     assert 'workflow_dispatch' in yaml_of({'name': 'ci', 'on': {}, 'jobs': []})
-
-@pytest.mark.skipif(__import__('importlib.util', fromlist=['x']).find_spec('gheasy') is None, reason='the builder composes with gheasy')
-def test_jobs_wire_up_by_needs():
     text = yaml_of({'name': 'ci', 'on': {'push': 'main'},
                     'jobs': [{'preset': 'uv_lint'},
                              {'preset': 'uv_test', 'needs': ['lint']},
                              {'preset': 'uv_pypi', 'needs': ['test']}]})
     assert text.index('lint:') < text.index('test:') < text.index('publish:')
     assert text.count('needs:') == 2
-
-@pytest.mark.skipif(__import__('importlib.util', fromlist=['x']).find_spec('gheasy') is None, reason='the builder composes with gheasy')
-def test_two_jobs_of_the_same_kind_do_not_collide():
-    "A duplicate job id is a file GitHub rejects, for a reason the person who clicked"
     text = yaml_of({'name': 'ci', 'on': {'push': 'main'},
                     'jobs': [{'preset': 'run', 'options': {'cmds': 'echo one'}},
                              {'preset': 'run', 'options': {'cmds': 'echo two'}}]})
     assert '  run:' in text and '  run2:' in text
     assert 'echo one' in text and 'echo two' in text
-
-@pytest.mark.skipif(__import__('importlib.util', fromlist=['x']).find_spec('gheasy') is None, reason='the builder composes with gheasy')
-def test_options_reach_the_preset():
     text = yaml_of({'name': 'ci', 'on': {'push': 'main'},
                     'jobs': [{'preset': 'uv_test',
                               'options': {'test_cmd': 'pytest -x', 'python_versions': '3.11, 3.12'}}]})
     assert 'uv run pytest -x' in text
     assert "- '3.11'" in text and "- '3.12'" in text
-
-@pytest.mark.skipif(__import__('importlib.util', fromlist=['x']).find_spec('gheasy') is None, reason='the builder composes with gheasy')
-def test_the_deploy_job_renders_the_schema_it_is_given():
     text = yaml_of({'name': 'deploy', 'on': {'push': 'main'}, 'jobs': [{'preset': 'deploy'}]},
                    schema={'DOMAIN': None, 'PORT': '5001'}, app='kalpa')
     assert 'DOMAIN: ${{ secrets.DOMAIN }}' in text and 'PORT: ${{ vars.PORT }}' in text
     assert 'DEPLOY_KEY' in text and 'python deploy.py deploy' in text
     assert 'SERVER_NAME:-kalpa' in text
-
-@pytest.mark.skipif(__import__('importlib.util', fromlist=['x']).find_spec('gheasy') is None, reason='the builder composes with gheasy')
-def test_an_unknown_preset_is_ignored_rather_than_breaking_the_file():
     text = yaml_of({'name': 'ci', 'on': {'push': 'main'},
                     'jobs': [{'preset': 'nonsense'}, {'preset': 'uv_test'}]})
     assert 'test:' in text and 'nonsense' not in text
+
+
+
+
+
+
+
 
 @pytest.mark.skipif(__import__('importlib.util', fromlist=['x']).find_spec('gheasy') is None, reason='the builder composes with gheasy')
 def test_the_spec_is_kept_beside_the_file_it_produced(tmp_path):

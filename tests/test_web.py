@@ -22,13 +22,33 @@ import pytest
 from leela.blocks.runtime.kernels import RuntimeBroker, KernelPool
 from leela.hub import LoopbackHostGuard, WorkspaceHub, WorkspaceSite, workspace_slug
 
-def test_status_is_a_prominent_timed_banner_with_a_busy_state():
+def test_the_shell_paints_status_theme_and_layout():
     block = JS[JS.index('let statusTimer'):JS.index('/* ------------------------------------------------------------------ keymap')]
     assert "tone === 'busy' ? 0" in block and "el.classList.add('show')" in block
     assert "busyWords.test(msg)" in block and 'el.onclick = () =>' in block
     assert 'position: fixed; left: 50%; bottom: 34px' in CSS
     assert '.lee-status.busy::before' in CSS and '@keyframes lee-status-breathe' in CSS
     assert '@media (prefers-reduced-motion: reduce)' in CSS
+    assert "const THEME_MODES = ['system', 'dark', 'light']" in JS
+    assert "localStorage.getItem('lee-theme')" in JS
+    assert ':root[data-theme="leela"][data-mode="light"]' in CSS
+    assert ':root[data-theme="cursor"][data-mode="light"]' in CSS
+    assert ':root:not([data-mode])' in CSS
+    assert '.lee-app.mobile-left .lee-left' in CSS and '.lee-app.mobile-right .lee-right' in CSS
+    assert "matchMedia('(max-width: 1100px)')" in JS
+    assert '.lee-left, .lee-right { display: none; }' not in CSS
+    assert 'function leeTermExpand()' in JS
+    assert 'lee.term?.refit()' in JS
+    assert '.lee-centre.term-expanded .lee-bottomdock' in CSS
+    assert '.lee-centre.agent-expanded .lee-editor, .lee-centre.term-expanded .lee-editor' in CSS
+    assert '.lee-editor-stage { position:relative; flex:1 1 auto; min-height:240px' in CSS
+    assert 'max-height: min(900px, calc(100% - 240px))' in CSS
+    assert 'const limit = () => Math.min(900, Math.max(110, centreHeight() - 240))' in JS
+    assert "['exec-h', 80]" in JS and "['agent-h', 110]" in JS
+    from leela.app import _asset
+    assert _asset('lee-ide.css').startswith('/leestatic/lee-ide.css?v=')
+    assert _asset('lee-ide.js').startswith('/leestatic/lee-ide.js?v=')
+
 
 def test_modals_take_focus_trap_tab_and_restore_the_previous_control():
     block = JS[JS.index('function modal('):JS.index('function inputDialog')]
@@ -46,19 +66,33 @@ def test_header_leads_with_workspace_branch_and_named_menus_without_starting_a_k
     assert '>File</button>' in html and '>Tools</button>' in html and '>Debug</button>' in html
     assert 'id="themepill"' not in html and 'id="cwdpill"' not in html
 
-def test_web_theme_is_applied_before_styles_and_has_all_modes():
-    assert "const THEME_MODES = ['system', 'dark', 'light']" in JS
-    assert "localStorage.getItem('lee-theme')" in JS
-    assert ':root[data-theme="leela"][data-mode="light"]' in CSS
-    assert ':root[data-theme="cursor"][data-mode="light"]' in CSS
-    assert ':root:not([data-mode])' in CSS
 
-def test_file_backed_code_is_saved_before_execution_for_disk_reading_tools():
+def test_running_a_cell_saves_first_and_reports_where_it_ran():
     run_cell = JS[JS.index('async function runCell'):JS.index('function paintDebugInlineValues')]
     run_file = JS[JS.index('async function runFile'):JS.index('async function runSelection')]
     guard = "$('.lee-tab.active.dirty') && !await saveTab(true)"
     assert guard in run_cell and guard in run_file
     assert run_cell.index('saveTab(true)') < run_cell.index("postEvents('/nb/run/stream'")
+    run = JS[JS.index('async function runCell'):JS.index('async function askCell')]
+    ask = JS[JS.index('async function askCell'):JS.index('/* ---------------------------------------------------------- running files */')]
+    assert 'lee.path === runPath' in run and 'lee.cells[i]?.id === cellId' in run
+    assert 'lee.path !== runPath' in ask and 'lee.cells[i]?.id !== cellId' in ask
+    run = JS[JS.index('async function runCell'):JS.index('async function askCell')]
+    exec_run = JS[JS.index('async function runExec'):JS.index('function recall')]
+    assert 'if (c.running)' in run and 'is already running' in run
+    assert 'if (lee.execBusy)' in exec_run and 'finally { lee.execBusy = false; }' in exec_run
+    cell = JS[JS.index('const cellState'):JS.index('/* The per-cell controls')]
+    assert "!c.fresh ? 'previous'" in cell
+    assert "saved output from a previous kernel" in cell
+    assert 'function markPreviousRuns()' in cell
+    assert '.lee-cell-state.previous' in CSS
+    assert '.lee-cell-time.previous' in CSS
+    output = JS[JS.index('function outputTone'):JS.index('function paintSel')]
+    assert "return 'error'" in output and "? 'warning' : 'log'" in output
+    assert "return 'result'" in output and "return 'output'" in output
+    for selector in ('.lee-out.output', '.lee-out.warning', '.lee-out.log', '.lee-out.error'):
+        assert selector in CSS
+
 
 def test_autosave_is_configurable_debounced_and_invalidates_stale_requests():
     block = JS[JS.index('function autoSaveEnabled'):JS.index('function jumpToLine')]
@@ -188,10 +222,6 @@ def test_agent_composer_can_mention_tools_and_skills_inline():
     assert "agentVocabulary?.commands" in send
     assert "if (q.startsWith('/'))" in send
 
-def test_responsive_layout_uses_mobile_drawers_instead_of_dropping_tools():
-    assert '.lee-app.mobile-left .lee-left' in CSS and '.lee-app.mobile-right .lee-right' in CSS
-    assert "matchMedia('(max-width: 1100px)')" in JS
-    assert '.lee-left, .lee-right { display: none; }' not in CSS
 
 def test_notebook_cells_offer_ipykernel_debugging():
     assert 'leeDebugCell' in JS and "'/nb/debug/stream'" in JS
@@ -226,11 +256,58 @@ def test_pyproject_dependencies_get_runtime_version_pills(tmp_path):
     assert 'LeeCM.setPackageVersions' in JS and 'lee-package-summary' in JS
     assert '.cm-lee-package.missing' in CSS and '.lee-package-popover' in CSS
 
-def test_notebooks_have_collapsible_cells_and_a_heading_outline():
+def test_the_notebook_surface_mounts_patches_and_folds_cells():
     assert 'function notebookHeadings' in JS and 'function notebookToc' in JS
     assert 'function setCellCollapsed' in JS and 'cell_collapse:' in JS
     assert '.lee-cell.collapsed .lee-cm' in CSS and '.lee-nb-toc' in CSS
     assert '.lee-gutter .lee-cell-fold' in CSS
+    focus = JS[JS.index('function focusCell'):JS.index('function markDirty')]
+    assert "scrollIntoView({block: 'nearest'" in focus
+    assert 'requestAnimationFrame' in focus
+    run = JS[JS.index('async function runCell'):JS.index('async function askCell')]
+    assert "renderMarkdown(out.querySelector('.lee-md'), src, true)" in run
+    assert "style.display = 'none'" not in run
+    mount = JS[JS.index('function observeNotebookCells'):JS.index('const gutterFor')]
+    assert 'new IntersectionObserver' in mount
+    assert "rootMargin: '700px 0px'" in mount
+    assert 'st.cells.forEach((c, i) => mountCell(c, i))' not in mount
+    mount = JS[JS.index('function mountCell'):JS.index('function renderOutputs')]
+    run = JS[JS.index('async function runCell'):JS.index('async function askCell')]
+    assert 'lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : c.source' in mount
+    assert 'Object.assign(c, r.cell)' in run
+    assert 'lee.cells[i] = r.cell' not in run
+    mount = JS[JS.index('function mountCell'):JS.index('function renderOutputs')]
+    assert 'if (c.running)' in mount
+    assert "setCellState(c, 'running'" in mount
+    assert "notice.hidden = false" in mount
+    actions = JS[JS.index('const ACTIONS'):JS.index("for (let i = 1")]
+    assert 'is now ${r.cells[at]?.cell_type' in actions
+    assert "status('cell split', 'ok')" in actions
+    assert "status('cell inserted below', 'ok')" in actions
+    assert "status('cell deleted', 'ok')" in actions
+    assert 'focusCell(at + 1)' in actions
+    mount = JS[JS.index('function mountCell'):JS.index('function renderOutputs')]
+    assert "c.cell_type === 'markdown' ? 'markdown' : ''" in mount
+    assert '.lee-cell.prompt .lee-cm' not in CSS
+    assert '.lee-cell.prompt .lee-gutter' not in CSS
+    assert 'lee-cell-context' in JS
+    assert "op: 'context'" in JS
+    assert "['auto', 'keep', 'discard']" in JS
+    patch = JS[JS.index('function patchNotebook'):JS.index('function ensureCellMounted')]
+    assert 'oldEls = new Map' in patch
+    assert 'host.appendChild(el)' in patch
+    assert 'if (!el || changed)' in patch
+    assert 'LeeCM.destroy(view)' in patch
+    assert "host.innerHTML = ''" not in patch
+    cell = JS[JS.index('function cellEl'):JS.index('function setCellCollapsed')]
+    mounted = JS[JS.index('function mountCell'):JS.index('function renderOutputs')]
+    assert 'selectCell(+d.dataset.i)' in cell
+    assert "moveCellTo(from, +d.dataset.i)" in cell
+    assert "findIndex(cell => cell.id === c.id)" in mounted
+    focus = JS[JS.index('function focusCell'):JS.index('function autoSaveEnabled')]
+    assert "scrollIntoView({block: 'nearest', inline: 'nearest'})" in focus
+    assert "behavior: 'smooth'" not in focus
+
 
 def test_workspace_panes_can_minimise_and_restore_independently(tmp_path):
     html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
@@ -304,12 +381,37 @@ def test_the_builder_is_a_form_rendered_from_the_servers_vocabulary():
     assert 'The file has been edited' in block, 'a hand edit is not overwritten silently'
     assert '.lee-bld-job' in CSS and '.lee-bld-trigger' in CSS
 
-def test_a_failure_names_the_package_and_opens_your_copy_of_it():
+def test_the_git_panel_reports_outcomes_filters_and_history():
     block = JS[JS.index('function blameRow'):JS.index('function relStepRow')]
     assert 'your checkout' in block and 'installed copy' in block
     assert 'data-blame-open' in block and 'leeOpenFile' in JS
     assert 'scrollIntoView: true' in JS, 'landing on a line you cannot see is not landing on it'
     assert '.lee-blame' in CSS
+    assert "openTerm('gh-auth')" in JS
+    assert "gh_auth_argv() if kind == 'gh-auth'" in SERVER
+    assert "kind === 'gh-auth' ? 'gh auth'" in JS
+    assert "gitUrl('/git/commit/review', {ref})" in JS
+    assert "gitUrl('/git/commit/file', {ref, path})" in JS
+    assert 'function gitCommitInspector' in JS and 'data-history-commit' in JS
+    assert 'openGitCommitFile' in JS and "kind: 'commit'" in JS
+    assert '.lee-git-commit-inspector' in CSS and '.lee-git-commit-file' in CSS
+    fn = JS[JS.index('function firstLine('):JS.index('function leeLogFilter(')]
+    assert "replace(/^\\w*Error:\\s*/, '')" in fn, 'the class name is not the message'
+    assert "split('\\n').find(x => x.trim())" in fn, 'the first line that says anything'
+    assert 'max - 1' in fn and '…' in fn, 'and it is clipped for a status line'
+    done = JS[JS.index('async function gitDo('):JS.index('function gitOperationBanner')]
+    assert "lee.gitSignature = ''; gitChanged();" in done, \
+        'immediately, and the next poll does not treat our own mutation as news'
+    block = JS[JS.index('function gitFilterBanner'):JS.index('function gitSummary')]
+    assert 'f.ok !== false' in block and 'f.explain' in block
+    assert 'may not stay staged' in block
+    assert 'data-git-undo' in block and 'point.describe' in block
+    assert 'gitFilterBanner(d) + gitUndoBanner(d)' in JS, 'both sit with the file list'
+    assert '.lee-git-undo' in CSS
+    block = JS[JS.index('async function gitDo'):JS.index('function gitOperationBanner')]
+    assert 'd.outcome?.summary' in block
+    assert "d.outcome?.note ? ' — ' + d.outcome.note : ''" in block, 'one call, so neither is dropped'
+
 
 def test_the_deploy_panel_shows_the_servers_and_tunnels_it_deploys_onto():
     block = JS[JS.index('function depInfraRows'):JS.index('function renderDeployPanel')]
@@ -321,11 +423,6 @@ def test_the_deploy_panel_shows_the_servers_and_tunnels_it_deploys_onto():
     assert 'edits in your checkout are not what runs' in block, 'the shadowed package warning'
     assert '.lee-inf-row' in CSS and '.lee-pkg.shadowed' in CSS
 
-def test_authenticating_opens_the_real_gh_login():
-    "It is a conversation with a browser and a one-time code; a form cannot hold it."
-    assert "openTerm('gh-auth')" in JS
-    assert "gh_auth_argv() if kind == 'gh-auth'" in SERVER
-    assert "kind === 'gh-auth' ? 'gh auth'" in JS
 
 def test_the_deploy_panel_shows_where_it_goes_before_it_goes_there():
     block = JS[JS.index('const depUI ='):JS.index('async function renderGitPanel')]
@@ -360,18 +457,23 @@ def test_the_drive_panel_shows_the_call_it_is_about_to_make():
     assert "data_left='drive'" in SERVER and '.lee-left.left-drive' in CSS
     assert '.lee-drv-part.state-failed' in CSS
 
-def test_both_pipelines_share_one_terminal_socket():
-    "A release and a deploy differ in what they run and in nothing else, including this."
+def test_panels_refresh_themselves_and_keep_secrets_server_side():
     assert "url: kind === 'drive' ? '/drive/ws' : '/pipeline/ws'" in JS
     assert "openReleaseTerm(root = '', kind = 'release')" in JS
     assert 'def pipeline_socket(' in read('leela/core/web.py')
     assert SERVER.count("pipeline_socket(app, '") == 2, 'both blocks register through it'
-
-def test_the_environment_view_hides_secret_values_in_the_browser_too():
-    "The server never sends one; the client must not invent a place to show one either."
     block = JS[JS.index('function wfEnvRows'):JS.index('function renderWorkflowsPanel')]
     assert "'••••••••'" in block or '••••••••' in block
     assert 'e.secret ?' in block, 'a secret and a variable are drawn differently'
+    ops = JS[JS.index('async function refreshFileTree'):JS.index('document.addEventListener(\'click\'')]
+    assert 'location.reload()' not in ops
+    assert "fetch('/files/panel')" in ops
+    assert "old.replaceWith(fresh)" in ops
+    first = workspace_slug('My Project')
+    second = workspace_slug('My Project', [first])
+    assert first == 'my-project' and second == 'my-project-2'
+
+
 
 def test_the_release_pipeline_runs_steps_and_shows_them_in_a_terminal():
     block = JS[JS.index('const REL_MARK'):JS.index('async function renderGitPanel')]
@@ -425,12 +527,6 @@ def test_git_diffs_open_as_editor_tabs_with_unified_and_split_layouts():
     assert '.cm-merge-revert button:hover' in CSS
     assert '.lee-git-diff-tab' in CSS
 
-def test_git_history_inspects_commits_and_opens_each_file_without_a_full_patch_modal():
-    assert "gitUrl('/git/commit/review', {ref})" in JS
-    assert "gitUrl('/git/commit/file', {ref, path})" in JS
-    assert 'function gitCommitInspector' in JS and 'data-history-commit' in JS
-    assert 'openGitCommitFile' in JS and "kind: 'commit'" in JS
-    assert '.lee-git-commit-inspector' in CSS and '.lee-git-commit-file' in CSS
 
 def test_git_ui_confirms_destructive_operations_and_supports_branch_management():
     block = JS[JS.index('async function refreshProjectPills'):JS.index('/* ------------------------------------------------------------------ research')]
@@ -455,12 +551,6 @@ def test_a_failed_git_action_opens_the_log_it_just_wrote():
         "git's first line is usually the whole story, so the toast carries it"
     assert 'see logs' not in JS, 'nothing tells you to go and look any more'
 
-def test_the_toast_reports_gits_first_line_without_the_exception_class():
-    "`GitError: error: The following untracked...` reads as noise before it reads as a reason."
-    fn = JS[JS.index('function firstLine('):JS.index('function leeLogFilter(')]
-    assert "replace(/^\\w*Error:\\s*/, '')" in fn, 'the class name is not the message'
-    assert "split('\\n').find(x => x.trim())" in fn, 'the first line that says anything'
-    assert 'max - 1' in fn and '…' in fn, 'and it is clipped for a status line'
 
 def test_a_branch_change_reaches_every_surface_that_was_derived_from_it():
     "The pill and the tree badges were repainted by the poll; nothing else was."
@@ -477,10 +567,6 @@ def test_a_branch_change_reaches_every_surface_that_was_derived_from_it():
     assert 'noticeGitState(d)' in pills
     assert 'setInterval(refreshProjectPills, 5000)' in JS
 
-def test_our_own_git_action_updates_at_once_without_the_poll_repeating_it():
-    done = JS[JS.index('async function gitDo('):JS.index('function gitOperationBanner')]
-    assert "lee.gitSignature = ''; gitChanged();" in done, \
-        'immediately, and the next poll does not treat our own mutation as news'
 
 def test_the_merge_button_always_answers_instead_of_being_disabled():
     '"I clicked merge and nothing happened" was a disabled button.'
@@ -511,18 +597,7 @@ def test_the_conflict_resolver_is_three_panes_over_gits_own_markers():
     assert 'showWholeSideConflict' in block, 'delete/modify has no lines to work through'
     assert '.lee-merge3-panes' in CSS and '.cm-line.cm-lee-change-conflict-active' in CSS
 
-def test_the_panel_explains_a_dirtying_filter_and_offers_the_way_back():
-    block = JS[JS.index('function gitFilterBanner'):JS.index('function gitSummary')]
-    assert 'f.ok !== false' in block and 'f.explain' in block
-    assert 'may not stay staged' in block
-    assert 'data-git-undo' in block and 'point.describe' in block
-    assert 'gitFilterBanner(d) + gitUndoBanner(d)' in JS, 'both sit with the file list'
-    assert '.lee-git-undo' in CSS
 
-def test_a_mutation_reports_what_it_left_behind_rather_than_how_long_it_took():
-    block = JS[JS.index('async function gitDo'):JS.index('function gitOperationBanner')]
-    assert 'd.outcome?.summary' in block
-    assert "d.outcome?.note ? ' — ' + d.outcome.note : ''" in block, 'one call, so neither is dropped'
 
 def test_choosing_a_folder_reloads_every_project_panel_not_just_git():
     "The backend answering correctly is half of it: the open panel has to ask again."
@@ -560,13 +635,18 @@ def test_all_streams_its_backends_into_stable_slots():
     assert 'if (liveStream) { try { liveStream.close(); }' in search
     assert "if (mode === 'all')" in search and 'return streamAll(q, seq)' in search
 
-def test_the_search_stream_route_fans_its_legs_out_concurrently():
+def test_research_and_search_stream_into_the_workspace():
     from tests.assets import read
     src = read('leela/blocks/search/app.py')
     assert 'asyncio.as_completed(tasks)' in src, 'completion order is the entire point'
     assert 'off_loop(ctx.search.leg, name' in src, 'each leg on its own worker thread'
     assert 'await req.is_disconnected()' in src and 't.cancel()' in src
     assert "sse('leg'" in src and "sse('done'" in src and "sse('start'" in src
+    research = JS[JS.index('function researchWorkspace'):JS.index('function webSearch')]
+    assert 'Add to agent memory' in research and "leeNewMemoryNote({title:" in research
+    assert 'data-new-thought' in research and 'New research note' in research
+    assert 'Markdown scratchpad' in research and 'edit and choose model routing before saving' in research
+
 
 def test_a_pdf_opens_in_the_browsers_own_viewer(tmp_path):
     "We are in a browser, so the viewer already exists -- the feature is handing the bytes over."
@@ -706,13 +786,22 @@ def test_every_markdown_block_maps_to_the_element_it_rendered_as():
     fence = next(b for b in blocks if b['type'] == 'code_block')
     assert (fence['from'], fence['to']) == (7, 9) and fence['code'] == 'uv add rishi\n'
 
-def test_a_block_that_cannot_be_placed_costs_the_bars_rather_than_moving_them():
-    "One raw HTML block that renders as two elements shifts every block after it."
+def test_markdown_diffs_map_blocks_onto_the_elements_they_rendered():
     from leela.core.text import md_blocks
     doc = 'para one\n\n<p>a</p><p>b</p>\n\n## heading\n'
     assert _md_align(_md_render(doc), md_blocks(doc)) is None
     assert _md_align('<p>only</p>', md_blocks('para\n\npara two\n')) is None, 'a block with no element'
     assert _md_align('<p>a</p><p>b</p>', md_blocks('para\n')) is None, 'an element no block claimed'
+    render = JS[JS.index('function renderMarkdown('):JS.index('async function api(')]
+    assert 'onRender = null' in render
+    assert render.index('onRender(el)') < render.index('enhanceCodeBlocks(el)'), 'the pre is still a pre'
+    assert 'try { onRender(el); } catch' in render, 'a mapping bug cannot cost the reader the rendering'
+    paint = JS[JS.index('function paintMarkdownDiff'):JS.index('async function mountMarkdownDiff')]
+    assert "if (row.status === 'removed') { removed.push(row); continue; }" in paint
+    assert 'host.dataset.removedAbove' in paint and 'last.dataset.removedBelow' in paint
+    assert 'removed.map(r => r.source).join' in paint, 'the old text is readable without another request'
+    assert '.lee-md-change[data-removed-above]::after' in CSS
+
 
 def test_a_markdown_diff_pairs_blocks_and_refuses_to_pair_across_types():
     from leela.core.text import md_block_diff
@@ -772,11 +861,6 @@ def test_a_markdown_diff_reads_as_a_rendering_beside_unified_and_split():
     for kind in ('added', 'modified', 'code'):
         assert f'.lee-md-change[data-change="{kind}"]::before' in CSS
 
-def test_the_annotation_sees_the_fragment_before_the_code_upgrade_replaces_it():
-    render = JS[JS.index('function renderMarkdown('):JS.index('async function api(')]
-    assert 'onRender = null' in render
-    assert render.index('onRender(el)') < render.index('enhanceCodeBlocks(el)'), 'the pre is still a pre'
-    assert 'try { onRender(el); } catch' in render, 'a mapping bug cannot cost the reader the rendering'
 
 def test_a_block_that_cannot_be_matched_leaves_the_rendering_unmarked_and_says_so():
     block = JS[JS.index('function alignMarkdownBlocks'):JS.index('function markdownCodeDiffHtml')]
@@ -805,12 +889,6 @@ def test_a_changed_code_fence_shows_its_line_diff_inside_the_rendering():
     assert '.lee-md-code-line.del' in CSS and 'text-decoration: line-through' in CSS
     assert '.lee-md-code-line.add' in CSS
 
-def test_text_that_was_removed_is_reported_on_the_block_that_closed_over_it():
-    paint = JS[JS.index('function paintMarkdownDiff'):JS.index('async function mountMarkdownDiff')]
-    assert "if (row.status === 'removed') { removed.push(row); continue; }" in paint
-    assert 'host.dataset.removedAbove' in paint and 'last.dataset.removedBelow' in paint
-    assert 'removed.map(r => r.source).join' in paint, 'the old text is readable without another request'
-    assert '.lee-md-change[data-removed-above]::after' in CSS
 
 def test_the_rendered_markdown_pane_carries_the_change_marks_of_the_gutter_beside_it():
     "The file's own preview places `/git/file` line ranges by block: the other route to the"
@@ -892,48 +970,55 @@ def test_settings_dialog_never_scopes_saves_to_the_focused_tabs_language():
     assert "remembered!==null?remembered:''" in code
     assert 'curLang' not in code
 
-def test_inspector_support_is_appended_inside_the_project_kernel():
+def test_variables_and_runtimes_follow_the_active_tab():
     src = bootstrap_src()
     assert 'sys.path.append(_p)' in src
     assert 'import dhrishti.serving as ls' in src
     assert src.index('sys.path.append(_p)') < src.index('import dhrishti.serving as ls')
-
-def test_one_router_owns_platform_mod_and_derives_context_from_focus():
-    assert "window.addEventListener('keydown'" in JS
-    assert "const wantMeta = !!c.mod && MAC" in JS
-    assert 'function eventContext(e)' in JS
-    assert "inPath('#agentprompt, .lee-agent')" in JS
-    assert "inPath('#execbox, .lee-exec')" in JS
-    assert 'function cmBinds' not in JS
-
-def test_exec_and_variables_can_switch_to_the_persistent_agent_session():
     from leela.app import _vars_panel
     from leela.workspace import Workspace
     html = str(_vars_panel(Workspace(roots=[])))
     assert '>agent</button>' in html and 'leeScope("agent")' in html
     assert "lee.execScope === 'live' ? 'agent' : 'live'" in JS
     assert "protected agent session" in JS
-
-def test_identical_variable_polls_do_not_rebuild_the_dom():
     refresh = JS[JS.index('async function refreshVars'):JS.index('function varRow')]
     assert 'lee.varFingerprints.get(runtime) === fingerprint' in refresh
     assert 'lee.varFingerprints.set(runtime, fingerprint)' in refresh
-
-def test_run_and_advance_reveals_the_next_cell_in_the_outer_scroller():
-    focus = JS[JS.index('function focusCell'):JS.index('function markDirty')]
-    assert "scrollIntoView({block: 'nearest'" in focus
-    assert 'requestAnimationFrame' in focus
-
-def test_missing_kernel_support_can_be_installed_from_the_picker():
     picker = JS[JS.index('async function pickKernel'):JS.index('/* ---------------------------------------------------------- the keymap')]
     assert "post('/runtime/support', {python: o.python})" in picker
     assert 'installing ipykernel and ipymini with uv' in picker
     assert "return pickKernel()" in picker
-
-def test_switching_runtime_does_not_destroy_existing_terminal_tabs():
     picker = JS[JS.index('async function pickKernel'):JS.index('/* ---------------------------------------------------------- the keymap')]
     assert '.dispose()' not in picker
     assert "post('/term/close" not in picker
+    assert 'function editRuns()' in JS and 'data-run-env-file' in JS and 'data-env-key' in JS
+    assert 'Secret values belong in an ignored .env.local file' in JS
+    vars_code = JS[JS.index('async function leeVars'):JS.index('function varRow')]
+    assert 'lee.varStates.set(lee.varRuntime' in vars_code
+    assert 'lee.varStates.get(runtime)' in vars_code
+    assert 'open: new Set(lee.varOpen)' in vars_code
+    assert "filter: $('#varfilter')?.value" in vars_code
+
+
+def test_one_keyboard_router_reaches_every_panel():
+    assert "window.addEventListener('keydown'" in JS
+    assert "const wantMeta = !!c.mod && MAC" in JS
+    assert 'function eventContext(e)' in JS
+    assert "inPath('#agentprompt, .lee-agent')" in JS
+    assert "inPath('#execbox, .lee-exec')" in JS
+    assert 'function cmBinds' not in JS
+    from leela.core.keys import lookup
+    for action, panel in (('panel_git', 'git'), ('panel_releases', 'releases'), ('panel_deploys', 'deploys')):
+        key = lookup(action)
+        assert key.scope == 'global' and key.keys, f'{action} is bound'
+        assert re.search(rf"{action}:\s*\(\) => leeLeft\('{panel}'\)", JS), f'{action} opens the {panel} panel'
+    assert 'lee.keys.filter(k => k.label)' in JS
+
+
+
+
+
+
 
 def test_terminal_starts_inside_the_project_uv_environment():
     "One builder, used by the pty and by every release, deploy and drive step alike."
@@ -968,10 +1053,18 @@ def test_indent_detection_copies_tabs_or_space_units_without_treating_alignment_
     assert 'function indentColumns' in editor and '--lee-indent-cols' in editor
     assert 'background-repeat: no-repeat' in CSS
 
-def test_codemirror_navigation_extensions_are_optional_live_preferences():
+def test_editor_extensions_are_live_preferences():
     editor = EDITOR
     assert 'function overviewPlugin' in editor and 'const stickyPlugin' in editor
     assert "'editor','overviewMode'" in JS and "'editor','stickyNavigation'" in JS
+    prefs = JS[JS.index('function readEditorPrefs'):JS.index('lee.editorPrefs = readEditorPrefs()')]
+    assert "if ('minimap' in old && !old.minimapMode)" in prefs
+    assert 'if (old.minimapMode && !old.overviewMode) old.overviewMode = old.minimapMode;' in prefs
+    assert 'settings.overviewMode || settings.minimapMode' in EDITOR, 'and on the editor side too'
+    src=EDITOR
+    assert 'pairedTripleQuotes' in src and 'transactionFilter' in src
+    assert (ROOT/'leela/vendor/lee-cm6.js').stat().st_size > 100_000
+
 
 def test_the_overview_is_the_scrollbar_marked_up_rather_than_a_picture_of_the_text():
     "A compressed image of the letters answers no question you can act on."
@@ -984,23 +1077,43 @@ def test_the_overview_is_the_scrollbar_marked_up_rather_than_a_picture_of_the_te
     assert 'scrollbar-width: none' in CSS and '.cm-lee-has-overview .cm-scroller' in CSS
     assert 'cm-lee-minimap' not in CSS, 'the old canvas is gone, not merely hidden'
 
-def test_the_overview_setting_carries_its_two_older_names_forward():
-    "A stored preference must not silently reset because the feature was renamed twice."
-    prefs = JS[JS.index('function readEditorPrefs'):JS.index('lee.editorPrefs = readEditorPrefs()')]
-    assert "if ('minimap' in old && !old.minimapMode)" in prefs
-    assert 'if (old.minimapMode && !old.overviewMode) old.overviewMode = old.minimapMode;' in prefs
-    assert 'settings.overviewMode || settings.minimapMode' in EDITOR, 'and on the editor side too'
 
-def test_codemirror_merge_view_is_used_for_external_file_conflicts():
+def test_drafts_and_autosave_survive_reload_and_conflict():
     editor = EDITOR
     assert 'MergeView' in editor and 'export function createMerge' in editor
     assert 'function openMergeConflict' in JS and 'data-save-merge' in JS
     assert 'Resolve notebook conflict' in JS and 'data-cell-merge' in JS
     assert '/tab/disk?path=' in JS
+    assert "lee.filePrefs.autoSave || 'afterDelay'" in JS
+    assert "'onFocusChange'" in JS and "'onWindowChange'" in JS
+    assert 'persistDraft(key, payload)' in JS
+    assert 'base_disk_version = draftBaseFor(documentKey)' in JS
+    assert 'showSaveConflict(message)' in JS
+    assert "const DRAFT_DB = 'leela-editor-drafts'" in JS
+    assert 'indexedDB.open(DRAFT_DB, 1)' in JS
+    assert 'await restoreDrafts(st)' in JS
+    assert "window.addEventListener('pagehide', snapshotCurrentDraft)" in JS
+    assert 'await clearDrafts(path)' in JS
+    restore = JS[JS.index('async function restoreDrafts'):JS.index('window.lee = lee')]
+    assert 'let recovered = false' in restore
+    assert 'if (!recovered) await clearDrafts(documentKey)' in restore
+    assert "row.payload.text !== st.text" in restore
+    conflict = JS[JS.index('function showSaveConflict'):JS.index('async function saveAllTabs')]
+    assert 'heldSaveConflicts.add(lee.path)' in conflict
+    assert "automatic retries paused" in conflict
+    autosave = JS[JS.index('function scheduleAutoSave'):JS.index('function markDirty')]
+    assert 'lee.heldSaveConflicts.has(lee.path)' in autosave
+    reload_code = JS[JS.index('async function takeDiskVersion'):JS.index('async function stopAgent')]
+    assert "await post('/tab/reload', {path})" in reload_code
+    assert 'lee.buffers.delete(key)' in reload_code
+    assert 'await takeDiskVersion(e.path)' in reload_code
+    assert 'function rememberBuffer(key, payload)' in JS
+    assert "post('/tab/buffer', {...payload, base_disk_version:" in JS
+    assert 'persistDraft(key, payload)' in JS
+    assert "lee.dirtyBuffers.has(key) ? lee.buffers.get(key)" in JS
+    assert 'bufferTimers' in JS
 
-def test_run_configuration_workbench_edits_environment_without_putting_secrets_in_browser_storage():
-    assert 'function editRuns()' in JS and 'data-run-env-file' in JS and 'data-env-key' in JS
-    assert 'Secret values belong in an ignored .env.local file' in JS
+
 
 def test_editor_toolbar_keeps_contextual_actions_and_moves_the_rest_to_kebab():
     from fasthtml.common import to_xml
@@ -1047,10 +1160,54 @@ def test_agent_state_is_a_markdown_codemirror_with_preview_lint_and_tool_inserti
     assert '.lee-agent-state-editor .cm-editor { height: 100%' in CSS
     assert '.lee-state-ref-tabs' in CSS and '.lee-state-ref-pane.active' in CSS
 
-def test_appending_agent_status_does_not_reparse_and_detach_existing_actions():
+def test_the_agent_panel_streams_steps_approvals_and_usage():
     log = JS[JS.index('function agentLog'):JS.index('/* A write pauses')]
     assert "insertAdjacentHTML('beforeend', html)" in log
     assert 'log.innerHTML +=' not in log
+    assert 'checking Kosha graph, then asking the completion model' in JS
+    assert 'asking the inline model to rewrite the selection' in JS
+    assert 'review before replacing' in JS
+    boot = JS[JS.index('async function boot()'):JS.index("document.addEventListener('DOMContentLoaded'")]
+    assert '/complete/warm' not in boot
+    step = JS[JS.index('function renderAgentStep'):JS.index('// A turn gets an immediate')]
+    assert "document.createElement('summary')" in step
+    assert 'lee-agent-step-detail' in step and 'readableDetail(a.detail)' in step
+    assert "mountCodeSurface(block, code, 'python', true)" in step
+    assert "document.createElement('details')" in JS
+    assert '.lee-agent-step > summary' in CSS and '.lee-agent-step-detail' in CSS
+    card = JS[JS.index('function showApproval'):JS.index('function readableDetail')]
+    assert 'Pause again' in card and 'Trust changes for this session' in card
+    assert "const session = ok && $('[data-run-policy]', card).value === 'approve_session'" in card
+    assert "post('/agent/approve', {id: a.id, ok, note, session, tool, args})" in card
+    assert "api('/agent/approval')" in JS
+    assert 'if (r.pending) showApproval(r.pending)' in JS
+    assert 'setInterval(pollApproval, 750)' in JS
+    card = JS[JS.index('function showApproval'):JS.index('async function pollApproval')]
+    assert "leePane('right', true)" in card
+    assert "leeRight('agent')" in card
+    assert "restoreAgentLive()" in card
+    message = JS[JS.index('function userMessage'):JS.index('function renderTurns')]
+    assert "raw.length > 900" in message and "raw.split('\\n').length > 14" in message
+    assert 'Show full request' in message and 'lee-user-message-more' in message
+    assert 'item.appendChild(userMessage(turn.prompt))' in JS
+    assert 'log.appendChild(userMessage(q))' in JS
+    assert '.lee-user-message {' in CSS and '.lee-user-message-body.preview' in CSS
+    js = JS
+    agent = AGENT
+    assert "'usage': self.turn_use.dict()" in agent
+    assert 'function usageMeta(' in js and 'usageMeta(turn.usage' in js
+    assert 'usageMeta(d.usage' in js and 'Token usage and estimated cost for this turn' in js
+    from leela.app import _agent_panel
+    from leela.workspace import Workspace
+    html=str(_agent_panel(Workspace(roots=[])))
+    assert 'leeAddModel' in html and '/agent/models/add' in JS
+    assert 'Hugging Face URL' in JS and 'hosted API / FastLLM' in JS
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[])
+    assert ws.inline_model == 'gpt-mini'
+    assert ws.completion_model == 'gpt-4.1'
+    assert ws.ai.routing.name_for('completion') == 'gpt-4.1'
+
 
 def test_agent_memory_workbench_edits_notes_and_routes_each_model_surface():
     assert 'async function leeAgentMemory' in JS
@@ -1065,11 +1222,6 @@ def test_agent_memory_workbench_edits_notes_and_routes_each_model_surface():
     assert '.lee-memory-note-empty[hidden] { display: none; }' in CSS
     assert '.lee-memory-note-card' in CSS and '.lee-memory-note-routes' in CSS
 
-def test_research_can_promote_a_source_or_digest_into_an_editable_agent_memory_note():
-    research = JS[JS.index('function researchWorkspace'):JS.index('function webSearch')]
-    assert 'Add to agent memory' in research and "leeNewMemoryNote({title:" in research
-    assert 'data-new-thought' in research and 'New research note' in research
-    assert 'Markdown scratchpad' in research and 'edit and choose model routing before saving' in research
 
 def test_agent_execution_ui_has_run_policies_previews_steering_and_state_memory():
     required = ("/agent/run-policy", "/agent/tool-preview", "/agent/retry-tool", "/agent/rollback-tool",
@@ -1126,17 +1278,7 @@ def test_agent_and_variables_share_the_right_tabs_while_exec_and_terminal_share_
     assert 'function leeRight(which)' in JS and "leeDock('exec')" in JS
     assert 'agentAttachments' in JS and '/agent/commands' in JS and "'/fs/find?q='" in JS
 
-def test_terminal_can_expand_and_refits_its_pty():
-    assert 'function leeTermExpand()' in JS
-    assert 'lee.term?.refit()' in JS
-    assert '.lee-centre.term-expanded .lee-bottomdock' in CSS
-    assert '.lee-centre.agent-expanded .lee-editor, .lee-centre.term-expanded .lee-editor' in CSS
 
-def test_lower_panels_cannot_consume_the_editor():
-    assert '.lee-editor-stage { position:relative; flex:1 1 auto; min-height:240px' in CSS
-    assert 'max-height: min(900px, calc(100% - 240px))' in CSS
-    assert 'const limit = () => Math.min(900, Math.max(110, centreHeight() - 240))' in JS
-    assert "['exec-h', 80]" in JS and "['agent-h', 110]" in JS
 
 def test_terminal_has_mouse_resize_and_multiple_live_tabs():
     splits = JS[JS.index('function initSplits'):JS.index('async function refreshKernelPill')]
@@ -1157,10 +1299,6 @@ def test_screen_capture_route_rejects_oversized_payloads_before_decoding(tmp_pat
     assert response.status_code == 413
     assert 'larger than 9 MB' in response.json()['error']
 
-def test_editor_keeps_replaced_triple_quotes_paired():
-    src=EDITOR
-    assert 'pairedTripleQuotes' in src and 'transactionFilter' in src
-    assert (ROOT/'leela/vendor/lee-cm6.js').stat().st_size > 100_000
 
 def test_one_static_prefix_serves_both_the_authored_and_vendored_asset_trees(tmp_path):
     "`/leestatic` spans `leela/static` and `leela/vendor` as if they were one folder."
@@ -1176,10 +1314,6 @@ def test_one_static_prefix_serves_both_the_authored_and_vendored_asset_trees(tmp
     assert b'@font-face' in authored.content and b'/leestatic/fonts/' in authored.content
     assert missing.status_code == 404
 
-def test_inline_model_calls_explain_their_progress():
-    assert 'checking Kosha graph, then asking the completion model' in JS
-    assert 'asking the inline model to rewrite the selection' in JS
-    assert 'review before replacing' in JS
 
 def test_selection_help_uses_summary_and_completion_jobs_without_editing(tmp_path, monkeypatch):
     from starlette.testclient import TestClient
@@ -1212,10 +1346,6 @@ def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
     assert 'onerror=' not in safe and 'language-html' in safe
     assert 'onerror=' in trusted
 
-def test_rendering_markdown_does_not_hide_its_editor():
-    run = JS[JS.index('async function runCell'):JS.index('async function askCell')]
-    assert "renderMarkdown(out.querySelector('.lee-md'), src, true)" in run
-    assert "style.display = 'none'" not in run
 
 def test_model_discovery_does_not_block_shell_render_or_editor_mount():
     from leela.app import _agent_panel
@@ -1226,15 +1356,7 @@ def test_model_discovery_does_not_block_shell_render_or_editor_mount():
     assert 'await loadAgentModels()' not in boot
     assert 'loadAgentModels().catch' in boot
 
-def test_opening_the_ide_does_not_warm_a_local_model():
-    boot = JS[JS.index('async function boot()'):JS.index("document.addEventListener('DOMContentLoaded'")]
-    assert '/complete/warm' not in boot
 
-def test_notebook_editors_mount_lazily_near_the_viewport():
-    mount = JS[JS.index('function observeNotebookCells'):JS.index('const gutterFor')]
-    assert 'new IntersectionObserver' in mount
-    assert "rootMargin: '700px 0px'" in mount
-    assert 'st.cells.forEach((c, i) => mountCell(c, i))' not in mount
 
 def test_terminal_bundle_loads_only_when_the_terminal_opens():
     from leela.app import _asset, _shell
@@ -1245,42 +1367,29 @@ def test_terminal_bundle_loads_only_when_the_terminal_opens():
     terminal = JS[JS.index('let termBundle'):JS.index('function leeTermExpand')]
     assert "document.createElement('script')" in terminal and 'await loadTermBundle()' in terminal
 
-def test_file_backed_changes_have_configurable_autosave_and_keep_a_crash_recovery_draft():
-    assert "lee.filePrefs.autoSave || 'afterDelay'" in JS
-    assert "'onFocusChange'" in JS and "'onWindowChange'" in JS
-    assert 'persistDraft(key, payload)' in JS
-    assert 'base_disk_version = draftBaseFor(documentKey)' in JS
-    assert 'showSaveConflict(message)' in JS
 
-def test_file_mutations_refresh_only_the_tree_panel():
-    ops = JS[JS.index('async function refreshFileTree'):JS.index('document.addEventListener(\'click\'')]
-    assert 'location.reload()' not in ops
-    assert "fetch('/files/panel')" in ops
-    assert "old.replaceWith(fresh)" in ops
 
-def test_prompt_cells_have_a_local_live_status_slot():
+def test_prompt_cells_show_a_live_notice_and_render_server_markdown():
     assert 'id="model-${c.id}"' in JS
     assert 'role="status"' in JS and 'aria-live="polite"' in JS
     assert '●' in JS and 'Model is running' in JS and ' · ${seconds}s elapsed' in JS
-
-def test_prompt_notice_is_shown_timed_and_always_cleared():
     ask = JS[JS.index('async function askCell'):JS.index('/* ---------------------------------------------------------- running files */')]
     assert 'notice.hidden = false' in ask
     assert 'setInterval(tick, 1000)' in ask
     assert 'finally {' in ask and 'notice.hidden = true' in ask
     assert 'clearInterval(clock)' in ask
-
-def test_prompt_notice_motion_respects_accessibility_preferences():
     assert '.lee-model-running[hidden] { display: none; }' in CSS
     assert '@keyframes lee-model-pulse' in CSS
     assert '@media (prefers-reduced-motion: reduce)' in CSS
-
-def test_prompt_replies_use_the_server_mdhtml_renderer():
     assert 'function renderMarkdown(el, text, allowRaw = false' in JS
     assert "fetch('/markdown/render'" in JS
     assert 'window.leeMarkdown' not in JS
     assert "renderMarkdown(reply, c.reply)" in JS
     assert "renderMarkdown(reply, raw)" in JS
+
+
+
+
 
 def test_mdhtml_rendering_is_paste_safe_and_reports_unclosed_constructs():
     from starlette.testclient import TestClient
@@ -1315,13 +1424,6 @@ def test_agent_turn_has_a_live_one_line_progress_surface_and_one_line_tools():
     assert '.lee-agent-step-copy { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }' in CSS
     assert '@keyframes lee-agent-wave' in CSS
 
-def test_agent_tool_rows_expand_to_structured_details():
-    step = JS[JS.index('function renderAgentStep'):JS.index('// A turn gets an immediate')]
-    assert "document.createElement('summary')" in step
-    assert 'lee-agent-step-detail' in step and 'readableDetail(a.detail)' in step
-    assert "mountCodeSurface(block, code, 'python', true)" in step
-    assert "document.createElement('details')" in JS
-    assert '.lee-agent-step > summary' in CSS and '.lee-agent-step-detail' in CSS
 
 def test_markdown_code_uses_readonly_codemirror_and_only_python_can_promote():
     code = JS[JS.index('async function promoteCodeToNotebook'):JS.index('function renderMarkdown')]
@@ -1345,37 +1447,10 @@ def test_agent_markdown_can_become_an_editable_markdown_cell_and_hides_duplicate
     assert '.lee-agent-step.kind-search .lee-agent-step-state' in CSS
     assert '.lee-reply {' in CSS and 'white-space: normal' in CSS
 
-def test_approval_card_can_trust_later_writes_for_the_current_session():
-    card = JS[JS.index('function showApproval'):JS.index('function readableDetail')]
-    assert 'Pause again' in card and 'Trust changes for this session' in card
-    assert "const session = ok && $('[data-run-policy]', card).value === 'approve_session'" in card
-    assert "post('/agent/approve', {id: a.id, ok, note, session, tool, args})" in card
 
-def test_browser_polls_for_approvals_from_rishi_outside_agent_streams():
-    assert "api('/agent/approval')" in JS
-    assert 'if (r.pending) showApproval(r.pending)' in JS
-    assert 'setInterval(pollApproval, 750)' in JS
 
-def test_an_approval_reveals_the_live_agent_tab_automatically():
-    card = JS[JS.index('function showApproval'):JS.index('async function pollApproval')]
-    assert "leePane('right', true)" in card
-    assert "leeRight('agent')" in card
-    assert "restoreAgentLive()" in card
 
-def test_long_user_messages_are_composed_cards_not_unbounded_traceback_text():
-    message = JS[JS.index('function userMessage'):JS.index('function renderTurns')]
-    assert "raw.length > 900" in message and "raw.split('\\n').length > 14" in message
-    assert 'Show full request' in message and 'lee-user-message-more' in message
-    assert 'item.appendChild(userMessage(turn.prompt))' in JS
-    assert 'log.appendChild(userMessage(q))' in JS
-    assert '.lee-user-message {' in CSS and '.lee-user-message-body.preview' in CSS
 
-def test_agent_turn_usage_is_persisted_and_rendered_in_live_and_history_views():
-    js = JS
-    agent = AGENT
-    assert "'usage': self.turn_use.dict()" in agent
-    assert 'function usageMeta(' in js and 'usageMeta(turn.usage' in js
-    assert 'usageMeta(d.usage' in js and 'Token usage and estimated cost for this turn' in js
 
 def test_history_groups_turns_by_context_session_without_rendering_every_turn():
     from leela.app import _history_sessions
@@ -1429,12 +1504,6 @@ def test_agent_state_refresh_uses_current_project_evidence(tmp_path):
     assert 'Refresh from code' in JS
     assert '<current-project>' in SERVER
 
-def test_custom_model_controls_are_in_the_dropdown_ui():
-    from leela.app import _agent_panel
-    from leela.workspace import Workspace
-    html=str(_agent_panel(Workspace(roots=[])))
-    assert 'leeAddModel' in html and '/agent/models/add' in JS
-    assert 'Hugging Face URL' in JS and 'hosted API / FastLLM' in JS
 
 def test_model_picker_shows_older_models_by_default(monkeypatch):
     from starlette.testclient import TestClient
@@ -1475,12 +1544,6 @@ def test_every_model_choice_is_saved_and_restored(tmp_path):
     restored = Workspace.load(path)
     assert (restored.model, restored.inline_model, restored.completion_model) == ('gemma-12b', 'gemma-e2b', 'gemma-e4b')
 
-def test_new_workspaces_use_requested_prompt_and_completion_defaults():
-    from leela.workspace import Workspace
-    ws = Workspace(roots=[])
-    assert ws.inline_model == 'gpt-mini'
-    assert ws.completion_model == 'gpt-4.1'
-    assert ws.ai.routing.name_for('completion') == 'gpt-4.1'
 
 def test_configured_agent_does_not_offer_setup_again():
     from leela.app import _agent_panel
@@ -1519,10 +1582,6 @@ def test_local_multimodal_setting_is_persisted_from_the_ui(tmp_path):
     assert data['ok'] and ws.local_multimodal is True
     assert ws._state_path.read_json()['local_multimodal'] is True
 
-def test_static_assets_are_cache_busted_as_one_revision():
-    from leela.app import _asset
-    assert _asset('lee-ide.css').startswith('/leestatic/lee-ide.css?v=')
-    assert _asset('lee-ide.js').startswith('/leestatic/lee-ide.js?v=')
 
 def _nb(path, source):
     path.write_text(json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {}, 'cells': [{
@@ -1540,31 +1599,9 @@ def test_explicit_reload_invalidates_the_notebook_cache_and_reads_agent_changes(
         assert client.post('/tab/reload', json={'path': str(a)}).json()['ok']
         assert client.get('/tab/state').json()['cells'][0]['source'] == 'value = "agent edit"'
 
-def test_browser_drafts_survive_reload_independently_of_server_memory():
-    assert "const DRAFT_DB = 'leela-editor-drafts'" in JS
-    assert 'indexedDB.open(DRAFT_DB, 1)' in JS
-    assert 'await restoreDrafts(st)' in JS
-    assert "window.addEventListener('pagehide', snapshotCurrentDraft)" in JS
-    assert 'await clearDrafts(path)' in JS
 
-def test_identical_crash_drafts_are_cleaned_instead_of_triggering_conflict_autosave():
-    restore = JS[JS.index('async function restoreDrafts'):JS.index('window.lee = lee')]
-    assert 'let recovered = false' in restore
-    assert 'if (!recovered) await clearDrafts(documentKey)' in restore
-    assert "row.payload.text !== st.text" in restore
 
-def test_keep_draft_pauses_automatic_conflict_retries_until_an_explicit_save():
-    conflict = JS[JS.index('function showSaveConflict'):JS.index('async function saveAllTabs')]
-    assert 'heldSaveConflicts.add(lee.path)' in conflict
-    assert "automatic retries paused" in conflict
-    autosave = JS[JS.index('function scheduleAutoSave'):JS.index('function markDirty')]
-    assert 'lee.heldSaveConflicts.has(lee.path)' in autosave
 
-def test_client_reload_clears_both_document_caches_before_mounting():
-    reload_code = JS[JS.index('async function takeDiskVersion'):JS.index('async function stopAgent')]
-    assert "await post('/tab/reload', {path})" in reload_code
-    assert 'lee.buffers.delete(key)' in reload_code
-    assert 'await takeDiskVersion(e.path)' in reload_code
 
 def test_browser_watch_detects_an_external_file_write(tmp_path):
     a = tmp_path/'a.py'; a.write_text('before = True\n')
@@ -1624,12 +1661,6 @@ def test_remove_root_route_never_deletes_the_folder(tmp_path):
     assert root.exists() and kept.read_text() == 'x = 1\n'
     assert root not in ws.fs.roots
 
-def test_variable_tree_keeps_separate_view_state_per_runtime():
-    vars_code = JS[JS.index('async function leeVars'):JS.index('function varRow')]
-    assert 'lee.varStates.set(lee.varRuntime' in vars_code
-    assert 'lee.varStates.get(runtime)' in vars_code
-    assert 'open: new Set(lee.varOpen)' in vars_code
-    assert "filter: $('#varfilter')?.value" in vars_code
 
 def test_save_refuses_to_overwrite_a_disk_change_after_the_draft_started(tmp_path):
     a = tmp_path/'a.py'; a.write_text('before = True\n')
@@ -1673,24 +1704,8 @@ def test_save_all_persists_inactive_tab_buffers(tmp_path):
     assert a.read_text() == 'new_a = True\n'
     assert b.read_text() == 'new_b = True\n'
 
-def test_stale_empty_buffer_cache_cannot_blank_server_cell_source_after_run():
-    mount = JS[JS.index('function mountCell'):JS.index('function renderOutputs')]
-    run = JS[JS.index('async function runCell'):JS.index('async function askCell')]
-    assert 'lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : c.source' in mount
-    assert 'Object.assign(c, r.cell)' in run
-    assert 'lee.cells[i] = r.cell' not in run
 
-def test_remounted_running_cells_restore_their_local_indicators():
-    mount = JS[JS.index('function mountCell'):JS.index('function renderOutputs')]
-    assert 'if (c.running)' in mount
-    assert "setCellState(c, 'running'" in mount
-    assert "notice.hidden = false" in mount
 
-def test_a_finished_background_run_does_not_paint_the_new_tab():
-    run = JS[JS.index('async function runCell'):JS.index('async function askCell')]
-    ask = JS[JS.index('async function askCell'):JS.index('/* ---------------------------------------------------------- running files */')]
-    assert 'lee.path === runPath' in run and 'lee.cells[i]?.id === cellId' in run
-    assert 'lee.path !== runPath' in ask and 'lee.cells[i]?.id !== cellId' in ask
 
 def test_cell_runs_carry_document_and_cell_identity_and_reject_stale_positions(tmp_path):
     notebook = tmp_path/'ordered.ipynb'; _nb(notebook, 'class Definition: pass')
@@ -1743,13 +1758,6 @@ def test_the_tab_menu_offers_the_bulk_closes_and_they_run_right_to_left():
     assert 'dataset.gitDiff' in body, 'browser-only diff tabs are not server tabs'
     assert 'confirmDialog' in body, 'unsaved work is still asked about'
 
-def test_the_activity_panels_have_keys_and_reach_the_palette():
-    from leela.core.keys import lookup
-    for action, panel in (('panel_git', 'git'), ('panel_releases', 'releases'), ('panel_deploys', 'deploys')):
-        key = lookup(action)
-        assert key.scope == 'global' and key.keys, f'{action} is bound'
-        assert re.search(rf"{action}:\s*\(\) => leeLeft\('{panel}'\)", JS), f'{action} opens the {panel} panel'
-    assert 'lee.keys.filter(k => k.label)' in JS
 
 def _notebook(path):
     path.write_text(json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {}, 'cells': [
@@ -1779,13 +1787,6 @@ def test_structural_edits_preserve_scroll_selection_cursor_and_visual_anchor():
     assert 'patchNotebook(host, before, r.cells, d.op)' in edit
     assert "{...d, sources: cur}" in edit
 
-def test_type_split_insert_and_delete_actions_give_feedback_and_focus():
-    actions = JS[JS.index('const ACTIONS'):JS.index("for (let i = 1")]
-    assert 'is now ${r.cells[at]?.cell_type' in actions
-    assert "status('cell split', 'ok')" in actions
-    assert "status('cell inserted below', 'ok')" in actions
-    assert "status('cell deleted', 'ok')" in actions
-    assert 'focusCell(at + 1)' in actions
 
 def test_cell_clipboard_survives_tabs_and_pastes_full_cells_with_new_ids(tmp_path):
     actions = JS[JS.index('const ACTIONS'):JS.index("for (let i = 1")]
@@ -1809,12 +1810,6 @@ def test_cell_clipboard_survives_tabs_and_pastes_full_cells_with_new_ids(tmp_pat
     assert pasted['source'] == 'moved = True' and pasted['outputs'][0]['text'] == 'yes\n'
     assert pasted['id'] != 'old-id' and pasted['running'] is False
 
-def test_unsaved_buffers_survive_tab_switches_without_waiting_for_a_save():
-    assert 'function rememberBuffer(key, payload)' in JS
-    assert "post('/tab/buffer', {...payload, base_disk_version:" in JS
-    assert 'persistDraft(key, payload)' in JS
-    assert "lee.dirtyBuffers.has(key) ? lee.buffers.get(key)" in JS
-    assert 'bufferTimers' in JS
 
 def test_exec_newline_and_file_tree_parent_are_real_actions_not_noops():
     actions = JS[JS.index('const ACTIONS'):JS.index("for (let i = 1")]
@@ -1846,50 +1841,12 @@ def test_cell_controls_form_an_attached_header_above_the_editor_not_an_overlay()
     assert 'border-bottom: 0' in chrome and 'border-radius: 5px 5px 0 0' in chrome
     assert 'position: absolute' not in chrome
 
-def test_prompt_cell_uses_the_normal_plain_text_editor_surface():
-    mount = JS[JS.index('function mountCell'):JS.index('function renderOutputs')]
-    assert "c.cell_type === 'markdown' ? 'markdown' : ''" in mount
-    assert '.lee-cell.prompt .lee-cm' not in CSS
-    assert '.lee-cell.prompt .lee-gutter' not in CSS
 
-def test_each_cell_exposes_a_persisted_compaction_choice():
-    assert 'lee-cell-context' in JS
-    assert "op: 'context'" in JS
-    assert "['auto', 'keep', 'discard']" in JS
 
-def test_structural_edits_patch_cells_without_remounting_unchanged_editors():
-    patch = JS[JS.index('function patchNotebook'):JS.index('function ensureCellMounted')]
-    assert 'oldEls = new Map' in patch
-    assert 'host.appendChild(el)' in patch
-    assert 'if (!el || changed)' in patch
-    assert 'LeeCM.destroy(view)' in patch
-    assert "host.innerHTML = ''" not in patch
 
-def test_cell_handlers_resolve_the_current_index_after_a_move():
-    cell = JS[JS.index('function cellEl'):JS.index('function setCellCollapsed')]
-    mounted = JS[JS.index('function mountCell'):JS.index('function renderOutputs')]
-    assert 'selectCell(+d.dataset.i)' in cell
-    assert "moveCellTo(from, +d.dataset.i)" in cell
-    assert "findIndex(cell => cell.id === c.id)" in mounted
 
-def test_cell_focus_never_animates_the_notebook_scroll():
-    focus = JS[JS.index('function focusCell'):JS.index('function autoSaveEnabled')]
-    assert "scrollIntoView({block: 'nearest', inline: 'nearest'})" in focus
-    assert "behavior: 'smooth'" not in focus
 
-def test_repeated_run_gestures_do_not_queue_duplicate_work():
-    run = JS[JS.index('async function runCell'):JS.index('async function askCell')]
-    exec_run = JS[JS.index('async function runExec'):JS.index('function recall')]
-    assert 'if (c.running)' in run and 'is already running' in run
-    assert 'if (lee.execBusy)' in exec_run and 'finally { lee.execBusy = false; }' in exec_run
 
-def test_saved_runs_are_yellow_history_not_green_current_kernel_success():
-    cell = JS[JS.index('const cellState'):JS.index('/* The per-cell controls')]
-    assert "!c.fresh ? 'previous'" in cell
-    assert "saved output from a previous kernel" in cell
-    assert 'function markPreviousRuns()' in cell
-    assert '.lee-cell-state.previous' in CSS
-    assert '.lee-cell-time.previous' in CSS
 
 def test_cell_chrome_shows_live_and_last_execution_time():
     cell = JS[JS.index('function setCellState'):JS.index('/* The per-cell controls')]
@@ -1900,12 +1857,6 @@ def test_cell_chrome_shows_live_and_last_execution_time():
     assert 'setInterval(() => setCellTime' in run and 'clearInterval(cellClock)' in run
     assert 'setCellTime(c, elapsed, true)' in prompt
 
-def test_cell_output_colours_distinguish_results_warnings_logs_and_errors():
-    output = JS[JS.index('function outputTone'):JS.index('function paintSel')]
-    assert "return 'error'" in output and "? 'warning' : 'log'" in output
-    assert "return 'result'" in output and "return 'output'" in output
-    for selector in ('.lee-out.output', '.lee-out.warning', '.lee-out.log', '.lee-out.error'):
-        assert selector in CSS
 
 def test_a_changed_notebook_cell_carries_the_same_mark_a_changed_file_line_does():
     "PyCharm-style: a thin bar at the start of the work that differs from the commit."
@@ -1936,10 +1887,6 @@ def test_a_notebook_gets_its_own_overview_stripe_on_the_page_scrollbar():
     assert "addEventListener('resize', queueNotebookOverview)" in JS
     assert 'queueNotebookOverview();' in JS[JS.index('function setCellState'):JS.index('function markPreviousRuns')]
 
-def test_workspace_slugs_are_dns_safe_and_unique():
-    first = workspace_slug('My Project')
-    second = workspace_slug('My Project', [first])
-    assert first == 'my-project' and second == 'my-project-2'
 
 def test_workspace_hub_dispatches_by_localhost_subdomain():
     seen = []

@@ -118,54 +118,45 @@ def test_execution_time_survives_the_notebook_round_trip(tmp_path):
     assert back[0].execution_ms == pytest.approx(127.4)
     assert back[1].execution_ms == pytest.approx(2048.2)
 
-def test_cycling_visits_every_type():
+def test_a_prompt_cell_carries_its_context_and_its_answer():
     nb = Notebook([Cell(source='x')])
     assert [nb.cycle_type(0).cell_type for _ in CELL_TYPES] == ['markdown', 'prompt', 'code']
-
-def test_changing_type_discards_the_answer():
-    "A prompt turned into prose is no longer an answered question."
     nb = dialog()
     assert nb.set_type(2, 'markdown').reply == ''
-
-def test_context_carries_complete_cell_details_output_and_prose():
     ctx = dialog().context(2)
     assert '<cell id="m1" type="markdown" compact="auto">' in ctx and '## Loading' in ctx
     assert '<cell id="c1" type="code" compact="auto">' in ctx and 'df = load()' in ctx
     assert '<output>' in ctx and 'dtype: int64' in ctx
-
-def test_every_cell_above_a_prompt_is_fresh_context():
-    "The notebook, not stale backend history, is the inline agent's source of truth."
     nb = dialog()
     assert nb.prompt_start(4) == 0
     ctx = nb.context(4, since=nb.prompt_start(4))
     assert 'df.mean()' in ctx
     assert '## Loading' in ctx and 'why is the sum 6?' in ctx
-
-def test_an_earlier_prompt_reads_from_the_top():
     nb = dialog()
     assert nb.prompt_start(2) == 0
-
-def test_context_includes_earlier_questions_and_answers():
     ctx = dialog().context(4, since=0)
     assert 'type="prompt"' in ctx and 'why is the sum 6?' in ctx
     assert '<answer>' in ctx and 'Because 1+2+3 = 6.' in ctx
-
-def test_context_does_not_clip_outputs_by_default():
     nb = dialog()
     nb[1].outputs[0]['data']['text/plain'] = 'x' * 5000
     assert 'x' * 5000 in nb.context(4)
     assert len(nb.context(4, out_chars=5)) < len(nb.context(4))
-
-def test_explicit_context_compaction_preserves_keep_and_drops_discard_first():
     nb = dialog()
     nb[0].context_mode = 'keep'
     nb[1].context_mode = 'discard'
     ctx = nb.context(4, since=0, max_chars=180)
     assert '## Loading' in ctx
     assert 'df = load()' not in ctx
-
-def test_context_of_the_first_cell_is_empty():
     assert dialog().context(0) == ''
+
+
+
+
+
+
+
+
+
 
 def test_cell_operations_can_be_undone_and_redone():
     nb = Notebook([Cell(source='keep', id='a'), Cell(source='restore me', id='b')])
@@ -176,19 +167,33 @@ def test_cell_operations_can_be_undone_and_redone():
     assert nb.redo() == 0
     assert [c.id for c in nb.cells] == ['a']
 
-def test_new_cell_operation_clears_redo_history():
+def test_cell_operations_are_undoable_and_keep_their_order():
+    from leela.blocks.nb.nb import Cell, Notebook
     nb = Notebook([Cell(source='a'), Cell(source='b')])
     nb.delete(1)
     nb.undo()
     nb.insert(2, Cell(source='c'))
     assert nb.redo() is None
-
-def test_deleting_the_only_cell_is_undoable():
     nb = Notebook([Cell(source='do not lose this', id='only')])
     nb.delete(0)
     assert len(nb) == 1 and nb[0].source == ''
     nb.undo()
     assert len(nb) == 1 and nb[0].id == 'only' and nb[0].source == 'do not lose this'
+    nb = Notebook([Cell(source='x = 1', id='original', execution_count=3,
+                        outputs=[{'output_type': 'stream', 'name': 'stdout', 'text': 'one\n'}])])
+    duplicate = nb.duplicate(0)
+    assert [c.source for c in nb.cells] == ['x = 1', 'x = 1']
+    assert duplicate.outputs == nb[0].outputs and duplicate.outputs is not nb[0].outputs
+    assert duplicate.id != nb[0].id and not duplicate.running and nb.dirty
+    nb = Notebook([Cell(source=x) for x in 'abcd'])
+    assert nb.move(0, 2) == 2
+    assert [c.source for c in nb.cells] == ['b', 'c', 'a', 'd']
+    assert nb.dirty
+    txt = dialog().source_text()
+    assert '# %% markdown m1' in txt and '# %% code c1' in txt and '# %% prompt p1' in txt
+    assert 'dtype: int64' not in dialog().source_text()
+
+
 
 def test_cell_ranges_move_copy_and_delete_as_single_undoable_operations():
     nb = Notebook(cells=[Cell(source=x) for x in ('a', 'b', 'c', 'd')])
@@ -202,13 +207,6 @@ def test_cell_ranges_move_copy_and_delete_as_single_undoable_operations():
     nb.delete_many([1, 2]); assert [c.source for c in nb.cells] == ['a', 'd']
     nb.undo(); assert [c.source for c in nb.cells] == ['a', 'b', 'c', 'd']
 
-def test_duplicate_cell_keeps_content_and_output_but_gets_a_fresh_identity():
-    nb = Notebook([Cell(source='x = 1', id='original', execution_count=3,
-                        outputs=[{'output_type': 'stream', 'name': 'stdout', 'text': 'one\n'}])])
-    duplicate = nb.duplicate(0)
-    assert [c.source for c in nb.cells] == ['x = 1', 'x = 1']
-    assert duplicate.outputs == nb[0].outputs and duplicate.outputs is not nb[0].outputs
-    assert duplicate.id != nb[0].id and not duplicate.running and nb.dirty
 
 def test_detached_cell_can_be_pasted_between_notebooks_repeatedly():
     source = Notebook([Cell(source='answer = 42', cell_type='code', id='source-cell',
@@ -222,21 +220,8 @@ def test_detached_cell_can_be_pasted_between_notebooks_repeatedly():
     assert len({source[0].id, clipboard.id, first.id, second.id}) == 4
     assert not first.running and not first.fresh and target.dirty
 
-def test_moving_a_cell_multiple_places_preserves_the_order_between():
-    from leela.blocks.nb.nb import Cell, Notebook
-    nb = Notebook([Cell(source=x) for x in 'abcd'])
-    assert nb.move(0, 2) == 2
-    assert [c.source for c in nb.cells] == ['b', 'c', 'a', 'd']
-    assert nb.dirty
 
-def test_source_text_marks_cells_by_type_and_id():
-    "So a diff hunk can be traced back to the cell it came from."
-    txt = dialog().source_text()
-    assert '# %% markdown m1' in txt and '# %% code c1' in txt and '# %% prompt p1' in txt
 
-def test_source_text_leaves_outputs_out():
-    "It is a view of what was written, not of what was produced."
-    assert 'dtype: int64' not in dialog().source_text()
 
 def test_an_approval_cell_round_trips_as_plain_markdown(tmp_path):
     "The exchange between the agent and the person is saved with the work."
@@ -318,15 +303,26 @@ import build_ide_js as builder  # noqa: E402
 PNG = bytes.fromhex('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4'
                     '890000000a49444154789c6300010000050001' '0d0a2db4' '0000000049454e44ae426082')
 
-def test_every_image_tab_kind_can_actually_be_served():
-    "A kind whose bytes `/file/raw` refuses is a tab that opens onto a broken image."
+def test_image_tabs_are_served_but_never_written_over():
     assert IMAGE_EXTS <= set(SERVED_TYPES), sorted(IMAGE_EXTS - set(SERVED_TYPES))
-
-def test_an_image_path_becomes_an_image_tab_not_a_text_one():
     for ext in sorted(IMAGE_EXTS):
         assert Tab(path=f'/tmp/a{ext}').kind == 'image', ext
         assert Tab(path=f'/tmp/a{ext.upper()}').kind == 'image', 'the extension is not case sensitive'
     assert Tab(path='/tmp/a.py').kind == 'text' and Tab(path='/tmp/a.pdf').kind == 'pdf'
+    js = builder.OUT.read_text()
+    assert "lee.kind === 'pdf' || lee.kind === 'image'" in js
+    assert 'function mountImage' in js and "st.kind === 'image'" in js
+    js = builder.OUT.read_text()
+    block = js[js.index('function resolveMarkdownImages'):js.index('function renderMarkdown')]
+    assert "/^(https?:|data:|blob:|\\/file\\/raw)/" in block, 'an absolute or already-resolved src is left alone'
+    assert "data-md-base" in js, 'the surfaces say which folder the document came from'
+    assert "loading = 'lazy'" in block
+    js = builder.OUT.read_text()
+    block = js[js.index('async function leeOpenFile'):js.index('async function leeOpenFile') + 2200]
+    assert "$('#header')?.insertBefore(fresh" in block, 'a destroyed tab bar is put back'
+    assert "doc.querySelector('.lee-err')?.textContent" in block, 'the server said why; show that'
+
+
 
 def test_the_tab_payload_carries_no_bytes_and_the_raw_route_serves_them(tmp_path):
     "Base64ing a whole image into every tab switch is what the pdf kind already avoids."
@@ -341,18 +337,7 @@ def test_the_tab_payload_carries_no_bytes_and_the_raw_route_serves_them(tmp_path
         assert raw.status_code == 200 and raw.headers['content-type'] == 'image/png'
         assert raw.content == PNG
 
-def test_an_image_tab_is_never_saved_over():
-    "`saveTab` writes the editor's buffer; an image tab has none, so it must refuse before that."
-    js = builder.OUT.read_text()
-    assert "lee.kind === 'pdf' || lee.kind === 'image'" in js
-    assert 'function mountImage' in js and "st.kind === 'image'" in js
 
-def test_markdown_figures_are_resolved_against_the_document_not_the_page():
-    js = builder.OUT.read_text()
-    block = js[js.index('function resolveMarkdownImages'):js.index('function renderMarkdown')]
-    assert "/^(https?:|data:|blob:|\\/file\\/raw)/" in block, 'an absolute or already-resolved src is left alone'
-    assert "data-md-base" in js, 'the surfaces say which folder the document came from'
-    assert "loading = 'lazy'" in block
 
 def test_the_research_space_can_browse_the_vault():
     "The vault beside the web: what you already kept, in the column where sources go."
@@ -363,12 +348,6 @@ def test_the_research_space_can_browse_the_vault():
     assert "activeMode === 'vault'" in block
     assert 'if (!query) return;' in block and block.index("activeMode === 'vault'") < block.index('if (!query) return;')
 
-def test_opening_a_file_recovers_a_tab_bar_a_failed_swap_destroyed():
-    "`#tabbar` is an htmx `outerHTML` target for tab select, vault open and every `htmxPost`."
-    js = builder.OUT.read_text()
-    block = js[js.index('async function leeOpenFile'):js.index('async function leeOpenFile') + 2200]
-    assert "$('#header')?.insertBefore(fresh" in block, 'a destroyed tab bar is put back'
-    assert "doc.querySelector('.lee-err')?.textContent" in block, 'the server said why; show that'
 
 EDITOR_editor = (ROOT / 'frontend/editor.js').read_text()
 PACKAGE = (ROOT / 'frontend/package.json').read_text()
@@ -385,19 +364,27 @@ def test_python_compiler_reports_precise_syntax_errors():
     assert source[error['from']:error['to']]
     assert error['from'] >= source.index('if True')
 
-def test_python_compiler_reports_warnings_and_never_executes_source():
+def test_python_is_checked_without_being_executed():
     warnings = _python_diagnostics('value is 1\nraise RuntimeError("must not run")\n')
     assert len(warnings) == 1
     warning = warnings[0]
     assert warning['severity'] == 'warning'
     assert warning['code'] == 'SyntaxWarning'
     assert 'Did you mean "=="?' in warning['message']
-
-def test_lint_endpoint_checks_unsaved_python_without_an_external_linter():
     with TestClient(ide_app(Workspace(roots=[]))) as client:
         response = client.post('/lint', json={'lang': 'python', 'code': 'if True print(1)'})
     assert response.status_code == 200
     assert response.json()['diagnostics'][0]['severity'] == 'error'
+    for language in ('toml', 'javascript', 'typescript', 'jsx', 'tsx', 'yaml', 'json',
+                     'bash', 'rust', 'go', 'java', 'cpp', 'xml', 'properties'):
+        assert language in EDITOR
+    assert 'StreamLanguage.define(toml)' in EDITOR
+    assert 'StreamLanguage.define(shell)' in EDITOR
+    assert "toml: 'toml'" in CLIENT and "yml: 'yaml'" in CLIENT and "jsonc: 'json'" in CLIENT
+    assert '!CODE_LANGS[named]' in CLIENT
+    assert "python && el.classList.contains('lee-reply')" in CLIENT
+
+
 
 def test_codemirror_lint_source_covers_errors_warnings_and_readonly_surfaces():
     assert '"@codemirror/lint"' in PACKAGE
@@ -418,15 +405,3 @@ def test_common_project_languages_are_detected_from_paths():
         'Dockerfile': 'bash', 'Cargo.lock': 'toml',
     }
     assert {name: lang_for(name) for name in expected} == expected
-
-def test_codemirror_bundle_declares_every_detected_syntax_family():
-    for language in ('toml', 'javascript', 'typescript', 'jsx', 'tsx', 'yaml', 'json',
-                     'bash', 'rust', 'go', 'java', 'cpp', 'xml', 'properties'):
-        assert language in EDITOR
-    assert 'StreamLanguage.define(toml)' in EDITOR
-    assert 'StreamLanguage.define(shell)' in EDITOR
-
-def test_tagged_markdown_fences_support_non_python_languages_without_becoming_executable():
-    assert "toml: 'toml'" in CLIENT and "yml: 'yaml'" in CLIENT and "jsonc: 'json'" in CLIENT
-    assert '!CODE_LANGS[named]' in CLIENT
-    assert "python && el.classList.contains('lee-reply')" in CLIENT

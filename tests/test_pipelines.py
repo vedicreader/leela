@@ -225,9 +225,24 @@ def test_a_deploy_needs_somewhere_to_go(tmp_path):
     with pytest.raises(DeployError, match='domain is required'):
         Deploy(project_deploy(tmp_path/'p')).scaffold(domain='')
 
-def test_the_template_names_the_apex_when_there_is_no_subdomain():
+def test_a_deploy_says_where_it_goes_and_what_is_still_missing():
     assert "host = 'example.com'" in deploy_template('app', 'example.com', '')
     assert "host = 'app.example.com'" in deploy_template('app', 'example.com', 'app')
+    assert {p.package for p in PARTS} == {'dockeasy', 'vpseasy', 'cfeasy', 'gheasy'}
+    for p in PARTS:
+        assert p.doc and p.code and p.id
+        assert p.package in p.code, f'{p.id} claims {p.package} but does not import it'
+    st = Infra(FakeStore_infra()).status()
+    assert set(st) == {'vpseasy', 'cfeasy', 'hcloud_token', 'cf_token', 'keys'}
+    assert not st['hcloud_token'] and not st['cf_token']
+    assert Infra(FakeStore_infra(HCLOUD_TOKEN='x')).status()['hcloud_token']
+    assert st['keys'] == ['HCLOUD_TOKEN', 'CLOUDFLARE_API_TOKEN'], 'the panel can say which to set'
+    infra = Infra(FakeStore_infra())
+    with pytest.raises(InfraError, match='HCLOUD_TOKEN is not set'):
+        infra.servers()
+    with pytest.raises(InfraError, match='CLOUDFLARE_API_TOKEN is not set'):
+        infra.tunnels()
+
 
 def project_drive(root, name='kalpa'):
     root.mkdir(parents=True, exist_ok=True)
@@ -239,12 +254,6 @@ class FakeStore_drive:
     def get(self, key, secret=True): return self.values.get(key, '')
     def values_for(self, keys): return {}
 
-def test_every_part_names_the_package_it_drives():
-    "The panel groups by this, and a part whose package is a guess is not a diagnostic."
-    assert {p.package for p in PARTS} == {'dockeasy', 'vpseasy', 'cfeasy', 'gheasy'}
-    for p in PARTS:
-        assert p.doc and p.code and p.id
-        assert p.package in p.code, f'{p.id} claims {p.package} but does not import it'
 
 def test_the_host_is_split_into_the_arguments_cfeasy_takes(tmp_path):
     "setup_tunnel wants a zone and a subdomain, and DOMAIN is written as one host."
@@ -306,20 +315,7 @@ class FakeStore_infra:
     def __init__(self, **values): self.values = values
     def get(self, key, secret=True): return self.values.get(key, '')
 
-def test_status_names_each_missing_piece():
-    st = Infra(FakeStore_infra()).status()
-    assert set(st) == {'vpseasy', 'cfeasy', 'hcloud_token', 'cf_token', 'keys'}
-    assert not st['hcloud_token'] and not st['cf_token']
-    assert Infra(FakeStore_infra(HCLOUD_TOKEN='x')).status()['hcloud_token']
-    assert st['keys'] == ['HCLOUD_TOKEN', 'CLOUDFLARE_API_TOKEN'], 'the panel can say which to set'
 
-def test_a_missing_token_is_refused_before_a_provider_is_reached():
-    "The message names the key and where to set it; 'unauthorized' from an SDK does not."
-    infra = Infra(FakeStore_infra())
-    with pytest.raises(InfraError, match='HCLOUD_TOKEN is not set'):
-        infra.servers()
-    with pytest.raises(InfraError, match='CLOUDFLARE_API_TOKEN is not set'):
-        infra.tunnels()
 
 def test_the_token_does_not_outlive_the_call(monkeypatch):
     "It is put in the environment because vpseasy reads it from there, and taken out again."
@@ -408,16 +404,24 @@ def test_without_a_checkout_it_still_names_the_package(tmp_path):
     assert b['package'] == 'cfeasy' and b['open'].endswith('site-packages/cfeasy/core.py')
     assert b['checkout'] == ''
 
-def test_a_traceback_with_nothing_of_yours_in_it_blames_nobody():
+def test_a_traceback_blames_the_deepest_frame_that_is_yours():
     text = 'Traceback:\n  File "/usr/lib/python3.12/json/decoder.py", line 1, in decode\nValueError: bad'
     b = blame(text)
     assert b['package'] == '' and b['open'] == ''
     assert b['error'] == 'ValueError: bad', 'the exception is still worth reporting'
-
-def test_frames_are_read_in_order():
     got = frames(TRACEBACK)
     assert [f['line'] for f in got] == [12, 110, 57]
     assert got[0]['fn'] == 'deploy'
+    for name in ('gheasy', 'dockeasy', 'vpseasy', 'cfeasy'):
+        assert name in FAMILY
+    b = blame(VENV_TRACEBACK)
+    assert b['package'] == 'cfeasy', 'the deepest frame that is actually one of yours'
+    assert b['line'] == 110 and b['fn'] == 'setup_tunnel'
+    assert b['error'].startswith('TypeError')
+    only_theirs = '\n'.join(l for l in VENV_TRACEBACK.splitlines() if 'cfeasy' not in l)
+    assert blame(only_theirs)['package'] == ''
+
+
 
 def test_a_checkout_shadowed_by_an_installed_copy_is_the_row_worth_seeing(tmp_path, monkeypatch):
     "An edit in the checkout does nothing until the environment is reinstalled."
@@ -436,9 +440,6 @@ def test_a_package_run_from_its_checkout_is_not_shadowed(tmp_path, monkeypatch):
     row = survey(['cfeasy'], [checkout])[0]
     assert row['source'] == 'checkout' and row['editable'] and not row['shadowed']
 
-def test_the_family_is_the_packages_this_workspace_is_about():
-    for name in ('gheasy', 'dockeasy', 'vpseasy', 'cfeasy'):
-        assert name in FAMILY
 
 VENV_TRACEBACK = '''  File "<string>", line 4, in <module>
   File "/home/you/code/leela/.venv/lib/python3.12/site-packages/cfeasy/core.py", line 110, in setup_tunnel
@@ -447,15 +448,3 @@ VENV_TRACEBACK = '''  File "<string>", line 4, in <module>
     raise TypeError("Could not resolve authentication method.")
 TypeError: Could not resolve authentication method.
 '''
-
-def test_a_venv_inside_a_package_directory_does_not_capture_every_traceback():
-    "The bug this pins: a virtualenv at `~/code/leela/.venv` puts `leela` in the path of"
-    b = blame(VENV_TRACEBACK)
-    assert b['package'] == 'cfeasy', 'the deepest frame that is actually one of yours'
-    assert b['line'] == 110 and b['fn'] == 'setup_tunnel'
-    assert b['error'].startswith('TypeError')
-
-def test_a_third_party_frame_is_nobody_of_yours():
-    "cloudflare is not in the family, so a failure only in its code blames no package."
-    only_theirs = '\n'.join(l for l in VENV_TRACEBACK.splitlines() if 'cfeasy' not in l)
-    assert blame(only_theirs)['package'] == ''

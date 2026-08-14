@@ -5,60 +5,61 @@ state, terminals, source control, research, and the coding agent in one loopback
 
 ## Settings
 
-Open **Tools → Settings** or press `Command+,` (`Control+,` elsewhere). Editing settings are
-layered in this order: Leela defaults, `~/.config/leela/settings.json`, the project's
-`.leela/settings.json`, and user/workspace language overrides. Browser-only geometry remains
-in local storage. The settings header chooses User or Workspace scope and all languages,
-Python, or Markdown.
+Open Tools, then Settings, or press `Command+,` (`Control+,` elsewhere). Four layers decide
+an editing setting, in this order: Leela's defaults, `~/.config/leela/settings.json`, the
+project's `.leela/settings.json`, then the user and workspace language overrides. Local
+storage keeps browser-only geometry. The settings header picks the User or Workspace scope,
+and all languages, Python, or Markdown.
 
 JetBrains Mono and Fira Code variable fonts are bundled as WOFF2 assets, so selecting them
 works offline and does not silently fall back to the system font. The ligature proof row
 shows `!=`, `->`, `=>`, `<=`, `>=`, `===`, and `::` while toggling OpenType `liga` and `calt`.
-Typography, wrapping, visual columns, whitespace, indentation guides, relative/hybrid line
-numbers, bracket colors, cursor style, sticky symbols, and the long-file code overview update
-open CodeMirror editors without remounting them.
+A change to typography, wrapping, visual columns, whitespace, indentation guides, line
+numbers, bracket colors, cursor style, sticky symbols or the long-file overview updates an
+open CodeMirror editor in place. None of them remount it.
 
 File settings control autosave timing, final newlines, trailing whitespace, delete
 confirmation, and format-on-save. Python formatting uses Ruff or Black from the selected
-project environment; JSON uses Leela's structural formatter. IndexedDB recovery and external
+project environment. JSON uses Leela's own structural formatter. IndexedDB recovery and external
 write conflict review remain enabled independently of autosave.
 
 ## Notebook cells
 
 Use the cell gutter to drag a cell. The cell menu includes run above/below/all, insert,
 move, duplicate, copy, cut, paste above/below, split, merge, change type, clear output,
-and delete. Structural operations have notebook-level undo and redo; text editing keeps
-CodeMirror's character-level history. Shift-click selects a cell range, and copy, cut,
+and delete. Structural operations have notebook-level undo and redo. Text editing keeps CodeMirror's
+character-level history. Shift-click selects a cell range, and copy, cut,
 paste, delete, and gutter dragging operate on that range as one undoable operation.
 
 ## Runtime and debugging configuration
 
-The kernel picker chooses the launcher and Python interpreter. Run configurations provide
-a structured UI for command, working directory, watched module, inspector attachment,
-explicit environment values, and a project-relative dotenv file such as `.env.local`.
+The kernel picker chooses the launcher and Python interpreter. A run configuration has a field for the command, the working
+directory, the watched module, inspector attachment, explicit environment values, and a
+project-relative dotenv file such as `.env.local`.
 Keep secrets in an ignored dotenv file rather than `.leela/runs.json`.
 
-A run configuration can instead launch or attach with debugpy. Direct sessions support files,
-modules, tests and applications, arguments, environment, `justMyCode`, stop-on-entry,
-subprocesses, Django/Jinja/gevent options, loopback attach host/port, source breakpoints,
-conditions, hit counts, logpoints, exception policy, call stacks, locals, evaluation, and
-continue/step-over/step-in/step-out. Leela offers to install debugpy into the selected project
-environment; it never exposes a non-loopback attach port by default. Notebook cells retain
+A run configuration can instead launch or attach with debugpy. A direct session covers files,
+modules, tests and applications. It carries arguments, environment, `justMyCode`,
+stop-on-entry, subprocesses, the Django, Jinja and gevent options, and a loopback attach host
+and port. While it runs you get source breakpoints, conditions, hit counts, logpoints,
+exception policy, call stacks, locals, evaluation, and continue, step over, step in and step
+out. Leela offers to install debugpy into the selected project environment. It never exposes
+a non-loopback attach port by default. Notebook cells retain
 their ipykernel Jupyter-DAP path and use the same debugger UI.
 
 ## Workspace history
 
-Every successful file save creates a persistent checkpoint outside the repository. Open
-**Tools → Workspace history** to inspect and undo checkpoints. Undo is atomic and refused
+Every successful file save creates a persistent checkpoint outside the repository. Open Tools,
+then Workspace history, to inspect and undo them. Undo is atomic and refused
 when any affected file no longer matches the recorded output, so it cannot overwrite a
 newer external change.
 
 ## File conflicts
 
-Autosave uses disk-version checks and IndexedDB recovery. If the file changed externally,
-choose **merge changes** to open CodeMirror's two-pane merge view: current disk content is
-on the left and the editable result is on the right. Saving the result creates a new, explicit disk version instead of silently replacing
-either side. Notebooks use the same merge engine cell by cell, preserving their structural
+Autosave uses disk-version checks and IndexedDB recovery. If the file changed externally, choose merge
+changes. CodeMirror's two-pane merge view opens with the current disk content on the left and
+the editable result on the right. Saving the result creates a new disk version rather than
+replacing either side. Notebooks use the same merge engine cell by cell, preserving their structural
 boundaries while resolving source conflicts.
 
 ## Python language service

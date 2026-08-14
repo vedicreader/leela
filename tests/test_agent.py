@@ -111,15 +111,32 @@ def test_agent_package_does_not_import_leela():
             if re.match(r'\s*from\s+\.\.', line): bad.append(f'{p.name}:{i}: {line.strip()}')
     assert not bad, 'leela.agent must not import from leela:\n' + '\n'.join(bad)
 
-def test_null_host_offers_only_what_it_supports():
-    "A capability the host does not have must not become a tool the model keeps failing to call."
+def test_a_host_offers_only_the_tools_it_supports():
+    from leela.agent.tools import read_only
+    from leela.blocks.agent.ai import WorkspaceHost
+    from leela.workspace import Workspace
+    from leela.agent.tools import NullHost
     names = {t.__name__ for t in tools_for(NullHost(['/x']))}
     assert 'search_code' in names and 'view_file' in names
     assert 'run_python' not in names and 'notebook_cells' not in names
-
-def test_mem_host_gets_the_session_tools_it_supports():
     names = {t.__name__ for t in tools_for(MemHost_agent())}
     assert 'run_python' not in names
+    assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
+            'run_shell', 'memory_forget', 'create_skill',
+            'cancel_watch', 'cart_add', 'cart_remove'} == set(WRITE_TOOLS)
+    a, _ = fake_agent()
+    names = {t.__name__ for t in read_only(a.tools)}
+    assert not (names & WRITE_TOOLS)
+    assert 'search_code' in names
+    h = WorkspaceHost(Workspace(roots=[]))
+    with pytest.raises(NotImplementedError): h.run_python('1')
+    assert 'run_python' not in {t.__name__ for t in tools_for(h)}
+    assert 'run_shell' not in named(tools_for(NullHost(['/x'])))
+    h = MemHost()
+    assert 'run_shell' in named(tools_for(h))
+    assert h.cmds == []
+
+
 
 def test_cheap_jobs_stay_local_when_the_turn_goes_to_the_cloud(monkeypatch):
     "The whole argument for routing: pointing the turn at a frontier model must not move completions."
@@ -138,14 +155,26 @@ def test_env_overrides_a_single_job(monkeypatch):
     assert r.spec('summary').name == 'gemma-12b'
     assert r.spec('classify').name == models.DFLT_LOCAL, 'the other cheap jobs stay put'
 
-def test_unknown_bare_name_is_an_error_not_a_guess():
-    "Silently running a typo on a frontier model is the kind of surprise that shows up on a bill."
+def test_a_model_spec_resolves_or_says_why_not():
+    from leela.agent.runtime import FastllmBackend, MAX_STEPS, RishiBackend
     with pytest.raises(KeyError): models.resolve('sonnnet')
-
-def test_a_vendor_slash_model_spec_is_taken_at_face_value():
     s = models.resolve('somevendor/some-model')
     assert (s.backend, s.model_id) == ('remote', 'somevendor/some-model')
     assert s.ctx > 0
+    local = models.ModelSpec('local', 'rishi', 'local/model', ctx=1000)
+    cloud = models.ModelSpec('cloud', 'fastllm', 'cloud/model', ctx=1000)
+    assert RishiBackend(local).max_steps == MAX_STEPS
+    assert FastllmBackend(cloud).max_steps == MAX_STEPS
+    with pytest.raises(KeyError): Registry().on('after_lunch', lambda: None)
+    a, _ = fake_agent()
+    assert {'model', 'cost', 'compact', 'skills', 'tools', 'reload'} <= set(a.commands())
+    assert a.command('nonsense') is None
+    assert 'tok' in a.command('cost') or a.command('cost') is not None
+    a, _ = fake_agent()
+    out = a.command('model')
+    for job in models.JOBS: assert job in out
+
+
 
 def test_backend_refresh_updates_sp_and_tools_in_place(spec):
     "A running backend keeps its engine and conversation; only the briefing and tools change."
@@ -164,12 +193,6 @@ def test_backend_refresh_before_start_only_records(spec):
     be.refresh('new', [])
     assert be.sp == 'new' and not hasattr(be, 'refreshed')
 
-def test_local_and_cloud_backends_share_an_explicit_tool_loop_budget():
-    from leela.agent.runtime import FastllmBackend, MAX_STEPS, RishiBackend
-    local = models.ModelSpec('local', 'rishi', 'local/model', ctx=1000)
-    cloud = models.ModelSpec('cloud', 'fastllm', 'cloud/model', ctx=1000)
-    assert RishiBackend(local).max_steps == MAX_STEPS
-    assert FastllmBackend(cloud).max_steps == MAX_STEPS
 
 def test_agent_refresh_rebriefs_a_running_turn_backend():
     "Opening a folder reaches the live conversation: the briefing names it, without a reload."
@@ -186,20 +209,79 @@ def test_agent_refresh_rebriefs_a_running_turn_backend():
     assert '/newproj' in be.sp
     assert a._skills is not None and a._tools is not None
 
-def test_agent_refresh_is_a_noop_when_nothing_is_running():
-    "No turn backend built yet means nothing to re-brief, but the caches still reset for next time."
+def test_a_turn_records_its_activity_usage_and_changes():
+    from leela.app import _sse
     a = Agent(MemHost_agent(), extensions=False, subagents=False)
     _ = a.tools
     a.refresh()
     assert a._tools is None
+    a, be = fake_agent(replies=['done'])
+    assert a.ask('hello') == 'done'
+    assert a.use.total == 15
+    assert be.sent and 'hello' in str(be.sent[0])
+    before = Usage(model='m', input=10, output=4, total=14, cost=.01, turns=1)
+    after = Usage(model='m', input=18, output=7, total=25, cost=.016, turns=2)
+    delta = after - before
+    assert (delta.input, delta.output, delta.total, round(delta.cost, 3), delta.turns) == (8, 3, 11, .006, 1)
+    u = Usage(model='a', input=1, output=2, total=3, cost=0.5) + Usage(model='b', input=1, output=1, total=2, cost=0.25)
+    assert (u.total, u.cost, u.model) == (5, 0.75, 'b')
+    assert '$0.75' in repr(u)
+    a, be = fake_agent(replies=['all done'])
+    out = ''.join(a.stream('go'))
+    assert out.strip() == 'all done'
+    assert a.use.total == 15
+    f = _sse('chunk', {'text': 'line one\nline two'})
+    assert f.count('\n\n') == 1 and f.startswith('event: chunk\ndata: ')
+    a = agent_on(MemHost(commands={'pytest': (0, '5 passed')}))
+    named(a.tools)['run_shell']('pytest')
+    assert a.activity.rows()[-1]['ok'] is True
+    h = MemHost({'/proj/m.py': SRC})
+    a = agent_on(h)
+    named(a.tools)['replace_text']('/proj/m.py', '[{"oldText": "a + b", "newText": "a * b"}]')
+    before, after = a.changes()['/proj/m.py']
+    assert 'a + b' in before and 'a * b' in after
+    h = MemHost({'/proj/m.py': SRC})
+    a = agent_on(h)
+    named(a.tools)['replace_text']('/proj/m.py', '[{"oldText": "nope", "newText": "x"}]')
+    assert a.changes() == {}
 
-def test_agent_state_template_teaches_rules_routing_tools_and_maintenance():
+
+def test_the_briefing_says_what_is_true_of_this_project():
     from leela.blocks.agent.ai import STATE_TEMPLATE
     for heading in ('Agent charter', 'Hard boundaries', 'Routing rules', 'Tool practices',
                     'Verification', 'Progress', 'Critical context', 'State maintenance'):
         assert heading in STATE_TEMPLATE
     assert 'Never claim a tool ran' in STATE_TEMPLATE
     assert 'Update this state after' in STATE_TEMPLATE
+    everything = work_rules()
+    assert 'run_shell' in everything and 'grep' in everything
+    narrow = work_rules({'search_code', 'view_file'})
+    assert 'run_shell' not in narrow and 'delegate_parallel' not in narrow
+    assert 'search_code' in narrow
+    narrow = work_rules({'view_file'})
+    assert 'unless a tool\n  result in this conversation says so' in narrow
+    assert 'ERROR:' in narrow
+    assert 'inside the folders above' in narrow
+    real = {t.__name__ for t in tools_for(MemHost())} | {'notebook_cells', 'delegate_parallel',
+                                                         'memory_search', 'web_search', 'run_python'}
+    assert {tool for tool, _ in RULES if tool} <= real
+    h = MemHost({'/proj/AGENTS.md': '# House rules\n\nUse uv, never pip.\n'})
+    ctx = project_context(h)
+    assert 'Use uv, never pip' in ctx and '/proj/AGENTS.md' in ctx
+    assert 'Use uv, never pip' in system_prompt(h, tools=tools_for(h))
+    h = MemHost({'/proj/AGENTS.md': 'rule\n' + 'filler\n' * 5000})
+    ctx = project_context(h, mx=200)
+    assert 'rule' in ctx and 'truncated' in ctx and len(ctx) < 900
+    assert project_context(MemHost()) == ''
+    assert '<project_context>' not in system_prompt(MemHost(), tools=tools_for(MemHost()))
+    sp = system_prompt(MemHost(), tools=tools_for(MemHost()))
+    assert '/proj' in sp
+    h = MemHost({'/proj/AGENTS.md': 'Use uv, never pip.\n'})
+    a = agent_on(h)
+    sp = a.system_prompt()
+    assert 'run_shell' in sp and 'Use uv, never pip' in sp
+    assert 'scale_numeric' not in sp
+
 
 def test_directed_checkpoint_can_rewrite_the_live_tool_call():
     from leela.blocks.agent.ai import Interventions
@@ -311,11 +393,47 @@ def test_new_agent_setup_keeps_file_and_notebook_access_inside_workspace(tmp_pat
     assert 'outside the open folders' in tools['create_file'](path=str(outside), text='unsafe = True\n')
     assert not outside.exists()
 
-def test_activity_uses_the_backend_tool_call_id_across_approval_and_execution():
+def test_approval_gates_writes_and_carries_its_answer_back():
+    from leela.blocks.agent.ai import Interventions
     act = activity.Activity(); act.mark('turn-1')
     row = act.start('search_code', {'query': 'needle'}, action_id='call_exact', branch_id='branch_a')
     assert row.dict()['action_id'] == 'call_exact'
     assert row.dict()['turn_id'] == 'turn-1' and row.dict()['branch_id'] == 'branch_a'
+    ap = Interventions(control='guided')
+    ap.queue_steer('inspect the existing component first')
+    assert ap.state()['queued_steer'] == 'inspect the existing component first'
+    assert ap.consume_steer() == 'inspect the existing component first'
+    assert ap.consume_steer() == ''
+    ap = hitl.Approvals(tools={'edit_file'})
+    assert ap.gate({'function': {'name': 'search_code', 'arguments': {'query': 'x'}}})
+    ap = hitl.Approvals(tools={'edit_file'}, timeout=30)
+    t0 = time.time()
+    d = ap.gate({'function': {'name': 'edit_file', 'arguments': {'path': 'a.py'}}})
+    assert not d and time.time() - t0 < 1
+    assert 'nothing is listening' in d.reply()
+    ap = hitl.Approvals(tools={'edit_file'}, mode='ask')
+    a = hitl.Ask(tool='edit_file'); ap.current = a
+    ap.answer(a.id, False, 'not this file', session=True)
+    assert ap.mode == 'ask' and not a
+    ap = hitl.Approvals(tools={'edit_file'}, mode='auto')
+    d = ap.request('edit_file', {'path': 'a.py'})
+    assert d and d.reply() is None
+    d2 = hitl.Ask(tool='edit_file').resolve(True, 'keep the docstring')
+    assert 'keep the docstring' in d2.reply()
+    p = hitl.preview_for('edit_file', {'path': 'a.py', 'commands': '[["12|ab|","s","old","new"]]'})
+    assert '12|ab|' in p and 'old' in p and 'new' in p
+    p2 = hitl.preview_for('create_file', {'path': 'b.py', 'text': 'x = 1'})
+    assert 'new file' in p2 and 'x = 1' in p2
+    ap = hitl.Approvals(tools={'edit_file'}, timeout=30)
+    stop = ap.listen()
+    threading.Thread(target=lambda: (time.sleep(0.05), ap.cancel_all()), daemon=True).start()
+    d = ap.gate({'function': {'name': 'edit_file', 'arguments': {}}})
+    stop()
+    assert not d and 'cancelled' in d.reply()
+    assert fastllm_hitl.apply() and fastllm_hitl.applied()
+    assert 'rishi.remote' in fastllm_hitl.note()
+    assert 'run_shell' in WRITE_TOOLS
+
 
 def test_file_checkpoint_rolls_back_only_its_unchanged_output():
     from leela.blocks.agent.ai import Interventions
@@ -329,17 +447,7 @@ def test_file_checkpoint_rolls_back_only_its_unchanged_output():
     host.write('/proj/a.py', 'someone else changed it')
     with pytest.raises(ValueError, match='changed after'): ap.rollback(decision.id)
 
-def test_queued_steering_is_consumed_exactly_once():
-    from leela.blocks.agent.ai import Interventions
-    ap = Interventions(control='guided')
-    ap.queue_steer('inspect the existing component first')
-    assert ap.state()['queued_steer'] == 'inspect the existing component first'
-    assert ap.consume_steer() == 'inspect the existing component first'
-    assert ap.consume_steer() == ''
 
-def test_ungated_tools_run_without_asking():
-    ap = hitl.Approvals(tools={'edit_file'})
-    assert ap.gate({'function': {'name': 'search_code', 'arguments': {'query': 'x'}}})
 
 def test_external_request_can_force_a_browser_decision_for_an_unknown_tool():
     ap = hitl.Approvals(tools={'edit_file'}, timeout=5)
@@ -353,13 +461,6 @@ def test_external_request_can_force_a_browser_decision_for_an_unknown_tool():
     finally: stop()
     assert d and d.tool == 'custom_tool'
 
-def test_nothing_listening_refuses_immediately_rather_than_hanging():
-    "A blocked worker thread is a hung IDE. Refusing fast is a bad answer that is at least an answer."
-    ap = hitl.Approvals(tools={'edit_file'}, timeout=30)
-    t0 = time.time()
-    d = ap.gate({'function': {'name': 'edit_file', 'arguments': {'path': 'a.py'}}})
-    assert not d and time.time() - t0 < 1
-    assert 'nothing is listening' in d.reply()
 
 def test_a_refusal_carries_the_reason_back_to_the_model():
     "The point of the whole module: 'that file is generated' redirects, 'denied' just gets retried."
@@ -393,18 +494,7 @@ def test_approve_session_answers_now_and_auto_approves_later_writes():
     assert 'rest of this session' in first.reply()
     assert second.reply() is None
 
-def test_a_refusal_never_changes_the_policy_even_if_session_is_requested():
-    ap = hitl.Approvals(tools={'edit_file'}, mode='ask')
-    a = hitl.Ask(tool='edit_file'); ap.current = a
-    ap.answer(a.id, False, 'not this file', session=True)
-    assert ap.mode == 'ask' and not a
 
-def test_an_approval_note_rides_back_with_the_result():
-    ap = hitl.Approvals(tools={'edit_file'}, mode='auto')
-    d = ap.request('edit_file', {'path': 'a.py'})
-    assert d and d.reply() is None
-    d2 = hitl.Ask(tool='edit_file').resolve(True, 'keep the docstring')
-    assert 'keep the docstring' in d2.reply()
 
 def test_every_watcher_and_the_recorder_both_hear_it():
     "A second frontend opening must not unhook the notebook recorder, or the first frontend."
@@ -421,23 +511,8 @@ def test_every_watcher_and_the_recorder_both_hear_it():
     ap.gate({'function': {'name': 'edit_file', 'arguments': {}}})
     assert sorted(seen) == ['one', 'recorder', 'two']
 
-def test_preview_shows_what_would_change():
-    p = hitl.preview_for('edit_file', {'path': 'a.py', 'commands': '[["12|ab|","s","old","new"]]'})
-    assert '12|ab|' in p and 'old' in p and 'new' in p
-    p2 = hitl.preview_for('create_file', {'path': 'b.py', 'text': 'x = 1'})
-    assert 'new file' in p2 and 'x = 1' in p2
 
-def test_cancelling_a_turn_releases_a_waiting_approval():
-    ap = hitl.Approvals(tools={'edit_file'}, timeout=30)
-    stop = ap.listen()
-    threading.Thread(target=lambda: (time.sleep(0.05), ap.cancel_all()), daemon=True).start()
-    d = ap.gate({'function': {'name': 'edit_file', 'arguments': {}}})
-    stop()
-    assert not d and 'cancelled' in d.reply()
 
-def test_fastllm_compatibility_shim_reports_rishi_approval():
-    assert fastllm_hitl.apply() and fastllm_hitl.applied()
-    assert 'rishi.remote' in fastllm_hitl.note()
 
 def test_older_specialized_openai_models_are_opt_in(monkeypatch):
     monkeypatch.setenv('OPENAI_API_KEY', 'present')
@@ -471,13 +546,29 @@ def test_available_models_follow_environment_and_codex_login(monkeypatch, tmp_pa
     assert any(r['value'].startswith('codex/') for r in rows)
     assert all('present' not in str(r) for r in rows)
 
-def test_prompt_directives_select_tools_and_load_named_skills_without_matching_paths():
+def test_skills_are_discovered_and_selected_by_the_prompt():
+    from leela.agent.tools import Skill, find
     def research(query: str): return query
     skill = skills.Skill('nbdev', 'md', 'Notebook development', '/skills/nbdev', 'full instructions')
     tools, loaded = prompt_directives(
         'add test cells /research nbdev projects then use /nbdev, not /Users/me', [research], [skill])
     assert tools == [('research', 'nbdev projects then use')]
     assert loaded == [skill]
+    assert tool_plan('what default model does leela use?')[0] == 'repo'
+    assert tool_plan('where is approval implemented in this repo?')[0] == 'repo'
+    assert tool_plan('change the code_clusters method to accept a store')[0] == 'repo'
+    assert tool_plan('what do the current pandas release notes say?')[0] == 'web'
+    assert tool_plan('what is 2 + 2?')[0] == 'direct'
+    found = {s.name: s for s in skills.discover()}
+    assert 'exhash' in found, 'exhash ships the editing reference leela used to paste by hand'
+    assert found['exhash'].source == 'pyskill'
+    assert found['exhash'].text().strip()
+    ss = [Skill('editskill', 'pyskill'), Skill('editor', 'pyskill')]
+    assert find(ss, 'edit') is None
+    assert find(ss, 'editskill').name == 'editskill'
+    meta, body = skills.frontmatter('---\nname: x\ndescription: "y z"\n---\nbody\n')
+    assert meta == {'name': 'x', 'description': 'y z'} and body.strip() == 'body'
+
 
 def test_explicit_research_uses_only_the_request_not_composed_notebook_context():
     class ResearchHost(MemHost_agent):
@@ -501,19 +592,42 @@ def test_create_skill_writes_standard_project_skill_without_overwriting():
     assert 'name: "notebook-tests"' in host.files[path]
     assert 'description: "How this project tests notebooks"' in host.files[path]
 
-def test_tool_planner_routes_repo_and_current_web_questions():
-    assert tool_plan('what default model does leela use?')[0] == 'repo'
-    assert tool_plan('where is approval implemented in this repo?')[0] == 'repo'
-    assert tool_plan('change the code_clusters method to accept a store')[0] == 'repo'
-    assert tool_plan('what do the current pandas release notes say?')[0] == 'web'
-    assert tool_plan('what is 2 + 2?')[0] == 'direct'
 
-def test_search_results_tell_the_agent_to_address_notebooks_by_cell_id():
+def test_the_composer_carries_files_selections_and_notices():
     host = MemHost_agent({'/proj/nbs/core.ipynb': 'code_clusters method'})
     search = next(t for t in tools_for(host) if t.__name__ == 'search_code')
     out = search('code_clusters')
     assert '/proj/nbs/core.ipynb:1' in out
     assert 'use this exact path with notebook_cells, then view_cell/edit_cell' in out
+    assert 'clean namespace' in compact.reorient(kernel_alive=False)
+    assert compact.prompt_notices('where is this handled?') == [compact.Q_NOTICE]
+    assert compact.APPROVAL_NOTICE in compact.prompt_notices('go')
+    assert compact.APPROVAL_NOTICE in compact.prompt_notices('ok.')
+    assert compact.BTW_NOTICE in compact.prompt_notices('BTW can you also check the tests')
+    assert compact.ACTION_NOTICE in compact.prompt_notices('add a test for this')
+    assert compact.ACTION_NOTICE in compact.prompt_notices('scale the numeric columns as df_norm')
+    assert '<system-reminder>' in compact.notices_block('what does this do?')
+    assert compact.ACTION_NOTICE in compact.notices_block('add a test')
+    js = builder.OUT.read_text()
+    block = js[js.index('function chooseAgentSuggest'):js.index('let agentSuggestSeq')]
+    assert '`$1@${item.name} `' in block, 'the token is rewritten, not removed'
+    js = builder.OUT.read_text()
+    block = js[js.index('function paintAgentAttachments'):js.index('function closeAgentSuggest')]
+    assert "input.value.replace(new RegExp(" in block
+    assert 'lee.agentSelections.splice' in block, 'a selection chip is removable too'
+    js = builder.OUT.read_text()
+    block = js[js.index('function leeAgentSelection'):js.index('async function leeAgentBudget')]
+    assert "kind: 'selection'" in block and 'doc.sliceString' in block
+    assert "leeRight('agent')" in block, 'the panel comes forward so the chip is visible'
+    assert 'agent_selection: () => leeAgentSelection()' in js, 'and it is a bindable action'
+    js = builder.OUT.read_text()
+    assert 'clearTimeout(agentSuggestTimer)' in js and 'agentSuggestTimer = setTimeout(' in js
+    c = Completer(Agent_comple())
+    prompt = c._prompt('frame.', 6, 'python', 'def clean(frame):\n    return frame.dropna()')
+    assert '<related_code>' in prompt and 'def clean(frame)' in prompt
+    assert '<runtime_variables>' in prompt and 'threshold: float = 0.73' in prompt
+    assert '<before>\nframe.' in prompt
+
 
 def test_agent_keeps_inspectable_conversation_history():
     host = MemHost_agent({'/proj/models.py': "DFLT_LOCAL = 'gemma-e2b'\n"})
@@ -525,11 +639,28 @@ def test_agent_keeps_inspectable_conversation_history():
     assert turn['reply'] == 'the answer' and turn['plan']['route'] == 'repo'
     assert turn['model']
 
-def test_threshold_leaves_room_for_one_more_reply():
+def test_the_context_window_keeps_recent_turns_and_the_notebook():
     assert compact.threshold(200_000, 16_384) == 200_000 - 16_384
     assert compact.threshold(0) is None
     assert compact.should_compact(190_000, 200_000)
     assert not compact.should_compact(100_000, 200_000)
+    prompt = '<notebook>\n<cell id="a" type="code" compact="discard">all details</cell>\n</notebook>'
+    assert compact.compact_notebook_context(prompt, lambda text: True) == prompt
+    a, _ = fake_agent()
+    msg = a.compose('q', context='CTX', context_path='/work/dialog.ipynb')
+    assert '<notebook path="/work/dialog.ipynb">' in msg
+    assert '<user-request>\nq\n</user-request>' in msg
+    a = Agent(MemHost_agent(), model='gemma-e4b', extensions=False, local_multimodal=False)
+    msg = a.compose('describe it', image=b'not-an-image')
+    assert isinstance(msg, str)
+    assert 'omitted' in msg and 'describe it' in msg
+    assert threshold(4096) == 4096 - 1024
+    assert threshold(200_000) == 200_000 - RESERVE
+    assert threshold(0) is None
+    c = Compactor()
+    assert c.budget(4096) == 2048
+    assert c.budget(200_000) == c.keep_recent
+
 
 def test_an_existing_summary_is_updated_not_re_summarised():
     "Summarising a summary loses a little every time; tau's second prompt exists to stop that."
@@ -559,9 +690,6 @@ def test_pending_notebook_compaction_honours_cell_policy():
     assert 'KEEP ME' in out and 'DROP FIRST' not in out
     assert '<context-compacted' in out and 'discard="1"' in out
 
-def test_pending_notebook_context_is_untouched_when_it_fits():
-    prompt = '<notebook>\n<cell id="a" type="code" compact="discard">all details</cell>\n</notebook>'
-    assert compact.compact_notebook_context(prompt, lambda text: True) == prompt
 
 def test_compaction_replaces_history_and_reorients(spec):
     be = FakeBackend(spec)
@@ -576,27 +704,9 @@ def test_compaction_replaces_history_and_reorients(spec):
     assert 'kernel process was not touched' in head
     assert 'do not re-import' in head
 
-def test_a_dead_kernel_is_not_promised():
-    assert 'clean namespace' in compact.reorient(kernel_alive=False)
 
-def test_prompt_notices_fire_where_they_should():
-    assert compact.prompt_notices('where is this handled?') == [compact.Q_NOTICE]
-    assert compact.APPROVAL_NOTICE in compact.prompt_notices('go')
-    assert compact.APPROVAL_NOTICE in compact.prompt_notices('ok.')
-    assert compact.BTW_NOTICE in compact.prompt_notices('BTW can you also check the tests')
-    assert compact.ACTION_NOTICE in compact.prompt_notices('add a test for this')
-    assert compact.ACTION_NOTICE in compact.prompt_notices('scale the numeric columns as df_norm')
 
-def test_notices_ride_along_with_the_prompt():
-    assert '<system-reminder>' in compact.notices_block('what does this do?')
-    assert compact.ACTION_NOTICE in compact.notices_block('add a test')
 
-def test_pyskills_are_discovered_from_installed_packages():
-    "The test of whether this feature is real rather than architectural: installing a"
-    found = {s.name: s for s in skills.discover()}
-    assert 'exhash' in found, 'exhash ships the editing reference leela used to paste by hand'
-    assert found['exhash'].source == 'pyskill'
-    assert found['exhash'].text().strip()
 
 def test_skill_md_directories_win_over_packages(tmp_path):
     d = tmp_path/'skills'/'exhash'
@@ -622,22 +732,28 @@ def test_the_index_carries_names_not_bodies():
     rows = [l for l in idx.splitlines() if l.startswith('- `')]
     assert rows and all(len(l) <= 60 + skills.SKILL_DESC_MAX for l in rows), max(rows, key=len)
 
-def test_find_refuses_to_guess_between_two_matches():
-    from leela.agent.tools import Skill, find
-    ss = [Skill('editskill', 'pyskill'), Skill('editor', 'pyskill')]
-    assert find(ss, 'edit') is None
-    assert find(ss, 'editskill').name == 'editskill'
 
-def test_frontmatter_parses_without_a_yaml_dependency():
-    meta, body = skills.frontmatter('---\nname: x\ndescription: "y z"\n---\nbody\n')
-    assert meta == {'name': 'x', 'description': 'y z'} and body.strip() == 'body'
 
-def test_summaries_read_like_what_a_person_would_say():
+def test_activity_markdown_folds_results_and_reads_like_prose():
     s = activity.summarise
     assert s('search_code', {'query': 'AgentSession'}) == 'Search AgentSession'
     assert s('view_file', {'path': 'leela/ai.py', 'start': 240, 'end': 290}) == 'View leela/ai.py:240-290'
     assert s('read_url', {'url': 'https://github.com/AnswerDotAI/ipymini'}).startswith('Web fetch: https://')
     assert s('edit_file', {'path': 'a.py'}) == 'Edit a.py'
+    act = activity.Activity()
+    act.mark()
+    act.finish(act.start('search_code', {'query': 'q'}), 'a hit')
+    md = act.md(mark=0)
+    assert '<details>' in md and 'Search q' in md and 'a hit' in md
+    act = activity.Activity()
+    a = act.start('view_file', {'path': 'a.md'})
+    act.finish(a, 'text\n```\nfenced\n```\n')
+    assert '\n```\n' not in a.md().split('```\n', 1)[1].rsplit('```', 1)[0]
+    a, be = fake_agent(replies=['because x'])
+    a.ask('why does this break?')
+    assert a.history[-1]['plan']['route'] == 'direct'
+    assert 'Answer directly' in str(be.sent[0])
+
 
 def test_activity_fires_at_the_start_of_a_call_not_only_at_the_end():
     "Showing ⏳ while a fetch happens is the difference between looking alive and looking stuck."
@@ -648,26 +764,28 @@ def test_activity_fires_at_the_start_of_a_call_not_only_at_the_end():
     assert [d for _, d in seen] == [False, True]
     assert a.detail == 'the page' and a.done
 
-def test_activity_markdown_folds_the_result():
-    act = activity.Activity()
-    act.mark()
-    act.finish(act.start('search_code', {'query': 'q'}), 'a hit')
-    md = act.md(mark=0)
-    assert '<details>' in md and 'Search q' in md and 'a hit' in md
 
-def test_a_fence_in_a_result_cannot_escape_the_fold():
-    act = activity.Activity()
-    a = act.start('view_file', {'path': 'a.md'})
-    act.finish(a, 'text\n```\nfenced\n```\n')
-    assert '\n```\n' not in a.md().split('```\n', 1)[1].rsplit('```', 1)[0]
 
-def test_wrapping_a_tool_keeps_the_schema_the_model_reads():
-    "Both backends build their tool schema from the signature and docstring, so the"
+def test_results_are_clipped_and_failures_spelled_one_way():
     import inspect
     a, _ = fake_agent()
     t = next(t for t in a.tools if t.__name__ == 'view_file')
     assert t.__doc__ and 'lineno|hash|content' in t.__doc__
     assert list(inspect.signature(t).parameters) == ['path', 'start', 'end']
+    assert failed(err('could not read x'))
+    assert failed(err('write failed', ValueError('nope')))
+    assert not failed('exit 0\nall tests passed')
+    assert err('a', ValueError('b')) == f'{ERR}a: ValueError: b'
+    out = clip_lines([f'line {i}' for i in range(1, 500)], start=1, n=120,
+                     more='call view_file(path, start={next}) to continue')
+    assert 'more line(s) not shown' in out
+    assert 'start=' in out and 'start={next}' not in out
+    assert clip_lines([], empty='(nothing)') == '(nothing)'
+    out = clip_lines(['x' * 50, 'y' * 50, 'z' * 50], n=60)
+    assert 'y' not in out.split('…')[0].split('\n')[-1]
+    assert clip('short') == 'short'
+    assert 'truncated' in clip('x' * 100, n=50)
+
 
 def test_changes_report_the_file_not_the_claim():
     "A tool that reported success and changed nothing must not appear in the diff."
@@ -680,31 +798,9 @@ def test_changes_report_the_file_not_the_claim():
     create(path='/proj/a.py', text='x = 2\n')
     assert a.changes() == {'/proj/a.py': ('x = 1\n', 'x = 2\n')}
 
-def test_a_turn_records_its_activity_and_usage():
-    a, be = fake_agent(replies=['done'])
-    assert a.ask('hello') == 'done'
-    assert a.use.total == 15
-    assert be.sent and 'hello' in str(be.sent[0])
 
-def test_a_question_gets_the_answer_first_notice():
-    "A question is routed to an answer, not to the work it implies."
-    a, be = fake_agent(replies=['because x'])
-    a.ask('why does this break?')
-    assert a.history[-1]['plan']['route'] == 'direct'
-    assert 'Answer directly' in str(be.sent[0])
 
-def test_write_tools_are_the_ones_approval_draws_its_line_around():
-    assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
-            'run_shell', 'memory_forget', 'create_skill',
-            'cancel_watch', 'cart_add', 'cart_remove'} == set(WRITE_TOOLS)
 
-def test_a_subagent_never_gets_a_write_tool():
-    "A delegated question is a question. An agent nobody is watching should not be editing files."
-    from leela.agent.tools import read_only
-    a, _ = fake_agent()
-    names = {t.__name__ for t in read_only(a.tools)}
-    assert not (names & WRITE_TOOLS)
-    assert 'search_code' in names
 
 def test_a_subagent_tool_budget_is_a_hard_stop():
     from leela.agent.tools import read_only
@@ -759,30 +855,10 @@ def test_project_extensions_are_off_unless_asked_for(tmp_path):
     assert load(Registry(), roots=[tmp_path]).commands == {}
     assert 'boom' in load(Registry(), roots=[tmp_path], project=True).commands
 
-def test_an_unknown_hook_name_is_an_error():
-    with pytest.raises(KeyError): Registry().on('after_lunch', lambda: None)
 
-def test_commands_exist_once_for_both_frontends():
-    a, _ = fake_agent()
-    assert {'model', 'cost', 'compact', 'skills', 'tools', 'reload'} <= set(a.commands())
-    assert a.command('nonsense') is None
-    assert 'tok' in a.command('cost') or a.command('cost') is not None
 
-def test_the_model_command_reports_the_whole_policy():
-    a, _ = fake_agent()
-    out = a.command('model')
-    for job in models.JOBS: assert job in out
 
-def test_usage_subtraction_produces_a_non_negative_turn_delta():
-    before = Usage(model='m', input=10, output=4, total=14, cost=.01, turns=1)
-    after = Usage(model='m', input=18, output=7, total=25, cost=.016, turns=2)
-    delta = after - before
-    assert (delta.input, delta.output, delta.total, round(delta.cost, 3), delta.turns) == (8, 3, 11, .006, 1)
 
-def test_usage_adds_up_across_models():
-    u = Usage(model='a', input=1, output=2, total=3, cost=0.5) + Usage(model='b', input=1, output=1, total=2, cost=0.25)
-    assert (u.total, u.cost, u.model) == (5, 0.75, 'b')
-    assert '$0.75' in repr(u)
 
 def test_an_approval_exchange_is_written_into_the_notebook():
     "The request, the refusal and the reason land as cells beside the prompt that caused"
@@ -836,13 +912,6 @@ def test_workspace_agent_reaches_the_live_kernel_inspector():
     names = {t.__name__ for t in tools_for(h)}
     assert {'run_python', 'inspect_python', 'list_vars'} <= names
 
-def test_a_workspace_host_hides_what_the_workspace_cannot_do():
-    "No kernel session bound yet means no run_python offered, not a run_python that always fails."
-    from leela.blocks.agent.ai import WorkspaceHost
-    from leela.workspace import Workspace
-    h = WorkspaceHost(Workspace(roots=[]))
-    with pytest.raises(NotImplementedError): h.run_python('1')
-    assert 'run_python' not in {t.__name__ for t in tools_for(h)}
 
 def test_a_stream_yields_before_it_finishes(spec):
     "The whole point. A stream that only yields at the end is a blocking call with extra steps."
@@ -852,11 +921,6 @@ def test_a_stream_yields_before_it_finishes(spec):
     got = list(be.stream('hi'))
     assert len(got) == 3 and ''.join(got).split() == ['one', 'two', 'three']
 
-def test_notebook_context_names_the_open_file_and_separates_the_user_request():
-    a, _ = fake_agent()
-    msg = a.compose('q', context='CTX', context_path='/work/dialog.ipynb')
-    assert '<notebook path="/work/dialog.ipynb">' in msg
-    assert '<user-request>\nq\n</user-request>' in msg
 
 def test_agent_prompt_bar_accepts_the_open_notebook_context(tmp_path):
     from leela.workspace import Workspace
@@ -882,11 +946,6 @@ def test_streaming_and_blocking_compose_the_same_message():
     assert str(be.sent[-1]) == blocking
     assert '<notebook>' in blocking and '<screen>' in blocking
 
-def test_text_only_local_agent_does_not_send_image_bytes():
-    a = Agent(MemHost_agent(), model='gemma-e4b', extensions=False, local_multimodal=False)
-    msg = a.compose('describe it', image=b'not-an-image')
-    assert isinstance(msg, str)
-    assert 'omitted' in msg and 'describe it' in msg
 
 def test_local_multimodal_is_forwarded_to_rishi(monkeypatch):
     import leela.agent.agent as chat
@@ -898,11 +957,6 @@ def test_local_multimodal_is_forwarded_to_rishi(monkeypatch):
     assert made[0][0].backend == 'litert'
     assert made[0][1]['multimodal'] is False
 
-def test_a_streamed_turn_still_records_usage_and_activity():
-    a, be = fake_agent(replies=['all done'])
-    out = ''.join(a.stream('go'))
-    assert out.strip() == 'all done'
-    assert a.use.total == 15
 
 def test_prompt_cells_and_agent_chat_have_separate_assistants_and_histories():
     from leela.workspace import Workspace
@@ -942,11 +996,6 @@ def test_a_streamed_cell_still_gets_its_activity_trail():
     assert '<details>' in nb[0].reply and 'Search Approvals' in nb[0].reply
     assert nb[0].calls and nb[0].calls[0]['tool'] == 'search_code'
 
-def test_the_sse_frame_survives_a_newline_in_the_payload():
-    "A raw newline would end the frame early; JSON is why chunks can contain markdown."
-    from leela.app import _sse
-    f = _sse('chunk', {'text': 'line one\nline two'})
-    assert f.count('\n\n') == 1 and f.startswith('event: chunk\ndata: ')
 
 def test_workspace_at_attachments_are_grounded_and_sandboxed(tmp_path):
     from leela.workspace import Workspace
@@ -1080,68 +1129,34 @@ def test_one_unresolvable_model_does_not_blank_the_whole_picker(monkeypatch):
 def named(tools):
     return {t.__name__: t for t in tools}
 
-def test_every_failure_is_spelled_the_same_way():
-    "Neither engine carries an `is_error` flag through to the model, so the flag has to"
-    assert failed(err('could not read x'))
-    assert failed(err('write failed', ValueError('nope')))
-    assert not failed('exit 0\nall tests passed')
-    assert err('a', ValueError('b')) == f'{ERR}a: ValueError: b'
 
-def test_a_truncated_result_says_how_to_continue():
-    "A model that cannot resume a truncated read invents the rest or reads the same half again."
-    out = clip_lines([f'line {i}' for i in range(1, 500)], start=1, n=120,
-                     more='call view_file(path, start={next}) to continue')
-    assert 'more line(s) not shown' in out
-    assert 'start=' in out and 'start={next}' not in out
-    assert clip_lines([], empty='(nothing)') == '(nothing)'
 
-def test_truncation_never_ends_mid_line():
-    out = clip_lines(['x' * 50, 'y' * 50, 'z' * 50], n=60)
-    assert 'y' not in out.split('…')[0].split('\n')[-1]
 
-def test_clip_keeps_a_short_result_untouched():
-    assert clip('short') == 'short'
-    assert 'truncated' in clip('x' * 100, n=50)
 
-def test_a_host_that_cannot_run_commands_is_not_offered_the_tool():
-    from leela.agent.tools import NullHost
-    assert 'run_shell' not in named(tools_for(NullHost(['/x'])))
 
-def test_a_host_that_can_run_commands_gets_the_tool_without_running_one():
-    "The capability probe must not itself be a side effect: a command is not a harmless call."
-    h = MemHost()
-    assert 'run_shell' in named(tools_for(h))
-    assert h.cmds == []
 
-def test_a_failing_command_comes_back_marked_as_a_failure():
-    "The whole point of the tool. A non-zero exit that reads like ordinary output is a"
+def test_run_shell_reports_what_it_ran_and_how_it_ended():
     h = MemHost(commands={'pytest -q': (1, '2 failed, 3 passed')})
     run = named(shell_tools(h))['run_shell']
     out = run('pytest -q')
     assert failed(out) and 'exit 1' in out and 'FAILED' in out and '2 failed' in out
-
-def test_a_passing_command_is_not_marked_as_a_failure():
     h = MemHost(commands={'pytest -q': (0, '5 passed')})
     out = named(shell_tools(h))['run_shell']('pytest -q')
     assert not failed(out) and out.startswith('exit 0') and '5 passed' in out
-
-def test_a_silent_command_still_says_it_ran():
     out = named(shell_tools(MemHost()))['run_shell']('ruff check .')
     assert 'exit 0' in out and '(no output)' in out
-
-def test_an_empty_command_is_refused_rather_than_run():
     h = MemHost()
     assert failed(named(shell_tools(h))['run_shell']('   '))
     assert h.cmds == []
-
-def test_the_command_and_its_directory_reach_the_host_unchanged():
     h = MemHost()
     named(shell_tools(h))['run_shell']('git status --short', cwd='/proj/sub', timeout=30)
     assert h.cmds == [('git status --short', '/proj/sub', 30)]
 
-def test_running_a_command_needs_approval():
-    "A shell can name any path, so confining the working directory is not the sandbox: the person is."
-    assert 'run_shell' in WRITE_TOOLS
+
+
+
+
+
 
 SRC = 'def add(a, b):\n    return a + b\n\n\ndef sub(a, b):\n    return a - b\n'
 
@@ -1149,61 +1164,55 @@ def editor(files=None):
     h = MemHost(files if files is not None else {'/proj/m.py': SRC})
     return h, named(file_tools(h))['replace_text']
 
-def test_two_edits_to_one_file_land_in_one_call():
+def test_edit_file_applies_every_edit_or_refuses_with_a_reason():
     h, edit = editor()
     out = edit('/proj/m.py', '[{"oldText": "a + b", "newText": "a + b + 1"},'
                              ' {"oldText": "a - b", "newText": "a - b - 1"}]')
     assert not failed(out) and 'replaced 2 block(s)' in out
     assert h.files['/proj/m.py'] == SRC.replace('a + b', 'a + b + 1').replace('a - b', 'a - b - 1')
-
-def test_the_diff_comes_back_so_the_result_can_be_checked():
     _, edit = editor()
     out = edit('/proj/m.py', '[{"oldText": "a + b", "newText": "a * b"}]')
     assert '-    return a + b' in out and '+    return a * b' in out
-
-def test_an_ambiguous_oldtext_is_refused_and_says_what_to_do():
-    "`return a` appears twice. Picking one is how an agent silently edits the wrong"
     h, edit = editor()
     out = edit('/proj/m.py', '[{"oldText": "return a", "newText": "return 0"}]')
     assert failed(out) and 'matches 2 places' in out and 'more surrounding' in out
     assert h.files['/proj/m.py'] == SRC
-
-def test_a_stale_oldtext_is_refused_and_says_what_to_do():
     h, edit = editor()
     out = edit('/proj/m.py', '[{"oldText": "def add(a, b, c):", "newText": "x"}]')
     assert failed(out) and 'not found' in out and 'Re-read' in out
     assert h.files['/proj/m.py'] == SRC
-
-def test_one_bad_edit_leaves_the_whole_file_alone():
-    "Atomicity is the reason to locate every span before applying any of them."
     h, edit = editor()
     out = edit('/proj/m.py', '[{"oldText": "a + b", "newText": "ok"},'
                              ' {"oldText": "not in the file", "newText": "x"}]')
     assert failed(out) and 'edit 2' in out
     assert h.files['/proj/m.py'] == SRC
-
-def test_overlapping_edits_are_refused_rather_than_applied_in_some_order():
     h, edit = editor()
     out = edit('/proj/m.py', '[{"oldText": "def add(a, b):\\n    return a + b", "newText": "x"},'
                              ' {"oldText": "return a + b", "newText": "y"}]')
     assert failed(out) and 'overlap' in out
     assert h.files['/proj/m.py'] == SRC
-
-def test_an_empty_oldtext_is_refused_with_the_tool_that_does_want_it():
     _, edit = editor()
     out = edit('/proj/m.py', '[{"oldText": "", "newText": "x"}]')
     assert failed(out) and 'create_file' in out
-
-def test_a_no_op_edit_is_reported_rather_than_called_a_success():
-    "A model told 'replaced 1 block' when nothing moved will build its next edit on a fiction."
     _, edit = editor()
     out = edit('/proj/m.py', '[{"oldText": "a + b", "newText": "a + b"}]')
     assert failed(out) and 'changed nothing' in out
-
-def test_editing_a_file_that_is_not_there_points_at_create_file():
     _, edit = editor()
     out = edit('/proj/nope.py', '[{"oldText": "a", "newText": "b"}]')
     assert failed(out) and 'create_file' in out
+    _, edit = editor()
+    assert failed(edit('/proj/m.py', 'not json'))
+    assert failed(edit('/proj/m.py', '[]'))
+    assert 'oldText' in edit('/proj/m.py', '[{"old": "a"}]')
+
+
+
+
+
+
+
+
+
 
 def test_the_shapes_a_model_actually_sends_are_all_accepted():
     "A JSON string, a list of dicts, and a list of pairs are each unambiguous. Refusing"
@@ -1215,46 +1224,35 @@ def test_the_shapes_a_model_actually_sends_are_all_accepted():
         assert not failed(edit('/proj/m.py', edits)), edits
         assert 'return z' in h.files['/proj/m.py']
 
-def test_malformed_edits_say_what_the_shape_should_be():
-    _, edit = editor()
-    assert failed(edit('/proj/m.py', 'not json'))
-    assert failed(edit('/proj/m.py', '[]'))
-    assert 'oldText' in edit('/proj/m.py', '[{"old": "a"}]')
 
 FILES = {'/proj/a.py': 'import json\nvalue = compute(1)\n',
          '/proj/tests/test_a.py': 'from a import compute\n\ndef test_compute():\n    assert compute(1)\n',
          '/proj/notes.md': 'compute is described here\n'}
 
-def test_grep_finds_every_literal_occurrence_with_its_line_number():
-    "`search_code` answers with what is *like* the query. A rename needs every place the"
+def test_grep_reports_its_matches_and_what_it_searched():
     out = named(code_tools(MemHost(FILES)))['grep']('compute')
     assert '/proj/a.py:2' in out and '/proj/tests/test_a.py:1' in out and '/proj/notes.md:1' in out
     assert 'match(es) in 3 file(s) searched' in out
-
-def test_grep_can_be_confined_to_part_of_the_tree():
     out = named(code_tools(MemHost(FILES)))['grep']('compute', path_filter='tests/')
     assert '/proj/tests/test_a.py' in out and '/proj/a.py:' not in out
-
-def test_grep_takes_a_regex_and_can_be_told_not_to():
     g = named(code_tools(MemHost(FILES)))['grep']
     assert '/proj/a.py' in g(r'compute\(\d\)')
     assert 'no matches' in g('compute(1)', regex=True)
     assert '/proj/a.py' in g('compute(1)', regex=False)
-
-def test_grep_matches_case_only_when_told_to_ignore_it():
     g = named(code_tools(MemHost({'/proj/a.py': 'Value = 1\n'})))['grep']
     assert 'no matches' in g('value')
     assert '/proj/a.py' in g('value', ignore_case=True)
-
-def test_grep_says_what_it_searched_when_it_finds_nothing():
-    "'no matches' with no denominator reads like a broken tool; with one it reads like an answer."
     out = named(code_tools(MemHost(FILES)))['grep']('nowhere')
     assert 'no matches' in out and '3 file(s)' in out
-
-def test_grep_needs_a_pattern_and_reports_a_bad_one():
     g = named(code_tools(MemHost(FILES)))['grep']
     assert failed(g(''))
     assert failed(g('(unclosed'))
+
+
+
+
+
+
 
 def test_ls_lists_the_open_folders_when_asked_for_nothing(tmp_path):
     from leela.agent.tools import NullHost
@@ -1267,46 +1265,12 @@ def test_ls_lists_the_open_folders_when_asked_for_nothing(tmp_path):
     out = named(code_tools(H([str(tmp_path)])))['ls']('')
     assert 'pkg/' in out and 'x.py' in out
 
-def test_a_rule_about_a_missing_tool_does_not_appear():
-    "The briefing described a `scale_numeric` that had been deleted, and promised"
-    everything = work_rules()
-    assert 'run_shell' in everything and 'grep' in everything
-    narrow = work_rules({'search_code', 'view_file'})
-    assert 'run_shell' not in narrow and 'delegate_parallel' not in narrow
-    assert 'search_code' in narrow
 
-def test_the_rules_that_always_apply_survive_any_tool_list():
-    "Honesty is not a capability, so it cannot be filtered out with one."
-    narrow = work_rules({'view_file'})
-    assert 'unless a tool\n  result in this conversation says so' in narrow
-    assert 'ERROR:' in narrow
-    assert 'inside the folders above' in narrow
 
-def test_every_rule_names_a_real_tool():
-    "A rule tagged with a tool that no longer exists would silently never appear again."
-    real = {t.__name__ for t in tools_for(MemHost())} | {'notebook_cells', 'delegate_parallel',
-                                                         'memory_search', 'web_search', 'run_python'}
-    assert {tool for tool, _ in RULES if tool} <= real
 
-def test_the_briefing_carries_the_projects_own_instructions():
-    "A repository can tell every other agent how to work here; it could not tell this one."
-    h = MemHost({'/proj/AGENTS.md': '# House rules\n\nUse uv, never pip.\n'})
-    ctx = project_context(h)
-    assert 'Use uv, never pip' in ctx and '/proj/AGENTS.md' in ctx
-    assert 'Use uv, never pip' in system_prompt(h, tools=tools_for(h))
 
-def test_project_instructions_are_capped_rather_than_dropped():
-    h = MemHost({'/proj/AGENTS.md': 'rule\n' + 'filler\n' * 5000})
-    ctx = project_context(h, mx=200)
-    assert 'rule' in ctx and 'truncated' in ctx and len(ctx) < 900
 
-def test_no_project_instructions_means_no_empty_block():
-    assert project_context(MemHost()) == ''
-    assert '<project_context>' not in system_prompt(MemHost(), tools=tools_for(MemHost()))
 
-def test_the_briefing_says_where_it_may_work():
-    sp = system_prompt(MemHost(), tools=tools_for(MemHost()))
-    assert '/proj' in sp
 
 def agent_on(host):
     "An `Agent` over `host` with no model behind it: these tests are about the tool layer."
@@ -1323,24 +1287,8 @@ def test_a_failed_tool_call_is_recorded_as_failed():
     rows = a.activity.rows()
     assert [r['ok'] for r in rows[-2:]] == [False, False]
 
-def test_a_successful_tool_call_is_recorded_as_successful():
-    a = agent_on(MemHost(commands={'pytest': (0, '5 passed')}))
-    named(a.tools)['run_shell']('pytest')
-    assert a.activity.rows()[-1]['ok'] is True
 
-def test_an_exact_text_edit_shows_up_in_the_turns_changes():
-    "`changes()` reports the file, not the tool's account of the file."
-    h = MemHost({'/proj/m.py': SRC})
-    a = agent_on(h)
-    named(a.tools)['replace_text']('/proj/m.py', '[{"oldText": "a + b", "newText": "a * b"}]')
-    before, after = a.changes()['/proj/m.py']
-    assert 'a + b' in before and 'a * b' in after
 
-def test_a_refused_edit_does_not_show_up_as_a_change():
-    h = MemHost({'/proj/m.py': SRC})
-    a = agent_on(h)
-    named(a.tools)['replace_text']('/proj/m.py', '[{"oldText": "nope", "newText": "x"}]')
-    assert a.changes() == {}
 
 def test_a_capability_lost_mid_session_is_a_failure_not_the_end_of_the_turn():
     "A kernel dies, a folder closes. Raising here ends the turn; a failure the model can"
@@ -1353,12 +1301,6 @@ def test_a_capability_lost_mid_session_is_a_failure_not_the_end_of_the_turn():
     assert failed(out) and 'not available' in out
     assert a.activity.rows()[-1]['ok'] is False
 
-def test_the_briefing_the_agent_sends_matches_the_tools_it_has():
-    h = MemHost({'/proj/AGENTS.md': 'Use uv, never pip.\n'})
-    a = agent_on(h)
-    sp = a.system_prompt()
-    assert 'run_shell' in sp and 'Use uv, never pip' in sp
-    assert 'scale_numeric' not in sp
 
 @pytest.fixture
 def project(tmp_path):
@@ -1540,25 +1482,8 @@ def test_folders_are_offered_to_the_agent_and_not_to_quick_open(ws, tmp_path):
         quick = c.get('/fs/find', params={'q': 'pkg'}).json()['hits']
         assert all(h['kind'] == 'file' for h in quick), 'opening a folder is not quick-open\'s job'
 
-def test_the_token_stays_in_the_prompt_when_a_file_is_attached():
-    'Stripping it left the sentence reading "look at and tell me why".'
-    js = builder.OUT.read_text()
-    block = js[js.index('function chooseAgentSuggest'):js.index('let agentSuggestSeq')]
-    assert '`$1@${item.name} `' in block, 'the token is rewritten, not removed'
 
-def test_removing_a_chip_removes_its_token():
-    "Or the prompt goes on naming something that is no longer attached."
-    js = builder.OUT.read_text()
-    block = js[js.index('function paintAgentAttachments'):js.index('function closeAgentSuggest')]
-    assert "input.value.replace(new RegExp(" in block
-    assert 'lee.agentSelections.splice' in block, 'a selection chip is removable too'
 
-def test_a_selection_reaches_the_agent_panel_as_a_queued_context():
-    js = builder.OUT.read_text()
-    block = js[js.index('function leeAgentSelection'):js.index('async function leeAgentBudget')]
-    assert "kind: 'selection'" in block and 'doc.sliceString' in block
-    assert "leeRight('agent')" in block, 'the panel comes forward so the chip is visible'
-    assert 'agent_selection: () => leeAgentSelection()' in js, 'and it is a bindable action'
 
 def test_an_interpreters_libraries_are_not_the_project(tmp_path):
     "98% of a walk of this repo was site-packages, so `@keys` ranked `libxslt/keys.h` over"
@@ -1583,22 +1508,8 @@ def test_a_site_packages_under_an_oddly_named_venv_is_still_skipped(tmp_path):
     ws = Workspace(roots=[tmp_path])
     assert [p.name for p in ws.fs.walk(tmp_path)] == ['mine.py']
 
-def test_the_file_suggest_is_coalesced():
-    "Each call walks the project tree; dropping the answer discards the work after doing it."
-    js = builder.OUT.read_text()
-    assert 'clearTimeout(agentSuggestTimer)' in js and 'agentSuggestTimer = setTimeout(' in js
 
-def test_a_small_window_is_not_swamped_by_the_reserve():
-    "The 16k reserve is bigger than a 4k local model's entire context."
-    assert threshold(4096) == 4096 - 1024
-    assert threshold(200_000) == 200_000 - RESERVE
-    assert threshold(0) is None
 
-def test_recent_is_capped_by_the_window_too():
-    '20k of "recent" on a 4k model means nothing is ever old enough to summarise.'
-    c = Compactor()
-    assert c.budget(4096) == 2048
-    assert c.budget(200_000) == c.keep_recent
 
 def test_the_local_window_errs_small_and_can_be_overridden(monkeypatch):
     "Under-stating a window costs one early compaction; over-stating it costs the turn."
@@ -1626,23 +1537,24 @@ def _native_write(text):
     "Write straight to fd 2, the way a C++ engine does -- around Python's sys.stderr, not through it."
     os.write(2, text.encode())
 
-def test_a_native_complaint_is_captured_and_still_printed():
-    "Captured for the IDE, and teed to where it was going, because a terminal session still wants it."
+def test_native_output_is_captured_without_being_lost():
     with captured() as cap:
         _native_write(GEMMA)
     assert 'exceed the maximum number of tokens 4096' in cap.text
     assert cap.problems, 'a line saying "exceed" is a problem, not chatter'
-
-def test_engine_chatter_is_not_reported_as_a_problem():
-    "An engine that logs delegate creation on every call would otherwise bury the one line that."
     with captured() as cap:
         _native_write('INFO: Created TensorFlow Lite XNNPACK delegate for CPU.\n')
     assert cap.text and not cap.problems
-
-def test_captured_output_is_deduplicated_and_trimmed():
-    "A native layer will repeat itself once per token; a status bar cannot."
     assert interesting(GEMMA * 5) == [GEMMA.strip()]
     assert len(interesting('\n'.join(f'error {i}' for i in range(20)))) == 4
+    def boom():
+        _native_write(GEMMA)
+        raise RuntimeError('generate failed')
+    with pytest.raises(RuntimeError) as e: native_capture(boom)
+    assert 'exceed the maximum number of tokens' in getattr(e.value, 'native_output', '')
+
+
+
 
 def test_the_descriptor_survives_an_exception_inside_the_block():
     "A broken stderr would be a far worse bug than the one this fixes."
@@ -1656,13 +1568,6 @@ def test_the_descriptor_survives_an_exception_inside_the_block():
         assert sys.stderr is not None
     finally: os.close(before)
 
-def test_an_exception_carries_what_the_engine_said():
-    "So the reported failure is the engine's own words rather than a generic wrapper message."
-    def boom():
-        _native_write(GEMMA)
-        raise RuntimeError('generate failed')
-    with pytest.raises(RuntimeError) as e: native_capture(boom)
-    assert 'exceed the maximum number of tokens' in getattr(e.value, 'native_output', '')
 
 def test_capture_can_be_switched_off(monkeypatch):
     "Anything that moves a file descriptor needs a way out."
@@ -1816,12 +1721,6 @@ class Host_comple:
 class Agent_comple:
     host = Host_comple()
 
-def test_completion_prompt_includes_related_code_and_runtime_variables():
-    c = Completer(Agent_comple())
-    prompt = c._prompt('frame.', 6, 'python', 'def clean(frame):\n    return frame.dropna()')
-    assert '<related_code>' in prompt and 'def clean(frame)' in prompt
-    assert '<runtime_variables>' in prompt and 'threshold: float = 0.73' in prompt
-    assert '<before>\nframe.' in prompt
 
 def test_kosha_adds_dynamic_patch_methods_to_runtime_completion(tmp_path):
     class Store:

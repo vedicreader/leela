@@ -11,19 +11,21 @@ Leela now supports independent app-window workspaces with:
 - one persistent CDP Chrome profile reused through `fossick.cdp.cdp_setup`;
 - py2app and py2exe standalone build definitions.
 
-The remaining `ClientSession` extraction described below is needed when two independent
-windows attach to the *same* workspace. Different workspace windows are isolated now.
+Two independent windows attached to one workspace still need the `ClientSession` extraction
+below. Leela already isolates one workspace window from another.
 
 ## Decision
 
 Treat these as three different lifetimes:
 
-1. **Leela daemon** — one long-lived local process per user profile.
-2. **Workspace session** — roots, open documents, run configurations, terminals, agent history, and UI preferences for one project/window group.
-3. **Kernel runtime** — an independently supervised process that a workspace attaches to by an opaque runtime id.
+1. A Leela daemon. One long-lived local process per user profile.
+2. A workspace session. Roots, open documents, run configurations, terminals, agent history
+   and UI preferences, for one project or window group.
+3. A kernel runtime. A supervised process that a workspace attaches to by an opaque runtime
+   id.
 
-A browser window is a client of a workspace session. It must not *be* the session, and a
-kernel must not belong to a browser connection. Closing or refreshing Chrome should detach
+A browser window is a client of a workspace session. It must not be the session, and a kernel
+must not belong to a browser connection. Closing or refreshing Chrome should detach
 the client without killing either.
 
 The current `ide_app(ws)` has one process-global `Workspace`, including `ws.active`. That is
@@ -83,7 +85,7 @@ The AnswerDotAI projects suggest a cleaner boundary than embedding one
 1. `Kernel` and `GatewayKernel` already implement the same workspace-facing surface:
    `execute`, `complete`, `inspect_obj`, `interrupt`, `restart`, `api`, `alive`, and `pid`.
 2. Direct local ZMQ remains available as `--transport direct`.
-3. `GatewayKernel` uses jupyasyncclient and the supervised `GatewayService`; app mode selects
+3. `GatewayKernel` uses jupyasyncclient and the supervised `GatewayService`. App mode selects
    it automatically.
 4. `RuntimeBroker` currently provides global admission control. The next step is moving all
    runtime ids and lifecycle ownership into it so workspaces never receive concrete clients.
@@ -94,20 +96,20 @@ This is an incremental transport replacement, not a frontend rewrite.
 
 ## Avoiding memory overload
 
-“One kernel per notebook” gives strong isolation but is the largest memory multiplier. Use an
-explicit runtime policy instead of silently changing that promise:
+One kernel per notebook gives strong isolation, and it is also the largest memory multiplier.
+Write down a runtime policy rather than quietly changing that promise:
 
 - Source files continue to share a project runtime.
 - A notebook defaults to a private runtime while active.
-- Clean, idle private runtimes become **suspend candidates** after a configurable timeout.
+- A clean, idle private runtime becomes a suspend candidate after a configurable timeout.
 - First implementation: shut down an idle runtime only after recording that its namespace
   will be lost, then show the tab as detached. Never imply live variables survived.
-- Later implementation: optional checkpoint/restore can serialize only supported values;
-  it must remain visibly different from a live namespace.
+- Later implementation: optional checkpoint and restore, serializing only supported values.
+  It must stay visibly different from a live namespace.
 - Put hard caps on simultaneously warm local model engines and kernels. Eviction is LRU among
-  idle, unpinned runtimes; running, dirty, or debug-paused runtimes are never evicted.
-- A single jupygate process multiplexes transport but does **not** remove each kernel's Python
-  heap. The broker still needs RSS telemetry and admission control.
+  idle, unpinned runtimes. A running, dirty or debug-paused runtime is never evicted.
+- A single jupygate process multiplexes transport. It does not remove each kernel's Python
+  heap, so the broker still needs RSS telemetry and admission control.
 
 JEP 91 subshells can reduce the number of kernels for deliberately shared notebooks, but a
 subshell is not a memory-isolation boundary. Make that an opt-in attachment mode.
@@ -121,8 +123,8 @@ the Jupyter `debug_request` protocol and Debug Adapter Protocol (DAP):
 1. Add debug capability reporting to `RuntimeClient`.
 2. Add request/reply methods for `debug_request` and route debug events separately from cell
    output.
-3. Start with kernels backed by kernmini/ipymini that advertise `debug_request`; disable the
-   controls for others.
+3. Start with kernels backed by kernmini or ipymini that advertise `debug_request`, and
+   disable the controls for the rest.
 4. Store breakpoints in the workspace, but store paused thread/frame selection in the client
    session.
 5. Add Variables scopes for locals, globals, and watches without replacing Leela's existing

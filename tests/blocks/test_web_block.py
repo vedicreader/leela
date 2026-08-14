@@ -79,12 +79,20 @@ def test_shell_still_exposes_workspace_and_git_switchers(tmp_path):
     assert 'id="gitpill"' in html and 'leeBranchMenu(this)' in html
     assert 'data-left="git"' in html
 
-def test_agent_focus_action_opens_the_right_panel_before_prompt_fill():
+def test_the_committed_bundle_is_the_modules_it_was_built_from():
     assert 'focus_agent:' in JS
     assert "leeRight('agent')" in JS
     assert "$('#agentprompt')?.focus()" in JS
     assert "applyTheme('cursor')" in (ROOT / 'tools/webshots.py').read_text()
     assert "leeAct('focus_agent')" in (ROOT / 'tools/webshots.py').read_text()
+    assert [p.name for p in builder.modules() if not p.read_text().endswith('\n')] == []
+    names = L(builder.modules()).map(lambda p: set(_DECL.findall(p.read_text())))
+    dupes = sorted(n for n, c in Counter(n for s in names for n in s).items() if c > 1)
+    assert dupes == [], f'declared in more than one module: {dupes}'
+    assert builder.OUT.read_text() == builder.bundle(), 'run python tools/build_ide_js.py'
+    js = builder.OUT.read_text()
+    for fn in ('function leeAct', 'function leeLeft', 'function leeRight', 'function leePane'): assert fn in js, fn
+
 
 JS = (ROOT/'leela/static/lee-ide.js').read_text()
 CSS = (ROOT/'leela/static/lee-ide.css').read_text()
@@ -108,31 +116,37 @@ def js_families():
     table = JS.split('const THEMES = {', 1)[1].split('\n};', 1)[0]
     return set(re.findall(r'^\s*(\w+):\s*\{', table, re.M))
 
-def test_every_family_ships_a_dark_and_a_light_variant():
+def test_every_theme_variant_declares_every_token_in_both_modes():
+    import itertools
     variants = css_variants()
     families = js_families()
     assert families >= {'leela', 'cursor', 'vscode', 'jetbrains', 'solarized', 'gruvbox', 'nord', 'dracula'}
     assert {f for f, _ in variants} == families, 'a family exists in only one of CSS and JS'
     for family in families:
         assert (family, 'dark') in variants and (family, 'light') in variants, family
-
-def test_every_variant_declares_every_colour_token():
-    "Missing tokens fall through to whatever :root had, which is another theme's colour."
     for (family, mode), names in css_variants().items():
         assert not (TOKENS - names), f'{family}/{mode} is missing {sorted(TOKENS - names)}'
-
-def test_whitespace_marks_have_their_own_token_in_every_variant():
-    "The dots are drawn inside the selection, so --lee-fg4 washed out on light themes."
     assert 'var(--lee-space-mark)' in CSS.split('.cm-lee-space-mark')[1].split('}')[0]
     assert 'var(--lee-space-mark)' in CSS.split('.cm-lee-tab-mark')[1].split('}')[0]
     for (family, mode), names in css_variants().items():
         assert 'space-mark' in names, f'{family}/{mode}'
-
-def test_colour_scheme_is_only_ever_dark_or_light():
-    "A family name is not a valid `color-scheme`; it is silently ignored when one lands there."
     assigns = L(re.findall(r'colorScheme\s*=\s*([^;\n]+)', JS + (ROOT/'leela/app.py').read_text()))
     assert assigns, 'nothing sets colorScheme any more'
     for a in assigns: assert a.strip() in ('resolved', 'resolved;'), a
+    app = (ROOT/'leela/app.py').read_text()
+    assert 'dataset.density' in app and 'dataset.density' in JS
+    for value in re.findall(r'dataset\.density\s*=\s*([^;\n]+)', JS):
+        assert value.strip() == 'density'
+    for reader in (JS, (ROOT/'leela/app.py').read_text()):
+        assert "dark: 'leela:dark:relaxed'" in reader and "cursor: 'cursor:light:tight'" in reader
+    for (fam, mode), tokens in variant_colours().items():
+        for a, b in [*itertools.combinations(LEGEND, 2), ('blue', 'purple')]:
+            assert tokens[a].lower() != tokens[b].lower(), f'{fam} {mode}: {a} and {b} are both {tokens[a]}'
+            assert _dE(tokens[a], tokens[b]) > 5, f'{fam} {mode}: {a} and {b} are indistinguishable'
+
+
+
+
 
 def test_density_is_its_own_axis_and_carries_the_chrome():
     "Tight chrome came from the cursor theme, but any family must be able to wear it."
@@ -143,17 +157,7 @@ def test_density_is_its_own_axis_and_carries_the_chrome():
     assert re.findall(r':root\[data-theme="\w+"\]\s+\.lee-', CSS) == []
     assert "const THEME_DENSITIES = ['tight', 'relaxed']" in JS
 
-def test_density_reaches_the_document_before_the_first_paint():
-    "Painting relaxed chrome and then tightening it a frame later is the flash this avoids."
-    app = (ROOT/'leela/app.py').read_text()
-    assert 'dataset.density' in app and 'dataset.density' in JS
-    for value in re.findall(r'dataset\.density\s*=\s*([^;\n]+)', JS):
-        assert value.strip() == 'density'
 
-def test_a_pre_family_preference_still_resolves():
-    "`lee-theme` held system|dark|light|cursor; both readers must migrate it, not reset it."
-    for reader in (JS, (ROOT/'leela/app.py').read_text()):
-        assert "dark: 'leela:dark:relaxed'" in reader and "cursor: 'cursor:light:tight'" in reader
 
 def _lab(hex_):
     "sRGB hex to CIE Lab, so two colours can be compared the way an eye compares them."
@@ -179,38 +183,16 @@ def variant_colours():
                 out[m.groups()] = {k: v.strip() for k, v in re.findall(r'--lee-([\w-]+):\s*([^;]+);', body)}
     return out
 
-def test_no_variant_paints_two_legend_colours_the_same():
-    "A duplicated hex is a copy-paste, not a palette choice, and it makes a legend unreadable."
-    import itertools
-    for (fam, mode), tokens in variant_colours().items():
-        for a, b in [*itertools.combinations(LEGEND, 2), ('blue', 'purple')]:
-            assert tokens[a].lower() != tokens[b].lower(), f'{fam} {mode}: {a} and {b} are both {tokens[a]}'
-            assert _dE(tokens[a], tokens[b]) > 5, f'{fam} {mode}: {a} and {b} are indistinguishable'
 
 sys.path.insert(0, str(ROOT/'tools'))
 
 import build_ide_js as builder  # noqa: E402
 
-def test_every_module_ends_with_a_newline():
-    "Without one, a module's last line fuses into the next module's first when concatenated."
-    assert [p.name for p in builder.modules() if not p.read_text().endswith('\n')] == []
 
 _DECL = re.compile(r'^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(', re.M)
 
-def test_no_two_modules_declare_the_same_top_level_function():
-    "The modules share one scope, so the later declaration silently wins."
-    names = L(builder.modules()).map(lambda p: set(_DECL.findall(p.read_text())))
-    dupes = sorted(n for n, c in Counter(n for s in names for n in s).items() if c > 1)
-    assert dupes == [], f'declared in more than one module: {dupes}'
 
-def test_the_committed_bundle_matches_its_modules():
-    "Editing lee-ide.js directly is the drift this catches; edit the module and rebuild."
-    assert builder.OUT.read_text() == builder.bundle(), 'run python tools/build_ide_js.py'
 
-def test_the_bundle_defines_the_entry_points_the_server_renders():
-    "app.py renders onclick=leeAct(...) and friends; the split must keep them all present."
-    js = builder.OUT.read_text()
-    for fn in ('function leeAct', 'function leeLeft', 'function leeRight', 'function leePane'): assert fn in js, fn
 
 def test_the_empty_state_is_written_only_in_python():
     "`mountTab` clones `#leeempty`; a second copy in JS is the drift that put them out of step."

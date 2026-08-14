@@ -263,13 +263,30 @@ def test_the_finder_skips_the_directories_that_made_it_slow(tmp_path):
         (d/'.git').mkdir(parents=True); (d/'.git'/'HEAD').write_text('ref: x')
     assert [p.name for p in find_repos(tmp_path)] == ['real-repo']
 
-def test_a_failed_git_action_says_so_instead_of_looking_stalled():
-    "A refused checkout is a fast, normal answer. It must not read as a hang."
+def test_a_terminal_is_a_login_shell_in_the_projects_environment():
+    from leela.blocks.term.term import default_shell, shell_argv
     block = JS[JS.index('async function gitDo('):]
     block = block[:block.index('\nfunction gitOperationBanner')]
     assert 'catch (e)' in block, 'a failure has to reach the status line'
     assert 'failed' in block and "'err'" in block
     assert block.index('catch (e)') < block.index('finally'), 'caught before busy is cleared'
+    block = JS[JS.index('async function pollRunLogs'):]
+    block = block[:block.index('function leeDock')]
+    assert "classList.contains('dock-logs')" in block and 'return' in block
+    assert 'lee.runSeen' in block, 'and only new lines are appended'
+    assert 'prelude' in SERVER, 'the pty takes one'
+    assert 'os.write(master, self.prelude.encode()' in SERVER, 'written after the shell starts'
+    assert 'export PATH=' in SERVER and '$PATH' in SERVER
+    assert shell_argv('/opt/homebrew/bin/fish') == ['/opt/homebrew/bin/fish', '-l']
+    assert shell_argv('/bin/bash', login=False) == ['/bin/bash']
+    assert shell_argv('/bin/bash', ['-i', '-c', 'true']) == ['/bin/bash', '-i', '-c', 'true']
+    assert shell_argv('', (), True) == [default_shell(), '-l'], 'empty means $SHELL'
+    assert "id='termexternal'" in SERVER and 'leeExternalTerm()' in SERVER
+    block = JS[JS.index('async function leeExternalTerm'):JS.index('function leeNewTerm')]
+    assert "post('/term/external')" in block
+    open_block = JS[JS.index('async function openTerm'):JS.index('async function openReleaseTerm')]
+    assert "external.hidden = !(d.external || []).length" in open_block
+
 
 def test_a_workspace_operation_names_the_repositories_it_is_working_on():
     "A fan-out over several checkouts always raises the question of which one is slow."
@@ -290,11 +307,6 @@ def test_the_logs_pane_holds_what_a_status_line_cannot():
     assert 'showLog(' in JS and 'firstLine(detail)' in JS
     assert '.lee-logdetail' in CSS and 'pre-wrap' in CSS, 'the detail is not clipped'
 
-def test_the_run_log_tail_costs_nothing_while_the_pane_is_closed():
-    block = JS[JS.index('async function pollRunLogs'):]
-    block = block[:block.index('function leeDock')]
-    assert "classList.contains('dock-logs')" in block and 'return' in block
-    assert 'lee.runSeen' in block, 'and only new lines are appended'
 
 def test_a_terminal_tab_closes_itself():
     "One × in the header could only shut the active terminal; closing a background one meant."
@@ -305,11 +317,6 @@ def test_a_terminal_tab_closes_itself():
     assert 'closeTerm(b.dataset.termClose)' in block
     assert "close active terminal" not in SERVER, 'the header control is gone'
 
-def test_the_terminal_corrects_its_path_after_the_shell_reads_its_rc():
-    "`env=` alone loses to the rc file."
-    assert 'prelude' in SERVER, 'the pty takes one'
-    assert 'os.write(master, self.prelude.encode()' in SERVER, 'written after the shell starts'
-    assert 'export PATH=' in SERVER and '$PATH' in SERVER
 
 def test_the_folder_picker_is_one_box_that_completes_as_you_type():
     "A path bar, a filter box, a list and an up button were four controls for one question."
@@ -388,13 +395,6 @@ def test_terminals_report_the_key_each_pty_is_filed_under(tmp_path):
         terms.close_all()
     assert terms.states() == [], 'and closing takes the process with it'
 
-def test_the_shell_is_a_login_shell_unless_told_otherwise():
-    "`-l` is what makes an IDE terminal behave like the one in the dock."
-    from leela.blocks.term.term import default_shell, shell_argv
-    assert shell_argv('/opt/homebrew/bin/fish') == ['/opt/homebrew/bin/fish', '-l']
-    assert shell_argv('/bin/bash', login=False) == ['/bin/bash']
-    assert shell_argv('/bin/bash', ['-i', '-c', 'true']) == ['/bin/bash', '-i', '-c', 'true']
-    assert shell_argv('', (), True) == [default_shell(), '-l'], 'empty means $SHELL'
 
 def test_an_external_terminal_is_offered_only_when_one_is_installed(tmp_path, monkeypatch):
     "xterm.js cannot be attached to a running terminal, so the honest offer is to launch one."
@@ -407,13 +407,6 @@ def test_an_external_terminal_is_offered_only_when_one_is_installed(tmp_path, mo
     monkeypatch.setattr(T, 'EXTERNAL_TERMINALS', (('NoSuchTerminal', 'no-such-terminal'),))
     assert T.external_terminal_argv(tmp_path) is None, 'no terminal, no button'
 
-def test_the_external_terminal_button_is_offered_only_when_one_exists():
-    "Hidden until the server says it found a terminal, so it never fails when pressed."
-    assert "id='termexternal'" in SERVER and 'leeExternalTerm()' in SERVER
-    block = JS[JS.index('async function leeExternalTerm'):JS.index('function leeNewTerm')]
-    assert "post('/term/external')" in block
-    open_block = JS[JS.index('async function openTerm'):JS.index('async function openReleaseTerm')]
-    assert "external.hidden = !(d.external || []).length" in open_block
 
 def test_opening_a_terminal_really_builds_its_argv_from_the_settings(tmp_path):
     "Actually open the pty, because nothing else here does."
@@ -592,16 +585,19 @@ def test_an_open_file_always_gives_the_picker_something_to_offer(tmp_path):
     assert got.name == 'train' and got.cmd.endswith('train.py') and got.watch == 'train'
     assert r.runs == [], 'an inferred configuration is offered, not saved'
 
-def test_a_command_line_is_split_like_a_shell():
+def test_a_run_configuration_becomes_a_watched_process():
     assert split_cmd('uvicorn app:app --port 8000') == ['uvicorn', 'app:app', '--port', '8000']
     assert split_cmd(['python', '-m', 'x']) == ['python', '-m', 'x']
-
-def test_the_watched_module_is_inferred_from_the_command():
-    "`uvicorn app:app` is about `app`, not about uvicorn."
     assert infer_watch(['uvicorn', 'app:app', '--port', '8000']) == 'app'
     assert infer_watch(['gunicorn', '-w', '4', 'server:application']) == 'server'
     assert infer_watch(['python', 'train.py']) == 'train'
     assert infer_watch(['pytest', '-x']) == ''
+    assert DevServers.key('uvicorn app:app --port 8000') != DevServers.key('uvicorn app:app --port 8001')
+    assert DevServers.key('./x.py') == DevServers.key(str(Path('x.py').resolve()))
+    with pytest.raises(SystemExit) as e: run_command(['definitely-not-installed', '--x'])
+    assert 'cannot run' in str(e.value)
+
+
 
 def test_the_child_command_carries_the_watch_and_the_argv(tmp_path):
     s = DevServer(script='uvicorn api:app --port 8123', cwd=str(tmp_path), port=9100)
@@ -619,10 +615,6 @@ def test_a_plain_script_still_runs_the_way_it_always_did(tmp_path):
     assert s._cmd()[-1] == str(p)
     assert s._cwd() == str(tmp_path)
 
-def test_two_commands_are_two_servers_but_one_script_is_one():
-    "A path is resolved so the same file opened two ways is one server; a command line is itself."
-    assert DevServers.key('uvicorn app:app --port 8000') != DevServers.key('uvicorn app:app --port 8001')
-    assert DevServers.key('./x.py') == DevServers.key(str(Path('x.py').resolve()))
 
 def test_a_command_runs_in_this_process(tmp_path, monkeypatch, capsys):
     "The whole point: the command runs *here*, where the inspector is."
@@ -639,10 +631,6 @@ def test_a_module_runs_with_runpy(tmp_path, monkeypatch, capsys):
     run_command(['python', '-m', 'mymod'])
     assert 'module ran' in capsys.readouterr().out
 
-def test_an_unresolvable_command_says_so_rather_than_forking():
-    "Silently running it in a subprocess would look like the feature working and show nothing."
-    with pytest.raises(SystemExit) as e: run_command(['definitely-not-installed', '--x'])
-    assert 'cannot run' in str(e.value)
 
 def test_the_env_list_covers_kernels_and_anything_that_registered(ws, monkeypatch):
     "A notebook kernel, an app leela started, and a process that called serve() are all envs."
@@ -830,50 +818,41 @@ def test_install_prefers_uv_when_the_project_venv_has_no_pip(monkeypatch, tmp_pa
     assert calls[0][:5] == ['/usr/local/bin/uv', 'pip', 'install', '--python', str(python.absolute())]
     assert 'ipykernel>=7.3.0' in calls[0] and 'ipymini>=0.0.1' in calls[0]
 
-def test_real_leela_environment_contains_both_kernel_launchers():
+def test_the_environment_leela_wires_up_actually_imports():
+    from inspect import signature
     state = support.kernel_support(__import__('sys').executable)
     assert state['ipykernel']['available'], state
     assert state['ipymini']['available'], state
-
-def test_leela_can_import_everything_it_wires_up():
-    "Every dhrishti name leela reaches for, in one place."
     for name in ('reg_dir', 'active', 'serve', 'serve_in_kernel', 'watch', 'set_kernel_backend'):
         assert callable(getattr(ds, name)), name
-
-def test_the_kernel_bootstrap_keywords_still_exist():
-    "The bootstrap passes these by keyword; dropping one would be a TypeError inside a kernel."
-    from inspect import signature
     params = signature(ds.serve_in_kernel).parameters
     assert {'name', 'port', 'agent', 'token', 'session_dir', 'agent_session_dir'} <= set(params)
 
-def test_the_profiles_and_sorts_the_frontend_offers():
-    "web/app.py renders these as the panel's profile and sort pickers."
+
+
+
+def test_the_variable_tree_expands_values_and_survives_bad_reprs():
     assert list(PROFILES) == ['minimal', 'standard', 'full']
     assert {'name', 'recent', 'type', 'size'} <= set(SORTS)
-
-def test_a_row_carries_the_fields_the_panel_draws():
     v = var_info('n', 42, ('n',), 'n')
     assert (v.name, v.type, v.value) == ('n', 'int', '42')
     df = var_info('df', pd.DataFrame({'a': [1, 2], 'b': [3, 4]}), ('df',), 'df')
     assert df.shape == '(2, 2)' and df.is_container
-
-def test_value_str_survives_an_object_that_raises_in_repr():
-    "A broken __repr__ is the user's bug, not a reason for the whole panel to go blank."
     class Boom:
         def __repr__(self): raise RuntimeError('nope')
     assert isinstance(value_str(Boom()), str)
-
-def test_expanding_reaches_keys_columns_and_cells():
     ns = {'d': {'a': 1}, 'df': pd.DataFrame({'revenue': [1, 2, 3]}), 'arr': np.arange(6).reshape(2, 3)}
     assert "'a'" in {c.name for c in expand(ns, ('d',))}
     assert 'revenue' in {c.name for c in expand(ns, ('df',))}
     assert grid_page(ns, ('df',))['nrows'] == 3
     assert grid_page(ns, ('arr',))['nrows'] == 2
     assert grid_page(ns, ('d',)) is None
-
-def test_expanding_something_that_is_not_there_does_not_raise():
-    "The IDE can ask about a name a cell has since deleted; that must not take the panel down."
     assert expand({'x': 1}, ('nope',)) is not None
+
+
+
+
+
 
 def test_the_result_lens_keeps_an_expandable_accessor():
     "leela's result panel expands from `_`; the accessor has to survive the round trip."
@@ -884,32 +863,29 @@ def test_the_result_lens_keeps_an_expandable_accessor():
     assert first.path == '_[0]' and first.is_container
     assert bridge.expand(first.accessor)[0].path == "_[0]['path']"
 
-def test_setting_a_value_writes_into_the_namespace():
+def test_an_agent_write_shadows_rather_than_rebinds():
     ns = {'n': 1}
     assert Bridge(NsClient(ns)).set_value(('n',), '99') is None
     assert ns['n'] == 99
     assert Bridge(NsClient(ns)).set_value(('n',), 'this is not python') is not None
-
-def test_an_agent_write_shadows_instead_of_rebinding():
-    "The agent's assignment succeeds, but lands in its own layer."
     owner = {'x': 1}
     s = AgentSession(owner=lambda: owner, log=False)
     assert s.run('x = 999').ok
     assert owner['x'] == 1, "the owner's binding must survive whatever the agent does"
     assert s.layer['x'] == 999, 'the agent should see its own value'
-
-def test_the_agent_cannot_delete_or_mutate_an_owner_name():
     owner = {'x': 1, 'xs': [1, 2]}
     s = AgentSession(owner=lambda: owner, log=False)
     s.run('del x')
     assert 'x' in owner
     assert s.run('xs.append(3)').error.startswith('blocked:')
     assert owner['xs'] == [1, 2]
-
-def test_the_isolated_scope_discards_what_it_wrote():
     s = AgentSession(owner=lambda: {'x': 1}, log=False)
     s.run('z = 5', scope='isolated')
     assert 'z' not in s.layer
+
+
+
+
 
 def test_leela_can_redirect_both_transcript_streams(tmp_path):
     "What the kernel bootstrap and `leela-dev` pass as session_dir/agent_session_dir."

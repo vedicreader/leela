@@ -6,46 +6,42 @@ import pytest
 
 from leela.blocks.runtime.kernels import Kernel, KernelPool, _spec, bootstrap_src, ipymini_available, output_text
 
-def test_spec_ipykernel_default():
+def test_the_kernel_spec_and_bootstrap_follow_the_chosen_launcher():
+    import dhrishti
+    from leela import cli
     s = _spec()
     assert s.argv == [sys.executable, '-m', 'ipykernel_launcher', '-f', '{connection_file}']
     assert s.metadata['supported_encryption'] == 'curve'
-
-def test_spec_ipymini_argv():
     s = _spec(kernel='ipymini')
     assert s.argv == [sys.executable, '-Xfrozen_modules=off', '-m', 'ipymini', '-f', '{connection_file}']
-
-def test_bootstrap_src_carries_ipymini_flag():
-    "ipymini bootstrap stashes _kernel_backend on the inspect server."
     assert '_kernel_backend' in bootstrap_src(kernel='ipymini')
     assert "'True'" in bootstrap_src(kernel='ipymini') or 'True' in bootstrap_src(kernel='ipymini')
     src = bootstrap_src(kernel='ipykernel')
     assert 'False' in src
-
-def test_bootstrap_pins_leelas_dhrishti_even_when_the_project_has_an_older_copy():
-    import dhrishti
     src = bootstrap_src()
     assert str(__import__('pathlib').Path(dhrishti.__file__).resolve()) in src
     assert "spec_from_file_location('dhrishti'" in src
     assert "del sys.modules[_n]" in src
-
-def test_kernel_kind_default_ipykernel():
     k = Kernel()
     assert k.kernel_kind == 'ipykernel'
-
-def test_kernel_kind_ipymini_selected():
     if not ipymini_available(): pytest.skip('ipymini not installed')
     k = Kernel(kernel='ipymini')
     assert k.kernel_kind == 'ipymini'
-
-def test_ipymini_debugging_is_explicitly_refused():
     k = Kernel(); k.kernel = 'ipymini'
     with pytest.raises(RuntimeError, match='requires an ipykernel'):
         asyncio.run(k.debug_request('initialize'))
-
-def test_unknown_kernel_falls_back():
     k = Kernel(kernel='definitely-not-a-kernel')
     assert k.kernel_kind == 'ipykernel'
+    with pytest.raises(SystemExit):
+        cli.main(['--kernel', 'nonesuch'])
+
+
+
+
+
+
+
+
 
 def test_pool_default_kernel_forwarded(monkeypatch):
     "KernelPool.default_kernel is what Kernel() gets when the caller doesn't say."
@@ -58,10 +54,26 @@ def test_pool_default_kernel_forwarded(monkeypatch):
     asyncio.new_event_loop().run_until_complete(pool.get('k'))
     assert seen['kernel'] == 'ipymini'
 
-def test_markdown_is_the_plain_text_fallback_for_terminal_surfaces():
+def test_a_pool_and_its_workspace_stay_usable_around_a_bad_kernel():
+    from leela.workspace import Workspace
     outs = [{'output_type': 'display_data', 'data': {
         'text/markdown': '**rendered**', 'text/plain': '<IPython.display.Markdown object>'}}]
     assert output_text(outs) == '**rendered**'
+    class Manager:
+        has_kernel = True
+    kernel = Kernel()
+    kernel.km = Manager()
+    assert not kernel.alive
+    assert asyncio.run(Kernel().stop()) == {
+        'ok': False, 'forced': False, 'note': 'nothing is running'}
+    pool = KernelPool(default_kernel='bogus')
+    assert pool.default_kernel == 'ipykernel'
+    ws = Workspace(kernel='ipymini')
+    assert ws.kernel_kind == 'ipymini'
+    assert callable(ws.kernel)
+    assert ws.pool.default_kernel in ('ipymini', 'ipykernel')
+    assert Workspace().kernel_kind == 'ipykernel'
+
 
 def test_real_ipykernel_debugger_stops_and_exposes_locals():
     "The Jupyter Debug Protocol seam, including the control channel and unparented stop event."
@@ -209,12 +221,6 @@ def test_pool_does_not_expose_a_half_started_kernel(monkeypatch):
     first, second = asyncio.run(go())
     assert first is second and first.kc is not None
 
-def test_kernel_is_not_alive_before_its_client_exists():
-    class Manager:
-        has_kernel = True
-    kernel = Kernel()
-    kernel.km = Manager()
-    assert not kernel.alive
 
 def test_pool_peek_hides_a_kernel_until_start_is_complete(monkeypatch):
     started, finish = asyncio.Event(), asyncio.Event()
@@ -251,13 +257,7 @@ def test_stop_forces_restart_when_execution_ignores_interrupt(monkeypatch):
         assert calls == ['interrupt', 'restart'] and task.cancelled()
     asyncio.run(go())
 
-def test_stop_reports_when_nothing_is_executing():
-    assert asyncio.run(Kernel().stop()) == {
-        'ok': False, 'forced': False, 'note': 'nothing is running'}
 
-def test_pool_ignores_bad_default():
-    pool = KernelPool(default_kernel='bogus')
-    assert pool.default_kernel == 'ipykernel'
 
 def test_fallback_when_ipymini_missing(monkeypatch):
     "Asking for ipymini when it isn't installed warns and falls back."
@@ -285,10 +285,6 @@ def test_cli_ipymini_flag(monkeypatch):
     cli.main(['--kernel', 'ipymini'])
     assert seen['kernel'] == 'ipymini'
 
-def test_cli_rejects_unknown_kernel():
-    from leela import cli
-    with pytest.raises(SystemExit):
-        cli.main(['--kernel', 'nonesuch'])
 
 def test_cli_refuses_non_loopback_bind_before_starting_server(monkeypatch):
     from leela import cli
@@ -361,15 +357,3 @@ def test_ipymini_agent_exec_runs_while_cell_sleeps(tmp_path):
         finally:
             await k.shutdown()
     _run(go())
-
-def test_workspace_kernel_stays_callable():
-    "`Workspace.kernel()` is the coroutine that hands out a tab's live kernel."
-    from leela.workspace import Workspace
-    ws = Workspace(kernel='ipymini')
-    assert ws.kernel_kind == 'ipymini'
-    assert callable(ws.kernel)
-    assert ws.pool.default_kernel in ('ipymini', 'ipykernel')
-
-def test_workspace_kernel_kind_defaults():
-    from leela.workspace import Workspace
-    assert Workspace().kernel_kind == 'ipykernel'
