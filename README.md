@@ -23,6 +23,7 @@ leela                      # open the saved browser workspace
 leela .                    # open a folder
 leela src tests            # one browser workspace with two roots
 leela --app src tests      # two independent app windows in the persistent CDP Chrome
+leela --shell webview .    # a native desktop window — what the packaged Mac/Windows app runs
 ```
 
 Workflows, releases and their credentials need gheasy and dockeasy:
@@ -37,6 +38,13 @@ kernel pool at `folder.localhost:5001`; it does not start another resident Chrom
 folder. App mode uses the shared jupygate transport by default. Use `--transport direct`
 to retain Leela's local ZMQ client, or `--transport gateway` in the browser workspace.
 Install gateway support with `pip install "leela[gateway]"`.
+
+`--app` chooses the workspace *shape*; `--shell` chooses what opens on top of it. `chrome` is
+fossick's CDP app window and the default under `--app`, `webview` is a native desktop window
+(`pip install "leela[desktop]"`), and `none` serves without opening anything. Whichever shell
+you use, the same CDP Chrome backs [the inline browser](#the-browser-inside-leela), which
+draws web pages as tabs inside the workspace. See
+[Standalone desktop builds](#standalone-desktop-builds) for the packaged Mac and Windows apps.
 
 Every browser workspace owns one `Workspace` containing its folders, tabs, and kernels.
 The planned separation for independent windows, project sessions,
@@ -62,7 +70,10 @@ The browser interaction model is documented in the [Browser workbench guide](doc
 - **Research without leaving the workspace.** Search the web, read a URL through Fossick's
   clean Markdown extraction, or build a cited digest from several sources. The Research
   workspace keeps sources beside the reader and can open the original page, save Markdown,
-  create a notebook, or carry the source list into the agent composer. Fetched and model
+  create a notebook, or carry the source list into the agent composer. "Open the original
+  page" means a tab in Leela: the persistent CDP Chrome renders it and streams it in, so the
+  page you read is the one its scripts and your logins produce. See
+  [the browser, inside Leela](#the-browser-inside-leela). Fetched and model
   Markdown cannot execute explicit raw-HTML fences; authored notebook Markdown can still use
   deliberate `{=html}` passthrough.
 - **Durable research memory.** Every page Leela reads and every source in a research brief is
@@ -494,35 +505,82 @@ them names an action that does not exist.
 
 ## Standalone desktop builds
 
-On macOS, py2app freezes Leela and its Python environment into `dist/Leela.app`. The app
-still reuses Chrome from fossick's persistent CDP profile; Chrome is not duplicated inside
-the bundle.
+Packaged, Leela is a native window with a Python server behind it and a headless Chrome
+beside it. The window is [pywebview](https://pywebview.flowrl.com/) over the platform's own
+webview — WKWebView on macOS, WebView2 on Windows — pointed at the loopback server on a port
+chosen at launch. Chrome is not in the bundle: `--app` and the inline browser both drive the
+persistent CDP profile fossick already keeps in `~/.cache/fastcdp`, so it is the copy of
+Chrome the machine has, with the logins it has.
+
+![The packaged app](docs/screenshots/desktop-window.png)
+
+That arrangement is what makes the next section possible. The window is the application, so
+Chrome is free to be a *renderer* Leela draws into its own tabs rather than a second
+application to switch to.
 
 ```sh
 uv sync --extra gateway --extra macapp --group test
-python setup_app.py
-python tools/build_release.py       # dist/Leela.app + dist/Leela-macOS.dmg
+python setup_app.py                 # dist/Leela.app
+python tools/build_release.py       # + dist/Leela-macOS.dmg
 open dist/Leela.app
 ```
 
-`setup_app.py` automatically creates a framework-Python build environment when the active
-Python is uv's standalone distribution, because py2app requires stdlib extension modules
-such as `zlib` to exist as files. The resulting app has been launched against its real HTTP
-workspace endpoint.
+`setup_app.py --check` says what it would do before it does it. On macOS it creates a
+framework-Python build environment when the active interpreter is uv's standalone
+distribution, because py2app copies stdlib extension modules such as `zlib` out of the
+running Python as files, and a standalone build has them linked in.
 
-Windows uses py2exe's current `freeze`/build implementation through the isolated setup:
+Windows uses py2exe's `freeze` through the same driver, and produces a folder rather than a
+single file:
 
 ```powershell
 uv sync --extra gateway --extra windows --group test
-python setup_app.py
+python setup_app.py                 # dist\Leela\Leela.exe
+python tools\build_release.py       # + dist\Leela-Windows.zip
 ```
 
-The platform-specific definitions are in `packaging/macos/setup.py` and
-`packaging/windows/setup.py`. Both use the same geometric Leela mark from
-`packaging/assets`; macOS receives an ICNS and Windows an ICO with executable metadata.
-`.github/workflows/desktop-artifacts.yml` builds and uploads the DMG and zipped Windows EXE
-on version tags or manual dispatch. Set `LEELA_CODESIGN_IDENTITY` for Developer ID signing;
-notarization credentials remain a release-environment concern and are never stored here.
+The platform definitions are `packaging/macos/setup.py` and `packaging/windows/setup.py`,
+both using the geometric Leela mark from `packaging/assets` — an ICNS for macOS, an ICO with
+executable metadata for Windows. `leela_app.py` is the script they freeze: it picks a free
+port, starts the ordinary `leela --app` server on a daemon thread, and gives the main thread
+to the window, which is not a style choice but the only order Cocoa allows.
+
+`tests/test_packaging.py` checks the parts of this that a green build would not: that the
+asset walk reaches `vendor/fonts/`, that the plist carries the
+`NSAllowsLocalNetworking` exemption without which WKWebView refuses the loopback URL, and
+that Windows keeps modules as files so a kernel subprocess can import them.
+`.github/workflows/desktop-artifacts.yml` builds both on version tags or manual dispatch,
+runs that file against the built artefact, and uploads the DMG and the zip. Set
+`LEELA_CODESIGN_IDENTITY` for Developer ID signing; notarization credentials remain a
+release-environment concern and are never stored here.
+
+You do not need a build to use the window. From a checkout:
+
+```sh
+uv sync --extra desktop
+leela --shell webview .
+```
+
+## The browser, inside Leela
+
+A page opens as a tab. Chrome renders it offscreen in the persistent CDP profile, streams
+frames into a canvas over `/browser/ws`, and mouse and keyboard go back the other way — so a
+result from Research is a tab beside the notebook, using the sessions fossick is already
+signed in to.
+
+![A live page in a Leela tab](docs/screenshots/desktop-window-browser.png)
+
+- **`alt+shift+o`** opens an address. **Tools → Pages open in the browser…** adopts one Chrome
+  already has, whether Leela opened it or fossick did.
+- **read** lifts the page to Markdown through the same `fossick.to_md` research uses — but from
+  the DOM *after* the scripts ran and after the login, which is the case a plain fetch cannot
+  reach. **remember** files it in the vault as an ordinary source.
+- Nothing renders web content in Leela's process: Chrome renders, Leela draws JPEG frames.
+  Every navigation goes through `fossick.check_url`, so the browser cannot be pointed back at
+  Leela's own unauthenticated loopback server unless `FOSSICK_ALLOW_PRIVATE` says so.
+
+The panel keeps the keyboard the way the terminal does — a page's own `j`, `/` and `?` reach
+the page, and only the chords that get you back out are still Leela's.
 
 ## Develop
 
