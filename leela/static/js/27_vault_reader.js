@@ -30,11 +30,16 @@ async function mountVault(host, st) {
   catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; return; }
 
   const doc = d.doc || {}, sections = d.sections || [];
+  const src = String(doc.source || '');
+  const mdBase = /^(https?:|memory:|pointer:)/.test(src) || !src ? '' : src.slice(0, src.lastIndexOf('/'));
   host.innerHTML = `<div class="lee-vault-reader">` +
     `<aside class="lee-vault-toc"><div class="lee-phead"><span class="lee-ptitle">${esc(doc.title || st.title)}</span>` +
     `<span class="lee-keyscope">${esc(doc.kind || 'document')} · ${esc(st.shelf || 'store')}</span></div>` +
     `<div class="lee-vault-sections">${vaultSectionRows(sections, '')}</div></aside>` +
-    `<div class="lee-vault-body">${vaultPrivacy(d)}<article class="lee-vault-text" data-markdown=""></article></div></div>`;
+    // `data-md-base` is the folder the document was clipped from, so figures written relative
+    // to it resolve. A document that was never a file has no base and keeps its links as written.
+    `<div class="lee-vault-body"${mdBase ? ` data-md-base="${esc(mdBase)}"` : ''}>${vaultPrivacy(d)}` +
+    `<article class="lee-vault-text" data-markdown=""></article></div></div>`;
 
   const body = $('.lee-vault-text', host);
   const show = async node => {
@@ -58,6 +63,28 @@ async function mountVault(host, st) {
   };
 }
 window.mountVault = mountVault;
+
+/* The document in the vault is a copy; this opens the thing it was copied from. Editing happens
+   there, because a file on disk is something leela already knows how to edit, and writing back
+   into the vault would mean deciding what becomes of its nodes, embeddings and content address. */
+async function leeOpenVaultFile(doc, shelf = '', vault = '') {
+  let d;
+  try { d = await api('/vault/source?' + new URLSearchParams({doc, shelf, vault})); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  if (d.kind === 'url') return status('this was clipped from the web, not from a file', 'err');
+  if (d.kind !== 'file') return status('this document was never a file', 'err');
+  if (!d.exists) return status(`${d.path} is no longer there`, 'err');
+  // The fs sandbox refuses paths outside an open folder, and that refusal is the thing every
+  // other path in leela is checked against. So ask rather than reach around it.
+  if (!d.inside_workspace) {
+    if (!await confirmDialog('open folder', `${d.parent} is not open in this workspace.\n\nAdd it as a folder?`, 'add'))
+      return;
+    try { await post('/fs/add-root', {path: d.parent}); await refreshFileTree(d.parent); }
+    catch (e) { return status(e.message || String(e), 'err'); }
+  }
+  return leeOpenFile(d.path);
+}
+window.leeOpenVaultFile = leeOpenVaultFile;
 
 async function leeOpenVaultDoc(doc, shelf = '', vault = '', title = '') {
   await htmx.ajax('POST', '/vault/open?' + new URLSearchParams({doc, shelf, vault, title}),

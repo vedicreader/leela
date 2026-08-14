@@ -10,14 +10,16 @@ threads and a SQLite file, so it lives beside the kernel pool rather than being 
 
 from __future__ import annotations
 
-import json
+import json, re
 from urllib.parse import urlencode
 
+from fastcore.all import Path
 from fasthtml.common import Button, Details, Div, Form, Hidden, Input, Option, Pre, Progress, Section, Select, Span, Summary
 
 from ... import errstr
 from ..tabs.ui import tab_bar
 from ...core.web import fail, off_loop
+from ..memory.memory import source_kind
 from ..memory.vaults import ACCESS
 
 __all__ = ['CAPS', 'connect', 'job_card', 'pii_badge', 'vault_panel']
@@ -48,6 +50,9 @@ def job_card(job):
         body.append(Span(d['error'], cls='lee-job-error'))
         body.append(Form(Button('retry', cls='lee-btn'), hx_post=f"/jobs/{d['id']}/retry",
             hx_target='closest .lee-job', hx_swap='outerHTML'))
+        # A failed job could only be retried, so a clone typed wrong sat in the panel for good.
+        body.append(Form(Button('dismiss', cls='lee-btn'), hx_post=f"/jobs/{d['id']}/forget",
+            hx_target='closest .lee-job', hx_swap='delete'))
     result = d['result'] if isinstance(d['result'], dict) else {}
     if pii := result.get('pii'): body.append(_clip_pii_badge(pii))
     if d['result']: body.append(Details(Summary('details'), Pre(_summarise(d['result']), cls='lee-job-result')))
@@ -94,12 +99,6 @@ def _clip_form(target, kind, label, hint):
     return Form(Input(name='target', cls='lee-input', value=target or '', placeholder=hint, autocomplete='off'),
         Hidden(name='kind', value=kind), Button(label, cls='lee-btn go', type='submit'),
         cls='lee-clip-form', hx_post='/clip', hx_target='#vaultjobs', hx_swap='afterbegin')
-
-
-def _shelf_rows(shelves, mine):
-    if not shelves: return [Div('No shelf yet. Clip something and it appears here.', cls='lee-vault-empty')]
-    return [Div(Span(s.get('store', ''), cls='lee-shelf-name' + (' mine' if s.get('store') == mine else '')),
-        Span(f"{s.get('docs', 0)} docs", cls='lee-shelf-count'), cls='lee-shelf-row') for s in shelves]
 
 
 def _watch_row(w):
@@ -158,13 +157,18 @@ def _tidy_list(memory, shelf='', k=20):
 def _js(*args): return ', '.join(json.dumps(str(a or '')) for a in args)
 
 
-def _doc_row(d, vault=''):
+def _doc_row(d, vault='', depth=0):
     "One document, opening the reader tab. `onclick`, because the tab is mounted by the client."
     doc, shelf = d.get('doc_id') or d.get('id'), d.get('shelf', '')
+    # The file button is rendered only for a document that came from one: a web clip has no file,
+    # and a control that cannot work is worse than no control.
+    filed = source_kind(d.get('source')) == 'file'
     return Div(Button(d.get('title') or doc, cls='lee-vault-doc',
             onclick=f'leeOpenVaultDoc({_js(doc, shelf, vault, d.get("title"))})'),
+        *([Button('file', cls='lee-vault-openfile', title=str(d.get('source') or ''),
+                  onclick=f'leeOpenVaultFile({_js(doc, shelf, vault)})')] if filed else []),
         Span(d.get('kind') or '', cls='lee-shelf-count'), Span(shelf, cls='lee-shelf-count'),
-        cls='lee-vault-docrow')
+        style=f'--depth:{depth}', cls='lee-vault-docrow')
 
 
 def _hit_row(h, vault=''):
@@ -184,7 +188,118 @@ def vault_docs(memory, q='', vault='', shelf='', limit=60):
     return Div(*body, id='vaultdocs', cls='lee-vault-docs')
 
 
-def vault_browse(memory, q='', vault='', shelf='', limit=60):
+def _group_of(row):
+    "Which top-level group a document belongs under, and the path it occupies inside it."
+    src = str(row.get('source') or '')
+    kind = source_kind(src)
+    if kind == 'file': return 'files', src
+    # A web clip has no folder, but it does have a domain, which is the only grouping a pile of
+    # saved pages has ever wanted. Everything else lands flat under `notes`.
+    if kind == 'url':
+        rest = src.split('://', 1)[-1]
+        return 'web', rest
+    return 'notes', str(row.get('title') or row.get('doc_id') or '')
+
+
+def _strip_prefix(paths):
+    "The common leading folders shared by every path, which are chrome rather than structure."
+    parts = [p.split('/') for p in paths]
+    if not parts: return 0
+    # `- 1` so the last segment, the filename, is never eaten: one document must not collapse
+    # to nothing, and two files in one folder still keep that folder.
+    common = 0
+    for seg in zip(*[p[:-1] for p in parts]):
+        if len(set(seg)) != 1: break
+        common += 1
+    return common
+
+
+def _placed(memory, shelf='', limit=2000):
+    """Every document keyed by where it sits: `<shelf>/[<group>/]<folders...>/<leaf>`.
+
+    The shelf is the top level because it is the division the vault actually has, and the one
+    the panel already counts documents by. `files`/`web`/`notes` sit under it and are named only
+    when a shelf holds more than one of them: a shelf of clipped files should show its folders,
+    not the word `files` wrapped around them.
+    """
+    rows = memory.all_documents(limit=limit, shelves=[shelf] if shelf else None)
+    by_shelf = {}
+    for r in rows: by_shelf.setdefault(str(r.get('shelf') or 'main'), []).append(r)
+    out = []
+    for name, items in sorted(by_shelf.items()):
+        groups = {}
+        for r in items:
+            group, path = _group_of(r)
+            # Stripped here and nowhere else: measuring the common prefix on the raw path and
+            # then cutting the stripped one is off by the leading empty segment, which silently
+            # ate a real folder off the front of every key.
+            groups.setdefault(group, []).append((r, path.strip('/')))
+        solo = len(groups) == 1
+        for group, gi in groups.items():
+            # Only real folders are worth collapsing. A domain is already the top of its own
+            # path, and a note has no path at all.
+            cut = _strip_prefix([p for _, p in gi]) if group == 'files' else 0
+            for r, path in gi:
+                rest = '/'.join(path.split('/')[cut:])
+                out.append((f'{name}/' + ('' if solo else f'{group}/') + rest, r))
+    return out
+
+
+def _nest(placed):
+    "The flat keys as a tree of `{name: subtree}` with documents at the leaves."
+    root = {}
+    for key, r in placed:
+        parts = key.split('/')
+        node = root
+        for part in parts[:-1]: node = node.setdefault(part, {})
+        node.setdefault('', []).append((parts[-1], r))
+    return root
+
+
+def _tree_rows(node, vault, at='', open_folders=(), depth=0, elid='vaultbrowse', notes=None):
+    """One subtree, descending only into folders that are open.
+
+    Closed folders cost one row each however much is under them, so the whole tree is rendered
+    every time without the size of the vault deciding how much work that is.
+    """
+    out = []
+    for name in sorted(k for k in node if k != ''):
+        path = f'{at}/{name}'.strip('/')
+        opened = path in open_folders
+        nxt = tuple(x for x in open_folders if x != path) if opened else (*open_folders, path)
+        out.append(Button(Span('▾' if opened else '▸', cls='lee-vault-caret'), Span(name),
+            # A shelf says how much is in it before you open it; a folder does not need to.
+            *([Span((notes or {}).get(name, ''), cls='lee-shelf-count')] if depth == 0 and notes else []),
+            cls='lee-vault-folder' + (' shelf' if depth == 0 else ''), style=f'--depth:{depth}',
+            aria_expanded=str(opened).lower(),
+            hx_get='/vault/tree', hx_target=f'#{elid}tree', hx_swap='outerHTML',
+            hx_vals=json.dumps({'vault': vault, 'open': '|'.join(nxt), 'elid': elid})))
+        if opened: out += _tree_rows(node[name], vault, path, open_folders, depth + 1, elid, notes)
+    for _, r in sorted(node.get('', []), key=lambda x: x[0].lower()):
+        out.append(_doc_row(r, vault, depth))
+    return out
+
+
+def vault_tree(memory, vault='', shelf='', open_folders=None, limit=2000, elid='vaultbrowse'):
+    """The vault as a tree you can walk, with `open_folders` deciding how far it is unfolded.
+
+    `None` means nobody has said yet, and opens the top-level groups: a vault whose first screen
+    is the single word `files` has answered no question anybody had. An empty tuple is a real
+    answer -- everything collapsed, because that is what you asked for.
+    """
+    placed = _placed(memory, shelf, limit)
+    node = _nest(placed)
+    counts = {}
+    for key, _ in placed: counts[key.split('/')[0]] = counts.get(key.split('/')[0], 0) + 1
+    notes = {k: f"{n} doc{'' if n == 1 else 's'}" for k, n in counts.items()}
+    if open_folders is None: open_folders = tuple(k for k in node if k != '')
+    rows = _tree_rows(node, vault, '', tuple(open_folders), 0, elid, notes)
+    return Div(*(rows or [Div('Nothing here yet. Clip a document, or attach a vault.',
+                              cls='lee-vault-empty')]),
+               id=f'{elid}tree', cls='lee-vault-tree')
+
+
+def vault_browse(memory, q='', vault='', shelf='', limit=60, open_folders=None, elid='vaultbrowse'):
     """The browse block: which vault is open, a search box scoped to it, and the rows.
 
     The form comes back with the fragment carrying the vault it was rendered for, so searching
@@ -193,11 +308,16 @@ def vault_browse(memory, q='', vault='', shelf='', limit=60):
     """
     return Div(Span(f'documents · {vault}' if vault else 'documents', cls='lee-vault-legend'),
         Form(Hidden(name='vault', value=vault), Hidden(name='shelf', value=shelf),
+            Hidden(name='open', value='|'.join(open_folders) if open_folders is not None else ''),
+            Hidden(name='elid', value=elid),
             Input(name='q', value=q, cls='lee-input', placeholder='search this vault…', autocomplete='off'),
             Button('search', cls='lee-btn go', type='submit'), cls='lee-clip-form',
-            hx_get='/vault/browse', hx_target='#vaultbrowse', hx_swap='outerHTML'),
-        vault_docs(memory, q, vault, shelf, limit),
-        id='vaultbrowse', cls='lee-vault-browse')
+            hx_get='/vault/browse', hx_target=f'#{elid}', hx_swap='outerHTML'),
+        # Two views of one panel: a query answers with hits, and clearing it returns the tree.
+        # A flat list is the right shape for "what matched" and the wrong one for "what is here".
+        vault_docs(memory, q, vault, shelf, limit) if q.strip()
+            else vault_tree(memory, vault, shelf, open_folders, elid=elid),
+        id=elid, cls='lee-vault-browse')
 
 
 def _vault_row(r):
@@ -234,9 +354,16 @@ def vault_panel(memory, jobs, active_path='', root='', vaults=None):
     Server-rendered so the browser needs no state of its own -- every action is a form, and the
     job cards that come back carry their own polling.
     """
-    shelves, mine = memory.shelves(), (memory.shelf_name or 'main')
+    # The shelves are not listed separately any more: they are the top level of the document
+    # tree, with their counts on them. Two lists of the same thing, one of them directly under
+    # the vaults and unlabelled, is what made shelves read as vaults.
     return Section(
-        Div(Span('vault', cls='lee-ptitle'), Span(memory.note or '', cls='lee-keyscope'), cls='lee-phead'),
+        Div(Span('vault', cls='lee-ptitle'), Span(memory.note or '', cls='lee-keyscope'),
+            Span(cls='lee-spacer'),
+            # The research space reads and writes the same vault, so it belongs on this panel
+            # rather than only behind a keybinding.
+            Button('research', cls='lee-btn', title='search the web and keep what you find here',
+                   onclick='leeAct("research")'), cls='lee-phead'),
         Div(Span('vaults', cls='lee-vault-legend'),
             *[_vault_row(r) for r in (vaults or {}).get('vaults', [])],
             Form(Input(name='path', cls='lee-input', placeholder='path to a vault.db, or a folder for a new one'),
@@ -244,8 +371,11 @@ def vault_panel(memory, jobs, active_path='', root='', vaults=None):
                 Button('attach', cls='lee-btn', type='submit', formaction='/vault/attach'),
                 Button('create', cls='lee-btn go', type='submit', formaction='/vault/create'),
                 cls='lee-clip-form', hx_post='/vault/attach', hx_target='#vaultpanel', hx_swap='none'),
+            # Typing an absolute path from memory is not a way to find anything.
+            Button('find vaults', cls='lee-btn lee-vault-find', hx_get='/vault/find',
+                   hx_target='#vaultfound', hx_swap='outerHTML'),
+            Div(id='vaultfound', cls='lee-vault-found-rows'),
             cls='lee-vault-vaults'),
-        Div(*_shelf_rows(shelves, mine), id='vaultshelves', cls='lee-vault-shelves'),
         # Asked for once the panel is up rather than rendered with it: the document list is a
         # query, and `vault_browse` returns the search box along with it.
         Div(id='vaultbrowse', cls='lee-vault-browse', hx_get='/vault/browse',
@@ -270,6 +400,10 @@ def vault_panel(memory, jobs, active_path='', root='', vaults=None):
         Div(Span('tidy', cls='lee-vault-legend'),
             Button('review', cls='lee-btn', title='what the vault thinks dilutes search',
                 hx_get='/vault/tidy/list', hx_target='#vaulttidy', hx_swap='outerHTML'),
+            # The sweep also runs on a cadence; this is for when you know you just changed
+            # something and do not want to wait for it.
+            Button('re-index changed', cls='lee-btn', title='re-read clipped files that changed on disk',
+                hx_post='/vault/reindex', hx_target='#vaulttidy', hx_swap='outerHTML'),
             Div(id='vaulttidy', cls='lee-vault-tidyrows'),
             cls='lee-vault-tidy'),
         cls='lee-panel lee-vault', id='vaultpanel')
@@ -289,6 +423,11 @@ def connect(app, ctx):
     @rt('/jobs/{jid}')
     def job_one(jid: str):
         try: return job_card(ctx.jobs.get(jid))
+        except Exception as e: return fail(e)
+
+    @rt('/jobs/{jid}/forget')
+    def job_forget(jid: str):
+        try: return {'ok': True, 'id': ctx.jobs.forget(jid).id}
         except Exception as e: return fail(e)
 
     @rt('/jobs/{jid}/retry')
@@ -339,6 +478,17 @@ def connect(app, ctx):
     def tidy(shelf: str = '', k: int = 20):
         "The same ranking as a job, for a shelf big enough that scoring it is not a request."
         try: return job_card(ctx.jobs.start('tidy', shelf or '', shelf=shelf or None, k=k))
+        except Exception as e: return fail(e)
+
+    @rt('/vault/reindex')
+    async def vault_reindex(shelf: str = ''):
+        "Re-read clipped files that changed on disk, now rather than at the next sweep."
+        try:
+            r = await off_loop(ctx.memory.reindex_changed, [shelf] if shelf else None)
+            said = (f"re-indexed {r['reindexed']} of {r['checked']} filed documents" +
+                    (f" · {len(r['missing'])} missing" if r['missing'] else '') +
+                    (f" · {len(r['failed'])} failed" if r['failed'] else ''))
+            return Div(Div(said, cls='lee-vault-empty'), id='vaulttidy', cls='lee-vault-tidyrows')
         except Exception as e: return fail(e)
 
     @rt('/vault/tidy/list')
@@ -396,6 +546,18 @@ def connect(app, ctx):
     def _mem(vault=''):
         "The `Memory` for a named vault, defaulting to the active one."
         return ctx.vaults.memory(vault or None)
+
+    def _elid(spec):
+        "The caller's element id, kept to word characters: it is written into an id and a selector."
+        return re.sub(r'[^A-Za-z0-9_-]', '', str(spec or ''))[:40] or 'vaultbrowse'
+
+    def _open(spec):
+        """The open folders, as sent: `a|a/b|web`. Pipe-separated because `/` is in the paths.
+
+        `None` is not the same as empty: absent means nobody has chosen and the tree picks a
+        sensible default, while empty means every folder was deliberately closed.
+        """
+        return None if spec is None else tuple(x for x in str(spec).split('|') if x)
 
     def _writable(vault='', who='you'):
         "Refuse a write to a vault attached read-only, rather than doing it and reporting success."
@@ -520,8 +682,56 @@ def connect(app, ctx):
             return tab_bar(ctx.session)
         except Exception as e: return fail(e)
 
+    @rt('/vault/find')
+    async def vault_find():
+        """Vault files on this machine, so attaching one is a pick rather than a typed path.
+
+        Only the places a vault is actually kept, one level deep: a scan of the home directory
+        would be slow and would surface every unrelated SQLite file on the disk.
+        """
+        try:
+            seen = {r['path'] for r in ctx.vaults.dict().get('vaults', [])}
+            found, roots = [], [Path('~/.vishalakshi').expanduser(), Path('~/.leela').expanduser(),
+                                *[Path(r) for r in ctx.fs.roots]]
+            for root in roots:
+                if not root.is_dir(): continue
+                for p in sorted(root.glob('*.db')) + sorted(root.glob('*/vault.db')):
+                    if str(p) in seen or not p.is_file(): continue
+                    found.append({'path': str(p), 'name': p.parent.name if p.name == 'vault.db' else p.stem,
+                                  'bytes': p.stat().st_size})
+            return Div(*([Button(f"{f['name']} · {round(f['bytes'] / 1024)}kb", cls='lee-vault-found',
+                                 title=f['path'], hx_post='/vault/attach', hx_target='#vaultpanel',
+                                 hx_swap='none', hx_vals=json.dumps({'path': f['path'], 'name': f['name']}))
+                          for f in found] or [Span('no unattached vaults found', cls='lee-dim')]),
+                       id='vaultfound', cls='lee-vault-found-rows')
+        except Exception as e: return fail(e)
+
+    @rt('/vault/source')
+    def vault_source(doc: str, shelf: str = '', vault: str = ''):
+        "Where a document came from, so the client knows whether there is a file to open."
+        try:
+            row = _mem(vault).document(doc, shelf or None)
+            src = str(row.get('source') or '')
+            kind = source_kind(src)
+            if kind != 'file': return {'ok': True, 'kind': kind, 'path': src, 'exists': False,
+                                       'inside_workspace': False}
+            p = Path(src).expanduser()
+            # `covers`, not `_check`: the question is whether the file is reachable, and being
+            # told it is not is the answer rather than an error.
+            return {'ok': True, 'kind': 'file', 'path': str(p), 'exists': p.is_file(),
+                    'inside_workspace': ctx.fs.covers(p), 'parent': str(p.parent)}
+        except Exception as e: return fail(e)
+
     @rt('/vault/browse')
-    async def vault_browse_route(q: str = '', vault: str = '', shelf: str = '', limit: int = 60):
-        "The document list, or the hits for a query. One fragment, swapped in either way."
-        try: return await off_loop(vault_browse, _mem(vault), q, vault, shelf, limit)
+    async def vault_browse_route(q: str = '', vault: str = '', shelf: str = '', limit: int = 60,
+                                 open: str = None, elid: str = 'vaultbrowse'):
+        "The tree, or the hits for a query. One fragment, swapped in either way."
+        try: return await off_loop(vault_browse, _mem(vault), q, vault, shelf, limit, _open(open), _elid(elid))
+        except Exception as e: return fail(e)
+
+    @rt('/vault/tree')
+    async def vault_tree_route(vault: str = '', shelf: str = '', open: str = None, limit: int = 2000,
+                               elid: str = 'vaultbrowse'):
+        "Just the tree, for expanding and collapsing a folder without redrawing the search box."
+        try: return await off_loop(vault_tree, _mem(vault), vault, shelf, _open(open), limit, _elid(elid))
         except Exception as e: return fail(e)

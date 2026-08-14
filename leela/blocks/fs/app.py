@@ -23,7 +23,8 @@ __all__ = ['CAPS', 'connect', 'SERVED_TYPES']
 # An allowlist, not `mimetypes.guess_type`: these bytes go to a renderer, so what counts as
 # renderable is a decision. With `nosniff` a mislabelled file cannot be reinterpreted.
 SERVED_TYPES = {'.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon'}
+    '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+    '.bmp': 'image/bmp'}
 
 CAPS = ('fs', 'journal')
 
@@ -148,7 +149,7 @@ def connect(app, ctx):
     _routes.insert(_static, _named)
 
     @rt('/fs/find')
-    def fs_find(q: str = '', limit: int = 200, scope: str = ''):
+    def fs_find(q: str = '', limit: int = 200, scope: str = '', dirs: bool = False):
         """Fuzzy match over the open folders, best match first.
 
         `scope='project'` narrows to the chosen folder, which is what the agent's `@` means: in a
@@ -157,6 +158,13 @@ def connect(app, ctx):
         workspace is exactly its job.
         """
         root = ctx.session.project_root if scope == 'project' else None
-        hits = fuzzy_rank(q, ctx.fs.walk(root), key=str, limit=limit)
-        return {'hits': [dict(path=str(p), name=p.name, lang=lang_for(p) or '') for p in hits],
-                'scope': str(root) if root else ''}
+        files = ctx.fs.walk(root)
+        hits = fuzzy_rank(q, files, key=str, limit=limit)
+        rows = [dict(path=str(p), name=p.name, lang=lang_for(p) or '', kind='file') for p in hits]
+        if dirs:
+            # Derived from the files rather than walked separately, so the folder list inherits
+            # `walk`'s skips: nobody wants `.git` or `node_modules` offered as somewhere to look.
+            folders = {q for p in files for q in p.parents if root is None or q != root}
+            found = fuzzy_rank(q, sorted(folders), key=str, limit=limit)
+            rows = [dict(path=str(p), name=p.name + '/', lang='', kind='folder') for p in found] + rows
+        return {'hits': rows[:limit], 'scope': str(root) if root else ''}

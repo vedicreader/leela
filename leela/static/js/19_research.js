@@ -27,7 +27,8 @@ function researchWorkspace(mode = 'search', value = '') {
     `<form class="lee-research-command"><div class="lee-segbar" aria-label="research mode">` +
     `<button type="button" class="lee-seg" data-mode="search">Search</button>` +
     `<button type="button" class="lee-seg" data-mode="read">Read URL</button>` +
-    `<button type="button" class="lee-seg" data-mode="research">Research</button></div>` +
+    `<button type="button" class="lee-seg" data-mode="research">Research</button>` +
+    `<button type="button" class="lee-seg" data-mode="vault">Vault</button></div>` +
     `<input class="lee-input" id="researchquery" autocomplete="off">` +
     `<label class="lee-research-remember" title="Store fetched sources in durable memory"><input type="checkbox" id="researchremember" checked> remember</label>` +
     `<button class="lee-btn go" type="submit">Go</button></form>` +
@@ -47,11 +48,24 @@ function researchWorkspace(mode = 'search', value = '') {
   m.classList.add('lee-research-modal');
   const input = $('#researchquery', m), list = $('#researchsources', m), reader = $('#researchreader', m);
   const title = $('#researchtitle', m), meta = $('#researchmeta', m);
+  /* Vault mode puts what you have already kept in the same column as what you are about to
+     find. The sources list becomes the vault tree, and the reader stays the reader: a clipped
+     document and a fetched page are the same kind of thing once they are on screen. */
+  const showVault = async () => {
+    list.innerHTML = '<div class="lee-research-empty">Reading the vault…</div>';
+    // `elid`, because the vault panel may be open behind this modal with a fragment of its own,
+    // and two elements sharing an id would send every folder toggle to whichever came first.
+    try { await htmx.ajax('GET', '/vault/browse?elid=researchvault', {target: '#researchsources', swap: 'innerHTML'}); }
+    catch (e) { list.innerHTML = `<div class="lee-research-error">${esc(e.message || e)}</div>`; }
+  };
   const setMode = next => {
     activeMode = next;
     $$('[data-mode]', m).forEach(b => b.classList.toggle('active', b.dataset.mode === next));
     input.placeholder = next === 'read' ? 'https://example.com/article' :
-      next === 'research' ? 'Research a question across several sources…' : 'Search the web…';
+      next === 'research' ? 'Research a question across several sources…' :
+      next === 'vault' ? 'Search what you have already kept…' : 'Search the web…';
+    m.classList.toggle('research-vault', next === 'vault');
+    if (next === 'vault') showVault();
     input.focus();
   };
   const setBusy = text => {
@@ -106,7 +120,13 @@ function researchWorkspace(mode = 'search', value = '') {
       '<div class="lee-research-empty">No sources yet.</div>';
   };
   const run = async () => {
-    query = input.value.trim(); if (!query) return;
+    query = input.value.trim();
+    // The vault is searched where it is shown, and an empty box is a real answer here: it puts
+    // the tree back, which is the same two-views-of-one-panel rule the vault panel follows.
+    if (activeMode === 'vault')
+      return htmx.ajax('GET', '/vault/browse?' + new URLSearchParams({q: query, elid: 'researchvault'}),
+                       {target: '#researchsources', swap: 'innerHTML'});
+    if (!query) return;
     setBusy(activeMode === 'research' ? 'Reading and comparing the strongest sources…' : activeMode === 'read' ? 'Fetching the page…' : 'Searching the web…');
     try {
       if (activeMode === 'read') {

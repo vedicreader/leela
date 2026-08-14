@@ -32,6 +32,10 @@ TERMINAL = ('complete', 'error')
 # `shlex` at the boundary that accepts it, so a job cannot become an injection.
 SCRIPT_TIMEOUT = 900
 
+#: How often the re-index sweep walks the vault looking for files that changed on disk. Slower
+#: than the watch tick by design: this reads every filed document, a watch reads one page.
+REINDEX_SECONDS = 300
+
 
 class JobError(RuntimeError):
     pass
@@ -105,6 +109,13 @@ class Jobs:
         with self._db() as c: r = c.execute('select * from jobs where id=?', (str(jid),)).fetchone()
         if r is None: raise JobError(f'no job {jid}')
         return self._row(r)
+
+    def forget(self, jid):
+        "Drop a finished job's row. A dead card that can only be retried can never be cleared."
+        job = self.get(jid)
+        if job.active: raise JobError('that job is still running')
+        with self._db() as c: c.execute('DELETE FROM jobs WHERE id=?', (jid,))
+        return job
 
     def all(self, limit=40, kind=None):
         q = 'select * from jobs' + (' where kind=?' if kind else '') + ' order by created_at desc limit ?'
@@ -183,12 +194,20 @@ class Jobs:
         secs = int(ifnone(seconds, os.getenv('LEELA_POLL_SECONDS') or 0))
         if secs <= 0 or self._ticking: return None
         self._ticking = True
+        # The re-index sweep rides the same thread on its own, slower period: it walks every
+        # filed document, so it must not run at the cadence of a single-page watch.
+        every = max(secs, int(os.getenv('LEELA_REINDEX_SECONDS') or REINDEX_SECONDS))
 
         def loop():
+            last = time.time()
             while True:
                 time.sleep(secs)
                 try: self.poll_due()
                 except Exception as e: self.note = f'poll tick failed ({errstr(e)})'
+                if every <= 0 or time.time() - last < every: continue
+                last = time.time()
+                try: self.reindex_due()
+                except Exception as e: self.note = f'reindex sweep failed ({errstr(e)})'
         threading.Thread(target=loop, daemon=True, name='leela-job-tick').start()
         return secs
 
@@ -201,6 +220,19 @@ class Jobs:
         if self.memory is None: return dict(note='no vault', ran=0, checked=0)
         if not self._lock.acquire(blocking=False): return dict(note='a poll is already running', ran=0, checked=0)
         try: return self.memory.poll()
+        finally: self._lock.release()
+
+    def reindex_due(self):
+        """Re-clip filed documents whose file has changed, under the same lock as the watches.
+
+        Separate from `poll_due` and much slower: a watch fetches one thing it was told to
+        fetch, while this walks every filed document in the vault. `LEELA_REINDEX_SECONDS`
+        governs it, `0` disables it, and it shares the lock so a sweep and a poll cannot embed
+        into the same shelf at once.
+        """
+        if self.memory is None: return dict(note='no vault', checked=0, reindexed=0)
+        if not self._lock.acquire(blocking=False): return dict(note='a poll is already running', checked=0, reindexed=0)
+        try: return self.memory.reindex_changed()
         finally: self._lock.release()
 
 

@@ -15,9 +15,40 @@ try: from ramabana.vault import safe_shelf as _safe_shelf
 except ImportError:  # ramabana < shelf helper; keep one local sanitiser
     def _safe_shelf(name=None, default='main'): return re.sub(r'[^a-z0-9_]+', '_', str(name or default).lower()).strip('_') or default
 
-__all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'GLOBAL']
+__all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'source_kind', 'GLOBAL']
 
 GLOBAL = 'leela'
+
+
+def source_kind(source):
+    """What a document's `source` actually is: a file on disk, a web page, or neither of those.
+
+    A file is recognised by *being a path*, not by failing to match a list of schemes. The vault
+    invents an address for anything that was never a file -- `note:`, `agent-note:`,
+    `agent-state:`, `memory:`, `pointer:` -- and enumerating those got `note:` wrong, which put
+    every agent note under a folder called `agent-note:` and offered to open it as a file.
+    """
+    s = str(source or '')
+    if s.startswith(('http://', 'https://')): return 'url'
+    if s.startswith(('/', '~')): return 'file'
+    if len(s) > 2 and s[1] == ':' and s[2] in '\\/': return 'file'      # C:\ on Windows
+    return 'synthetic'
+
+
+def _added_epoch(at):
+    """`added_at` as a timestamp. Unreadable means *unknown*, and unknown must not mean stale.
+
+    The stored string is naive but is UTC, so it has to be read as UTC. Left to
+    `fromisoformat`, which assumes local time, every row west of Greenwich looks older than the
+    file it came from and the whole vault re-embeds on every sweep.
+    """
+    if isinstance(at, (int, float)): return float(at)
+    from datetime import datetime, timezone
+    try: dt = datetime.fromisoformat(str(at))
+    # Infinity, not zero: zero would make every row look older than its file, which is the same
+    # runaway by another route. The count of these is reported instead.
+    except Exception: return float('inf')
+    return (dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt).timestamp()
 
 
 def memory_path(path=None):
@@ -312,6 +343,35 @@ class Memory:
         "Every document, newest first, with its shelf. `doc_id` beside `id`: `sources` and `clip` disagree."
         rows = self._across(shelves, lambda n, v: v.sources(kind), lambda n: f'{n} documents')
         return [dict(r, doc_id=r.get('doc_id') or r.get('id')) for r in self._newest(rows, limit)]
+
+    def reindex_changed(self, shelves=None, limit=2000):
+        """Re-clip every filed document whose file on disk is newer than the vault's copy.
+
+        mtime rather than a hash: hashing every clipped file on each sweep is the cost this
+        exists to avoid, and a changed-but-not-touched file is not something an editor produces.
+        A touched-but-unchanged one costs a single needless re-clip, which is the cheaper error.
+
+        Missing files are reported, never forgotten. A vault is a record, and an unplugged
+        drive is not a reason to drop what was on it.
+        """
+        checked, done, missing, unknown, failed = 0, [], [], [], []
+        for row in self.all_documents(limit=limit, shelves=shelves):
+            src = str(row.get('source') or '')
+            if source_kind(src) != 'file': continue
+            checked += 1
+            p = Path(src).expanduser()
+            if not p.is_file(): missing.append(src); continue
+            at = _added_epoch(row.get('added_at'))
+            if at == float('inf'): unknown.append(src); continue
+            # A second of slack, because `added_at` is stored to the second while `st_mtime` is
+            # fractional: a file written at .7 and clipped at .9 is recorded as .0 and would
+            # otherwise look newer than its own record on every sweep, forever.
+            if p.stat().st_mtime <= at + 1: continue
+            try: self.clip([p], shelf=row.get('shelf'), force=True); done.append(src)
+            except Exception as e: failed.append(f'{src}: {errstr(e)}')
+        self.note = f'reindexed {len(done)} of {checked} filed documents'
+        return dict(checked=checked, reindexed=len(done), paths=done,
+                    missing=missing, unknown=unknown, failed=failed)
 
     def search_all(self, query, limit=20, shelves=None):
         "Search every populated shelf and merge."

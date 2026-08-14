@@ -84,9 +84,10 @@ def connect(app, ctx):
             docs.docs[key] = nb
             return {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
                     'disk_version': disk_version(t.path), 'cells': [c.dict() for c in nb.cells]}
-        if t.kind == 'pdf':
-            # No contents: the browser's own viewer must fetch the bytes from `/file/raw` itself.
-            return {'kind': 'pdf', 'path': t.path, 'title': t.title,
+        if t.kind in ('pdf', 'image'):
+            # No contents: the browser fetches the bytes from `/file/raw` itself. Sending them
+            # through this JSON payload would base64 a whole document into every tab switch.
+            return {'kind': t.kind, 'path': t.path, 'title': t.title,
                     'disk_version': disk_version(t.path)}
         if t.kind == 'vault':
             # Same shape as pdf: the tab names a document, the reader fetches it from `/vault/doc`.

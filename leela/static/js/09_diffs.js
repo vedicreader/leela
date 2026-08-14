@@ -92,7 +92,10 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
   // A document the browser renders has no editor behind it, so there is nothing to write and
   // `getDoc` would be called on nothing. Reporting success is honest here: the file on disk is
   // exactly what is being shown.
-  if (lee.kind === 'pdf') { if (!quiet) status('a PDF is read-only here'); return true; }
+  if (lee.kind === 'pdf' || lee.kind === 'image') {
+    if (!quiet) status(`${lee.kind === 'pdf' ? 'a PDF' : 'an image'} is read-only here`);
+    return true;
+  }
   let saveTabEl = $('.lee-tab.active');
   setTabSaveState(saveTabEl, 'saving');
   try {

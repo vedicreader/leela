@@ -12,7 +12,7 @@ and pretending otherwise would be a lie about what is live.
 """
 
 from __future__ import annotations
-import hashlib, os, time
+import hashlib, json, os, time
 from dataclasses import dataclass
 from fastcore.all import Path, L, first, ifnone
 
@@ -115,6 +115,25 @@ class _EnvClient:
 def ws_path(): return leela_cfg/'workspace.json'
 
 
+#: What ramabana accepts for a turn's budget. Mirrored rather than imported: they are private
+#: there (`_TOOL_MIN`/`_TOOL_MAX`), and a settings form has to state its own bounds anyway.
+TOOL_RANGE, STEP_RANGE = (20, 400), (8, 80)
+
+
+def budget_value(v, lo, hi):
+    "`auto`, or a number inside `lo..hi`. Anything else is `auto`, never a silent clamp to a bound."
+    if isinstance(v, bool) or v is None: return 'auto'
+    if isinstance(v, str) and v.strip().lower() == 'auto': return 'auto'
+    try: n = int(str(v).strip())
+    except (TypeError, ValueError): return 'auto'
+    return n if lo <= n <= hi else 'auto'
+
+
+# What opens in the image viewer rather than in an editor. Every one of these is also in
+# `SERVED_TYPES`, because a tab kind whose bytes cannot be served is a broken tab.
+IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'}
+
+
 @dataclass
 class Tab(Dictable):
     'One open editor tab.'
@@ -135,6 +154,9 @@ class Tab(Dictable):
         # viewer worth writing. It gets its own kind so nothing downstream tries to put it in an
         # editor, diff it, or hand it to a linter.
         elif self.path.lower().endswith('.pdf'): self.kind = 'pdf'
+        # An image is a document too, for the same reasons, and for one more: opened as text it
+        # decodes to replacement characters, and saving that back would destroy the file.
+        elif Path(self.path).suffix.lower() in IMAGE_EXTS: self.kind = 'image'
         if self.private_kernel is None: self.private_kernel = self.kind == 'notebook'
 
     @property
@@ -218,6 +240,10 @@ class Workspace:
         self.litert_backend = str(litert_backend or '').lower()
         if self.litert_backend: os.environ['LEELA_LITERT_BACKEND'] = self.litert_backend
         self.compact_auto, self.compact_strategy = True, 'surgical'
+        # How much work one turn may do. `auto` lets ramabana size the turn from the prompt --
+        # 24 calls for a question, 240 for "implement and verify" -- and a number pins it, which
+        # is what you want when a long job keeps stopping one step short of finished.
+        self.tool_budget, self.step_budget = 'auto', 'auto'
         # Which of several open folders the person means right now. A workspace holds more
         # than one checkout, and "the project" was answered by `roots[0]` -- so adding a
         # second folder and switching to it left every project-scoped surface, the branch
@@ -355,7 +381,7 @@ class Workspace:
     def open(self, path, kind=None):
         "Open a file, focusing it if it is already open. Refuses anything outside the open folders."
         p = self.fs._check(path, must_exist=True)
-        if not is_texty(p) and p.suffix.lower() not in ('.ipynb', '.pdf'):
+        if not is_texty(p) and p.suffix.lower() not in ('.ipynb', '.pdf', *IMAGE_EXTS):
             raise Unsafe(f'{p.name} is not a text file')
         # Opening a file in another checkout is the other way of saying which project you mean.
         try: self.active_root = self.fs.root_of(p)
@@ -364,8 +390,11 @@ class Workspace:
             self.active = i
             self.watch_env(None)
             return self.tabs[i]
+        # `Tab.__post_init__` already decides this from the path; passing 'text' here would
+        # override it and hand a PNG to the editor.
         return self._add_tab(Tab(path=str(p), kind=ifnone(kind, 'notebook' if p.suffix == '.ipynb' else
-                                                                'pdf' if p.suffix.lower() == '.pdf' else 'text')))
+                                                                'pdf' if p.suffix.lower() == '.pdf' else
+                                                                'image' if p.suffix.lower() in IMAGE_EXTS else 'text')))
 
     def open_vault_doc(self, doc_id, shelf='', vault='', title=''):
         "Open a vault document as a tab. It has no path: the client reads it back through `/vault/doc`."
@@ -522,12 +551,62 @@ class Workspace:
         nb.dirty = True
         return c
 
+    def folder_manifest(self, ref, limit=300):
+        """What is in a folder, as a listing rather than its contents.
+
+        A folder is attached to say *look in here*, and the agent has file tools of its own. A
+        manifest costs a few hundred bytes and never truncates a file in the middle; inlining
+        the contents would silently cut a repo off at the budget and leave the model unable to
+        tell what it had not been shown.
+        """
+        root = self.fs._check(ref, must_exist=True)
+        if not root.is_dir(): raise ValueError(f'not a folder: {ref}')
+        # `fs.walk` already skips `.git`, `node_modules` and the rest, which is the difference
+        # between a manifest and a listing of somebody's virtualenv.
+        found = sorted(self.fs.walk(root, limit=limit * 4))
+        rows = []
+        for f in found[:limit]:
+            try: size = f.stat().st_size
+            except OSError: continue
+            rows.append(f'  {f.relative_to(root)}\t{size}\t{lang_for(str(f)) or ""}'.rstrip())
+        shown = len(found)
+        more = f'\n  [{shown - limit} more files not listed]' if shown > limit else ''
+        return (f'<attached-folder path="{root}" files="{shown}">\n'
+                f'  name\tbytes\tlanguage\n' + '\n'.join(rows) + more + '\n</attached-folder>')
+
+    def _selection_context(self, sel, max_text=60_000):
+        """One highlighted range, as the editor had it.
+
+        Sent with its line numbers so the model can say "line 34" and mean the same line you are
+        looking at, and marked as a selection rather than a file so it is not mistaken for the
+        whole of one.
+        """
+        path = str(sel.get('path') or 'untitled')
+        a, b = int(sel.get('from') or 1), int(sel.get('to') or 1)
+        body = str(sel.get('text') or '')[:max_text]
+        return f'<attached-selection path="{path}" lines="{a}-{b}">\n{body}\n</attached-selection>'
+
     def _attachment_context(self, refs=(), max_file=120_000, max_total=300_000):
         "Workspace files selected with @, as grounded text context and multimodal image parts."
         text, images, used = [], [], 0
         image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
-        for ref in dict.fromkeys(str(x) for x in (refs or ()) if str(x).strip()):
+        # Deduplicated on a key rather than by `str`: a selection is a dict, and stringifying it
+        # to dedupe would also have been what got passed to `_check`.
+        seen, items = set(), []
+        for ref in (refs or ()):
+            key = json.dumps(ref, sort_keys=True) if isinstance(ref, dict) else str(ref).strip()
+            if not key or key in seen: continue
+            seen.add(key); items.append(ref)
+        for ref in items:
+            # A selection carries its own text and range, so it is not re-read from disk: what
+            # the editor sent is what was on screen, and the buffer may be unsaved.
+            if isinstance(ref, dict) and ref.get('kind') == 'selection':
+                text.append(self._selection_context(ref))
+                continue
             p = self.fs._check(ref, must_exist=True)
+            if p.is_dir():
+                text.append(self.folder_manifest(p))
+                continue
             if not p.is_file(): raise ValueError(f'attachment is not a file: {ref}')
             if p.suffix.lower() in image_exts:
                 images.append(p.read_bytes())
@@ -989,6 +1068,7 @@ class Workspace:
                 'agent_state_layers': self.agent_state_layers,
                 'agent_memory_selection': self.agent_memory_selection,
                 'compact_auto': self.compact_auto, 'compact_strategy': self.compact_strategy,
+                'tool_budget': self.tool_budget, 'step_budget': self.step_budget,
                 'active_root': str(self.active_root or ''),
                 'saved': time.time()}
 
@@ -1019,6 +1099,8 @@ class Workspace:
         ws._state_path = p
         ws.compact_auto = bool(d.get('compact_auto', True))
         ws.compact_strategy = str(d.get('compact_strategy') or 'surgical')
+        ws.tool_budget = budget_value(d.get('tool_budget'), *TOOL_RANGE)
+        ws.step_budget = budget_value(d.get('step_budget'), *STEP_RANGE)
         ws.agent_state = str(d.get('agent_state') or '')
         saved_selection = d.get('agent_memory_selection')
         if isinstance(saved_selection, dict):

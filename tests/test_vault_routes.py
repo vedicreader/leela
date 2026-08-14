@@ -169,10 +169,14 @@ def test_the_panel_lists_vaults_and_documents_you_can_click(ws, proj):
         assert 'id="vaultbrowse"' in panel and 'hx-get="/vault/browse"' in panel
         assert 'agent off' in panel or 'agent on' in panel, 'the per-vault agent toggle is on the row'
 
+        # Browsing answers with the tree, unfolded far enough to show something: a vault whose
+        # first screen is the single word `files` has answered no question anybody had.
         docs = c.get('/vault/browse').text
         assert 'leeOpenVaultDoc(' in docs and 'notes' in docs
+        assert 'lee-vault-tree' in docs and 'lee-vault-folder' in docs
         hits = c.get('/vault/browse', params={'q': 'ranking'}).text
         assert 'leeOpenVaultDoc(' in hits, 'a hit opens the document it is in'
+        assert 'lee-vault-tree' not in hits, 'a query answers with hits, not with the tree'
 
 
 def test_a_vault_name_browses_it_without_making_it_active(ws, proj):
@@ -194,3 +198,68 @@ def test_browsing_a_vault_scopes_the_search_box_to_it(ws, proj):
         assert 'id="vaultbrowse"' in block
         assert 'name="vault"' in block and 'value="workspace"' in block
         assert 'documents · workspace' in block, 'the legend says which vault is open'
+
+
+def test_the_tree_keeps_real_folders_and_drops_the_common_chrome(ws, proj):
+    "A vault clipped from one deep folder must open on its own folders, not on six of /Users."
+    (proj/'docs'/'deep').mkdir(parents=True)
+    (proj/'papers').mkdir()
+    (proj/'docs'/'a.md').write_text('# A\nalpha\n')
+    (proj/'docs'/'deep'/'b.md').write_text('# B\nbeta\n')
+    (proj/'papers'/'c.md').write_text('# C\ngamma\n')
+    with TestClient(ide_app(ws)) as c:
+        ws.memory.clip([proj/'docs'/'a.md', proj/'docs'/'deep'/'b.md', proj/'papers'/'c.md'])
+        tree = c.get('/vault/tree').text
+        assert '>docs<' in tree and '>papers<' in tree, 'the folders that differ survive'
+        # The shelf is the top level and is named for the project, so what must not appear is
+        # the path chrome above the documents rather than the project's own name.
+        for chrome in ('>private<', '>var<', '>folders<', '>T<'):
+            assert chrome not in tree, chrome
+        shelf = ws.memory.shelf_name
+        # Closed below the shelf: a folder costs one row however much is under it.
+        assert '>deep<' not in tree
+        deep = c.get('/vault/tree', params={'open': f'{shelf}|{shelf}/docs'}).text
+        assert '>deep<' in deep and 'a.md' in deep
+
+
+def test_a_document_that_was_never_a_file_has_no_open_file_button(ws, proj):
+    with TestClient(ide_app(ws)) as c:
+        ws.memory.clip([proj/'notes.md'])
+        row = c.get('/vault/browse').text
+        assert 'leeOpenVaultFile(' in row, 'a clipped file offers to open the file'
+        doc = next(d for d in ws.memory.all_documents() if d.get('source', '').endswith('notes.md'))
+        src = c.get('/vault/source', params={'doc': doc['doc_id']}).json()
+        assert src['kind'] == 'file' and src['exists'] and src['inside_workspace']
+
+
+def test_a_source_outside_the_workspace_is_reported_not_read(ws, proj, tmp_path_factory):
+    "The fs sandbox refuses paths outside a root, so the answer is `no`, not a way around it."
+    # A sibling of the open root, not a child of it: `proj` *is* `tmp_path`, so anything under
+    # that is inside the workspace and would prove nothing.
+    outside = tmp_path_factory.mktemp('elsewhere')
+    (outside/'far.md').write_text('# Far\n\nfar away\n')
+    with TestClient(ide_app(ws)) as c:
+        ws.memory.clip([outside/'far.md'])
+        doc = next(d for d in ws.memory.all_documents() if d.get('source', '').endswith('far.md'))
+        src = c.get('/vault/source', params={'doc': doc['doc_id']}).json()
+        assert src['kind'] == 'file' and src['exists'] and not src['inside_workspace']
+        assert src['parent'] == str(outside)
+
+
+def test_two_browse_fragments_on_one_page_do_not_share_an_id(ws, proj):
+    "The research modal shows the tree beside the panel's; one id would take both toggles."
+    with TestClient(ide_app(ws)) as c:
+        ws.memory.clip([proj/'notes.md'])
+        other = c.get('/vault/browse', params={'elid': 'researchvault'}).text
+        assert 'id="researchvault"' in other and 'id="researchvaulttree"' in other
+        assert 'id="vaultbrowse"' not in other
+        # An id is written into a selector, so it is reduced to what can safely go in one.
+        assert 'id="vaultbrowse"' in c.get('/vault/browse', params={'elid': 'a b#<script>'}).text \
+            or 'id="ab' in c.get('/vault/browse', params={'elid': 'a b#<script>'}).text
+
+
+def test_reindex_reports_what_it_reread(ws, proj):
+    with TestClient(ide_app(ws)) as c:
+        ws.memory.clip([proj/'notes.md'])
+        said = c.post('/vault/reindex').text
+        assert 'filed documents' in said and 'id="vaulttidy"' in said
