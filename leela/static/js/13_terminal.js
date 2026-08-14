@@ -65,7 +65,7 @@ function leeLeft(which = 'files') {
   else { setScope('files'); requestAnimationFrame(() => $('#filetree')?.focus()); }
 }
 window.leeLeft = leeLeft;
-function leePane(which, show = null) {
+function leePane(which, show = null, persist = true) {
   const shell = $('#shell'); if (!shell) return;
   const cls = which === 'left' ? 'no-left' : which === 'right' ? 'no-right' : 'no-bottom';
   const hidden = show === null ? !shell.classList.contains(cls) : !show;
@@ -78,7 +78,71 @@ function leePane(which, show = null) {
       shell.classList.add(other === 'left' ? 'no-left' : 'no-right');
     }
   }
-  localStorage.setItem('lee-pane-' + which, hidden ? 'hidden' : 'shown');
+  // An auto-close is not a preference: the pane was got out of the way for one keystroke, and
+  // recording it as hidden would mean it never came back after a reload.
+  if (persist) localStorage.setItem('lee-pane-' + which, hidden ? 'hidden' : 'shown');
   if (!hidden && which === 'bottom') requestAnimationFrame(() => lee.term?.refit());
 }
 window.leePane = leePane;
+
+/* ---- docking: a pane is either pinned open, or closes when you work somewhere else ----
+
+   The file and agent panes are furniture on a wide screen and an obstruction on a narrow one,
+   so each carries its own answer rather than the layout deciding for everybody. Pinned is the
+   default and is exactly the old behaviour: nothing moves until you unpin it. */
+const DOCKABLE = {left: '#left', right: '#right'};
+
+function leePinned(which) { return localStorage.getItem('lee-pin-' + which) !== '0'; }
+
+function leeSyncPin(which) {
+  const pinned = leePinned(which);
+  $('#shell')?.classList.toggle('unpinned-' + which, !pinned);
+  $$(`[data-pane-pin="${which}"]`).forEach(b => {
+    b.textContent = pinned ? '●' : '○';
+    b.classList.toggle('pinned', pinned);
+    b.setAttribute('aria-pressed', String(pinned));
+    b.title = pinned ? 'pinned open — unpin to close it when you click away'
+                     : 'auto-closing — pin to keep it open';
+  });
+}
+
+function leePinPane(which) {
+  localStorage.setItem('lee-pin-' + which, leePinned(which) ? '0' : '1');
+  leeSyncPin(which);
+  status(leePinned(which) ? `${which} pane pinned open` : `${which} pane closes when you click away`);
+}
+window.leePinPane = leePinPane;
+
+/* Modals, context menus, the restore tabs and the splitters are not "somewhere else": each is
+   opened from a pane or acts on one, and closing the pane underneath would pull the ground out
+   from whatever the dialog was about to do. */
+function leeAutoClosePanes(target) {
+  const shell = $('#shell');
+  if (!shell || !(target instanceof Element)) return;
+  if (target.closest('.lee-modal, .lee-ctxmenu, .lee-pane-restore, .lee-split')) return;
+  for (const [which, sel] of Object.entries(DOCKABLE)) {
+    const pane = $(sel);
+    if (leePinned(which) || !pane || pane.contains(target)) continue;
+    if (shell.classList.contains(which === 'left' ? 'no-left' : 'no-right')) continue;
+    // Two more ways a pane is still in use without holding the keyboard. A model mid-answer
+    // must not be closed out of sight -- the run is the reason the pane is open. And a pane
+    // must not shut under the pointer that is travelling towards it, which is what focus
+    // landing elsewhere looks like from here.
+    if (which === 'right' && lee.agentBusy) continue;
+    if (pane.matches(':hover')) continue;
+    leePane(which, false, false);
+  }
+}
+document.addEventListener('focusin', e => leeAutoClosePanes(e.target), true);
+document.addEventListener('mousedown', e => leeAutoClosePanes(e.target), true);
+
+// Escape from inside an unpinned pane puts you back in the editor, which is the only way out
+// that does not need the mouse.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  for (const [which, sel] of Object.entries(DOCKABLE)) {
+    if (leePinned(which) || !$(sel)?.contains(e.target)) continue;
+    leePane(which, false, false);
+    setScope('editor'); curEditor()?.focus();
+  }
+}, true);

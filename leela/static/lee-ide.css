@@ -459,6 +459,23 @@ body {
 .lee-pane-min { border: 0; background: transparent; color: var(--lee-fg4); cursor: pointer;
                  padding: 0 7px; font: 13px/1 var(--lee-mono); }
 .lee-pane-min:hover { color: var(--lee-fg); background: var(--lee-bg2); }
+
+/* Docking. A pinned pane stays; an unpinned one closes when you work somewhere else, so it
+   says which it is at rest rather than only when hovered. */
+.lee-pane-pin { border: 0; background: transparent; color: var(--lee-fg4); cursor: pointer;
+                padding: 0 6px; font: 11px/1 var(--lee-mono); }
+.lee-pane-pin:hover { color: var(--lee-fg); background: var(--lee-bg2); }
+.lee-pane-pin.pinned { color: var(--lee-accent); }
+.lee-pane-pin:focus-visible { outline: 1px solid var(--lee-accent); outline-offset: 1px; }
+/* The rail is a column, so the pane controls are pushed to its foot. */
+.lee-activity-spacer { flex: 1 1 auto; }
+.lee-activity .lee-pane-pin, .lee-activity .lee-pane-min {
+  height: 26px; display: grid; place-items: center; padding: 0;
+}
+/* An auto-closing pane reads as provisional: a dashed inner edge, so it is clear before you
+   click away that clicking away is going to shut it. */
+.unpinned-left  #left  { border-right: 1px dashed var(--lee-border); }
+.unpinned-right #right { border-left: 1px dashed var(--lee-border); }
 .lee-pane-restore { display: none; position: fixed; z-index: 6; border: 1px solid var(--lee-border);
                     background: var(--lee-bg1); color: var(--lee-fg2); cursor: pointer;
                     padding: 4px 8px; font: 10px/1 var(--lee-mono); text-transform: uppercase;

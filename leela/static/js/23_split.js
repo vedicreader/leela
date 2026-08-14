@@ -6,6 +6,8 @@ function initSplits() {
   leeLeft(['git', 'symbols', 'workflows', 'releases', 'deploys', 'drive'].includes(savedLeft) ? savedLeft : 'files');
   for (const pane of ['left', 'right', 'bottom'])
     if (localStorage.getItem('lee-pane-' + pane) === 'hidden') leePane(pane, false);
+  // The pin buttons are rendered pinned; a saved unpin has to reach them before the first click.
+  for (const pane of ['left', 'right']) leeSyncPin(pane);
   if (matchMedia('(max-width: 1100px)').matches) {
     leePane('left', false); leePane('right', false);
   }

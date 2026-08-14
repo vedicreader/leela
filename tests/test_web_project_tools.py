@@ -272,6 +272,28 @@ def test_workspace_panes_can_minimise_and_restore_independently(tmp_path):
     assert '.lee-app.no-bottom .lee-bottomdock' in CSS
 
 
+def test_the_file_and_agent_panes_can_be_pinned_or_left_to_auto_close(tmp_path):
+    "Unpinned, a pane closes when you work elsewhere; pinned is the default and the old behaviour."
+    html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
+    for pane in ('left', 'right'):
+        assert f'data-pane-pin="{pane}"' in html, pane
+        assert f'leePinPane(&quot;{pane}&quot;)' in html or f"leePinPane(\"{pane}\")" in html, pane
+    assert html.count('lee-pane-min') >= 4, 'the file pane gained its own minimise'
+
+    block = JS[JS.index('const DOCKABLE'):JS.index('function leeTerm')]
+    assert "localStorage.getItem('lee-pin-' + which) !== '0'" in block, 'pinned is the default'
+    # A dialog or menu opened from the pane must not close the pane it came from.
+    assert ".lee-modal, .lee-ctxmenu, .lee-pane-restore, .lee-split" in block
+    assert "leePane(which, false, false)" in block, 'an auto-close is not persisted as a preference'
+    assert 'function leePane(which, show = null, persist = true)' in JS
+    assert "if (persist) localStorage.setItem('lee-pane-' + which" in JS
+    assert '.lee-pane-pin.pinned' in CSS and '.unpinned-left  #left' in CSS
+    # A pane in use is not a pane you have left: a run in flight is the reason the right pane is
+    # open, and the pointer on its way to a pane must not have it shut underneath.
+    assert "which === 'right' && lee.agentBusy" in block, 'a streaming agent is never auto-closed'
+    assert "pane.matches(':hover')" in block, 'a pane does not close under the pointer'
+
+
 def test_git_is_a_first_class_vertical_project_tab(tmp_path):
     html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
     assert 'lee-activity' in html and 'data-left="files"' in html and 'data-left="git"' in html
