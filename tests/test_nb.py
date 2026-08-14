@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from leela.nb import CELL_TYPES, Cell, Notebook
+from leela.blocks.nb.nb import CELL_TYPES, Cell, Notebook
 
 
 def dialog():
@@ -252,7 +252,7 @@ def test_detached_cell_can_be_pasted_between_notebooks_repeatedly():
 
 
 def test_moving_a_cell_multiple_places_preserves_the_order_between():
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     nb = Notebook([Cell(source=x) for x in 'abcd'])
     assert nb.move(0, 2) == 2
     assert [c.source for c in nb.cells] == ['b', 'c', 'a', 'd']
@@ -281,7 +281,7 @@ def test_an_approval_cell_round_trips_as_plain_markdown(tmp_path):
     uses, and for the same reason: the file stays valid nbformat and legible in plain
     Jupyter, where the negotiation simply reads as prose.
     """
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     nb = Notebook([Cell(source='fix the bug', cell_type='prompt')])
     c = Cell(source='**🔐 approval needed — `edit_file`**', cell_type='markdown')
     c.approval = {'kind': 'approval', 'id': 'ab12', 'tool': 'edit_file', 'state': 'refused'}
@@ -309,8 +309,54 @@ def test_cell_context_policy_survives_the_notebook_round_trip(tmp_path):
 
 
 def test_ordinary_cells_carry_no_approval_metadata(tmp_path):
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     nb = Notebook([Cell(source='x = 1')])
     nb.save(p := tmp_path/'d.ipynb')
     assert Notebook.load(p)[0].approval is None
     assert 'leela' not in json.loads(p.read_text())['cells'][0]['metadata']
+
+
+def notebook_json():
+    "A notebook on disk, written the way nbformat writes one: a JSON string per source line."
+    nb = Notebook([Cell(source='## Loading', cell_type='markdown', id='m1'),
+                   Cell(source='import os\n\ndef alpha(x):\n    return x', id='c1'),
+                   Cell(source='class Beta:\n    def gamma(self):\n        return alpha(1)', id='c2')])
+    return nb
+
+
+def test_a_cells_lines_are_found_in_the_file_that_holds_them(tmp_path):
+    "The scan behind notebook blame and notebook search: which file lines are this cell's source."
+    from leela.blocks.nb.spans import cell_lines, read_cells, source_spans
+    notebook_json().save(p := tmp_path/'d.ipynb')
+    text = p.read_text()
+    cells = read_cells(text)
+    spans = source_spans(text, cells)
+    lines = text.splitlines()
+    for cell, span in zip(cells, spans):
+        held = [lines[n - 1] for n in range(span[0], span[1] + 1)]
+        for source, raw in zip(cell_lines(cell), held):
+            assert json.dumps(source) in raw, 'the span holds exactly this cell source line'
+
+
+def test_a_file_line_maps_back_to_the_cell_and_the_line_inside_it(tmp_path):
+    "The direction search needs: ripgrep reports a line of JSON and a reader needs a cell."
+    from leela.blocks.nb.spans import cell_at
+    notebook_json().save(p := tmp_path/'d.ipynb')
+    text = p.read_text()
+    line = next(i for i, raw in enumerate(text.splitlines(), 1) if 'def gamma' in raw)
+    at = cell_at(text, line)
+    assert (at['id'], at['index'], at['line']) == ('c2', 2, 2)
+    assert at['file_line'] == line
+    assert cell_at(text, 1) is None, 'a line of JSON that is nobody\'s source belongs to no cell'
+
+
+def test_a_notebook_that_cannot_be_read_is_reported_rather_than_guessed_at(tmp_path):
+    from leela.blocks.nb.spans import cell_at, cell_of, read_cells
+    assert read_cells('not json at all') is None
+    assert read_cells('{"nbformat": 4}') is None
+    assert cell_at('not json at all', 3) is None
+    notebook_json().save(p := tmp_path/'d.ipynb')
+    text = p.read_text()
+    assert cell_of(text, 'def gamma')['id'] == 'c2'
+    assert cell_of(text, 'return') is None, 'two cells contain it, so neither is the answer'
+    assert cell_of(text, 'nothing here') is None

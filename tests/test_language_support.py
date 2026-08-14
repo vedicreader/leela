@@ -1,12 +1,8 @@
 """File-language detection and the browser's bundled syntax modes stay aligned."""
 
-from pathlib import Path
+from leela.blocks.fs.fs import lang_for
 
-from leela.fs import lang_for
-
-ROOT = Path(__file__).resolve().parents[1]
-EDITOR = (ROOT/'leela/web/src/editor.js').read_text()
-CLIENT = (ROOT/'leela/web/static/lee-ide.js').read_text()
+from tests.assets import EDITOR, JS as CLIENT
 
 
 def test_common_project_languages_are_detected_from_paths():

@@ -1,10 +1,6 @@
 """The prompt-cell progress notice is local to the question, not only in the footer."""
 
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-JS = (ROOT/'leela/web/static/lee-ide.js').read_text()
-CSS = (ROOT/'leela/web/static/lee-ide.css').read_text()
+from tests.assets import JS, CSS, SERVER, AGENT
 
 
 def test_prompt_cells_have_a_local_live_status_slot():
@@ -28,7 +24,11 @@ def test_prompt_notice_motion_respects_accessibility_preferences():
 
 
 def test_prompt_replies_use_the_server_mdhtml_renderer():
-    assert 'function renderMarkdown(el, text, allowRaw = false)' in JS
+    # A prefix rather than the whole signature: optional parameters get added to this function
+    # (an `onRender` callback, for one), and breaking on that is noise. What must not drift is the
+    # first three and that `allowRaw` defaults to *false* -- raw HTML from a document is an
+    # explicit opt-in at each call site, never what you get by not thinking about it.
+    assert 'function renderMarkdown(el, text, allowRaw = false' in JS
     assert "fetch('/markdown/render'" in JS
     assert 'window.leeMarkdown' not in JS
     assert "renderMarkdown(reply, c.reply)" in JS
@@ -37,7 +37,7 @@ def test_prompt_replies_use_the_server_mdhtml_renderer():
 
 def test_mdhtml_rendering_is_paste_safe_and_reports_unclosed_constructs():
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     with TestClient(ide_app(Workspace(roots=[]))) as client:
         response = client.post('/markdown/render', json={
@@ -51,7 +51,7 @@ def test_mdhtml_rendering_is_paste_safe_and_reports_unclosed_constructs():
 
 def test_mdhtml_keeps_explicit_html_passthrough_deliberate():
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     with TestClient(ide_app(Workspace(roots=[]))) as client:
         response = client.post('/markdown/render', json={'text': '```{=html}\n<kbd>explicit</kbd>\n```'})
@@ -136,15 +136,15 @@ def test_long_user_messages_are_composed_cards_not_unbounded_traceback_text():
 
 
 def test_agent_turn_usage_is_persisted_and_rendered_in_live_and_history_views():
-    js = (ROOT/'leela/web/static/lee-ide.js').read_text()
-    agent = (ROOT/'leela/agent/agent.py').read_text()
+    js = JS
+    agent = AGENT
     assert "'usage': self.turn_use.dict()" in agent
     assert 'function usageMeta(' in js and 'usageMeta(turn.usage' in js
     assert 'usageMeta(d.usage' in js and 'Token usage and estimated cost for this turn' in js
 
 
 def test_history_groups_turns_by_context_session_without_rendering_every_turn():
-    from leela.web.app import _history_sessions
+    from leela.app import _history_sessions
     turns = [
         {'session': 'agent-a', 'at': 10, 'prompt': 'one'},
         {'session': 'agent-a', 'at': 20, 'prompt': 'two'},
@@ -162,7 +162,7 @@ def test_history_groups_turns_by_context_session_without_rendering_every_turn():
 
 
 def test_routing_popover_closes_on_outside_click_and_escape():
-    from leela.web.app import _agent_panel
+    from leela.app import _agent_panel
     from leela.workspace import Workspace
     html = str(_agent_panel(Workspace(roots=[])))
     assert 'lee-dismissable' in html
@@ -172,7 +172,7 @@ def test_routing_popover_closes_on_outside_click_and_escape():
 
 
 def test_agent_pane_has_model_history_and_expand_controls():
-    from leela.web.app import _agent_panel
+    from leela.app import _agent_panel
     from leela.workspace import Workspace
     html = str(_agent_panel(Workspace(roots=[])))
     assert 'agentmodel' in html and 'leeAgentModel' in html
@@ -189,18 +189,18 @@ def test_agent_pane_has_model_history_and_expand_controls():
 
 
 def test_agent_state_refresh_uses_current_project_evidence(tmp_path):
-    from leela.web.app import _project_state_context
+    from leela.app import _project_state_context
     from leela.workspace import Workspace
     (tmp_path/'pyproject.toml').write_text('[project]\nname = "current-code"\n')
     (tmp_path/'module.py').write_text('def current_api():\n    return 1\n')
     context = _project_state_context(Workspace(roots=[tmp_path]))
     assert 'pyproject.toml' in context and 'module.py' in context and 'current-code' in context
     assert 'Refresh from code' in JS
-    assert '<current-project>' in (ROOT/'leela/web/app.py').read_text()
+    assert '<current-project>' in SERVER
 
 
 def test_custom_model_controls_are_in_the_dropdown_ui():
-    from leela.web.app import _agent_panel
+    from leela.app import _agent_panel
     from leela.workspace import Workspace
     html=str(_agent_panel(Workspace(roots=[])))
     assert 'leeAddModel' in html and '/agent/models/add' in JS
@@ -210,7 +210,7 @@ def test_custom_model_controls_are_in_the_dropdown_ui():
 def test_model_picker_shows_older_models_by_default(monkeypatch):
     from starlette.testclient import TestClient
     from leela.agent import core as models
-    from leela.web.app import _agent_panel, ide_app
+    from leela.app import _agent_panel, ide_app
     from leela.workspace import Workspace
     monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
     monkeypatch.setattr(models, '_oai_cache', (float('inf'), ['gpt-4.1', 'gpt-5.6-luna']))
@@ -224,7 +224,7 @@ def test_model_picker_shows_older_models_by_default(monkeypatch):
 def test_model_selector_endpoint_exposes_sources_not_secrets(monkeypatch):
     from starlette.testclient import TestClient
     from leela.agent import core as models
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     monkeypatch.setenv('OPENAI_API_KEY', 'top-secret')
     monkeypatch.setattr(models, '_oai_cache', (float('inf'), ['gpt-5.4']))
@@ -237,7 +237,7 @@ def test_model_selector_endpoint_exposes_sources_not_secrets(monkeypatch):
 
 def test_every_model_choice_is_saved_and_restored(tmp_path):
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     path = tmp_path/'workspace.json'
     ws = Workspace(roots=[]); ws._state_path = path
@@ -258,7 +258,7 @@ def test_new_workspaces_use_requested_prompt_and_completion_defaults():
 
 
 def test_configured_agent_does_not_offer_setup_again():
-    from leela.web.app import _agent_panel
+    from leela.app import _agent_panel
     from leela.workspace import Workspace
     ws = Workspace(roots=[])
     ws.agent_state_layers['project']['text'] = '# Goal\n\nMaintain this project.'
@@ -269,7 +269,7 @@ def test_configured_agent_does_not_offer_setup_again():
 
 def test_agent_memory_api_selects_notes_per_surface_and_rebriefs(tmp_path):
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'workspace.json'
     with TestClient(ide_app(ws)) as client:
@@ -287,7 +287,7 @@ def test_agent_memory_api_selects_notes_per_surface_and_rebriefs(tmp_path):
 
 def test_local_multimodal_setting_is_persisted_from_the_ui(tmp_path):
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     ws = Workspace(roots=[])
     ws._state_path = tmp_path/'workspace.json'
@@ -298,6 +298,6 @@ def test_local_multimodal_setting_is_persisted_from_the_ui(tmp_path):
 
 
 def test_static_assets_are_cache_busted_as_one_revision():
-    from leela.web.app import _asset
+    from leela.app import _asset
     assert _asset('lee-ide.css').startswith('/leestatic/lee-ide.css?v=')
     assert _asset('lee-ide.js').startswith('/leestatic/lee-ide.js?v=')

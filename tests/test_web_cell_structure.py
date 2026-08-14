@@ -1,16 +1,13 @@
 """Structural notebook edits are fast, preserve position, and report what happened."""
 
 import json
-from pathlib import Path
 
 from starlette.testclient import TestClient
 
-from leela.web.app import ide_app
+from leela.app import ide_app
 from leela.workspace import Workspace
 
-ROOT = Path(__file__).resolve().parents[1]
-JS = (ROOT/'leela/web/static/lee-ide.js').read_text()
-CSS = (ROOT/'leela/web/static/lee-ide.css').read_text()
+from tests.assets import JS, CSS
 
 
 def _notebook(path):
@@ -186,3 +183,41 @@ def test_cell_output_colours_distinguish_results_warnings_logs_and_errors():
     assert "return 'result'" in output and "return 'output'" in output
     for selector in ('.lee-out.output', '.lee-out.warning', '.lee-out.log', '.lee-out.error'):
         assert selector in CSS
+
+
+def test_a_changed_notebook_cell_carries_the_same_mark_a_changed_file_line_does():
+    "PyCharm-style: a thin bar at the start of the work that differs from the commit."
+    assert "api('/git/notebook?path='" in JS, 'the marks come from git, not from the buffer'
+    paint = JS[JS.index('function repaintNotebookGitMarks()'):]
+    paint = paint[:paint.index('\n}\n') + 2]
+    assert "el.classList.toggle('changed'" in paint and "el.classList.toggle('changed-added'" in paint
+    assert 'lee.notebookGit' in paint, 'repainting a reordered cell must not refetch'
+    # The bar on the cell says that it differs; the lines inside say where.
+    assert 'LeeCM.setChangedLines(view, lines[el.dataset.id] || [])' in paint
+    mount = JS[JS.index('function mountCell('):JS.index('function renderOutputs')]
+    assert "changedLines: (lee.notebookGit?.lines || {})[c.id] || []" in mount, \
+        'a cell mounted after the marks arrived is still marked'
+    # Reused cells have their className rewritten wholesale, so the marks are put back after.
+    assert 'repaintNotebookGitMarks();' in JS[JS.index('function patchNotebook('):JS.index('function ensureCellMounted(')]
+    assert 'paintNotebookGitMarks();' in JS[JS.index('function mountNotebook('):JS.index('function patchNotebook(')]
+    assert '.lee-cell.changed .lee-cellmain' in CSS and '.lee-cell.changed-added .lee-cellmain' in CSS
+
+
+def test_a_notebook_gets_its_own_overview_stripe_on_the_page_scrollbar():
+    """A file's stripe belongs to CodeMirror; a notebook scrolls as a page of cells.
+
+    Without this the per-cell change marks are only visible once you have scrolled to them,
+    which is the opposite of what an overview is for.
+    """
+    stripe = JS[JS.index('function paintNotebookOverview()'):JS.index('let nbOverviewFrame')]
+    assert 'lee.notebookGit?.cells' in stripe, 'uncommitted cells are the bars'
+    assert "$('.lee-cell-state.error', el)" in stripe, 'failed runs are the ticks'
+    assert 'host.scrollTop' in stripe and 'host.clientHeight' in stripe, 'and the viewport is the thumb'
+    assert 'host.scrollHeight > host.clientHeight + 4' in stripe, \
+        'a notebook that already fits keeps its scrollbar'
+    assert 'box.right - stageBox.left - NB_OVERVIEW_W' in stripe, 'measured, so a split lands right'
+    assert '.lee-editor.has-overview { scrollbar-width:none; }' in CSS, 'it takes the scrollbar’s place'
+    # Repainting: the notebook moves under it, so scrolling and resizing have to redraw.
+    assert "if (e.target?.id === 'editor') queueNotebookOverview();" in JS
+    assert "addEventListener('resize', queueNotebookOverview)" in JS
+    assert 'queueNotebookOverview();' in JS[JS.index('function setCellState'):JS.index('function markPreviousRuns')]

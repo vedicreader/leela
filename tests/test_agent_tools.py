@@ -14,6 +14,7 @@ Nothing here loads a model, and nothing touches the disk except through `tmp_pat
 """
 
 import pytest
+from fastcore.all import first
 
 from leela.agent.agent import RULES, project_context, system_prompt, work_rules
 from leela.agent.testing import MemHost
@@ -386,7 +387,7 @@ def test_the_briefing_the_agent_sends_matches_the_tools_it_has():
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def project(tmp_path):
-    from leela.ai import WorkspaceHost
+    from leela.blocks.agent.ai import WorkspaceHost
     from leela.workspace import Workspace
     (tmp_path/'src').mkdir()
     (tmp_path/'src'/'app.py').write_text('value = 1\n')
@@ -416,7 +417,7 @@ def test_a_command_can_be_run_in_a_subdirectory(project):
 
 
 def test_a_command_cannot_be_started_outside_the_open_folders(project):
-    from leela.fs import Unsafe
+    from leela.blocks.fs.fs import Unsafe
     with pytest.raises(Unsafe):
         project.run_cmd('ls', cwd='/etc')
 
@@ -444,13 +445,13 @@ def test_the_probe_command_never_spawns_anything(project):
 
 
 def test_leelas_own_agent_is_offered_the_shell(project):
-    from leela.ai import ide_tools
+    from leela.blocks.agent.ai import ide_tools
     assert 'run_shell' in named(ide_tools(project))
 
 
 def test_the_browser_previews_an_exact_text_edit_as_a_diff_without_writing_it(project):
     "The checkpoint form shows what the call would do. It must not do it."
-    from leela.web.app import _tool_preview
+    from leela.app import _tool_preview
     path = project.roots[0] + '/src/app.py'
     args = {'path': path, 'edits': '[{"oldText": "value = 1", "newText": "value = 2"}]'}
     preview = _tool_preview(project.ws.ai, 'replace_text', args)
@@ -459,7 +460,7 @@ def test_the_browser_previews_an_exact_text_edit_as_a_diff_without_writing_it(pr
 
 
 def test_the_browser_previews_a_command_as_a_command(project):
-    from leela.web.app import _tool_preview
+    from leela.app import _tool_preview
     p = _tool_preview(project.ws.ai, 'run_shell', {'command': 'pytest -q'})
     assert p['text'] == 'pytest -q' and p['language'] == 'bash'
 
@@ -467,7 +468,70 @@ def test_the_browser_previews_a_command_as_a_command(project):
 def test_a_sub_agent_does_not_get_a_shell(project):
     "A research sub-agent reports; it does not act, and a command is an action."
     from leela.agent.tools import read_only
-    from leela.ai import ide_tools
+    from leela.blocks.agent.ai import ide_tools
     assert 'run_shell' not in named(read_only(ide_tools(project)))
     assert 'replace_text' not in named(read_only(ide_tools(project)))
     assert 'grep' in named(read_only(ide_tools(project)))
+
+
+# ---------------------------------------------------------------------------
+# the blended search, and what it costs
+# ---------------------------------------------------------------------------
+def _index_legs(ws, monkeypatch, path):
+    """Stand in for the three Kosha-backed legs and record which of them the blend ran.
+
+    The indexed legs need a built Kosha store, which a tmp project has no reason to have; what
+    is under test is the merge, the agreement stamp, and which legs a surface pays for.
+    """
+    from fastcore.all import L
+    from leela.blocks.search.search import Hit
+    ran = []
+    rows = {'symbols': [Hit(path=path, line=1, text='def compute_total(x):', kind='symbol',
+                            symbol='compute_total')],
+            'fts': [Hit(path=path, line=1, text='def compute_total(x):', kind='fts', score=0.5)],
+            'ann': [Hit(path=path, line=2, text='return x', kind='ann', symbol='compute_total',
+                        score=0.9)]}
+    for name, hits in rows.items():
+        def leg(q, limit, name=name, hits=hits): return ran.append(name) or L(hits)
+        monkeypatch.setattr(ws.search, f'_{name}', leg)
+    return ran
+
+
+def test_search_all_reports_the_engines_that_agreed_on_each_hit(project, monkeypatch):
+    "One location four engines found is the point: the row has to say so, or it is just another list."
+    path = project.roots[0] + '/src/app.py'
+    open(path, 'w').write('def compute_total(x):\n    return x\n')
+    _index_legs(project.ws, monkeypatch, path)
+    panel = project.ws.ai
+    panel.tools
+    out = named(panel.registry.tools)['search_all']('compute_total')
+    lines = out.splitlines()
+    assert lines[0].startswith('[all:')                      # which backends answered at all
+    agreed = first(lines, lambda r: r.startswith(f'{path}:1'))
+    alone = first(lines, lambda r: r.startswith(f'{path}:2'))
+    assert agreed.endswith('[symbols+rg+fts]') and 'def compute_total(x):' in agreed
+    assert alone.endswith('[ann]')                           # the semantic-only hit is still offered
+    assert len([r for r in lines if r.startswith(path)]) == 2  # one row per location, not per engine
+
+
+def test_the_inline_agent_never_waits_on_the_embedding_leg(project, monkeypatch):
+    "A prompt cell is answered while someone waits mid-line; `ann` embeds the query first."
+    path = project.roots[0] + '/src/app.py'
+    open(path, 'w').write('def compute_total(x):\n    return x\n')
+    ran = _index_legs(project.ws, monkeypatch, path)
+    inline = project.ws.inline_ai
+    inline.tools
+    out = named(inline.registry.tools)['search_all']('compute_total')
+    assert set(ran) == {'symbols', 'fts'} and 'ann' not in ran
+    assert '[ann]' not in out and f'{path}:1' in out
+
+
+def test_both_surfaces_offer_the_blend_and_a_sub_agent_keeps_it(project):
+    "Reading is never the dangerous part, so delegation should not lose the better search."
+    from leela.agent.tools import read_only
+    from leela.blocks.agent.ai import ide_tools
+    panel = project.ws.ai
+    panel.tools
+    assert 'search_all' in named(panel.registry.tools)
+    assert 'search_all' in named(read_only(ide_tools(project)))
+    assert 'search_code' in named(ide_tools(project))        # the single-engine search stays

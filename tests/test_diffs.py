@@ -1,4 +1,4 @@
-"""Tests for `leela.diffs`.
+"""Tests for `leela.core.diffs`.
 
 Plain unit tests, because this module is pure text in and text out. The line numbers on
 diff rows get the most attention: they exist so a frontend can jump from a changed line
@@ -8,7 +8,7 @@ rows themselves, which is exactly the kind of arithmetic that is wrong until it 
 
 import pytest
 
-from leela.diffs import (DiffRow, closest, diff_label, diff_rows, diff_stat,
+from leela.core.diffs import (DiffRow, closest, diff_label, diff_rows, diff_stat,
                                 did_you_mean, fuzzy_rank, udiff)
 
 A = 'def f(x):\n    return x\n\nz = 1\n'

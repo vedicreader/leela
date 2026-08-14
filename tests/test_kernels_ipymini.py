@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio, sys, warnings
 import pytest
 
-from leela.kernels import Kernel, KernelPool, _spec, bootstrap_src, ipymini_available, output_text
+from leela.blocks.runtime.kernels import Kernel, KernelPool, _spec, bootstrap_src, ipymini_available, output_text
 
 
 # -- unit tests: no live kernel, no ipymini required ---------------------------------
@@ -64,7 +64,7 @@ def test_pool_default_kernel_forwarded(monkeypatch):
     class Fake:
         def __init__(self, **kw): seen.update(kw); self.alive = False
         async def start(self): return self
-    monkeypatch.setattr('leela.kernels.Kernel', Fake)
+    monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
     pool = KernelPool(default_kernel='ipymini')
     asyncio.new_event_loop().run_until_complete(pool.get('k'))
     assert seen['kernel'] == 'ipymini'
@@ -191,7 +191,7 @@ def test_concurrent_pool_gets_share_one_start(monkeypatch):
             await asyncio.sleep(0.02)
             self.alive = True
             return self
-    monkeypatch.setattr('leela.kernels.Kernel', Fake)
+    monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
 
     async def go():
         pool = KernelPool()
@@ -216,7 +216,7 @@ def test_pool_does_not_expose_a_half_started_kernel(monkeypatch):
             self.kc = object()
             return self
 
-    monkeypatch.setattr('leela.kernels.Kernel', Fake)
+    monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
 
     async def go():
         pool = KernelPool()
@@ -251,7 +251,7 @@ def test_pool_peek_hides_a_kernel_until_start_is_complete(monkeypatch):
             self.alive = True
             return self
 
-    monkeypatch.setattr('leela.kernels.Kernel', Fake)
+    monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
 
     async def go():
         pool = KernelPool()
@@ -292,7 +292,7 @@ def test_pool_ignores_bad_default():
 
 def test_fallback_when_ipymini_missing(monkeypatch):
     "Asking for ipymini when it isn't installed warns and falls back."
-    monkeypatch.setattr('leela.kernels.ipymini_available', lambda: False)
+    monkeypatch.setattr('leela.blocks.runtime.kernels.ipymini_available', lambda: False)
     with warnings.catch_warnings(record=True) as ws:
         warnings.simplefilter('always')
         k = Kernel(kernel='ipymini')
@@ -307,7 +307,7 @@ def test_cli_default_kernel_is_ipykernel(monkeypatch):
     from leela import cli
     seen = {}
     def fake_run(roots, **kw): seen.update(kw); seen['_roots'] = roots
-    monkeypatch.setattr('leela.web.app.serve_ide', fake_run)
+    monkeypatch.setattr('leela.app.serve_ide', fake_run)
     cli.main([])
     assert seen['kernel'] == 'ipykernel'
 
@@ -315,7 +315,7 @@ def test_cli_ipymini_flag(monkeypatch):
     from leela import cli
     seen = {}
     def fake_run(roots, **kw): seen.update(kw)
-    monkeypatch.setattr('leela.web.app.serve_ide', fake_run)
+    monkeypatch.setattr('leela.app.serve_ide', fake_run)
     cli.main(['--kernel', 'ipymini'])
     assert seen['kernel'] == 'ipymini'
 
@@ -327,12 +327,15 @@ def test_cli_rejects_unknown_kernel():
 
 def test_cli_refuses_non_loopback_bind_before_starting_server(monkeypatch):
     from leela import cli
-    monkeypatch.setattr('leela.web.app.serve_ide', lambda *a, **k: pytest.fail('server should not start'))
+    monkeypatch.setattr('leela.app.serve_ide', lambda *a, **k: pytest.fail('server should not start'))
     with pytest.raises(SystemExit):
         cli.main(['--host', '0.0.0.0'])
 
 
 # -- live-kernel tests, gated on ipymini ---------------------------------------------
+
+# starts real kernels, so it is out of the default run: `pytest -m slow` or `-m ""` includes it
+pytestmark = pytest.mark.slow
 
 pytestmark_live = pytest.mark.skipif(not ipymini_available(),
                                      reason='ipymini not installed')

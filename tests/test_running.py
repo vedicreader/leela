@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-from leela.kernels import find_pythons, run_file_src
+from leela.blocks.runtime.kernels import find_pythons, run_file_src
 from leela.workspace import Workspace
 
 

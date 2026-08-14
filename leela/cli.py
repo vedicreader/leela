@@ -55,10 +55,10 @@ def main(argv=None):
                    help='write every action and its current chord to that file, then exit — '
                         'the starting point for rebinding anything your terminal swallows')
     a = p.parse_args(argv)
-    # Set before the web app imports `leela.keys`, which loads overrides at import time.
+    # Set before the web app imports `leela.core.keys`, which loads overrides at import time.
     if a.keymap: os.environ['LEELA_KEYMAP'] = os.path.abspath(a.keymap)
     if a.write_keymap:
-        from .keys import write_keymap, keymap_path, NOTES
+        from .core.keys import write_keymap, keymap_path, NOTES
         path = write_keymap()
         print(f'wrote {path}')
         print('  action -> chord, or several chords separated by spaces; "" unbinds it.')
@@ -73,7 +73,7 @@ def main(argv=None):
         loopback = False
     if not loopback:
         p.error('Leela executes code and is intentionally loopback-only; use 127.0.0.1, ::1, or localhost')
-    from .web.app import serve_ide
+    from .app import serve_ide
     serve_ide(roots, port=a.port, host=a.host, agent=a.agent, kernel_port=a.kernel_port,
               kernel=a.kernel, model=a.model, approvals=a.approvals, agent_scope=a.agent_scope,
               python=a.python,

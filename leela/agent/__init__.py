@@ -1,28 +1,39 @@
-"""The coding agent, as part of leela rather than beside it.
+"""The coding agent, which is now `ramabana` rather than a copy of it kept here.
 
-This used to live in a separate distribution (`ramabana`) that leela depended on. The
-split cost more than it bought: the harness's only consumer was leela, every change had
-to be made twice, and the two copies drifted until leela imported module names the
-harness no longer had. It is now one package, maintained here, in five modules:
+This package was a fork. The harness lived in `ramabana`, leela vendored it, and for a
+while that was cheaper than the dependency -- until the two copies drifted far enough that
+each had fixes the other did not. leela's copy had grown `run_shell`, exact-text editing,
+`grep`, the `ERROR:` failure convention and `AGENTS.md`; ramabana's had grown a vault, a
+shopping cart, a real filesystem `Host`, an MCP server and a per-turn usage ledger.
+Neither was "the" harness, which is where a fork always ends up.
 
-- `core`     -- the error type, the environment convention, the model tables and routing.
-- `runtime`  -- native output capture, the context window, compaction, and the backends.
-- `tools`    -- `Host` (what an application must provide) and every tool built on it.
-- `agent`    -- the turn: the briefing, approvals, the activity feed, `Agent` itself.
-- `testing`  -- the doubles: a host with no disk, backends with no model.
+They are merged, `ramabana` is the agent core, and this package is the seam: the same five
+module paths leela has always imported, each one an alias for the module that now holds
+the code.
 
-Nothing in here imports from `leela` outside this package. That is not modesty about
-layering, it is what keeps the harness testable without an IDE: `testing.MemHost` is a
-complete host in a dict, and `tests/test_agent.py` runs the whole loop against it.
+- `leela.agent.core`     -> `ramabana.core`     -- the error type, the environment, model routing.
+- `leela.agent.runtime`  -> `ramabana.runtime`  -- native capture, the context window, the backends.
+- `leela.agent.tools`    -> `ramabana.tools`    -- `Host` and every tool built on it.
+- `leela.agent.agent`    -> `ramabana.agent`    -- the turn: briefing, approvals, activity, `Agent`.
+- `leela.agent.testing`  -> `ramabana.testing`  -- the doubles: a host with no disk, no model.
 
-Everything heavy is imported on first touch. `runtime` reaches for rishi, which loads a
-local engine or a cloud client; asking for `leela.agent.Host` must not pay for that.
+Each of those files replaces its own module object rather than re-exporting a list of
+names. leela reaches for private helpers -- `tools._cmds`, `tools._edits`,
+`tools._apply_edits` in `app.py` -- and a hand-written export list would have to be kept in
+step with them, which is the drift this merge exists to end.
+
+Nothing here imports from `leela`, and nothing in `ramabana` does either. That is not
+layering pedantry: `testing.MemHost` is a complete host in a dict, and it is what lets the
+whole loop be tested without starting an IDE.
+
+Everything heavy is still imported on first touch. `runtime` reaches for rishi, which
+loads a local engine or a cloud client; asking for `leela.agent.Host` must not pay for that.
 """
 
 __all__ = ['Host', 'NullHost', 'Hit', 'Backend', 'Agent', 'Completer', 'Approvals', 'Ask',
            'ModelSpec', 'Routing', 'AgentError', 'agent_err', 'env']
 
-from .core import AgentError, agent_err, env
+from ramabana.core import AgentError, agent_err, env
 
 _lazy = {'Host': ('.tools', 'Host'), 'NullHost': ('.tools', 'NullHost'), 'Hit': ('.tools', 'Hit'),
          'Backend': ('.runtime', 'Backend'), 'Agent': ('.agent', 'Agent'),

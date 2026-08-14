@@ -1,16 +1,17 @@
 """Notebook execution feedback stays tied to the kernel and source that produced it."""
 
-import asyncio
-from pathlib import Path
+# drives a real browser through playwright, so it is out of the default run. `pytest -m slow` or `-m ""` includes it.
+import pytest
 
-from leela.buttons import bar
-from leela.web.app import _assigned_lines, _inline_values, ide_app
+pytestmark = pytest.mark.slow
+
+import asyncio
+
+from leela.core.buttons import bar
+from leela.app import _assigned_lines, _inline_values, ide_app
 from leela.workspace import Workspace, _EnvClient
 
-ROOT = Path(__file__).resolve().parents[1]
-JS = (ROOT/'leela/web/static/lee-ide.js').read_text()
-CSS = (ROOT/'leela/web/static/lee-ide.css').read_text()
-EDITOR = (ROOT/'leela/web/src/editor.js').read_text()
+from tests.assets import JS, CSS, SERVER, EDITOR
 
 
 def test_python_bindings_are_mapped_to_the_lines_that_create_them():
@@ -69,7 +70,7 @@ def test_external_inspected_runtimes_normalise_execution_as_notebook_output(monk
 
 def test_variable_header_does_not_duplicate_the_sort_dropdown_with_a_button():
     assert 'sort' not in {b.action for b in bar('vars')}
-    assert "id='varsort'" in (Path(__file__).resolve().parents[1]/'leela/web/app.py').read_text()
+    assert "id='varsort'" in SERVER
 
 
 def test_switching_tabs_returns_variables_to_that_notebooks_kernel(tmp_path):
@@ -178,3 +179,4 @@ def test_large_outputs_are_folded_before_the_browser_parses_them():
 def test_inline_values_disappear_as_soon_as_the_source_changes():
     field = EDITOR[EDITOR.index('const inlineField'):EDITOR.index('export function setInlineValues')]
     assert 'if (tr.docChanged) values = Decoration.none' in field
+

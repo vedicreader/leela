@@ -14,6 +14,11 @@ These boot the actual app with a fake kernel and drive it with Playwright, which
 only place the JS runs at all.
 """
 
+# drives a real browser through playwright, so it is out of the default run. `pytest -m slow` or `-m ""` includes it.
+import pytest
+
+pytestmark = pytest.mark.slow
+
 import asyncio
 import socket
 import threading
@@ -23,8 +28,8 @@ import pytest
 pytest.importorskip('playwright.async_api')
 from playwright.async_api import async_playwright   # noqa: E402
 
-from leela.kernels import KernelPool                # noqa: E402
-from leela.web.app import ide_app                   # noqa: E402
+from leela.blocks.runtime.kernels import KernelPool                # noqa: E402
+from leela.app import ide_app                   # noqa: E402
 from leela.workspace import Workspace               # noqa: E402
 from conftest import FakeKernel                     # noqa: E402
 
@@ -182,7 +187,7 @@ def test_bundled_code_fonts_load_and_ligatures_reach_codemirror():
 
 
 def test_user_checkbox_settings_survive_close_and_reopen(tmp_path, monkeypatch):
-    import leela.settings as settings_module
+    import leela.blocks.settings.settings as settings_module
     monkeypatch.setattr(settings_module, 'USER_SETTINGS_FILE', tmp_path/'settings.json')
     async def go(pg):
         await pg.evaluate("leeAct('settings')")
@@ -198,7 +203,8 @@ def test_user_checkbox_settings_survive_close_and_reopen(tmp_path, monkeypatch):
                 await pg.is_checked('[data-pref="useTabs"]'))
     assert _run(go) == (False, True)
     saved = settings_module.Settings(user_path=tmp_path/'settings.json').raw('user')
-    assert saved['languages']['python']['editor'] == {'ligatures': False, 'useTabs': True}
+    # Settings default to All languages; only deviations from defaults are persisted.
+    assert saved.get('editor', {}) == {'ligatures': False, 'useTabs': True}
 
 
 def test_function_keys_are_left_to_the_os_and_browser():
@@ -487,29 +493,44 @@ def test_expandable_expression_results_open_in_a_floating_value_lens():
     assert "_hits[0]['path']" in heading
 
 
+# `all` is the default mode and it streams: one `leg` event per backend over SSE rather than one
+# batch answer, so this feeds the dialog a stream. The same hit arrives twice, from two legs, to
+# pin the merge -- the second leg must add its name to the row the first one drew, not a second row.
+_SEARCH_HIT = ('{"path": "/tmp/engine.py", "line": 17, "text": "def runtime_engine():\\n    return 42",'
+               ' "kind": "%s", "symbol": %s, "score": 220%s}')
+_SEARCH_STREAM = (
+    'event: start\ndata: {"legs": ["symbols", "rg"], "searched": ["/tmp/proj"]}\n\n'
+    'event: leg\ndata: {"leg": "symbols", "hits": ['
+    + (_SEARCH_HIT % ('symbol', '"runtime_engine"', ', "sources": ["symbols"]')) + ']}\n\n'
+    'event: leg\ndata: {"leg": "rg", "hits": [' + (_SEARCH_HIT % ('text', 'null', '')) + ']}\n\n'
+    'event: done\ndata: {}\n\n')
+
+
 def test_unified_code_search_previews_highlighted_code_and_opens_locations():
     async def go(pg):
         await pg.route('**/code/status', lambda route: route.fulfill(status=200, content_type='application/json',
           body='{"ok":true,"files":274,"packages":152,"graph_nodes":8088,"stale_files":0}'))
-        await pg.route('**/search?*', lambda route: route.fulfill(status=200, content_type='application/json', body='''{
-          "backend":"all","note":"rg + symbols + fts + ann","hits":[{
-            "path":"/tmp/engine.py","line":17,"text":"def runtime_engine():\\n    return 42",
-            "kind":"symbol","symbol":"runtime_engine","score":220,"sources":["symbols","rg"]
-          }]}'''))
+        await pg.route('**/search/stream?*', lambda route: route.fulfill(
+            status=200, content_type='text/event-stream', body=_SEARCH_STREAM))
         await pg.evaluate("leeAct('code_search')")
         await pg.fill('#cs', 'runtime_engine')
         await pg.wait_for_selector('.lee-search-result')
-        await pg.click('.lee-search-result')
         await pg.wait_for_selector('.lee-search-preview .cm-editor')
-        modes = await pg.locator('.lee-searchmodes').inner_text()
+        modes = await pg.locator('.lee-searchrail').inner_text()
         preview = await pg.locator('.lee-search-preview').inner_text()
-        await pg.dblclick('.lee-search-result')
+        scope_note = await pg.locator('#csscopenote').inner_text()
+        rows = await pg.locator('.lee-search-result').count()
+        # One click opens the hit at its line and closes the dialog; the preview needed no click.
+        await pg.click('.lee-search-result')
         location = await pg.evaluate('lee.pendingLocation')
-        return modes, preview, location
-    modes, preview, location = _run(go)
-    assert modes.splitlines()[0] == 'context'
+        return modes, preview, scope_note, rows, location, await pg.locator('.lee-code-search-modal').count()
+    modes, preview, scope_note, rows, location, still_open = _run(go)
+    assert modes.splitlines()[:2] == ['all', '1']   # default mode, and both legs counted as one hit
+    assert rows == 1
     assert 'runtime_engine' in preview and 'symbols + rg' in preview
-    assert location == {'path': '/tmp/engine.py', 'line': 17}
+    assert scope_note == 'searched proj'
+    assert (location['path'], location['line']) == ('/tmp/engine.py', 17)
+    assert still_open == 0
 
 
 def test_research_memory_is_a_first_class_right_panel():
@@ -519,6 +540,8 @@ def test_research_memory_is_a_first_class_right_panel():
           "items":[{"id":"abc","title":"Agent memory","source":"https://example.com","kind":"page","pages":1,"meta":{}}]
         }'''))
         await pg.click('[data-right="memory"]')
+        # Memory opens on agent notes; research sources are the adjacent view.
+        await pg.click('[data-memory-view="sources"]')
         await pg.wait_for_selector('.lee-memory-doc')
         return await pg.locator('#memorystatus').inner_text(), await pg.locator('#memorybody').inner_text()
     status_text, body = _run(go)
@@ -533,8 +556,10 @@ def test_memory_purge_can_select_bad_results_or_clear_the_corpus():
             {"id":"bad","title":"Bad result","source":"https://bad.example","kind":"page","pages":1,"meta":{}},
             {"id":"good","title":"Useful result","source":"https://good.example","kind":"page","pages":1,"meta":{}}
           ]}'''))
-        await pg.click('[data-right="memory"]'); await pg.wait_for_selector('.lee-memory-doc')
-        await pg.click('.lee-memory .lee-phead .warn'); await pg.wait_for_selector('.lee-memory-purge-list')
+        await pg.click('[data-right="memory"]')
+        await pg.click('[data-memory-view="sources"]')
+        await pg.wait_for_selector('.lee-memory-doc')
+        await pg.click('.lee-memory-nav .warn'); await pg.wait_for_selector('.lee-memory-purge-list')
         return await pg.locator('.lee-memory-purge-list').inner_text(), await pg.locator('[data-all]').inner_text()
     rows, all_label = _run(go)
     assert 'Bad result' in rows and 'Useful result' in rows

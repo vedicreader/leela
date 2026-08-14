@@ -2,12 +2,11 @@
 
 from pathlib import Path
 
-from leela.kernels import bootstrap_src, project_python
+from leela.blocks.runtime.kernels import bootstrap_src, project_python
 from leela.workspace import Workspace
 
 ROOT = Path(__file__).resolve().parents[1]
-JS = (ROOT/'leela/web/static/lee-ide.js').read_text()
-CSS = (ROOT/'leela/web/static/lee-ide.css').read_text()
+from tests.assets import JS, CSS, EDITOR
 
 
 def _fake_venv(root):
@@ -64,7 +63,7 @@ def test_one_router_owns_platform_mod_and_derives_context_from_focus():
 
 
 def test_exec_and_variables_can_switch_to_the_persistent_agent_session():
-    from leela.web.app import _vars_panel
+    from leela.app import _vars_panel
     from leela.workspace import Workspace
     html = str(_vars_panel(Workspace(roots=[])))
     assert '>agent</button>' in html and 'leeScope("agent")' in html
@@ -98,16 +97,18 @@ def test_switching_runtime_does_not_destroy_existing_terminal_tabs():
 
 
 def test_terminal_starts_inside_the_project_uv_environment():
-    from leela.web.app import ide_app
-    import inspect
-    source = inspect.getsource(ide_app)
-    assert "env['VIRTUAL_ENV'] = venv" in source
-    assert "env['UV_PROJECT_ENVIRONMENT'] = venv" in source
-    assert "env['PATH'] = bindir + os.pathsep" in source
+    "One builder, used by the pty and by every release, deploy and drive step alike."
+    import inspect, os
+    from leela.app import ide_app
+    from leela.blocks.runtime.kernels import venv_env
+    env = venv_env('/proj/.venv/bin/python', {'PATH': '/usr/bin'})
+    assert env['VIRTUAL_ENV'] == env['UV_PROJECT_ENVIRONMENT'] == '/proj/.venv'
+    assert env['PATH'] == '/proj/.venv/bin' + os.pathsep + '/usr/bin'
+    assert 'env = venv_env(py) if py else None' in inspect.getsource(ide_app)
 
 
 def test_codemirror_preferences_are_live_reconfigurable_and_have_a_settings_workbench():
-    editor = (ROOT/'leela/web/src/editor.js').read_text()
+    editor = EDITOR
     assert 'function settingsExt' in editor and 'export function configure' in editor
     assert 'EditorState.tabSize.of' in editor and 'EditorView.lineWrapping' in editor
     assert 'async function editorSettings(' in JS and "post('/settings/save'" in JS
@@ -122,7 +123,7 @@ def test_codemirror_preferences_are_live_reconfigurable_and_have_a_settings_work
 
 
 def test_indent_detection_copies_tabs_or_space_units_without_treating_alignment_as_policy():
-    editor = (ROOT/'leela/web/src/editor.js').read_text()
+    editor = EDITOR
     detection = editor[editor.index('function detectedIndentation'):editor.index('function normalizedSettings')]
     assert "if(tabs>widths.length)return {...settings,useTabs:true}" in detection
     assert 'const candidates=[2,4,8]' in detection and 'width%unit===0' in detection
@@ -132,13 +133,39 @@ def test_indent_detection_copies_tabs_or_space_units_without_treating_alignment_
 
 
 def test_codemirror_navigation_extensions_are_optional_live_preferences():
-    editor = (ROOT/'leela/web/src/editor.js').read_text()
-    assert 'function minimapPlugin' in editor and 'const stickyPlugin' in editor
-    assert "'editor','minimapMode'" in JS and "'editor','stickyNavigation'" in JS
+    editor = EDITOR
+    assert 'function overviewPlugin' in editor and 'const stickyPlugin' in editor
+    assert "'editor','overviewMode'" in JS and "'editor','stickyNavigation'" in JS
+
+
+def test_the_overview_is_the_scrollbar_marked_up_rather_than_a_picture_of_the_text():
+    """A compressed image of the letters answers no question you can act on.
+
+    What a full-file view is for is where the problems and the changes are, so the stripe
+    carries a tick per diagnostic and a bar per uncommitted line -- and it takes the
+    scrollbar's place rather than sitting beside it, so there is never a second thing to
+    scroll or two bars down one edge.
+    """
+    stripe = EDITOR[EDITOR.index('function overviewPlugin'):EDITOR.index('const stickyPlugin')]
+    assert 'forEachDiagnostic(this.view.state' in stripe, 'ticks come from the real diagnostics'
+    assert 'this.view.state.field(changesField, false)' in stripe, 'bars come from the git marks'
+    assert 'cm-lee-change-(\\w+)' in stripe, 'a change bar is coloured by its kind'
+    assert 's.scrollTop =' in stripe and 'pointermove' in stripe, 'it scrolls, and it drags'
+    assert 'viewportLineBlocks' in stripe, 'and it says where you are'
+    assert 'scrollbar-width: none' in CSS and '.cm-lee-has-overview .cm-scroller' in CSS
+    assert 'cm-lee-minimap' not in CSS, 'the old canvas is gone, not merely hidden'
+
+
+def test_the_overview_setting_carries_its_two_older_names_forward():
+    "A stored preference must not silently reset because the feature was renamed twice."
+    prefs = JS[JS.index('function readEditorPrefs'):JS.index('lee.editorPrefs = readEditorPrefs()')]
+    assert "if ('minimap' in old && !old.minimapMode)" in prefs
+    assert 'if (old.minimapMode && !old.overviewMode) old.overviewMode = old.minimapMode;' in prefs
+    assert 'settings.overviewMode || settings.minimapMode' in EDITOR, 'and on the editor side too'
 
 
 def test_codemirror_merge_view_is_used_for_external_file_conflicts():
-    editor = (ROOT/'leela/web/src/editor.js').read_text()
+    editor = EDITOR
     assert 'MergeView' in editor and 'export function createMerge' in editor
     assert 'function openMergeConflict' in JS and 'data-save-merge' in JS
     assert 'Resolve notebook conflict' in JS and 'data-cell-merge' in JS
@@ -152,7 +179,7 @@ def test_run_configuration_workbench_edits_environment_without_putting_secrets_i
 
 def test_editor_toolbar_keeps_contextual_actions_and_moves_the_rest_to_kebab():
     from fasthtml.common import to_xml
-    from leela.web.app import _toolbar
+    from leela.app import _toolbar
     html = to_xml(_toolbar())
     assert 'data-action="run_cell"' in html and 'data-action="run_file"' in html
     assert 'data-action="run_all"' not in html
@@ -162,7 +189,7 @@ def test_editor_toolbar_keeps_contextual_actions_and_moves_the_rest_to_kebab():
 
 def test_agent_teleprompter_exposes_control_modes_and_editable_tool_calls():
     from fasthtml.common import to_xml
-    from leela.web.app import _agent_panel
+    from leela.app import _agent_panel
     from leela.workspace import Workspace
     html = to_xml(_agent_panel(Workspace(roots=[])))
     assert 'id="agentcontrol"' in html
@@ -230,7 +257,7 @@ def test_agent_execution_ui_has_run_policies_previews_steering_and_state_memory(
     required = ("/agent/run-policy", "/agent/tool-preview", "/agent/retry-tool", "/agent/rollback-tool",
                 "/agent/steer", "/agent/state/save", "/agent/state/load")
     from inspect import getsource
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     source = getsource(ide_app)
     assert all(route in source for route in required)
     assert 'function proposalFields' in JS and 'function refreshProposalPreview' in JS
@@ -241,7 +268,7 @@ def test_agent_execution_ui_has_run_policies_previews_steering_and_state_memory(
 
 
 def test_tool_schema_only_marks_read_only_calls_as_rerunnable(tmp_path):
-    from leela.web.app import _tool_schemas
+    from leela.app import _tool_schemas
     from leela.workspace import Workspace
     rows = {row['name']: row for row in _tool_schemas(Workspace(roots=[tmp_path]).ai)}
     assert rows['run_shell']['changes_state'] and not rows['run_shell']['retryable']
@@ -263,7 +290,7 @@ def test_checkpoints_and_response_revision_explain_consequences_in_plain_languag
 
 def test_agent_control_route_changes_checkpoint_policy_without_starting_a_model(tmp_path):
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     with TestClient(ide_app(ws)) as client:
@@ -276,8 +303,8 @@ def test_agent_control_route_changes_checkpoint_policy_without_starting_a_model(
 
 def test_agent_and_variables_share_the_right_tabs_while_exec_and_terminal_share_the_bottom():
     from fasthtml.common import to_xml
-    from leela.web.app import _shell
-    from leela.term import TerminalGate
+    from leela.app import _shell
+    from leela.blocks.term.term import TerminalGate
     from leela.workspace import Workspace
     html = to_xml(_shell(Workspace(roots=[]), TerminalGate()))
     assert 'lee-righttabs' in html and 'data-right="agent"' in html and 'data-right="vars"' in html
@@ -294,7 +321,7 @@ def test_terminal_can_expand_and_refits_its_pty():
 
 
 def test_lower_panels_cannot_consume_the_editor():
-    assert '.lee-editor-stage { flex:1 1 auto; min-height:240px' in CSS
+    assert '.lee-editor-stage { position:relative; flex:1 1 auto; min-height:240px' in CSS
     assert 'max-height: min(900px, calc(100% - 240px))' in CSS
     assert 'const limit = () => Math.min(900, Math.max(110, centreHeight() - 240))' in JS
     assert "['exec-h', 80]" in JS and "['agent-h', 110]" in JS
@@ -313,7 +340,7 @@ def test_terminal_has_mouse_resize_and_multiple_live_tabs():
 
 def test_screen_capture_route_rejects_oversized_payloads_before_decoding(tmp_path):
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         response = client.post('/screen', json={'data_url': 'data:image/png;base64,' + 'A' * 12_000_001})
@@ -322,9 +349,29 @@ def test_screen_capture_route_rejects_oversized_payloads_before_decoding(tmp_pat
 
 
 def test_editor_keeps_replaced_triple_quotes_paired():
-    src=(ROOT/'leela/web/src/editor.js').read_text()
+    src=EDITOR
     assert 'pairedTripleQuotes' in src and 'transactionFilter' in src
-    assert (ROOT/'leela/web/static/lee-cm6.js').stat().st_size > 100_000
+    assert (ROOT/'leela/vendor/lee-cm6.js').stat().st_size > 100_000
+
+
+def test_one_static_prefix_serves_both_the_authored_and_vendored_asset_trees(tmp_path):
+    """`/leestatic` spans `leela/static` and `leela/vendor` as if they were one folder.
+
+    Splitting them must not change a single asset URL. The font is the case that matters:
+    `lee-ide.css` names `/leestatic/fonts/*.woff2` from the authored tree, but the file itself
+    now lives in the vendored one, so a mount that could not fall through would 404 it.
+    """
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        authored = client.get('/leestatic/lee-ide.css')
+        vendored = client.get('/leestatic/lee-cm6.js')
+        font = client.get('/leestatic/fonts/jetbrains-mono-latin-wght-normal.woff2')
+        missing = client.get('/leestatic/no-such-asset.js')
+    assert authored.status_code == vendored.status_code == font.status_code == 200
+    assert b'@font-face' in authored.content and b'/leestatic/fonts/' in authored.content
+    assert missing.status_code == 404
 
 
 def test_inline_model_calls_explain_their_progress():
@@ -335,7 +382,7 @@ def test_inline_model_calls_explain_their_progress():
 
 def test_selection_help_uses_summary_and_completion_jobs_without_editing(tmp_path, monkeypatch):
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     calls = []
@@ -356,7 +403,7 @@ def test_selection_help_uses_summary_and_completion_jobs_without_editing(tmp_pat
 
 def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         raw = '```{=html}\n<img src=x onerror=alert(1)>\n```'
@@ -373,7 +420,7 @@ def test_rendering_markdown_does_not_hide_its_editor():
 
 
 def test_model_discovery_does_not_block_shell_render_or_editor_mount():
-    from leela.web.app import _agent_panel
+    from leela.app import _agent_panel
     from leela.workspace import Workspace
     html = str(_agent_panel(Workspace(roots=[])))
     assert html.count('loading…') == 3
@@ -395,8 +442,8 @@ def test_notebook_editors_mount_lazily_near_the_viewport():
 
 
 def test_terminal_bundle_loads_only_when_the_terminal_opens():
-    from leela.web.app import _asset, _shell
-    from leela.term import TerminalGate
+    from leela.app import _asset, _shell
+    from leela.blocks.term.term import TerminalGate
     from leela.workspace import Workspace
     html = str(_shell(Workspace(roots=[]), TerminalGate()))
     assert f'<script src="{_asset("lee-term.js")}">' not in html

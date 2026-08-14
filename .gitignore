@@ -149,9 +149,9 @@ checklink/cookies.txt
 .sesskey
 .kosha/
 
-# vendored browser build inputs (the built bundles in leela/web/static ARE committed)
-leela/web/src/node_modules/
-leela/web/src/package-lock.json
+# browser build inputs (the bundles they produce in leela/vendor/ ARE committed)
+frontend/node_modules/
+frontend/package-lock.json
 
 # pytest-textual-snapshot writes this on failure
 snapshot_report.html

@@ -25,6 +25,12 @@ leela src tests            # one browser workspace with two roots
 leela --app src tests      # two independent app windows in the persistent CDP Chrome
 ```
 
+Workflows, releases and their credentials need gheasy and dockeasy:
+
+```sh
+pip install "leela[github]"
+```
+
 `--app` uses `fossick.cdp.cdp_setup` on port 9223 and reuses its persistent Chrome
 profile. Each folder gets an isolated `Workspace`, document store, agent, terminals, and
 kernel pool at `folder.localhost:5001`; it does not start another resident Chrome per
@@ -60,15 +66,13 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   Markdown cannot execute explicit raw-HTML fences; authored notebook Markdown can still use
   deliberate `{=html}` passthrough.
 - **Durable research memory.** Every page Leela reads and every source in a research brief is
-  ingested automatically into a persistent litesearch database. It reuses Kosha's resident
-  embedder, but stores prose as document trees rather than mixing it into the AST-shaped code
-  index. The Memory tab browses recent documents, heading trees, whole sections, hybrid
-  FTS/ANN retrieval and labelled semantic clusters. The agent gets the same `memory_search`,
-  `memory_tree`, `memory_read` and `memory_topics` tools, so an earlier investigation can be
-  recalled before paying to search the live web again. Memory is controllable rather than an
-  indiscriminate archive: turn off **remember** before a read/research run, forget the active
-  source from its reader, purge selected bad results, or purge the complete corpus. Purging
-  removes the document tree, chunks and ANN entries together.
+  ingested into a [vishalakshi](https://github.com/vedicreader/vishalakshi) vault — prose shelves
+  over litesearch, separate from Kosha's AST-shaped code index. A global `leela` shelf holds
+  agent notes and saved state; each workspace has its own shelf for project reading. The Memory
+  tab browses documents, heading trees, sections, hybrid retrieval and topics. The agent gets
+  `memory_search`, `memory_tree`, `memory_read` and `memory_topics`, so an earlier investigation
+  can be recalled before paying to search the live web again. Turn off **remember** before a
+  read, forget a source from its reader, or purge selected results / the whole corpus.
 - **Buttons for everything, and keys you can change.** Every action has a toolbar or
   panel button, a command-palette entry, and a chord you can rebind — see
   [keys and buttons](#keys-and-buttons). `hyper` means Command+Control+Option+Shift in
@@ -196,21 +200,154 @@ The browser interaction model is documented in the [Browser workbench guide](doc
   points the panel at any of them, or back at the notebook's kernel. See
   [watching something run](#watching-something-run).
 - **Browser source control without leaving the editor.** A vertical Project/Git activity
-  bar opens a four-part source-control workspace: Changes, Branches, History, and Repository.
-  The branch pill shows changes and upstream divergence. Modified, staged, untracked, and
-  conflicted files are coloured in the tree; source rails open syntax-preserving patches.
-  Review can move whole files or selected hunks through the index, inspect notebook cell
-  content without JSON noise, blame individual lines, and choose ours/theirs/current content
-  in a three-way conflict view. The searchable branch view sorts visibly by commit time and
+  bar opens a six-part source-control workspace: Changes, Review, Branches, History,
+  Repository, and All repos. Workflows, Release and Deploy sit beside it on the same bar. The branch pill shows changes and upstream divergence. Modified, staged,
+  untracked, and conflicted files are coloured in the tree; source rails open
+  syntax-preserving patches. Changes include line statistics, multi-file selection, local
+  changelists, pre-stage previews for untracked files, staged-only commit review, and hunk
+  staging. Every changed file opens as a normal editor diff tab with collapsible
+  notebook-style unified hunks or a synchronized side-by-side view with high-contrast
+  change bands. Safe working-tree comparisons expose per-chunk revert arrows and require an
+  explicit apply before replacing the uncommitted file; historical sides remain read-only. Branch review
+  separates pull-request-style proposed changes from complete snapshot comparisons, lazily
+  loads per-file patches, remembers reviewed files and notes,
+  exports notes as Markdown, and can apply selected incoming hunks to a clean base branch.
+  Notebook review shows cell content without JSON noise; blame and three-way conflict tools
+  remain available. The searchable branch view sorts visibly by commit time and
   identifies latest, default, local/remote, merged/unmerged, upstream, and tracking state;
   remote freshness is always explicit rather than implied. It supports create, switch,
-  publish, rename, track, compare, merge, rebase, safe delete, fetch/pull/push, amend,
-  annotated tags, and complete stash handling. History provides a commit graph, search,
-  signatures, patches, compare, cherry-pick, revert, reset with mode-specific safeguards,
+  publish, rename, track, compare, safe delete, fetch/pull/push, and amend. Merge and rebase
+  now open non-mutating plans first: incoming commits, file statistics, ancestry, working-tree
+  safety, conflict rehearsal, and merge strategy are visible before history changes.
+  Blame is an action rather than a button on one row: a chord, the command palette, and the
+  file, editor, cell and tab menus all reach it, and a text file blames the lines you have
+  selected with the whole file one press away. A **notebook is blamed as cells**, not as its
+  JSON — each cell shows who touched it last and the commits it is made of, expanding to its
+  real source lines with per-line attribution, so a line someone else changed inside a cell
+  that is otherwise yours is visible. Colour-coding is by commit, newest first.
+  Annotated tags and complete stash handling remain in the same workspace. History provides
+  a searchable commit graph and a compact file-first inspector; selecting a file opens the
+  same diff tab instead of rendering an entire commit patch in a dialog. Signatures,
+  comparisons, cherry-pick, revert, and reset retain mode-specific safeguards,
   blame, and reflog recovery. Repository tools manage remote URLs, host pull-request links,
   worktrees, and submodule state. Active merge/rebase/cherry-pick/revert operations expose
   continue, skip, and abort actions. Status snapshots are coalesced so one mutation does not
   launch several duplicate Git scans. Lazygit remains available for full-screen workflows.
+- **A workspace of repositories, not just one.** `leela ~/code` opens a folder of
+  checkouts as readily as a single project, and **All repos** answers the questions that only
+  exist in the plural — which are dirty, which are behind, which are still on last week's
+  branch, which have commits past their last tag — the way
+  [fastws](https://github.com/AnswerDotAI/fastws) does from the command line. Membership is
+  discovered rather than configured: an open folder is a checkout, or it holds them, or
+  both; a `repos.txt` beside it is read when present, so a workspace laid out for fastws
+  works untouched, and a checkout from anywhere else can be added or dropped from the list
+  without moving it. Fetch, pull and push run across every repository at once, each one
+  reporting its own outcome so a remote that is down cannot hide the nineteen that
+  succeeded; a bulk pull skips a repository with no upstream and a bulk push skips an
+  unpublished branch rather than guessing. Clone several at once by URL or `owner/name`.
+  Pinning a repository points the whole panel — changes, branches, history, review — at
+  that checkout, while the branch pill, tree badges and editor change marks keep following
+  the file you have open.
+- **Workflows you can look at.** A `.github/workflows` file is a graph pretending to be a
+  document, so the **Workflows** panel draws it: jobs as boxes, `needs` as the rows between
+  them, each one carrying its runner, its `if` guard, its environment and its steps. Recent
+  runs come back beside it, and selecting one paints its result onto the same boxes, so a
+  red workflow says *which* job is red. A `workflow_dispatch` file gets a run button. All of
+  the GitHub half is [gheasy](https://github.com/vedicreader/gheasy) — repository
+  resolution, the token, `GhApi`, and the workflow generated from `.gheasy/config.json`,
+  which you can preview before agreeing to have it written. What a docker job would build
+  comes from [dockeasy](https://github.com/Karthik777/dockeasy)'s `detect_app`, which will
+  also write the Dockerfile it detected. Without those two installed the panel still lists
+  the workflow files and says what to install: `pip install "leela[github]"`.
+- **A picker that knows what this project is.** *Add* lists the workflows on offer and
+  marks the ones this repository actually wants — nbdev CI rather than plain CI for an nbdev
+  project, a Docker workflow when there is something to put in an image, the VPS deploy when
+  there is a deploy script or a `vpseasy` dependency. The detection is dockeasy's
+  `detect_app` plus the files that give a project away; every workflow itself is gheasy's,
+  three of them its own presets and the rest its DSL, so what lands in `.github/workflows`
+  is what the `gheasy` CLI would have written. Preview any of them before agreeing; the one
+  judgement Leela makes is *which*, because that is the part neither library can know.
+  The VPS entry is lego's deploy workflow with its key list read rather than written down:
+  gheasy's `env_schema` becomes the `env:` block, secrets and variables sorted by the same
+  rule that decides where a value is pushed.
+- **A builder for people who are not good at Actions.** *Build* is a form: checkboxes for
+  when it runs, a job per card, each job's options with a sentence saying what they do, and
+  `waits for` to wire one job to another. The YAML updates as you change it and is written
+  only when you say so. Every job is a gheasy preset or its DSL, so the file is the one
+  `gheasy` would have produced — and the vocabulary is served from `leela/wfbuild.py` as
+  data, so a preset gained there appears in the form without a line of frontend. The spec is
+  kept beside the file it produced, so reopening the builder reopens what *you built*; if
+  the YAML has been edited by hand since, the panel says so before offering to replace it.
+- **`gh auth login`, in a terminal.** Authenticating is a conversation — which host, open a
+  browser, paste a one-time code — so the button opens the real thing in the dock rather
+  than a form pretending to be one. It appears when the CLI is installed and not logged in,
+  which is also when pushing a secret would otherwise fail for a reason nobody could see.
+- **A release pipeline that keeps each step's identity.** `nbdev_prepare && nbdev_bump_version
+  && nbdev_release_gh && nbdev_pypi` is the whole of an nbdev release, and typing it as one
+  line is what makes it unpleasant — the chain stops somewhere in the middle and the
+  scrollback holds four commands at once. The **Release** panel runs the same four commands
+  as four steps, each with its own exit code and its own output. A green step starts the
+  next one; a red one halts the run with its output on screen and offers retry or a
+  deliberate skip, because continuing past a failed `nbdev_prepare` to publish to PyPI is
+  not a convenience. nbdev is recognised from `settings.ini` *or* `[tool.nbdev]` in
+  `pyproject.toml`, and the resulting pipeline is a starting point saved to
+  `.leela/release.json`, not a special case in the code. Steps run on a real pty — progress
+  bars redraw, spinners spin, and twine can ask for a password — rendered in the same xterm
+  the shell uses, with one transcript for the whole release rather than one per step.
+- **Deploy to a VM, the way lego does it.** The **Deploy** panel runs the project's own
+  `deploy.py`, one subcommand per stage, on the same terminal as a release: write `.env`,
+  build the stack, then the tunnel and the server. Above the stages it says where this is
+  going — domain, server name, which of `deploy.py`, `Dockerfile`, `docker-compose.yml` and
+  `Caddyfile` exist yet, and which values are still unset — because a deploy that cannot say
+  where it goes is the one nobody presses. A project with no deploy script gets offered the
+  first one: `scaffold` writes lego's pattern with this project's names in it — dockeasy's
+  `detect_app` for the image, vpseasy's `caddy_stack` and `hetzner_deploy` for the stack and
+  the server, cfeasy's `CF().setup_tunnel` for the tunnel and its DNS — together with the
+  gheasy schema those keys live in and the deploy workflow generated from it. It is a
+  starting point to edit, generated from the same libraries it imports, so there is one way
+  these deploys work rather than two. Both halves are written: `setup.py` — the schema, LFS,
+  `.env.example`, the workflow, the secrets and the deploy key, run once by you — and
+  `deploy.py`, which CI runs on every push, with the compose stack, the tunnel, an optional
+  second hostname on the same container, the rsync include list, `status` and a guarded
+  `nuke`.
+- **The servers and tunnels it landed on.** The Deploy panel's *Servers* view lists what
+  Hetzner and Cloudflare actually have — servers with their IP and state, tunnels with their
+  connection count, zones and their DNS records with the tunnel-backed ones marked, which is
+  where the answer lives when a host serves the wrong thing. It is vpseasy's `Hetzner` and
+  cfeasy's `CF`, with the token taken from dockeasy's store and put back afterwards rather
+  than left in the environment. Nothing here is bulk: the two deletions each name one thing,
+  and there is no "remove everything unused" button, because deciding what is unused is the
+  judgement that goes wrong on infrastructure someone is serving from.
+- **The same deploy, taken apart.** *Drive* is the alternative to running `deploy.py`:
+  dockeasy writes the Dockerfile, vpseasy writes the compose stack, cfeasy opens the tunnel,
+  vpseasy provisions and rsyncs, gheasy pushes the secrets — six calls, six exit codes, six
+  transcripts, each runnable on its own and re-runnable after a fix. It exists because
+  "it failed somewhere in deploy" is where the afternoon goes when five library calls share
+  one exit code. Each part shows the exact call it is about to make with this project's
+  values already substituted, so the panel explains itself and the snippet is the line you
+  paste into a REPL. They run on a pty in a subprocess like every other pipeline, because
+  `hetzner_deploy` shells out to ssh and rsync and their output goes to a file descriptor no
+  `redirect_stdout` can catch. Values hand off through dockeasy's store exactly as they do
+  inside `deploy.py` — the tunnel step writes `CF_TUNNEL_TOKEN`, and the panel draws that
+  hand-off rather than an order someone wrote down. Deploy is unchanged and still runs your
+  script; the two are meant to be compared.
+- **Which of your packages just raised.** When a release or a deploy fails, the panel names
+  the deepest frame belonging to one of your packages — gheasy, dockeasy, vpseasy, cfeasy,
+  the app — with the exception line and an **open** button. The path is rewritten to the
+  checkout this workspace has open, so the fix lands in the repository rather than in a copy
+  under `.venv` that the next sync overwrites. The *Stack* view is the same knowledge
+  standing still: every package, its version, whether it runs from a checkout or from
+  site-packages, and a warning on any package you have open here but are importing from a
+  wheel — where an edit does nothing at all until you reinstall it.
+- **The values they need, where dockeasy already keeps them.** `GITHUB_TOKEN` and the twine
+  credentials are read and written through dockeasy's `secret_set`/`env_get`: the OS
+  keychain, a `0600` file under `~/.config/fastops`, and `os.environ` first — so a token set
+  from a dockeasy script, from gheasy, or from the panel is one value rather than three. The
+  panel lists what the project *declares* (gheasy's `env_schema`, plus whatever the release
+  steps say they need) and never the store itself, and a secret's value is never sent to the
+  browser — only that it is set. Pushing them to GitHub goes through gheasy's `gh_push_env`,
+  so the schema that decides a key is a secret here decides it there, and an undeclared key
+  is skipped rather than guessed at.
 - **Notebook outline and folding.** Collapse any cell to a one-line source preview. The
   sticky Contents accordion is generated from Markdown headings, jumps to a section, and
   can fold or reopen that whole section at once.
@@ -331,6 +468,17 @@ leela/
   keys.py         single-source browser keymap and the user's overrides
   buttons.py      single-source button bars, over those same actions
   fs.py           filesystem access, confined to the open folders
+  git.py          one repository, as records rather than porcelain text
+  repos.py        every repository in the workspace, and one operation across all of them
+  workflows.py    GitHub Actions read into jobs and edges; the rest is gheasy's
+  wfbuild.py      the workflow builder: a spec, and gheasy's DSL applied to it
+  infra.py        servers, tunnels and DNS, through vpseasy and cfeasy
+  packages.py     which of your packages is running, and which one just raised
+  pipelines.py    a named sequence of commands on a pty: the runner both panels share
+  releases.py     the release pipeline: nbdev's commands, one step at a time
+  deploys.py      the deploy pipeline, and the first deploy.py for a project with none
+  drive.py        the same deploy taken apart: one library call per step
+  envs.py         which values a project needs; dockeasy keeps them
   term.py         terminals and lazygit
   research.py     web search and fetch; automatically feeds durable memory
   memory.py       litesearch document trees, hybrid recall and semantic topic clusters
@@ -393,11 +541,20 @@ to test routing, approval, compaction and the tool wrappers without gigabytes in
 working ipykernel — `tests/test_inspect.py` covers the engine directly instead, by
 driving it over a plain dict.
 
-The browser bundles in `leela/web/static` are committed so users never need node.
+leela's own browser code is `leela/static/`; the bundles esbuild and npm produce sit in
+`leela/vendor/` and are committed so users never need node.
 To rebuild them:
 
 ```sh
-cd leela/web/src && npm install && npm run build
+cd frontend && npm install && npm run build
+```
+
+The IDE client is authored as modules in `leela/static/js/` and concatenated into the served
+`leela/static/lee-ide.js`, which is committed so an install needs no build step:
+
+```sh
+python tools/build_ide_js.py            # rebuild after editing a module
+python tools/build_ide_js.py --check    # fail if the bundle and its modules disagree
 ```
 
 ## License

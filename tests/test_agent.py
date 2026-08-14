@@ -161,10 +161,11 @@ def test_cheap_jobs_stay_local_when_the_turn_goes_to_the_cloud(monkeypatch):
     assert r.spec('turn').name == 'gemma-12b'
     # Asserted against the policy rather than against model names: which small model is
     # cheapest here depends on the machine, and the claim being tested is that the turn
-    # moving does not move anything else.
+    # moving does not move anything else. `None` in the policy is not "unset" but "whatever
+    # `DFLT_LOCAL` says", so that is what the job has to still be on.
     for job, name in models.DEFAULT_POLICY.items():
         if job == 'turn': continue
-        assert r.spec(job).name == name, job
+        assert r.spec(job).name == (name or models.DFLT_LOCAL), job
         assert r.spec(job).local, job
 
 
@@ -172,7 +173,7 @@ def test_env_overrides_a_single_job(monkeypatch):
     monkeypatch.setenv('LEELA_MODEL_SUMMARY', 'gemma-12b')
     r = models.Routing(turn='gemma-e2b')
     assert r.spec('summary').name == 'gemma-12b'
-    assert r.spec('classify').name == models.DEFAULT_POLICY['classify']
+    assert r.spec('classify').name == models.DFLT_LOCAL, 'the other cheap jobs stay put'
 
 
 def test_unknown_bare_name_is_an_error_not_a_guess():
@@ -244,7 +245,7 @@ def test_agent_refresh_is_a_noop_when_nothing_is_running():
 # approval and editable execution checkpoints
 # ---------------------------------------------------------------------------
 def test_agent_state_template_teaches_rules_routing_tools_and_maintenance():
-    from leela.ai import STATE_TEMPLATE
+    from leela.blocks.agent.ai import STATE_TEMPLATE
     for heading in ('Agent charter', 'Hard boundaries', 'Routing rules', 'Tool practices',
                     'Verification', 'Progress', 'Critical context', 'State maintenance'):
         assert heading in STATE_TEMPLATE
@@ -253,7 +254,7 @@ def test_agent_state_template_teaches_rules_routing_tools_and_maintenance():
 
 
 def test_directed_checkpoint_can_rewrite_the_live_tool_call():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     ap = Interventions(tools={'edit_file'}, mode='ask', control='directed', timeout=2)
     stop = ap.listen()
     tc = {'function': {'name': 'search_code', 'arguments': {'query': 'old'}}}
@@ -274,11 +275,11 @@ def test_directed_checkpoint_can_rewrite_the_live_tool_call():
 
 
 def test_rejection_ignores_rewritten_or_malformed_call_fields():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     ap = Interventions(tools={'edit_file'}, mode='ask', control='directed')
     # Put a request in flight directly to exercise the answer boundary without involving
     # a worker thread: rejection must preserve the proposal rather than accept form edits.
-    from leela.ai import Intervention
+    from leela.blocks.agent.ai import Intervention
     pending = Intervention(tool='edit_file', args={'path': 'original.py', 'commands': '[]'},
                            summary='edit_file → original.py')
     ap.current = pending
@@ -292,7 +293,7 @@ def test_rejection_ignores_rewritten_or_malformed_call_fields():
 
 @pytest.mark.parametrize('note', ['', 'edit the notebook source instead'])
 def test_refusal_becomes_a_do_not_retry_tool_result_with_optional_direction(note):
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     ap = Interventions(tools={'edit_file'}, mode='ask', control='directed', timeout=2)
     stop = ap.listen(); tc = {'id': 'call_edit', 'function': {'name': 'edit_file', 'arguments': {'path': 'a.py'}}}
     def refuse():
@@ -310,7 +311,7 @@ def test_refusal_becomes_a_do_not_retry_tool_result_with_optional_direction(note
 
 
 def test_control_levels_checkpoint_only_the_expected_tools():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     auto = Interventions(tools={'edit_file'}, mode='ask', control='autopilot')
     assert auto.request('search_code', {'query': 'x'})
     assert not auto.history[-1].edited
@@ -320,7 +321,7 @@ def test_control_levels_checkpoint_only_the_expected_tools():
 
 
 def test_run_until_write_bypasses_reads_then_stops_at_the_write():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     ap = Interventions(tools={'edit_file'}, mode='ask', control='directed')
     ap.set_run_policy('until_write')
     assert ap.request('search_code', {'query': 'x'})
@@ -331,7 +332,7 @@ def test_run_until_write_bypasses_reads_then_stops_at_the_write():
 
 
 def test_count_and_until_failure_policies_have_explicit_stop_conditions():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     ap = Interventions(control='directed')
     ap.set_run_policy('count', 2)
     assert ap.request('search_code', {'query': 'one'})
@@ -344,8 +345,8 @@ def test_count_and_until_failure_policies_have_explicit_stop_conditions():
 
 
 def test_approved_notebook_call_passes_only_activity_identity_metadata(tmp_path):
-    from leela.ai import Interventions
-    from leela.nb import Cell, Notebook
+    from leela.blocks.agent.ai import Interventions
+    from leela.blocks.nb.nb import Cell, Notebook
     from leela.workspace import Workspace
     p = tmp_path/'sample.ipynb'; Notebook([Cell(source='x = 1')]).save(p)
     ws = Workspace(roots=[tmp_path], approvals='auto'); a = ws.ai
@@ -362,7 +363,7 @@ def test_approved_notebook_call_passes_only_activity_identity_metadata(tmp_path)
 
 
 def test_new_agent_setup_keeps_file_and_notebook_access_inside_workspace(tmp_path):
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     from leela.workspace import Workspace
     file = tmp_path/'a.py'; file.write_text('x = 1\n')
     notebook = tmp_path/'a.ipynb'; Notebook([Cell(source='y = 2')]).save(notebook)
@@ -386,7 +387,7 @@ def test_activity_uses_the_backend_tool_call_id_across_approval_and_execution():
 
 
 def test_file_checkpoint_rolls_back_only_its_unchanged_output():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     host = MemHost({'/proj/a.py': 'before'})
     ap = Interventions(tools={'create_file'}, mode='auto', control='autopilot', host=host)
     decision = ap.request('create_file', {'path': '/proj/a.py', 'text': 'after'})
@@ -399,7 +400,7 @@ def test_file_checkpoint_rolls_back_only_its_unchanged_output():
 
 
 def test_queued_steering_is_consumed_exactly_once():
-    from leela.ai import Interventions
+    from leela.blocks.agent.ai import Interventions
     ap = Interventions(control='guided')
     ap.queue_steer('inspect the existing component first')
     assert ap.state()['queued_steer'] == 'inspect the existing component first'
@@ -552,7 +553,10 @@ def test_available_models_follow_environment_and_codex_login(monkeypatch, tmp_pa
     monkeypatch.setattr(models, '_oai_cache', (float('inf'), []))
     rows = models.available_models()
     providers = {r['provider'] for r in rows}
-    assert {'local', 'openai', 'codex', 'gemini'} <= providers
+    assert {'openai', 'codex', 'gemini'} <= providers
+    # On-device models are grouped by the runtime that runs them, and which runtimes are
+    # installed is a property of the machine; that any of them is offered is not.
+    assert any('on device' in r['source'] for r in rows)
     assert 'anthropic' not in providers
     assert any(r['value'].startswith('codex/') for r in rows)
     # Only provenance is exposed; no credential value is returned to the browser.
@@ -573,7 +577,9 @@ def test_explicit_research_uses_only_the_request_not_composed_notebook_context()
         def __init__(self): super().__init__(); self.queries = []
         def research(self, query): self.queries.append(query); return 'grounded research'
     host = ResearchHost()
-    a, be = fake_agent(host=host, replies=['done'])
+    # A named model, because `research` is one of the tools a small window gives up: left on
+    # the default local model this asserts nothing about directives and everything about ctx.
+    a, be = fake_agent(host=host, replies=['done'], model='sonnet')
     composed = a.compose('add tests /research nbdev test cells', context='<cell>implementation details</cell>',
                          context_path='/proj/nbs/core.ipynb')
     assert a.ask(composed) == 'done'
@@ -820,14 +826,20 @@ def test_a_turn_records_its_activity_and_usage():
 
 
 def test_a_question_gets_the_answer_first_notice():
+    "A question is routed to an answer, not to the work it implies."
     a, be = fake_agent(replies=['because x'])
     a.ask('why does this break?')
-    assert '<system-reminder>' in str(be.sent[0]) and 'question' in str(be.sent[0])
+    assert a.history[-1]['plan']['route'] == 'direct'
+    assert 'Answer directly' in str(be.sent[0])
 
 
 def test_write_tools_are_the_ones_approval_draws_its_line_around():
+    # The core is shared with ramabana, so the set also covers the tools leela does not
+    # offer: deleting a standing reminder and spending money in a trolley are both things
+    # a person should get to see before they happen.
     assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
-            'run_shell', 'memory_forget', 'create_skill'} == set(WRITE_TOOLS)
+            'run_shell', 'memory_forget', 'create_skill',
+            'cancel_watch', 'cart_add', 'cart_remove'} == set(WRITE_TOOLS)
 
 
 # ---------------------------------------------------------------------------
@@ -942,7 +954,7 @@ def test_usage_adds_up_across_models():
 def test_an_approval_exchange_is_written_into_the_notebook():
     """The request, the refusal and the reason land as cells beside the prompt that caused
     them, so reading the notebook top to bottom reads as what actually happened."""
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     from leela.workspace import Workspace
     ws = Workspace(roots=[])
     nb = Notebook([Cell(source='fix it', cell_type='prompt')])
@@ -965,7 +977,7 @@ def test_an_approval_exchange_is_written_into_the_notebook():
 
 
 def test_workspace_path_refusal_names_the_files_that_are_open(tmp_path):
-    from leela.ai import WorkspaceHost
+    from leela.blocks.agent.ai import WorkspaceHost
     from leela.workspace import Workspace
     p = tmp_path/'dialog.ipynb'
     p.write_text('{}')
@@ -976,7 +988,7 @@ def test_workspace_path_refusal_names_the_files_that_are_open(tmp_path):
 
 
 def test_workspace_agent_reaches_the_live_kernel_inspector():
-    from leela.ai import WorkspaceHost
+    from leela.blocks.agent.ai import WorkspaceHost
     from leela.workspace import Workspace
 
     class K:
@@ -1001,7 +1013,7 @@ def test_workspace_agent_reaches_the_live_kernel_inspector():
 
 def test_a_workspace_host_hides_what_the_workspace_cannot_do():
     "No kernel session bound yet means no run_python offered, not a run_python that always fails."
-    from leela.ai import WorkspaceHost
+    from leela.blocks.agent.ai import WorkspaceHost
     from leela.workspace import Workspace
     h = WorkspaceHost(Workspace(roots=[]))
     with pytest.raises(NotImplementedError): h.run_python('1')
@@ -1091,7 +1103,7 @@ def test_prompt_cells_and_agent_chat_have_separate_assistants_and_histories():
 def test_a_prompt_cell_fills_in_as_the_answer_arrives():
     """`ask_cell_stream` appends to `cell.reply` on the way past, so repainting the cell
     *is* the live view -- the advantage of having put the answer in the document."""
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     from leela.workspace import Workspace
     from tests.fakemodel import Step, install
     ws = Workspace(roots=[])
@@ -1107,7 +1119,7 @@ def test_a_prompt_cell_fills_in_as_the_answer_arrives():
 
 
 def test_a_streamed_cell_still_gets_its_activity_trail():
-    from leela.nb import Cell, Notebook
+    from leela.blocks.nb.nb import Cell, Notebook
     from leela.workspace import Workspace
     from tests.fakemodel import Step, install
     ws = Workspace(roots=[])
@@ -1122,7 +1134,7 @@ def test_a_streamed_cell_still_gets_its_activity_trail():
 
 def test_the_sse_frame_survives_a_newline_in_the_payload():
     "A raw newline would end the frame early; JSON is why chunks can contain markdown."
-    from leela.web.app import _sse
+    from leela.app import _sse
     f = _sse('chunk', {'text': 'line one\nline two'})
     assert f.count('\n\n') == 1 and f.startswith('event: chunk\ndata: ')
 
@@ -1145,7 +1157,7 @@ def test_the_sse_endpoint_streams_the_real_app():
     """
     pytest.importorskip('starlette.testclient')
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     from tests.fakemodel import Step, install
 
@@ -1175,7 +1187,7 @@ def test_the_sse_endpoint_streams_the_real_app():
 
 def test_external_rishi_request_uses_the_web_approval_queue():
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
 
     ws = Workspace(roots=[])
@@ -1199,7 +1211,7 @@ def test_external_rishi_request_uses_the_web_approval_queue():
 def test_prompt_cell_endpoint_streams_into_the_notebook():
     from pathlib import Path
     from starlette.testclient import TestClient
-    from leela.web.app import ide_app
+    from leela.app import ide_app
     from leela.workspace import Workspace
     from tests.fakemodel import Step, install
 
@@ -1252,3 +1264,38 @@ def test_a_narrow_host_says_why_rather_than_failing_silently():
             if scope not in self.scopes: return f'scope {scope!r} is not available here'
             return 'sandboxed ok'
     assert 'not available' in H(['/x']).inspect_python('x', 'overlay')
+
+
+def test_one_unresolvable_model_does_not_blank_the_whole_picker(monkeypatch):
+    """A model that will not resolve costs its own row, not the model list.
+
+    `Routing.spec('turn')` re-raises for the turn job on purpose, so `ws.ai.model` raises
+    whenever the chosen model cannot be resolved here. `/agent/models` called that
+    unguarded and returned 500, which left the picker on "loading…" with nothing
+    selectable -- the whole list gone because of one entry. The reported case was a
+    `tokenize.TokenError` escaping while tool schemas were built from source, which is not
+    an error type anyone thinks to catch; the route must survive any of them.
+    """
+    from tokenize import TokenError
+    from fastcore.basics import first
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+
+    broken, real = 'codex/gpt-5.6-terra', models.resolve
+    def resolve(name, *a, **kw):
+        if name == broken: raise TokenError('unterminated string literal (detected at line 19)', (19, 62))
+        return real(name, *a, **kw)
+
+    ws = Workspace(roots=[], model=broken)
+    with TestClient(ide_app(ws)) as c:
+        ws.ai                                  # a live assistant, as the IDE has after one turn
+        monkeypatch.setattr(models, 'resolve', resolve)
+        ws.ai.routing._cache.clear()           # the spec was cached before the model went bad
+        r = c.get('/agent/models')
+    assert r.status_code == 200
+    d = r.json()
+    assert len(d['models']) > 1 and d['selected']['agent'] == broken
+    row = first(m for m in d['models'] if m['value'] == broken)
+    assert row['unavailable'] and 'TokenError' in row['source']
+    assert all('TokenError' not in (m.get('source') or '') for m in d['models'] if m['value'] != broken)

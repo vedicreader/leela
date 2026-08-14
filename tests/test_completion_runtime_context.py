@@ -1,11 +1,8 @@
 """The resident completion model sees code context and the selected runtime namespace."""
 
-import importlib.util
-
-from leela.fs import Sandbox
-from leela.search import Search
+from leela.blocks.fs.fs import Sandbox
+from leela.blocks.search.search import Search
 from leela.agent.agent import Completer
-from leela.agent.core import LLAMA, available_models, resolve
 
 
 class Host:
@@ -38,15 +35,3 @@ def test_kosha_adds_dynamic_patch_methods_to_runtime_completion(tmp_path):
     out=s.merge_completions(code,len(code),{'from':len(code)-2,'matches':['read_text']})
     assert out['matches']==['read_text','read_json']
     assert out['graph'][0]['symbol']=='fastcore.xtras.read_json'
-
-
-def test_llama_cpp_models_are_explicit_optional_local_choices():
-    spec = resolve('llama-qwen-0.6b')
-    assert spec.backend == 'llama' and spec.local
-    assert spec.model_id == LLAMA['llama-qwen-0.6b']
-
-
-def test_llama_models_only_appear_when_llama_cpp_is_installed():
-    rows = available_models()
-    shown = any(r['value'] == 'llama-qwen-0.6b' and r['provider'] == 'llama.cpp' for r in rows)
-    assert shown is (importlib.util.find_spec('llama_cpp') is not None)

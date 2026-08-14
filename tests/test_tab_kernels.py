@@ -50,6 +50,18 @@ def test_notebook_kernel_cwd_is_the_notebook_directory(tmp_path):
     assert seen['cwd'] == nbs and seen['name'] == 'two'
 
 
+def test_notebooks_choose_their_own_project_venv(tmp_path):
+    a, b = tmp_path/'ramabana', tmp_path/'rishi'
+    a.mkdir(); b.mkdir(); pa, pb = a/'.venv'/'bin'/'python', b/'.venv'/'bin'/'python'
+    pa.parent.mkdir(parents=True); pb.parent.mkdir(parents=True); pa.touch(); pb.touch()
+    na, nb = a/'a.ipynb', b/'b.ipynb'; _notebook(na); _notebook(nb)
+    ws = Workspace(roots=[a, b]); ta, tb = ws.open(na), ws.open(nb); seen = []
+    async def get(key, **kwargs): seen.append((key, kwargs['python'])); return object()
+    ws.pool.get = get
+    asyncio.run(ws.kernel(ta)); asyncio.run(ws.kernel(tb))
+    assert seen == [(f'tab:{na}', str(pa)), (f'tab:{nb}', str(pb))]
+
+
 def test_notebook_parent_paths_match_jupyter_and_pycharm(tmp_path):
     project = tmp_path/'project'; nbs = project/'nbs'; nbs.mkdir(parents=True)
     p = nbs/'analysis.ipynb'; _notebook(p)

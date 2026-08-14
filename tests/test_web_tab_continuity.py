@@ -1,15 +1,14 @@
 """Switching editors does not detach the runtime or erase in-flight notebook state."""
 
 import json
-from pathlib import Path
+import re
 
 from starlette.testclient import TestClient
 
-from leela.web.app import ide_app
+from leela.app import ide_app
 from leela.workspace import Workspace
 
-ROOT = Path(__file__).resolve().parents[1]
-JS = (ROOT/'leela/web/static/lee-ide.js').read_text()
+from tests.assets import JS
 
 
 def _nb(path, source):
@@ -87,7 +86,7 @@ def test_same_named_files_in_different_roots_keep_absolute_identity(tmp_path):
         assert client.get('/tab/state').json()['cells'][0]['source']=='RAMABANA'
     assert len(ws.tabs)==2 and {t.path for t in ws.tabs}=={str(a.resolve()),str(b.resolve())}
     from fasthtml.common import to_xml
-    from leela.web.app import _tab_bar
+    from leela.app import _tab_bar
     tabs=to_xml(_tab_bar(ws));assert 'ramabana/00_core.ipynb' in tabs and 'rishi/00_core.ipynb' in tabs
     assert 'leeOpenFile' in JS and 'pendingFocusPath === st.path' in JS
     assert 'version!==openFileVersion' in JS and "mountTab(path)" in JS
@@ -209,3 +208,60 @@ def test_cell_runs_carry_document_and_cell_identity_and_reject_stale_positions(t
         })
     assert response.status_code == 409
     assert 'id: cellId' in JS and "path: runPath || lee.tabKey || ''" in JS
+
+
+# ---------------------------------------------------------------- the tab strip itself
+
+def test_a_tab_can_be_dragged_to_a_new_position_and_the_same_document_stays_active(tmp_path):
+    "The strip is the user's arrangement of their own work, so the order is server state."
+    a, b, c = (tmp_path/f'{n}.py' for n in 'abc')
+    for p in (a, b, c): p.write_text('x = 1\n')
+    ws = Workspace(roots=[tmp_path])
+    for p in (a, b, c): ws.open(p)
+    ws.activate(0)                                  # a.py is on screen
+    with TestClient(ide_app(ws)) as client:
+        assert client.post('/tab/move?i=0&j=2').status_code == 200
+    assert [t.title for t in ws.tabs] == ['b.py', 'c.py', 'a.py']
+    assert ws.tab.title == 'a.py', 'the dragged tab is still the one being edited'
+
+
+def test_moving_a_tab_nowhere_or_out_of_range_is_a_no_op(tmp_path):
+    a, b = (tmp_path/f'{n}.py' for n in 'ab')
+    for p in (a, b): p.write_text('x = 1\n')
+    ws = Workspace(roots=[tmp_path])
+    for p in (a, b): ws.open(p)
+    before = list(ws.tabs)
+    ws.move_tab(1, 1); ws.move_tab(9, 0); ws.move_tab(0, 9)
+    assert [t.title for t in ws.tabs] == [t.title for t in ([before[1], before[0]])], 'only the clamped move applied'
+
+
+def test_middle_click_closes_a_tab_the_way_a_browser_does():
+    assert "document.addEventListener('auxclick'" in JS
+    aux = JS[JS.index("document.addEventListener('auxclick'"):]
+    aux = aux[:aux.index("document.addEventListener('dragstart'")]
+    assert 'e.button !== 1' in aux, 'middle button only'
+    assert 'closeTerm(term.dataset.term)' in aux, 'terminal tabs too'
+    assert 'closeTab(+tab.dataset.i)' in aux
+    assert 'e.preventDefault()' in aux, 'button 1 pastes or autoscrolls otherwise'
+
+
+def test_the_tab_menu_offers_the_bulk_closes_and_they_run_right_to_left():
+    from leela.blocks.keys.menus import MENUS
+    actions = [i.action for i in MENUS['tab']]
+    assert actions[-3:] == ['close_others', 'close_right', 'close_saved']
+    body = JS[JS.index('async function closeTabs('):JS.index('function moveTab(')]
+    assert '.reverse()' in body, 'tabs are addressed by index; close the highest first'
+    assert "await htmxPost('/tab/close?i=' + i)" in body, 'each swap is awaited'
+    assert 'dataset.gitDiff' in body, 'browser-only diff tabs are not server tabs'
+    assert 'confirmDialog' in body, 'unsaved work is still asked about'
+
+
+def test_the_activity_panels_have_keys_and_reach_the_palette():
+    from leela.core.keys import lookup
+    for action, panel in (('panel_git', 'git'), ('panel_releases', 'releases'), ('panel_deploys', 'deploys')):
+        key = lookup(action)
+        assert key.scope == 'global' and key.keys, f'{action} is bound'
+        assert re.search(rf"{action}:\s*\(\) => leeLeft\('{panel}'\)", JS), f'{action} opens the {panel} panel'
+    # The palette and the keybinding editor are both built from the keymap, so a new action
+    # is searchable by having been declared -- this is what that depends on.
+    assert 'lee.keys.filter(k => k.label)' in JS

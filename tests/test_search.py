@@ -1,10 +1,11 @@
 """Code search is predictable: rg by default, indexed modes only by explicit request."""
 
 import asyncio, sys, threading
+from pathlib import Path
 from types import SimpleNamespace
 
-from leela.fs import Sandbox
-from leela.search import Hit, Search
+from leela.blocks.fs.fs import Sandbox
+from leela.blocks.search.search import Hit, Search
 
 
 def test_default_search_uses_ripgrep_and_reports_real_lines(tmp_path):
@@ -185,7 +186,8 @@ def test_all_mode_merges_every_backend_and_ranks_exact_symbols_first(monkeypatch
 def test_search_modes_are_explicit_not_inferred_from_the_query(monkeypatch, tmp_path):
     s = Search(Sandbox([tmp_path]))
     called = []
-    monkeypatch.setattr(s, '_rg', lambda q, limit, regex=False: called.append('rg') or [])
+    monkeypatch.setattr(s, '_rg', lambda q, limit, regex=False, exts=(), roots=None:
+                        called.append('rg') or [])
     monkeypatch.setattr(s, '_fts', lambda q, limit: called.append('fts') or [Hit('/x', 1, 'x')])
     monkeypatch.setattr(s, '_ann', lambda q, limit: called.append('ann') or [Hit('/x', 1, 'x')])
     s.search('a long semantic-looking question')
@@ -194,3 +196,329 @@ def test_search_modes_are_explicit_not_inferred_from_the_query(monkeypatch, tmp_
     monkeypatch.setattr(s, '_symbols', lambda q, limit: called.append('symbols') or [Hit('/x', 1, 'x')])
     s.search('SomeClass', mode='symbols')
     assert called == ['rg', 'fts', 'ann', 'symbols']
+
+
+def test_an_extension_filter_narrows_every_backend_the_same_way(tmp_path):
+    """"Only .py" has to mean the same thing whichever backend answers.
+
+    ripgrep is told, so it never opens the other files; an index is filtered afterwards, because
+    Kosha answers about its whole corpus and cannot be asked to narrow. Both spellings of an
+    extension are accepted -- a person types `py` and a glob says `*.py`.
+    """
+    (tmp_path/'a.py').write_text('needle = 1\n')
+    (tmp_path/'b.js').write_text('const needle = 1\n')
+    (tmp_path/'c.md').write_text('needle\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    assert {Path(h.path).name for h in s.search('needle')} == {'a.py', 'b.js', 'c.md'}
+    assert {Path(h.path).name for h in s.search('needle', exts='py')} == {'a.py'}
+    assert {Path(h.path).name for h in s.search('needle', exts='.PY')} == {'a.py'}
+    assert {Path(h.path).name for h in s.search('needle', exts='py,js')} == {'a.py', 'b.js'}
+    assert {Path(h.path).name for h in s.search('needle', exts=['*.md'])} == {'c.md'}
+    assert Search.clean_exts('py, .ts ,,*') == {'.py', '.ts'}, 'junk is dropped, not guessed at'
+
+    # The indexed path is filtered after the fact, so assert that leg directly.
+    hits = s._keep([Hit(str(tmp_path/'a.py'), 1, 'x'), Hit(str(tmp_path/'b.js'), 1, 'x')], exts='py')
+    assert [Path(h.path).name for h in hits] == ['a.py']
+
+
+def test_a_search_can_be_confined_to_one_checkout(tmp_path):
+    "Two folders open, one question: matches from the repository you are not in are noise."
+    a, b = tmp_path/'repo-a', tmp_path/'repo-b'
+    for d in (a, b): d.mkdir()
+    (a/'one.py').write_text('needle = 1\n')
+    (b/'two.py').write_text('needle = 2\n')
+    s = Search(Sandbox([a, b]), prefer_kosha=False)
+    assert len(s.search('needle')) == 2, 'both, by default, at this level'
+    assert [Path(h.path).name for h in s.search('needle', roots=[a])] == ['one.py']
+    assert [Path(h.path).name for h in s.search('needle', roots=[b])] == ['two.py']
+    # And the same restriction applied to hits an index produced.
+    hits = s._keep([Hit(str(a/'one.py'), 1, 'x'), Hit(str(b/'two.py'), 1, 'x')], roots=[a])
+    assert [Path(h.path).name for h in hits] == ['one.py']
+
+
+def test_the_search_route_follows_the_chosen_folder_and_never_takes_a_root(tmp_path):
+    """`scope` is a word, not a path.
+
+    A root arriving as a parameter would point the search wherever the caller liked, and "it is
+    only a search" is how that becomes a way to read files outside the sandbox. So the browser
+    names a scope and the server resolves it from the session.
+    """
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    a, b = tmp_path/'repo-a', tmp_path/'repo-b'
+    for d in (a, b): d.mkdir()
+    (a/'one.py').write_text('needle = 1\n')
+    (b/'two.py').write_text('needle = 2\n')
+    ws = Workspace(roots=[a, b])
+    with TestClient(ide_app(ws)) as c:
+        first = c.get('/search', params={'q': 'needle'}).json()
+        assert first['searched'] == [str(a)] and first['scope'] == 'project'
+        assert [Path(h['path']).name for h in first['hits']] == ['one.py']
+
+        ws.activate_root(b)
+        after = c.get('/search', params={'q': 'needle'}).json()
+        assert after['searched'] == [str(b)], 'the search follows the chosen folder'
+        assert [Path(h['path']).name for h in after['hits']] == ['two.py']
+
+        both = c.get('/search', params={'q': 'needle', 'scope': 'workspace'}).json()
+        assert sorted(Path(h['path']).name for h in both['hits']) == ['one.py', 'two.py']
+
+        assert c.get('/search', params={'q': 'x', 'scope': str(tmp_path)}).json()['error']
+        filtered = c.get('/search', params={'q': 'needle', 'exts': 'md', 'scope': 'workspace'}).json()
+        assert filtered['hits'] == [] and filtered['exts'] == 'md'
+
+
+def a_notebook(path):
+    "A saved notebook with a def in one cell and a class with a method in the next."
+    from leela.blocks.nb.nb import Cell, Notebook
+    Notebook([Cell(source='## Loading', cell_type='markdown', id='m1'),
+              Cell(source='import os\n\ndef alpha(x):\n    return x', id='c1'),
+              Cell(source='class Beta:\n    def gamma(self):\n        return alpha(1)', id='c2')]).save(path)
+    return path
+
+
+def test_a_notebooks_symbols_are_read_from_its_cells_not_from_its_json(tmp_path):
+    """A notebook read as text has no symbols: the line is `    "def f(x):\\n",`.
+
+    So the outline, ctrl+B and Find Usages all used to come up empty for every notebook in the
+    workspace. Both coordinates are reported -- the JSON line for callers that think in file
+    lines, and the cell plus the line inside it, which is the only pair an editor can open.
+    """
+    p = a_notebook(tmp_path/'demo.ipynb')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    syms = s.symbols(p)
+    assert [(h.symbol, h.cell, h.cell_index, h.cell_line) for h in syms] == [
+        ('alpha', 'c1', 1, 3), ('Beta', 'c2', 2, 1), ('gamma', 'c2', 2, 2)]
+    assert [h.score for h in syms] == [0.0, 0.0, 4.0], 'indent depth still nests a method'
+    lines = p.read_text().splitlines()
+    for h in syms: assert h.symbol in lines[h.line - 1], 'the file line is the JSON line holding it'
+
+
+def test_going_to_a_definition_in_a_notebook_lands_in_the_cell(tmp_path):
+    p = a_notebook(tmp_path/'demo.ipynb')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    defs = s.definitions('gamma', p)
+    assert [(h.symbol, h.cell, h.cell_line) for h in defs] == [('gamma', 'c2', 2)]
+    uses = s.usages('alpha')
+    assert [(h.cell, h.cell_index, h.cell_line) for h in uses] == [('c1', 1, 3), ('c2', 2, 3)]
+    assert all(h.line > 1 for h in uses), 'the JSON line is still reported alongside'
+
+
+def test_a_literal_search_in_a_notebook_says_which_cell_it_matched(tmp_path):
+    p = a_notebook(tmp_path/'demo.ipynb')
+    (tmp_path/'plain.py').write_text('alpha = 1\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    hits = {Path(h.path).name: h for h in s.search('alpha')}
+    assert hits['demo.ipynb'].cell_index >= 0 and hits['demo.ipynb'].cell_line > 0
+    assert (hits['plain.py'].cell, hits['plain.py'].cell_index, hits['plain.py'].cell_line) == ('', -1, 0), \
+        'an ordinary file has no cell to name'
+
+
+def test_an_indexed_notebook_hit_is_placed_by_its_text_when_it_has_no_line(monkeypatch, tmp_path):
+    """Kosha chunks a notebook by cell and records no line number, so every notebook row it
+    returns arrives as line 1. The cell is recoverable from the chunk's own text, and is taken
+    only when exactly one cell contains it -- a hit placed in the wrong cell is worse than one
+    left unplaced, because the reader cannot tell."""
+    p = a_notebook(tmp_path/'demo.ipynb')
+    rows = [{'content': 'class Beta:\n    def gamma(self):\n        return alpha(1)',
+             'metadata': {'path': str(p)}},
+            {'content': 'nothing in this notebook', 'metadata': {'path': str(p)}}]
+    s = Search(Sandbox([tmp_path]))
+    s._k = SimpleNamespace(context=lambda *a, **k: rows,
+                           status=lambda **k: {'files': 1, 'new_files': 0, 'stale_files': 0})
+    s._k_tried = True
+    placed, unplaced = s.agent_search('the Beta class')
+    assert (placed.cell, placed.cell_index, placed.cell_line) == ('c2', 2, 1)
+    assert placed.line > 1, 'placing it also recovers the JSON line it never had'
+    assert (unplaced.cell, unplaced.cell_index, unplaced.cell_line) == ('', -1, 0)
+
+
+def test_a_notebook_that_cannot_be_parsed_reports_no_symbols_at_all(tmp_path):
+    p = tmp_path/'broken.ipynb'
+    p.write_text('{"cells": [ this is not JSON')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    assert list(s.symbols(p)) == [], 'no symbol beats a symbol at a guessed line'
+    assert [h.cell_line for h in s.usages('cells')] == [0], 'and the hit stays honestly unplaced'
+
+
+def test_the_outline_route_gives_a_notebook_the_cell_coordinates_it_needs(tmp_path):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    p = a_notebook(tmp_path/'demo.ipynb')
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c:
+        rows = c.get('/outline', params={'path': str(p)}).json()['symbols']
+    assert [(r['symbol'], r['cell'], r['cell_index'], r['cell_line']) for r in rows] == [
+        ('alpha', 'c1', 1, 3), ('Beta', 'c2', 2, 1), ('gamma', 'c2', 2, 2)]
+
+
+def test_narrowing_the_scope_never_hides_an_installed_package(tmp_path):
+    """The reported regression: `merge dict` stopped returning `fastcore.basics.merge`.
+
+    Confining the search to the chosen checkout filtered out every hit outside it -- which is
+    every package, since site-packages is under no open folder by definition. Scope is about
+    which of *your* checkouts to look in; whether the environment answers at all is what the mode
+    buttons decide. `context` returns both kinds at once, so the exemption has to be per hit
+    rather than per mode.
+    """
+    (tmp_path/'x.py').write_text('x = 1\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    package = Hit(path='/site-packages/fastcore/basics.py', line=655, text='def merge(*ds):',
+                  kind='env-context', symbol='fastcore.basics.merge', package='fastcore')
+    mine = Hit(path=str(tmp_path/'x.py'), line=1, text='x = 1', kind='context')
+    elsewhere = Hit(path='/somewhere/else/other.py', line=1, text='x = 1', kind='context')
+
+    kept = s._keep([package, mine, elsewhere], roots=[tmp_path])
+    assert [h.symbol or h.path for h in kept] == ['fastcore.basics.merge', str(tmp_path/'x.py')]
+    assert elsewhere not in kept, 'a repo hit outside the scope is still excluded'
+
+    # A package hit marked only by its kind, with no `package` recorded, is exempt too.
+    bare = Hit(path='/site-packages/pkg/api.py', line=1, text='def f(): pass', kind='env-context')
+    assert s._keep([bare], roots=[tmp_path]) == [bare]
+    # The extension filter still applies to packages -- that one is about the file, not the scope.
+    assert s._keep([package], exts='ts', roots=[tmp_path]) == []
+
+
+def test_context_mode_keeps_both_halves_under_a_project_scope(tmp_path):
+    "The mode that returns repo *and* environment rows is where the regression actually bit."
+    local = tmp_path/'local.py'; local.write_text('def local_symbol(): pass\n')
+    class FakeKosha:
+        root = tmp_path
+        def context(self, *a, **kw):
+            return [
+                {'content': 'def local_symbol(): pass',
+                 'metadata': {'path': str(local), 'lineno': 1, 'mod_name': 'project.local_symbol'}},
+                {'content': 'def merge(*ds): ...',
+                 'metadata': {'path': '/site/fastcore/basics.py', 'lineno': 655,
+                              'mod_name': 'fastcore.basics.merge', 'package': 'fastcore'}},
+            ]
+    s = Search(Sandbox([tmp_path])); s._k = FakeKosha(); s._k_tried = True
+    hits = s.search('merge dict', mode='context', roots=[tmp_path])
+    assert [h.kind for h in hits] == ['context', 'env-context']
+    assert any(h.symbol == 'fastcore.basics.merge' for h in hits)
+
+
+def test_a_leg_is_scored_exactly_as_the_batch_answer_scores_it(tmp_path):
+    """A streamed hit that ranked differently from the same hit in `all` would make the list
+    reorder for no reason the moment the last backend landed."""
+    p = tmp_path/'core.py'; p.write_text('def merge_dicts(a, b):\n    return a | b\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    hits, note = s.leg('rg', 'merge_dicts', 20)
+    assert note == '' and [h.line for h in hits] == [1]
+    assert hits[0].sources == ['rg']
+    # The same hit, scored the way `all` scores it: leg priority 80 plus 40 for the query being
+    # in the matched text. Computed from a pristine hit, because `relevance` folds the backend's
+    # raw score in as a tie-breaker and both `leg` and `_all` then *replace* `score` with the
+    # result -- so it is a one-shot calculation, not one to re-apply to an already-scored hit.
+    from dataclasses import replace
+    pristine = replace(hits[0], score=0.0, sources=[])
+    assert hits[0].score == s.relevance('rg', pristine, 'merge_dicts') == 120.0
+    assert s.relevance('rg', hits[0], 'merge_dicts') == 130.0, 'documented: not idempotent'
+    # Best-first within the leg, so the frontend can append without re-sorting.
+    assert [h.score for h in hits] == sorted((h.score for h in hits), reverse=True)
+
+
+def test_an_unavailable_leg_says_so_instead_of_taking_the_others_down(tmp_path):
+    "One absent index must not cost the other three their answers."
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    hits, note = s.leg('ann', 'anything', 10)
+    assert hits == [] and 'unavailable' in note
+
+    def boom(*a, **kw): raise RuntimeError('index is corrupt')
+    s._fts = boom
+    hits, note = s.leg('fts', 'anything', 10)
+    assert hits == [] and 'fts failed' in note and 'corrupt' in note
+    assert s.leg('nonsense', 'x', 10)[1].startswith('unknown search leg')
+
+
+def test_the_streaming_search_reports_each_backend_as_it_finishes(tmp_path):
+    """The legs never depended on each other; they were merely written as one loop, so the
+    answer cost the *sum* of their times. Each one now arrives on its own."""
+    import json as _json
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    (tmp_path/'core.py').write_text('def merge_dicts(a, b):\n    return a | b\n')
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as c:
+        with c.stream('GET', '/search/stream', params={'q': 'merge_dicts'}) as r:
+            assert r.status_code == 200
+            events, name = [], ''
+            for line in r.iter_lines():
+                if line.startswith('event: '): name = line[7:].strip()
+                elif line.startswith('data: '): events.append((name, _json.loads(line[6:])))
+    kinds = [n for n, _ in events]
+    assert kinds[0] == 'start' and kinds[-1] == 'done'
+    start = events[0][1]
+    assert start['legs'] == list(Search.ALL_LEGS) and start['searched'] == [str(tmp_path)]
+    legs = {d['leg']: d for n, d in events if n == 'leg'}
+    assert set(legs) == set(Search.ALL_LEGS), 'every leg reports, even the ones with no index'
+    assert any(h['line'] == 1 for h in legs['rg']['hits']), 'and rg found the definition'
+    assert legs['ann']['hits'] == [] and 'unavailable' in legs['ann']['note']
+
+
+def test_the_stream_says_so_when_there_is_nothing_to_search_for(tmp_path):
+    import json as _json
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c:
+        with c.stream('GET', '/search/stream', params={'q': '  '}) as r:
+            body = r.read().decode()
+    assert 'event: start' in body and 'event: done' in body and 'event: leg' not in body
+    assert 'nothing to search for' in body
+
+
+def test_similar_and_peers_prefer_kosha_primitives_when_present(monkeypatch, tmp_path):
+    "Search is an adapter: kosha owns similarity; leela only formats hits."
+    path = str(tmp_path/'core.py')
+    class FakeKosha:
+        def similar(self, p, line=1, limit=15, graph=False):
+            assert (p, line, limit, graph) == (path, 3, 5, True)
+            return [SimpleNamespace(path=path, lineno=10, mod_name='core.peer',
+                                    sig='def peer():', content='def peer():', kind='ann', dist=0.1)]
+        def peers(self, p, line=1, limit=25, graph=False, **kw):
+            return SimpleNamespace(hits=[SimpleNamespace(path=path, lineno=12, mod_name='core.family',
+                                                         sig='def family():', content='def family():',
+                                                         kind='usearch', dist=None)],
+                                   method='usearch', note='cluster of 4 (usearch)')
+        def code_clusters(self, limit=None, min_size=2, **kw):
+            return SimpleNamespace(clusters=[SimpleNamespace(centroid=1, size=4, label='family',
+                                                             members=[SimpleNamespace(path=path, lineno=12,
+                                                                                      mod_name='core.family',
+                                                                                      content='def family():')])],
+                                   method='usearch', note='1 clusters over 4 vectors (usearch)')
+    s = Search(Sandbox([tmp_path])); s._k = FakeKosha(); s._k_tried = True
+    sim = s.similar(path, 3, limit=5)
+    assert [(h.path, h.line, h.symbol) for h in sim] == [(path, 10, 'core.peer')]
+    peer = s.peers(path, 3)
+    assert s.backend == 'usearch' and 'cluster of 4' in s.note
+    assert peer[0].symbol == 'core.family'
+    cs = s.clusters()
+    assert cs[0].label == 'family' and cs[0].members[0].path == path
+
+
+def test_similar_uses_litesearch_ann_neighbors_without_kosha_helpers(monkeypatch, tmp_path):
+    path = str(tmp_path/'a.py')
+    class Store:
+        def ann_neighbors(self, key, limit=15, columns=None, **kw):
+            assert key == 7 and limit == 3
+            return [{'rowid': 8, 'path': path, 'content': 'def neighbour():\n    pass',
+                     'metadata': {'lineno': 4, 'mod_name': 'a.neighbour'}, '_dist': 0.2}]
+        def peers(self, key, limit=25, columns=None, **kw):
+            return SimpleNamespace(hits=[{'rowid': 9, 'path': path, 'content': 'def cousin():\n    pass',
+                                          'metadata': {'lineno': 8, 'mod_name': 'a.cousin'}}],
+                                   method='knn', note='index holds 3 vectors; showing nearest neighbours')
+        def clusters(self, **kw):
+            return SimpleNamespace(clusters=[SimpleNamespace(centroid=1, size=2, label='cousin',
+                                                             members=[{'path': path, 'content': 'def cousin():',
+                                                                       'metadata': {'lineno': 8, 'mod_name': 'a.cousin'}}])],
+                                   method='knn', note='1 clusters over 3 vectors (knn)')
+    class FakeKosha:
+        code_st = Store()
+    s = Search(Sandbox([tmp_path])); s._k = FakeKosha(); s._k_tried = True
+    monkeypatch.setattr(s, '_anchor', lambda p, line: (7, s._k.code_st))
+    assert s.similar(path, 1, limit=3)[0].symbol == 'a.neighbour'
+    assert s.peers(path, 1)[0].symbol == 'a.cousin' and s.backend == 'knn'
+    assert s.clusters()[0].label == 'cousin'

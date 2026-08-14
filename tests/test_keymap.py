@@ -3,8 +3,8 @@
 import json
 import pytest
 
-from leela import keys as K
-from leela.keys import (DEFAULTS, KEYS, apply_overrides, help_rows,
+from leela.core import keys as K
+from leela.core.keys import (DEFAULTS, KEYS, apply_overrides, help_rows,
                         keymap_json, lookup, read_overrides, web_keymap)
 
 

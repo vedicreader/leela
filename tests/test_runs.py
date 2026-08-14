@@ -14,8 +14,8 @@ import sys
 import pytest
 from fastcore.all import Path
 
-from leela.devserver import DevServer, DevServers, infer_watch, run_command, split_cmd
-from leela.runs import RUNS_FILE, Run, Runs
+from leela.blocks.runtime.devserver import DevServer, DevServers, infer_watch, run_command, split_cmd
+from leela.blocks.runs.runs import RUNS_FILE, Run, Runs
 from leela.workspace import _EnvClient
 
 
@@ -87,7 +87,7 @@ def test_the_watched_module_is_inferred_from_the_command():
 def test_the_child_command_carries_the_watch_and_the_argv(tmp_path):
     s = DevServer(script='uvicorn api:app --port 8123', cwd=str(tmp_path), port=9100)
     cmd = s._cmd()
-    assert cmd[:4] == [sys.executable, '-u', '-m', 'leela.devserver']
+    assert cmd[:4] == [sys.executable, '-u', '-m', 'leela.blocks.runtime.devserver']
     assert '--watch' in cmd and cmd[cmd.index('--watch') + 1] == 'api'
     assert cmd[cmd.index('--') + 1:] == ['uvicorn', 'api:app', '--port', '8123']
     assert not s.is_script and s.label == 'uvicorn api:app'

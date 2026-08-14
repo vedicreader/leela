@@ -4,12 +4,12 @@ from pathlib import Path
 
 from starlette.testclient import TestClient
 
-from leela.web.app import _python_diagnostics, ide_app
+from leela.app import _python_diagnostics, ide_app
 from leela.workspace import Workspace
 
 ROOT = Path(__file__).resolve().parents[1]
-EDITOR = (ROOT / 'leela/web/src/editor.js').read_text()
-PACKAGE = (ROOT / 'leela/web/src/package.json').read_text()
+EDITOR = (ROOT / 'frontend/editor.js').read_text()
+PACKAGE = (ROOT / 'frontend/package.json').read_text()
 
 
 def test_python_compiler_reports_precise_syntax_errors():
@@ -46,7 +46,7 @@ def test_lint_endpoint_checks_unsaved_python_without_an_external_linter():
 
 def test_codemirror_lint_source_covers_errors_warnings_and_readonly_surfaces():
     assert '"@codemirror/lint"' in PACKAGE
-    assert 'import {linter} from "@codemirror/lint"' in EDITOR
+    assert 'import {linter, forEachDiagnostic} from "@codemirror/lint"' in EDITOR
     assert 'node.type.isError' in EDITOR
     assert 'severity: "error"' in EDITOR
     assert 'data.diagnostics' in EDITOR

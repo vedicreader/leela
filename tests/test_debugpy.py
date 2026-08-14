@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from leela.debug import DebugSession, debugpy_available
+from leela.blocks.debug.debug import DebugSession, debugpy_available
 
 
 def test_direct_debugpy_stops_exposes_locals_and_continues(tmp_path):
