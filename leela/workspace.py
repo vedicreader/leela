@@ -48,7 +48,7 @@ class _EnvClient:
     @property
     def token(self):
         "The owner token this inspector wrote next to its registry entry, if it armed one."
-        from dhrishti.serving import reg_dir
+        from .core.inspectors import reg_dir
         try: return (reg_dir()/f"token-{self.base.rsplit(':', 1)[-1]}").read_text().strip() or None
         except Exception: return None
 
@@ -871,7 +871,7 @@ class Workspace:
         named after its folder, the way the rest of the IDE names it; everything else comes
         from the registry, which is where any process that called `serve()` writes itself.
         """
-        from dhrishti.serving import active
+        from .core.inspectors import active
         out, seen = L(), set()
         for key, k in self.pool.kernels.items():
             if not (k and getattr(k, 'base', None)): continue

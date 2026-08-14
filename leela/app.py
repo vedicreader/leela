@@ -25,7 +25,7 @@ from urllib.parse import quote
 from fasthtml.common import *          # re-exports fastcore's Path, L, first, asdict, ...
 from starlette.routing import WebSocketRoute
 
-from dhrishti.core import PROFILES, SORTS
+from .core.inspectors import PROFILES, SORTS
 from . import errstr
 from .blocks import browser as browser_block
 from .blocks import drive as drive_block

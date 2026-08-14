@@ -138,9 +138,9 @@ def test_an_unresolvable_command_says_so_rather_than_forking():
 # ---- what the panel may watch ----------------------------------------------
 def test_the_env_list_covers_kernels_and_anything_that_registered(ws, monkeypatch):
     "A notebook kernel, an app leela started, and a process that called serve() are all envs."
-    import leela.workspace as W
-    monkeypatch.setattr(W, 'active', lambda: [], raising=False)
-    monkeypatch.setattr('dhrishti.serving.active',
+    # `leela.core.inspectors` is where the registry is read; dhrishti owns the format, and
+    # `tests/test_inspectors.py` is what keeps the two agreeing.
+    monkeypatch.setattr('leela.core.inspectors.active',
                         lambda: [{'name': 'api', 'base': 'http://127.0.0.1:9500', 'pid': 4321,
                                   'cwd': '/tmp'}])
     ws.pool.kernels['k'] = type('K', (), {'base': 'http://127.0.0.1:8000', 'pid': 11})()
@@ -150,7 +150,7 @@ def test_the_env_list_covers_kernels_and_anything_that_registered(ws, monkeypatc
 
 
 def test_watching_an_env_points_the_panel_at_it_and_back(ws, monkeypatch):
-    monkeypatch.setattr('dhrishti.serving.active',
+    monkeypatch.setattr('leela.core.inspectors.active',
                         lambda: [{'name': 'api', 'base': 'http://127.0.0.1:9500', 'pid': 4321}])
     ws.watch_env('http://127.0.0.1:9500')
     assert isinstance(ws.inspector(), _EnvClient)
@@ -160,7 +160,7 @@ def test_watching_an_env_points_the_panel_at_it_and_back(ws, monkeypatch):
 
 def test_watching_an_env_that_died_falls_back_rather_than_going_blank(ws, monkeypatch):
     "An app you were watching exits; the panel should quietly return to the kernel."
-    monkeypatch.setattr('dhrishti.serving.active', lambda: [])
+    monkeypatch.setattr('leela.core.inspectors.active', lambda: [])
     ws.watch_env('http://127.0.0.1:9999')
     assert not isinstance(ws.inspector(), _EnvClient)
     assert ws.env_base is None

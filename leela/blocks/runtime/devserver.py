@@ -6,7 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 from fastcore.all import Path, L, first
 
-from dhrishti.serving import active
+from ...core.inspectors import active
 
 __all__ = ['DevServer', 'DevServers']
 
