@@ -22,6 +22,9 @@ const lee = {
   breakpoints: new Map(), debugThread: null, debugCell: null, debugState: null, directDebug: false, debugWatches: [],
   shownProblems: new Set(),   // agent failures already written into the pane, so they show once
   agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
+  // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
+  // path->name map: two selections in one file are two contexts, not one key overwriting itself.
+  agentSelections: [],
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
@@ -384,6 +387,26 @@ function addMarkdownCellAction(el) {
 // in the order it emitted them, and the code-block upgrade replaces `<pre>` with an editor
 // surface. So the annotation goes first, and a throw in it cannot cost the reader the
 // rendering it was annotating.
+/* A markdown file's images are written relative to the file, and the browser resolves them
+   against the *page*, so every figure in a rendered document was a broken link. Rewrite them
+   through `/file/raw`, which already serves image bytes from inside the workspace.
+
+   An http source is left alone, and so is anything that will not resolve: a picture that is
+   plainly missing is honest, where one rewritten to a URL that 403s looks like a bug in leela.
+   The base is `data-md-base`, set by whichever surface knows which file this came from. */
+function resolveMarkdownImages(el) {
+  const base = el.closest('[data-md-base]')?.dataset.mdBase || '';
+  $$('img', el).forEach(img => {
+    const src = img.getAttribute('src') || '';
+    if (!src || /^(https?:|data:|blob:|\/file\/raw)/.test(src)) return;
+    if (!src.startsWith('/') && !base) return;
+    // `..` and `.` are resolved by URL, so a path cannot climb out through the query string.
+    const abs = src.startsWith('/') ? src : new URL(src, 'file://' + base + '/').pathname;
+    img.src = '/file/raw/' + encodeURIComponent(abs.split('/').pop()) + '?path=' + encodeURIComponent(abs);
+    img.loading = 'lazy';
+  });
+}
+
 function renderMarkdown(el, text, allowRaw = false, onRender = null) {
   if (!el) return;
   el.dataset.markdown = String(text || '');
@@ -407,6 +430,7 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
       el._leeCodeFrame = requestAnimationFrame(() => {
         el._leeCodeFrame = 0;
         if (onRender) try { onRender(el); } catch (e) { console.warn('Leela markdown annotation:', e); }
+        resolveMarkdownImages(el);
         upgradePortableToolMarkdown(el); enhanceCodeBlocks(el); addMarkdownCellAction(el);
       });
     } catch (e) {
@@ -624,6 +648,7 @@ const ACTIONS = {
   find_definition: () => findDefinition(),
   find_usages: () => findUsages(),
   rename_symbol: () => renameSymbol(),
+  agent_selection: () => leeAgentSelection(),
   sync_index: syncCodeIndex,
   run_app:      runApp,
   palette:      palette,
@@ -1192,8 +1217,18 @@ async function leeOpenFile(path) {
   const response=await fetch('/tab/open?path='+encodeURIComponent(path),{method:'POST',headers:{'HX-Request':'true'}});
   if(!response.ok)throw new Error(await response.text());const html=await response.text();
   if(version!==openFileVersion)return;
-  const doc=new DOMParser().parseFromString(html,'text/html'),fresh=doc.querySelector('#tabbar'),old=$('#tabbar');
-  if(!fresh||!old)throw new Error('tab open returned no tab bar');old.replaceWith(fresh);htmx.process(fresh);
+  const doc=new DOMParser().parseFromString(html,'text/html'),fresh=doc.querySelector('#tabbar');
+  // `/tab/open` answers a refusal with an error div and a 200, so the reason is in the body.
+  // Reporting "no tab bar" instead threw away the only sentence that said what was wrong.
+  if(!fresh)throw new Error(doc.querySelector('.lee-err')?.textContent?.trim()||'tab open returned no tab bar');
+  // `#tabbar` is an htmx swap target for tab selection and for opening a vault document, so a
+  // failed swap can replace the element with an error string and take it out of the page. Every
+  // open after that failed on the missing element rather than on anything to do with the file,
+  // which looks exactly like the UI having seized. Put it back instead.
+  const old=$('#tabbar');
+  if(old)old.replaceWith(fresh);
+  else $('#header')?.insertBefore(fresh,$('.lee-tab-overflow')||null);
+  htmx.process(fresh);
   await mountTab(path);await leeVars();refreshProjectPills();requestAnimationFrame(layoutTabs);
   const after = $$('.lee-node').find(n => n.dataset.path === path);
   if (after) selectTreeNode(after);
@@ -1264,6 +1299,7 @@ async function mountTab(expectedPath = '') {
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
   if (st.kind === 'vault') await mountVault(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);
+  else if (st.kind === 'image') mountImage(host, st);
   else if (st.kind === 'notebook') mountNotebook(host, st);
   else await mountFile(host, st);
   if (recoveredDraft) {
@@ -1344,6 +1380,30 @@ function mountPdf(host, st) {
     `<noscript class="lee-dim">This view needs the browser's PDF viewer.</noscript></div></div>`;
 }
 
+/* An image, in the same chrome as a PDF. Fit is the default because an image opened from a
+   vault or a file tree is being *identified*, not inspected; actual size is one click away and
+   the dimensions are shown either way, since "is this the 2x asset" is the usual question. */
+function mountImage(host, st) {
+  const name = (st.path || '').split('/').pop() || 'image';
+  const raw = '/file/raw/' + encodeURIComponent(name) + '?path=' + encodeURIComponent(st.path);
+  host.innerHTML =
+    `<div class="lee-doc">` +
+    `<div class="lee-doc-head"><span>${esc(compactPath(st.path))}</span>` +
+    `<span class="lee-dim" data-image-size></span><span class="lee-spacer"></span>` +
+    `<button class="lee-btn" data-image-fit>actual size</button>` +
+    `<a class="lee-btn" href="${esc(raw)}" target="_blank" rel="noopener noreferrer">open externally</a>` +
+    `<a class="lee-btn" href="${esc(raw)}&download=true" download>download</a></div>` +
+    `<div class="lee-doc-body lee-image-body fit">` +
+    `<img class="lee-image" alt="${esc(st.title || name)}" src="${esc(raw)}"></div></div>`;
+  const img = $('.lee-image', host), body = $('.lee-image-body', host), button = $('[data-image-fit]', host);
+  img.onload = () => { $('[data-image-size]', host).textContent = `${img.naturalWidth}×${img.naturalHeight}`; };
+  img.onerror = () => { body.innerHTML = `<div class="lee-err">${esc(name)} could not be displayed</div>`; };
+  button.onclick = () => {
+    const fit = body.classList.toggle('fit');
+    button.textContent = fit ? 'actual size' : 'fit to window';
+  };
+}
+
 async function mountFile(host, st) {
   const isProject = st.path?.endsWith('/pyproject.toml') || st.title === 'pyproject.toml';
   const crumbMode=lee.workbenchPrefs.breadcrumbs||'pathAndSymbols',crumb=crumbMode==='off'?'':`<nav class="lee-breadcrumbs" id="editorcrumbs" aria-label="File and symbol path"><span>${esc(compactPath(st.path||st.title||''))}</span></nav>`;
@@ -1359,7 +1419,10 @@ async function mountFile(host, st) {
               `<button class="lee-seg${v === view ? ' active' : ''}" data-md-view="${v}">${v}</button>`).join('') +
             `</div><span class="lee-spacer"></span>` +
             `<span class="lee-dim">the change gutter and blame stay on the source</span></div>` : '') +
-    (isMd ? `<div class="lee-md-stage" data-view="${view}"><div class="lee-cm" id="filecm"></div>` +
+    // `data-md-base` is this file's folder: a figure written `![](img/a.png)` is relative to the
+    // document, not to the page the renderer drops it into.
+    (isMd ? `<div class="lee-md-stage" data-view="${view}" data-md-base="${esc((st.path || '').slice(0, (st.path || '').lastIndexOf('/')))}">` +
+            `<div class="lee-cm" id="filecm"></div>` +
             `<div class="lee-md-preview" id="mdpreview" data-markdown=""></div></div>`
           : '<div class="lee-cm" id="filecm"></div>');
   let git = {ranges: []}, packages = null;
@@ -2050,12 +2113,31 @@ function markDirty() {
   if (t) { t.classList.add('dirty'); setTabSaveState(t, 'pending'); }
   scheduleAutoSave();
 }
+/* Put a position in the middle of the view rather than merely inside it.
+
+   `scrollIntoView` moves the *minimum* distance, so a match below the fold arrives on the last
+   visible line with nothing under it -- and a search result is something you are about to read
+   around, not just look at. Written against `scrollDOM` rather than CodeMirror's own centring
+   effect: the vendored bundle is committed and rebuilding it needs node.
+
+   A notebook scrolls its column of cells, not the cell's own editor, so the element that can
+   actually move is the one that gets scrolled. */
+function centreOnPos(v, pos) {
+  const coords = v.coordsAtPos(pos); if (!coords) return;
+  const own = v.scrollDOM, host = own.scrollHeight - own.clientHeight > 4 ? own : $('#editor');
+  if (!host) return;
+  const box = host.getBoundingClientRect();
+  host.scrollTop += (coords.top + coords.bottom) / 2 - (box.top + box.height / 2);
+}
+
 function jumpToLine(line) {
   const v = lee.kind === 'notebook' ? lee.editors.get(lee.cells[lee.sel]?.id) : lee.editors.get('file');
   if (!v) return;
   const n = Math.max(1, Math.min(Number(line) || 1, v.state.doc.lines));
   const pos = v.state.doc.line(n).from;
   v.dispatch({selection: {anchor: pos}, scrollIntoView: true}); v.focus();
+  // After the layout `scrollIntoView` just caused, or the measurement is of the old position.
+  requestAnimationFrame(() => centreOnPos(v, pos));
 }
 function openLocation(hit) {
   // A hit in a notebook reports two coordinates: `line` in the .ipynb JSON, which is what
@@ -2624,6 +2706,14 @@ async function nbEdit(d) {
   }
   const restored = same >= 0 && lee.editors.get(selectedId);
   if (restored) LeeCM.setCursor?.(restored, Math.min(cursor, restored.state.doc.length));
+  // An undo that scrolls nothing leaves you looking for what moved. The cell the operation
+  // landed on is already `lee.sel`; put it in the middle so it is the thing you are looking at.
+  if (d.op === 'undo' || d.op === 'redo') {
+    const cell = $(`.lee-cell[data-i="${lee.sel}"]`);
+    cell?.scrollIntoView({block: 'center', inline: 'nearest'});
+    cell?.classList.add('lee-cell-changed');
+    setTimeout(() => cell?.classList.remove('lee-cell-changed'), 1200);
+  }
   markDirty();
   return r;
 }
@@ -2851,7 +2941,10 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
   // A document the browser renders has no editor behind it, so there is nothing to write and
   // `getDoc` would be called on nothing. Reporting success is honest here: the file on disk is
   // exactly what is being shown.
-  if (lee.kind === 'pdf') { if (!quiet) status('a PDF is read-only here'); return true; }
+  if (lee.kind === 'pdf' || lee.kind === 'image') {
+    if (!quiet) status(`${lee.kind === 'pdf' ? 'a PDF' : 'an image'} is read-only here`);
+    return true;
+  }
   let saveTabEl = $('.lee-tab.active');
   setTabSaveState(saveTabEl, 'saving');
   try {
@@ -3302,6 +3395,47 @@ async function leeAgentCompaction() {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 window.leeAgentCompaction = leeAgentCompaction;
+
+/* How much work one turn may do. `auto` lets ramabana size it from the prompt; a number pins it.
+   The fields are written back from the answer, so a refusal leaves the box showing what is
+   actually in force rather than the rejected text. */
+/* The highlighted range, queued as context for the next turn.
+
+   Sent as text rather than as `path:from-to` for the agent to go and read: the buffer may be
+   unsaved, and what you highlighted is what you meant, not what happens to be on disk. */
+function leeAgentSelection() {
+  const v = curEditor();
+  if (!v) return status('put the cursor in some code first', 'err');
+  const sel = v.state.selection.main;
+  if (sel.empty) return status('select the code you want the agent to see', 'err');
+  const doc = v.state.doc, from = doc.lineAt(sel.from).number, to = doc.lineAt(sel.to).number;
+  const path = lee.path || 'untitled', name = path.split('/').pop() || 'untitled';
+  lee.agentSelections.push({
+    label: `${name}:${from}${to > from ? '–' + to : ''}`,
+    path,
+    ref: {kind: 'selection', path, from, to, text: doc.sliceString(sel.from, sel.to)},
+  });
+  leePane('right', true); leeRight('agent'); paintAgentAttachments();
+  $('#agentprompt')?.focus();
+  status(`selection queued for the agent · ${from}${to > from ? '–' + to : ''}`, 'ok');
+}
+window.leeAgentSelection = leeAgentSelection;
+
+async function leeAgentBudget() {
+  const tools = $('#toolbudget'), steps = $('#stepbudget');
+  try {
+    const d = await post('/agent/budget', {tools: tools?.value.trim(), steps: steps?.value.trim()});
+    if (tools) tools.value = String(d.tools);
+    if (steps) steps.value = String(d.steps);
+    status(d.note, 'ok');
+  } catch (e) {
+    status(e.message || String(e), 'err');
+    try { const d = await api('/agent/budget/state');
+      if (tools) tools.value = String(d.tools); if (steps) steps.value = String(d.steps);
+    } catch (_) { /* leave the boxes alone rather than blank them on a second failure */ }
+  }
+}
+window.leeAgentBudget = leeAgentBudget;
 
 async function leeLocalMultimodal(enabled) {
   const box = $('#localmultimodal');
@@ -4274,14 +4408,27 @@ function paintAgentAttachments() {
     `<span>active · ${esc(compactPath(lee.path))}</span></span>` : '';
   const states = lee.stateSuggestions.map(s => `<button type="button" class="lee-agent-state-suggestion" data-state-id="${esc(s.id)}" ` +
     `title="Preview and attach this remembered starting state">state · ${esc(s.title)}</button>`).join('');
-  host.innerHTML = active + [...lee.agentAttachments.entries()].map(([path, name]) =>
-    `<span class="lee-agent-attachment" title="${esc(path)}"><span>${esc(name)}</span>` +
+  const sels = lee.agentSelections.map((s, i) =>
+    `<span class="lee-agent-attachment selection" title="${esc(s.path)}"><span>${esc(s.label)}</span>` +
+    `<button type="button" data-sel="${i}" aria-label="remove ${esc(s.label)}">remove</button></span>`).join('');
+  host.innerHTML = active + sels + [...lee.agentAttachments.entries()].map(([path, name]) =>
+    `<span class="lee-agent-attachment${name.endsWith('/') ? ' folder' : ''}" title="${esc(path)}"><span>${esc(name)}</span>` +
     `<button type="button" data-path="${esc(path)}" aria-label="remove ${esc(name)}">remove</button></span>`).join('') + states;
   $$('.lee-agent-state-suggestion', host).forEach(b => b.onclick = async () => {
     await post('/agent/state/load', {id: b.dataset.stateId, layer: 'task'});
     lee.stateSuggestions = []; paintAgentAttachments(); status('relevant state attached to this workspace', 'ok');
   });
-  $$('button', host).forEach(b => b.onclick = () => { lee.agentAttachments.delete(b.dataset.path); paintAgentAttachments(); });
+  $$('[data-sel]', host).forEach(b => b.onclick = () => {
+    lee.agentSelections.splice(+b.dataset.sel, 1); paintAgentAttachments();
+  });
+  $$('[data-path]', host).forEach(b => b.onclick = () => {
+    const name = lee.agentAttachments.get(b.dataset.path);
+    lee.agentAttachments.delete(b.dataset.path);
+    // The token goes with the chip, or the prompt keeps naming something no longer attached.
+    const input = $('#agentprompt');
+    if (input && name) input.value = input.value.replace(new RegExp(`(^|\\s)@${name.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&')}\\s?`), '$1');
+    paintAgentAttachments();
+  });
 }
 function closeAgentSuggest() {
   const menu = $('#agentsuggest'); if (!menu) return;
@@ -4304,14 +4451,18 @@ function chooseAgentSuggest(i = lee.agentSuggestAt) {
     const left = before.replace(/(^|\s)\/(?:[A-Za-z_][\w-]*)?$/, `$1/${item.name} `);
     input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
   } else {
+    // The token *stays*. Removing it left the sentence reading "look at and tell me why",
+    // with the thing being talked about visible only as a chip somewhere else. What you typed
+    // is the reference; the chip is that reference resolved, not a replacement for it.
     lee.agentAttachments.set(item.path, item.name);
-    const at = input.selectionStart, left = input.value.slice(0, at).replace(/(^|\s)@[^\s@]*$/, '$1');
+    const at = input.selectionStart, before = input.value.slice(0, at);
+    const left = before.replace(/(^|\s)@[^\s@]*$/, `$1@${item.name} `);
     input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
     paintAgentAttachments();
   }
   closeAgentSuggest(); input.focus();
 }
-let agentSuggestSeq = 0, stateSuggestTimer = null;
+let agentSuggestSeq = 0, stateSuggestTimer = null, agentSuggestTimer = null;
 async function suggestAgentState(text) {
   if (text.trim().length < 18 || text.trim().startsWith('/')) { lee.stateSuggestions = []; return paintAgentAttachments(); }
   try {
@@ -4337,10 +4488,12 @@ async function updateAgentSuggest() {
   } else if (mention) {
     // `@` means "in this project", not "anywhere the workspace can reach": with several
     // checkouts open, the unscoped list is mostly files from a project you are not in.
-    const d = await api('/fs/find?scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=12');
+    // `dirs`: a folder is somewhere to look, and attaching one is how you say "read around here".
+    const d = await api('/fs/find?dirs=1&scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=12');
     if (seq !== agentSuggestSeq) return;
-    lee.agentSuggest = (d.hits || []).slice(0, 12).map(f => ({kind: 'file', path: f.path, name: f.name,
-      label: '@' + f.name, detail: compactPath(f.path)}));
+    lee.agentSuggest = (d.hits || []).slice(0, 12).map(f => ({kind: f.kind === 'folder' ? 'folder' : 'file',
+      path: f.path, name: f.name, label: '@' + f.name,
+      detail: (f.kind === 'folder' ? 'folder · ' : '') + compactPath(f.path)}));
   } else return closeAgentSuggest();
   lee.agentSuggestAt = 0; paintAgentSuggest();
 }
@@ -4368,7 +4521,12 @@ function initAgentComposer() {
     input.style.height = Math.min(190, Math.max(64, input.scrollHeight)) + 'px';
   };
   input.addEventListener('input', () => {
-    grow(); updateAgentSuggest().catch(e => status(String(e.message || e), 'err'));
+    grow();
+    // Coalesced, because each call walks the project tree. `agentSuggestSeq` already drops a
+    // stale answer, but that discards the work after it has been done rather than before.
+    clearTimeout(agentSuggestTimer);
+    agentSuggestTimer = setTimeout(
+      () => updateAgentSuggest().catch(e => status(String(e.message || e), 'err')), 90);
     clearTimeout(stateSuggestTimer); stateSuggestTimer = setTimeout(() => suggestAgentState(input.value), 420);
   });
   grow();
@@ -4406,7 +4564,8 @@ async function sendAgent() {
     const head = q.slice(1).split(/\s/, 1)[0];
     if ((lee.agentVocabulary?.commands || []).some(c => c.name === head)) return sendAgentCommand(q);
   }
-  const attachments = [...lee.agentAttachments.keys()]; lee.agentAttachments.clear(); paintAgentAttachments();
+  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref)];
+  lee.agentAttachments.clear(); lee.agentSelections = []; paintAgentAttachments();
   lee.agentBusy = true; updateAgentRunstrip();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   log.appendChild(userMessage(q)); log.scrollTop = log.scrollHeight;
@@ -7358,7 +7517,8 @@ function researchWorkspace(mode = 'search', value = '') {
     `<form class="lee-research-command"><div class="lee-segbar" aria-label="research mode">` +
     `<button type="button" class="lee-seg" data-mode="search">Search</button>` +
     `<button type="button" class="lee-seg" data-mode="read">Read URL</button>` +
-    `<button type="button" class="lee-seg" data-mode="research">Research</button></div>` +
+    `<button type="button" class="lee-seg" data-mode="research">Research</button>` +
+    `<button type="button" class="lee-seg" data-mode="vault">Vault</button></div>` +
     `<input class="lee-input" id="researchquery" autocomplete="off">` +
     `<label class="lee-research-remember" title="Store fetched sources in durable memory"><input type="checkbox" id="researchremember" checked> remember</label>` +
     `<button class="lee-btn go" type="submit">Go</button></form>` +
@@ -7378,11 +7538,24 @@ function researchWorkspace(mode = 'search', value = '') {
   m.classList.add('lee-research-modal');
   const input = $('#researchquery', m), list = $('#researchsources', m), reader = $('#researchreader', m);
   const title = $('#researchtitle', m), meta = $('#researchmeta', m);
+  /* Vault mode puts what you have already kept in the same column as what you are about to
+     find. The sources list becomes the vault tree, and the reader stays the reader: a clipped
+     document and a fetched page are the same kind of thing once they are on screen. */
+  const showVault = async () => {
+    list.innerHTML = '<div class="lee-research-empty">Reading the vault…</div>';
+    // `elid`, because the vault panel may be open behind this modal with a fragment of its own,
+    // and two elements sharing an id would send every folder toggle to whichever came first.
+    try { await htmx.ajax('GET', '/vault/browse?elid=researchvault', {target: '#researchsources', swap: 'innerHTML'}); }
+    catch (e) { list.innerHTML = `<div class="lee-research-error">${esc(e.message || e)}</div>`; }
+  };
   const setMode = next => {
     activeMode = next;
     $$('[data-mode]', m).forEach(b => b.classList.toggle('active', b.dataset.mode === next));
     input.placeholder = next === 'read' ? 'https://example.com/article' :
-      next === 'research' ? 'Research a question across several sources…' : 'Search the web…';
+      next === 'research' ? 'Research a question across several sources…' :
+      next === 'vault' ? 'Search what you have already kept…' : 'Search the web…';
+    m.classList.toggle('research-vault', next === 'vault');
+    if (next === 'vault') showVault();
     input.focus();
   };
   const setBusy = text => {
@@ -7437,7 +7610,13 @@ function researchWorkspace(mode = 'search', value = '') {
       '<div class="lee-research-empty">No sources yet.</div>';
   };
   const run = async () => {
-    query = input.value.trim(); if (!query) return;
+    query = input.value.trim();
+    // The vault is searched where it is shown, and an empty box is a real answer here: it puts
+    // the tree back, which is the same two-views-of-one-panel rule the vault panel follows.
+    if (activeMode === 'vault')
+      return htmx.ajax('GET', '/vault/browse?' + new URLSearchParams({q: query, elid: 'researchvault'}),
+                       {target: '#researchsources', swap: 'innerHTML'});
+    if (!query) return;
     setBusy(activeMode === 'research' ? 'Reading and comparing the strongest sources…' : activeMode === 'read' ? 'Fetching the page…' : 'Searching the web…');
     try {
       if (activeMode === 'read') {
@@ -7810,8 +7989,7 @@ async function operationHistory() {
     const redo = row.dataset.history === 'redo', verb = redo ? 'Redo' : 'Undo';
     if (!await confirmDialog(`${verb} workspace operation`, `${verb} ${row.textContent.trim()}?`, verb.toLowerCase())) return;
     try { const r = await post('/history/' + (redo ? 'redo' : 'undo'), {id: row.dataset.op}); m.remove();
-      if ((r.operation.resources || []).some(x => x.path === lee.path)) await takeDiskVersion(lee.path);
-      status(`workspace operation ${redo ? 'redone' : 'undone'}`, 'ok'); refreshFileTree(undefined, false);
+      await afterHistory(r.operation, `workspace operation ${redo ? 'redone' : 'undone'}`, !redo);
     } catch (e) { status(e.message || String(e), 'err'); }
   });
 }
@@ -8979,6 +9157,31 @@ async function checkProjectRuntime() {
   m.querySelector('#runtimelater').onclick = () => m.remove();
 }
 
+/* CodeMirror measures its width once and caches it, and nothing was telling it when that width
+   changed. Toggling a pane, unpinning one so it auto-closes, opening a split, switching the
+   markdown view or resizing the window all move the editor's right edge without a keystroke, so
+   the cached measurement outlived the layout.
+
+   Visible as a vertical band cutting through the text: the overview stripe is pinned to the
+   *editor's* right edge, so it stays where the edge used to be while the text runs on past it.
+   Intermittent only because it takes a resize that happens to miss a re-measure.
+
+   `requestMeasure` is plain EditorView API, so no new `LeeCM` export and no vendored rebuild. */
+function observeEditorWidth() {
+  if (!('ResizeObserver' in window)) return;
+  let frame = 0;
+  const remeasure = () => {
+    cancelAnimationFrame(frame);
+    // Coalesced: a drag on the splitter fires this per frame, and each measure is a layout read.
+    frame = requestAnimationFrame(() => {
+      for (const v of lee.editors.values()) { try { v.requestMeasure(); } catch (_) { /* torn down */ } }
+      lee.gitMergeView?.a?.requestMeasure?.(); lee.gitMergeView?.b?.requestMeasure?.();
+    });
+  };
+  const observer = new ResizeObserver(remeasure);
+  for (const sel of ['#editor', '#shell', '#bottomdock']) { const el = $(sel); if (el) observer.observe(el); }
+}
+
 /* ------------------------------------------------------------------ boot */
 async function boot() {
   await Promise.all([loadKeys(), loadSettings()]);
@@ -8990,6 +9193,7 @@ async function boot() {
   await mountTab();
   layoutTabs();
   new ResizeObserver(layoutTabs).observe($('#header'));
+  observeEditorWidth();
   checkProjectRuntime();
   leeVars();
   setInterval(leeVars, 2500);          // the kernel's own inspector is the source of truth; poll it
@@ -9056,11 +9260,48 @@ async function replaceWorkspace() {
   };
 }
 
+/* Which lines differ, as one span from the first difference to the last.
+
+   Not a real diff: the point is to put the change on screen and under a selection, and a span
+   does that for every edit an undo can produce. A minimal diff would draw prettier ranges and
+   would not answer the question -- "where did it change" -- any better. */
+function changedSpan(now, other) {
+  const A = String(now || '').split('\n'), B = String(other || '').split('\n');
+  let s = 0;
+  while (s < A.length && s < B.length && A[s] === B[s]) s++;
+  let a = A.length - 1, b = B.length - 1;
+  while (a >= s && b >= s && A[a] === B[b]) { a--; b--; }
+  return {from: s + 1, to: Math.max(s + 1, a + 1)};
+}
+
+/* An undo that changes a file you cannot see has happened to you rather than been done by you.
+   Select what moved and centre it, so the operation is legible instead of merely reported. */
+function showChangedSpan(now, other, note) {
+  const v = curEditor();
+  if (!v) return status(note, 'ok');
+  const doc = v.state.doc, {from, to} = changedSpan(now, other);
+  const head = doc.line(Math.min(to, doc.lines)).to, anchor = doc.line(Math.min(from, doc.lines)).from;
+  v.dispatch({selection: {anchor, head}, scrollIntoView: true});
+  requestAnimationFrame(() => centreOnPos(v, anchor));
+  v.focus();
+  status(`${note} · line${to > from ? `s ${from}–${to}` : ` ${from}`}`, 'ok');
+}
+
+/* `undone` says which way round the texts are: after an undo the file holds `before`, after a
+   redo it holds `after`, and the other one is what it was. */
+async function afterHistory(operation, note, undone) {
+  const rows = operation.resources || [], paths = rows.map(x => x.path);
+  refreshFileTree(undefined, false);
+  const row = rows.find(x => x.path === lee.path);
+  if (!row) return status(`${note} · ${paths.length} file${paths.length === 1 ? '' : 's'}`, 'ok');
+  await takeDiskVersion(lee.path);
+  showChangedSpan(undone ? row.before : row.after, undone ? row.after : row.before, note);
+}
+
 async function workspaceHistoryRedo() {
   try {
-    const result = await post('/history/redo', {}), paths = (result.operation.resources || []).map(x => x.path);
-    if (paths.includes(lee.path)) await takeDiskVersion(lee.path);
-    refreshFileTree(undefined, false); status('workspace operation redone', 'ok');
+    const result = await post('/history/redo', {});
+    await afterHistory(result.operation, 'workspace operation redone', false);
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 
@@ -9194,11 +9435,16 @@ async function mountVault(host, st) {
   catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; return; }
 
   const doc = d.doc || {}, sections = d.sections || [];
+  const src = String(doc.source || '');
+  const mdBase = /^(https?:|memory:|pointer:)/.test(src) || !src ? '' : src.slice(0, src.lastIndexOf('/'));
   host.innerHTML = `<div class="lee-vault-reader">` +
     `<aside class="lee-vault-toc"><div class="lee-phead"><span class="lee-ptitle">${esc(doc.title || st.title)}</span>` +
     `<span class="lee-keyscope">${esc(doc.kind || 'document')} · ${esc(st.shelf || 'store')}</span></div>` +
     `<div class="lee-vault-sections">${vaultSectionRows(sections, '')}</div></aside>` +
-    `<div class="lee-vault-body">${vaultPrivacy(d)}<article class="lee-vault-text" data-markdown=""></article></div></div>`;
+    // `data-md-base` is the folder the document was clipped from, so figures written relative
+    // to it resolve. A document that was never a file has no base and keeps its links as written.
+    `<div class="lee-vault-body"${mdBase ? ` data-md-base="${esc(mdBase)}"` : ''}>${vaultPrivacy(d)}` +
+    `<article class="lee-vault-text" data-markdown=""></article></div></div>`;
 
   const body = $('.lee-vault-text', host);
   const show = async node => {
@@ -9222,6 +9468,28 @@ async function mountVault(host, st) {
   };
 }
 window.mountVault = mountVault;
+
+/* The document in the vault is a copy; this opens the thing it was copied from. Editing happens
+   there, because a file on disk is something leela already knows how to edit, and writing back
+   into the vault would mean deciding what becomes of its nodes, embeddings and content address. */
+async function leeOpenVaultFile(doc, shelf = '', vault = '') {
+  let d;
+  try { d = await api('/vault/source?' + new URLSearchParams({doc, shelf, vault})); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  if (d.kind === 'url') return status('this was clipped from the web, not from a file', 'err');
+  if (d.kind !== 'file') return status('this document was never a file', 'err');
+  if (!d.exists) return status(`${d.path} is no longer there`, 'err');
+  // The fs sandbox refuses paths outside an open folder, and that refusal is the thing every
+  // other path in leela is checked against. So ask rather than reach around it.
+  if (!d.inside_workspace) {
+    if (!await confirmDialog('open folder', `${d.parent} is not open in this workspace.\n\nAdd it as a folder?`, 'add'))
+      return;
+    try { await post('/fs/add-root', {path: d.parent}); await refreshFileTree(d.parent); }
+    catch (e) { return status(e.message || String(e), 'err'); }
+  }
+  return leeOpenFile(d.path);
+}
+window.leeOpenVaultFile = leeOpenVaultFile;
 
 async function leeOpenVaultDoc(doc, shelf = '', vault = '', title = '') {
   await htmx.ajax('POST', '/vault/open?' + new URLSearchParams({doc, shelf, vault, title}),

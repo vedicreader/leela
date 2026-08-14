@@ -72,7 +72,7 @@ from .blocks.git.git import GitRepo, GitError
 from .core.keys import by_scope, chord_display, toast_rows
 from .blocks.nb.nb import Notebook, Cell
 from .blocks.term.term import TerminalGate, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
-from .workspace import Workspace
+from .workspace import STEP_RANGE, TOOL_RANGE, Workspace
 from .agent.core import model_note
 from .agent.runtime import estimate_tokens
 
@@ -800,6 +800,20 @@ def _agent_panel(ws):
                         Label('compaction', Select(Option('surgical · readable tool trail', value='surgical', selected=ws.compact_strategy == 'surgical'),
                                                    Option('summary · model checkpoint', value='summary', selected=ws.compact_strategy == 'summary'),
                                                    id='compactstrategy', cls='lee-select', onchange='leeAgentCompaction()')),
+                        # `auto` sizes the turn from the prompt; the numbers are for the long job
+                        # that keeps stopping one step short of finished.
+                        Label('tool calls per turn',
+                              Input(id='toolbudget', cls='lee-input', value=str(ws.tool_budget),
+                                    list='toolbudgets', autocomplete='off', spellcheck='false',
+                                    title=f'auto, or {TOOL_RANGE[0]}–{TOOL_RANGE[1]}',
+                                    onchange='leeAgentBudget()')),
+                        Datalist(*[Option(value=v) for v in ('auto', '80', '160', '240', '400')], id='toolbudgets'),
+                        Label('steps per turn',
+                              Input(id='stepbudget', cls='lee-input', value=str(ws.step_budget),
+                                    list='stepbudgets', autocomplete='off', spellcheck='false',
+                                    title=f'auto, or {STEP_RANGE[0]}–{STEP_RANGE[1]}',
+                                    onchange='leeAgentBudget()')),
+                        Datalist(*[Option(value=v) for v in ('auto', '20', '40', '60', '80')], id='stepbudgets'),
                         Label(Input(type='checkbox', id='localmultimodal', checked=ws.local_multimodal,
                                     onchange='leeLocalMultimodal(this.checked)'),
                               ' local image/audio encoders', cls='lee-check-setting',
@@ -2072,6 +2086,36 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         return {'ok': True, 'auto': auto, 'strategy': strategy,
                 'note': f'auto compaction {"on" if auto else "off"} · {strategy}'}
 
+    @rt('/agent/budget')
+    async def agent_budget(req):
+        """How much work one turn may do, changed without restarting the conversation.
+
+        `auto` is ramabana sizing the turn from the prompt -- 24 tool calls for a question, 240
+        for "implement and verify". A number pins it, which is what a long job that keeps
+        stopping one step short of finished actually needs.
+        """
+        from .workspace import budget_value
+        d = await req.json()
+        for key, given in (('tool_budget', d.get('tools')), ('step_budget', d.get('steps'))):
+            if given is None: continue
+            lo, hi = TOOL_RANGE if key == 'tool_budget' else STEP_RANGE
+            value = budget_value(given, lo, hi)
+            # `budget_value` answers `auto` for anything it will not take, so a typo would be
+            # silently accepted as a reset. Say so instead.
+            if value == 'auto' and str(given).strip().lower() != 'auto':
+                return _fail(f'{key}: use auto, or a number from {lo} to {hi}')
+            setattr(ws, key, value)
+        for agent in _live_assistants(): agent.tool_budget, agent.step_budget = ws.tool_budget, ws.step_budget
+        ws.save()
+        return {'ok': True, 'tools': ws.tool_budget, 'steps': ws.step_budget,
+                'note': f'tool budget {ws.tool_budget} · steps {ws.step_budget}'}
+
+    @rt('/agent/budget/state')
+    def agent_budget_state():
+        "What is actually in force, so a refused edit can put the box back rather than blank it."
+        return {'ok': True, 'tools': ws.tool_budget, 'steps': ws.step_budget,
+                'tool_range': list(TOOL_RANGE), 'step_range': list(STEP_RANGE)}
+
     @rt('/agent/model')
     async def agent_model(req):
         d = await req.json()
@@ -2569,6 +2613,13 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if not line: return {'ok': True, 'text': 'commands: ' + ', '.join('/' + c for c in ws.ai.commands())}
         out = await _off_loop(ws.ai.command, line)
         if out is None: return _fail(f'unknown command {line.split()[0]}')
+        # `/tool-budget` and `/steps` are ramabana's, and they set the attribute on *this* agent.
+        # Without this the panel would still show the old number and the next prompt cell would
+        # be built with it: one way of saying a thing, two answers to what it is.
+        if line.lstrip('/').split(' ')[0] in ('tool-budget', 'steps'):
+            ws.tool_budget, ws.step_budget = ws.ai.tool_budget, ws.ai.step_budget
+            for agent in _live_assistants(): agent.tool_budget, agent.step_budget = ws.tool_budget, ws.step_budget
+            ws.save()
         return {'ok': True, 'text': out}
 
     @rt('/agent/ask')

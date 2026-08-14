@@ -22,6 +22,9 @@ const lee = {
   breakpoints: new Map(), debugThread: null, debugCell: null, debugState: null, directDebug: false, debugWatches: [],
   shownProblems: new Set(),   // agent failures already written into the pane, so they show once
   agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
+  // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
+  // path->name map: two selections in one file are two contexts, not one key overwriting itself.
+  agentSelections: [],
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
@@ -384,6 +387,26 @@ function addMarkdownCellAction(el) {
 // in the order it emitted them, and the code-block upgrade replaces `<pre>` with an editor
 // surface. So the annotation goes first, and a throw in it cannot cost the reader the
 // rendering it was annotating.
+/* A markdown file's images are written relative to the file, and the browser resolves them
+   against the *page*, so every figure in a rendered document was a broken link. Rewrite them
+   through `/file/raw`, which already serves image bytes from inside the workspace.
+
+   An http source is left alone, and so is anything that will not resolve: a picture that is
+   plainly missing is honest, where one rewritten to a URL that 403s looks like a bug in leela.
+   The base is `data-md-base`, set by whichever surface knows which file this came from. */
+function resolveMarkdownImages(el) {
+  const base = el.closest('[data-md-base]')?.dataset.mdBase || '';
+  $$('img', el).forEach(img => {
+    const src = img.getAttribute('src') || '';
+    if (!src || /^(https?:|data:|blob:|\/file\/raw)/.test(src)) return;
+    if (!src.startsWith('/') && !base) return;
+    // `..` and `.` are resolved by URL, so a path cannot climb out through the query string.
+    const abs = src.startsWith('/') ? src : new URL(src, 'file://' + base + '/').pathname;
+    img.src = '/file/raw/' + encodeURIComponent(abs.split('/').pop()) + '?path=' + encodeURIComponent(abs);
+    img.loading = 'lazy';
+  });
+}
+
 function renderMarkdown(el, text, allowRaw = false, onRender = null) {
   if (!el) return;
   el.dataset.markdown = String(text || '');
@@ -407,6 +430,7 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
       el._leeCodeFrame = requestAnimationFrame(() => {
         el._leeCodeFrame = 0;
         if (onRender) try { onRender(el); } catch (e) { console.warn('Leela markdown annotation:', e); }
+        resolveMarkdownImages(el);
         upgradePortableToolMarkdown(el); enhanceCodeBlocks(el); addMarkdownCellAction(el);
       });
     } catch (e) {

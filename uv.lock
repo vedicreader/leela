@@ -1970,7 +1970,7 @@ wheels = [
 
 [[package]]
 name = "jupyasyncclient"
-version = "0.2.5"
+version = "0.2.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -1978,9 +1978,9 @@ dependencies = [
     { name = "jupywire" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9e/69/8584df54e13605df12f3c78fbe2c49abe3c3ef2ac0a53e0caf02746f302f/jupyasyncclient-0.2.5.tar.gz", hash = "sha256:69629d1ca2da8b0af0870becc3499bef4a8b205d968df1a9d2702ce56b2848a7", size = 21901, upload-time = "2026-08-13T05:55:31.368Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/23/1126e99af7a1256be6055985d8f78f7b3feca1f072ba2c6b3a3381a1a86f/jupyasyncclient-0.2.6.tar.gz", hash = "sha256:0d379be894640dcccf0503bc57c4bc4b838bbda469553848f83a79232c7bbf46", size = 22255, upload-time = "2026-08-14T07:02:24.747Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/47/58428c4f05cc5546c41656ff20178e5a79929b6416f07b0fbadbfb20c912/jupyasyncclient-0.2.5-py3-none-any.whl", hash = "sha256:fab7252f15e9ca5f28e962d84e7b117ff11c262c1748d94f209cafdea17722d4", size = 19441, upload-time = "2026-08-13T05:55:30.13Z" },
+    { url = "https://files.pythonhosted.org/packages/60/2b/1f1425713d2a683e83274babb72ca93b44a678a474babbc298fafcb93094/jupyasyncclient-0.2.6-py3-none-any.whl", hash = "sha256:2bad7d66761bbe5a74cbc77904ba556c57b4920b61a0a6c12e63beaa2c8de125", size = 19791, upload-time = "2026-08-14T07:02:23.472Z" },
 ]
 
 [[package]]
@@ -2343,7 +2343,7 @@ dependencies = [
     { name = "packaging" },
     { name = "python-fasthtml" },
     { name = "pyyaml" },
-    { name = "ramabana" },
+    { name = "ramabana", extra = ["all"] },
     { name = "starlette" },
     { name = "uvicorn" },
     { name = "vishalakshi" },
@@ -2442,7 +2442,7 @@ requires-dist = [
     { name = "python-dotenv", marker = "extra == 'github'", specifier = ">=1.0.0" },
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ramabana", editable = "../ramabana" },
+    { name = "ramabana", extras = ["all"], editable = "../ramabana" },
     { name = "starlette", specifier = ">=0.40.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
     { name = "vishalakshi", specifier = ">=0.1.8" },
@@ -3937,6 +3937,20 @@ wheels = [
 ]
 
 [[package]]
+name = "pyghostty"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cffi" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5b/9e/64b07389d5a99d3c735f02629c561729f7df5a6ec4c7a8d1a9b6df6feef4/pyghostty-0.1.0-py3-none-macosx_13_0_arm64.whl", hash = "sha256:5b9dd0487667be3500e51ffbf5ca87f53e020a9ef36f0dc0cf4ddd277e8822b2", size = 591183, upload-time = "2026-07-24T07:20:25.047Z" },
+    { url = "https://files.pythonhosted.org/packages/66/82/b8531f50f44e8fa85cd96acd011067f55c932f4225891d34bb3e5def9b4f/pyghostty-0.1.0-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:2722590d17f4cb5376e1d04d251a824b173223bb45466e94632c61b4e1cef577", size = 655962, upload-time = "2026-07-24T07:20:27.006Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/e1/c2815400bb74a9846b44f2aa86e83088f42312b7e48c18a576b4d703fd7a/pyghostty-0.1.0-py3-none-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:8a1c628bff9a449707ea71ae6fd47e859ce5d80a5312bef357c383b7e7a7e71c", size = 2010126, upload-time = "2026-07-24T07:20:29.153Z" },
+    { url = "https://files.pythonhosted.org/packages/50/c9/d56ce52b8e109c2dfa7882fe0b7b9ebd527c554b7d5e33f9e2648dfa89f3/pyghostty-0.1.0-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9461e0e42d9be8fd0a0afcd0e7c9487d5e900b1e57e64df16adc0ebdbb527194", size = 2176016, upload-time = "2026-07-24T07:20:31.06Z" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4250,6 +4264,15 @@ dependencies = [
     { name = "vishalakshi" },
 ]
 
+[package.optional-dependencies]
+all = [
+    { name = "dhrishti" },
+    { name = "jupyter-client" },
+    { name = "mcp" },
+    { name = "pyghostty" },
+    { name = "teleprint" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "dhrishti", marker = "extra == 'all'", specifier = ">=0.1.2" },
@@ -4277,8 +4300,8 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rgapi", specifier = ">=0.1.19" },
-    { name = "rishi", specifier = ">=0.1.11" },
-    { name = "rishi", extras = ["all"], marker = "extra == 'dev'", specifier = ">=0.1.11" },
+    { name = "rishi", specifier = ">=0.1.12" },
+    { name = "rishi", extras = ["all"], marker = "extra == 'dev'", specifier = ">=0.1.12" },
     { name = "teleprint", marker = "extra == 'all'", specifier = ">=0.1.1" },
     { name = "teleprint", marker = "extra == 'cli'", specifier = ">=0.1.1" },
     { name = "teleprint", marker = "extra == 'dev'", specifier = ">=0.1.1" },
@@ -4497,16 +4520,16 @@ wheels = [
 
 [[package]]
 name = "rishi"
-version = "0.1.11"
+version = "0.1.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
     { name = "huggingface-hub" },
     { name = "safepyrun" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/47/34/3295a5bec26e67d9f19be260cf487ef680a1742c57b215ca99a3aeffc391/rishi-0.1.11.tar.gz", hash = "sha256:ed80d7557917144cdaacf4f994ecae93088674d5cb5d4ffced117648d19fb9d5", size = 79178, upload-time = "2026-08-14T02:25:55.679Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7b/79/01ad75e47d9d52eda09538383d59bbbf4a42ab73831ccdbb1fe73925062a/rishi-0.1.12.tar.gz", hash = "sha256:13026415bd91b7dd7b59dcfca9b478af6520dd8924ed68cb6d658e270cdd1da1", size = 79329, upload-time = "2026-08-14T05:01:59.49Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/62/f7/d4dd34bf1942e4b458231b636a4060a7c2cb0ac76646d9a00242aea5ed67/rishi-0.1.11-py3-none-any.whl", hash = "sha256:ffccbabfabb4b9db730dfc66de9d68c4605f1b031f4819dde536985a46352de0", size = 88236, upload-time = "2026-08-14T02:25:54.154Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/79/b92f8739a756f320de5fa548215aed2c9e83dccb2247808074cae6d814ee/rishi-0.1.12-py3-none-any.whl", hash = "sha256:3f73f3a0cf6b78e8ff73142b929ffd074c8ba6601928c156fe0bb05424f27d62", size = 88383, upload-time = "2026-08-14T05:01:57.999Z" },
 ]
 
 [package.optional-dependencies]
@@ -4819,6 +4842,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/46/58/8c37dea7bbf769b20d58e7ace7e5edfe65b849442b00ffcdd56be88697c6/tabulate-0.10.0.tar.gz", hash = "sha256:e2cfde8f79420f6deeffdeda9aaec3b6bc5abce947655d17ac662b126e48a60d", size = 91754, upload-time = "2026-03-04T18:55:34.402Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl", hash = "sha256:f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3", size = 39814, upload-time = "2026-03-04T18:55:31.284Z" },
+]
+
+[[package]]
+name = "teleprint"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "rich" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9b/68/1bd280623d232a0cd639d88c2d7080366ed6277f9f4f3d8dfe1191b17f22/teleprint-0.1.1.tar.gz", hash = "sha256:770cd9b257a0a17b93dd04bd83b92860157d78325ac7c3fe8939f5abed34f915", size = 49437, upload-time = "2026-08-04T11:46:38.326Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/89/7a1220afcf37e0ef54b416455f19ab3dcff3709fb90ad2886a32d4b87a4d/teleprint-0.1.1-py3-none-any.whl", hash = "sha256:609772828367c0e6a0b66db46df70a564d16cc4a15d52e2ae1e9aec615949362", size = 33615, upload-time = "2026-08-04T11:46:36.933Z" },
 ]
 
 [[package]]

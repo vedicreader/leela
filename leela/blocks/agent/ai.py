@@ -675,6 +675,10 @@ class Assistant(Agent):
         kwargs.setdefault('approvals', getattr(ws, 'approvals', None))
         kwargs.setdefault('compact', getattr(ws, 'compact_auto', True))
         kwargs.setdefault('compact_strategy', getattr(ws, 'compact_strategy', 'surgical'))
+        # ramabana sizes a turn from the prompt when these are `auto`; a number pins it. The
+        # workspace holds the choice so a new prompt cell agrees with the panel.
+        kwargs.setdefault('max_tool_calls', getattr(ws, 'tool_budget', 'auto'))
+        kwargs.setdefault('max_steps', getattr(ws, 'step_budget', 'auto'))
         if approve is not None and kwargs.get('approvals') is None:
             kwargs['approvals'] = _PolicyApprovals(approve)
         self.ws, self.surface = ws, surface

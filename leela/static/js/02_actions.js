@@ -16,6 +16,7 @@ const ACTIONS = {
   find_definition: () => findDefinition(),
   find_usages: () => findUsages(),
   rename_symbol: () => renameSymbol(),
+  agent_selection: () => leeAgentSelection(),
   sync_index: syncCodeIndex,
   run_app:      runApp,
   palette:      palette,

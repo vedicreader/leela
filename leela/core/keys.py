@@ -153,6 +153,7 @@ DEFAULTS = L(
     Key('ai_complete',      'alt+shift+space', 'global', 'ai completion',     'toast'),
     Key('show_docs',        'alt+shift+h',   'global', 'docs for symbol',     'toast'),
     Key('capture',          'alt+shift+p',   'global', 'screenshot for the assistant', 'toast'),
+    Key('agent_selection',  'alt+shift+n',   'global', 'send selection to the agent', 'toast'),
     # Clipping is a deliberate act on a named thing, so it is menu-first and unbound by default.
     Key('clip_to_vault',    '',              'global', 'clip into the vault'),
     Key('close_tab',        'alt+w',         'global', 'close tab',           'toast'),

@@ -95,6 +95,47 @@ async function leeAgentCompaction() {
 }
 window.leeAgentCompaction = leeAgentCompaction;
 
+/* How much work one turn may do. `auto` lets ramabana size it from the prompt; a number pins it.
+   The fields are written back from the answer, so a refusal leaves the box showing what is
+   actually in force rather than the rejected text. */
+/* The highlighted range, queued as context for the next turn.
+
+   Sent as text rather than as `path:from-to` for the agent to go and read: the buffer may be
+   unsaved, and what you highlighted is what you meant, not what happens to be on disk. */
+function leeAgentSelection() {
+  const v = curEditor();
+  if (!v) return status('put the cursor in some code first', 'err');
+  const sel = v.state.selection.main;
+  if (sel.empty) return status('select the code you want the agent to see', 'err');
+  const doc = v.state.doc, from = doc.lineAt(sel.from).number, to = doc.lineAt(sel.to).number;
+  const path = lee.path || 'untitled', name = path.split('/').pop() || 'untitled';
+  lee.agentSelections.push({
+    label: `${name}:${from}${to > from ? '–' + to : ''}`,
+    path,
+    ref: {kind: 'selection', path, from, to, text: doc.sliceString(sel.from, sel.to)},
+  });
+  leePane('right', true); leeRight('agent'); paintAgentAttachments();
+  $('#agentprompt')?.focus();
+  status(`selection queued for the agent · ${from}${to > from ? '–' + to : ''}`, 'ok');
+}
+window.leeAgentSelection = leeAgentSelection;
+
+async function leeAgentBudget() {
+  const tools = $('#toolbudget'), steps = $('#stepbudget');
+  try {
+    const d = await post('/agent/budget', {tools: tools?.value.trim(), steps: steps?.value.trim()});
+    if (tools) tools.value = String(d.tools);
+    if (steps) steps.value = String(d.steps);
+    status(d.note, 'ok');
+  } catch (e) {
+    status(e.message || String(e), 'err');
+    try { const d = await api('/agent/budget/state');
+      if (tools) tools.value = String(d.tools); if (steps) steps.value = String(d.steps);
+    } catch (_) { /* leave the boxes alone rather than blank them on a second failure */ }
+  }
+}
+window.leeAgentBudget = leeAgentBudget;
+
 async function leeLocalMultimodal(enabled) {
   const box = $('#localmultimodal');
   const d = await post('/agent/settings', {local_multimodal: !!enabled});
@@ -1066,14 +1107,27 @@ function paintAgentAttachments() {
     `<span>active · ${esc(compactPath(lee.path))}</span></span>` : '';
   const states = lee.stateSuggestions.map(s => `<button type="button" class="lee-agent-state-suggestion" data-state-id="${esc(s.id)}" ` +
     `title="Preview and attach this remembered starting state">state · ${esc(s.title)}</button>`).join('');
-  host.innerHTML = active + [...lee.agentAttachments.entries()].map(([path, name]) =>
-    `<span class="lee-agent-attachment" title="${esc(path)}"><span>${esc(name)}</span>` +
+  const sels = lee.agentSelections.map((s, i) =>
+    `<span class="lee-agent-attachment selection" title="${esc(s.path)}"><span>${esc(s.label)}</span>` +
+    `<button type="button" data-sel="${i}" aria-label="remove ${esc(s.label)}">remove</button></span>`).join('');
+  host.innerHTML = active + sels + [...lee.agentAttachments.entries()].map(([path, name]) =>
+    `<span class="lee-agent-attachment${name.endsWith('/') ? ' folder' : ''}" title="${esc(path)}"><span>${esc(name)}</span>` +
     `<button type="button" data-path="${esc(path)}" aria-label="remove ${esc(name)}">remove</button></span>`).join('') + states;
   $$('.lee-agent-state-suggestion', host).forEach(b => b.onclick = async () => {
     await post('/agent/state/load', {id: b.dataset.stateId, layer: 'task'});
     lee.stateSuggestions = []; paintAgentAttachments(); status('relevant state attached to this workspace', 'ok');
   });
-  $$('button', host).forEach(b => b.onclick = () => { lee.agentAttachments.delete(b.dataset.path); paintAgentAttachments(); });
+  $$('[data-sel]', host).forEach(b => b.onclick = () => {
+    lee.agentSelections.splice(+b.dataset.sel, 1); paintAgentAttachments();
+  });
+  $$('[data-path]', host).forEach(b => b.onclick = () => {
+    const name = lee.agentAttachments.get(b.dataset.path);
+    lee.agentAttachments.delete(b.dataset.path);
+    // The token goes with the chip, or the prompt keeps naming something no longer attached.
+    const input = $('#agentprompt');
+    if (input && name) input.value = input.value.replace(new RegExp(`(^|\\s)@${name.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&')}\\s?`), '$1');
+    paintAgentAttachments();
+  });
 }
 function closeAgentSuggest() {
   const menu = $('#agentsuggest'); if (!menu) return;
@@ -1096,14 +1150,18 @@ function chooseAgentSuggest(i = lee.agentSuggestAt) {
     const left = before.replace(/(^|\s)\/(?:[A-Za-z_][\w-]*)?$/, `$1/${item.name} `);
     input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
   } else {
+    // The token *stays*. Removing it left the sentence reading "look at and tell me why",
+    // with the thing being talked about visible only as a chip somewhere else. What you typed
+    // is the reference; the chip is that reference resolved, not a replacement for it.
     lee.agentAttachments.set(item.path, item.name);
-    const at = input.selectionStart, left = input.value.slice(0, at).replace(/(^|\s)@[^\s@]*$/, '$1');
+    const at = input.selectionStart, before = input.value.slice(0, at);
+    const left = before.replace(/(^|\s)@[^\s@]*$/, `$1@${item.name} `);
     input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
     paintAgentAttachments();
   }
   closeAgentSuggest(); input.focus();
 }
-let agentSuggestSeq = 0, stateSuggestTimer = null;
+let agentSuggestSeq = 0, stateSuggestTimer = null, agentSuggestTimer = null;
 async function suggestAgentState(text) {
   if (text.trim().length < 18 || text.trim().startsWith('/')) { lee.stateSuggestions = []; return paintAgentAttachments(); }
   try {
@@ -1129,10 +1187,12 @@ async function updateAgentSuggest() {
   } else if (mention) {
     // `@` means "in this project", not "anywhere the workspace can reach": with several
     // checkouts open, the unscoped list is mostly files from a project you are not in.
-    const d = await api('/fs/find?scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=12');
+    // `dirs`: a folder is somewhere to look, and attaching one is how you say "read around here".
+    const d = await api('/fs/find?dirs=1&scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=12');
     if (seq !== agentSuggestSeq) return;
-    lee.agentSuggest = (d.hits || []).slice(0, 12).map(f => ({kind: 'file', path: f.path, name: f.name,
-      label: '@' + f.name, detail: compactPath(f.path)}));
+    lee.agentSuggest = (d.hits || []).slice(0, 12).map(f => ({kind: f.kind === 'folder' ? 'folder' : 'file',
+      path: f.path, name: f.name, label: '@' + f.name,
+      detail: (f.kind === 'folder' ? 'folder · ' : '') + compactPath(f.path)}));
   } else return closeAgentSuggest();
   lee.agentSuggestAt = 0; paintAgentSuggest();
 }
@@ -1160,7 +1220,12 @@ function initAgentComposer() {
     input.style.height = Math.min(190, Math.max(64, input.scrollHeight)) + 'px';
   };
   input.addEventListener('input', () => {
-    grow(); updateAgentSuggest().catch(e => status(String(e.message || e), 'err'));
+    grow();
+    // Coalesced, because each call walks the project tree. `agentSuggestSeq` already drops a
+    // stale answer, but that discards the work after it has been done rather than before.
+    clearTimeout(agentSuggestTimer);
+    agentSuggestTimer = setTimeout(
+      () => updateAgentSuggest().catch(e => status(String(e.message || e), 'err')), 90);
     clearTimeout(stateSuggestTimer); stateSuggestTimer = setTimeout(() => suggestAgentState(input.value), 420);
   });
   grow();
@@ -1198,7 +1263,8 @@ async function sendAgent() {
     const head = q.slice(1).split(/\s/, 1)[0];
     if ((lee.agentVocabulary?.commands || []).some(c => c.name === head)) return sendAgentCommand(q);
   }
-  const attachments = [...lee.agentAttachments.keys()]; lee.agentAttachments.clear(); paintAgentAttachments();
+  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref)];
+  lee.agentAttachments.clear(); lee.agentSelections = []; paintAgentAttachments();
   lee.agentBusy = true; updateAgentRunstrip();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   log.appendChild(userMessage(q)); log.scrollTop = log.scrollHeight;
