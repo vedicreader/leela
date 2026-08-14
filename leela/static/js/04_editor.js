@@ -1,7 +1,10 @@
 /* ------------------------------------------------------------------ editor */
 function updateToolbarForKind(kind) {
   const notebook = kind === 'notebook', text = kind === 'text';
-  const visibility = {run_cell: notebook, run_advance: notebook, run_file: text, run_selection: text};
+  // `stop` interrupts the tab's kernel, and a document tab -- a PDF, an image, a vault entry,
+  // a live web page -- does not have one, so it was offering to interrupt nothing.
+  const visibility = {run_cell: notebook, run_advance: notebook, run_file: text,
+                      run_selection: text, interrupt: notebook || text};
   for (const [action, shown] of Object.entries(visibility)) {
     const button = $(`#toolbar [data-action="${action}"]`); if (button) button.hidden = !shown;
   }

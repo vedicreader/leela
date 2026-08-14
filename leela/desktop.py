@@ -71,18 +71,23 @@ def wait_for_http(url, timeout=60, interval=.1):
     return False
 
 
-def start_cdp(port=9223, headless=True, wait=False, timeout=None):
+def start_cdp(port=9223, headless=True, wait=False, timeout=None, profile=None):
     """Bring up the persistent CDP Chrome the inline browser renders into.
 
     Started on a thread and never waited on by default: Chrome takes a second or two, and no
     part of opening the workspace needs it. The first inline tab pays whatever is left.
+
+    `profile` defaults to fossick's own, which is the point -- its cookies are why a page
+    reads here and not through a plain fetch. Chrome allows one process per profile, so
+    anything wanting a *second* browser (the screenshot tooling, the tests) must name its own.
     """
     def boot():
         try:
             from fossick.cdp import _debug_ready, cdp_setup
             from fossick.core import syncy
             if _debug_ready(port): return
-            syncy(cdp_setup(port=port, headless=headless, timeout=timeout))
+            syncy(cdp_setup(port=port, headless=headless, timeout=timeout,
+                            user_data_dir=profile))
         except Exception as e:
             # A missing or unstartable Chrome costs the inline browser, not the workspace.
             # `leela.blocks.browser` reports the same failure again, in the panel, when
