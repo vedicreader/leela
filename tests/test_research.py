@@ -1,10 +1,9 @@
-"""Research keeps Fossick's rich results and writes useful, confined documents."""
+"Research keeps Fossick's rich results and writes useful, confined documents."
 
 from types import SimpleNamespace
 
 from leela.blocks.fs.fs import Sandbox
 from leela.blocks.research.research import Research, _url_slug
-
 
 def test_arxiv_reader_uses_fossick_source_and_title(monkeypatch, tmp_path):
     fake = SimpleNamespace(read_arxiv=lambda *a, **k: {
@@ -18,7 +17,6 @@ def test_arxiv_reader_uses_fossick_source_and_title(monkeypatch, tmp_path):
     assert doc.title == 'A Better Runtime Boundary'
     assert 'complete paper source' in doc.text
     assert doc.kind == 'paper'
-
 
 def test_repeated_articles_remain_separate_documents(monkeypatch, tmp_path):
     class Match:
@@ -48,7 +46,6 @@ def test_repeated_articles_remain_separate_documents(monkeypatch, tmp_path):
     assert [section['title'] for section in doc.sections] == ['First story', 'Second story']
     assert 'first body' in doc.sections[0]['text'] and 'second body' in doc.sections[1]['text']
 
-
 def test_page_reader_keeps_all_semantic_blocks_not_only_the_first(monkeypatch, tmp_path):
     calls = []
     page = object()
@@ -66,7 +63,6 @@ def test_page_reader_keeps_all_semantic_blocks_not_only_the_first(monkeypatch, t
     assert ('article', True) in calls
     assert 'via article' in research.note
 
-
 def test_thin_static_pages_retry_with_rendering_and_independent_extract(monkeypatch, tmp_path):
     static, rendered = object(), object()
     fetches = []
@@ -82,7 +78,6 @@ def test_thin_static_pages_retry_with_rendering_and_independent_extract(monkeypa
     assert len(doc.text) > 1000
     assert any(call.get('heavy') and call.get('network_idle') for call in fetches)
     assert 'rendered main' in research.note
-
 
 def test_research_dig_uses_fossick_research(monkeypatch, tmp_path):
     "dig is a thin adapter over fossick.research, not a second fetch pipeline."
@@ -103,7 +98,6 @@ def test_research_dig_uses_fossick_research(monkeypatch, tmp_path):
     assert 'First' in digest and 'Second' in digest
     assert 'complete sources' in research.note and '1 unread' in research.note
 
-
 def test_url_notebooks_get_distinct_meaningful_default_names(monkeypatch, tmp_path):
     written = []
     def url2nb(url, nb_path):
@@ -118,7 +112,6 @@ def test_url_notebooks_get_distinct_meaningful_default_names(monkeypatch, tmp_pa
     assert first.name == 'docs-python-org-3-library-asyncio-html.ipynb'
     assert second.name == 'arxiv-org-abs-2601-01234.ipynb'
     assert all(str(tmp_path) in path for _, path in written)
-
 
 def test_url_slug_has_a_safe_fallback():
     assert _url_slug('') == 'page'

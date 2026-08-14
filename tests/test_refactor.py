@@ -1,6 +1,10 @@
+"Refactoring and the language server behind it."
+
 from leela.blocks.fs.fs import Sandbox
 from leela.blocks.refactor.refactor import replace_plan
-
+import pytest
+from leela.blocks.refactor.python import extract, inline
+from leela.blocks.lsp.lsp import PyrightService
 
 def test_replace_plan_changes_text_files_and_skips_notebooks(tmp_path):
     root = tmp_path/'project'; root.mkdir()
@@ -11,7 +15,6 @@ def test_replace_plan_changes_text_files_and_skips_notebooks(tmp_path):
     assert rows[0].after == 'value = new\nold_value = new\n'
     assert str(root/'notes.ipynb') in skipped
 
-
 def test_replace_plan_accepts_regex_and_rejects_invalid_patterns(tmp_path):
     root = tmp_path/'project'; root.mkdir(); (root/'a.txt').write_text('a1 a22')
     rows, _ = replace_plan(Sandbox([root]), r'a(\d+)', r'b\1', regex=True)
@@ -20,15 +23,75 @@ def test_replace_plan_accepts_regex_and_rejects_invalid_patterns(tmp_path):
     except ValueError as e: assert 'invalid regular expression' in str(e)
     else: assert False
 
-
 def test_literal_replacement_backslashes_are_not_regex_escapes(tmp_path):
     root = tmp_path/'project'; root.mkdir(); (root/'a.txt').write_text('root = HERE\n')
     rows, _ = replace_plan(Sandbox([root]), 'HERE', 'C:\\new\\1')
     assert rows[0].after == 'root = C:\\new\\1\n'
-
 
 def test_replace_plan_skips_files_that_did_not_decode_cleanly(tmp_path):
     root = tmp_path/'project'; root.mkdir()
     (root/'legacy.txt').write_bytes(b'caf\xe9 old\n')
     rows, skipped = replace_plan(Sandbox([root]), 'old', 'new')
     assert not rows and str(root/'legacy.txt') in skipped
+
+def test_extract_variable():
+    src = 'total = price * qty\n'
+    row = extract('a.py', src, 8, 19, 'variable', 'amount')
+    assert row.after == 'amount = price * qty\ntotal = amount\n'
+
+def test_extract_constant_rejects_non_literal():
+    with pytest.raises(ValueError, match='literal'):
+        extract('a.py', 'x = value\n', 4, 9, 'constant', 'default')
+
+def test_extract_function_rejects_a_selection_starting_mid_line():
+    "A partial line spliced a `def` into the middle of a statement: `y = cdef f(ompute, x):`."
+    src = 'x = 1\ny = compute(x)\n'
+    with pytest.raises(ValueError, match='complete statement lines'):
+        extract('a.py', src, src.index('compute'), src.index(')') + 1, 'function', 'f')
+
+def test_extract_function_does_not_pass_builtins_as_parameters():
+    "`dir(__builtins__)` is `dir(dict)` in an imported module, which listed no builtin names."
+    src = 'value = 1\nprint(len(value))\n'
+    row = extract('a.py', src, src.index('print'), len(src), 'function', 'show')
+    assert row.after == 'value = 1\ndef show(value):\n    print(len(value))\n\nshow(value)\n'
+
+def test_inline_undoes_extract_variable():
+    "The two are inverses, up to the brackets inline adds to keep the value from reassociating."
+    src = 'total = price * qty\n'
+    out = extract('a.py', src, 8, 19, 'variable', 'amount').after
+    assert inline('a.py', out, out.index('amount')).after == 'total = (price * qty)\n'
+
+def test_inline_rewrites_every_use_and_counts_them():
+    src = 'amount = price * qty\ntotal = amount\nprint(amount)\n'
+    row = inline('a.py', src, src.index('amount'))
+    assert row.after == 'total = (price * qty)\nprint((price * qty))\n' and row.edits == 2
+
+def test_inline_brackets_a_value_that_would_reassociate():
+    "Unbracketed, `a if b else c` inlined into `x * 2` would bind the multiply to `c` alone."
+    src = 'x = a if b else c\nprint(x * 2)\n'
+    assert inline('a.py', src, 0).after == 'print((a if b else c) * 2)\n'
+
+def test_inline_leaves_an_already_atomic_value_unbracketed():
+    src = 'n = 3\nprint(n)\n'
+    assert inline('a.py', src, src.index('n)')).after == 'print(3)\n'
+
+@pytest.mark.parametrize('src,pos,why', [
+    ('x = 1\nx = 2\nprint(x)\n', 0, 'exactly once'),
+    ('for x in items:\n    print(x)\n', 4, 'exactly once'),
+    ('x = 1\nglobal x\n', 0, 'global or nonlocal'),
+    ('x = 1; print(x)\n', 0, 'lines of its own'),
+    ('x = 1  # keep\nprint(x)\n', 0, 'lines of its own'),
+    ('x = 1\n', 0, 'never read'),
+])
+def test_inline_refuses_what_it_cannot_reverse(src, pos, why):
+    with pytest.raises(ValueError, match=why): inline('a.py', src, pos)
+
+def test_inline_needs_the_cursor_on_a_name():
+    with pytest.raises(ValueError, match='cursor on a variable'): inline('a.py', 'x = 1\n', 4)
+
+def test_pyright_is_optional_and_reports_status(tmp_path, monkeypatch):
+    monkeypatch.setattr('shutil.which', lambda name: None)
+    service = PyrightService(tmp_path)
+    assert not service.available and not service.start()
+    rows, note = service.diagnostics(tmp_path/'a.py', 'x: int = "bad"')
+    assert rows == [] and 'not installed' in note

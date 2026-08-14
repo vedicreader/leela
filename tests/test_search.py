@@ -1,12 +1,16 @@
-"""Code search is predictable: rg by default, indexed modes only by explicit request."""
+"Search: kosha, the scan fallback, reindexing and navigation."
 
 import asyncio, sys, threading
 from pathlib import Path
 from types import SimpleNamespace
-
 from leela.blocks.fs.fs import Sandbox
 from leela.blocks.search.search import Hit, Search
-
+import time
+import pytest
+from leela.blocks.memory.memory import Memory, _added_epoch, source_kind
+import sys
+from fastcore.all import Path
+ROOT = Path(__file__).resolve().parents[1]
 
 def test_default_search_uses_ripgrep_and_reports_real_lines(tmp_path):
     p = tmp_path / 'sample.py'
@@ -16,7 +20,6 @@ def test_default_search_uses_ripgrep_and_reports_real_lines(tmp_path):
     assert s.backend in ('rg', 'scan')
     assert [(h.path, h.line, h.text) for h in hits] == [(str(p), 2, 'NeedleValue = 2')]
 
-
 def test_definition_and_usage_fallbacks_report_exact_locations(tmp_path):
     p = tmp_path/'sample.py'
     p.write_text('def calculate_total(x):\n    return x\n\nresult = calculate_total(3)\n')
@@ -25,7 +28,6 @@ def test_definition_and_usage_fallbacks_report_exact_locations(tmp_path):
     uses = s.usages('calculate_total')
     assert [(h.path, h.line) for h in defs] == [(str(p), 1)]
     assert [(h.path, h.line) for h in uses] == [(str(p), 1), (str(p), 4)]
-
 
 def test_kosha_is_bound_to_the_workspace_not_the_packaged_apps_cwd(monkeypatch, tmp_path):
     seen = []
@@ -37,22 +39,18 @@ def test_kosha_is_bound_to_the_workspace_not_the_packaged_apps_cwd(monkeypatch, 
     assert s._kosha() is not None
     assert seen[0]['dir'] == tmp_path.resolve()
     assert seen[0]['install_skill'] is False
-    assert 'xdg_dir' not in seen[0]  # the shared Kosha env.db spans indexed environments
+    assert 'xdg_dir' not in seen[0]
     assert seen[1] == {'pyproject': False}
-
 
 def test_kosha_sync_has_fastcore_thread_and_awaitable_surfaces(monkeypatch, tmp_path):
     s = Search(Sandbox([tmp_path]), prefer_kosha=False)
     main, seen = threading.get_ident(), []
     monkeypatch.setattr(s, '_sync', lambda *a: seen.append(threading.get_ident()) or {'ok': True})
-
     worker = s.sync()
     worker.join(timeout=2)
     assert worker.result == {'ok': True} and seen[-1] != main
-
     assert asyncio.run(s.async_sync()) == {'ok': True}
     assert seen[-1] != main
-
 
 def test_kosha_sync_indexes_notebook_cells_through_the_normal_repo_pipeline(monkeypatch, tmp_path):
     import json
@@ -76,7 +74,6 @@ def test_kosha_sync_indexes_notebook_cells_through_the_normal_repo_pipeline(monk
     assert '.ipynb' in repo['exts']
     assert result['ok'] and result['notebook_cells'] == 1
 
-
 def test_search_keeps_reading_while_the_separate_writer_syncs(monkeypatch,tmp_path):
     import time
     started,release=threading.Event(),threading.Event()
@@ -97,7 +94,6 @@ def test_search_keeps_reading_while_the_separate_writer_syncs(monkeypatch,tmp_pa
     release.set(); worker.join(2)
     assert hits and dt<.2
 
-
 def test_agent_search_uses_kosha_semantics_and_drops_stale_paths(monkeypatch, tmp_path):
     current = tmp_path/'core.py'; current.write_text('def code_clusters(): pass\n')
     stale = tmp_path/'moved.py'
@@ -116,14 +112,12 @@ def test_agent_search_uses_kosha_semantics_and_drops_stale_paths(monkeypatch, tm
     assert seen == [('change the clustering method', {'graph': True, 'env': True, 'limit': 20})]
     assert s.backend == 'kosha' and 'existing paths only' in s.note
 
-
 def test_agent_search_falls_back_to_current_files_when_kosha_has_no_live_hit(monkeypatch, tmp_path):
     p = tmp_path/'core.py'; p.write_text('code_clusters = 1\n')
     s = Search(Sandbox([tmp_path])); s._k = SimpleNamespace(context=lambda *a, **k: []); s._k_tried = True
     hits = s.agent_search('code_clusters')
     assert [(h.path, h.line) for h in hits] == [(str(p), 1)]
     assert s.backend in ('rg', 'scan')
-
 
 def test_context_mode_combines_repo_and_environment_rows(monkeypatch, tmp_path):
     local = tmp_path/'local.py'; local.write_text('def local_symbol(): pass\n')
@@ -143,7 +137,6 @@ def test_context_mode_combines_repo_and_environment_rows(monkeypatch, tmp_path):
     assert hits[0].callers == ['project.caller'] and hits[1].package == 'pkg'
     assert '1 repo + 1 environment' in s.note
 
-
 def test_repo_and_environment_modes_target_their_kosha_stores(monkeypatch, tmp_path):
     local = tmp_path/'local.py'; local.write_text('pass\n')
     called = []
@@ -159,7 +152,6 @@ def test_repo_and_environment_modes_target_their_kosha_stores(monkeypatch, tmp_p
     assert s.search('body', mode='env')[0].kind == 'env-context'
     assert called == ['repo', 'env']
 
-
 def test_package_public_api_is_exposed_through_kosha(tmp_path):
     class FakeKosha:
         def public_api(self, package):
@@ -167,7 +159,6 @@ def test_package_public_api_is_exposed_through_kosha(tmp_path):
             return [{'mod_name': 'fastcore.basics.store_attr', 'docstring': 'Store arguments as attributes'}]
     s = Search(Sandbox([tmp_path])); s._k = FakeKosha(); s._k_tried = True
     assert s.package_api('fastcore')[0]['mod_name'] == 'fastcore.basics.store_attr'
-
 
 def test_all_mode_merges_every_backend_and_ranks_exact_symbols_first(monkeypatch, tmp_path):
     path = str(tmp_path/'engine.py')
@@ -181,7 +172,6 @@ def test_all_mode_merges_every_backend_and_ranks_exact_symbols_first(monkeypatch
     assert [(h.line, h.kind) for h in hits] == [(5, 'symbol'), (20, 'rg'), (40, 'ann')]
     assert hits[1].sources == ['rg', 'fts']
     assert s.backend == 'all' and all(name in s.note for name in ('rg', 'symbols', 'fts', 'ann'))
-
 
 def test_search_modes_are_explicit_not_inferred_from_the_query(monkeypatch, tmp_path):
     s = Search(Sandbox([tmp_path]))
@@ -197,14 +187,8 @@ def test_search_modes_are_explicit_not_inferred_from_the_query(monkeypatch, tmp_
     s.search('SomeClass', mode='symbols')
     assert called == ['rg', 'fts', 'ann', 'symbols']
 
-
 def test_an_extension_filter_narrows_every_backend_the_same_way(tmp_path):
-    """"Only .py" has to mean the same thing whichever backend answers.
-
-    ripgrep is told, so it never opens the other files; an index is filtered afterwards, because
-    Kosha answers about its whole corpus and cannot be asked to narrow. Both spellings of an
-    extension are accepted -- a person types `py` and a glob says `*.py`.
-    """
+    '"Only .py" has to mean the same thing whichever backend answers.'
     (tmp_path/'a.py').write_text('needle = 1\n')
     (tmp_path/'b.js').write_text('const needle = 1\n')
     (tmp_path/'c.md').write_text('needle\n')
@@ -215,11 +199,8 @@ def test_an_extension_filter_narrows_every_backend_the_same_way(tmp_path):
     assert {Path(h.path).name for h in s.search('needle', exts='py,js')} == {'a.py', 'b.js'}
     assert {Path(h.path).name for h in s.search('needle', exts=['*.md'])} == {'c.md'}
     assert Search.clean_exts('py, .ts ,,*') == {'.py', '.ts'}, 'junk is dropped, not guessed at'
-
-    # The indexed path is filtered after the fact, so assert that leg directly.
     hits = s._keep([Hit(str(tmp_path/'a.py'), 1, 'x'), Hit(str(tmp_path/'b.js'), 1, 'x')], exts='py')
     assert [Path(h.path).name for h in hits] == ['a.py']
-
 
 def test_a_search_can_be_confined_to_one_checkout(tmp_path):
     "Two folders open, one question: matches from the repository you are not in are noise."
@@ -231,18 +212,11 @@ def test_a_search_can_be_confined_to_one_checkout(tmp_path):
     assert len(s.search('needle')) == 2, 'both, by default, at this level'
     assert [Path(h.path).name for h in s.search('needle', roots=[a])] == ['one.py']
     assert [Path(h.path).name for h in s.search('needle', roots=[b])] == ['two.py']
-    # And the same restriction applied to hits an index produced.
     hits = s._keep([Hit(str(a/'one.py'), 1, 'x'), Hit(str(b/'two.py'), 1, 'x')], roots=[a])
     assert [Path(h.path).name for h in hits] == ['one.py']
 
-
 def test_the_search_route_follows_the_chosen_folder_and_never_takes_a_root(tmp_path):
-    """`scope` is a word, not a path.
-
-    A root arriving as a parameter would point the search wherever the caller liked, and "it is
-    only a search" is how that becomes a way to read files outside the sandbox. So the browser
-    names a scope and the server resolves it from the session.
-    """
+    "`scope` is a word, not a path."
     from starlette.testclient import TestClient
     from leela.app import ide_app
     from leela.workspace import Workspace
@@ -255,19 +229,15 @@ def test_the_search_route_follows_the_chosen_folder_and_never_takes_a_root(tmp_p
         first = c.get('/search', params={'q': 'needle'}).json()
         assert first['searched'] == [str(a)] and first['scope'] == 'project'
         assert [Path(h['path']).name for h in first['hits']] == ['one.py']
-
         ws.activate_root(b)
         after = c.get('/search', params={'q': 'needle'}).json()
         assert after['searched'] == [str(b)], 'the search follows the chosen folder'
         assert [Path(h['path']).name for h in after['hits']] == ['two.py']
-
         both = c.get('/search', params={'q': 'needle', 'scope': 'workspace'}).json()
         assert sorted(Path(h['path']).name for h in both['hits']) == ['one.py', 'two.py']
-
         assert c.get('/search', params={'q': 'x', 'scope': str(tmp_path)}).json()['error']
         filtered = c.get('/search', params={'q': 'needle', 'exts': 'md', 'scope': 'workspace'}).json()
         assert filtered['hits'] == [] and filtered['exts'] == 'md'
-
 
 def a_notebook(path):
     "A saved notebook with a def in one cell and a class with a method in the next."
@@ -277,14 +247,8 @@ def a_notebook(path):
               Cell(source='class Beta:\n    def gamma(self):\n        return alpha(1)', id='c2')]).save(path)
     return path
 
-
 def test_a_notebooks_symbols_are_read_from_its_cells_not_from_its_json(tmp_path):
-    """A notebook read as text has no symbols: the line is `    "def f(x):\\n",`.
-
-    So the outline, ctrl+B and Find Usages all used to come up empty for every notebook in the
-    workspace. Both coordinates are reported -- the JSON line for callers that think in file
-    lines, and the cell plus the line inside it, which is the only pair an editor can open.
-    """
+    'A notebook read as text has no symbols: the line is ` "def f(x):\n",`.'
     p = a_notebook(tmp_path/'demo.ipynb')
     s = Search(Sandbox([tmp_path]), prefer_kosha=False)
     syms = s.symbols(p)
@@ -293,7 +257,6 @@ def test_a_notebooks_symbols_are_read_from_its_cells_not_from_its_json(tmp_path)
     assert [h.score for h in syms] == [0.0, 0.0, 4.0], 'indent depth still nests a method'
     lines = p.read_text().splitlines()
     for h in syms: assert h.symbol in lines[h.line - 1], 'the file line is the JSON line holding it'
-
 
 def test_going_to_a_definition_in_a_notebook_lands_in_the_cell(tmp_path):
     p = a_notebook(tmp_path/'demo.ipynb')
@@ -304,7 +267,6 @@ def test_going_to_a_definition_in_a_notebook_lands_in_the_cell(tmp_path):
     assert [(h.cell, h.cell_index, h.cell_line) for h in uses] == [('c1', 1, 3), ('c2', 2, 3)]
     assert all(h.line > 1 for h in uses), 'the JSON line is still reported alongside'
 
-
 def test_a_literal_search_in_a_notebook_says_which_cell_it_matched(tmp_path):
     p = a_notebook(tmp_path/'demo.ipynb')
     (tmp_path/'plain.py').write_text('alpha = 1\n')
@@ -314,12 +276,8 @@ def test_a_literal_search_in_a_notebook_says_which_cell_it_matched(tmp_path):
     assert (hits['plain.py'].cell, hits['plain.py'].cell_index, hits['plain.py'].cell_line) == ('', -1, 0), \
         'an ordinary file has no cell to name'
 
-
 def test_an_indexed_notebook_hit_is_placed_by_its_text_when_it_has_no_line(monkeypatch, tmp_path):
-    """Kosha chunks a notebook by cell and records no line number, so every notebook row it
-    returns arrives as line 1. The cell is recoverable from the chunk's own text, and is taken
-    only when exactly one cell contains it -- a hit placed in the wrong cell is worse than one
-    left unplaced, because the reader cannot tell."""
+    "Kosha chunks a notebook by cell and records no line number, so every notebook row it"
     p = a_notebook(tmp_path/'demo.ipynb')
     rows = [{'content': 'class Beta:\n    def gamma(self):\n        return alpha(1)',
              'metadata': {'path': str(p)}},
@@ -333,14 +291,12 @@ def test_an_indexed_notebook_hit_is_placed_by_its_text_when_it_has_no_line(monke
     assert placed.line > 1, 'placing it also recovers the JSON line it never had'
     assert (unplaced.cell, unplaced.cell_index, unplaced.cell_line) == ('', -1, 0)
 
-
 def test_a_notebook_that_cannot_be_parsed_reports_no_symbols_at_all(tmp_path):
     p = tmp_path/'broken.ipynb'
     p.write_text('{"cells": [ this is not JSON')
     s = Search(Sandbox([tmp_path]), prefer_kosha=False)
     assert list(s.symbols(p)) == [], 'no symbol beats a symbol at a guessed line'
     assert [h.cell_line for h in s.usages('cells')] == [0], 'and the hit stays honestly unplaced'
-
 
 def test_the_outline_route_gives_a_notebook_the_cell_coordinates_it_needs(tmp_path):
     from starlette.testclient import TestClient
@@ -352,33 +308,20 @@ def test_the_outline_route_gives_a_notebook_the_cell_coordinates_it_needs(tmp_pa
     assert [(r['symbol'], r['cell'], r['cell_index'], r['cell_line']) for r in rows] == [
         ('alpha', 'c1', 1, 3), ('Beta', 'c2', 2, 1), ('gamma', 'c2', 2, 2)]
 
-
 def test_narrowing_the_scope_never_hides_an_installed_package(tmp_path):
-    """The reported regression: `merge dict` stopped returning `fastcore.basics.merge`.
-
-    Confining the search to the chosen checkout filtered out every hit outside it -- which is
-    every package, since site-packages is under no open folder by definition. Scope is about
-    which of *your* checkouts to look in; whether the environment answers at all is what the mode
-    buttons decide. `context` returns both kinds at once, so the exemption has to be per hit
-    rather than per mode.
-    """
+    "The reported regression: `merge dict` stopped returning `fastcore.basics.merge`."
     (tmp_path/'x.py').write_text('x = 1\n')
     s = Search(Sandbox([tmp_path]), prefer_kosha=False)
     package = Hit(path='/site-packages/fastcore/basics.py', line=655, text='def merge(*ds):',
                   kind='env-context', symbol='fastcore.basics.merge', package='fastcore')
     mine = Hit(path=str(tmp_path/'x.py'), line=1, text='x = 1', kind='context')
     elsewhere = Hit(path='/somewhere/else/other.py', line=1, text='x = 1', kind='context')
-
     kept = s._keep([package, mine, elsewhere], roots=[tmp_path])
     assert [h.symbol or h.path for h in kept] == ['fastcore.basics.merge', str(tmp_path/'x.py')]
     assert elsewhere not in kept, 'a repo hit outside the scope is still excluded'
-
-    # A package hit marked only by its kind, with no `package` recorded, is exempt too.
     bare = Hit(path='/site-packages/pkg/api.py', line=1, text='def f(): pass', kind='env-context')
     assert s._keep([bare], roots=[tmp_path]) == [bare]
-    # The extension filter still applies to packages -- that one is about the file, not the scope.
     assert s._keep([package], exts='ts', roots=[tmp_path]) == []
-
 
 def test_context_mode_keeps_both_halves_under_a_project_scope(tmp_path):
     "The mode that returns repo *and* environment rows is where the regression actually bit."
@@ -398,43 +341,32 @@ def test_context_mode_keeps_both_halves_under_a_project_scope(tmp_path):
     assert [h.kind for h in hits] == ['context', 'env-context']
     assert any(h.symbol == 'fastcore.basics.merge' for h in hits)
 
-
 def test_a_leg_is_scored_exactly_as_the_batch_answer_scores_it(tmp_path):
-    """A streamed hit that ranked differently from the same hit in `all` would make the list
-    reorder for no reason the moment the last backend landed."""
+    "A streamed hit that ranked differently from the same hit in `all` would make the list"
     p = tmp_path/'core.py'; p.write_text('def merge_dicts(a, b):\n    return a | b\n')
     s = Search(Sandbox([tmp_path]), prefer_kosha=False)
     hits, note = s.leg('rg', 'merge_dicts', 20)
     assert note == '' and [h.line for h in hits] == [1]
     assert hits[0].sources == ['rg']
-    # The same hit, scored the way `all` scores it: leg priority 80 plus 40 for the query being
-    # in the matched text. Computed from a pristine hit, because `relevance` folds the backend's
-    # raw score in as a tie-breaker and both `leg` and `_all` then *replace* `score` with the
-    # result -- so it is a one-shot calculation, not one to re-apply to an already-scored hit.
     from dataclasses import replace
     pristine = replace(hits[0], score=0.0, sources=[])
     assert hits[0].score == s.relevance('rg', pristine, 'merge_dicts') == 120.0
     assert s.relevance('rg', hits[0], 'merge_dicts') == 130.0, 'documented: not idempotent'
-    # Best-first within the leg, so the frontend can append without re-sorting.
     assert [h.score for h in hits] == sorted((h.score for h in hits), reverse=True)
-
 
 def test_an_unavailable_leg_says_so_instead_of_taking_the_others_down(tmp_path):
     "One absent index must not cost the other three their answers."
     s = Search(Sandbox([tmp_path]), prefer_kosha=False)
     hits, note = s.leg('ann', 'anything', 10)
     assert hits == [] and 'unavailable' in note
-
     def boom(*a, **kw): raise RuntimeError('index is corrupt')
     s._fts = boom
     hits, note = s.leg('fts', 'anything', 10)
     assert hits == [] and 'fts failed' in note and 'corrupt' in note
     assert s.leg('nonsense', 'x', 10)[1].startswith('unknown search leg')
 
-
 def test_the_streaming_search_reports_each_backend_as_it_finishes(tmp_path):
-    """The legs never depended on each other; they were merely written as one loop, so the
-    answer cost the *sum* of their times. Each one now arrives on its own."""
+    "The legs never depended on each other; they were merely written as one loop, so the"
     import json as _json
     from starlette.testclient import TestClient
     from leela.app import ide_app
@@ -457,7 +389,6 @@ def test_the_streaming_search_reports_each_backend_as_it_finishes(tmp_path):
     assert any(h['line'] == 1 for h in legs['rg']['hits']), 'and rg found the definition'
     assert legs['ann']['hits'] == [] and 'unavailable' in legs['ann']['note']
 
-
 def test_the_stream_says_so_when_there_is_nothing_to_search_for(tmp_path):
     import json as _json
     from starlette.testclient import TestClient
@@ -468,7 +399,6 @@ def test_the_stream_says_so_when_there_is_nothing_to_search_for(tmp_path):
             body = r.read().decode()
     assert 'event: start' in body and 'event: done' in body and 'event: leg' not in body
     assert 'nothing to search for' in body
-
 
 def test_similar_and_peers_prefer_kosha_primitives_when_present(monkeypatch, tmp_path):
     "Search is an adapter: kosha owns similarity; leela only formats hits."
@@ -498,7 +428,6 @@ def test_similar_and_peers_prefer_kosha_primitives_when_present(monkeypatch, tmp
     cs = s.clusters()
     assert cs[0].label == 'family' and cs[0].members[0].path == path
 
-
 def test_similar_uses_litesearch_ann_neighbors_without_kosha_helpers(monkeypatch, tmp_path):
     path = str(tmp_path/'a.py')
     class Store:
@@ -522,3 +451,100 @@ def test_similar_uses_litesearch_ann_neighbors_without_kosha_helpers(monkeypatch
     assert s.similar(path, 1, limit=3)[0].symbol == 'a.neighbour'
     assert s.peers(path, 1)[0].symbol == 'a.cousin' and s.backend == 'knn'
     assert s.clusters()[0].label == 'cousin'
+
+@pytest.fixture
+def vault(tmp_path):
+    (tmp_path/'a.md').write_text('# A\n\nalpha\n')
+    (tmp_path/'b.md').write_text('# B\n\nbeta\n')
+    m = Memory(path=tmp_path/'vault.db', offline=True)
+    m.clip([tmp_path/'a.md', tmp_path/'b.md'])
+    return m, tmp_path
+
+def test_added_at_is_read_as_utc():
+    "The stored stamp is naive but is UTC. Read as local time it is hours out, every row looks"
+    from datetime import datetime, timezone
+    naive = '2026-08-14 09:43:14'
+    assert _added_epoch(naive) == datetime(2026, 8, 14, 9, 43, 14, tzinfo=timezone.utc).timestamp()
+    assert _added_epoch(1786664594.0) == 1786664594.0
+    assert _added_epoch('not a date') == float('inf')
+
+def test_source_kind_tells_a_file_from_a_page_from_an_invention():
+    assert source_kind('/a/b.md') == 'file'
+    assert source_kind('https://example.com/p') == 'url'
+    for s in ('memory:ab12', 'pointer:ff01', '', None): assert source_kind(s) == 'synthetic'
+
+def test_an_untouched_vault_is_not_reindexed(vault):
+    m, _ = vault
+    r = m.reindex_changed()
+    assert r['checked'] == 2 and r['reindexed'] == 0
+
+def test_a_changed_file_is_reindexed_once_and_then_settles(vault):
+    "Re-clipping advances `added_at`, so a change costs one sweep rather than every sweep."
+    m, d = vault
+    time.sleep(1.1)
+    (d/'a.md').write_text('# A\n\nalpha rewritten\n')
+    r = m.reindex_changed()
+    assert r['reindexed'] == 1 and [p.split('/')[-1] for p in r['paths']] == ['a.md']
+    time.sleep(1.1)
+    assert m.reindex_changed()['reindexed'] == 0, 'it must converge, not re-read forever'
+    assert len(m.all_documents()) == 2, 're-clipping updates the document, it does not add one'
+
+def test_a_missing_file_is_reported_and_never_forgotten(vault):
+    "A vault is a record. An unplugged drive is not a reason to drop what was on it."
+    m, d = vault
+    (d/'b.md').unlink()
+    r = m.reindex_changed()
+    assert [p.split('/')[-1] for p in r['missing']] == ['b.md']
+    assert len(m.all_documents()) == 2, 'the row survives its file'
+
+def test_documents_that_were_never_files_are_not_walked(vault):
+    m, d = vault
+    m.clip([d/'a.md'])
+    before = m.reindex_changed()['checked']
+    assert before == 2, 'only filed documents are candidates'
+
+sys.path.insert(0, str(ROOT/'tools'))
+import build_ide_js as builder  # noqa: E402
+
+JS = builder.OUT.read_text()
+CSS = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
+
+def test_a_jump_centres_rather_than_merely_revealing():
+    "`scrollIntoView` moves the minimum distance, so a hit below the fold lands on the last"
+    block = JS[JS.index('function centreOnPos'):JS.index('function openLocation')]
+    assert 'coordsAtPos' in block and 'scrollTop +=' in block
+    assert "scrollHeight - own.clientHeight > 4 ? own : $('#editor')" in block
+    assert 'requestAnimationFrame(() => centreOnPos(v, pos))' in JS, 'measured after the layout it caused'
+
+def test_the_span_an_undo_changed_is_selected_and_centred():
+    block = JS[JS.index('function changedSpan'):JS.index('async function workspaceHistoryRedo')]
+    assert 'while (s < A.length' in block and 'while (a >= s' in block, 'first and last differing lines'
+    assert 'selection: {anchor, head}' in block, 'the change is selected, not just scrolled to'
+    assert 'centreOnPos(v, anchor)' in block
+
+def test_undo_and_redo_read_the_texts_the_right_way_round():
+    "After an undo the file holds `before`; after a redo it holds `after`. Swapping them lies."
+    block = JS[JS.index('async function afterHistory'):JS.index('async function workspaceHistoryRedo')]
+    assert 'undone ? row.before : row.after, undone ? row.after : row.before' in block
+    assert "afterHistory(result.operation, 'workspace operation redone', false)" in JS
+    assert "`workspace operation ${redo ? 'redone' : 'undone'}`, !redo)" in JS
+
+def test_a_notebook_undo_shows_which_cell_moved():
+    assert "d.op === 'undo' || d.op === 'redo'" in JS
+    assert "block: 'center'" in JS and 'lee-cell-changed' in JS
+    assert '.lee-cell-changed' in CSS and '@keyframes lee-cell-flash' in CSS
+    assert 'prefers-reduced-motion' in CSS, 'a flash is decoration; it must be optional'
+
+def test_the_editors_re_measure_when_their_width_changes():
+    "CodeMirror caches its width; nothing was telling it when the layout changed it."
+    block = JS[JS.index('function observeEditorWidth'):JS.index('async function boot')]
+    assert 'requestMeasure' in block and 'ResizeObserver' in block
+    assert 'cancelAnimationFrame' in block, 'a splitter drag fires this every frame'
+    for host in ("'#editor'", "'#shell'", "'#bottomdock'"): assert host in block, host
+    assert 'observeEditorWidth();' in JS, 'and it is actually started'
+
+def test_the_overview_stripe_cannot_lay_out_at_the_canvas_default_width():
+    "A <canvas> with no width attribute is 300px wide, which is the band, not the stripe."
+    rule = CSS[CSS.index('.cm-lee-overview {'):CSS.index('.cm-lee-overview[hidden]')]
+    assert 'width: 14px' in rule
+    assert 'padding-right: 15px' in CSS, 'the scroller still reserves room for it'

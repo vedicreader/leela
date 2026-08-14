@@ -1,33 +1,9 @@
-"""Can a sub-agent look at the user's live variables while the user is busy?
+"The agent under a real model: sub-agent fan-out and local context limits."
 
-Written after measuring rather than before, because the measurement contradicted the
-obvious guess. The guess was that ipymini's subshell is what lets an agent reach the
-kernel during a running cell. It is not: leela already serves its inspector from an HTTP
-server *inside* the kernel process, so an agent request never goes near the shell queue a
-cell is holding. That was true before ipymini and stays true after it.
-
-What was actually missing was much simpler. `subagent.read_only` strips every write tool,
-`run_python` is a write tool, and there was no read-only execution tool — so a sub-agent
-had no way to touch the live namespace at all. `inspect_python` is that tool, and these
-tests are the evidence for what it can and cannot do:
-
-- against a cell that yields (any `await`, any I/O — most of what a notebook waits on) an
-  inspection answers in tens of milliseconds, under **both** kernels;
-- against a CPU-bound loop holding the GIL it *still* answers in about the same time,
-  because CPython hands the GIL over every few milliseconds — only the very first call,
-  which builds the session, is slow enough to notice;
-- several inspections overlap rather than queue;
-- the **overlay** scope gives it the real interpreter -- `list(df.columns)`,
-  `df.head().to_dict()` -- while the user's cell keeps running, with the agent's own
-  bindings kept in a layer of their own;
-- and nothing it runs, in either scope, can change what the user has.
-
-Everything skips without ipymini so the comparison can be made; the single-kernel
-behaviour is asserted for ipykernel too, since that is what most people run.
-"""
-
-# starts real kernels, so it is out of the default run. `pytest -m slow` or `-m ""` includes it.
+from __future__ import annotations
 import pytest
+
+pytestmark = pytest.mark.slow
 
 pytestmark = pytest.mark.slow
 
@@ -40,7 +16,6 @@ from leela.blocks.runtime.kernels import Kernel, ipymini_available
 
 KINDS = ['ipykernel'] + (['ipymini'] if ipymini_available() else [])
 
-# A cell that binds something worth inspecting, then waits in a way that yields the GIL.
 YIELDING = (
     'import asyncio, pandas as pd\n'
     'df = pd.DataFrame({"a": range(200), "b": range(200)})\n'
@@ -51,7 +26,6 @@ YIELDING = (
     'await _hold()\n'
 )
 
-# The same, but spinning: nothing else in the process gets a fair share of the interpreter.
 SPINNING = (
     'import time, pandas as pd\n'
     'df = pd.DataFrame({"a": range(200), "b": range(200)})\n'
@@ -61,41 +35,28 @@ SPINNING = (
     'while time.time() < end: pass\n'
 )
 
-
 def _run(coro): return asyncio.new_event_loop().run_until_complete(coro)
-
 
 async def _kernel(tmp_path, kind, port=8600):
     k = Kernel(name='t', cwd=str(tmp_path), agent='restricted', port=port, kernel=kind)
     await k.start()
     return k
 
-
 async def _inspect(k, code, scope='isolated', timeout=20):
-    """One `/agent/api/exec` in the isolated scope: exactly what `Host.inspect_python` does.
-
-    Driven over HTTP rather than through the harness because the harness would only be
-    forwarding, and the question here is entirely about the kernel underneath it.
-    """
+    "One `/agent/api/exec` in the isolated scope: exactly what `Host.inspect_python` does."
     import httpx2 as httpx
     async with httpx.AsyncClient(base_url=k.base, timeout=timeout) as c:
         t0 = time.monotonic()
         r = await c.get('/agent/api/exec', params={'code': code, 'scope': scope})
         return time.monotonic() - t0, r.json()
 
-
 async def _warm(k):
     "First call builds the agent session and imports the sandbox; that cost is not the measurement."
     await _inspect(k, '1')
 
-
 @pytest.mark.parametrize('kind', KINDS)
 def test_an_inspection_runs_beside_a_yielding_cell(tmp_path, kind):
-    """The capability sub-agents needed, and leela already had the architecture for.
-
-    Asserted for both kernels on purpose: the in-kernel HTTP inspector is what makes this
-    work, so it is not an ipymini feature and should not be sold as one.
-    """
+    "The capability sub-agents needed, and leela already had the architecture for."
     async def go():
         k = await _kernel(tmp_path, kind)
         try:
@@ -103,7 +64,6 @@ def test_an_inspection_runs_beside_a_yielding_cell(tmp_path, kind):
             await _warm(k)
             busy = asyncio.create_task(k.execute(YIELDING, timeout=30))
             await asyncio.sleep(1.0)
-
             dt, out = await _inspect(k, 'df.shape')
             assert out.get('ok'), out
             assert '(200, 2)' in str(out.get('result') or out.get('stdout')), out
@@ -114,18 +74,9 @@ def test_an_inspection_runs_beside_a_yielding_cell(tmp_path, kind):
             await k.shutdown()
     _run(go())
 
-
 @pytest.mark.parametrize('kind', KINDS)
 def test_even_a_spinning_cell_does_not_block_an_inspection(tmp_path, kind):
-    """The surprising one, and the reason these tests were written after measuring.
-
-    A cell holding the GIL in a tight loop was the case I expected to lose: no subshell can
-    make a spinning interpreter share. It does not lose, because CPython hands the GIL over
-    every few milliseconds and a warm inspection is microseconds of work. What *is* slow is
-    the very first call, which has to build the agent session and import the sandbox while
-    competing with the loop — so the warm-up is done before the cell starts, exactly as a
-    real session would have done it on some earlier question.
-    """
+    "The surprising one, and the reason these tests were written after measuring."
     async def go():
         k = await _kernel(tmp_path, kind, port=8620)
         try:
@@ -135,15 +86,12 @@ def test_even_a_spinning_cell_does_not_block_an_inspection(tmp_path, kind):
             dt, out = await _inspect(k, 'df.shape', timeout=15)
             assert out.get('ok'), out
             assert '(200, 2)' in str(out.get('result') or out.get('stdout')), out
-            # Loaded CI hosts and Apple GPU teardown can briefly starve this competing
-            # interpreter thread; the invariant is that it answers well before the 3s cell.
             assert dt < 2.0, f'{kind}: a warm inspection took {dt:.2f}s against a spinning cell'
             assert not busy.done(), 'the cell finished first, so this proved nothing'
             await busy
         finally:
             await k.shutdown()
     _run(go())
-
 
 @pytest.mark.parametrize('kind', KINDS)
 def test_several_inspections_overlap_rather_than_queue(tmp_path, kind):
@@ -154,14 +102,12 @@ def test_several_inspections_overlap_rather_than_queue(tmp_path, kind):
             await _warm(k)
             busy = asyncio.create_task(k.execute(YIELDING, timeout=30))
             await asyncio.sleep(1.0)
-
             t0 = time.monotonic()
             one, _ = await _inspect(k, 'df.shape')
             t0 = time.monotonic()
             outs = await asyncio.gather(*[_inspect(k, c) for c in
                                           ('df.shape', 'df.ndim', 'len(df)', 'df.size')])
             four = time.monotonic() - t0
-
             assert all(o.get('ok') for _, o in outs), outs
             assert four < max(1.0, one * 4), f'{kind}: four took {four:.2f}s against one at {one:.2f}s; they queued'
             assert not busy.done()
@@ -170,15 +116,9 @@ def test_several_inspections_overlap_rather_than_queue(tmp_path, kind):
             await k.shutdown()
     _run(go())
 
-
 @pytest.mark.parametrize('kind', KINDS)
 def test_an_inspection_cannot_change_what_the_user_has(tmp_path, kind):
-    """Why a sub-agent is allowed to run code at all.
-
-    The isolated scope seeds the owner's state into a throwaway sandbox and discards every
-    write. Without that, "sub-agents can reach the kernel" would mean "agents nobody is
-    watching are racing on your variables", which is a worse feature than not having one.
-    """
+    "Why a sub-agent is allowed to run code at all."
     async def go():
         k = await _kernel(tmp_path, kind, port=8660)
         try:
@@ -191,12 +131,10 @@ def test_an_inspection_cannot_change_what_the_user_has(tmp_path, kind):
             await k.shutdown()
     _run(go())
 
-
 def test_a_subagent_is_given_inspect_python_and_no_write_tools():
     "The harness half: `read_only` must keep the one execution tool that is safe to delegate."
     from leela.agent.tools import NO_SUB, read_only
     from leela.agent.tools import WRITE_TOOLS
-
     class Fake:
         def __init__(self, n): self.__name__ = n
     tools = [Fake(n) for n in ('search_code', 'view_file', 'inspect_python', 'run_python',
@@ -206,18 +144,10 @@ def test_a_subagent_is_given_inspect_python_and_no_write_tools():
     assert not (names & WRITE_TOOLS), 'a sub-agent must not be able to write'
     assert not (names & NO_SUB), 'a sub-agent must not spawn sub-agents of its own'
 
-
 def test_the_briefing_says_what_is_true_of_both_kernels():
-    """The briefing promises concurrency unconditionally, because it is unconditionally true.
-
-    An earlier version made the promise only under ipymini and warned the model to keep
-    inspections short otherwise. The tests above are why that was removed: the concurrency
-    comes from leela's in-kernel inspector, so the warning was advice for a problem that
-    does not exist, and it would have made the agent avoid a tool that works.
-    """
+    "The briefing promises concurrency unconditionally, because it is unconditionally true."
     from leela.agent.agent import system_prompt
     from leela.agent.tools import NullHost
-
     class Mini(NullHost): kernel_kind = 'ipymini'
     for h in (Mini(['/x']), NullHost(['/x'])):
         sp = system_prompt(h, [])
@@ -226,51 +156,32 @@ def test_the_briefing_says_what_is_true_of_both_kernels():
     assert 'subshell' in system_prompt(Mini(['/x']), [])
     assert 'subshell' not in system_prompt(NullHost(['/x']), [])
 
-
 @pytest.mark.parametrize('kind', KINDS)
 def test_overlay_gives_the_real_interpreter_while_a_cell_runs(tmp_path, kind):
-    """The scope that makes `inspect_python` worth having, and the one I got wrong first.
-
-    The allowlist sandbox refuses `list(df.columns)` and `df.head().to_dict()`, and I wrote
-    that up as the tool's limit. It is the limit of the *scope*, not of the mechanism: the
-    overlay scope runs the real interpreter against the real namespace under the AST policy,
-    those calls work, and it is just as concurrent. Both are asserted here so the difference
-    is measured rather than remembered.
-    """
+    "The scope that makes `inspect_python` worth having, and the one I got wrong first."
     async def go():
         k = await _kernel(tmp_path, kind, port=8680)
         try:
             await k.execute('import pandas as pd\n'
                             'df = pd.DataFrame({"a": range(200), "b": range(200)})\n', timeout=20)
-            await _inspect(k, '1', 'overlay')                       # warm
+            await _inspect(k, '1', 'overlay')
             busy = asyncio.create_task(k.execute(YIELDING, timeout=40))
             await asyncio.sleep(1.0)
-
             for code in ('list(df.columns)', 'df.head(2).to_dict()'):
                 dt, out = await _inspect(k, code, 'overlay')
                 assert out.get('ok'), f'{kind}: overlay should allow {code}: {out}'
                 assert dt < 1.5, f'{kind}: {code} took {dt:.2f}s beside a running cell'
-                # safepyrun now allows these pandas reads in isolated too; the scopes differ
-                # in persistence and escape surface, not in basic DataFrame inspection.
                 _, sandboxed = await _inspect(k, code, 'isolated')
                 assert sandboxed.get('ok'), f'{kind}: isolated should allow {code}: {sandboxed}'
-
             assert not busy.done(), 'the cell finished first, so this proved nothing'
             await busy
         finally:
             await k.shutdown()
     _run(go())
 
-
 @pytest.mark.parametrize('kind', KINDS)
 def test_overlay_names_persist_but_the_owners_do_not_move(tmp_path, kind):
-    """Overlay is a *layer*, and that is the whole reason it is safe to offer.
-
-    The agent's own bindings survive from one call to the next, so it can build a piece of
-    analysis across several. A binding that collides with one of the user's shadows it
-    inside the layer and leaves the user's alone -- which is what makes "the agent and I
-    working at the same time" a fact rather than a hope.
-    """
+    "Overlay is a *layer*, and that is the whole reason it is safe to offer."
     async def go():
         k = await _kernel(tmp_path, kind, port=8700)
         try:
@@ -279,24 +190,20 @@ def test_overlay_names_persist_but_the_owners_do_not_move(tmp_path, kind):
             await _inspect(k, '1', 'overlay')
             busy = asyncio.create_task(k.execute(YIELDING, timeout=40))
             await asyncio.sleep(1.0)
-
             _, mk = await _inspect(k, 'agent_tmp = len(df) * 2', 'overlay')
             assert mk.get('ok'), mk
             _, got = await _inspect(k, 'agent_tmp', 'overlay')
             assert '400' in str(got.get('result') or got.get('stdout')), got
-
             _, shadow = await _inspect(k, 'seed = 999', 'overlay')
             assert shadow.get('ok'), shadow
             assert not busy.done()
             await busy
-
             after = await k.execute('print(seed)', timeout=20)
             assert '1' in after.text and '999' not in after.text, (
                 f"the agent moved the owner's variable: {after.text!r}")
         finally:
             await k.shutdown()
     _run(go())
-
 
 @pytest.mark.parametrize('kind', KINDS)
 def test_overlay_still_refuses_to_touch_what_the_user_made(tmp_path, kind):
@@ -315,7 +222,6 @@ def test_overlay_still_refuses_to_touch_what_the_user_made(tmp_path, kind):
             await k.shutdown()
     _run(go())
 
-
 def test_a_host_can_refuse_overlay():
     "`--agent-scope isolated` is the setting for a machine where even a scratch layer is unwanted."
     from leela.blocks.agent.ai import WorkspaceHost
@@ -323,50 +229,9 @@ def test_a_host_can_refuse_overlay():
     assert WorkspaceHost(Workspace(roots=[])).scopes == ('isolated', 'overlay')
     assert WorkspaceHost(Workspace(roots=[], agent_scope='isolated')).scopes == ('isolated',)
 
-
-def test_a_subagent_is_given_inspect_python_and_no_write_tools():
-    "The harness half: `read_only` must keep the one execution tool that is safe to delegate."
-    from leela.agent.tools import NO_SUB, read_only
-    from leela.agent.tools import WRITE_TOOLS
-
-    class Fake:
-        def __init__(self, n): self.__name__ = n
-    tools = [Fake(n) for n in ('search_code', 'view_file', 'inspect_python', 'run_python',
-                               'edit_file', 'delegate_search', 'delegate_parallel')]
-    names = {t.__name__ for t in read_only(tools)}
-    assert 'inspect_python' in names
-    assert not (names & WRITE_TOOLS), 'a sub-agent must not be able to write'
-    assert not (names & NO_SUB), 'a sub-agent must not spawn sub-agents of its own'
-
-
-def test_the_briefing_says_what_is_true_of_both_kernels():
-    """The briefing promises concurrency unconditionally, because it is unconditionally true.
-
-    An earlier version made the promise only under ipymini and warned the model to keep
-    inspections short otherwise. The tests above are why that was removed: the concurrency
-    comes from leela's in-kernel inspector, so the warning was advice for a problem that
-    does not exist, and it would have made the agent avoid a tool that works.
-    """
-    from leela.agent.agent import system_prompt
-    from leela.agent.tools import NullHost
-
-    class Mini(NullHost): kernel_kind = 'ipymini'
-    for h in (Mini(['/x']), NullHost(['/x'])):
-        sp = system_prompt(h, [])
-        assert "while one of the user's cells is still running" in sp
-        assert 'one thing at a time' not in sp
-    assert 'subshell' in system_prompt(Mini(['/x']), [])
-    assert 'subshell' not in system_prompt(NullHost(['/x']), [])
-
-
 @pytest.mark.parametrize('kind', KINDS[:1])
 def test_the_isolated_sandbox_is_narrower_than_it_looks(tmp_path, kind):
-    """The boundary, measured, because it changes what the tool is good for.
-
-    Isolated is a throwaway safepyrun sandbox: common pandas reads work, but writes do not
-    land in the owner namespace. Overlay is the real interpreter with a persistent agent
-    layer. Pinning both keeps the docstrings honest when safepyrun's allowlist moves.
-    """
+    "The boundary, measured, because it changes what the tool is good for."
     async def go():
         k = await _kernel(tmp_path, kind, port=8680)
         try:
@@ -375,9 +240,80 @@ def test_the_isolated_sandbox_is_narrower_than_it_looks(tmp_path, kind):
             for code in ('df.shape', 'len(df)', 'df.size', 'list(df.columns)', 'df.head(2).to_dict()'):
                 _, out = await _inspect(k, code)
                 assert out.get('ok'), f'{code} should be allowed: {out}'
-            # Owner mutation is refused before the sandbox even runs.
             _, wrote = await _inspect(k, 'df["a"] = -1')
             assert not wrote.get('ok') and 'cannot modify owner' in str(wrote.get('error')).lower(), wrote
         finally:
             await k.shutdown()
     _run(go())
+
+pytestmark = pytest.mark.slow
+
+import asyncio
+import os
+from pathlib import Path
+
+import pytest
+
+from leela.agent.core import LOCAL, local_ctx
+from leela.blocks.nb.nb import Notebook
+from leela.workspace import Workspace
+
+MODEL_NAME = 'gemma-e4b'
+MODEL_ID = LOCAL[MODEL_NAME]
+REPO = Path(__file__).resolve().parents[1]
+DIALOG = REPO/'tests'/'fixtures'/'dialog.ipynb'
+PROMPT_CELL = 2
+
+def _model_available():
+    from rishi.litert import _cached_model
+    return bool(_cached_model(MODEL_ID))
+
+@pytest.fixture(scope='module')
+def dialog_agent():
+    if not _model_available() and os.environ.get('LEELA_RUN_RISHI_INTEGRATION') != '1':
+        pytest.skip(f'{MODEL_NAME} LiteRT bundle is not cached; set LEELA_RUN_RISHI_INTEGRATION=1 to download it')
+    ws = Workspace(roots=[str(DIALOG.parent)], inline_model=MODEL_NAME, approvals='auto')
+    ws.open(DIALOG)
+    nb = Notebook.load(DIALOG)
+    async def prepare():
+        kernel = await ws.kernel()
+        result = await nb.run(1, kernel)
+        assert not result.has_error
+    asyncio.run(prepare())
+    try: yield ws, nb
+    finally:
+        ws.ai.close()
+        ws.inline_ai.close()
+        asyncio.run(ws.pool.close_all())
+
+def test_real_dialog_prompt_uses_a_16k_litert_engine(dialog_agent):
+    ws, nb = dialog_agent
+    backend = ws.inline_ai.backend
+    assert backend.start() is not None
+    assert local_ctx(MODEL_NAME) == 16384
+    assert backend.chat.ctx_limit == 16384
+    assert backend.chat.engine.max_num_tokens == 16384
+    conv_kw = backend.chat._conv_kw
+    cfg = conv_kw.get('constrained_decoding_config')
+    assert conv_kw.get('enable_constrained_decoding') is True or getattr(cfg, 'enable', False)
+    assert {'run_python', 'inspect_python', 'list_vars'} <= {t.__name__ for t in backend.tools}
+    cell = nb[PROMPT_CELL]
+    message = ws.inline_ai.compose(
+        cell.source,
+        context=nb.context(PROMPT_CELL, since=nb.prompt_start(PROMPT_CELL)),
+        context_path=nb.path,
+    )
+    assert 3600 <= backend.pending_tokens(message) <= 5200
+    assert backend.fits(message)
+
+def test_real_dialog_prompt_cell_completes_end_to_end(dialog_agent):
+    ws, nb = dialog_agent
+    chunks = list(ws.ask_cell_stream(nb, PROMPT_CELL))
+    assert chunks
+    assert nb[PROMPT_CELL].reply.strip()
+    assert 'the assistant failed' not in nb[PROMPT_CELL].reply
+    assert 'produced no event' not in nb[PROMPT_CELL].reply
+    assert not ws.inline_ai.problems
+    rows = ws.kernel_peek().api_sync('/api/rows', {'profile': 'minimal', 'sort': 'name'})
+    names = {v.get('name') for g in (rows or {}).get('groups', []) for v in g.get('nodes', [])}
+    assert 'df_norm' in names, 'the imperative prompt must execute and bind its requested result'

@@ -9,7 +9,6 @@ from leela.blocks.memory.memory import Memory
 from leela.blocks.research.research import Research
 from leela.core.block import Ctx
 
-
 def test_research_search_passes_n_to_fossick(monkeypatch, tmp_path):
     seen = {}
     def search(q, category='text', n=10, **kw):
@@ -20,7 +19,6 @@ def test_research_search_passes_n_to_fossick(monkeypatch, tmp_path):
     hits = r.search('widgets', n=3)
     assert seen == dict(q='widgets', n=3, category='text')
     assert len(hits) == 3
-
 
 def test_research_dig_files_into_memory(monkeypatch, tmp_path):
     body = 'cited paragraph ' * 80
@@ -34,7 +32,6 @@ def test_research_dig_files_into_memory(monkeypatch, tmp_path):
     assert docs and docs[0].memory_id
     assert 'One' in digest
     assert mem.note.startswith('remembered') or 'already' in mem.note
-
 
 def test_research_ctx_exposes_only_research_cap(ws):
     ctx = Ctx(ws, 'research', caps=('research',))
