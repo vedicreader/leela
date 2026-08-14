@@ -15,7 +15,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from leela.app import ide_app
-from leela.blocks.runtime.kernels import project_python
+from leela.blocks.runtime.kernels import nearest_python, project_python
 from leela.workspace import Workspace
 from tests.assets import CSS, JS, SERVER
 
@@ -592,3 +592,41 @@ def test_opening_a_terminal_really_builds_its_argv_from_the_settings(tmp_path):
                 assert b'leela-terminal-ok' in first['bytes']
         finally:
             ws.terms.close_all()
+
+
+def test_a_notebook_gets_its_own_project_venv_not_the_last_one_chosen(tmp_path):
+    """The reported failure: opening a notebook under `nbs/` ran it in another checkout's venv.
+
+    A notebook's working directory is its own folder, and discovery only looked *in* that
+    folder. `nbs/` holds no venv, so the lookup missed and the kernel fell back to
+    `pool.default_python` -- which is the first root's, i.e. whichever project happened to be
+    opened first.
+    """
+    from leela.blocks.runtime.kernels import nearest_python, python_for
+    a, b = tmp_path/'repo-a', tmp_path/'repo-b'
+    pa, pb = _venv(a), _venv(b)
+    (b/'nbs').mkdir(parents=True)
+    (b/'nbs'/'00_core.ipynb').write_text('{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
+    ws = Workspace(roots=[a, b])
+    assert ws.pool.default_python == str(pa), 'precondition: the pool holds the first root'
+
+    tab = ws.open(b/'nbs'/'00_core.ipynb')
+    assert tab.kind == 'notebook' and Path(ws.cwd_for(tab)) == b/'nbs', 'a notebook runs beside itself'
+    assert python_for(ws.cwd_for(tab), ws) == str(pb), 'the notebook belongs to repo-b'
+
+
+def test_the_walk_up_stops_at_the_open_folder(tmp_path):
+    "A venv above the workspace belongs to something else; adopting it is worse than finding none."
+    outer = tmp_path/'outer'
+    _venv(outer)
+    inner = outer/'project'/'nbs'
+    inner.mkdir(parents=True)
+    assert nearest_python(inner) == str(outer/'.venv'/'bin'/'python'), 'unbounded, it climbs'
+    assert nearest_python(inner, stop=outer/'project') is None, 'bounded, it does not'
+
+
+def test_a_venv_in_the_notebooks_own_folder_still_wins(tmp_path):
+    "Nearest means nearest: the walk starts where it always did."
+    root = tmp_path/'repo'
+    outer, inner = _venv(root), _venv(root/'nbs')
+    assert nearest_python(root/'nbs', stop=root) == str(inner) != str(outer)

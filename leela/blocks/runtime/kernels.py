@@ -15,7 +15,7 @@ from .support import clean_env
 
 __all__ = ['ExecOutcome', 'Kernel', 'GatewayKernel', 'GatewayService', 'KernelPool', 'RuntimeBroker',
            'bootstrap_src', 'output_text', 'ipymini_available', 'find_pythons', 'project_python',
-           'python_for', 'venv_env', 'run_file_src']
+           'nearest_python', 'python_for', 'venv_env', 'run_file_src']
 
 KERNELS = ('ipykernel', 'ipymini')
 
@@ -51,13 +51,34 @@ def project_python(roots=()):
     return None
 
 
-def python_for(cwd=None, session=None):
+def nearest_python(start, stop=None):
+    """The nearest conventional venv interpreter at or above `start`, not searched past `stop`.
+
+    Looking in `start` alone was not enough for the case it matters most in: a notebook lives in
+    `nbs/` and its project's venv is at the repository root, so nothing was found there and the
+    kernel fell back to whichever interpreter had been chosen last -- routinely another
+    checkout's. `stop` is the open folder the path belongs to, so the walk cannot wander above
+    the workspace and adopt a venv from an unrelated parent directory.
+    """
+    try: start = Path(start).resolve()
+    except Exception: return None
+    stop = Path(stop).resolve() if stop else None
+    for d in (start, *start.parents):
+        if (p := first(p for _, p in _venv_pythons(d) if p.exists())): return str(p)
+        if stop is not None and d == stop: break
+    return None
+
+
+def python_for(cwd=None, session=None, stop=None):
     "The interpreter anything Leela spawns for `cwd` should be inside."
-    # `cwd`'s own venv wins: a workspace can hold several checkouts, so `default_python` would
+    # `cwd`'s own project wins: a workspace can hold several checkouts, so `default_python` would
     # put the child in the *first* root's venv. Discovery must also run past `default_python`,
     # which is None until something chooses -- otherwise the child gets PATH's `python3`, the
     # system 3.8.
-    if (py := project_python([cwd]) if cwd else None): return py
+    if cwd and stop is None and session is not None:
+        try: stop = session.fs.root_of(cwd)
+        except Exception: stop = None
+    if (py := nearest_python(cwd, stop) if cwd else None): return py
     if session is None: return None
     return session.pool.default_python or project_python(session.fs.roots)
 
