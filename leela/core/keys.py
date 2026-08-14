@@ -127,10 +127,20 @@ DEFAULTS = L(
     Key('find_repo',        'mod+shift+o',    'global', 'find repository',    'toast'),
     Key('find_definition',  'mod+b',          'global', 'go to definition',   'toast'),
     Key('find_usages',      'hyper+u',        'global', 'find usages',        'toast'),
-    Key('rename_symbol',    '',               'global', 'rename symbol'),
-    Key('replace_workspace','',               'global', 'replace in workspace'),
-    Key('workspace_undo',   '',               'global', 'undo workspace operation'),
-    Key('workspace_redo',   '',               'global', 'redo workspace operation'),
+    Key('rename_symbol',    'mod+alt+r',      'global', 'rename symbol',       'toast'),
+    Key('replace_workspace','mod+shift+h',    'global', 'replace in workspace', 'toast'),
+    # `mod+z` belongs to whichever text editor holds the cursor and `mod+alt+z` to notebook
+    # cell structure; workspace undo reverses a whole journalled operation across files, so it
+    # is deliberately a harder chord to reach than either. Not `hyper+z`, which folds onto
+    # `notebook_redo`'s `mod+alt+shift+z` off macOS: `,` and `.` read as step back and forward.
+    Key('workspace_undo',   'hyper+,',        'global', 'undo workspace operation'),
+    Key('workspace_redo',   'hyper+.',        'global', 'redo workspace operation'),
+    # Extraction acts on the file on disk, so these refuse a dirty buffer rather than extract
+    # from text the server cannot see.
+    Key('extract_variable', 'mod+alt+v',      'global', 'extract variable',    'toast'),
+    Key('extract_method',   'mod+alt+m',      'global', 'extract method / function'),
+    Key('extract_constant', 'mod+alt+c',      'global', 'extract constant'),
+    Key('inline_variable',  'mod+alt+n',      'global', 'inline variable'),
     Key('sync_index',       'hyper+i',        'global', 'sync Kosha index'),
     Key('save',             'mod+s',         'global', 'save',                'toast'),
     Key('save_all',         'alt+shift+s',   'global', 'save all'),
@@ -215,6 +225,11 @@ DEFAULTS = L(
     Key('cell_merge_below', 'hyper+pageup',    'editor', 'merge cell below'),
     Key('clear_cell_output','hyper+delete',    'editor', 'clear this cell output'),
     Key('clear_all_outputs','mod+shift+backspace', 'editor', 'clear all outputs'),
+    # Lines within one buffer, where `cell_move_up`/`cell_move_down` move whole cells. These
+    # take the chords CodeMirror's own keymap uses for them, so the router wins the same key
+    # rather than leaving a second, unlisted binding underneath.
+    Key('move_line_up',     'alt+up',        'editor', 'move line up',        'toast'),
+    Key('move_line_down',   'alt+down',      'editor', 'move line down'),
     Key('comment',          'mod+/',         'editor', 'toggle comment',      'toast'),
     Key('find_similar',     'ctrl+shift+a',  'editor', 'code like this',      'toast'),
     Key('code_map',         'ctrl+shift+m',  'editor', 'code map (clusters)'),
@@ -399,6 +414,12 @@ _SNAPSHOT_MIGRATIONS = {
     'toggle_right': ('alt+shift+v', 'alt+shift+v hyper+right'),
     'run_selection': ('', 'hyper+s'), 'new_notebook': ('', 'hyper+n'),
     'edit_keys': ('', 'hyper+k'),
+    # These four shipped declared-but-unbound, so every generated snapshot holds `""` for them
+    # and would pin them unreachable forever. Only that exact empty default migrates; someone
+    # who deliberately unbound one after it gained a chord is not affected, because their file
+    # would have to have been written before the chord existed.
+    'rename_symbol': ('', 'mod+alt+r'), 'replace_workspace': ('', 'mod+shift+h'),
+    'workspace_undo': ('', 'hyper+,'), 'workspace_redo': ('', 'hyper+.'),
 }
 
 

@@ -106,6 +106,27 @@ def test_files_that_are_not_utf8_are_skipped_rather_than_rewritten_lossily(tmp_p
     assert (tmp_path/'legacy.txt').read_bytes() == b'caf\xe9 alpha\n'
 
 
+def test_inline_previews_against_disk_and_applies_through_the_shared_token(tmp_path):
+    "Inline shares `/refactor/apply`, so its plan has to be journalled and undoable like the rest."
+    (tmp_path/'a.py').write_text('amount = price * qty\nprint(amount)\n')
+    c, ws = client(tmp_path)
+    d = c.post('/refactor/inline', json={'path': str(tmp_path/'a.py'), 'pos': 0}).json()
+    assert d['files'][0]['after'] == 'print((price * qty))\n'
+
+    r = c.post('/refactor/apply', json={'token': d['token']})
+    assert r.status_code == 200, r.text
+    assert (tmp_path/'a.py').read_text() == 'print((price * qty))\n'
+    ws.journal.undo(r.json()['operation']['id'])
+    assert (tmp_path/'a.py').read_text() == 'amount = price * qty\nprint(amount)\n'
+
+
+def test_refactoring_a_non_python_file_is_refused(tmp_path):
+    (tmp_path/'a.txt').write_text('amount = 1\n')
+    c, _ = client(tmp_path)
+    r = c.post('/refactor/inline', json={'path': str(tmp_path/'a.txt'), 'pos': 0})
+    assert 'Python files only' in r.json()['error']
+
+
 def test_preview_state_does_not_accumulate_across_previews(tmp_path):
     "Each plan holds a full copy of every file it would change, so unapplied ones must go."
     from leela.blocks.refactor.app import MAX_PLANS, _prune

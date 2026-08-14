@@ -5,7 +5,7 @@ import time, uuid
 
 from ...core.web import fail, off_loop
 from .refactor import replace_plan
-from .python import extract
+from .python import extract, inline
 
 __all__ = ['CAPS', 'connect']
 
@@ -38,18 +38,30 @@ def _prune(plans):
 def connect(app, ctx):
     rt, plans = app.route, {}
 
+    async def _one_file(d, kind, fn, *args):
+        "Run one single-file refactoring against the text on disk and stash it as a plan."
+        _prune(plans)
+        path = ctx.fs._check(d.get('path'), must_exist=True)
+        if path.suffix != '.py': return fail(f'{kind} currently supports Python files only')
+        row = await off_loop(fn, str(path), ctx.fs.read(path), *args)
+        token = 'refactor_' + uuid.uuid4().hex
+        plans[token] = {'at': time.time(), 'find': kind, 'rows': [row]}
+        return {'ok': True, 'token': token, 'files': [row.dict()],
+                'summary': {'files': 1, 'edits': row.edits}}
+
     @rt('/refactor/preview')
     async def refactor_preview(req):
         try:
-            _prune(plans)
-            d = await req.json(); path = ctx.fs._check(d.get('path'), must_exist=True)
-            if path.suffix != '.py': return fail('extraction currently supports Python files only')
-            before = ctx.fs.read(path)
-            row = await off_loop(extract, str(path), before, d.get('start'), d.get('end'),
-                                 d.get('kind'), d.get('name'))
-            token = 'refactor_' + uuid.uuid4().hex
-            plans[token] = {'at': time.time(), 'find': d.get('kind', 'refactor'), 'rows': [row]}
-            return {'ok': True, 'token': token, 'files': [row.dict()], 'summary': {'files': 1, 'edits': 1}}
+            d = await req.json(); kind = d.get('kind')
+            return await _one_file(d, kind or 'extraction', extract,
+                                   d.get('start'), d.get('end'), kind, d.get('name'))
+        except Exception as e: return fail(e)
+
+    @rt('/refactor/inline')
+    async def refactor_inline(req):
+        try:
+            d = await req.json()
+            return await _one_file(d, 'inline', inline, d.get('pos'))
         except Exception as e: return fail(e)
 
     @rt('/replace/preview')
@@ -67,8 +79,9 @@ def connect(app, ctx):
                     'skipped': skipped[:100]}
         except Exception as e: return fail(e)
 
-    @rt('/refactor/apply')
-    @rt('/replace/apply')
+    # Registered against both paths below rather than by stacking `@rt`: the decorator returns
+    # its own wrapper, so stacking registers *that* for the outer path and the real coroutine
+    # is then never awaited -- the route answers 200 and writes nothing.
     async def replace_apply(req):
         try:
             d = await req.json(); plan = plans.pop(str(d.get('token') or ''), None)
@@ -94,3 +107,5 @@ def connect(app, ctx):
             _clear(ctx, [r.path for r in rows])
             return {'ok': True, 'operation': op, 'paths': [r.path for r in rows]}
         except Exception as e: return fail(e, 409)
+
+    for path in ('/replace/apply', '/refactor/apply'): rt(path)(replace_apply)

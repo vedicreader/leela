@@ -173,6 +173,7 @@ GET,POST /nb/save
 GET,POST /outline
 GET,POST /project/nbdev_prepare
 GET,POST /refactor/apply
+GET,POST /refactor/inline
 GET,POST /refactor/preview
 GET,POST /releases
 GET,POST /releases/action

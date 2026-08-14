@@ -49,6 +49,80 @@ async function workspaceHistoryRedo() {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 
+/* Extraction and inlining run against the file *on disk*: the endpoints read it themselves and
+   address it by character offset, so an unsaved buffer would be rewritten from text the server
+   never saw. Both refuse rather than save on the user's behalf. */
+function refactorTarget() {
+  if (lee.kind !== 'text' || !(lee.path || '').endsWith('.py')) {
+    status('open a Python file to refactor', 'err'); return null;
+  }
+  if (lee.dirtyBuffers.has(lee.path)) { status('save the file before refactoring', 'err'); return null; }
+  return curEditor();
+}
+
+async function runRefactor(url, body, note) {
+  const data = await post(url, {path: lee.path, ...body}), edits = data.summary.edits;
+  if (!await confirmDialog('Refactor', `Change ${edits} place${edits === 1 ? '' : 's'} in this file?`, 'apply')) return;
+  await post('/refactor/apply', {token: data.token});
+  await takeDiskVersion(lee.path); refreshFileTree(undefined, false); status(note, 'ok');
+}
+
+/* Whether the block the selection sits in is a class body, which is what decides between a
+   method taking `self` and a plain function. The nearest header at a smaller indent wins. */
+function inClassBody(view, pos) {
+  const doc = view.state.doc, indent = t => t.match(/^[ \t]*/)[0].length;
+  const want = indent(doc.lineAt(pos).text);
+  for (let n = doc.lineAt(pos).number - 1; n >= 1; n--) {
+    const t = doc.line(n).text;
+    if (t.trim() && indent(t) < want) return /^\s*class\s/.test(t);
+  }
+  return false;
+}
+
+async function extractRefactor(kind) {
+  const view = refactorTarget(); if (!view) return;
+  const sel = LeeCM.selection(view);
+  if (!sel || sel.from === sel.to) return status('select the code to extract first', 'err');
+  if (kind === 'method' && !inClassBody(view, sel.from)) kind = 'function';
+  const name = await inputDialog(`extract ${kind}`, 'Name', '', 'valid Python identifier');
+  if (!name) return;
+  try {
+    await runRefactor('/refactor/preview', {start: sel.from, end: sel.to, kind, name}, `extracted ${kind} ${name}`);
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+
+async function inlineVariable() {
+  const view = refactorTarget(); if (!view) return;
+  try {
+    await runRefactor('/refactor/inline', {pos: LeeCM.cursor(view)}, 'variable inlined');
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+
+/* Whole lines within one buffer, where `cell_move_up`/`cell_move_down` move whole cells.
+   Written against the CodeMirror state directly rather than through a new `LeeCM` export: the
+   vendored bundle is committed and rebuilding it needs node, so the page must not grow a
+   dependency on a wrapper that is not in the shipped build. */
+function moveLines(dir) {
+  const view = curEditor(); if (!view) return;
+  const doc = view.state.doc, sel = view.state.selection.main;
+  const first = doc.lineAt(sel.from), last = doc.lineAt(sel.to);
+  const n = dir < 0 ? first.number - 1 : last.number + 1;
+  if (n < 1 || n > doc.lines) return;
+  const swap = doc.line(n), block = doc.sliceString(first.from, last.to);
+  const shift = dir * (swap.text.length + 1);
+  view.dispatch({
+    changes: {from: Math.min(first.from, swap.from), to: Math.max(last.to, swap.to),
+              insert: dir < 0 ? block + '\n' + swap.text : swap.text + '\n' + block},
+    selection: {anchor: sel.anchor + shift, head: sel.head + shift}, scrollIntoView: true});
+  view.focus();
+}
+
 ACTIONS.replace_workspace = replaceWorkspace;
 ACTIONS.workspace_undo = () => operationHistory();
 ACTIONS.workspace_redo = workspaceHistoryRedo;
+ACTIONS.extract_variable = () => extractRefactor('variable');
+ACTIONS.extract_constant = () => extractRefactor('constant');
+ACTIONS.extract_method = () => extractRefactor('method');
+ACTIONS.inline_variable = inlineVariable;
+ACTIONS.move_line_up = () => moveLines(-1);
+ACTIONS.move_line_down = () => moveLines(1);

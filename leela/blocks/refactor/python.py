@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 import ast, builtins, re
+from functools import partial
+from itertools import accumulate
+
+from fastcore.all import first
 
 from .refactor import FileEdit
 
-__all__ = ['extract']
+__all__ = ['extract', 'inline']
 
 
 def _name(name):
@@ -68,3 +72,66 @@ def extract(path, source, start, end, kind, name):
     else: definition = f'{indent}def {name}({", ".join(params)}):\n{body}'
     after = source[:start] + definition + '\n' + indent + call + '\n' + source[end:]
     return FileEdit(path, source, after, 1)
+
+
+# -- inline: the inverse of `extract` with kind='variable' --------------------
+
+def _starts(source):
+    "Character offset at which each line begins, plus the end of the text."
+    return list(accumulate(map(len, source.splitlines(True)), initial=0))
+
+
+def _at(source, starts, node):
+    "A node's (start, end) character offsets. `col_offset` counts utf-8 bytes, not characters."
+    def one(lineno, col):
+        begin = starts[lineno - 1]
+        return begin + len(source[begin:starts[lineno]].encode()[:col].decode('utf-8', 'ignore'))
+    return one(node.lineno, node.col_offset), one(node.end_lineno, node.end_col_offset)
+
+
+# A value that is already one syntactic unit can be dropped in as it stands; anything else
+# (`a + b`, a conditional, a lambda) needs brackets or it would re-associate at the use site.
+_ATOMIC = (ast.Name, ast.Constant, ast.Attribute, ast.Subscript, ast.Call,
+           ast.List, ast.Dict, ast.Set, ast.ListComp, ast.DictComp, ast.SetComp, ast.JoinedStr)
+
+
+def _binding(tree, name):
+    "The one plain `name = value` statement that defines `name`, or a reason there isn't one."
+    if any(name in n.names for n in ast.walk(tree) if isinstance(n, (ast.Global, ast.Nonlocal))):
+        raise ValueError(f'{name} is declared global or nonlocal')
+    # Every other way of binding a name -- `for`, `with ... as`, `except ... as`, `import`,
+    # walrus, augmented and annotated assignment -- is a store this rewrite cannot reverse.
+    stores = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == name
+              and isinstance(n.ctx, (ast.Store, ast.Del))]
+    plain = [n for n in ast.walk(tree) if isinstance(n, ast.Assign) and len(n.targets) == 1
+             and isinstance(n.targets[0], ast.Name) and n.targets[0].id == name]
+    if len(plain) != 1 or len(stores) != 1:
+        raise ValueError(f'inline needs {name} assigned exactly once, as a plain `{name} = value`')
+    return plain[0]
+
+
+def inline(path, source, pos):
+    """Replace a variable's uses with its value and delete the assignment."""
+    pos = int(pos)
+    if not 0 <= pos <= len(source): raise ValueError('put the cursor on a variable first')
+    tree, starts = ast.parse(source), _starts(source)
+    at = partial(_at, source, starts)
+    spans = {n: at(n) for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    here = first(n for n, (a, b) in spans.items() if a <= pos <= b)
+    if here is None: raise ValueError('put the cursor on a variable first')
+    assign = _binding(tree, here.id)
+    astart, aend = at(assign)
+    # The assignment has to own its lines outright: `x = 1; use(x)` would lose the second
+    # statement, and a trailing comment would be deleted along with the code it describes.
+    lstart, lend = starts[assign.lineno - 1], starts[assign.end_lineno]
+    if source[lstart:astart].strip() or source[aend:lend].strip():
+        raise ValueError('inline needs the assignment on lines of its own')
+    value = source[slice(*at(assign.value))]
+    if not isinstance(assign.value, _ATOMIC): value = f'({value})'
+    uses = [span for n, span in spans.items() if n.id == here.id and isinstance(n.ctx, ast.Load)]
+    if not uses: raise ValueError(f'{here.id} is never read, so there is nothing to inline')
+    if any(a < aend for a, _ in uses): raise ValueError(f'{here.id} is read before it is assigned')
+    after = source
+    # Rewrite back to front so each span still addresses the text it was measured against.
+    for a, b in sorted(uses, reverse=True): after = after[:a] + value + after[b:]
+    return FileEdit(path, source, after[:lstart] + after[lend:], len(uses))
