@@ -1,4 +1,4 @@
-'The keymap, as data the browser asks for rather than chords it hardcodes.'
+"The keymap, as data the browser asks for rather than chords it hardcodes."
 
 from __future__ import annotations
 
@@ -17,10 +17,8 @@ __all__ = ['CAPS', 'connect']
 
 CAPS = ()
 
-
 def connect(app, ctx):
     rt = app.route
-
     @rt('/keys.json')
     def keys_json():
         "The keymap, and the buttons that run the same actions -- one fetch, one source."
@@ -29,14 +27,12 @@ def connect(app, ctx):
                              'path': str(keymap_path()), 'notes': list(keymap.NOTES),
                              'bars': {n: [{'action': b.action, 'label': b.label, 'title': b.tooltip,
                                            'kind': b.kind} for b in btn_bar(n)] for n in BARS}})
-
     @rt('/keys/file')
     def keys_file():
         p = keymap_path()
         try: text = p.read_text()
         except Exception: text = json.dumps(keymap_json(), indent=2) + '\n'
         return {'path': str(p), 'exists': p.exists(), 'text': text, 'notes': list(keymap.NOTES)}
-
     @rt('/keys/save')
     async def keys_save(req):
         "Write the keymap, re-read it, and hand back what it now says -- including what it refused."
@@ -50,7 +46,6 @@ def connect(app, ctx):
         keymap.reload()
         return {'ok': True, 'path': str(p), 'notes': list(keymap.NOTES),
                 'keys': web_keymap(), 'help': help_rows()}
-
     @rt('/keys/reset')
     def keys_reset():
         "Put leela's own defaults back, so a keymap you cannot use is one click from gone."

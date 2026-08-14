@@ -1,9 +1,4 @@
-"""Binding a `Workspace` to the agent harness.
-
-The adapter: ramabana is the brain and knows nothing about leela, and everything it needs
-arrives through `Host`. What is here is the application's half -- how a leela workspace answers
-the harness's questions, and how an approval turns into a conversation in a notebook.
-"""
+"Binding a `Workspace` to the agent harness."
 
 from __future__ import annotations
 
@@ -19,18 +14,13 @@ from ...agent.tools import Host, clip, tools_for
 
 GIT_TOOLS = ('git_status', 'git_fetch', 'git_checkout', 'git_pull', 'git_push')
 GIT_WRITE_TOOLS = frozenset(GIT_TOOLS) - {'git_status'}
-#: How a tool reports its own failure, which is also how `_record` classifies one. Derived from
-#: the tool names so a tool added to `GIT_TOOLS` cannot be silently misread as having succeeded.
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not', *(f'{t.replace("_", " ")} failed' for t in GIT_TOOLS))
-# The blend legs that answer in tens of milliseconds; `ann` has to embed the query first.
 FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
 WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools',
            'notebook_approvals', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
 
-# Guided checkpoints calls that cross a process boundary; directed stops at every locally
-# executed tool. The write policy is in force in all three.
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
 GUIDED_TOOLS = WRITE_TOOLS | frozenset({'web_search', 'read_url', 'research'})
 
@@ -86,10 +76,8 @@ STATE_TEMPLATE = """# Agent charter
 - Remove stale instructions instead of accumulating contradictions.
 """
 
-
 class Intervention(Ask):
     "A proposed call, including provenance when the person rewrites it before execution."
-
     def __init__(self, *a, control='guided', **kw):
         super().__init__(*a, **kw)
         self.control = control
@@ -97,10 +85,8 @@ class Intervention(Ask):
         self.original_args = dict(self.args)
         self.before = self.after = None
         self.revision, self.branch_id, self.parent_action_id = 0, 'main', ''
-
     @property
     def edited(self): return self.tool != self.original_tool or self.args != self.original_args
-
     def dict(self):
         return {**super().dict(), 'args': self.args, 'control': self.control, 'edited': self.edited,
             'original_tool': self.original_tool, 'original_args': self.original_args,
@@ -108,10 +94,8 @@ class Intervention(Ask):
             'parent_action_id': self.parent_action_id,
             'rollback': self.before is not None and self.after is not None and self.before != self.after}
 
-
 class Interventions(Approvals):
     "Approval queue extended with editable tool calls and teleprompter control levels."
-
     def __init__(self, *a, control='guided', **kw):
         super().__init__(*a, **kw)
         self.control = control if control in CONTROL_MODES else 'guided'
@@ -120,12 +104,10 @@ class Interventions(Approvals):
         self.queued_steer = ''
         self._state_lock = threading.Lock()
         self._execution_meta = []
-
     def set_control(self, control):
         if control not in CONTROL_MODES: raise ValueError(f'unknown agent control mode {control!r}')
         with self._state_lock: self.control, self.run_policy, self.pause_next = control, None, False
         return control
-
     def set_run_policy(self, policy='once', count=1):
         "Set a temporary run-through policy for calls after the current checkpoint."
         if policy not in {'once', 'count', 'until_write', 'reads', 'until_failure', 'completion'}:
@@ -135,22 +117,18 @@ class Interventions(Approvals):
             self.run_policy = {'kind': policy, 'remaining': count} if policy in {'once', 'count'} else {'kind': policy}
             self.pause_next = False
         return dict(self.run_policy)
-
     def set_pause_next(self):
         with self._state_lock: self.pause_next, self.run_policy = True, None
-
     def queue_steer(self, text):
         with self._state_lock:
             self.queued_steer = str(text or '').strip()
             if self.queued_steer: self.run_policy, self.pause_next = {'kind': 'once', 'remaining': 1}, False
         return self.queued_steer
-
     def consume_steer(self):
         with self._state_lock:
             text, self.queued_steer = self.queued_steer, ''
             if text: self.run_policy = None
         return text
-
     def observe_result(self, ok):
         "Capture a write result and end an until-failure run after a failed call."
         a = self.history[-1] if self.history else None
@@ -159,7 +137,6 @@ class Interventions(Approvals):
         with self._state_lock:
             if not ok and self.run_policy and self.run_policy.get('kind') == 'until_failure':
                 self.run_policy, self.pause_next = None, True
-
     def rollback(self, id):
         "Restore one file call only when no later write has changed its resolved output."
         a = first(reversed(self.history), lambda x: x.id == id)
@@ -168,7 +145,6 @@ class Interventions(Approvals):
         if self.host.text_at(path) != a.after: raise ValueError('the file changed after this call; rollback refused')
         self.host.write(path, a.before)
         return path
-
     def _policy_bypasses(self, name):
         with self._state_lock:
             if self.pause_next:
@@ -188,12 +164,10 @@ class Interventions(Approvals):
                 return True
             if kind == 'reads': return name not in WRITE_TOOLS
             return kind in {'until_failure', 'completion'}
-
     def state(self):
         with self._state_lock:
             return {'control': self.control, 'run_policy': dict(self.run_policy) if self.run_policy else None,
                 'pause_next': self.pause_next, 'queued_steer': self.queued_steer}
-
     def request(self, name, args, force=False, timeout=None, action_id='', revision=0,
         branch_id='main', parent_action_id=''):
         args = dict(args or {})
@@ -210,8 +184,6 @@ class Interventions(Approvals):
             a.before = self.host.text_at(args['path'])
         self.history.append(a)
         if not checkpoint: return a.resolve(True)
-        # Independent policies: “approve later writes” must not disable directed mode or the
-        # guided network checks.
         if required and self.mode == 'auto' and self.control != 'directed': return a.resolve(True)
         if required and self.mode == 'off':
             return a.resolve(False, 'approval is switched off for this session')
@@ -224,19 +196,15 @@ class Interventions(Approvals):
             a.resolve(False, f'no answer after {wait_for}s')
             self._notify('answer', a)
         return a
-
     def answer(self, id, ok, note='', session=False, tool=None, args=None):
         "Resolve a checkpoint; only approval may replace the call that will execute."
         a = self.current
         if a is None or a.id != id or not a.pending: return None
-        # A rejection executes nothing, so it keeps the original proposal: that is what lets a
-        # person reject a malformed call without first repairing its form.
         if ok:
             if tool: a.tool = str(tool)
             if args is not None: a.args = dict(args)
             a.summary, a.preview = _summary(a.tool, a.args), preview_for(a.tool, a.args, self.host)
         return super().answer(id, ok, note, session=session)
-
     def gate(self, tool_call):
         "Pause according to the control level, then apply an approved rewrite to the live call."
         if hasattr(tool_call, 'name'):
@@ -256,15 +224,12 @@ class Interventions(Approvals):
                         'parent_action_id': a.parent_action_id,
                         'tool': a.tool, 'args': dict(a.args)})
             elif tool_call.get('id'):
-                # A bare backend denial reads to a model as a transient permission failure and
-                # it proposes the same call again, so “no” resolves as a durable instruction.
                 instruction = ('The user rejected this tool call. Do not retry this call or an '
                     'equivalent action unless the user explicitly asks for it later.')
                 if a.note: instruction += f' User direction: {a.note}'
                 fn['name'], fn['arguments'] = 'user_steering', {'instruction': instruction}
                 return True
         return a
-
     def execution_meta(self, name, args):
         "Consume identity recorded by the approval hook before the wrapped tool executes."
         with self._state_lock:
@@ -272,32 +237,19 @@ class Interventions(Approvals):
                 if row['tool'] == name and row['args'] == dict(args or {}))
             return self._execution_meta.pop(i) if i is not None else {}
 
-
 class WorkspaceHost(Host):
-    """A `Workspace`, answering the harness's questions.
-
-    Anything the workspace cannot do raises `NotImplementedError`, and the harness responds by
-    not offering that tool at all.
-    """
-
+    "A `Workspace`, answering the harness's questions."
     def __init__(self, ws, session=None): self.ws, self.session = ws, session
-
-    # -- where it is allowed to be -------------------------------------------
     @property
     def roots(self): return [str(r) for r in self.ws.fs.roots]
-
     @property
     def project(self):
         "The folder the agent's commands run in: the chosen one, else the first open."
-        # Not `roots[0]`, which is only where the agent is *allowed* to be.
         root = self.ws.project_root
         return str(root) if root else (self.roots[0] if self.roots else '')
-
     def check(self, path, must_exist=False):
         try: return self.ws.fs._check(path, must_exist=must_exist)
         except Unsafe as e:
-            # The refusal names what is open: a local model that mistypes one digit of an
-            # absolute path otherwise retries guesses instead of reading the hint.
             opened = [t.path for t in self.ws.tabs if t.path]
             hint = f'; open files: {", ".join(opened[-5:])}' if opened else ''
             raise Unsafe(f'{e}{hint}') from e
@@ -305,47 +257,31 @@ class WorkspaceHost(Host):
     def read(self, path): return self.ws.fs.read(self.check(path))
     def write(self, path, text): return self.ws.fs.write(path, text).path
     def text_at(self, path): return self.ws.text_at(path)
-
-    # -- seeing the code -----------------------------------------------------
     def search(self, query, limit=20): return self.ws.search.agent_search(query, limit=limit)
-
     def search_blend(self, query, limit=20, legs=None):
         "Leela's own blend: every backend at once, each hit stamped with the legs that agreed."
         return self.ws.search.search(query, limit=limit, mode='all', legs=legs)
-
     def peers(self, path, line, limit=20): return self.ws.search.peers(path, line, limit=limit)
     def symbols(self, path): return self.ws.search.symbols(path)
-
     @property
     def search_note(self):
         s = self.ws.search
         return f'{s.backend}: {s.note}' if s.note else str(s.backend)
-
-    # -- reading the web -----------------------------------------------------
     def web_search(self, query, n=20): return self.ws.research.search(query, n=n)
     def read_url(self, url, remember=True): return self.ws.research.read(url, remember=remember)
-
     def research(self, query):
         _, digest = self.ws.research.dig(query)
         return digest
-
     @property
     def research_note(self): return self.ws.research.note
-
-    # -- durable research memory --------------------------------------------
     def _vault(self, write=False):
-        """The active vault's `Memory`, refusing a write the toggle does not allow.
-
-        `agent_writable` is stored per vault; enforcing it only in the panel would make it a
-        suggestion. Reads are open on every attached vault -- that is what attaching one is for.
-        """
+        "The active vault's `Memory`, refusing a write the toggle does not allow."
         vaults = getattr(self.ws, 'vaults', None)
         if vaults is None: return self.ws.memory
         ref = vaults.active
         if write and not ref.agent_writable:
             raise PermissionError(f'the agent may not write to {ref.name}; turn on agent writes for it first')
         return vaults.memory(ref.name)
-
     def memory_search(self, query, limit=8): return self._vault().context(query, sections=limit)
     def memory_tree(self, document=''): return self._vault().toc(document or None)
     def memory_read(self, node_id): return self._vault().read(node_id)
@@ -353,39 +289,28 @@ class WorkspaceHost(Host):
     def memory_forget(self, doc_id): return self._vault(write=True).forget(doc_id)
     def memory_documents(self, limit=50): return self._vault().all_documents(limit)
     def memory_sections(self, doc_id): return self._vault().sections(doc_id)
-
-    # `remember`, `watch` and `unwatch` come from ramabana's Host and write to whatever vault it
-    # holds; overridden so they go through the same toggle as everything else here.
     def remember(self, text, title=None, tags=()):
         return self._vault(write=True)._open().note(str(text), title=title, tags=list(tags or []))
     def watch(self, target, action='url', every='1d', note=None, **kw):
         return self._vault(write=True).watch(target, action=action, every=every, note=note, **kw)
     def unwatch(self, watch_id): return self._vault(write=True).unwatch(watch_id)
     def watches(self, due_only=False): return self._vault().watches(due_only=due_only)
-
-    # -- notebooks -----------------------------------------------------------
     def nb_cells(self, path):
         from ..nb.nb import Notebook
         return [(c.id, c.cell_type, c.source) for c in Notebook.load(self.check(path)).cells]
-
     def nb_add_cell(self, path, source, index=-1, cell_type='code'):
         from ..nb.nb import Cell, Notebook
         p = self.check(path)
         nb = Notebook.load(p) if p.exists() else Notebook.blank(p)
         c = nb.insert(len(nb) if index < 0 else int(index), Cell(source=source, cell_type=cell_type))
-        # `Notebook.blank` seeds an empty cell for a human to type in; drop it here, or every
-        # agent-created notebook opens with a stray blank cell at the top.
         if len(nb) == 2 and not nb[0].source.strip() and nb[1] is c: nb.delete(0)
         nb.save(p, sandbox=self.ws.fs)
         return c.id
-
-    # -- the live session ----------------------------------------------------
     def _kernel(self):
         k = self.ws.runtime_peek()
         if k is None or not getattr(k, 'base', None) or not hasattr(k, 'api_sync'):
             raise NotImplementedError('no live kernel inspector')
         return k
-
     @staticmethod
     def _exec_text(r):
         if not r: return 'kernel inspector did not answer'
@@ -395,7 +320,6 @@ class WorkspaceHost(Host):
         if isinstance(result, dict): result = result.get('value') or result.get('text') or str(result)
         if result is not None: out += ('\n' if out else '') + str(result)
         return out or '(ok)'
-
     @staticmethod
     def _session_text(r):
         "One `AgentSession` run as the text the model sees."
@@ -403,13 +327,9 @@ class WorkspaceHost(Host):
         out = r.stdout or ''
         if r.result is not None: out += ('\n' if out else '') + r.result.value
         return out or '(ok)'
-
     def run_python(self, code):
         if self.session is not None: return self._session_text(self.session.run(code))
-        # The web agent lives outside the kernel, and reaches the owner namespace through the
-        # authenticated inspector, exactly like the exec bar.
         return self._exec_text(self._kernel().api_sync('/api/exec', {'code': code, 'scope': 'global'}))
-
     def inspect_python(self, code, scope='isolated'):
         "Read-only execution in one of `AgentSession`'s scopes; neither can change what the user made."
         if scope not in self.scopes:
@@ -417,42 +337,30 @@ class WorkspaceHost(Host):
                 'the workspace was opened with a narrower agent scope')
         if self.session is not None: return self._session_text(self.session.run(code, scope=scope))
         return self._exec_text(self._kernel().api_sync('/agent/api/exec', {'code': code, 'scope': scope}))
-
     @property
     def scopes(self):
         s = getattr(self.ws, 'agent_scope', 'overlay')
         return ('isolated',) if s == 'isolated' else ('isolated', 'overlay')
-
     @property
     def kernel_kind(self): return getattr(self.ws, 'kernel_kind', 'ipykernel')
-
     def list_vars(self):
         if self.session is not None:
             return '\n'.join(f'{v.name}: {v.type} = {v.value}' for _, vs in self.session.view('minimal') for v in vs)
         r = self._kernel().api_sync('/api/rows', {'profile': 'minimal', 'sort': 'name'}) or {}
         return '\n'.join(f"{v.get('name')}: {v.get('type')} = {v.get('value')}"
             for g in r.get('groups', []) for v in g.get('nodes', []))
-
     def terminal_text(self, lines=200):
         terms = self.ws.terms.all()
         if not terms: return 'no terminal is open in the IDE'
         parts = [f'--- terminal {t.pid} ({" ".join(t.argv)}) ---\n{t.text(lines)}' for t in terms]
         return '\n\n'.join(parts).strip()
-
-    # -- running a command ---------------------------------------------------
     def run_cmd(self, command, cwd=None, timeout=120):
-        """Run one command in the project, the way the user would run it in leela's terminal.
-
-        Confinement is the working directory only: a shell can name any path, so a command is a
-        write everywhere it matters and goes to a person for approval like one.
-        """
+        "Run one command in the project, the way the user would run it in leela's terminal."
         import signal, subprocess
-        if not str(command or '').strip(): return 0, ''      # the capability probe
+        if not str(command or '').strip(): return 0, ''
         if not self.roots: raise NotImplementedError('no folder is open')
         d = self.check(cwd) if cwd else self.check(self.project)
         if not d.is_dir(): d = d.parent
-        # Its own session, so a timeout kills the whole tree: anything behind a pipe leaves
-        # children that outlive the shell.
         new_session = os.name == 'posix'
         p = subprocess.Popen(str(command), shell=True, cwd=str(d), text=True, errors='replace',
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -467,40 +375,28 @@ class WorkspaceHost(Host):
             else: p.kill()
             out, _ = p.communicate()
             return 124, f'{out or ""}\n[killed after {timeout}s]'
-
     @property
     def shell_note(self):
         return f'commands run in {self.project}' if self.roots else 'no folder is open'
-
-    # -- the person ----------------------------------------------------------
     @property
     def approvals(self): return getattr(self.ws, 'approvals', None)
-
     def note(self, text):
         fn = getattr(self.ws, 'on_note', None)
         if fn:
             try: fn(text)
             except Exception: pass
 
-
-# ---------------------------------------------------------------------------
-# application tools
-# ---------------------------------------------------------------------------
 def _git_tools(host):
     "Git operations bound to an open repository and kept inside workspace roots."
     from ..git.git import GitRepo
-
     def repo(path=''):
         roots = [Path(r).expanduser().resolve() for r in host.roots]
         if not roots: raise ValueError('open a project folder first')
         selected = host.check(path or getattr(host, 'project', '') or roots[0], must_exist=True)
         found = GitRepo.at(selected)
-        # Git discovers a worktree above an opened subfolder, but an agent checkout must not
-        # modify siblings outside its sandbox.
         if not any(found.root == root or found.root.is_relative_to(root) for root in roots):
             raise ValueError(f'Git root {found.root} is outside the open folders; open the repository root first')
         return found
-
     def result(r, output=''):
         if isinstance(output, dict): output = output.get('summary') or output.get('message') or ''
         info = r.info()
@@ -508,93 +404,44 @@ def _git_tools(host):
             'ahead': info['ahead'], 'behind': info['behind'], 'clean': info['clean'],
             'branches': info['branches'], 'changes': info['changes']}
         return ((output.strip() + '\n') if output and output.strip() else '') + json.dumps(summary, indent=2)
-
     def report(what, path, act=None):
         "Run one operation on the selected repository and report it with the refreshed status."
         try:
             r = repo(path)
             return clip(result(r, act(r) if act else ''), MAX_TOOL_CHARS * 2)
         except Exception as e: return f'{what} failed: {errstr(e)}'
-
     def git_status(path: str = '') -> str:
-        """Show repository status, local and remote branches, upstream, and changed files.
-
-        `path` selects a repository when several folders are open; leave it empty for the
-        first open folder. Use this before checkout or pull so local changes are visible.
-        """
+        "Show repository status, local and remote branches, upstream, and changed files."
         return report('git status', path)
-
     def git_fetch(path: str = '') -> str:
-        """Fetch and prune remote refs, then return the refreshed branch status.
-
-        This contacts the configured remotes but does not merge into the working tree.
-        Remote-only branches become visible to `git_status` and `git_checkout`.
-        """
+        "Fetch and prune remote refs, then return the refreshed branch status."
         return report('git fetch', path, lambda r: r.fetch())
-
     def git_checkout(branch: str, path: str = '') -> str:
-        """Switch to a local branch or create a local tracking branch from `REMOTE/BRANCH`.
-
-        Call `git_fetch` and inspect `git_status` first. Git refuses a checkout that would
-        overwrite local work; never discard or stash the user's changes implicitly.
-        """
-        # `checkout` says when it had to set uncommitted work aside to move; that is exactly what
-        # the model must not silently lose, so it is reported like fetch/pull/push report theirs.
+        "Switch to a local branch or create a local tracking branch from `REMOTE/BRANCH`."
         return report('git checkout', path, lambda r: r.checkout(str(branch or '').strip()))
-
     def git_pull(path: str = '') -> str:
-        """Fast-forward the current branch from its configured upstream.
-
-        This deliberately uses `--ff-only`: divergent history is reported for the user to
-        resolve explicitly rather than creating a surprise merge commit.
-        """
+        "Fast-forward the current branch from its configured upstream."
         return report('git pull', path, lambda r: r.pull())
-
     def git_push(path: str = '') -> str:
-        """Push the current branch to its configured upstream.
-
-        The branch must already have an upstream. This never force-pushes and never creates
-        remote branches implicitly.
-        """
+        "Push the current branch to its configured upstream."
         return report('git push', path, lambda r: r.push())
-
     return [git_status, git_fetch, git_checkout, git_pull, git_push]
-
 
 def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
     "Leela's blended search as one tool: every backend at once, each hit stamped with what agreed."
     def search_all(query: str) -> str:
-        """Search every code backend at once: exact symbols, literal text, keywords, and meaning.
-
-        Each row ends with the engines that agreed on it, such as `[symbols+rg+ann]`; more
-        engines means more confidence. Use this when you want the exact definition and the
-        conceptually related code in one answer, or when one search's ranking looked wrong.
-
-        For a wide sweep whose rows you do not need to keep, give the question to
-        `delegate_search` instead: the sub-agent has this tool and reports only its conclusion.
-        """
+        "Search every code backend at once: exact symbols, literal text, keywords, and meaning."
         try: hits = host.search_blend(query, limit=MAX_HITS, legs=legs)
         except Exception as e: return f'search_all failed: {errstr(e)}'
         if not hits: return f'no matches ({host.search_note})'
         rows = L(hits).map(lambda h: f'{h.path}:{h.line}  {h.symbol or ""}  {h.text}'
             f'  [{"+".join(getattr(h, "sources", None) or [])}]')
         return clip(f'[{host.search_note}]\n' + '\n'.join(rows), mx)
-
     return [search_all]
 
-
-# ---------------------------------------------------------------------------
-# approval, as a conversation in the notebook
-# ---------------------------------------------------------------------------
 def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, host=None):
-    """An `Approvals` that writes the whole exchange into the notebook.
-
-    `get_target` returns `(notebook, index)` for the cell the turn belongs to, or None when the
-    turn did not come from a notebook. The cells are markdown carrying
-    `metadata.leela.kind = 'approval'`, so they stay legible in plain Jupyter.
-    """
+    "An `Approvals` that writes the whole exchange into the notebook."
     from ..nb.nb import Cell
-
     def _add(md, meta):
         t = get_target()
         if not t: return None
@@ -604,7 +451,6 @@ def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, h
         nb.insert(min(i + 1 + _n_approvals(nb, i), len(nb)), c)
         nb.dirty = True
         return c
-
     def on_ask(a): _add(ask_md(a), {'kind': 'approval', 'id': a.id, 'tool': a.tool, 'state': 'pending'})
     def on_answer(a):
         md = answer_md(a)
@@ -614,19 +460,16 @@ def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, h
         _add(md, {'kind': 'approval', 'id': a.id, 'tool': a.tool,
             'state': 'approved' if a.answer else 'refused',
             'edited': bool(getattr(a, 'edited', False))})
-
     return Interventions(tools=tools, mode=mode, timeout=timeout, host=host,
         on_ask=on_ask, on_answer=on_answer)
 
-
 def _irreversible(action):
-    "How a completed action reads in the turn's irreversible list, or None if restoring files undoes it."
+    "How a completed action reads in the turn's irreversible list, or None if restoring files undoes."
     if action.tool == 'memory_forget': return f"memory_forget ({action.args.get('doc_id', 'unknown document')})"
     if action.tool == 'run_python': return 'run_python (live kernel state)'
     if action.tool == 'run_shell': return f"run_shell ({action.args.get('command', 'command')})"
     if action.tool in GIT_WRITE_TOOLS: return action.tool
     return None
-
 
 def _n_approvals(nb, i):
     "How many approval cells already sit below the prompt cell at `i`."
@@ -636,19 +479,11 @@ def _n_approvals(nb, i):
         n += 1
     return n
 
-
-# ---------------------------------------------------------------------------
-# what the frontends hold
-# ---------------------------------------------------------------------------
 class Assistant(Agent):
     "The IDE's agent, built over a `Workspace`."
-
     LITERT_BACKENDS = ('cpu', 'gpu')
-
     def set_litert_backend(self, which):
         "Choose the accelerator LiteRT engines are built on, and release the loaded ones."
-        # ramabana reads `$LEELA_LITERT_BACKEND` when it builds an engine, so setting the
-        # variable is what keeps a CLI agent on this machine agreeing with the IDE.
         which = str(which or '').strip().lower()
         if which not in self.LITERT_BACKENDS:
             raise ValueError(f'litert backend must be one of {", ".join(self.LITERT_BACKENDS)}')
@@ -657,26 +492,23 @@ class Assistant(Agent):
         for key in [k for k in self._backends if k[0] == 'litert']: self._backends.pop(key).close()
         self.note = f'LiteRT backend {which}'
         return which
-
     @delegates(Agent.__init__)
     def __init__(self,
-        ws,                    # the `Workspace` the agent acts on
-        session=None,          # an `AgentSession` for read-only Python, when there is one
-        model=None,            # the turn model; None takes the routing default
-        sp=None,               # override the whole briefing
-        approve=None,          # a plain `approve(tool_call) -> bool`, wrapped in an `Approvals`
-        surface='agent',       # 'agent' for the panel, 'inline' for a prompt cell
+        ws,
+        session=None,
+        model=None,
+        sp=None,
+        approve=None,
+        surface='agent',
         **kwargs
     ):
         from .models import load_models
-        load_models()  # saved aliases work in prompt cells and the web dropdown alike
+        load_models()
         host = WorkspaceHost(ws, session)
         kwargs.setdefault('cfg', leela_cfg)
         kwargs.setdefault('approvals', getattr(ws, 'approvals', None))
         kwargs.setdefault('compact', getattr(ws, 'compact_auto', True))
         kwargs.setdefault('compact_strategy', getattr(ws, 'compact_strategy', 'surgical'))
-        # ramabana sizes a turn from the prompt when these are `auto`; a number pins it. The
-        # workspace holds the choice so a new prompt cell agrees with the panel.
         kwargs.setdefault('max_tool_calls', getattr(ws, 'tool_budget', 'auto'))
         kwargs.setdefault('max_steps', getattr(ws, 'step_budget', 'auto'))
         if approve is not None and kwargs.get('approvals') is None:
@@ -684,17 +516,13 @@ class Assistant(Agent):
         self.ws, self.surface = ws, surface
         self.session_state = str(getattr(ws, 'agent_state', '') or '')
         self._git_toolset = _git_tools(host)
-        # Inline searches only the legs that answer in milliseconds: a prompt cell is answered
-        # while someone waits on the line they are typing, and the embedding leg takes seconds.
         self._search_toolset = _search_tools(host, legs=None if surface == 'agent' else FAST_SEARCH_LEGS)
         super().__init__(host, model=model, sp=sp, **kwargs)
-
         def user_steering(instruction: str) -> str:
             "Return a user's intervention after a skipped tool call so the agent can redirect its next step."
             return f'User steering after skipping the proposed call: {instruction}'
         self._steering_tool = user_steering
         self.turn_transactions = {}
-
     @property
     def tools(self):
         if self._tools is None:
@@ -703,12 +531,9 @@ class Assistant(Agent):
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             built = super().tools
-            # Delegated agents inherit `_plain` and only know the harness's generic write set,
-            # so leela's Git writes must not reach that read-only delegation surface.
             self._plain = [f for f in self._plain if f.__name__ not in GIT_WRITE_TOOLS]
             return built
         return super().tools
-
     def system_prompt(self):
         base = super().system_prompt()
         layers = getattr(self.ws, 'agent_state_layers', {})
@@ -722,7 +547,6 @@ class Assistant(Agent):
             base += ('\n\n## User-selected memory notes\n'
                 'Treat these as durable user context. If a note conflicts with the current request or code, ask rather than guessing.\n\n' + memory)
         return base
-
     def set_state(self, text, layer='task', enabled=True, source='user'):
         "Replace one explicit state layer and re-brief the live model without losing history."
         if layer not in self.ws.agent_state_layers: raise ValueError(f'unknown state layer {layer!r}')
@@ -732,7 +556,6 @@ class Assistant(Agent):
         self.ws.save()
         self.refresh()
         return text
-
     def _finish(self, text, prompt=''):
         out = super()._finish(text, prompt)
         changes = self.changes()
@@ -745,7 +568,6 @@ class Assistant(Agent):
         self.ws.journal.record('Agent turn', [(p, before, after) for p, (before, after) in changes.items()],
             kind='agent', irreversible=irreversible)
         return out
-
     def turn_capabilities(self, turn_id):
         "Which post-turn operations have a real checkpoint or artifact behind them."
         checkpoint = self.checkpoints.get(str(turn_id), {})
@@ -756,7 +578,6 @@ class Assistant(Agent):
         files = list((tx.get('files') or {}).keys())
         return {'revisable': revisable, 'undoable': bool(files) and not tx.get('rolled_back'),
             'files': files, 'irreversible': list(tx.get('irreversible') or [])}
-
     def rollback_turn(self, turn_id):
         "Atomically restore every unchanged artifact from a completed turn."
         tx = self.turn_transactions.get(str(turn_id))
@@ -767,21 +588,16 @@ class Assistant(Agent):
         for path, snap in tx['files'].items(): self.host.write(path, snap['before'])
         tx['rolled_back'] = True
         return tx
-
     def _action_meta(self, name, args):
         base = super()._action_meta(name, args)
         if self.approvals is not None:
-            # `tool` and `args` are `execution_meta`'s lookup fields, not `Activity.start`
-            # arguments: forwarding them gives “multiple values for tool”.
             approved = self.approvals.execution_meta(name, args)
             base.update({k: v for k, v in approved.items() if k not in {'tool', 'args'}})
         base['branch_id'] = self.current_branch_id
         return base
-
     def _record(self, f):
         "Observe results for run-until-failure and deliver queued steering between calls."
         run = super()._record(f)
-
         @functools.wraps(f)
         def wrapper(*args, **kw):
             approvals = self.approvals
@@ -802,7 +618,6 @@ class Assistant(Agent):
             if approvals is not None: approvals.observe_result(ok)
             return out
         return wrapper
-
     def status(self):
         out = super().status()
         if self.approvals is not None: out.update(self.approvals.state())
@@ -810,25 +625,20 @@ class Assistant(Agent):
             'count': self.compactor.count, 'note': self.compactor.note,
             'threshold': self.compactor.due(self.backend)}
         return out
-
     @property
     def tools_note(self): return f'{len(self.tools)} tools, {len(self.skills)} skills'
 
-
 class _PolicyApprovals(Approvals):
     "An `Approvals` wrapping a plain `approve(tool_call) -> bool`."
-
     def __init__(self, approve):
         super().__init__(tools=WRITE_TOOLS, mode='ask')
         self._approve = approve
-
     def request(self, name, args):
         a = Ask(tool=name, args=args, summary=_summary(name, args), preview=preview_for(name, args))
         self.history.append(a)
         try: ok = self._approve({'function': {'name': name, 'arguments': args}})
         except Exception as e: return a.resolve(False, errstr(e))
         return a.resolve(bool(ok))
-
 
 def ide_tools(ws, session=None):
     "Every tool the agent gets, bound to one `Workspace`."

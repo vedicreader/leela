@@ -1,28 +1,10 @@
-"""The web IDE.
-
-The server owns state and structure; the browser owns the editors. Anything
-with a text cursor is CodeMirror talking JSON to these routes, and everything
-else -- file tree, variable tree, tab bar, status -- is server-rendered htmx,
-reusing the fragments leela already knows how to build.
-
-Variable data is *proxied* rather than fetched cross-origin. Each kernel hosts
-its own inspector on its own port; letting the page hit those ports directly
-would mean CORS on every kernel and the owner token sitting in the browser.
-Proxying keeps the token server-side and the page single-origin.
-
-The exec strip's two scopes are genuinely different runtimes, not a flag:
-`live` runs on the tab's kernel, sharing the notebook's namespace, while
-`isolated` runs through the agent session's safepyrun sandbox, where writes are
-discarded and escapes refused. (The older `scope='isolated'` copies the
-namespace dict shallowly, so a mutating call still reached the real object --
-routing the toggle at the sandbox makes the label true.)
-"""
+"The web IDE."
 
 from __future__ import annotations
 import ast, asyncio, ipaddress, json, os, re, shutil, subprocess, sys, warnings
 from itertools import accumulate
 from urllib.parse import quote
-from fasthtml.common import *          # re-exports fastcore's Path, L, first, asdict, ...
+from fasthtml.common import *
 from starlette.routing import WebSocketRoute
 
 from dhrishti.core import PROFILES, SORTS
@@ -78,55 +60,40 @@ from .agent.runtime import estimate_tokens
 
 __all__ = ['ide_app', 'serve_ide']
 
-
-# Connect your blocks. Order is registration order and the first route to match a path
-# wins, so a block claiming a broad path belongs after the specific ones. The URL surface
-# this produces is pinned by `tests/routes.txt`.
-#
-# Everything not listed here is still a closure inside `ide_app`; see `docs/blocks.md` for
-# the extraction order and what remains.
 BLOCKS = [keys_block, settings_block, search_block, memory_block, jobs_block,
           research_block, term_block, runs_block, workspace_block, git_block,
           workflows_block, pipelines_block, drive_block, stack_block,
           fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block, refactor_block]
-
 
 def _term_python(ws, cwd=None):
     "The interpreter a terminal opened at `cwd` should be inside. See `python_for`."
     from .blocks.runtime.kernels import python_for
     return python_for(cwd, ws)
 
-
 def _line_starts(text):
     "The lines of `text`, keeping their ends, and the character offset each one begins at."
     lines = text.splitlines(keepends=True) or ['']
     return lines, list(accumulate(map(len, lines), initial=0))[:-1]
 
-
 def _python_diagnostics(source, filename='<cell>'):
-    """Compile without executing and return Python's own errors and warnings as editor ranges."""
+    "Compile without executing and return Python's own errors and warnings as editor ranges."
     source = str(source or '')
     lines, starts = _line_starts(source)
-
     def point(line, column):
         row = max(1, min(int(line or 1), len(lines)))
         text = lines[row - 1].rstrip('\r\n')
         col = max(0, min((int(column) - 1) if column else 0, len(text)))
         return starts[row - 1] + col
-
     def line_range(line):
         row = max(1, min(int(line or 1), len(lines)))
         text = lines[row - 1].rstrip('\r\n')
         leading = len(text) - len(text.lstrip())
         start = starts[row - 1] + leading
         return start, max(start + (1 if start < len(source) else 0), starts[row - 1] + len(text))
-
     found = []
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
         try:
-            # Producing a code object performs the complete compiler warning pass, unlike
-            # PyCF_ONLY_AST, but does not execute any user code.
             compile(source, filename or '<cell>', 'exec')
         except SyntaxError as error:
             start = point(error.lineno, error.offset)
@@ -143,7 +110,6 @@ def _python_diagnostics(source, filename='<cell>'):
                           'message': str(warning.message), 'source': 'Python',
                           'code': warning.category.__name__})
     return found
-
 
 def _project_state_context(ws, max_files=120, max_chars=12_000):
     "Bounded, current-disk evidence used when a person asks the charter to follow the code."
@@ -166,7 +132,6 @@ def _project_state_context(ws, max_files=120, max_chars=12_000):
             '\n\n## Current file map\n' + (names or '- no files') +
             '\n\n## Project-file excerpts\n' + ('\n\n'.join(excerpts) or '- none'))
 
-
 def _tool_preview(agent, tool, args):
     "Dry-run preview for editable calls; never invokes the tool or mutates the workspace."
     args = dict(args or {})
@@ -183,8 +148,6 @@ def _tool_preview(agent, tool, args):
         result = exhash(before, _cmds(args.get('commands', '[]')))
         return {'kind': 'patch', 'text': str(result)}
     if tool == 'replace_text':
-        # Previewed as the diff it would make, computed against the file on disk without
-        # writing it -- the same guarantee `edit_file` above gives.
         from .agent.tools import _apply_edits, _edits
         path = args.get('path', '')
         before = agent.host.text_at(path)
@@ -200,7 +163,6 @@ def _tool_preview(agent, tool, args):
         return {'kind': 'network', 'text': str(args.get('url') or args.get('query') or '')}
     return {'kind': 'json', 'text': json.dumps(args, indent=2, default=str)}
 
-
 TOOL_GROUPS = {
     'Repository': {'search_code', 'similar_code', 'outline', 'list_files', 'grep', 'ls',
                    'view_file', 'edit_file', 'replace_text', 'create_file'},
@@ -208,13 +170,11 @@ TOOL_GROUPS = {
     'Web': {'web_search', 'read_url', 'research'},
 }
 
-
 def _tool_group(name):
     "Which browser-facing family a tool belongs to."
     group = first(g for g, names in TOOL_GROUPS.items() if name in names)
     if group: return group
     return 'Notebook' if 'cell' in name or 'notebook' in name else 'Other'
-
 
 def _tool_schemas(agent):
     "Browser-sized schemas for editable checkpoint forms; callable validation remains authoritative."
@@ -238,25 +198,16 @@ def _tool_schemas(agent):
                     'group': _tool_group(tool.__name__), 'fields': fields})
     return out
 
-
 def _assigned_lines(source):
-    """Top-level bindings made by Python source, as ``[(line, name)]``.
-
-    This is deliberately syntax-aware rather than a regex: tuple unpacking, annotations,
-    imports and assignments inside a top-level control block all count, while locals inside
-    a function do not leak into the notebook namespace. The browser uses the line number to
-    put the kernel's real value beside the statement that created it.
-    """
+    "Top-level bindings made by Python source, as ``[(line, name)]``."
     try: tree = ast.parse(source or '')
     except SyntaxError: return []
     found = []
-
     def target(node, line=None):
         if isinstance(node, ast.Name): found.append((line or node.lineno, node.id))
         elif isinstance(node, (ast.Tuple, ast.List)):
             for child in node.elts: target(child, line)
         elif isinstance(node, ast.Starred): target(node.value, line)
-
     class Bindings(ast.NodeVisitor):
         def visit_Assign(self, node):
             for t in node.targets: target(t, node.lineno)
@@ -281,10 +232,8 @@ def _assigned_lines(source):
         def visit_FunctionDef(self, node): found.append((node.lineno, node.name))
         visit_AsyncFunctionDef = visit_FunctionDef
         def visit_ClassDef(self, node): found.append((node.lineno, node.name))
-
     Bindings().visit(tree)
     return list(dict.fromkeys(found))
-
 
 def _inline_values(source, groups, outputs=(), result_info=None):
     "Kernel values for bindings and a final expression, located on their source lines."
@@ -296,8 +245,6 @@ def _inline_values(source, groups, outputs=(), result_info=None):
                         'type': row.get('type', ''), 'shape': row.get('shape'),
                         'dtype': row.get('dtype'), 'is_grid': bool(row.get('is_grid')),
                         'accessor': row.get('accessor') or [name]})
-    # Jupyter's useful last-expression result belongs beside that expression too. Keep the
-    # marker tiny (the root name, e.g. ``df`` for ``df.dtypes``); clicking reveals the repr.
     output_result = first(o for o in reversed(outputs or ()) if o.get('output_type') == 'execute_result')
     if output_result:
         try:
@@ -317,28 +264,20 @@ def _inline_values(source, groups, outputs=(), result_info=None):
         except (SyntaxError, IndexError): pass
     return out
 
-
 async def _cell_extras(k, cell):
-    """Inspector rows and the rich last result for a finished cell, or `(None, None)`.
-
-    Inline annotations are a bonus, never a reason for a completed cell to look hung. A
-    sick inspector gets two seconds; outputs return without the pills.
-    """
+    "Inspector rows and the rich last result for a finished cell, or `(None, None)`."
     if not k or cell.has_error: return None, None
     rows = await k.api('/api/rows', {'profile': 'full', 'sort': 'name'}, timeout=2)
     has_result = any(o.get('output_type') == 'execute_result' for o in cell.outputs)
     latest = await k.api('/api/result', timeout=2) if has_result else None
     return rows, (latest or {}).get('result')
 
-
 def _edit_diffs(a):
     "Per-file diffs for what an assistant turn actually wrote."
     return [{'path': p, **_diff(was, now)} for p, (was, now) in a.changes().items()]
 
-
 def _activity_changes(a, versions):
-    """Activity rows that moved since the last poll: new calls and in-place transitions
-    (pending -> done), not only appends. `versions` is the caller's running record."""
+    "Activity rows that moved since the last poll: new calls and in-place transitions"
     changed = []
     for row in a.activity.rows(mark=a.activity._mark):
         version = (row.get('done'), row.get('ok'), row.get('line'), row.get('detail'), row.get('secs'))
@@ -347,9 +286,8 @@ def _activity_changes(a, versions):
             changed.append(row)
     return changed
 
-
 def _history_sessions(turns, execution=()):
-    """Turns grouped by durable model-context id; old untagged history splits after 30m."""
+    "Turns grouped by durable model-context id; old untagged history splits after 30m."
     groups, by_id, legacy_n, legacy_last = [], {}, 0, None
     for turn in turns or ():
         sid, at = turn.get('session') or '', float(turn.get('at') or 0)
@@ -369,30 +307,13 @@ def _history_sessions(turns, execution=()):
                              'context_continues': True, 'code': row.get('code', 0)})
     return list(reversed(groups))
 
-
 async def _explain(k, err, scope='live'):
-    """A kernel error with a `did you mean` appended, when a near-miss name exists.
-
-    Guarded on the message rather than run for every failure: the suggestion costs an
-    extra call to the kernel's inspector, and only a `NameError` can use one.
-    """
+    "A kernel error with a `did you mean` appended, when a near-miss name exists."
     if not (err and 'is not defined' in err): return err
     return did_you_mean(err, await k.names(scope)) if k else err
 
-
-# ---------------------------------------------------------------------------
-# chrome
-# ---------------------------------------------------------------------------
 def _header(ws):
-    """Project identity first, document tabs second, infrequent actions in menus.
-
-    A branch is project context rather than a toolbar command, so it stays beside the
-    workspace switcher. The former wall of run/editor controls now has named doors; the
-    command palette remains the exhaustive surface.
-    """
-    # The chosen folder, like the branch pill beside it. These two name the same project and
-    # looked like they did -- but only the branch actually followed the choice, so the name next
-    # to it went on saying whichever folder happened to be opened first.
+    "Project identity first, document tabs second, infrequent actions in menus."
     root = ws.project_root
     return Header(
         Button(Span('leela', cls='lee-brand'), Span(Path(root).name if root else 'open workspace',
@@ -400,8 +321,6 @@ def _header(ws):
                id='workspacepill', title='switch or open workspace', onclick='leeWorkspaceMenu(this)'),
         Button('no git', id='gitpill', cls='lee-branch-switcher', title='switch branch',
                onclick='leeBranchMenu(this)'),
-        # Fetch, pull and push beside the branch they act on: the three remote gestures are
-        # the only Git commands frequent enough to cost a click rather than a panel.
         Div(*(Button(glyph, id=f'git{op}', cls='lee-git-quick', title=title, aria_label=title,
                      onclick=f'leeGitQuick("{op}")')
               for op, glyph, title in (('fetch', '⭮', 'fetch from remotes'),
@@ -421,7 +340,6 @@ def _header(ws):
         _kernel_pill(ws),
         cls='lee-header', id='header')
 
-
 def _git_panel():
     return Section(
         Div(Span('source control', cls='lee-ptitle'), Span(cls='lee-spacer'),
@@ -431,14 +349,8 @@ def _git_panel():
         Div(Div('loading repository…', cls='lee-dim lee-git-empty'), id='gitpanel', cls='lee-git-panel'),
         cls='lee-panel lee-source-control')
 
-
 def _workflows_panel():
-    """GitHub Actions for this project, read locally and reached through gheasy.
-
-    The panel is deliberately useful before it is connected: the workflow files are on disk,
-    so the graph draws with no token, no network and no `gheasy` installed, and the run
-    history is the part that asks for those.
-    """
+    "GitHub Actions for this project, read locally and reached through gheasy."
     return Section(
         Div(Span('workflows', cls='lee-ptitle'), Span(cls='lee-spacer'),
             Button('refresh', cls='lee-btn', onclick='leeWorkflows()', title='reread the workflow files'),
@@ -446,7 +358,6 @@ def _workflows_panel():
                    aria_label='minimise workflows', onclick='leePane("left", false)'), cls='lee-phead'),
         Div(Div('reading workflows…', cls='lee-dim'), id='workflowspanel', cls='lee-workflows-panel'),
         cls='lee-panel lee-workflows')
-
 
 def _releases_panel():
     "The release pipeline, its state, and the terminal the steps run on."
@@ -458,7 +369,6 @@ def _releases_panel():
         Div(Div('reading the pipeline…', cls='lee-dim'), id='releasespanel', cls='lee-releases-panel'),
         cls='lee-panel lee-releases')
 
-
 def _deploy_panel():
     "Where this app runs, what it is missing, and the stages that put it there."
     return Section(
@@ -469,13 +379,8 @@ def _deploy_panel():
         Div(Div('reading the deploy plan…', cls='lee-dim'), id='deploypanel', cls='lee-releases-panel'),
         cls='lee-panel lee-deploys')
 
-
 def _drive_panel():
-    """The same deploy as `deploy.py`, taken apart into the library calls it makes.
-
-    A panel of its own rather than a view inside Deploy: they are alternatives, and keeping
-    them apart is what makes them comparable.
-    """
+    "The same deploy as `deploy.py`, taken apart into the library calls it makes."
     return Section(
         Div(Span('drive', cls='lee-ptitle'), Span(cls='lee-spacer'),
             Button('refresh', cls='lee-btn', onclick='leeDrive()', title='re-read the values'),
@@ -483,7 +388,6 @@ def _drive_panel():
                    aria_label='minimise drive', onclick='leePane("left", false)'), cls='lee-phead'),
         Div(Div('reading the parts…', cls='lee-dim'), id='drivepanel', cls='lee-releases-panel'),
         cls='lee-panel lee-drive')
-
 
 def _symbols_panel():
     return Section(
@@ -494,7 +398,6 @@ def _symbols_panel():
         Div(Div('Open a source file to see its symbols.', cls='lee-dim'), id='symbols',
             cls='lee-symbols', role='tree', aria_label='file structure'),
         cls='lee-panel lee-structure')
-
 
 def _left_workspace(ws):
     return Aside(
@@ -520,7 +423,6 @@ def _left_workspace(ws):
                    data_left='drive', title='Drive the packages one call at a time',
                    aria_label='Drive the packages one call at a time',
                    onclick='leeLeft("drive")'),
-            # Pushed to the foot of the rail: these act on the pane, not on what it shows.
             Span(cls='lee-activity-spacer'),
             Button('●', cls='lee-pane-pin pinned', type='button', data_pane_pin='left',
                    title='pinned open — unpin to close it when you click away',
@@ -533,7 +435,6 @@ def _left_workspace(ws):
             _releases_panel(), _deploy_panel(), _drive_panel(), _toast_panel(), cls='lee-left-content'),
         cls='lee-left left-files', id='left')
 
-
 def _toast_panel():
     "The left-sidebar cheatsheet: the keys that earn space but do not fit the footer."
     rows = [Div(Kbd(k), Span(lbl), cls='lee-krow') for k, lbl in toast_rows()]
@@ -543,9 +444,8 @@ def _toast_panel():
         Div(*rows, id='keytoast', cls='lee-toast', aria_live='polite'),
         cls='lee-panel lee-keys')
 
-
 def _toolbar():
-    """Only the actions used continuously; everything else lives in a named menu."""
+    "Only the actions used continuously; everything else lives in a named menu."
     actions = {'run_cell', 'run_advance', 'run_file', 'run_selection', 'interrupt'}
     buttons = [_btn(b) for b in btn_bar('toolbar') if b.action in actions]
     return Div(*buttons, Span(cls='lee-spacer'),
@@ -553,20 +453,13 @@ def _toolbar():
                       aria_label='more editor actions', onclick='leeEditorMenu(this)'),
                cls='lee-toolbar', id='toolbar')
 
-
 def _vars_panel(ws):
-    """The right sidebar: owner or agent-session namespace, then filtering.
-
-    The toggle governs both exec and this tree. Agent is the protected persistent layer
-    used by run_python, so derived variables can be inspected and continued interactively.
-    """
+    "The right sidebar: owner or agent-session namespace, then filtering."
     return Section(
         Div(Span('variables', cls='lee-ptitle'),
             Div(Button('live', id='sc-live', cls='lee-seg active', onclick='leeScope("live")'),
                 Button('agent', id='sc-agent', cls='lee-seg', onclick='leeScope("agent")'),
                 cls='lee-segbar', title='live is your kernel · agent is its protected persistent layer'),
-            # Named only when it is *not* the tab's kernel: a panel showing a running app
-            # must never be mistaken for the notebook's own namespace.
             Span(id='envtag', cls='lee-pill lee-pill-on', style='display:none'),
             Span(cls='lee-spacer'), _action_bar('web_vars'), _action_bar('vars'), _menu_button('variable'),
             cls='lee-phead'),
@@ -579,7 +472,6 @@ def _vars_panel(ws):
             cls='lee-filterbar'),
         Div(Div('connect a kernel to see variables', cls='lee-dim'), id='vars', cls='lee-vars'),
         cls='lee-panel lee-varspanel')
-
 
 def _empty_editor():
     "First paint with no tab: brand + one path into each main surface."
@@ -605,19 +497,16 @@ def _empty_editor():
               Kbd('mod+e'), ' recent files'),
         cls='lee-empty')
 
-
 def _editor_pane(ws):
     "Primary editor plus an optional client-mounted second pane."
     t = ws.tab
     primary = (Div(_empty_editor(), id='editor', cls='lee-editor', tabindex='-1') if t is None else
                Div(id='editor', cls='lee-editor', data_kind=t.kind, data_path=t.path,
                    data_lang=t.lang or '', tabindex='-1'))
-    # `mountTab` clones this when a tab closes, so the empty state is written once, here.
     return Div(primary, Div(cls='lee-editor-splitter'),
                Div(id='editor2', cls='lee-editor lee-editor-secondary', hidden=True),
                Template(_empty_editor(), id='leeempty'),
                cls='lee-editor-stage', id='editorstage')
-
 
 def _exec_strip():
     "The merged exec box. One editor; the live/agent toggle decides where it runs."
@@ -630,13 +519,8 @@ def _exec_strip():
         Div(id='execbox', cls='lee-execbox'),
         cls='lee-panel lee-exec')
 
-
 def _term_panel(gate):
-    """The terminal drawer: hidden until `ctrl+alt+~` asks for it.
-
-    Rendered even when terminals are disabled, so the reason shows up in the place the
-    user looked for the feature rather than as silence.
-    """
+    "The terminal drawer: hidden until `ctrl+alt+~` asks for it."
     body = (Div(Div('open a terminal with + or ctrl+`', cls='lee-termempty', id='termempty'),
                 id='terms', cls='lee-terms')
             if gate.enabled else Div(gate.why, cls='lee-dim lee-termoff'))
@@ -648,9 +532,6 @@ def _term_panel(gate):
             Span(cls='lee-spacer'),
             Button('expand', id='termexpand', cls='lee-icon', title='expand or restore terminal',
                    onclick='leeTermExpand()'),
-            # Hidden until `/term/info` says a terminal application is actually installed: an
-            # embedded terminal cannot *become* the one you live in, so the honest offer is to
-            # hand the project over to it rather than to imitate it.
             Button('external', id='termexternal', cls='lee-icon', hidden=True,
                    title='open this project in your terminal application',
                    onclick='leeExternalTerm()'),
@@ -659,14 +540,8 @@ def _term_panel(gate):
         body,
         cls='lee-panel lee-termpanel', id='termwrap', data_term_src=_asset('lee-term.js'))
 
-
 def _log_panel():
-    """Where the detail a toast cannot hold goes: git output, and what a running app prints.
-
-    Two things drove this. Git's refusals are multi-line -- the list of files a checkout would
-    overwrite is the useful part -- and a status line shows one clipped sentence of it. And
-    `/dev/log` has always kept what dev servers print, with nothing in the browser reading it.
-    """
+    "Where the detail a toast cannot hold goes: git output, and what a running app prints."
     return Section(
         Div(Span('logs', cls='lee-ptitle'),
             Button('all', cls='lee-logfilter active', data_log_filter='', onclick='leeLogFilter("")'),
@@ -678,7 +553,6 @@ def _log_panel():
             cls='lee-phead'),
         Div(cls='lee-logbody', id='loglist'),
         cls='lee-panel lee-logpanel', id='logwrap')
-
 
 def _bottom_dock(ws, gate):
     "One bounded lower workspace: Exec, Terminal and Logs switch in place instead of stacking."
@@ -693,7 +567,6 @@ def _bottom_dock(ws, gate):
         Div(_exec_strip(), _term_panel(gate), _log_panel(), cls='lee-dockbody'),
         cls='lee-bottomdock dock-exec', id='bottomdock')
 
-
 def _memory_panel():
     return Section(
         Div(Span('memory', cls='lee-ptitle'), Span(id='memorystatus', cls='lee-keyscope'),
@@ -702,8 +575,6 @@ def _memory_panel():
         Nav(Button('notes', cls='active', data_memory_view='notes', onclick='leeMemoryNotes()'),
             Button('sources', data_memory_view='sources', onclick='leeMemoryHome()'),
             Button('topics', data_memory_view='topics', onclick='leeMemoryTopics()'),
-            # The vault view is entirely server-rendered: one GET, and every action inside it is a
-            # form. Nothing here has client state to keep in step.
             Button('vault', data_memory_view='vault', onclick='setMemoryView("vault")',
                    hx_get='/vault/panel', hx_target='#memorybody', hx_swap='innerHTML'),
             Span(cls='lee-spacer'), Button('manage', cls='warn', title='remove remembered items', onclick='leeMemoryPurge()'),
@@ -714,7 +585,6 @@ def _memory_panel():
         Div(Div('Pages you read and research will appear here.', cls='lee-memory-empty'),
             id='memorybody', cls='lee-memory-body'),
         cls='lee-panel lee-memory')
-
 
 def _right_workspace(ws):
     "Agent, variables and durable research memory share the right-hand work area."
@@ -732,11 +602,9 @@ def _right_workspace(ws):
         Div(_agent_panel(ws), _vars_panel(ws), _memory_panel(), cls='lee-rightbody'),
         cls='lee-right right-agent', id='right')
 
-
 def _agent_panel(ws):
     "Bottom centre; model choices load asynchronously after the editor can paint."
     from .agent.core import DFLT_LOCAL, env as _env
-
     agent_model = ws.model or _env('MODEL') or DFLT_LOCAL
     inline_model = ws.inline_model or _env('MODEL_INLINE') or 'gpt-mini'
     completion_model = ws.completion_model or _env('MODEL_COMPLETION') or 'gpt-4.1'
@@ -747,7 +615,6 @@ def _agent_panel(ws):
         Span('Create a reviewed charter from this codebase. Leela remembers it and can refresh it as the project changes.'),
         Button('Set up agent state', cls='lee-btn go', type='button', onclick='leeAgentState()'),
         cls='lee-agent-welcome')
-
     return Section(
         Div(Div(Span('agent', cls='lee-ptitle'),
                 Span('state active' if has_state else 'no state', id='agentnames', cls='lee-agent-state-badge'),
@@ -800,8 +667,6 @@ def _agent_panel(ws):
                         Label('compaction', Select(Option('surgical · readable tool trail', value='surgical', selected=ws.compact_strategy == 'surgical'),
                                                    Option('summary · model checkpoint', value='summary', selected=ws.compact_strategy == 'summary'),
                                                    id='compactstrategy', cls='lee-select', onchange='leeAgentCompaction()')),
-                        # `auto` sizes the turn from the prompt; the numbers are for the long job
-                        # that keeps stopping one step short of finished.
                         Label('tool calls per turn',
                               Input(id='toolbudget', cls='lee-input', value=str(ws.tool_budget),
                                     list='toolbudgets', autocomplete='off', spellcheck='false',
@@ -829,7 +694,6 @@ def _agent_panel(ws):
             cls='lee-promptbar lee-agent-composer'),
         cls='lee-panel lee-agent')
 
-
 def _footer():
     "Always-visible keys plus status."
     ks = (by_scope('global') + by_scope('editor')).filter(lambda k: k.show == 'footer')
@@ -837,7 +701,6 @@ def _footer():
     return Footer(*kids, Span(cls='lee-spacer'),
                   Span(id='status', cls='lee-status', role='status', aria_live='polite', hidden=True),
                   cls='lee-footer')
-
 
 def _shell(ws, gate):
     "The whole app body; every structural route returns this so the client re-mounts consistently."
@@ -858,33 +721,14 @@ def _shell(ws, gate):
         Button('terminal / exec', cls='lee-pane-restore restore-bottom', onclick='leePane("bottom", true)'),
         id='shell', cls='lee-app')
 
-
-# ---------------------------------------------------------------------------
-# app
-# ---------------------------------------------------------------------------
 def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     "Build the FastHTML IDE around an open workspace. `gate` decides who may open a terminal."
-    # Registering makes asking possible: with nobody listening `Approvals` refuses every
-    # gated write immediately rather than parking the model's thread on an answer that is
-    # never coming. The browser counts as a listener for as long as the app is served.
     ws.approvals.listen()
     gate = gate or TerminalGate()
-    # (tab identity, cell id) -> (runtime, execution task). This keeps Stop aimed at the
-    # cell that started the work even if the person switches tabs before pressing it.
-    # `RunState` owns it so blocks can share it; `running_cells` is the same dict under its
-    # old name, so the routes still in this function are untouched until they move.
     _runstate = RunState()
     running_cells = _runstate.cells
-    # Everything is served from disk. FastHTML's default headers pull htmx and friends
-    # from a CDN, which would make a local IDE need the network to start -- and fail
-    # outright behind a proxy or on a plane. `default_hdrs=False` plus the vendored
-    # bundles keeps it self-contained, the same reason CodeMirror is vendored.
-    # JS sources live in `leela/static/js/` and concatenate to `lee-ide.js` via tools/build_ide_js.py.
     hdrs = (Link(rel='icon', href=_asset('favicon.svg'), type='image/svg+xml'),
             Script(src=_asset('htmx.min.js')),
-            # Runs before the stylesheet so the first paint is already the chosen family. It
-            # duplicates `parseTheme` in js/15_prefs.js on purpose: the bundle is deferred, and
-            # waiting for it is a flash of the wrong theme. Pre-family values are still honoured.
             Script("""try { const legacy = {system: 'leela:system:relaxed', dark: 'leela:dark:relaxed', light: 'leela:light:relaxed', cursor: 'cursor:light:tight'};
 const stored = localStorage.getItem('lee-theme') || 'cursor:light:tight';
 const [family, mode, density] = (stored.includes(':') ? stored : legacy[stored] || 'cursor:light:tight').split(':');
@@ -897,53 +741,28 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             Link(rel='stylesheet', href=_asset('lee-term.css')),
             Link(rel='stylesheet', href=_asset('lee-ide.css')),
             Script(src=_asset('lee-ide.js'), defer=True))
-
-    # The pty websocket is registered when the app is built, before any block connects, so
-    # it cannot reach the term block's Ctx. It shares the block's definition instead.
     def _term_cwd(ref=None): return term_cwd(ws, ref)
-
     def _term_settings(session):
-        """The `terminal` settings block, layered user-then-workspace as everything else is.
-
-        Read per terminal rather than held: changing your shell should apply to the next terminal
-        you open, not the next time Leela starts. A missing or malformed file is the defaults,
-        which is what `Settings` already answers with.
-        """
+        "The `terminal` settings block, layered user-then-workspace as everything else is."
         from .blocks.settings.settings import Settings
         try: return Settings(session.project_root).effective().get('terminal', {}) or {}
         except Exception: return {}
-
     async def term_ws(sock):
-        """One websocket, one pty. Binary frames are keystrokes; text frames are control.
-
-        The split is what keeps the protocol free of escaping: a pty's traffic is
-        arbitrary bytes, so anything that needs *structure* (the opening handshake, a
-        resize) travels as text and everything else is passed through untouched.
-        """
+        "One websocket, one pty. Binary frames are keystrokes; text frames are control."
         await sock.accept()
         t = key = None
         try:
             hello = json.loads((await sock.receive()).get('text') or '{}')
-            gate.check(hello.get('token'))          # raises unless this connection may have a pty
+            gate.check(hello.get('token'))
             kind = hello.get('kind', 'shell')
             cwd = _term_cwd(hello.get('cwd'))
-            # `kind` is what a terminal *is*, and the only place argv is decided. A shell
-            # with a command typed into it would race the prompt and could not report a
-            # missing tool before the pty existed.
             argv = (lazygit_argv(cwd) if kind == 'git' else
                     gh_auth_argv() if kind == 'gh-auth' else None)
             shell = _term_settings(ws)
             key = hello.get('id') or kind
-            # Every pty is started *inside* the project's uv/venv rather than asking the user
-            # to activate it in each tab -- lazygit included, because a commit runs the
-            # project's hooks and `gh` shells out too. What a tab runs differs; which
-            # environment it runs in does not.
             from .blocks.runtime.kernels import venv_env
             py = _term_python(ws, cwd)
             env = venv_env(py) if py else None
-            # Only a shell gets a prelude: `argv` means this pty is a program, and the line
-            # would be keystrokes into lazygit's UI or `gh auth login`'s prompt. `path_prelude`
-            # writes it in the user's own shell language, because `export` is not fish.
             prelude = path_prelude(py, shell.get('shell')) if argv is None else ''
             if argv is None:
                 argv = shell_argv(shell.get('shell'), shell.get('shellArgs'), shell.get('loginShell'))
@@ -953,9 +772,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             await sock.send_text(json.dumps({'t': 'error', 'error': errstr(e)}))
             await sock.close()
             return
-
         async def to_browser(data): await sock.send_bytes(data)
-
         async def from_browser():
             while True:
                 m = await sock.receive()
@@ -964,12 +781,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 elif (s := m.get('text')) is not None:
                     c = json.loads(s)
                     if c.get('t') == 'size': t.resize(c.get('cols', 80), c.get('rows', 24))
-
         pump = asyncio.create_task(t.stream(to_browser))
         recv = asyncio.create_task(from_browser())
         try:
             await asyncio.wait({pump, recv}, return_when=asyncio.FIRST_COMPLETED)
-            if pump.done():                          # the child exited; say so before closing
+            if pump.done():
                 ws.terms.close(key)
                 try: await sock.send_text(json.dumps({'t': 'exit', 'note': t.exit_note}))
                 except Exception: pass
@@ -978,48 +794,33 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 if not task.done(): task.cancel()
             try: await sock.close()
             except Exception: pass
-
     app, rt = fast_app(pico=False, default_hdrs=False, hdrs=hdrs,
                        routes=(Mount('/leestatic', Assets(*static_dirs())),
                                WebSocketRoute('/term/ws', term_ws)))
-
-    # Open notebooks, unsaved buffers and per-kernel run locks. `DocStore` owns them so the
-    # extracted blocks can share them as a capability; the four names below are the same
-    # objects under their old names, so the routes still in this function are untouched
-    # until they move. See `leela/core/session.py`.
     _docstore = DocStore(ws)
     _docs: dict[str, Notebook] = _docstore.docs
     _buffers: dict[str, str] = _docstore.buffers
     _buffer_bases: dict[str, str] = _docstore.bases
     _run_locks: dict[str, asyncio.Lock] = _docstore.run_locks
-    # A paused debugger belongs to the kernel that started it, not whichever tab becomes
-    # active while stepping into another source file.
     _debug = {'kernel': None, 'origin_path': '', 'cell_id': ''}
     _direct_debug = {'session': None, 'task': None, 'name': ''}
-
     def _doc():
         t = ws.tab
         return None if t is None else _docs.get(t.path or t.title)
-
     def _live_assistants():
         "Only the assistants already built -- reaching for `ws.ai` here would construct one."
         return L(ws._ai, ws._inline_ai).filter(lambda a: a is not None)
-
     def _refresh_assistants():
         for a in _live_assistants(): a.refresh()
-
     def _dbg(method=None):
         "The kernel holding the paused notebook debugger, when it can serve `method`."
         k = _debug.get('kernel')
         return k if k is not None and (method is None or hasattr(k, method)) else None
-
     def _open_path(path):
         "The workspace file a debug frame refers to, or '' when it is outside the sandbox."
         try: return str(ws.fs._check(path, must_exist=True))
         except Exception: return ''
-
     def _frame_path(frame): return (frame.get('source') or {}).get('path') or ''
-
     def _debug_ui(state):
         "Map temporary cell sources back to the notebook and mark project files safe to open."
         state.update(origin_path=_debug.get('origin_path'), cell_id=_debug.get('cell_id'))
@@ -1034,19 +835,15 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             else:
                 frame['open_path'] = _open_path(path)
         return state
-
     def _direct_debug_ui(state):
         for frame in state.get('frames', []): frame['open_path'] = _open_path(_frame_path(frame))
         return state
-
     def _previous_runs():
-        """A reset namespace makes every saved output historical, even though it remains useful."""
+        "A reset namespace makes every saved output historical, even though it remains useful."
         _docstore.mark_all_stale()
-
     async def _k(tab=None):
         "The explicitly picked runtime, else the addressed tab's own project/notebook kernel."
         return await ws.runtime(tab)
-
     def _run_owner(d):
         "Resolve a notebook request to the tab that submitted it, even after a tab switch."
         ref = str(d.get('path') or '')
@@ -1055,37 +852,19 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         nb = _docs.get(tab.path or tab.title)
         key = ws.kernel_key(tab)
         return tab, nb, _run_locks.setdefault(key, asyncio.Lock())
-
     async def _api(path, params=None, timeout=15):
-        """Proxy inspection through the exact runtime used by Run.
-
-        This intentionally resolves ``Workspace.runtime`` rather than independently
-        peeking at an inspector. A selected venv may restart or replace the tab kernel;
-        execution and Variables must cross the same runtime boundary on every request,
-        not merely happen to agree while the old kernel is still cached.
-        """
+        "Proxy inspection through the exact runtime used by Run."
         client = await _k()
         return await client.api(path, params, timeout) if client else None
-
-    # -- shell -------------------------------------------------------------
     @rt('/')
     def home():
         return Title('leela'), _shell(ws, gate)
-
     @rt('/markdown/render')
     async def markdown_render(req):
-        """Paste-safe Markdown rendering through mdhtml's explicit dialect.
-
-        Raw style/script tags become visible text; only an authored ``{=html}`` block is
-        treated as deliberate passthrough by the dialect. References use id mode because
-        an IDE fragment may point at a target in another cell.
-        """
+        "Paste-safe Markdown rendering through mdhtml's explicit dialect."
         d = await req.json()
         text = str(d.get('text') or '')
         if len(text) > 1_000_000: return _fail('markdown fragment is larger than 1 MB')
-        # Explicit raw HTML is useful in a Markdown cell the person authored, but model,
-        # kernel-output and fetched-web Markdown are untrusted. Turn their passthrough
-        # fences into ordinary highlighted HTML code before mdhtml sees them.
         if not d.get('allow_raw', True):
             text = re.sub(r'(?m)^([ \t]*`{3,})\{=html\}([ \t]*)$', r'\1html\2', text)
         try:
@@ -1096,12 +875,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             warnings = list(getattr(symbolic, 'warnings', ())) + list(getattr(rendered, 'warnings', ()))
             return {'html': str(rendered), 'warnings': list(dict.fromkeys(map(str, warnings)))}
         except Exception as e: return _fail(e)
-
-    # The two routes below deliberately return *records about* Markdown and never HTML. A
-    # rendered document still comes from `/markdown/render` above and nowhere else, so its
-    # sanitisation is the only sanitisation in play; these say which source lines each block
-    # came from and which blocks changed, which is what a rendering needs to be read as a
-    # diff. See `leela/core/markdown.py` for why blocks, and not lines, are the unit.
     @rt('/markdown/blocks')
     async def markdown_blocks(req):
         "Top-level block spans of one Markdown document, for placing change marks."
@@ -1111,7 +884,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         blocks = md_blocks(text)
         ranges = d.get('ranges') or ()
         return {'blocks': blocks, 'kinds': md_change_kinds(blocks, ranges) if ranges else []}
-
     @rt('/markdown/diff')
     async def markdown_diff(req):
         "Two versions of a Markdown document paired block against block, in the new order."
@@ -1119,26 +891,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         left, right = str(d.get('left') or ''), str(d.get('right') or '')
         if max(len(left), len(right)) > 1_000_000: return _fail('markdown fragment is larger than 1 MB')
         return md_block_diff(left, right)
-
-    # `keys` and `settings` are connected as blocks at the end of this function.
-
-    # `runtime` is connected as a block; see BLOCKS.
-
-    # `fs` is connected as a block; see BLOCKS. `/fs/add_root` stays here because it
-    # re-renders the whole shell, which is the last thing left in this function.
     @rt('/fs/add_root')
     def add_root(path: str):
         try: ws.add_root(path); ws.save()
         except Exception as e: return _fail(str(e))
         return _shell(ws, gate)
-
-    # -- tabs --------------------------------------------------------------
-    # Tab routes swap only the tab bar, never the whole shell. Re-rendering everything
-    # for a tab switch would collapse the file tree, drop the exec editor and reset the
-    # variable panel -- the client re-mounts just the editor when #tabbar changes.
-    # `tabs` and `editor` are connected as blocks; see BLOCKS.
-
-    # -- notebooks ---------------------------------------------------------
     @rt('/nb/run')
     async def nb_run(req):
         "Run one cell against its submitting tab's kernel and return its outputs."
@@ -1158,15 +915,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         rows, result = await _cell_extras(k, c)
         return {'ok': not c.has_error, 'i': i, 'cell': c.dict(), 'result': result,
                 'inline': _inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)}
-
     @rt('/nb/run/stream')
     async def nb_run_stream(req):
-        """Run a cell while streaming its evolving Jupyter outputs as SSE.
-
-        Rishi's ``display_stream`` repeatedly updates one ``text/markdown`` display id.
-        Sending the cell's reconciled output list on each callback lets the browser redraw
-        that Markdown in place instead of looking frozen until inference ends.
-        """
+        "Run a cell while streaming its evolving Jupyter outputs as SSE."
         d = await req.json()
         owner_tab, nb, run_lock = _run_owner(d)
         i = int(d.get('i', 0))
@@ -1174,18 +925,12 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
             return _fail('that cell is no longer at this position', 409)
         nb[i].source = d.get('source', nb[i].source)
-        # Code in this cell may immediately crawl the project and parse notebooks. Repair
-        # zero-byte placeholders left by generic file creation before it can observe invalid
-        # JSON on disk (PyCharm performs the equivalent initialization on save/run).
         await _off_loop(ws.initialize_empty_notebooks, ws.cwd_for(owner_tab))
-        # Acquire before returning the StreamingResponse. If this lived inside `events`,
-        # Starlette could schedule two new streams in reverse order after startup.
         await run_lock.acquire()
         try: k = await _k(owner_tab)
         except BaseException:
             run_lock.release()
             raise
-
         async def events():
             q = asyncio.Queue()
             if owner_tab: owner_tab.running += 1
@@ -1197,8 +942,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 while not task.done() or not q.empty():
                     try: outputs = await asyncio.wait_for(q.get(), 0.12)
                     except asyncio.TimeoutError: continue
-                    # Markdown display updates can arrive token-by-token. Keep the newest
-                    # frame instead of making the browser render a backlog it can no longer see.
                     while not q.empty(): outputs = q.get_nowait()
                     yield _sse('output', {'i': i, 'outputs': outputs})
                 c = await task
@@ -1213,13 +956,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 if running_cells.get(run_key, (None,))[1:] == (task,): running_cells.pop(run_key, None)
                 if not task.done(): task.cancel()
                 run_lock.release()
-
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-
     @rt('/nb/debug/stream')
     async def nb_debug_stream(req):
-        """Debug one code cell through ipykernel's Jupyter Debug Protocol."""
+        "Debug one code cell through ipykernel's Jupyter Debug Protocol."
         d = await req.json()
         owner_tab, nb, run_lock = _run_owner(d)
         i = int(d.get('i', 0))
@@ -1229,9 +970,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             return _fail('that cell is no longer at this position', 409)
         if nb[i].cell_type != 'code': return _fail('only code cells can be debugged')
         nb[i].source = d.get('source', nb[i].source)
-        # Debug configuration and execution share the same kernel channels as normal
-        # cells. Reserve the runtime before startup so a definition cannot be overtaken
-        # by its debugged use (or vice versa).
         await run_lock.acquire()
         try: k = await _k(owner_tab)
         except BaseException:
@@ -1240,14 +978,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if getattr(k, 'kernel_kind', None) != 'ipykernel' or not hasattr(k, 'debug_start'):
             run_lock.release()
             return _fail('cell debugging currently requires a direct ipykernel runtime')
-        # The debugger UI has one global frame/variable selection. Do not let a second
-        # notebook replace that state while the first is paused, even on another kernel.
         if _debug.get('kernel') is not None:
             run_lock.release()
             return _fail('a debugger session is already active', 409)
         breakpoints = d.get('breakpoints') or []
         _debug.update(kernel=k, origin_path=owner_tab.path, cell_id=nb[i].id)
-
         async def events():
             q, c = asyncio.Queue(), nb[i]
             c.clear(); c.running = True
@@ -1257,7 +992,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 notebook_sources = [(cell.id, cell.source) for cell in nb.cells if cell.cell_type == 'code']
                 verified = await k.debug_start(c.source, breakpoints, notebook_sources)
                 yield _sse('ready', {'i': i, 'breakpoints': verified})
-
                 def output(_out): q.put_nowait(('output', None))
                 def debug(event): q.put_nowait(('debug', event))
                 task = asyncio.create_task(k.execute(c.source, on_output=output, on_debug=debug))
@@ -1265,8 +999,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                     try: kind, value = await asyncio.wait_for(q.get(), .12)
                     except asyncio.TimeoutError: continue
                     if kind == 'output':
-                        # Kernel owns the reconciled final output list; incremental debug
-                        # output is intentionally only a repaint signal.
                         continue
                     if value.get('event') == 'stopped':
                         state = await k.debug_state((value.get('body') or {}).get('threadId'))
@@ -1289,10 +1021,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 except Exception: pass
                 if _debug.get('kernel') is k: _debug.update(kernel=None, origin_path='', cell_id='')
                 run_lock.release()
-
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-
     @rt('/nb/debug/state')
     async def nb_debug_state(frame_id: int = 0):
         if (k := _dbg('debug_state')) is None: return _fail('no ipykernel debugger is active')
@@ -1300,7 +1030,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             state = await k.debug_state(frame_id=frame_id or None)
             return _debug_ui(state)
         except Exception as e: return _fail(e)
-
     @rt('/nb/debug/source')
     async def nb_debug_source(frame_id: int):
         "Source for a stack frame outside the workspace, addressed by trusted frame id—not a client path."
@@ -1315,13 +1044,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             return {'content': reply.get('body', {}).get('content', ''), 'line': frame.get('line'),
                     'path': source.get('path', ''), 'name': frame.get('name', '')}
         except Exception as e: return _fail(e)
-
     @rt('/nb/debug/variables')
     async def nb_debug_variables(reference: int):
         if (k := _dbg('debug_variables')) is None: return _fail('no ipykernel debugger is active')
         try: return {'variables': await k.debug_variables(reference)}
         except Exception as e: return _fail(e)
-
     @rt('/nb/debug/evaluate')
     async def nb_debug_evaluate(req):
         d, k = await req.json(), _dbg('debug_evaluate')
@@ -1330,7 +1057,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             body = await k.debug_evaluate(d.get('code', ''), d.get('frame_id'))
             return {'ok': True, **body}
         except Exception as e: return _fail(e)
-
     @rt('/nb/debug/control')
     async def nb_debug_control(req):
         d, k = await req.json(), _dbg('debug_control')
@@ -1339,7 +1065,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             await k.debug_control(d.get('command', ''), d.get('thread_id'))
             return {'ok': True, 'command': d.get('command')}
         except Exception as e: return _fail(e)
-
     @rt('/nb/debug/stop')
     async def nb_debug_stop():
         if (k := _dbg('debug_stop')) is None: return _fail('no ipykernel debugger is active')
@@ -1348,14 +1073,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             await k.interrupt()
             return {'ok': True}
         except Exception as e: return _fail(e)
-
     @rt('/nb/ask')
     async def nb_ask(req):
-        """Run a prompt cell: the assistant answers, with the notebook above it as context.
-
-        Off the loop like every other model call, and slow enough that it has to be --
-        the file tree must keep responding while the answer is being written.
-        """
+        "Run a prompt cell: the assistant answers, with the notebook above it as context."
         d = await req.json()
         nb, i = _doc(), int(d.get('i', 0))
         if nb is None: return _fail('no notebook open')
@@ -1367,10 +1087,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         a = ws.inline_ai
         return {'ok': a.ready, 'i': i, 'cell': c.dict(), 'note': a.note,
                 'problems': a.problems,
-                'cells': [x.dict() for x in nb.cells],   # approval/compaction cells may have landed
+                'cells': [x.dict() for x in nb.cells],
                 'activity': a.activity.rows(mark=a.activity._mark),
                 'edits': _edit_diffs(a)}
-
     @rt('/nb/ask/stream')
     async def nb_ask_stream(req):
         "Stream a prompt cell into its own reply area as markdown arrives."
@@ -1383,21 +1102,17 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         owner_tab = ws.tab
         if owner_tab: owner_tab.running += 1
         a = ws.inline_ai
-
         async def events():
             import queue as _q
             out, done = _q.Queue(), object()
-
             def pump():
                 try:
                     for chunk in ws.ask_cell_stream(nb, i): out.put(('chunk', chunk))
                 except Exception as e: out.put(('error', errstr(e)))
                 finally: out.put((done, None))
-
             task = asyncio.get_running_loop().run_in_executor(None, pump)
             approval_id, activity_versions = None, {}
             def changed_activity(): return _activity_changes(a, activity_versions)
-
             try:
                 while True:
                     try: kind, value = await _off_loop(out.get, True, 0.25)
@@ -1429,10 +1144,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 if owner_tab is not None:
                     owner_tab.running = max(0, owner_tab.running - 1)
                     owner_tab.dirty = True
-
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-
     @rt('/nb/edit')
     async def nb_edit(req):
         "Structural edits: insert / delete / move / type / split / merge."
@@ -1440,8 +1153,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         nb = _doc()
         if nb is None: return _fail('no notebook open')
         op, i = d.get('op'), int(d.get('i', 0))
-        # Structural edits arrive with the current editor buffers in one request. Sending
-        # one HTTP request per cell made changing a type appear broken on large notebooks.
         for src in d.get('sources', []):
             j = int(src.get('i', -1))
             if 0 <= j < len(nb): nb[j].source = src.get('source', nb[j].source)
@@ -1484,7 +1195,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if ws.tab: ws.tab.dirty = nb.dirty
         return {'ok': True, 'cells': [c.dict() for c in nb.cells],
                 'index': at if op in ('undo', 'redo') else i}
-
     @rt('/nb/save')
     async def nb_save(req):
         d=await req.json();path=str(d.get('path') or '')
@@ -1517,7 +1227,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                     'operation_id': operation['id'] if operation else ''}
         except Exception as e:
             return _fail(e)
-
     @rt('/tabs/save-all')
     async def tabs_save_all():
         "Persist every dirty open tab, including buffers belonging to inactive tabs."
@@ -1544,18 +1253,13 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         ws.save()
         if errors: return _fail('; '.join(errors))
         return {'ok': True, 'saved': saved}
-
     @rt('/history/operations')
     def operation_history(limit: int = 50):
         return {'operations': ws.journal.rows(limit)}
-
     def _forget_operation_buffers(op):
         for path in (r['path'] for r in op.get('resources', [])):
-            # `forget` also drops the draft base version; leaving it behind made the next
-            # save-all refuse the tab as "changed on disk after this browser draft began".
             _docstore.forget(path)
             if (tab := first(t for t in ws.tabs if t.path == path)): tab.dirty = False
-
     @rt('/history/undo')
     async def operation_undo(req):
         try:
@@ -1563,7 +1267,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             _forget_operation_buffers(op)
             return {'ok': True, 'operation': op}
         except Exception as e: return _fail(e, 409)
-
     @rt('/history/redo')
     async def operation_redo(req):
         try:
@@ -1571,15 +1274,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             _forget_operation_buffers(op)
             return {'ok': True, 'operation': op}
         except Exception as e: return _fail(e, 409)
-
     @rt('/diff')
     async def diff_route(req):
-        """What the editor holds, against what is on disk.
-
-        The dirty dot says *that* a tab changed; this says what changed, which is the
-        question actually worth answering before a save -- or after the assistant or
-        lazygit has been at the file underneath the buffer.
-        """
+        "What the editor holds, against what is on disk."
         d = await req.json()
         t = ws.tab
         if t is None: return _fail('nothing open')
@@ -1594,17 +1291,13 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         else:
             buf = d.get('text', '')
         return {'path': t.path, 'title': t.title, **_diff(disk, buf)}
-
-    # -- exec strip --------------------------------------------------------
     @rt('/exec')
     async def exec_route(req):
-        """Run in the owner kernel or the agent's protected persistent overlay."""
+        "Run in the owner kernel or the agent's protected persistent overlay."
         d = await req.json()
         code, scope = (d.get('code') or '').strip(), d.get('scope', 'live')
         if not code: return {'ok': True, 'text': '', 'outputs': []}
         k = _debug.get('kernel') or await _k()
-        # A normal execute_request queues behind the paused cell forever. While debugging,
-        # the same Exec strip becomes a frame REPL and evaluates through DAP instead.
         if scope == 'live' and getattr(k, '_debug_thread', None) and hasattr(k, 'debug_evaluate'):
             try:
                 body = await k.debug_evaluate(code, d.get('frame_id'))
@@ -1626,16 +1319,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         return {'ok': res.ok, 'text': await _explain(k, res.error) or res.text or 'ok',
                 'outputs': res.outputs, 'count': res.execution_count, 'scope': 'live',
                 'result': (latest or {}).get('result')}
-
     @rt('/run/file')
     async def run_file(req):
-        """Run the open .py as a script, in the tab's kernel.
-
-        The editor's text is what runs, not the file on disk -- pressing run after typing
-        should run what is on the screen -- and it runs *in* the kernel rather than in a
-        subprocess, so everything the script defines is in the variable panel when it
-        finishes.
-        """
+        "Run the open .py as a script, in the tab's kernel."
         d = await req.json()
         code, label = ws.run_file_code(src=d.get('text'))
         if code is None: return _fail(label)
@@ -1643,7 +1329,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         res = await k.execute(code)
         return {'ok': res.ok, 'label': label, 'outputs': res.outputs,
                 'text': await _explain(k, res.error) or res.text or 'ok'}
-
     @rt('/run/code')
     async def run_code(req):
         "Run an arbitrary block -- what the `run selection` button sends -- in the tab's kernel."
@@ -1654,16 +1339,14 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         res = await k.execute(code)
         return {'ok': res.ok, 'outputs': res.outputs,
                 'text': await _explain(k, res.error) or res.text or 'ok'}
-
     @rt('/exec/history')
     async def exec_history(n: int = 200):
         "The rolling history notebook, oldest first -- what ctrl+up/down cycles through."
         r = await _api('/api/history', {'n': n})
         return {'cells': (r or {}).get('cells', [])}
-
     @rt('/lint')
     async def lint_route(req):
-        """Compiler or structural diagnostics for an unsaved buffer; source is never run."""
+        "Compiler or structural diagnostics for an unsaved buffer; source is never run."
         d = await req.json(); lang, code = d.get('lang'), str(d.get('code') or '')
         if lang == 'python':
             diagnostics = _python_diagnostics(code, d.get('path') or '<cell>')
@@ -1694,8 +1377,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         except Exception as e:
             diagnostics.append({'from': 0, 'to': min(1, len(code)), 'severity': 'error',
                                 'message': str(e), 'source': 'markdown'})
-        # Agent charters are ordinary Markdown, but these landmarks make state legible and
-        # updateable. Report omissions as advice rather than rejecting free-form documents.
         if d.get('path') == '<agent-state>':
             required = ('Role', 'Goal', 'Hard boundaries', 'Routing rules', 'Tool practices',
                         'Verification', 'Progress', 'Key decisions', 'Next steps', 'Critical context')
@@ -1706,9 +1387,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                                         'message': f'Consider adding “{heading}” to keep this charter complete.',
                                         'source': 'agent state'})
         return {'diagnostics': diagnostics}
-
-    # `lsp` is connected as a block; see BLOCKS.
-
     @rt('/complete')
     async def complete_route(req, pos: int = 0):
         "Completions from the kernel, so venv modules complete like they do in a real shell."
@@ -1722,22 +1400,15 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             try: runtime=await k.complete(code,at)
             except Exception: runtime={'from':at,'matches':[]}
         return await _off_loop(ws.search.merge_completions,code,at,runtime)
-
     @rt('/complete/warm')
     async def complete_warm():
         "Load the configured completion engine before the first requested suggestion."
         c = ws.completer
         b = await _off_loop(c.a._be_or_none, 'completion')
         return {'ok': b is not None, 'model': b.spec.name if b else '', 'note': c.a.note}
-
     @rt('/complete/ai')
     async def ai_complete_route(req):
-        """One inline suggestion from the local model, for what belongs at the cursor.
-
-        Never fired by typing: it costs a forward pass, and the kernel's own completions
-        above are instant and know the real namespace. This answers the other question --
-        what the next few lines should *say*.
-        """
+        "One inline suggestion from the local model, for what belongs at the cursor."
         d = await req.json()
         c = ws.completer
         context = ''
@@ -1752,7 +1423,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         text = await _off_loop(c.complete,code,at,d.get('lang') or 'python',context)
         return {'text':text,'note':c.note,'ready':c.ready,'model':c.a.routing.name_for('completion'),
                 'graph_methods':len(graph.get('details',[]))}
-
     @rt('/complete/selection')
     async def selection_help(req):
         "One throwaway AI response for selected editor text; never edits until the browser accepts it."
@@ -1775,28 +1445,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             prompt = f'Language: {lang}\nInstruction: {instruction}\n\n<selection>\n{text}\n</selection>'
             answer = await _off_loop(ws.ai.oneshot, prompt, sp, 'completion', 2048)
         answer = str(answer or '').strip()
-        # Completion models occasionally fence a replacement despite being told not to.
-        # Reuse fastcore's structural fence parser rather than trimming backticks by hand.
         from fastcore.xtras import fenced_blocks
         if blocks := fenced_blocks(answer): answer = str(blocks[-1][1]).strip()
         if not answer: return _fail(ws.ai.note or 'the model returned no suggestion')
         return {'ok': True, 'text': answer, 'mode': mode,
                 'model': ws.ai.routing.name_for('summary' if mode == 'summary' else 'completion')}
-
-    # `vars` is connected as a block; see BLOCKS.
-
-    # `search` is connected as a block; see BLOCKS.
-
-    # `workspace` and `git` are connected as blocks; see BLOCKS.
-
-    # `term` is connected as a block; see BLOCKS.
-
-    # `research` is connected as a block; see BLOCKS.
-
-    # -- live envs ---------------------------------------------------------
-    # -- run configurations & dev servers ----------------------------------
-    # `runs` is connected as a block; see BLOCKS.
-
     @rt('/debug/capabilities')
     def debug_capabilities():
         from .blocks.debug.debug import debugpy_available
@@ -1804,7 +1457,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         python = ws.pool.default_python or project_python(ws.fs.roots) or sys.executable
         return {'python': str(python), 'debugpy': debugpy_available(python),
                 'notebook': True, 'direct': debugpy_available(python)}
-
     @rt('/debug/install')
     async def debug_install(req):
         from .blocks.runtime.kernels import project_python
@@ -1818,7 +1470,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             if result.returncode: raise RuntimeError(result.stderr or result.stdout)
         try: await _off_loop(install); return {'ok': True, 'python': str(python)}
         except Exception as e: return _fail(e)
-
     @rt('/debug/start')
     async def debug_start(req):
         "Launch a Python file/module or attach through a direct debugpy DAP session."
@@ -1827,7 +1478,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         d = await req.json(); name = d.get('name') or ''
         run = ws.runs.get(name) if name else None
         config = run.dict() if run else dict(d)
-        root = ws.project_root or Path.cwd()   # a run configuration belongs to the chosen project
+        root = ws.project_root or Path.cwd()
         python = d.get('python') or ws.pool.default_python or project_python(ws.fs.roots) or sys.executable
         cwd = config.get('cwd') or str(root)
         if cwd and not Path(cwd).is_absolute(): cwd = str((root/str(cwd)).resolve())
@@ -1850,7 +1501,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             return _fail(e)
         _direct_debug.update(session=session, name=config.get('name') or Path(program or config.get('module','python')).name)
         return {'ok': True, 'name': _direct_debug['name'], 'python': str(python)}
-
     @rt('/debug/events')
     async def debug_events(req):
         "Stream direct DAP output, stops, continuation, exit, and errors."
@@ -1868,49 +1518,42 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 yield _sse(name or 'event', body)
                 if name in ('terminated', 'exited'): break
         return StreamingResponse(events(), media_type='text/event-stream', headers={'Cache-Control':'no-cache','X-Accel-Buffering':'no'})
-
     @rt('/debug/state')
     async def debug_state(frame_id: int = 0):
         session = _direct_debug.get('session')
         if session is None: return _fail('no direct debugger is active')
         try: return _direct_debug_ui(await _off_loop(session.state, None, frame_id or None))
         except Exception as e: return _fail(e)
-
     @rt('/debug/variables')
     async def debug_variables(reference: int):
         session = _direct_debug.get('session')
         if session is None: return _fail('no direct debugger is active')
         try: return {'variables': await _off_loop(session.variables, reference)}
         except Exception as e: return _fail(e)
-
     @rt('/debug/evaluate')
     async def debug_evaluate(req):
         session = _direct_debug.get('session'); d = await req.json()
         if session is None: return _fail('no direct debugger is active')
         try: return await _off_loop(session.evaluate, d.get('expression',''), d.get('frame_id'))
         except Exception as e: return _fail(e)
-
     @rt('/debug/control')
     async def debug_control(req):
         session = _direct_debug.get('session'); d = await req.json()
         if session is None: return _fail('no direct debugger is active')
         try: return {'ok': True, **(await _off_loop(session.control, d.get('command')))}
         except Exception as e: return _fail(e)
-
     @rt('/debug/breakpoints')
     async def debug_breakpoints(req):
         session = _direct_debug.get('session'); d = await req.json()
         if session is None: return _fail('no direct debugger is active')
         try: return {'ok': True, 'breakpoints': await _off_loop(session.set_breakpoints, d.get('path'), d.get('breakpoints') or [])}
         except Exception as e: return _fail(e)
-
     @rt('/debug/stop')
     async def debug_stop_direct():
         session = _direct_debug.get('session')
         if session: await _off_loop(session.disconnect)
         _direct_debug.update(session=None, name='')
         return {'ok': True}
-
     @rt('/runs/file')
     def runs_file():
         "The configurations file as text, or a template for one, for the in-IDE editor."
@@ -1922,21 +1565,12 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             text = json.dumps(ws.runs.template(t.path if t else None), indent=2) + '\n'
         return {'path': str(p or ''), 'exists': bool(p and p.exists()), 'text': text,
                 'note': ws.runs.note}
-
-    # -- what the assistant can see ---------------------------------------
     @rt('/screen')
     async def screen(req):
-        """Park a screenshot to go with the next question.
-
-        The capture itself has to happen in the browser -- `getDisplayMedia` needs a user
-        gesture and a real window server, neither of which a server-side grab has. So the
-        page sends the frame here, and it waits in the workspace until something asks.
-        """
+        "Park a screenshot to go with the next question."
         d = await req.json()
         url = d.get('data_url') or ''
         if not url.startswith('data:image'): return _fail('no image in that capture')
-        # The browser scales ordinary captures, but this route is still a public input
-        # boundary. Refuse an oversized encoded body before allocating its decoded copy.
         if len(url) > 12_000_000: return _fail('screen capture is larger than 9 MB', 413)
         import base64
         try: png = base64.b64decode(url.split(',', 1)[1], validate=True)
@@ -1944,40 +1578,28 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if len(png) > 9_000_000: return _fail('screen capture is larger than 9 MB', 413)
         ws.put_screen(png=png, note='a screenshot from the browser')
         return {'ok': True, 'bytes': len(png)}
-
-    # -- agent -------------------------------------------------------------
     @rt('/agent/info')
     async def agent_info(): return await _api('/agent/api/info') or {'mode': 'off'}
-
     @rt('/agent/sessions')
     async def agent_sessions():
         return await _api('/agent/api/sessions') or {'current': None, 'sessions': []}
-
     @rt('/agent/transcript')
     async def agent_transcript(session: str = ''):
         live = await _api('/agent/api/transcript', {'session': session}) or {'cells': []}
         return {'id': live.get('id'), 'path': live.get('path'), 'cells': live.get('cells', []),
                 'agent': list(ws.ai.history) if not session else [],
                 'inline': list(ws.inline_ai.history) if not session else []}
-
     @rt('/agent/history')
     async def agent_history():
-        """All durable turns grouped by model-context session, newest session first."""
+        "All durable turns grouped by model-context session, newest session first."
         execution = await _api('/agent/api/sessions') or {'sessions': []}
-        # Scripted is the test harness backend. It can share the developer config directory,
-        # but its fixture turns are not user conversations and must not bury real Luna history.
         turns = [t for t in ws.ai.history if t.get('model') != 'scripted']
         return {'sessions': _history_sessions(turns, execution.get('sessions', [])),
                 'model': ws.ai.model.name, 'current': ws.ai.session_id}
-
     @rt('/agent/models')
     def agent_models(legacy: bool = True):
         from .agent.core import DFLT_LOCAL, available_models, auth_status, resolve
         from .blocks.agent.models import load_models, runtimes
-        # Every part of this answer is asked for separately. One model that will not resolve --
-        # a `TokenError` out of `resolve` took the whole route down once -- used to 500 the
-        # endpoint, and the picker sat on "loading…" with no model selectable at all. A part
-        # that fails now costs its own entry and a note, and the rest of the list still arrives.
         notes = {}
         def _try(what, f, dflt=None):
             "`f()`, or `dflt` and a note saying why: no one failure may blank the picker."
@@ -1997,13 +1619,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         completion_dflt = ws.completion_model or os.environ.get('LEELA_MODEL_COMPLETION') or 'gpt-4.1'
         completion = (_name('completion model', lambda: ws.ai.routing.name_for('completion'), completion_dflt)
                       if ws._ai is not None else completion_dflt)
-        # A durable choice remains visible even before its provider is authenticated. Hiding
-        # it made the first local option look selected while requests still used the saved one.
         for current in (agent, inline, completion):
             spec = _spec(current)
             if spec is None:
-                # The chosen model is the one that cannot be resolved. It still gets a row, saying
-                # why: dropping it is what left the user with an empty picker and no explanation.
                 why = f'unavailable ({notes.get(current, "")})'
                 row = first(r for r in rows if r['value'] == current)
                 if row is None: rows.append(row := {'value': current, 'label': current})
@@ -2022,34 +1640,25 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 'auth': _try('auth', auth_status, {}) or {}, 'runtimes': _try('runtimes', runtimes, []) or [],
                 'selected': {'agent': selected(agent), 'inline': selected(inline),
                              'completion': selected(completion)}}
-
     @rt('/agent/models/add')
     async def agent_models_add(req):
         "Save a Hugging Face repo/URL or hosted provider model alias."
         from .blocks.agent.models import save_model
         try:return {'ok':True,'model':save_model(await req.json())}
         except Exception as e:return _fail(e)
-
     @rt('/agent/models/remove')
     async def agent_models_remove(req):
         from .blocks.agent.models import delete_model
         try:return {'ok':True,'name':delete_model((await req.json()).get('name',''))}
         except Exception as e:return _fail(e)
-
     @rt('/agent/settings')
     async def agent_settings(req):
         "Set engine-level agent options. LiteRT engines reload lazily after a change."
         d = await req.json()
         if 'litert_backend' in d:
-            # ramabana reads $LEELA_LITERT_BACKEND when it builds an engine, so the assistants
-            # set it and release what they have loaded. GPU is materially faster than CPU on
-            # this hardware, and the choice is the engine's rather than a conversation's.
             try:
                 from .blocks.agent.ai import Assistant
                 which = str(d.get('litert_backend') or '').strip().lower()
-                # Validated here, not only in `set_litert_backend`: with no assistant built yet
-                # that loop is empty, and an unchecked value would be written to the environment
-                # and the workspace to fail later, at the first local request.
                 if which not in Assistant.LITERT_BACKENDS:
                     raise ValueError(f'litert backend must be one of {", ".join(Assistant.LITERT_BACKENDS)}')
                 live = _live_assistants()
@@ -2071,7 +1680,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             return {'ok': True, 'local_multimodal': enabled,
                     'note': f'local image/audio encoders {"enabled" if enabled else "disabled"}'}
         except Exception as e: return _fail(e)
-
     @rt('/agent/compaction')
     async def agent_compaction(req):
         "Configure visible automatic compaction without restarting the model conversation."
@@ -2085,23 +1693,15 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         ws.save()
         return {'ok': True, 'auto': auto, 'strategy': strategy,
                 'note': f'auto compaction {"on" if auto else "off"} · {strategy}'}
-
     @rt('/agent/budget')
     async def agent_budget(req):
-        """How much work one turn may do, changed without restarting the conversation.
-
-        `auto` is ramabana sizing the turn from the prompt -- 24 tool calls for a question, 240
-        for "implement and verify". A number pins it, which is what a long job that keeps
-        stopping one step short of finished actually needs.
-        """
+        "How much work one turn may do, changed without restarting the conversation."
         from .workspace import budget_value
         d = await req.json()
         for key, given in (('tool_budget', d.get('tools')), ('step_budget', d.get('steps'))):
             if given is None: continue
             lo, hi = TOOL_RANGE if key == 'tool_budget' else STEP_RANGE
             value = budget_value(given, lo, hi)
-            # `budget_value` answers `auto` for anything it will not take, so a typo would be
-            # silently accepted as a reset. Say so instead.
             if value == 'auto' and str(given).strip().lower() != 'auto':
                 return _fail(f'{key}: use auto, or a number from {lo} to {hi}')
             setattr(ws, key, value)
@@ -2109,13 +1709,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         ws.save()
         return {'ok': True, 'tools': ws.tool_budget, 'steps': ws.step_budget,
                 'note': f'tool budget {ws.tool_budget} · steps {ws.step_budget}'}
-
     @rt('/agent/budget/state')
     def agent_budget_state():
         "What is actually in force, so a refused edit can put the box back rather than blank it."
         return {'ok': True, 'tools': ws.tool_budget, 'steps': ws.step_budget,
                 'tool_range': list(TOOL_RANGE), 'step_range': list(STEP_RANGE)}
-
     @rt('/agent/model')
     async def agent_model(req):
         d = await req.json()
@@ -2132,7 +1730,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             ws.save()
             return {'ok': True, 'target': target, 'model': spec.name, 'note': model_note(spec)}
         except Exception as e: return _fail(e)
-
     @rt('/agent/memory')
     async def agent_memory():
         "Editable notes and their explicit per-model session routing."
@@ -2141,7 +1738,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         return {'notes': rows, 'selected': ws.agent_memory_selection,
                 'targets': {'agent': 'Agent conversation', 'inline': 'Prompt cells',
                             'completion': 'Code completion'}}
-
     @rt('/agent/memory/save')
     async def agent_memory_save(req):
         d = await req.json(); title = (d.get('title') or '').strip(); text = (d.get('text') or '').strip()
@@ -2161,7 +1757,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         ws.save()
         _refresh_assistants()
         return {'ok': True, 'id': new_id, 'note': ws.memory.note}
-
     @rt('/agent/memory/select')
     async def agent_memory_select(req):
         d = await req.json(); target = str(d.get('target') or '')
@@ -2175,7 +1770,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if assistant is not None: assistant.refresh()
         tokens = sum([estimate_tokens(await _off_loop(ws.memory.exact_text, v)) for v in selected])
         return {'ok': True, 'target': target, 'ids': selected, 'tokens': tokens}
-
     @rt('/agent/memory/delete')
     async def agent_memory_delete(req):
         doc_id = str((await req.json()).get('id') or '')
@@ -2186,7 +1780,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         ok = await _off_loop(ws.memory.forget, doc_id); ws.save()
         _refresh_assistants()
         return {'ok': ok, 'note': ws.memory.note}
-
     @rt('/agent/states')
     def agent_states():
         "Saved conversation states and the state currently injected into the briefing."
@@ -2194,7 +1787,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                      for layer in ws.agent_state_layers.values())
         return {'active': active, 'active_text': ws.agent_state,
                 'layers': ws.agent_state_layers, 'states': ws.memory.agent_states()}
-
     @rt('/agent/state/template')
     def agent_state_template():
         "A complete, usable rules template with this workspace's actual tool catalog."
@@ -2203,7 +1795,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         catalog = '\n'.join(f"- `{t['name']}` ({t['group']}): {t['description']}" for t in tools)
         return {'template': STATE_TEMPLATE, 'tools': tools,
                 'catalog': '## Available tools\n' + (catalog or '- No tools are currently available.')}
-
     @rt('/agent/state/bootstrap')
     async def agent_state_bootstrap(req):
         "Ask the summary model to fill a transparent charter from the template and real tools."
@@ -2222,7 +1813,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if not text: text = STATE_TEMPLATE + '\n\n## Available tools\n' + catalog
         return {'ok': True, 'text': text, 'tools': tools,
                 'model': ws.ai.routing.name_for('summary'), 'generated': text != STATE_TEMPLATE}
-
     @rt('/agent/state/draft')
     def agent_state_draft():
         "A structured, editable state distilled deterministically from the visible conversation."
@@ -2233,7 +1823,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         state = ws.agent_state or STATE_TEMPLATE
         return {'state': state, 'layers': ws.agent_state_layers,
                 'conversation': conversation, 'turns': len(turns)}
-
     @rt('/agent/state/save')
     async def agent_state_save(req):
         "Save the user's edited state to durable semantic memory and optionally activate it."
@@ -2248,7 +1837,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         layer = (d.get('layer') or 'task').strip()
         if d.get('activate', True): ws.ai.set_state(text, layer=layer, source='memory')
         return {'ok': True, 'saved': saved, 'active': ws.agent_state}
-
     @rt('/agent/state/suggest')
     def agent_state_suggest(q: str = ''):
         "Relevant saved states remain advisory; the browser decides whether to attach one."
@@ -2256,7 +1844,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         hits = ws.memory.search(q, limit=12) if q.strip() else []
         ids = [i for i in dict.fromkeys(str(h.get('doc_id') or '') for h in hits) if i in states]
         return {'query': q, 'states': [states[i] for i in ids[:5]]}
-
     @rt('/agent/state/diagnostics')
     async def agent_state_diagnostics(req):
         "Token budget, stale paths, and duplicate/conflicting headings for edited state."
@@ -2271,7 +1858,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         duplicate = sorted({h for h in headings if headings.count(h) > 1})
         return {'tokens': tokens, 'context': ws.ai.model.ctx if ws._ai is not None else None,
                 'missing_paths': sorted(missing), 'duplicate_headings': duplicate}
-
     @rt('/agent/state/update')
     async def agent_state_update(req):
         "Use the summary model to propose a reviewed state replacement; never activate automatically."
@@ -2286,7 +1872,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                                'Update explicit agent state. Return Markdown only, without a fence.', 'summary', 1600)
         if not text: return _fail(ws.ai.note or 'state update model returned nothing')
         return {'ok': True, 'text': text, 'diff': _diff(current, text)}
-
     @rt('/agent/state/activate')
     async def agent_state_activate(req):
         "Activate an edited state without adding it to durable memory."
@@ -2294,7 +1879,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         try: ws.ai.set_state(text, layer=layer, enabled=d.get('enabled', True), source='user')
         except ValueError as e: return _fail(e)
         return {'ok': True, 'state': text, 'layer': layer}
-
     @rt('/agent/state/compare')
     async def agent_state_compare(req):
         "Compare one remembered revision with edited text before replacing or merging it."
@@ -2302,7 +1886,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if not text: return _fail(ws.memory.note or 'saved state is empty')
         current = str(d.get('current') or '')
         return {'ok': True, 'state': text, 'diff': _diff(current, text)}
-
     @rt('/agent/state/load')
     async def agent_state_load(req):
         "Load a remembered state into the live agent briefing, preserving its conversation history."
@@ -2312,7 +1895,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         try: ws.ai.set_state(text, layer=layer, source='memory')
         except ValueError as e: return _fail(e)
         return {'ok': True, 'state': text, 'layer': layer}
-
     @rt('/agent/commands')
     def agent_commands():
         "Slash-command metadata for the prompt's inline command picker."
@@ -2330,19 +1912,10 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             'tools': [{'name': t.__name__, 'help': describe(t)} for t in ws.ai.tools],
             'skills': [{'name': s.name, 'help': s.description} for s in ws.ai.skills],
         }
-
     @rt('/agent/status')
     def agent_status():
-        """Whether the assistant is loaded, what model it is on, and what it is doing right now.
-
-        Polled while a turn runs, which is why `activity` is in here: an agentic loop that
-        shows nothing for forty seconds is indistinguishable from a hang, and the client
-        renders these rows as they arrive. `approval` is in the same payload so a write
-        waiting on a person is picked up by the poll already in flight rather than needing
-        a channel of its own.
-        """
+        "Whether the assistant is loaded, what model it is on, and what it is doing right now."
         return ws.ai.status()
-
     @rt('/agent/stop')
     def agent_stop():
         "Ask the model to stop generating. The turn in flight returns whatever it already had."
@@ -2351,20 +1924,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             return {'ok': False, 'error': 'the assistant is not running'}
         except Exception as e:
             return {'ok': False, 'error': errstr(e)}
-
     @rt('/agent/stream')
     async def agent_stream(req):
-        """One turn as server-sent events, so the browser fills in as the model writes.
-
-        SSE rather than a WebSocket because this is one-way and short-lived, and the
-        terminal already owns the only socket in this app. Each event carries either a
-        markdown chunk, an activity row, or the final payload with the diffs -- so the
-        client renders the same three things it renders for a blocking turn, just sooner.
-
-        The generator runs on a worker thread and hands chunks over a queue: the harness is
-        synchronous by design (see `leela.agent.runtime`), and blocking the event loop on a
-        model would freeze every other request this server is serving.
-        """
+        "One turn as server-sent events, so the browser fills in as the model writes."
         q = (req.query_params.get('prompt') or '').strip()
         if not q: return _fail('nothing to ask')
         try: attachments = json.loads(req.query_params.get('attachments') or '[]')
@@ -2375,11 +1937,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             return _fail('reasoning must be auto, low, medium or high')
         reasoning = None if reasoning in ('', 'auto') else reasoning
         a = ws.ai
-
         async def events():
             import queue as _q
             out, done = _q.Queue(), object()
-
             def pump():
                 try:
                     nb = _doc()
@@ -2389,17 +1949,13 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                                            context=context, context_path=context_path): out.put(('chunk', c))
                 except Exception as e: out.put(('error', errstr(e)))
                 finally: out.put((done, None))
-
             loop = asyncio.get_running_loop()
             task = loop.run_in_executor(None, pump)
             finished, approval_id, activity_versions, execution_version = False, None, {}, None
             compact_count = a.compactor.count
             def changed_activity(): return _activity_changes(a, activity_versions)
-
             try:
                 while True:
-                    # A bounded wait both notices vanished browsers and publishes tool state
-                    # changes while the model itself is silent inside a long-running call.
                     try:
                         kind, val = await _off_loop(out.get, True, 0.25)
                     except _q.Empty:
@@ -2423,7 +1979,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                     if kind is None: continue
                     if kind is done:
                         finished = True
-                        # A tool may have finished immediately before the worker's sentinel.
                         for row in changed_activity(): yield _sse('activity', row)
                         break
                     yield _sse(kind, {'text': val} if kind == 'chunk' else {'error': val})
@@ -2433,9 +1988,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                     except Exception: pass
             if not finished: return
             await task
-            # `problems` rather than `note` alone: a turn can finish looking fine while the
-            # engine refused a compaction or a completion on the way, and those failures
-            # have no other way out -- see `Agent.problems`.
             capabilities = a.turn_capabilities(a.current_turn_id)
             yield _sse('done', {'ok': a.ready, 'note': a.note,
                                 'usage': a.turn_use.dict(), 'usage_label': repr(a.turn_use),
@@ -2445,17 +1997,14 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                                 'problems': a.problems,
                                 'activity': a.activity.rows(mark=a.activity._mark),
                                 'edits': _edit_diffs(a)})
-
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-
     @rt('/agent/approval')
     def agent_approval():
         "The call waiting for a person, or None. It stays inline so the rest of the IDE remains usable."
         a = ws.pending_approval
         pending = ({**a.dict(), 'schemas': _tool_schemas(ws.ai)} if a is not None else None)
         return {'pending': pending, 'control': getattr(ws.approvals, 'control', 'guided')}
-
     @rt('/agent/control')
     async def agent_control(req):
         "Choose how often tool proposals become editable checkpoints."
@@ -2463,7 +2012,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         try: control = ws.approvals.set_control((d.get('control') or '').strip())
         except ValueError as e: return _fail(e)
         return {'ok': True, 'control': control}
-
     @rt('/agent/run-policy')
     async def agent_run_policy(req):
         "Run through bounded future calls, or pause immediately after the current one."
@@ -2474,7 +2022,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         try: policy = ws.approvals.set_run_policy(d.get('policy') or 'once', d.get('count') or 1)
         except (ValueError, TypeError) as e: return _fail(e)
         return {'ok': True, 'policy': policy, **ws.approvals.state()}
-
     @rt('/agent/steer')
     async def agent_steer(req):
         "Queue guidance after the current tool; the next proposed call is skipped and replaced by it."
@@ -2486,7 +2033,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if not text: return _fail('steering instruction is empty')
         ws.approvals.queue_steer(text)
         return {'ok': True, **ws.approvals.state()}
-
     @rt('/agent/tool-preview')
     async def agent_tool_preview(req):
         "Preview the resolved call without executing it."
@@ -2496,7 +2042,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if not isinstance(args, dict): return _fail('tool arguments must be an object')
         try: return {'ok': True, 'preview': _tool_preview(ws.ai, tool, args)}
         except Exception as e: return _fail(e)
-
     @rt('/agent/branches')
     def agent_branches():
         "Turn boundaries available for a true model-context fork in this running session."
@@ -2505,7 +2050,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 'turns': [{'turn_id': tid, 'branch_id': cp.get('branch_id', 'main'),
                            'before': 'before' in cp, 'after': 'after' in cp}
                           for tid, cp in a.checkpoints.items()]}
-
     @rt('/agent/fork')
     async def agent_fork(req):
         "Restore a model-history checkpoint as a new active conversation branch."
@@ -2513,7 +2057,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         try: branch = ws.ai.fork(d.get('turn_id') or '', d.get('stage') or 'after', d.get('branch_id') or '')
         except Exception as e: return _fail(e)
         return {'ok': True, **branch}
-
     @rt('/agent/revise')
     async def agent_revise(req):
         "Create a branch whose last assistant prose is the user's edited response."
@@ -2522,7 +2065,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         try: branch = ws.ai.revise(d.get('turn_id') or '', text, d.get('branch_id') or '')
         except Exception as e: return _fail(e)
         return {'ok': True, **branch}
-
     @rt('/agent/retry-tool')
     async def agent_retry_tool(req):
         "Rerun a completed read-only call; return its result without changing model history."
@@ -2536,14 +2078,12 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         try: result = await _off_loop(choices[tool], **args)
         except Exception as e: return _fail(e)
         return {'ok': True, 'tool': tool, 'args': args, 'result': str(result)}
-
     @rt('/agent/turn-transaction')
     def agent_turn_transaction(turn_id: str = ''):
         tx = ws.ai.turn_transactions.get(turn_id)
         if tx is None: return _fail(f'no transaction for {turn_id}', 404)
         return {'transaction': {**tx, 'files': [{'path': p, **_diff(s['before'], s['after'])}
                                                 for p, s in tx['files'].items()]}}
-
     @rt('/agent/rollback-turn')
     async def agent_rollback_turn(req):
         d = await req.json()
@@ -2551,7 +2091,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         except Exception as e: return _fail(e)
         return {'ok': True, 'turn_id': tx['turn_id'], 'paths': list(tx['files']),
                 'irreversible': tx['irreversible']}
-
     @rt('/agent/rollback-tool')
     async def agent_rollback_tool(req):
         "Rollback one snapshotted file call when its output is still the current file."
@@ -2559,15 +2098,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         try: path = ws.approvals.rollback((d.get('id') or '').strip())
         except Exception as e: return _fail(e)
         return {'ok': True, 'path': path}
-
     @rt('/agent/approval/request')
     async def agent_approval_request(req):
-        """Ask for a decision in this browser on behalf of an external Rishi session.
-
-        Notebook kernels and ordinary Python processes cannot use ``input()`` through the
-        web IDE. This endpoint lets Rishi's optional browser approval callback join the
-        same queue and render the same approval card as Leela's own agent.
-        """
+        "Ask for a decision in this browser on behalf of an external Rishi session."
         d = await req.json()
         tc = d.get('tool_call') or {}
         fn = tc.get('function') or {} if isinstance(tc, dict) else {}
@@ -2581,15 +2114,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         except (TypeError, ValueError): return _fail('timeout must be a number of seconds')
         a = await _off_loop(ws.approvals.request, name, args, True, timeout)
         return {'ok': True, 'answer': a.dict()}
-
     @rt('/agent/approve')
     async def agent_approve(req):
-        """Answer a pending approval. `note` is the reason, and the reason goes back to the model.
-
-        Refusing with a reason is the point of the whole mechanism: "no, that file is
-        generated, edit the notebook instead" redirects the agent, where a bare denial just
-        makes it try the same edit again.
-        """
+        "Answer a pending approval. `note` is the reason, and the reason goes back to the model."
         d = await req.json()
         args = d.get('args')
         if args is not None and not isinstance(args, dict): return _fail('tool arguments must be an object')
@@ -2604,7 +2131,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                                session=bool(d.get('session')), tool=tool, args=args)
         if a is None: return _fail('nothing is waiting for an answer')
         return {'ok': True, 'answer': a.dict()}
-
     @rt('/agent/command')
     async def agent_command(req):
         "Run a slash command (`/model`, `/cost`, `/compact`, `/skills`, `/tools`, `/reload`)."
@@ -2613,40 +2139,24 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if not line: return {'ok': True, 'text': 'commands: ' + ', '.join('/' + c for c in ws.ai.commands())}
         out = await _off_loop(ws.ai.command, line)
         if out is None: return _fail(f'unknown command {line.split()[0]}')
-        # `/tool-budget` and `/steps` are ramabana's, and they set the attribute on *this* agent.
-        # Without this the panel would still show the old number and the next prompt cell would
-        # be built with it: one way of saying a thing, two answers to what it is.
         if line.lstrip('/').split(' ')[0] in ('tool-budget', 'steps'):
             ws.tool_budget, ws.step_budget = ws.ai.tool_budget, ws.ai.step_budget
             for agent in _live_assistants(): agent.tool_budget, agent.step_budget = ws.tool_budget, ws.step_budget
             ws.save()
         return {'ok': True, 'text': out}
-
     @rt('/agent/ask')
     async def agent_ask(req):
-        """One turn with the assistant.
-
-        The model runs on a worker thread and its tools call straight back into this
-        workspace, so an edit it makes is on disk by the time the reply arrives.
-
-        What comes back with the reply is a *diff per changed file*, taken from disk on
-        either side of each write rather than from what the tools reported. That is the
-        difference between the model's account of its work and the work: a tool result is
-        a claim, and the file is the fact. It also lets the client decide whether
-        reloading the tab would throw away something the user typed while it was thinking.
-        """
+        "One turn with the assistant."
         d = await req.json()
         q = (d.get('prompt') or '').strip()
         if not q: return _fail('nothing to ask')
         a = ws.ai
-        text = await _off_loop(ws.ask, q)      # `ws.ask` attaches any pending screen capture
+        text = await _off_loop(ws.ask, q)
         return {'ok': a.ready, 'text': text, 'note': a.note,
                 'activity': a.activity.rows(mark=a.activity._mark),
                 'usage': a.turn_use.dict(), 'usage_label': repr(a.turn_use),
                 'session_usage': a.use.dict(), 'session_usage_label': repr(a.use), 'model': a.model.name,
                 'edits': _edit_diffs(a)}
-
-    # -- kernel control ----------------------------------------------------
     @rt('/nb/interrupt')
     async def nb_interrupt(req):
         "Interrupt one exact running cell, force-restarting its managed kernel if needed."
@@ -2656,34 +2166,15 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         k, _task = item
         if not hasattr(k, 'stop'): return _fail('this external runtime cannot be stopped safely')
         return await k.stop(timeout=2.0)
-
-
-    # `runtime` also owns the /kernel/* routes; see BLOCKS.
-
-    # -- blocks --------------------------------------------------------------
-    # Routes extracted from this function so far. Order is the registration order, and the
-    # first route to match a path wins; `tests/routes.txt` pins the resulting surface.
-    # Blocks connect last for now, so anything still defined above keeps its precedence
-    # while the extraction is in progress.
-    # `debug` is not supplied yet: the debugger closures are still in this function, and a
-    # Ctx must not hand a block a capability that is not the live one. It joins here when
-    # the debug block moves.
     connect_all(app, ws, BLOCKS, docs=_docstore, running=_runstate, gate=gate,
                 catalog=workspace_catalog)
-
     return app
-
 
 def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_port=8400,
               open_ws=True, kernel='ipykernel',
               model=None, approvals='ask', agent_scope='overlay', python=None,
               app_window=False, cdp_port=9223, transport='auto', gateway_port=8787):
-    """Start one web workspace, or independent app-window workspaces under ``--app``.
-
-    Independent workspaces share the ASGI/Chrome processes but not mutable IDE state.
-    Host-based dispatch keeps all existing absolute browser routes valid:
-    ``project.localhost:5001`` and ``tests.localhost:5001`` each own an ``ide_app``.
-    """
+    "Start one web workspace, or independent app-window workspaces under ``--app``."
     import uvicorn
     try:
         loopback = host == 'localhost' or ipaddress.ip_address(host).is_loopback
@@ -2693,7 +2184,6 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
         raise ValueError('Leela executes code and may only bind to a loopback address')
     from . import leela_cfg
     from .hub import WorkspaceHub, WorkspaceSite, workspace_slug
-
     roots = [Path(r).expanduser().resolve() for r in roots]
     gate = TerminalGate(host=host)
     requested_transport = transport
@@ -2704,9 +2194,6 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             from .blocks.runtime.kernels import GatewayService
             gateway = GatewayService(port=gateway_port).start()
         except (ImportError, RuntimeError) as e:
-            # App windows prefer the shared gateway, but a desktop/source install without
-            # the optional gateway extra must still open and run code. Only an explicit
-            # `--transport gateway` is a hard requirement; `auto` degrades to direct ZMQ.
             if requested_transport != 'auto': raise
             transport = 'direct'
             print(f'  gateway unavailable; using direct kernel transport: {errstr(e)}')
@@ -2751,8 +2238,6 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
         if open_ws and not roots:
             ws = Workspace.load(**kw)
         else:
-            # Opening an explicit folder starts a clean tab set, not a clean preference set.
-            # Reuse the durable model choices so `leela .` does not reset routing each run.
             try: remembered = (leela_cfg/'workspace.json').read_json() if open_ws else {}
             except Exception: remembered = {}
             if model is None: kw['model'] = remembered.get('model')
@@ -2764,8 +2249,6 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             ws.add_root(Path.home() if getattr(sys, 'frozen', False) else os.getcwd())
         if ws.restore_remembered_agent_state(): ws.save()
         app = ide_app(ws, gate)
-        # Watches only come due if something asks. Started here rather than in the block, so
-        # building an app in a test does not leave a polling thread behind. `$LEELA_POLL_SECONDS`.
         if (secs := ws.jobs.tick()): print(f'  vault watches polled every {secs}s')
         print(f'leela  http://{host}:{port}   folders: ' + ', '.join(p.name for p in ws.fs.roots))
         if app_window:

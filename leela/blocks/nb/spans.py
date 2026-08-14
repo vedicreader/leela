@@ -1,16 +1,10 @@
-"""Mapping between file lines of an `.ipynb` and (cell, line-in-cell) coordinates.
-
-The scan is over the raw text, not a parse: the question is *which line of this file*, which a
-parsed notebook has already thrown away. Anything that cannot be located is reported as
-unknown rather than guessed.
-"""
+"Mapping between file lines of an `.ipynb` and (cell, line-in-cell) coordinates."
 
 from __future__ import annotations
 
 import json
 
 __all__ = ['read_cells', 'source_spans', 'cell_lines', 'cell_at', 'cell_of']
-
 
 def read_cells(text):
     "The cells of a notebook's JSON text, or `None` when this is not a notebook we can read."
@@ -20,9 +14,8 @@ def read_cells(text):
     cells = nb.get('cells')
     return cells if isinstance(cells, list) else None
 
-
 def source_spans(text, cells):
-    "The 1-based file line numbers holding each cell's source strings, or `None` where they cannot be located."
+    "The 1-based file line numbers holding each cell's source strings, or `None` where they cannot."
     lines, spans, idx = (text or '').splitlines(), [], 0
     for cell in cells:
         source = cell.get('source')
@@ -31,7 +24,7 @@ def source_spans(text, cells):
         if idx >= len(lines):
             spans.append(None)
             continue
-        head, idx = lines[idx], idx + 1            # idx is now the head line's 1-based number
+        head, idx = lines[idx], idx + 1
         after = head.split('"source"', 1)[1]
         if ']' in after or '[' not in after: spans.append((idx, idx))
         else:
@@ -39,19 +32,16 @@ def source_spans(text, cells):
             idx += count
     return spans
 
-
 def cell_lines(cell):
     "One cell's source as a list of lines, whichever of nbformat's two shapes it is in."
     source = cell.get('source') or ''
     return list(source) if isinstance(source, list) else str(source).splitlines(True)
 
-
 def _at(cells, spans, i, line_in_cell):
-    "The address of a line inside cell `i`. `id` is `''` before nbformat 4.5, so the index is always reported too."
+    "The address of a line inside cell `i`. `id` is `''` before nbformat 4.5, so the index is always."
     span = spans[i]
     return dict(index=i, id=str(cells[i].get('id') or ''), line=line_in_cell,
         file_line=(span[0] + line_in_cell - 1) if span else 0, kind=str(cells[i].get('cell_type') or 'code'))
-
 
 def cell_at(text, line, cells=None):
     "The cell containing file line `line`, or `None` when no cell's source does."
@@ -63,7 +53,6 @@ def cell_at(text, line, cells=None):
     for i, span in enumerate(spans):
         if span and span[0] <= line <= span[1]: return _at(cells, spans, i, line - span[0] + 1)
     return None
-
 
 def cell_of(text, snippet, cells=None):
     "The cell holding `snippet`, when exactly one does; `None` for none or several."

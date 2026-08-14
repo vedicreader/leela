@@ -1,8 +1,4 @@
-"""The file tree, and the Git decoration on it.
-
-Directories fetch their children on first open. Git state is computed once per render for every
-open root, not per node: `changes()` is a subprocess per repository.
-"""
+"The file tree, and the Git decoration on it."
 
 from __future__ import annotations
 
@@ -16,7 +12,6 @@ from ...core.ui import action_bar, menu_button
 from ..git.git import GitError, GitRepo
 
 __all__ = ['git_tree_state', 'tree_node', 'files_panel']
-
 
 def git_tree_state(fs):
     "Absolute changed paths for file-tree decoration, across every open repository."
@@ -32,7 +27,6 @@ def git_tree_state(fs):
         except GitError: pass
     return out
 
-
 def _git_class(change):
     "One file's Git decoration, worst news first: a conflict outranks an unstaged edit."
     if not change: return ''
@@ -40,7 +34,6 @@ def _git_class(change):
     if change['untracked']: return 'untracked'
     if change['staged'] and not change['unstaged']: return 'staged'
     return 'modified'
-
 
 def tree_node(e, git_state=None):
     "One file-tree row; directories lazily fetch their children on first open."
@@ -54,7 +47,6 @@ def tree_node(e, git_state=None):
         cls='lee-node lee-file' + (f' git-{state}' if state else ''), data_path=e.path, role='treeitem',
         data_lang=e.lang or '', aria_selected='false',
         onclick=f'event.preventDefault();event.stopPropagation();leeOpenFile({json.dumps(e.path)})')
-
 
 def files_panel(fs):
     state = git_tree_state(fs)

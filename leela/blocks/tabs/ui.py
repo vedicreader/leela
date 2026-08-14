@@ -1,4 +1,4 @@
-'The tab strip. A duplicated title widens to `root/relative/path`; a unique one stays short.'
+"The tab strip. A duplicated title widens to `root/relative/path`; a unique one stays short."
 
 from __future__ import annotations
 
@@ -9,12 +9,10 @@ from fasthtml.common import Button, Div, Span
 
 __all__ = ['tab_bar', 'kernel_pill']
 
-
 def tab_bar(ws):
     "The open tabs. `alt+1..9` selects, the x closes."
     if not ws.tabs: return Div(Span('no files open', cls='lee-dim'), id='tabbar', cls='lee-tabbar', role='tablist')
     counts = Counter(t.title for t in ws.tabs)
-
     def label(t):
         "A shared title widens to `root/relative/path`; a unique one stays short."
         if counts[t.title] < 2 or not t.path: return t.title
@@ -22,7 +20,6 @@ def tab_bar(ws):
             root = ws.fs.root_of(t.path)
             return f'{root.name}/{Path(t.path).relative_to(root)}'
         except Exception: return t.path
-
     def tab(i, t):
         active, saved = i == ws.active, 'changes waiting for autosave' if t.dirty else 'saved on disk'
         return Div(
@@ -35,10 +32,8 @@ def tab_bar(ws):
             title=t.path or t.title, data_i=i, data_kind=t.kind, role='tab', draggable='true',
             aria_selected='true' if active else 'false', tabindex='0' if active else '-1',
             hx_post=f'/tab/select?i={i}', hx_target='#tabbar', hx_swap='outerHTML')
-
     return Div(*[tab(i, t) for i, t in enumerate(ws.tabs)], id='tabbar', cls='lee-tabbar',
         role='tablist', aria_label='open files')
-
 
 def kernel_pill(ws):
     "Kernel identity and liveness for the active tab. Clicking it opens the picker."

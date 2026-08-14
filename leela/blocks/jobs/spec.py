@@ -1,8 +1,4 @@
-"""OpenAPI / Google Discovery documents as operation rows.
-
-`ramabana.spec` owns this when the installed ramabana has it; the fallback below is the
-same three names over the two document shapes leela actually clips.
-"""
+"OpenAPI / Google Discovery documents as operation rows."
 
 from __future__ import annotations
 import json
@@ -10,15 +6,12 @@ from fastcore.all import Path, L, first, risinstance
 
 __all__ = ['load_spec', 'op_row', 'spec_ops']
 
-
 try: import ramabana.spec as _spec
 except ImportError: _spec = None
-
 
 def _ramabana(name):
     "`ramabana.spec.<name>`, or None on a ramabana that does not ship the parser."
     return getattr(_spec, name, None)
-
 
 def load_spec(target):
     "Parse a YAML/JSON OpenAPI or Discovery document from a path or a literal string."
@@ -30,12 +23,10 @@ def load_spec(target):
         return yaml.safe_load(raw)
     return json.loads(raw)
 
-
 def op_row(o):
     "One operation as the flat row `clip_api_spec` writes a section from."
     if (fn := _ramabana('op_row')): return fn(o)
     return dict(o)
-
 
 def spec_ops(spec):
     "Every operation in `spec`: verb, path, summary, group, required, signature."
@@ -45,22 +36,18 @@ def spec_ops(spec):
     if 'resources' in spec or spec.get('discoveryVersion'): return _discovery_ops(spec)
     return L()
 
-
 def _row(verb, path, summary, group, required, signature):
     "One operation, flattened the way `clip_api_spec` writes a section from it."
     return dict(verb=verb.upper(), path=path, summary=summary or '', group=group or '',
         required=list(required), signature=signature, docs_url='')
 
-
 def _params(o):
     "The parameter dicts on an operation or a path item, ignoring anything else in there."
     return L(o.get('parameters')).filter(risinstance(dict))
 
-
 def _required(params):
     "Required parameter names, once each: an operation may restate a path-level parameter."
     return params.filter(lambda p: p.get('required') and p.get('name')).itemgot('name').unique()
-
 
 def _openapi_ops(spec):
     "OpenAPI `paths`. Path-level parameters apply to every method under that path."
@@ -74,7 +61,6 @@ def _openapi_ops(spec):
                 _required(shared + _params(op)), op.get('operationId') or f'{verb.upper()} {path}'))
     return out
 
-
 def _discovery_ops(spec):
     "Google Discovery nests methods under `resources`, which nest arbitrarily deep."
     out = L()
@@ -83,7 +69,6 @@ def _discovery_ops(spec):
             if not isinstance(body, dict): continue
             for method, op in (body.get('methods') or {}).items():
                 if not isinstance(op, dict): continue
-                # Discovery keys parameters by name, where OpenAPI lists them.
                 required = [k for k, v in (op.get('parameters') or {}).items()
                     if isinstance(v, dict) and v.get('required')]
                 path, verb = op.get('path') or method, op.get('httpMethod') or 'GET'

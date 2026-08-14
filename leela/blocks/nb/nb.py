@@ -1,9 +1,4 @@
-"""The notebook document: cells, outputs, and running them against a kernel.
-
-Outputs stay in nbformat shape end to end, so a round-trip loses nothing. There is a third
-cell type Jupyter does not have: `prompt`, a question for the assistant whose context is the
-cells above it and whose answer is stored in the cell.
-"""
+"The notebook document: cells, outputs, and running them against a kernel."
 
 from __future__ import annotations
 import time, uuid
@@ -17,18 +12,14 @@ from ..runtime.kernels import output_text
 
 __all__ = ['CELL_TYPES', 'Cell', 'Notebook', 'cell_id']
 
-# The order `ctrl+alt+m` cycles through.
 CELL_TYPES = ('code', 'markdown', 'prompt')
 
-# `None` means context is uncapped; callers pass explicit limits for a constrained model.
 MAX_CONTEXT = None
 MAX_CELL_OUT = None
 CONTEXT_MODES = ('auto', 'keep', 'discard')
-MAX_UNDO = 100        # structural notebook snapshots kept in each direction
-
+MAX_UNDO = 100
 
 def cell_id(): return uuid.uuid4().hex[:8]
-
 
 def _detached(cell):
     "A copy of `cell` with a fresh identity and no running state."
@@ -36,46 +27,38 @@ def _detached(cell):
     n.id, n.running, n.fresh = cell_id(), False, False
     return n
 
-
 @dataclass
 class Cell(Dictable):
-    'One notebook cell. `outputs` are nbformat dicts exactly as the kernel sent them.'
+    "One notebook cell. `outputs` are nbformat dicts exactly as the kernel sent them."
     source: str = ''
-    cell_type: str = 'code'                        # 'code' | 'markdown' | 'prompt' | 'raw'
+    cell_type: str = 'code'
     outputs: list = field(default_factory=list)
     execution_count: int | None = None
-    execution_ms: float | None = None                 # last run duration, persisted in metadata
+    execution_ms: float | None = None
     id: str = field(default_factory=cell_id)
     running: bool = False
-    reply: str = ''                                # a prompt cell's answer
-    calls: list = field(default_factory=list)      # and the tools used to reach it
-    usage: dict = field(default_factory=dict)      # per-answer token and estimated cost accounting
-    approval: dict | None = None                # an agent approval exchange; `None` on every other cell
-    context_mode: str = 'auto'                  # 'auto' | 'keep' | 'discard' compaction policy
-    fresh: bool = False                         # ran in this live kernel; deliberately not persisted
-
+    reply: str = ''
+    calls: list = field(default_factory=list)
+    usage: dict = field(default_factory=dict)
+    approval: dict | None = None
+    context_mode: str = 'auto'
+    fresh: bool = False
     def __post_init__(self):
         if self.context_mode not in CONTEXT_MODES: self.context_mode = 'auto'
-
     @property
     def text(self): return output_text(self.outputs)
-
     @property
     def has_error(self): return any(o.get('output_type') == 'error' for o in self.outputs)
-
     @property
     def is_prompt(self): return self.cell_type == 'prompt'
-
     @property
     def is_approval(self): return self.approval is not None
-
     def clear(self):
         self.outputs, self.execution_count, self.execution_ms, self.fresh = [], None, None, False
         self.reply, self.calls, self.usage = '', [], {}
         return self
-
     def nbcell(self):
-        "This cell in nbformat v4 shape; nbformat has no prompt cell, so one is written as markdown with its answer in metadata."
+        "This cell in nbformat v4 shape; nbformat has no prompt cell, so one is written as markdown with."
         c = dict(cell_type=self.cell_type, source=self.source, metadata={}, id=self.id)
         meta = {} if self.context_mode == 'auto' else {'context': self.context_mode}
         if self.cell_type == 'code':
@@ -89,7 +72,6 @@ class Cell(Dictable):
         elif self.approval is not None: meta.update(self.approval, kind='approval')
         if meta: c['metadata'] = {'leela': meta}
         return c
-
     @classmethod
     def from_nb(cls, c):
         src = c.get('source', '')
@@ -101,20 +83,15 @@ class Cell(Dictable):
             reply=str(meta.get('reply') or ''), calls=list(meta.get('calls') or []), usage=dict(meta.get('usage') or {}),
             context_mode=str(meta.get('context') or 'auto'), approval=dict(meta) if meta.get('kind') == 'approval' else None)
 
-
 class Notebook:
     "An open .ipynb: an ordered list of `Cell`s that can run against a `Kernel`."
-
     def __init__(self, cells=None, path=None):
         self.cells = L(ifnone(cells, [Cell()]))
         self.path = str(path) if path else ''
         self.dirty = False
-        self._undo, self._redo = [], []   # structural operations only; editors own character-level undo
-
+        self._undo, self._redo = [], []
     def __len__(self): return len(self.cells)
     def __getitem__(self, i): return self.cells[i]
-
-    # -- io --------------------------------------------------------------------
     @classmethod
     def load(cls, path):
         "Open an `.ipynb`. A zero-byte file (what `touch` leaves) is a new document, not a parse error."
@@ -123,10 +100,8 @@ class Notebook:
         nb = read_nb(str(path))
         cells = [Cell.from_nb(c) for c in nb['cells']] or [Cell()]
         return cls(cells, path)
-
     @classmethod
     def blank(cls, path=None): return cls([Cell()], path)
-
     def save(self, path=None, sandbox=None):
         "Write the notebook; `sandbox` confines the write to the open folders."
         p = str(path or self.path)
@@ -136,15 +111,11 @@ class Notebook:
         else: write_nb(nb, p)
         self.path, self.dirty = p, False
         return p
-
-    # -- structure -------------------------------------------------------------
     def _snapshot(self, i=0): return dict(cells=deepcopy(list(self.cells)), dirty=self.dirty, index=i)
-
     def _checkpoint(self, i=0):
         self._undo.append(self._snapshot(i))
         del self._undo[:-MAX_UNDO]
         self._redo.clear()
-
     def _restore(self, src, dst):
         if not src: return None
         snap = src.pop()
@@ -152,22 +123,18 @@ class Notebook:
         del dst[:-MAX_UNDO]
         self.cells, self.dirty = L(deepcopy(snap['cells'])), snap['dirty']
         return max(0, min(snap['index'], len(self.cells) - 1))
-
     def undo(self):
         "Restore the notebook before its last structural operation; return the focus index."
         return self._restore(self._undo, self._redo)
-
     def redo(self):
         "Reapply the last undone structural operation; return the focus index."
         return self._restore(self._redo, self._undo)
-
     def insert(self, i, cell=None):
         self._checkpoint(i)
         c = cell or Cell()
         self.cells.insert(max(0, min(i, len(self.cells))), c)
         self.dirty = True
         return c
-
     def delete(self, i):
         "Remove a cell; a notebook always keeps at least one."
         if not (0 <= i < len(self.cells)): return None
@@ -176,7 +143,6 @@ class Notebook:
         if not self.cells: self.cells.append(Cell())
         self.dirty = True
         return c
-
     def move(self, i, d):
         "Move a cell by `d` positions, shifting the cells between rather than swapping endpoints."
         j = i + d
@@ -185,7 +151,6 @@ class Notebook:
         self.cells.insert(j, self.cells.pop(i))
         self.dirty = True
         return j
-
     def set_type(self, i, t):
         self._checkpoint(i)
         c = self.cells[i]
@@ -193,13 +158,11 @@ class Notebook:
         if t != 'code': c.clear()
         self.dirty = True
         return c
-
     def cycle_type(self, i):
         "Advance a cell through `CELL_TYPES`."
         c = self.cells[i]
         if c.cell_type not in CELL_TYPES: return self.set_type(i, 'code')
         return self.set_type(i, CELL_TYPES[(CELL_TYPES.index(c.cell_type) + 1) % len(CELL_TYPES)])
-
     def split(self, i, offset):
         "Split cell `i` at a character offset, keeping outputs with the first half."
         c = self.cells[i]
@@ -210,26 +173,21 @@ class Notebook:
         self.cells.insert(i+1, n)
         self.dirty = True
         return n
-
     def detached(self, i):
         "A clipboard-safe copy of cell `i`, with a fresh identity and no running state."
         if not (0 <= i < len(self.cells)): return None
         return _detached(self.cells[i])
-
     def paste(self, i, cell):
         "Insert a copy of `cell` at `i`, leaving the clipboard reusable."
         if not isinstance(cell, Cell): raise TypeError('cell clipboard must contain a Cell')
         return self.insert(i, _detached(cell))
-
     def duplicate(self, i):
         "Duplicate cell `i` below itself, including its current output but with a fresh id."
         if (n := self.detached(i)) is None: return None
         return self.insert(i + 1, n)
-
     def _live(self, indices):
         "The given cell indices, deduplicated, in order, and inside the document."
         return sorted({int(i) for i in indices if 0 <= int(i) < len(self.cells)})
-
     def delete_many(self, indices):
         "Delete a cell range as one undoable operation."
         indices = self._live(indices)
@@ -240,7 +198,6 @@ class Notebook:
         if not self.cells: self.cells.append(Cell())
         self.dirty = True
         return removed
-
     def paste_many(self, i, cells):
         "Paste detached cells as one undoable operation, assigning fresh identities."
         cells = list(cells or ())
@@ -255,7 +212,6 @@ class Notebook:
             out.append(n)
         self.dirty = True
         return out
-
     def move_many(self, indices, target):
         "Move selected cells before `target` as one stable, undoable block."
         indices = self._live(indices)
@@ -268,7 +224,6 @@ class Notebook:
         for offset, cell in enumerate(picked): self.cells.insert(target + offset, cell)
         self.dirty = True
         return target
-
     def merge(self, i):
         "Merge cell `i+1` up into `i`."
         if i+1 >= len(self.cells): return None
@@ -278,19 +233,15 @@ class Notebook:
         c.clear()
         self.dirty = True
         return c
-
     def clear_cell(self, i):
         "Clear one cell's output/reply as an undoable notebook operation."
         if not (0 <= i < len(self.cells)): return None
         self._checkpoint(i)
         return self.cells[i].clear()
-
     def clear_all(self):
         self._checkpoint(0)
         for c in self.cells: c.clear()
         self.dirty = True
-
-    # -- execution -------------------------------------------------------------
     async def run(self, i, kernel, on_output=None):
         "Run cell `i` against `kernel`, replacing its outputs. Non-code cells are a no-op."
         c = self.cells[i]
@@ -309,8 +260,6 @@ class Notebook:
                     if display_id: display_at[display_id] = len(c.outputs) - 1
                 if on_output: on_output(i, row)
             r = await kernel.execute(c.source, on_output=receive)
-            # Kernel's reconciled list, not the callback's: it strips callback-only display
-            # metadata and covers kernels that emit no incremental callbacks at all.
             c.outputs = r.outputs
             c.execution_count = r.execution_count
         finally:
@@ -319,7 +268,6 @@ class Notebook:
             c.fresh = True
         self.dirty = True
         return c
-
     async def run_all(self, kernel, on_output=None, stop_on_error=True):
         "Run every code cell in order, stopping at the first error by default."
         done = L()
@@ -328,16 +276,12 @@ class Notebook:
             done.append(await self.run(i, kernel, on_output))
             if stop_on_error and c.has_error: break
         return done
-
     def code(self):
         "All code sources, for handing the whole notebook to something that wants a script."
         return '\n\n'.join(c.source for c in self.cells if c.cell_type == 'code' and c.source.strip())
-
-    # -- prompt cells ----------------------------------------------------------
     def prompt_start(self, i):
         "Prompt cells always read from the top of the document, not from backend chat history."
         return 0
-
     def _context_cell(self, c, out_chars=None):
         "One cell as explicit, compaction-aware context markup."
         src = c.source.strip()
@@ -351,9 +295,8 @@ class Notebook:
         if c.is_prompt and c.reply: body.append(f'<answer>\n{c.reply.strip()}\n</answer>')
         body.append('</cell>')
         return '\n'.join(body)
-
     def context(self, i, since=0, max_chars=MAX_CONTEXT, out_chars=MAX_CELL_OUT):
-        "Every cell above `i` in document order; under an explicit `max_chars`, `discard` cells go first and `keep` last."
+        "Every cell above `i` in document order; under an explicit `max_chars`, `discard` cells go first."
         above = self.cells[max(0, since):max(0, i)]
         rows = [(c.context_mode, self._context_cell(c, out_chars)) for c in above]
         rows = [(mode, text) for mode, text in rows if text]
@@ -365,7 +308,6 @@ class Notebook:
         tail = '\n'.join(ordinary)
         if len(tail) > available: tail = ('…\n' + tail[-max(0, available-2):]) if available else ''
         return '\n'.join([*kept, tail] if tail else kept)
-
     def source_text(self):
         "The whole notebook as one diffable document: every cell's source under a jupytext `# %%` marker."
         return '\n'.join(f'# %% {c.cell_type} {c.id}\n{c.source.rstrip()}' for c in self.cells)

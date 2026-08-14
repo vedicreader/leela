@@ -1,9 +1,4 @@
-"""Filesystem access for the IDE, confined to the open folders.
-
-Every read, write, rename and delete goes through `Sandbox._check`, which resolves the path
-(collapsing `..` and following symlinks) and refuses anything outside an open root. Refs are
-plain absolute paths, not root ids, which drift as roots are added and removed.
-"""
+"Filesystem access for the IDE, confined to the open folders."
 
 from __future__ import annotations
 import os, re
@@ -15,20 +10,12 @@ from ... import Dictable
 
 __all__ = ['Unsafe', 'Entry', 'SKIP_DIRS', 'LANGS', 'lang_for', 'is_texty', 'Sandbox']
 
-# Directories never worth walking in a project tree; shown only if explicitly opened as a root.
 SKIP_DIRS = {'.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', 'node_modules', '.mypy_cache',
     '.pytest_cache', '.ruff_cache', '.ipynb_checkpoints', '.tox', 'dist', 'build', '.idea',
-    # An interpreter's libraries are not the project. Without this, 98% of what a walk of this
-    # repo returned was somebody else's code, the fuzzy match was picking `libxslt/keys.h` over
-    # `leela/core/keys.py`, and the 20k cap was being spent before the project was reached.
     'site-packages', 'site-python', '.eggs', '.gradle', '.next', '.turbo'}
-# A virtualenv is not always called `.venv`: this repo has `packaging/.app-venv`, and an exact
-# name match walked all of it. `site-packages` above prunes the inside of any of them whatever
-# the outer folder is called; this catches the folder itself so the walk never descends at all.
 _SKIP_RE = (r'^(' + '|'.join(re.escape(d) for d in sorted(SKIP_DIRS))
             + r'|[^/]*[-_.]venv|venv[-_.][^/]*)$')
 
-# suffix -> CodeMirror 6 language id.
 LANGS = {'.py': 'python', '.pyi': 'python', '.ipynb': 'python', '.js': 'javascript', '.mjs': 'javascript',
     '.cjs': 'javascript', '.jsx': 'jsx', '.ts': 'typescript', '.mts': 'typescript', '.cts': 'typescript', '.tsx': 'tsx',
     '.json': 'json', '.jsonc': 'json', '.json5': 'json', '.md': 'markdown', '.markdown': 'markdown', '.html': 'html',
@@ -42,27 +29,23 @@ NAME_LANGS = {'Dockerfile': 'bash', 'Makefile': 'bash', 'Procfile': 'bash', 'Car
 _BINARY = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.gz', '.tar', '.whl', '.so', '.dylib',
     '.dll', '.pyc', '.parquet', '.db', '.sqlite', '.woff', '.woff2', '.ttf', '.mp4', '.mp3', '.npy', '.npz', '.pkl'}
 
-MAX_EDIT_BYTES = 4_000_000   # above this the editor opens read-only rather than choking
-
+MAX_EDIT_BYTES = 4_000_000
 
 class Unsafe(Exception):
-    'A path that resolves outside every open root, or an operation refused for safety.'
-
+    "A path that resolves outside every open root, or an operation refused for safety."
 
 def lang_for(p):
     "Language id for a path, including conventional extensionless project files."
     p = Path(p)
     return NAME_LANGS.get(p.name, LANGS.get(p.suffix.lower()))
 
-
 def is_texty(p):
     "Can this be opened in a text editor at all?"
     return Path(p).suffix.lower() not in _BINARY
 
-
 @dataclass
 class Entry(Dictable):
-    'One row in the file tree.'
+    "One row in the file tree."
     name: str
     path: str
     is_dir: bool
@@ -71,33 +54,25 @@ class Entry(Dictable):
     lang: str | None = None
     is_root: bool = False
 
-
 class Sandbox:
     "The open folders, and every filesystem operation the IDE is allowed to perform inside them."
-
     def __init__(self, roots=()):
         self.roots = L()
         for r in roots: self.add_root(r)
-
-    # -- roots ----------------------------------------------------------------
     def covers(self, p):
         "Is `p` inside an open root, or one of them itself?"
         return any(p.is_relative_to(r) for r in self.roots)
-
     def add_root(self, p):
         "Open a folder. Returns its resolved path; adding a folder already covered is a no-op."
         p = Path(p).expanduser().resolve()
         if not p.is_dir(): raise Unsafe(f'not a directory: {p}')
         if self.covers(p): return p
-        self.roots = L([r for r in self.roots if p not in r.parents]) + [p]  # a new parent subsumes its children
+        self.roots = L([r for r in self.roots if p not in r.parents]) + [p]
         return p
-
     def drop_root(self, p):
         p = Path(p).expanduser().resolve()
         self.roots = self.roots.filter(lambda r: r != p)
         return p
-
-    # -- the gate -------------------------------------------------------------
     def _check(self, ref, must_exist=False):
         "Resolve `ref` and refuse it unless it lands inside an open root."
         if not self.roots: raise Unsafe('no folder is open')
@@ -107,12 +82,10 @@ class Sandbox:
         if not self.covers(p): raise Unsafe(f'{p} is outside the open folders')
         if must_exist and not p.exists(): raise FileNotFoundError(str(p))
         return p
-
     def root_of(self, ref):
         "The open root containing `ref` (the deepest one, if roots nest)."
         p = self._check(ref)
         return max((r for r in self.roots if p.is_relative_to(r)), key=lambda r: len(r.parts))
-
     def entry(self, p, is_root=False):
         p = Path(p)
         try: st = p.stat()
@@ -120,8 +93,6 @@ class Sandbox:
         d = p.is_dir()
         return Entry(name=p.name or str(p), path=str(p), is_dir=d, is_root=is_root, lang=None if d else lang_for(p),
             size=0 if d or st is None else st.st_size, mtime=0.0 if st is None else st.st_mtime)
-
-    # -- reading --------------------------------------------------------------
     def ls(self, ref=None, hidden=False, skip=True):
         "One level of a directory, dirs first then files, each alphabetical. `ref=None` lists the roots."
         if ref is None: return L(self.entry(r, is_root=True) for r in self.roots)
@@ -129,7 +100,6 @@ class Sandbox:
         if not p.is_dir(): raise NotADirectoryError(str(p))
         keep = lambda c: (hidden or not c.name.startswith('.')) and (not (skip and c.is_dir() and (c.name in SKIP_DIRS)))
         return L(p.ls()).filter(keep).sorted(key=lambda c: (not c.is_dir(), c.name.lower())).map(self.entry)
-
     def walk(self, ref=None, hidden=False, limit=20000):
         "Every file under `ref` (or all roots), for quick-open, capped at `limit`."
         out = L()
@@ -138,7 +108,6 @@ class Sandbox:
                 folder_re=None if hidden else r'^[^.]', func=Path)
             if len(out) >= limit: break
         return out[:limit]
-
     def read(self, ref):
         "Text contents of a file. Refuses binaries and anything too big to sanely edit."
         p = self._check(ref, must_exist=True)
@@ -146,18 +115,14 @@ class Sandbox:
         if not is_texty(p): raise Unsafe(f'{p.name} is a binary file')
         if p.stat().st_size > MAX_EDIT_BYTES: raise Unsafe(f'{p.name} is too large to edit')
         return p.read_text(encoding='utf-8', errors='replace')
-
     def read_bytes(self, ref):
         p = self._check(ref, must_exist=True)
         return p.read_bytes()
-
-    # -- writing --------------------------------------------------------------
     def write(self, ref, text):
         "Write text atomically, so a crash mid-save leaves the previous file intact."
         p = self._check(ref)
         with atomic_save(p, mode='w', encoding='utf-8') as f: f.write(text)
         return self.entry(p)
-
     def touch(self, ref):
         "Create an empty file; refuses to clobber an existing one."
         p = self._check(ref)
@@ -165,12 +130,10 @@ class Sandbox:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.touch()
         return self.entry(p)
-
     def mkdir(self, ref):
         p = self._check(ref)
         if p.exists(): raise FileExistsError(str(p))
         return self.entry(fc_mkdir(p, parents=True))
-
     def rename(self, ref, name):
         "Rename in place. `name` must be a bare filename: a path here would write outside the folder."
         p = self._check(ref, must_exist=True)
@@ -179,7 +142,6 @@ class Sandbox:
         if dst.exists(): raise FileExistsError(str(dst))
         p.rename(dst)
         return self.entry(dst)
-
     def move(self, ref, dest_dir):
         "Move into another directory; both ends are checked."
         p = self._check(ref, must_exist=True)
@@ -190,7 +152,6 @@ class Sandbox:
         if dst.exists(): raise FileExistsError(str(dst))
         fc_move(p, dst)
         return self.entry(dst)
-
     def delete(self, ref):
         "Delete a file, or a directory and its contents. Refuses to delete an open root."
         p = self._check(ref, must_exist=True)

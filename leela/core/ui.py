@@ -1,8 +1,4 @@
-"""The chrome every panel is built from: buttons, bars, menus and activity icons.
-
-`btn(b)` renders a row from `leela.core.buttons` with `onclick="leeAct(action)"` -- the same
-action name the keymap binds to a chord, so a button and its shortcut cannot drift apart.
-"""
+"The chrome every panel is built from: buttons, bars, menus and activity icons."
 
 from __future__ import annotations
 
@@ -12,23 +8,19 @@ from .buttons import bar as btn_bar
 
 __all__ = ['btn', 'action_bar', 'menu_button', 'activity_icon', 'ICONS']
 
-
 def btn(b):
     "One button from the shared table. The click runs the same action its key runs."
     return Button(b.label, cls='lee-btn ' + (b.kind or 'plain'), title=b.tooltip,
                   data_action=b.action, onclick=f'leeAct("{b.action}")')
 
-
 def action_bar(name, **kw):
     "A whole bar of them, in the order `leela.core.buttons` declares."
     return Div(*btn_bar(name).map(btn), cls=f'lee-bar lee-bar-{name}', **kw)
-
 
 def menu_button(surface):
     "Mouse-discoverable door into the same contextual registry used by right-click."
     return Button('⋯', cls='lee-more', title=f'{surface} actions', aria_label=f'{surface} actions',
                   onclick=f'leeMenuAt("{surface}", this)')
-
 
 ICONS = {
     'files': '<path d="M2.5 5.5h6l1.7 2h7.3v8.5h-15zM2.5 5.5V4h5l1.5 1.5"/>',
@@ -44,7 +36,6 @@ ICONS = {
     'git': '<circle cx="5" cy="4" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="5" cy="16" r="2"/>'
            '<path d="M5 6v8m2-7h4a4 4 0 0 1 4 4v-3"/>',
 }
-
 
 def activity_icon(kind):
     "Small monochrome activity-bar icons; labels remain available to assistive tech."

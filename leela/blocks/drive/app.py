@@ -1,4 +1,4 @@
-'Driving dockeasy, vpseasy, cfeasy and gheasy a call at a time.'
+"Driving dockeasy, vpseasy, cfeasy and gheasy a call at a time."
 
 from __future__ import annotations
 
@@ -12,19 +12,16 @@ __all__ = ['CAPS', 'connect']
 
 CAPS = ('fs', 'gate')
 
-
 def connect(app, ctx):
     rt = app.route
     live = {}
-
     def drive(target=''):
         "The driver for one project, made once and kept -- a running step is a process."
         root = repo_for(ctx.session, target)
         key = str(root)
         if key not in live: live[key] = Drive(root, env=EnvStore())
-        live[key].python = python_for(root, ctx.session)   # this project's venv, not the first root's
+        live[key].python = python_for(root, ctx.session)
         return live[key]
-
     def state(target=''):
         d = drive(target)
         out = d.state()
@@ -32,13 +29,11 @@ def connect(app, ctx):
             try: out['blame'] = d.blame([str(r) for r in RepoSet(ctx.fs.roots).paths()])
             except Exception: out['blame'] = {}
         return out
-
     @rt('/drive')
     def drive_info(repo: str = ''):
         "Every part, its rendered snippet, and where the last run of it got to."
         try: return state(repo)
         except Exception as e: return fail(e)
-
     @rt('/drive/action')
     async def drive_action(req):
         "Run one part, or the lot; `step` does not carry on into the next one."
@@ -57,11 +52,9 @@ def connect(app, ctx):
             else: raise DriveError(f'unknown drive action: {op}')
             return state(target)
         except Exception as e: return fail(e)
-
     @rt('/drive/tail')
     async def drive_tail(repo: str = '', lines: int = 80):
         try: return {'text': await off_loop(drive(repo).tail, lines)}
         except Exception as e: return fail(e)
-
     pipeline_socket(app, '/drive/ws', ctx.gate,
                     lambda hello: drive(hello.get('repo') or hello.get('cwd') or ''))

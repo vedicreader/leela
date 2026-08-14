@@ -1,12 +1,4 @@
-"""Every vault leela can reach, which is active, and what may write to each.
-
-A vault is a vishalakshi database file. Shelves inside one are not enough once another tool owns
-a vault: chitragupta's file is a peer, not a shelf, and attaching it must not imply leela may
-write to it. So `access` says what a person may do, and `agent` narrows that to the model.
-
-The registry lives beside leela's config, not in workspace state: what you have attached
-outlives the folder you happen to have open.
-"""
+"Every vault leela can reach, which is active, and what may write to each."
 
 from __future__ import annotations
 import json, os, time
@@ -20,57 +12,44 @@ from .memory import GLOBAL, Memory, memory_path, safe_shelf
 __all__ = ['ACCESS', 'WORKSPACE', 'VaultRef', 'Vaults', 'vaults_path']
 
 ACCESS = ('read', 'admin')
-WORKSPACE = 'workspace'      # leela's own vault; never detached, never redefined by the file
-
+WORKSPACE = 'workspace'
 
 def vaults_path(): return leela_cfg/'vaults.json'
 
-
 def _same_file(a, b):
-    "One vault file is one vault, whatever path you reached it by: `~`, `..` and symlinks all resolve."
+    "One vault file is one vault, whatever path you reached it by: `~`, `..` and symlinks all."
     return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
-
 
 @dataclass
 class VaultRef(Dictable):
     "One vault file leela knows about."
     name: str
     path: str
-    access: str = 'read'          # 'read' | 'admin'
-    agent: bool = False           # may the model write here? only meaningful while `access` is admin
+    access: str = 'read'
+    agent: bool = False
     attached_at: float = field(default_factory=time.time)
-
     def __post_init__(self):
         if self.access not in ACCESS: raise ValueError(f'{self.name}: unknown access {self.access!r}')
         self.name, self.path = safe_shelf(self.name), str(Path(self.path).expanduser())
-
     @property
     def writable(self): return self.access == 'admin'
-
     @property
     def agent_writable(self):
         "An `and`, never an `or`: the model writes only where a person already may."
         return self.writable and bool(self.agent)
-
     @property
     def exists(self): return Path(self.path).is_file()
-
     def dict(self):
         return {**super().dict(), 'writable': self.writable, 'agent_writable': self.agent_writable,
                 'exists': self.exists, 'reserved': self.name == WORKSPACE}
 
-
 class Vaults:
     "The attached vaults, the active one, and one cached `Memory` each."
-
     def __init__(self, path=None, workspace_vault=None, shelf=GLOBAL, own=None):
         self.file = Path(path) if path else vaults_path()
         self.shelf, self.note, self.own = shelf, '', own
-        # Handed in, not rebuilt: a second `Memory` is a second set of connections on one file.
         self._memories = {WORKSPACE: own} if own is not None else {}
         self.rows, self.active_name = self._load(workspace_vault or getattr(own, 'path', None))
-
-    # -- the registry file ----------------------------------------------------
     def _load(self, workspace_vault=None):
         "The registry, with leela's own vault first whatever the file says."
         own = VaultRef(WORKSPACE, str(workspace_vault or memory_path()), access='admin', agent=True)
@@ -78,52 +57,39 @@ class Vaults:
         try:
             d = json.loads(self.file.read_text()) if self.file.is_file() else {}
             for r in d.get('vaults') or ():
-                if r.get('name') == WORKSPACE: continue     # never let the file redefine leela's own
+                if r.get('name') == WORKSPACE: continue
                 try: rows.append(VaultRef(**{k: v for k, v in r.items() if k in VaultRef.__dataclass_fields__}))
-                except Exception: continue                   # one bad row must not lose the rest
+                except Exception: continue
             if (want := str(d.get('active') or '')) in {r.name for r in rows}: active = want
         except Exception as e: self.note = f'could not read {self.file.name} ({errstr(e)})'
         return rows, active
-
     def save(self):
         "Persist all but leela's own vault, whose location the workspace decides."
-        # `asdict`, not `dict()`: the derived keys are for a route to read, and `exists` in
-        # particular is a snapshot that would be stale the moment it was written.
         rows = [asdict(r) for r in self.rows if r.name != WORKSPACE]
         try:
             self.file.parent.mkdir(parents=True, exist_ok=True)
-            # Written whole and renamed over, under a pid-unique name: a crash or a second leela
-            # mid-write must not leave a truncated file that the next load reads as no vaults.
             tmp = self.file.parent/f'{self.file.name}.{os.getpid()}.tmp'
             tmp.write_text(json.dumps({'active': self.active_name, 'vaults': rows}, indent=2))
             tmp.replace(self.file)
         except Exception as e: self.note = f'could not save {self.file.name} ({errstr(e)})'
         return self
-
-    # -- reading the registry -------------------------------------------------
     def __len__(self): return len(self.rows)
     def __iter__(self): return iter(self.rows)
-
     def get(self, name=None):
         "One vault by name, defaulting to the active one."
         return first(r for r in self.rows if r.name == safe_shelf(name or self.active_name))
-
     @property
     def active(self):
         "The active vault, falling back to leela's own so this cannot fail."
         return self.get() or self.rows[0]
-
     def dict(self):
         return {'active': self.active.name, 'note': self.note,
                 'vaults': [dict(r.dict(), active=r.name == self.active.name) for r in self.rows]}
-
-    # -- changing it ----------------------------------------------------------
     def _unique(self, name):
         "A name not already taken, suffixed rather than replacing a vault."
         taken, base = {r.name for r in self.rows}, safe_shelf(name)
         if base not in taken: return base
         return first(f'{base}_{i}' for i in range(2, 1000) if f'{base}_{i}' not in taken)
-
     def attach(self, path, name='', access='read', agent=False):
         "Register an existing vault file. Never creates one: a typo is not a new vault."
         p = Path(path).expanduser()
@@ -135,7 +101,6 @@ class Vaults:
         self.rows.append(ref); self.save()
         self.note = f'attached {ref.name}'
         return ref
-
     def create(self, path, name='', access='admin', agent=False):
         "Make a vault file and attach it, as admin: a vault you made is yours."
         p = Path(path).expanduser()
@@ -143,11 +108,10 @@ class Vaults:
         if p.exists(): raise FileExistsError(f'{p} already exists; attach it instead')
         p.parent.mkdir(parents=True, exist_ok=True)
         ref = VaultRef(self._unique(name or p.parent.name or p.stem), str(p), access=access, agent=agent)
-        self._build(ref)._open()      # so the file and its tables exist before anything reads it
+        self._build(ref)._open()
         self.rows.append(ref); self.save()
         self.note = f'created {ref.name}'
         return ref
-
     def detach(self, name):
         "Forget a vault. The file is left alone."
         ref = self.get(name)
@@ -159,7 +123,6 @@ class Vaults:
         self.save()
         self.note = f'detached {ref.name}'
         return ref
-
     def activate(self, name):
         "Choose the vault the memory surfaces are about."
         ref = self.get(name)
@@ -167,13 +130,11 @@ class Vaults:
         self.active_name = ref.name; self.save()
         self.note = f'active vault is {ref.name}'
         return ref
-
     def _replace(self, ref, **kw):
         self.rows = self.rows.map(lambda r: replace(r, **kw) if r.name == ref.name else r)
-        if ref.name != WORKSPACE: self._memories.pop(ref.name, None)   # rebuilt on next use
+        if ref.name != WORKSPACE: self._memories.pop(ref.name, None)
         self.save()
         return self.get(ref.name)
-
     def set_access(self, name, access):
         "Read or admin. Dropping to read drops the agent's reach with it."
         ref = self.get(name)
@@ -182,7 +143,6 @@ class Vaults:
         out = self._replace(ref, access=access, agent=ref.agent and access == 'admin')
         self.note = f'{out.name} is {out.access}'
         return out
-
     def set_agent(self, name, agent=True):
         "Whether the model may write here. Refused on a read-only vault, not silently ignored."
         ref = self.get(name)
@@ -192,22 +152,16 @@ class Vaults:
         out = self._replace(ref, agent=bool(agent))
         self.note = f"agent may {'write to' if out.agent_writable else 'only read'} {out.name}"
         return out
-
-    # -- the vaults themselves ------------------------------------------------
     def _build(self, ref): return Memory(shelf=self.shelf, path=ref.path)
-
     def memory(self, name=None):
         "The `Memory` over one vault, built once and kept."
         ref = self.get(name)
         if ref is None: raise KeyError(name)
         if ref.name not in self._memories:
-            # Opening a vault creates the file. A peer's vault that has been deleted or unmounted
-            # since it was attached would come back as a new empty one, silently.
             if ref.name != WORKSPACE and not ref.exists:
                 raise FileNotFoundError(f'{ref.name}: no vault file at {ref.path}')
             self._memories[ref.name] = self._build(ref)
         return self._memories[ref.name]
-
     def close(self):
         "Close what this registry opened; the workspace closes its own."
         for name, m in list(self._memories.items()):

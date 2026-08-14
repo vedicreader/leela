@@ -1,8 +1,4 @@
-"""Open documents: the tab strip, the buffers behind it, and disk agreement.
-
-Tab routes swap only `#tabbar`: re-rendering the shell would collapse the file tree, drop the
-exec editor and reset the variable panel.
-"""
+"Open documents: the tab strip, the buffers behind it, and disk agreement."
 
 from __future__ import annotations
 
@@ -19,7 +15,6 @@ __all__ = ['CAPS', 'connect', 'disk_version']
 
 CAPS = ('fs', 'pool', 'tab', 'docs')
 
-
 def disk_version(path):
     "A cheap browser-watch token; changes whenever the active file is replaced or written."
     if not path: return ''
@@ -28,26 +23,22 @@ def disk_version(path):
         return f'{s.st_mtime_ns}:{s.st_size}'
     except OSError: return 'missing'
 
-
 def connect(app, ctx):
     rt = app.route
     session, docs = ctx.session, ctx.docs
-
     @rt('/tab/open')
     def tab_open(path: str):
         try:
             session.open(path)
-            session.watch_env(None)   # a manually watched app belongs to the tab it was chosen from
+            session.watch_env(None)
             session.save()
         except Exception as e: return Div(errstr(e), cls='lee-err')
         return tab_bar(session)
-
     @rt('/tab/select')
     def tab_select(i: int):
         session.activate(i)
         session.watch_env(None)
         return tab_bar(session)
-
     @rt('/tab/close')
     async def tab_close(i: int):
         key = session.kernel_key(session.tabs[i]) if 0 <= i < len(session.tabs) else None
@@ -55,19 +46,16 @@ def connect(app, ctx):
         session.close(i); session.watch_env(None); session.save()
         if private and key: await ctx.pool.close(key)
         return tab_bar(session)
-
     @rt('/tab/move')
     def tab_move(i: int, j: int):
         "Reorder by drag. The strip is the user's ordering of their own work, so it persists."
         session.move_tab(i, j); session.save()
         return tab_bar(session)
-
     @rt('/tab/new')
     def tab_new(kind: str = 'notebook'):
         session.new_scratch(kind)
         session.watch_env(None)
         return tab_bar(session)
-
     @rt('/tab/state')
     def tab_state(path: str = ''):
         "Everything needed to mount the active tab, or an open tab addressed by absolute path."
@@ -77,7 +65,6 @@ def connect(app, ctx):
         if t.kind == 'notebook':
             key = t.path or t.title
             try:
-                # In-memory first: the document owns unsaved outputs and running state.
                 nb = docs.docs.get(key)
                 if nb is None: nb = Notebook.load(t.path) if t.path else Notebook.blank()
             except Exception as e: return {'kind': 'error', 'error': errstr(e)}
@@ -85,22 +72,17 @@ def connect(app, ctx):
             return {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
                     'disk_version': disk_version(t.path), 'cells': [c.dict() for c in nb.cells]}
         if t.kind in ('pdf', 'image'):
-            # No contents: the browser fetches the bytes from `/file/raw` itself. Sending them
-            # through this JSON payload would base64 a whole document into every tab switch.
             return {'kind': t.kind, 'path': t.path, 'title': t.title,
                     'disk_version': disk_version(t.path)}
         if t.kind == 'vault':
-            # Same shape as pdf: the tab names a document, the reader fetches it from `/vault/doc`.
             vault, shelf, doc = (t.ref.split('|') + ['', '', ''])[:3]
             return {'kind': 'vault', 'title': t.title, 'vault': vault, 'shelf': shelf, 'doc': doc}
         try:
             key = t.path or t.title
-            # `in`, not `.get(...) or`: an empty buffer is a real answer, not a miss.
             text = docs.buffers[key] if key in docs.buffers else (ctx.fs.read(t.path) if t.path else '')
         except Exception as e: return {'kind': 'error', 'error': errstr(e)}
         return {'kind': 'text', 'path': t.path, 'title': t.title, 'lang': t.lang or '',
                 'disk_version': disk_version(t.path), 'text': text}
-
     @rt('/tab/disk')
     def tab_disk(path: str = ''):
         "Current on-disk text for the explicit conflict/merge editor."
@@ -113,13 +95,11 @@ def connect(app, ctx):
             return {'path': str(p), 'kind': 'text', 'text': ctx.fs.read(p),
                     'disk_version': disk_version(p)}
         except Exception as e: return fail(e)
-
     @rt('/tab/watch')
     def tab_watch():
         "Pollable disk identity for the open document; no file contents cross the wire."
         t = ctx.tab
         return {'path': t.path if t else '', 'disk_version': disk_version(t.path) if t else ''}
-
     @rt('/tab/reload')
     async def tab_reload(req):
         "Drop server-side editor caches so the next state read comes straight from disk."
@@ -129,7 +109,6 @@ def connect(app, ctx):
         docs.forget(t.path or t.title)
         t.dirty = False
         return {'ok': True, 'path': t.path}
-
     @rt('/tab/buffer')
     async def tab_buffer(req):
         "Persist an editor buffer in memory so a tab switch cannot discard unsaved typing."

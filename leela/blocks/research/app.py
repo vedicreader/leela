@@ -1,9 +1,4 @@
-"""Web search, reading and citation, without leaving the workspace.
-
-Three depths: `/search` for titles and urls, `/read` for one page as Markdown, `/dig` for
-several sources plus a cited digest. `remember` defaults to true; pass `remember=0` to read
-without adding to the corpus. Every backend here is blocking, so all of it goes through `off_loop`.
-"""
+"Web search, reading and citation, without leaving the workspace."
 
 from __future__ import annotations
 
@@ -14,30 +9,25 @@ __all__ = ['CAPS', 'connect']
 
 CAPS = ('research',)
 
-
 def connect(app, ctx):
     rt = app.route
-
     @rt('/research/search')
     async def research_search(q: str = '', n: int = 15):
         "Web search: titles and urls only, so it stays fast enough to drive from a prompt box."
         n = min(50, max(1, int(n)))
         docs = await off_loop(ctx.research.search, q, n)
         return {'note': ctx.research.note, 'docs': [d.dict() for d in docs]}
-
     @rt('/research/read')
     async def research_read(url: str = '', remember: bool = True):
         "One page (or GitHub file, or arxiv paper) as markdown."
         d = await off_loop(ctx.research.read, url, None, remember)
         return {'note': ctx.research.note, 'doc': d.dict() if d else None}
-
     @rt('/research/dig')
     async def research_dig(q: str = '', n: int = 5, remember: bool = True):
         "Search and read the top results into one cited digest."
         n = min(12, max(1, int(n)))
         docs, digest = await off_loop(ctx.research.dig, q, n, MAX_DOC_CHARS, remember)
         return dict(note=ctx.research.note, digest=digest, docs=[d.dict() for d in docs])
-
     @rt('/research/save')
     async def research_save(req):
         "Keep a fetched page: markdown by default, or a runnable notebook with kind='notebook'."

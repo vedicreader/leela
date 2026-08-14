@@ -1,9 +1,4 @@
-"""The deploy taken apart: one library call per step, each with its own output.
-
-Steps run in a subprocess on a pty: `hetzner_deploy` shells out to ssh and rsync, whose
-output goes to a file descriptor `redirect_stdout` cannot catch. Values flow between steps
-through dockeasy's store (`env_set`/`env_get`), as they do inside `deploy.py`.
-"""
+"The deploy taken apart: one library call per step, each with its own output."
 
 from __future__ import annotations
 
@@ -19,7 +14,6 @@ __all__ = ['Drive', 'DriveError', 'Part', 'PARTS', 'DRIVE_FILE', 'context', 'par
 DRIVE_FILE = '.leela/drive.json'
 DriveError = PipelineError
 
-
 @dataclass
 class Part:
     "One library call, as a step you can run on its own."
@@ -31,7 +25,6 @@ class Part:
     needs: list = field(default_factory=list)
     writes: list = field(default_factory=list)
     produces: list = field(default_factory=list)
-
 
 PARTS = [
     Part('image', 'dockeasy', 'Dockerfile',
@@ -95,7 +88,6 @@ PARTS = [
          needs=['GITHUB_TOKEN']),
 ]
 
-
 def context(root, env=None):
     "The values every snippet is rendered with, resolved once."
     root = Path(root).expanduser().resolve()
@@ -126,7 +118,6 @@ def context(root, env=None):
                     'docker-compose.yml', 'Caddyfile', '.env'],
             'exc': ['data/', '.git/', '.venv/', '__pycache__/']}
 
-
 def _step(part, exe, ctx):
     "One part as a `Step`, its snippet rendered with this project's values."
     code = part.code.format(**ctx)
@@ -135,35 +126,28 @@ def _step(part, exe, ctx):
                 meta={'package': part.package, 'code': code, 'writes': list(part.writes),
                       'produces': list(part.produces), 'title': part.label})
 
-
 def parts(root, env=None, python=''):
     "Every part as a runnable step, with this project's values already in the snippet."
     ctx = context(root, env)
     return [_step(p, str(python or sys.executable), ctx) for p in PARTS]
 
-
 class Drive(Pipeline):
     "The deploy, driven a library at a time."
-
     FILE = DRIVE_FILE
     KIND = 'drive'
-
     def __init__(self, root, python=None, env=None):
         super().__init__(root, python=python, env=env)
         self._rendered = ''
-
     @staticmethod
     def defaults(root): return parts(root)
-
     def refresh(self):
         "Re-render the snippets against the current values."
-        if self.path.exists(): return self.steps          # an edited plan is the user's
+        if self.path.exists(): return self.steps
         key = json.dumps(context(self.root, self.env), sort_keys=True)
         if key != self._rendered:
             self.steps = parts(self.root, self.env, self.python or '')
             self._rendered = key
         return self.steps
-
     def state(self):
         self.refresh()
         ctx = context(self.root, self.env)

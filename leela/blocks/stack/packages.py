@@ -1,4 +1,4 @@
-'Which of your packages is installed, where from, and which one just raised.'
+"Which of your packages is installed, where from, and which one just raised."
 
 from __future__ import annotations
 
@@ -13,13 +13,11 @@ FAMILY = ['gheasy', 'dockeasy', 'vpseasy', 'cfeasy', 'leela', 'dhrishti', 'nbdev
 
 _FRAME = re.compile(r'File "([^"]+)", line (\d+), in (\S+)')
 
-
 def installed(name):
     "Is `name` importable, without importing it?"
     from importlib.util import find_spec
     try: return find_spec(name) is not None
     except (ImportError, ValueError): return False
-
 
 def _origin(name):
     "Where importing `name` would actually read from, without importing it."
@@ -30,21 +28,17 @@ def _origin(name):
     where = first(spec.submodule_search_locations or ()) or spec.origin
     return Path(where) if where else None
 
-
 def _version(name):
     from importlib import metadata
     try: return metadata.version(name)
     except Exception: return ''
-
 
 def _vendored(path):
     "Is this path inside an installed environment rather than someone's working tree?"
     parts = set(Path(path).parts)
     return bool(parts & {'site-packages', 'dist-packages', '.venv', 'venv'})
 
-
 def _roots(checkouts): return [Path(c).expanduser().resolve() for c in checkouts]
-
 
 def checkout_for(name, checkouts):
     "The open checkout that *is* this package, matched by `<root>/<name>/__init__.py`, not repo name."
@@ -52,7 +46,6 @@ def checkout_for(name, checkouts):
         for inner in (root/name, root/'src'/name):
             if (inner/'__init__.py').exists(): return str(root)
     return ''
-
 
 def _row(name, roots):
     "One package: where an import lands, and whether that copy is the open checkout."
@@ -64,26 +57,18 @@ def _row(name, roots):
             'source': ('checkout' if from_source else 'site-packages') if path else '',
             'shadowed': bool(local) and bool(path) and not from_source}
 
-
 def survey(names=(), checkouts=()):
-    "One row each: installed, version, the copy an import resolves to, and whether a checkout is shadowed."
+    "One row each: installed, version, the copy an import resolves to, and whether a checkout is."
     roots = _roots(checkouts)
     return [_row(name, roots) for name in (list(names) or FAMILY)]
-
 
 def frames(text):
     "Every `File ..., line N, in f` in a traceback, oldest first, as the terminal printed it."
     return [{'file': m.group(1), 'line': int(m.group(2)), 'fn': m.group(3)}
             for m in _FRAME.finditer(str(text or ''))]
 
-
 def _package_of(path, names):
-    """The family package a file belongs to.
-
-    Inside an environment it is the component right after `site-packages` and nothing else: a
-    venv at `~/code/leela/.venv` puts `leela` in every installed package's path, so matching
-    anywhere blames Leela for the Cloudflare SDK. Outside one, the last match wins.
-    """
+    "The family package a file belongs to."
     parts = Path(path).parts
     for marker in ('site-packages', 'dist-packages'):
         if marker in parts:
@@ -94,11 +79,9 @@ def _package_of(path, names):
         if part in names: return part
     return ''
 
-
 def _is_error(line):
     "A line that reads like `SomeError: message` rather than a frame or a caret marker."
     return bool(line) and not line.startswith(('File "', '^', '~', '|')) and ':' in line and '    ' not in line[:4]
-
 
 def blame(text, names=(), checkouts=()):
     "Which package raised (the deepest family frame) and where to open it, preferring a checkout."

@@ -1,7 +1,4 @@
-"""Layered settings: defaults, then user, then workspace, then language.
-
-`Settings` is rebuilt per request: it reads files the user may be editing in this very editor.
-"""
+"Layered settings: defaults, then user, then workspace, then language."
 
 from __future__ import annotations
 
@@ -12,18 +9,13 @@ __all__ = ['CAPS', 'connect']
 
 CAPS = ('fs',)
 
-
 def connect(app, ctx):
     rt = app.route
-
-    # The chosen project, not roots[0]: with two checkouts open the wrong `.leela/settings.json` wins.
     def _settings(): return Settings(ctx.session.project_root)
-
     @rt('/settings')
     def settings_get(language: str = ''):
         "Effective defaults + user + workspace + language values and their origins."
         return _settings().describe(language)
-
     @rt('/settings/save')
     async def settings_save(req):
         d = await req.json()
@@ -31,7 +23,6 @@ def connect(app, ctx):
             return {'ok': True, **_settings().save(d.get('scope', 'user'), d.get('section', 'editor'),
                                                     d.get('values') or {}, d.get('language') or '')}
         except Exception as e: return fail(e)
-
     @rt('/settings/reset')
     async def settings_reset(req):
         d = await req.json()

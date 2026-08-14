@@ -7,9 +7,6 @@ __all__ = ['connect', 'CAPS']
 
 __getattr__ = lazy_app(globals())
 
-
-# This block owns `MemoryPort`, so it registers what satisfies it. `vishalakshi.Vault`
-# registers the same way -- see `docs/integration.md`.
 @provider('memory', DEFAULT)
 def _memory(kosha=None, path=None, **kw):
     from .memory import Memory

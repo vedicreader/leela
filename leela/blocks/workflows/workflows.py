@@ -1,12 +1,4 @@
-"""GitHub Actions, as something you can look at rather than a folder of YAML.
-
-The local files parsed into jobs and edges, the recent runs from GitHub, and the trigger
-that starts one. Everything except the reading is gheasy's -- `owner/name`, the token, the
-`GhApi`, the branch, the generated workflow, the secret-or-variable rule, and the ruamel
-instance. gheasy is an optional extra; without it the panel lists the files and says what to
-install. Nothing writes to GitHub implicitly, and `push_env` refuses a key the project's
-`env_schema` does not declare.
-"""
+"GitHub Actions, as something you can look at rather than a folder of YAML."
 
 from __future__ import annotations
 
@@ -21,10 +13,8 @@ __all__ = ['Workflows', 'WorkflowError', 'levels']
 
 WORKFLOW_DIR = '.github/workflows'
 
-
 class WorkflowError(RuntimeError):
     pass
-
 
 def _gheasy():
     try:
@@ -32,7 +22,6 @@ def _gheasy():
         return core
     except ImportError as e:
         raise WorkflowError('this needs gheasy: pip install "leela[github]"') from e
-
 
 def _yaml():
     "gheasy's ruamel instance, so Leela reads what gheasy writes with the same parser."
@@ -42,11 +31,8 @@ def _yaml():
     except ImportError as e:
         raise WorkflowError('reading workflow files needs gheasy: pip install "leela[github]"') from e
 
-
 def levels(jobs):
     "Jobs arranged into rows: everything that can start, then what follows, by longest path."
-    # A job left over after layering is in a `needs` cycle; it goes in a final row rather
-    # than stopping the drawing.
     known = {j['id'] for j in jobs}
     depth, pending = {}, list(jobs)
     for _ in range(len(jobs) + 1):
@@ -64,20 +50,14 @@ def levels(jobs):
     for job in jobs: rows.setdefault(depth[job['id']], []).append(job['id'])
     return [rows[k] for k in sorted(rows)]
 
-
 class Workflows:
     "Every workflow in one repository: the files, the graph, the runs, and the secrets."
-
     def __init__(self, root): self.root = Path(root).expanduser().resolve()
-
-    # -- local files -----------------------------------------------------------
     @property
     def dir(self): return self.root/WORKFLOW_DIR
-
     def files(self):
         try: return sorted(p for p in self.dir.iterdir() if p.suffix in ('.yml', '.yaml'))
         except OSError: return []
-
     @staticmethod
     def _triggers(on):
         "`on:` in any of its three shapes -- a string, a list, or a mapping with filters."
@@ -93,7 +73,6 @@ class Workflows:
             elif isinstance(spec, list): detail = ', '.join(map(str, spec))
             rows.append({'event': str(event), 'detail': detail})
         return rows
-
     @staticmethod
     def _steps(raw):
         rows = []
@@ -103,7 +82,6 @@ class Workflows:
             label = str(step.get('name') or '') or uses or (run.splitlines()[0] if run else '') or 'step'
             rows.append({'name': label, 'uses': uses, 'run': run, 'if': str(step.get('if') or '')})
         return rows
-
     @classmethod
     def _job(cls, job_id, job):
         "One entry of `jobs:`, with `needs` in either of its shapes and `environment` in either of its."
@@ -116,7 +94,6 @@ class Workflows:
             'if': str(job.get('if') or ''), 'uses': str(job.get('uses') or ''),
             'environment': str(env.get('name') or '') if isinstance(env, dict) else str(env or ''),
             'steps': cls._steps(job.get('steps'))}
-
     def parse(self, path):
         "One workflow file as jobs and edges, or as the error that stopped it being read."
         path = Path(path)
@@ -124,10 +101,9 @@ class Workflows:
             'jobs': [], 'levels': [], 'dispatchable': False, 'error': ''}
         try: doc = _yaml().load(path.read_text(encoding='utf-8', errors='replace')) or {}
         except (OSError, WorkflowError) as e: return row | {'error': str(e)}
-        except Exception as e:                                  # a YAML error names the line
+        except Exception as e:
             return row | {'error': f'{type(e).__name__}: {e}'}
         if not isinstance(doc, dict): return row | {'error': 'this file is not a workflow'}
-        # `on:` parses as the YAML 1.1 boolean `True`, so a naive `doc['on']` finds nothing.
         on = doc.get('on', doc.get(True, {}))
         row['name'] = str(doc.get('name') or path.stem)
         row['triggers'] = self._triggers(on)
@@ -136,10 +112,7 @@ class Workflows:
         row['jobs'] = [self._job(k, v) for k, v in (jobs.items() if isinstance(jobs, dict) else ())]
         row['levels'] = levels(row['jobs'])
         return row
-
     def parsed(self): return [self.parse(p) for p in self.files()]
-
-    # -- the GitHub side -------------------------------------------------------
     def repo(self):
         "`owner/name` from the origin remote, or `''` when there is no GitHub remote."
         try:
@@ -147,7 +120,6 @@ class Workflows:
             owner, name = core._get_repo_slug(str(self.root))
             return f'{owner}/{name}'
         except Exception: return ''
-
     def _api(self):
         core = _gheasy()
         token = core._resolve_gh_token()
@@ -155,7 +127,6 @@ class Workflows:
             raise WorkflowError('set GITHUB_TOKEN — add it in Environment below, or export it before starting Leela')
         owner, name, api = core._gh_api(token, str(self.root))
         return owner, name, _sync_api(core, owner, name, token, api)
-
     def status(self):
         "Whether the GitHub half is usable, and if not, which of gheasy, remote or token is missing."
         row = {'gheasy': True, 'dockeasy': installed('dockeasy'), 'repo': '', 'token': False,
@@ -167,7 +138,6 @@ class Workflows:
         if not row['repo']: row['why'] = 'no GitHub remote on this repository'
         elif not row['token']: row['why'] = 'no GITHUB_TOKEN'
         return row
-
     def runs(self, limit=20, workflow=''):
         "Recent runs, newest first. `workflow` is a file name, matching what `files` returns."
         owner, name, api = self._api()
@@ -175,7 +145,6 @@ class Workflows:
         raw = (api.actions.list_workflow_runs(workflow_id=workflow, **kw) if workflow
             else api.actions.list_workflow_runs_for_repo(**kw))
         return [_run_row(run) for run in (raw.get('workflow_runs') or [])]
-
     def run_jobs(self, run_id):
         "The jobs of one run, so a red workflow says which box is red."
         owner, name, api = self._api()
@@ -187,7 +156,6 @@ class Workflows:
                 'conclusion': s.get('conclusion') or '', 'number': s.get('number')}
                 for s in (j.get('steps') or [])]}
             for j in (raw.get('jobs') or [])]
-
     def dispatch(self, workflow, ref='', inputs=None):
         "Start a run. The workflow must declare `workflow_dispatch`; GitHub refuses otherwise."
         owner, name, api = self._api()
@@ -195,27 +163,22 @@ class Workflows:
         ref = str(ref or '').strip() or _gheasy()._git_branch(str(self.root))
         api.actions.create_workflow_dispatch(workflow_id=str(workflow), ref=ref, inputs=dict(inputs or {}))
         return {'workflow': str(workflow), 'ref': ref}
-
     def cancel(self, run_id):
         owner, name, api = self._api()
         api.actions.cancel_workflow_run(run_id=int(run_id))
         return {'cancelled': int(run_id)}
-
-    # -- gheasy's generated workflow -------------------------------------------
     def config(self):
         "The project's `.gheasy/config.json`, or None when gheasy has not been set up here."
         try: core = _gheasy()
         except WorkflowError: return None
         if not core.cfg_path(str(self.root)).exists(): return None
         return core.GheasyConfig.load(str(self.root)).to_dict()
-
     def generate(self):
         "The workflow gheasy would write for this project, as text, without writing it."
         core = _gheasy()
         if not core.cfg_path(str(self.root)).exists():
             raise WorkflowError('this project has no .gheasy/config.json to generate from')
         return core.mk_workflow(core.GheasyConfig.load(str(self.root)))
-
     def write_generated(self):
         "Write it through gheasy's `gh_workflow`, the same call the CLI makes. Never commits."
         core = _gheasy()
@@ -223,8 +186,6 @@ class Workflows:
             raise WorkflowError('this project has no .gheasy/config.json to generate from')
         core.gh_workflow(path=str(self.root))
         return {'path': str(self.dir/'gheasy.yml')}
-
-    # -- the catalogue, and which of it this project wants ----------------------
     def detect(self):
         "What this project is, from the files that say so and from dockeasy's `detect_app`."
         root = self.root
@@ -248,9 +209,8 @@ class Workflows:
         except ImportError: row['build_why'] = 'install dockeasy to detect the build'
         except Exception as e: row['build_why'] = f'{type(e).__name__}: {e}'
         return row
-
     def catalogue(self):
-        "The workflows on offer, every one of them gheasy's, each marked with whether this project wants it."
+        "The workflows on offer, every one of them gheasy's, each marked with whether this project wants."
         d = self.detect()
         present = {p.name for p in self.files()}
         rows = [
@@ -279,7 +239,6 @@ class Workflows:
             row['recommended'] = bool(row['want'])
             row['why'] = row['why'] if row['want'] else ''
         return {'detect': d, 'workflows': rows}
-
     def _build(self, choice):
         "One catalogue entry as a gheasy `WorkflowDoc`. Nothing here writes anything."
         from gheasy.workflow import Workflow, docker_build_push, pages_deploy, uv_ci
@@ -301,7 +260,6 @@ class Workflows:
         if choice == 'pages': return pages_deploy(f'{app} pages')
         if choice == 'deploy': return self._deploy_workflow(app, cfg)
         raise WorkflowError(f'unknown workflow: {choice}')
-
     def _deploy_workflow(self, app, cfg):
         "The deploy workflow, with the project's own `env_schema` rendered into its `env:` block."
         from gheasy.workflow import Workflow
@@ -310,15 +268,12 @@ class Workflows:
         wfb.on.push(branches=['main'])
         deploy_job(wfb, 'deploy', {}, cfg.get('env_schema') or {}, app)
         return wfb.build()
-
-    # -- building one by hand --------------------------------------------------
     def build(self, spec):
         "A spec from the builder as YAML, composed entirely with gheasy's DSL."
         _gheasy()
         from .wfbuild import compose
         cfg = self.config() or {}
         return compose(spec, schema=self.schema(), app=str(cfg.get('app') or self.root.name))
-
     def write_spec(self, spec, file=''):
         "Write a built workflow, and keep the spec beside it — reading YAML back into one is lossy."
         _gheasy()
@@ -330,7 +285,6 @@ class Workflows:
         path.write_text(text, encoding='utf-8')
         save_spec(self.root, name, {**spec, 'file': name})
         return {'path': str(path), 'file': name}
-
     def spec(self, file):
         "The spec a workflow was built from, plus whether the file on disk still matches it."
         from .wfbuild import load_spec
@@ -341,12 +295,10 @@ class Workflows:
         try: stale = bool(current) and current.strip() != self.build(spec).strip()
         except WorkflowError: stale = False
         return {'spec': spec, 'stale': stale}
-
     def preview(self, choice):
         "The YAML a catalogue entry would write, without writing it."
         _gheasy()
         return self._build(str(choice)).to_yaml()
-
     def add(self, choice, file=''):
         "Write one catalogue entry into `.github/workflows`. Never overwrites silently."
         _gheasy()
@@ -359,8 +311,6 @@ class Workflows:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._build(row['id']).save(path)
         return {'path': str(path), 'workflow': row['id']}
-
-    # -- what the docker job would build ---------------------------------------
     def docker(self):
         "What dockeasy makes of this project, and whether it already has a Dockerfile."
         row = {'dockerfile': (self.root/'Dockerfile').exists(), 'base': '', 'preview': '', 'why': ''}
@@ -370,7 +320,6 @@ class Workflows:
         try: text = str(detect_app(str(self.root)))
         except Exception as e: return row | {'why': f'{type(e).__name__}: {e}'}
         return row | {'preview': text, 'base': _from_line(text)}
-
     def write_dockerfile(self):
         "Write the Dockerfile dockeasy detected. Refuses to overwrite one that already exists."
         try: from dockeasy.core import detect_app
@@ -381,13 +330,10 @@ class Workflows:
         text = str(detect_app(str(self.root)))
         path.write_text(text if text.endswith('\n') else text + '\n', encoding='utf-8')
         return {'path': str(path)}
-
-    # -- secrets and variables -------------------------------------------------
     def schema(self):
         "gheasy's `env_schema`: `{KEY: None}` is a secret, `{KEY: default}` is a variable."
         cfg = self.config() or {}
         return dict(cfg.get('env_schema') or {})
-
     def remote_env(self):
         "What GitHub already has. Secret *values* are not readable, by GitHub's design."
         owner, name, api = self._api()
@@ -396,7 +342,6 @@ class Workflows:
         variables = [{'name': v.get('name'), 'value': v.get('value') or '', 'updated_at': v.get('updated_at') or ''}
             for v in (api.actions.list_repo_variables(per_page=100).get('variables') or [])]
         return {'secrets': secrets, 'variables': variables}
-
     def push_env(self, values, keys=(), dry_run=False):
         "Send values up through gheasy's `gh_push_env`, one result per key; undeclared keys are skipped."
         core = _gheasy()
@@ -424,15 +369,12 @@ class Workflows:
                 rows.append({'key': key, 'ok': False, 'error': f'{type(e).__name__}: {e}', 'target': target})
         return rows
 
-
 def _sync_api(core, owner, name, token, api):
     "gheasy's client rebuilt synchronous: ghapi 2 is async by default and nothing here awaits."
-    # ghapi 1 has no `sync` and swallows an unknown keyword as a request parameter.
     from inspect import signature
     GhApi = getattr(core, 'GhApi', None)
     if GhApi is None or 'sync' not in signature(GhApi).parameters: return api
     return GhApi(owner=owner, repo=name, token=token, sync=True)
-
 
 def _gh_authed():
     "Is the GitHub CLI logged in? `gh auth status` is the only thing that knows."
@@ -441,7 +383,6 @@ def _gh_authed():
     try:
         return subprocess.run(['gh', 'auth', 'status'], capture_output=True, timeout=8).returncode == 0
     except (OSError, subprocess.SubprocessError): return False
-
 
 def _run_row(run):
     "One run as the panel shows it; the title falls back to the head commit's first line."
@@ -454,25 +395,21 @@ def _run_row(run):
         'actor': ((run.get('actor') or {}).get('login') or ''),
         'title': str(run.get('display_title') or (head.get('message') or '')).split('\n')[0]}
 
-
 def _read(path):
     "A file's text, or `''` when it is not there -- what a detector wants of a missing file."
     try: return Path(path).read_text(encoding='utf-8', errors='replace')
     except OSError: return ''
 
-
 def _wf_file(run):
     "The file a run came from; GitHub reports it as a path on the workflow, not a name."
     return re.sub(r'^\.github/workflows/', '', run.get('path') or '')
-
 
 def _from_line(text):
     "The `FROM` line of a Dockerfile, which is what a panel shows of a detected build."
     return first(str(text).splitlines(), lambda l: l.startswith('FROM ')) or ''
 
-
 def _wf_name(name):
-    "A workflow file name, or the error that says why it is not one -- no directories, no other suffix."
+    "A workflow file name, or the error that says why it is not one -- no directories, no other."
     if '/' in name or not name.endswith(('.yml', '.yaml')):
         raise WorkflowError(f'not a workflow file name: {name}')
     return name

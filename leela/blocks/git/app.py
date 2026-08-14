@@ -1,20 +1,4 @@
-"""Git, as one mutation per request and one refreshed snapshot back.
-
-`/git/action` is one route with an `op` rather than thirty, because the browser renders a
-mutation's response directly: one op in, one `repo.info()` out, one render.
-
-`git_paths` is the security boundary. Every pathspec comes from the browser, so absolute paths
-and `..` are refused outright rather than resolved. `/git/file` additionally converts an
-absolute editor path through the sandbox and refuses anything outside the repository.
-
-`repo` is the second boundary: an optional repository root, also an absolute path from the
-browser, so it goes through `RepoSet.require`, which answers only for repositories the
-workspace already discovered.
-
-Every call is a subprocess, so all of them go through `off_loop`. Cloning is the exception:
-it is networked and can run for minutes, so `/git/clone` starts a job and answers immediately.
-Its destination is the third boundary -- see `_clone_into`.
-"""
+"Git, as one mutation per request and one refreshed snapshot back."
 
 from __future__ import annotations
 
@@ -29,7 +13,6 @@ __all__ = ['CAPS', 'connect', 'git_paths']
 
 CAPS = ('fs', 'jobs')
 
-
 def git_paths(values):
     "Pathspecs accepted from the browser, constrained to repository-relative files."
     out = []
@@ -40,9 +23,6 @@ def git_paths(values):
     if not out: raise GitError('select at least one changed file')
     return out
 
-
-# op name -> what it does to the repo. A table so the set of known ops is inspectable: the
-# client can ask for nothing that is not in here.
 def _apply(repo, op, d):
     ops = {
         'stage': lambda: repo.stage(git_paths(d.get('paths'))),
@@ -84,53 +64,30 @@ def _apply(repo, op, d):
         'remove_worktree': lambda: repo.remove_worktree(d.get('path') or '', bool(d.get('force'))),
     }
     if op in ops: return ops[op]()
-    # `operation_*` is a family rather than a fixed name: the client sends whatever the
-    # in-progress operation offers (continue, skip, abort).
     if op.startswith('operation_'): return repo.operation_action(op.removeprefix('operation_'))
     raise GitError(f'unknown Git action: {op}')
 
-
 def _clone_into(fs, url, parent, name=''):
-    """Where a clone may land, and the one rule that confines it.
-
-    A repository the workspace does not have yet cannot be cloned *inside* the sandbox -- that
-    is the point of cloning it. So the boundary is the same one `/fs/add-root` already applies
-    to opening a folder: an existing directory the person named, into which exactly one new,
-    not-yet-existing folder is created. Nothing is overwritten, and the default parent is an
-    open folder, so the arbitrary path has to be asked for explicitly.
-    """
-    # `Path('')` is the process's own directory, which is nobody's choice at all.
+    "Where a clone may land, and the one rule that confines it."
     parent = str(parent or '').strip() or (str(fs.roots[0]) if fs.roots else '')
     if not parent: raise GitError('choose a folder to clone into')
     return clone_target(url, parent, name)
 
-
 def connect(app, ctx):
     rt = app.route
-
     def run_clone(job, report):
         report(current=f'cloning {job.target}')
         root = clone(job.target, job.params.get('parent') or '', job.params.get('name') or '')
         return {'root': str(root), 'name': root.name}
-
-    # A clone is minutes of network, so it is a job rather than a request. Registered here
-    # because the work is this block's; the jobs block only shows the row.
     ctx.jobs.register('git_clone', run_clone)
-
     def repos(): return RepoSet(ctx.fs.roots)
-
     def repo_at(target=''):
         "The repository a request names, else the chosen folder's, else the open file's."
-        # Every project panel must answer this identically, so it defers to `repo_for` rather
-        # than repeating its three steps. The only difference is that this surface is about Git,
-        # so a folder that is not a checkout is an error here and unremarkable there.
         return GitRepo.at(repo_for(ctx.session, target))
-
     @rt('/git/info')
     async def git_info(repo: str = ''):
         try: return await off_loop(lambda: repo_at(repo).info())
         except Exception as e: return fail(e)
-
     @rt('/git/action')
     async def git_action(req):
         "Perform one explicit Git mutation and return the one refreshed snapshot."
@@ -139,14 +96,10 @@ def connect(app, ctx):
             def act():
                 r = repo_at(d.get('repo') or '')
                 outcome = _apply(r, str(d.get('op') or ''), d)
-                # The snapshot alone cannot distinguish "squash staged your merge" from
-                # "something dirtied your index", so mutations that can surprise report what
-                # they did. Ops that cannot return nothing.
                 snapshot = r.info()
                 return snapshot | {'outcome': outcome} if isinstance(outcome, dict) else snapshot
             return await off_loop(act)
         except Exception as e: return fail(e)
-
     @rt('/git/find')
     async def git_find(base: str = '', q: str = '', limit: int = 60):
         "Repositories anywhere under `base`, so the open-folder dialog can be typed at."
@@ -155,18 +108,14 @@ def connect(app, ctx):
             return {'base': str(base or ''), 'q': q,
                 'repos': [{'path': str(p), 'name': p.name, 'parent': str(p.parent)} for p in found]}
         except Exception as e: return fail(e)
-
     @rt('/git/repos')
     async def git_repos(expect: str = ''):
         "Every repository in the workspace as one row, and the workspace as a whole."
         try: return await off_loop(repos().overview, expect)
         except Exception as e: return fail(e)
-
     @rt('/git/repos/action')
     async def git_repos_action(req):
         "One operation across many repositories, answered per repository."
-        # `add`, `remove` and `clone` return the refreshed overview with their own result, for
-        # the same reason `/git/action` returns a snapshot: the browser renders it directly.
         d = await req.json()
         op, paths = str(d.get('op') or ''), [str(p) for p in (d.get('paths') or ())]
         try:
@@ -179,7 +128,6 @@ def connect(app, ctx):
             outcome = await off_loop(act)
             return outcome | await off_loop(repos().overview, str(d.get('expect') or ''))
         except Exception as e: return fail(e)
-
     @rt('/git/clone')
     async def git_clone(req):
         "Start a clone into a folder. Returns at once; the browser watches `/git/clone/status`."
@@ -190,13 +138,11 @@ def connect(app, ctx):
             job = ctx.jobs.start('git_clone', url, parent=str(target.parent), name=target.name)
             return {'job': job.dict(), 'root': str(target)}
         except Exception as e: return fail(e)
-
     @rt('/git/clone/status')
     def git_clone_status(job: str = ''):
         "How a clone is going. JSON, because the branch popup polls it rather than a job card."
         try: return ctx.jobs.get(job).dict()
         except Exception as e: return fail(e)
-
     @rt('/git/history')
     async def git_history(limit: int = 100, skip: int = 0, query: str = '', ref: str = '--all',
         path: str = '', repo: str = ''):
@@ -204,51 +150,42 @@ def connect(app, ctx):
             clean = git_paths([path])[0] if path else ''
             return {'commits': await off_loop(repo_at(repo).history, limit, skip, query, ref, clean)}
         except Exception as e: return fail(e)
-
     @rt('/git/reflog')
     async def git_reflog(limit: int = 100, repo: str = ''):
         try: return {'entries': await off_loop(repo_at(repo).reflog, limit)}
         except Exception as e: return fail(e)
-
     @rt('/git/conflicts')
     async def git_conflicts(repo: str = ''):
         try: return await off_loop(repo_at(repo).conflict_plan)
         except Exception as e: return fail(e)
-
     @rt('/git/conflict')
     async def git_conflict(path: str = '', repo: str = ''):
         try: return await off_loop(repo_at(repo).conflict_versions, git_paths([path])[0])
         except Exception as e: return fail(e)
-
     @rt('/git/commit')
     async def git_commit_detail(ref: str = 'HEAD', repo: str = ''):
         try: return await off_loop(repo_at(repo).commit_detail, ref)
         except Exception as e: return fail(e)
-
     @rt('/git/commit/review')
     async def git_commit_review(ref: str = 'HEAD', repo: str = ''):
         try: return await off_loop(repo_at(repo).commit_review, ref)
         except Exception as e: return fail(e)
-
     @rt('/git/commit/file')
     async def git_commit_file(ref: str = 'HEAD', path: str = '', context: int = 3, repo: str = ''):
         try: return await off_loop(repo_at(repo).commit_file, ref, git_paths([path])[0], context)
         except Exception as e: return fail(e)
-
     @rt('/git/compare')
     async def git_compare(left: str = 'HEAD', right: str = '', repo: str = ''):
         try:
             if not right: raise GitError('choose two refs to compare')
             return await off_loop(repo_at(repo).compare, left, right)
         except Exception as e: return fail(e)
-
     @rt('/git/review')
     async def git_review(base: str = 'HEAD', head: str = '', mode: str = 'review', repo: str = ''):
         try:
             if not head: raise GitError('choose a branch to review')
             return await off_loop(repo_at(repo).review, base, head, mode)
         except Exception as e: return fail(e)
-
     @rt('/git/review/file')
     async def git_review_file(base: str = 'HEAD', head: str = '', path: str = '',
         mode: str = 'review', context: int = 3, repo: str = ''):
@@ -256,26 +193,21 @@ def connect(app, ctx):
             if not head: raise GitError('choose a branch to review')
             return await off_loop(repo_at(repo).review_file, base, head, git_paths([path])[0], mode, context)
         except Exception as e: return fail(e)
-
     @rt('/git/merge-preview')
     async def git_merge_preview(incoming: str = '', repo: str = ''):
         try:
             if not incoming: raise GitError('choose a branch to merge')
             return await off_loop(repo_at(repo).merge_preview, incoming)
         except Exception as e: return fail(e)
-
     @rt('/git/rebase-preview')
     async def git_rebase_preview(onto: str = '', repo: str = ''):
         try:
             if not onto: raise GitError('choose a branch to rebase')
             return await off_loop(repo_at(repo).rebase_preview, onto)
         except Exception as e: return fail(e)
-
     @rt('/git/blame')
     async def git_blame(path: str = '', start: int = 1, end: int = 0, repo: str = '', cells: bool = True):
         "Who wrote these lines -- grouped into cells when the file is a notebook."
-        # `cells=false` asks for the raw file lines, the fallback for a notebook in a shape the
-        # cell mapping cannot read.
         try:
             clean = git_paths([path])[0]
             repository = repo_at(repo)
@@ -284,7 +216,6 @@ def connect(app, ctx):
             rows = await off_loop(repository.blame, clean, start, end)
             return {'lines': rows, 'notebook': False, 'cells': [], 'path': clean, 'start': start, 'end': end}
         except Exception as e: return fail(e)
-
     @rt('/git/resources')
     async def git_resources(repo: str = ''):
         try:
@@ -292,7 +223,6 @@ def connect(app, ctx):
             worktrees, submodules = await asyncio.gather(off_loop(r.worktrees), off_loop(r.submodules))
             return {'worktrees': worktrees, 'submodules': submodules}
         except Exception as e: return fail(e)
-
     @rt('/git/diff')
     async def git_diff(path: str = '', staged: bool = False, repo: str = ''):
         try:
@@ -300,20 +230,15 @@ def connect(app, ctx):
             view = await off_loop(lambda: repo_at(repo).diff_view(clean, staged))
             return {'path': path, 'staged': staged, **view}
         except Exception as e: return fail(e)
-
     def repo_of(path):
         "The repository one file belongs to, whatever the panels are pointed at."
-        # Not `repo_at`, which answers which project this is *about*: a file's change marks come
-        # from the checkout the file is actually in, or there are none.
         absolute = ctx.fs._check(path, must_exist=False)
         return GitRepo.at(absolute.parent), absolute
-
     def repo_relative(path, what):
         "That repository and the file's path inside it, refusing a file that is not in it."
         r, absolute = repo_of(path)
         try: return r, str(absolute.relative_to(r.root))
         except ValueError: raise GitError(f'the active {what} is outside this repository')
-
     @rt('/git/file')
     async def git_file(path: str = ''):
         "The active editor file's Git state, always in *its own* repository."
@@ -321,7 +246,6 @@ def connect(app, ctx):
             r, relative = repo_relative(path, 'file')
             return await off_loop(r.file_changes, relative)
         except Exception as e: return fail(e)
-
     @rt('/git/notebook')
     async def git_notebook(path: str = ''):
         "The open notebook's changed cells, by cell id. Same repository rule as `/git/file`."

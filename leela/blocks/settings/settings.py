@@ -1,4 +1,4 @@
-'Layered, validated IDE settings: defaults, then user, then workspace, then language.'
+"Layered, validated IDE settings: defaults, then user, then workspace, then language."
 from __future__ import annotations
 
 import json
@@ -42,10 +42,10 @@ DEFAULT_SETTINGS = {
         'breakOnRaised': False, 'breakOnUncaught': True,
     },
     'terminal': {
-        'shell': '',            # '' means $SHELL
+        'shell': '',
         'shellArgs': [],
-        'loginShell': True,     # macOS puts PATH and tool setup in login config
-        'external': '',         # '' means the first installed of EXTERNAL_TERMINALS
+        'loginShell': True,
+        'external': '',
     },
 }
 
@@ -68,20 +68,17 @@ _RANGES = {
     ('files', 'autoSaveDelay'): (100, 60000),
 }
 
-
 def _read(path):
     try:
         value = Path(path).read_json(encoding='utf-8')
         return value if isinstance(value, dict) else {}
     except (OSError, ValueError, TypeError): return {}
 
-
 def _write(path, data):
     "Replace a settings document atomically, never leaving a half-written JSON file."
     path = Path(path)
     text = json.dumps(data, indent=2, sort_keys=True) + '\n'
     with atomic_save(path, mode='w', encoding='utf-8') as file: file.write(text)
-
 
 def _compact_legacy_snapshot(data):
     "Strip defaults from legacy full-section snapshots, which else outrank a later user change."
@@ -98,14 +95,12 @@ def _compact_legacy_snapshot(data):
         if isinstance(values, dict): compact(values)
     return data
 
-
 def _merge(base, overlay):
     out = deepcopy(base)
     for section, values in (overlay or {}).items():
         if section == 'languages' or not isinstance(values, dict): continue
         if section in out: out[section].update({k: v for k, v in values.items() if k in out[section]})
     return out
-
 
 def _validated(section, values):
     if section not in DEFAULT_SETTINGS or not isinstance(values, dict):
@@ -127,7 +122,6 @@ def _validated(section, values):
         out[key] = value
     return out
 
-
 def _origin(section, key, user, workspace, language):
     "Which layer supplies `section.key`; the last layer that names it wins."
     def lang_values(scope): return ((scope.get('languages') or {}).get(language, {}).get(section)) or {}
@@ -138,21 +132,17 @@ def _origin(section, key, user, workspace, language):
     if language and key in lang_values(workspace): origin = f'workspace:{language}'
     return origin
 
-
 class Settings:
     "Read and write user/workspace settings without allowing arbitrary paths or keys."
     def __init__(self, root=None, user_path=None):
         self.root = Path(root).resolve() if root else None
         self.user_path = Path(user_path or USER_SETTINGS_FILE)
-
     @property
     def workspace_path(self): return self.root/WORKSPACE_SETTINGS_FILE if self.root else None
-
     def raw(self, scope):
         if scope == 'user': return _compact_legacy_snapshot(_read(self.user_path))
         if scope == 'workspace': return _compact_legacy_snapshot(_read(self.workspace_path)) if self.workspace_path else {}
         raise ValueError('scope must be user or workspace')
-
     def effective(self, language=''):
         user, workspace = self.raw('user'), self.raw('workspace')
         out = _merge(_merge(DEFAULT_SETTINGS, user), workspace)
@@ -160,7 +150,6 @@ class Settings:
             out = _merge(out, (user.get('languages') or {}).get(language, {}))
             out = _merge(out, (workspace.get('languages') or {}).get(language, {}))
         return out
-
     def describe(self, language=''):
         user, workspace = self.raw('user'), self.raw('workspace')
         effective = self.effective(language)
@@ -169,13 +158,11 @@ class Settings:
         return {'effective': effective, 'origins': origins, 'user': user, 'workspace': workspace,
                 'paths': {'user': str(self.user_path), 'workspace': str(self.workspace_path or '')},
                 'language': language}
-
     def _path(self, scope, verb):
         "The file `scope` writes to. A workspace scope needs a project open to have one."
         path = {'user': self.user_path, 'workspace': self.workspace_path}.get(scope)
         if path is None: raise ValueError(f'open a project folder before {verb} workspace settings')
         return path
-
     def save(self, scope, section, values, language=''):
         values = _validated(section, values)
         path = self._path(scope, 'saving')
@@ -184,7 +171,6 @@ class Settings:
         target.setdefault(section, {}).update(values)
         _write(path, current)
         return self.describe(language)
-
     def reset(self, scope, section=None, language=''):
         path = self._path(scope, 'resetting')
         current = self.raw(scope)

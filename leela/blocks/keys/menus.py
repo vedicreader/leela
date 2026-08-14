@@ -1,4 +1,4 @@
-'Contextual menus, as rows naming actions from the shared keymap; labels and chords come from it.'
+"Contextual menus, as rows naming actions from the shared keymap; labels and chords come from it."
 
 from dataclasses import dataclass
 
@@ -8,17 +8,14 @@ from ...core.keys import KEYS, chord_display, lookup
 
 __all__ = ['MenuItem', 'MENUS', 'menu', 'web_menus']
 
-
 @dataclass(frozen=True)
 class MenuItem:
     "One action in a contextual menu; a blank action is a separator."
     action: str = ''
-    kind: str = ''       # '' | 'warn'
-
+    kind: str = ''
     def __post_init__(self):
         if self.kind not in ('', 'warn'):
             raise ValueError(f'{self.action or "separator"}: bad menu kind {self.kind!r}')
-
 
 S = MenuItem
 MENUS = {
@@ -30,7 +27,6 @@ MENUS = {
                 S('delete', 'warn'), S(), S('add_root'), S('refresh_files')),
     'root': L(S('new_file'), S('new_dir'), S(), S('remove_root', 'warn'),
               S(), S('add_root'), S('refresh_files')),
-
     'editor': L(S('complete'), S('ai_complete'), S('show_docs'), S(), S('find_similar'),
                 S('code_map'), S('git_blame'), S(), S('extract_variable'), S('extract_method'),
                 S('extract_constant'), S('inline_variable'), S('rename_symbol'),
@@ -54,11 +50,9 @@ MENUS = {
     'exec': L(S('exec_run'), S('exec_promote'), S('toggle_scope'), S(), S('exec_clear')),
 }
 
-
 def menu(surface):
     "The rows for one surface, in declaration order."
     return MENUS.get(surface, L())
-
 
 def _row(item):
     "One menu row: a separator, or an action with its keymap label and effective chord."
@@ -67,12 +61,9 @@ def _row(item):
     return {'action': item.action, 'label': key.label or item.action.replace('_', ' '),
             'chord': chord_display(key), 'kind': item.kind}
 
-
 def web_menus():
     "JSON-ready menus, resolving labels and effective user chords from the keymap."
-    # A plain list, not `items.map(...)`: these rows are JSON-encoded, and `L` is not a list.
     return {surface: [_row(i) for i in items] for surface, items in MENUS.items()}
-
 
 _known = set(KEYS.attrgot('action'))
 if _missing := sorted({i.action for rows in MENUS.values() for i in rows if i.action} - _known):

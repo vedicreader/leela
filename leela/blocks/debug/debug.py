@@ -1,8 +1,4 @@
-"""A small Debug Adapter Protocol client for direct Python/debugpy sessions.
-
-Notebooks stay on ipykernel's Jupyter debug channel; this covers files, modules, tests, web
-apps and attach endpoints, normalized to the same state.
-"""
+"A small Debug Adapter Protocol client for direct Python/debugpy sessions."
 from __future__ import annotations
 
 import json, queue, subprocess, threading, time
@@ -13,13 +9,11 @@ __all__ = ['DebugSession', 'debugpy_available']
 DAP_COMMANDS = {'continue': 'continue', 'next': 'next', 'stepIn': 'stepIn',
                 'stepOut': 'stepOut', 'pause': 'pause'}
 
-
 def debugpy_available(python):
     try:
         return subprocess.run([str(python), '-c', 'import debugpy'], capture_output=True,
                               timeout=5).returncode == 0
     except Exception: return False
-
 
 def _breakpoint(row):
     "One requested breakpoint in DAP shape; a bare line number is the common case."
@@ -29,19 +23,16 @@ def _breakpoint(row):
         if row.get(k): item[k] = str(row[k])
     return item
 
-
 class DebugSession:
-    'One debugpy adapter process and its request/event state.'
+    "One debugpy adapter process and its request/event state."
     def __init__(self, python, cwd=None):
-        self.python = str(Path(python).expanduser().absolute())  # keep a venv symlink: resolving it loses site-packages
+        self.python = str(Path(python).expanduser().absolute())
         self.cwd = str(Path(cwd or Path.cwd()).resolve())
         self.process = None; self.seq = 0; self.pending = {}; self.events = queue.Queue()
         self._lock = threading.Lock(); self.thread_id = None; self.frame_id = None
         self.breakpoints = {}; self.config = {}; self.closed = False
-
     @property
     def alive(self): return bool(self.process and self.process.poll() is None and not self.closed)
-
     def start_adapter(self):
         if not debugpy_available(self.python):
             raise RuntimeError(f'debugpy is not installed in {self.python}')
@@ -54,18 +45,15 @@ class DebugSession:
             'supportsVariableType': True, 'supportsVariablePaging': True,
             'supportsRunInTerminalRequest': False}, timeout=15)
         return self
-
     def _write(self, message):
         raw = json.dumps(message, separators=(',', ':')).encode()
         with self._lock:
             self.process.stdin.write(f'Content-Length: {len(raw)}\r\n\r\n'.encode()+raw)
             self.process.stdin.flush()
-
     def send_request(self, command, arguments=None):
         self.seq += 1; seq = self.seq; answer = queue.Queue(1); self.pending[seq] = answer
         self._write({'seq': seq, 'type': 'request', 'command': command, 'arguments': arguments or {}})
         return seq, answer
-
     def _await_answer(self, seq, answer, timeout, on_timeout, on_failure):
         "The reply to one sent request, raising `on_timeout`/`on_failure` if it never lands or failed."
         try: message = answer.get(timeout=timeout)
@@ -74,13 +62,11 @@ class DebugSession:
             raise TimeoutError(on_timeout)
         if not message.get('success', False): raise RuntimeError(message.get('message') or on_failure)
         return message
-
     def request(self, command, arguments=None, timeout=10):
         seq, answer = self.send_request(command, arguments)
         message = self._await_answer(seq, answer, timeout, f'debugpy did not answer {command}',
                                      f'debugpy rejected {command}')
         return message.get('body') or {}
-
     def _read(self):
         stream = self.process.stdout
         while self.process and self.process.poll() is None:
@@ -102,7 +88,6 @@ class DebugSession:
                 elif message.get('type') == 'request': self._adapter_request(message)
             except Exception as error:
                 self.events.put({'type': 'event', 'event': 'error', 'body': {'message': f'DAP reader: {error}'}}); return
-
     def _stderr(self):
         while self.process and self.process.poll() is None:
             raw = self.process.stderr.readline()
@@ -110,7 +95,6 @@ class DebugSession:
             text = raw.decode(errors='replace').rstrip()
             if text: self.events.put({'type': 'event', 'event': 'output',
                 'body': {'category': 'stderr', 'output': text+'\n'}})
-
     def _adapter_request(self, message):
         command = message.get('command')
         response = {'seq': self.seq+1, 'type': 'response', 'request_seq': message.get('seq'),
@@ -120,7 +104,6 @@ class DebugSession:
             response['message'] = 'Leela direct debugging uses debugpy internalConsole'
         else: response['message'] = f'unsupported adapter request {command}'
         self._write(response)
-
     def wait_event(self, names, timeout=15):
         names = {names} if isinstance(names, str) else set(names); deadline = time.time()+timeout; skipped = []
         try:
@@ -132,7 +115,6 @@ class DebugSession:
         finally:
             for event in skipped: self.events.put(event)
         raise TimeoutError(f'debugpy did not emit {sorted(names)}')
-
     def launch(self, config, breakpoints=None):
         self.config = dict(config); request = config.get('request', 'launch')
         args = {'name': config.get('name', 'Python'), 'type': 'debugpy', 'request': request,
@@ -161,14 +143,12 @@ class DebugSession:
         self._await_answer(launch_seq, launch_answer, 30, 'debugpy launch did not complete',
                            'debugpy launch failed')
         return self
-
     def set_breakpoints(self, path, rows):
         resolved = str(Path(path).resolve())
         body = self.request('setBreakpoints', {'source': {'path': resolved},
             'breakpoints': [_breakpoint(row) for row in rows or []]})
         self.breakpoints[resolved] = rows
         return body.get('breakpoints') or []
-
     def state(self, thread_id=None, frame_id=None):
         tid = int(thread_id or self.thread_id or 0)
         if not tid: raise RuntimeError('debugger is not paused')
@@ -181,21 +161,17 @@ class DebugSession:
         return {'thread_id': tid, 'frame_id': selected['id'], 'frames': frames, 'scopes': scopes,
                 'variables': self.variables(local.get('variablesReference', 0)) if local else [],
                 'source': (selected.get('source') or {}).get('path', '')}
-
     def variables(self, reference, start=0, count=200):
         return self.request('variables', {'variablesReference': int(reference), 'start': int(start),
             'count': int(count)}).get('variables') or []
-
     def evaluate(self, expression, frame_id=None, context='repl'):
         return self.request('evaluate', {'expression': expression,
             'frameId': int(frame_id or self.frame_id or 0), 'context': context})
-
     def control(self, command):
         if command not in DAP_COMMANDS: raise ValueError(f'unknown debug command {command}')
         body = self.request(DAP_COMMANDS[command], {'threadId': int(self.thread_id or 0)})
         if command != 'pause': self.thread_id = None
         return body
-
     def disconnect(self, terminate=True):
         if self.closed: return
         try: self.request('disconnect', {'restart': False, 'terminateDebuggee': bool(terminate)}, timeout=5)

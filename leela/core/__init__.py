@@ -1,9 +1,4 @@
-"""What every block is allowed to import.
-
-Blocks import `leela.core`, `leela.core` imports no block, and blocks do not import each
-other. Core defines how a block reaches the workspace (`Ctx`) and what may be swapped out
-underneath it (`ports`).
-"""
+"What every block is allowed to import."
 
 from .block import Block, block_caps, connect_all
 from .ctx import APP, CAPABILITIES, EAGER, LAZY, Ctx

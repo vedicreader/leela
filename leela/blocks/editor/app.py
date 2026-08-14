@@ -1,8 +1,4 @@
-"""Editor services that are neither the kernel's job nor Pyright's.
-
-Formatting never writes; the browser saves the returned text. ruff then black, both from the
-*project* interpreter, so the result matches what the project's own CI does.
-"""
+"Editor services that are neither the kernel's job nor Pyright's."
 
 from __future__ import annotations
 
@@ -15,14 +11,12 @@ __all__ = ['CAPS', 'connect', 'project_package_rows']
 
 CAPS = ('fs', 'pool')
 
-
 _VERSIONS_SCRIPT = ('import importlib.metadata as m,json,sys\n'
                     'out={}\n'
                     'for n in json.loads(sys.argv[1]):\n'
                     ' try: out[n]=m.version(n)\n'
                     ' except m.PackageNotFoundError: out[n]=None\n'
                     'print(json.dumps(out))')
-
 
 def _declared(data):
     "Every requirement string a pyproject states, across dependencies, extras and groups."
@@ -33,7 +27,6 @@ def _declared(data):
         out += [x for x in (values or []) if isinstance(x, str)]
     return out
 
-
 def _installed_versions(names, python):
     "What `python` actually has installed, asked of that interpreter rather than of ours."
     if not names: return {}
@@ -43,10 +36,8 @@ def _installed_versions(names, python):
         return json.loads(proc.stdout)
     except Exception: return {n: None for n in names}
 
-
 def _locate(lines, raw, used):
     "Where `raw` is declared, as `(line, end column)`. `used` keeps repeats on separate lines."
-    # The whole quoted declaration, not the bare name: that also occurs in keywords and URLs.
     for i, line in enumerate(lines, 1):
         for quote in ('"', "'"):
             token = f'{quote}{raw}{quote}'
@@ -56,12 +47,10 @@ def _locate(lines, raw, used):
                 return i, at + len(token)
     return None
 
-
 def _applies(req):
     "Is this requirement's environment marker satisfied here? An unreadable marker is not a no."
     try: return not (req.marker and not req.marker.evaluate())
     except Exception: return True
-
 
 def _compatible(req, installed):
     "Does the installed version satisfy the declared specifier? `None` when there is no opinion."
@@ -69,13 +58,12 @@ def _compatible(req, installed):
     try: return req.specifier.contains(installed, prereleases=True)
     except Exception: return None
 
-
 def project_package_rows(path, python=None):
     "Declared pyproject requirements with installed versions and source-line addresses."
     import tomllib
     python = str(python or sys.executable)
     source = Path(path).read_text(encoding='utf-8')
-    declared = _declared(tomllib.loads(source))   # outside the try: unreadable TOML is an error, not an empty list
+    declared = _declared(tomllib.loads(source))
     try:
         from packaging.requirements import Requirement
         parsed = [(Requirement(x), x) for x in declared]
@@ -93,7 +81,6 @@ def project_package_rows(path, python=None):
                      'python': python})
     return rows
 
-
 def _format_cwd(ctx, path=''):
     "The directory whose formatter configuration applies to `path`, else the chosen project's."
     if str(path or '').strip():
@@ -104,10 +91,8 @@ def _format_cwd(ctx, path=''):
     root = ctx.session.project_root
     return str(root) if root else None
 
-
 def connect(app, ctx):
     rt = app.route
-
     @rt('/editor/format')
     async def editor_format(req):
         "Format without writing; the browser reviews and saves the returned text."
@@ -134,7 +119,6 @@ def connect(app, ctx):
             else: return fail(f'no formatter configured for {lang or "this file"}')
             return {'ok': True, 'text': formatted}
         except Exception as e: return fail(e)
-
     @rt('/editor/packages')
     def editor_packages(path: str):
         "Installed-version annotations for a workspace pyproject.toml."

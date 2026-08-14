@@ -7,7 +7,6 @@ __all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes'
 
 API_KEYS = ('base_url', 'api_key_env', 'vendor_name', 'api_name')
 
-# Never restate this list: the copy that used to live here drifted twice from ramabana's.
 def _runtimes():
     from ...agent.core import RUNTIMES
     return tuple(RUNTIMES)

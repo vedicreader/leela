@@ -1,15 +1,8 @@
-"""`leela` — the browser IDE entry point.
-
-    leela                 open the saved workspace
-    leela .               open a folder
-    leela src tests       open two folders in one workspace
-    leela --app src tests open each folder in its own app window
-"""
+"`leela` — the browser IDE entry point."
 
 import argparse, ipaddress, os
 
 __all__ = ['main']
-
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog='leela', description='notebooks, files and live variables')
@@ -55,7 +48,6 @@ def main(argv=None):
                    help='write every action and its current chord to that file, then exit — '
                         'the starting point for rebinding anything your terminal swallows')
     a = p.parse_args(argv)
-    # Set before the web app imports `leela.core.keys`, which loads overrides at import time.
     if a.keymap: os.environ['LEELA_KEYMAP'] = os.path.abspath(a.keymap)
     if a.write_keymap:
         from .core.keys import write_keymap, keymap_path, NOTES
@@ -79,6 +71,5 @@ def main(argv=None):
               python=a.python,
               app_window=a.app, cdp_port=a.cdp_port, transport=a.transport,
               gateway_port=a.gateway_port)
-
 
 if __name__ == '__main__': main()

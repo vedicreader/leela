@@ -1,7 +1,4 @@
-"""Pyright, for the static questions a kernel cannot answer.
-
-Every request is a subprocess round-trip, so all of them go through `off_loop`.
-"""
+"Pyright, for the static questions a kernel cannot answer."
 
 from __future__ import annotations
 
@@ -13,7 +10,6 @@ __all__ = ['CAPS', 'connect']
 
 CAPS = ('lsp', 'fs', 'journal')
 
-
 def _offsets(source):
     "Character offset of the start of each line, for converting LSP positions to offsets."
     lines = source.splitlines(keepends=True) or ['']
@@ -23,29 +19,24 @@ def _offsets(source):
         at += len(line)
     return lines, starts
 
-
 def _edited(before, edits):
     "`before` with one file's LSP edits applied."
     lines, starts = _offsets(before)
     def offset(pos):
         row = max(0, min(int(pos.get('line', 0)), len(lines) - 1))
         return starts[row] + min(int(pos.get('character', 0)), len(lines[row].rstrip('\r\n')))
-    # Last-first, so an earlier edit cannot invalidate a later one's offsets.
     spans = sorted(((offset(x['range']['start']), offset(x['range']['end']), x.get('newText', '')) for x in edits),
                    reverse=True)
     after = before
     for start, end, new in spans: after = after[:start] + new + after[end:]
     return after
 
-
 def connect(app, ctx):
     rt = app.route
-
     @rt('/lsp/status')
     def lsp_status():
         lsp = ctx.lsp
         return {'provider': 'pyright', 'available': lsp.available, 'alive': lsp.alive, 'note': lsp.note}
-
     @rt('/lsp/symbols')
     async def lsp_symbols(req):
         d = await req.json()
@@ -54,7 +45,6 @@ def connect(app, ctx):
                                   d.get('text', ''), None, 0, None, 8)
             return {'symbols': rows or []}
         except Exception as e: return fail(e)
-
     @rt('/lsp/hover')
     async def lsp_hover(req):
         d = await req.json()
@@ -62,7 +52,6 @@ def connect(app, ctx):
             return {'hover': await off_loop(ctx.lsp.request, 'textDocument/hover', d.get('path'),
                                             d.get('text', ''), d.get('line', 0), d.get('character', 0))}
         except Exception as e: return fail(e)
-
     @rt('/lsp/inlay-hints')
     async def lsp_inlay_hints(req):
         d = await req.json(); text = d.get('text', ''); lines = text.splitlines()
@@ -72,7 +61,6 @@ def connect(app, ctx):
                                   {'range': {'start': {'line': 0, 'character': 0}, 'end': end}}, 8)
             return {'hints': rows or []}
         except Exception as e: return fail(e)
-
     @rt('/lsp/rename')
     async def lsp_rename(req):
         "Preview or atomically apply Pyright's workspace rename edit within open roots."

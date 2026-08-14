@@ -1,4 +1,4 @@
-"""Preview and atomically apply workspace text replacements."""
+"Preview and atomically apply workspace text replacements."
 
 from __future__ import annotations
 import time, uuid
@@ -11,33 +11,27 @@ __all__ = ['CAPS', 'connect']
 
 CAPS = ('fs', 'journal', 'tab', 'docs')
 
-
 def _dirty(ctx, paths):
-    """Open unsaved buffers the server would otherwise overwrite."""
+    "Open unsaved buffers the server would otherwise overwrite."
     wanted = set(paths)
     return [t.path for t in ctx.session.tabs if t.path in wanted and t.dirty]
 
-
 def _clear(ctx, paths):
-    """Forget server buffers after an external workspace edit."""
+    "Forget server buffers after an external workspace edit."
     for path in paths:
         ctx.docs.forget(path)
         tab = next((t for t in ctx.session.tabs if t.path == path), None)
         if tab: tab.dirty = False
 
-
 PLAN_TTL, MAX_PLANS = 600, 8
-
 
 def _prune(plans):
     "Forget previews nobody applied; each one holds a full copy of every file it would change."
     for token in [k for k, v in plans.items() if time.time() - v['at'] > PLAN_TTL]: plans.pop(token, None)
     for token in list(plans)[:max(0, len(plans) - MAX_PLANS)]: plans.pop(token, None)
 
-
 def connect(app, ctx):
     rt, plans = app.route, {}
-
     async def _one_file(d, kind, fn, *args):
         "Run one single-file refactoring against the text on disk and stash it as a plan."
         _prune(plans)
@@ -48,7 +42,6 @@ def connect(app, ctx):
         plans[token] = {'at': time.time(), 'find': kind, 'rows': [row]}
         return {'ok': True, 'token': token, 'files': [row.dict()],
                 'summary': {'files': 1, 'edits': row.edits}}
-
     @rt('/refactor/preview')
     async def refactor_preview(req):
         try:
@@ -56,14 +49,12 @@ def connect(app, ctx):
             return await _one_file(d, kind or 'extraction', extract,
                                    d.get('start'), d.get('end'), kind, d.get('name'))
         except Exception as e: return fail(e)
-
     @rt('/refactor/inline')
     async def refactor_inline(req):
         try:
             d = await req.json()
             return await _one_file(d, 'inline', inline, d.get('pos'))
         except Exception as e: return fail(e)
-
     @rt('/replace/preview')
     async def replace_preview(req):
         try:
@@ -78,10 +69,6 @@ def connect(app, ctx):
                     'summary': {'files': len(rows), 'edits': sum(r.edits for r in rows), 'skipped': len(skipped)},
                     'skipped': skipped[:100]}
         except Exception as e: return fail(e)
-
-    # Registered against both paths below rather than by stacking `@rt`: the decorator returns
-    # its own wrapper, so stacking registers *that* for the outer path and the real coroutine
-    # is then never awaited -- the route answers 200 and writes nothing.
     async def replace_apply(req):
         try:
             d = await req.json(); plan = plans.pop(str(d.get('token') or ''), None)
@@ -97,7 +84,6 @@ def connect(app, ctx):
                 for row in rows:
                     ctx.fs.write(row.path, row.after); written.append(row)
             except Exception:
-                # A failed multi-file replace must leave the workspace at its preview base.
                 for row in reversed(written):
                     try: ctx.fs.write(row.path, row.before)
                     except Exception: pass
@@ -107,5 +93,4 @@ def connect(app, ctx):
             _clear(ctx, [r.path for r in rows])
             return {'ok': True, 'operation': op, 'paths': [r.path for r in rows]}
         except Exception as e: return fail(e, 409)
-
     for path in ('/replace/apply', '/refactor/apply'): rt(path)(replace_apply)

@@ -1,26 +1,4 @@
-"""Does this implementation actually satisfy the port?
-
-`isinstance(x, MemoryPort)` answers a narrow question: are the names present. It does not
-notice a method that takes different arguments, and `runtime_checkable` Protocols
-deliberately do not check signatures at all. For a swap where the alternate is a different
-project by a different author, "the names are there" is not enough to act on.
-
-So this checks three things and reports them as data rather than raising:
-
-1. **presence** -- every member the port names exists
-2. **kind** -- a member the port declares as an attribute is not a method, and vice versa;
-   `Backend.ready` is a property, and a runtime that made it a method would break callers
-3. **signature** -- every parameter leela actually passes at a call site is accepted, by
-   name, in a way that does not depend on argument order
-
-Signature checking is the part that earns this module. leela calls
-`memory.search(query, limit=8)` and `memory.toc(doc=None, depth=3)`; an implementation
-whose `search` takes `(q, n)` passes `isinstance` and fails at runtime on the first query.
-
-Use it from a test, or from the command line once an alternate exists:
-
-    python -m leela.conformance memory vishalakshi
-"""
+"Does this implementation actually satisfy the port?"
 
 from __future__ import annotations
 
@@ -32,9 +10,6 @@ __all__ = ['PORTS', 'CALLS', 'check', 'report']
 
 PORTS = {'memory': ports.MemoryPort, 'search': ports.SearchPort, 'runtime': ports.RuntimePort}
 
-# The keyword arguments leela actually passes, per member. Taken from the call sites in
-# leela/blocks/ and leela/agent/, not from the Protocol -- the Protocol says what may be
-# called, this says what *is*, and only the second one breaks a user.
 CALLS = {
     'memory': {
         'search': ('query', 'limit'), 'toc': ('doc', 'depth'), 'read': ('node_id', 'max_chars'),
@@ -62,39 +37,26 @@ CALLS = {
     },
 }
 
-
 def _accepts(fn, names):
     "Parameter names `fn` can be given by keyword. `**kwargs` accepts anything."
     try: sig = inspect.signature(fn)
-    except (TypeError, ValueError): return set(names)          # builtins: unknowable, assume ok
+    except (TypeError, ValueError): return set(names)
     ps = sig.parameters.values()
     if any(p.kind is p.VAR_KEYWORD for p in ps): return set(names)
     ok = {p.name for p in ps if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)}
     return {n for n in names if n in ok}
 
-
 def check(port, obj):
-    """Compare `obj` against the named port. Returns a list of problem strings; empty is a pass.
-
-    `obj` may be an instance or a class -- attributes declared by the port are checked with
-    `hasattr` either way, which is why `Backend.ready` (a property on the class) is
-    reported as an attribute rather than a missing method.
-    """
+    "Compare `obj` against the named port. Returns a list of problem strings; empty is a pass."
     proto = PORTS.get(port)
     if proto is None: raise ValueError(f'unknown port {port!r}; known: {sorted(PORTS)}')
     problems, calls = [], CALLS.get(port, {})
-    # Protocol members that are methods, as declared on the Protocol itself.
     declared_methods = {n for n in proto.__protocol_attrs__
                         if callable(getattr(proto, n, None))}
-
-    # Checking a class rather than an instance cannot see attributes assigned in
-    # `__init__` -- `Backend.spec` is real but invisible until one is built. Constructor
-    # parameters count as satisfied, so a class can be checked without starting a model.
     init_params = set()
     if isinstance(obj, type):
         try: init_params = set(inspect.signature(obj.__init__).parameters)
         except (TypeError, ValueError): pass
-
     for name in sorted(proto.__protocol_attrs__):
         if not hasattr(obj, name):
             if name in init_params: continue
@@ -115,7 +77,6 @@ def check(port, obj):
                 problems.append(f'{name}: leela passes {missing} which this does not accept')
     return problems
 
-
 def report(port, obj, label=''):
     "A human-readable pass/fail block for one implementation."
     problems = check(port, obj)
@@ -123,15 +84,8 @@ def report(port, obj, label=''):
     if not problems: return f'{head}: OK ({len(PORTS[port].__protocol_attrs__)} members)'
     return '\n'.join([f'{head}: {len(problems)} problem(s)'] + [f'  - {p}' for p in problems])
 
-
 def _sample_args(port):
-    """The cheapest real arguments each port's factory needs, for a command-line check.
-
-    All three are constructible without touching a model or an index: `Search` opens no
-    kernel, and `Backend.__init__` only records the spec -- `start()` is what would open a
-    chat session. That is what makes checking an alternate a one-liner rather than a
-    fixture.
-    """
+    "The cheapest real arguments each port's factory needs, for a command-line check."
     if port == 'search':
         from .blocks.fs.fs import Sandbox
         return (Sandbox([]),), {}
@@ -139,7 +93,6 @@ def _sample_args(port):
         from .agent.core import resolve
         return (resolve('gpt-mini'),), {}
     return (), {}
-
 
 def _main(argv):
     from .core.providers import ProviderError, build
@@ -152,7 +105,7 @@ def _main(argv):
         a, kw = _sample_args(port)
         obj = build(port, *a, override=name, **kw)
     except ProviderError as e:
-        print(f'{port}: {e}')                    # the message is the point; a traceback is not
+        print(f'{port}: {e}')
         return 2
     except Exception as e:
         print(f'{port}: could not build {name or "leela"} to check it '
@@ -160,7 +113,6 @@ def _main(argv):
         return 2
     print(report(port, obj, label=name))
     return 1 if check(port, obj) else 0
-
 
 if __name__ == '__main__':
     import sys

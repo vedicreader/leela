@@ -1,11 +1,4 @@
-"""Building a workflow by choosing, not by typing YAML.
-
-The panel edits a **spec** -- triggers, and a list of jobs with their options -- and `compose`
-turns it into gheasy's `WorkflowBuilder` calls. Nothing here writes YAML. `PRESETS` and
-`TRIGGERS` are data, so the browser renders a form from them and a preset gained here needs no
-frontend change. The spec is saved beside the file it produced, in `.leela/workflows`, because
-reading a workflow back into a spec is lossy.
-"""
+"Building a workflow by choosing, not by typing YAML."
 
 from __future__ import annotations
 
@@ -18,7 +11,6 @@ __all__ = ['PRESETS', 'TRIGGERS', 'compose', 'deploy_job', 'nbdev_job', 'spec_pa
 
 SPEC_DIR = '.leela/workflows'
 
-# `kind` is what the form renders: a checkbox, a comma list of branches, or a cron string.
 TRIGGERS = [
     {'id': 'push', 'label': 'on push', 'kind': 'branches', 'default': 'main',
         'doc': 'Every push to these branches.'},
@@ -32,7 +24,6 @@ TRIGGERS = [
         'doc': 'A cron expression in UTC. `0 9 * * 1` is Mondays at 09:00.'},
 ]
 
-# One job each. `job` is the job id gheasy gives it, which is what other jobs name in `needs`.
 PRESETS = [
     {'id': 'uv_test', 'job': 'test', 'name': 'Test (uv)',
         'doc': 'Checkout, install with uv, run the tests.',
@@ -79,26 +70,21 @@ PRESETS = [
                 'doc': ''}]},
 ]
 
-
 def preset_rows():
     "The vocabulary, as the panel renders it."
     return dict(presets=PRESETS, triggers=TRIGGERS)
-
 
 def _listy(value):
     if isinstance(value, (list, tuple)): return [str(v).strip() for v in value if str(v).strip()]
     return [v.strip() for v in str(value or '').split(',') if v.strip()]
 
-
 def _lines(value):
     if isinstance(value, (list, tuple)): return [str(v) for v in value if str(v).strip()]
     return [l for l in str(value or '').splitlines() if l.strip()]
 
-
 def _branches(value):
     "The branches a push or pull_request trigger names; `True` and empty both mean `main`."
     return _listy('main' if value is True else value) or ['main']
-
 
 def _triggers(wfb, on):
     "Apply the trigger part of a spec, whose one shape gheasy renders into `on:`'s three."
@@ -121,9 +107,7 @@ def _triggers(wfb, on):
     if cron:
         wfb.on.schedule(str(cron).strip())
         used = True
-    # A workflow with no triggers would silently never run, so it says so in the file.
     if not used: wfb.on.workflow_dispatch()
-
 
 def deploy_job(wfb, job_id, opts, schema, app):
     "lego's deploy job: the schema as `env:`, the key, then the command."
@@ -140,14 +124,12 @@ def deploy_job(wfb, job_id, opts, schema, app):
         .step('Install SSH key').if_("env.DEPLOY_KEY != ''").run(ssh).end_step()
         .step('Deploy').run(str(opts.get('cmd') or 'python deploy.py deploy')).end_job())
 
-
 def nbdev_job(wfb, job_id='test', needs=None):
     "nbdev's own CI job: export and test, then the clean check that is what breaks in an nbdev repo."
     (wfb.job(job_id, needs=needs).runs_on('ubuntu-latest')
         .checkout().end_step().setup_uv().end_step().uv_install().end_step()
         .uv_run('nbdev_test').end_step()
         .step('Notebooks are clean').run('uv run nbdev_clean --check_all').end_job())
-
 
 def _run_job(wfb, job_id, opts):
     job = wfb.job(job_id, needs=opts.get('needs') or None).runs_on('ubuntu-latest')
@@ -158,7 +140,6 @@ def _run_job(wfb, job_id, opts):
         step = step.step(f'Step {i + 1}').run(cmd)
         step = step.end_step() if i + 1 < len(cmds) else step
     step.end_job()
-
 
 def compose(spec, schema=None, app=''):
     "A spec as YAML, built entirely with gheasy. Job ids are made unique as they are added."
@@ -197,15 +178,12 @@ def compose(spec, schema=None, app=''):
         elif pid == 'run': _run_job(wfb, job_id, opts)
     return wfb.build().to_yaml()
 
-
 def spec_path(root, file): return Path(root)/SPEC_DIR/Path(file).with_suffix('.json')
-
 
 def load_spec(root, file):
     "The spec a workflow was built from, or None when it was written some other way."
     try: return json.loads(spec_path(root, file).read_text(encoding='utf-8'))
     except (OSError, ValueError): return None
-
 
 def save_spec(root, file, spec):
     p = spec_path(root, file)

@@ -1,19 +1,4 @@
-"""The browser IDE's single-source keymap, shipped to the browser by `web_keymap()`.
-
-Chord syntax is `[mod+][ctrl+][alt+][shift+]base`, base being one printable character or a
-name (`enter`, `tab`, `up`, `f1`, ...). `mod` is Command on macOS and Control elsewhere;
-`hyper+` is Command+Control+Option+Shift on macOS and Control+Alt+Shift elsewhere;
-`shift+<letter>` is written as the bare uppercase letter. An empty `key` means unbound.
-
-A binding fires when its scope is the focused pane, or when its scope is `global`.
-
-`keys.json` in leela's config dir (or `$LEELA_KEYMAP`) overrides the defaults per action:
-
-    {"run_cell": "mod+enter ctrl+y", "quit": ""}
-
-Overrides are applied one at a time at import; anything unparseable, unknown or conflicting
-is skipped and reported in `NOTES`, so a broken config file cannot stop the IDE starting.
-"""
+"The browser IDE's single-source keymap, shipped to the browser by `web_keymap()`."
 
 import json, os
 from dataclasses import dataclass, asdict, replace
@@ -24,24 +9,19 @@ __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'WEB_ONLY_SCOPES', 'KEYS', 'DEFAUL
            'help_rows', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
            'apply_overrides', 'keymap_json', 'write_keymap', 'reload']
 
-# Panes that own a text cursor. Bare-letter bindings are refused in these; anything bound in
-# `term` is a chord deliberately withheld from the pty's child process.
 EDITING_SCOPES = ('editor', 'exec', 'agent', 'term')
-# Focusable panes, outermost first. `global` bindings fire from any of them.
 SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term')
 
-# Compatibility export; the browser is now the only frontend, so every scope is native.
 WEB_ONLY_SCOPES = ()
 
 _NAMED = {'enter', 'escape', 'tab', 'backspace', 'delete', 'space', 'up', 'down', 'left', 'right',
           'home', 'end', 'pageup', 'pagedown', *[f'f{i}' for i in range(1, 13)]}
 
-# canonical base -> browser KeyboardEvent.key
 _WEB_BASE = {'enter': 'Enter', 'escape': 'Escape', 'tab': 'Tab', 'backspace': 'Backspace',
              'delete': 'Delete', 'space': ' ', 'up': 'ArrowUp', 'down': 'ArrowDown',
              'left': 'ArrowLeft', 'right': 'ArrowRight', 'home': 'Home', 'end': 'End',
              'pageup': 'PageUp', 'pagedown': 'PageDown',
-             **{f'f{i}': f'F{i}' for i in range(1, 13)}}   # KeyboardEvent.key is 'F2', not 'f2'
+             **{f'f{i}': f'F{i}' for i in range(1, 13)}}
 _WEB_CODE = {**{chr(c): f'Key{chr(c).upper()}' for c in range(ord('a'), ord('z') + 1)},
              **{str(i): f'Digit{i}' for i in range(10)},
              'enter': 'Enter', 'space': 'Space', 'tab': 'Tab', 'escape': 'Escape',
@@ -51,7 +31,6 @@ _WEB_CODE = {**{chr(c): f'Key{chr(c).upper()}' for c in range(ord('a'), ord('z')
              '[': 'BracketLeft', ']': 'BracketRight', '/': 'Slash', '\\': 'Backslash',
              '`': 'Backquote', '-': 'Minus', '=': 'Equal', '.': 'Period', ',': 'Comma',
              ';': 'Semicolon', "'": 'Quote'}
-
 
 def parse_key(k):
     "Canonical chord -> (frozenset of modifiers, base key). 'X' normalises to ({'shift'}, 'x')."
@@ -65,35 +44,28 @@ def parse_key(k):
     if base not in _NAMED and len(base) != 1: raise ValueError(f'unknown base key {base!r} in {k!r}')
     return frozenset(mods), base
 
-
 @dataclass(frozen=True)
 class Key:
-    'One binding: what it does, the chord that triggers it, and where it is advertised.'
-    action: str          # what the frontends dispatch on (`focus_exec` -> action_focus_exec / the JS handler table)
-    key: str             # canonical chord, or several alternatives separated by spaces ('f2 r'); '' is unbound
+    "One binding: what it does, the chord that triggers it, and where it is advertised."
+    action: str
+    key: str
     scope: str = 'global'
-    label: str = ''      # human text for help / footer / toast
-    show: str = 'help'   # 'footer' (always-visible bar) | 'toast' (left-sidebar cheatsheet) | 'help' (overlay only)
-
+    label: str = ''
+    show: str = 'help'
     def __post_init__(self):
         if self.scope not in SCOPES: raise ValueError(f'{self.action}: unknown scope {self.scope!r}')
         if self.show not in ('footer', 'toast', 'help'): raise ValueError(f'{self.action}: bad show {self.show!r}')
-        # A binding that can fire while a cell editor holds the cursor must carry a modifier,
-        # or it would type a character instead.
         if self.scope in EDITING_SCOPES or self.scope == 'global':
             for c in self.keys:
                 mods, base = parse_key(c)
                 if not mods and base not in _NAMED:
                     raise ValueError(f'{self.action}: bare {c!r} cannot bind in scope {self.scope!r}')
-
     @property
     def keys(self):
         "Every chord this action answers to, first one first. Empty when the action is unbound."
         return L(self.key.split())
-
     @property
     def bound(self): return bool(self.keys)
-
 
 def web_key(k):
     "Canonical chord -> the dict the browser handler matches a KeyboardEvent against."
@@ -104,15 +76,7 @@ def web_key(k):
     return {'key': key, 'code': _WEB_CODE.get(base), 'hyper': hyper, 'mod': 'mod' in mods,
             'ctrl': 'ctrl' in mods, 'alt': 'alt' in mods, 'shift': 'shift' in mods}
 
-
-# The map. Order within a scope is the order shown in help and the toast.
-#
-# Unusable, so never bound here:
-# - Chrome will not release ctrl+w, ctrl+t, ctrl+n, ctrl+tab, ctrl+shift+w.
-# - macOS Mission Control takes ctrl+up/down/left/right before any app sees them.
-# - Function keys are media/system keys on stock Mac laptops, or reserved by the browser.
 DEFAULTS = L(
-    # -- global: reachable from any pane, including from inside a cell editor ----------
     Key('focus_files',      'alt+shift+1',   'global', 'files',               'footer'),
     Key('focus_editor',     'alt+shift+2',   'global', 'editor',              'footer'),
     Key('focus_exec',       'alt+shift+3',   'global', 'exec',                'footer'),
@@ -121,7 +85,6 @@ DEFAULTS = L(
     Key('palette',          'mod+shift+p',   'global', 'command palette',     'footer'),
     Key('settings',         'mod+,',         'global', 'settings',             'toast'),
     Key('quick_open',       'mod+p',         'global', 'open file',           'toast'),
-    # Chrome owns Ctrl+Tab even in an app window, hence mod+e for recent files.
     Key('recent_tabs',      'mod+e',         'global', 'recent files',        'toast'),
     Key('code_search',      'mod+shift+f',    'global', 'search code',        'toast'),
     Key('find_repo',        'mod+shift+o',    'global', 'find repository',    'toast'),
@@ -129,14 +92,8 @@ DEFAULTS = L(
     Key('find_usages',      'hyper+u',        'global', 'find usages',        'toast'),
     Key('rename_symbol',    'mod+alt+r',      'global', 'rename symbol',       'toast'),
     Key('replace_workspace','mod+shift+h',    'global', 'replace in workspace', 'toast'),
-    # `mod+z` belongs to whichever text editor holds the cursor and `mod+alt+z` to notebook
-    # cell structure; workspace undo reverses a whole journalled operation across files, so it
-    # is deliberately a harder chord to reach than either. Not `hyper+z`, which folds onto
-    # `notebook_redo`'s `mod+alt+shift+z` off macOS: `,` and `.` read as step back and forward.
     Key('workspace_undo',   'hyper+,',        'global', 'undo workspace operation'),
     Key('workspace_redo',   'hyper+.',        'global', 'redo workspace operation'),
-    # Extraction acts on the file on disk, so these refuse a dirty buffer rather than extract
-    # from text the server cannot see.
     Key('extract_variable', 'mod+alt+v',      'global', 'extract variable',    'toast'),
     Key('extract_method',   'mod+alt+m',      'global', 'extract method / function'),
     Key('extract_constant', 'mod+alt+c',      'global', 'extract constant'),
@@ -145,19 +102,14 @@ DEFAULTS = L(
     Key('save',             'mod+s',         'global', 'save',                'toast'),
     Key('save_all',         'alt+shift+s',   'global', 'save all'),
     Key('show_diff',        'alt+shift+d',   'global', 'what changed',        'toast'),
-    # Blame, completion and docs are global rather than editor-scoped so they reach a notebook
-    # cell, the file editor and the exec strip alike; each resolves the cursor from whichever
-    # editor holds it.
     Key('git_blame',        'hyper+b',       'global', 'who wrote this',      'toast'),
     Key('complete',         'alt+/ ctrl+space', 'global', 'complete',         'toast'),
     Key('ai_complete',      'alt+shift+space', 'global', 'ai completion',     'toast'),
     Key('show_docs',        'alt+shift+h',   'global', 'docs for symbol',     'toast'),
     Key('capture',          'alt+shift+p',   'global', 'screenshot for the assistant', 'toast'),
     Key('agent_selection',  'alt+shift+n',   'global', 'send selection to the agent', 'toast'),
-    # Clipping is a deliberate act on a named thing, so it is menu-first and unbound by default.
     Key('clip_to_vault',    '',              'global', 'clip into the vault'),
     Key('close_tab',        'alt+w',         'global', 'close tab',           'toast'),
-    # The bulk closes are menu-first, and unbound by default; every action here is rebindable.
     Key('close_others',     '',              'global', 'close other tabs'),
     Key('close_right',      '',              'global', 'close tabs to the right'),
     Key('close_saved',      '',              'global', 'close saved tabs'),
@@ -188,8 +140,6 @@ DEFAULTS = L(
     Key('help',             'mod+shift+/',   'global', 'keys',                'footer'),
     Key('quit',             '',              'global', 'quit'),
     *[Key(f'tab_{i}', f'alt+{i}', 'global', f'tab {i}') for i in range(1, 10)],
-
-    # -- editor: notebook cells and plain files ---------------------------------------
     Key('run_cell',         'mod+enter',       'editor', 'run cell',              'footer'),
     Key('run_advance',      'shift+enter',     'editor', 'run and select below',  'footer'),
     Key('run_insert',       'alt+enter',       'editor', 'run and insert below'),
@@ -209,15 +159,12 @@ DEFAULTS = L(
     Key('cell_above',       'mod+alt+up',      'editor', 'insert cell above'),
     Key('cell_below',       'mod+alt+down',    'editor', 'insert cell below'),
     Key('cell_delete',      'mod+alt+backspace', 'editor', 'delete cell'),
-    # mod+z/mod+shift+z stay with the focused text editor; these operate on cell structure.
     Key('notebook_undo',    'mod+alt+z',       'editor', 'undo cell operation', 'toast'),
     Key('notebook_redo',    'mod+alt+shift+z', 'editor', 'redo cell operation'),
     Key('cell_type',        'alt+shift+m',     'editor', 'code / markdown / prompt', 'toast'),
     Key('cell_split',       'alt+shift+-',     'editor', 'split cell'),
     Key('cell_collapse',    'hyper+c',         'editor', 'collapse / expand cell'),
     Key('cell_duplicate',   'hyper+d',         'editor', 'duplicate cell below'),
-    # Whole-cell operations only when there is no source selection; the browser router leaves
-    # selected text to CodeMirror and the system clipboard.
     Key('cell_copy',        'mod+c',           'editor', 'copy cell'),
     Key('cell_cut',         'mod+x',           'editor', 'cut cell'),
     Key('cell_paste_above', '',                'editor', 'paste cell above'),
@@ -226,24 +173,17 @@ DEFAULTS = L(
     Key('cell_merge_below', 'hyper+pageup',    'editor', 'merge cell below'),
     Key('clear_cell_output','hyper+delete',    'editor', 'clear this cell output'),
     Key('clear_all_outputs','mod+shift+backspace', 'editor', 'clear all outputs'),
-    # Lines within one buffer, where `cell_move_up`/`cell_move_down` move whole cells. These
-    # take the chords CodeMirror's own keymap uses for them, so the router wins the same key
-    # rather than leaving a second, unlisted binding underneath.
     Key('move_line_up',     'alt+up',        'editor', 'move line up',        'toast'),
     Key('move_line_down',   'alt+down',      'editor', 'move line down'),
     Key('comment',          'mod+/',         'editor', 'toggle comment',      'toast'),
     Key('find_similar',     'ctrl+shift+a',  'editor', 'code like this',      'toast'),
     Key('code_map',         'ctrl+shift+m',  'editor', 'code map (clusters)'),
-
-    # -- exec strip: the merged live/isolated box -------------------------------------
     Key('exec_run',         'mod+enter',     'exec',   'run',                  'footer'),
     Key('exec_newline',     'alt+enter',     'exec',   'newline'),
     Key('exec_prev',        'ctrl+shift+up', 'exec',   'older',               'toast'),
     Key('exec_next',        'ctrl+shift+down', 'exec', 'newer',               'toast'),
     Key('exec_clear',       'alt+shift+l',   'exec',   'clear log'),
     Key('exec_promote',     'mod+shift+g',   'exec',   'run in live namespace'),
-
-    # -- files: the left tree (no text cursor, so bare letters are fine) --------------
     Key('open',             'enter',         'files',  'open / toggle folder','footer'),
     Key('tree_down',        'down',          'files',  'next item',           'footer'),
     Key('tree_up',          'up',            'files',  'previous item'),
@@ -258,8 +198,6 @@ DEFAULTS = L(
     Key('add_root',         'o',             'files',  'open folder',         'toast'),
     Key('remove_root',      '',              'files',  'remove folder from workspace'),
     Key('filter_files',     '/',             'files',  'filter'),
-
-    # -- vars: the right-hand inspector -----------------------------------------------
     Key('expand',           'enter',         'vars',   'expand',              'footer'),
     Key('filter_vars',      '/',             'vars',   'filter',              'footer'),
     Key('edit_value',       'i',             'vars',   'edit',                'toast'),
@@ -271,28 +209,20 @@ DEFAULTS = L(
     Key('profile_minimal',  '1',             'vars',   'minimal'),
     Key('profile_standard', '2',             'vars',   'standard'),
     Key('profile_full',     '3',             'vars',   'full'),
-
-    # -- agent session (bottom centre) -------------------------------------------------
     Key('agent_send',       'mod+enter',     'agent',  'send',                 'footer'),
     Key('agent_stop',       'alt+shift+c',   'agent',  'stop agent'),
     Key('agent_tools',      'alt+shift+t',   'agent',  'what the agent did'),
-
-    # -- terminal: a real pty, so only what it must not swallow is bound here ----------
     Key('term_new',         'ctrl+shift+`',  'term',   'new terminal',        'toast'),
     Key('term_next',        'ctrl+shift+]',  'term',   'next terminal'),
     Key('term_prev',        'ctrl+shift+[',  'term',   'previous terminal'),
     Key('term_close',       'alt+shift+x',   'term',   'close terminal',      'toast'),
 )
 
-
 def _signature(chord):
     "A chord as it collides: modifiers sorted, and `mod` folded into `ctrl`."
-    # Outside macOS `mod` is Control, so the two must collide: a keymap accepted on one
-    # platform cannot be allowed to become ambiguous on another.
     mods, base = parse_key(chord)
     if 'mod' in mods: mods = (mods - {'mod'}) | {'ctrl'}
     return tuple(sorted(mods)), base
-
 
 def _dupes(keys):
     "(scope, chord) pairs bound twice, and actions declared twice -- both are real conflicts."
@@ -305,17 +235,14 @@ def _dupes(keys):
             else: seen[sig] = k.action
     acts = keys.attrgot('action')
     bad += [f'action {a!r} declared twice' for a in set(acts) if acts.count(a) > 1]
-    # A global chord that collides with a scoped one is ambiguous when that pane has focus.
     g = {_signature(c): k.action for k in keys.filter(lambda k: k.scope == 'global') for c in k.keys}
     for k in keys.filter(lambda k: k.scope != 'global'):
         for c in k.keys:
             if (t := _signature(c)) in g: bad.append(f'{c} is both global ({g[t]}) and {k.scope} ({k.action})')
     return bad
 
-
 def by_scope(scope): return KEYS.filter(lambda k: k.scope == scope)
 def lookup(action): return first(KEYS.filter(lambda k: k.action == action))
-
 
 def chord_display(action_or_key, sep=' / '):
     "How a binding is written for a person: every chord it answers to, or an em dash when unbound."
@@ -323,37 +250,26 @@ def chord_display(action_or_key, sep=' / '):
     if k is None: return ''
     return sep.join(k.keys) if k.bound else '—'
 
-
 def web_keymap():
     "The whole table as JSON-ready rows for the browser handler."
     return [{**asdict(k), 'chords': [web_key(c) for c in k.keys]} for k in KEYS]
-
 
 def help_rows():
     "Every binding grouped by scope, for the full help overlay: {scope: [(chord_display, label)]}."
     return {s: [(chord_display(k), k.label) for k in by_scope(s) if k.label] for s in SCOPES}
 
-
 def toast_rows():
     "The short cheatsheet for the left sidebar: keys that earn space but are not in the footer."
-    # `sep=' '` rather than ` / `: the sidebar is only a few characters wider than its longest
-    # chord, and the fallback chord still has to fit.
     return [(chord_display(k, sep=' '), k.label) for k in KEYS if k.show == 'toast']
 
-
-# -- the user's own keymap ---------------------------------------------------
-NOTES = L()          # what went wrong reading it, in the words the frontends show
-
+NOTES = L()
 
 def keymap_path(path=None):
     "Where overrides are read from: the argument, else `$LEELA_KEYMAP`, else `<config>/keys.json`."
     from .. import leela_cfg
     return Path(path or os.environ.get('LEELA_KEYMAP') or (leela_cfg/'keys.json'))
 
-
 _GENERATED_DEFAULT_MIGRATIONS = {
-    # Exact defaults written by older versions of `--write-keymap`, so a generated snapshot
-    # cannot pin known-bad browser/system bindings forever. A custom chord is never touched.
     'focus_files': ('ctrl+b', 'alt+shift+1'),
     'focus_editor': ('ctrl+j', 'alt+shift+2'),
     'focus_exec': ('ctrl+e', 'alt+shift+3'),
@@ -400,39 +316,27 @@ _GENERATED_DEFAULT_MIGRATIONS = {
     'agent_stop': ('ctrl+alt+c', 'alt+shift+c'),
     'agent_tools': ('ctrl+alt+l', 'alt+shift+t'),
     'term_close': ('ctrl+alt+x', 'alt+shift+x'),
-    # Control+Option+Arrow is intercepted by macOS accessibility/window features on some
-    # machines. Command+Option is delivered by Chrome; other browsers map `mod` to Control.
     'cell_above': ('ctrl+alt+up', 'mod+alt+up'),
     'cell_below': ('ctrl+alt+down', 'mod+alt+down'),
     'rename': ('f2 r', 'r'),
 }
 
-# Defaults that moved after `mod` arrived, migrated in any generated snapshot rather than
-# only in a pre-`mod` one: these gained an alternative chord instead of changing platform.
 _SNAPSHOT_MIGRATIONS = {
     'restart': ('alt+shift+r', 'alt+shift+r hyper+r'),
     'toggle_left': ('alt+shift+b', 'alt+shift+b hyper+left'),
     'toggle_right': ('alt+shift+v', 'alt+shift+v hyper+right'),
     'run_selection': ('', 'hyper+s'), 'new_notebook': ('', 'hyper+n'),
     'edit_keys': ('', 'hyper+k'),
-    # These four shipped declared-but-unbound, so every generated snapshot holds `""` for them
-    # and would pin them unreachable forever. Only that exact empty default migrates; someone
-    # who deliberately unbound one after it gained a chord is not affected, because their file
-    # would have to have been written before the chord existed.
     'rename_symbol': ('', 'mod+alt+r'), 'replace_workspace': ('', 'mod+shift+h'),
     'workspace_undo': ('', 'hyper+,'), 'workspace_redo': ('', 'hyper+.'),
 }
-
 
 def _migrated(d, table):
     "`d` with every action still holding an exact old default moved onto the new one."
     return {a: table[a][1] if a in table and c == table[a][0] else c for a, c in d.items()}
 
-
 def read_overrides(path=None, notes=None):
     "`{action: chord}` from the user's keymap file. Never raises -- a broken file is a note."
-    # Two shapes are accepted: the mapping at the top level, or under a `keys` key. Anything
-    # starting with `_` is a comment, so the written template can explain itself.
     p = Path(path or keymap_path())
     notes = ifnone(notes, NOTES)
     try: d = json.loads(p.read_text())
@@ -443,8 +347,6 @@ def read_overrides(path=None, notes=None):
     if not isinstance(d, dict):
         notes.append(f'{p}: expected an object of action -> chord — using the default keys')
         return {}
-    # The old in-app editor wrote every default into the file, and that snapshot would pin the
-    # pre-`mod` defaults forever. Only exact old defaults migrate; a custom chord is untouched.
     help_text = ' '.join(map(str, d.get('_help') or ()))
     generated_snapshot = isinstance(d.get('keys'), dict) and len(d['keys']) > 50 and 'leela keymap' in help_text
     legacy_generated = generated_snapshot and 'mod is Command' not in help_text
@@ -453,18 +355,14 @@ def read_overrides(path=None, notes=None):
     if generated_snapshot: d = _migrated(d, _SNAPSHOT_MIGRATIONS)
     out = {}
     for a, c in d.items():
-        if a.startswith('_') or a == 'agent_transcript': continue  # removed: History owns sessions
+        if a.startswith('_') or a == 'agent_transcript': continue
         if not isinstance(c, str): notes.append(f'{p}: {a}: {c!r} is not a chord string')
         else: out[a] = c.strip()
     return out
 
-
 def apply_overrides(keys, over, notes=None):
     "`keys` with the user's chords applied one at a time, skipping what cannot work."
     notes = ifnone(notes, NOTES)
-    # `L(an_L)` hands back the *same* object (fastcore's NewChkMeta), so both of these copy
-    # through a plain list -- otherwise a rejected override would still have been written into
-    # the map it was being trialled against.
     out = L(list(keys))
     for a, c in (over or {}).items():
         i = out.argfirst(lambda k: k.action == a)
@@ -482,7 +380,6 @@ def apply_overrides(keys, over, notes=None):
         out = trial
     return out
 
-
 def keymap_json(keys=None):
     "The effective map as the JSON a user would edit, with a comment explaining the format."
     ks = L(ifnone(keys, KEYS))
@@ -493,7 +390,6 @@ def keymap_json(keys=None):
                       'Anything unparseable or conflicting is skipped and reported in the IDE.'],
             'keys': {k.action: k.key for k in ks}}
 
-
 def write_keymap(path=None, keys=None):
     "Write the effective map where the user can edit it, and return the path."
     p = Path(path or keymap_path())
@@ -501,14 +397,12 @@ def write_keymap(path=None, keys=None):
     p.write_text(json.dumps(keymap_json(keys), indent=2) + '\n')
     return p
 
-
 def reload(path=None):
     "Rebuild `KEYS` from the defaults plus the user's file. Called once at import."
     global KEYS
     NOTES.clear()
     KEYS = apply_overrides(DEFAULTS, read_overrides(path), NOTES)
     return KEYS
-
 
 if _c := _dupes(DEFAULTS): raise ValueError('keymap conflicts:\n  ' + '\n  '.join(_c))
 KEYS = DEFAULTS

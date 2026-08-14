@@ -1,18 +1,4 @@
-"""What clipping a thing into the vault means, which depends on what the thing is.
-
-Three kinds, three pipelines, because they are not the same shape:
-
-- **a document** is prose: a tab, a file, a PDF, a notebook, a page already read. It goes in as
-  chunks, which is vishalakshi's ordinary path.
-- **a codebase** is not prose. Kosha owns code, and the vault already knows it -- `Vault.context`
-  federates code sections in -- so what lands in the shelf is one pointer document naming the
-  index, not a copy of the source. A clipped repository then tracks its index instead of ageing
-  into a snapshot of it.
-- **an API spec** is structured. `ramabana.spec` parses it into operations already signed by
-  `fastcore.apisurface`, so each operation becomes a section and stays individually retrievable.
-
-Every handler takes `(job, report)` and returns a JSON-safe dict.
-"""
+"What clipping a thing into the vault means, which depends on what the thing is."
 
 from __future__ import annotations
 
@@ -24,19 +10,15 @@ from .jobs import JobError, run_script
 
 __all__ = ['DOC_EXTS', 'clip_docs', 'clip_codebase', 'clip_api_spec', 'register_all']
 
-#: Narrower than litesearch's list on purpose: a clip is a deliberate act, so the surface offers
-#: what a person would call a document.
 DOC_EXTS = frozenset({'.md', '.markdown', '.txt', '.rst', '.pdf', '.ipynb', '.html', '.htm'})
 
 BATCH = 8
-
 
 def _files(target, exts=DOC_EXTS):
     p = Path(target)
     if p.is_file(): return [p]
     if not p.is_dir(): raise JobError(f'nothing to clip at {target}')
     return sorted(f for f in p.rglob('*') if f.is_file() and f.suffix.lower() in exts)
-
 
 def clip_docs(memory, job, report):
     "Prose into the workspace shelf, committed in batches so partial work is usable."
@@ -47,8 +29,6 @@ def clip_docs(memory, job, report):
     pending = [f for f in files if str(f) not in already]
     out = dict(files=list(done), skipped=[], shelf=shelf, n=len(files))
     meta = dict(clipped_from=job.params.get('from') or 'file', clip_job=job.id)
-    # Doc ids as they are written, so the PII report covers what this job clipped rather than
-    # whatever else the shelf holds. A resumed job only reports on the batches it ran itself.
     clipped = []
     for i in range(0, len(pending), BATCH):
         batch = pending[i:i + BATCH]
@@ -62,13 +42,8 @@ def clip_docs(memory, job, report):
     out['pii'] = _pii_summary(memory, clipped, shelf)
     return out
 
-
 def _pii_summary(memory, doc_ids, shelf):
-    """Which of the documents just clipped carry personal information, per the vault's own report.
-
-    Titled names and pattern kinds only. A bare name is not found, and an unstructured address is
-    not masked, so a surface showing this says "found", never "none".
-    """
+    "Which of the documents just clipped carry personal information, per the vault's own report."
     kinds, flagged = Counter(), []
     for did in L(doc_ids).filter():
         r = memory.pii(did, shelf=shelf)
@@ -76,7 +51,6 @@ def _pii_summary(memory, doc_ids, shelf):
         flagged.append(memory.ref(did, shelf))
         kinds.update(r.get('kinds') or {})
     return dict(documents=flagged, kinds=dict(kinds), covers='titled names and pattern kinds')
-
 
 def clip_codebase(memory, search, job, report):
     "Index the repository with kosha, then file one pointer document naming that index."
@@ -86,7 +60,6 @@ def clip_codebase(memory, search, job, report):
     try: index = dict(synced=search.sync(notebooks=True, graph=True)) if hasattr(search, 'sync') else dict(note='kosha unavailable')
     except Exception as e: index = dict(note=f'index failed ({errstr(e)})')
     report(current='writing the pointer', progress=0.7)
-
     langs = dict(Counter(f.suffix.lower() for f in root.rglob('*') if f.is_file() and f.suffix))
     top = ', '.join(f'{k} {v}' for k, v in sorted(langs.items(), key=lambda kv: -kv[1])[:6])
     text = (f'# {root.name}\n\nCodebase indexed for search rather than stored as prose. Retrieval '
@@ -99,7 +72,6 @@ def clip_codebase(memory, search, job, report):
     return dict(root=str(root), pointer=doc, index=index, types=langs,
         note='source is not duplicated into the shelf; the index is federated at query time')
 
-
 def clip_api_spec(memory, job, report):
     "One document per spec, one section per operation, so an endpoint stays addressable."
     from .spec import load_spec, op_row, spec_ops
@@ -107,10 +79,8 @@ def clip_api_spec(memory, job, report):
     spec, src = load_spec(job.target), str(job.target)
     ops = [dict(op_row(o)) for o in spec_ops(spec)]
     info = spec.get('info') or {}
-    # A Discovery document names itself at the top level; OpenAPI nests it under `info`.
     title = job.params.get('name') or info.get('title') or spec.get('title') or src
     report(current=f'{len(ops)} operations', progress=0.6)
-
     lines = [f'# {title}\n', f'API specification clipped from `{src}`.',
         f"version {info.get('version') or spec.get('version') or 'unstated'} · {len(ops)} operations\n"]
     for o in ops:
@@ -123,7 +93,6 @@ def clip_api_spec(memory, job, report):
     return dict(source=src, title=title, operations=len(ops), pointer=doc,
         groups=sorted({o['group'] for o in ops if o.get('group')}))
 
-
 def register_all(jobs, memory, search=None, cwd=None):
     "Wire every clip kind, plus the two general ones, onto a `Jobs`."
     jobs.register('clip', lambda job, report: clip_docs(memory, job, report))
@@ -135,7 +104,6 @@ def register_all(jobs, memory, search=None, cwd=None):
     jobs.register('script', lambda job, report: run_script(job.target, cwd=cwd))
     jobs.register('migrate_memory', lambda job, report: _migrate(job, report))
     return jobs
-
 
 def _migrate(job, report):
     "The memory migration as a job, so it has progress and a retry instead of a terminal."
