@@ -209,8 +209,18 @@ async function leeOpenFile(path) {
   const response=await fetch('/tab/open?path='+encodeURIComponent(path),{method:'POST',headers:{'HX-Request':'true'}});
   if(!response.ok)throw new Error(await response.text());const html=await response.text();
   if(version!==openFileVersion)return;
-  const doc=new DOMParser().parseFromString(html,'text/html'),fresh=doc.querySelector('#tabbar'),old=$('#tabbar');
-  if(!fresh||!old)throw new Error('tab open returned no tab bar');old.replaceWith(fresh);htmx.process(fresh);
+  const doc=new DOMParser().parseFromString(html,'text/html'),fresh=doc.querySelector('#tabbar');
+  // `/tab/open` answers a refusal with an error div and a 200, so the reason is in the body.
+  // Reporting "no tab bar" instead threw away the only sentence that said what was wrong.
+  if(!fresh)throw new Error(doc.querySelector('.lee-err')?.textContent?.trim()||'tab open returned no tab bar');
+  // `#tabbar` is an htmx swap target for tab selection and for opening a vault document, so a
+  // failed swap can replace the element with an error string and take it out of the page. Every
+  // open after that failed on the missing element rather than on anything to do with the file,
+  // which looks exactly like the UI having seized. Put it back instead.
+  const old=$('#tabbar');
+  if(old)old.replaceWith(fresh);
+  else $('#header')?.insertBefore(fresh,$('.lee-tab-overflow')||null);
+  htmx.process(fresh);
   await mountTab(path);await leeVars();refreshProjectPills();requestAnimationFrame(layoutTabs);
   const after = $$('.lee-node').find(n => n.dataset.path === path);
   if (after) selectTreeNode(after);

@@ -89,6 +89,14 @@ async function nbEdit(d) {
   }
   const restored = same >= 0 && lee.editors.get(selectedId);
   if (restored) LeeCM.setCursor?.(restored, Math.min(cursor, restored.state.doc.length));
+  // An undo that scrolls nothing leaves you looking for what moved. The cell the operation
+  // landed on is already `lee.sel`; put it in the middle so it is the thing you are looking at.
+  if (d.op === 'undo' || d.op === 'redo') {
+    const cell = $(`.lee-cell[data-i="${lee.sel}"]`);
+    cell?.scrollIntoView({block: 'center', inline: 'nearest'});
+    cell?.classList.add('lee-cell-changed');
+    setTimeout(() => cell?.classList.remove('lee-cell-changed'), 1200);
+  }
   markDirty();
   return r;
 }

@@ -41,11 +41,48 @@ async function replaceWorkspace() {
   };
 }
 
+/* Which lines differ, as one span from the first difference to the last.
+
+   Not a real diff: the point is to put the change on screen and under a selection, and a span
+   does that for every edit an undo can produce. A minimal diff would draw prettier ranges and
+   would not answer the question -- "where did it change" -- any better. */
+function changedSpan(now, other) {
+  const A = String(now || '').split('\n'), B = String(other || '').split('\n');
+  let s = 0;
+  while (s < A.length && s < B.length && A[s] === B[s]) s++;
+  let a = A.length - 1, b = B.length - 1;
+  while (a >= s && b >= s && A[a] === B[b]) { a--; b--; }
+  return {from: s + 1, to: Math.max(s + 1, a + 1)};
+}
+
+/* An undo that changes a file you cannot see has happened to you rather than been done by you.
+   Select what moved and centre it, so the operation is legible instead of merely reported. */
+function showChangedSpan(now, other, note) {
+  const v = curEditor();
+  if (!v) return status(note, 'ok');
+  const doc = v.state.doc, {from, to} = changedSpan(now, other);
+  const head = doc.line(Math.min(to, doc.lines)).to, anchor = doc.line(Math.min(from, doc.lines)).from;
+  v.dispatch({selection: {anchor, head}, scrollIntoView: true});
+  requestAnimationFrame(() => centreOnPos(v, anchor));
+  v.focus();
+  status(`${note} · line${to > from ? `s ${from}–${to}` : ` ${from}`}`, 'ok');
+}
+
+/* `undone` says which way round the texts are: after an undo the file holds `before`, after a
+   redo it holds `after`, and the other one is what it was. */
+async function afterHistory(operation, note, undone) {
+  const rows = operation.resources || [], paths = rows.map(x => x.path);
+  refreshFileTree(undefined, false);
+  const row = rows.find(x => x.path === lee.path);
+  if (!row) return status(`${note} · ${paths.length} file${paths.length === 1 ? '' : 's'}`, 'ok');
+  await takeDiskVersion(lee.path);
+  showChangedSpan(undone ? row.before : row.after, undone ? row.after : row.before, note);
+}
+
 async function workspaceHistoryRedo() {
   try {
-    const result = await post('/history/redo', {}), paths = (result.operation.resources || []).map(x => x.path);
-    if (paths.includes(lee.path)) await takeDiskVersion(lee.path);
-    refreshFileTree(undefined, false); status('workspace operation redone', 'ok');
+    const result = await post('/history/redo', {});
+    await afterHistory(result.operation, 'workspace operation redone', false);
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 

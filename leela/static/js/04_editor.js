@@ -62,6 +62,7 @@ async function mountTab(expectedPath = '') {
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
   if (st.kind === 'vault') await mountVault(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);
+  else if (st.kind === 'image') mountImage(host, st);
   else if (st.kind === 'notebook') mountNotebook(host, st);
   else await mountFile(host, st);
   if (recoveredDraft) {
@@ -142,6 +143,30 @@ function mountPdf(host, st) {
     `<noscript class="lee-dim">This view needs the browser's PDF viewer.</noscript></div></div>`;
 }
 
+/* An image, in the same chrome as a PDF. Fit is the default because an image opened from a
+   vault or a file tree is being *identified*, not inspected; actual size is one click away and
+   the dimensions are shown either way, since "is this the 2x asset" is the usual question. */
+function mountImage(host, st) {
+  const name = (st.path || '').split('/').pop() || 'image';
+  const raw = '/file/raw/' + encodeURIComponent(name) + '?path=' + encodeURIComponent(st.path);
+  host.innerHTML =
+    `<div class="lee-doc">` +
+    `<div class="lee-doc-head"><span>${esc(compactPath(st.path))}</span>` +
+    `<span class="lee-dim" data-image-size></span><span class="lee-spacer"></span>` +
+    `<button class="lee-btn" data-image-fit>actual size</button>` +
+    `<a class="lee-btn" href="${esc(raw)}" target="_blank" rel="noopener noreferrer">open externally</a>` +
+    `<a class="lee-btn" href="${esc(raw)}&download=true" download>download</a></div>` +
+    `<div class="lee-doc-body lee-image-body fit">` +
+    `<img class="lee-image" alt="${esc(st.title || name)}" src="${esc(raw)}"></div></div>`;
+  const img = $('.lee-image', host), body = $('.lee-image-body', host), button = $('[data-image-fit]', host);
+  img.onload = () => { $('[data-image-size]', host).textContent = `${img.naturalWidth}×${img.naturalHeight}`; };
+  img.onerror = () => { body.innerHTML = `<div class="lee-err">${esc(name)} could not be displayed</div>`; };
+  button.onclick = () => {
+    const fit = body.classList.toggle('fit');
+    button.textContent = fit ? 'actual size' : 'fit to window';
+  };
+}
+
 async function mountFile(host, st) {
   const isProject = st.path?.endsWith('/pyproject.toml') || st.title === 'pyproject.toml';
   const crumbMode=lee.workbenchPrefs.breadcrumbs||'pathAndSymbols',crumb=crumbMode==='off'?'':`<nav class="lee-breadcrumbs" id="editorcrumbs" aria-label="File and symbol path"><span>${esc(compactPath(st.path||st.title||''))}</span></nav>`;
@@ -157,7 +182,10 @@ async function mountFile(host, st) {
               `<button class="lee-seg${v === view ? ' active' : ''}" data-md-view="${v}">${v}</button>`).join('') +
             `</div><span class="lee-spacer"></span>` +
             `<span class="lee-dim">the change gutter and blame stay on the source</span></div>` : '') +
-    (isMd ? `<div class="lee-md-stage" data-view="${view}"><div class="lee-cm" id="filecm"></div>` +
+    // `data-md-base` is this file's folder: a figure written `![](img/a.png)` is relative to the
+    // document, not to the page the renderer drops it into.
+    (isMd ? `<div class="lee-md-stage" data-view="${view}" data-md-base="${esc((st.path || '').slice(0, (st.path || '').lastIndexOf('/')))}">` +
+            `<div class="lee-cm" id="filecm"></div>` +
             `<div class="lee-md-preview" id="mdpreview" data-markdown=""></div></div>`
           : '<div class="lee-cm" id="filecm"></div>');
   let git = {ranges: []}, packages = null;
@@ -848,12 +876,31 @@ function markDirty() {
   if (t) { t.classList.add('dirty'); setTabSaveState(t, 'pending'); }
   scheduleAutoSave();
 }
+/* Put a position in the middle of the view rather than merely inside it.
+
+   `scrollIntoView` moves the *minimum* distance, so a match below the fold arrives on the last
+   visible line with nothing under it -- and a search result is something you are about to read
+   around, not just look at. Written against `scrollDOM` rather than CodeMirror's own centring
+   effect: the vendored bundle is committed and rebuilding it needs node.
+
+   A notebook scrolls its column of cells, not the cell's own editor, so the element that can
+   actually move is the one that gets scrolled. */
+function centreOnPos(v, pos) {
+  const coords = v.coordsAtPos(pos); if (!coords) return;
+  const own = v.scrollDOM, host = own.scrollHeight - own.clientHeight > 4 ? own : $('#editor');
+  if (!host) return;
+  const box = host.getBoundingClientRect();
+  host.scrollTop += (coords.top + coords.bottom) / 2 - (box.top + box.height / 2);
+}
+
 function jumpToLine(line) {
   const v = lee.kind === 'notebook' ? lee.editors.get(lee.cells[lee.sel]?.id) : lee.editors.get('file');
   if (!v) return;
   const n = Math.max(1, Math.min(Number(line) || 1, v.state.doc.lines));
   const pos = v.state.doc.line(n).from;
   v.dispatch({selection: {anchor: pos}, scrollIntoView: true}); v.focus();
+  // After the layout `scrollIntoView` just caused, or the measurement is of the old position.
+  requestAnimationFrame(() => centreOnPos(v, pos));
 }
 function openLocation(hit) {
   // A hit in a notebook reports two coordinates: `line` in the .ipynb JSON, which is what

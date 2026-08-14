@@ -280,8 +280,7 @@ async function operationHistory() {
     const redo = row.dataset.history === 'redo', verb = redo ? 'Redo' : 'Undo';
     if (!await confirmDialog(`${verb} workspace operation`, `${verb} ${row.textContent.trim()}?`, verb.toLowerCase())) return;
     try { const r = await post('/history/' + (redo ? 'redo' : 'undo'), {id: row.dataset.op}); m.remove();
-      if ((r.operation.resources || []).some(x => x.path === lee.path)) await takeDiskVersion(lee.path);
-      status(`workspace operation ${redo ? 'redone' : 'undone'}`, 'ok'); refreshFileTree(undefined, false);
+      await afterHistory(r.operation, `workspace operation ${redo ? 'redone' : 'undone'}`, !redo);
     } catch (e) { status(e.message || String(e), 'err'); }
   });
 }
