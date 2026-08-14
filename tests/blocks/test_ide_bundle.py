@@ -1,8 +1,9 @@
 "The served `lee-ide.js` is generated: it must equal its `static/js/` modules."
 
-import sys
+import re, sys
+from collections import Counter
 
-from fastcore.all import Path
+from fastcore.all import L, Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT/'tools'))
@@ -13,6 +14,21 @@ import build_ide_js as builder  # noqa: E402
 def test_every_module_ends_with_a_newline():
     "Without one, a module's last line fuses into the next module's first when concatenated."
     assert [p.name for p in builder.modules() if not p.read_text().endswith('\n')] == []
+
+
+_DECL = re.compile(r'^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(', re.M)
+
+
+def test_no_two_modules_declare_the_same_top_level_function():
+    """The modules share one scope, so the later declaration silently wins.
+
+    Nothing reports this: the build succeeds, the page loads, and the losing module's callers
+    reach a function with the same name and a different signature. That is how the source
+    control panel's branch kebab came to hand `openChromeMenu` a string and throw.
+    """
+    names = L(builder.modules()).map(lambda p: set(_DECL.findall(p.read_text())))
+    dupes = sorted(n for n, c in Counter(n for s in names for n in s).items() if c > 1)
+    assert dupes == [], f'declared in more than one module: {dupes}'
 
 
 def test_the_committed_bundle_matches_its_modules():

@@ -891,7 +891,7 @@ function wireGitPanel(host, d) {
   const branchFilter = host.querySelector('#gitbranchfilter'); if (branchFilter) branchFilter.oninput = () => { gitUI.branchQuery = branchFilter.value; renderGitPanel(d); requestAnimationFrame(() => { const x = $('#gitbranchfilter'); x?.focus(); x?.setSelectionRange(x.value.length, x.value.length); }); };
   const branchScope = host.querySelector('#gitbranchscope'); if (branchScope) { branchScope.value = gitUI.branchScope; branchScope.onchange = () => { gitUI.branchScope = branchScope.value; renderGitPanel(d); }; }
   host.querySelector('#scbranch')?.addEventListener('click', async () => { const branch = await inputDialog('new branch', 'Branch name', '', 'feature/name'); if (branch) act('create', {branch}); });
-  host.querySelectorAll('[data-branch]').forEach(row => { const branch = row.dataset.branch; row.querySelector('[data-switch]').onclick = () => act('checkout', {branch}); row.querySelector('[data-compare]')?.addEventListener('click', () => { gitUI.reviewBase = d.branch; gitUI.reviewHead = branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); }); row.querySelector('[data-more]')?.addEventListener('click', () => branchActions(branch, d, act)); });
+  host.querySelectorAll('[data-branch]').forEach(row => { const branch = row.dataset.branch; row.querySelector('[data-switch]').onclick = () => act('checkout', {branch}); row.querySelector('[data-compare]')?.addEventListener('click', () => { gitUI.reviewBase = d.branch; gitUI.reviewHead = branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); }); const more = row.querySelector('[data-more]'); more?.addEventListener('click', () => gitBranchMenu(more, branch, d, act)); });
   host.querySelector('#sctag')?.addEventListener('click', async () => { const name = await inputDialog('create tag', 'Tag name', '', 'v1.0.0'); if (!name) return; const message = await inputDialog('annotated tag', 'Optional annotation', '', ''); if (message !== null) act('tag', {name, message}); });
   host.querySelectorAll('[data-delete-tag]').forEach(b => b.onclick = async () => { const name = b.closest('[data-tag]').dataset.tag; if (await confirmDialog('delete tag', `Delete local tag ${name}?`, 'delete')) act('delete_tag', {name}); });
   host.querySelector('#gitreviewmode') && (host.querySelector('#gitreviewmode').value = gitUI.reviewMode);
@@ -999,21 +999,44 @@ async function showRebasePreview(branch, d, act) {
     };
   } catch (e) { status(e.message || String(e), 'err'); }
 }
-async function branchActions(branch, d, act) {
-  const m = modal(`<div class="lee-mhead">${esc(branch)}<span class="sub">branch actions</span></div><div class="lee-branch-actions">` +
-    `<button class="lee-btn" data-op="merge">merge into ${esc(d.branch)}</button><button class="lee-btn" data-op="rebase">rebase current onto branch</button>` +
-    `<button class="lee-btn" data-op="rename">rename</button><button class="lee-btn" data-op="upstream">set upstream</button><button class="lee-btn" data-op="compare">review selected into current</button>` +
-    `<button class="lee-btn warn" data-op="delete">delete local branch</button></div>`);
-  m.querySelectorAll('[data-op]').forEach(b => b.onclick = async () => {
-    const op = b.dataset.op;
-    if (op === 'delete') { if (!await confirmDialog('delete branch', `Delete local branch ${branch}?`, 'delete')) return; m.remove(); return act('delete', {branch}); }
-    if (op === 'rename') { const name = await inputDialog('rename branch', 'New name', branch, 'feature/name'); if (name) { m.remove(); act('rename_branch', {branch, name}); } return; }
-    if (op === 'upstream') { const upstream = await inputDialog('set upstream', 'Remote tracking branch', '', 'origin/' + branch); if (upstream) { m.remove(); act('set_upstream', {branch, upstream}); } return; }
-    if (op === 'compare') { m.remove(); gitUI.reviewBase = d.branch; gitUI.reviewHead = branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; return renderGitPanel(d); }
-    if (op === 'merge') { m.remove(); return showMergePreview(branch, d, act); }
-    if (op === 'rebase') { m.remove(); return showRebasePreview(branch, d, act); }
-    m.remove(); act(op, {branch});
-  });
+/* The branch row's `•••`, as a menu anchored to the button rather than a modal: picking a
+   branch to compare against is a glance, not a dialogue. Named for this panel because the
+   branch pill in `28_branchbar.js` has its own, differently-shaped menu, and the modules are
+   concatenated into one scope -- two `function branchActions` and the later file silently won. */
+function gitBranchMenu(anchor, branch, d, act) {
+  const current = branch === d.branch;
+  const review = mode => {
+    Object.assign(gitUI, {reviewBase: d.branch, reviewHead: branch, reviewMode: mode, review: null, tab: 'review'});
+    renderGitPanel(d);
+  };
+  const rows = [
+    {label: `Checkout ${branch}`, disabled: current, run: () => act('checkout', {branch})},
+    {label: 'New branch from…', detail: branch, run: async () => {
+      const name = await inputDialog('new branch', `Branch name, starting at ${branch}`, '', 'feature/name');
+      if (name) act('create', {branch: name, start: branch});
+    }},
+    {separator: true},
+    {label: `Review ${branch} into ${d.branch}`, detail: 'proposed changes', disabled: current,
+     run: () => review('review')},
+    {label: `Diff ${d.branch} … ${branch}`, detail: 'complete snapshots', disabled: current,
+     run: () => review('snapshot')},
+    {separator: true},
+    {label: `Rebase ${d.branch} onto ${branch}`, disabled: current, run: () => showRebasePreview(branch, d, act)},
+    {label: `Merge ${branch} into ${d.branch}`, disabled: current, run: () => showMergePreview(branch, d, act)},
+    {separator: true},
+    {label: 'Rename…', run: async () => {
+      const name = await inputDialog('rename branch', 'New name', branch, 'feature/name');
+      if (name) act('rename_branch', {branch, name});
+    }},
+    {label: 'Set upstream…', run: async () => {
+      const upstream = await inputDialog('set upstream', 'Remote tracking branch', '', 'origin/' + branch);
+      if (upstream) act('set_upstream', {branch, upstream});
+    }},
+  ];
+  if (!current) rows.push({separator: true}, {label: `Delete ${branch}`, warn: true, run: async () => {
+    if (await confirmDialog('delete branch', `Delete local branch ${branch}?`, 'delete')) act('delete', {branch});
+  }});
+  openChromeMenu(anchor, rows);
 }
 async function loadGitCommitInspector(ref) {
   try { gitUI.selectedCommit = await api(gitUrl('/git/commit/review', {ref})); renderGitPanel(gitUI.snapshot); }

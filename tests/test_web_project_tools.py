@@ -282,7 +282,7 @@ def test_git_is_a_first_class_vertical_project_tab(tmp_path):
     # one rule above it. The guarantee is the same -- Git does not show the file tree.
     assert '.lee-left-content > .lee-panel { display: none; }' in CSS
     assert '.lee-left.left-git .lee-source-control' in CSS
-    panel = JS[JS.index('async function renderGitPanel'):JS.index('async function branchActions')]
+    panel = JS[JS.index('async function renderGitPanel'):JS.index('function gitBranchMenu')]
     for feature in ('Staged changes', 'Changes', 'Branches', 'Stashes', 'Remotes & tags'):
         assert feature in panel
     for op in ('fetch', 'pull', 'push', 'stash', 'tag', 'stage all', 'unstage all'):
@@ -467,7 +467,7 @@ def test_git_compare_has_explicit_direction_and_works_from_branch_rows():
     assert 'From (base)' in block and 'To (target)' in block
     assert 'gitcompareswap' in block and "gitUI.reviewMode = 'snapshot'" in block
     assert "gitUI.reviewHead = branch" in block and "gitUI.tab = 'review'" in block
-    assert 'review selected into current' in block
+    assert 'Review ${branch} into ${d.branch}' in block, 'the branch kebab offers the review'
     assert "gitUI.reviewMode = 'snapshot'" in block
     assert '.lee-git-compare-fields' in CSS and '.lee-git-compare-summary' in CSS
     assert 'function gitReviewView' in block and 'function showMergePreview' in block
@@ -578,7 +578,7 @@ def test_the_merge_button_always_answers_instead_of_being_disabled():
         'a press that cannot proceed says why'
     assert 'commit or stash ${p.dirty.length} changed file' in fn, 'and names the real blocker'
     assert 'p.dirty.map(esc).join' in fn, 'listing the tracked files, not a count of everything'
-    rb = JS[JS.index('async function showRebasePreview('):JS.index('async function branchActions(')]
+    rb = JS[JS.index('async function showRebasePreview('):JS.index('function gitBranchMenu(')]
     assert 'data-rebase>' in rb and "data-rebase ${" not in rb
     assert "if (rbBlocked) return status(`cannot rebase — ${rbBlocked}`, 'err')" in rb
 
