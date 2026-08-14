@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 from dataclasses import dataclass
 
 from ... import Dictable, errstr
@@ -103,6 +104,20 @@ class Browser:
             from fossick.cdp import _debug_ready
             return bool(_debug_ready(self.port))
         except Exception: return False
+
+    def available(self):
+        """Whether a page *could* be opened -- a Chrome exists, running or not.
+
+        The question the UI actually has. Chrome is started on demand rather than at launch,
+        because it is several hundred megabytes and most sessions never open a web tab, so
+        "not running yet" must not read as "no inline browser here".
+        """
+        if self.running(): return True
+        try:
+            from fossick.cdp import chrome_bin
+            binary = chrome_bin()
+        except Exception: return False
+        return bool(binary and (shutil.which(binary) or os.path.exists(binary)))
 
     async def alive(self):
         "Whether a page could be opened right now. Starts Chrome if it has to."

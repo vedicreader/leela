@@ -25,8 +25,8 @@ from . import errstr, leela_cfg
 # app is the same event as launching with one. Re-exported here because it is a desktop idea.
 from .core.projects import last_folders, recent_folders, remember, session  # noqa: F401
 
-__all__ = ['BACKENDS', 'backend', 'shell_ready', 'wait_for_http', 'start_cdp', 'window_size',
-           'run_shell', 'watch_open_events', 'ShellApi',
+__all__ = ['BACKENDS', 'backend', 'shell_ready', 'wait_for_http', 'start_cdp', 'warm_cdp',
+           'window_size', 'run_shell', 'watch_open_events', 'ShellApi',
            'session', 'remember', 'last_folders', 'recent_folders']
 
 # pywebview's own name for each platform's webview. macOS gets WKWebView through pyobjc,
@@ -98,6 +98,9 @@ def wait_for_http(url, timeout=60, interval=.1):
     return False
 
 
+EAGER_CDP = 'LEELA_CDP_EAGER'
+
+
 def start_cdp(port=9223, headless=True, wait=False, timeout=None, profile=None):
     """Bring up the persistent CDP Chrome the inline browser renders into.
 
@@ -125,6 +128,19 @@ def start_cdp(port=9223, headless=True, wait=False, timeout=None, profile=None):
     t.start()
     if wait: t.join(timeout or 30)
     return t
+
+
+def warm_cdp(port=9223, profile=None):
+    """Start Chrome at launch only if asked to. Off by default, and the default is the point.
+
+    A headless Chrome is several hundred megabytes across a dozen processes -- far more than
+    the workspace it would be sitting beside -- and most sessions never open a web tab. So it
+    is started by the first page that needs one, which `Browser` already does, and the couple
+    of seconds that costs is paid by the person who asked for a page rather than by everyone.
+    Set `$LEELA_CDP_EAGER=1` to trade the memory back for that latency.
+    """
+    if os.environ.get(EAGER_CDP, '').strip() not in ('1', 'true', 'yes'): return None
+    return start_cdp(port, headless=True, profile=profile)
 
 
 def window_size(spec=None):

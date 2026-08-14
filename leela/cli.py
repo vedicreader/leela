@@ -92,14 +92,14 @@ def main(argv=None):
     # back, so here the server is the background half. `leela_app.py` does the same thing for
     # the frozen app; this is the source-checkout way in, and what the shell is tested through.
     import threading
-    from .desktop import run_shell, shell_ready, start_cdp
+    from .desktop import run_shell, shell_ready, warm_cdp
     from .hub import workspace_urls
     ok, why = shell_ready()
     if not ok: p.error(f'--shell webview: {why}')
     urls = workspace_urls(roots, a.port) if (a.app and roots) else [f'http://{a.host}:{a.port}/']
     titles = [f'leela — {os.path.basename(r)}' for r in roots] if len(urls) == len(roots) else ['leela']
     threading.Thread(target=serve, args=('none',), daemon=True, name='leela-server').start()
-    start_cdp(a.cdp_port, headless=True)
+    warm_cdp(a.cdp_port)          # only if `$LEELA_CDP_EAGER`; the first web tab starts it
     run_shell(urls, titles=titles)
 
 

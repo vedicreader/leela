@@ -176,11 +176,34 @@ from leela.app import ide_app
 from leela.workspace import Workspace
 from leela.blocks.browser.browser import Browser
 from leela.desktop import start_cdp
+import subprocess
+
+def chrome_rss(port):
+    "RSS and process count for the Chrome on `port`, children included."
+    try:
+        root = int(subprocess.run(['pgrep', '-f', f'remote-debugging-port={{port}}'],
+                                  capture_output=True, text=True).stdout.split()[0])
+    except (IndexError, ValueError, OSError): return 0, 0
+    rows = [l.split() for l in subprocess.run(['ps', '-eo', 'pid,ppid,rss'],
+            capture_output=True, text=True).stdout.splitlines()[1:]]
+    kids, rss = {{}}, {{}}
+    for r in rows:
+        if len(r) != 3: continue
+        kids.setdefault(int(r[1]), []).append(int(r[0])); rss[int(r[0])] = int(r[2])
+    seen, stack, total = set(), [root], 0
+    while stack:
+        p = stack.pop()
+        if p in seen: continue
+        seen.add(p); total += rss.get(p, 0); stack += kids.get(p, [])
+    return total // 1024, len(seen)
+
 fake_kernels()
 proj = Path(tempfile.mkdtemp()); (proj/'a.py').write_text('x=1\\n')
 ws = Workspace(roots=[proj], port=8000)
 profile = Path(tempfile.mkdtemp())/'chrome'
 start_cdp({cdp}, headless=True, wait=True, timeout=120, profile=str(profile))
+time.sleep(2)
+chrome_idle, procs_idle = chrome_rss({cdp})
 ws.browser = Browser(port={cdp}, headless=True, profile=profile)
 
 with TestClient(ide_app(ws)) as c:
@@ -201,12 +224,14 @@ with TestClient(ide_app(ws)) as c:
                 sizes.append(len(d.get('data') or '')); kinds.append('base64')
             elif d['t'] == 'error': raise SystemExit(d['error'])
     secs = time.perf_counter() - t0
+    chrome, procs = chrome_rss({cdp})
     print(json.dumps(dict(ms=round(secs * 1000), frames=len(sizes),
                           wire=round(statistics.mean(sizes)) if sizes else 0,
                           kind=kinds[0] if kinds else '-',
                           fps=round(len(sizes) / secs, 1) if secs else 0,
                           rss_before=before, rss=rss(),
-                          heavy=[])))
+                          chrome_idle=chrome_idle, chrome_procs_idle=procs_idle,
+                          chrome=chrome, chrome_procs=procs, heavy=[])))
 '''
 
 
@@ -219,8 +244,13 @@ def browser(frames=40):
            ('mean bytes per frame, on the wire', f"{r['wire']:,}"),
            ('frames per second', r['fps']),
            ('workspace rss before the tab', f"{r['rss_before']}MB"),
-           ('workspace rss while streaming', f"{r['rss']}MB")],
+           ('workspace rss while streaming', f"{r['rss']}MB"),
+           ('chrome, idle', f"{r['chrome_idle']}MB in {r['chrome_procs_idle']} processes"),
+           ('chrome, holding the page', f"{r['chrome']}MB in {r['chrome_procs']} processes")],
           ('measure', 'value'))
+    print('\nChrome is the larger half of the application by far, which is why it is started\n'
+          'by the first page that needs one rather than at launch. `ps` counts shared pages\n'
+          'once per process, so the totals overstate what is actually held.')
 
 
 def main(argv=None):

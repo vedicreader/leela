@@ -33,8 +33,13 @@ def connect(app, ctx):
 
     @rt('/browser/ready')
     def browser_ready():
-        "Is there a browser to render into? Cheap, and never starts one to find out."
-        return {'ok': browser.running(), 'port': browser.port}
+        """Could a page be opened here? Cheap, and never starts a browser to find out.
+
+        `ok` is whether there is a Chrome to drive; `running` is whether it is up yet. The
+        first inline tab of a session starts it, which takes a second or two, so the client
+        says so rather than treating a cold browser as a missing one.
+        """
+        return {'ok': browser.available(), 'running': browser.running(), 'port': browser.port}
 
     @rt('/browser/tabs')
     async def browser_tabs():

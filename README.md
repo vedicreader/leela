@@ -639,6 +639,14 @@ python tools/profile_app.py --imports  # what is on the startup path, and what i
 | process start to first page served | 786ms | **587ms** |
 | one workspace, resident and idle | 119MB | **74MB** |
 | one screencast frame, on the wire | 10,775 bytes | **8,080 bytes** |
+| a launch that never opens a web tab | + ~900MB of Chrome | **no Chrome at all** |
+
+The last line is the largest of them. A headless Chrome is several hundred megabytes across a
+dozen processes — comfortably more than the workspace beside it — and most sessions never open
+a web tab, so it is now started by the first page that wants one rather than at launch. Set
+`LEELA_CDP_EAGER=1` to trade that memory back for the second or two the first tab spends
+waiting. Research still offers to open pages inline while the browser is cold: `/browser/ready`
+answers "is there a Chrome to drive", not "is one running".
 
 Nearly all of the first three was `dhrishti`, which the server imported for two constants and
 a directory listing. dhrishti belongs *inside a kernel* — `dhrishti.core` imports IPython,

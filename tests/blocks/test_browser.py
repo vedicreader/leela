@@ -83,9 +83,12 @@ class FakeBrowser:
     "Enough of `Browser` for the routes, with no Chrome anywhere near it."
     port = 9223
 
-    def __init__(self, up=True): self.up, self.closed, self.opened = up, [], []
+    def __init__(self, up=True, installed=True):
+        self.up, self.installed, self.closed, self.opened = up, installed, [], []
 
     def running(self): return self.up
+
+    def available(self): return self.up or self.installed
 
     async def pages(self):
         if not self.up: raise BrowserUnavailable('no browser running on the CDP port 9223')
@@ -110,10 +113,29 @@ def client(ws):
     with TestClient(ide_app(ws)) as c: yield c, ws
 
 
-def test_readiness_is_answered_without_touching_chrome(client):
+def test_a_browser_that_is_installed_but_not_running_yet_still_counts_as_available(client):
+    """Chrome is started by the first page that wants one, not at launch.
+
+    It costs several hundred megabytes across a dozen processes -- more than the workspace
+    beside it -- and most sessions never open a web tab. So "not up yet" must not read as
+    "no inline browser here", or research would go back to opening pages in another browser.
+    """
     c, ws = client
     ws.browser.up = False
-    assert c.get('/browser/ready').json() == {'ok': False, 'port': 9223}
+    assert c.get('/browser/ready').json() == {'ok': True, 'running': False, 'port': 9223}
+
+
+def test_no_chrome_at_all_is_reported_as_no_browser(client):
+    c, ws = client
+    ws.browser.up = ws.browser.installed = False
+    assert c.get('/browser/ready').json()['ok'] is False
+
+
+def test_availability_is_answered_without_starting_anything(tmp_path):
+    "The question must stay cheap: it is asked every time a research result is clicked."
+    b = Browser(port=1, profile=tmp_path)
+    assert b.running() is False
+    assert b.available() is True     # this machine has a Chrome; it is simply not running
 
 
 def test_a_missing_browser_is_reported_in_the_panel_rather_than_as_a_500(client):

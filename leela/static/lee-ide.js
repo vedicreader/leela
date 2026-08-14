@@ -7516,9 +7516,12 @@ function researchDomain(url) {
 // link, and it opens it the way it always did.
 async function openWebpage(url) {
   if (!url) return status('choose a source first', 'err');
-  let ready = false;
-  try { ready = (await api('/browser/ready')).ok; } catch (_) {}
-  if (!ready) return window.open(url, '_blank', 'noopener,noreferrer');
+  let ready = {};
+  try { ready = await api('/browser/ready'); } catch (_) {}
+  // `ok` is "there is a Chrome to drive", not "it is already up". Chrome is started by the
+  // first page that needs one, so a cold browser is a short wait, not a missing feature.
+  if (!ready.ok) return window.open(url, '_blank', 'noopener,noreferrer');
+  if (!ready.running) status('starting the browser…');
   return openWebTab(url);
 }
 async function saveDoc(doc, kind) {

@@ -93,7 +93,7 @@ def run():
     ones this app had open when it was last closed, and failing both, none at all -- which
     opens on the welcome screen rather than guessing.
     """
-    from leela.desktop import last_folders, remember, run_shell, shell_ready, start_cdp
+    from leela.desktop import last_folders, remember, run_shell, shell_ready, warm_cdp
     from leela.hub import workspace_urls
 
     dirs = remember(folders() or last_folders())
@@ -107,9 +107,11 @@ def run():
         return serve(leela_args(port, dirs, ('--shell', 'chrome', '--cdp-port', str(cdp_port))))
 
     serve(leela_args(port, dirs, ('--shell', 'none', '--cdp-port', str(cdp_port))), background=True)
-    # Headless on purpose: with a native window as the shell, this Chrome is a renderer for
-    # the tabs Leela draws inside itself, and a second visible browser would be clutter.
-    start_cdp(cdp_port, headless=True)
+    # Not started unless `$LEELA_CDP_EAGER` asks for it. Headless Chrome costs several hundred
+    # megabytes across a dozen processes, more than the workspace beside it, and a session
+    # that never opens a web tab should never pay for one. The first tab that wants a page
+    # starts it.
+    warm_cdp(cdp_port)
     # `--app` gives each folder its own workspace behind a host-dispatching hub, so each one
     # needs its own window. Opening a single window on the bare loopback host would show the
     # first folder and silently strand the rest.
