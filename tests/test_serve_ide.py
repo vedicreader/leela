@@ -1,21 +1,8 @@
-"""`serve_ide` actually starting, for both shapes of workspace.
-
-Everything else tests `ide_app` against a `Workspace` the test built itself, which skips the
-part that decides *which* workspaces exist and hands them their arguments. That gap let a
-`Workspace.load()` that did not accept `cdp_port` reach the branch `--app` uses: the server
-raised on startup, and the only symptom was a desktop window sitting on its splash screen
-forever. Nothing in the suite noticed, because nothing in the suite started a server.
-
-These are slow by the standards of the rest of the suite -- a real port, a real uvicorn -- and
-still under a second each, which is worth it for the one code path every launch goes through.
-"""
+"`serve_ide` actually starting, for both shapes of workspace: a real port, a real uvicorn."
 
 from __future__ import annotations
 
-import socket
-import threading
-import urllib.error
-import urllib.request
+import socket, threading, urllib.error, urllib.request
 
 import pytest
 

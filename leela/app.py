@@ -2254,9 +2254,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             kw['completion_model'] = remembered.get('completion_model') or 'gpt-4.1'
             ws = Workspace(**kw)
         for r in roots: ws.add_root(r)
-        # A terminal launch means "here"; a double-clicked application has no such answer, and
-        # the old guess -- home -- had teeth: Kosha would index every file the user owns. With
-        # no root it opens on the welcome screen instead.
+        # A shell launch means "here"; a frozen one has no such answer, so: welcome screen.
         if not ws.fs.roots and not getattr(sys, 'frozen', False): ws.add_root(os.getcwd())
         if ws.restore_remembered_agent_state(): ws.save()
         app = ide_app(ws, gate)
