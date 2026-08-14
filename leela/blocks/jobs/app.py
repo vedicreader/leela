@@ -184,13 +184,36 @@ def vault_docs(memory, q='', vault='', shelf='', limit=60):
     return Div(*body, id='vaultdocs', cls='lee-vault-docs')
 
 
+def vault_browse(memory, q='', vault='', shelf='', limit=60):
+    """The browse block: which vault is open, a search box scoped to it, and the rows.
+
+    The form comes back with the fragment carrying the vault it was rendered for, so searching
+    stays in the vault you clicked into. Were only the list swapped, the form left behind would
+    still be the panel's, and the next search would silently answer from the active vault.
+    """
+    return Div(Span(f'documents · {vault}' if vault else 'documents', cls='lee-vault-legend'),
+        Form(Hidden(name='vault', value=vault), Hidden(name='shelf', value=shelf),
+            Input(name='q', value=q, cls='lee-input', placeholder='search this vault…', autocomplete='off'),
+            Button('search', cls='lee-btn go', type='submit'), cls='lee-clip-form',
+            hx_get='/vault/browse', hx_target='#vaultbrowse', hx_swap='outerHTML'),
+        vault_docs(memory, q, vault, shelf, limit),
+        id='vaultbrowse', cls='lee-vault-browse')
+
+
 def _vault_row(r):
-    "One vault: whether it is active, who may write to it, and whether the model may."
+    "One vault: click the name to read it, the dot to make it active, plus who may write to it."
     name, act = r['name'], ('lee-shelf-name mine' if r['active'] else 'lee-shelf-name')
     hid = Hidden(name='name', value=name)
-    return Div(Span(name, cls=act, title=r['path']),
-        Form(hid, Button('use', cls='lee-btn', type='submit'), hx_post='/vault/activate',
-             hx_target='#vaultpanel', hx_swap='none') if not r['active'] else Span('active', cls='lee-shelf-count'),
+    # Reading a vault and writing to one are different intentions, so they are different
+    # controls: the name browses without disturbing anything, and only the dot moves where
+    # clips and the model's writes land.
+    return Div(Button(name, cls=act + ' lee-vault-open', title=f"{r['path']} — browse this vault",
+            hx_get='/vault/browse', hx_vals=json.dumps({'vault': name}),
+            hx_target='#vaultbrowse', hx_swap='outerHTML'),
+        Span('●', cls='lee-shelf-count lee-vault-active', title='the active vault') if r['active'] else
+        Form(hid, Button('○', cls='lee-btn lee-vault-use', type='submit',
+                         title='make this the active vault'),
+             hx_post='/vault/activate', hx_target='#vaultpanel', hx_swap='none'),
         Form(Hidden(name='name', value=name),
              Select(*[Option(a, value=a, selected=a == r['access']) for a in ACCESS],
                     name='access', cls='lee-input', onchange='this.form.requestSubmit()'),
@@ -223,13 +246,10 @@ def vault_panel(memory, jobs, active_path='', root='', vaults=None):
                 cls='lee-clip-form', hx_post='/vault/attach', hx_target='#vaultpanel', hx_swap='none'),
             cls='lee-vault-vaults'),
         Div(*_shelf_rows(shelves, mine), id='vaultshelves', cls='lee-vault-shelves'),
-        Div(Span('documents', cls='lee-vault-legend'),
-            Form(Input(name='q', cls='lee-input', placeholder='search this vault…', autocomplete='off'),
-                Button('search', cls='lee-btn go', type='submit'), cls='lee-clip-form',
-                hx_get='/vault/browse', hx_target='#vaultdocs', hx_swap='outerHTML'),
-            Div(id='vaultdocs', cls='lee-vault-docs', hx_get='/vault/browse',
-                hx_trigger='load', hx_swap='outerHTML'),
-            cls='lee-vault-browse'),
+        # Asked for once the panel is up rather than rendered with it: the document list is a
+        # query, and `vault_browse` returns the search box along with it.
+        Div(id='vaultbrowse', cls='lee-vault-browse', hx_get='/vault/browse',
+            hx_trigger='load', hx_swap='outerHTML'),
         Div(Span('clip', cls='lee-vault-legend'),
             _clip_form(active_path, 'clip', 'document', 'a file or folder of documents'),
             _clip_form(root, 'clip_codebase', 'codebase', 'a repository root'),
@@ -501,7 +521,7 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
 
     @rt('/vault/browse')
-    async def vault_browse(q: str = '', vault: str = '', shelf: str = '', limit: int = 60):
+    async def vault_browse_route(q: str = '', vault: str = '', shelf: str = '', limit: int = 60):
         "The document list, or the hits for a query. One fragment, swapped in either way."
-        try: return await off_loop(vault_docs, _mem(vault), q, vault, shelf, limit)
+        try: return await off_loop(vault_browse, _mem(vault), q, vault, shelf, limit)
         except Exception as e: return fail(e)

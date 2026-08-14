@@ -166,10 +166,31 @@ def test_the_panel_lists_vaults_and_documents_you_can_click(ws, proj):
     with TestClient(ide_app(ws)) as c:
         ws.memory.clip([proj/'notes.md'])
         panel = c.get('/vault/panel').text
-        assert 'id="vaultdocs"' in panel and 'hx-get="/vault/browse"' in panel
+        assert 'id="vaultbrowse"' in panel and 'hx-get="/vault/browse"' in panel
         assert 'agent off' in panel or 'agent on' in panel, 'the per-vault agent toggle is on the row'
 
         docs = c.get('/vault/browse').text
         assert 'leeOpenVaultDoc(' in docs and 'notes' in docs
         hits = c.get('/vault/browse', params={'q': 'ranking'}).text
         assert 'leeOpenVaultDoc(' in hits, 'a hit opens the document it is in'
+
+
+def test_a_vault_name_browses_it_without_making_it_active(ws, proj):
+    "Reading a vault and writing to one are different intentions; only the dot changes writes."
+    with TestClient(ide_app(ws)) as c:
+        ws.memory.clip([proj/'notes.md'])
+        row = c.get('/vault/panel').text
+        assert 'hx-get="/vault/browse"' in row and 'lee-vault-open' in row, 'the name is a control'
+        # Only the workspace vault is attached here, and it is the active one, so the row shows
+        # the active marker rather than the button that would move activation to it.
+        assert 'lee-vault-active' in row and '/vault/activate' not in row
+
+
+def test_browsing_a_vault_scopes_the_search_box_to_it(ws, proj):
+    "Swapping only the list would leave the panel's form behind, searching the active vault."
+    with TestClient(ide_app(ws)) as c:
+        ws.memory.clip([proj/'notes.md'])
+        block = c.get('/vault/browse', params={'vault': 'workspace'}).text
+        assert 'id="vaultbrowse"' in block
+        assert 'name="vault"' in block and 'value="workspace"' in block
+        assert 'documents · workspace' in block, 'the legend says which vault is open'
