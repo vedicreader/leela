@@ -77,6 +77,9 @@ def connect(app, ctx):
         if t.kind == 'vault':
             vault, shelf, doc = (t.ref.split('|') + ['', '', ''])[:3]
             return {'kind': 'vault', 'title': t.title, 'vault': vault, 'shelf': shelf, 'doc': doc}
+        if t.kind == 'web':
+            # Same shape again: the page lives in Chrome, and the panel opens `/browser/ws`.
+            return {'kind': 'web', 'title': t.title, 'target': t.ref}
         try:
             key = t.path or t.title
             text = docs.buffers[key] if key in docs.buffers else (ctx.fs.read(t.path) if t.path else '')

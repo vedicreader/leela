@@ -169,6 +169,8 @@ const ACTIONS = {
   web_search:   webSearch,
   research:     researchQ,
   read_url:     () => readUrl(),
+  browse_url:   browseUrl,
+  browse_tabs:  () => pickWebTab(),
 };
 for (let i = 1; i <= 9; i++) ACTIONS['tab_' + i] = () => htmxPost('/tab/select?i=' + (i - 1));
 

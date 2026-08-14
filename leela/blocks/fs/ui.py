@@ -50,7 +50,11 @@ def tree_node(e, git_state=None):
 
 def files_panel(fs):
     state = git_tree_state(fs)
-    body = [tree_node(e, state) for e in fs.ls(None)] or [Div('no folder open', cls='lee-dim')]
+    # With nothing open this pane is the only way to start a session, so it offers, not reports.
+    body = [tree_node(e, state) for e in fs.ls(None)] or [
+        Div(Div('no folder open', cls='lee-dim'),
+            Button('Open a folder…', cls='lee-btn go', onclick='leeAct("add_root")'),
+            cls='lee-tree-empty')]
     minimise = Button('−', cls='lee-pane-min', title='minimise files', aria_label='minimise files',
         onclick='leePane("left", false)')
     head = Div(Span('files', cls='lee-ptitle'), Span(cls='lee-spacer'), action_bar('web_files'),

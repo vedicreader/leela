@@ -137,6 +137,8 @@ DEFAULTS = L(
     Key('web_search',       'alt+shift+w',   'global', 'search the web',      'toast'),
     Key('research',         'alt+shift+q',   'global', 'research a question'),
     Key('read_url',         'alt+shift+u',   'global', 'read a url'),
+    Key('browse_url',       'alt+shift+o',   'global', 'browse a url in a tab'),
+    Key('browse_tabs',      '',              'global', 'adopt a page open in the browser'),
     Key('help',             'mod+shift+/',   'global', 'keys',                'footer'),
     Key('quit',             '',              'global', 'quit'),
     *[Key(f'tab_{i}', f'alt+{i}', 'global', f'tab {i}') for i in range(1, 10)],

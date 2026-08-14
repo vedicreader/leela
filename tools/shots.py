@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
-from leela.kernels import ExecOutcome, KernelPool
+from leela.blocks.runtime.kernels import ExecOutcome, KernelPool
 from tests.fakemodel import Step
 
 NB = '''{

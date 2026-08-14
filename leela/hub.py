@@ -7,7 +7,8 @@ from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ['WorkspaceSite', 'WorkspaceHub', 'LoopbackHostGuard', 'workspace_slug']
+__all__ = ['WorkspaceSite', 'WorkspaceHub', 'LoopbackHostGuard', 'workspace_slug',
+           'workspace_slugs', 'workspace_urls']
 
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
 
@@ -18,6 +19,16 @@ def workspace_slug(value, used=()):
     while slug in used:
         slug, n = f'{base}-{n}', n + 1
     return slug
+
+def workspace_slugs(names):
+    "Slugs for `names`, disambiguated against each other and stable in order."
+    used = []
+    for n in names: used.append(workspace_slug(n, used))
+    return used
+
+def workspace_urls(roots, port):
+    "Where each root will be served, before `serve_ide` has built the workspaces to say so."
+    return [f'http://{s}.localhost:{port}/' for s in workspace_slugs(Path(r).name for r in roots)]
 
 def _headers(scope): return {k.lower(): v for k, v in (scope.get('headers') or ())}
 

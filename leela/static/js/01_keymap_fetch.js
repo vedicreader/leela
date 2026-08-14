@@ -44,6 +44,10 @@ function eventContext(e) {
   // this router leaves it alone; commands behind a dialog must never fire accidentally.
   if (inPath('.lee-modal, .lee-ctxmenu')) return 'overlay';
   if (inPath('#termwrap, .xterm')) return 'term';
+  // A live page wants its own keyboard as much as a shell does -- Gmail's `j`, a site's `/`
+  // search -- so the inline browser is routed exactly like the terminal, and for the same
+  // reason. It has to come before `#editor`, which contains it.
+  if (inPath('.lee-webview')) return 'web';
   if (inPath('#agentprompt, .lee-agent')) return 'agent';
   if (inPath('#execbox, .lee-exec')) return 'exec';
   if (inPath('#editor, .lee-cell, #filecm')) return 'editor';
@@ -88,8 +92,10 @@ function chordMatches(c, e) {
 const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.test(c.key);
 function findBinding(e, scope) {
   if (scope === 'overlay') return null;
-  const allowed = scope === 'term'
-    ? k => k.scope === 'term' || k.action.startsWith('focus_') || TERM_ESCAPES.has(k.action)
+  // `term` and `web` both hand the keyboard to something that is not Leela, keeping only the
+  // chords that get you back out again.
+  const allowed = (scope === 'term' || scope === 'web')
+    ? k => k.scope === scope || k.action.startsWith('focus_') || TERM_ESCAPES.has(k.action)
     : k => k.scope === scope || k.scope === 'global';
   const guard = !EDITING_SCOPES.has(scope) && isTextEntry(e.target);
   for (const k of lee.keys) {

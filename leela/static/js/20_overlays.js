@@ -292,6 +292,8 @@ function leeToolsMenu(anchor) {
     {separator: true},
     {label: 'Research workspace…', run: () => leeAct('research')},
     {label: 'Read webpage…', run: () => leeAct('read_url')},
+    {label: 'Browse a page…', detail: displayChord('alt+shift+o'), run: () => leeAct('browse_url')},
+    {label: 'Pages open in the browser…', run: () => leeAct('browse_tabs')},
     {label: 'Kernel and interpreter…', run: () => leeAct('pick_kernel')},
     {label: 'Working directory…', run: leeCwd},
     {label: 'nbdev prepare…', detail: 'uv + settings.ini', run: leeNbdevPrepare},

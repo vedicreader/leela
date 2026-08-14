@@ -1,0 +1,63 @@
+## The macOS DMG and the zipped Windows folder.
+##
+## Both build on their own OS, because py2app and py2exe copy the running interpreter's own
+## runtime into the bundle -- there is no cross-compilation to be had. The macOS job uses
+## `actions/setup-python`, whose macOS builds are framework builds, so `setup_app.py` finds
+## nothing to rebuild and goes straight to py2app.
+##
+## Signing is opt-in: set the LEELA_CODESIGN_IDENTITY secret to a Developer ID and import the
+## certificate in a step of your own. Notarization credentials stay out of this repository.
+name: desktop-artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[gateway,macapp]"
+      - name: build
+        env:
+          LEELA_CODESIGN_IDENTITY: ${{ secrets.LEELA_CODESIGN_IDENTITY }}
+        run: python tools/build_release.py
+      # The app is launched here rather than only built: a py2app bundle that imports
+      # something it did not copy fails at startup, which a successful build does not catch.
+      - name: smoke
+        run: python -m pytest tests/test_packaging.py -q
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Leela-macOS
+          path: dist/Leela-macOS.dmg
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[gateway,windows]"
+      - name: build
+        run: python tools/build_release.py
+      - name: smoke
+        run: python -m pytest tests/test_packaging.py -q
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Leela-Windows
+          path: dist/Leela-Windows.zip
+          if-no-files-found: error

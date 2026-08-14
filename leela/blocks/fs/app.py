@@ -35,11 +35,24 @@ def connect(app, ctx):
     @rt('/fs/add-root')
     async def add_root_json(req):
         "Add a root without rebuilding the editor, model controls and every other pane."
-        d = await req.json()
-        try:
-            ctx.session.add_root(d.get('path') or '')
-            ctx.session.save()
+        from ...core.projects import note_folder
+        path = (await req.json()).get('path') or ''
+        try: ctx.session.add_root(path); ctx.session.save(); note_folder(path)
         except Exception as e: return fail(e)
+        return {'ok': True}
+    @rt('/fs/recent')
+    def fs_recent():
+        "Folders opened before: with nothing to launch on, this is the way back to a project."
+        from ...core.projects import recent_folders
+        open_now = {str(r) for r in ctx.fs.roots}
+        return {'ok': True, 'home': str(Path.home()),
+                'recent': [{'path': p, 'name': Path(p).name, 'open': p in open_now}
+                           for p in recent_folders()]}
+    @rt('/fs/forget-recent')
+    async def fs_forget_recent(req):
+        "Drop one folder from the welcome screen's list."
+        from ...core.projects import forget_recent
+        forget_recent((await req.json()).get('path') or '')
         return {'ok': True}
     @rt('/fs/browse')
     def fs_browse(path: str = ''):
@@ -84,10 +97,13 @@ def connect(app, ctx):
     @rt('/fs/remove-root')
     async def fs_remove_root(req):
         "Remove an open root from the workspace without touching anything on disk."
+        from ...core.projects import drop_folder
         d = await req.json()
         try:
             ctx.session.drop_root(d['path'])
             ctx.session.save()
+            # Out of the set that reopens, but still in `recent`: closing is not forgetting.
+            drop_folder(d['path'])
             return {'ok': True}
         except Exception as e: return fail(e)
     @rt('/fs/delete')

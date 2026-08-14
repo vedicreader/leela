@@ -23,12 +23,16 @@ leela                      # the saved workspace
 leela .                    # a folder
 leela src tests            # one workspace, two roots
 leela --app src tests      # two app windows in fossick's persistent CDP Chrome
+leela --shell webview .    # a native desktop window — what the packaged app runs
 ```
 
 In `--app` mode each folder gets its own `Workspace`, documents, agent, terminals and kernel
-pool at `folder.localhost:5001`. `--transport direct|gateway` picks the kernel transport.
-`--kernel ipykernel|ipymini` picks the kernel. `--agent restricted|readonly|off` sets what
-the agent may touch. Run `leela --help` for the rest.
+pool at `folder.localhost:5001`. `--app` picks the workspace *shape*; `--shell` picks what
+opens on top of it: `chrome` (the default under `--app`), `webview` for a native window, or
+`none`. The same CDP Chrome backs [the inline browser](#the-browser-inside-leela) either way.
+`--transport direct|gateway` picks the kernel transport. `--kernel ipykernel|ipymini` picks
+the kernel. `--agent restricted|readonly|off` sets what the agent may touch. Run
+`leela --help` for the rest.
 
 ## What it does
 
@@ -77,6 +81,13 @@ search the live web again.
 clean Markdown. Sources stay beside the reader, and a digest cites them. Everything renders
 through [mdhtml](https://github.com/AnswerDotAI/mdhtml), so pasted `<script>` stays visible
 rather than applied.
+
+### The browser
+
+A page opens as a tab. Chrome renders it offscreen in fossick's persistent profile and streams
+frames in. A research result is a tab beside the notebook, on the sessions you are already
+signed in to. **read** lifts it to Markdown from the DOM after the scripts ran.
+See [the browser, inside leela](#the-browser-inside-leela).
 
 ### Git
 
@@ -170,13 +181,19 @@ leela/
     session.py    open docs, running cells, the debugger, the journal
     envs.py       which values a project needs; dockeasy keeps them
     web.py        shared route helpers
+    projects.py   which folders are open, and which were open lately
+    inspectors.py dhrishti's registry and menus, without importing dhrishti
   blocks/         one folder per feature: `connect(app, ctx)` plus a `CAPS` tuple
     nb git search memory agent runtime research jobs workflows pipelines drive
     fs term keys tabs vars runs stack refactor lsp debug editor settings workspace
+    browser       a CDP page as a tab: screencast in, input out
   workspace.py    open folders, open tabs, and which kernel each tab talks to
   app.py          the FastHTML IDE: `ide_app`, `serve_ide`
+  desktop.py      the native window: pywebview, the CDP boot, the macOS open event
   cli.py          the `leela` entry point
   static/         the browser client. `vendor/` holds the committed npm bundles
+leela_app.py      what py2app and py2exe freeze: server on a thread, window on the main one
+packaging/        the platform build definitions and the mark
 ```
 
 A block imports `leela.core` and never another block. [docs/blocks.md](docs/blocks.md) has
@@ -185,17 +202,140 @@ rather than here.
 
 ## Standalone desktop builds
 
+Packaged, leela is a native window with a Python server behind it and a headless Chrome
+beside it. The window is [pywebview](https://pywebview.flowrl.com/) over the platform's own
+webview: WKWebView on macOS, WebView2 on Windows. It points at a loopback port chosen at
+launch. Chrome is not in the bundle. `--app` and the inline browser both drive the persistent
+CDP profile fossick keeps in `~/.cache/fastcdp`. It is the copy of Chrome the machine already
+has, with the logins it already has.
+
+![The packaged app](docs/screenshots/desktop-window.png)
+
 ```sh
 uv sync --extra gateway --extra macapp --group test
-python setup_app.py
-python tools/build_release.py       # dist/Leela.app + dist/Leela-macOS.dmg
+python setup_app.py                 # dist/Leela.app
+python tools/build_release.py       # + dist/Leela-macOS.dmg
 ```
 
-macOS uses py2app and Windows uses py2exe under `--extra windows`. The definitions live in
-`packaging/macos/setup.py` and `packaging/windows/setup.py`, and the mark lives in
-`packaging/assets`. `.github/workflows/desktop-artifacts.yml` builds the DMG and the zipped
-EXE on version tags. Set `LEELA_CODESIGN_IDENTITY` for Developer ID signing. The app reuses
-fossick's Chrome profile rather than bundling one.
+```powershell
+uv sync --extra gateway --extra windows --group test
+python setup_app.py                 # dist\Leela\Leela.exe
+python tools\build_release.py       # + dist\Leela-Windows.zip
+```
+
+`setup_app.py --check` says what it would do first. On macOS it builds against a framework
+Python and makes one when the active interpreter is uv's standalone build. py2app copies
+stdlib extension modules such as `zlib` out as files, and a standalone build has them linked
+in. Windows uses py2exe through the same driver, and produces a folder rather than one file.
+
+The definitions are `packaging/macos/setup.py` and `packaging/windows/setup.py`. The mark
+lives in `packaging/assets`: an ICNS for macOS, an ICO with executable metadata for Windows.
+`leela_app.py` is the script they freeze. It picks a free port, starts the ordinary
+`leela --app` server on a daemon thread, and gives the main thread to the window. Cocoa allows
+no other order.
+
+`tests/test_packaging.py` checks what a green build would not. That the asset walk reaches
+`vendor/fonts/`. That the plist carries the `NSAllowsLocalNetworking` exemption WKWebView
+needs for a loopback URL. That Windows keeps modules as files, so a kernel subprocess can
+import them. `.github/workflows/desktop-artifacts.yml` builds both on version tags, runs that
+file against the artefact, and uploads the DMG and the zip. Set `LEELA_CODESIGN_IDENTITY` for
+Developer ID signing. Notarization credentials stay in the release environment.
+
+The window needs no build. From a checkout:
+
+```sh
+uv sync --extra desktop
+leela --shell webview .
+```
+
+### Opening a project without a command line
+
+A packaged leela is double-clicked, so nothing tells it which folder you meant. It takes the
+folders the desktop handed it, else the set it had open when it was last closed, else none.
+Then it opens the welcome screen rather than guessing. `leela` from a shell means "here", and
+the shell has already chosen where here is. A double-clicked application has no such answer,
+and the old guess, home, handed kosha every file you own to index.
+
+![The app with no folder open yet](docs/screenshots/desktop-welcome.png)
+
+The remembered set follows the workspace rather than the arguments it started with. A folder
+opened from inside the app is there next launch, and one you closed is not. Closing a project
+is not forgetting it. It stays on the welcome screen until you say otherwise. The ways in that
+involve no typing:
+
+- The platform's folder chooser, from **Open a folder** or **browse…**. A web page cannot
+  produce a directory path, so in the packaged app this comes from the native window through
+  `window.pywebview.api`.
+- **Open With -> Leela** on a folder, and a folder dropped on the Dock icon. macOS delivers
+  that to the *running* application rather than through argv. `leela.desktop` answers the
+  `odoc` Apple Event and adds the folder to the open workspace.
+
+Windows has no such event. Explorer starts a new process with the path in argv, which the app
+already reads. To put leela on a folder's context menu:
+
+```
+reg add "HKCU\Software\Classes\Directory\shell\Leela" /ve /d "Open in Leela" /f
+reg add "HKCU\Software\Classes\Directory\shell\Leela\command" /ve /d "\"C:\Path\To\Leela.exe\" \"%V\"" /f
+```
+
+## The browser, inside leela
+
+A page opens as a tab. Chrome renders it offscreen in the persistent CDP profile and streams
+frames into a canvas over `/browser/ws`. Mouse and keyboard go back the other way. A result
+from Research is therefore a tab beside the notebook, on the sessions fossick is already
+signed in to.
+
+![A live page in a leela tab](docs/screenshots/desktop-window-browser.png)
+
+`alt+shift+o` opens an address. **Tools -> Pages open in the browser…** adopts one Chrome
+already has, whether leela opened it or fossick did. **read** lifts the page to Markdown
+through the same `fossick.to_md` research uses, but from the DOM *after* the scripts ran and
+after the login. A plain fetch cannot reach that. **remember** files it in the vault as an
+ordinary source.
+
+Nothing renders web content in leela's process. Chrome renders, and leela draws JPEG frames.
+Every navigation goes through `fossick.check_url`, so the browser cannot be pointed back at
+leela's own unauthenticated loopback server unless `FOSSICK_ALLOW_PRIVATE` says so. The panel
+keeps the keyboard the way the terminal does. A page's own `j`, `/` and `?` reach the page.
+Only the chords that get you back out stay leela's.
+
+Frames cross the socket as raw JPEG rather than base64 in JSON, which is a third fewer bytes.
+They decode through `createImageBitmap` off the main thread. A frame that arrives mid-decode
+is dropped rather than queued, because latency on a picture nobody will see is worth nothing.
+Hiding the window stops the cast. The page stays loaded, and resuming asks for a frame at once.
+
+## What it costs to run
+
+`tools/profile_app.py` measures the three things the desktop app is judged on. Each runs in a
+fresh subprocess, because import cost is order-dependent and RSS is cumulative.
+
+```sh
+python tools/profile_app.py            # all three
+python tools/profile_app.py --imports  # what is on the startup path, and what it drags in
+```
+
+| | before | now |
+|---|---|---|
+| `import leela.app` | 766ms · 109MB | **377ms · 48MB** |
+| process start to first page served | 786ms | **587ms** |
+| one workspace, resident and idle | 119MB | **74MB** |
+| one screencast frame, on the wire | 10,775 bytes | **8,080 bytes** |
+| a launch that never opens a web tab | + ~900MB of Chrome | **no Chrome at all** |
+
+The last line is the largest. A headless Chrome is several hundred megabytes across a dozen
+processes, more than the workspace beside it, and most sessions never open a web tab. So the
+first page that wants one starts it. `LEELA_CDP_EAGER=1` trades that memory back for the
+second or two the first tab would spend waiting. Research still offers to open pages while the
+browser is cold. `/browser/ready` answers "is there a Chrome to drive", not "is one running".
+
+Nearly all of the first three lines was dhrishti, which the server imported for two constants
+and a directory listing. dhrishti belongs *inside a kernel*. `dhrishti.core` imports IPython,
+pandas and numpy at module scope, and leela's server never formats a live value.
+`leela/core/inspectors.py` holds the profile and sort menus, and the reader for the registry
+in-kernel inspectors write themselves into. `tests/test_inspectors.py` imports the real
+dhrishti and fails if the two disagree, round trip included. The kernel side is untouched,
+which is why the dependency stays. The IPython still resident arrives through `fasthtml.pico`,
+which `fast_app` imports even for `pico=False`. That one is a one-line fix upstream.
 
 ## Develop
 

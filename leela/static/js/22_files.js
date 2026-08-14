@@ -128,9 +128,20 @@ async function addRoot(find = false) {
       placeholder="~/code/  ·  or the name of a repository below it">
     <div class="lee-modallist lee-folderlist" id="folderlist" role="listbox"></div>
     <div class="lee-mfoot"><button class="lee-btn go" id="folderopen">open this folder</button>
+    <button class="lee-btn" id="folderbrowse" hidden>browse…</button>
     <span class="lee-dim" id="folderhint"></span></div>`);
   const input = m.querySelector('#folderpath'), list = m.querySelector('#folderlist');
   const hint = m.querySelector('#folderhint'), openBtn = m.querySelector('#folderopen');
+  // In the packaged app the platform's own chooser is the obvious way to find a folder, and
+  // the only one that does not require knowing the path. In a browser tab there is none.
+  const browse = m.querySelector('#folderbrowse');
+  if (inShell()) {
+    browse.hidden = false;
+    browse.onclick = async () => {
+      const picked = await nativeFolder();
+      if (picked) { m.remove(); openFolder(picked); }
+    };
+  }
   let base = '', dirs = [], rows = [], sel = 0, lastDir = null, seq = 0, timer = null;
 
   const dirOf = v => { const i = v.lastIndexOf('/'); return i < 0 ? '' : v.slice(0, i + 1); };

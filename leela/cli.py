@@ -10,7 +10,11 @@ def main(argv=None):
     p.add_argument('--app', action='store_true',
                    help='open each folder as an independent app window in fossick’s persistent CDP Chrome')
     p.add_argument('--cdp-port', type=int, default=9223,
-                   help='Chrome remote-debugging port used by --app (default: 9223)')
+                   help='Chrome remote-debugging port for --app and the inline browser (default: 9223)')
+    p.add_argument('--shell', choices=['chrome', 'webview', 'none'], default=None,
+                   help='what opens on top of the server: chrome (fossick’s persistent CDP app '
+                        'window, the default under --app), webview (the native window the packaged '
+                        'app runs), or none. The inline browser uses the CDP Chrome either way.')
     p.add_argument('--port', type=int, default=5001, help='web IDE port (default: 5001)')
     p.add_argument('--host', default='127.0.0.1', help='web IDE host (default: 127.0.0.1)')
     p.add_argument('--kernel-port', type=int, default=8400, help='base port for kernel inspectors')
@@ -65,11 +69,23 @@ def main(argv=None):
         loopback = False
     if not loopback:
         p.error('Leela executes code and is intentionally loopback-only; use 127.0.0.1, ::1, or localhost')
+    shell = a.shell or ('chrome' if a.app else 'none')
     from .app import serve_ide
-    serve_ide(roots, port=a.port, host=a.host, agent=a.agent, kernel_port=a.kernel_port,
-              kernel=a.kernel, model=a.model, approvals=a.approvals, agent_scope=a.agent_scope,
-              python=a.python,
-              app_window=a.app, cdp_port=a.cdp_port, transport=a.transport,
-              gateway_port=a.gateway_port)
+    serve = lambda s: serve_ide(roots, port=a.port, host=a.host, agent=a.agent,
+                                kernel_port=a.kernel_port, kernel=a.kernel, model=a.model,
+                                approvals=a.approvals, agent_scope=a.agent_scope,
+                                python=a.python, app_window=a.app, cdp_port=a.cdp_port,
+                                transport=a.transport, gateway_port=a.gateway_port, shell=s)
+    if shell != 'webview': return serve(shell)
+    import threading
+    from .desktop import run_shell, shell_ready, warm_cdp
+    from .hub import workspace_urls
+    ok, why = shell_ready()
+    if not ok: p.error(f'--shell webview: {why}')
+    urls = workspace_urls(roots, a.port) if (a.app and roots) else [f'http://{a.host}:{a.port}/']
+    titles = [f'leela — {os.path.basename(r)}' for r in roots] if len(urls) == len(roots) else ['leela']
+    threading.Thread(target=serve, args=('none',), daemon=True, name='leela-server').start()
+    warm_cdp(a.cdp_port)
+    run_shell(urls, titles=titles)
 
 if __name__ == '__main__': main()

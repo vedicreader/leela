@@ -28,7 +28,7 @@ class _EnvClient:
     @property
     def token(self):
         "The owner token this inspector wrote next to its registry entry, if it armed one."
-        from dhrishti.serving import reg_dir
+        from .core.inspectors import reg_dir
         try: return (reg_dir()/f"token-{self.base.rsplit(':', 1)[-1]}").read_text().strip() or None
         except Exception: return None
     @property
@@ -123,7 +123,7 @@ class Workspace:
                  approvals='ask',
                  agent_scope='overlay',
                  python=None,
-                 transport='direct', gateway=None):
+                 transport='direct', gateway=None, cdp_port=9223):
         self.fs = Sandbox(roots)
         from .blocks.runtime.kernels import project_python
         runtime_python = python or project_python(self.fs.roots)
@@ -139,6 +139,8 @@ class Workspace:
         from .blocks.memory.vaults import Vaults
         self.vaults = Vaults(shelf=memory_shelf(root), own=self.memory)
         self.research = Research(self.fs, memory=self.memory)
+        from .blocks.browser.browser import Browser
+        self.browser = Browser(port=cdp_port)
         self.runs = Runs(first(self.fs.roots))
         from .core.session import OperationJournal
         journal_key = hashlib.sha256('\0'.join(map(str, self.fs.roots)).encode()).hexdigest()[:16]
@@ -277,6 +279,14 @@ class Workspace:
             return self.tabs[i]
         return self._add_tab(Tab(path='', kind='vault', ref=ref, scratch=True,
                                  title=title or doc_id, private_kernel=False))
+    def open_web(self, target, title=''):
+        "Open a CDP target as a tab, focusing it if that page is already cast."
+        if (i := first(i for i, t in enumerate(self.tabs)
+                       if t.kind == 'web' and t.ref == target)) is not None:
+            self.active = i
+            return self.tabs[i]
+        return self._add_tab(Tab(path='', kind='web', ref=target, scratch=True,
+                                 title=title or 'page', private_kernel=False))
     def new_scratch(self, kind='notebook'):
         "An unsaved buffer -- what the IDE opens when there is nothing to open yet."
         self._untitled += 1
@@ -576,7 +586,7 @@ class Workspace:
         return self.watched_kernel() or (self.inspector(tab) if self.env_base else self.kernel_peek(tab))
     def envs(self):
         "Every inspector this IDE could point the variable panel at."
-        from dhrishti.serving import active
+        from .core.inspectors import active
         out, seen = L(), set()
         for key, k in self.pool.kernels.items():
             if not (k and getattr(k, 'base', None)): continue
@@ -748,12 +758,13 @@ class Workspace:
     def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel',
              model=None, inline_model=None, completion_model=None, local_multimodal=None,
              litert_backend=None,
-             approvals='ask', agent_scope='overlay', python=None, transport='direct', gateway=None):
+             approvals='ask', agent_scope='overlay', python=None, transport='direct', gateway=None,
+             cdp_port=9223):
         "Restore a saved workspace, dropping any folder or file that has since gone away."
         p = Path(path or ws_path())
         try: d = p.read_json()
         except Exception: d = {}
-        ws = cls(port=port, agent=agent, kernel=kernel,
+        ws = cls(port=port, agent=agent, kernel=kernel, cdp_port=cdp_port,
                  model=ifnone(model, d.get('model')),
                  inline_model=ifnone(inline_model, d.get('inline_model') or 'gpt-mini'),
                  completion_model=ifnone(completion_model, d.get('completion_model') or 'gpt-4.1'),

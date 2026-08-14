@@ -1,7 +1,10 @@
 /* ------------------------------------------------------------------ editor */
 function updateToolbarForKind(kind) {
   const notebook = kind === 'notebook', text = kind === 'text';
-  const visibility = {run_cell: notebook, run_advance: notebook, run_file: text, run_selection: text};
+  // `stop` interrupts the tab's kernel, and a document tab -- a PDF, an image, a vault entry,
+  // a live web page -- does not have one, so it was offering to interrupt nothing.
+  const visibility = {run_cell: notebook, run_advance: notebook, run_file: text,
+                      run_selection: text, interrupt: notebook || text};
   for (const [action, shown] of Object.entries(visibility)) {
     const button = $(`#toolbar [data-action="${action}"]`); if (button) button.hidden = !shown;
   }
@@ -49,6 +52,9 @@ async function mountTab(expectedPath = '') {
   // to the tab, and destroying it here would silently leave the box unmounted.
   lee.cellObserver?.disconnect(); lee.cellObserver = null;
   lee.editors.forEach((v, k) => { if (k !== 'exec') { LeeCM.destroy(v); lee.editors.delete(k); } });
+  // A screencast is a live encode in Chrome for as long as it is running, so leaving the tab
+  // has to stop it. The page itself stays open; the tab reattaches to it on the way back.
+  closeWebView();
   const host = $('#editor'); if (!host) return;
   lee.kind = st.kind; lee.path = st.path || ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
   await loadSettings(st.lang || (st.kind === 'notebook' ? 'python' : ''));
@@ -58,9 +64,14 @@ async function mountTab(expectedPath = '') {
   // Tab navigation always returns Run and Variables to that tab's private kernel.
   paintEnv('');
   // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
-  if (!st.kind) { host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? ''); return; }
+  if (!st.kind) {
+    host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? '');
+    paintRecent();
+    return;
+  }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
   if (st.kind === 'vault') await mountVault(host, st);
+  else if (st.kind === 'web') mountWeb(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'image') mountImage(host, st);
   else if (st.kind === 'notebook') mountNotebook(host, st);

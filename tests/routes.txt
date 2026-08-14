@@ -1,3 +1,4 @@
+GET /{fname:path}.{ext:static}
 GET,POST /
 GET,POST /agent/approval
 GET,POST /agent/approval/request
@@ -46,6 +47,13 @@ GET,POST /agent/stream
 GET,POST /agent/tool-preview
 GET,POST /agent/transcript
 GET,POST /agent/turn-transaction
+GET,POST /browser/attach
+GET,POST /browser/close
+GET,POST /browser/markdown
+GET,POST /browser/open
+GET,POST /browser/ready
+GET,POST /browser/state
+GET,POST /browser/tabs
 GET,POST /clip
 GET,POST /clusters
 GET,POST /code/definition
@@ -80,7 +88,6 @@ GET,POST /diff
 GET,POST /drive
 GET,POST /drive/action
 GET,POST /drive/tail
-WebSocketRoute /drive/ws
 GET,POST /editor/format
 GET,POST /editor/packages
 GET,POST /envs
@@ -95,7 +102,9 @@ GET,POST /fs/add_root
 GET,POST /fs/browse
 GET,POST /fs/delete
 GET,POST /fs/find
+GET,POST /fs/forget-recent
 GET,POST /fs/new
+GET,POST /fs/recent
 GET,POST /fs/remove-root
 GET,POST /fs/rename
 GET,POST /git/action
@@ -143,7 +152,6 @@ GET,POST /keys.json
 GET,POST /keys/file
 GET,POST /keys/reset
 GET,POST /keys/save
-Mount /leestatic
 GET,POST /lint
 GET,POST /lsp/hover
 GET,POST /lsp/inlay-hints
@@ -175,7 +183,6 @@ GET,POST /nb/run
 GET,POST /nb/run/stream
 GET,POST /nb/save
 GET,POST /outline
-WebSocketRoute /pipeline/ws
 GET,POST /project/nbdev_prepare
 GET,POST /refactor/apply
 GET,POST /refactor/inline
@@ -220,7 +227,6 @@ GET,POST /tabs/save-all
 GET,POST /term/close
 GET,POST /term/external
 GET,POST /term/info
-WebSocketRoute /term/ws
 GET,POST /tree
 GET,POST /vars
 GET,POST /vars/eval
@@ -270,4 +276,8 @@ GET,POST /workflows/runs
 GET,POST /workflows/spec
 GET,POST /workspace/activate
 GET,POST /workspace/info
-GET /{fname:path}.{ext:static}
+Mount /leestatic
+WebSocketRoute /browser/ws
+WebSocketRoute /drive/ws
+WebSocketRoute /pipeline/ws
+WebSocketRoute /term/ws

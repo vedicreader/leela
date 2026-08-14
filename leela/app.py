@@ -7,8 +7,9 @@ from urllib.parse import quote
 from fasthtml.common import *
 from starlette.routing import WebSocketRoute
 
-from dhrishti.core import PROFILES, SORTS
+from .core.inspectors import PROFILES, SORTS
 from . import errstr
+from .blocks import browser as browser_block
 from .blocks import drive as drive_block
 from .blocks import editor as editor_block
 from .blocks import fs as fs_block
@@ -61,7 +62,7 @@ from .agent.runtime import estimate_tokens
 __all__ = ['ide_app', 'serve_ide']
 
 BLOCKS = [keys_block, settings_block, search_block, memory_block, jobs_block,
-          research_block, term_block, runs_block, workspace_block, git_block,
+          research_block, browser_block, term_block, runs_block, workspace_block, git_block,
           workflows_block, pipelines_block, drive_block, stack_block,
           fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block, refactor_block]
 
@@ -487,12 +488,16 @@ def _empty_editor():
         Span('leela', cls='lee-empty-mark'),
         Strong('Creative workspace that starts with coding'),
         P('Notebooks, files, live variables, research memory, and an agent that sees what you see.'),
-        Ul(*[Li(Strong(title), Span(blurb)) for title, blurb in features], cls='lee-empty-features'),
-        Div(Button('Open file', cls='lee-btn go', onclick='leeAct("quick_open")'),
+        # Actions before the tour: reopening a project should not mean reading past it.
+        Div(Button('Open a folder', cls='lee-btn go', onclick='leeAct("add_root")'),
+            Button('Open file', cls='lee-btn', onclick='leeAct("quick_open")'),
             Button('New notebook', cls='lee-btn', onclick='leeAct("new_notebook")'),
             Button('Research a topic', cls='lee-btn', onclick='leeAct("research")'),
             Button('Ask the agent', cls='lee-btn', onclick='leeAct("focus_agent")'),
             cls='lee-empty-actions'),
+        # Filled by the client from `/fs/recent`: live, because a packaged shell is built once.
+        Div(id='leerecent', cls='lee-empty-recent', hidden=True),
+        Ul(*[Li(Strong(title), Span(blurb)) for title, blurb in features], cls='lee-empty-features'),
         Small('Keyboard: ', Kbd('ctrl+p'), ' open · ', Kbd('ctrl+shift+p'), ' commands · ',
               Kbd('mod+e'), ' recent files'),
         cls='lee-empty')
@@ -893,7 +898,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         return md_block_diff(left, right)
     @rt('/fs/add_root')
     def add_root(path: str):
-        try: ws.add_root(path); ws.save()
+        from .core.projects import note_folder
+        # `note_folder`: so the next launch reopens it, and the welcome screen offers it.
+        try: ws.add_root(path); ws.save(); note_folder(path)
         except Exception as e: return _fail(str(e))
         return _shell(ws, gate)
     @rt('/nb/run')
@@ -2173,9 +2180,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
 def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_port=8400,
               open_ws=True, kernel='ipykernel',
               model=None, approvals='ask', agent_scope='overlay', python=None,
-              app_window=False, cdp_port=9223, transport='auto', gateway_port=8787):
+              app_window=False, cdp_port=9223, transport='auto', gateway_port=8787,
+              shell=None):
     "Start one web workspace, or independent app-window workspaces under ``--app``."
     import uvicorn
+    shell = ifnone(shell, 'chrome' if app_window else 'none')
     try:
         loopback = host == 'localhost' or ipaddress.ip_address(host).is_loopback
     except ValueError:
@@ -2183,7 +2192,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
     if not loopback:
         raise ValueError('Leela executes code and may only bind to a loopback address')
     from . import leela_cfg
-    from .hub import WorkspaceHub, WorkspaceSite, workspace_slug
+    from .hub import WorkspaceHub, WorkspaceSite, workspace_slugs
     roots = [Path(r).expanduser().resolve() for r in roots]
     gate = TerminalGate(host=host)
     requested_transport = transport
@@ -2199,13 +2208,12 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             print(f'  gateway unavailable; using direct kernel transport: {errstr(e)}')
     if app_window and roots:
         from .blocks.runtime.kernels import RuntimeBroker
-        sites, used, hub, broker = [], [], None, RuntimeBroker()
-        for i, root in enumerate(roots):
-            slug = workspace_slug(root.name, used); used.append(slug)
+        sites, hub, broker = [], None, RuntimeBroker()
+        for i, (root, slug) in enumerate(zip(roots, workspace_slugs(r.name for r in roots))):
             state = leela_cfg/'workspaces'/f'{slug}.json'
             kw = dict(port=kernel_port + i * 100, agent=agent, kernel=kernel, model=model,
                       approvals=approvals, agent_scope=agent_scope, python=python,
-                      transport=transport, gateway=gateway)
+                      transport=transport, gateway=gateway, cdp_port=cdp_port)
             ws = Workspace.load(path=state, **kw) if open_ws else Workspace(**kw)
             state.parent.mkdir(parents=True, exist_ok=True)
             ws._state_path = state
@@ -2220,7 +2228,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
         urls = [row['url'] for row in hub.catalog()]
         print(f'leela  {len(sites)} independent workspaces on :{port}')
         for row in hub.catalog(): print(f"  {row['name']}: {row['url']}")
-        if app_window:
+        if shell == 'chrome':
             import threading, time, urllib.request
             def open_windows():
                 probe = f'http://127.0.0.1:{port}/'
@@ -2234,7 +2242,8 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             threading.Thread(target=open_windows, daemon=True, name='leela-cdp-open').start()
     else:
         kw = dict(port=kernel_port, agent=agent, kernel=kernel, model=model, approvals=approvals,
-                  agent_scope=agent_scope, python=python, transport=transport, gateway=gateway)
+                  agent_scope=agent_scope, python=python, transport=transport, gateway=gateway,
+                  cdp_port=cdp_port)
         if open_ws and not roots:
             ws = Workspace.load(**kw)
         else:
@@ -2245,13 +2254,16 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             kw['completion_model'] = remembered.get('completion_model') or 'gpt-4.1'
             ws = Workspace(**kw)
         for r in roots: ws.add_root(r)
-        if not ws.fs.roots:
-            ws.add_root(Path.home() if getattr(sys, 'frozen', False) else os.getcwd())
+        # A terminal launch means "here"; a double-clicked application has no such answer, and
+        # the old guess -- home -- had teeth: Kosha would index every file the user owns. With
+        # no root it opens on the welcome screen instead.
+        if not ws.fs.roots and not getattr(sys, 'frozen', False): ws.add_root(os.getcwd())
         if ws.restore_remembered_agent_state(): ws.save()
         app = ide_app(ws, gate)
         if (secs := ws.jobs.tick()): print(f'  vault watches polled every {secs}s')
-        print(f'leela  http://{host}:{port}   folders: ' + ', '.join(p.name for p in ws.fs.roots))
-        if app_window:
+        print(f'leela  http://{host}:{port}   folders: '
+              + (', '.join(p.name for p in ws.fs.roots) or 'no folder open yet'))
+        if shell == 'chrome':
             import threading, time, urllib.request
             def open_window():
                 url = f'http://127.0.0.1:{port}/'
