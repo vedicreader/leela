@@ -166,6 +166,10 @@ packaging/macos/build/
 packaging/macos/dist/
 packaging/windows/build/
 packaging/windows/dist/
+# The PNG and ICO are committed so a build does not need Pillow; the iconset and the ICNS
+# built from it are intermediates, and `iconutil` only exists on macOS anyway.
+packaging/assets/Leela.iconset/
+packaging/assets/Leela.icns
 
 # capture side-products: the SVG and PNG are the artefacts, the text dump is a debugging aid
 docs/screenshots/*.txt

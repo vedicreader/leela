@@ -1,4 +1,4 @@
-"""Build signed-local macOS app + DMG, or delegate to py2exe on Windows."""
+"""Build the distributable: a signed-local macOS app + DMG, or a zipped Windows folder."""
 
 from __future__ import annotations
 
@@ -14,9 +14,15 @@ ROOT = Path(__file__).resolve().parents[1]
 def run(*args, **kw): return subprocess.run([str(x) for x in args], check=True, **kw)
 
 
+def build_app(*extra):
+    "The platform bundle itself, unless a caller already has one it wants to package."
+    if os.environ.get('LEELA_SKIP_APP_BUILD') == '1': return
+    run(sys.executable, ROOT/'setup_app.py', *extra)
+
+
 def mac_release():
     run(sys.executable, ROOT/'tools'/'build_icons.py')
-    if os.environ.get('LEELA_SKIP_APP_BUILD') != '1': run(sys.executable, ROOT/'setup_app.py')
+    build_app()
     app, out = ROOT/'dist'/'Leela.app', ROOT/'dist'/'Leela-macOS.dmg'
     identity = os.environ.get('LEELA_CODESIGN_IDENTITY', '').strip()
     # A local py2app build is linker-signed and launchable as-is. Distribution signing is
@@ -38,9 +44,21 @@ def mac_release():
     print(f'Created {out}')
 
 
+def windows_release():
+    "py2exe produces a folder; the artefact is that folder zipped, which is what a user gets."
+    run(sys.executable, ROOT/'tools'/'build_icons.py')
+    build_app()
+    app = ROOT/'dist'/'Leela'
+    if not app.is_dir(): raise SystemExit(f'{app} was not built')
+    out = ROOT/'dist'/'Leela-Windows'
+    shutil.make_archive(str(out), 'zip', root_dir=app.parent, base_dir=app.name)
+    print(f'Created {app}')
+    print(f'Created {out}.zip')
+
+
 def main():
     if sys.platform == 'darwin': mac_release()
-    elif sys.platform == 'win32': run(sys.executable, ROOT/'setup_app.py')
+    elif sys.platform == 'win32': windows_release()
     else: raise SystemExit('release artifacts build on their target OS')
 
 

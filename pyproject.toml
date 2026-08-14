@@ -80,8 +80,18 @@ gateway = [
 # Everything optional at once, so a checkout is one command. Platform builds stay out: they
 # are for making a release, not for working on leela.
 all = ["leela[github,gateway,lsp]"]
-macapp = ["py2app>=0.28.8; sys_platform == 'darwin'"]
-windows = ["py2exe>=0.14.2; sys_platform == 'win32'"]
+# The native desktop window. Runtime, not build tooling: `leela --shell webview` uses it from
+# a source checkout, and it is what the frozen app's main thread runs. Each platform's webview
+# is the one the OS already ships -- WKWebView, WebView2, WebKitGTK -- so this only pulls in
+# the binding, and the Linux binding comes from the distribution's own `python3-gi`.
+desktop = [
+    "pywebview>=5.3",
+    "pyobjc-framework-Cocoa>=10.1; sys_platform == 'darwin'",
+    "pyobjc-framework-WebKit>=10.1; sys_platform == 'darwin'",
+    "pythonnet>=3.0.3; sys_platform == 'win32'",
+]
+macapp = ["leela[desktop]", "py2app>=0.28.8; sys_platform == 'darwin'"]
+windows = ["leela[desktop]", "py2exe>=0.14.2; sys_platform == 'win32'"]
 
 [project.urls]
 Repository = "https://github.com/vedicreader/leela"
@@ -117,6 +127,8 @@ test = [
     "playwright>=1.40",                 # the browser tests in test_web_keys and friends
     "pandas>=2.0",                      # a DataFrame in the variable panel fixtures
     "rishi>=0.1.7",                     # leela does not import it; these tests reach past ramabana
+    "pywebview>=5.3",                   # test_desktop_shell asserts on the window it would open
+    "pillow>=10.0",                     # tools/build_icons.py, which test_packaging runs
 ]
 
 [tool.pytest.ini_options]
