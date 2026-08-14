@@ -16,12 +16,33 @@ from fastcore.all import Path, first
 from ..nb.spans import source_spans
 from .safety import GitError, gateway
 
-__all__ = ['GitRepo', 'GitError', 'repo_root', 'clone']
+__all__ = ['GitRepo', 'GitError', 'repo_root', 'clone', 'clone_target']
 
 
 def _run(cwd, *args, check=True, input=None, timeout=30, kind=None):
     "One Git command, through the gateway that serialises it against the repository's others."
     return gateway().run(cwd, *args, check=check, input=input, timeout=timeout, kind=kind)
+
+
+def _conflict_blocks(text):
+    """Marker spans with their ours/theirs payload; malformed markers remain ordinary text."""
+    out, pos = [], 0
+    while True:
+        start = text.find('<<<<<<< ', pos)
+        if start < 0: break
+        middle = text.find('\n=======\n', start)
+        # From `middle + 8`, the newline closing `=======`, so that an empty theirs side -- what
+        # a delete/modify conflict writes -- is found rather than dismissed as malformed.
+        end = text.find('\n>>>>>>> ', middle + 8) if middle >= 0 else -1
+        finish = text.find('\n', end + 1) if end >= 0 else -1
+        if middle < 0 or end < 0: pos = start + 7; continue
+        finish = len(text) if finish < 0 else finish + 1
+        # Each payload keeps its own trailing newline, so substituting one side for the whole
+        # `text[start:end]` span rejoins the line after `>>>>>>>` instead of running into it.
+        ours = text[text.find('\n', start) + 1:middle + 1]
+        theirs = text[middle + 9:end + 1]
+        out.append({'start': start, 'end': finish, 'ours': ours, 'theirs': theirs}); pos = finish
+    return out
 
 
 def repo_root(path):
@@ -34,20 +55,33 @@ def repo_root(path):
     except (OSError, GitError): return None
 
 
-def clone(url, parent, name=''):
-    "Clone `url` into `parent`, returning the new worktree root."
-    # An option-shaped URL would be read as a flag by `git clone`; `--` and the refusal below
-    # keep it a URL.
+def url_name(url):
+    "The folder name a clone of `url` lands in: its last path segment, without `.git`."
+    return re.sub(r'\.git$', '', str(url or '').rstrip('/').rpartition('/')[2])
+
+
+def clone_target(url, parent, name=''):
+    "Where a clone of `url` would land, refusing anything but a free folder inside `parent`."
+    # Separate from `clone` because a clone runs for minutes on a background thread: a route
+    # that only starts one still has to be able to refuse a bad destination in its own answer.
     url = str(url or '').strip()
     if not url or url.startswith('-'): raise GitError(f'not a repository URL: {url or "(empty)"}')
     parent = Path(parent).expanduser().resolve()
     if not parent.is_dir(): raise GitError(f'not a directory: {parent}')
-    name = str(name or '').strip() or re.sub(r'\.git$', '', url.rstrip('/').rpartition('/')[2])
+    name = str(name or '').strip() or url_name(url)
     if not name or '/' in name or name in ('.', '..'):
         raise GitError(f'cannot work out a folder name for {url}')
     target = parent/name
     if target.exists(): raise GitError(f'{name} already exists in {parent.name}')
-    _run(parent, 'clone', '--', url, name, timeout=600)
+    return target
+
+
+def clone(url, parent, name=''):
+    "Clone `url` into `parent`, returning the new worktree root."
+    # An option-shaped URL would be read as a flag by `git clone`; `--` and the refusal in
+    # `clone_target` keep it a URL.
+    target = clone_target(url, parent, name)
+    _run(target.parent, 'clone', '--', str(url).strip(), target.name, timeout=600)
     return target
 
 
@@ -87,17 +121,28 @@ def _remote_web_url(raw):
     return ''
 
 
+def _track_counts(track):
+    "`[ahead 2, behind 1]` as `(2, 1)`, so a branch row can say how far each way it has run."
+    counts = dict(re.findall(r'(ahead|behind) (\d+)', track or ''))
+    return int(counts.get('ahead', 0)), int(counts.get('behind', 0))
+
+
+def _plural(n, word):
+    "`1 file` / `2 files`, for the sentences a mutation reports itself with."
+    return f'{n} {word}' + ('' if n == 1 else 's')
+
+
 def _summarise(out):
     "One sentence about where the repository now is, for the surface that has to say it."
     # `merge --squash` stages its whole result and stops without committing, which is
     # indistinguishable from the IDE having dirtied the index by itself unless said out loud.
     op, staged, conflicted = out['op'], len(out['staged']), len(out['conflicted'])
     if conflicted:
-        return f'{op} stopped at {conflicted} conflicted file{"" if conflicted == 1 else "s"} -- resolve them to continue'
+        return f'{op} stopped at {_plural(conflicted, "conflicted file")} -- resolve them to continue'
     if out['operation']['active']:
         return f'{out["operation"]["active"]} is in progress -- continue, skip, or abort it'
     if staged and not out['moved']:
-        return f'{op} staged {staged} file{"" if staged == 1 else "s"} without committing -- commit to finish'
+        return f'{op} staged {_plural(staged, "file")} without committing -- commit to finish'
     if out['moved']:
         return f'{op} moved this branch to {out["head"]}'
     return out['message'].splitlines()[0] if out['message'] else f'{op} changed nothing'
@@ -123,6 +168,7 @@ def _explain_filters(broken):
 
 
 def shorten(text, limit):
+    "One whitespace-collapsed line of `text`, ellipsised to `limit` characters."
     text = ' '.join(str(text or '').split())
     return text if len(text) <= limit else text[:limit - 1] + '…'
 
@@ -138,6 +184,11 @@ def _fields(
 ):
     "Exactly `n` fields from a NUL-separated record, padding the ones Git left empty."
     return (text.split('\0') + [''] * n)[:n]
+
+
+def _unified_arg(context):
+    "`--unified=n`, clamped to what a diff pane can usefully show."
+    return f'--unified={max(0, min(int(context), 20))}'
 
 
 def _unified(before, after, from_label, to_label):
@@ -281,40 +332,35 @@ class GitRepo:
         "Local and unclaimed remote-tracking branches, newest commit first."
         fmt = '%(refname)%00%(refname:short)%00%(HEAD)%00%(upstream:short)%00' \
               '%(upstream:trackshort)%00%(objectname:short)%00%(subject)%00' \
-              '%(committerdate:unix)%00%(committerdate:iso-strict)%00%(authorname)%00%(symref)'
+              '%(committerdate:unix)%00%(committerdate:iso-strict)%00%(authorname)%00%(symref)' \
+              '%00%(upstream:track)'
         raw = self.run('for-each-ref', f'--format={fmt}', '--sort=-committerdate',
             'refs/heads', 'refs/remotes')
         parsed, claimed = [], set()
         for line in raw.splitlines():
             (full, name, head, upstream, track, oid,
-                subject, stamp, date, author, symref) = _fields(line, 11)
+                subject, stamp, date, author, symref, drift) = _fields(line, 12)
             if full.startswith('refs/remotes/') and (symref or full.endswith('/HEAD')):
                 continue
             remote = full.startswith('refs/remotes/')
             if not remote and upstream:
                 claimed.add(upstream)
+            ahead, behind = _track_counts(drift)
             parsed.append({
                 'name': name, 'full_name': full, 'current': head == '*',
                 'upstream': upstream, 'track': track, 'oid': oid, 'subject': subject,
                 'remote': remote, 'timestamp': int(stamp or 0), 'date': date,
-                'author': author, 'merged': False,
+                'author': author, 'ahead': ahead, 'behind': behind, 'gone': 'gone' in drift,
             })
-        merged_raw = _run(self.root, 'for-each-ref', '--merged=HEAD', '--format=%(refname)',
-            'refs/heads', 'refs/remotes', check=False).stdout
-        merged = set(merged_raw.splitlines())
-        rows = []
-        for row in parsed:
-            if row['remote'] and row['name'] in claimed:
-                continue
-            row['merged'] = row['full_name'] in merged
-            rows.append(row)
-        if rows:
-            newest = max(row['timestamp'] for row in rows)
-            for row in rows:
-                row['latest'] = row['timestamp'] == newest
-                row['default'] = False
+        merged = set(_run(self.root, 'for-each-ref', '--merged=HEAD', '--format=%(refname)',
+            'refs/heads', 'refs/remotes', check=False).stdout.splitlines())
+        # A remote-tracking branch a local one already tracks is the same branch said twice.
+        rows = [r for r in parsed if not (r['remote'] and r['name'] in claimed)]
+        newest = max([r['timestamp'] for r in rows], default=0)
         default = self._ask('symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')
         for row in rows:
+            row['merged'] = row['full_name'] in merged
+            row['latest'] = row['timestamp'] == newest
             row['default'] = row['name'] in {default, default.partition('/')[2]}
         return rows
 
@@ -401,9 +447,13 @@ class GitRepo:
         return {'active': active, 'can_continue': active in {'rebase', 'cherry-pick', 'revert'},
             'can_skip': active in {'rebase', 'cherry-pick'}, 'can_abort': bool(active)}
 
+    def _remote_names(self):
+        "The configured remotes, in Git's own order."
+        return [n for n in self.run('remote').splitlines() if n]
+
     def _remotes(self):
         rows = []
-        for name in filter(None, self.run('remote').splitlines()):
+        for name in self._remote_names():
             fetch = self._ask('remote', 'get-url', name)
             rows.append({'name': name, 'fetch': fetch, 'push': self._ask('remote', 'get-url', '--push', name),
                 'web_url': _remote_web_url(fetch)})
@@ -425,15 +475,13 @@ class GitRepo:
                 branch = (oid + ' (detached)') if oid else 'HEAD (unborn)'
             upstream_name, ahead, behind = self._tracking()
             changes = self._changes_uncached()
-            stashes = []
-            for line in self.run('stash', 'list', '--format=%gd%x00%gs%x00%ct').splitlines():
-                ref, subject, stamp = _fields(line, 3)
-                stashes.append({'ref': ref, 'subject': subject, 'timestamp': int(stamp or 0)})
-            tag_details = []
+            stashes = [{'ref': ref, 'subject': subject, 'timestamp': int(stamp or 0)}
+                for ref, subject, stamp in
+                (_fields(l, 3) for l in self.run('stash', 'list', '--format=%gd%x00%gs%x00%ct').splitlines())]
             tag_fmt = '%(refname:short)%00%(objectname:short)%00%(creatordate:unix)%00%(subject)'
-            for line in self.run('tag', '-l', f'--format={tag_fmt}', '--sort=-creatordate').splitlines()[:100]:
-                name, tag_oid, stamp, subject = _fields(line, 4)
-                tag_details.append({'name': name, 'oid': tag_oid, 'timestamp': int(stamp or 0), 'subject': subject})
+            tag_details = [{'name': name, 'oid': tag_oid, 'timestamp': int(stamp or 0), 'subject': subject}
+                for name, tag_oid, stamp, subject in (_fields(l, 4) for l in
+                self.run('tag', '-l', f'--format={tag_fmt}', '--sort=-creatordate').splitlines()[:100])]
             return {
                 # `head` is the only field a commit of the whole working tree moves: the branch,
                 # the counts and the file list all still say what they said before.
@@ -587,7 +635,7 @@ class GitRepo:
         if publish:
             branch = self.run('branch', '--show-current').strip()
             if not branch: raise GitError('cannot publish a detached HEAD')
-            remotes = list(filter(None, self.run('remote').splitlines()))
+            remotes = self._remote_names()
             if not remotes: raise GitError('add a remote before publishing this branch')
             args += ['--set-upstream', 'origin' if 'origin' in remotes else remotes[0], branch]
         if force_with_lease: args.append('--force-with-lease')
@@ -779,15 +827,19 @@ class GitRepo:
         result = _run(self.root, 'show', f'{ref}:{path}', check=False)
         return result.stdout if result.returncode == 0 else ''
 
+    def _file_pair(self, path, base, head, from_label, to_label, context, old_path=''):
+        "Both sides of one file between two commits, and the patch between them."
+        patch = self.run('diff', '--no-ext-diff', _unified_arg(context), '-M', base, head, '--', path)
+        left = self._ref_file(base, old_path or path)
+        right = self._ref_file(head, path)
+        return self._side_by_side(path, left, right, from_label, to_label, patch)
+
     def review_file(self, base, head, path, mode='review', context=3):
         review = self.review(base, head, mode)
         known = first(x for x in review['files'] if x['path'] == path)
         if known is None: raise GitError(f'{path} is not changed in this comparison')
-        patch = self.run('diff', '--no-ext-diff', f'--unified={max(0, min(int(context), 20))}',
-            '-M', review['diff_base_oid'], review['head_oid'], '--', path)
-        left = self._ref_file(review['diff_base_oid'], known.get('old_path') or path)
-        right = self._ref_file(review['head_oid'], path)
-        left, right, patch = self._side_by_side(path, left, right, review['base'], review['head'], patch)
+        left, right, patch = self._file_pair(path, review['diff_base_oid'], review['head_oid'],
+            review['base'], review['head'], context, known.get('old_path'))
         return {'file': known, 'patch': patch, 'left': left, 'right': right,
             'base': review['base'], 'head': review['head'],
             'mode': mode, 'can_apply': review['can_apply']}
@@ -804,12 +856,8 @@ class GitRepo:
         detail = self.commit_review(ref)
         known = first(x for x in detail['files'] if x['path'] == path)
         if known is None: raise GitError(f'{path} is not changed by this commit')
-        patch = self.run('diff', '--no-ext-diff', f'--unified={max(0, min(int(context), 20))}',
-            '-M', detail['base'], detail['head'], '--', path)
-        left = self._ref_file(detail['base'], known.get('old_path') or path)
-        right = self._ref_file(detail['head'], path)
-        left, right, patch = self._side_by_side(path, left, right, detail['base'][:8],
-            detail['head'][:8], patch)
+        left, right, patch = self._file_pair(path, detail['base'], detail['head'],
+            detail['base'][:8], detail['head'][:8], context, known.get('old_path'))
         return {'file': known, 'patch': patch, 'left': left, 'right': right,
             'base': detail['base'], 'head': detail['head']}
 
@@ -818,6 +866,12 @@ class GitRepo:
         # Not `changes()`: Git merges perfectly well beside an untracked file, and refuses only
         # when the merge would overwrite one, which it says at the time.
         return [c for c in self.changes() if not c.get('untracked')]
+
+    def _in_the_way(self):
+        "How much uncommitted work a preview has to warn about, in the shape both previews report."
+        blocking = self._blocking_changes()
+        return {'clean': not blocking, 'dirty': [c['path'] for c in blocking][:20],
+            'untracked': sum(1 for c in self.changes() if c.get('untracked'))}
 
     def merge_preview(self, incoming):
         current = self.run('branch', '--show-current').strip() or 'HEAD'
@@ -830,12 +884,10 @@ class GitRepo:
         elif merge_base == incoming_oid: relation = 'already-merged'
         else: relation = 'diverged'
         conflicts, likely = self._rehearse(current_oid, incoming_oid)
-        blocking = self._blocking_changes()
-        return {'current': current, 'incoming': str(incoming), 'relation': relation,
-            'clean': not blocking, 'dirty': [c['path'] for c in blocking][:20],
-            'untracked': sum(1 for c in self.changes() if c.get('untracked')),
-            'merge_base': merge_base, 'conflicts': conflicts, 'conflict_likely': likely,
-            'review': self.review(current, incoming, 'review')}
+        return ({'current': current, 'incoming': str(incoming), 'relation': relation}
+            | self._in_the_way()
+            | {'merge_base': merge_base, 'conflicts': conflicts, 'conflict_likely': likely,
+                'review': self.review(current, incoming, 'review')})
 
     def rebase_preview(self, onto):
         "Describe replaying current-only commits on `onto` before mutating history."
@@ -845,13 +897,11 @@ class GitRepo:
         base = self._ask('merge-base', current_oid, onto_oid)
         if not base: raise GitError(f'{current} and {onto} do not share a merge base')
         conflicts, likely = self._rehearse(onto_oid, current_oid)
-        blocking = self._blocking_changes()
-        return {'current': current, 'onto': str(onto), 'clean': not blocking,
-            'dirty': [c['path'] for c in blocking][:20],
-            'untracked': sum(1 for c in self.changes() if c.get('untracked')),
-            'merge_base': base, 'commits': self.history(limit=250, ref=f'{onto_oid}..{current_oid}'),
-            'conflicts': conflicts, 'conflict_likely': likely,
-            'already_based': base == onto_oid, 'review': self.review(onto, current, 'review')}
+        return ({'current': current, 'onto': str(onto)}
+            | self._in_the_way()
+            | {'merge_base': base, 'commits': self.history(limit=250, ref=f'{onto_oid}..{current_oid}'),
+                'conflicts': conflicts, 'conflict_likely': likely,
+                'already_based': base == onto_oid, 'review': self.review(onto, current, 'review')})
 
     def compare(self, left, right):
         "Compare the complete snapshots at two refs, from `left` to `right`."
@@ -862,6 +912,51 @@ class GitRepo:
             'right_only': review['head_only'],
             'changed_files': review['summary']['files'],
             'merge_base': review['merge_base'], 'patch': patch}
+
+    def conflict_plan(self):
+        """Unresolved files with deterministic marker-level resolution suggestions."""
+        rows = []
+        for change in self.changes():
+            if not change['conflicted']: continue
+            path, versions = change['path'], self.conflict_versions(change['path'])
+            worktree = versions['worktree']
+            if '\x00' in worktree:
+                rows.append({'path': path, 'kind': 'binary', 'blocks': 0, 'safe': 0,
+                             'manual': 1, 'reason': 'binary file; choose one complete side'})
+                continue
+            blocks = _conflict_blocks(worktree)
+            safe = sum(1 for b in blocks if b['ours'] == b['theirs'])
+            rows.append({'path': path, 'kind': 'text', 'blocks': len(blocks), 'safe': safe,
+                         'manual': len(blocks) - safe,
+                         'reason': 'identical sides can be removed safely' if safe else 'manual review required'})
+        return {'operation': self._operation(), 'files': rows,
+                'summary': {'files': len(rows), 'blocks': sum(x['blocks'] for x in rows),
+                            'safe': sum(x['safe'] for x in rows), 'manual': sum(x['manual'] for x in rows)}}
+
+    def resolve_safe_conflicts(self, paths=()):
+        """Remove only conflict markers whose ours and theirs text is identical, then stage."""
+        wanted = set(paths or [x['path'] for x in self.conflict_plan()['files']])
+        changed = []
+        for path in wanted:
+            versions = self.conflict_versions(path)
+            text, blocks = versions['worktree'], _conflict_blocks(versions['worktree'])
+            if not blocks: continue
+            out, at, safe = [], 0, 0
+            for block in blocks:
+                out.append(text[at:block['start']])
+                if block['ours'] == block['theirs']:
+                    out.append(block['ours']); safe += 1
+                else: out.append(text[block['start']:block['end']])
+                at = block['end']
+            out.append(text[at:])
+            if not safe: continue
+            self.write_worktree(path, ''.join(out))
+            # Staging is what tells Git a conflict is settled, so a file that still has contested
+            # blocks is written but left unstaged -- staging it would let `commit` take the
+            # remaining markers and drop the file out of the conflict list unresolved.
+            if safe == len(blocks): self.stage([path])
+            changed.append({'path': path, 'safe': safe, 'remaining': len(blocks) - safe})
+        return {'resolved': changed, 'plan': self.conflict_plan()}
 
     def conflict_versions(self, path):
         change = first(row for row in self.changes() if row['path'] == path)
@@ -891,9 +986,8 @@ class GitRepo:
         remaining = [c['path'] for c in self._changes_uncached() if c['conflicted']]
         return {'path': path, 'choice': choice, 'conflicted': remaining,
             'operation': self._operation(),
-            'summary': (f'{len(remaining)} file{"" if len(remaining) == 1 else "s"} still '
-                f'conflicted' if remaining else
-                'every conflict is resolved -- commit to finish the merge')}
+            'summary': f'{_plural(len(remaining), "file")} still conflicted' if remaining else
+                'every conflict is resolved -- commit to finish the merge'}
 
     def blame(self, path, start=1, end=0):
         args = ['blame', '--line-porcelain']
@@ -906,10 +1000,12 @@ class GitRepo:
                 current = {'oid': oid.lstrip('^'), 'original_line': int(original),
                     'line': int(final), 'count': int(count), 'author': '',
                     'timestamp': 0, 'summary': '', 'text': ''}
-            elif current is not None and line.startswith('author '): current['author'] = line[7:]
-            elif current is not None and line.startswith('author-time '): current['timestamp'] = int(line[12:] or 0)
-            elif current is not None and line.startswith('summary '): current['summary'] = line[8:]
-            elif current is not None and line.startswith('\t'):
+            elif current is None: continue
+            elif line.startswith('author '): current['author'] = line[7:]
+            elif line.startswith('author-time '): current['timestamp'] = int(line[12:] or 0)
+            elif line.startswith('summary '): current['summary'] = line[8:]
+            # The tab-prefixed line is the code itself, and closes the record it belongs to.
+            elif line.startswith('\t'):
                 current['text'] = line[1:]
                 rows.append(current)
                 current = None
@@ -956,8 +1052,8 @@ class GitRepo:
                 'first': span[0] if span else 0, 'last': span[1] if span else 0,
                 'lines': lines, 'commits': [{'oid': k, 'lines': v} for k, v in commits.items()],
                 'authors': sorted({row['author'] for row in lines if row['author']}),
-                'touched': last and {k: last[k] for k in ('oid', 'author', 'summary', 'timestamp',
-                    'uncommitted')} or {},
+                'touched': {k: last[k] for k in ('oid', 'author', 'summary', 'timestamp',
+                    'uncommitted')} if last else {},
                 'mapped': bool(span),
             })
         return {'notebook': True, 'path': path, 'cells': out, 'lines': rows,
@@ -1001,7 +1097,7 @@ class GitRepo:
         return rows
 
     def diff(self, path='', staged=False, left='', right='', context=3):
-        args = ['diff', '--no-ext-diff', f'--unified={max(0, min(int(context), 20))}']
+        args = ['diff', '--no-ext-diff', _unified_arg(context)]
         if staged: args.append('--cached')
         if left and right: args.append(f'{left}...{right}')
         elif left: args.append(left)

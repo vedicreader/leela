@@ -17,6 +17,11 @@ __all__ = ['CAPS', 'connect']
 CAPS = ()
 
 
+def _api_path(name, scope):
+    "`live` asks the tab's kernel; `agent` asks its overlay, which mounts the same names."
+    return f'/agent/api/{name}' if scope == 'agent' else f'/api/{name}'
+
+
 def connect(app, ctx):
     rt = app.route
     session = ctx.session
@@ -38,18 +43,16 @@ def connect(app, ctx):
         code, scope = (d.get('code') or '').strip(), d.get('scope', 'live')
         if not code: return fail('enter a Python expression after =')
         k = await session.runtime()
-        path = '/agent/api/exec' if scope == 'agent' else '/api/exec'
         params = {'code': code, 'scope': 'overlay' if scope == 'agent' else 'global'}
-        r = await k.api(path, params, timeout=120) if k else None
+        r = await k.api(_api_path('exec', scope), params, timeout=120) if k else None
         if r is None: return fail('no runtime answered')
         return {'ok': bool(r.get('ok')), 'error': r.get('error'), 'stdout': r.get('stdout') or '',
                 'result': r.get('result'), 'scope': scope}
 
     @rt('/vars')
     async def vars_route(profile: str = 'minimal', sort: str = 'recent', scope: str = 'live'):
-        base = '/agent/api/rows' if scope == 'agent' else '/api/rows'
         runtime = await session.runtime()
-        r = await runtime.api(base, {'profile': profile, 'sort': sort}, 15) if runtime else None
+        r = await runtime.api(_api_path('rows', scope), {'profile': profile, 'sort': sort}, 15) if runtime else None
         identity = ((getattr(runtime, 'base', None) or
                      (f'kernel:{session.kernel_key()}' if runtime is not None else 'none')) + f':{scope}')
         problem = (getattr(runtime, 'boot_error', '') or getattr(runtime, 'last_api_error', '') or
@@ -60,13 +63,11 @@ def connect(app, ctx):
 
     @rt('/vars/expand')
     async def vars_expand(accessor: str, offset: int = 0, scope: str = 'live'):
-        base = '/agent/api/expand' if scope == 'agent' else '/api/expand'
-        return JSONResponse(await api(base, {'accessor': accessor, 'offset': offset}) or [])
+        return JSONResponse(await api(_api_path('expand', scope), {'accessor': accessor, 'offset': offset}) or [])
 
     @rt('/vars/grid')
     async def vars_grid(accessor: str, roff: int = 0, coff: int = 0, scope: str = 'live'):
-        base = '/agent/api/grid' if scope == 'agent' else '/api/grid'
-        return JSONResponse(await api(base, {'accessor': accessor, 'roff': roff, 'coff': coff}))
+        return JSONResponse(await api(_api_path('grid', scope), {'accessor': accessor, 'roff': roff, 'coff': coff}))
 
     @rt('/vars/set')
     async def vars_set(req):

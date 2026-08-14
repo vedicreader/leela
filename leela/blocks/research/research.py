@@ -129,13 +129,7 @@ class Research:
                 if len(rendered_sections) > len(sections): sections = rendered_sections
         # Last resort for a DOM that is still a shell: DDGS extraction, independent of the DOM.
         if len(text) < 800 and hasattr(f, 'extract'):
-            extracted = self._try('extract page', f.extract, url)
-            rows = extracted if isinstance(extracted, list) else [extracted]
-            parts = []
-            for row in rows:
-                if isinstance(row, dict): parts.append(str(row.get('content') or row.get('body') or row.get('text') or ''))
-                elif row: parts.append(str(row))
-            fallback = '\n\n'.join(x.strip() for x in parts if x and x.strip())
+            fallback = _extracted_text(self._try('extract page', f.extract, url))
             if len(fallback) > len(text): text, strategy = fallback[:MAX_DOC_CHARS], 'independent extraction'
         return text, strategy, sections
 
@@ -236,6 +230,18 @@ class Research:
         return self.fs.entry(p)
 
 
+def _body(row):
+    "The text of one extraction row, whichever key this fossick names the body with."
+    if isinstance(row, dict): return str(row.get('content') or row.get('body') or row.get('text') or '')
+    return str(row or '')
+
+
+def _extracted_text(extracted):
+    "One or many DDGS extraction rows as a single Markdown blob."
+    rows = extracted if isinstance(extracted, list) else [extracted]
+    return '\n\n'.join(L(rows).map(_body).map(str.strip).filter())
+
+
 def _url_slug(url):
     "A stable useful filename from a URL when no fetched title is available."
     from urllib.parse import urlparse
@@ -261,6 +267,11 @@ def _hit(row):
 
 
 def _source_doc(row, chars=MAX_DOC_CHARS):
-    "One `fossick.research` source as a `Doc`, clipped to `chars`."
+    """One `fossick.research` source as a `Doc`, clipped to `chars`.
+
+    `sections` stays empty: splitting a page into its repeated articles needs the DOM, which
+    `research` does not hand back. Memory ingests `text`, so a dug page is one whole document
+    where the same page opened through `read` is one document per article.
+    """
     text = str(row.get('md') or '')[:chars]
     return Doc(title=row.get('title') or _title(text, _url(row)), url=_url(row), kind='page', text=text)

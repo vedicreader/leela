@@ -29,8 +29,14 @@ if not TEST_CONFIG_HOME:
 _os.environ['XDG_CONFIG_HOME'] = TEST_CONFIG_HOME
 
 import asyncio
+import socket as _socket
+import threading
+import time as _time
+from contextlib import contextmanager
+
 import pytest
 
+from leela.app import ide_app
 from leela.blocks.runtime.kernels import ExecOutcome, KernelPool
 from leela.workspace import Workspace
 
@@ -141,3 +147,22 @@ def ws(request, monkeypatch):
     monkeypatch.setattr(KernelPool, 'peek', lambda self, key: self.kernels.get(key))
     monkeypatch.setattr(KernelPool, 'close_all', lambda self: asyncio.sleep(0))
     return Workspace(roots=[fixture_dir(request)], port=8000)
+
+
+@contextmanager
+def serve(ws):
+    "The real app on a background thread, so Playwright can drive it like any other site."
+    import uvicorn
+    with _socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(ide_app(ws), host='127.0.0.1', port=port, log_level='error'))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(100):
+        if server.started: break
+        _time.sleep(.02)
+    try: yield f'http://127.0.0.1:{port}'
+    finally:
+        server.should_exit = True
+        thread.join(timeout=3)

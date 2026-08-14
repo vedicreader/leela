@@ -20,6 +20,7 @@ routing the toggle at the sandbox makes the label true.)
 
 from __future__ import annotations
 import ast, asyncio, ipaddress, json, os, re, shutil, subprocess, sys, warnings
+from itertools import accumulate
 from urllib.parse import quote
 from fasthtml.common import *          # re-exports fastcore's Path, L, first, asdict, ...
 from starlette.routing import WebSocketRoute
@@ -36,6 +37,7 @@ from .blocks import lsp as lsp_block
 from .blocks import memory as memory_block
 from .blocks import pipelines as pipelines_block
 from .blocks import research as research_block
+from .blocks import refactor as refactor_block
 from .blocks import runs as runs_block
 from .blocks import runtime as runtime_block
 from .blocks import search as search_block
@@ -86,7 +88,7 @@ __all__ = ['ide_app', 'serve_ide']
 BLOCKS = [keys_block, settings_block, search_block, memory_block, jobs_block,
           research_block, term_block, runs_block, workspace_block, git_block,
           workflows_block, pipelines_block, drive_block, stack_block,
-          fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block]
+          fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block, refactor_block]
 
 
 def _term_python(ws, cwd=None):
@@ -95,14 +97,16 @@ def _term_python(ws, cwd=None):
     return python_for(cwd, ws)
 
 
+def _line_starts(text):
+    "The lines of `text`, keeping their ends, and the character offset each one begins at."
+    lines = text.splitlines(keepends=True) or ['']
+    return lines, list(accumulate(map(len, lines), initial=0))[:-1]
+
+
 def _python_diagnostics(source, filename='<cell>'):
     """Compile without executing and return Python's own errors and warnings as editor ranges."""
     source = str(source or '')
-    lines = source.splitlines(keepends=True) or ['']
-    starts, at = [], 0
-    for line in lines:
-        starts.append(at)
-        at += len(line)
+    lines, starts = _line_starts(source)
 
     def point(line, column):
         row = max(1, min(int(line or 1), len(lines)))
@@ -143,7 +147,6 @@ def _python_diagnostics(source, filename='<cell>'):
 
 def _project_state_context(ws, max_files=120, max_chars=12_000):
     "Bounded, current-disk evidence used when a person asks the charter to follow the code."
-    roots = [str(root) for root in ws.fs.roots]
     files = [p for p in ws.fs.walk(limit=max_files) if p.is_file()]
     names = '\n'.join(f'- {p}' for p in files)
     preferred = ('README.md', 'pyproject.toml', 'package.json', 'Cargo.toml', 'go.mod',
@@ -159,7 +162,7 @@ def _project_state_context(ws, max_files=120, max_chars=12_000):
         if excerpt:
             excerpts.append(f'### {path}\n{excerpt}')
             used += len(excerpt)
-    return ('## Open roots\n' + ('\n'.join(f'- {root}' for root in roots) or '- none') +
+    return ('## Open roots\n' + ('\n'.join(f'- {root}' for root in ws.fs.roots) or '- none') +
             '\n\n## Current file map\n' + (names or '- no files') +
             '\n\n## Project-file excerpts\n' + ('\n\n'.join(excerpts) or '- none'))
 
@@ -198,6 +201,21 @@ def _tool_preview(agent, tool, args):
     return {'kind': 'json', 'text': json.dumps(args, indent=2, default=str)}
 
 
+TOOL_GROUPS = {
+    'Repository': {'search_code', 'similar_code', 'outline', 'list_files', 'grep', 'ls',
+                   'view_file', 'edit_file', 'replace_text', 'create_file'},
+    'Runtime': {'run_python', 'inspect_python', 'list_vars', 'read_terminal', 'run_shell'},
+    'Web': {'web_search', 'read_url', 'research'},
+}
+
+
+def _tool_group(name):
+    "Which browser-facing family a tool belongs to."
+    group = first(g for g, names in TOOL_GROUPS.items() if name in names)
+    if group: return group
+    return 'Notebook' if 'cell' in name or 'notebook' in name else 'Other'
+
+
 def _tool_schemas(agent):
     "Browser-sized schemas for editable checkpoint forms; callable validation remains authoritative."
     import inspect
@@ -217,14 +235,7 @@ def _tool_schemas(agent):
         out.append({'name': tool.__name__, 'description': (inspect.getdoc(tool) or '').split('\n')[0],
                     'changes_state': tool.__name__ in WRITE_TOOLS,
                     'retryable': tool.__name__ not in WRITE_TOOLS,
-                    'group': ('Repository' if tool.__name__ in {'search_code', 'similar_code', 'outline', 'list_files',
-                                                               'grep', 'ls', 'view_file', 'edit_file',
-                                                               'replace_text', 'create_file'}
-                              else 'Runtime' if tool.__name__ in {'run_python', 'inspect_python', 'list_vars',
-                                                                  'read_terminal', 'run_shell'}
-                              else 'Web' if tool.__name__ in {'web_search', 'read_url', 'research'}
-                              else 'Notebook' if 'cell' in tool.__name__ or 'notebook' in tool.__name__
-                              else 'Other'), 'fields': fields})
+                    'group': _tool_group(tool.__name__), 'fields': fields})
     return out
 
 
@@ -307,6 +318,36 @@ def _inline_values(source, groups, outputs=(), result_info=None):
     return out
 
 
+async def _cell_extras(k, cell):
+    """Inspector rows and the rich last result for a finished cell, or `(None, None)`.
+
+    Inline annotations are a bonus, never a reason for a completed cell to look hung. A
+    sick inspector gets two seconds; outputs return without the pills.
+    """
+    if not k or cell.has_error: return None, None
+    rows = await k.api('/api/rows', {'profile': 'full', 'sort': 'name'}, timeout=2)
+    has_result = any(o.get('output_type') == 'execute_result' for o in cell.outputs)
+    latest = await k.api('/api/result', timeout=2) if has_result else None
+    return rows, (latest or {}).get('result')
+
+
+def _edit_diffs(a):
+    "Per-file diffs for what an assistant turn actually wrote."
+    return [{'path': p, **_diff(was, now)} for p, (was, now) in a.changes().items()]
+
+
+def _activity_changes(a, versions):
+    """Activity rows that moved since the last poll: new calls and in-place transitions
+    (pending -> done), not only appends. `versions` is the caller's running record."""
+    changed = []
+    for row in a.activity.rows(mark=a.activity._mark):
+        version = (row.get('done'), row.get('ok'), row.get('line'), row.get('detail'), row.get('secs'))
+        if versions.get(row['id']) != version:
+            versions[row['id']] = version
+            changed.append(row)
+    return changed
+
+
 def _history_sessions(turns, execution=()):
     """Turns grouped by durable model-context id; old untagged history splits after 30m."""
     groups, by_id, legacy_n, legacy_last = [], {}, 0, None
@@ -359,6 +400,14 @@ def _header(ws):
                id='workspacepill', title='switch or open workspace', onclick='leeWorkspaceMenu(this)'),
         Button('no git', id='gitpill', cls='lee-branch-switcher', title='switch branch',
                onclick='leeBranchMenu(this)'),
+        # Fetch, pull and push beside the branch they act on: the three remote gestures are
+        # the only Git commands frequent enough to cost a click rather than a panel.
+        Div(*(Button(glyph, id=f'git{op}', cls='lee-git-quick', title=title, aria_label=title,
+                     onclick=f'leeGitQuick("{op}")')
+              for op, glyph, title in (('fetch', '⭮', 'fetch from remotes'),
+                                       ('pull', '↓', 'pull (fast-forward, autostash)'),
+                                       ('push', '↑', 'push this branch'))),
+            cls='lee-git-quickbar', aria_label='remote actions'),
         Nav(Button('File', cls='lee-menubar-btn', onclick='leeMenuAt("files", this)'),
             Button('Tools', cls='lee-menubar-btn', onclick='leeToolsMenu(this)'),
             Button('Debug', cls='lee-menubar-btn', onclick='leeDebugMenu(this)'),
@@ -554,8 +603,10 @@ def _editor_pane(ws):
     primary = (Div(_empty_editor(), id='editor', cls='lee-editor', tabindex='-1') if t is None else
                Div(id='editor', cls='lee-editor', data_kind=t.kind, data_path=t.path,
                    data_lang=t.lang or '', tabindex='-1'))
+    # `mountTab` clones this when a tab closes, so the empty state is written once, here.
     return Div(primary, Div(cls='lee-editor-splitter'),
                Div(id='editor2', cls='lee-editor lee-editor-secondary', hidden=True),
+               Template(_empty_editor(), id='leeempty'),
                cls='lee-editor-stage', id='editorstage')
 
 
@@ -644,8 +695,8 @@ def _memory_panel():
             Button('topics', data_memory_view='topics', onclick='leeMemoryTopics()'),
             # The vault view is entirely server-rendered: one GET, and every action inside it is a
             # form. Nothing here has client state to keep in step.
-            Button('vault', data_memory_view='vault', hx_get='/vault/panel',
-                   hx_target='#memorybody', hx_swap='innerHTML'),
+            Button('vault', data_memory_view='vault', onclick='setMemoryView("vault")',
+                   hx_get='/vault/panel', hx_target='#memorybody', hx_swap='innerHTML'),
             Span(cls='lee-spacer'), Button('manage', cls='warn', title='remove remembered items', onclick='leeMemoryPurge()'),
             cls='lee-memory-nav', aria_label='memory views'),
         Form(Input(id='memoryquery', cls='lee-input', placeholder='search remembered research…',
@@ -754,8 +805,8 @@ def _agent_panel(ws):
 
 def _footer():
     "Always-visible keys plus status."
-    ks = [k for k in (list(by_scope('global')) + list(by_scope('editor'))) if k.show == 'footer']
-    kids = [Span(Kbd(k.keys[0]), Span(k.label), cls='lee-fkey') for k in ks]
+    ks = (by_scope('global') + by_scope('editor')).filter(lambda k: k.show == 'footer')
+    kids = ks.map(lambda k: Span(Kbd(k.keys[0]), Span(k.label), cls='lee-fkey'))
     return Footer(*kids, Span(cls='lee-spacer'),
                   Span(id='status', cls='lee-status', role='status', aria_live='polite', hidden=True),
                   cls='lee-footer')
@@ -785,11 +836,11 @@ def _shell(ws, gate):
 # app
 # ---------------------------------------------------------------------------
 def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
+    "Build the FastHTML IDE around an open workspace. `gate` decides who may open a terminal."
     # Registering makes asking possible: with nobody listening `Approvals` refuses every
     # gated write immediately rather than parking the model's thread on an answer that is
     # never coming. The browser counts as a listener for as long as the app is served.
     ws.approvals.listen()
-    "Build the FastHTML IDE around an open workspace. `gate` decides who may open a terminal."
     gate = gate or TerminalGate()
     # (tab identity, cell id) -> (runtime, execution task). This keeps Stop aimed at the
     # cell that started the work even if the person switches tabs before pressing it.
@@ -804,9 +855,17 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     # JS sources live in `leela/static/js/` and concatenate to `lee-ide.js` via tools/build_ide_js.py.
     hdrs = (Link(rel='icon', href=_asset('favicon.svg'), type='image/svg+xml'),
             Script(src=_asset('htmx.min.js')),
-            Script("""try { const t = localStorage.getItem('lee-theme') || 'system';
-if (t !== 'system') document.documentElement.dataset.theme = t;
-document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; } catch (_) {}"""),
+            # Runs before the stylesheet so the first paint is already the chosen family. It
+            # duplicates `parseTheme` in js/15_prefs.js on purpose: the bundle is deferred, and
+            # waiting for it is a flash of the wrong theme. Pre-family values are still honoured.
+            Script("""try { const legacy = {system: 'leela:system:relaxed', dark: 'leela:dark:relaxed', light: 'leela:light:relaxed', cursor: 'cursor:light:tight'};
+const stored = localStorage.getItem('lee-theme') || 'cursor:light:tight';
+const [family, mode, density] = (stored.includes(':') ? stored : legacy[stored] || 'cursor:light:tight').split(':');
+const resolved = mode === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : mode;
+document.documentElement.dataset.theme = family;
+document.documentElement.dataset.mode = resolved;
+document.documentElement.dataset.density = density || (family === 'cursor' ? 'tight' : 'relaxed');
+document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             Script(src=_asset('lee-cm6.js')),
             Link(rel='stylesheet', href=_asset('lee-term.css')),
             Link(rel='stylesheet', href=_asset('lee-ide.css')),
@@ -915,27 +974,42 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         t = ws.tab
         return None if t is None else _docs.get(t.path or t.title)
 
+    def _live_assistants():
+        "Only the assistants already built -- reaching for `ws.ai` here would construct one."
+        return L(ws._ai, ws._inline_ai).filter(lambda a: a is not None)
+
+    def _refresh_assistants():
+        for a in _live_assistants(): a.refresh()
+
+    def _dbg(method=None):
+        "The kernel holding the paused notebook debugger, when it can serve `method`."
+        k = _debug.get('kernel')
+        return k if k is not None and (method is None or hasattr(k, method)) else None
+
+    def _open_path(path):
+        "The workspace file a debug frame refers to, or '' when it is outside the sandbox."
+        try: return str(ws.fs._check(path, must_exist=True))
+        except Exception: return ''
+
+    def _frame_path(frame): return (frame.get('source') or {}).get('path') or ''
+
     def _debug_ui(state):
         "Map temporary cell sources back to the notebook and mark project files safe to open."
         state.update(origin_path=_debug.get('origin_path'), cell_id=_debug.get('cell_id'))
         temp = state.get('source')
         cell_sources = getattr(_debug.get('kernel'), '_debug_sources', {})
         for frame in state.get('frames', []):
-            path = (frame.get('source') or {}).get('path') or ''
+            path = _frame_path(frame)
             cell_id = cell_sources.get(path)
             if path == temp or cell_id:
                 frame['open_path'] = _debug.get('origin_path') or ''
                 frame['cell_id'] = cell_id or _debug.get('cell_id') or ''
             else:
-                try: frame['open_path'] = str(ws.fs._check(path, must_exist=True))
-                except Exception: frame['open_path'] = ''
+                frame['open_path'] = _open_path(path)
         return state
 
     def _direct_debug_ui(state):
-        for frame in state.get('frames', []):
-            path = (frame.get('source') or {}).get('path') or ''
-            try: frame['open_path'] = str(ws.fs._check(path, must_exist=True))
-            except Exception: frame['open_path'] = ''
+        for frame in state.get('frames', []): frame['open_path'] = _open_path(_frame_path(frame))
         return state
 
     def _previous_runs():
@@ -986,7 +1060,6 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         # kernel-output and fetched-web Markdown are untrusted. Turn their passthrough
         # fences into ordinary highlighted HTML code before mdhtml sees them.
         if not d.get('allow_raw', True):
-            import re
             text = re.sub(r'(?m)^([ \t]*`{3,})\{=html\}([ \t]*)$', r'\1html\2', text)
         try:
             from mdhtml import to_mdhtml, to_html
@@ -1055,13 +1128,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             try: c = await nb.run(i, k)
             finally: owner_tab.running = max(0, owner_tab.running - 1)
         if owner_tab: owner_tab.dirty = True
-        # Inline annotations are a bonus, never a reason for a completed cell to look
-        # hung. A sick inspector gets two seconds; outputs return without the pills.
-        rows = (await k.api('/api/rows', {'profile': 'full', 'sort': 'name'}, timeout=2)
-                if k and not c.has_error else None)
-        has_result = any(o.get('output_type') == 'execute_result' for o in c.outputs)
-        latest = (await k.api('/api/result', timeout=2) if k and not c.has_error and has_result else None)
-        result = (latest or {}).get('result')
+        rows, result = await _cell_extras(k, c)
         return {'ok': not c.has_error, 'i': i, 'cell': c.dict(), 'result': result,
                 'inline': _inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)}
 
@@ -1109,11 +1176,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                     yield _sse('output', {'i': i, 'outputs': outputs})
                 c = await task
                 if owner_tab: owner_tab.dirty = True
-                rows = (await k.api('/api/rows', {'profile': 'full', 'sort': 'name'}, timeout=2)
-                        if k and not c.has_error else None)
-                has_result = any(o.get('output_type') == 'execute_result' for o in c.outputs)
-                latest = (await k.api('/api/result', timeout=2) if k and not c.has_error and has_result else None)
-                result = (latest or {}).get('result')
+                rows, result = await _cell_extras(k, c)
                 yield _sse('done', {'ok': not c.has_error, 'i': i, 'cell': c.dict(), 'result': result,
                                     'inline': _inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)})
             except Exception as e:
@@ -1205,8 +1268,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
 
     @rt('/nb/debug/state')
     async def nb_debug_state(frame_id: int = 0):
-        k = _debug.get('kernel')
-        if k is None or not hasattr(k, 'debug_state'): return _fail('no ipykernel debugger is active')
+        if (k := _dbg('debug_state')) is None: return _fail('no ipykernel debugger is active')
         try:
             state = await k.debug_state(frame_id=frame_id or None)
             return _debug_ui(state)
@@ -1215,8 +1277,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     @rt('/nb/debug/source')
     async def nb_debug_source(frame_id: int):
         "Source for a stack frame outside the workspace, addressed by trusted frame id—not a client path."
-        k = _debug.get('kernel')
-        if k is None: return _fail('no ipykernel debugger is active')
+        if (k := _dbg()) is None: return _fail('no ipykernel debugger is active')
         try:
             state = await k.debug_state(frame_id=frame_id)
             frame = first(f for f in state.get('frames', []) if f.get('id') == frame_id)
@@ -1230,15 +1291,14 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
 
     @rt('/nb/debug/variables')
     async def nb_debug_variables(reference: int):
-        k = _debug.get('kernel')
-        if k is None or not hasattr(k, 'debug_variables'): return _fail('no ipykernel debugger is active')
+        if (k := _dbg('debug_variables')) is None: return _fail('no ipykernel debugger is active')
         try: return {'variables': await k.debug_variables(reference)}
         except Exception as e: return _fail(e)
 
     @rt('/nb/debug/evaluate')
     async def nb_debug_evaluate(req):
-        d, k = await req.json(), _debug.get('kernel')
-        if k is None or not hasattr(k, 'debug_evaluate'): return _fail('no ipykernel debugger is active')
+        d, k = await req.json(), _dbg('debug_evaluate')
+        if k is None: return _fail('no ipykernel debugger is active')
         try:
             body = await k.debug_evaluate(d.get('code', ''), d.get('frame_id'))
             return {'ok': True, **body}
@@ -1246,8 +1306,8 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
 
     @rt('/nb/debug/control')
     async def nb_debug_control(req):
-        d, k = await req.json(), _debug.get('kernel')
-        if k is None or not hasattr(k, 'debug_control'): return _fail('no ipykernel debugger is active')
+        d, k = await req.json(), _dbg('debug_control')
+        if k is None: return _fail('no ipykernel debugger is active')
         try:
             await k.debug_control(d.get('command', ''), d.get('thread_id'))
             return {'ok': True, 'command': d.get('command')}
@@ -1255,8 +1315,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
 
     @rt('/nb/debug/stop')
     async def nb_debug_stop():
-        k = _debug.get('kernel')
-        if k is None or not hasattr(k, 'debug_stop'): return _fail('no ipykernel debugger is active')
+        if (k := _dbg('debug_stop')) is None: return _fail('no ipykernel debugger is active')
         try:
             await k.debug_stop()
             await k.interrupt()
@@ -1283,7 +1342,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                 'problems': a.problems,
                 'cells': [x.dict() for x in nb.cells],   # approval/compaction cells may have landed
                 'activity': a.activity.rows(mark=a.activity._mark),
-                'edits': [{'path': p, **_diff(was, now)} for p, (was, now) in a.changes().items()]}
+                'edits': _edit_diffs(a)}
 
     @rt('/nb/ask/stream')
     async def nb_ask_stream(req):
@@ -1310,15 +1369,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
 
             task = asyncio.get_running_loop().run_in_executor(None, pump)
             approval_id, activity_versions = None, {}
-
-            def changed_activity():
-                changed = []
-                for row in a.activity.rows(mark=a.activity._mark):
-                    version = (row.get('done'), row.get('ok'), row.get('line'), row.get('detail'), row.get('secs'))
-                    if activity_versions.get(row['id']) != version:
-                        activity_versions[row['id']] = version
-                        changed.append(row)
-                return changed
+            def changed_activity(): return _activity_changes(a, activity_versions)
 
             try:
                 while True:
@@ -1345,15 +1396,13 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                                     'problems': a.problems,
                                     'cells': [x.dict() for x in nb.cells],
                                     'activity': a.activity.rows(mark=a.activity._mark),
-                                    'edits': [{'path': p, **_diff(was, now)}
-                                              for p, (was, now) in a.changes().items()]})
+                                    'edits': _edit_diffs(a)})
             finally:
                 nb[i].running = False
                 if owner_tab is not None:
                     owner_tab.running = max(0, owner_tab.running - 1)
                     owner_tab.dirty = True
 
-        from starlette.responses import StreamingResponse
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
@@ -1473,13 +1522,26 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     def operation_history(limit: int = 50):
         return {'operations': ws.journal.rows(limit)}
 
+    def _forget_operation_buffers(op):
+        for path in (r['path'] for r in op.get('resources', [])):
+            # `forget` also drops the draft base version; leaving it behind made the next
+            # save-all refuse the tab as "changed on disk after this browser draft began".
+            _docstore.forget(path)
+            if (tab := first(t for t in ws.tabs if t.path == path)): tab.dirty = False
+
     @rt('/history/undo')
     async def operation_undo(req):
         try:
             d = await req.json(); op = ws.journal.undo(d.get('id', ''))
-            for path in (r['path'] for r in op.get('resources', [])):
-                _buffers.pop(path, None); _docs.pop(path, None)
-                if (tab := first(t for t in ws.tabs if t.path == path)): tab.dirty = False
+            _forget_operation_buffers(op)
+            return {'ok': True, 'operation': op}
+        except Exception as e: return _fail(e, 409)
+
+    @rt('/history/redo')
+    async def operation_redo(req):
+        try:
+            d = await req.json(); op = ws.journal.redo(d.get('id', ''))
+            _forget_operation_buffers(op)
             return {'ok': True, 'operation': op}
         except Exception as e: return _fail(e, 409)
 
@@ -1581,8 +1643,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             path = str(d.get('path') or '')
             if path.endswith('.py'):
                 rows, note = await _off_loop(ws.lsp.diagnostics, path, code)
-                lines = code.splitlines(keepends=True) or ['']; starts, at = [], 0
-                for line in lines: starts.append(at); at += len(line)
+                lines, starts = _line_starts(code)
                 def offset(pos):
                     row = max(0, min(int(pos.get('line', 0)), len(lines)-1))
                     return starts[row] + min(int(pos.get('character', 0)), len(lines[row].rstrip('\r\n')))
@@ -1723,7 +1784,9 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         d = await req.json(); python = d.get('python') or ws.pool.default_python or project_python(ws.fs.roots)
         if not python: return _fail('choose a project interpreter first')
         def install():
-            cmd = [shutil.which('uv'), 'pip', 'install', '--python', str(python), 'debugpy'] if shutil.which('uv') else [str(python), '-m', 'pip', 'install', 'debugpy']
+            uv = shutil.which('uv')
+            cmd = ([uv, 'pip', 'install', '--python', str(python), 'debugpy'] if uv else
+                   [str(python), '-m', 'pip', 'install', 'debugpy'])
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
             if result.returncode: raise RuntimeError(result.stderr or result.stdout)
         try: await _off_loop(install); return {'ok': True, 'python': str(python)}
@@ -1884,31 +1947,52 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     def agent_models(legacy: bool = True):
         from .agent.core import DFLT_LOCAL, available_models, auth_status, resolve
         from .blocks.agent.models import load_models, runtimes
-        saved=load_models()
-        rows = available_models(include_legacy=legacy)
+        # Every part of this answer is asked for separately. One model that will not resolve --
+        # a `TokenError` out of `resolve` took the whole route down once -- used to 500 the
+        # endpoint, and the picker sat on "loading…" with no model selectable at all. A part
+        # that fails now costs its own entry and a note, and the rest of the list still arrives.
+        notes = {}
+        def _try(what, f, dflt=None):
+            "`f()`, or `dflt` and a note saying why: no one failure may blank the picker."
+            try: return f()
+            except Exception as e: notes[what] = errstr(e); return dflt
+        def _spec(name): return _try(name, lambda: resolve(name))
+        def _name(what, get, dflt): return _try(what, get, dflt) or dflt
+        saved = _try('saved models', load_models, []) or []
+        rows = _try('model catalog', lambda: available_models(include_legacy=legacy), []) or []
         rows += [{'value':x['name'],'label':x['name'],'provider':x['runtime'],
                   'source':f"saved · {x['model_id']}",'custom':True} for x in saved]
-        agent = ws.ai.model.name if ws._ai is not None else (ws.model or os.environ.get('LEELA_MODEL') or DFLT_LOCAL)
-        inline = (ws.inline_ai.model.name if ws._inline_ai is not None else
-                  (ws.inline_model or os.environ.get('LEELA_MODEL_INLINE') or 'gpt-mini'))
-        completion = (ws.ai.routing.name_for('completion') if ws._ai is not None else
-                      (ws.completion_model or os.environ.get('LEELA_MODEL_COMPLETION') or 'gpt-4.1'))
+        agent_dflt = ws.model or os.environ.get('LEELA_MODEL') or DFLT_LOCAL
+        agent = _name('agent model', lambda: ws.ai.model.name, agent_dflt) if ws._ai is not None else agent_dflt
+        inline_dflt = ws.inline_model or os.environ.get('LEELA_MODEL_INLINE') or 'gpt-mini'
+        inline = (_name('inline model', lambda: ws.inline_ai.model.name, inline_dflt)
+                  if ws._inline_ai is not None else inline_dflt)
+        completion_dflt = ws.completion_model or os.environ.get('LEELA_MODEL_COMPLETION') or 'gpt-4.1'
+        completion = (_name('completion model', lambda: ws.ai.routing.name_for('completion'), completion_dflt)
+                      if ws._ai is not None else completion_dflt)
         # A durable choice remains visible even before its provider is authenticated. Hiding
         # it made the first local option look selected while requests still used the saved one.
         for current in (agent, inline, completion):
-            try:
-                spec = resolve(current)
-                if not any(resolve(row['value']).model_id == spec.model_id for row in rows):
-                    provider = spec.model_id.partition('/')[0] if not spec.local else spec.runtime
-                    rows.append({'value': current, 'label': current, 'provider': provider,
-                                 'source': 'saved choice · provider credentials may be required'})
-            except Exception: pass
+            spec = _spec(current)
+            if spec is None:
+                # The chosen model is the one that cannot be resolved. It still gets a row, saying
+                # why: dropping it is what left the user with an empty picker and no explanation.
+                why = f'unavailable ({notes.get(current, "")})'
+                row = first(r for r in rows if r['value'] == current)
+                if row is None: rows.append(row := {'value': current, 'label': current})
+                row.update(provider='unavailable', source=why, unavailable=True)
+                continue
+            if not any((s := _spec(r['value'])) and s.model_id == spec.model_id for r in rows):
+                provider = spec.model_id.partition('/')[0] if not spec.local else spec.runtime
+                rows.append({'value': current, 'label': current, 'provider': provider,
+                             'source': 'saved choice · provider credentials may be required'})
         def selected(current):
-            try:
-                mid = resolve(current).model_id
-                return ifnone(first(r['value'] for r in rows if resolve(r['value']).model_id == mid), current)
-            except Exception: return current
-        return {'models': rows, 'saved':saved, 'auth': auth_status(), 'runtimes': runtimes(),
+            spec = _spec(current)
+            if spec is None: return current
+            return ifnone(first(r['value'] for r in rows
+                                if (s := _spec(r['value'])) and s.model_id == spec.model_id), current)
+        return {'models': rows, 'saved':saved, 'notes': notes,
+                'auth': _try('auth', auth_status, {}) or {}, 'runtimes': _try('runtimes', runtimes, []) or [],
                 'selected': {'agent': selected(agent), 'inline': selected(inline),
                              'completion': selected(completion)}}
 
@@ -1941,7 +2025,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                 # and the workspace to fail later, at the first local request.
                 if which not in Assistant.LITERT_BACKENDS:
                     raise ValueError(f'litert backend must be one of {", ".join(Assistant.LITERT_BACKENDS)}')
-                live = [a for a in (ws._ai, ws._inline_ai) if a is not None]
+                live = _live_assistants()
                 for a in live: a.set_litert_backend(which)
                 if not live: os.environ['LEELA_LITERT_BACKEND'] = which
                 ws.litert_backend = which
@@ -1952,7 +2036,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         try:
             enabled = d.get('local_multimodal')
             if not isinstance(enabled, bool): raise ValueError('local_multimodal must be true or false')
-            live = [a for a in (ws._ai, ws._inline_ai) if a is not None]
+            live = _live_assistants()
             if any(a.busy for a in live): raise RuntimeError('cannot change local multimodal while an assistant is working')
             for a in live: a.set_local_multimodal(enabled)
             ws.local_multimodal = enabled
@@ -1969,9 +2053,8 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         auto = d.get('auto', ws.compact_auto)
         if not isinstance(auto, bool): return _fail('auto must be true or false')
         ws.compact_auto, ws.compact_strategy = auto, strategy
-        for agent in (ws._ai, ws._inline_ai):
-            if agent is not None:
-                agent.compactor.auto, agent.compactor.strategy = auto, strategy
+        for agent in _live_assistants():
+            agent.compactor.auto, agent.compactor.strategy = auto, strategy
         ws.save()
         return {'ok': True, 'auto': auto, 'strategy': strategy,
                 'note': f'auto compaction {"on" if auto else "off"} · {strategy}'}
@@ -1997,10 +2080,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
     async def agent_memory():
         "Editable notes and their explicit per-model session routing."
         notes = await _off_loop(ws.memory.agent_notes)
-        rows = []
-        for note in notes:
-            text = await _off_loop(ws.memory.exact_text, str(note['id']))
-            rows.append({**note, 'text': text})
+        rows = [{**note, 'text': await _off_loop(ws.memory.exact_text, str(note['id']))} for note in notes]
         return {'notes': rows, 'selected': ws.agent_memory_selection,
                 'targets': {'agent': 'Agent conversation', 'inline': 'Prompt cells',
                             'completion': 'Code completion'}}
@@ -2022,8 +2102,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             if target not in ws.agent_memory_selection: return _fail('targets must contain only agent, inline, or completion')
             if new_id and new_id not in ws.agent_memory_selection[target]: ws.agent_memory_selection[target].append(new_id)
         ws.save()
-        for assistant in (ws._ai, ws._inline_ai):
-            if assistant is not None: assistant.refresh()
+        _refresh_assistants()
         return {'ok': True, 'id': new_id, 'note': ws.memory.note}
 
     @rt('/agent/memory/select')
@@ -2037,9 +2116,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         ws.agent_memory_selection[target] = selected; ws.save()
         assistant = ws._ai if target in {'agent', 'completion'} else ws._inline_ai
         if assistant is not None: assistant.refresh()
-        tokens = 0
-        for value in selected:
-            tokens += estimate_tokens(await _off_loop(ws.memory.exact_text, value))
+        tokens = sum([estimate_tokens(await _off_loop(ws.memory.exact_text, v)) for v in selected])
         return {'ok': True, 'target': target, 'ids': selected, 'tokens': tokens}
 
     @rt('/agent/memory/delete')
@@ -2050,8 +2127,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         for target, ids in ws.agent_memory_selection.items():
             ws.agent_memory_selection[target] = [value for value in ids if value != doc_id]
         ok = await _off_loop(ws.memory.forget, doc_id); ws.save()
-        for assistant in (ws._ai, ws._inline_ai):
-            if assistant is not None: assistant.refresh()
+        _refresh_assistants()
         return {'ok': ok, 'note': ws.memory.note}
 
     @rt('/agent/states')
@@ -2121,24 +2197,19 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
         "Relevant saved states remain advisory; the browser decides whether to attach one."
         states = {str(s['id']): s for s in ws.memory.agent_states()}
         hits = ws.memory.search(q, limit=12) if q.strip() else []
-        ids = []
-        for hit in hits:
-            doc_id = str(hit.get('doc_id') or '')
-            if doc_id in states and doc_id not in ids: ids.append(doc_id)
+        ids = [i for i in dict.fromkeys(str(h.get('doc_id') or '') for h in hits) if i in states]
         return {'query': q, 'states': [states[i] for i in ids[:5]]}
 
     @rt('/agent/state/diagnostics')
     async def agent_state_diagnostics(req):
         "Token budget, stale paths, and duplicate/conflicting headings for edited state."
-        import re
         d = await req.json(); text = str(d.get('text') or '')
         tokens = estimate_tokens(text, ws.ai.backend.count_tokens if ws._ai is not None else None)
         paths = set(re.findall(r'(?<![\w.-])(?:[\w.-]+/)+[\w.-]+', text))
-        missing = []
-        for path in paths:
-            try:
-                if not ws.fs._check(path).exists(): missing.append(path)
-            except Exception: missing.append(path)
+        def absent(path):
+            try: return not ws.fs._check(path).exists()
+            except Exception: return True
+        missing = [p for p in paths if absent(p)]
         headings = [h.strip().lower() for h in re.findall(r'^#{1,3}\s+(.+)$', text, re.M)]
         duplicate = sorted({h for h in headings if headings.count(h) > 1})
         return {'tokens': tokens, 'context': ws.ai.model.ctx if ws._ai is not None else None,
@@ -2266,16 +2337,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
             task = loop.run_in_executor(None, pump)
             finished, approval_id, activity_versions, execution_version = False, None, {}, None
             compact_count = a.compactor.count
-
-            def changed_activity():
-                """New calls and in-place transitions (pending -> done), not only appends."""
-                changed = []
-                for row in a.activity.rows(mark=a.activity._mark):
-                    version = (row.get('done'), row.get('ok'), row.get('line'), row.get('detail'), row.get('secs'))
-                    if activity_versions.get(row['id']) != version:
-                        activity_versions[row['id']] = version
-                        changed.append(row)
-                return changed
+            def changed_activity(): return _activity_changes(a, activity_versions)
 
             try:
                 while True:
@@ -2325,10 +2387,8 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                                 'branch_id': a.current_branch_id, 'capabilities': capabilities,
                                 'problems': a.problems,
                                 'activity': a.activity.rows(mark=a.activity._mark),
-                                'edits': [{'path': p, **_diff(was, now)}
-                                          for p, (was, now) in a.changes().items()]})
+                                'edits': _edit_diffs(a)})
 
-        from starlette.responses import StreamingResponse
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
@@ -2520,7 +2580,7 @@ document.documentElement.style.colorScheme = t === 'system' ? 'light dark' : t; 
                 'activity': a.activity.rows(mark=a.activity._mark),
                 'usage': a.turn_use.dict(), 'usage_label': repr(a.turn_use),
                 'session_usage': a.use.dict(), 'session_usage_label': repr(a.use), 'model': a.model.name,
-                'edits': [{'path': p, **_diff(was, now)} for p, (was, now) in a.changes().items()]}
+                'edits': _edit_diffs(a)}
 
     # -- kernel control ----------------------------------------------------
     @rt('/nb/interrupt')
@@ -2637,7 +2697,6 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             ws = Workspace(**kw)
         for r in roots: ws.add_root(r)
         if not ws.fs.roots:
-            import sys
             ws.add_root(Path.home() if getattr(sys, 'frozen', False) else os.getcwd())
         if ws.restore_remembered_agent_state(): ws.save()
         app = ide_app(ws, gate)

@@ -6,7 +6,7 @@ itself is never enumerated. A secret's value never reaches the browser, only tha
 
 from __future__ import annotations
 
-import os
+import asyncio, inspect, os, threading
 
 __all__ = ['EnvStore', 'EnvError']
 
@@ -27,6 +27,21 @@ def _dockeasy():
     return env_get, env_set, secret_get, secret_set
 
 
+def _call(fn, *args, **kwargs):
+    value = fn(*args, **kwargs)
+    if not inspect.isawaitable(value): return value
+    try: asyncio.get_running_loop()
+    except RuntimeError: return asyncio.run(value)
+    out = []
+    def run():
+        try: out.append((True, asyncio.run(value)))
+        except BaseException as e: out.append((False, e))
+    thread = threading.Thread(target=run); thread.start(); thread.join()
+    ok, value = out[0]
+    if ok: return value
+    raise value
+
+
 class EnvStore:
     "The environment keys one project cares about, read and written through dockeasy."
     # `service` stays at dockeasy's keychain default, so a token set from a `dockeasy`/`gheasy`
@@ -42,7 +57,8 @@ class EnvStore:
         # one from the process, and `Pipeline._env` passes it to the child, so a step whose
         # token is exported must not be reported as missing it.
         env_get, _set, secret_get, _sset = _dockeasy()
-        stored = secret_get(key, service=self.service, path=self.path) if secret else env_get(key, path=self.path)
+        stored = (_call(secret_get, key, service=self.service, path=self.path) if secret
+                  else _call(env_get, key, path=self.path))
         return stored or os.environ.get(key) or ''
 
     def set(self, key, value, secret=True):
@@ -51,8 +67,8 @@ class EnvStore:
         if not key: raise EnvError('a key is required')
         if not str(value): raise EnvError(f'{key} needs a value')
         env_get, env_set, secret_get, secret_set = _dockeasy()
-        if secret: secret_set(key, str(value), service=self.service, path=self.path)
-        else: env_set(key, str(value), path=self.path)
+        if secret: _call(secret_set, key, str(value), service=self.service, path=self.path)
+        else: _call(env_set, key, str(value), path=self.path)
         return {'key': key, 'secret': bool(secret)}
 
     def unset(self, key):
@@ -95,8 +111,4 @@ class EnvStore:
 
     def values(self, keys):
         "The values for `keys`, for handing to a child process. Never returned to a browser."
-        out = {}
-        for key in keys or ():
-            v = self.get(key, secret=True)
-            if v: out[key] = v
-        return out
+        return {key: v for key in (keys or ()) if (v := self.get(key, secret=True))}

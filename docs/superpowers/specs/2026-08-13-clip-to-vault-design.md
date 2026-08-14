@@ -4,8 +4,13 @@
 > done at `8cc89a6` and `c119e20`: `leela/blocks/jobs/` with the job row, restart recovery, the
 > cadence tick and all three clip kinds; `Memory` carrying the vault surface; 13 flow tests in
 > `tests/test_vault.py` and `tests/test_jobs.py`; 12 new routes pinned in `tests/routes.txt`.
-> **Not done: the browser surface** — the clip affordance on a tab and in the tree, the tidy
-> review list, the shelf rail, the PII badge. Every route it needs exists and is tested.
+> The browser surface is done: the shelf rail and clip forms at `b3f9491`, and the last three —
+> the clip affordance on a tab and in the tree, the tidy review list, the PII badge — with
+> `/vault/tidy/list` and `/vault/pii/badge`, fragment tests in `tests/blocks/test_vault_surface.py`
+> and browser tests in `tests/test_web_vault.py`.
+>
+> One deviation: the badge on a tidy row is fetched on `revealed` rather than rendered with the
+> list, because a PII report reads the whole document and twenty rows would be twenty full scans.
 > Deviations from this design are marked inline below.
 
 Click a document, a codebase or an API spec into the workspace's vault shelf. Jobs carry the work,

@@ -17,16 +17,16 @@ CSS = (ROOT / 'leela/static/lee-ide.css').read_text()
 
 
 def test_cursor_theme_is_default_and_keeps_light_dark_system():
-    assert "const THEMES = ['system', 'dark', 'light', 'cursor']" in JS
-    assert "localStorage.getItem('lee-theme') || 'cursor'" in JS
-    assert ':root[data-theme="cursor"]' in CSS
-    assert ':root[data-theme="light"]' in CSS
-    assert ':root[data-theme="dark"]' not in CSS or '--lee-bg:' in CSS  # dark is :root default
-    assert 'thin light chrome' in JS
-    # Quiet chrome — not chunky card buttons as the primary look.
-    assert ':root[data-theme="cursor"] .lee-btn.go' in CSS
-    assert ':root[data-theme="cursor"] .lee-phead' in CSS
-    assert ':root[data-theme="cursor"] .lee-node.sel' in CSS
+    assert "const THEME_DEFAULT = 'cursor:light:tight'" in JS
+    assert "localStorage.getItem('lee-theme')" in JS
+    assert ':root[data-theme="cursor"][data-mode="light"]' in CSS
+    assert ':root[data-theme="cursor"][data-mode="dark"]' in CSS
+    assert 'thin quiet chrome' in JS
+    # Quiet chrome — not chunky card buttons as the primary look. It is now the `tight`
+    # density rather than the cursor family, so any palette can be worn at cursor's size.
+    assert ':root[data-density="tight"] .lee-btn.go' in CSS
+    assert ':root[data-density="tight"] .lee-phead' in CSS
+    assert ':root[data-density="tight"] .lee-node.sel' in CSS
 
 
 def test_file_click_sets_the_same_selected_state_as_keyboard_navigation(tmp_path):

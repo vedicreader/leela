@@ -493,29 +493,44 @@ def test_expandable_expression_results_open_in_a_floating_value_lens():
     assert "_hits[0]['path']" in heading
 
 
+# `all` is the default mode and it streams: one `leg` event per backend over SSE rather than one
+# batch answer, so this feeds the dialog a stream. The same hit arrives twice, from two legs, to
+# pin the merge -- the second leg must add its name to the row the first one drew, not a second row.
+_SEARCH_HIT = ('{"path": "/tmp/engine.py", "line": 17, "text": "def runtime_engine():\\n    return 42",'
+               ' "kind": "%s", "symbol": %s, "score": 220%s}')
+_SEARCH_STREAM = (
+    'event: start\ndata: {"legs": ["symbols", "rg"], "searched": ["/tmp/proj"]}\n\n'
+    'event: leg\ndata: {"leg": "symbols", "hits": ['
+    + (_SEARCH_HIT % ('symbol', '"runtime_engine"', ', "sources": ["symbols"]')) + ']}\n\n'
+    'event: leg\ndata: {"leg": "rg", "hits": [' + (_SEARCH_HIT % ('text', 'null', '')) + ']}\n\n'
+    'event: done\ndata: {}\n\n')
+
+
 def test_unified_code_search_previews_highlighted_code_and_opens_locations():
     async def go(pg):
         await pg.route('**/code/status', lambda route: route.fulfill(status=200, content_type='application/json',
           body='{"ok":true,"files":274,"packages":152,"graph_nodes":8088,"stale_files":0}'))
-        await pg.route('**/search?*', lambda route: route.fulfill(status=200, content_type='application/json', body='''{
-          "backend":"all","note":"rg + symbols + fts + ann","hits":[{
-            "path":"/tmp/engine.py","line":17,"text":"def runtime_engine():\\n    return 42",
-            "kind":"symbol","symbol":"runtime_engine","score":220,"sources":["symbols","rg"]
-          }]}'''))
+        await pg.route('**/search/stream?*', lambda route: route.fulfill(
+            status=200, content_type='text/event-stream', body=_SEARCH_STREAM))
         await pg.evaluate("leeAct('code_search')")
         await pg.fill('#cs', 'runtime_engine')
         await pg.wait_for_selector('.lee-search-result')
-        await pg.click('.lee-search-result')
         await pg.wait_for_selector('.lee-search-preview .cm-editor')
-        modes = await pg.locator('.lee-searchmodes').inner_text()
+        modes = await pg.locator('.lee-searchrail').inner_text()
         preview = await pg.locator('.lee-search-preview').inner_text()
-        await pg.dblclick('.lee-search-result')
+        scope_note = await pg.locator('#csscopenote').inner_text()
+        rows = await pg.locator('.lee-search-result').count()
+        # One click opens the hit at its line and closes the dialog; the preview needed no click.
+        await pg.click('.lee-search-result')
         location = await pg.evaluate('lee.pendingLocation')
-        return modes, preview, location
-    modes, preview, location = _run(go)
-    assert modes.splitlines()[0] == 'context'
+        return modes, preview, scope_note, rows, location, await pg.locator('.lee-code-search-modal').count()
+    modes, preview, scope_note, rows, location, still_open = _run(go)
+    assert modes.splitlines()[:2] == ['all', '1']   # default mode, and both legs counted as one hit
+    assert rows == 1
     assert 'runtime_engine' in preview and 'symbols + rg' in preview
-    assert location == {'path': '/tmp/engine.py', 'line': 17}
+    assert scope_note == 'searched proj'
+    assert (location['path'], location['line']) == ('/tmp/engine.py', 17)
+    assert still_open == 0
 
 
 def test_research_memory_is_a_first_class_right_panel():

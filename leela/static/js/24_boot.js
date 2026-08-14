@@ -15,7 +15,7 @@ async function boot() {
   setInterval(watchOpenFile, 1000);    // agent, terminal and git writes appear without a page refresh
   pollApproval();
   setInterval(pollApproval, 750);       // catches Rishi approvals raised outside an agent SSE stream
-  applyTheme(localStorage.getItem('lee-theme') || 'cursor');
+  applyTheme(readTheme());   // also rewrites a pre-family value into `family:mode`
   refreshProjectPills();
   setInterval(refreshKernelPill, 5000);
   setInterval(refreshProjectPills, 5000);

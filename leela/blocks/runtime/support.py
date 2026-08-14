@@ -22,16 +22,18 @@ def _run(args, timeout=180):
         encoding='utf-8', errors='replace', capture_output=True, timeout=timeout)
 
 
+def _probe(python, module):
+    "Whether `module` imports in `python`, with its version or the failure."
+    p = _run([python, '-c', f'import {module}; print(getattr({module}, "__version__", "installed"))'], 15)
+    return {'available': p.returncode == 0,
+        'version': p.stdout.strip() if p.returncode == 0 else '',
+        'error': (p.stderr or p.stdout).strip() if p.returncode else ''}
+
+
 def kernel_support(python):
     "Importability of both supported kernel launchers in ``python``."
     python = str(Path(python).expanduser())
-    result = {}
-    for module in ('ipykernel', 'ipymini'):
-        p = _run([python, '-c', f'import {module}; print(getattr({module}, "__version__", "installed"))'], 15)
-        result[module] = {'available': p.returncode == 0,
-            'version': p.stdout.strip() if p.returncode == 0 else '',
-            'error': (p.stderr or p.stdout).strip() if p.returncode else ''}
-    return result
+    return {m: _probe(python, m) for m in ('ipykernel', 'ipymini')}
 
 
 def install_kernel_support(python, packages=('ipykernel>=7.3.0', 'ipymini>=0.0.1')):
@@ -45,7 +47,7 @@ def install_kernel_support(python, packages=('ipykernel>=7.3.0', 'ipymini>=0.0.1
     attempts.append([python, '-m', 'pip', 'install', *packages])
 
     # A standard venv may have been created without pip; ensurepip is the portable fallback.
-    if not shutil.which('uv'):
+    if not uv:
         bootstrap = _run([python, '-m', 'ensurepip', '--upgrade'])
         if bootstrap.returncode == 0:
             attempts.insert(0, [python, '-m', 'pip', 'install', *packages])

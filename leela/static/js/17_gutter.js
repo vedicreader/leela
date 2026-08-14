@@ -281,7 +281,7 @@ function gitOperationBanner(d) {
   const op = d.operation || {};
   if (!op.active) return '';
   return `<section class="lee-git-operation"><div><strong>${esc(op.active)} in progress</strong><span>Resolve the listed conflicts, then continue or abort.</span></div>` +
-    `<span class="lee-spacer"></span>${op.can_continue ? '<button data-operation="continue">continue</button>' : ''}${op.can_skip ? '<button data-operation="skip">skip</button>' : ''}` +
+    `<span class="lee-spacer"></span><button data-conflict-center>resolve conflicts</button>${op.can_continue ? '<button data-operation="continue">continue</button>' : ''}${op.can_skip ? '<button data-operation="skip">skip</button>' : ''}` +
     `${op.can_abort ? '<button data-operation="abort" class="warn">abort</button>' : ''}</section>`;
 }
 // Why a file will not stay staged, said once, where the file list is. Git treats a filter it

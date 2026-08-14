@@ -40,7 +40,7 @@ dependencies = [
     "packaging>=24.0",         # comparing installed versions for the editor's package hints
     "pyyaml>=6.0",             # reading a YAML OpenAPI spec, and the workflow files on disk
     "dhrishti>=0.1.2",         # the inspection engine: namespace -> node tree, as a JSON API in-kernel
-    "vishalakshi>=0.1.7",      # the vault behind memory: prose shelves, topics, federated recall,
+    "vishalakshi>=0.1.8",      # the vault behind memory: prose shelves, topics, federated recall,
                                # doc_marks, the noise ranker, and the pii report whose `ner=` and
                                # `scanned_ner` the vault block's badge reads
 ]

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...core.envs import EnvStore
-from ..pipelines.pipelines import Pipeline, PipelineError, Step
+from ..pipelines.pipelines import Pipeline, PipelineError, Step, env_value
 
 __all__ = ['Drive', 'DriveError', 'Part', 'PARTS', 'DRIVE_FILE', 'context', 'parts']
 
@@ -100,9 +100,7 @@ def context(root, env=None):
     "The values every snippet is rendered with, resolved once."
     root = Path(root).expanduser().resolve()
     store = env or EnvStore()
-    def value(key, default=''):
-        try: return store.get(key, secret=False) or default
-        except Exception: return default
+    def value(key, default=''): return env_value(store, key, default)
     app, schema = '', {}
     try:
         from gheasy.core import GheasyConfig
@@ -129,18 +127,19 @@ def context(root, env=None):
             'exc': ['data/', '.git/', '.venv/', '__pycache__/']}
 
 
+def _step(part, exe, ctx):
+    "One part as a `Step`, its snippet rendered with this project's values."
+    code = part.code.format(**ctx)
+    return Step(id=part.id, label=f'{part.package} · {part.label}', doc=part.doc,
+                cmd=f'python -c … {part.package}', argv=[exe, '-c', code], needs=list(part.needs),
+                meta={'package': part.package, 'code': code, 'writes': list(part.writes),
+                      'produces': list(part.produces), 'title': part.label})
+
+
 def parts(root, env=None, python=''):
     "Every part as a runnable step, with this project's values already in the snippet."
     ctx = context(root, env)
-    exe = str(python or sys.executable)
-    out = []
-    for part in PARTS:
-        code = part.code.format(**ctx)
-        out.append(Step(id=part.id, label=f'{part.package} · {part.label}', doc=part.doc,
-                        cmd=f'python -c … {part.package}', argv=[exe, '-c', code], needs=list(part.needs),
-                        meta={'package': part.package, 'code': code, 'writes': list(part.writes),
-                              'produces': list(part.produces), 'title': part.label}))
-    return out
+    return [_step(p, str(python or sys.executable), ctx) for p in PARTS]
 
 
 class Drive(Pipeline):

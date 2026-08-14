@@ -90,6 +90,19 @@ def test_a_green_step_starts_the_next_one_and_a_red_one_stops_the_run(tmp_path):
     assert 'gamma' not in r.tail()
 
 
+def test_a_completed_release_is_not_quietly_released_a_second_time(tmp_path):
+    "`start` runs on to the end, and that end uploads to PyPI, so only `reset` allows a second."
+    r = Release(project(tmp_path/'p', steps=[{'id': 'gh', 'label': 'release', 'cmd': 'echo release'}]))
+    async def go():
+        await r.start(); await settle(r)
+        with pytest.raises(ReleaseError, match='already run'): await r.start()
+        r.reset()
+        await r.start(); await settle(r)
+    run(go())
+    assert r.state()['steps'][0]['status'] == 'passed'
+    assert r.tail().count('❯ echo release') == 1, 'reset clears the transcript with the results'
+
+
 def test_the_transcript_covers_the_whole_release_not_just_the_last_step(tmp_path):
     """Each step is its own pty, so the pipeline keeps the log rather than the terminal.
 

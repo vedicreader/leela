@@ -127,18 +127,25 @@ function leeRight(which) {
 }
 window.leeRight = leeRight;
 
+// Every memory view is fetched asynchronously into one `#memorybody`, so a slow answer must not
+// paint over the view you switched to while it was in flight. Each switch takes the next token;
+// a fetch that finds the token moved drops its result.
+let memoryViewSeq = 0;
 function setMemoryView(view) {
+  memoryViewSeq += 1;
   const panel = $('.lee-memory');
-  if (panel) { panel.classList.remove('memory-view-notes', 'memory-view-sources', 'memory-view-topics'); panel.classList.add('memory-view-' + view); }
+  if (panel) { panel.classList.remove('memory-view-notes', 'memory-view-sources', 'memory-view-topics', 'memory-view-vault'); panel.classList.add('memory-view-' + view); }
   $$('[data-memory-view]').forEach(button => button.classList.toggle('active', button.dataset.memoryView === view));
 }
 async function leeMemoryNotes() {
   const body = $('#memorybody'); if (!body) return;
   lee.memoryLoaded = 'loading'; leePane('right', true); leeRight('memory'); setMemoryView('notes');
+  const seq = memoryViewSeq;
   body.innerHTML = '<div class="lee-memory-empty">Loading agent memory…</div>';
   try {
     const data = await api('/agent/memory'), selected = Object.fromEntries(
       Object.entries(data.selected || {}).map(([target, ids]) => [target, new Set(ids || [])]));
+    if (seq !== memoryViewSeq) return;      // the vault (or another view) is on screen now
     lee.agentMemory = data; lee.memoryLoaded = 'notes';
     $('#memorystatus').textContent = `· ${data.notes.length} note${data.notes.length === 1 ? '' : 's'}`;
     if (!data.notes.length) {
@@ -165,7 +172,7 @@ async function leeMemoryNotes() {
         } catch (e) { input.checked = !input.checked; status(e.message || String(e), 'err'); }
       });
     });
-  } catch (e) { lee.memoryLoaded = false; body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+  } catch (e) { if (seq !== memoryViewSeq) return; lee.memoryLoaded = false; body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
 }
 function leeNewMemoryNote(draft = {}) { leeAgentMemory('__new__', draft); }
 window.leeMemoryNotes = leeMemoryNotes; window.leeNewMemoryNote = leeNewMemoryNote;
@@ -1120,7 +1127,9 @@ async function updateAgentSuggest() {
       .filter(x => x.name.toLowerCase().startsWith(query)).slice(0, 14)
       .map(x => ({...x, label: '/' + x.name, detail: `${x.kind} · ${x.help || ''}`}));
   } else if (mention) {
-    const d = await api('/fs/find?q=' + encodeURIComponent(mention[1]) + '&limit=12');
+    // `@` means "in this project", not "anywhere the workspace can reach": with several
+    // checkouts open, the unscoped list is mostly files from a project you are not in.
+    const d = await api('/fs/find?scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=12');
     if (seq !== agentSuggestSeq) return;
     lee.agentSuggest = (d.hits || []).slice(0, 12).map(f => ({kind: 'file', path: f.path, name: f.name,
       label: '@' + f.name, detail: compactPath(f.path)}));

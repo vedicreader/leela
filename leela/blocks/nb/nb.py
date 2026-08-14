@@ -30,6 +30,13 @@ MAX_UNDO = 100        # structural notebook snapshots kept in each direction
 def cell_id(): return uuid.uuid4().hex[:8]
 
 
+def _detached(cell):
+    "A copy of `cell` with a fresh identity and no running state."
+    n = deepcopy(cell)
+    n.id, n.running, n.fresh = cell_id(), False, False
+    return n
+
+
 @dataclass
 class Cell(Dictable):
     'One notebook cell. `outputs` are nbformat dicts exactly as the kernel sent them.'
@@ -207,25 +214,25 @@ class Notebook:
     def detached(self, i):
         "A clipboard-safe copy of cell `i`, with a fresh identity and no running state."
         if not (0 <= i < len(self.cells)): return None
-        n = deepcopy(self.cells[i])
-        n.id, n.running, n.fresh = cell_id(), False, False
-        return n
+        return _detached(self.cells[i])
 
     def paste(self, i, cell):
         "Insert a copy of `cell` at `i`, leaving the clipboard reusable."
         if not isinstance(cell, Cell): raise TypeError('cell clipboard must contain a Cell')
-        n = deepcopy(cell)
-        n.id, n.running, n.fresh = cell_id(), False, False
-        return self.insert(i, n)
+        return self.insert(i, _detached(cell))
 
     def duplicate(self, i):
         "Duplicate cell `i` below itself, including its current output but with a fresh id."
         if (n := self.detached(i)) is None: return None
         return self.insert(i + 1, n)
 
+    def _live(self, indices):
+        "The given cell indices, deduplicated, in order, and inside the document."
+        return sorted({int(i) for i in indices if 0 <= int(i) < len(self.cells)})
+
     def delete_many(self, indices):
         "Delete a cell range as one undoable operation."
-        indices = sorted({int(i) for i in indices if 0 <= int(i) < len(self.cells)})
+        indices = self._live(indices)
         if not indices: return []
         self._checkpoint(indices[0])
         removed = [self.cells[i] for i in indices]
@@ -243,8 +250,7 @@ class Notebook:
         out = []
         for raw in cells:
             if not isinstance(raw, Cell): raise TypeError('cell clipboard must contain Cells')
-            n = deepcopy(raw)
-            n.id, n.running, n.fresh = cell_id(), False, False
+            n = _detached(raw)
             self.cells.insert(i + len(out), n)
             out.append(n)
         self.dirty = True
@@ -252,7 +258,7 @@ class Notebook:
 
     def move_many(self, indices, target):
         "Move selected cells before `target` as one stable, undoable block."
-        indices = sorted({int(i) for i in indices if 0 <= int(i) < len(self.cells)})
+        indices = self._live(indices)
         if not indices: return 0
         target = max(0, min(int(target), len(self.cells)))
         self._checkpoint(indices[0])

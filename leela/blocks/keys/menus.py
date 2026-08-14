@@ -24,10 +24,10 @@ S = MenuItem
 MENUS = {
     'files': L(S('quick_open'), S('add_root'), S(), S('new_file'), S('new_notebook'),
                S('new_dir'), S(), S('code_search'), S('refresh_files')),
-    'file': L(S('open'), S('git_blame'), S(), S('new_file'), S('new_dir'), S(), S('rename'),
-              S('delete', 'warn')),
-    'folder': L(S('new_file'), S('new_dir'), S(), S('rename'), S('delete', 'warn'),
-                S(), S('add_root'), S('refresh_files')),
+    'file': L(S('open'), S('git_blame'), S(), S('clip_to_vault'), S(), S('new_file'), S('new_dir'),
+              S(), S('rename'), S('delete', 'warn')),
+    'folder': L(S('new_file'), S('new_dir'), S(), S('clip_to_vault'), S(), S('rename'),
+                S('delete', 'warn'), S(), S('add_root'), S('refresh_files')),
     'root': L(S('new_file'), S('new_dir'), S(), S('remove_root', 'warn'),
               S(), S('add_root'), S('refresh_files')),
 
@@ -43,8 +43,8 @@ MENUS = {
               S('find_similar'), S('git_blame'), S('run_selection'), S(), S('cell_delete', 'warn')),
     'variable': L(S('expand'), S('grid'), S(), S('edit_value'), S('promote'),
                   S(), S('copy_value'), S('copy_path')),
-    'tab': L(S('save'), S('show_diff'), S('git_blame'), S(), S('close_tab'),
-             S('close_others'), S('close_right'), S('close_saved')),
+    'tab': L(S('save'), S('show_diff'), S('git_blame'), S(), S('clip_to_vault'), S(),
+             S('close_tab'), S('close_others'), S('close_right'), S('close_saved')),
     'kernel': L(S('pick_kernel'), S('switch_env'), S(), S('interrupt', 'warn'),
                 S('restart', 'warn')),
     'exec': L(S('exec_run'), S('exec_promote'), S('toggle_scope'), S(), S('exec_clear')),
@@ -56,22 +56,18 @@ def menu(surface):
     return MENUS.get(surface, L())
 
 
+def _row(item):
+    "One menu row: a separator, or an action with its keymap label and effective chord."
+    if not item.action: return {'separator': True}
+    key = lookup(item.action)
+    return {'action': item.action, 'label': key.label or item.action.replace('_', ' '),
+            'chord': chord_display(key), 'kind': item.kind}
+
+
 def web_menus():
     "JSON-ready menus, resolving labels and effective user chords from the keymap."
-    out = {}
-    for surface, items in MENUS.items():
-        rows = []
-        for item in items:
-            if not item.action:
-                rows.append({'separator': True})
-                continue
-            key = lookup(item.action)
-            rows.append({'action': item.action,
-                         'label': key.label or item.action.replace('_', ' '),
-                         'chord': chord_display(key),
-                         'kind': item.kind})
-        out[surface] = rows
-    return out
+    # A plain list, not `items.map(...)`: these rows are JSON-encoded, and `L` is not a list.
+    return {surface: [_row(i) for i in items] for surface, items in MENUS.items()}
 
 
 _known = set(KEYS.attrgot('action'))

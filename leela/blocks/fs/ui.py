@@ -33,6 +33,15 @@ def git_tree_state(fs):
     return out
 
 
+def _git_class(change):
+    "One file's Git decoration, worst news first: a conflict outranks an unstaged edit."
+    if not change: return ''
+    if change['conflicted']: return 'conflict'
+    if change['untracked']: return 'untracked'
+    if change['staged'] and not change['unstaged']: return 'staged'
+    return 'modified'
+
+
 def tree_node(e, git_state=None):
     "One file-tree row; directories lazily fetch their children on first open."
     if e.is_dir:
@@ -40,9 +49,7 @@ def tree_node(e, git_state=None):
             hx_get=f'/tree?path={quote(e.path)}', hx_target='next .lee-kids', hx_trigger='click once')
         return Details(summary, Div(cls='lee-kids'), data_path=e.path, role='treeitem',
             cls='lee-node lee-dir' + (' lee-root' if e.is_root else ''), aria_expanded='false', aria_selected='false')
-    change = (git_state or {}).get(str(Path(e.path).resolve()))
-    state = ('conflict' if change and change['conflicted'] else 'untracked' if change and change['untracked']
-        else 'staged' if change and change['staged'] and not change['unstaged'] else 'modified' if change else '')
+    state = _git_class((git_state or {}).get(str(Path(e.path).resolve())))
     return Div(Span(e.name, cls='lee-fname'), Span(state[:1].upper(), cls='lee-tree-git') if state else '',
         cls='lee-node lee-file' + (f' git-{state}' if state else ''), data_path=e.path, role='treeitem',
         data_lang=e.lang or '', aria_selected='false',

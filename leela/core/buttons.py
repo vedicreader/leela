@@ -17,6 +17,12 @@ BARS = ('toolbar', 'cell', 'files', 'keys', 'exec', 'vars', 'agent',
         'web_editor', 'web_files', 'web_vars')
 
 
+def _with_chord(what, action):
+    "`what`, plus the chord that also does it when there is one."
+    c = chord_display(action)
+    return f'{what}  ({c})' if c and c != '—' else what
+
+
 @dataclass(frozen=True)
 class Btn:
     'One clickable control: the action it runs, its face, and the bar it belongs to.'
@@ -33,9 +39,7 @@ class Btn:
     def tooltip(self):
         "What to show on hover: what it does, and the key that also does it."
         k = lookup(self.action)
-        what = self.title or (k.label if k else self.action)
-        c = chord_display(self.action)
-        return f'{what}  ({c})' if c and c != '—' else what
+        return _with_chord(self.title or (k.label if k else self.action), self.action)
 
 
 BUTTONS = L(
@@ -114,9 +118,8 @@ def bar(name):
 def tip(action):
     "The tooltip for an action, whether or not it has a button -- the label plus its chord."
     k = lookup(action)
-    c = chord_display(action)
-    what = k.label if (k and k.label) else action
-    return f'{what}  ({c})' if c and c != '—' else what
+    # Unlike `Btn.tooltip`, an action with a blank label falls back to its own name here.
+    return _with_chord(k.label if (k and k.label) else action, action)
 
 
 _acts = set(KEYS.attrgot('action'))

@@ -16,61 +16,81 @@ __all__ = ['CAPS', 'connect', 'project_package_rows']
 CAPS = ('fs', 'pool')
 
 
+_VERSIONS_SCRIPT = ('import importlib.metadata as m,json,sys\n'
+                    'out={}\n'
+                    'for n in json.loads(sys.argv[1]):\n'
+                    ' try: out[n]=m.version(n)\n'
+                    ' except m.PackageNotFoundError: out[n]=None\n'
+                    'print(json.dumps(out))')
+
+
+def _declared(data):
+    "Every requirement string a pyproject states, across dependencies, extras and groups."
+    project = data.get('project') or {}
+    out = list(project.get('dependencies') or [])
+    for values in (project.get('optional-dependencies') or {}).values(): out += list(values or [])
+    for values in (data.get('dependency-groups') or {}).values():
+        out += [x for x in (values or []) if isinstance(x, str)]
+    return out
+
+
+def _installed_versions(names, python):
+    "What `python` actually has installed, asked of that interpreter rather than of ours."
+    if not names: return {}
+    try:
+        proc = subprocess.run([str(python), '-c', _VERSIONS_SCRIPT, json.dumps(names)],
+                              capture_output=True, text=True, timeout=8, check=True)
+        return json.loads(proc.stdout)
+    except Exception: return {n: None for n in names}
+
+
+def _locate(lines, raw, used):
+    "Where `raw` is declared, as `(line, end column)`. `used` keeps repeats on separate lines."
+    # The whole quoted declaration, not the bare name: that also occurs in keywords and URLs.
+    for i, line in enumerate(lines, 1):
+        for quote in ('"', "'"):
+            token = f'{quote}{raw}{quote}'
+            at = line.find(token)
+            if at >= 0 and (key := (i, at, token)) not in used:
+                used.add(key)
+                return i, at + len(token)
+    return None
+
+
+def _applies(req):
+    "Is this requirement's environment marker satisfied here? An unreadable marker is not a no."
+    try: return not (req.marker and not req.marker.evaluate())
+    except Exception: return True
+
+
+def _compatible(req, installed):
+    "Does the installed version satisfy the declared specifier? `None` when there is no opinion."
+    if installed is None or not str(req.specifier): return None
+    try: return req.specifier.contains(installed, prereleases=True)
+    except Exception: return None
+
+
 def project_package_rows(path, python=None):
     "Declared pyproject requirements with installed versions and source-line addresses."
     import tomllib
-    p = Path(path)
-    source = p.read_text(encoding='utf-8')
-    data = tomllib.loads(source)
-    project = data.get('project') or {}
-    declared = list(project.get('dependencies') or [])
-    for values in (project.get('optional-dependencies') or {}).values(): declared += list(values or [])
-    for values in (data.get('dependency-groups') or {}).values():
-        declared += [x for x in (values or []) if isinstance(x, str)]
+    python = str(python or sys.executable)
+    source = Path(path).read_text(encoding='utf-8')
+    declared = _declared(tomllib.loads(source))   # outside the try: unreadable TOML is an error, not an empty list
     try:
         from packaging.requirements import Requirement
         parsed = [(Requirement(x), x) for x in declared]
     except Exception: parsed = []
-    names = list(dict.fromkeys(r.name for r, _raw in parsed))
-    versions = {}
-    if names:
-        script = ('import importlib.metadata as m,json,sys\n'
-                  'out={}\n'
-                  'for n in json.loads(sys.argv[1]):\n'
-                  ' try: out[n]=m.version(n)\n'
-                  ' except m.PackageNotFoundError: out[n]=None\n'
-                  'print(json.dumps(out))')
-        try:
-            proc = subprocess.run([str(python or sys.executable), '-c', script, json.dumps(names)],
-                                  capture_output=True, text=True, timeout=8, check=True)
-            versions = json.loads(proc.stdout)
-        except Exception: versions = {n: None for n in names}
-    rows, used = [], set()
-    lines = source.splitlines()
+    versions = _installed_versions(list(dict.fromkeys(r.name for r, _raw in parsed)), python)
+    lines, used, rows = source.splitlines(), set(), []
     for req, raw in parsed:
-        try:
-            if req.marker and not req.marker.evaluate(): continue
-        except Exception: pass
-        # The whole quoted declaration, not the bare name: that also occurs in keywords and URLs.
-        found = None
-        for i, line in enumerate(lines, 1):
-            for quote in ('"', "'"):
-                token = f'{quote}{raw}{quote}'
-                at = line.find(token)
-                key = (i, at, token)
-                if at >= 0 and key not in used:
-                    found = (i, at + len(token)); used.add(key); break
-            if found: break
+        if not _applies(req): continue
+        found = _locate(lines, raw, used)
         if not found: continue
         installed = versions.get(req.name)
-        compatible = None
-        if installed is not None and str(req.specifier):
-            try: compatible = req.specifier.contains(installed, prereleases=True)
-            except Exception: compatible = None
         rows.append({'line': found[0], 'column': found[1], 'name': req.name,
                      'required': str(req.specifier), 'marker': str(req.marker or ''),
-                     'installed': installed, 'compatible': compatible,
-                     'python': str(python or sys.executable)})
+                     'installed': installed, 'compatible': _compatible(req, installed),
+                     'python': python})
     return rows
 
 
@@ -102,13 +122,14 @@ def connect(app, ctx):
                 # ruff finds `pyproject.toml` from `cwd`, so it must be the folder the *file* is in.
                 cwd = _format_cwd(ctx, d.get('path'))
                 def format_python():
-                    choices = [[str(python), '-m', 'ruff', 'format', '-'], [str(python), '-m', 'black', '-q', '-']]
-                    failures=[]
-                    for cmd in choices:
-                        result=subprocess.run(cmd,input=text,text=True,capture_output=True,cwd=cwd,timeout=30)
+                    "ruff first, then black; whichever the project has, with the first one's output winning."
+                    failures = []
+                    for cmd in ([str(python), '-m', 'ruff', 'format', '-'], [str(python), '-m', 'black', '-q', '-']):
+                        result = subprocess.run(cmd, input=text, text=True, capture_output=True, cwd=cwd, timeout=30)
                         if result.returncode == 0: return result.stdout
                         failures.append(result.stderr.strip())
-                    raise RuntimeError('install ruff or black in the project environment · ' + ' · '.join(x for x in failures if x))
+                    raise RuntimeError('install ruff or black in the project environment · '
+                                       + ' · '.join(x for x in failures if x))
                 formatted = await off_loop(format_python)
             else: return fail(f'no formatter configured for {lang or "this file"}')
             return {'ok': True, 'text': formatted}

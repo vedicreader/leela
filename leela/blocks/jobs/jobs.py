@@ -180,7 +180,7 @@ class Jobs:
         leave a thread behind. Nothing here pushes to the browser: a watch that fires writes a
         document, and the surfaces find it the next time they look.
         """
-        secs = int(seconds if seconds is not None else os.getenv('LEELA_POLL_SECONDS') or 0)
+        secs = int(ifnone(seconds, os.getenv('LEELA_POLL_SECONDS') or 0))
         if secs <= 0 or self._ticking: return None
         self._ticking = True
 

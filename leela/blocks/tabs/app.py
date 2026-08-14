@@ -88,6 +88,10 @@ def connect(app, ctx):
             # No contents: the browser's own viewer must fetch the bytes from `/file/raw` itself.
             return {'kind': 'pdf', 'path': t.path, 'title': t.title,
                     'disk_version': disk_version(t.path)}
+        if t.kind == 'vault':
+            # Same shape as pdf: the tab names a document, the reader fetches it from `/vault/doc`.
+            vault, shelf, doc = (t.ref.split('|') + ['', '', ''])[:3]
+            return {'kind': 'vault', 'title': t.title, 'vault': vault, 'shelf': shelf, 'doc': doc}
         try:
             key = t.path or t.title
             # `in`, not `.get(...) or`: an empty buffer is a real answer, not a miss.

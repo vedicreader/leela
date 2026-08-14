@@ -10,7 +10,7 @@ workflow -- as a starting point to edit.
 from __future__ import annotations
 
 from ...core.envs import EnvStore
-from .pipelines import Pipeline, PipelineError, Step
+from .pipelines import Pipeline, PipelineError, Step, env_value
 
 __all__ = ['Deploy', 'DeployError', 'DEPLOY_FILE', 'DEPLOY_KEYS', 'deploy_template',
            'setup_template']
@@ -319,13 +319,9 @@ class Deploy(Pipeline):
     def target(self):
         "Where this deploy goes and what it is still missing, from the store the steps will read."
         store = self.env if isinstance(self.env, EnvStore) else EnvStore()
-        def value(key, default=''):
-            try: return store.get(key, secret=False) or default
-            except Exception: return default
-        def secret(key):
-            try: return store.get(key)
-            except Exception: return ''
-        missing = [k for k, v in DEPLOY_KEYS.items() if v is None and not secret(k)]
+        def value(key, default=''): return env_value(store, key, default)
+        missing = [k for k, v in DEPLOY_KEYS.items()
+                   if v is None and not env_value(store, k, secret=True)]
         return {'app': value('APP') or self.root.name, 'domain': value('DOMAIN'),
             'server': value('SERVER_NAME'), 'user': value('SERVER_USER', 'deploy'),
             'port': value('PORT', '5001'), 'missing': missing,

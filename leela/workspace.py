@@ -52,13 +52,17 @@ class _EnvClient:
         try: return (reg_dir()/f"token-{self.base.rsplit(':', 1)[-1]}").read_text().strip() or None
         except Exception: return None
 
+    @property
+    def headers(self):
+        "The owner token, as the header dhrishti's token-gated surface wants it."
+        return {'X-Dhrishti-Token': t} if (t := self.token) else {}
+
     async def api(self, path, params=None, timeout=15):
         # httpx2, like the sync path below and every other caller in leela: fasthtml already
         # brings it, and one HTTP client in the process rather than two.
         import httpx2 as httpx
-        h = {'X-Dhrishti-Token': t} if (t := self.token) else {}
         try:
-            async with httpx.AsyncClient(base_url=self.base, timeout=timeout, headers=h) as c:
+            async with httpx.AsyncClient(base_url=self.base, timeout=timeout, headers=self.headers) as c:
                 r = await c.get(path, params=params or {})
                 r.raise_for_status()
                 return r.json()
@@ -67,9 +71,8 @@ class _EnvClient:
 
     def api_sync(self, path, params=None, timeout=15):
         import httpx2 as httpx
-        h = {'X-Dhrishti-Token': t} if (t := self.token) else {}
         try:
-            with httpx.Client(base_url=self.base, timeout=timeout, headers=h) as c:
+            with httpx.Client(base_url=self.base, timeout=timeout, headers=self.headers) as c:
                 r = c.get(path, params=params or {}); r.raise_for_status(); return r.json()
         except Exception: return None
 
@@ -116,13 +119,14 @@ def ws_path(): return leela_cfg/'workspace.json'
 class Tab(Dictable):
     'One open editor tab.'
     path: str                       # absolute path; '' for an unsaved buffer
-    kind: str = 'text'              # 'notebook' | 'text'
+    kind: str = 'text'              # 'notebook' | 'text' | 'pdf' | 'vault'
     title: str = ''
     dirty: bool = False
     private_kernel: bool | None = None  # notebooks own one by default; files use the folder kernel
     scratch: bool = False               # never written to disk
     running: int = 0                    # in-flight cells; transient tab-bar feedback
     cwd: str = ''                       # optional per-tab working-directory override
+    ref: str = ''                       # `vault|shelf|doc_id` for a vault tab, which has no path
 
     def __post_init__(self):
         if not self.title: self.title = Path(self.path).name or 'untitled'
@@ -166,11 +170,15 @@ class Workspace:
         from .blocks.memory.memory import memory_shelf
         self.search = build_provider('search', self.fs)
         # Prose memory is a vishalakshi vault shelf, one per project; kosha stays the code index.
-        root = self.fs.roots[0] if self.fs.roots else None
+        root = first(self.fs.roots)
         self.memory = build_provider('memory', shelf=memory_shelf(root),
                                      kosha=getattr(self.search, '_kosha', None))
+        # Other vaults leela can reach. `memory` stays the workspace's own; `vaults` is how a
+        # peer tool's vault becomes browsable without leela assuming it may write there.
+        from .blocks.memory.vaults import Vaults
+        self.vaults = Vaults(shelf=memory_shelf(root), own=self.memory)
         self.research = Research(self.fs, memory=self.memory)
-        self.runs = Runs(self.fs.roots[0] if self.fs.roots else None)
+        self.runs = Runs(first(self.fs.roots))
         from .core.journal import OperationJournal
         journal_key = hashlib.sha256('\0'.join(map(str, self.fs.roots)).encode()).hexdigest()[:16]
         self.journal = OperationJournal(leela_cfg/'journals'/f'{journal_key}.json', self.fs)
@@ -185,7 +193,7 @@ class Workspace:
         # Which live inspector the variable panel is looking at, when it is not the tab's
         # own kernel. A base URL, because that is what identifies an env across processes.
         self.env_base = None
-        self.terms = Terminals(cwd=self.fs.roots[0] if self.fs.roots else None)
+        self.terms = Terminals(cwd=first(self.fs.roots))
         self.agent = agent
         # `kernel_kind`, not `kernel`: `kernel()` below is the coroutine that hands out the
         # live kernel for a tab, and an attribute of the same name shadows it — every
@@ -335,7 +343,14 @@ class Workspace:
     def project_root(self):
         "The folder the project surfaces are about: the chosen one, else the first open folder."
         if self.active_root and self.active_root in self.fs.roots: return self.active_root
-        return self.fs.roots[0] if self.fs.roots else None
+        return first(self.fs.roots)
+
+    def _add_tab(self, t):
+        "Append a tab, focus it, and point the variable panel back at its kernel."
+        self.tabs.append(t)
+        self.active = len(self.tabs) - 1
+        self.watch_env(None)
+        return t
 
     def open(self, path, kind=None):
         "Open a file, focusing it if it is already open. Refuses anything outside the open folders."
@@ -349,21 +364,22 @@ class Workspace:
             self.active = i
             self.watch_env(None)
             return self.tabs[i]
-        t = Tab(path=str(p), kind=ifnone(kind, 'notebook' if p.suffix == '.ipynb' else
-                                              'pdf' if p.suffix.lower() == '.pdf' else 'text'))
-        self.tabs.append(t)
-        self.active = len(self.tabs) - 1
-        self.watch_env(None)
-        return t
+        return self._add_tab(Tab(path=str(p), kind=ifnone(kind, 'notebook' if p.suffix == '.ipynb' else
+                                                                'pdf' if p.suffix.lower() == '.pdf' else 'text')))
+
+    def open_vault_doc(self, doc_id, shelf='', vault='', title=''):
+        "Open a vault document as a tab. It has no path: the client reads it back through `/vault/doc`."
+        ref = f'{vault or self.vaults.active.name}|{shelf}|{doc_id}'
+        if (i := first(i for i, t in enumerate(self.tabs) if t.ref == ref)) is not None:
+            self.active = i
+            return self.tabs[i]
+        return self._add_tab(Tab(path='', kind='vault', ref=ref, scratch=True,
+                                 title=title or doc_id, private_kernel=False))
 
     def new_scratch(self, kind='notebook'):
         "An unsaved buffer -- what the IDE opens when there is nothing to open yet."
         self._untitled += 1
-        t = Tab(path='', kind=kind, title=f'untitled-{self._untitled}', scratch=True)
-        self.tabs.append(t)
-        self.active = len(self.tabs) - 1
-        self.watch_env(None)
-        return t
+        return self._add_tab(Tab(path='', kind=kind, title=f'untitled-{self._untitled}', scratch=True))
 
     def create_document(self, path):
         """Create a file in its native empty shape.
@@ -525,12 +541,16 @@ class Workspace:
             text.append(f'<attached-file path="{p}">\n{body}{clipped}\n</attached-file>')
         return '\n\n'.join(text), images
 
-    def ask(self, prompt, attachments=(), context='', context_path=''):
-        "One turn from a prompt bar, grounded by the open notebook and @-selected files."
+    def _grounding(self, attachments, context):
+        "`(context, screen, media)` for one prompt-bar turn: pending capture plus @-selected files."
         png, screen, _ = self.take_screen()
         attached, images = self._attachment_context(attachments)
-        context = '\n\n'.join(x for x in (context, attached) if x)
-        media = ([png] if png else []) + images
+        return ('\n\n'.join(x for x in (context, attached) if x), screen,
+                ([png] if png else []) + images)
+
+    def ask(self, prompt, attachments=(), context='', context_path=''):
+        "One turn from a prompt bar, grounded by the open notebook and @-selected files."
+        context, screen, media = self._grounding(attachments, context)
         return self.ai.ask_with(prompt, context=context, screen=screen, image=media or None,
                                 context_path=context_path)
 
@@ -541,10 +561,7 @@ class Workspace:
         decoding policy, so the composer may safely retain one preference while models
         change without passing an unsupported argument into Rishi.
         """
-        png, screen, _ = self.take_screen()
-        attached, images = self._attachment_context(attachments)
-        context = '\n\n'.join(x for x in (context, attached) if x)
-        media = ([png] if png else []) + images
+        context, screen, media = self._grounding(attachments, context)
         kw = {'reasoning_effort': reasoning} if reasoning and not self.ai.model.local else {}
         return self.ai.stream_with(prompt, context=context, screen=screen, image=media or None,
                                    context_path=context_path, **kw)
@@ -691,12 +708,14 @@ class Workspace:
         except Unsafe: return 'default'
 
     async def kernel(self, tab=None):
-        "The live kernel for a tab, started in the folder that owns that tab."
+        "The live kernel for a tab, started in its folder's interpreter."
         t = tab or self.tab
         key, cwd = self.kernel_key(t), self.cwd_for(t)
+        from .blocks.runtime.kernels import python_for
         try: name = self.fs.root_of(t.path).name if t and t.path else Path(cwd).name
         except Exception: name = Path(cwd).name if cwd else None
-        return await self.pool.get(key, cwd=cwd, name=name, agent=self.agent)
+        return await self.pool.get(key, cwd=cwd, name=name, agent=self.agent,
+                                   python=python_for(cwd, self))
 
     def kernel_peek(self, tab=None): return self.pool.peek(self.kernel_key(tab))
 
@@ -910,7 +929,7 @@ class Workspace:
     def lsp(self):
         if self._lsp is None:
             from .blocks.lsp.lsp import PyrightService
-            self._lsp = PyrightService(self.fs.roots[0] if self.fs.roots else None)
+            self._lsp = PyrightService(first(self.fs.roots))
         return self._lsp
 
     async def shutdown(self):
@@ -946,12 +965,11 @@ class Workspace:
             return False
         roots = {str(Path(root).resolve()) for root in self.fs.roots}
         if not roots: return False
-        states = self.memory.agent_states()
-        compatible = []
-        for state in states:
-            saved_roots = {str(Path(root).expanduser().resolve())
-                           for root in ((state.get('meta') or {}).get('agent') or {}).get('roots', [])}
-            if saved_roots == roots or not saved_roots: compatible.append(state)
+        def saved_roots(state):
+            return {str(Path(root).expanduser().resolve())
+                    for root in ((state.get('meta') or {}).get('agent') or {}).get('roots', [])}
+        compatible = [s for s in self.memory.agent_states()
+                      if not (saved := saved_roots(s)) or saved == roots]
         if not compatible: return False
         text = self.memory.agent_state_text(compatible[0]['id']).strip()
         if not text: return False
@@ -991,15 +1009,11 @@ class Workspace:
         try: d = p.read_json()
         except Exception: d = {}
         ws = cls(port=port, agent=agent, kernel=kernel,
-                 model=model if model is not None else d.get('model'),
-                 inline_model=(inline_model if inline_model is not None else
-                               d.get('inline_model') or 'gpt-mini'),
-                 completion_model=(completion_model if completion_model is not None else
-                                   d.get('completion_model') or 'gpt-4.1'),
-                 local_multimodal=(local_multimodal if local_multimodal is not None else
-                                   d.get('local_multimodal', False)),
-                 litert_backend=(litert_backend if litert_backend is not None else
-                                 d.get('litert_backend', '')),
+                 model=ifnone(model, d.get('model')),
+                 inline_model=ifnone(inline_model, d.get('inline_model') or 'gpt-mini'),
+                 completion_model=ifnone(completion_model, d.get('completion_model') or 'gpt-4.1'),
+                 local_multimodal=ifnone(local_multimodal, d.get('local_multimodal', False)),
+                 litert_backend=ifnone(litert_backend, d.get('litert_backend', '')),
                  approvals=approvals, agent_scope=agent_scope, python=python,
                  transport=transport, gateway=gateway)
         ws._state_path = p

@@ -103,7 +103,7 @@ def connect(app, ctx):
         try:
             wf = flows(repo)
             schema = wf.schema()
-            rows = EnvStore().entries(schema, env_keys(wf.root))
+            rows = await off_loop(EnvStore().entries, schema, env_keys(wf.root))
             out = {'entries': rows, 'schema': schema, 'status': wf.status()}
             if remote: out['remote'] = await off_loop(wf.remote_env)
             return out
@@ -117,12 +117,12 @@ def connect(app, ctx):
         try:
             wf = flows(d.get('repo') or '')
             store = EnvStore()
-            if op == 'set': out = store.set(key, d.get('value') or '', bool(d.get('secret', True)))
-            elif op == 'unset': out = store.unset(key)
+            if op == 'set': out = await off_loop(store.set, key, d.get('value') or '', bool(d.get('secret', True)))
+            elif op == 'unset': out = await off_loop(store.unset, key)
             elif op == 'push':
                 keys = [str(k) for k in (d.get('keys') or ())] or list(wf.schema())
                 values = store.values(keys)
                 out = {'results': await off_loop(wf.push_env, values, keys, bool(d.get('dry_run')))}
             else: raise WorkflowError(f'unknown environment action: {op}')
-            return out | {'entries': store.entries(wf.schema(), env_keys(wf.root))}
+            return out | {'entries': await off_loop(store.entries, wf.schema(), env_keys(wf.root))}
         except Exception as e: return fail(e)

@@ -19,6 +19,16 @@ SCOPES = ('project', 'workspace')
 def connect(app, ctx):
     rt = app.route
 
+    def scope_roots(scope):
+        "The folders a scope names: the active project's, or `None` for the whole workspace."
+        if scope != 'project': return None
+        root = ctx.session.project_root
+        return [root] if root is not None else None
+
+    def searched(roots):
+        "The folders actually searched, for the client to say where the answer came from."
+        return [str(r) for r in (roots if roots is not None else ctx.fs.roots)]
+
     @rt('/search')
     async def search_route(q: str = '', regex: bool = False, limit: int = 60, mode: str = 'rg',
         exts: str = '', scope: str = 'project'):
@@ -27,15 +37,11 @@ def connect(app, ctx):
         # somewhere the sandbox never listed.
         if mode not in MODES: return fail(f'unknown search mode {mode!r}')
         if scope not in SCOPES: return fail(f'unknown search scope {scope!r}')
-        roots = None
-        if scope == 'project':
-            root = ctx.session.project_root
-            roots = [root] if root is not None else None
+        roots = scope_roots(scope)
         hits = await off_loop(ctx.search.search, q, limit=limit, regex=regex, mode=mode,
             exts=exts, roots=roots)
         return found(ctx.search, hits) | {
-            'scope': scope, 'exts': exts,
-            'searched': [str(r) for r in (roots if roots is not None else ctx.fs.roots)]}
+            'scope': scope, 'exts': exts, 'searched': searched(roots)}
 
     @rt('/search/stream')
     async def search_stream(req, q: str = '', regex: bool = False, limit: int = 60,
@@ -46,15 +52,12 @@ def connect(app, ctx):
         from starlette.responses import StreamingResponse
         from ...core.web import sse
         if scope not in SCOPES: return fail(f'unknown search scope {scope!r}')
-        roots = None
-        if scope == 'project':
-            root = ctx.session.project_root
-            roots = [root] if root is not None else None
+        roots = scope_roots(scope)
         per = max(12, min(limit, 40))
 
         async def events():
             yield sse('start', {'legs': list(ctx.search.ALL_LEGS), 'scope': scope,
-                'searched': [str(r) for r in (roots if roots is not None else ctx.fs.roots)]})
+                'searched': searched(roots)})
             if not (q or '').strip():
                 yield sse('done', {'note': 'nothing to search for'})
                 return

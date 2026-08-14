@@ -21,7 +21,7 @@ def btn(b):
 
 def action_bar(name, **kw):
     "A whole bar of them, in the order `leela.core.buttons` declares."
-    return Div(*[btn(b) for b in btn_bar(name)], cls=f'lee-bar lee-bar-{name}', **kw)
+    return Div(*btn_bar(name).map(btn), cls=f'lee-bar lee-bar-{name}', **kw)
 
 
 def menu_button(surface):

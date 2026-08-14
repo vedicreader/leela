@@ -11,12 +11,13 @@ from fastcore.all import Path, L, first, risinstance
 __all__ = ['load_spec', 'op_row', 'spec_ops']
 
 
+try: import ramabana.spec as _spec
+except ImportError: _spec = None
+
+
 def _ramabana(name):
     "`ramabana.spec.<name>`, or None on a ramabana that does not ship the parser."
-    try:
-        import ramabana.spec as spec
-    except ImportError: return None
-    return getattr(spec, name, None)
+    return getattr(_spec, name, None)
 
 
 def load_spec(target):
@@ -57,7 +58,8 @@ def _params(o):
 
 
 def _required(params):
-    return params.filter(lambda p: p.get('required') and p.get('name')).itemgot('name')
+    "Required parameter names, once each: an operation may restate a path-level parameter."
+    return params.filter(lambda p: p.get('required') and p.get('name')).itemgot('name').unique()
 
 
 def _openapi_ops(spec):

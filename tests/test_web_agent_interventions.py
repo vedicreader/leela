@@ -5,35 +5,12 @@ import pytest
 
 pytestmark = pytest.mark.slow
 
-import socket, threading, time
-from contextlib import contextmanager
-
 import pytest
+
+from conftest import serve as _server
 
 from leela.app import ide_app
 from leela.workspace import Workspace
-
-
-def _port():
-    with socket.socket() as s:
-        s.bind(('127.0.0.1', 0))
-        return s.getsockname()[1]
-
-
-@contextmanager
-def _server(ws):
-    import uvicorn
-    port = _port()
-    server = uvicorn.Server(uvicorn.Config(ide_app(ws), host='127.0.0.1', port=port, log_level='error'))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    for _ in range(100):
-        if server.started: break
-        time.sleep(.02)
-    try: yield f'http://127.0.0.1:{port}'
-    finally:
-        server.should_exit = True
-        thread.join(timeout=3)
 
 
 @pytest.mark.skipif(__import__('importlib').util.find_spec('playwright') is None, reason='playwright is not installed')

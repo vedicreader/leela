@@ -35,11 +35,11 @@ def test_header_leads_with_workspace_branch_and_named_menus_without_starting_a_k
 
 
 def test_web_theme_is_applied_before_styles_and_has_all_modes():
-    assert "const THEMES = ['system', 'dark', 'light', 'cursor']" in JS
+    assert "const THEME_MODES = ['system', 'dark', 'light']" in JS
     assert "localStorage.getItem('lee-theme')" in JS
-    assert ':root[data-theme="light"]' in CSS
-    assert ':root[data-theme="cursor"]' in CSS
-    assert ':root:not([data-theme="dark"])' in CSS
+    assert ':root[data-theme="leela"][data-mode="light"]' in CSS
+    assert ':root[data-theme="cursor"][data-mode="light"]' in CSS
+    assert ':root:not([data-mode])' in CSS      # the pre-paint fallback, for JS-off and first paint
 
 
 def test_file_backed_code_is_saved_before_execution_for_disk_reading_tools():

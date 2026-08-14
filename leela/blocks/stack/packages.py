@@ -5,11 +5,20 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-__all__ = ['FAMILY', 'survey', 'blame', 'frames', 'checkout_for']
+from fastcore.basics import first, ifnone
+
+__all__ = ['FAMILY', 'survey', 'blame', 'frames', 'checkout_for', 'installed']
 
 FAMILY = ['gheasy', 'dockeasy', 'vpseasy', 'cfeasy', 'leela', 'dhrishti', 'nbdev']
 
 _FRAME = re.compile(r'File "([^"]+)", line (\d+), in (\S+)')
+
+
+def installed(name):
+    "Is `name` importable, without importing it?"
+    from importlib.util import find_spec
+    try: return find_spec(name) is not None
+    except (ImportError, ValueError): return False
 
 
 def _origin(name):
@@ -18,9 +27,8 @@ def _origin(name):
     try: spec = find_spec(name)
     except (ImportError, ValueError, ModuleNotFoundError): return None
     if spec is None: return None
-    if spec.submodule_search_locations:
-        for p in spec.submodule_search_locations: return Path(p)
-    return Path(spec.origin) if spec.origin else None
+    where = first(spec.submodule_search_locations or ()) or spec.origin
+    return Path(where) if where else None
 
 
 def _version(name):
@@ -35,28 +43,32 @@ def _vendored(path):
     return bool(parts & {'site-packages', 'dist-packages', '.venv', 'venv'})
 
 
+def _roots(checkouts): return [Path(c).expanduser().resolve() for c in checkouts]
+
+
 def checkout_for(name, checkouts):
     "The open checkout that *is* this package, matched by `<root>/<name>/__init__.py`, not repo name."
-    for root in checkouts:
-        root = Path(root).expanduser().resolve()
+    for root in _roots(checkouts):
         for inner in (root/name, root/'src'/name):
             if (inner/'__init__.py').exists(): return str(root)
     return ''
 
 
+def _row(name, roots):
+    "One package: where an import lands, and whether that copy is the open checkout."
+    path = _origin(name)
+    local = checkout_for(name, roots)
+    from_source = bool(path) and not _vendored(path)
+    return {'name': name, 'installed': path is not None, 'version': _version(name),
+            'path': str(path or ''), 'checkout': local, 'editable': from_source,
+            'source': ('checkout' if from_source else 'site-packages') if path else '',
+            'shadowed': bool(local) and bool(path) and not from_source}
+
+
 def survey(names=(), checkouts=()):
     "One row each: installed, version, the copy an import resolves to, and whether a checkout is shadowed."
-    roots = [Path(c).expanduser().resolve() for c in checkouts]
-    rows = []
-    for name in (list(names) or FAMILY):
-        path = _origin(name)
-        local = checkout_for(name, roots)
-        from_source = bool(path) and not _vendored(path)
-        rows.append({'name': name, 'installed': path is not None, 'version': _version(name),
-                     'path': str(path or ''), 'checkout': local, 'editable': from_source,
-                     'source': ('checkout' if from_source else 'site-packages') if path else '',
-                     'shadowed': bool(local) and bool(path) and not from_source})
-    return rows
+    roots = _roots(checkouts)
+    return [_row(name, roots) for name in (list(names) or FAMILY)]
 
 
 def frames(text):
@@ -83,21 +95,20 @@ def _package_of(path, names):
     return ''
 
 
+def _is_error(line):
+    "A line that reads like `SomeError: message` rather than a frame or a caret marker."
+    return bool(line) and not line.startswith(('File "', '^', '~', '|')) and ':' in line and '    ' not in line[:4]
+
+
 def blame(text, names=(), checkouts=()):
     "Which package raised (the deepest family frame) and where to open it, preferring a checkout."
     text = str(text or '')
     names = list(names) or FAMILY
-    roots = [Path(c).expanduser().resolve() for c in checkouts]
-    found = None
-    for frame in frames(text):
-        pkg = _package_of(frame['file'], names)
-        if pkg: found = frame | {'package': pkg}
-    error = ''
-    for line in reversed(text.strip().splitlines()):
-        line = line.strip()
-        if line and not line.startswith(('File "', '^', '~', '|')) and ':' in line and '    ' not in line[:4]:
-            error = line
-            break
+    roots = _roots(checkouts)
+    family = [f | {'package': pkg} for f in frames(text)
+              if (pkg := _package_of(f['file'], names))]
+    found = family[-1] if family else None
+    error = ifnone(first((l.strip() for l in reversed(text.strip().splitlines())), _is_error), '')
     if found is None:
         return {'package': '', 'file': '', 'line': 0, 'fn': '', 'error': error, 'open': ''}
     open_at = found['file']

@@ -98,7 +98,7 @@ class Runs:
 
     def add(self, run, save=True):
         "Add or replace a configuration by name."
-        self.runs = L([r for r in self.runs if r.name != run.name]) + L([run])
+        self.runs = self.runs.filter(lambda r: r.name != run.name) + [run]
         if save: self.save()
         return run
 

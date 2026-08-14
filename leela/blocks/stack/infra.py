@@ -6,6 +6,7 @@ import os
 from contextlib import contextmanager
 
 from ...core.envs import EnvStore
+from .packages import installed
 
 __all__ = ['Infra', 'InfraError']
 
@@ -26,6 +27,14 @@ def _with_env(values):
             else: os.environ[k] = v
 
 
+def _record(r):
+    "One DNS record as a panel shows it; `tunnel` marks a CNAME to `<id>.cfargotunnel.com`."
+    content = str(r.get('content') or '')
+    return {'id': r.get('id') or '', 'type': r.get('type') or '', 'name': r.get('name') or '',
+            'content': content, 'proxied': bool(r.get('proxied')), 'ttl': r.get('ttl'),
+            'tunnel': content.endswith('.cfargotunnel.com')}
+
+
 class Infra:
     "Hetzner and Cloudflare, through vpseasy and cfeasy, with this project's tokens."
 
@@ -39,10 +48,6 @@ class Infra:
         except Exception: return os.environ.get(key, '')
 
     def status(self):
-        from importlib.util import find_spec
-        def installed(name):
-            try: return find_spec(name) is not None
-            except (ImportError, ValueError): return False
         return {'vpseasy': installed('vpseasy'), 'cfeasy': installed('cfeasy'),
                 'hcloud_token': bool(self.token(self.HCLOUD)),
                 'cf_token': bool(self.token(self.CF_TOKEN)),
@@ -96,19 +101,12 @@ class Infra:
                 for z in self._cf().zones()]
 
     def records(self, zone):
-        "DNS records for one zone, by name or id; `tunnel` marks CNAMEs to `<id>.cfargotunnel.com`."
+        "DNS records for one zone, named or by id."
         cf = self._cf()
         zone = str(zone or '').strip()
         if not zone: raise InfraError('choose a zone')
         zid = zone if len(zone) == 32 and '.' not in zone else cf.zone_id(zone)
-        rows = []
-        for r in cf.dns_records(zid):
-            content = str(r.get('content') or '')
-            rows.append({'id': r.get('id') or '', 'type': r.get('type') or '',
-                         'name': r.get('name') or '', 'content': content,
-                         'proxied': bool(r.get('proxied')), 'ttl': r.get('ttl'),
-                         'tunnel': content.endswith('.cfargotunnel.com')})
-        return sorted(rows, key=lambda r: (r['name'], r['type']))
+        return sorted((_record(r) for r in cf.dns_records(zid)), key=lambda r: (r['name'], r['type']))
 
     def verify(self):
         "cfeasy's own token check, so a permissions problem is named before a deploy hits it."

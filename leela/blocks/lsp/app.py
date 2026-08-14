@@ -24,6 +24,20 @@ def _offsets(source):
     return lines, starts
 
 
+def _edited(before, edits):
+    "`before` with one file's LSP edits applied."
+    lines, starts = _offsets(before)
+    def offset(pos):
+        row = max(0, min(int(pos.get('line', 0)), len(lines) - 1))
+        return starts[row] + min(int(pos.get('character', 0)), len(lines[row].rstrip('\r\n')))
+    # Last-first, so an earlier edit cannot invalidate a later one's offsets.
+    spans = sorted(((offset(x['range']['start']), offset(x['range']['end']), x.get('newText', '')) for x in edits),
+                   reverse=True)
+    after = before
+    for start, end, new in spans: after = after[:start] + new + after[end:]
+    return after
+
+
 def connect(app, ctx):
     rt = app.route
 
@@ -70,26 +84,13 @@ def connect(app, ctx):
             changes = (edit or {}).get('changes') or {}
             previews = []
             for uri, edits in changes.items():
-                path = unquote(urlparse(uri).path)
-                p = ctx.fs._check(path, must_exist=True)
+                p = ctx.fs._check(unquote(urlparse(uri).path), must_exist=True)
                 before = ctx.fs.read(p)
-                ls, starts = _offsets(before)
-
-                def offset(pos, ls=ls, starts=starts):
-                    row = max(0, min(int(pos.get('line', 0)), len(ls)-1))
-                    return starts[row] + min(int(pos.get('character', 0)), len(ls[row].rstrip('\r\n')))
-
-                # Last-first, so an earlier edit cannot invalidate a later one's offsets.
-                replacements = sorted([(offset(x['range']['start']), offset(x['range']['end']),
-                                        x.get('newText', '')) for x in edits], reverse=True)
-                after = before
-                for start, end, new in replacements: after = after[:start] + new + after[end:]
-                previews.append({'path': str(p), 'before': before, 'after': after, 'edits': len(edits)})
+                previews.append({'path': str(p), 'before': before, 'after': _edited(before, edits),
+                                 'edits': len(edits)})
             if d.get('apply'):
-                operation = []
-                for row in previews:
-                    ctx.fs.write(row['path'], row['after'])
-                    operation.append((row['path'], row['before'], row['after']))
-                ctx.journal.record(f"Rename to {d.get('newName','')}", operation, kind='rename-symbol')
+                for row in previews: ctx.fs.write(row['path'], row['after'])
+                ctx.journal.record(f"Rename to {d.get('newName','')}",
+                                   [(r['path'], r['before'], r['after']) for r in previews], kind='rename-symbol')
             return {'ok': True, 'applied': bool(d.get('apply')), 'files': previews}
         except Exception as e: return fail(e)

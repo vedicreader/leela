@@ -36,6 +36,17 @@ def _tags(b):
     return _MD_TAGS.get(str(b.get('type') or ''), ())
 
 
+def _block_row(b, lines):
+    "One mdhtml block as the record this module returns."
+    kind = str(b.get('type') or '')
+    start, end = int(b.get('start') or 0), int(b.get('end') or 0)
+    row = {'type': kind, 'from': start + 1, 'to': max(start + 1, end),
+           'source': '\n'.join(lines[start:end]), 'tags': list(_tags(b)),
+           'renders': kind not in _MD_SILENT}
+    if kind == 'code_block': row |= {'lang': str(b.get('lang') or ''), 'code': str(b.get('text') or '')}
+    return row
+
+
 def md_blocks(text):
     "Every top-level block of `text`: 1-based inclusive source lines, expected tag, and code."
     text = str(text or '')
@@ -44,41 +55,31 @@ def md_blocks(text):
         found = blocks(text, **_MD_OPTS)
     except Exception: return []
     lines = text.split('\n')
-    out = []
-    for b in found:
-        kind = str(b.get('type') or '')
-        start, end = int(b.get('start') or 0), int(b.get('end') or 0)
-        row = {'type': kind, 'from': start + 1, 'to': max(start + 1, end),
-               'source': '\n'.join(lines[start:end]), 'tags': list(_tags(b)),
-               'renders': kind not in _MD_SILENT}
-        if kind == 'code_block': row |= {'lang': str(b.get('lang') or ''), 'code': str(b.get('text') or '')}
-        out.append(row)
-    return out
+    return [_block_row(b, lines) for b in found]
+
+
+def _change_kind(kinds):
+    "One block's status from the kinds of the ranges touching it; None when none do."
+    if not kinds: return None
+    if kinds == {'added'}: return 'added'
+    if kinds == {'deleted'}: return 'removed'
+    return 'modified'
 
 
 def md_change_kinds(blocks, ranges):
     "Mark each block of `blocks` with the kind of the changed line ranges it contains."
     # Git reports a pure deletion at the line that closed over it, so a removal lands on the
     # block that now sits there. A block no range touches is left alone.
-    out = []
-    for b in blocks:
-        kinds = {str(r.get('kind') or 'modified') for r in ranges or ()
-                 if int(r.get('from') or 0) <= b['to'] and int(r.get('to') or 0) >= b['from']}
-        if not kinds: out.append(None)
-        elif kinds == {'added'}: out.append('added')
-        elif kinds == {'deleted'}: out.append('removed')
-        else: out.append('modified')
-    return out
+    return [_change_kind({str(r.get('kind') or 'modified') for r in ranges or ()
+                          if int(r.get('from') or 0) <= b['to'] and int(r.get('to') or 0) >= b['from']})
+            for b in blocks]
 
 
 def _line_stat(left, right):
     "Added and removed line counts between two texts, the way `git diff --stat` counts them."
     a, b = str(left or '').split('\n'), str(right or '').split('\n')
-    added = removed = 0
-    for tag, i1, i2, j1, j2 in SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
-        if tag == 'equal': continue
-        added += j2 - j1; removed += i2 - i1
-    return added, removed
+    ops = [o for o in SequenceMatcher(None, a, b, autojunk=False).get_opcodes() if o[0] != 'equal']
+    return sum(j2 - j1 for _, _, _, j1, j2 in ops), sum(i2 - i1 for _, i1, i2, _, _ in ops)
 
 
 def _removed(b): return b | {'status': 'removed', 'old_from': b['from'], 'old_to': b['to']}

@@ -12,17 +12,23 @@ import asyncio, json, os, shlex, time
 from dataclasses import dataclass, field
 from shutil import which
 
-from fastcore.all import Path, first
+from fastcore.all import L, Path, first
 from fastcore.xtras import strip_ansi
 
 from ...core.envs import EnvStore
 from ..term.term import SCROLLBACK, Pty
 
-__all__ = ['Pipeline', 'PipelineError', 'Step', 'resolve_script']
+__all__ = ['Pipeline', 'PipelineError', 'Step', 'env_value', 'resolve_script']
 
 
 class PipelineError(RuntimeError):
     pass
+
+
+def env_value(store, key, default='', secret=False):
+    "One value out of the environment store, or `default` when it is unset or unreadable."
+    try: return store.get(key, secret=secret) or default
+    except Exception: return default
 
 
 def resolve_script(argv, python=None, env=None):
@@ -89,15 +95,13 @@ class Pipeline:
         try: raw = json.loads(self.path.read_text(encoding='utf-8'))
         except (OSError, ValueError): return self.defaults(self.root)
         steps = raw.get('steps') if isinstance(raw, dict) else raw
-        out = []
-        for row in steps or ():
-            if not isinstance(row, dict) or not row.get('cmd'): continue
-            out.append(Step(id=str(row.get('id') or f'step{len(out) + 1}'),
-                label=str(row.get('label') or row.get('id') or 'step'),
-                cmd=str(row['cmd']), doc=str(row.get('doc') or ''),
-                needs=[str(x) for x in (row.get('needs') or ())],
-                argv=[str(x) for x in (row.get('argv') or ())],
-                meta=dict(row.get('meta') or {})))
+        rows = [r for r in (steps or ()) if isinstance(r, dict) and r.get('cmd')]
+        out = [Step(id=str(row.get('id') or f'step{i + 1}'),
+            label=str(row.get('label') or row.get('id') or 'step'),
+            cmd=str(row['cmd']), doc=str(row.get('doc') or ''),
+            needs=[str(x) for x in (row.get('needs') or ())],
+            argv=[str(x) for x in (row.get('argv') or ())],
+            meta=dict(row.get('meta') or {})) for i, row in enumerate(rows)]
         return out or self.defaults(self.root)
 
     def save(self, steps):
@@ -122,11 +126,7 @@ class Pipeline:
     # -- environment -----------------------------------------------------------
     def needs(self):
         "Every environment key the pipeline names, in the order the steps name them."
-        seen = []
-        for s in self.steps:
-            for k in s.needs:
-                if k not in seen: seen.append(k)
-        return seen
+        return list(L(self.steps).attrgot('needs').concat().unique())
 
     def missing(self, step):
         "Keys this step names that dockeasy's store cannot produce."
@@ -143,15 +143,17 @@ class Pipeline:
         return env
 
     # -- state -----------------------------------------------------------------
+    def _row(self, s):
+        "One step as the panel sees it: the plan, plus how the last run of it went."
+        r = self.results.get(s.id) or {}
+        return s.dict() | {
+            'status': 'running' if s.id == self.active else (r.get('status') or 'pending'),
+            'code': r.get('code'), 'started': r.get('started', 0), 'finished': r.get('finished', 0),
+            'missing': self.missing(s),
+        }
+
     def state(self):
-        rows = []
-        for s in self.steps:
-            r = self.results.get(s.id) or {}
-            rows.append(s.dict() | {
-                'status': 'running' if s.id == self.active else (r.get('status') or 'pending'),
-                'code': r.get('code'), 'started': r.get('started', 0), 'finished': r.get('finished', 0),
-                'missing': self.missing(s),
-            })
+        rows = [self._row(s) for s in self.steps]
         failed = first(rows, lambda r: r['status'] == 'failed')
         return {'root': str(self.root), 'kind': self.KIND, 'path': str(self.path),
             'configured': self.path.exists(), 'steps': rows, 'active': self.active,
@@ -189,7 +191,8 @@ class Pipeline:
         if self.active: raise PipelineError(f'{self.active} is still running')
         self._auto = bool(auto)
         step = self.step(step_id) if step_id else self._next()
-        if step is None: raise PipelineError('every step has already run')
+        # Never restarted here: `start` runs on to the end, and that end publishes or deploys.
+        if step is None: raise PipelineError('every step has already run — reset to run them again')
         await self._run(step)
         return self.state()
 

@@ -83,6 +83,16 @@ def _subseq(q, s):
     return all(c in it for c in q)
 
 
+def _fuzzy_score(q, s):
+    "How well the lowercased query `q` matches candidate `s`."
+    low = s.lower()
+    base = low.rsplit('/', 1)[-1]
+    score = max(SequenceMatcher(None, q, base).ratio(), SequenceMatcher(None, q, low).ratio() * .5)
+    if q in base: score += 1.           # a contiguous hit in the name beats a scattered one
+    if base.startswith(q): score += .5  # and a prefix beats a hit in the middle
+    return score
+
+
 def fuzzy_rank(q, items, key=str, limit=None):
     "`items` ranked by how well `q` matches, best first; a non-match is dropped."
     # Membership is subsequence containment, not substring, so `wapp` finds `web/app.py`;
@@ -90,15 +100,7 @@ def fuzzy_rank(q, items, key=str, limit=None):
     q = (q or '').strip().lower()
     items = L(items)
     if not q: return items if limit is None else items[:limit]
-    scored = L()
-    for it in items:
-        s = str(key(it))
-        low = s.lower()
-        base = low.rsplit('/', 1)[-1]
-        if not _subseq(q, low): continue
-        score = max(SequenceMatcher(None, q, base).ratio(), SequenceMatcher(None, q, low).ratio() * .5)
-        if q in base: score += 1.           # a contiguous hit in the name beats a scattered one
-        if base.startswith(q): score += .5  # and a prefix beats a hit in the middle
-        scored.append((score, len(s), it))
+    cands = [(str(key(it)), it) for it in items]
+    scored = L((_fuzzy_score(q, s), len(s), it) for s, it in cands if _subseq(q, s.lower()))
     ranked = scored.sorted(key=lambda t: (-t[0], t[1])).itemgot(2)
     return ranked if limit is None else ranked[:limit]

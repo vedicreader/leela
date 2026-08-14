@@ -19,6 +19,10 @@ __all__ = ['ExecOutcome', 'Kernel', 'GatewayKernel', 'GatewayService', 'KernelPo
 
 KERNELS = ('ipykernel', 'ipymini')
 
+#: Conventional project-local virtualenv directories, and where each keeps its interpreter.
+VENV_DIRS = ('.venv', 'venv', 'env', '.env')
+VENV_BINS = ('bin/python', 'Scripts/python.exe')
+
 #: jupyter_client's own `shutdown_wait_time`, so a gateway kernel gives up no later than a local one.
 SHUTDOWN_WAIT = 5.0
 
@@ -34,13 +38,16 @@ def ipymini_available():
     return importlib.util.find_spec('ipymini') is not None
 
 
+def _venv_pythons(root):
+    "Every conventional venv interpreter path under `root`, as `(venv dir, path)`; existence unchecked."
+    root = Path(root)
+    return L((d, root/d/b) for d in VENV_DIRS for b in VENV_BINS)
+
+
 def project_python(roots=()):
     "The first conventional project-local virtualenv interpreter, or None."
     for root in L(roots):
-        root = Path(root)
-        for d in ('.venv', 'venv', 'env', '.env'):
-            for b in ('bin/python', 'Scripts/python.exe'):
-                if (p := root/d/b).exists(): return str(p)
+        if (p := first(p for _, p in _venv_pythons(root) if p.exists())): return str(p)
     return None
 
 
@@ -83,10 +90,7 @@ def find_pythons(roots=()):
 
     add(sys.executable, 'this one (leela’s own)')
     for r in L(roots):
-        r = Path(r)
-        for d in ('.venv', 'venv', 'env', '.env'):
-            for b in ('bin/python', 'Scripts/python.exe'):
-                add(r/d/b, f'{r.name}/{d}')
+        for d, p in _venv_pythons(r): add(p, f'{Path(r).name}/{d}')
     for n in ('python3', 'python'):
         if (w := which(n)): add(w, f'{n} on PATH')
     return out
@@ -241,6 +245,22 @@ class _Inspector:
 
     def _headers(self): return {'X-Dhrishti-Token': t} if (t := self.token) else {}
 
+    @property
+    def _boot_name(self):
+        "The name the in-kernel inspector registers itself under."
+        return self.name
+
+    async def bootstrap(self):
+        "Start the inspector inside the kernel and record its base URL."
+        src = bootstrap_src(self._boot_name, self.port, self.agent, True, self.kernel)
+        r = await self.execute(src, silent=True, store_history=False)
+        if not r.ok:
+            self.boot_error = r.error or r.text or 'inspector bootstrap failed'
+            return None
+        self.base = await self._find_base()
+        if self.base is None: self.boot_error = 'inspector started but did not register'
+        return self.base
+
     async def api(self, path, params=None, timeout=15):
         "GET this kernel's own inspector, carrying its owner token; None if it has none."
         # Reaches a background thread inside the kernel, so it answers while a cell is running.
@@ -373,17 +393,6 @@ class Kernel(_Inspector):
             raise
         if self.inspect: await self.bootstrap()
         return self
-
-    async def bootstrap(self):
-        "Start the inspector inside the kernel and record its base URL."
-        src = bootstrap_src(self.name, self.port, self.agent, True, self.kernel)
-        r = await self.execute(src, silent=True, store_history=False)
-        if not r.ok:
-            self.boot_error = r.error or r.text or 'inspector bootstrap failed'
-            return None
-        self.base = await self._find_base()
-        if self.base is None: self.boot_error = 'inspector started but did not register'
-        return self.base
 
     async def _find_base(self):
         "The registry entry written by our own kernel process, matched on pid."
@@ -683,17 +692,16 @@ class GatewayKernel(_Inspector):
         if self.inspect: await self.bootstrap()
         return self
 
-    async def bootstrap(self):
-        src = bootstrap_src(self._registry_name, self.port, self.agent, True, self.kernel)
-        r = await self.execute(src, silent=True, store_history=False)
-        if not r.ok:
-            self.boot_error = r.error or r.text or 'inspector bootstrap failed'; return None
+    @property
+    def _boot_name(self):
+        "jupygate exposes no pid, so the registry entry is matched on a name unique to this kernel."
+        return self._registry_name
+
+    async def _find_base(self):
+        "The registry entry written by this kernel, matched on its unique name."
         for _ in range(60):
-            rows = [e for e in active() if e.get('name') == self._registry_name]
-            if rows:
-                self.base = rows[-1]['base']; return self.base
+            if rows := [e for e in active() if e.get('name') == self._registry_name]: return rows[-1]['base']
             await asyncio.sleep(.05)
-        self.boot_error = 'inspector started but did not register'
         return None
 
     async def execute(self, code, silent=False, store_history=True, on_output=None, timeout=None):

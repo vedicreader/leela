@@ -56,12 +56,29 @@ function wfPickRows(cat) {
     `${d.build ? `<code>${esc(d.build)}</code>` : d.build_why ? `<small>${esc(d.build_why)}</small>` : ''}</div>` +
     `<div class="lee-wf-picks">${rows}</div>`;
 }
-function wfEnvRows(entries) {
+// `refresh` fetches what GitHub has; without this the answer was thrown away. Values of secrets
+// are not readable by GitHub's design, so remote presence is all there is to show for one.
+function wfRemoteMark(remote, key) {
+  if (!remote) return '';
+  const hit = (remote.secrets || []).find(s => s.name === key) || (remote.variables || []).find(v => v.name === key);
+  if (!hit) return '<span class="lee-wf-remote missing" title="not on GitHub">·</span>';
+  const when = String(hit.updated_at || '').slice(0, 10);
+  return `<span class="lee-wf-remote" title="on GitHub${when ? ', updated ' + when : ''}">gh</span>`;
+}
+function wfRemoteExtra(remote, entries) {
+  if (!remote) return '';
+  const declared = new Set((entries || []).map(e => e.key));
+  const extra = [...(remote.secrets || []), ...(remote.variables || [])].map(x => x.name).filter(n => !declared.has(n));
+  return extra.length ? `<div class="lee-wf-remote-extra">on GitHub but not declared here: ${extra.map(esc).join(', ')}</div>` : '';
+}
+function wfEnvRows(entries, remote) {
   if (!entries?.length) return '<div class="lee-git-empty-state"><strong>Nothing declared</strong><span>Add <code>env_schema</code> to .gheasy/config.json, or a release step that needs a key.</span></div>';
   return entries.map(e => `<article class="lee-wf-env${e.set ? ' is-set' : ''}" data-env="${esc(e.key)}">` +
     `<div><strong>${esc(e.key)}</strong><small>${e.target}${e.declared ? '' : ' · from a release step'}</small></div>` +
     `<span class="lee-wf-envval">${e.secret ? (e.set ? '••••••••' : 'not set') : esc(e.value || 'not set')}</span>` +
-    `<button data-env-set>${e.set ? 'change' : 'set'}</button>${e.set ? '<button data-env-unset aria-label="remove">×</button>' : ''}</article>`).join('');
+    wfRemoteMark(remote, e.key) +
+    `<button data-env-set>${e.set ? 'change' : 'set'}</button>${e.set ? '<button data-env-unset aria-label="remove">×</button>' : ''}</article>`).join('')
+    + wfRemoteExtra(remote, entries);
 }
 function renderWorkflowsPanel() {
   const host = $('#workflowspanel'); if (!host) return;
@@ -93,7 +110,7 @@ function renderWorkflowsPanel() {
         `${st.gh_cli && !st.gh_auth ? '<button data-wf-env="auth">gh auth login…</button>' : ''}` +
         `<button data-wf-env="push" ${st.gh_auth ? '' : 'title="pushing uses the GitHub CLI"'}>push declared to GitHub</button>` +
         `<button data-wf-env="add">add key…</button></div>` +
-        `<div class="lee-wf-envs">${wfEnvRows(wfUI.env?.entries)}</div>`
+        `<div class="lee-wf-envs">${wfEnvRows(wfUI.env?.entries, wfUI.env?.remote)}</div>`
       : `<div class="lee-wf-tabs">${tabs}</div>` +
         `<div class="lee-sc-actions">${wf?.dispatchable ? '<button data-wf-op="dispatch">run workflow</button>' : ''}` +
         `<button data-wf-op="open">open file</button><button data-wf-op="edit">edit in builder</button>` +
@@ -192,6 +209,8 @@ async function envOp(op, extra) {
   try {
     const d = await post('/workflows/env/action', {op, repo: projectRepo(), ...extra});
     wfUI.env = {...(wfUI.env || {}), entries: d.entries};
+    // A push changes what GitHub has, so a listing already on screen is now wrong.
+    if (op === 'push' && wfUI.env.remote) return loadWorkflowEnv(true);
     if (d.results) {
       const failed = d.results.filter(r => r.ok === false).length;
       status(`pushed ${d.results.filter(r => r.ok && !r.skipped).length} · skipped ${d.results.filter(r => r.skipped).length} · failed ${failed}`, failed ? 'err' : 'ok');
@@ -380,6 +399,14 @@ function wireBlame(host) {
     }, 350);
   });
 }
+function openProjectEnv() {
+  leeLeft('workflows'); wfUI.view = 'env'; wfUI.env = null; return leeWorkflows();
+}
+// A finished pipeline refuses to start again server-side, because its end publishes or ships.
+async function confirmRerun(d, what) {
+  return !d.done || confirmDialog(`run ${what} again`,
+    `Every step already ran. Forget that and run the whole ${what} again from the top?`, 'run again');
+}
 function relStepRow(s, d) {
   const busy = d.running && s.status !== 'running';
   return `<article class="lee-rel-step state-${s.status}" data-step="${esc(s.id)}">` +
@@ -403,7 +430,7 @@ function renderReleasesPanel() {
     `<span>${d.nbdev ? 'nbdev project' : 'plain project'} · ${done}/${d.steps.length} done${d.configured ? ' · .leela/release.json' : ' · default pipeline'}</span></div></header>` +
     `<div class="lee-sc-actions">` +
     `${d.running ? '<button data-rel-top="stop" class="warn">stop</button>' : `<button data-rel-top="start">${d.failed ? 'continue' : 'run release'}</button>`}` +
-    `<button data-rel-top="terminal">terminal</button><button data-rel-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
+    `<button data-rel-top="terminal">terminal</button><button data-rel-top="env">environment</button><button data-rel-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
     `<button data-rel-top="edit">edit steps</button>${d.configured ? '<button data-rel-top="defaults">defaults</button>' : ''}</div>` +
     `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the release terminal. Fix and retry, or skip it deliberately.</span></div>` : ''}` +
     blameRow(d.blame) +
@@ -441,12 +468,14 @@ async function releaseOp(op, extra = {}) {
 }
 async function releaseTop(op, d) {
   if (op === 'terminal') return openReleaseTerm(d.root, 'release');
-  if (op === 'env') { leeLeft('workflows'); wfUI.view = 'env'; wfUI.env = null; return leeWorkflows(); }
+  if (op === 'env') return openProjectEnv();
   if (op === 'defaults') return releaseOp('reset_plan');
   if (op === 'start') {
     const missing = d.steps.flatMap(s => s.missing);
     if (missing.length && !await confirmDialog('run release',
         `These steps are missing ${[...new Set(missing)].join(', ')}. Run anyway?`, 'run')) return;
+    if (!await confirmRerun(d, 'release')) return;
+    if (d.done) await releaseOp('reset');
     return releaseOp('start');
   }
   if (op === 'stop') { if (await confirmDialog('stop release', 'Stop the running step?', 'stop')) releaseOp('stop'); return; }
@@ -472,7 +501,7 @@ function depTargetCard(t) {
     `<span>${esc(t.server || 'no server named')} · ${esc(t.user)}@:${esc(t.port)}</span></div></header>` +
     `<div class="lee-dep-files">${files.map(([n, has]) => `<i class="${has ? 'has' : ''}">${esc(n)}</i>`).join('')}</div>` +
     (t.missing.length ? `<div class="lee-wf-note"><strong>${t.missing.length} value${t.missing.length === 1 ? '' : 's'} not set</strong>` +
-      `<span>${t.missing.map(esc).join(', ')}</span><code>set them in Workflows → Environment</code></div>` : '');
+      `<span>${t.missing.map(esc).join(', ')}</span><code>set them in Workflows → Environment</code><button data-dep-env>environment</button></div>` : '');
 }
 
 function depInfraRows() {
@@ -564,7 +593,7 @@ function renderDeployPanel() {
     `${t.script ? (d.running ? '<button data-dep-top="stop" class="warn">stop</button>'
                              : `<button data-dep-top="start">${d.failed ? 'continue' : 'deploy'}</button>`)
                 : '<button data-dep-top="scaffold">write deploy.py…</button>'}` +
-    `<button data-dep-top="terminal">terminal</button>` +
+    `<button data-dep-top="terminal">terminal</button><button data-dep-top="env">environment</button>` +
     `<button data-dep-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
     `<button data-dep-top="edit">edit steps</button>` +
     `${t.script ? '<button data-dep-top="open">open deploy.py</button>' : ''}</div>` +
@@ -573,6 +602,7 @@ function renderDeployPanel() {
     `<div class="lee-rel-steps">${d.steps.map(s => relStepRow(s, d)).join('')}</div>`;
   host.querySelectorAll('[data-dep-view]').forEach(b => b.onclick = () => { depUI.view = b.dataset.depView; renderDeployPanel(); });
   host.querySelectorAll('[data-dep-top]').forEach(b => b.onclick = () => deployTop(b.dataset.depTop, d));
+  host.querySelector('[data-dep-env]')?.addEventListener('click', openProjectEnv);
   wireBlame(host);
   host.querySelectorAll('.lee-rel-step').forEach(row => {
     const step = row.dataset.step;
@@ -597,6 +627,7 @@ async function deployOp(op, extra = {}) {
 async function deployTop(op, d) {
   const t = d.target;
   if (op === 'terminal') return openReleaseTerm(d.root, 'deploy');
+  if (op === 'env') return openProjectEnv();
   if (op === 'open') return leeOpenFile(d.root + '/deploy.py');
   if (op === 'reset') { if (await confirmDialog('reset', 'Forget what ran? The stages are unchanged.', 'reset')) deployOp('reset'); return; }
   if (op === 'stop') { if (await confirmDialog('stop deploy', 'Stop the running stage?', 'stop')) deployOp('stop'); return; }
@@ -619,6 +650,8 @@ async function deployTop(op, d) {
   if (op === 'start') {
     if (t.missing.length && !await confirmDialog('deploy',
         `These are not set: ${t.missing.join(', ')}. Deploy anyway?`, 'deploy')) return;
+    if (!await confirmRerun(d, 'deploy')) return;
+    if (d.done) await deployOp('reset');
     return deployOp('start');
   }
   if (op === 'edit') {
@@ -671,7 +704,7 @@ function renderDrivePanel() {
                  : '<button data-drv-top="start">run all</button>'}` +
     `<button data-drv-top="terminal">terminal</button>` +
     `<button data-drv-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
-    `<button data-drv-top="values">values…</button></div>` +
+    `<button data-drv-top="values">environment</button></div>` +
     blameRow(d.blame) +
     `<div class="lee-rel-steps">${d.steps.map(s => drvPart(s, d)).join('')}</div>`;
   host.querySelectorAll('[data-drv-top]').forEach(b => b.onclick = () => driveTop(b.dataset.drvTop, d));
@@ -699,13 +732,15 @@ async function driveOp(op, extra = {}) {
 }
 async function driveTop(op, d) {
   if (op === 'terminal') return openReleaseTerm(d.root, 'drive');
-  if (op === 'values') { leeLeft('workflows'); wfUI.view = 'env'; wfUI.env = null; return leeWorkflows(); }
+  if (op === 'values') return openProjectEnv();
   if (op === 'stop') { if (await confirmDialog('stop', 'Stop the running call?', 'stop')) driveOp('stop'); return; }
   if (op === 'reset') { if (await confirmDialog('reset', 'Forget what ran? The calls are unchanged.', 'reset')) driveOp('reset'); return; }
   if (op === 'start') {
     const missing = [...new Set(d.steps.flatMap(s => s.missing))];
     if (missing.length && !await confirmDialog('run every call',
         `These are not set: ${missing.join(', ')}. Run anyway?`, 'run')) return;
+    if (!await confirmRerun(d, 'run')) return;
+    if (d.done) await driveOp('reset');
     return driveOp('start');
   }
 }
@@ -829,6 +864,7 @@ function wireGitPanel(host, d) {
   host.querySelector('#scstash')?.addEventListener('click', async () => { const message = await inputDialog('stash changes', 'Optional message', '', 'work in progress'); if (message !== null) act('stash', {message}); });
   host.querySelector('#sccommit')?.addEventListener('submit', e => { e.preventDefault(); const message = e.target.querySelector('textarea').value.trim(); if (message) act('commit', {message, amend: e.target.elements.amend.checked}); });
   host.querySelector('#screviewstaged')?.addEventListener('click', () => showStagedReview(d));
+  host.querySelector('[data-conflict-center]')?.addEventListener('click', () => showConflictCenter());
   host.querySelectorAll('[data-selected-action]').forEach(b => b.onclick = async () => {
     const action = b.dataset.selectedAction;
     if (action === 'clear') { gitUI.selectedChanges.clear(); return renderGitPanel(d); }

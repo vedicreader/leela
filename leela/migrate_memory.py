@@ -37,13 +37,10 @@ def read_old(path):
         with sqlite3.connect(f'file:{src}?mode=ro', uri=True) as s, sqlite3.connect(work) as d:
             s.backup(d)
         v = Vault(work, store=STORE, offline=True)
-        out = []
-        for d in v.sources():
-            doc = v.document(d['id'])
-            if (doc.text or '').strip():
-                out.append(dict(title=doc.title, source=doc.source, kind=doc.kind,
-                                meta=dict(doc.meta or {}), text=doc.text))
-        return out
+        docs = [v.document(d['id']) for d in v.sources()]
+        return [dict(title=doc.title, source=doc.source, kind=doc.kind,
+                     meta=dict(doc.meta or {}), text=doc.text)
+                for doc in docs if (doc.text or '').strip()]
 
 
 def migrate(shelf='leela', vault_path=None, old=None, apply=False, encoder=None, offline=False):

@@ -17,7 +17,11 @@ from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, p
 from ...agent.tools import MAX_HITS, MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS
 from ...agent.tools import Host, clip, tools_for
 
-GIT_WRITE_TOOLS = frozenset({'git_fetch', 'git_checkout', 'git_pull', 'git_push'})
+GIT_TOOLS = ('git_status', 'git_fetch', 'git_checkout', 'git_pull', 'git_push')
+GIT_WRITE_TOOLS = frozenset(GIT_TOOLS) - {'git_status'}
+#: How a tool reports its own failure, which is also how `_record` classifies one. Derived from
+#: the tool names so a tool added to `GIT_TOOLS` cannot be silently misread as having succeeded.
+FAILED_PREFIXES = ('edit failed', 'write failed', 'could not', *(f'{t.replace("_", " ")} failed' for t in GIT_TOOLS))
 # The blend legs that answer in tens of milliseconds; `ann` has to embed the query first.
 FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
 WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS
@@ -329,11 +333,35 @@ class WorkspaceHost(Host):
     def research_note(self): return self.ws.research.note
 
     # -- durable research memory --------------------------------------------
-    def memory_search(self, query, limit=8): return self.ws.memory.context(query, sections=limit)
-    def memory_tree(self, document=''): return self.ws.memory.toc(document or None)
-    def memory_read(self, node_id): return self.ws.memory.read(node_id)
-    def memory_topics(self, limit=12): return self.ws.memory.clusters(limit)
-    def memory_forget(self, doc_id): return self.ws.memory.forget(doc_id)
+    def _vault(self, write=False):
+        """The active vault's `Memory`, refusing a write the toggle does not allow.
+
+        `agent_writable` is stored per vault; enforcing it only in the panel would make it a
+        suggestion. Reads are open on every attached vault -- that is what attaching one is for.
+        """
+        vaults = getattr(self.ws, 'vaults', None)
+        if vaults is None: return self.ws.memory
+        ref = vaults.active
+        if write and not ref.agent_writable:
+            raise PermissionError(f'the agent may not write to {ref.name}; turn on agent writes for it first')
+        return vaults.memory(ref.name)
+
+    def memory_search(self, query, limit=8): return self._vault().context(query, sections=limit)
+    def memory_tree(self, document=''): return self._vault().toc(document or None)
+    def memory_read(self, node_id): return self._vault().read(node_id)
+    def memory_topics(self, limit=12): return self._vault().clusters(limit)
+    def memory_forget(self, doc_id): return self._vault(write=True).forget(doc_id)
+    def memory_documents(self, limit=50): return self._vault().all_documents(limit)
+    def memory_sections(self, doc_id): return self._vault().sections(doc_id)
+
+    # `remember`, `watch` and `unwatch` come from ramabana's Host and write to whatever vault it
+    # holds; overridden so they go through the same toggle as everything else here.
+    def remember(self, text, title=None, tags=()):
+        return self._vault(write=True)._open().note(str(text), title=title, tags=list(tags or []))
+    def watch(self, target, action='url', every='1d', note=None, **kw):
+        return self._vault(write=True).watch(target, action=action, every=every, note=note, **kw)
+    def unwatch(self, watch_id): return self._vault(write=True).unwatch(watch_id)
+    def watches(self, due_only=False): return self._vault().watches(due_only=due_only)
 
     # -- notebooks -----------------------------------------------------------
     def nb_cells(self, path):
@@ -368,13 +396,16 @@ class WorkspaceHost(Host):
         if result is not None: out += ('\n' if out else '') + str(result)
         return out or '(ok)'
 
+    @staticmethod
+    def _session_text(r):
+        "One `AgentSession` run as the text the model sees."
+        if r.error: return r.error
+        out = r.stdout or ''
+        if r.result is not None: out += ('\n' if out else '') + r.result.value
+        return out or '(ok)'
+
     def run_python(self, code):
-        if self.session is not None:
-            r = self.session.run(code)
-            if r.error: return r.error
-            out = r.stdout or ''
-            if r.result is not None: out += ('\n' if out else '') + r.result.value
-            return out or '(ok)'
+        if self.session is not None: return self._session_text(self.session.run(code))
         # The web agent lives outside the kernel, and reaches the owner namespace through the
         # authenticated inspector, exactly like the exec bar.
         return self._exec_text(self._kernel().api_sync('/api/exec', {'code': code, 'scope': 'global'}))
@@ -384,12 +415,7 @@ class WorkspaceHost(Host):
         if scope not in self.scopes:
             return (f'scope {scope!r} is not available here (allowed: {", ".join(self.scopes)}); '
                 'the workspace was opened with a narrower agent scope')
-        if self.session is not None:
-            r = self.session.run(code, scope=scope)
-            if r.error: return r.error
-            out = r.stdout or ''
-            if r.result is not None: out += ('\n' if out else '') + r.result.value
-            return out or '(ok)'
+        if self.session is not None: return self._session_text(self.session.run(code, scope=scope))
         return self._exec_text(self._kernel().api_sync('/agent/api/exec', {'code': code, 'scope': scope}))
 
     @property
@@ -483,16 +509,20 @@ def _git_tools(host):
             'branches': info['branches'], 'changes': info['changes']}
         return ((output.strip() + '\n') if output and output.strip() else '') + json.dumps(summary, indent=2)
 
+    def report(what, path, act=None):
+        "Run one operation on the selected repository and report it with the refreshed status."
+        try:
+            r = repo(path)
+            return clip(result(r, act(r) if act else ''), MAX_TOOL_CHARS * 2)
+        except Exception as e: return f'{what} failed: {errstr(e)}'
+
     def git_status(path: str = '') -> str:
         """Show repository status, local and remote branches, upstream, and changed files.
 
         `path` selects a repository when several folders are open; leave it empty for the
         first open folder. Use this before checkout or pull so local changes are visible.
         """
-        try:
-            r = repo(path)
-            return clip(result(r), MAX_TOOL_CHARS * 2)
-        except Exception as e: return f'git status failed: {errstr(e)}'
+        return report('git status', path)
 
     def git_fetch(path: str = '') -> str:
         """Fetch and prune remote refs, then return the refreshed branch status.
@@ -500,10 +530,7 @@ def _git_tools(host):
         This contacts the configured remotes but does not merge into the working tree.
         Remote-only branches become visible to `git_status` and `git_checkout`.
         """
-        try:
-            r = repo(path)
-            return clip(result(r, r.fetch()), MAX_TOOL_CHARS * 2)
-        except Exception as e: return f'git fetch failed: {errstr(e)}'
+        return report('git fetch', path, lambda r: r.fetch())
 
     def git_checkout(branch: str, path: str = '') -> str:
         """Switch to a local branch or create a local tracking branch from `REMOTE/BRANCH`.
@@ -511,11 +538,9 @@ def _git_tools(host):
         Call `git_fetch` and inspect `git_status` first. Git refuses a checkout that would
         overwrite local work; never discard or stash the user's changes implicitly.
         """
-        try:
-            r = repo(path)
-            r.checkout(str(branch or '').strip())
-            return clip(result(r), MAX_TOOL_CHARS * 2)
-        except Exception as e: return f'git checkout failed: {errstr(e)}'
+        # `checkout` says when it had to set uncommitted work aside to move; that is exactly what
+        # the model must not silently lose, so it is reported like fetch/pull/push report theirs.
+        return report('git checkout', path, lambda r: r.checkout(str(branch or '').strip()))
 
     def git_pull(path: str = '') -> str:
         """Fast-forward the current branch from its configured upstream.
@@ -523,10 +548,7 @@ def _git_tools(host):
         This deliberately uses `--ff-only`: divergent history is reported for the user to
         resolve explicitly rather than creating a surprise merge commit.
         """
-        try:
-            r = repo(path)
-            return clip(result(r, r.pull()), MAX_TOOL_CHARS * 2)
-        except Exception as e: return f'git pull failed: {errstr(e)}'
+        return report('git pull', path, lambda r: r.pull())
 
     def git_push(path: str = '') -> str:
         """Push the current branch to its configured upstream.
@@ -534,10 +556,7 @@ def _git_tools(host):
         The branch must already have an upstream. This never force-pushes and never creates
         remote branches implicitly.
         """
-        try:
-            r = repo(path)
-            return clip(result(r, r.push()), MAX_TOOL_CHARS * 2)
-        except Exception as e: return f'git push failed: {errstr(e)}'
+        return report('git push', path, lambda r: r.push())
 
     return [git_status, git_fetch, git_checkout, git_pull, git_push]
 
@@ -598,6 +617,15 @@ def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, h
 
     return Interventions(tools=tools, mode=mode, timeout=timeout, host=host,
         on_ask=on_ask, on_answer=on_answer)
+
+
+def _irreversible(action):
+    "How a completed action reads in the turn's irreversible list, or None if restoring files undoes it."
+    if action.tool == 'memory_forget': return f"memory_forget ({action.args.get('doc_id', 'unknown document')})"
+    if action.tool == 'run_python': return 'run_python (live kernel state)'
+    if action.tool == 'run_shell': return f"run_shell ({action.args.get('command', 'command')})"
+    if action.tool in GIT_WRITE_TOOLS: return action.tool
+    return None
 
 
 def _n_approvals(nb, i):
@@ -704,15 +732,8 @@ class Assistant(Agent):
     def _finish(self, text, prompt=''):
         out = super()._finish(text, prompt)
         changes = self.changes()
-        irreversible = []
-        for action in self.activity.since(self.activity._mark):
-            if not (action.done and action.ok): continue
-            if action.tool == 'memory_forget':
-                irreversible.append(f"memory_forget ({action.args.get('doc_id', 'unknown document')})")
-            elif action.tool == 'run_python': irreversible.append('run_python (live kernel state)')
-            elif action.tool == 'run_shell':
-                irreversible.append(f"run_shell ({action.args.get('command', 'command')})")
-            elif action.tool in GIT_WRITE_TOOLS: irreversible.append(action.tool)
+        irreversible = [note for a in self.activity.since(self.activity._mark)
+                        if a.done and a.ok and (note := _irreversible(a))]
         self.turn_transactions[self.current_turn_id] = {
             'turn_id': self.current_turn_id, 'branch_id': self.current_branch_id,
             'files': {p: {'before': before, 'after': after} for p, (before, after) in changes.items()},
@@ -773,9 +794,7 @@ class Assistant(Agent):
             except Exception:
                 if approvals is not None: approvals.observe_result(False)
                 raise
-            ok = not str(out).startswith(('edit failed', 'write failed', 'could not',
-                'git status failed', 'git fetch failed',
-                'git checkout failed', 'git pull failed', 'git push failed'))
+            ok = not str(out).startswith(FAILED_PREFIXES)
             if approvals is not None: approvals.observe_result(ok)
             return out
         return wrapper

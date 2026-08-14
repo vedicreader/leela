@@ -23,9 +23,10 @@ const lee = {
   shownProblems: new Set(),   // agent failures already written into the pane, so they show once
   agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
-  recentTabs: [], researchDocs: [], researchSelected: new Set(),
+  recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
   editorPrefs: null, settingsMeta: null, filePrefs: {}, workbenchPrefs: {}, debugPrefs: {},
+  theme: null,               // {family, mode, density}; mode may be 'system', resolved at paint time
   gitDiffTabs: new Map(), activeGitTab: '', gitMergeView: null,
 };
 const CODE_FONTS = [
@@ -93,6 +94,8 @@ applyEditorPrefs(lee.editorPrefs);
 function createEditor(el, opts = {}) { return LeeCM.create(el, {...opts, settings: {...lee.editorPrefs, ...(opts.settings||{})}}); }
 try { lee.recentTabs = JSON.parse(sessionStorage.getItem('lee-recent-tabs') || '[]'); }
 catch (_) { lee.recentTabs = []; }
+try { lee.locations = new Map(JSON.parse(sessionStorage.getItem('lee-tab-locations') || '[]')); }
+catch (_) { lee.locations = new Map(); }
 try { lee.breakpoints = new Map(JSON.parse(localStorage.getItem('lee-breakpoints') || '[]')); }
 catch (_) { lee.breakpoints = new Map(); }
 try { lee.debugWatches=JSON.parse(localStorage.getItem('lee-debug-watches')||'[]'); } catch(_){lee.debugWatches=[];}

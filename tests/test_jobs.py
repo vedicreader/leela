@@ -175,3 +175,28 @@ def test_the_clip_surface_is_forms_and_the_progress_loop_ends_itself(ws, proj):
         assert gone.status_code == 200 and ws.memory.watches() == []
 
         assert c.post('/vault/watch', data=dict(target=' ', action='remind')).status_code == 400
+
+
+def test_a_judgement_round_trips_from_the_row_that_carried_it(ws, proj):
+    """The tidy row posts `noisy` as a form string, and `keep` must not arrive as `drop`.
+
+    A truthy-string bug here is silent and destructive: `keep` would exclude the document from
+    search instead of clearing it, and the row would say the opposite of what it did.
+    """
+    with TestClient(ide_app(ws)) as c:
+        ws.memory.clip([proj/'notes.md'])
+        doc = (ws.memory.documents() or [{}])[0]
+        did = doc.get('doc_id') or doc.get('id')
+
+        assert 'vaulttidy' in c.get('/vault/tidy/list').text
+
+        dropped = c.post('/vault/noisy', data=dict(doc=did, noisy='true'))
+        assert dropped.status_code == 200 and 'dropped from search' in dropped.text
+        assert ws.memory._open().marks(did).get('noisy') == 1
+
+        kept = c.post('/vault/noisy', data=dict(doc=did, noisy='false'))
+        assert kept.status_code == 200 and 'kept' in kept.text
+        assert ws.memory._open().marks(did).get('noisy') == 0, 'keep must clear, not set'
+
+        badge = c.get('/vault/pii/badge', params=dict(doc=did))
+        assert badge.status_code == 200 and 'lee-pii' in badge.text

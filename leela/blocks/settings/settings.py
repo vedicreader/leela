@@ -128,6 +128,17 @@ def _validated(section, values):
     return out
 
 
+def _origin(section, key, user, workspace, language):
+    "Which layer supplies `section.key`; the last layer that names it wins."
+    def lang_values(scope): return ((scope.get('languages') or {}).get(language, {}).get(section)) or {}
+    origin = 'default'
+    if key in (user.get(section) or {}): origin = 'user'
+    if key in (workspace.get(section) or {}): origin = 'workspace'
+    if language and key in lang_values(user): origin = f'user:{language}'
+    if language and key in lang_values(workspace): origin = f'workspace:{language}'
+    return origin
+
+
 class Settings:
     "Read and write user/workspace settings without allowing arbitrary paths or keys."
     def __init__(self, root=None, user_path=None):
@@ -153,26 +164,21 @@ class Settings:
     def describe(self, language=''):
         user, workspace = self.raw('user'), self.raw('workspace')
         effective = self.effective(language)
-        origins = {}
-        for section, values in DEFAULT_SETTINGS.items():
-            origins[section] = {}
-            for key in values:
-                origin = 'default'
-                if key in (user.get(section) or {}): origin = 'user'
-                if key in (workspace.get(section) or {}): origin = 'workspace'
-                if language and key in (((user.get('languages') or {}).get(language, {}).get(section)) or {}):
-                    origin = f'user:{language}'
-                if language and key in (((workspace.get('languages') or {}).get(language, {}).get(section)) or {}):
-                    origin = f'workspace:{language}'
-                origins[section][key] = origin
+        origins = {section: {key: _origin(section, key, user, workspace, language) for key in values}
+                   for section, values in DEFAULT_SETTINGS.items()}
         return {'effective': effective, 'origins': origins, 'user': user, 'workspace': workspace,
                 'paths': {'user': str(self.user_path), 'workspace': str(self.workspace_path or '')},
                 'language': language}
 
+    def _path(self, scope, verb):
+        "The file `scope` writes to. A workspace scope needs a project open to have one."
+        path = {'user': self.user_path, 'workspace': self.workspace_path}.get(scope)
+        if path is None: raise ValueError(f'open a project folder before {verb} workspace settings')
+        return path
+
     def save(self, scope, section, values, language=''):
         values = _validated(section, values)
-        path = self.user_path if scope == 'user' else self.workspace_path if scope == 'workspace' else None
-        if path is None: raise ValueError('open a project folder before saving workspace settings')
+        path = self._path(scope, 'saving')
         current = self.raw(scope)
         target = current.setdefault('languages', {}).setdefault(language, {}) if language else current
         target.setdefault(section, {}).update(values)
@@ -180,8 +186,7 @@ class Settings:
         return self.describe(language)
 
     def reset(self, scope, section=None, language=''):
-        path = self.user_path if scope == 'user' else self.workspace_path if scope == 'workspace' else None
-        if path is None: raise ValueError('open a project folder before resetting workspace settings')
+        path = self._path(scope, 'resetting')
         current = self.raw(scope)
         target = (current.get('languages') or {}).get(language, {}) if language else current
         if section: target.pop(section, None)

@@ -176,3 +176,24 @@ function webSearch() { return researchWorkspace('search'); }
 function readUrl(url = '') { return researchWorkspace('read', url); }
 function researchQ() { return researchWorkspace('research'); }
 
+
+/* ---- clip: a file, a folder or the open tab into the workspace vault shelf ---- */
+function clipTarget() {
+  // Which menu opened decides the target. A tab names its path in `title`, so an inactive tab
+  // read straight after right-clicking it does not have to wait for the select to land.
+  const s = lee.menuSurface;
+  if (s === 'file' || s === 'folder') return treeSel()?.dataset.path || '';
+  if (s === 'tab') return $(`.lee-tab[data-i="${lee.menuTab}"]`)?.title || '';
+  return treeSel()?.dataset.path || lee.path || '';
+}
+async function leeClipToVault() {
+  const target = clipTarget();
+  if (!target) return status('select a file, a folder or a tab to clip', 'err');
+  leePane('right', true); leeRight('memory'); setMemoryView('vault');
+  // The panel first, because the job card swaps into it. Both are ordinary htmx requests.
+  await htmx.ajax('GET', '/vault/panel', {target: '#memorybody', swap: 'innerHTML'});
+  await htmx.ajax('POST', '/clip?' + new URLSearchParams({target, kind: 'clip', origin: 'menu'}),
+    {target: '#vaultjobs', swap: 'afterbegin'});
+  status(`clipping ${target.split('/').pop() || target} into the vault…`);
+}
+window.leeClipToVault = leeClipToVault;

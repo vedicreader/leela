@@ -13,8 +13,8 @@ import json
 
 from fastcore.all import Path
 
-__all__ = ['PRESETS', 'TRIGGERS', 'compose', 'deploy_job', 'spec_path', 'load_spec', 'save_spec',
-           'preset_rows']
+__all__ = ['PRESETS', 'TRIGGERS', 'compose', 'deploy_job', 'nbdev_job', 'spec_path', 'load_spec',
+           'save_spec', 'preset_rows']
 
 SPEC_DIR = '.leela/workflows'
 
@@ -95,16 +95,21 @@ def _lines(value):
     return [l for l in str(value or '').splitlines() if l.strip()]
 
 
+def _branches(value):
+    "The branches a push or pull_request trigger names; `True` and empty both mean `main`."
+    return _listy('main' if value is True else value) or ['main']
+
+
 def _triggers(wfb, on):
     "Apply the trigger part of a spec, whose one shape gheasy renders into `on:`'s three."
     used = False
     push = on.get('push')
     if push not in (None, False):
-        wfb.on.push(branches=_listy(push if push is not True else 'main') or ['main'])
+        wfb.on.push(branches=_branches(push))
         used = True
     pr = on.get('pull_request')
     if pr not in (None, False):
-        wfb.on.pull_request(branches=_listy(pr if pr is not True else 'main') or ['main'])
+        wfb.on.pull_request(branches=_branches(pr))
         used = True
     if on.get('workflow_dispatch'):
         wfb.on.workflow_dispatch()
@@ -134,6 +139,14 @@ def deploy_job(wfb, job_id, opts, schema, app):
         .uv_install('uv sync --group dev').end_step()
         .step('Install SSH key').if_("env.DEPLOY_KEY != ''").run(ssh).end_step()
         .step('Deploy').run(str(opts.get('cmd') or 'python deploy.py deploy')).end_job())
+
+
+def nbdev_job(wfb, job_id='test', needs=None):
+    "nbdev's own CI job: export and test, then the clean check that is what breaks in an nbdev repo."
+    (wfb.job(job_id, needs=needs).runs_on('ubuntu-latest')
+        .checkout().end_step().setup_uv().end_step().uv_install().end_step()
+        .uv_run('nbdev_test').end_step()
+        .step('Notebooks are clean').run('uv run nbdev_clean --check_all').end_job())
 
 
 def _run_job(wfb, job_id, opts):
@@ -179,11 +192,7 @@ def compose(spec, schema=None, app=''):
         elif pid == 'node': wfb.node_job()
         elif pid == 'rust': wfb.rust_job()
         elif pid == 'go': wfb.go_job()
-        elif pid == 'nbdev_test':
-            (wfb.job(job_id, needs=opts['needs']).runs_on('ubuntu-latest')
-                .checkout().end_step().setup_uv().end_step().uv_install().end_step()
-                .uv_run('nbdev_test').end_step()
-                .step('Notebooks are clean').run('uv run nbdev_clean --check_all').end_job())
+        elif pid == 'nbdev_test': nbdev_job(wfb, job_id, opts['needs'])
         elif pid == 'deploy': deploy_job(wfb, job_id, opts, schema, app)
         elif pid == 'run': _run_job(wfb, job_id, opts)
     return wfb.build().to_yaml()

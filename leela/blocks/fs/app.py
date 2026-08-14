@@ -148,7 +148,15 @@ def connect(app, ctx):
     _routes.insert(_static, _named)
 
     @rt('/fs/find')
-    def fs_find(q: str = '', limit: int = 200):
-        "Quick-open: fuzzy match over every file in the open folders, best match first."
-        hits = fuzzy_rank(q, ctx.fs.walk(), key=str, limit=limit)
-        return {'hits': [dict(path=str(p), name=p.name, lang=lang_for(p) or '') for p in hits]}
+    def fs_find(q: str = '', limit: int = 200, scope: str = ''):
+        """Fuzzy match over the open folders, best match first.
+
+        `scope='project'` narrows to the chosen folder, which is what the agent's `@` means: in a
+        workspace with several checkouts open, every file everywhere is not a useful list of what
+        this project contains. Quick-open keeps the default, because opening a file across the
+        workspace is exactly its job.
+        """
+        root = ctx.session.project_root if scope == 'project' else None
+        hits = fuzzy_rank(q, ctx.fs.walk(root), key=str, limit=limit)
+        return {'hits': [dict(path=str(p), name=p.name, lang=lang_for(p) or '') for p in hits],
+                'scope': str(root) if root else ''}

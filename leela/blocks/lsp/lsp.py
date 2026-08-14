@@ -5,12 +5,20 @@ from pathlib import Path
 from urllib.parse import quote
 
 
+def _why_unavailable(command, root):
+    "Why there is no Pyright, in the words the status pill shows. Empty means it is there."
+    if command: return ''
+    return 'open a project folder for Pyright' if not root else 'pyright-langserver is not installed'
+
+
 class PyrightService:
     def __init__(self, root):
         self.root = Path(root).resolve() if root else None
         self.command = shutil.which('pyright-langserver') if self.root else None
-        self.process = None; self._seq = 0; self._pending = {}; self._diagnostics = {}; self._versions = {}
-        self._lock = threading.Lock(); self.note = '' if self.command else ('open a project folder for Pyright' if not self.root else 'pyright-langserver is not installed')
+        self.process, self._seq = None, 0
+        self._pending, self._diagnostics, self._versions = {}, {}, {}
+        self._lock = threading.Lock()
+        self.note = _why_unavailable(self.command, self.root)
 
     @property
     def available(self): return bool(self.command)
@@ -34,22 +42,27 @@ class PyrightService:
             self._notify('initialized', {})
             self.note = 'Pyright connected'
         except Exception as e:
-            self.note = f'Pyright failed: {type(e).__name__}: {e}'; self.close(); return False
+            self.note = f'Pyright failed: {type(e).__name__}: {e}'
+            self.close()
+            return False
         return True
 
     def _send(self, payload):
         raw = json.dumps(payload, separators=(',', ':')).encode()
         with self._lock:
-            self.process.stdin.write(f'Content-Length: {len(raw)}\r\n\r\n'.encode() + raw); self.process.stdin.flush()
+            self.process.stdin.write(f'Content-Length: {len(raw)}\r\n\r\n'.encode() + raw)
+            self.process.stdin.flush()
 
     def _request(self, method, params, timeout=5):
-        self._seq += 1; ident = self._seq; answer = queue.Queue(1); self._pending[ident] = answer
-        self._send({'jsonrpc':'2.0','id':ident,'method':method,'params':params})
+        self._seq += 1
+        ident, answer = self._seq, queue.Queue(1)
+        self._pending[ident] = answer
+        self._send({'jsonrpc': '2.0', 'id': ident, 'method': method, 'params': params})
         row = answer.get(timeout=timeout)
         if 'error' in row: raise RuntimeError(row['error'])
         return row.get('result')
 
-    def _notify(self, method, params): self._send({'jsonrpc':'2.0','method':method,'params':params})
+    def _notify(self, method, params): self._send({'jsonrpc': '2.0', 'method': method, 'params': params})
 
     def _read(self):
         stream = self.process.stdout
@@ -60,21 +73,26 @@ class PyrightService:
                     line = stream.readline()
                     if not line: return
                     if line in (b'\r\n', b'\n'): break
-                    key, _, value = line.decode('ascii', 'replace').partition(':'); headers[key.lower()] = value.strip()
+                    key, _, value = line.decode('ascii', 'replace').partition(':')
+                    headers[key.lower()] = value.strip()
                 body = stream.read(int(headers.get('content-length', '0')))
                 msg = json.loads(body)
                 if 'id' in msg and msg['id'] in self._pending: self._pending.pop(msg['id']).put(msg)
                 elif msg.get('method') == 'textDocument/publishDiagnostics':
-                    p = msg.get('params', {}); self._diagnostics[p.get('uri', '')] = (time.time(), p.get('diagnostics', []))
+                    p = msg.get('params', {})
+                    self._diagnostics[p.get('uri', '')] = (time.time(), p.get('diagnostics', []))
             except Exception: return
 
     def sync(self, path, text):
         if not self.start(): return None
-        uri = self._uri(path); version = self._versions.get(uri, 0) + 1; self._versions[uri] = version
+        uri = self._uri(path)
+        version = self._versions[uri] = self._versions.get(uri, 0) + 1
         if version == 1:
-            self._notify('textDocument/didOpen', {'textDocument': {'uri':uri,'languageId':'python','version':version,'text':text}})
+            self._notify('textDocument/didOpen',
+                {'textDocument': {'uri': uri, 'languageId': 'python', 'version': version, 'text': text}})
         else:
-            self._notify('textDocument/didChange', {'textDocument': {'uri':uri,'version':version}, 'contentChanges':[{'text':text}]})
+            self._notify('textDocument/didChange',
+                {'textDocument': {'uri': uri, 'version': version}, 'contentChanges': [{'text': text}]})
         return uri
 
     def request(self, method, path, text, line=0, character=0, extra=None, timeout=5):
@@ -86,7 +104,7 @@ class PyrightService:
         return self._request(method, params, timeout)
 
     def diagnostics(self, path, text, timeout=2.5):
-        started = time.time(); uri = self.sync(path, text)
+        started, uri = time.time(), self.sync(path, text)
         if not uri: return [], self.note
         while time.time() - started < timeout:
             row = self._diagnostics.get(uri)

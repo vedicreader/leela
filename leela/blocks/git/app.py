@@ -11,7 +11,9 @@ absolute editor path through the sandbox and refuses anything outside the reposi
 browser, so it goes through `RepoSet.require`, which answers only for repositories the
 workspace already discovered.
 
-Every call is a subprocess, so all of them go through `off_loop`.
+Every call is a subprocess, so all of them go through `off_loop`. Cloning is the exception:
+it is networked and can run for minutes, so `/git/clone` starts a job and answers immediately.
+Its destination is the third boundary -- see `_clone_into`.
 """
 
 from __future__ import annotations
@@ -20,12 +22,12 @@ import asyncio
 from pathlib import Path
 
 from ...core.web import fail, off_loop
-from .git import GitError, GitRepo
-from .repos import RepoSet, find_repos, repo_for
+from .git import GitError, GitRepo, clone, clone_target
+from .repos import RepoSet, clone_url, find_repos, repo_for
 
 __all__ = ['CAPS', 'connect', 'git_paths']
 
-CAPS = ('fs',)
+CAPS = ('fs', 'jobs')
 
 
 def git_paths(values):
@@ -48,6 +50,7 @@ def _apply(repo, op, d):
         'discard': lambda: repo.discard(git_paths(d.get('paths'))),
         'write_worktree': lambda: repo.write_worktree(git_paths([d.get('path')])[0], d.get('content') or ''),
         'resolve_conflict': lambda: repo.resolve_conflict(git_paths([d.get('path')])[0], d.get('choice') or '', d.get('content')),
+        'resolve_safe_conflicts': lambda: repo.resolve_safe_conflicts(git_paths(d.get('paths')) if d.get('paths') else ()),
         'undo': lambda: repo.undo(str(d.get('token') or '')),
         'apply_patch': lambda: repo.apply_patch(d.get('patch') or '', bool(d.get('staged', True)), bool(d.get('reverse'))),
         'checkout': lambda: repo.checkout(d.get('branch') or ''),
@@ -87,8 +90,32 @@ def _apply(repo, op, d):
     raise GitError(f'unknown Git action: {op}')
 
 
+def _clone_into(fs, url, parent, name=''):
+    """Where a clone may land, and the one rule that confines it.
+
+    A repository the workspace does not have yet cannot be cloned *inside* the sandbox -- that
+    is the point of cloning it. So the boundary is the same one `/fs/add-root` already applies
+    to opening a folder: an existing directory the person named, into which exactly one new,
+    not-yet-existing folder is created. Nothing is overwritten, and the default parent is an
+    open folder, so the arbitrary path has to be asked for explicitly.
+    """
+    # `Path('')` is the process's own directory, which is nobody's choice at all.
+    parent = str(parent or '').strip() or (str(fs.roots[0]) if fs.roots else '')
+    if not parent: raise GitError('choose a folder to clone into')
+    return clone_target(url, parent, name)
+
+
 def connect(app, ctx):
     rt = app.route
+
+    def run_clone(job, report):
+        report(current=f'cloning {job.target}')
+        root = clone(job.target, job.params.get('parent') or '', job.params.get('name') or '')
+        return {'root': str(root), 'name': root.name}
+
+    # A clone is minutes of network, so it is a job rather than a request. Registered here
+    # because the work is this block's; the jobs block only shows the row.
+    ctx.jobs.register('git_clone', run_clone)
 
     def repos(): return RepoSet(ctx.fs.roots)
 
@@ -153,6 +180,23 @@ def connect(app, ctx):
             return outcome | await off_loop(repos().overview, str(d.get('expect') or ''))
         except Exception as e: return fail(e)
 
+    @rt('/git/clone')
+    async def git_clone(req):
+        "Start a clone into a folder. Returns at once; the browser watches `/git/clone/status`."
+        d = await req.json()
+        try:
+            url = clone_url(d.get('url') or '')
+            target = _clone_into(ctx.fs, url, str(d.get('parent') or ''), str(d.get('name') or ''))
+            job = ctx.jobs.start('git_clone', url, parent=str(target.parent), name=target.name)
+            return {'job': job.dict(), 'root': str(target)}
+        except Exception as e: return fail(e)
+
+    @rt('/git/clone/status')
+    def git_clone_status(job: str = ''):
+        "How a clone is going. JSON, because the branch popup polls it rather than a job card."
+        try: return ctx.jobs.get(job).dict()
+        except Exception as e: return fail(e)
+
     @rt('/git/history')
     async def git_history(limit: int = 100, skip: int = 0, query: str = '', ref: str = '--all',
         path: str = '', repo: str = ''):
@@ -164,6 +208,11 @@ def connect(app, ctx):
     @rt('/git/reflog')
     async def git_reflog(limit: int = 100, repo: str = ''):
         try: return {'entries': await off_loop(repo_at(repo).reflog, limit)}
+        except Exception as e: return fail(e)
+
+    @rt('/git/conflicts')
+    async def git_conflicts(repo: str = ''):
+        try: return await off_loop(repo_at(repo).conflict_plan)
         except Exception as e: return fail(e)
 
     @rt('/git/conflict')
@@ -259,13 +308,17 @@ def connect(app, ctx):
         absolute = ctx.fs._check(path, must_exist=False)
         return GitRepo.at(absolute.parent), absolute
 
+    def repo_relative(path, what):
+        "That repository and the file's path inside it, refusing a file that is not in it."
+        r, absolute = repo_of(path)
+        try: return r, str(absolute.relative_to(r.root))
+        except ValueError: raise GitError(f'the active {what} is outside this repository')
+
     @rt('/git/file')
     async def git_file(path: str = ''):
         "The active editor file's Git state, always in *its own* repository."
         try:
-            r, absolute = repo_of(path)
-            try: relative = str(absolute.relative_to(r.root))
-            except ValueError: raise GitError('the active file is outside this repository')
+            r, relative = repo_relative(path, 'file')
             return await off_loop(r.file_changes, relative)
         except Exception as e: return fail(e)
 
@@ -273,8 +326,6 @@ def connect(app, ctx):
     async def git_notebook(path: str = ''):
         "The open notebook's changed cells, by cell id. Same repository rule as `/git/file`."
         try:
-            r, absolute = repo_of(path)
-            try: relative = str(absolute.relative_to(r.root))
-            except ValueError: raise GitError('the active notebook is outside this repository')
+            r, relative = repo_relative(path, 'notebook')
             return await off_loop(r.notebook_changes, relative)
         except Exception as e: return fail(e)

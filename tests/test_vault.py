@@ -87,3 +87,32 @@ def test_a_cadence_is_a_watch_and_a_url_watch_forces_a_refetch(mem):
         w = mem.watch(f'https://example.com/{action}', action=action, every='6h')
         assert w['params'].get('force') is True, f'{action} must refetch'
         mem.unwatch(w['id'])
+
+
+def test_a_clips_pii_report_covers_what_that_clip_wrote(mem, tmp_path):
+    """The summary is about the documents this job clipped, not about the shelf.
+
+    It used to re-list `documents(limit=400)`, so clipping one clean file into a shelf that
+    already held a CV reported personal information the clip had nothing to do with.
+    """
+    from leela.blocks.jobs.clip import _pii_summary
+    (tmp_path/'cv.md').write_text('# CV\n\nDr Charles Babbage, ada@example.com, 555-123-4567.\n')
+    (tmp_path/'clean.md').write_text('# Notes\n\nRanking and recall, no one in particular.\n')
+    rows = {r['title']: r['doc_id'] for r in mem.clip(sorted(tmp_path.glob('*.md')))}
+
+    clean = _pii_summary(mem, [rows['clean']], mem.shelf_name)
+    assert clean['documents'] == [] and clean['kinds'] == {}, 'the CV is in the shelf, not in this clip'
+    cv = _pii_summary(mem, [rows['cv']], mem.shelf_name)
+    assert cv['documents'] == [mem.ref(rows['cv'], mem.shelf_name)]
+    assert set(cv['kinds']) >= {'email', 'phone'}
+
+
+def test_purge_attempts_each_document_once(mem, tmp_path):
+    "The three listings overlap; a document whose forget fails must not be retried per duplicate."
+    (tmp_path/'a.md').write_text('# A\n\nDurable prose about ranking.\n')
+    mem.clip([tmp_path/'a.md'])
+    doc_id = (mem.documents() or [{}])[0]['id']
+    tried = []
+    mem.forget = lambda i: (tried.append(i), False)[1]      # a forget that never succeeds
+    assert mem.purge() == 0
+    assert tried.count(doc_id) == 1, 'one attempt per document, however many listings name it'

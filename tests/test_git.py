@@ -3,6 +3,8 @@ import time
 
 import pytest
 
+from fastcore.basics import first
+
 from leela.blocks.agent.ai import GIT_WRITE_TOOLS, WRITE_TOOLS, _git_tools
 from leela.blocks.git.git import GitError, GitRepo, repo_root
 from leela.workspace import Workspace
@@ -208,6 +210,36 @@ def test_agent_git_tools_fetch_track_and_report_failures(repo, tmp_path):
     assert '"branch": "from-agent"' in checked_out
     assert '"upstream": "origin/from-agent"' in checked_out
     assert tools['git_status'](str(repo.parent)).startswith('git status failed:')
+
+    # Every prefix a tool reports failure with is one `_record` classifies as a failure. These
+    # were two hand-maintained lists; a tool added to one and not the other read as success.
+    from leela.blocks.agent.ai import FAILED_PREFIXES, GIT_TOOLS
+    assert set(tools) == set(GIT_TOOLS)
+    for name in GIT_TOOLS: assert f'{name.replace("_", " ")} failed' in FAILED_PREFIXES, name
+
+
+def test_agent_checkout_reports_what_the_switch_said(repo, tmp_path):
+    """`git_checkout` surfaces `GitRepo.checkout`'s message, as fetch/pull/push surface theirs.
+
+    It used to discard it. That matters most in the case this cannot easily stage — when Git
+    refuses to carry dirty work and `checkout` sets it aside, the sentence saying so was dropped,
+    so the agent reported a clean branch switch it had not performed.
+    """
+    git(repo, 'branch', 'other')
+    (repo/'app.py').write_text('print("uncommitted")\n')
+
+    class Host:
+        roots = [str(repo)]
+        def check(self, path, must_exist=False):
+            from pathlib import Path
+            return Path(path or repo).resolve()
+
+    checkout = {f.__name__: f for f in _git_tools(Host())}['git_checkout']
+    out = checkout('other')
+    assert not out.startswith('git checkout failed'), out
+    assert '"branch": "other"' in out
+    # The message leads, ahead of the status JSON; discarding it left the reply starting at `{`.
+    assert out.splitlines()[0].strip() and not out.lstrip().startswith('{'), out[:200]
 
 
 def test_remote_head_is_not_a_branch_and_refs_explain_recency(repo, tmp_path):
@@ -423,6 +455,86 @@ def test_conflict_versions_resolution_operation_state_and_reflog(repo):
     r.operation_action('abort')
     assert not r.info()['operation']['active']
     assert r.reflog() and all(row['selector'].startswith('HEAD@{') for row in r.reflog())
+
+
+
+def conflicted(repo, ours, theirs):
+    "Leave `repo` mid-merge with src/app.py conflicted between the two texts."
+    r = GitRepo.at(repo); path = repo/'src'/'app.py'
+    r.create('other'); path.write_text(theirs)
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'other side')
+    r.checkout('main'); path.write_text(ours)
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'main side')
+    assert subprocess.run(['git', 'merge', 'other'], cwd=repo, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode != 0
+    return r, path
+
+
+# One shared line, one contested line: a "safe" resolution exists but does not finish the file.
+MIXED_OURS = 'shared\nours only\ntail\n'
+MIXED_THEIRS = 'shared\ntheirs only\ntail\n'
+
+
+def test_conflict_blocks_span_the_whole_marker_and_survive_an_empty_side():
+    """Each payload must be exactly what its span should become, newline included.
+
+    An empty theirs side is what a delete/modify conflict writes; it used to be read as a
+    malformed marker, so the file reported zero conflict blocks.
+    """
+    from leela.blocks.git.git import _conflict_blocks
+    text = 'a\n<<<<<<< HEAD\nx\n=======\n>>>>>>> o\nb\n'
+    block, = _conflict_blocks(text)
+    assert (block['ours'], block['theirs']) == ('x\n', '')
+    assert text[:block['start']] + block['ours'] + text[block['end']:] == 'a\nx\nb\n'
+    assert text[:block['start']] + block['theirs'] + text[block['end']:] == 'a\nb\n'
+    assert _conflict_blocks('a\n<<<<<<< HEAD\nx\n') == []          # unterminated stays plain text
+
+
+def test_conflict_plan_counts_safe_and_manual_blocks(repo):
+    r, _ = conflicted(repo, 'one\ntwo\n', 'ONE\ntwo\n')
+    plan = r.conflict_plan()
+    assert plan['operation']['active'] == 'merge'
+    assert plan['summary'] == {'files': 1, 'blocks': 1, 'safe': 0, 'manual': 1}
+    row = plan['files'][0]
+    assert row['path'] == 'src/app.py' and row['kind'] == 'text' and row['reason']
+
+
+def test_resolving_a_safe_conflict_keeps_the_line_break_it_replaced(repo):
+    """The whole marker span is swapped for one side, so that side must keep its newline.
+
+    Without it the resolved line ran into the line after `>>>>>>>`.
+    """
+    r, path = conflicted(repo, MIXED_OURS, MIXED_THEIRS)
+    # Both sides of the block are the same text, which is the only case this is allowed to touch.
+    path.write_text('top\n<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> other\nnext\n')
+    out = r.resolve_safe_conflicts(['src/app.py'])
+    assert path.read_text() == 'top\nsame\nnext\n'
+    assert out['resolved'] == [{'path': 'src/app.py', 'safe': 1, 'remaining': 0}]
+
+
+def test_a_partly_resolved_file_is_written_but_not_staged(repo):
+    """Staging is what marks a conflict settled, so it must wait for the last contested block.
+
+    Staging early let `commit` take the remaining `<<<<<<<` markers, and dropped the file out
+    of the conflict list with its manual blocks unreviewed.
+    """
+    r, path = conflicted(repo, MIXED_OURS, MIXED_THEIRS)
+    path.write_text('<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> other\n' + path.read_text())
+    out = r.resolve_safe_conflicts(['src/app.py'])
+    assert out['resolved'] == [{'path': 'src/app.py', 'safe': 1, 'remaining': 1}]
+    assert path.read_text().startswith('same\n') and '<<<<<<<' in path.read_text()
+    assert first(c for c in r.info()['changes'] if c['path'] == 'src/app.py')['conflicted']
+
+
+def test_conflicts_route_answers_json_for_a_clean_repo_and_a_stopped_merge(repo):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    c = TestClient(ide_app(Workspace(roots=[repo])))
+    d = c.get('/git/conflicts').json()
+    assert d['files'] == [] and d['summary']['files'] == 0 and not d['operation']['active']
+    conflicted(repo, 'one\ntwo\n', 'ONE\ntwo\n')
+    d = c.get('/git/conflicts').json()
+    assert [f['path'] for f in d['files']] == ['src/app.py'] and d['operation']['active'] == 'merge'
 
 
 def test_git_errors_are_readable(tmp_path):
@@ -787,3 +899,174 @@ def test_choosing_a_folder_moves_the_agent_and_the_kernel_fallback_too(tmp_path)
 
     from leela.blocks.agent.ai import WorkspaceHost
     assert WorkspaceHost(ws).project == str(b), 'as does where its commands run'
+
+
+# -- the top bar as a Git control ------------------------------------------------------
+# The branch pill's popup, the fetch/pull/push icons beside it and "clone a repository" are
+# routes plus a renderer. What is pinned here is the routes; `28_branchbar.js` only calls them.
+
+def _outside(tmp_path, name):
+    "A sibling of `tmp_path`, because the `repo` fixture *is* `tmp_path`."
+    return tmp_path.parent/f'{tmp_path.name}-{name}'
+
+
+def _bare_remote(repo, tmp_path, name='remote.git'):
+    "A local bare repository standing in for a network remote, published from `repo`."
+    remote = _outside(tmp_path, name)
+    git(tmp_path.parent, 'init', '--bare', remote.name)
+    git(repo, 'remote', 'add', 'origin', str(remote))
+    git(repo, 'push', '-u', 'origin', 'main')
+    # A bare repository initialised on a machine whose default branch is `master` has a HEAD
+    # pointing at a branch nobody pushed, and a clone of it checks out nothing at all.
+    git(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main')
+    return remote
+
+
+def _await_job(client, jid, tries=300):
+    for _ in range(tries):
+        job = client.get('/git/clone/status', params={'job': jid}).json()
+        if not job['active']: return job
+        time.sleep(.05)
+    raise AssertionError(f'job {jid} never finished')
+
+
+def test_clone_target_refuses_anything_but_a_free_folder_in_a_real_directory(tmp_path):
+    from leela.blocks.git.git import clone_target
+    assert clone_target('https://example.com/x/leela.git', tmp_path) == tmp_path/'leela'
+    # An option-shaped URL would be read as a flag by `git clone` rather than a repository.
+    with pytest.raises(GitError, match='not a repository URL'):
+        clone_target('--upload-pack=whatever', tmp_path)
+    with pytest.raises(GitError, match='not a directory'):
+        clone_target('https://example.com/x/leela.git', tmp_path/'imaginary')
+    (tmp_path/'leela').mkdir()
+    with pytest.raises(GitError, match='already exists'):
+        clone_target('https://example.com/x/leela.git', tmp_path)
+
+
+def test_cloning_a_repository_into_a_folder_runs_as_a_job_and_can_then_be_opened(repo, tmp_path):
+    """A clone is minutes of network, so `/git/clone` answers with a job, not a checkout.
+
+    The destination boundary is the one `/fs/add-root` already applies to opening a folder: a
+    directory that exists, into which exactly one new folder is made. Nothing is overwritten.
+    """
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    remote = _bare_remote(repo, tmp_path)
+    # Deliberately not an open folder: the point of a clone is a repository the workspace does
+    # not have yet, so the destination is a directory the person named, not one already inside.
+    into = _outside(tmp_path, 'checkouts'); into.mkdir()
+    with TestClient(ide_app(Workspace(roots=[repo]))) as client:
+        landed = into/remote.name.removesuffix('.git')
+        started = client.post('/git/clone', json={'url': str(remote), 'parent': str(into)}).json()
+        assert started['root'] == str(landed), 'the folder name comes from the URL'
+        job = _await_job(client, started['job']['id'])
+        assert job['status'] == 'complete', job.get('error')
+        assert (landed/'src'/'app.py').read_text() == 'value = 1\n'
+        assert repo_root(landed) == landed and job['result']['root'] == str(landed)
+
+        # And the workspace can then open it, which is what the popup does next.
+        assert client.post('/fs/add-root', json={'path': str(landed)}).json()['ok']
+        assert client.post('/workspace/activate', json={'path': str(landed)}).json()['ok']
+        assert client.get('/git/info').json()['root'] == str(landed)
+
+        # Cloning it again would have to overwrite the first one, so it is refused up front --
+        # in the route's own answer, not minutes later in a job row.
+        assert 'already exists' in client.post('/git/clone',
+            json={'url': str(remote), 'parent': str(into)}).json()['error']
+        assert 'not a directory' in client.post('/git/clone',
+            json={'url': str(remote), 'parent': str(_outside(tmp_path, 'imaginary'))}).json()['error']
+
+
+def test_switching_branches_from_the_top_bar_says_what_became_of_dirty_work(repo):
+    """The popup's rows post `checkout`, and `checkout` may have to set the tree aside.
+
+    That sentence is the whole reason the switch is not alarming, so the response has to carry
+    it. `summary` cannot: a switch always moves HEAD, and that is what `summary` reports.
+    """
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    path = repo/'src'/'app.py'
+    path.write_text('top\n' + 'body\n' * 20 + 'bottom\n')
+    git(repo, 'commit', '-am', 'room to edit either end')
+    git(repo, 'checkout', '-b', 'feature/one')
+    path.write_text(path.read_text().replace('top\n', 'TOP\n', 1))
+    git(repo, 'commit', '-am', 'the other branch owns the first line')
+    git(repo, 'checkout', 'main')
+
+    # Dirty at the other end of the same file: Git refuses to carry it, but the snapshot
+    # reapplies cleanly on the far side, so the switch happens and says what it did.
+    path.write_text(path.read_text().replace('bottom\n', 'MINE\n', 1))
+    with TestClient(ide_app(Workspace(roots=[repo]))) as client:
+        d = client.post('/git/action', json={'op': 'checkout', 'branch': 'feature/one'}).json()
+    assert d['branch'] == 'feature/one'
+    assert 'carried' in d['outcome']['message'], 'the sentence the browser has to show'
+    assert not d['outcome']['note'], 'nothing had to be left behind'
+    assert path.read_text().startswith('TOP\n') and 'MINE\n' in path.read_text()
+
+    # And when it cannot be carried, nothing moves and the refusal explains itself.
+    git(repo, 'checkout', '-f', 'main')
+    path.write_text(path.read_text().replace('top\n', 'mine\n', 1))
+    with TestClient(ide_app(Workspace(roots=[repo]))) as client:
+        d = client.post('/git/action', json={'op': 'checkout', 'branch': 'feature/one'}).json()
+    assert 'error' in d and 'still on main' in d['error']
+    assert path.read_text().startswith('mine\n'), 'the work is exactly where it was'
+    assert GitRepo.at(repo).info()['branch'] == 'main'
+
+
+def test_a_remote_only_branch_is_checked_out_by_its_leaf_name(repo, tmp_path):
+    "What the popup sends for an `origin/…` row: the name without the remote, so Git tracks it."
+    _bare_remote(repo, tmp_path, 'leaf-remote.git')
+    git(repo, 'branch', 'cursor/work')
+    git(repo, 'push', 'origin', 'cursor/work')
+    git(repo, 'branch', '-D', 'cursor/work')
+
+    r = GitRepo.at(repo)
+    r.fetch()
+    assert 'origin/cursor/work' in {b['name'] for b in r.info()['branches']}
+    r.checkout('cursor/work')
+    info = r.info()
+    assert info['branch'] == 'cursor/work' and info['upstream'] == 'origin/cursor/work'
+
+
+def test_every_branch_row_carries_its_own_ahead_and_behind(repo, tmp_path):
+    "The popup shows `↙2 ↗1` per branch, so the counts cannot come from the current one alone."
+    _bare_remote(repo, tmp_path, 'drift-remote.git')
+    (repo/'src'/'app.py').write_text('value = 2\n')
+    git(repo, 'commit', '-am', 'ahead by one')
+    git(repo, 'checkout', '-b', 'side')
+    (repo/'notes.txt').write_text('side\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-m', 'side work')
+
+    rows = {b['name']: b for b in GitRepo.at(repo).info()['branches']}
+    assert rows['main']['upstream'] == 'origin/main'
+    assert (rows['main']['ahead'], rows['main']['behind']) == (1, 0)
+    assert (rows['side']['ahead'], rows['side']['behind']) == (0, 0), 'no upstream, no drift'
+    assert not rows['side']['gone'] and not rows['main']['gone']
+
+
+def test_fetch_pull_and_push_are_the_same_one_route_the_panel_already_uses(repo, tmp_path):
+    "The three top-bar icons add no route: `/git/action` has known all three all along."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    remote = _bare_remote(repo, tmp_path, 'quick-remote.git')
+    other = _outside(tmp_path, 'other')
+    git(tmp_path.parent, 'clone', str(remote), other.name)
+    git(other, 'config', 'user.email', 'tests@leela.local')
+    git(other, 'config', 'user.name', 'Leela tests')
+    (other/'src'/'app.py').write_text('value = 7\n')
+    git(other, 'commit', '-am', 'upstream work')
+    git(other, 'push', 'origin', 'main')
+
+    with TestClient(ide_app(Workspace(roots=[repo]))) as client:
+        assert client.post('/git/action', json={'op': 'fetch'}).json()['behind'] == 1
+        assert client.post('/git/action', json={'op': 'pull'}).json()['behind'] == 0
+        assert (repo/'src'/'app.py').read_text() == 'value = 7\n'
+
+        (repo/'notes.txt').write_text('local work\n')
+        git(repo, 'add', '.'); git(repo, 'commit', '-m', 'local work')
+        assert client.post('/git/action', json={'op': 'push'}).json()['ahead'] == 0
+
+        # An unpublished branch has nowhere to push to; `publish` is what the icon sends then.
+        git(repo, 'checkout', '-b', 'fresh')
+        d = client.post('/git/action', json={'op': 'push', 'publish': True}).json()
+        assert d['upstream'] == 'origin/fresh' and d['ahead'] == 0

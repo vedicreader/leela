@@ -178,3 +178,36 @@ def test_the_deploy_workflow_is_the_projects_schema_rendered(tmp_path):
     assert 'PORT: ${{ vars.PORT }}' in text             # a default means variable
     assert 'DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}' in text
     assert 'python deploy.py deploy' in text
+
+
+class _AsyncOps:
+    "ghapi 2's default client: every operation is a coroutine function."
+    async def list_repo_secrets(self, **kw): return {'secrets': [{'name': 'A', 'updated_at': 'x'}]}
+    async def list_repo_variables(self, **kw): return {'variables': [{'name': 'B', 'value': '1'}]}
+    async def list_workflow_runs_for_repo(self, **kw): return {'workflow_runs': [{'id': 1}]}
+
+
+class _SyncOps:
+    def list_repo_secrets(self, **kw): return {'secrets': [{'name': 'A', 'updated_at': 'x'}]}
+    def list_repo_variables(self, **kw): return {'variables': [{'name': 'B', 'value': '1'}]}
+    def list_workflow_runs_for_repo(self, **kw): return {'workflow_runs': [{'id': 1}]}
+
+
+class _Api:
+    def __init__(self, sync=False): self.actions = _SyncOps() if sync else _AsyncOps()
+
+
+class _Core:
+    "As much of gheasy.core as `Workflows._api` uses, over a client that is async by default."
+    GhApi = staticmethod(lambda owner=None, repo=None, token=None, sync=False: _Api(sync=sync))
+    _resolve_gh_token = staticmethod(lambda: 'token')
+    _gh_api = staticmethod(lambda token, path: ('o', 'r', _Api()))
+
+
+def test_github_calls_get_the_synchronous_client(tmp_path, monkeypatch):
+    "Left async, every call returns a coroutine and Environment's refresh raises on `.get`."
+    monkeypatch.setattr('leela.blocks.workflows.workflows._gheasy', lambda: _Core)
+    wf = Workflows(tmp_path)
+    assert wf.remote_env() == {'secrets': [{'name': 'A', 'updated_at': 'x'}],
+                               'variables': [{'name': 'B', 'value': '1', 'updated_at': ''}]}
+    assert [r['id'] for r in wf.runs()] == [1]

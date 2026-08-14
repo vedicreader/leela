@@ -14,8 +14,4 @@ import ramabana.core
 # the core alone still works -- but inside leela, leela's own name wins.
 ramabana.core.use_env_prefix('LEELA_', 'RAMABANA_')
 
-# ramabana 0.1.1 exposes `_RUNTIME_DEPS` + `remote`; older leela code/tests named `RUNTIMES`.
-if not hasattr(ramabana.core, 'RUNTIMES'):
-    ramabana.core.RUNTIMES = (*getattr(ramabana.core, '_RUNTIME_DEPS', {}), 'remote')
-
 sys.modules[__name__] = ramabana.core

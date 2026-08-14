@@ -15,6 +15,8 @@ from shutil import which
 
 from fastcore.all import Path, first
 
+from ..stack.packages import installed
+
 __all__ = ['Workflows', 'WorkflowError', 'levels']
 
 WORKFLOW_DIR = '.github/workflows'
@@ -73,9 +75,8 @@ class Workflows:
     def dir(self): return self.root/WORKFLOW_DIR
 
     def files(self):
-        try: found = sorted(p for p in self.dir.iterdir() if p.suffix in ('.yml', '.yaml'))
+        try: return sorted(p for p in self.dir.iterdir() if p.suffix in ('.yml', '.yaml'))
         except OSError: return []
-        return found
 
     @staticmethod
     def _triggers(on):
@@ -103,39 +104,36 @@ class Workflows:
             rows.append({'name': label, 'uses': uses, 'run': run, 'if': str(step.get('if') or '')})
         return rows
 
+    @classmethod
+    def _job(cls, job_id, job):
+        "One entry of `jobs:`, with `needs` in either of its shapes and `environment` in either of its."
+        job = job if isinstance(job, dict) else {}
+        needs = job.get('needs') or []
+        env = job.get('environment')
+        return {'id': str(job_id), 'name': str(job.get('name') or job_id),
+            'needs': [needs] if isinstance(needs, str) else [str(n) for n in needs],
+            'runs_on': str(job.get('runs-on') or job.get('runs_on') or ''),
+            'if': str(job.get('if') or ''), 'uses': str(job.get('uses') or ''),
+            'environment': str(env.get('name') or '') if isinstance(env, dict) else str(env or ''),
+            'steps': cls._steps(job.get('steps'))}
+
     def parse(self, path):
         "One workflow file as jobs and edges, or as the error that stopped it being read."
         path = Path(path)
         row = {'file': path.name, 'path': str(path), 'name': path.stem, 'triggers': [],
             'jobs': [], 'levels': [], 'dispatchable': False, 'error': ''}
         try: doc = _yaml().load(path.read_text(encoding='utf-8', errors='replace')) or {}
-        except (OSError, WorkflowError) as e:
-            row['error'] = str(e)
-            return row
+        except (OSError, WorkflowError) as e: return row | {'error': str(e)}
         except Exception as e:                                  # a YAML error names the line
-            row['error'] = f'{type(e).__name__}: {e}'
-            return row
-        if not isinstance(doc, dict):
-            row['error'] = 'this file is not a workflow'
-            return row
+            return row | {'error': f'{type(e).__name__}: {e}'}
+        if not isinstance(doc, dict): return row | {'error': 'this file is not a workflow'}
         # `on:` parses as the YAML 1.1 boolean `True`, so a naive `doc['on']` finds nothing.
         on = doc.get('on', doc.get(True, {}))
         row['name'] = str(doc.get('name') or path.stem)
         row['triggers'] = self._triggers(on)
         row['dispatchable'] = any(t['event'] == 'workflow_dispatch' for t in row['triggers'])
         jobs = doc.get('jobs') or {}
-        for job_id, job in jobs.items() if isinstance(jobs, dict) else ():
-            job = job if isinstance(job, dict) else {}
-            needs = job.get('needs') or []
-            needs = [needs] if isinstance(needs, str) else [str(n) for n in needs]
-            row['jobs'].append({
-                'id': str(job_id), 'name': str(job.get('name') or job_id), 'needs': needs,
-                'runs_on': str(job.get('runs-on') or job.get('runs_on') or ''),
-                'if': str(job.get('if') or ''), 'uses': str(job.get('uses') or ''),
-                'environment': str(job.get('environment') or '') if not isinstance(job.get('environment'), dict)
-                else str((job.get('environment') or {}).get('name') or ''),
-                'steps': self._steps(job.get('steps')),
-            })
+        row['jobs'] = [self._job(k, v) for k, v in (jobs.items() if isinstance(jobs, dict) else ())]
         row['levels'] = levels(row['jobs'])
         return row
 
@@ -156,11 +154,11 @@ class Workflows:
         if not token:
             raise WorkflowError('set GITHUB_TOKEN — add it in Environment below, or export it before starting Leela')
         owner, name, api = core._gh_api(token, str(self.root))
-        return owner, name, api
+        return owner, name, _sync_api(core, owner, name, token, api)
 
     def status(self):
         "Whether the GitHub half is usable, and if not, which of gheasy, remote or token is missing."
-        row = {'gheasy': True, 'dockeasy': _installed('dockeasy'), 'repo': '', 'token': False,
+        row = {'gheasy': True, 'dockeasy': installed('dockeasy'), 'repo': '', 'token': False,
             'gh_cli': bool(which('gh')), 'gh_auth': _gh_authed(), 'why': ''}
         try: core = _gheasy()
         except WorkflowError as e: return row | {'gheasy': False, 'why': str(e)}
@@ -176,17 +174,7 @@ class Workflows:
         kw = {'per_page': max(1, min(int(limit), 100))}
         raw = (api.actions.list_workflow_runs(workflow_id=workflow, **kw) if workflow
             else api.actions.list_workflow_runs_for_repo(**kw))
-        rows = []
-        for run in (raw.get('workflow_runs') or []):
-            head = run.get('head_commit') if isinstance(run.get('head_commit'), dict) else {}
-            title = str(run.get('display_title') or (head.get('message') or '')).split('\n')[0]
-            rows.append({'id': run.get('id'), 'name': run.get('name') or '', 'file': _wf_file(run),
-                'number': run.get('run_number'), 'status': run.get('status') or '',
-                'conclusion': run.get('conclusion') or '', 'branch': run.get('head_branch') or '',
-                'event': run.get('event') or '', 'created_at': run.get('created_at') or '',
-                'updated_at': run.get('updated_at') or '', 'url': run.get('html_url') or '',
-                'actor': ((run.get('actor') or {}).get('login') or ''), 'title': title})
-        return rows
+        return [_run_row(run) for run in (raw.get('workflow_runs') or [])]
 
     def run_jobs(self, run_id):
         "The jobs of one run, so a red workflow says which box is red."
@@ -241,10 +229,7 @@ class Workflows:
         "What this project is, from the files that say so and from dockeasy's `detect_app`."
         root = self.root
         has = lambda *names: any((root/n).exists() for n in names)
-        text = ''
-        for name in ('pyproject.toml', 'requirements.txt'):
-            try: text += (root/name).read_text(encoding='utf-8', errors='replace').lower()
-            except OSError: pass
+        text = ''.join(_read(root/n) for n in ('pyproject.toml', 'requirements.txt')).lower()
         from ..pipelines.releases import nbdev_project
         row = {
             'python': has('pyproject.toml', 'requirements.txt', 'setup.py'),
@@ -252,15 +237,14 @@ class Workflows:
             'nbdev': nbdev_project(root), 'docker': has('Dockerfile'),
             'compose': has('docker-compose.yml', 'compose.yml'),
             'deploy_script': has('deploy.py'), 'pages': has('_quarto.yml', 'nbs/_quarto.yml', 'docs'),
-            'web': 'python-fasthtml' in text or 'fastapi' in text or 'django' in text or 'flask' in text,
+            'web': any(k in text for k in ('python-fasthtml', 'fastapi', 'django', 'flask')),
             'vps': any(k in text for k in ('vpseasy', 'cfeasy', 'hcloud')),
-            'publish': 'hatchling' in text or 'setuptools' in text or 'flit' in text,
+            'publish': any(k in text for k in ('hatchling', 'setuptools', 'flit')),
             'build': '', 'build_why': '',
         }
         try:
             from dockeasy.core import detect_app
-            built = str(detect_app(str(root)))
-            row['build'] = first(built.splitlines(), lambda l: l.startswith('FROM ')) or ''
+            row['build'] = _from_line(detect_app(str(root)))
         except ImportError: row['build_why'] = 'install dockeasy to detect the build'
         except Exception as e: row['build_why'] = f'{type(e).__name__}: {e}'
         return row
@@ -299,16 +283,14 @@ class Workflows:
     def _build(self, choice):
         "One catalogue entry as a gheasy `WorkflowDoc`. Nothing here writes anything."
         from gheasy.workflow import Workflow, docker_build_push, pages_deploy, uv_ci
+        from .wfbuild import nbdev_job
         cfg = self.config() or {}
         app = str(cfg.get('app') or self.root.name)
         if choice == 'ci': return uv_ci(f'{app} CI')
         if choice == 'nbdev':
             wfb = Workflow(f'{app} CI')
             wfb.on.push(branches=['main']).pull_request(branches=['main'])
-            (wfb.job('test').runs_on('ubuntu-latest').checkout().end_step()
-                .setup_uv().end_step().uv_install().end_step()
-                .uv_run('nbdev_test').end_step()
-                .step('Notebooks are clean').run('uv run nbdev_clean --check_all').end_job())
+            nbdev_job(wfb)
             return wfb.build()
         if choice == 'pypi':
             wfb = Workflow(f'{app} publish')
@@ -341,9 +323,7 @@ class Workflows:
         "Write a built workflow, and keep the spec beside it — reading YAML back into one is lossy."
         _gheasy()
         from .wfbuild import save_spec
-        name = str(file or spec.get('file') or f"{spec.get('name') or 'ci'}.yml")
-        if '/' in name or not name.endswith(('.yml', '.yaml')):
-            raise WorkflowError(f'not a workflow file name: {name}')
+        name = _wf_name(str(file or spec.get('file') or f"{spec.get('name') or 'ci'}.yml"))
         text = self.build(spec)
         path = self.dir/name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -373,9 +353,7 @@ class Workflows:
         rows = {r['id']: r for r in self.catalogue()['workflows']}
         row = rows.get(str(choice))
         if row is None: raise WorkflowError(f'unknown workflow: {choice}')
-        name = str(file or row['file'])
-        if '/' in name or not name.endswith(('.yml', '.yaml')):
-            raise WorkflowError(f'not a workflow file name: {name}')
+        name = _wf_name(str(file or row['file']))
         path = self.dir/name
         if path.exists(): raise WorkflowError(f'{name} already exists — delete or rename it first')
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -391,9 +369,7 @@ class Workflows:
             return row | {'why': 'detecting the build needs dockeasy: pip install "leela[github]"'}
         try: text = str(detect_app(str(self.root)))
         except Exception as e: return row | {'why': f'{type(e).__name__}: {e}'}
-        row['preview'] = text
-        row['base'] = first(text.splitlines(), lambda l: l.startswith('FROM ')) or ''
-        return row
+        return row | {'preview': text, 'base': _from_line(text)}
 
     def write_dockerfile(self):
         "Write the Dockerfile dockeasy detected. Refuses to overwrite one that already exists."
@@ -449,6 +425,15 @@ class Workflows:
         return rows
 
 
+def _sync_api(core, owner, name, token, api):
+    "gheasy's client rebuilt synchronous: ghapi 2 is async by default and nothing here awaits."
+    # ghapi 1 has no `sync` and swallows an unknown keyword as a request parameter.
+    from inspect import signature
+    GhApi = getattr(core, 'GhApi', None)
+    if GhApi is None or 'sync' not in signature(GhApi).parameters: return api
+    return GhApi(owner=owner, repo=name, token=token, sync=True)
+
+
 def _gh_authed():
     "Is the GitHub CLI logged in? `gh auth status` is the only thing that knows."
     if not which('gh'): return False
@@ -458,12 +443,36 @@ def _gh_authed():
     except (OSError, subprocess.SubprocessError): return False
 
 
-def _installed(name):
-    from importlib.util import find_spec
-    try: return find_spec(name) is not None
-    except (ImportError, ValueError): return False
+def _run_row(run):
+    "One run as the panel shows it; the title falls back to the head commit's first line."
+    head = run.get('head_commit') if isinstance(run.get('head_commit'), dict) else {}
+    return {'id': run.get('id'), 'name': run.get('name') or '', 'file': _wf_file(run),
+        'number': run.get('run_number'), 'status': run.get('status') or '',
+        'conclusion': run.get('conclusion') or '', 'branch': run.get('head_branch') or '',
+        'event': run.get('event') or '', 'created_at': run.get('created_at') or '',
+        'updated_at': run.get('updated_at') or '', 'url': run.get('html_url') or '',
+        'actor': ((run.get('actor') or {}).get('login') or ''),
+        'title': str(run.get('display_title') or (head.get('message') or '')).split('\n')[0]}
+
+
+def _read(path):
+    "A file's text, or `''` when it is not there -- what a detector wants of a missing file."
+    try: return Path(path).read_text(encoding='utf-8', errors='replace')
+    except OSError: return ''
 
 
 def _wf_file(run):
     "The file a run came from; GitHub reports it as a path on the workflow, not a name."
     return re.sub(r'^\.github/workflows/', '', run.get('path') or '')
+
+
+def _from_line(text):
+    "The `FROM` line of a Dockerfile, which is what a panel shows of a detected build."
+    return first(str(text).splitlines(), lambda l: l.startswith('FROM ')) or ''
+
+
+def _wf_name(name):
+    "A workflow file name, or the error that says why it is not one -- no directories, no other suffix."
+    if '/' in name or not name.endswith(('.yml', '.yaml')):
+        raise WorkflowError(f'not a workflow file name: {name}')
+    return name

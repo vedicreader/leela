@@ -128,6 +128,9 @@ DEFAULTS = L(
     Key('find_definition',  'mod+b',          'global', 'go to definition',   'toast'),
     Key('find_usages',      'hyper+u',        'global', 'find usages',        'toast'),
     Key('rename_symbol',    '',               'global', 'rename symbol'),
+    Key('replace_workspace','',               'global', 'replace in workspace'),
+    Key('workspace_undo',   '',               'global', 'undo workspace operation'),
+    Key('workspace_redo',   '',               'global', 'redo workspace operation'),
     Key('sync_index',       'hyper+i',        'global', 'sync Kosha index'),
     Key('save',             'mod+s',         'global', 'save',                'toast'),
     Key('save_all',         'alt+shift+s',   'global', 'save all'),
@@ -140,6 +143,8 @@ DEFAULTS = L(
     Key('ai_complete',      'alt+shift+space', 'global', 'ai completion',     'toast'),
     Key('show_docs',        'alt+shift+h',   'global', 'docs for symbol',     'toast'),
     Key('capture',          'alt+shift+p',   'global', 'screenshot for the assistant', 'toast'),
+    # Clipping is a deliberate act on a named thing, so it is menu-first and unbound by default.
+    Key('clip_to_vault',    '',              'global', 'clip into the vault'),
     Key('close_tab',        'alt+w',         'global', 'close tab',           'toast'),
     # The bulk closes are menu-first, and unbound by default; every action here is rebindable.
     Key('close_others',     '',              'global', 'close other tabs'),
@@ -264,30 +269,31 @@ DEFAULTS = L(
 )
 
 
+def _signature(chord):
+    "A chord as it collides: modifiers sorted, and `mod` folded into `ctrl`."
+    # Outside macOS `mod` is Control, so the two must collide: a keymap accepted on one
+    # platform cannot be allowed to become ambiguous on another.
+    mods, base = parse_key(chord)
+    if 'mod' in mods: mods = (mods - {'mod'}) | {'ctrl'}
+    return tuple(sorted(mods)), base
+
+
 def _dupes(keys):
     "(scope, chord) pairs bound twice, and actions declared twice -- both are real conflicts."
     seen, bad = {}, []
     keys = L(keys)
     for k in keys:
         for c in k.keys:
-            mods, base = parse_key(c)
-            # Outside macOS `mod` is Control, so the two must collide: a keymap accepted on one
-            # platform cannot be allowed to become ambiguous on another.
-            if 'mod' in mods: mods = (mods - {'mod'}) | {'ctrl'}
-            sig = (k.scope, tuple(sorted(mods)), base)
+            sig = (k.scope, _signature(c))
             if sig in seen: bad.append(f'{c} is bound by both {seen[sig]} and {k.action} in scope {k.scope}')
             else: seen[sig] = k.action
     acts = keys.attrgot('action')
     bad += [f'action {a!r} declared twice' for a in set(acts) if acts.count(a) > 1]
     # A global chord that collides with a scoped one is ambiguous when that pane has focus.
-    def signature(chord):
-        mods, base = parse_key(chord)
-        if 'mod' in mods: mods = (mods - {'mod'}) | {'ctrl'}
-        return tuple(sorted(mods)), base
-    g = {signature(c): k.action for k in keys.filter(lambda k: k.scope == 'global') for c in k.keys}
+    g = {_signature(c): k.action for k in keys.filter(lambda k: k.scope == 'global') for c in k.keys}
     for k in keys.filter(lambda k: k.scope != 'global'):
         for c in k.keys:
-            if (t := signature(c)) in g: bad.append(f'{c} is both global ({g[t]}) and {k.scope} ({k.action})')
+            if (t := _signature(c)) in g: bad.append(f'{c} is both global ({g[t]}) and {k.scope} ({k.action})')
     return bad
 
 
@@ -385,6 +391,21 @@ _GENERATED_DEFAULT_MIGRATIONS = {
     'rename': ('f2 r', 'r'),
 }
 
+# Defaults that moved after `mod` arrived, migrated in any generated snapshot rather than
+# only in a pre-`mod` one: these gained an alternative chord instead of changing platform.
+_SNAPSHOT_MIGRATIONS = {
+    'restart': ('alt+shift+r', 'alt+shift+r hyper+r'),
+    'toggle_left': ('alt+shift+b', 'alt+shift+b hyper+left'),
+    'toggle_right': ('alt+shift+v', 'alt+shift+v hyper+right'),
+    'run_selection': ('', 'hyper+s'), 'new_notebook': ('', 'hyper+n'),
+    'edit_keys': ('', 'hyper+k'),
+}
+
+
+def _migrated(d, table):
+    "`d` with every action still holding an exact old default moved onto the new one."
+    return {a: table[a][1] if a in table and c == table[a][0] else c for a, c in d.items()}
+
 
 def read_overrides(path=None, notes=None):
     "`{action: chord}` from the user's keymap file. Never raises -- a broken file is a note."
@@ -406,21 +427,8 @@ def read_overrides(path=None, notes=None):
     generated_snapshot = isinstance(d.get('keys'), dict) and len(d['keys']) > 50 and 'leela keymap' in help_text
     legacy_generated = generated_snapshot and 'mod is Command' not in help_text
     if isinstance(d.get('keys'), dict): d = d['keys']
-    if legacy_generated:
-        d = dict(d)
-        for action, (old, new) in _GENERATED_DEFAULT_MIGRATIONS.items():
-            if d.get(action) == old: d[action] = new
-    if generated_snapshot:
-        d = dict(d)
-        current = {
-            'restart': ('alt+shift+r', 'alt+shift+r hyper+r'),
-            'toggle_left': ('alt+shift+b', 'alt+shift+b hyper+left'),
-            'toggle_right': ('alt+shift+v', 'alt+shift+v hyper+right'),
-            'run_selection': ('', 'hyper+s'), 'new_notebook': ('', 'hyper+n'),
-            'edit_keys': ('', 'hyper+k'),
-        }
-        for action, (old, new) in current.items():
-            if d.get(action) == old: d[action] = new
+    if legacy_generated: d = _migrated(d, _GENERATED_DEFAULT_MIGRATIONS)
+    if generated_snapshot: d = _migrated(d, _SNAPSHOT_MIGRATIONS)
     out = {}
     for a, c in d.items():
         if a.startswith('_') or a == 'agent_transcript': continue  # removed: History owns sessions

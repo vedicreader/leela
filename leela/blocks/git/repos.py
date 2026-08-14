@@ -23,7 +23,7 @@ from fastcore.all import Path, first
 from fastcore.parallel import parallel
 
 from ... import leela_cfg
-from .git import GitError, GitRepo, repo_root
+from .git import GitError, GitRepo, repo_root, url_name
 from .git import clone as git_clone
 
 __all__ = ['RepoSet', 'discover', 'repo_for', 'MEMBERS', 'OPS']
@@ -47,7 +47,7 @@ def _member_root(entry, folder):
     entry = str(entry).strip()
     if not entry: return None
     if entry.startswith(('http://', 'https://', 'git@', 'ssh://', 'git://')):
-        candidate = Path(folder)/re.sub(r'\.git$', '', entry.rstrip('/').rpartition('/')[2])
+        candidate = Path(folder)/url_name(entry)
     else:
         candidate = Path(entry).expanduser()
         if not candidate.is_absolute(): candidate = Path(folder)/candidate

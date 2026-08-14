@@ -133,13 +133,17 @@ class Search:
             self.note = self._k_note + '; literal scan'
         return self._k
 
+    def _covers(self, path):
+        "Whether the sandbox can open an indexed path. Kosha may index a wider checkout."
+        try: return bool(path) and self.fs.covers(Path(path).resolve())
+        except Exception: return False
+
     def _context_rows(self, rows, default_kind='context'):
         out = L()
         for row in rows:
             m = _meta(row)
             path = str(m.get('path') or row.get('path') or '')
-            try: local = bool(path) and self.fs.covers(Path(path).resolve())
-            except Exception: local = False
+            local = self._covers(path)
             package = str(row.get('package') or m.get('package') or '')
             out.append(Hit(path=path, line=int(m.get('lineno') or 1),
                 text=(row.get('content') or '').strip(),
@@ -191,18 +195,19 @@ class Search:
     def completion_patches(self, code, pos, limit=50):
         "Methods dynamically patched onto the receiver type, from Kosha's code stores."
         typ,frag,start=_receiver(code,pos)
-        if not typ: return {'from':start,'matches':[],'details':[]}
+        def result(rows=()):
+            details=[x for x in rows if not frag or x['name'].startswith(frag)][:limit]
+            return {'from':start,'matches':[x['name'] for x in details],'details':details}
+        if not typ: return result()
         k=self._kosha()
-        if k is None: return {'from':start,'matches':[],'details':[]}
+        if k is None: return result()
         rows=[]
         # The LIKE queries below cover an index whose graph predates kosha's @patch edges.
         packages=set(re.findall(r'^\s*(?:from|import)\s+([\w.]+)',code or '',re.M))
         packages={p.split('.')[0] for p in packages}
         key=(typ,tuple(sorted(packages)))
         cached=self._completion_cache.get(key)
-        if cached is not None:
-            details=[x for x in cached if not frag or x['name'].startswith(frag)][:limit]
-            return {'from':start,'matches':[x['name'] for x in details],'details':details}
+        if cached is not None: return result(cached)
         for pkg in packages:
             try: rows += list(k.public_api(pkg,meta_cols='name,mod_name,docstring,path,lineno',limit=2000))
             except Exception: pass
@@ -221,11 +226,10 @@ class Search:
             if not name or name.startswith('_'): continue
             out[name]={'name':name,'type':typ,'symbol':m.get('mod_name') or name,
                 'doc':m.get('docstring') or 'dynamically patched method'}
-        all_details=list(out.values())
-        self._completion_cache[key]=all_details
-        details=[x for x in all_details if not frag or x['name'].startswith(frag)][:limit]
-        if details:self.note=f'Kosha graph · {len(details)} patched {typ} method(s)'
-        return {'from':start,'matches':[x['name'] for x in details],'details':details}
+        self._completion_cache[key]=list(out.values())
+        found=result(self._completion_cache[key])
+        if found['details']:self.note=f'Kosha graph · {len(found["details"])} patched {typ} method(s)'
+        return found
 
     def merge_completions(self, code, pos, runtime=None, limit=50):
         "Merge live-kernel and Kosha graph completions, preserving runtime order."
@@ -366,13 +370,8 @@ class Search:
 
     def _indexed_hits(self, rows, kind, score_key=''):
         "Only indexed rows the workspace can actually open; Kosha may index a wider checkout."
-        out = L()
-        for row in rows:
-            hit = self._hit(row, kind, (row.get(score_key) or 0.0) if score_key else 0.0)
-            try: allowed = bool(hit.path) and self.fs.covers(Path(hit.path).resolve())
-            except Exception: allowed = False
-            if allowed: out.append(hit)
-        return out
+        hits = L(self._hit(r, kind, (r.get(score_key) or 0.0) if score_key else 0.0) for r in rows)
+        return hits.filter(lambda h: self._covers(h.path))
 
     def _fts(self, q, limit):
         "Kosha's lexical FTS5 leg only: no embedding and no vector search hidden behind it."
@@ -651,12 +650,16 @@ class Search:
         # ANN and FTS scores are on different scales, so they only ever break a tie.
         return relevance + min(10.0, abs(float(hit.score or 0.0)))
 
-    def leg(self, name, q, limit=40, regex=False, exts=(), roots=None):
-        "One backend of `all`, scored the way `all` scores it; `(hits, note)`, never raising."
-        runners = {'rg': lambda: self._rg(q, limit, regex, exts, roots),
+    def _runners(self, q, limit, regex=False, exts=(), roots=None):
+        "The `all` legs as callables, each returning hits or None. Only rg can be narrowed."
+        return {'rg': lambda: self._rg(q, limit, regex, exts, roots),
             'symbols': lambda: self._symbols(q, limit),
             'fts': lambda: self._fts(q, limit),
             'ann': lambda: self._ann(q, limit)}
+
+    def leg(self, name, q, limit=40, regex=False, exts=(), roots=None):
+        "One backend of `all`, scored the way `all` scores it; `(hits, note)`, never raising."
+        runners = self._runners(q, limit, regex, exts, roots)
         if name not in runners: return L(), f'unknown search leg {name!r}'
         try: rows = runners[name]()
         except Exception as e: return L(), f'{name} failed: {errstr(e)}'
@@ -670,8 +673,9 @@ class Search:
     def _all(self, q, limit, regex=False, legs=None):
         "Search every available leg -- `legs` narrows the fan-out -- and rank one deduplicated result set."
         per = max(12, min(limit, 40))
-        runners = {'rg': lambda: self._rg(q, per, regex), 'symbols': lambda: self._symbols(q, per),
-            'fts': lambda: self._fts(q, per), 'ann': lambda: self._ann(q, per)}
+        # No `exts`/`roots`: only rg can be narrowed at source, so narrowing it alone would bias
+        # the merge. `search` applies both to the merged result instead.
+        runners = self._runners(q, per, regex)
         wanted = L(ifnone(legs, self.ALL_LEGS)).filter(lambda n: n in runners)
         legs, notes = [], []
         for name in wanted:
@@ -709,15 +713,15 @@ class Search:
         q = (q or '').strip()
         if not q: return L()
         if force_scan: mode = 'rg'
-        if mode == 'rg': return self._place(self._rg(q, limit, regex, exts, roots))
         if mode == 'all': return self._place(self._keep(self._all(q, limit, regex, legs), exts, roots))
-        legs = {'context': self._context, 'repo': self._repo_context, 'env': self._env_context,
+        indexed = {'context': self._context, 'repo': self._repo_context, 'env': self._env_context,
             'fts': self._fts, 'ann': self._ann, 'symbols': self._symbols}
-        if mode in legs:
-            hits = legs[mode](q, limit)
+        if mode in indexed:
+            hits = indexed[mode](q, limit)
             if hits is None: return L()
             # Scoped per *hit*, not per mode: `context` returns repo and package hits at once.
             return self._place(self._keep(hits, exts, roots))
+        # `rg`, and anything unrecognised: ripgrep is the mode nothing has to be indexed for.
         return self._place(self._rg(q, limit, regex, exts, roots))
 
     def symbols(self, path):

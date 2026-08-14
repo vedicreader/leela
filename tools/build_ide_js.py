@@ -3,7 +3,7 @@
 
 The modules are the source; the bundle is generated and committed so the IDE stays
 one deferred script tag with no build step at install time. `--check` fails when the
-two have drifted, which is what CI and `tests/test_web_block.py` assert.
+two have drifted, which is what CI and `tests/blocks/test_ide_bundle.py` assert.
 """
 from __future__ import annotations
 import sys
@@ -14,18 +14,19 @@ JS, OUT = ROOT/'leela'/'static'/'js', ROOT/'leela'/'static'/'lee-ide.js'
 
 
 def modules():
-    "The module paths in manifest order, refusing a manifest that has drifted from disk."
-    listed = [ln.strip() for ln in (JS/'manifest.txt').read_text().splitlines() if ln.strip()]
-    on_disk = {p.name for p in JS.glob('*.js')}
-    if missing := [n for n in listed if n not in on_disk]: raise SystemExit(f'manifest names no such module: {missing}')
-    if unlisted := sorted(on_disk - set(listed)): raise SystemExit(f'module not in manifest.txt: {unlisted}')
-    return [JS/n for n in listed]
+    "The module paths in load order, which the numeric filename prefixes are there to fix."
+    return sorted(JS.glob('*.js'))
+
+
+def _text(p):
+    "One module's source, newline-terminated: without it its last line fuses into the next module."
+    t = p.read_text()
+    return t if t.endswith('\n') else t + '\n'
 
 
 def bundle():
     "The concatenated bundle text."
-    text = ''.join(p.read_text() for p in modules())
-    return text if text.endswith('\n') else text + '\n'
+    return ''.join(_text(p) for p in modules())
 
 
 def build(check=False):

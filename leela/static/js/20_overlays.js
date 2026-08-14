@@ -192,6 +192,7 @@ function confirmDialog(title, detail, action = 'confirm') {
 function closeMenu() { $('.lee-ctxmenu')?.remove(); }
 function openMenu(surface, x, y) {
   closeMenu();
+  lee.menuSurface = surface;   // an action can act on what was right-clicked, not on the focus
   const rows = lee.menus?.[surface] || [];
   if (!rows.length) return;
   const menu = document.createElement('div');
@@ -264,31 +265,23 @@ async function leeWorkspaceMenu(anchor) {
 }
 window.leeWorkspaceMenu = leeWorkspaceMenu;
 
-async function leeBranchMenu(anchor) {
-  try {
-    const d = await api(gitUrl('/git/info'));
-    const rows = (d.branches || []).map(b => ({label: b.name, detail: b.current ? 'current' : b.oid,
-      run: () => b.current ? leeLeft('git') : gitDo('checkout', {branch: b.name, repo: ''})}));
-    rows.push({separator: true}, {label: 'Create branch…', run: async () => {
-      const branch = await inputDialog('new branch', 'Branch name', '', 'feature/name');
-      if (branch) gitDo('create', {branch, repo: ''});
-    }}, {label: 'Source control', detail: `${(d.changes || []).length} changes`, run: () => leeLeft('git')});
-    openChromeMenu(anchor, rows);
-  } catch (e) { status(e.message || String(e), 'err'); }
-}
-window.leeBranchMenu = leeBranchMenu;
+/* The branch pill's own popup is `28_branchbar.js`: it is a searchable list of branches and
+   actions rather than a menu, so it does not fit `openChromeMenu`. */
 
 async function operationHistory() {
   const d = await api('/history/operations');
   const m = modal(`<div class="lee-mhead">workspace history<span class="sub">saved file checkpoints · newest first</span></div>` +
-    `<div class="lee-modallist">${(d.operations || []).map((op, i) => `<button class="lee-mrow" data-op="${esc(op.id)}"${op.reversible ? '' : ' data-off="1"'}>` +
-      `<strong>${esc(op.label)}</strong><span class="sub">${new Date(op.at * 1000).toLocaleString()} · ${esc((op.paths || []).join(', '))}${op.irreversible?.length ? ' · external: ' + esc(op.irreversible.join(', ')) : ''}</span></button>`).join('') || '<div class="lee-dim">No saved operations yet.</div>'}</div>` +
-    `<div class="lee-mfoot"><span class="lee-dim">Undo is refused if any file changed after its checkpoint.</span></div>`);
-  $$('[data-op]:not([data-off])', m).forEach(row => row.onclick = async () => {
-    if (!await confirmDialog('Undo workspace operation', `Restore ${row.textContent.trim()}?`, 'undo')) return;
-    try { const r = await post('/history/undo', {id: row.dataset.op}); m.remove();
+    // An empty `data-history` still matches `[data-history]`, so the attribute is omitted
+    // rather than blanked: a spent operation must not be clickable at all.
+    `<div class="lee-modallist">${(d.operations || []).map(op => `<button class="lee-mrow" data-op="${esc(op.id)}"${op.reversible ? ' data-history="undo"' : op.redoable ? ' data-history="redo"' : ' data-off="1"'}>` +
+      `<strong>${esc(op.label)}</strong><span class="sub">${op.redoable ? 'undone · redo available · ' : ''}${new Date(op.at * 1000).toLocaleString()} · ${esc((op.paths || []).join(', '))}</span></button>`).join('') || '<div class="lee-dim">No saved operations yet.</div>'}</div>` +
+    `<div class="lee-mfoot"><span class="lee-dim">Undo and redo refuse files changed after the checkpoint.</span></div>`);
+  $$('[data-history]', m).forEach(row => row.onclick = async () => {
+    const redo = row.dataset.history === 'redo', verb = redo ? 'Redo' : 'Undo';
+    if (!await confirmDialog(`${verb} workspace operation`, `${verb} ${row.textContent.trim()}?`, verb.toLowerCase())) return;
+    try { const r = await post('/history/' + (redo ? 'redo' : 'undo'), {id: row.dataset.op}); m.remove();
       if ((r.operation.resources || []).some(x => x.path === lee.path)) await takeDiskVersion(lee.path);
-      status('workspace operation undone', 'ok'); refreshFileTree(undefined, false);
+      status(`workspace operation ${redo ? 'redone' : 'undone'}`, 'ok'); refreshFileTree(undefined, false);
     } catch (e) { status(e.message || String(e), 'err'); }
   });
 }
@@ -321,6 +314,7 @@ function leeEditorMenu(anchor) {
     {label: 'Save', detail: displayChord(lee.keys.find(k => k.action === 'save')?.key || ''), run: () => leeAct('save')},
     {label: 'Show unsaved changes', run: () => leeAct('show_diff')},
     {label: 'Rename symbol…', run: () => leeAct('rename_symbol')},
+    {label: 'Replace in workspace…', run: () => leeAct('replace_workspace')},
     {separator: true},
     {label: 'Insert cell below', run: () => leeAct('cell_below')},
     {label: 'Change cell type', run: () => leeAct('cell_type')},

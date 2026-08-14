@@ -160,8 +160,9 @@ async function openReleaseTerm(root = '', kind = 'release') {
   await loadTermBundle();
   const d = await api('/term/info');
   if (!d.enabled) return status(d.why, 'err');
-  const id = kind;
-  if (lee.terms.has(id)) return switchTerm(id);
+  const id = kind, prior = lee.terms.get(id);
+  if (prior && !prior.exited) return switchTerm(id);
+  if (prior) { prior.view.dispose(); prior.host.remove(); lee.terms.delete(id); }
   $('#shell').classList.add('show-term');
   const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
   const host = document.createElement('div'); host.className = 'lee-term lee-term-session';

@@ -108,6 +108,7 @@ const ACTIONS = {
   show_docs:    showDocs,
   show_diff:    showDiff,
   git_blame:    leeBlame,
+  clip_to_vault: leeClipToVault,
   find_similar: findSimilar,
   code_map:     codeMap,
 
@@ -235,6 +236,14 @@ function recentTabs() {
   const byKey = new Map(open.map(x => [x.key, x]));
   let rows = lee.recentTabs.map(x => ({...x, ...byKey.get(x.key)})).filter(x => x.i != null);
   for (const row of open) if (!rows.some(x => x.i === row.i)) rows.push(row);
+  const now = Date.now(), active = activeTabIndex();
+  if (now - lee.recentCycleAt > 1400 || !lee.recentCycle.length)
+    lee.recentCycle = rows.filter(x => x.i !== active).map(x => x.i);
+  lee.recentCycleAt = now;
+  if (lee.recentCycle.length) {
+    const next = lee.recentCycle.shift(); lee.recentCycle.push(next);
+    return htmxPost('/tab/select?i=' + next);
+  }
   let filtered = rows, sel = Math.max(0, Math.min(1, rows.length - 1));
   const m = modal(`<div class="lee-mhead">Recent files<span class="sub">most recently used</span></div>` +
     `<input class="lee-input lee-recent-query" placeholder="filter open files…" autofocus>` +

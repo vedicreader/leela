@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 from fastcore.aio import athreaded
-from fastcore.basics import first
+from fastcore.basics import first, ifnone
 from fasthtml.common import JSONResponse
 from starlette.staticfiles import StaticFiles
 
@@ -27,7 +27,7 @@ def asset_dir(name):
     if getattr(sys, 'frozen', False):
         exe = Path(sys.executable).resolve()
         candidates += [exe.parent/'leela'/name, exe.parent.parent/'Resources'/'leela'/name]
-    return first(p for p in candidates if p.exists()) or candidates[0]
+    return ifnone(first(p for p in candidates if p.exists()), candidates[0])
 
 
 def static_dirs():
@@ -56,7 +56,7 @@ class Assets:
         # leaves nothing to remove.
         rel = scope['path'].removeprefix(scope.get('root_path') or '').lstrip('/')
         served = first(a for d, a in zip(self.dirs, self.apps) if (d/rel).is_file())
-        return await (served or self.apps[0])(scope, receive, send)   # else the first one 404s
+        return await ifnone(served, self.apps[0])(scope, receive, send)   # else the first one 404s
 
 
 def fail(err, code=400):

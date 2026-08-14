@@ -7,7 +7,7 @@ this module is the adapter that keeps leela's `note` status string and workspace
 
 from __future__ import annotations
 import hashlib, os, re, time, uuid
-from fastcore.all import Path, first
+from fastcore.all import L, Path, first, risinstance
 
 from ... import errstr
 
@@ -76,6 +76,10 @@ class Memory:
 
     def _open(self): return self._store(self.shelf_name)
     def _agent(self): return self._store(GLOBAL)
+
+    def _shelf(self, shelf=None):
+        "The store an explicit shelf names, defaulting to this workspace's."
+        return self._store(shelf or self.shelf_name)
 
     @property
     def vault(self):
@@ -211,12 +215,10 @@ class Memory:
     def purge(self, ids=None):
         docs = [*self.documents(limit=100_000), *self.agent_notes(10_000), *self.agent_states(10_000)]
         wanted = {str(x) for x in (ids if ids is not None else [d['id'] for d in docs])}
-        seen, removed = set(), 0
-        for doc in docs:
-            i = str(doc['id'])
-            if i in wanted and i not in seen and self.forget(i):
-                seen.add(i)
-                removed += 1
+        # Deduplicate before forgetting, not after: the three listings overlap, and keying the
+        # dedupe on success meant a document whose forget failed was tried again per duplicate.
+        removed = sum(bool(self.forget(i))
+                      for i in dict.fromkeys(str(d['id']) for d in docs) if i in wanted)
         suffix = '' if removed == 1 else 's'
         self.note = f'purged {removed} remembered document{suffix}'
         return removed
@@ -287,11 +289,129 @@ class Memory:
         "`store|doc_id` — a doc id is content-addressed per shelf, so it is not unique alone."
         return f'{safe_shelf(shelf or self.shelf_name)}|{doc_id}'
 
+    def _shelf_name(self, store):
+        "One name per shelf: `shelves()` calls the unprefixed store `store`, a shelf argument calls it `main`."
+        return 'main' if store in (None, '', 'store', 'main') else safe_shelf(store)
+
+    def _populated(self):
+        "Every shelf worth reading: this workspace's, plus any other that actually holds documents."
+        return L(self.shelf_name, *[s['store'] for s in self.shelves() if s.get('docs')]).map(self._shelf_name).unique()
+
+    def _across(self, shelves, f, note):
+        "`f(name, store)` over each shelf, stamped with its shelf. One unreadable shelf is counted, not fatal."
+        out, failed = [], L()
+        for name in L(shelves if shelves is not None else self._populated()).map(self._shelf_name).unique():
+            try: out += [dict(r, shelf=name) for r in f(name, self._store(name))]
+            except Exception as e: failed.append(errstr(e))
+        # The first failure is named, not just counted: a bug in `f` fails every shelf alike, and
+        # a bare count would report that as an empty vault.
+        self.note = note(len(out)) + (f' · {len(failed)} unreadable ({failed[0]})' if failed else '')
+        return out
+
+    def all_documents(self, limit=200, shelves=None, kind=None):
+        "Every document, newest first, with its shelf. `doc_id` beside `id`: `sources` and `clip` disagree."
+        rows = self._across(shelves, lambda n, v: v.sources(kind), lambda n: f'{n} documents')
+        return [dict(r, doc_id=r.get('doc_id') or r.get('id')) for r in self._newest(rows, limit)]
+
+    def search_all(self, query, limit=20, shelves=None):
+        "Search every populated shelf and merge."
+        query = (query or '').strip()
+        if not query: return []
+        names = shelves if shelves is not None else self._populated()
+        per = max(3, int(limit) // max(1, len(names)))
+        rows = self._across(names, lambda n, v: v.search(query, limit=per), lambda n: f'{n} hits for {query!r}')
+        return sorted(rows, key=lambda r: -(r.get('score') or 0))[:max(1, int(limit))]
+
+    def document(self, doc_id, shelf=None):
+        "One document's row, or `{}`."
+        try: return dict(self._shelf(shelf).doc(doc_id) or {})
+        except Exception as e:
+            self.note = f'could not read document ({errstr(e)})'
+            return {}
+
+    def shelf_toc(self, doc_id, shelf=None, depth=3):
+        "One document's section tree, in whichever shelf holds it."
+        try: return [dict(r) for r in self._shelf(shelf).toc(doc_id, max_depth=max(1, min(6, int(depth))))]
+        except Exception as e:
+            self.note = f'could not read the section tree ({errstr(e)})'
+            return []
+
+    def sections(self, doc_id, shelf=None, depth=6):
+        "`toc` flattened: each document is a row whose `tree` holds the nesting, walked once here."
+        out = []
+        def walk(items, at=0):
+            for x in L(items or ()).filter(risinstance(dict)):
+                if tree := x.get('tree'):
+                    walk([tree], at); continue
+                if node := x.get('id') or x.get('node_id'):
+                    pages = x.get('pages') if isinstance(x.get('pages'), (list, tuple)) else None
+                    out.append({'node_id': node, 'title': x.get('title') or 'Untitled section',
+                        'level': x.get('level', at), 'depth': at, 'chunks': x.get('nchunks') or 0,
+                        'page': (pages[0] + 1) if pages else None, 'summary': x.get('summary') or ''})
+                walk(x.get('children'), at + 1)
+        walk(self.shelf_toc(doc_id, shelf, depth))
+        return out
+
+    def shelf_read(self, node_id, shelf=None, max_chars=40_000):
+        "One section, in whichever shelf holds it."
+        try: return dict(self._shelf(shelf).read(node_id, max_chars=max_chars) or {})
+        except Exception as e:
+            self.note = f'could not read section ({errstr(e)})'
+            return {}
+
+    def related(self, node_id, shelf=None):
+        "Sections the vault thinks sit near this one."
+        try: return [dict(r) for r in self._shelf(shelf).related(node_id)]
+        except Exception: return []
+
+    def move(self, doc_id, target, shelf=None):
+        "Move a document to another shelf."
+        name = safe_shelf(target)
+        out = dict(self._shelf(shelf).reshelf(doc_id, shelf=name))
+        self.note = f'moved to {name}'
+        return dict(out, moved_to=name, note=self.note)
+
+    def drop_shelf(self, shelf):
+        "Drop an empty shelf. `Vault.drop_shelf` deletes a populated one without asking."
+        name = safe_shelf(shelf)
+        if self._shelf_name(name) in (self._shelf_name(self.shelf_name), GLOBAL):
+            raise ValueError(f'{name} is in use by this workspace')
+        row = first(s for s in self.shelves() if s.get('store') == name)
+        if row is None: raise KeyError(name)
+        if row.get('docs'): raise ValueError(f'{name} still holds {row["docs"]} documents')
+        out = dict(self._open().drop_shelf(name))
+        self._stores.pop(name, None)
+        self.note = f'dropped {name}'
+        return out
+
+    def mark_not_pii(self, doc_id, shelf=None, clear=True, reason=''):
+        "Override the PII report, or restore detection. Via `doc_marks`: `meta` is erased on re-ingest."
+        return dict(self._shelf(shelf).mark_not_pii(doc_id, clear=clear, reason=reason))
+
+    def pii_evidence(self, doc_id, shelf=None):
+        "Recognised PII spans by page. Returned, never written back: that would store it twice."
+        from vishalakshi.pii import pii_report
+        v, out, seen = self._shelf(shelf), [], set()
+        try: rows = v.store(where='doc_id=?', where_args=[str(doc_id)], select='content,page,node_id')
+        except Exception as e:
+            self.note = f'pii evidence unavailable ({errstr(e)})'
+            return []
+        # `ner` off on code, as `Vault.pii` does, or the evidence disagrees with the badge beside it.
+        ner = str(self.document(doc_id, shelf).get('kind') or '').lower() != 'code'
+        for row in rows:
+            for start, end, kind, value in pii_report(row.get('content') or '', ner=ner).spans:
+                key = (kind, value, row.get('page'))
+                if key in seen: continue
+                seen.add(key)
+                out.append({'kind': kind, 'value': value, 'page': (row.get('page') or 0) + 1,
+                            'node_id': row.get('node_id'), 'start': start, 'end': end})
+        return out
+
     def clip(self, paths, shelf=None, meta=None, force=False):
         "Ingest files into a shelf as prose. Returns one row per file, skips included."
         paths = [str(p) for p in ([paths] if isinstance(paths, (str, Path)) else paths)]
         if not paths: return []
-        v = self._store(shelf or self.shelf_name)
+        v = self._shelf(shelf)
         try: out = v.add_files(paths, meta=dict(meta or {}), force=force)
         except Exception as e:
             self.note = f'clip failed ({errstr(e)})'
@@ -301,11 +421,11 @@ class Memory:
 
     def note_pointer(self, title, text, shelf=None, meta=None):
         "One document standing for something not stored as prose — a code index, an API spec."
-        v = self._store(shelf or self.shelf_name)
+        v = self._shelf(shelf)
         if meta is None: return dict(v.note(text, title=title))
         return dict(v.add(text, title, source=f'pointer:{uuid.uuid4().hex[:12]}', meta=dict(meta)))
 
-    def set_meta(self, doc_id, shelf=None, **kv): return self._store(shelf or self.shelf_name).set_meta(doc_id, **kv)
+    def set_meta(self, doc_id, shelf=None, **kv): return self._shelf(shelf).set_meta(doc_id, **kv)
 
     def pii(self, doc_id, shelf=None, ner=True):
         """The PII report for one document, or why there is none.
@@ -313,12 +433,12 @@ class Memory:
         Coverage is pattern kinds plus *titled* names -- `Dr Charles Babbage`, not `Ada Lovelace`.
         A bare name or unstructured address is never masked; surfaces showing this must say so.
         """
-        try: return dict(self._store(shelf or self.shelf_name).pii(doc_id, ner=ner))
+        try: return dict(self._shelf(shelf).pii(doc_id, ner=ner))
         except Exception as e: return dict(note=f'pii unavailable ({errstr(e)})', has_pii=False)
 
     def noisy_candidates(self, shelf=None, k=20, min_score=1.0):
         "Documents the vault thinks are diluting retrieval, ranked, with the features that say so."
-        v = self._store(shelf or self.shelf_name)
+        v = self._shelf(shelf)
         try: return [dict(r) for r in v.suggest_noisy(k=k, min_score=min_score)]
         except Exception as e:
             self.note = f'noise ranking unavailable ({errstr(e)})'
@@ -326,24 +446,24 @@ class Memory:
 
     def mark_noisy(self, doc_id, shelf=None, noisy=True, reason=''):
         "Judgements live in `doc_marks`, keyed (doc_id, store), so re-ingesting cannot erase them."
-        return dict(self._store(shelf or self.shelf_name).mark_noisy(doc_id, noisy=noisy, reason=reason))
+        return dict(self._shelf(shelf).mark_noisy(doc_id, noisy=noisy, reason=reason))
 
     def watch(self, target, action='url', every='1d', note=None, shelf=None, **params):
         # A mutable page is content-addressed on `source|title`, so without `force` it reports
         # "already ingested" for ever and the watch never refreshes anything.
         if action in ('url', 'arxiv', 'youtube'): params.setdefault('force', True)
-        v = self._store(shelf or self.shelf_name)
+        v = self._shelf(shelf)
         return dict(v.watch(target, action=action, every=every, note=note, **params))
 
     def watches(self, shelf=None, due_only=False):
-        try: return [dict(w) for w in self._store(shelf or self.shelf_name).watches(due_only=due_only)]
+        try: return [dict(w) for w in self._shelf(shelf).watches(due_only=due_only)]
         except Exception as e:
             self.note = f'watches unavailable ({errstr(e)})'
             return []
 
-    def unwatch(self, watch_id, shelf=None): return self._store(shelf or self.shelf_name).unwatch(watch_id)
+    def unwatch(self, watch_id, shelf=None): return self._shelf(shelf).unwatch(watch_id)
 
     def poll(self, shelf=None):
         "Run every watch that has come due. The tick a scheduler calls."
-        try: return dict(self._store(shelf or self.shelf_name).poll())
+        try: return dict(self._shelf(shelf).poll())
         except Exception as e: return dict(note=f'poll failed ({errstr(e)})', ran=0, checked=0)

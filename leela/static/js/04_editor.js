@@ -8,7 +8,34 @@ function updateToolbarForKind(kind) {
 }
 
 let mountTabVersion=0;
+function saveTabLocation() {
+  const view = curEditor(), key = lee.path || lee.tabKey;
+  if (!view || !key) return;
+  // A Map keeps a re-set key at its *first* insertion point, so without the delete the tail
+  // slice below persisted the eighty oldest files ever opened and dropped the recent ones.
+  lee.locations.delete(key);
+  lee.locations.set(key, {pos: LeeCM.cursor(view), scroll: view.scrollDOM.scrollTop,
+    cell: lee.kind === 'notebook' ? lee.sel : -1});
+  // Nothing else prunes this: a closed, renamed or deleted file leaves its entry behind, so
+  // the cap is what keeps a long session (and sessionStorage) bounded.
+  for (const stale of [...lee.locations.keys()].slice(0, lee.locations.size - 80)) lee.locations.delete(stale);
+  try { sessionStorage.setItem('lee-tab-locations', JSON.stringify([...lee.locations])); } catch (_) {}
+}
+function restoreTabLocation(st, skip = false) {
+  const key = st.path || st.title, loc = lee.locations.get(key);
+  if (!loc || skip || lee.pendingLocation) return;
+  requestAnimationFrame(() => {
+    let view = lee.editors.get('file');
+    if (st.kind === 'notebook' && loc.cell >= 0 && loc.cell < lee.cells.length) {
+      selectCell(loc.cell); view = ensureCellMounted(loc.cell);
+    }
+    if (!view) return;
+    LeeCM.setCursor(view, loc.pos); view.scrollDOM.scrollTop = loc.scroll || 0;
+  });
+}
 async function mountTab(expectedPath = '') {
+  saveTabLocation();
+  const hadPendingLocation = Boolean(lee.pendingLocation);
   const mountVersion=++mountTabVersion;
   lee.activeGitTab = '';
   if (lee.gitMergeView) { LeeCM.destroyMerge(lee.gitMergeView); lee.gitMergeView = null; }
@@ -30,27 +57,11 @@ async function mountTab(expectedPath = '') {
   lee.diskVersion = st.disk_version || ''; lee.seenDiskVersion = lee.diskVersion;
   // Tab navigation always returns Run and Variables to that tab's private kernel.
   paintEnv('');
-  if (!st.kind) {
-    host.innerHTML = `<section class="lee-empty"><span class="lee-empty-mark">leela</span>` +
-      `<strong>Creative workspace that starts with coding</strong>` +
-      `<p>Notebooks, files, live variables, research memory, and an agent that sees what you see.</p>` +
-      `<ul class="lee-empty-features">` +
-      `<li><strong>Notebooks &amp; files</strong><span>CodeMirror 6 beside runnable cells; scripts get their own kernel.</span></li>` +
-      `<li><strong>Live variables</strong><span>Inspect the kernel namespace while cells run — expand nested values.</span></li>` +
-      `<li><strong>Research &amp; memory</strong><span>Fossick digests into a Vishalakshi vault; recall before re-fetching.</span></li>` +
-      `<li><strong>Code search</strong><span>Kosha FTS5 + embeddings + call graph; peers and clusters when you need them.</span></li>` +
-      `<li><strong>Agent</strong><span>Ramabana sees the index, open files, and live namespace.</span></li>` +
-      `<li><strong>Git, release, deploy</strong><span>Source control and pipelines without leaving the workspace.</span></li>` +
-      `</ul>` +
-      `<div class="lee-empty-actions"><button class="lee-btn go" onclick="leeAct('quick_open')">Open file</button>` +
-      `<button class="lee-btn" onclick="leeAct('new_notebook')">New notebook</button>` +
-      `<button class="lee-btn" onclick="leeAct('research')">Research a topic</button>` +
-      `<button class="lee-btn" onclick="leeAct('focus_agent')">Ask the agent</button></div>` +
-      `<small>Keyboard: <kbd>ctrl+p</kbd> open · <kbd>ctrl+shift+p</kbd> commands · <kbd>mod+e</kbd> recent files</small></section>`;
-    return;
-  }
+  // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
+  if (!st.kind) { host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? ''); return; }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
-  if (st.kind === 'pdf') mountPdf(host, st);
+  if (st.kind === 'vault') await mountVault(host, st);
+  else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'notebook') mountNotebook(host, st);
   else await mountFile(host, st);
   if (recoveredDraft) {
@@ -85,6 +96,7 @@ async function mountTab(expectedPath = '') {
       }
     });
   }
+  restoreTabLocation(st, hadPendingLocation);
   refreshKernelPill();
   if ($('#left')?.classList.contains('left-symbols')) leeSymbols();
   paintAgentAttachments();

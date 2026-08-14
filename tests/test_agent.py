@@ -1264,3 +1264,38 @@ def test_a_narrow_host_says_why_rather_than_failing_silently():
             if scope not in self.scopes: return f'scope {scope!r} is not available here'
             return 'sandboxed ok'
     assert 'not available' in H(['/x']).inspect_python('x', 'overlay')
+
+
+def test_one_unresolvable_model_does_not_blank_the_whole_picker(monkeypatch):
+    """A model that will not resolve costs its own row, not the model list.
+
+    `Routing.spec('turn')` re-raises for the turn job on purpose, so `ws.ai.model` raises
+    whenever the chosen model cannot be resolved here. `/agent/models` called that
+    unguarded and returned 500, which left the picker on "loading…" with nothing
+    selectable -- the whole list gone because of one entry. The reported case was a
+    `tokenize.TokenError` escaping while tool schemas were built from source, which is not
+    an error type anyone thinks to catch; the route must survive any of them.
+    """
+    from tokenize import TokenError
+    from fastcore.basics import first
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+
+    broken, real = 'codex/gpt-5.6-terra', models.resolve
+    def resolve(name, *a, **kw):
+        if name == broken: raise TokenError('unterminated string literal (detected at line 19)', (19, 62))
+        return real(name, *a, **kw)
+
+    ws = Workspace(roots=[], model=broken)
+    with TestClient(ide_app(ws)) as c:
+        ws.ai                                  # a live assistant, as the IDE has after one turn
+        monkeypatch.setattr(models, 'resolve', resolve)
+        ws.ai.routing._cache.clear()           # the spec was cached before the model went bad
+        r = c.get('/agent/models')
+    assert r.status_code == 200
+    d = r.json()
+    assert len(d['models']) > 1 and d['selected']['agent'] == broken
+    row = first(m for m in d['models'] if m['value'] == broken)
+    assert row['unavailable'] and 'TokenError' in row['source']
+    assert all('TokenError' not in (m.get('source') or '') for m in d['models'] if m['value'] != broken)

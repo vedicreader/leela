@@ -16,7 +16,8 @@ Every handler takes `(job, report)` and returns a JSON-safe dict.
 
 from __future__ import annotations
 
-from fastcore.all import Path
+from collections import Counter
+from fastcore.all import L, Path
 
 from ... import errstr
 from .jobs import JobError, run_script
@@ -42,35 +43,39 @@ def clip_docs(memory, job, report):
     shelf, files = job.params.get('shelf'), _files(job.target)
     if not files: raise JobError(f'no clippable document under {job.target}')
     done = job.params.get('_resume', {}).get('done', []) if job.resumable else []
-    pending = [f for f in files if str(f) not in set(done)]
+    already = set(done)
+    pending = [f for f in files if str(f) not in already]
     out = dict(files=list(done), skipped=[], shelf=shelf, n=len(files))
     meta = dict(clipped_from=job.params.get('from') or 'file', clip_job=job.id)
+    # Doc ids as they are written, so the PII report covers what this job clipped rather than
+    # whatever else the shelf holds. A resumed job only reports on the batches it ran itself.
+    clipped = []
     for i in range(0, len(pending), BATCH):
         batch = pending[i:i + BATCH]
         rows = memory.clip(batch, shelf=shelf, meta=meta)
-        for f, r in zip(batch, rows or [{}] * len(batch)): out['skipped' if r.get('skipped') else 'files'].append(str(f))
+        for f, r in zip(batch, rows or [{}] * len(batch)):
+            out['skipped' if r.get('skipped') else 'files'].append(str(f))
+            if r.get('doc_id'): clipped.append(r['doc_id'])
         seen = out['files'] + out['skipped']
         report(progress=0.05 + 0.9 * len(seen) / len(files), current=f'{len(seen)} of {len(files)}',
             result=out, params=dict(job.params, _resume=dict(done=seen)))
-    out['pii'] = _pii_summary(memory, out['files'], shelf)
+    out['pii'] = _pii_summary(memory, clipped, shelf)
     return out
 
 
-def _pii_summary(memory, paths, shelf):
-    """Which clipped documents carry personal information, per the vault's own report.
+def _pii_summary(memory, doc_ids, shelf):
+    """Which of the documents just clipped carry personal information, per the vault's own report.
 
     Titled names and pattern kinds only. A bare name is not found, and an unstructured address is
     not masked, so a surface showing this says "found", never "none".
     """
-    kinds, flagged = {}, []
-    for d in memory.documents(limit=400):
-        did = d.get('doc_id') or d.get('id')
-        if not did: continue
+    kinds, flagged = Counter(), []
+    for did in L(doc_ids).filter():
         r = memory.pii(did, shelf=shelf)
         if not r.get('has_pii'): continue
         flagged.append(memory.ref(did, shelf))
-        for k, n in (r.get('kinds') or {}).items(): kinds[k] = kinds.get(k, 0) + n
-    return dict(documents=flagged, kinds=kinds, covers='titled names and pattern kinds')
+        kinds.update(r.get('kinds') or {})
+    return dict(documents=flagged, kinds=dict(kinds), covers='titled names and pattern kinds')
 
 
 def clip_codebase(memory, search, job, report):
@@ -82,9 +87,7 @@ def clip_codebase(memory, search, job, report):
     except Exception as e: index = dict(note=f'index failed ({errstr(e)})')
     report(current='writing the pointer', progress=0.7)
 
-    langs = {}
-    for f in root.rglob('*'):
-        if f.is_file() and f.suffix: langs[f.suffix.lower()] = langs.get(f.suffix.lower(), 0) + 1
+    langs = dict(Counter(f.suffix.lower() for f in root.rglob('*') if f.is_file() and f.suffix))
     top = ', '.join(f'{k} {v}' for k, v in sorted(langs.items(), key=lambda kv: -kv[1])[:6])
     text = (f'# {root.name}\n\nCodebase indexed for search rather than stored as prose. Retrieval '
         f'federates code sections from the index; this document is the pointer to it.\n\n'

@@ -23,9 +23,10 @@ const lee = {
   shownProblems: new Set(),   // agent failures already written into the pane, so they show once
   agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
-  recentTabs: [], researchDocs: [], researchSelected: new Set(),
+  recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
   editorPrefs: null, settingsMeta: null, filePrefs: {}, workbenchPrefs: {}, debugPrefs: {},
+  theme: null,               // {family, mode, density}; mode may be 'system', resolved at paint time
   gitDiffTabs: new Map(), activeGitTab: '', gitMergeView: null,
 };
 const CODE_FONTS = [
@@ -93,6 +94,8 @@ applyEditorPrefs(lee.editorPrefs);
 function createEditor(el, opts = {}) { return LeeCM.create(el, {...opts, settings: {...lee.editorPrefs, ...(opts.settings||{})}}); }
 try { lee.recentTabs = JSON.parse(sessionStorage.getItem('lee-recent-tabs') || '[]'); }
 catch (_) { lee.recentTabs = []; }
+try { lee.locations = new Map(JSON.parse(sessionStorage.getItem('lee-tab-locations') || '[]')); }
+catch (_) { lee.locations = new Map(); }
 try { lee.breakpoints = new Map(JSON.parse(localStorage.getItem('lee-breakpoints') || '[]')); }
 catch (_) { lee.breakpoints = new Map(); }
 try { lee.debugWatches=JSON.parse(localStorage.getItem('lee-debug-watches')||'[]'); } catch(_){lee.debugWatches=[];}
@@ -713,6 +716,7 @@ const ACTIONS = {
   show_docs:    showDocs,
   show_diff:    showDiff,
   git_blame:    leeBlame,
+  clip_to_vault: leeClipToVault,
   find_similar: findSimilar,
   code_map:     codeMap,
 
@@ -840,6 +844,14 @@ function recentTabs() {
   const byKey = new Map(open.map(x => [x.key, x]));
   let rows = lee.recentTabs.map(x => ({...x, ...byKey.get(x.key)})).filter(x => x.i != null);
   for (const row of open) if (!rows.some(x => x.i === row.i)) rows.push(row);
+  const now = Date.now(), active = activeTabIndex();
+  if (now - lee.recentCycleAt > 1400 || !lee.recentCycle.length)
+    lee.recentCycle = rows.filter(x => x.i !== active).map(x => x.i);
+  lee.recentCycleAt = now;
+  if (lee.recentCycle.length) {
+    const next = lee.recentCycle.shift(); lee.recentCycle.push(next);
+    return htmxPost('/tab/select?i=' + next);
+  }
   let filtered = rows, sel = Math.max(0, Math.min(1, rows.length - 1));
   const m = modal(`<div class="lee-mhead">Recent files<span class="sub">most recently used</span></div>` +
     `<input class="lee-input lee-recent-query" placeholder="filter open files…" autofocus>` +
@@ -1198,7 +1210,34 @@ function updateToolbarForKind(kind) {
 }
 
 let mountTabVersion=0;
+function saveTabLocation() {
+  const view = curEditor(), key = lee.path || lee.tabKey;
+  if (!view || !key) return;
+  // A Map keeps a re-set key at its *first* insertion point, so without the delete the tail
+  // slice below persisted the eighty oldest files ever opened and dropped the recent ones.
+  lee.locations.delete(key);
+  lee.locations.set(key, {pos: LeeCM.cursor(view), scroll: view.scrollDOM.scrollTop,
+    cell: lee.kind === 'notebook' ? lee.sel : -1});
+  // Nothing else prunes this: a closed, renamed or deleted file leaves its entry behind, so
+  // the cap is what keeps a long session (and sessionStorage) bounded.
+  for (const stale of [...lee.locations.keys()].slice(0, lee.locations.size - 80)) lee.locations.delete(stale);
+  try { sessionStorage.setItem('lee-tab-locations', JSON.stringify([...lee.locations])); } catch (_) {}
+}
+function restoreTabLocation(st, skip = false) {
+  const key = st.path || st.title, loc = lee.locations.get(key);
+  if (!loc || skip || lee.pendingLocation) return;
+  requestAnimationFrame(() => {
+    let view = lee.editors.get('file');
+    if (st.kind === 'notebook' && loc.cell >= 0 && loc.cell < lee.cells.length) {
+      selectCell(loc.cell); view = ensureCellMounted(loc.cell);
+    }
+    if (!view) return;
+    LeeCM.setCursor(view, loc.pos); view.scrollDOM.scrollTop = loc.scroll || 0;
+  });
+}
 async function mountTab(expectedPath = '') {
+  saveTabLocation();
+  const hadPendingLocation = Boolean(lee.pendingLocation);
   const mountVersion=++mountTabVersion;
   lee.activeGitTab = '';
   if (lee.gitMergeView) { LeeCM.destroyMerge(lee.gitMergeView); lee.gitMergeView = null; }
@@ -1220,27 +1259,11 @@ async function mountTab(expectedPath = '') {
   lee.diskVersion = st.disk_version || ''; lee.seenDiskVersion = lee.diskVersion;
   // Tab navigation always returns Run and Variables to that tab's private kernel.
   paintEnv('');
-  if (!st.kind) {
-    host.innerHTML = `<section class="lee-empty"><span class="lee-empty-mark">leela</span>` +
-      `<strong>Creative workspace that starts with coding</strong>` +
-      `<p>Notebooks, files, live variables, research memory, and an agent that sees what you see.</p>` +
-      `<ul class="lee-empty-features">` +
-      `<li><strong>Notebooks &amp; files</strong><span>CodeMirror 6 beside runnable cells; scripts get their own kernel.</span></li>` +
-      `<li><strong>Live variables</strong><span>Inspect the kernel namespace while cells run — expand nested values.</span></li>` +
-      `<li><strong>Research &amp; memory</strong><span>Fossick digests into a Vishalakshi vault; recall before re-fetching.</span></li>` +
-      `<li><strong>Code search</strong><span>Kosha FTS5 + embeddings + call graph; peers and clusters when you need them.</span></li>` +
-      `<li><strong>Agent</strong><span>Ramabana sees the index, open files, and live namespace.</span></li>` +
-      `<li><strong>Git, release, deploy</strong><span>Source control and pipelines without leaving the workspace.</span></li>` +
-      `</ul>` +
-      `<div class="lee-empty-actions"><button class="lee-btn go" onclick="leeAct('quick_open')">Open file</button>` +
-      `<button class="lee-btn" onclick="leeAct('new_notebook')">New notebook</button>` +
-      `<button class="lee-btn" onclick="leeAct('research')">Research a topic</button>` +
-      `<button class="lee-btn" onclick="leeAct('focus_agent')">Ask the agent</button></div>` +
-      `<small>Keyboard: <kbd>ctrl+p</kbd> open · <kbd>ctrl+shift+p</kbd> commands · <kbd>mod+e</kbd> recent files</small></section>`;
-    return;
-  }
+  // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
+  if (!st.kind) { host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? ''); return; }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
-  if (st.kind === 'pdf') mountPdf(host, st);
+  if (st.kind === 'vault') await mountVault(host, st);
+  else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'notebook') mountNotebook(host, st);
   else await mountFile(host, st);
   if (recoveredDraft) {
@@ -1275,6 +1298,7 @@ async function mountTab(expectedPath = '') {
       }
     });
   }
+  restoreTabLocation(st, hadPendingLocation);
   refreshKernelPill();
   if ($('#left')?.classList.contains('left-symbols')) leeSymbols();
   paintAgentAttachments();
@@ -3311,18 +3335,25 @@ function leeRight(which) {
 }
 window.leeRight = leeRight;
 
+// Every memory view is fetched asynchronously into one `#memorybody`, so a slow answer must not
+// paint over the view you switched to while it was in flight. Each switch takes the next token;
+// a fetch that finds the token moved drops its result.
+let memoryViewSeq = 0;
 function setMemoryView(view) {
+  memoryViewSeq += 1;
   const panel = $('.lee-memory');
-  if (panel) { panel.classList.remove('memory-view-notes', 'memory-view-sources', 'memory-view-topics'); panel.classList.add('memory-view-' + view); }
+  if (panel) { panel.classList.remove('memory-view-notes', 'memory-view-sources', 'memory-view-topics', 'memory-view-vault'); panel.classList.add('memory-view-' + view); }
   $$('[data-memory-view]').forEach(button => button.classList.toggle('active', button.dataset.memoryView === view));
 }
 async function leeMemoryNotes() {
   const body = $('#memorybody'); if (!body) return;
   lee.memoryLoaded = 'loading'; leePane('right', true); leeRight('memory'); setMemoryView('notes');
+  const seq = memoryViewSeq;
   body.innerHTML = '<div class="lee-memory-empty">Loading agent memory…</div>';
   try {
     const data = await api('/agent/memory'), selected = Object.fromEntries(
       Object.entries(data.selected || {}).map(([target, ids]) => [target, new Set(ids || [])]));
+    if (seq !== memoryViewSeq) return;      // the vault (or another view) is on screen now
     lee.agentMemory = data; lee.memoryLoaded = 'notes';
     $('#memorystatus').textContent = `· ${data.notes.length} note${data.notes.length === 1 ? '' : 's'}`;
     if (!data.notes.length) {
@@ -3349,7 +3380,7 @@ async function leeMemoryNotes() {
         } catch (e) { input.checked = !input.checked; status(e.message || String(e), 'err'); }
       });
     });
-  } catch (e) { lee.memoryLoaded = false; body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+  } catch (e) { if (seq !== memoryViewSeq) return; lee.memoryLoaded = false; body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
 }
 function leeNewMemoryNote(draft = {}) { leeAgentMemory('__new__', draft); }
 window.leeMemoryNotes = leeMemoryNotes; window.leeNewMemoryNote = leeNewMemoryNote;
@@ -4304,7 +4335,9 @@ async function updateAgentSuggest() {
       .filter(x => x.name.toLowerCase().startsWith(query)).slice(0, 14)
       .map(x => ({...x, label: '/' + x.name, detail: `${x.kind} · ${x.help || ''}`}));
   } else if (mention) {
-    const d = await api('/fs/find?q=' + encodeURIComponent(mention[1]) + '&limit=12');
+    // `@` means "in this project", not "anywhere the workspace can reach": with several
+    // checkouts open, the unscoped list is mostly files from a project you are not in.
+    const d = await api('/fs/find?scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=12');
     if (seq !== agentSuggestSeq) return;
     lee.agentSuggest = (d.hits || []).slice(0, 12).map(f => ({kind: 'file', path: f.path, name: f.name,
       label: '@' + f.name, detail: compactPath(f.path)}));
@@ -4809,8 +4842,9 @@ async function openReleaseTerm(root = '', kind = 'release') {
   await loadTermBundle();
   const d = await api('/term/info');
   if (!d.enabled) return status(d.why, 'err');
-  const id = kind;
-  if (lee.terms.has(id)) return switchTerm(id);
+  const id = kind, prior = lee.terms.get(id);
+  if (prior && !prior.exited) return switchTerm(id);
+  if (prior) { prior.view.dispose(); prior.host.remove(); lee.terms.delete(id); }
   $('#shell').classList.add('show-term');
   const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
   const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
@@ -4890,16 +4924,59 @@ function closeTerm(id = lee.activeTerm) {
 }
 
 /* ---------------------------------------------------------- web preferences */
-const THEMES = ['system', 'dark', 'light', 'cursor'];
-function applyTheme(theme) {
-  theme = THEMES.includes(theme) ? theme : 'cursor';
-  localStorage.setItem('lee-theme', theme);
-  if (theme === 'system') delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = theme;
-  document.documentElement.style.colorScheme = theme === 'system' ? 'light dark' : theme === 'cursor' ? 'light' : theme;
-  const pill = $('#themepill'); if (pill) pill.textContent = theme;
+/* Themes are families with a dark and a light variant: `data-theme` is the family,
+   `data-mode` the resolved variant. Each entry's swatch colours are [bg, bg1, accent],
+   read from the same palette its CSS block declares, so the picker cannot drift from it. */
+const THEMES = {
+  leela: {blurb: 'the house palette', dark: ['#0d1117', '#161b22', '#58a6ff'], light: ['#ffffff', '#f6f8fa', '#0969da']},
+  cursor: {blurb: 'thin quiet chrome', dark: ['#141414', '#1a1a1a', '#6a9fff'], light: ['#fbfbfb', '#f4f4f4', '#171717']},
+  vscode: {blurb: 'Dark+ / Light+', dark: ['#1e1e1e', '#252526', '#3794ff'], light: ['#ffffff', '#f3f3f3', '#005fb8']},
+  jetbrains: {blurb: 'Darcula / IntelliJ', dark: ['#2b2b2b', '#313335', '#589df6'], light: ['#ffffff', '#f7f8fa', '#2470b3']},
+  solarized: {blurb: 'Ethan Schoonover', dark: ['#002b36', '#073642', '#268bd2'], light: ['#fdf6e3', '#f5eeda', '#268bd2']},
+  gruvbox: {blurb: 'warm retro groove', dark: ['#282828', '#32302f', '#83a598'], light: ['#fbf1c7', '#f2e5bc', '#076678']},
+  nord: {blurb: 'arctic bluish', dark: ['#2e3440', '#333b48', '#88c0d0'], light: ['#eceff4', '#e5e9f0', '#5e81ac']},
+  dracula: {blurb: 'the famous fangs', dark: ['#282a36', '#21222c', '#bd93f9'], light: ['#faf9f2', '#f2f1e8', '#7b48c8']},
+};
+const THEME_MODES = ['system', 'dark', 'light'];
+// Density is its own axis: the tight chrome started as cursor's look, but wanting it with
+// another family's colours is reasonable, so it is stored and chosen separately.
+const THEME_DENSITIES = ['tight', 'relaxed'];
+const THEME_DEFAULT = 'cursor:light:tight';
+// What `lee-theme` held before families existed. Dropping these would silently reset everyone.
+const THEME_LEGACY = {system: 'leela:system:relaxed', dark: 'leela:dark:relaxed',
+                      light: 'leela:light:relaxed', cursor: 'cursor:light:tight'};
+const darkQuery = () => matchMedia('(prefers-color-scheme: dark)');
+
+function parseTheme(theme) {
+  "A stored value, a `family:mode:density` string or a {family, mode, density} object, validated."
+  if (theme && typeof theme === 'object') theme = `${theme.family}:${theme.mode}:${theme.density}`;
+  const [family, mode, density] = String(theme || '').includes(':') ? String(theme).split(':')
+    : (THEME_LEGACY[theme] || THEME_DEFAULT).split(':');
+  return {family: family in THEMES ? family : 'cursor',
+          mode: THEME_MODES.includes(mode) ? mode : 'light',
+          // A two-field value predates the split, when density was whatever the family implied.
+          density: THEME_DENSITIES.includes(density) ? density : family === 'cursor' ? 'tight' : 'relaxed'};
+}
+const readTheme = () => parseTheme(localStorage.getItem('lee-theme'));
+const themeMode = mode => mode === 'system' ? (darkQuery().matches ? 'dark' : 'light') : mode;
+
+function paintTheme() {
+  "Write the family, the resolved mode and the density onto <html>, and retheme what CSS cannot reach."
+  const {family, mode, density} = lee.theme, resolved = themeMode(mode), root = document.documentElement;
+  root.dataset.theme = family; root.dataset.mode = resolved; root.dataset.density = density;
+  // color-scheme only accepts dark/light; a family name here is ignored and native controls stay wrong.
+  root.style.colorScheme = resolved;
+  const pill = $('#themepill'); if (pill) pill.textContent = mode === 'system' ? `${family} · auto` : `${family} · ${mode}`;
   for (const t of lee.terms.values()) t.view.retheme();
 }
+function applyTheme(theme) {
+  lee.theme = parseTheme(theme);
+  const {family, mode, density} = lee.theme;
+  localStorage.setItem('lee-theme', `${family}:${mode}:${density}`);
+  paintTheme();
+}
+// Following the system means following it now, not at the next reload.
+darkQuery().addEventListener('change', () => { if (lee.theme?.mode === 'system') paintTheme(); });
 async function editorSettings(languageScope = null) {
   if(typeof languageScope!=='string'){
     // Default to All languages, never to the focused tab's language. Deriving it from
@@ -4915,7 +4992,7 @@ async function editorSettings(languageScope = null) {
   await loadSettings(languageScope);
   const original = {...lee.editorPrefs}, originalFiles = {...lee.filePrefs},
         originalWorkbench = {...lee.workbenchPrefs}, originalDebug = {...lee.debugPrefs},
-        originalTheme = localStorage.getItem('lee-theme') || 'cursor';
+        originalTheme = readTheme();
   let saved = false, previewView = null;
   const selected = (value, current) => value === current ? ' selected' : '';
   const checked = (section, key) => (section === 'editor' ? lee.editorPrefs : section === 'files' ? lee.filePrefs :
@@ -4926,7 +5003,17 @@ async function editorSettings(languageScope = null) {
   const check = (section, key, label, help='') => `<label class="lee-settings-toggle"><input type="checkbox" data-pref-section="${section}" data-pref="${key}"${checked(section,key)}><span>${label}${help ? `<small>${help}</small>` : ''}</span></label>`;
   const select = (section, key, label, values, help='') => field(section,key,label,
     `<select class="lee-select" data-setting>${values.map(([value,text]) => `<option value="${value}"${selected(value,(section==='editor'?lee.editorPrefs:section==='files'?lee.filePrefs:section==='workbench'?lee.workbenchPrefs:lee.debugPrefs)[key])}>${text}</option>`).join('')}</select>`,help);
-  const themeBlurb = t => t === 'system' ? 'follow your device' : t === 'cursor' ? 'thin light chrome' : t + ' interface';
+  const swatch = (family, mode) => {
+    const [bg, bg1, accent] = THEMES[family][themeMode(mode)];
+    return `background: linear-gradient(135deg, ${bg} 0 42%, ${bg1} 42% 62%, ${accent} 62%)`;
+  };
+  const themeButtons = mode => Object.entries(THEMES).map(([family, {blurb}]) =>
+    `<button class="lee-theme-choice${family === originalTheme.family ? ' active' : ''}" data-theme="${family}" aria-pressed="${family === originalTheme.family}">` +
+    `<span class="lee-theme-swatch" style="${swatch(family, mode)}"></span><strong>${family}</strong><span>${esc(blurb)}</span></button>`).join('');
+  const modeButtons = mode => THEME_MODES.map(m =>
+    `<button class="lee-theme-mode${m === mode ? ' active' : ''}" data-theme-mode="${m}" aria-pressed="${m === mode}">${m === 'system' ? 'follow system' : m}</button>`).join('');
+  const densityButtons = density => THEME_DENSITIES.map(d =>
+    `<button class="lee-theme-mode${d === density ? ' active' : ''}" data-theme-density="${d}" aria-pressed="${d === density}">${d}</button>`).join('');
   const m = modal(`<div class="lee-mhead">settings<span class="sub">user · workspace · language-aware</span></div>` +
     `<div class="lee-settings-scope"><label>Save to <select class="lee-select" data-settings-scope><option value="user"${selected('user',rememberedScope)}>User</option><option value="workspace"${selected('workspace',rememberedScope)}>Workspace</option></select></label>` +
     `<label>Apply to <select class="lee-select" data-settings-language><option value=""${selected('',languageScope)}>All languages</option><option value="python"${selected('python',languageScope)}>Python</option><option value="markdown"${selected('markdown',languageScope)}>Markdown</option></select></label>` +
@@ -4953,7 +5040,9 @@ async function editorSettings(languageScope = null) {
     `${check('editor','stickyNavigation','Sticky Python symbol')}${check('editor','scrollPastEnd','Scroll past end')}${check('editor','smoothScrolling','Smooth scrolling')}</div>` +
     `<div class="lee-settings-preview" id="settingspreview"></div><div class="lee-setting-row"><span><strong>Python language service</strong><small>Pyright diagnostics and code intelligence</small></span><span class="lee-setting-state" data-lsp-state>checking…</span></div></section>` +
     `<section data-settings-section="appearance" hidden><h3>Appearance</h3><p>Reduce navigation friction without crowding the editor.</p>` +
-    `<div class="lee-theme-options">${THEMES.map(t=>`<button class="lee-theme-choice${t===originalTheme?' active':''}" data-theme="${t}"><span class="lee-theme-swatch ${t}"></span><strong>${t}</strong><span>${themeBlurb(t)}</span></button>`).join('')}</div>` +
+    `<div class="lee-theme-modes" role="group" aria-label="Theme variant">Variant ${modeButtons(originalTheme.mode)}` +
+    `<span class="lee-spacer"></span>Layout ${densityButtons(originalTheme.density)}<small>tight thins the chrome; it is independent of the palette</small></div>` +
+    `<div class="lee-theme-options" role="group" aria-label="Theme family">${themeButtons(originalTheme.mode)}</div>` +
     `<div class="lee-settings-group"><h4>Editor chrome</h4><div class="lee-settings-grid">` +
     select('editor','lineNumbers','Line numbers',[['off','Off'],['absolute','Absolute'],['relative','Relative'],['hybrid','Hybrid']]) +
     select('editor','renderWhitespace','Whitespace',[['none','None'],['selection','Selection'],['trailing','Trailing'],['all','All']]) +
@@ -4990,7 +5079,15 @@ async function editorSettings(languageScope = null) {
   const paintPath=()=>{path.textContent=lee.settingsMeta?.paths?.[scope.value]||'';target.textContent=`${scope.value} · ${language.value||'all languages'}`;};
   scope.onchange=()=>{localStorage.setItem('lee-settings-save-scope',scope.value);paintPath();};paintPath();
   language.onchange=()=>{localStorage.setItem('lee-settings-language-scope',language.value);saved=true;m.remove();editorSettings(language.value);};
-  $$('[data-theme]',m).forEach(b=>b.onclick=()=>{applyTheme(b.dataset.theme);$$('[data-theme]',m).forEach(x=>x.classList.toggle('active',x===b));});
+  // Every click previews live; the modal's close handler puts the original back unless saved.
+  const paintPicker=()=>{const {family,mode}=lee.theme;
+    $$('[data-theme]',m).forEach(b=>{const on=b.dataset.theme===family;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on);
+      $('.lee-theme-swatch',b).style.cssText=swatch(b.dataset.theme,mode);});
+    $$('[data-theme-mode]',m).forEach(b=>{const on=b.dataset.themeMode===mode;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on);});
+    $$('[data-theme-density]',m).forEach(b=>{const on=b.dataset.themeDensity===lee.theme.density;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on);});};
+  $$('[data-theme]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,family:b.dataset.theme});paintPicker();});
+  $$('[data-theme-mode]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,mode:b.dataset.themeMode});paintPicker();});
+  $$('[data-theme-density]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,density:b.dataset.themeDensity});paintPicker();});
   $('[data-reset]',m).onclick=async()=>{const section=page==='appearance'?'editor':page; if(!sections[section])return;await post('/settings/reset',{scope:scope.value,section,language:language.value});saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
   $('[data-cancel]',m).onclick=()=>m.remove();
   $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>value!==initialSections[section][key]));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})`,'ok');};
@@ -5578,7 +5675,7 @@ function gitOperationBanner(d) {
   const op = d.operation || {};
   if (!op.active) return '';
   return `<section class="lee-git-operation"><div><strong>${esc(op.active)} in progress</strong><span>Resolve the listed conflicts, then continue or abort.</span></div>` +
-    `<span class="lee-spacer"></span>${op.can_continue ? '<button data-operation="continue">continue</button>' : ''}${op.can_skip ? '<button data-operation="skip">skip</button>' : ''}` +
+    `<span class="lee-spacer"></span><button data-conflict-center>resolve conflicts</button>${op.can_continue ? '<button data-operation="continue">continue</button>' : ''}${op.can_skip ? '<button data-operation="skip">skip</button>' : ''}` +
     `${op.can_abort ? '<button data-operation="abort" class="warn">abort</button>' : ''}</section>`;
 }
 // Why a file will not stay staged, said once, where the file list is. Git treats a filter it
@@ -5841,12 +5938,29 @@ function wfPickRows(cat) {
     `${d.build ? `<code>${esc(d.build)}</code>` : d.build_why ? `<small>${esc(d.build_why)}</small>` : ''}</div>` +
     `<div class="lee-wf-picks">${rows}</div>`;
 }
-function wfEnvRows(entries) {
+// `refresh` fetches what GitHub has; without this the answer was thrown away. Values of secrets
+// are not readable by GitHub's design, so remote presence is all there is to show for one.
+function wfRemoteMark(remote, key) {
+  if (!remote) return '';
+  const hit = (remote.secrets || []).find(s => s.name === key) || (remote.variables || []).find(v => v.name === key);
+  if (!hit) return '<span class="lee-wf-remote missing" title="not on GitHub">·</span>';
+  const when = String(hit.updated_at || '').slice(0, 10);
+  return `<span class="lee-wf-remote" title="on GitHub${when ? ', updated ' + when : ''}">gh</span>`;
+}
+function wfRemoteExtra(remote, entries) {
+  if (!remote) return '';
+  const declared = new Set((entries || []).map(e => e.key));
+  const extra = [...(remote.secrets || []), ...(remote.variables || [])].map(x => x.name).filter(n => !declared.has(n));
+  return extra.length ? `<div class="lee-wf-remote-extra">on GitHub but not declared here: ${extra.map(esc).join(', ')}</div>` : '';
+}
+function wfEnvRows(entries, remote) {
   if (!entries?.length) return '<div class="lee-git-empty-state"><strong>Nothing declared</strong><span>Add <code>env_schema</code> to .gheasy/config.json, or a release step that needs a key.</span></div>';
   return entries.map(e => `<article class="lee-wf-env${e.set ? ' is-set' : ''}" data-env="${esc(e.key)}">` +
     `<div><strong>${esc(e.key)}</strong><small>${e.target}${e.declared ? '' : ' · from a release step'}</small></div>` +
     `<span class="lee-wf-envval">${e.secret ? (e.set ? '••••••••' : 'not set') : esc(e.value || 'not set')}</span>` +
-    `<button data-env-set>${e.set ? 'change' : 'set'}</button>${e.set ? '<button data-env-unset aria-label="remove">×</button>' : ''}</article>`).join('');
+    wfRemoteMark(remote, e.key) +
+    `<button data-env-set>${e.set ? 'change' : 'set'}</button>${e.set ? '<button data-env-unset aria-label="remove">×</button>' : ''}</article>`).join('')
+    + wfRemoteExtra(remote, entries);
 }
 function renderWorkflowsPanel() {
   const host = $('#workflowspanel'); if (!host) return;
@@ -5878,7 +5992,7 @@ function renderWorkflowsPanel() {
         `${st.gh_cli && !st.gh_auth ? '<button data-wf-env="auth">gh auth login…</button>' : ''}` +
         `<button data-wf-env="push" ${st.gh_auth ? '' : 'title="pushing uses the GitHub CLI"'}>push declared to GitHub</button>` +
         `<button data-wf-env="add">add key…</button></div>` +
-        `<div class="lee-wf-envs">${wfEnvRows(wfUI.env?.entries)}</div>`
+        `<div class="lee-wf-envs">${wfEnvRows(wfUI.env?.entries, wfUI.env?.remote)}</div>`
       : `<div class="lee-wf-tabs">${tabs}</div>` +
         `<div class="lee-sc-actions">${wf?.dispatchable ? '<button data-wf-op="dispatch">run workflow</button>' : ''}` +
         `<button data-wf-op="open">open file</button><button data-wf-op="edit">edit in builder</button>` +
@@ -5977,6 +6091,8 @@ async function envOp(op, extra) {
   try {
     const d = await post('/workflows/env/action', {op, repo: projectRepo(), ...extra});
     wfUI.env = {...(wfUI.env || {}), entries: d.entries};
+    // A push changes what GitHub has, so a listing already on screen is now wrong.
+    if (op === 'push' && wfUI.env.remote) return loadWorkflowEnv(true);
     if (d.results) {
       const failed = d.results.filter(r => r.ok === false).length;
       status(`pushed ${d.results.filter(r => r.ok && !r.skipped).length} · skipped ${d.results.filter(r => r.skipped).length} · failed ${failed}`, failed ? 'err' : 'ok');
@@ -6165,6 +6281,14 @@ function wireBlame(host) {
     }, 350);
   });
 }
+function openProjectEnv() {
+  leeLeft('workflows'); wfUI.view = 'env'; wfUI.env = null; return leeWorkflows();
+}
+// A finished pipeline refuses to start again server-side, because its end publishes or ships.
+async function confirmRerun(d, what) {
+  return !d.done || confirmDialog(`run ${what} again`,
+    `Every step already ran. Forget that and run the whole ${what} again from the top?`, 'run again');
+}
 function relStepRow(s, d) {
   const busy = d.running && s.status !== 'running';
   return `<article class="lee-rel-step state-${s.status}" data-step="${esc(s.id)}">` +
@@ -6188,7 +6312,7 @@ function renderReleasesPanel() {
     `<span>${d.nbdev ? 'nbdev project' : 'plain project'} · ${done}/${d.steps.length} done${d.configured ? ' · .leela/release.json' : ' · default pipeline'}</span></div></header>` +
     `<div class="lee-sc-actions">` +
     `${d.running ? '<button data-rel-top="stop" class="warn">stop</button>' : `<button data-rel-top="start">${d.failed ? 'continue' : 'run release'}</button>`}` +
-    `<button data-rel-top="terminal">terminal</button><button data-rel-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
+    `<button data-rel-top="terminal">terminal</button><button data-rel-top="env">environment</button><button data-rel-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
     `<button data-rel-top="edit">edit steps</button>${d.configured ? '<button data-rel-top="defaults">defaults</button>' : ''}</div>` +
     `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the release terminal. Fix and retry, or skip it deliberately.</span></div>` : ''}` +
     blameRow(d.blame) +
@@ -6226,12 +6350,14 @@ async function releaseOp(op, extra = {}) {
 }
 async function releaseTop(op, d) {
   if (op === 'terminal') return openReleaseTerm(d.root, 'release');
-  if (op === 'env') { leeLeft('workflows'); wfUI.view = 'env'; wfUI.env = null; return leeWorkflows(); }
+  if (op === 'env') return openProjectEnv();
   if (op === 'defaults') return releaseOp('reset_plan');
   if (op === 'start') {
     const missing = d.steps.flatMap(s => s.missing);
     if (missing.length && !await confirmDialog('run release',
         `These steps are missing ${[...new Set(missing)].join(', ')}. Run anyway?`, 'run')) return;
+    if (!await confirmRerun(d, 'release')) return;
+    if (d.done) await releaseOp('reset');
     return releaseOp('start');
   }
   if (op === 'stop') { if (await confirmDialog('stop release', 'Stop the running step?', 'stop')) releaseOp('stop'); return; }
@@ -6257,7 +6383,7 @@ function depTargetCard(t) {
     `<span>${esc(t.server || 'no server named')} · ${esc(t.user)}@:${esc(t.port)}</span></div></header>` +
     `<div class="lee-dep-files">${files.map(([n, has]) => `<i class="${has ? 'has' : ''}">${esc(n)}</i>`).join('')}</div>` +
     (t.missing.length ? `<div class="lee-wf-note"><strong>${t.missing.length} value${t.missing.length === 1 ? '' : 's'} not set</strong>` +
-      `<span>${t.missing.map(esc).join(', ')}</span><code>set them in Workflows → Environment</code></div>` : '');
+      `<span>${t.missing.map(esc).join(', ')}</span><code>set them in Workflows → Environment</code><button data-dep-env>environment</button></div>` : '');
 }
 
 function depInfraRows() {
@@ -6349,7 +6475,7 @@ function renderDeployPanel() {
     `${t.script ? (d.running ? '<button data-dep-top="stop" class="warn">stop</button>'
                              : `<button data-dep-top="start">${d.failed ? 'continue' : 'deploy'}</button>`)
                 : '<button data-dep-top="scaffold">write deploy.py…</button>'}` +
-    `<button data-dep-top="terminal">terminal</button>` +
+    `<button data-dep-top="terminal">terminal</button><button data-dep-top="env">environment</button>` +
     `<button data-dep-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
     `<button data-dep-top="edit">edit steps</button>` +
     `${t.script ? '<button data-dep-top="open">open deploy.py</button>' : ''}</div>` +
@@ -6358,6 +6484,7 @@ function renderDeployPanel() {
     `<div class="lee-rel-steps">${d.steps.map(s => relStepRow(s, d)).join('')}</div>`;
   host.querySelectorAll('[data-dep-view]').forEach(b => b.onclick = () => { depUI.view = b.dataset.depView; renderDeployPanel(); });
   host.querySelectorAll('[data-dep-top]').forEach(b => b.onclick = () => deployTop(b.dataset.depTop, d));
+  host.querySelector('[data-dep-env]')?.addEventListener('click', openProjectEnv);
   wireBlame(host);
   host.querySelectorAll('.lee-rel-step').forEach(row => {
     const step = row.dataset.step;
@@ -6382,6 +6509,7 @@ async function deployOp(op, extra = {}) {
 async function deployTop(op, d) {
   const t = d.target;
   if (op === 'terminal') return openReleaseTerm(d.root, 'deploy');
+  if (op === 'env') return openProjectEnv();
   if (op === 'open') return leeOpenFile(d.root + '/deploy.py');
   if (op === 'reset') { if (await confirmDialog('reset', 'Forget what ran? The stages are unchanged.', 'reset')) deployOp('reset'); return; }
   if (op === 'stop') { if (await confirmDialog('stop deploy', 'Stop the running stage?', 'stop')) deployOp('stop'); return; }
@@ -6404,6 +6532,8 @@ async function deployTop(op, d) {
   if (op === 'start') {
     if (t.missing.length && !await confirmDialog('deploy',
         `These are not set: ${t.missing.join(', ')}. Deploy anyway?`, 'deploy')) return;
+    if (!await confirmRerun(d, 'deploy')) return;
+    if (d.done) await deployOp('reset');
     return deployOp('start');
   }
   if (op === 'edit') {
@@ -6456,7 +6586,7 @@ function renderDrivePanel() {
                  : '<button data-drv-top="start">run all</button>'}` +
     `<button data-drv-top="terminal">terminal</button>` +
     `<button data-drv-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
-    `<button data-drv-top="values">values…</button></div>` +
+    `<button data-drv-top="values">environment</button></div>` +
     blameRow(d.blame) +
     `<div class="lee-rel-steps">${d.steps.map(s => drvPart(s, d)).join('')}</div>`;
   host.querySelectorAll('[data-drv-top]').forEach(b => b.onclick = () => driveTop(b.dataset.drvTop, d));
@@ -6484,13 +6614,15 @@ async function driveOp(op, extra = {}) {
 }
 async function driveTop(op, d) {
   if (op === 'terminal') return openReleaseTerm(d.root, 'drive');
-  if (op === 'values') { leeLeft('workflows'); wfUI.view = 'env'; wfUI.env = null; return leeWorkflows(); }
+  if (op === 'values') return openProjectEnv();
   if (op === 'stop') { if (await confirmDialog('stop', 'Stop the running call?', 'stop')) driveOp('stop'); return; }
   if (op === 'reset') { if (await confirmDialog('reset', 'Forget what ran? The calls are unchanged.', 'reset')) driveOp('reset'); return; }
   if (op === 'start') {
     const missing = [...new Set(d.steps.flatMap(s => s.missing))];
     if (missing.length && !await confirmDialog('run every call',
         `These are not set: ${missing.join(', ')}. Run anyway?`, 'run')) return;
+    if (!await confirmRerun(d, 'run')) return;
+    if (d.done) await driveOp('reset');
     return driveOp('start');
   }
 }
@@ -6614,6 +6746,7 @@ function wireGitPanel(host, d) {
   host.querySelector('#scstash')?.addEventListener('click', async () => { const message = await inputDialog('stash changes', 'Optional message', '', 'work in progress'); if (message !== null) act('stash', {message}); });
   host.querySelector('#sccommit')?.addEventListener('submit', e => { e.preventDefault(); const message = e.target.querySelector('textarea').value.trim(); if (message) act('commit', {message, amend: e.target.elements.amend.checked}); });
   host.querySelector('#screviewstaged')?.addEventListener('click', () => showStagedReview(d));
+  host.querySelector('[data-conflict-center]')?.addEventListener('click', () => showConflictCenter());
   host.querySelectorAll('[data-selected-action]').forEach(b => b.onclick = async () => {
     const action = b.dataset.selectedAction;
     if (action === 'clear') { gitUI.selectedChanges.clear(); return renderGitPanel(d); }
@@ -7287,6 +7420,27 @@ function webSearch() { return researchWorkspace('search'); }
 function readUrl(url = '') { return researchWorkspace('read', url); }
 function researchQ() { return researchWorkspace('research'); }
 
+
+/* ---- clip: a file, a folder or the open tab into the workspace vault shelf ---- */
+function clipTarget() {
+  // Which menu opened decides the target. A tab names its path in `title`, so an inactive tab
+  // read straight after right-clicking it does not have to wait for the select to land.
+  const s = lee.menuSurface;
+  if (s === 'file' || s === 'folder') return treeSel()?.dataset.path || '';
+  if (s === 'tab') return $(`.lee-tab[data-i="${lee.menuTab}"]`)?.title || '';
+  return treeSel()?.dataset.path || lee.path || '';
+}
+async function leeClipToVault() {
+  const target = clipTarget();
+  if (!target) return status('select a file, a folder or a tab to clip', 'err');
+  leePane('right', true); leeRight('memory'); setMemoryView('vault');
+  // The panel first, because the job card swaps into it. Both are ordinary htmx requests.
+  await htmx.ajax('GET', '/vault/panel', {target: '#memorybody', swap: 'innerHTML'});
+  await htmx.ajax('POST', '/clip?' + new URLSearchParams({target, kind: 'clip', origin: 'menu'}),
+    {target: '#vaultjobs', swap: 'afterbegin'});
+  status(`clipping ${target.split('/').pop() || target} into the vault…`);
+}
+window.leeClipToVault = leeClipToVault;
 /* ------------------------------------------------------------------ overlays */
 function modal(inner, onKey, onClose, options = {}) {
   const previousFocus = document.activeElement;
@@ -7481,6 +7635,7 @@ function confirmDialog(title, detail, action = 'confirm') {
 function closeMenu() { $('.lee-ctxmenu')?.remove(); }
 function openMenu(surface, x, y) {
   closeMenu();
+  lee.menuSurface = surface;   // an action can act on what was right-clicked, not on the focus
   const rows = lee.menus?.[surface] || [];
   if (!rows.length) return;
   const menu = document.createElement('div');
@@ -7553,31 +7708,23 @@ async function leeWorkspaceMenu(anchor) {
 }
 window.leeWorkspaceMenu = leeWorkspaceMenu;
 
-async function leeBranchMenu(anchor) {
-  try {
-    const d = await api(gitUrl('/git/info'));
-    const rows = (d.branches || []).map(b => ({label: b.name, detail: b.current ? 'current' : b.oid,
-      run: () => b.current ? leeLeft('git') : gitDo('checkout', {branch: b.name, repo: ''})}));
-    rows.push({separator: true}, {label: 'Create branch…', run: async () => {
-      const branch = await inputDialog('new branch', 'Branch name', '', 'feature/name');
-      if (branch) gitDo('create', {branch, repo: ''});
-    }}, {label: 'Source control', detail: `${(d.changes || []).length} changes`, run: () => leeLeft('git')});
-    openChromeMenu(anchor, rows);
-  } catch (e) { status(e.message || String(e), 'err'); }
-}
-window.leeBranchMenu = leeBranchMenu;
+/* The branch pill's own popup is `28_branchbar.js`: it is a searchable list of branches and
+   actions rather than a menu, so it does not fit `openChromeMenu`. */
 
 async function operationHistory() {
   const d = await api('/history/operations');
   const m = modal(`<div class="lee-mhead">workspace history<span class="sub">saved file checkpoints · newest first</span></div>` +
-    `<div class="lee-modallist">${(d.operations || []).map((op, i) => `<button class="lee-mrow" data-op="${esc(op.id)}"${op.reversible ? '' : ' data-off="1"'}>` +
-      `<strong>${esc(op.label)}</strong><span class="sub">${new Date(op.at * 1000).toLocaleString()} · ${esc((op.paths || []).join(', '))}${op.irreversible?.length ? ' · external: ' + esc(op.irreversible.join(', ')) : ''}</span></button>`).join('') || '<div class="lee-dim">No saved operations yet.</div>'}</div>` +
-    `<div class="lee-mfoot"><span class="lee-dim">Undo is refused if any file changed after its checkpoint.</span></div>`);
-  $$('[data-op]:not([data-off])', m).forEach(row => row.onclick = async () => {
-    if (!await confirmDialog('Undo workspace operation', `Restore ${row.textContent.trim()}?`, 'undo')) return;
-    try { const r = await post('/history/undo', {id: row.dataset.op}); m.remove();
+    // An empty `data-history` still matches `[data-history]`, so the attribute is omitted
+    // rather than blanked: a spent operation must not be clickable at all.
+    `<div class="lee-modallist">${(d.operations || []).map(op => `<button class="lee-mrow" data-op="${esc(op.id)}"${op.reversible ? ' data-history="undo"' : op.redoable ? ' data-history="redo"' : ' data-off="1"'}>` +
+      `<strong>${esc(op.label)}</strong><span class="sub">${op.redoable ? 'undone · redo available · ' : ''}${new Date(op.at * 1000).toLocaleString()} · ${esc((op.paths || []).join(', '))}</span></button>`).join('') || '<div class="lee-dim">No saved operations yet.</div>'}</div>` +
+    `<div class="lee-mfoot"><span class="lee-dim">Undo and redo refuse files changed after the checkpoint.</span></div>`);
+  $$('[data-history]', m).forEach(row => row.onclick = async () => {
+    const redo = row.dataset.history === 'redo', verb = redo ? 'Redo' : 'Undo';
+    if (!await confirmDialog(`${verb} workspace operation`, `${verb} ${row.textContent.trim()}?`, verb.toLowerCase())) return;
+    try { const r = await post('/history/' + (redo ? 'redo' : 'undo'), {id: row.dataset.op}); m.remove();
       if ((r.operation.resources || []).some(x => x.path === lee.path)) await takeDiskVersion(lee.path);
-      status('workspace operation undone', 'ok'); refreshFileTree(undefined, false);
+      status(`workspace operation ${redo ? 'redone' : 'undone'}`, 'ok'); refreshFileTree(undefined, false);
     } catch (e) { status(e.message || String(e), 'err'); }
   });
 }
@@ -7610,6 +7757,7 @@ function leeEditorMenu(anchor) {
     {label: 'Save', detail: displayChord(lee.keys.find(k => k.action === 'save')?.key || ''), run: () => leeAct('save')},
     {label: 'Show unsaved changes', run: () => leeAct('show_diff')},
     {label: 'Rename symbol…', run: () => leeAct('rename_symbol')},
+    {label: 'Replace in workspace…', run: () => leeAct('replace_workspace')},
     {separator: true},
     {label: 'Insert cell below', run: () => leeAct('cell_below')},
     {label: 'Change cell type', run: () => leeAct('cell_type')},
@@ -8759,7 +8907,7 @@ async function boot() {
   setInterval(watchOpenFile, 1000);    // agent, terminal and git writes appear without a page refresh
   pollApproval();
   setInterval(pollApproval, 750);       // catches Rishi approvals raised outside an agent SSE stream
-  applyTheme(localStorage.getItem('lee-theme') || 'cursor');
+  applyTheme(readTheme());   // also rewrites a pre-family value into `family:mode`
   refreshProjectPills();
   setInterval(refreshKernelPill, 5000);
   setInterval(refreshProjectPills, 5000);
@@ -8776,3 +8924,397 @@ document.addEventListener('htmx:afterSwap', (e) => {
   // Adding a folder rebuilds the whole shell, so everything the client owns is remounted.
   else if (id === 'shell') { lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); mountTab().then(leeVars); requestAnimationFrame(layoutTabs); }
 });
+/* -------------------------------------------------------------- refactor */
+function refactorRows(files, selected) {
+  return files.map((file, i) => `<label class="lee-mrow"><input type="checkbox" data-refactor-path="${esc(file.path)}"${selected.has(file.path) ? ' checked' : ''}>` +
+    `<strong>${esc(compactPath(file.path))}</strong><span class="sub">${file.edits} replacement${file.edits === 1 ? '' : 's'}</span></label>`).join('');
+}
+
+async function replaceWorkspace() {
+  const m = modal(`<div class="lee-mhead">Replace in workspace<span class="sub">preview before changing files</span></div>` +
+    `<label>Find<input class="lee-input" data-refactor-find autofocus></label>` +
+    `<label>Replace<input class="lee-input" data-refactor-replace></label>` +
+    `<label><input type="checkbox" data-refactor-regex> regular expression</label>` +
+    `<label><input type="checkbox" data-refactor-case> match case</label>` +
+    `<label><input type="checkbox" data-refactor-word> whole word</label>` +
+    `<div class="lee-mfoot"><button class="lee-btn go" data-refactor-preview>Preview</button><button class="lee-btn" data-refactor-cancel>Cancel</button></div>`);
+  const find = $('[data-refactor-find]', m), replace = $('[data-refactor-replace]', m);
+  $('[data-refactor-cancel]', m).onclick = () => m.remove();
+  $('[data-refactor-preview]', m).onclick = async () => {
+    const button = $('[data-refactor-preview]', m); button.disabled = true;
+    try {
+      const data = await post('/replace/preview', {find: find.value, replace: replace.value,
+        regex: $('[data-refactor-regex]', m).checked, case: $('[data-refactor-case]', m).checked,
+        word: $('[data-refactor-word]', m).checked});
+      if (!data.summary.files) return status('no matches in editable workspace files', 'err');
+      const selected = new Set(data.files.map(x => x.path));
+      m.querySelector('.lee-modalbox').innerHTML = `<div class="lee-mhead">Replace preview<span class="sub">${data.summary.edits} replacements in ${data.summary.files} files</span></div>` +
+        `<div class="lee-modallist" data-refactor-files>${refactorRows(data.files, selected)}</div>` +
+        `<div class="lee-mfoot"><button class="lee-btn go" data-refactor-apply>Apply</button><button class="lee-btn" data-refactor-cancel>Cancel</button></div>`;
+      $('[data-refactor-cancel]', m).onclick = () => m.remove();
+      $('[data-refactor-apply]', m).onclick = async () => {
+        const paths = $$('[data-refactor-path]:checked', m).map(x => x.dataset.refactorPath);
+        if (!paths.length) return status('select at least one file', 'err');
+        if (!await confirmDialog('Replace in workspace', `Change ${paths.length} file${paths.length === 1 ? '' : 's'}?`, 'apply')) return;
+        try {
+          const result = await post('/replace/apply', {token: data.token, paths}); m.remove();
+          if (paths.includes(lee.path)) await takeDiskVersion(lee.path);
+          refreshFileTree(undefined, false); status(`replaced text in ${result.paths.length} file${result.paths.length === 1 ? '' : 's'}`, 'ok');
+        } catch (e) { status(e.message || String(e), 'err'); }
+      };
+    } catch (e) { status(e.message || String(e), 'err'); }
+    finally { button.disabled = false; }
+  };
+}
+
+async function workspaceHistoryRedo() {
+  try {
+    const result = await post('/history/redo', {}), paths = (result.operation.resources || []).map(x => x.path);
+    if (paths.includes(lee.path)) await takeDiskVersion(lee.path);
+    refreshFileTree(undefined, false); status('workspace operation redone', 'ok');
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+
+ACTIONS.replace_workspace = replaceWorkspace;
+ACTIONS.workspace_undo = () => operationHistory();
+ACTIONS.workspace_redo = workspaceHistoryRedo;
+/* --------------------------------------------------------- git conflicts */
+async function showConflictCenter() {
+  try {
+    const d = await api(gitUrl('/git/conflicts')), files = d.files || [], s = d.summary || {};
+    if (!files.length) return status('no unresolved Git conflicts', 'ok');
+    const rows = files.map(f => `<button class="lee-mrow" data-conflict-path="${esc(f.path)}"><strong>${esc(f.path)}</strong>` +
+      `<span class="sub">${f.kind} · ${f.blocks || 0} conflict${f.blocks === 1 ? '' : 's'} · ${f.safe ? `${f.safe} safe` : f.reason}</span></button>`).join('');
+    const m = modal(`<div class="lee-mhead">Resolve conflicts<span class="sub">${esc(d.operation.active || 'Git operation')} paused · ${s.files} files · ${s.blocks} blocks</span></div>` +
+      `<div class="lee-git-merge-preview"><header><strong>${s.safe || 0} safe resolution${s.safe === 1 ? '' : 's'} available</strong><span>Automatic changes are limited to identical sides.</span></header></div>` +
+      `<div class="lee-modallist">${rows}</div><div class="lee-mfoot"><button class="lee-btn go" data-safe${s.safe ? '' : ' disabled'}>Resolve safe changes</button><button class="lee-btn" data-close>Close</button></div>`);
+    $('[data-close]', m).onclick = () => m.remove();
+    $$('[data-conflict-path]', m).forEach(b => b.onclick = () => { m.remove(); showGitConflict(b.dataset.conflictPath); });
+    $('[data-safe]', m).onclick = async () => {
+      if (!await confirmDialog('Resolve safe conflicts', `Stage ${s.safe} deterministic resolution${s.safe === 1 ? '' : 's'}?`, 'resolve')) return;
+      const next = await gitDo('resolve_safe_conflicts', {paths: files.filter(f => f.safe).map(f => f.path)});
+      m.remove(); renderGitPanel(next); status('safe conflicts resolved; review remaining files', 'ok');
+      if ((next.changes || []).some(x => x.conflicted)) showConflictCenter();
+    };
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+window.showConflictCenter = showConflictCenter;
+/* ---- vault reader: a document from the vault, as an editor tab ---- */
+
+function vaultSectionRows(sections, active) {
+  if (!sections.length) return '<div class="lee-dim">No section structure was extracted.</div>';
+  return sections.map(s => `<button class="lee-vault-section${s.node_id === active ? ' active' : ''}" ` +
+    `data-node="${esc(s.node_id)}" style="padding-left:${6 + s.depth * 10}px">` +
+    `<strong>${esc(s.title)}</strong>${s.page ? `<small>p. ${s.page}</small>` : ''}</button>`).join('');
+}
+
+function vaultPrivacy(d) {
+  const p = d.privacy || {};
+  if (!p.has_pii && !p.detected) return `<div class="lee-pii clear" title="${esc(d.covers || '')}">no pattern found</div>`;
+  const kinds = Object.entries(p.kinds || {}).map(([k, n]) => `${k}×${n}`).join(', ');
+  const cleared = p.override === 'clear';
+  // `detected` stays true under an override, so an overridden document says so rather than
+  // claiming the scan found nothing.
+  return `<div class="lee-vault-privacy${cleared ? '' : ' sensitive'}">` +
+    `<strong>${cleared ? 'Marked not personal' : 'Personal information found'}</strong>` +
+    `<span class="lee-pii ${cleared ? 'clear' : 'found'}" title="${esc(d.covers || '')}">${esc(kinds || 'no kinds')}</span>` +
+    (d.evidence?.length ? `<div class="lee-vault-evidence">${d.evidence.slice(0, 40).map(e =>
+      `<span title="${esc(e.kind)}, page ${e.page}"><mark>${esc(e.value)}</mark><small>p. ${e.page}</small></span>`).join('')}</div>` : '') +
+    `<button data-vault-notpii="${cleared ? '0' : '1'}">${cleared ? 'restore detection' : 'mark not personal'}</button></div>`;
+}
+
+async function mountVault(host, st) {
+  host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the vault</small></div>';
+  const q = new URLSearchParams({doc: st.doc, shelf: st.shelf || '', vault: st.vault || ''});
+  let d;
+  try { d = await api('/vault/doc?' + q); }
+  catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; return; }
+
+  const doc = d.doc || {}, sections = d.sections || [];
+  host.innerHTML = `<div class="lee-vault-reader">` +
+    `<aside class="lee-vault-toc"><div class="lee-phead"><span class="lee-ptitle">${esc(doc.title || st.title)}</span>` +
+    `<span class="lee-keyscope">${esc(doc.kind || 'document')} · ${esc(st.shelf || 'store')}</span></div>` +
+    `<div class="lee-vault-sections">${vaultSectionRows(sections, '')}</div></aside>` +
+    `<div class="lee-vault-body">${vaultPrivacy(d)}<article class="lee-vault-text" data-markdown=""></article></div></div>`;
+
+  const body = $('.lee-vault-text', host);
+  const show = async node => {
+    $$('.lee-vault-section', host).forEach(b => b.classList.toggle('active', b.dataset.node === node));
+    try {
+      const s = await api('/vault/section?' + new URLSearchParams({node, shelf: st.shelf || '', vault: st.vault || ''}));
+      renderMarkdown(body, s.section?.text || '');
+    } catch (e) { body.textContent = e.message || String(e); }
+  };
+  $$('.lee-vault-section', host).forEach(b => b.onclick = () => show(b.dataset.node));
+  if (sections.length) show(sections[0].node_id);
+  // A document with nothing found has no override button, so this is optional -- assuming it was
+  // there threw on null and took the rest of the mount, including the first section, with it.
+  const notpii = $('[data-vault-notpii]', host);
+  if (notpii) notpii.onclick = async e => {
+    try {
+      await post('/vault/not-pii', {doc: st.doc, shelf: st.shelf || '', vault: st.vault || '',
+                                    clear: e.target.dataset.vaultNotpii === '1'});
+      mountVault(host, st);
+    } catch (err) { status(err.message || String(err), 'err'); }
+  };
+}
+window.mountVault = mountVault;
+
+async function leeOpenVaultDoc(doc, shelf = '', vault = '', title = '') {
+  await htmx.ajax('POST', '/vault/open?' + new URLSearchParams({doc, shelf, vault, title}),
+    {target: '#tabbar', swap: 'outerHTML'});
+  return mountTab();
+}
+window.leeOpenVaultDoc = leeOpenVaultDoc;
+/* The branch pill as a real Git control, and the three remote gestures beside it.
+ *
+ * One popup over branches *and* actions, in the order JetBrains settled on: what to do with
+ * the branch you are on, then how to get a different one, then the branches themselves. Names
+ * containing a `/` fold into a folder by their first segment -- a checkout with forty
+ * `cursor/…` branches is otherwise a wall of near-identical rows.
+ *
+ * Everything here posts to `/git/action`, which already knows checkout, fetch, pull, push,
+ * create, merge, rebase and delete. The one new route is `/git/clone`, because a clone is
+ * minutes of network and cannot be a request.
+ */
+
+const GIT_RECENT_KEY = 'lee-git-recent-branches';
+const gitBranchFolders = new Set();      // which prefix folders are expanded, this session
+
+function recentBranches(root) {
+  try { return JSON.parse(localStorage.getItem(GIT_RECENT_KEY) || '{}')[root] || []; }
+  catch (_) { return []; }
+}
+function rememberBranch(root, name) {
+  let all = {};
+  try { all = JSON.parse(localStorage.getItem(GIT_RECENT_KEY) || '{}'); } catch (_) {}
+  all[root] = [name, ...(all[root] || []).filter(x => x !== name)].slice(0, 8);
+  try { localStorage.setItem(GIT_RECENT_KEY, JSON.stringify(all)); } catch (_) {}
+}
+
+// A remote branch's first segment is its remote, not a folder: `origin/cursor/x` belongs in
+// `cursor` beside the local branch of the same name.
+function branchLeaf(b) { return b.remote ? b.name.split('/').slice(1).join('/') : b.name; }
+function branchFolder(b) { const cut = branchLeaf(b).indexOf('/'); return cut < 0 ? '' : branchLeaf(b).slice(0, cut); }
+function branchDrift(b) {
+  return `${b.behind ? `<i class="behind">↙${b.behind}</i>` : ''}${b.ahead ? `<i class="ahead">↗${b.ahead}</i>` : ''}`;
+}
+
+function branchRow(b, label) {
+  const upstream = b.gone ? 'upstream gone' : b.upstream || (b.remote ? 'remote' : 'no upstream');
+  return `<button class="lee-mrow lee-branch-row${b.current ? ' current' : ''}" data-branch="${esc(b.name)}">` +
+    `<span class="lee-branch-mark">${b.current ? '✓' : b.remote ? '☁' : '›'}</span>` +
+    `<strong>${esc(label ?? branchLeaf(b))}</strong><span class="sub">${esc(upstream)}</span>` +
+    `<span class="lee-spacer"></span>${branchDrift(b)}` +
+    `<span class="lee-branch-more" data-more="${esc(b.name)}" role="button" title="branch actions">•••</span></button>`;
+}
+
+function branchGroup(title, rows, fold = false) {
+  if (!rows.length) return '';
+  let body = rows.map(b => branchRow(b)).join('');
+  if (fold) {
+    const folders = new Map(), loose = [];
+    for (const b of rows) {
+      const name = branchFolder(b);
+      if (!name) { loose.push(b); continue; }
+      if (!folders.has(name)) folders.set(name, []);
+      folders.get(name).push(b);
+    }
+    // A collapsed folder's branches are absent from the DOM rather than hidden, so the modal's
+    // arrow-key walk over `.lee-mrow` never lands on a row nobody can see.
+    body = loose.map(b => branchRow(b)).join('') + [...folders].map(([name, kids]) => {
+      const open = gitBranchFolders.has(name) || kids.some(k => k.current);
+      return `<button class="lee-mrow lee-branch-folder" data-folder="${esc(name)}">` +
+        `<span class="lee-branch-mark">${open ? '▾' : '▸'}</span><strong>${esc(name)}/</strong>` +
+        `<span class="sub">${kids.length}</span></button>` +
+        (open ? kids.map(b => branchRow(b, branchLeaf(b).slice(name.length + 1))).join('') : '');
+    }).join('');
+  }
+  return `<div class="lee-branch-group"><header>${esc(title)}</header>${body}</div>`;
+}
+
+async function switchBranch(d, name) {
+  const b = (d.branches || []).find(x => x.name === name);
+  if (!b || b.current) return leeLeft('git');
+  rememberBranch(d.root, name);
+  // A remote-only branch is checked out by its leaf name; Git creates the tracking branch.
+  const out = (await gitDo('checkout', {branch: b.remote ? branchLeaf(b) : name})).outcome || {};
+  // A switch moves HEAD, so `summary` always says so -- and that buries the one sentence that
+  // matters, which is what became of work the switch had to set aside. Say it instead.
+  if (out.message) { leeLog('git', 'checkout', out.message, 'ok'); status(`git checkout · ${firstLine(out.message)}`, 'ok'); }
+  return out;
+}
+
+function compareBranch(d, name) {
+  Object.assign(gitUI, {tab: 'review', review: null, reviewBase: d.branch, reviewHead: name});
+  leeLeft('git'); leeGitRefresh();
+}
+
+function branchActions(anchor, d, b) {
+  if (!b) return;
+  const leaf = branchLeaf(b);
+  const rows = [
+    {label: `Checkout ${leaf}`, disabled: b.current, run: () => switchBranch(d, b.name)},
+    {label: 'New Branch from…', detail: b.name, run: async () => {
+      const branch = await inputDialog('new branch', `Branch name, starting at ${b.name}`, '', 'feature/name');
+      if (branch) gitDo('create', {branch, start: b.name});
+    }},
+    {separator: true},
+    {label: 'Compare with current', detail: `${d.branch} … ${leaf}`, disabled: b.current, run: () => compareBranch(d, b.name)},
+    {label: `Rebase ${d.branch} onto ${leaf}`, disabled: b.current, run: () => gitDo('rebase', {branch: b.name})},
+    {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => gitDo('merge', {branch: b.name})},
+  ];
+  if (!b.remote && !b.current) rows.push({separator: true}, {label: `Delete ${leaf}`, warn: true, run: async () => {
+    if (await confirmDialog('delete branch', `Delete ${b.name}? Commits only on it are lost.`, 'delete'))
+      gitDo('delete', {branch: b.name, force: !b.merged});
+  }});
+  openChromeMenu(anchor, rows);
+}
+
+function branchTopActions(d) {
+  const changed = (d.changes || []).length;
+  return [
+    {id: 'update', label: 'Update Project', detail: d.behind ? `${d.behind} behind ${d.upstream}` : 'pull, autostashing local work'},
+    {id: 'commit', label: 'Commit…', detail: changed ? `${changed} changed file${changed === 1 ? '' : 's'}` : 'working tree clean'},
+    {id: 'push', label: 'Push', detail: !d.upstream ? 'publish this branch' : d.ahead ? `${d.ahead} ahead` : 'nothing to push'},
+    {id: 'new', label: 'New Branch…', detail: `from ${d.branch}`},
+    {id: 'revision', label: 'Checkout Tag or Revision…', detail: 'any tag, commit or branch'},
+    {id: 'clone', label: 'Clone Repository…', detail: 'into a folder, then open it'},
+  ];
+}
+
+function runBranchAction(id, d) {
+  if (id === 'update') return gitDo('pull');
+  if (id === 'push') return leeGitQuick('push');
+  if (id === 'commit') { gitUI.tab = 'changes'; leeLeft('git'); return leeGitRefresh(); }
+  if (id === 'clone') return leeCloneRepo();
+  if (id === 'new') return inputDialog('new branch', `Branch name, starting at ${d.branch}`, '', 'feature/name')
+    .then(branch => branch && gitDo('create', {branch, start: d.branch}));
+  return inputDialog('checkout tag or revision', 'Tag, commit or branch', '', 'v1.2.0  ·  a1b2c3d')
+    .then(ref => ref && gitDo('checkout', {branch: ref}));
+}
+
+async function leeBranchMenu(anchor) {
+  let d;
+  try { d = await api(gitUrl('/git/info')); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  const recent = recentBranches(d.root);
+  let search = null;
+  const m = modal(
+    `<div class="lee-mhead">Git Branches<span class="sub">${esc(gitRepoName(d.root))} · on ${esc(d.branch)}</span></div>` +
+    `<input class="lee-input" id="branchsearch" autocomplete="off" spellcheck="false"` +
+    ` placeholder="Search branches and actions…" aria-label="search branches and actions">` +
+    `<div class="lee-modallist lee-branchlist" id="branchlist"></div>` +
+    `<div class="lee-mfoot"><span class="lee-dim">Enter checks out · ••• compares, rebases and merges</span></div>`,
+    // The arrow keys walk the rows, which takes the caret out of the box; a printable key puts
+    // it back, so searching never needs the mouse to come back first.
+    e => { if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && document.activeElement !== search) search.focus(); },
+    null, {className: 'lee-branchmodal', storageKey: 'branches'});
+  search = m.querySelector('#branchsearch');
+  const list = m.querySelector('#branchlist');
+
+  const paint = () => {
+    const q = search.value.trim().toLowerCase();
+    const hit = text => !q || String(text).toLowerCase().includes(q);
+    const acts = branchTopActions(d).filter(a => hit(a.label));
+    const all = (d.branches || []).filter(b => hit(`${b.name} ${b.subject} ${b.author}`));
+    const near = recent.map(n => all.find(b => b.name === n && !b.current)).filter(Boolean);
+    const rest = all.filter(b => !near.includes(b));
+    list.innerHTML =
+      (acts.length ? `<div class="lee-branch-group">${acts.map(a =>
+        `<button class="lee-mrow lee-branch-action" data-act="${a.id}"><strong>${esc(a.label)}</strong>` +
+        `<span class="lee-spacer"></span><span class="sub">${esc(a.detail)}</span></button>`).join('')}</div>` : '') +
+      branchGroup('Recent', near) +
+      branchGroup('Local', rest.filter(b => !b.remote), true) +
+      branchGroup('Remote', rest.filter(b => b.remote), true) ||
+      '<div class="lee-dim">nothing matches</div>';
+  };
+
+  list.onclick = e => {
+    const more = e.target.closest('[data-more]');
+    if (more) return branchActions(more, d, (d.branches || []).find(b => b.name === more.dataset.more));
+    const folder = e.target.closest('[data-folder]');
+    if (folder) {
+      const name = folder.dataset.folder;
+      gitBranchFolders.has(name) ? gitBranchFolders.delete(name) : gitBranchFolders.add(name);
+      return paint();
+    }
+    const row = e.target.closest('[data-branch]');
+    if (row) { m.remove(); return switchBranch(d, row.dataset.branch); }
+    const act = e.target.closest('[data-act]');
+    if (act) { m.remove(); return runBranchAction(act.dataset.act, d); }
+  };
+  search.oninput = paint;
+  paint();
+  setTimeout(() => search.focus(), 0);
+}
+window.leeBranchMenu = leeBranchMenu;
+
+/* ------------------------------------------------------------ fetch/pull/push */
+async function leeGitQuick(op) {
+  const button = $(`#git${op}`);
+  if (button) button.disabled = true;
+  try {
+    // Push is the one that needs to know where it stands: an unpublished branch has nowhere
+    // to push to, and saying "nothing to push" would be the wrong half of the truth.
+    const publish = op === 'push' && !(gitUI.snapshot || await api(gitUrl('/git/info'))).upstream;
+    await gitDo(op, op === 'push' ? {publish} : {});
+    refreshScmIfOpen();
+  } catch (_) { /* gitDo already logged it, showed the log, and said so in the status line */ }
+  finally { if (button) button.disabled = false; }
+}
+window.leeGitQuick = leeGitQuick;
+
+/* ------------------------------------------------------------------- cloning */
+// Poll a clone job until it stops. The cap is there so a wedged job ends as a sentence rather
+// than a spinner nothing will ever stop.
+async function cloneProgress(id, say) {
+  for (let i = 0; i < 900; i++) {
+    await new Promise(r => setTimeout(r, 900));
+    const job = await api(`/git/clone/status?job=${encodeURIComponent(id)}`);
+    if (job.error) throw new Error(job.error);
+    if (!job.active) return job.result || {};
+    if (job.current) say.textContent = job.current;
+  }
+  throw new Error('the clone is still running; the jobs panel has it');
+}
+
+async function leeCloneRepo() {
+  const info = await api('/workspace/info').catch(() => ({}));
+  // Beside the folders that are already open, not inside one: a clone that lands *under* an
+  // open folder is covered by it and can never become a chosen project of its own.
+  const beside = ((info.roots || [])[0]?.path || '').split('/').slice(0, -1).join('/');
+  const m = modal(
+    `<div class="lee-mhead">clone repository<span class="sub">the clone becomes an open folder</span></div>` +
+    `<label class="lee-fieldlabel">Repository<input class="lee-input" id="cloneurl" autocomplete="off"` +
+    ` spellcheck="false" placeholder="owner/name  ·  https://…  ·  git@…"></label>` +
+    `<label class="lee-fieldlabel">Into<input class="lee-input" id="cloneinto" autocomplete="off"` +
+    ` spellcheck="false" value="${esc(beside)}" placeholder="a folder that already exists"></label>` +
+    `<div class="lee-mfoot"><button class="lee-btn go" id="clonego">clone</button>` +
+    `<span class="lee-dim" id="clonesay"></span></div>`);
+  const say = m.querySelector('#clonesay'), go = m.querySelector('#clonego');
+  const start = async () => {
+    const url = m.querySelector('#cloneurl').value.trim();
+    if (!url) return m.querySelector('#cloneurl').focus();
+    go.disabled = true; say.textContent = 'starting…';
+    try {
+      const r = await post('/git/clone', {url, parent: m.querySelector('#cloneinto').value.trim()});
+      say.textContent = `cloning into ${r.root}…`;
+      const done = await cloneProgress(r.job.id, say);
+      m.remove();
+      // The same three steps the folder picker takes, so a clone lands where an opened folder
+      // lands: added, drawn in the tree, and chosen as the project.
+      await post('/fs/add-root', {path: done.root});
+      await refreshFileTree(done.root);
+      await activateRoot(done.root);
+      status(`cloned ${done.name}`, 'ok');
+    } catch (e) {
+      go.disabled = false; say.textContent = '';
+      status(e.message || String(e), 'err');
+    }
+  };
+  go.onclick = start;
+  m.querySelector('#cloneurl').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); start(); } };
+  setTimeout(() => m.querySelector('#cloneurl').focus(), 0);
+}
+window.leeCloneRepo = leeCloneRepo;
