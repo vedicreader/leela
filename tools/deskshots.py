@@ -54,14 +54,18 @@ def serve(ws, port=PORT):
     return srv
 
 
-def workspace(cdp_port=CDP_PORT):
-    "A workspace over Leela's own source, with kernels stubbed so nothing is launched."
+def workspace(cdp_port=CDP_PORT, roots=True):
+    """A workspace over Leela's own source, with kernels stubbed so nothing is launched.
+
+    `roots=False` opens on nothing, which is what a packaged app launched by double-click for
+    the first time actually looks like -- and the one state no other capture can show.
+    """
     from tools.shots import fake_kernels
     from leela.workspace import Workspace
     fake_kernels()
     ws = Workspace(roots=[], approvals='auto', cdp_port=cdp_port)
     ws.browser.profile = str(CDP_PROFILE)
-    ws.add_root(str(ROOT/'leela'))
+    if roots: ws.add_root(str(ROOT/'leela'))
     return ws
 
 
@@ -72,9 +76,9 @@ sys.path.insert(0, {root!r})
 from tools.deskshots import serve, workspace
 from leela.desktop import run_shell, start_cdp, wait_for_http
 
-ws = workspace(cdp_port={cdp})
+ws = workspace(cdp_port={cdp}, roots={roots!r})
 url = {url!r}
-if not url: ws.open({open_file!r})
+if not url and {roots!r}: ws.open({open_file!r})
 serve(ws, {port})
 base = 'http://127.0.0.1:{port}/'
 wait_for_http(base, timeout=90)
@@ -89,19 +93,20 @@ run_shell([base], titles=['leela — leela'], gui={gui!r}, size=({w}, {h}))
 '''
 
 
-def window_shot(out=None, size=(1440, 900), seconds=14, url=None):
+def window_shot(out=None, size=(1440, 900), seconds=14, url=None, roots=True, name=None):
     """Open the shell for real and photograph the window it draws.
 
     A subprocess because `webview.start` never returns, and under `xvfb-run` when there is no
     display, so this works the same on a laptop and in a container.
     """
-    out = Path(out or OUT/('desktop-window-browser.png' if url else 'desktop-window.png'))
+    default = 'desktop-window-browser.png' if url else 'desktop-window.png'
+    out = Path(out or OUT/(name or default))
     if not shutil.which('ffmpeg'): raise SystemExit('capturing the window needs ffmpeg')
     w, h = size
     script = ROOT/'build'/'deskshot-window.py'
     script.parent.mkdir(parents=True, exist_ok=True)
     script.write_text(WINDOW_SCRIPT.format(root=str(ROOT), port=PORT + 1, w=w, h=h, url=url,
-                                           cdp=CDP_PORT, profile=str(CDP_PROFILE),
+                                           cdp=CDP_PORT, profile=str(CDP_PROFILE), roots=roots,
                                            gui=None if os.environ.get('DISPLAY') else 'gtk',
                                            open_file=str(ROOT/'leela'/'desktop.py')))
     argv = [sys.executable, str(script)]
@@ -207,12 +212,29 @@ def main(argv=None):
     p.add_argument('--inline', action='store_true', help='only the inline browser')
     p.add_argument('--both-at-once', action='store_true',
                    help='only the native window with a live page inside it')
+    p.add_argument('--welcome', action='store_true',
+                   help='only the window as it opens with no folder yet')
     p.add_argument('--url', default=DEMO_URL, help='the page to show inline')
     a = p.parse_args(argv)
-    picked = a.window or a.inline or a.both_at_once
+    picked = a.window or a.inline or a.both_at_once or a.welcome
     if a.window or not picked: window_shot()
+    if a.welcome or not picked:
+        seed_recent()
+        window_shot(roots=False, name='desktop-welcome.png')
     if a.both_at_once or not picked: window_shot(url=a.url, seconds=18)
     if a.inline or not picked: asyncio.run(inline_shot(a.url))
+
+
+def seed_recent():
+    """Give the welcome screen something to offer.
+
+    A capture on a machine that has never opened a project would show the empty case, which is
+    true of exactly one launch ever and is not the state worth a picture.
+    """
+    from leela.core import projects
+    for d in (ROOT, ROOT/'leela', ROOT/'docs'):
+        if d.is_dir(): projects.note_folder(str(d))
+    projects.remember([])          # nothing open: this is the first-launch screen
 
 
 if __name__ == '__main__': main()

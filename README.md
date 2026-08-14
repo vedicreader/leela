@@ -561,6 +561,41 @@ uv sync --extra desktop
 leela --shell webview .
 ```
 
+### Opening a project without a command line
+
+A packaged Leela is double-clicked, so nothing tells it which folder you meant. It works that
+out in this order: the folders the desktop handed it, the set it had open when it was last
+closed, and failing both, none — which opens on the welcome screen rather than guessing.
+
+![The app with no folder open yet](docs/screenshots/desktop-welcome.png)
+
+The remembered set follows the workspace rather than the arguments it started with, so a
+folder opened from inside the app is there next launch and one you closed is not. Closing a
+project is not forgetting it: it stays on the welcome screen until you say otherwise.
+
+The ways in that do not involve typing a path:
+
+- **The platform's folder chooser**, from **Open a folder** or **browse…** in the picker. A web
+  page cannot produce a directory path however hard it tries, so in the packaged app this
+  comes from the native window through `window.pywebview.api`.
+- **Open With → Leela** on a folder, and dropping a folder on the Dock icon. macOS delivers
+  that to the *running* application rather than through `argv`, so `leela.desktop` answers the
+  `odoc` Apple Event and adds the folder to the open workspace.
+- **A path**, still: `leela --shell webview ~/src/proj`, or Explorer passing one in `argv`.
+
+Windows has no equivalent event to answer — Explorer starts a new process with the path in
+`argv`, which the app already reads. To put Leela on a folder's context menu, add a command
+under `HKEY_CURRENT_USER\Software\Classes\Directory\shell\Leela`:
+
+```
+reg add "HKCU\Software\Classes\Directory\shell\Leela" /ve /d "Open in Leela" /f
+reg add "HKCU\Software\Classes\Directory\shell\Leela\command" /ve /d "\"C:\Path\To\Leela.exe\" \"%V\"" /f
+```
+
+What it will *not* do is open your home directory. `leela` from a shell means "here" and the
+shell has already chosen where here is; a double-clicked application has no such answer, and
+the guess it used to make handed Kosha every file you own to index.
+
 ## The browser, inside Leela
 
 A page opens as a tab. Chrome renders it offscreen in the persistent CDP profile, streams
@@ -581,6 +616,42 @@ signed in to.
 
 The panel keeps the keyboard the way the terminal does — a page's own `j`, `/` and `?` reach
 the page, and only the chords that get you back out are still Leela's.
+
+Frames go over the socket as raw JPEG rather than base64 inside JSON — a third fewer bytes —
+and are decoded through `createImageBitmap` off the main thread, dropping a frame that arrives
+mid-decode rather than queueing latency onto a picture nobody will see. Hiding the window stops
+the cast outright; the page stays loaded and resuming asks for a frame immediately.
+
+## What it costs to run
+
+`tools/profile_app.py` measures the three things the desktop app is judged on — how long the
+window waits for a workspace, what one holds at rest, and what a streaming tab adds — each in
+a fresh subprocess, because import cost is order-dependent and RSS is cumulative.
+
+```sh
+python tools/profile_app.py            # all three
+python tools/profile_app.py --imports  # what is on the startup path, and what it drags in
+```
+
+| | before | now |
+|---|---|---|
+| `import leela.app` | 766ms · 109MB | **377ms · 48MB** |
+| process start to first page served | 786ms | **587ms** |
+| one workspace, resident and idle | 119MB | **74MB** |
+| one screencast frame, on the wire | 10,775 bytes | **8,080 bytes** |
+
+Nearly all of the first three was `dhrishti`, which the server imported for two constants and
+a directory listing. dhrishti belongs *inside a kernel* — `dhrishti.core` imports IPython,
+pandas and numpy at module scope because formatting live values is its job, and Leela's server
+never formats one. `leela/core/inspectors.py` holds the profile and sort menus and the reader
+for the registry that in-kernel inspectors write themselves into; `tests/test_inspectors.py`
+imports the real dhrishti and fails if the two ever disagree, including a round trip where
+dhrishti's own `register()` writes the entry and Leela's reader reads it. The kernel side is
+untouched, which is why the dependency stays.
+
+The IPython still resident arrives through `fasthtml.pico`, which `fast_app` imports
+unconditionally even for `pico=False`; pico's own IPython import is already guarded, so that
+one is a one-line fix upstream rather than something to work around here.
 
 ## Develop
 

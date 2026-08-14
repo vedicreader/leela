@@ -1103,12 +1103,13 @@ class Workspace:
     def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel',
              model=None, inline_model=None, completion_model=None, local_multimodal=None,
              litert_backend=None,
-             approvals='ask', agent_scope='overlay', python=None, transport='direct', gateway=None):
+             approvals='ask', agent_scope='overlay', python=None, transport='direct', gateway=None,
+             cdp_port=9223):
         "Restore a saved workspace, dropping any folder or file that has since gone away."
         p = Path(path or ws_path())
         try: d = p.read_json()
         except Exception: d = {}
-        ws = cls(port=port, agent=agent, kernel=kernel,
+        ws = cls(port=port, agent=agent, kernel=kernel, cdp_port=cdp_port,
                  model=ifnone(model, d.get('model')),
                  inline_model=ifnone(inline_model, d.get('inline_model') or 'gpt-mini'),
                  completion_model=ifnone(completion_model, d.get('completion_model') or 'gpt-4.1'),

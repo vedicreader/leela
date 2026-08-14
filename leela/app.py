@@ -596,7 +596,9 @@ def _empty_editor():
         Span('leela', cls='lee-empty-mark'),
         Strong('Creative workspace that starts with coding'),
         P('Notebooks, files, live variables, research memory, and an agent that sees what you see.'),
-        Ul(*[Li(Strong(title), Span(blurb)) for title, blurb in features], cls='lee-empty-features'),
+        # What to *do* comes before what Leela is. This screen is most of the packaged app's
+        # first moment, and someone reopening a project should not have to read past a feature
+        # tour to find its name.
         Div(Button('Open a folder', cls='lee-btn go', onclick='leeAct("add_root")'),
             Button('Open file', cls='lee-btn', onclick='leeAct("quick_open")'),
             Button('New notebook', cls='lee-btn', onclick='leeAct("new_notebook")'),
@@ -607,6 +609,7 @@ def _empty_editor():
         # so for someone coming back to a project this list *is* the way in, and it has to be
         # live rather than baked into the shell at build time.
         Div(id='leerecent', cls='lee-empty-recent', hidden=True),
+        Ul(*[Li(Strong(title), Span(blurb)) for title, blurb in features], cls='lee-empty-features'),
         Small('Keyboard: ', Kbd('ctrl+p'), ' open · ', Kbd('ctrl+shift+p'), ' commands · ',
               Kbd('mod+e'), ' recent files'),
         cls='lee-empty')
