@@ -22,8 +22,6 @@ from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.browser.browser import Browser, BrowserUnavailable, WebPage
 
-ROOT = Path(__file__).resolve().parents[2]
-
 
 # -- what may be opened -------------------------------------------------------
 def test_a_bare_domain_becomes_https_rather_than_a_relative_path():
