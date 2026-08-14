@@ -24,7 +24,6 @@ from leela.desktop import wait_for_http
 
 pytestmark = pytest.mark.usefixtures('_fake_kernels')
 
-
 @pytest.fixture
 def _fake_kernels(monkeypatch):
     import asyncio
@@ -41,12 +40,10 @@ def _fake_kernels(monkeypatch):
     monkeypatch.setattr(KernelPool, 'peek', lambda self, key: self.kernels.get(key))
     monkeypatch.setattr(KernelPool, 'close_all', lambda self: asyncio.sleep(0))
 
-
 def free_port():
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
-
 
 def serve(**kw):
     "Start `serve_ide` on a thread and wait for it, reporting a startup crash as one."
@@ -65,19 +62,16 @@ def serve(**kw):
         if wait_for_http(f'http://127.0.0.1:{port}/', timeout=.5): return port
     raise AssertionError('the server never answered')
 
-
 def get(url, host=None):
     req = urllib.request.Request(url, headers={'Host': host} if host else {})
     try: return urllib.request.urlopen(req, timeout=20)
     except urllib.error.HTTPError as e: return e
-
 
 def test_a_plain_workspace_serves_the_folders_it_was_given(tmp_path):
     (tmp_path/'one').mkdir()
     port = serve(roots=[str(tmp_path/'one')])
     body = get(f'http://127.0.0.1:{port}/').read().decode()
     assert 'lee-ide' in body and 'one' in body
-
 
 def test_app_windows_serve_one_isolated_workspace_per_folder(tmp_path):
     """The `--app` shape, which is what the desktop entry launches.
@@ -96,7 +90,6 @@ def test_app_windows_serve_one_isolated_workspace_per_folder(tmp_path):
         assert slug in r.read().decode()
     assert get(f'http://127.0.0.1:{port}/', host=f'nope.localhost:{port}').status == 421
 
-
 def test_the_cdp_port_reaches_the_workspaces_browser(tmp_path):
     "The inline browser reads its port off the `Workspace`, through both construction paths."
     (tmp_path/'one').mkdir()
@@ -104,7 +97,6 @@ def test_the_cdp_port_reaches_the_workspaces_browser(tmp_path):
     d = get(f'http://127.0.0.1:{port}/browser/ready', host=f'one.localhost:{port}')
     import json
     assert json.load(d)['port'] == 9876
-
 
 def test_a_desktop_launch_with_no_folder_does_not_open_your_home_directory(monkeypatch):
     "`leela` from a shell means here; a double-clicked app has no here, and used to guess."

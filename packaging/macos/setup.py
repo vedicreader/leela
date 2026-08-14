@@ -1,9 +1,4 @@
-"""py2app definition for `dist/Leela.app`.
-
-Run it through `setup_app.py`, which arranges the framework Python py2app needs. The bundle
-carries Leela and its Python environment but not Chrome: the inline browser drives the
-machine's own copy through the CDP profile fossick keeps in `~/.cache/fastcdp`.
-"""
+"py2app definition for `dist/Leela.app`. Run it through `setup_app.py`."
 from __future__ import annotations
 import sys
 from fastcore.all import Path, globtastic, groupby
@@ -15,18 +10,13 @@ sys.path.insert(0, str(ROOT))
 
 from leela import __version__  # noqa: E402
 
-
 def tree(src, dest, skip=()):
-    "Every file under `src` as py2app `(dest_dir, [files])` pairs, recursively."
-    # Recursively is the point: a flat `iterdir()` silently left `vendor/fonts/` out of the
-    # bundle, and the app then rendered in whatever the system had instead.
+    "Every file under `src` as py2app `(dest_dir, [files])` pairs. Recursively: see `vendor/fonts/`."
     fs = globtastic(src, skip_folder_re=f'^({"|".join([*skip, "__pycache__"])})$', skip_file_re=r'^\.')
     dirs = groupby(fs, lambda f: str(Path(dest)/Path(f).parent.relative_to(src)))
     return sorted((d, sorted(v)) for d, v in dirs.items())
 
-
-# `static/js/` is what `static/lee-ide.js` is built from, so shipping it would put the same
-# ~570KB in the bundle twice -- the same exclusion the wheel makes.
+# `static/js/` builds `static/lee-ide.js`; shipping both doubles ~570KB, as the wheel notes.
 DATA_FILES = tree(ROOT/'leela'/'static', 'leela/static', skip={'js'}) + tree(ROOT/'leela'/'vendor', 'leela/vendor')
 
 # Packages copied whole: anything imported inside a function -- most of Leela's heavy

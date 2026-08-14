@@ -1,14 +1,4 @@
-"""Web pages as tabs inside Leela, drawn by the CDP Chrome fossick already keeps.
-
-Chrome renders; Leela draws the JPEG frames on a canvas and forwards mouse and keyboard back.
-Nothing here parses or executes web content in Leela's process, and the only structured thing
-that crosses back is the Markdown `fossick.to_md` already produces for research. The profile is
-fossick's own, which is the point: its logins are why a page reads here and not through a fetch.
-
-Every navigation goes through `fossick.core.check_url`, which is not decoration -- the browser
-runs on the same loopback interface as Leela's own unauthenticated server, so `127.0.0.1` and
-friends are refused unless `FOSSICK_ALLOW_PRIVATE` says otherwise.
-"""
+"Web pages as tabs, drawn by the CDP Chrome fossick keeps. See `docs/desktop.md`."
 
 from __future__ import annotations
 import asyncio, os, shutil
@@ -19,15 +9,11 @@ from ... import Dictable, errstr
 
 __all__ = ['WebPage', 'Browser', 'BrowserUnavailable', 'DEFAULT_SIZE', 'MAX_SIZE']
 
-#: The frame size Chrome is asked for before a panel has measured itself, and the ceiling on
-#: what it gets: every frame is a re-encoded JPEG, so a maximised 5K panel saturates the socket.
 DEFAULT_SIZE = (1280, 800)
 MAX_SIZE = (2560, 1600)
 
-
 class BrowserUnavailable(RuntimeError):
     "No CDP Chrome to render into, and Leela could not start one."
-
 
 @dataclass
 class WebPage(Dictable):
@@ -37,13 +23,10 @@ class WebPage(Dictable):
     title: str = ''
     attached: bool = False
 
-
 class Browser:
     "The persistent CDP Chrome as pages Leela can draw and drive, addressed by CDP target id."
 
     def __init__(self, port=9223, headless=True, profile=None):
-        # `profile=None` means fossick's own. `$LEELA_CDP_PROFILE` overrides it, and the tests
-        # pass a throwaway: a second port cannot be opened against a profile Chrome holds.
         port, profile = int(port), profile or os.environ.get('LEELA_CDP_PROFILE') or None
         store_attr()
         self.note = ''
@@ -51,16 +34,12 @@ class Browser:
         self._pages, self._casts = {}, {}   # target -> its `Page`; target -> its cast's owner
         self._lock = asyncio.Lock()
 
-    # -- connection ---------------------------------------------------------
     async def cdp(self):
         "The live CDP connection, starting Chrome if nothing is listening yet."
         async with self._lock:
             loop = asyncio.get_running_loop()
-            # A websocket belongs to the loop that created it. Reusing one across loops does not
-            # raise -- it reports itself open and then never completes a read, which is a hang
-            # rather than an error. A `Workspace` outlives any one loop, so this is checked.
             if self._cdp is not None and self._cdp.is_open and self._loop is loop: return self._cdp
-            self._cdp, self._pages, self._loop = None, {}, loop  # a drop invalidates every session id
+            self._cdp, self._pages, self._loop = None, {}, loop
             try: from fossick.cdp import cdp_connect
             except ImportError as e:
                 raise BrowserUnavailable(f'the inline browser needs fossick ({errstr(e)})') from e
@@ -101,7 +80,6 @@ class Browser:
         try: await cdp.close()
         except Exception: pass
 
-    # -- pages --------------------------------------------------------------
     async def page(self, tid):
         "The `Page` for target `tid`, attaching to one Leela did not open itself."
         if (p := self._pages.get(tid)) is not None and p.is_open: return p
@@ -125,7 +103,7 @@ class Browser:
         url = self.check(url)
         cdp = await self.cdp()
         tid = await cdp.target.createTarget(url=url, background=background)
-        await asyncio.sleep(.05)   # createTarget answers before the load, so the title is still about:blank
+        await asyncio.sleep(.05)   # createTarget answers before the load
         p = await self.page(tid)
         return WebPage(id=tid, url=url, title=await self.title(p) or url, attached=True)
 
@@ -137,7 +115,6 @@ class Browser:
         except Exception: pass
         return p is not None
 
-    # -- driving one page ---------------------------------------------------
     def check(self, url):
         "Normalise and refuse a URL the browser must not be pointed at."
         url = (url or '').strip()
@@ -181,25 +158,15 @@ class Browser:
         except Exception: return ''
 
     async def markdown(self, tid, sel=None):
-        """The live page as Markdown, through the same `fossick.to_md` research uses.
-
-        With a fallback research does not need: `to_md` runs readability first, which returns
-        nothing at all for an application -- and an application behind a login is most of the
-        reason to read a page in here rather than fetch it.
-        """
+        "The live page as Markdown, through the same `fossick.to_md` research uses."
         from fossick.core import to_md
         p = await self.page(tid)
         md = to_md(await p.eval('document.documentElement.outerHTML') or '', sel=sel)
         if md.strip(): return md
         return (await p.eval('document.body ? document.body.innerText : ""') or '').strip()
 
-    # -- the picture --------------------------------------------------------
     async def resize(self, tid, width, height, scale=1):
-        """Pin the page's viewport to the panel showing it, so panel (x, y) is page (x, y).
-
-        The alternative is mapping every event through the frame metadata, which drifts the
-        moment the page scrolls.
-        """
+        "Pin the viewport to the panel showing it, so panel (x, y) is page (x, y)."
         w = max(240, min(int(width or 0) or DEFAULT_SIZE[0], MAX_SIZE[0]))
         h = max(180, min(int(height or 0) or DEFAULT_SIZE[1], MAX_SIZE[1]))
         p = await self.page(tid)
@@ -208,17 +175,7 @@ class Browser:
         return w, h
 
     async def start_cast(self, tid, width, height, quality=62, scale=1, owner=None):
-        """Begin streaming frames for `tid`. Returns `(width, height, owner)`.
-
-        Chrome only composites a page it believes is visible, and a target opened in the
-        background is not: without these two calls `startScreencast` succeeds and then never
-        emits a frame. `bringToFront` makes it visible; focus emulation keeps it *rendering*
-        once the next inline tab takes the front, which is what lets two tabs hold live pages.
-
-        `owner` is the socket, for its whole life across the stops and starts of pausing for a
-        hidden window. Handing it back to `stop_cast` is what stops a slow teardown from
-        switching off a stream that a reopened tab has just started.
-        """
+        "Stream frames for `tid`. `(width, height, owner)`; `owner` is the socket that owns it."
         w, h = await self.resize(tid, width, height, scale)
         p = await self.page(tid)
         try:
@@ -246,7 +203,6 @@ class Browser:
         p = await self.page(tid)
         await p.page.screencastFrameAck(sessionId=int(ack_id))
 
-    # -- input --------------------------------------------------------------
     async def mouse(self, tid, kind, x, y, button='left', clicks=1, modifiers=0, dx=0, dy=0):
         p = await self.page(tid)
         kw = dict(type=kind, x=float(x), y=float(y), modifiers=int(modifiers))

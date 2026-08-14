@@ -25,7 +25,6 @@ CDP_PORT = 9411
 # capture must not fight the developer's own browser or include their logged-in tabs.
 CDP_PROFILE = ROOT/'build'/'shot-chrome'
 
-
 def serve(ws, port=PORT):
     "The real app on a background thread, as `tools/webshots.py` does it."
     import uvicorn
@@ -33,7 +32,6 @@ def serve(ws, port=PORT):
     srv = uvicorn.Server(uvicorn.Config(ide_app(ws), host='127.0.0.1', port=port, log_level='error'))
     threading.Thread(target=srv.run, daemon=True).start()
     return srv
-
 
 def workspace(cdp_port=CDP_PORT, roots=True):
     "A workspace over Leela's own source, kernels stubbed; `roots=False` is the first-launch state."
@@ -45,8 +43,6 @@ def workspace(cdp_port=CDP_PORT, roots=True):
     if roots: ws.add_root(str(ROOT/'leela'))
     return ws
 
-
-# -- the native window --------------------------------------------------------
 WINDOW_SCRIPT = '''
 import sys, urllib.parse, urllib.request
 sys.path.insert(0, {root!r})
@@ -68,7 +64,6 @@ if url:
                            timeout=120).close()
 run_shell([base], titles=['leela — leela'], gui={gui!r}, size=({w}, {h}))
 '''
-
 
 def window_shot(out=None, size=(1440, 900), seconds=14, url=None, roots=True, name=None):
     "Open the shell for real and photograph the window it draws."
@@ -108,12 +103,10 @@ def window_shot(out=None, size=(1440, 900), seconds=14, url=None, roots=True, na
     print(out)
     return out
 
-
 def _x(display, *args, timeout=20):
     "stdout of an X client run against `display`."
     return subprocess.run([str(a) for a in args], capture_output=True, text=True, timeout=timeout,
                           env={**os.environ, 'DISPLAY': display}).stdout
-
 
 def _window_box(display, name='leela'):
     "Where the app window is on `display`, so the wallpaper around it can be cropped off."
@@ -128,8 +121,6 @@ def _window_box(display, name='leela'):
         return (max(0, x - 1), max(0, y - 30), x + w + 1, y + h + 1)
     except Exception: return None
 
-
-# -- the inline browser -------------------------------------------------------
 async def inline_shot(url=DEMO_URL, out=None):
     "Open `url` as a Leela tab and photograph the workspace with the page live inside it."
     out = Path(out or OUT/'desktop-inline-browser.png')
@@ -162,7 +153,6 @@ async def inline_shot(url=DEMO_URL, out=None):
     print(f'{out}  (address bar: {note})')
     return out
 
-
 async def _painted(pg, timeout=40):
     "Wait until the canvas has something other than one flat colour on it."
     js = """() => { const c = document.querySelector('.lee-webcanvas');
@@ -175,14 +165,12 @@ async def _painted(pg, timeout=40):
         await pg.wait_for_timeout(250)
     raise SystemExit('the inline browser never painted a frame')
 
-
 def seed_recent():
     "Give the welcome screen something to offer: an empty one is true of one launch ever."
     from leela.core import projects
     for d in (ROOT, ROOT/'leela', ROOT/'docs'):
         if d.is_dir(): projects.note_folder(str(d))
     projects.remember([])          # nothing open: this is the first-launch screen
-
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog='deskshots', description=__doc__.splitlines()[0])
@@ -199,6 +187,5 @@ def main(argv=None):
         window_shot(roots=False, name='desktop-welcome.png')
     if a.both_at_once or not picked: window_shot(url=a.url, seconds=18)
     if a.inline or not picked: asyncio.run(inline_shot(a.url))
-
 
 if __name__ == '__main__': main()

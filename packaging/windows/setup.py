@@ -1,10 +1,4 @@
-"""py2exe definition for `dist/Leela/Leela.exe`.
-
-Run it through `setup_app.py`. py2exe produces a folder, not a single file: `Leela.exe` beside
-its Python runtime and a `leela/` asset tree, which is where `leela.core.web.asset_dir` looks
-when `sys.frozen` is set. The window is the Edge WebView2 runtime, reached through pythonnet;
-as on macOS, Chrome is the machine's own rather than bundled.
-"""
+"py2exe definition for `dist/Leela/Leela.exe`, a folder not a file. Run it through `setup_app.py`."
 from __future__ import annotations
 import sys
 from fastcore.all import Path, globtastic, groupby
@@ -15,13 +9,11 @@ sys.path.insert(0, str(ROOT))
 
 from leela import __version__  # noqa: E402
 
-
 def tree(src, dest, skip=()):
     "Every file under `src` as `(dest_dir, [files])` pairs, recursively. See the macOS note."
     fs = globtastic(src, skip_folder_re=f'^({"|".join([*skip, "__pycache__"])})$', skip_file_re=r'^\.')
     dirs = groupby(fs, lambda f: str(Path(dest)/Path(f).parent.relative_to(src)))
     return sorted((d, sorted(v)) for d, v in dirs.items())
-
 
 DATA_FILES = (tree(ROOT/'leela'/'static', 'leela/static', skip={'js'}) +
               tree(ROOT/'leela'/'vendor', 'leela/vendor') + [('.', [str(ASSETS/'Leela.png')])])

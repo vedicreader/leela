@@ -1,19 +1,8 @@
-"""The inline browser: what it refuses to open, how a page becomes a tab, and a real page.
-
-The fast tests use a stub in place of the CDP connection, because they are about Leela's half
-of the arrangement -- the URL guard, the tab, the routes, the command dispatch. The slow test
-at the end drives an actual headless Chrome through the actual websocket, which is the only
-way to know that a frame ever arrives.
-"""
+"The inline browser: what it refuses to open, how a page becomes a tab, and a real page."
 
 from __future__ import annotations
 
-import asyncio
-import base64
-import functools
-import http.server
-import json
-import threading
+import asyncio, base64, functools, http.server, json, threading
 from pathlib import Path
 
 import pytest
@@ -22,31 +11,21 @@ from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.browser.browser import Browser, BrowserUnavailable, WebPage
 
-
-# -- what may be opened -------------------------------------------------------
 def test_a_bare_domain_becomes_https_rather_than_a_relative_path():
     assert Browser().check('example.com/a') == 'https://example.com/a'
-
 
 @pytest.mark.parametrize('url', ['http://127.0.0.1:5001/', 'http://localhost:5001/',
                                  'http://169.254.169.254/latest/meta-data/'])
 def test_the_browser_will_not_be_pointed_at_the_machine_it_is_running_on(url):
-    """Leela's own server is unauthenticated and on loopback, and so is everything else here.
-
-    A page is script someone else wrote; `fossick.check_url` is the same guard research
-    fetches through, and it is exactly as necessary when Chrome does the fetching.
-    """
+    "`fossick.check_url` is the same guard research fetches through, and just as necessary."
     with pytest.raises(Exception) as e: Browser().check(url)
     assert 'internal host' in str(e.value) or 'private or reserved' in str(e.value)
-
 
 def test_a_non_web_scheme_is_refused():
     with pytest.raises(Exception): Browser().check('file:///etc/passwd')
 
-
 def test_an_empty_url_is_refused_before_anything_is_started():
     with pytest.raises(ValueError): Browser().check('   ')
-
 
 def test_listing_pages_does_not_start_a_browser_to_discover_there_are_none(monkeypatch):
     "Asking a question must not have the side effect of booting Chrome. Opening a page may."
@@ -55,20 +34,16 @@ def test_listing_pages_does_not_start_a_browser_to_discover_there_are_none(monke
     monkeypatch.setattr(b, 'cdp', lambda: (_ for _ in ()).throw(AssertionError('connected!')))
     with pytest.raises(BrowserUnavailable): asyncio.run(b.pages())
 
-
-# -- the tab ------------------------------------------------------------------
 def test_a_page_becomes_a_tab_with_no_path_and_no_kernel(ws):
     t = ws.open_web('TARGET1', 'Some article')
     assert (t.kind, t.ref, t.path, t.private_kernel) == ('web', 'TARGET1', '', False)
     assert t.scratch and ws.tabs[ws.active] is t
-
 
 def test_opening_the_same_page_twice_focuses_the_tab_rather_than_casting_it_twice(ws):
     first = ws.open_web('TARGET1', 'Article')
     ws.open_web('OTHER', 'Other')
     assert ws.open_web('TARGET1') is first and ws.tabs[ws.active] is first
     assert sum(t.kind == 'web' for t in ws.tabs) == 2
-
 
 def test_the_tab_payload_names_the_page_and_nothing_else(ws):
     "No content crosses this route: the panel opens a socket and gets frames instead."
@@ -77,8 +52,6 @@ def test_the_tab_payload_names_the_page_and_nothing_else(ws):
         d = client.get('/tab/state').json()
     assert d == {'kind': 'web', 'title': 'Some article', 'target': 'TARGET1'}
 
-
-# -- the routes ---------------------------------------------------------------
 class FakeBrowser:
     "Enough of `Browser` for the routes, with no Chrome anywhere near it."
     port = 9223
@@ -106,30 +79,21 @@ class FakeBrowser:
     async def markdown(self, tid, sel=None): return '# Example\n\nbody text\n'
     async def shut(self, tid): self.closed.append(tid); return True
 
-
 @pytest.fixture
 def client(ws):
     ws.browser = FakeBrowser()
     with TestClient(ide_app(ws)) as c: yield c, ws
 
-
 def test_a_browser_that_is_installed_but_not_running_yet_still_counts_as_available(client):
-    """Chrome is started by the first page that wants one, not at launch.
-
-    It costs several hundred megabytes across a dozen processes -- more than the workspace
-    beside it -- and most sessions never open a web tab. So "not up yet" must not read as
-    "no inline browser here", or research would go back to opening pages in another browser.
-    """
+    "Chrome starts on the first page that wants one, so \"not up yet\" is not \"not here\"."
     c, ws = client
     ws.browser.up = False
     assert c.get('/browser/ready').json() == {'ok': True, 'running': False, 'port': 9223}
-
 
 def test_no_chrome_at_all_is_reported_as_no_browser(client):
     c, ws = client
     ws.browser.up = ws.browser.installed = False
     assert c.get('/browser/ready').json()['ok'] is False
-
 
 @pytest.mark.parametrize('binary,want', [('chrome-that-exists', True), ('', False)])
 def test_availability_is_answered_without_starting_anything(tmp_path, monkeypatch, binary, want):
@@ -140,19 +104,16 @@ def test_availability_is_answered_without_starting_anything(tmp_path, monkeypatc
     assert b.running() is False
     assert b.available() is want
 
-
 def test_a_missing_browser_is_reported_in_the_panel_rather_than_as_a_500(client):
     c, ws = client
     ws.browser.up = False
     d = c.get('/browser/tabs').json()
     assert d['ok'] is False and d['tabs'] == [] and 'no browser running' in d['error']
 
-
 def test_the_pages_chrome_already_has_are_offered_for_adoption(client):
     c, _ = client
     d = c.get('/browser/tabs').json()
     assert [t['id'] for t in d['tabs']] == ['T1', 'T2']
-
 
 def test_opening_a_page_answers_with_the_tab_strip_like_every_other_tab_route(client):
     c, ws = client
@@ -160,7 +121,6 @@ def test_opening_a_page_answers_with_the_tab_strip_like_every_other_tab_route(cl
     assert ws.browser.opened == ['https://example.com/a']
     assert 'id="tabbar"' in r.text and 'Opened' in r.text
     assert ws.tabs[ws.active].kind == 'web'
-
 
 def test_a_refused_url_leaves_no_tab_behind(client):
     c, ws = client
@@ -171,12 +131,10 @@ def test_a_refused_url_leaves_no_tab_behind(client):
     assert 'lee-err' in r.text and 'nope' in r.text
     assert len(ws.tabs) == before
 
-
 def test_adopting_a_page_gives_it_the_title_chrome_reports(client):
     c, ws = client
     c.get('/browser/attach?id=T1')
     assert ws.tabs[ws.active].ref == 'T1' and ws.tabs[ws.active].title == 'Example'
-
 
 def test_reading_the_live_page_returns_markdown_and_where_it_came_from(client):
     c, _ = client
@@ -184,20 +142,16 @@ def test_reading_the_live_page_returns_markdown_and_where_it_came_from(client):
     assert d['markdown'].startswith('# Example') and d['url'] == 'https://example.com/'
     assert d['note'] == ''      # not asked to remember
 
-
 def test_remembering_a_live_page_files_it_in_the_vault_like_a_fetched_one(client):
     c, _ = client
     d = c.get('/browser/markdown?id=T1&remember=1').json()
     assert d['ok'] and d['note']
-
 
 def test_closing_the_page_closes_it_in_chrome(client):
     c, ws = client
     assert c.get('/browser/close?id=T1').json() == {'ok': True}
     assert ws.browser.closed == ['T1']
 
-
-# -- input dispatch -----------------------------------------------------------
 class Recorder:
     def __init__(self): self.calls = []
 
@@ -205,20 +159,17 @@ class Recorder:
         async def f(*a, **kw): self.calls.append((name, a, kw))
         return f
 
-
 def drive(cmd):
     from leela.blocks.browser.app import _drive
     r, sock = Recorder(), Recorder()
     asyncio.run(_drive(r, 'T1', cmd, sock))
     return r.calls
 
-
 def test_a_click_is_forwarded_with_its_button_and_modifiers():
     (name, args, kw), = drive({'t': 'mouse', 'kind': 'mousePressed', 'x': 10, 'y': 20,
                                'button': 'right', 'clicks': 2, 'modifiers': 8})
     assert name == 'mouse' and args == ('T1', 'mousePressed', 10, 20)
     assert kw == {'button': 'right', 'clicks': 2, 'modifiers': 8, 'dx': 0, 'dy': 0}
-
 
 def test_a_keystroke_only_forwards_the_fields_chrome_accepts():
     "A stray field from a DOM KeyboardEvent would be a protocol error that kills the socket."
@@ -227,16 +178,13 @@ def test_a_keystroke_only_forwards_the_fields_chrome_accepts():
     assert name == 'key' and args == ('T1', 'keyDown')
     assert kw == {'key': 'a', 'code': 'KeyA', 'windowsVirtualKeyCode': 65}
 
-
 def test_an_unknown_command_is_refused_rather_than_ignored():
     with pytest.raises(ValueError): drive({'t': 'summon'})
-
 
 def test_hiding_the_window_stops_the_encoding_and_showing_it_starts_again():
     "A minimised app should not keep Chrome producing a JPEG per frame for nobody."
     assert [c[0] for c in drive({'t': 'pause'})] == ['stop_cast']
     assert [c[0] for c in drive({'t': 'resume', 'w': 800, 'h': 600})] == ['start_cast']
-
 
 def test_the_stream_belongs_to_the_socket_rather_than_to_each_start(ws):
     """Pausing and resuming must not orphan the cast.
@@ -257,15 +205,12 @@ def test_the_stream_belongs_to_the_socket_rather_than_to_each_start(ws):
     asyncio.run(_drive_owned(b, {'t': 'resume', 'w': 800, 'h': 600}, mine))
     assert started == [mine] and b._casts['T1'] is mine
 
-
 async def _drive_owned(browser, cmd, owner):
     from leela.blocks.browser.app import _drive
 
     async def say(**kw): pass
     await _drive(browser, 'T1', cmd, say, owner)
 
-
-# -- against a real browser ---------------------------------------------------
 # The page reports what reached it by renaming itself, so both input paths can be checked
 # through `/browser/state` -- and listening on the document means the assertion does not
 # depend on guessing where a button landed in the rendered frame.
@@ -277,7 +222,6 @@ PAGE = ("<!doctype html><meta charset=utf-8><title>idle</title>"
         "<button id=b>Press</button>"
         "<script>addEventListener('click',()=>{document.title='clicked'});"
         "addEventListener('keydown',e=>{document.title+='+'+e.key});</script>")
-
 
 @pytest.fixture
 def site():
@@ -291,7 +235,6 @@ def site():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try: yield f'http://127.0.0.1:{srv.server_address[1]}/index.html'
     finally: srv.shutdown()
-
 
 @pytest.mark.slow
 def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, monkeypatch,
@@ -356,7 +299,6 @@ def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, 
 
         assert client.get(f'/browser/close?id={target}').json() == {'ok': True}
 
-
 def _reply(sock, kind, tries=40):
     "Read past any frames the page painted meanwhile, to the reply that must be coming."
     for _ in range(tries):
@@ -365,7 +307,6 @@ def _reply(sock, kind, tries=40):
         d = json.loads(m['text'])
         if d['t'] == kind: return d
     raise AssertionError(f'no {kind!r} reply arrived')
-
 
 async def _start_chrome(port, profile):
     from fossick.cdp import _debug_ready, cdp_setup

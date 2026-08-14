@@ -38,7 +38,6 @@ def rss():
     return n // (1024 if sys.platform != 'darwin' else 1024 * 1024)
 '''
 
-
 def run(body):
     "Run `body` in a fresh interpreter with the prelude, and parse the JSON line it prints."
     env = dict(os.environ, XDG_CONFIG_HOME=tempfile.mkdtemp())
@@ -49,11 +48,9 @@ def run(body):
     if line is None: raise SystemExit(f'measurement failed:\n{out.stdout[-2000:]}\n{out.stderr[-2000:]}')
     return json.loads(line)
 
-
 def best(body, n=3, key='ms'):
     "The fastest of `n` runs -- a cold import measures the page cache, not the code."
     return min([run(body) for _ in range(n)], key=lambda r: r.get(key, 0))
-
 
 def table(rows, head):
     w = [max(len(str(r[i])) for r in [head, *rows]) for i in range(len(head))]
@@ -62,8 +59,6 @@ def table(rows, head):
     print('  '.join('-' * n for n in w))
     for r in rows: print(line(r))
 
-
-# -- what it costs to import ---------------------------------------------------
 IMPORT = '''
 import json
 t = time.perf_counter()
@@ -76,7 +71,6 @@ print(json.dumps(dict(ms=round(ms), rss=rss(), mods=len(sys.modules), heavy=heav
 MODULES = ('leela', 'leela.desktop', 'leela_app', 'fasthtml.common', 'dhrishti.core',
            'dhrishti.serving', 'leela.workspace', 'leela.blocks.runtime.kernels', 'leela.app')
 
-
 def imports():
     "Every module on the path from `leela_app` to a served page, measured on its own."
     print('\n## import cost — a fresh interpreter per row\n')
@@ -87,8 +81,6 @@ def imports():
         rows.append((mod, f"{r['ms']}ms", f"{r['rss']}MB", r['mods'], ' '.join(r['heavy']) or '—'))
     table(rows, ('module', 'time', 'peak rss', 'modules', 'heavy deps pulled in'))
 
-
-# -- what a running workspace costs --------------------------------------------
 SERVER = '''
 import json, threading, urllib.request
 t0 = time.perf_counter()
@@ -119,7 +111,6 @@ print(json.dumps(dict(ms=round((t_first - t0) * 1000),
                       heavy=sorted(m for m in {watch!r} if m in sys.modules))))
 '''
 
-
 def server():
     "Process start to a page served, and what the process weighs once it is."
     proj = Path(tempfile.mkdtemp())
@@ -135,8 +126,6 @@ def server():
            ('heavy deps resident', ' '.join(r['heavy']) or '—')],
           ('measure', 'value'))
 
-
-# -- what an inline browser tab costs ------------------------------------------
 BROWSER = '''
 import base64, json, statistics, threading, urllib.parse, urllib.request
 import http.server, functools, tempfile
@@ -220,9 +209,14 @@ with TestClient(ide_app(ws)) as c:
                           chrome=chrome, chrome_procs=procs, heavy=[])))
 '''
 
-
 def browser(frames=40):
     "What one streaming tab adds: bytes on the wire per frame, and megabytes held."
+    sys.path.insert(0, str(ROOT))
+    from leela.blocks.browser.browser import Browser
+    if not Browser().available():
+        print('\n## one inline browser tab, streaming\n\nskipped: no Chrome on this machine to '
+              'render into. Install one, or set $FASTCDP_CHROME.')
+        return
     r = run(BROWSER.format(cdp=9430, frames=frames))
     print('\n## one inline browser tab, streaming\n')
     table([('frames sampled', r['frames']),
@@ -238,7 +232,6 @@ def browser(frames=40):
           'by the first page that needs one rather than at launch. `ps` counts shared pages\n'
           'once per process, so the totals overstate what is actually held.')
 
-
 def main(argv=None):
     p = argparse.ArgumentParser(prog='profile_app', description=__doc__.splitlines()[0])
     p.add_argument('--imports', action='store_true')
@@ -249,6 +242,5 @@ def main(argv=None):
     if a.imports or not todo: imports()
     if a.server or not todo: server()
     if a.browser or not todo: browser()
-
 
 if __name__ == '__main__': main()

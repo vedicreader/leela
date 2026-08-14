@@ -1,8 +1,4 @@
-"""The inline browser's surface: open a page, list what Chrome has, stream one into a tab.
-
-The JSON routes are the cheap half. `/browser/ws` is the other one: it pairs a Leela tab with
-one CDP target -- frames out, input in, for as long as the tab is on screen.
-"""
+"The inline browser's surface. `/browser/ws` pairs a Leela tab with one CDP target."
 
 from __future__ import annotations
 import asyncio, base64, json
@@ -19,18 +15,13 @@ __all__ = ['CAPS', 'connect']
 
 CAPS = ('browser', 'memory')
 
-
 def connect(app, ctx):
     rt = app.route
     browser = ctx.browser
 
     @rt('/browser/ready')
     def browser_ready():
-        """Could a page be opened here? Cheap, and never starts a browser to find out.
-
-        `ok` is whether there is a Chrome to drive; `running` is whether it is up yet. The first
-        inline tab of a session starts it, which takes a second or two.
-        """
+        "Could a page be opened here? `ok` is a Chrome to drive, `running` is one already up."
         return {'ok': browser.available(), 'running': browser.running(), 'port': browser.port}
 
     @rt('/browser/tabs')
@@ -39,8 +30,6 @@ def connect(app, ctx):
         try: return {'ok': True, 'tabs': [p.dict() for p in await browser.pages()]}
         except BrowserUnavailable as e: return {'ok': False, 'error': errstr(e), 'tabs': []}
 
-    # These two answer with the tab strip rather than JSON, because that is what opening a tab
-    # means everywhere else in Leela: `/tab/open` and friends swap `#tabbar` and nothing more.
     @rt('/browser/open')
     async def browser_open(url: str = '', title: str = ''):
         "Open `url` in Chrome and give Leela a tab pointed at it."
@@ -89,7 +78,6 @@ def connect(app, ctx):
 
     _socket(app, ctx, browser)
 
-
 def _remember(ctx, state, md):
     "Put a live page into the same vault a fetched one goes to, as the same kind of document."
     from ..research.research import Doc
@@ -97,23 +85,15 @@ def _remember(ctx, state, md):
                                     url=state.get('url', ''), text=md, kind='page'))
     return f"remembered as {saved.get('doc_id')}" if saved else 'not remembered'
 
-
 def _socket(app, ctx, browser):
     "Pair one Leela tab with one CDP target for as long as the tab is showing."
-    # A raw Starlette route rather than FastHTML's `ws`, for the same reason the pipeline
-    # sockets are: the handler needs the socket object itself, not injected parameters.
-
     async def handler(sock):
         await sock.accept()
-        # Frames, navigation and command replies all write here, and a Starlette websocket is
-        # not safe for concurrent sends. One lock, one writer at a time.
-        writing = asyncio.Lock()
+        writing = asyncio.Lock()   # a Starlette websocket is not safe for concurrent sends
 
         async def say(**m):
             async with writing: await sock.send_text(json.dumps(m))
 
-        # `mine` owns the stream for as long as this socket is open, through every pause for a
-        # hidden window and every resize. A reopened tab is a different owner.
         tid, cast, mine = None, False, object()
         try:
             hello = json.loads((await sock.receive()).get('text') or '{}')
@@ -131,12 +111,7 @@ def _socket(app, ctx, browser):
         page = await browser.page(tid)
 
         async def to_client():
-            """Screencast frames for this page only, acked so Chrome keeps sending them.
-
-            The JPEG goes as binary rather than base64 inside the JSON envelope everything else
-            uses: a third fewer bytes per frame, and the client hands it straight to
-            `createImageBitmap` instead of decoding a data: URL first.
-            """
+            "Screencast frames for this page only, acked so Chrome keeps sending them."
             async with cdp.on('Page.screencastFrame') as q:
                 while True:
                     m = await q.get()
@@ -146,8 +121,6 @@ def _socket(app, ctx, browser):
                     except (ValueError, TypeError): jpeg = b''
                     if jpeg:
                         async with writing: await sock.send_bytes(jpeg)
-                    # The frame's own `sessionId` is Chrome's ack token and has nothing to do
-                    # with the CDP session above; not acking stops the stream after one frame.
                     try: await _whole(browser.ack(tid, p.get('sessionId')))
                     except asyncio.CancelledError: raise
                     except Exception: return
@@ -167,9 +140,6 @@ def _socket(app, ctx, browser):
                 except Exception: return           # the client went away mid-read
                 if m['type'] == 'websocket.disconnect': return
                 if (text := m.get('text')) is None: continue
-                # Shielded: closing the tab cancels this task, and a command cancelled between
-                # writing its frame and reading the reply leaves the shared CDP connection
-                # unusable for every other tab. Started means finished.
                 try: await _whole(_drive(browser, tid, json.loads(text), say, mine))
                 except asyncio.CancelledError: raise
                 except Exception as e:
@@ -181,11 +151,6 @@ def _socket(app, ctx, browser):
         finally:
             for t in tasks:
                 if not t.done(): t.cancel()
-            # Turning the screencast off is itself a CDP command, and this handler is usually
-            # unwinding because the client vanished -- which is a *cancelled* task. A cancelled
-            # CDP write wedges the connection every tab in this workspace shares, so the stop
-            # runs detached, after this handler is gone; its token keeps it from switching off
-            # a stream a reopened tab has started in the meantime.
             if cast: _detach(browser.stop_cast(tid, mine))
             try: await sock.close()
             except Exception: pass
@@ -193,20 +158,12 @@ def _socket(app, ctx, browser):
     app.router.routes.append(WebSocketRoute('/browser/ws', handler))
     return handler
 
-
 async def _whole(coro):
-    """Await `coro`, but let it finish even if this task is cancelled.
-
-    Only used for CDP calls. `websockets` cannot be interrupted part-way through a send and
-    stay usable, and every tab in the workspace shares one CDP connection -- so a tab being
-    closed must not leave the others talking to a dead socket.
-    """
+    "Await `coro`, but let it finish even if this task is cancelled. CDP calls only."
     return await asyncio.shield(coro)
 
-
-# Detached teardown tasks, held so the loop does not collect one before it has run.
+# Held so the loop does not collect a teardown task before it has run.
 _LOOSE = set()
-
 
 def _detach(coro):
     "Run `coro` on the loop, outside the lifetime of whatever asked for it."
@@ -214,7 +171,6 @@ def _detach(coro):
     _LOOSE.add(t)
     t.add_done_callback(_LOOSE.discard)
     return t
-
 
 async def _drive(browser, tid, c, say, owner=None):
     "One client command against the attached page. `say(**msg)` is the serialised writer."
@@ -229,8 +185,6 @@ async def _drive(browser, tid, c, say, owner=None):
     elif t == 'text': await browser.insert(tid, c.get('text', ''))
     elif t in ('resize', 'resume'):
         await browser.start_cast(tid, c.get('w'), c.get('h'), scale=c.get('scale') or 1, owner=owner)
-    # Only the encoding stops; the tab stays open and the page stays loaded. A hidden window
-    # that goes on receiving frames costs a core for a picture nobody can see.
     elif t == 'pause': await browser.stop_cast(tid, owner)
     elif t == 'goto':
         await browser.goto(tid, c.get('url', ''))
@@ -240,8 +194,6 @@ async def _drive(browser, tid, c, say, owner=None):
     elif t == 'state': await say(t='nav', **await browser.state(tid))
     else: raise ValueError(f'unknown browser command: {t!r}')
 
-
-# What `Input.dispatchKeyEvent` accepts. Anything else a DOM keydown carries is dropped rather
-# than forwarded, so a malformed event is a missing keystroke and not a socket-closing CDP error.
+# What `Input.dispatchKeyEvent` accepts; anything else a keydown carries is dropped.
 _KEY_FIELDS = ('text', 'key', 'code', 'windowsVirtualKeyCode', 'nativeVirtualKeyCode',
                'modifiers', 'location', 'autoRepeat', 'isKeypad', 'unmodifiedText')
