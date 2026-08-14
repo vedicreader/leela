@@ -881,7 +881,7 @@ uv add rishi
 
 
 def test_every_markdown_block_maps_to_the_element_it_rendered_as():
-    from leela.core.markdown import md_blocks
+    from leela.core.text import md_blocks
     blocks = md_blocks(README)
     pairs = _md_align(_md_render(README), blocks)
     assert pairs is not None, 'a rendered diff of an ordinary README can be marked'
@@ -895,7 +895,7 @@ def test_every_markdown_block_maps_to_the_element_it_rendered_as():
 
 def test_a_block_that_cannot_be_placed_costs_the_bars_rather_than_moving_them():
     "One raw HTML block that renders as two elements shifts every block after it."
-    from leela.core.markdown import md_blocks
+    from leela.core.text import md_blocks
     doc = 'para one\n\n<p>a</p><p>b</p>\n\n## heading\n'
     assert _md_align(_md_render(doc), md_blocks(doc)) is None
     assert _md_align('<p>only</p>', md_blocks('para\n\npara two\n')) is None, 'a block with no element'
@@ -903,7 +903,7 @@ def test_a_block_that_cannot_be_placed_costs_the_bars_rather_than_moving_them():
 
 
 def test_a_markdown_diff_pairs_blocks_and_refuses_to_pair_across_types():
-    from leela.core.markdown import md_block_diff
+    from leela.core.text import md_block_diff
     old = '# t\n\nold prose\n\n```sh\nold cmd\n```\n\ngone entirely\n'
     new = '# t\n\nnew prose\n\n```sh\nnew cmd\n```\n\n## Install\n\nfresh\n'
     d = md_block_diff(old, new)
@@ -925,7 +925,7 @@ def test_the_diff_records_still_line_up_with_the_document_being_read():
     A removed block is interleaved among them and has no element, so this is where an off-by-one
     would show up: the paragraph after a deletion must still pair with its own paragraph.
     """
-    from leela.core.markdown import md_block_diff
+    from leela.core.text import md_block_diff
     old = README.replace('## Install', 'A paragraph that this change deletes.\n\n## Setup')
     d = md_block_diff(old, README)
     pairs = _md_align(_md_render(README), d['blocks'])
@@ -939,7 +939,7 @@ def test_the_diff_records_still_line_up_with_the_document_being_read():
 
 
 def test_a_line_range_from_git_lands_on_the_block_that_holds_it():
-    from leela.core.markdown import md_blocks, md_change_kinds
+    from leela.core.text import md_blocks, md_change_kinds
     blocks = md_blocks('# t\n\nprose\n\n```sh\na\nb\n```\n')
     # Git reports a pure deletion at the line that closed over it, which is inside the fence.
     kinds = md_change_kinds(blocks, [{'from': 3, 'to': 3, 'kind': 'added'},

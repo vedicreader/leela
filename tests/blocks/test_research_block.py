@@ -7,7 +7,7 @@ import pytest
 from leela.blocks.fs.fs import Sandbox
 from leela.blocks.memory.memory import Memory
 from leela.blocks.research.research import Research
-from leela.core.ctx import Ctx
+from leela.core.block import Ctx
 
 
 def test_research_search_passes_n_to_fossick(monkeypatch, tmp_path):

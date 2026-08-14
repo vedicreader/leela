@@ -1,6 +1,6 @@
 "The agent as a leela feature: the adapter between the harness and the IDE."
 
-from ...core.providers import DEFAULT, provider
+from ...core.ports import DEFAULT, provider
 
 @provider('runtime', DEFAULT)
 def _runtime(spec, **kw):

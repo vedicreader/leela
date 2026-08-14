@@ -1,7 +1,7 @@
 "Code search: literal, structural and semantic, over Kosha plus ripgrep."
 
 from .._lazy import lazy_app
-from ...core.providers import DEFAULT, provider
+from ...core.ports import DEFAULT, provider
 
 __all__ = ['connect', 'CAPS']
 

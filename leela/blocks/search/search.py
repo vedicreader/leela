@@ -9,7 +9,7 @@ from fastcore.parallel import threaded
 
 from ... import Dictable, errstr
 from ..fs.fs import LANGS
-from ..nb.spans import cell_at, cell_lines, cell_of, read_cells, source_spans
+from ..nb.nb import cell_at, cell_lines, cell_of, read_cells, source_spans
 
 __all__ = ['Hit', 'Cluster', 'Search']
 

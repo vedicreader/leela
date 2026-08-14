@@ -3,8 +3,8 @@
 import pytest
 
 from leela import conformance
-from leela.core import providers
-from leela.core.providers import ProviderError, build, providers_for, selected
+from leela.core import ports as providers
+from leela.core.ports import ProviderError, build, providers_for, selected
 
 
 @pytest.fixture(autouse=True)

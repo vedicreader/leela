@@ -1,6 +1,6 @@
 """Tests for the clickable half of the IDE.
 
-`leela.core.buttons` exists because a chord is not always deliverable: `ctrl+enter` needs a
+`leela.core.ui` exists because a chord is not always deliverable: `ctrl+enter` needs a
 terminal that speaks the kitty keyboard protocol, `alt+<letter>` needs Option configured
 as Meta on macOS, and a browser keeps a dozen combinations for itself. The promise the
 button table makes is that none of that can leave a feature unreachable -- so what these
@@ -11,7 +11,7 @@ that actually have buttons.
 
 import pytest
 
-from leela.core.buttons import BARS, BUTTONS, bar, tip
+from leela.core.ui import BARS, BUTTONS, bar, tip
 from leela.core.keys import KEYS
 
 

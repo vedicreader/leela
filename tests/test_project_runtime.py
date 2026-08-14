@@ -148,7 +148,7 @@ def test_a_release_runs_in_the_venv_of_the_project_being_released(tmp_path):
     `pool.default_python` -- the *first* root's venv, or None until something chose -- ran the
     wrong one. It resolves the interpreter from the project root, exactly as a terminal does.
     """
-    from leela.blocks.pipelines.releases import Release
+    from leela.blocks.pipelines.pipelines import Release
     from leela.blocks.runtime.kernels import python_for
     a, b = tmp_path/'repo-a', tmp_path/'repo-b'
     pa, pb = _venv(a), _venv(b)

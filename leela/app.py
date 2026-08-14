@@ -31,7 +31,7 @@ from .blocks import vars as vars_block
 from .blocks import workflows as workflows_block
 from .blocks import workspace as workspace_block
 from .blocks.term.app import term_cwd
-from .core.buttons import bar as btn_bar
+from .core.ui import bar as btn_bar
 from .core import DocStore, RunState, connect_all
 from .blocks.fs.ui import files_panel as _files_panel
 from .blocks.tabs.app import disk_version as _disk_version
@@ -47,8 +47,8 @@ from .core.web import fail as _fail
 from .core.web import off_loop as _off_loop
 from .core.web import sse as _sse
 from .core.web import Assets, static_dirs
-from .core.diffs import did_you_mean, fuzzy_rank
-from .core.markdown import md_block_diff, md_blocks, md_change_kinds
+from .core.text import did_you_mean, fuzzy_rank
+from .core.text import md_block_diff, md_blocks, md_change_kinds
 from .blocks.fs.fs import lang_for
 from .blocks.git.git import GitRepo, GitError
 from .core.keys import by_scope, chord_display, toast_rows

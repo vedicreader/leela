@@ -1,10 +1,11 @@
-"The interfaces leela depends on, rather than the classes that currently satisfy them."
+"The contracts a workspace depends on, and the registry that satisfies them."
 
 from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
+import os
 
-__all__ = ['MemoryPort', 'SearchPort', 'RuntimePort']
+__all__ = ['MemoryPort', 'SearchPort', 'RuntimePort', 'register', 'provider', 'build',
+           'providers_for', 'selected', 'ProviderError']
 
 @runtime_checkable
 class MemoryPort(Protocol):
@@ -69,3 +70,48 @@ class RuntimePort(Protocol):
     def restore_hist(self, hist) -> Any: ...
     def replace_hist(self, summary, keep=()) -> Any: ...
     def count_tokens(self, *a, **kw) -> Any: ...
+
+
+_REGISTRY: dict[str, dict[str, callable]] = {}
+
+ENV = {'memory': 'LEELA_MEMORY', 'search': 'LEELA_SEARCH', 'runtime': 'LEELA_RUNTIME'}
+
+DEFAULT = 'leela'
+
+class ProviderError(RuntimeError):
+    "An implementation was asked for by name and could not be produced."
+
+def register(port, name, factory):
+    "Make `name` available for `port`; re-registering the same name replaces it."
+    _REGISTRY.setdefault(port, {})[name] = factory
+    return factory
+
+def provider(port, name):
+    "Decorator form of `register`."
+    def deco(fn): return register(port, name, fn)
+    return deco
+
+def providers_for(port):
+    "Every registered provider name for `port`, defaults first."
+    names = sorted(_REGISTRY.get(port, {}))
+    return ([DEFAULT] if DEFAULT in names else []) + [n for n in names if n != DEFAULT]
+
+def selected(port, override=None):
+    "Which provider `port` should use: explicit override, then environment, then the default."
+    if override: return override
+    return os.environ.get(ENV.get(port, ''), '') or DEFAULT
+
+def build(port, *a, override=None, **kw):
+    "Construct the implementation selected for `port`, raising rather than falling back."
+    name = selected(port, override)
+    factories = _REGISTRY.get(port, {})
+    if name not in factories:
+        known = ', '.join(providers_for(port)) or 'none registered'
+        raise ProviderError(f'unknown {port} provider {name!r}; available: {known}')
+    try:
+        return factories[name](*a, **kw)
+    except ImportError as e:
+        raise ProviderError(
+            f'{port} provider {name!r} is selected but its package is not installed: {e}') from e
+    except Exception as e:
+        raise ProviderError(f'{port} provider {name!r} failed to start: {type(e).__name__}: {e}') from e

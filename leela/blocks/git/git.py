@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from fastcore.all import Path, first
 
-from ..nb.spans import source_spans
+from ..nb.nb import source_spans
 from .safety import GitError, gateway
 
 __all__ = ['GitRepo', 'GitError', 'repo_root', 'clone', 'clone_target']

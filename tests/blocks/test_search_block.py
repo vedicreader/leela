@@ -2,7 +2,7 @@
 
 import pytest
 
-from leela.core.ctx import Ctx
+from leela.core.block import Ctx
 
 
 def test_search_finds_workspace_file(ws):

@@ -191,7 +191,7 @@ class Workflows:
         root = self.root
         has = lambda *names: any((root/n).exists() for n in names)
         text = ''.join(_read(root/n) for n in ('pyproject.toml', 'requirements.txt')).lower()
-        from ..pipelines.releases import nbdev_project
+        from ..pipelines.pipelines import nbdev_project
         row = {
             'python': has('pyproject.toml', 'requirements.txt', 'setup.py'),
             'node': has('package.json'), 'rust': has('Cargo.toml'), 'go': has('go.mod'),

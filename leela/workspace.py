@@ -130,7 +130,7 @@ class Workspace:
         self.pool = KernelPool(port=port, default_kernel=kernel, default_python=runtime_python,
                                transport=transport, gateway=gateway)
         self.dev = DevServers(port=dev_port)
-        from .core.providers import build as build_provider
+        from .core.ports import build as build_provider
         from .blocks.memory.memory import memory_shelf
         self.search = build_provider('search', self.fs)
         root = first(self.fs.roots)
@@ -140,7 +140,7 @@ class Workspace:
         self.vaults = Vaults(shelf=memory_shelf(root), own=self.memory)
         self.research = Research(self.fs, memory=self.memory)
         self.runs = Runs(first(self.fs.roots))
-        from .core.journal import OperationJournal
+        from .core.session import OperationJournal
         journal_key = hashlib.sha256('\0'.join(map(str, self.fs.roots)).encode()).hexdigest()[:16]
         self.journal = OperationJournal(leela_cfg/'journals'/f'{journal_key}.json', self.fs)
         from .blocks.jobs.clip import register_all

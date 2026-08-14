@@ -326,7 +326,7 @@ def notebook_json():
 
 def test_a_cells_lines_are_found_in_the_file_that_holds_them(tmp_path):
     "The scan behind notebook blame and notebook search: which file lines are this cell's source."
-    from leela.blocks.nb.spans import cell_lines, read_cells, source_spans
+    from leela.blocks.nb.nb import cell_lines, read_cells, source_spans
     notebook_json().save(p := tmp_path/'d.ipynb')
     text = p.read_text()
     cells = read_cells(text)
@@ -340,7 +340,7 @@ def test_a_cells_lines_are_found_in_the_file_that_holds_them(tmp_path):
 
 def test_a_file_line_maps_back_to_the_cell_and_the_line_inside_it(tmp_path):
     "The direction search needs: ripgrep reports a line of JSON and a reader needs a cell."
-    from leela.blocks.nb.spans import cell_at
+    from leela.blocks.nb.nb import cell_at
     notebook_json().save(p := tmp_path/'d.ipynb')
     text = p.read_text()
     line = next(i for i, raw in enumerate(text.splitlines(), 1) if 'def gamma' in raw)
@@ -351,7 +351,7 @@ def test_a_file_line_maps_back_to_the_cell_and_the_line_inside_it(tmp_path):
 
 
 def test_a_notebook_that_cannot_be_read_is_reported_rather_than_guessed_at(tmp_path):
-    from leela.blocks.nb.spans import cell_at, cell_of, read_cells
+    from leela.blocks.nb.nb import cell_at, cell_of, read_cells
     assert read_cells('not json at all') is None
     assert read_cells('{"nbformat": 4}') is None
     assert cell_at('not json at all', 3) is None

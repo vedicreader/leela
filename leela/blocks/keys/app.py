@@ -8,7 +8,7 @@ from fasthtml.common import JSONResponse
 
 from ... import errstr
 from ...core import keys as keymap
-from ...core.buttons import bar as btn_bar
+from ...core.ui import bar as btn_bar
 from ...core.web import fail
 from ...core.keys import help_rows, keymap_json, keymap_path, web_keymap
 from .menus import web_menus
@@ -22,7 +22,7 @@ def connect(app, ctx):
     @rt('/keys.json')
     def keys_json():
         "The keymap, and the buttons that run the same actions -- one fetch, one source."
-        from ...core.buttons import BARS
+        from ...core.ui import BARS
         return JSONResponse({'keys': web_keymap(), 'help': help_rows(), 'menus': web_menus(),
                              'path': str(keymap_path()), 'notes': list(keymap.NOTES),
                              'bars': {n: [{'action': b.action, 'label': b.label, 'title': b.tooltip,

@@ -9,7 +9,7 @@ from ..runtime.kernels import python_for
 from .deploys import Deploy
 from ...core.envs import EnvStore
 from .pipelines import PipelineError, resolve_script
-from .releases import Release
+from .pipelines import Release
 from ..git.repos import RepoSet, repo_for
 
 __all__ = ['CAPS', 'connect']

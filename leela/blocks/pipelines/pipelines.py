@@ -1,18 +1,18 @@
-"One command at a time, with the terminal it needs to be believed."
+"Build pipelines and releases: what ships, and the steps that ship it."
 
 from __future__ import annotations
-
 import asyncio, json, os, shlex, time
 from dataclasses import dataclass, field
 from shutil import which
-
 from fastcore.all import L, Path, first
 from fastcore.xtras import strip_ansi
-
 from ...core.envs import EnvStore
 from ..term.term import SCROLLBACK, Pty
+from fastcore.all import Path
 
-__all__ = ['Pipeline', 'PipelineError', 'Step', 'env_value', 'resolve_script']
+__all__ = ['Pipeline', 'PipelineError', 'Step', 'env_value', 'resolve_script', 'Release',
+           'ReleaseError', 'RELEASE_FILE', 'nbdev_project', 'default_steps', 'NBDEV_STEPS',
+           'PLAIN_STEPS']
 
 class PipelineError(RuntimeError):
     pass
@@ -229,3 +229,51 @@ class Pipeline:
         self.log.clear()
         self._broadcast(b'\x1b[2J\x1b[H')
         return self.state()
+
+
+RELEASE_FILE = '.leela/release.json'
+ReleaseError = PipelineError
+
+def nbdev_project(root):
+    "Is this an nbdev project? `settings.ini` for nbdev 2, `[tool.nbdev]` in `pyproject.toml` for."
+    root = Path(root)
+    try:
+        text = (root/'settings.ini').read_text(encoding='utf-8', errors='replace')
+        if '[DEFAULT]' in text and any(k in text for k in ('nbs_path', 'lib_name', 'doc_path')):
+            return True
+    except OSError: pass
+    try:
+        import tomllib
+        with open(root/'pyproject.toml', 'rb') as f: data = tomllib.load(f)
+    except (OSError, ValueError): return False
+    return 'nbdev' in (data.get('tool') or {}) or 'nbdev' in ((data.get('project') or {}).get('entry-points') or {})
+
+NBDEV_STEPS = [
+    Step('prepare', 'nbdev_prepare', 'nbdev_prepare',
+        'Export the notebooks, run the tests, clean the metadata, rebuild the README.'),
+    Step('bump', 'bump version', 'nbdev_bump_version',
+        'Raise the version in settings.ini and commit it.'),
+    Step('gh', 'GitHub release', 'nbdev_release_gh',
+        'Tag the version and create the GitHub release from CHANGELOG.', ['GITHUB_TOKEN']),
+    Step('pypi', 'PyPI release', 'nbdev_pypi',
+        'Build the wheel and upload it to PyPI.', ['TWINE_USERNAME', 'TWINE_PASSWORD']),
+]
+
+PLAIN_STEPS = [
+    Step('test', 'test', 'python -m pytest -q', 'Run the test suite before anything is published.'),
+    Step('build', 'build', 'python -m build', 'Build the sdist and wheel into dist/.'),
+    Step('gh', 'GitHub release', 'gh release create --generate-notes',
+        'Tag and publish a GitHub release.', ['GITHUB_TOKEN']),
+    Step('pypi', 'PyPI release', 'python -m twine upload dist/*',
+        'Upload the built distributions to PyPI.', ['TWINE_USERNAME', 'TWINE_PASSWORD']),
+]
+
+def default_steps(root): return list(NBDEV_STEPS if nbdev_project(root) else PLAIN_STEPS)
+
+class Release(Pipeline):
+    "The release pipeline: nbdev's four commands where it is an nbdev project, else the plain four."
+    FILE = RELEASE_FILE
+    KIND = 'release'
+    @staticmethod
+    def defaults(root): return default_steps(root)
+    def state(self): return super().state() | {'nbdev': nbdev_project(self.root)}

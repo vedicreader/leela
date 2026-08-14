@@ -4,7 +4,7 @@ import pytest
 
 from leela.blocks.memory.memory import GLOBAL, Memory, safe_shelf
 from leela.blocks.research.research import Doc
-from leela.core.ctx import Ctx
+from leela.core.block import Ctx
 
 
 def test_safe_shelf_normalises_folder_names():

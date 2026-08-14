@@ -95,7 +95,7 @@ def _sample_args(port):
     return (), {}
 
 def _main(argv):
-    from .core.providers import ProviderError, build
+    from .core.ports import ProviderError, build
     if not argv or argv[0] not in PORTS:
         print(f'usage: python -m leela.conformance <{"|".join(PORTS)}> [provider]')
         return 2

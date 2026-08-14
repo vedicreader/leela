@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ...core.web import fail, off_loop
 from ...core.envs import EnvStore
-from ..pipelines.releases import Release
+from ..pipelines.pipelines import Release
 from ..git.repos import repo_for
 from .workflows import WorkflowError, Workflows
 

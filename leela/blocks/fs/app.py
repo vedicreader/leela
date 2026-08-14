@@ -8,7 +8,7 @@ from fasthtml.common import Div
 
 from ... import errstr
 from ...core.web import fail
-from ...core.diffs import fuzzy_rank
+from ...core.text import fuzzy_rank
 from .fs import lang_for
 from .ui import files_panel, git_tree_state, tree_node
 
