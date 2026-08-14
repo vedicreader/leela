@@ -1,0 +1,208 @@
+"""The desktop build definitions, checked without building anything.
+
+A py2app or py2exe run takes minutes and only happens on its own OS, so what is worth testing
+here is the part that is neither: the file lists, the plist, and the decisions `setup_app.py`
+makes about which interpreter to use. Each of these has a matching failure that a green build
+would not catch -- a bundle missing its fonts, a window that cannot load `http://127.0.0.1`,
+a build that dies on `import zlib` twenty minutes in.
+
+The one test that runs the app is guarded to the platform that can, and is what the
+`desktop-artifacts` workflow calls after building.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load(rel):
+    "Import a packaging definition by path; they are scripts, not importable modules."
+    spec = importlib.util.spec_from_file_location(f'pkg_{Path(rel).parent.name}', ROOT/rel)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+@pytest.fixture(scope='module')
+def mac(): return load('packaging/macos/setup.py')
+
+
+@pytest.fixture(scope='module')
+def win(): return load('packaging/windows/setup.py')
+
+
+def files(mod):
+    "Every source file the definition would copy, as paths relative to the repository."
+    return {str(Path(f).relative_to(ROOT)) for _, fs in mod.DATA_FILES for f in fs}
+
+
+def dests(mod):
+    return {d for d, _ in mod.DATA_FILES}
+
+
+# -- what goes in the bundle --------------------------------------------------
+@pytest.mark.parametrize('which', ['mac', 'win'])
+def test_the_asset_walk_reaches_subdirectories(which, request):
+    """`vendor/fonts/` is the canary.
+
+    A flat `iterdir()` here builds and ships perfectly happily, and the app then renders in
+    whatever font the machine had. Nothing else in the suite would notice.
+    """
+    mod = request.getfixturevalue(which)
+    got = files(mod)
+    assert any(f.startswith('leela/vendor/fonts/') for f in got), 'fonts were left out'
+    assert {'leela/vendor/fonts'} <= {d.replace('\\', '/') for d in dests(mod)}
+    assert 'leela/static/lee-ide.js' in got and 'leela/static/lee-ide.css' in got
+    assert any(f.endswith('.woff2') for f in got), 'the webfonts themselves were left out'
+
+
+@pytest.mark.parametrize('which', ['mac', 'win'])
+def test_the_javascript_sources_are_not_shipped_beside_the_bundle_built_from_them(which, request):
+    "The same exclusion the wheel makes: `static/js/` is the input to `static/lee-ide.js`."
+    mod = request.getfixturevalue(which)
+    assert not [f for f in files(mod) if f.startswith('leela/static/js/')]
+
+
+@pytest.mark.parametrize('which', ['mac', 'win'])
+def test_assets_land_where_a_frozen_leela_looks_for_them(which, request):
+    "`leela.core.web.asset_dir` resolves `leela/static` under Resources or beside the exe."
+    mod = request.getfixturevalue(which)
+    assert {'leela/static', 'leela/vendor'} <= {d.replace('\\', '/') for d in dests(mod)}
+
+
+@pytest.mark.parametrize('which', ['mac', 'win'])
+def test_the_shell_and_the_browser_it_drives_are_both_frozen_in(which, request):
+    "A bundle without pywebview has no window, and one without fossick has no inline browser."
+    mod = request.getfixturevalue(which)
+    assert {'webview', 'fossick', 'fastcdp', 'leela'} <= set(mod.PACKAGES)
+    # The platform backend is imported by name at runtime, so the scanner never sees it.
+    assert any('platforms' in i for i in mod.INCLUDES)
+
+
+def test_the_other_platforms_webviews_are_left_out(mac, win):
+    assert 'webview.platforms.gtk' in mac.EXCLUDES and 'webview.platforms.cocoa' in win.EXCLUDES
+
+
+# -- the macOS bundle's declarations ------------------------------------------
+def test_the_window_is_allowed_to_load_the_loopback_server(mac):
+    """Without this the app builds, launches, and shows a blank window.
+
+    App Transport Security blocks cleartext HTTP from WKWebView, and Leela's server is
+    cleartext HTTP on 127.0.0.1 by design.
+    """
+    ats = mac.PLIST['NSAppTransportSecurity']
+    assert ats == {'NSAllowsLocalNetworking': True}
+    assert 'NSAllowsArbitraryLoads' not in ats, 'the exemption must stay narrow'
+
+
+def test_the_bundle_follows_the_system_appearance(mac):
+    "Otherwise every dark theme Leela ships renders against a white window."
+    assert mac.PLIST['NSRequiresAquaSystemAppearance'] is False
+
+
+def test_the_bundle_is_versioned_from_the_package(mac):
+    from leela import __version__
+    assert mac.PLIST['CFBundleShortVersionString'] == __version__
+
+
+def test_the_frozen_script_is_the_desktop_entry_and_not_the_cli(mac, win):
+    "`leela.cli:main` would serve with no window and never return the main thread."
+    assert Path(mac.__dict__['ROOT'], 'leela_app.py').is_file()
+    assert 'leela_app.py' in str(win.__dict__['ROOT']/'leela_app.py')
+
+
+def test_windows_keeps_modules_as_files_for_the_kernels_it_launches(win):
+    src = (ROOT/'packaging'/'windows'/'setup.py').read_text()
+    assert 'zipfile=None' in src, 'a kernel subprocess cannot import from the parent library.zip'
+
+
+# -- choosing an interpreter --------------------------------------------------
+def test_a_standalone_python_is_not_offered_to_py2app():
+    """The failure this prevents is a build that dies on `import zlib` minutes in.
+
+    uv's interpreters link the stdlib extension modules into the binary; py2app needs them as
+    files. The probe answers about *another* interpreter, so it is a subprocess, and it has to
+    be right about the one running the tests too.
+    """
+    import setup_app
+    assert setup_app.is_framework(sys.executable) is setup_app.is_framework()
+    assert setup_app.is_framework(Path('/definitely/not/a/python')) is False
+
+
+def test_check_explains_the_situation_on_any_platform():
+    "Including Linux, where there is nothing to build and saying so is the useful answer."
+    out = subprocess.run([sys.executable, str(ROOT/'setup_app.py'), '--check'],
+                         capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    assert 'platform' in out.stdout and 'pywebview' in out.stdout
+
+
+def test_a_linux_build_is_refused_with_advice_rather_than_a_traceback(monkeypatch):
+    import setup_app
+    monkeypatch.setattr(setup_app.sys, 'platform', 'linux')
+    with pytest.raises(SystemExit) as e: setup_app.platform_setup()
+    assert 'their own OS' in str(e.value)
+
+
+# -- icons --------------------------------------------------------------------
+def test_the_icons_the_build_needs_are_in_the_tree():
+    "Committed rather than generated, so a build machine does not need Pillow."
+    for name in ('Leela.png', 'Leela.ico'):
+        p = ROOT/'packaging'/'assets'/name
+        assert p.is_file() and p.stat().st_size > 1000, f'{name} is missing or empty'
+
+
+def test_the_icon_generator_is_reproducible(tmp_path, monkeypatch):
+    "The committed PNG must be the one the generator makes, or the two silently diverge."
+    pytest.importorskip('PIL')
+    import tools.build_icons as icons
+    made = icons.image(1024)
+    committed = __import__('PIL.Image', fromlist=['Image']).open(ROOT/'packaging'/'assets'/'Leela.png')
+    assert made.tobytes() == committed.convert('RGBA').tobytes()
+
+
+# -- the built application ----------------------------------------------------
+APP = ROOT/'dist'/('Leela.app/Contents/MacOS/Leela' if sys.platform == 'darwin' else 'Leela/Leela.exe')
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not APP.exists(), reason='no built app in dist/ — run setup_app.py first')
+def test_the_built_app_starts_and_serves_its_workspace(tmp_path):
+    """What a successful build does not prove: that the bundle can import what it needs.
+
+    py2app and py2exe both produce a runnable artefact that dies on the first missing module,
+    so the release workflow runs this after building.
+    """
+    import urllib.request
+    from leela.desktop import wait_for_http
+
+    env = {**__import__('os').environ, 'LEELA_HEADLESS_SMOKE': '1', 'LEELA_WINDOW_SIZE': '900x600'}
+    proc = subprocess.Popen([str(APP), str(tmp_path)], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        port = _port_from(proc)
+        assert port, 'the app never reported a port'
+        assert wait_for_http(f'http://127.0.0.1:{port}/', timeout=90)
+        body = urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=20).read().decode()
+        assert 'lee-ide' in body
+    finally:
+        proc.terminate()
+        try: proc.wait(timeout=20)
+        except subprocess.TimeoutExpired: proc.kill()
+
+
+def _port_from(proc, tries=400):
+    "Read the `leela  http://127.0.0.1:PORT` line the server prints on startup."
+    import re
+    for _ in range(tries):
+        line = proc.stdout.readline()
+        if not line: return None
+        if (m := re.search(r'127\.0\.0\.1:(\d+)', line)): return int(m.group(1))
+    return None

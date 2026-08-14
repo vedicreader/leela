@@ -57,15 +57,20 @@ def is_framework(python=None):
     avoids paying for a subprocess to learn something already in this process.
     """
     if python is None: return bool(sysconfig.get_config_var('PYTHONFRAMEWORK'))
-    probe = ('import sysconfig,sys;'
-             "print(sysconfig.get_config_var('PYTHONFRAMEWORK') or '', sys.version_info[:2])")
+    # JSON rather than two words: `PYTHONFRAMEWORK` is the empty string everywhere but macOS,
+    # and splitting `" (3, 12)"` on a space reads the version as the framework's name -- which
+    # says yes to every interpreter on the machine.
+    probe = ('import json,sysconfig,sys;'
+             "print(json.dumps([sysconfig.get_config_var('PYTHONFRAMEWORK') or '', "
+             'list(sys.version_info[:2])]))')
     try:
         out = subprocess.run([str(python), '-c', probe], capture_output=True, text=True,
                              timeout=30)
     except (OSError, subprocess.SubprocessError): return False
     if out.returncode: return False
-    name, _, version = out.stdout.strip().partition(' ')
-    return bool(name) and version >= '(3, 12)'
+    try: name, version = __import__('json').loads(out.stdout.strip() or 'null')
+    except (ValueError, TypeError): return False
+    return bool(name) and tuple(version) >= (3, 12)
 
 
 def framework_python():

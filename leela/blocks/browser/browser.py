@@ -19,6 +19,7 @@ friends are refused unless `FOSSICK_ALLOW_PRIVATE` says otherwise.
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 
 from ... import Dictable, errstr
@@ -53,26 +54,40 @@ class Browser:
     so a window fossick opened and a tab Leela opened are the same kind of thing.
     """
 
-    def __init__(self, port=9223, headless=True):
+    def __init__(self, port=9223, headless=True, profile=None):
         self.port, self.headless = int(port), headless
+        # Which Chrome profile to render in. `None` means fossick's own, which is the point of
+        # the feature -- its logins are the reason a page reads here and not through a fetch.
+        # `$LEELA_CDP_PROFILE` overrides it, and the tests use a throwaway one, because a
+        # second port cannot be opened against a profile Chrome is already holding.
+        self.profile = profile or os.environ.get('LEELA_CDP_PROFILE') or None
         self.note = ''
         self._cdp = None
+        self._loop = None
         self._pages: dict[str, object] = {}
+        self._casts: dict[str, object] = {}   # target -> the token of its current screencast
         self._lock = asyncio.Lock()
 
     # -- connection ---------------------------------------------------------
     async def cdp(self):
         "The live CDP connection, starting Chrome if nothing is listening yet."
         async with self._lock:
-            if self._cdp is not None and self._cdp.is_open: return self._cdp
+            loop = asyncio.get_running_loop()
+            # A websocket belongs to the loop that created it. Reusing one across loops does
+            # not raise -- it reports itself open and then never completes a read, which is a
+            # hang rather than an error. A `Workspace` outlives any one loop, so this is
+            # checked rather than assumed.
+            if self._cdp is not None and self._cdp.is_open and self._loop is loop:
+                return self._cdp
             # A dropped connection invalidates every session id we were holding.
-            self._cdp, self._pages = None, {}
+            self._cdp, self._pages, self._loop = None, {}, loop
             try:
                 from fossick.cdp import cdp_connect
             except ImportError as e:
                 raise BrowserUnavailable(f'the inline browser needs fossick ({errstr(e)})') from e
             try:
-                self._cdp = await cdp_connect(port=self.port, headless=self.headless)
+                self._cdp = await cdp_connect(port=self.port, headless=self.headless,
+                                              user_data_dir=self.profile)
             except Exception as e:
                 raise BrowserUnavailable(
                     f'no Chrome on the CDP port {self.port}: {errstr(e)}') from e
@@ -100,7 +115,7 @@ class Browser:
 
     async def close(self):
         "Drop Leela's connection. Chrome and its profile outlive it, on purpose."
-        cdp, self._cdp, self._pages = self._cdp, None, {}
+        cdp, self._cdp, self._pages, self._loop = self._cdp, None, {}, None
         if cdp is not None:
             try: await cdp.close()
             except Exception: pass
@@ -224,13 +239,16 @@ class Browser:
         return w, h
 
     async def start_cast(self, tid, width, height, quality=62, scale=1):
-        """Begin streaming frames for `tid`. Returns the size Chrome actually rendered at.
+        """Begin streaming frames for `tid`. Returns `(width, height, token)`.
 
         Chrome only composites a page it believes is visible, and a target opened in the
         background is not: without these two calls `startScreencast` succeeds and then never
         emits a frame. `bringToFront` makes it visible; focus emulation keeps it *rendering*
         once the next inline tab takes the front, which is what lets two Leela tabs hold live
         pages at the same time.
+
+        The token identifies this cast. Hand it back to `stop_cast` so that a slow teardown
+        arriving after the tab has been reopened cannot switch off the new stream.
         """
         w, h = await self.resize(tid, width, height, scale)
         p = await self.page(tid)
@@ -240,15 +258,19 @@ class Browser:
         except Exception: pass
         await p.page.startScreencast(format='jpeg', quality=int(quality),
                                      maxWidth=w, maxHeight=h, everyNthFrame=1)
-        return w, h
+        token = self._casts[tid] = object()
+        return w, h, token
 
-    async def stop_cast(self, tid):
+    async def stop_cast(self, tid, token=None):
         "Stop streaming and hand the page's viewport back to Chrome."
+        if token is not None and self._casts.get(tid) is not token: return False
+        self._casts.pop(tid, None)
         try:
             p = await self.page(tid)
             await p.page.stopScreencast()
             await p.emulation.clearDeviceMetricsOverride()
-        except Exception: pass
+        except Exception: return False
+        return True
 
     async def ack(self, tid, ack_id):
         "Tell Chrome the frame arrived. Without this the stream stops after one frame."

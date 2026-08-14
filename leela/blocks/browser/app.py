@@ -114,18 +114,23 @@ def _socket(app, ctx, browser):
 
     async def handler(sock):
         await sock.accept()
-        tid = casting = None
+        # Three tasks write to this socket -- frames, navigation, and command replies -- and a
+        # Starlette websocket is not safe for concurrent sends. One lock, one writer at a time.
+        writing = asyncio.Lock()
+
+        async def say(**m):
+            async with writing: await sock.send_text(json.dumps(m))
+
+        tid = cast = None
         try:
             hello = json.loads((await sock.receive()).get('text') or '{}')
             tid = hello.get('id') or ''
             if not tid: raise ValueError('no page id')
-            w, h = await browser.start_cast(tid, hello.get('w'), hello.get('h'),
-                                            scale=hello.get('scale') or 1)
-            casting = tid
-            await sock.send_text(json.dumps({'t': 'ready', 'w': w, 'h': h,
-                                             **await browser.state(tid)}))
+            w, h, cast = await browser.start_cast(tid, hello.get('w'), hello.get('h'),
+                                                  scale=hello.get('scale') or 1)
+            await say(t='ready', w=w, h=h, **await browser.state(tid))
         except Exception as e:
-            await sock.send_text(json.dumps({'t': 'error', 'error': errstr(e)}))
+            await say(t='error', error=errstr(e))
             await sock.close()
             return
 
@@ -139,11 +144,11 @@ def _socket(app, ctx, browser):
                     m = await q.get()
                     if m.get('sessionId') != page.sid: continue
                     p = m.get('params') or {}
-                    await sock.send_text(json.dumps({'t': 'frame', 'data': p.get('data', ''),
-                                                     'meta': p.get('metadata') or {}}))
+                    await say(t='frame', data=p.get('data', ''), meta=p.get('metadata') or {})
                     # The frame's own `sessionId` is Chrome's ack token and has nothing to do
                     # with the CDP session above; not acking stops the stream after one frame.
-                    try: await browser.ack(tid, p.get('sessionId'))
+                    try: await _whole(browser.ack(tid, p.get('sessionId')))
+                    except asyncio.CancelledError: raise
                     except Exception: return
 
         async def navigation():
@@ -153,23 +158,35 @@ def _socket(app, ctx, browser):
                     m = await q.get()
                     if m.get('sessionId') != page.sid: continue
                     if (m.get('params') or {}).get('frame', {}).get('parentId'): continue
-                    await sock.send_text(json.dumps({'t': 'nav', **await browser.state(tid)}))
+                    await say(t='nav', **await _whole(browser.state(tid)))
 
         async def from_client():
             while True:
-                m = await sock.receive()
+                try: m = await sock.receive()
+                except Exception: return           # the client went away mid-read
                 if m['type'] == 'websocket.disconnect': return
                 if (text := m.get('text')) is None: continue
-                try: await _drive(browser, tid, json.loads(text), sock)
+                # Shielded: closing the tab cancels this task, and a command cancelled between
+                # writing its frame and reading the reply leaves the shared CDP connection
+                # unusable for every other tab. Started means finished.
+                try: await _whole(_drive(browser, tid, json.loads(text), say))
+                except asyncio.CancelledError: raise
                 except Exception as e:
-                    await sock.send_text(json.dumps({'t': 'error', 'error': errstr(e)}))
+                    try: await say(t='error', error=errstr(e))
+                    except Exception: return
 
         tasks = [asyncio.create_task(c()) for c in (to_client, navigation, from_client)]
         try: await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
             for t in tasks:
                 if not t.done(): t.cancel()
-            if casting: await browser.stop_cast(casting)
+            # Turning the screencast off is a CDP command, and this task is being unwound --
+            # often because the client vanished, which in a disconnect is a *cancelled* task.
+            # A cancelled CDP write leaves the connection, which every tab in this workspace
+            # shares, wedged for all of them. So the stop is detached: it runs to completion
+            # on the loop after this handler is gone, and its token keeps it from switching
+            # off a stream that a reopened tab has started in the meantime.
+            if cast: _detach(browser.stop_cast(tid, cast))
             try: await sock.close()
             except Exception: pass
 
@@ -177,8 +194,31 @@ def _socket(app, ctx, browser):
     return handler
 
 
-async def _drive(browser, tid, c, sock):
-    "One client command against the attached page."
+async def _whole(coro):
+    """Await `coro`, but let it finish even if this task is cancelled.
+
+    Only used for CDP calls. `websockets` cannot be interrupted part-way through a send and
+    stay usable, and the CDP connection is shared by every tab in the workspace -- so a tab
+    being closed must not be able to leave the others talking to a dead socket. `shield` gives
+    the write its own task; the caller still unwinds immediately.
+    """
+    return await asyncio.shield(coro)
+
+
+# Detached teardown tasks, held so the loop does not collect one before it has run.
+_LOOSE = set()
+
+
+def _detach(coro):
+    "Run `coro` on the loop, outside the lifetime of whatever asked for it."
+    t = asyncio.ensure_future(coro)
+    _LOOSE.add(t)
+    t.add_done_callback(_LOOSE.discard)
+    return t
+
+
+async def _drive(browser, tid, c, say):
+    "One client command against the attached page. `say(**msg)` is the serialised writer."
     t = c.get('t')
     if t == 'mouse':
         await browser.mouse(tid, c['kind'], c.get('x', 0), c.get('y', 0),
@@ -191,11 +231,11 @@ async def _drive(browser, tid, c, sock):
     elif t == 'resize': await browser.start_cast(tid, c.get('w'), c.get('h'), scale=c.get('scale') or 1)
     elif t == 'goto':
         await browser.goto(tid, c.get('url', ''))
-        await sock.send_text(json.dumps({'t': 'nav', **await browser.state(tid)}))
+        await say(t='nav', **await browser.state(tid))
     elif t in ('back', 'forward'):
         await browser.history(tid, -1 if t == 'back' else 1)
     elif t == 'reload': await browser.reload(tid)
-    elif t == 'state': await sock.send_text(json.dumps({'t': 'nav', **await browser.state(tid)}))
+    elif t == 'state': await say(t='nav', **await browser.state(tid))
     else: raise ValueError(f'unknown browser command: {t!r}')
 
 
