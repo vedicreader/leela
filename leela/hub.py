@@ -37,13 +37,9 @@ def workspace_slugs(names):
 
 
 def workspace_urls(roots, port):
-    """Where each root will be served, without building the workspaces to find out.
-
-    The desktop shell has to name its windows' URLs before `serve_ide` has finished starting,
-    so the slug rule lives here and both callers share it rather than agreeing by accident.
-    """
-    return [f'http://{s}.localhost:{port}/'
-            for s in workspace_slugs(Path(r).name for r in roots)]
+    "Where each root will be served, before `serve_ide` has built the workspaces to say so."
+    # One slug rule, shared, so the desktop shell's window URLs and the hub's cannot drift.
+    return [f'http://{s}.localhost:{port}/' for s in workspace_slugs(Path(r).name for r in roots)]
 
 
 def _headers(scope): return {k.lower(): v for k, v in (scope.get('headers') or ())}

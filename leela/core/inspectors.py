@@ -1,31 +1,19 @@
 """What the server needs from dhrishti, without loading dhrishti into the server.
 
-dhrishti's place is *inside a kernel*. `dhrishti.core` imports IPython, pandas and numpy at
-module scope, which is right for something whose job is formatting live values, and which
-costs 660ms and 45MB in a process that never formats one. Leela's server does two things with
-dhrishti: it renders the profile and sort menus, and it reads the directory of JSON files that
-in-kernel inspectors register themselves in to find out which are alive. Neither needs a
-DataFrame.
-
-So the constants and the registry reader are duplicated here, deliberately and in full view.
-dhrishti stays authoritative: `tests/test_inspectors.py` imports the real thing and fails if
-these drift from it, which is a better failure than a Leela that quietly disagrees with the
-inspectors it is talking to. The registry is a file format shared between processes, not an
-API -- Leela is one of its readers, and reading it is nine lines.
-
-The kernel side is untouched. `blocks/runtime/kernels.py` still bootstraps the real dhrishti
-into every kernel it launches, which is where the dependency belongs and why it stays in
-`pyproject.toml`.
+`dhrishti.core` imports IPython, pandas and numpy at module scope -- right for something whose
+job is formatting live values, 660ms and 45MB in a process that only renders its menus and
+reads its registry. So the constants and the nine-line registry reader are duplicated here,
+and dhrishti stays authoritative: `tests/test_inspectors.py` imports the real thing and fails
+if these drift from it. The kernel side is untouched -- `blocks/runtime/kernels.py` still
+bootstraps the real dhrishti into every kernel it launches.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
-from pathlib import Path
 
-from .. import leela_cfg  # noqa: F401  (imported for its xdg side of the config contract)
+from fastcore.xtras import Path
 
 __all__ = ['PROFILES', 'SORTS', 'reg_dir', 'active', 'alive']
 
@@ -59,8 +47,8 @@ def alive(pid):
         st = subprocess.run(['ps', '-o', 'state=', '-p', str(pid)],
                             capture_output=True, text=True, timeout=2).stdout.strip()
         if st[:1] == 'Z': return False
-    # No `ps` (Windows), or it was too slow to answer. `os.kill` already said yes, and a
-    # zombie holding a port is the rarer wrong answer than pruning a live inspector.
+    # No `ps` (Windows), or it was too slow. `os.kill` already said yes, and a zombie holding a
+    # port is the rarer wrong answer than pruning a live inspector.
     except Exception: pass
     return True
 
@@ -69,10 +57,10 @@ def active():
     "Live registry entries, pruning any whose process has gone. The same sweep dhrishti does."
     out = []
     for f in sorted(reg_dir().glob('*.json')):
-        try: e = json.loads(f.read_text())
+        try: e = f.read_json()
         except Exception: continue
         if alive(e.get('pid', -1)): out.append(e)
         else:
-            try: f.unlink()
+            try: f.delete()
             except OSError: pass
     return out

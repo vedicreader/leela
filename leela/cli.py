@@ -18,13 +18,11 @@ def main(argv=None):
     p.add_argument('--app', action='store_true',
                    help='open each folder as an independent app window in fossick’s persistent CDP Chrome')
     p.add_argument('--cdp-port', type=int, default=9223,
-                   help='Chrome remote-debugging port used by --app and the inline browser '
-                        '(default: 9223)')
+                   help='Chrome remote-debugging port for --app and the inline browser (default: 9223)')
     p.add_argument('--shell', choices=['chrome', 'webview', 'none'], default=None,
-                   help='what opens on top of the server: chrome (fossick’s persistent CDP '
-                        'app window, the default under --app), webview (a native desktop '
-                        'window — what the packaged Mac/Windows app runs), or none. The '
-                        'inline browser uses the CDP Chrome whichever shell is chosen.')
+                   help='what opens on top of the server: chrome (fossick’s persistent CDP app '
+                        'window, the default under --app), webview (the native window the packaged '
+                        'app runs), or none. The inline browser uses the CDP Chrome either way.')
     p.add_argument('--port', type=int, default=5001, help='web IDE port (default: 5001)')
     p.add_argument('--host', default='127.0.0.1', help='web IDE host (default: 127.0.0.1)')
     p.add_argument('--kernel-port', type=int, default=8400, help='base port for kernel inspectors')
@@ -88,9 +86,8 @@ def main(argv=None):
                                 python=a.python, app_window=a.app, cdp_port=a.cdp_port,
                                 transport=a.transport, gateway_port=a.gateway_port, shell=s)
     if shell != 'webview': return serve(shell)
-    # The native window must be created on the main thread, and `serve_ide` never gives it
-    # back, so here the server is the background half. `leela_app.py` does the same thing for
-    # the frozen app; this is the source-checkout way in, and what the shell is tested through.
+    # A webview must be created on the main thread and `serve_ide` never gives it back, so the
+    # server is the background half here. `leela_app.py` does the same for the frozen app.
     import threading
     from .desktop import run_shell, shell_ready, warm_cdp
     from .hub import workspace_urls

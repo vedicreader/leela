@@ -180,13 +180,10 @@ finally: del _lee_bootstrap
 
 
 def bootstrap_src(name=None, port=8000, agent='restricted', token=True, kernel='ipykernel'):
-    """The bootstrap cell source for a kernel that should host an inspector.
-
-    Only dhrishti's *location* is wanted here, so it is found rather than imported: importing
-    it to read `__file__` would pull IPython, pandas and numpy into the Leela server, which
-    has no use for any of them. The kernel does the importing, which is the point.
-    """
+    "The bootstrap cell source for a kernel that should host an inspector."
     support = [p for p in sys.path if p and os.path.isabs(p) and os.path.exists(p)]
+    # Found, not imported: importing dhrishti for its `__file__` drags IPython, pandas and
+    # numpy into the Leela server, which has no use for them. The kernel does the importing.
     spec = importlib.util.find_spec('dhrishti')
     if spec is None or not spec.origin: raise RuntimeError('dhrishti is not installed')
     dhrishti_init = str(Path(spec.origin).resolve())

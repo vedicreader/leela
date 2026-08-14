@@ -1,22 +1,15 @@
 """Which folders Leela has open, and which it has had open lately.
 
-A command line answers "which project" every time it is typed. A double-clicked application
-never gets asked, so it has to remember: this is the file that makes launching the packaged
-app open the work you left, and the welcome screen offer the projects you actually use.
-
-Two lists, deliberately separate. `folders` is the current set -- what to reopen next launch,
-kept in step as roots are added and dropped. `recent` is a longer memory that outlives closing
-a project, and is only ever appended to and pruned.
-
-Nothing here decides anything. A folder that has been deleted or unmounted since is dropped on
-read rather than offered and then failing, which is the only cleverness in the file.
+A command line answers "which project" every time it is typed; a double-clicked application
+is never asked, so it has to remember. Two lists, deliberately separate: `folders` is the
+current set, kept in step as roots are added and dropped, and `recent` is a longer memory
+that outlives closing a project. A folder that has been deleted or unmounted since is dropped
+on read rather than offered and then failing.
 """
 
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
+from fastcore.xtras import Path
 
 from .. import leela_cfg
 
@@ -27,30 +20,28 @@ SESSION = leela_cfg/'desktop.json'
 MAX_RECENT = 12
 
 
+def _dir(p):
+    "`p` resolved, or None when it is not an existing directory."
+    try: p = Path(p).expanduser().resolve()
+    except (OSError, ValueError): return None
+    return str(p) if p.is_dir() else None
+
+
 def _clean(paths):
     "Existing directories, resolved, de-duplicated, in the order given."
-    out, seen = [], set()
-    for p in paths:
-        if not p: continue
-        try: p = str(Path(p).expanduser().resolve())
-        except (OSError, ValueError): continue
-        if p in seen or not os.path.isdir(p): continue
-        seen.add(p)
-        out.append(p)
-    return out
+    return list(dict.fromkeys(d for p in paths if p and (d := _dir(p))))
 
 
 def session():
     "The remembered session. A missing or corrupt file reads as an empty one, never an error."
-    try: d = json.loads(SESSION.read_text())
+    try: d = SESSION.read_json()
     except (OSError, ValueError): d = {}
     if not isinstance(d, dict): d = {}
     return {'folders': list(d.get('folders') or []), 'recent': list(d.get('recent') or [])}
 
 
 def _write(folders, recent):
-    SESSION.parent.mkdir(parents=True, exist_ok=True)
-    SESSION.write_text(json.dumps({'folders': folders, 'recent': recent[:MAX_RECENT]}, indent=1))
+    SESSION.write_json({'folders': folders, 'recent': recent[:MAX_RECENT]}, indent=1)
     return folders
 
 
@@ -61,19 +52,16 @@ def remember(folders):
 
 
 def note_folder(path):
-    """Add one folder to the open set and the top of the recent list.
-
-    Union rather than replace, because under `--app` each folder is its own `Workspace` and
-    each would otherwise record itself as the whole session.
-    """
+    "Add one folder to the open set and the top of the recent list."
+    # Union rather than replace: under `--app` each folder is its own `Workspace`, and each
+    # would otherwise record itself as the whole session.
     d = session()
     return _write(_clean(d['folders'] + [path]), _clean([path] + d['recent']))
 
 
 def drop_folder(path):
     "Remove one folder from the open set. It stays in `recent`: closing is not forgetting."
-    d = session()
-    gone = _clean([path])
+    d, gone = session(), _clean([path])
     return _write([f for f in _clean(d['folders']) if f not in gone], _clean(d['recent']))
 
 

@@ -94,8 +94,7 @@ def connect(app, ctx):
             vault, shelf, doc = (t.ref.split('|') + ['', '', ''])[:3]
             return {'kind': 'vault', 'title': t.title, 'vault': vault, 'shelf': shelf, 'doc': doc}
         if t.kind == 'web':
-            # The document is a live page in Chrome, so the payload is only its address; the
-            # panel opens `/browser/ws` and everything after that is frames and input events.
+            # Same shape again: the page lives in Chrome, and the panel opens `/browser/ws`.
             return {'kind': 'web', 'title': t.title, 'target': t.ref}
         try:
             key = t.path or t.title

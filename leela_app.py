@@ -3,13 +3,10 @@
 
 Nothing here is a second implementation of Leela. It picks a free port, starts the ordinary
 `leela --app` server on a daemon thread, and then spends the rest of its life owning the main
-thread on behalf of the native window in `leela.desktop`. That order is forced by macOS,
-where Cocoa will not create a window anywhere but the main thread, and it is the reason this
-file exists at all rather than the app bundle simply calling `leela.cli.main`.
-
-Ports are chosen rather than fixed. A frozen app is double-clicked, sometimes twice, and
-sometimes while a `leela` from a terminal already holds 5001; a desktop application that
-refuses to start because of that is a bug report, not a diagnostic.
+thread on behalf of the native window in `leela.desktop` -- an order macOS forces, since Cocoa
+will not create a window anywhere else, and the reason this file exists rather than the app
+bundle simply calling `leela.cli.main`. The port is chosen rather than fixed: a frozen app is
+double-clicked, sometimes twice, and sometimes while a terminal `leela` already holds 5001.
 
     python leela_app.py              # the saved workspace, in a native window
     python leela_app.py ~/src/proj   # one folder
@@ -45,11 +42,9 @@ def folders(argv=None):
 
 
 def leela_args(port, dirs=(), extra=()):
-    """The `leela` command line a desktop launch is.
-
-    `--app` for one independent workspace per folder, and `--gateway-port 0` so several
-    copies of the app can run without arguing over 8787 -- jupygate takes an ephemeral port.
-    """
+    "The `leela` command line a desktop launch is."
+    # `--app` for one independent workspace per folder, and `--gateway-port 0` so several
+    # copies of the app can run without arguing over 8787 -- jupygate takes an ephemeral port.
     return ['--app', '--port', str(port), '--gateway-port', '0', *extra, *dirs]
 
 
@@ -59,11 +54,9 @@ def _loop_running():
 
 
 def serve(args, background=False):
-    """Run `leela.cli.main(args)`, on this thread or a daemon one.
-
-    Imported at call time and reached through the module, so a test can replace
-    `leela.cli.main` and so the frozen app pays for the web stack only once it is needed.
-    """
+    "Run `leela.cli.main(args)`, on this thread or a daemon one."
+    # Imported at call time and reached through the module, so a test can replace
+    # `leela.cli.main` and the frozen app pays for the web stack only once it is needed.
     import leela.cli
 
     def go(): leela.cli.main(args)
@@ -77,11 +70,9 @@ def serve(args, background=False):
 
 
 def main():
-    """Serve the workspace: inline, or on a daemon thread when a loop already owns this one.
-
-    This is the server half on its own, which is what `python -m leela_app`-style embedding
-    and the tests want. `run()` is the whole application.
-    """
+    "Serve the workspace inline, or on a daemon thread when a loop already owns this one."
+    # The server half alone, which is what embedding and the tests want; `run()` is the whole
+    # application.
     return serve(leela_args(free_port(), folders()))
 
 
@@ -101,20 +92,16 @@ def run():
     cdp_port = int(os.environ.get('LEELA_CDP_PORT', 9223))
     ok, why = shell_ready()
     if not ok:
-        # No webview here, but Chrome is the shell Leela shipped with before this one and is
-        # already a dependency of the inline browser. Falling back to it beats refusing to open.
+        # Chrome is the shell Leela shipped with before this one and is already a dependency of
+        # the inline browser. Falling back to it beats refusing to open.
         print(f'leela: {why}; opening the workspace in Chrome instead')
         return serve(leela_args(port, dirs, ('--shell', 'chrome', '--cdp-port', str(cdp_port))))
 
     serve(leela_args(port, dirs, ('--shell', 'none', '--cdp-port', str(cdp_port))), background=True)
-    # Not started unless `$LEELA_CDP_EAGER` asks for it. Headless Chrome costs several hundred
-    # megabytes across a dozen processes, more than the workspace beside it, and a session
-    # that never opens a web tab should never pay for one. The first tab that wants a page
-    # starts it.
-    warm_cdp(cdp_port)
+    warm_cdp(cdp_port)          # a no-op unless `$LEELA_CDP_EAGER` asks for Chrome up front
     # `--app` gives each folder its own workspace behind a host-dispatching hub, so each one
-    # needs its own window. Opening a single window on the bare loopback host would show the
-    # first folder and silently strand the rest.
+    # needs its own window: a single window on the bare loopback host would show the first
+    # folder and silently strand the rest.
     urls = workspace_urls(dirs, port) if dirs else [f'http://127.0.0.1:{port}/']
     run_shell(urls, titles=titles_for(dirs), icon=_icon(),
               on_open_folder=lambda p: open_folder(port, p))
@@ -126,12 +113,9 @@ def titles_for(dirs):
 
 
 def open_folder(port, path, host='127.0.0.1'):
-    """Add a folder to the running workspace, for one the desktop handed us after startup.
-
-    Goes through the HTTP route rather than the `Workspace` object because the server owns
-    that object on another thread and another event loop; this is the same call the in-app
-    folder picker makes.
-    """
+    "Add a folder to the running workspace, for one the desktop handed us after startup."
+    # Through the HTTP route rather than the `Workspace` object, which the server owns on
+    # another thread and another event loop; the in-app folder picker makes the same call.
     import urllib.parse
     import urllib.request
 

@@ -48,21 +48,14 @@ def connect(app, ctx):
     async def add_root_json(req):
         "Add a root without rebuilding the editor, model controls and every other pane."
         from ...core.projects import note_folder
-        d = await req.json()
-        try:
-            ctx.session.add_root(d.get('path') or '')
-            ctx.session.save()
-            note_folder(d.get('path') or '')
+        path = (await req.json()).get('path') or ''
+        try: ctx.session.add_root(path); ctx.session.save(); note_folder(path)
         except Exception as e: return fail(e)
         return {'ok': True}
 
     @rt('/fs/recent')
     def fs_recent():
-        """Folders this Leela has opened before, for the welcome screen.
-
-        The packaged app is launched with no arguments, so this list is how someone gets back
-        to a project without typing its path.
-        """
+        "Folders opened before: with no argument to launch on, this is the way back to a project."
         from ...core.projects import recent_folders
         open_now = {str(r) for r in ctx.fs.roots}
         return {'ok': True, 'home': str(Path.home()),
@@ -73,8 +66,7 @@ def connect(app, ctx):
     async def fs_forget_recent(req):
         "Drop one folder from the welcome screen's list."
         from ...core.projects import forget_recent
-        d = await req.json()
-        forget_recent(d.get('path') or '')
+        forget_recent((await req.json()).get('path') or '')
         return {'ok': True}
 
     @rt('/fs/browse')

@@ -9795,21 +9795,17 @@ async function leeCloneRepo() {
 window.leeCloneRepo = leeCloneRepo;
 /* The inline browser: one page from the persistent CDP Chrome, drawn in a Leela tab.
  *
- * The tab holds no web content of its own. Chrome renders the page offscreen and streams JPEG
- * frames over `/browser/ws`; this module paints them on a canvas and sends mouse and keyboard
- * events back. That indirection is the point rather than a compromise -- the page runs in a
- * separate browser process with fossick's profile and cookies, so it cannot reach Leela's DOM,
- * and a site that needs a login is one Leela can read because fossick is already signed in.
+ * Chrome renders offscreen and streams JPEG frames over `/browser/ws`; this paints them on a
+ * canvas and sends input back. The page runs in a separate process with fossick's profile, so
+ * it cannot reach Leela's DOM and a site fossick is signed in to is one Leela can read.
  *
- * Coordinates are 1:1: the server pins Chrome's viewport to the canvas's CSS size, so a click
- * at (x, y) here is a click at (x, y) there and nothing has to be mapped through frame
- * metadata that changes whenever the page scrolls.
+ * Coordinates are 1:1 -- the server pins Chrome's viewport to the canvas's CSS size -- so
+ * nothing has to be mapped through frame metadata that moves when the page scrolls.
  */
 
 const wsURL = p => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${p}`;
 
-// The one live inline browser. Only the active tab is cast: a hidden canvas costs a JPEG
-// encode per animation frame in Chrome and buys nothing.
+// Only the active tab is cast: a hidden canvas costs a JPEG encode per frame in Chrome.
 let webView = null;
 
 function closeWebView() {
@@ -9890,10 +9886,9 @@ function mountWeb(host, st) {
   canvas.focus();
 }
 
-/* A minimised or hidden window is still a window with a live screencast behind it, and Chrome
-   goes on encoding a JPEG per animation frame for a canvas nobody can see. Stopping the cast
-   while hidden is the difference between a background Leela costing nothing and costing a
-   core; the page itself stays open, and resuming re-requests a frame immediately. */
+/* A hidden window still has a live screencast behind it, so Chrome goes on encoding for a
+   canvas nobody can see -- the difference between a background Leela costing nothing and
+   costing a core. The page stays open; resuming asks for a frame immediately. */
 function wireVisibility(view) {
   const onChange = () => {
     if (webView !== view || view.sock.readyState !== 1) return;
@@ -9905,17 +9900,14 @@ function wireVisibility(view) {
 }
 
 function sizeCanvas(canvas, w, h) {
-  // The backing store matches the CSS box exactly. A device-pixel-ratio canvas would look
-  // sharper and would also ask Chrome to encode four times the JPEG per frame.
+  // Backing store matches the CSS box: a DPR canvas would be sharper and cost Chrome 4x the JPEG.
   canvas.width = w; canvas.height = h;
   canvas.style.width = `${w}px`; canvas.style.height = `${h}px`;
 }
 
-/* Draw one JPEG. `createImageBitmap` decodes off the main thread and hands back something
-   `drawImage` can take directly, where an `<img>` with a data: URL would parse a URL, decode
-   on the main thread, and fire an event. A frame that arrives while the previous one is still
-   decoding is dropped rather than queued: on a page that is animating faster than the canvas
-   can keep up, a backlog only adds latency to a picture nobody will see. */
+/* `createImageBitmap` decodes off the main thread, where an `<img>` with a data: URL would
+   parse and decode on it. A frame arriving mid-decode is dropped, not queued: a backlog only
+   adds latency to pictures nobody sees. */
 function drawFrame(ctx, canvas, view, buf) {
   if (!buf || view.drawing) return;
   view.drawing = true;
@@ -9954,10 +9946,9 @@ function wireToolbar(host, view, urlBox, say) {
   on('remember', () => readWeb(view, true, say));
 }
 
-/* Lift the live page out as Markdown. This is the payoff of rendering in Chrome rather than
-   fetching: the DOM being read is the one after the scripts ran and after the login, so an
-   app or a paywalled article reads the same way a static page does. What comes back is a
-   `Doc` in research's own shape, so saving it and remembering it are the paths that exist. */
+/* The live page as Markdown -- the DOM after the scripts ran and after the login, which is
+   what a fetch cannot reach. Comes back as research's own `Doc`, so saving it is a path that
+   already exists. */
 async function readWeb(view, remember, say) {
   say(remember ? 'reading and remembering…' : 'reading…');
   let d;
@@ -9982,10 +9973,9 @@ function showWebMarkdown(doc) {
   $('[data-md="notebook"]', m).onclick = () => saveDoc(doc, 'notebook');
 }
 
-/* Input forwarding. Everything is `preventDefault`ed: the canvas is standing in for a browser
-   viewport, so a Space that scrolls the page must not also scroll Leela, and a Tab must move
-   focus inside the page rather than out of it. The keymap router already treats this panel
-   like the terminal, so the chords that get you out still work. */
+/* Everything is `preventDefault`ed: the canvas stands in for a viewport, so a Space that
+   scrolls the page must not also scroll Leela and a Tab must move focus inside it. The keymap
+   router treats this panel like the terminal, so the chords that get you out still work. */
 function wireInput(canvas, view) {
   const at = e => { const r = canvas.getBoundingClientRect();
                     return {x: e.clientX - r.left, y: e.clientY - r.top}; };
@@ -10002,8 +9992,7 @@ function wireInput(canvas, view) {
     view.send({t: 'mouse', kind: 'mouseReleased', ...at(e), button: BUTTONS[e.button] || 'left',
                clicks: e.detail || 1, modifiers: mods(e)});
   });
-  // Hover drives menus and link underlines, so it is worth sending -- but at the frame rate
-  // rather than the event rate, which for a fast mouse is several hundred a second.
+  // Hover drives menus and link underlines, but at frame rate: a fast mouse fires hundreds/s.
   let moveDue = false;
   canvas.addEventListener('mousemove', e => {
     if (moveDue) return;
@@ -10051,16 +10040,12 @@ function keyFields(e) {
           nativeVirtualKeyCode: vk, text: printable(e) ? e.key : ''};
 }
 
-// The chords the keymap router still answers while the page has focus. Asking it directly
-// keeps this list from drifting away from the one in `findBinding`.
-function isEscapeChord(e) {
-  const match = findBinding(e, 'web');
-  return Boolean(match);
-}
+// Asked of the router itself, so the list cannot drift from the one in `findBinding`.
+const isEscapeChord = e => Boolean(findBinding(e, 'web'));
 
-/* Open a URL as a tab. The entry point for research, the agent, and the command palette:
-   everything that used to `window.open` a page can bring it in here instead.
-   Both routes answer with the tab strip, like every other route that opens a tab. */
+// Open a URL as a tab -- the entry point for research and the palette. `/browser/open` answers
+// with the tab strip, like every other route that opens a tab.
+
 async function openWebTab(url, title = '') {
   if (!url) return status('no URL to open', 'err');
   status('opening in the inline browser…');
@@ -10073,16 +10058,13 @@ async function openWebTab(url, title = '') {
 }
 window.leeOpenWeb = openWebTab;
 
-// Ask for an address, then open it here. The counterpart to `read_url`, which fetches a page
-// and shows its Markdown: this one shows the page.
+// The counterpart to `read_url`, which shows a page's Markdown: this one shows the page.
 async function browseUrl() {
   const url = await inputDialog('open a page', 'address', '', 'example.com/article');
   if (url) return openWebTab(url.trim());
 }
 
-// Adopt whatever the CDP Chrome already has open -- a window fossick opened, a tab a link
-// spawned. This is the other half of "the browser is shared": a page does not have to start
-// in Leela to end up in Leela.
+// Adopt what Chrome already has: a page need not start in Leela to end up in Leela.
 async function pickWebTab(anchor) {
   let d;
   try { d = await api('/browser/tabs'); }
@@ -10101,29 +10083,26 @@ async function pickWebTab(anchor) {
 window.leePickWeb = pickWebTab;
 /* Opening a project when there is no command line to type one on.
  *
- * A packaged Leela is double-clicked. Nothing tells it which folder you meant, so the ways in
- * are: the folders it had open last time (the server restores those before the page loads),
- * the recent list on the welcome screen, and the picker. In the native shell the picker is the
- * platform's own folder chooser, because a web page cannot produce a directory path however
- * hard it tries -- a file input hands over contents, never a location.
+ * A packaged Leela is double-clicked. The ways in are the folders it had open last time (the
+ * server restores those before the page loads), the recent list, and the picker -- which in the
+ * native shell is the platform's own, because a web page cannot produce a directory path: a
+ * file input hands over contents, never a location.
  */
 
-// True inside the desktop shell. `window.pywebview` is injected by the native window, and its
-// `api` object is `leela.desktop.ShellApi`.
+// `window.pywebview.api` is `leela.desktop.ShellApi`, injected by the native window.
 const inShell = () => Boolean(window.pywebview?.api?.pick_folder);
+const shortHome = p => lee.home && p.startsWith(lee.home) ? '~' + p.slice(lee.home.length) : p;
 
-/* The platform folder chooser, or null when there is none or the user cancelled.
-   pywebview injects `window.pywebview` asynchronously, so a click arriving in the first
-   moments after load waits briefly rather than falling back to typing a path. */
+// The platform folder chooser, or null if there is none or it was cancelled. pywebview injects
+// its bridge asynchronously, so a click in the first moments after load waits for it.
 async function nativeFolder(waitMs = 1500) {
-  const deadline = Date.now() + waitMs;
-  while (!inShell() && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+  for (const end = Date.now() + waitMs; !inShell() && Date.now() < end;)
+    await new Promise(r => setTimeout(r, 50));
   if (!inShell()) return null;
   try { return await window.pywebview.api.pick_folder(); }
-  catch (e) { status(`folder chooser: ${e.message || e}`, 'err'); return null; }
+  catch (e) { return status(`folder chooser: ${e.message || e}`, 'err'), null; }
 }
 
-// Open a folder as a workspace root, from wherever it was chosen.
 async function openFolder(path) {
   if (!path) return;
   status(`opening ${path.split('/').pop()}…`);
@@ -10132,37 +10111,23 @@ async function openFolder(path) {
 }
 window.leeOpenFolder = openFolder;
 
-/* The welcome screen's recent list. Only drawn when there is something to draw and no tab is
-   open, so it never competes with the editor -- but when Leela opens on nothing, it is the
-   first thing there is. */
+// The welcome screen's recent list: when Leela opens on nothing, this is the way back to work.
 async function paintRecent() {
-  const host = $('#leerecent');
-  if (!host) return;
-  let d;
-  try { d = await api('/fs/recent'); } catch (_) { return; }
+  const host = $('#leerecent'); if (!host) return;
+  let d; try { d = await api('/fs/recent'); } catch (_) { return; }
   lee.home = d.home || '';
   const rows = (d.recent || []).filter(r => !r.open);
-  if (!rows.length) { host.hidden = true; return; }
-  host.hidden = false;
-  host.innerHTML =
-    `<h3>Recent projects</h3><ul class="lee-recentlist">` +
-    rows.map(r =>
-      `<li><button class="lee-recent" data-path="${esc(r.path)}">` +
-      `<span class="lee-recent-name">${esc(r.name)}</span>` +
-      `<span class="lee-recent-path lee-dim">${esc(shortHome(r.path))}</span></button>` +
-      `<button class="lee-recent-x" data-forget="${esc(r.path)}" title="forget this project"` +
-      ` aria-label="forget ${esc(r.name)}">×</button></li>`).join('') +
-    `</ul>`;
-  host.querySelectorAll('.lee-recent').forEach(b =>
-    b.onclick = () => openFolder(b.dataset.path));
-  host.querySelectorAll('[data-forget]').forEach(b => b.onclick = async () => {
+  host.hidden = !rows.length; if (!rows.length) return;
+  host.innerHTML = `<h3>Recent projects</h3><ul class="lee-recentlist">` + rows.map(r =>
+    `<li><button class="lee-recent" data-path="${esc(r.path)}">` +
+    `<span class="lee-recent-name">${esc(r.name)}</span>` +
+    `<span class="lee-recent-path lee-dim">${esc(shortHome(r.path))}</span></button>` +
+    `<button class="lee-recent-x" data-forget="${esc(r.path)}" title="forget this project"` +
+    ` aria-label="forget ${esc(r.name)}">×</button></li>`).join('') + `</ul>`;
+  $$('.lee-recent', host).forEach(b => b.onclick = () => openFolder(b.dataset.path));
+  $$('[data-forget]', host).forEach(b => b.onclick = async () => {
     await post('/fs/forget-recent', {path: b.dataset.forget});
     paintRecent();
   });
 }
 window.leePaintRecent = paintRecent;
-
-const shortHome = p => {
-  const home = (lee.home || '');
-  return home && p.startsWith(home) ? '~' + p.slice(home.length) : p;
-};

@@ -58,8 +58,7 @@ def tree_node(e, git_state=None):
 
 def files_panel(fs):
     state = git_tree_state(fs)
-    # With nothing open the pane is the only thing on screen that can start a session, so it
-    # offers rather than reports. A packaged app is launched with no folder to report.
+    # With nothing open this pane is the only way to start a session, so it offers, not reports.
     body = [tree_node(e, state) for e in fs.ls(None)] or [
         Div(Div('no folder open', cls='lee-dim'),
             Button('Open a folder…', cls='lee-btn go', onclick='leeAct("add_root")'),

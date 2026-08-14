@@ -145,8 +145,7 @@ class Tab(Dictable):
     scratch: bool = False               # never written to disk
     running: int = 0                    # in-flight cells; transient tab-bar feedback
     cwd: str = ''                       # optional per-tab working-directory override
-    ref: str = ''                       # `vault|shelf|doc_id` for a vault tab, or the CDP target
-                                        # id for a web tab. Neither kind has a path.
+    ref: str = ''                       # `vault|shelf|doc_id`, or a web tab's CDP target; no path either way
 
     def __post_init__(self):
         if not self.title: self.title = Path(self.path).name or 'untitled'
@@ -202,8 +201,8 @@ class Workspace:
         from .blocks.memory.vaults import Vaults
         self.vaults = Vaults(shelf=memory_shelf(root), own=self.memory)
         self.research = Research(self.fs, memory=self.memory)
-        # The inline browser. Constructed eagerly because it is a capability, but it holds
-        # nothing until a page is opened: Chrome is contacted on first use, not here.
+        # Eager because it is a capability, but empty until a page opens: Chrome is contacted
+        # on first use, not here.
         from .blocks.browser.browser import Browser
         self.browser = Browser(port=cdp_port)
         self.runs = Runs(first(self.fs.roots))
@@ -412,12 +411,7 @@ class Workspace:
                                  title=title or doc_id, private_kernel=False))
 
     def open_web(self, target, title=''):
-        """Open a page in the CDP Chrome as a tab. `target` is the CDP target id.
-
-        Like a vault tab it has no path and no kernel: the document lives in Chrome, and this
-        tab is the surface Leela draws it on. Re-opening the same target focuses the tab
-        rather than casting the same page twice.
-        """
+        "Open a CDP target as a tab, focusing it if that page is already cast. It has no path."
         if (i := first(i for i, t in enumerate(self.tabs)
                        if t.kind == 'web' and t.ref == target)) is not None:
             self.active = i

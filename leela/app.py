@@ -596,18 +596,14 @@ def _empty_editor():
         Span('leela', cls='lee-empty-mark'),
         Strong('Creative workspace that starts with coding'),
         P('Notebooks, files, live variables, research memory, and an agent that sees what you see.'),
-        # What to *do* comes before what Leela is. This screen is most of the packaged app's
-        # first moment, and someone reopening a project should not have to read past a feature
-        # tour to find its name.
+        # Actions before the tour: reopening a project should not mean reading past it.
         Div(Button('Open a folder', cls='lee-btn go', onclick='leeAct("add_root")'),
             Button('Open file', cls='lee-btn', onclick='leeAct("quick_open")'),
             Button('New notebook', cls='lee-btn', onclick='leeAct("new_notebook")'),
             Button('Research a topic', cls='lee-btn', onclick='leeAct("research")'),
             Button('Ask the agent', cls='lee-btn', onclick='leeAct("focus_agent")'),
             cls='lee-empty-actions'),
-        # Filled by the client from `/fs/recent`. A packaged app is launched with no arguments,
-        # so for someone coming back to a project this list *is* the way in, and it has to be
-        # live rather than baked into the shell at build time.
+        # Filled by the client from `/fs/recent`: live, because a packaged shell is built once.
         Div(id='leerecent', cls='lee-empty-recent', hidden=True),
         Ul(*[Li(Strong(title), Span(blurb)) for title, blurb in features], cls='lee-empty-features'),
         Small('Keyboard: ', Kbd('ctrl+p'), ' open · ', Kbd('ctrl+shift+p'), ' commands · ',
@@ -1138,10 +1134,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     @rt('/fs/add_root')
     def add_root(path: str):
         from .core.projects import note_folder
-        try:
-            ws.add_root(path); ws.save()
-            # So the application reopens it next launch, and offers it on the welcome screen.
-            note_folder(path)
+        # `note_folder`: so the next launch reopens it, and the welcome screen offers it.
+        try: ws.add_root(path); ws.save(); note_folder(path)
         except Exception as e: return _fail(str(e))
         return _shell(ws, gate)
 
@@ -2698,14 +2692,13 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
     Host-based dispatch keeps all existing absolute browser routes valid:
     ``project.localhost:5001`` and ``tests.localhost:5001`` each own an ``ide_app``.
 
-    ``app_window`` chooses the *workspace* shape -- one isolated workspace per folder behind
-    a host-dispatching hub. ``shell`` chooses what opens on top of it: ``'chrome'`` for
-    fossick's persistent CDP app windows, or ``'none'`` when something else owns the display.
-    The native window is ``'none'`` here plus `leela.desktop`, because a webview must be
-    created on the main thread and this function never returns from it.
+    ``app_window`` is the workspace *shape*; ``shell`` is what opens on top of it:
+    ``'chrome'`` for fossick's CDP app windows, ``'none'`` when something else owns the
+    display. A native window is ``'none'`` plus `leela.desktop`, since a webview must be
+    created on the main thread and this function never returns.
     """
     import uvicorn
-    if shell is None: shell = 'chrome' if app_window else 'none'
+    shell = ifnone(shell, 'chrome' if app_window else 'none')
     try:
         loopback = host == 'localhost' or ipaddress.ip_address(host).is_loopback
     except ValueError:
@@ -2734,8 +2727,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
     if app_window and roots:
         from .blocks.runtime.kernels import RuntimeBroker
         sites, hub, broker = [], None, RuntimeBroker()
-        slugs = workspace_slugs([r.name for r in roots])
-        for i, (root, slug) in enumerate(zip(roots, slugs)):
+        for i, (root, slug) in enumerate(zip(roots, workspace_slugs(r.name for r in roots))):
             state = leela_cfg/'workspaces'/f'{slug}.json'
             kw = dict(port=kernel_port + i * 100, agent=agent, kernel=kernel, model=model,
                       approvals=approvals, agent_scope=agent_scope, python=python,
@@ -2782,18 +2774,17 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             kw['completion_model'] = remembered.get('completion_model') or 'gpt-4.1'
             ws = Workspace(**kw)
         for r in roots: ws.add_root(r)
-        # A terminal launch means "here", and the shell already chose where here is. A
-        # double-clicked application has no such answer, and the old one -- the home directory
-        # -- was a bad guess with teeth: Kosha would index every file the user owns, and the
-        # watcher would follow them. Opening on nothing shows the welcome screen instead.
+        # A terminal launch means "here"; a double-clicked application has no such answer, and
+        # the old guess -- home -- had teeth: Kosha would index every file the user owns. With
+        # no root it opens on the welcome screen instead.
         if not ws.fs.roots and not getattr(sys, 'frozen', False): ws.add_root(os.getcwd())
         if ws.restore_remembered_agent_state(): ws.save()
         app = ide_app(ws, gate)
         # Watches only come due if something asks. Started here rather than in the block, so
         # building an app in a test does not leave a polling thread behind. `$LEELA_POLL_SECONDS`.
         if (secs := ws.jobs.tick()): print(f'  vault watches polled every {secs}s')
-        where = ', '.join(p.name for p in ws.fs.roots) or 'no folder open yet'
-        print(f'leela  http://{host}:{port}   folders: {where}')
+        print(f'leela  http://{host}:{port}   folders: '
+              + (', '.join(p.name for p in ws.fs.roots) or 'no folder open yet'))
         if shell == 'chrome':
             import threading, time, urllib.request
             def open_window():

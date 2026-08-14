@@ -1,15 +1,11 @@
 """The inline browser's surface: open a page, list what Chrome has, stream one into a tab.
 
-The JSON routes are the cheap half -- opening, closing and listing pages, and lifting one out
-as Markdown for research or the vault. The interesting half is `/browser/ws`, which pairs one
-Leela tab with one CDP target: frames out, input in, for as long as the tab is on screen.
+The JSON routes are the cheap half. `/browser/ws` is the other one: it pairs a Leela tab with
+one CDP target -- frames out, input in, for as long as the tab is on screen.
 """
 
 from __future__ import annotations
-
-import asyncio
-import base64
-import json
+import asyncio, base64, json
 
 from fasthtml.common import Div
 from starlette.routing import WebSocketRoute
@@ -23,9 +19,6 @@ __all__ = ['CAPS', 'connect']
 
 CAPS = ('browser', 'memory')
 
-# How long the socket waits on Chrome before deciding the page is wedged rather than busy.
-FRAME_TIMEOUT = 30
-
 
 def connect(app, ctx):
     rt = app.route
@@ -35,9 +28,8 @@ def connect(app, ctx):
     def browser_ready():
         """Could a page be opened here? Cheap, and never starts a browser to find out.
 
-        `ok` is whether there is a Chrome to drive; `running` is whether it is up yet. The
-        first inline tab of a session starts it, which takes a second or two, so the client
-        says so rather than treating a cold browser as a missing one.
+        `ok` is whether there is a Chrome to drive; `running` is whether it is up yet. The first
+        inline tab of a session starts it, which takes a second or two.
         """
         return {'ok': browser.available(), 'running': browser.running(), 'port': browser.port}
 
@@ -83,11 +75,7 @@ def connect(app, ctx):
 
     @rt('/browser/markdown')
     async def browser_markdown(id: str = '', remember: bool = False):
-        """The live page as Markdown -- what research would have fetched, after the JS ran.
-
-        This is the reason the browser is inside Leela rather than beside it: a page behind a
-        login or a client-rendered app is readable here and is not readable to a plain fetch.
-        """
+        "The live page as Markdown -- what research would have fetched, after the JS ran."
         try:
             md = await browser.markdown(id)
             state = await browser.state(id)
@@ -105,35 +93,31 @@ def connect(app, ctx):
 def _remember(ctx, state, md):
     "Put a live page into the same vault a fetched one goes to, as the same kind of document."
     from ..research.research import Doc
-    doc = Doc(title=state.get('title') or state.get('url', ''), url=state.get('url', ''),
-              text=md, kind='page')
-    saved = ctx.memory.remember(doc)
+    saved = ctx.memory.remember(Doc(title=state.get('title') or state.get('url', ''),
+                                    url=state.get('url', ''), text=md, kind='page'))
     return f"remembered as {saved.get('doc_id')}" if saved else 'not remembered'
 
 
 def _socket(app, ctx, browser):
-    """Pair one Leela tab with one CDP target for as long as the tab is showing.
-
-    A raw Starlette route rather than FastHTML's `ws`, for the same reason the terminal
-    sockets are: the handler needs the socket object itself, not injected parameters.
-    """
+    "Pair one Leela tab with one CDP target for as long as the tab is showing."
+    # A raw Starlette route rather than FastHTML's `ws`, for the same reason the pipeline
+    # sockets are: the handler needs the socket object itself, not injected parameters.
 
     async def handler(sock):
         await sock.accept()
-        # Three tasks write to this socket -- frames, navigation, and command replies -- and a
-        # Starlette websocket is not safe for concurrent sends. One lock, one writer at a time.
+        # Frames, navigation and command replies all write here, and a Starlette websocket is
+        # not safe for concurrent sends. One lock, one writer at a time.
         writing = asyncio.Lock()
 
         async def say(**m):
             async with writing: await sock.send_text(json.dumps(m))
 
-        # This socket owns the stream for as long as it is open, through every pause for a
+        # `mine` owns the stream for as long as this socket is open, through every pause for a
         # hidden window and every resize. A reopened tab is a different owner.
         tid, cast, mine = None, False, object()
         try:
             hello = json.loads((await sock.receive()).get('text') or '{}')
-            tid = hello.get('id') or ''
-            if not tid: raise ValueError('no page id')
+            if not (tid := hello.get('id') or ''): raise ValueError('no page id')
             w, h, _ = await browser.start_cast(tid, hello.get('w'), hello.get('h'),
                                                scale=hello.get('scale') or 1, owner=mine)
             cast = True
@@ -149,11 +133,9 @@ def _socket(app, ctx, browser):
         async def to_client():
             """Screencast frames for this page only, acked so Chrome keeps sending them.
 
-            Frames go as binary. Chrome hands them over base64-encoded and the obvious thing
-            is to forward that inside the JSON envelope everything else uses, which costs a
-            third more bytes on every frame and makes the client decode a data: URL before it
-            can draw. Decoding here instead and sending the JPEG itself is smaller on the wire
-            and lets the client go straight to `createImageBitmap`.
+            The JPEG goes as binary rather than base64 inside the JSON envelope everything else
+            uses: a third fewer bytes per frame, and the client hands it straight to
+            `createImageBitmap` instead of decoding a data: URL first.
             """
             async with cdp.on('Page.screencastFrame') as q:
                 while True:
@@ -199,12 +181,11 @@ def _socket(app, ctx, browser):
         finally:
             for t in tasks:
                 if not t.done(): t.cancel()
-            # Turning the screencast off is a CDP command, and this task is being unwound --
-            # often because the client vanished, which in a disconnect is a *cancelled* task.
-            # A cancelled CDP write leaves the connection, which every tab in this workspace
-            # shares, wedged for all of them. So the stop is detached: it runs to completion
-            # on the loop after this handler is gone, and its token keeps it from switching
-            # off a stream that a reopened tab has started in the meantime.
+            # Turning the screencast off is itself a CDP command, and this handler is usually
+            # unwinding because the client vanished -- which is a *cancelled* task. A cancelled
+            # CDP write wedges the connection every tab in this workspace shares, so the stop
+            # runs detached, after this handler is gone; its token keeps it from switching off
+            # a stream a reopened tab has started in the meantime.
             if cast: _detach(browser.stop_cast(tid, mine))
             try: await sock.close()
             except Exception: pass
@@ -217,9 +198,8 @@ async def _whole(coro):
     """Await `coro`, but let it finish even if this task is cancelled.
 
     Only used for CDP calls. `websockets` cannot be interrupted part-way through a send and
-    stay usable, and the CDP connection is shared by every tab in the workspace -- so a tab
-    being closed must not be able to leave the others talking to a dead socket. `shield` gives
-    the write its own task; the caller still unwinds immediately.
+    stay usable, and every tab in the workspace shares one CDP connection -- so a tab being
+    closed must not leave the others talking to a dead socket.
     """
     return await asyncio.shield(coro)
 
@@ -248,23 +228,20 @@ async def _drive(browser, tid, c, say, owner=None):
                                              if k in _KEY_FIELDS and v not in (None, '')})
     elif t == 'text': await browser.insert(tid, c.get('text', ''))
     elif t in ('resize', 'resume'):
-        await browser.start_cast(tid, c.get('w'), c.get('h'), scale=c.get('scale') or 1,
-                                 owner=owner)
-    # The tab is still open, the page is still loaded; only the encoding stops. A hidden
-    # window that goes on receiving frames costs a core for a picture nobody can see.
+        await browser.start_cast(tid, c.get('w'), c.get('h'), scale=c.get('scale') or 1, owner=owner)
+    # Only the encoding stops; the tab stays open and the page stays loaded. A hidden window
+    # that goes on receiving frames costs a core for a picture nobody can see.
     elif t == 'pause': await browser.stop_cast(tid, owner)
     elif t == 'goto':
         await browser.goto(tid, c.get('url', ''))
         await say(t='nav', **await browser.state(tid))
-    elif t in ('back', 'forward'):
-        await browser.history(tid, -1 if t == 'back' else 1)
+    elif t in ('back', 'forward'): await browser.history(tid, -1 if t == 'back' else 1)
     elif t == 'reload': await browser.reload(tid)
     elif t == 'state': await say(t='nav', **await browser.state(tid))
     else: raise ValueError(f'unknown browser command: {t!r}')
 
 
-# What `Input.dispatchKeyEvent` will accept from the client. Anything else a keydown handler
-# might carry is dropped rather than forwarded, so a malformed event is a missing keystroke
-# instead of a CDP protocol error that closes the socket.
+# What `Input.dispatchKeyEvent` accepts. Anything else a DOM keydown carries is dropped rather
+# than forwarded, so a malformed event is a missing keystroke and not a socket-closing CDP error.
 _KEY_FIELDS = ('text', 'key', 'code', 'windowsVirtualKeyCode', 'nativeVirtualKeyCode',
                'modifiers', 'location', 'autoRepeat', 'isKeypad', 'unmodifiedText')

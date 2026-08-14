@@ -1,12 +1,7 @@
 """Build the distributable: a signed-local macOS app + DMG, or a zipped Windows folder."""
-
 from __future__ import annotations
-
-import os
-import shutil
-import subprocess
-import sys
-from pathlib import Path
+import os, shutil, subprocess, sys
+from fastcore.all import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,10 +19,9 @@ def mac_release():
     run(sys.executable, ROOT/'tools'/'build_icons.py')
     build_app()
     app, out = ROOT/'dist'/'Leela.app', ROOT/'dist'/'Leela-macOS.dmg'
-    identity = os.environ.get('LEELA_CODESIGN_IDENTITY', '').strip()
-    # A local py2app build is linker-signed and launchable as-is. Distribution signing is
-    # opt-in because it requires the developer's identity and notarization credentials.
-    if identity:
+    # A local py2app build is linker-signed and launchable as-is; distribution signing is
+    # opt-in because it needs the developer's identity and notarization credentials.
+    if (identity := os.environ.get('LEELA_CODESIGN_IDENTITY', '').strip()):
         run('codesign', '--force', '--deep', '--options', 'runtime', '--sign', identity, app)
         run('codesign', '--verify', '--deep', '--strict', app)
     stage = ROOT/'build'/'dmg'

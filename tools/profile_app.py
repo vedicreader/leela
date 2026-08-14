@@ -1,35 +1,23 @@
 """What the desktop app costs to start and to hold open.
 
-Three things get measured, because they are the three the app is judged on: how long the
-window waits before there is a workspace in it, how much memory one workspace holds at rest,
-and what an inline browser tab adds while it is streaming.
-
-Every measurement runs in a fresh subprocess. Import cost is order-dependent and RSS is
-cumulative, so measuring several things in one interpreter measures the order they were done
-in. Numbers are the best of a few runs, since a cold page cache makes the first one a lie.
+Every measurement runs in a fresh subprocess, and is the best of a few runs: import cost is
+order-dependent and RSS is cumulative, so several things in one interpreter measure the order
+they were done in, and a cold page cache makes the first run a lie.
 
     python tools/profile_app.py                # all three
     python tools/profile_app.py --imports      # what is on the startup path, and its cost
     python tools/profile_app.py --server       # a running workspace: startup and resident size
     python tools/profile_app.py --browser      # bytes and time per screencast frame
 """
-
 from __future__ import annotations
-
-import argparse
-import json
-import os
-import subprocess
-import sys
-import tempfile
-import textwrap
-from pathlib import Path
+import argparse, json, os, subprocess, sys, tempfile, textwrap
+from fastcore.all import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PY = sys.executable
 
-# The heavy third-party roots worth knowing about by name. Each is something Leela's *server*
-# has no use for -- they arrive through a dependency -- so seeing one here is the finding.
+# Heavy third-party roots worth naming. Leela's *server* has no use for any of them -- they
+# arrive through a dependency -- so seeing one is the finding.
 WATCH = ('pandas', 'IPython', 'numpy', 'matplotlib', 'torch', 'scipy')
 
 PRELUDE = '''
@@ -51,28 +39,25 @@ def rss():
 '''
 
 
-def run(body, **kw):
+def run(body):
     "Run `body` in a fresh interpreter with the prelude, and parse the JSON line it prints."
     env = dict(os.environ, XDG_CONFIG_HOME=tempfile.mkdtemp())
     src = PRELUDE.format(root=str(ROOT), cfg=tempfile.mkdtemp(),
                          vault=tempfile.mkdtemp() + '/vault.db') + textwrap.dedent(body)
     out = subprocess.run([PY, '-c', src], capture_output=True, text=True, timeout=600, env=env)
     line = next((l for l in reversed(out.stdout.splitlines()) if l.startswith('{')), None)
-    if line is None:
-        raise SystemExit(f'measurement failed:\n{out.stdout[-2000:]}\n{out.stderr[-2000:]}')
+    if line is None: raise SystemExit(f'measurement failed:\n{out.stdout[-2000:]}\n{out.stderr[-2000:]}')
     return json.loads(line)
 
 
-def best(body, n=3, key='ms', **kw):
-    "The fastest of `n` runs -- a cold import is a measure of the page cache, not the code."
-    runs = [run(body, **kw) for _ in range(n)]
-    return min(runs, key=lambda r: r.get(key, 0))
+def best(body, n=3, key='ms'):
+    "The fastest of `n` runs -- a cold import measures the page cache, not the code."
+    return min([run(body) for _ in range(n)], key=lambda r: r.get(key, 0))
 
 
 def table(rows, head):
     w = [max(len(str(r[i])) for r in [head, *rows]) for i in range(len(head))]
-    line = lambda r: '  '.join(str(c).ljust(w[i]) if i == 0 else str(c).rjust(w[i])
-                               for i, c in enumerate(r))
+    line = lambda r: '  '.join(str(c).ljust(w[i]) if i == 0 else str(c).rjust(w[i]) for i, c in enumerate(r))
     print(line(head))
     print('  '.join('-' * n for n in w))
     for r in rows: print(line(r))
@@ -88,14 +73,15 @@ heavy = sorted(m for m in {watch!r} if m in sys.modules)
 print(json.dumps(dict(ms=round(ms), rss=rss(), mods=len(sys.modules), heavy=heavy)))
 '''
 
+MODULES = ('leela', 'leela.desktop', 'leela_app', 'fasthtml.common', 'dhrishti.core',
+           'dhrishti.serving', 'leela.workspace', 'leela.blocks.runtime.kernels', 'leela.app')
+
 
 def imports():
     "Every module on the path from `leela_app` to a served page, measured on its own."
     print('\n## import cost — a fresh interpreter per row\n')
     rows = []
-    for mod in ('leela', 'leela.desktop', 'leela_app', 'fasthtml.common', 'dhrishti.core',
-                'dhrishti.serving', 'leela.workspace', 'leela.blocks.runtime.kernels',
-                'leela.app'):
+    for mod in MODULES:
         try: r = best(IMPORT.format(mod=mod, watch=WATCH))
         except SystemExit: rows.append((mod, 'n/a', 'n/a', 'n/a', 'not installed')); continue
         rows.append((mod, f"{r['ms']}ms", f"{r['rss']}MB", r['mods'], ' '.join(r['heavy']) or '—'))
