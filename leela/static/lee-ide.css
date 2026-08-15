@@ -691,7 +691,7 @@ kbd {
 .lee-history-turn { padding: 9px 0 12px; border-bottom: 1px solid var(--lee-border); }
 .lee-history-index {
   position: sticky; top: 0; z-index: 2; display: grid;
-  grid-template-columns: minmax(120px, auto) minmax(220px, 1fr) auto; align-items: center; gap: 10px;
+  grid-template-columns: minmax(120px, auto) minmax(220px, 1fr) auto auto; align-items: center; gap: 10px;
   padding: 7px 8px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1);
 }
 .lee-history-heading { display: flex; flex-direction: column; min-width: 0; }
@@ -699,6 +699,7 @@ kbd {
 .lee-history-heading span { overflow: hidden; color: var(--lee-fg4); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .lee-history-select { width: 100%; min-width: 0; font-family: var(--lee-mono); }
 .lee-history-runs { color: var(--lee-fg4); font: 9.5px/1 var(--lee-mono); white-space: nowrap; }
+.lee-history-resume { white-space: nowrap; }
 .lee-history-session-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 4px 4px; }
 .lee-history-session-head strong { color: var(--lee-fg); font-size: 11px; }
 .lee-history-session-head span { color: var(--lee-green); font-size: 9.5px; }

@@ -1545,6 +1545,25 @@ def test_history_groups_turns_by_context_session_without_rendering_every_turn():
     assert 'groups.find' in history
     assert "(s.models || []).map" in history
 
+def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(tmp_path):
+    "History was a read-only view: it showed the turns and left the model with none of them."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    model = ws.ai.model.name
+    ws.ai.history = [{'session': 'agent-a', 'at': 1, 'model': model, 'prompt': 'remember cedar', 'reply': 'noted'},
+                     {'session': 'agent-a', 'at': 2, 'model': model, 'prompt': 'what was it?', 'reply': 'cedar'}]
+    with TestClient(ide_app(ws)) as client:
+        d = client.post('/agent/resume', json={'session': 'agent-a'}).json()
+        missing = client.post('/agent/resume', json={'session': 'legacy-1'})
+    assert d['session'] == 'agent-a' and [t['prompt'] for t in d['turns']] == ['remember cedar', 'what was it?']
+    assert ws.ai.session_id == 'agent-a'
+    assert ws.ai.backend._resume_hist[-1] == {'role': 'assistant', 'content': 'cedar'}
+    assert missing.status_code == 400
+    assert "post('/agent/resume', {session: group.id})" in JS and 'lee-history-resume' in JS
+    assert "renderTurns(log, d.turns || [], 'resumed conversation')" in JS
+
 def test_routing_popover_closes_on_outside_click_and_escape():
     from leela.app import _agent_panel
     from leela.workspace import Workspace

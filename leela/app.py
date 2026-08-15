@@ -1643,6 +1643,16 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         return {'id': live.get('id'), 'path': live.get('path'), 'cells': live.get('cells', []),
                 'agent': list(ws.ai.history) if not session else [],
                 'inline': list(ws.inline_ai.history) if not session else []}
+    @rt('/agent/resume')
+    async def agent_resume(req):
+        "Continue a saved conversation: its turns go back into the model's context, and onto the screen."
+        d = await req.json()
+        if ws.ai.busy: return _fail('cannot resume while the agent is working', 409)
+        try: s = await _off_loop(ws.ai.resume_session, str(d.get('session') or 'latest'))
+        except Exception as e: return _fail(e)
+        return {'ok': True, 'session': s['id'], 'note': ws.ai.note,
+                'turns': [t for t in ws.ai.history if t.get('session') == s['id']]}
+
     @rt('/agent/new')
     async def agent_new():
         if ws.ai.busy: return _fail('cannot start a new conversation while the agent is working', 409)

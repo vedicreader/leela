@@ -566,12 +566,15 @@ async function showHistorySession(group, groups) {
     const label = `${sessionTime(s)} · ${models} · ${s.turns.length} turn${s.turns.length === 1 ? '' : 's'}`;
     return `<option value="${esc(s.id)}"${s.id === group?.id ? ' selected' : ''}>${esc(label)}</option>`;
   }).join('');
+  const resumable = !!group && !group.id.startsWith('legacy-') && (group.turns || []).length > 0;
   index.innerHTML = `<div class="lee-history-heading"><strong>History</strong>` +
     `<span>one continuous model context per session</span></div>` +
     `<select class="lee-select lee-history-select" aria-label="agent history session">${options}</select>` +
-    `<span class="lee-history-runs">${group?.code || 0} kernel run${group?.code === 1 ? '' : 's'}</span>`;
+    `<span class="lee-history-runs">${group?.code || 0} kernel run${group?.code === 1 ? '' : 's'}</span>` +
+    (resumable ? `<button class="lee-btn go lee-history-resume" title="Put these turns back into the model's context">Resume</button>` : '');
   index.querySelector('select')?.addEventListener('change', e =>
     showHistorySession(groups.find(s => s.id === e.target.value), groups));
+  index.querySelector('.lee-history-resume')?.addEventListener('click', () => leeAgentResume(group));
   log.appendChild(index);
   if (!group) { log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>'); return; }
   log.insertAdjacentHTML('beforeend', `<div class="lee-history-session-head"><strong>${esc(sessionTime(group))}</strong>` +
@@ -592,8 +595,21 @@ async function leeAgentHistory() {
   const d = await api('/agent/history');
   await showHistorySession((d.sessions || [])[0], d.sessions || []);
 }
+async function leeAgentResume(group) {
+  if (!group) return;
+  if (lee.agentBusy) return status('the model is already working', 'err');
+  try {
+    const d = await post('/agent/resume', {session: group.id});
+    const log = $('#agentlog');
+    if (log) { log.innerHTML = ''; renderTurns(log, d.turns || [], 'resumed conversation'); log.scrollTop = log.scrollHeight; }
+    lee.agentView = 'live'; lee.agentLive = log?.innerHTML || '';
+    $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus();
+    status(d.note || `resumed ${d.session}`, 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
 async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
 window.leeAgentNew = leeAgentNew;
+window.leeAgentResume = leeAgentResume;
 window.leeAgentHistory = leeAgentHistory;
 
 async function leeAgentState() {
