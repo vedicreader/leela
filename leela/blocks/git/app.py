@@ -44,6 +44,7 @@ def _apply(repo, op, d):
         'commit': lambda: repo.commit(d.get('message') or '', bool(d.get('amend'))),
         'fetch': lambda: repo.fetch(d.get('remote') or '', bool(d.get('prune', True))),
         'pull': lambda: repo.pull(),
+        'sync': lambda: repo.sync(d.get('how') or 'rebase', d.get('upstream') or ''),
         'push': lambda: repo.push(bool(d.get('publish')), bool(d.get('force_with_lease'))),
         'stash': lambda: repo.stash(d.get('message') or ''),
         'stash_pop': lambda: repo.stash_pop(d.get('ref') or 'stash@{0}'),
@@ -199,6 +200,11 @@ def connect(app, ctx):
         try:
             if not incoming: raise GitError('choose a branch to merge')
             return await off_loop(repo_at(repo).merge_preview, incoming)
+        except Exception as e: return fail(e)
+    @rt('/git/sync-plan')
+    async def git_sync_plan(repo: str = '', upstream: str = '', fetch: bool = False):
+        "You against your upstream, and every way back rehearsed. What the Sync dialog reads."
+        try: return await off_loop(repo_at(repo).divergence, upstream, fetch)
         except Exception as e: return fail(e)
     @rt('/git/rebase-preview')
     async def git_rebase_preview(onto: str = '', repo: str = ''):

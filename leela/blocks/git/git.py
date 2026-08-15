@@ -674,13 +674,34 @@ class GitRepo:
         for row in rows:
             row.update(stats.get(row['path'], {'additions': 0, 'deletions': 0, 'binary': False}))
         return rows
+    EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+    @staticmethod
+    def _merge_tree_out(r):
+        "`merge-tree --write-tree --name-only`: the tree it wrote, then the conflicted paths."
+        head, _, rest = r.stdout.partition('\n')
+        # Names run to the first blank line; git's own commentary follows it.
+        return head.strip(), [x for x in (l.strip() for l in rest.split('\n\n', 1)[0].splitlines()) if x]
     def _rehearse(self, ours, theirs):
         "Merge `theirs` into `ours` in memory: the files that would conflict, and whether any do."
         r = _run(self.root, 'merge-tree', '--write-tree', '--name-only', ours, theirs, check=False)
         if not r.returncode: return [], False
-        named = (x.strip() for x in r.stdout.splitlines()[1:])
-        return list(dict.fromkeys(
-            x for x in named if x and not x.startswith(('Auto-merging ', 'CONFLICT ')))), True
+        return list(dict.fromkeys(self._merge_tree_out(r)[1])), True
+    def _replay(self, onto, commits):
+        "Cherry-pick `commits` onto `onto` in memory. A rebase replays; rehearsing it must too."
+        at, done = onto, []
+        for c in commits:
+            parent = first(c['parents']) or self.EMPTY_TREE
+            # `commit-tree` only writes an unreferenced object, so it rehearses under the read lock.
+            r = _run(self.root, 'merge-tree', '--write-tree', '--name-only',
+                f'--merge-base={parent}', at, c['oid'], check=False)
+            tree, names = self._merge_tree_out(r)
+            if r.returncode or not tree:
+                return done, {'short': c['short'], 'subject': c['subject'], 'oid': c['oid'],
+                    'files': names, 'error': '' if tree else (r.stderr or r.stdout).strip()}
+            at = _run(self.root, 'commit-tree', tree, '-p', at, '-m', c['short'],
+                kind='read').stdout.strip()
+            done.append(c['short'])
+        return done, None
     def _side_by_side(self, path, left, right, from_label, to_label, patch):
         "Both versions of one file and the patch between them, decoded when it is a notebook."
         if not str(path).lower().endswith('.ipynb'): return left, right, patch
@@ -767,6 +788,57 @@ class GitRepo:
             | self._in_the_way()
             | {'merge_base': merge_base, 'conflicts': conflicts, 'conflict_likely': likely,
                 'review': self.review(current, incoming, 'review')})
+    SYNC_OPS = ('fast-forward', 'merge', 'rebase', 'reset')
+    def divergence(self, upstream='', fetch=False):
+        "This branch against its upstream, and every way back with its conflicts rehearsed."
+        branch = self.run('branch', '--show-current').strip()
+        if not branch: raise GitError('cannot sync a detached HEAD')
+        if fetch: self.fetch()
+        up = str(upstream or '').strip() or self._ask('rev-parse', '--abbrev-ref', '@{upstream}')
+        out = {'branch': branch, 'upstream': up, 'ahead': 0, 'behind': 0, 'relation': 'no-upstream',
+            'ours': [], 'theirs': [], 'merge_base': '', 'options': [], 'recommended': ''} | self._in_the_way()
+        if not up: return out
+        head, other = self._resolve_ref('HEAD'), self._resolve_ref(up)
+        counts = self.run('rev-list', '--left-right', '--count', f'{other}...{head}').split()
+        behind, ahead = map(int, counts) if len(counts) == 2 else (0, 0)
+        ours = self.history(limit=250, ref=f'{other}..{head}')
+        theirs = self.history(limit=250, ref=f'{head}..{other}')
+        relation = ('identical' if head == other else 'ahead' if not behind
+            else 'fast-forward' if not ahead else 'diverged')
+        merged, likely = self._rehearse(head, other) if behind and ahead else ([], False)
+        replayed, stopped = self._replay(other, list(reversed(ours))) if behind and ahead else ([], None)
+        blocked = '' if out['clean'] else f"{_plural(len(out['dirty']), 'tracked file')} uncommitted"
+        opts = [
+            {'op': 'fast-forward', 'label': f'Fast-forward to {up}', 'commits': behind,
+                'available': bool(behind) and not ahead, 'conflicts': [], 'note': blocked or
+                ('nothing to fast-forward' if not behind else
+                 f'{_plural(ahead, "commit")} of yours would be left behind' if ahead else '')},
+            {'op': 'merge', 'label': f'Merge {up} into {branch}', 'commits': behind,
+                'available': bool(behind), 'conflicts': merged, 'note': blocked or
+                (f'{_plural(len(merged), "file")} would conflict, resolved once' if likely else '')},
+            {'op': 'rebase', 'label': f'Rebase {branch} onto {up}', 'commits': ahead,
+                'available': bool(behind and ahead), 'conflicts': (stopped or {}).get('files') or [],
+                'stops_at': stopped, 'replayed': len(replayed), 'note': blocked or
+                (f'stops replaying at {stopped["short"]} — {shorten(stopped["subject"], 50)}'
+                 if stopped else '')},
+            {'op': 'reset', 'label': f'Discard {branch} and take {up}', 'commits': ahead,
+                'available': bool(behind), 'conflicts': [], 'destructive': True,
+                'note': f'{_plural(ahead, "commit")} of yours would be lost' if ahead else ''},
+        ]
+        out |= {'ahead': ahead, 'behind': behind, 'relation': relation, 'ours': ours, 'theirs': theirs,
+            'merge_base': self._ask('merge-base', head, other), 'options': opts}
+        out['recommended'] = ('' if not behind else 'fast-forward' if not ahead
+            else 'rebase' if not stopped else 'merge' if not likely else 'merge')
+        return out
+    def sync(self, how='rebase', upstream=''):
+        "Reconcile with the upstream the way the plan named."
+        if how not in self.SYNC_OPS: raise GitError(f'sync must be one of {", ".join(self.SYNC_OPS)}')
+        up = str(upstream or '').strip() or self._ask('rev-parse', '--abbrev-ref', '@{upstream}')
+        if not up: raise GitError('this branch has no upstream to sync with')
+        if how == 'fast-forward': return self.pull()
+        if how == 'merge': return self._guarded('merge', lambda: self._attempt('merge', '--no-edit', up), autostash=True)
+        if how == 'rebase': return self._guarded('rebase', lambda: self._attempt('rebase', '--autostash', up))
+        return self._guarded('reset', lambda: self._mutate('reset', '--hard', up).strip())
     def rebase_preview(self, onto):
         "Describe replaying current-only commits on `onto` before mutating history."
         current = self.run('branch', '--show-current').strip()
@@ -774,11 +846,13 @@ class GitRepo:
         current_oid, onto_oid = self._resolve_ref('HEAD'), self._resolve_ref(onto)
         base = self._ask('merge-base', current_oid, onto_oid)
         if not base: raise GitError(f'{current} and {onto} do not share a merge base')
-        conflicts, likely = self._rehearse(onto_oid, current_oid)
+        commits = self.history(limit=250, ref=f'{onto_oid}..{current_oid}')
+        replayed, stopped = self._replay(onto_oid, list(reversed(commits)))
         return ({'current': current, 'onto': str(onto)}
             | self._in_the_way()
-            | {'merge_base': base, 'commits': self.history(limit=250, ref=f'{onto_oid}..{current_oid}'),
-                'conflicts': conflicts, 'conflict_likely': likely,
+            | {'merge_base': base, 'commits': commits, 'replayed': len(replayed),
+                'conflicts': (stopped or {}).get('files') or [], 'conflict_likely': bool(stopped),
+                'stops_at': stopped,
                 'already_based': base == onto_oid, 'review': self.review(onto, current, 'review')})
     def compare(self, left, right):
         "Compare the complete snapshots at two refs, from `left` to `right`."

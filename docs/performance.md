@@ -143,16 +143,19 @@ nothing at hunk level, though `_patch_hunks` and `apply_patch` already exist for
 
 In order:
 
-1. **`GitRepo.divergence()`** — one call: upstream, ahead/behind, dirty state, and each option
-   (fast-forward, merge, rebase, reset-to-upstream, stash-first) rehearsed with its predicted
-   conflicts and commit counts. Route `/git/sync-plan`. This is the missing primitive;
-   everything below reads it.
+1. ~~**`GitRepo.divergence()`**~~ — done. Upstream, ahead/behind, dirty state, and each option
+   (fast-forward, merge, rebase, reset) rehearsed with its conflicts and commit counts, behind
+   `/git/sync-plan`. `sync(how)` performs the chosen one through `_guarded`. `classify()` needed
+   no new entries: `pull --rebase` and `rebase --onto` already fall through to `write`.
 2. **A Sync dialog** replacing "Update Project" whenever ahead and behind are both non-zero,
    driven by that plan — and delete the two direct `gitDo` calls in `28_branchbar.js` so both
    menus rehearse.
-3. **Honest rebase rehearsal** — replay each commit onto the moving base with `merge-tree` and
-   report the first that conflicts, by subject. This is what a walkthrough narrates, and it
-   fixes 3 above.
+3. ~~**Honest rebase rehearsal**~~ — done. `_replay` cherry-picks each commit onto the
+   accumulated result with `merge-tree --merge-base`, wrapping each tree back into a commit with
+   `commit-tree` so the next step has a commit-ish, and reports the first commit that will not
+   apply by subject. `rebase_preview` and `divergence` both use it; `_rehearse` stays for merge,
+   which is the shape it was always right for. Its `--name-only` output is now parsed to the
+   first blank line rather than by string prefix.
 4. **Agent tools over the existing methods** — read-only first (`git_divergence`,
    `git_merge_preview`, `git_rebase_preview`, `git_conflicts`, `git_compare`), then guarded
    writes (`git_merge`, `git_rebase`, `git_resolve`, `git_operation`) through the approvals path

@@ -1,10 +1,10 @@
 GET /{fname:path}.{ext:static}
 GET,POST /
 GET,POST /agent/approval
-GET,POST /agent/attachment
 GET,POST /agent/approval/request
 GET,POST /agent/approve
 GET,POST /agent/ask
+GET,POST /agent/attachment
 GET,POST /agent/branches
 GET,POST /agent/budget
 GET,POST /agent/budget/state
@@ -16,7 +16,6 @@ GET,POST /agent/fork
 GET,POST /agent/history
 GET,POST /agent/info
 GET,POST /agent/memory
-GET,POST /agent/new
 GET,POST /agent/memory/delete
 GET,POST /agent/memory/save
 GET,POST /agent/memory/select
@@ -24,6 +23,7 @@ GET,POST /agent/model
 GET,POST /agent/models
 GET,POST /agent/models/add
 GET,POST /agent/models/remove
+GET,POST /agent/new
 GET,POST /agent/read-outside
 GET,POST /agent/retry-tool
 GET,POST /agent/revise
@@ -50,6 +50,7 @@ GET,POST /agent/stream
 GET,POST /agent/tool-preview
 GET,POST /agent/transcript
 GET,POST /agent/turn-transaction
+GET,POST /agent/workspace-repo-writes
 GET,POST /browser/attach
 GET,POST /browser/close
 GET,POST /browser/markdown
@@ -112,7 +113,6 @@ GET,POST /fs/remove-root
 GET,POST /fs/rename
 GET,POST /git/action
 GET,POST /git/blame
-GET,POST /git/tree/action
 GET,POST /git/clone
 GET,POST /git/clone/status
 GET,POST /git/commit
@@ -135,6 +135,8 @@ GET,POST /git/repos/action
 GET,POST /git/resources
 GET,POST /git/review
 GET,POST /git/review/file
+GET,POST /git/sync-plan
+GET,POST /git/tree/action
 GET,POST /history/operations
 GET,POST /history/redo
 GET,POST /history/undo
@@ -238,7 +240,6 @@ GET,POST /vars/expand
 GET,POST /vars/grid
 GET,POST /vars/promote
 GET,POST /vars/set
-GET,POST /agent/workspace-repo-writes
 GET,POST /vault/access
 GET,POST /vault/activate
 GET,POST /vault/attach
