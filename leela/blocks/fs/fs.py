@@ -5,6 +5,7 @@ import os, re
 from dataclasses import dataclass
 from fastcore.all import Path, L, globtastic, atomic_save, mkdir as fc_mkdir
 from fastcore.shutil import move as fc_move
+from fastcore.xtras import flexicache, time_policy
 
 from ... import Dictable
 
@@ -33,6 +34,15 @@ MAX_EDIT_BYTES = 4_000_000
 
 class Unsafe(Exception):
     "A path that resolves outside every open root, or an operation refused for safety."
+
+@flexicache(time_policy(2), maxsize=16)
+def _walked(roots, hidden, limit):
+    out = L()
+    for r in roots:
+        out += globtastic(r, skip_folder_re=_SKIP_RE, skip_file_re=None if hidden else r'^\.',
+            folder_re=None if hidden else r'^[^.]', func=Path)
+        if len(out) >= limit: break
+    return out[:limit]
 
 def lang_for(p):
     "Language id for a path, including conventional extensionless project files."
@@ -102,12 +112,8 @@ class Sandbox:
         return L(p.ls()).filter(keep).sorted(key=lambda c: (not c.is_dir(), c.name.lower())).map(self.entry)
     def walk(self, ref=None, hidden=False, limit=20000):
         "Every file under `ref` (or all roots), for quick-open, capped at `limit`."
-        out = L()
-        for r in (self.roots if ref is None else [self._check(ref, must_exist=True)]):
-            out += globtastic(r, skip_folder_re=_SKIP_RE, skip_file_re=None if hidden else r'^\.',
-                folder_re=None if hidden else r'^[^.]', func=Path)
-            if len(out) >= limit: break
-        return out[:limit]
+        roots = self.roots if ref is None else L([self._check(ref, must_exist=True)])
+        return _walked(tuple(str(r) for r in roots), hidden, limit)
     def read(self, ref):
         "Text contents of a file. Refuses binaries and anything too big to sanely edit."
         p = self._check(ref, must_exist=True)

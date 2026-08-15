@@ -2990,6 +2990,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     if (lee.activeEditor==='secondary' && lee.editors.get('secondary') && lee.secondaryPath) {
       const path=lee.secondaryPath,base_disk_version=draftBaseFor(path);
       const d=await post('/nb/save',{path,text:normalizeSavedText(LeeCM.getDoc(lee.editors.get('secondary'))),base_disk_version,force});
+      noteSelfWrite(path);
       lee.buffers.delete(path);lee.dirtyBuffers.delete(path);await clearDrafts(path);
       saveTabEl = $$('.lee-tab').find(x=>x.title===path); saveTabEl?.classList.remove('dirty');
       setTabSaveState(saveTabEl, 'saved');
@@ -3033,6 +3034,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     saveTabEl?.classList.remove('dirty');
     setTabSaveState(saveTabEl, 'saved');
     if (!quiet) status('saved', 'ok');
+    noteSelfWrite(documentKey, lee.path);
     refreshProjectPills();
     refreshOpenGitMarks();      // a notebook's marks are per cell, a file's per line
     if (lee.path?.endsWith('/pyproject.toml')) refreshPackageVersions();
@@ -3899,7 +3901,7 @@ function renderTurns(log, turns, heading) {
 }
 const sessionTime = s => s.started ? new Date(s.started * 1000).toLocaleString() : s.id.replace(/^agent_/, '');
 async function showHistorySession(group, groups) {
-  const log = $('#agentlog'); if (!log) return; log.innerHTML = '';
+  const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
   const index = document.createElement('nav'); index.className = 'lee-history-index';
   const options = (groups || []).map(s => {
     const models = (s.models || []).map(m => m.split('/').pop()).join(' + ') || 'execution';
@@ -3946,7 +3948,7 @@ async function leeAgentResume(group) {
     status(d.note || `resumed ${d.session}`, 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
 }
-async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
+async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; approvalCards.clear(); const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
 window.leeAgentNew = leeAgentNew;
 window.leeAgentResume = leeAgentResume;
 window.leeAgentHistory = leeAgentHistory;
@@ -4092,7 +4094,8 @@ function agentLog(html) {
 /* A write pauses Rishi's tool loop until it is answered. Keep the question in the agent
  * pane rather than a modal, so the rest of the IDE remains usable while the model waits.
  * The same event is used by agent-chat and notebook prompt-cell streams. */
-const approvalCards = new Map(), resolvedProposalCards = [];
+// Cleared wherever the log is: these are its nodes, and a detached one is held forever.
+const approvalCards = new Map();
 function proposalArgs(card) {
   const schema = card._schema, args = {};
   for (const field of (schema?.fields || [])) {
@@ -4271,7 +4274,6 @@ function showApproval(a) {
       const resolvedTool = ok ? tool : a.tool;
       card.dataset.tool = resolvedTool; card.dataset.resolvedTool = resolvedTool;
       card.dataset.retryable = String(!!byName.get(resolvedTool)?.retryable);
-      resolvedProposalCards.push(card);
       $('.lee-approval-actions', card).innerHTML = `<span>${ok ? (changed ? 'Edited call is running' : 'Running approved tool') : (note ? 'Not run · your direction was sent to the agent' : 'Not run')}</span>` +
         (ok && card.dataset.retryable === 'true' ? `<button class="lee-btn" data-retry title="Run this read-only tool again without changing the conversation">Run again</button>` : '') +
         (ok && ['edit_file','create_file'].includes(resolvedTool) ? `<button class="lee-btn warn" data-rollback disabled>Undo file change</button>` : '');
@@ -4449,6 +4451,13 @@ async function pollApproval() {
     const r = await api('/agent/approval');
     if (r.pending) showApproval(r.pending);
   } catch (_) {}
+}
+
+// Fast while the model is working -- an approval must not sit unseen. Idle, nothing can raise
+// one but a background job, and a window nobody is looking at can raise nothing at all.
+async function approvalLoop() {
+  if (!document.hidden) await pollApproval();
+  setTimeout(approvalLoop, document.hidden ? 5000 : lee.agentBusy ? 750 : 5000);
 }
 
 function readableDetail(value) {
@@ -5202,7 +5211,7 @@ window.leeLogFilter = leeLogFilter; window.leeLogClear = leeLogClear; window.lee
 lee.runSeen = new Map(); lee.runFinished = new Set();
 async function pollRunLogs() {
   let servers = [];
-  try { servers = (await api('/dev/list')).servers || []; } catch (_) { return; }
+  try { servers = (await api('/dev/list')).servers || []; } catch (_) { return false; }
   for (const srv of servers) {
     const path = srv.path || srv.script || '';
     if (!path) continue;
@@ -5221,6 +5230,13 @@ async function pollRunLogs() {
       if (failed) { leeLogFilter('runs'); leeDock('logs'); status(`${srv.label || path.split('/').pop()} failed — exit ${srv.returncode}`, 'err'); }
     }
   }
+  return servers.length;
+}
+
+// A dev server's output has to arrive promptly; an empty list has nothing to say for 15s.
+async function runLogLoop() {
+  const busy = await pollRunLogs();
+  setTimeout(runLogLoop, busy ? 2000 : 15000);
 }
 
 function leeDock(which) {
@@ -5550,13 +5566,15 @@ window.leeTheme = leeTheme; window.leeEditorSettings = editorSettings;
 
 /* ---------------------------------------------------------- cwd and source control */
 function paintGitTree(d) {
+  const rows = new Map();   // indexed once, not re-queried and rescanned per change
+
   $$('.lee-file').forEach(row => {
     row.classList.remove('git-modified', 'git-staged', 'git-untracked', 'git-conflict');
     row.querySelectorAll('.lee-tree-git').forEach(badge => badge.remove());
+    rows.set(row.dataset.path, row);
   });
   for (const c of (d.changes || [])) {
-    const path = d.root + '/' + c.path;
-    const row = $$('.lee-file').find(x => x.dataset.path === path); if (!row) continue;
+    const row = rows.get(d.root + '/' + c.path); if (!row) continue;
     const state = c.conflicted ? 'conflict' : c.untracked ? 'untracked' : c.staged && !c.unstaged ? 'staged' : 'modified';
     row.classList.add('git-' + state);
     const badge = document.createElement('span'); badge.className = 'lee-tree-git'; badge.textContent = state[0].toUpperCase();
@@ -7589,8 +7607,7 @@ async function showGitConflict(path) {
           `anyway, markers and all?`, 'stage anyway')) return;
       const next = await gitDo('resolve_conflict', {path, choice: 'resolved', content});
       m.remove();
-      renderGitPanel(next);
-      status(next.outcome?.summary || `${path} staged as resolved`, 'ok');
+      afterConflictResolved(next, `${path} staged`);
     };
     refresh(d.worktree || '', true);
     jumpTo(0);
@@ -7613,9 +7630,7 @@ async function showWholeSideConflict(path, d) {
     const choice = b.dataset.choice;
     if (!await confirmDialog('resolve conflict', `Use ${choice} for ${path} and stage it as resolved?`, 'resolve')) return;
     m.remove();
-    const next = await gitDo('resolve_conflict', {path, choice});
-    renderGitPanel(next);
-    status(next.outcome?.summary || `${path} staged as resolved`, 'ok');
+    afterConflictResolved(await gitDo('resolve_conflict', {path, choice}), `${path} staged`);
   });
 }
 
@@ -8322,9 +8337,16 @@ async function quickOpen(searchMode) {
   };
   const go = () => { const h = hits[sel]; if (h) { m.remove(); leeOpenFile(h.path); } };
   list.addEventListener('click', e => { const r = e.target.closest('.lee-mrow'); if (r) { sel = +r.dataset.i; go(); } });
-  input.addEventListener('input', async () => {
-    const q = input.value.trim();
-    hits = (await api('/fs/find?q=' + encodeURIComponent(q))).hits; sel = 0; paint();
+  // Each search walks the whole tree, so it is debounced and sequenced like the folder picker.
+  let seq = 0, timer = null;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const mine = ++seq, q = input.value.trim();
+      const found = (await api('/fs/find?q=' + encodeURIComponent(q))).hits;
+      if (mine !== seq) return;
+      hits = found; sel = 0; paint();
+    }, 120);
   });
   paint(); setTimeout(() => input.focus(), 0);
 }
@@ -8996,27 +9018,88 @@ function treeCollapse() {
   }
   selectTreeNode(n.parentElement?.closest('.lee-node.lee-dir') || n);
 }
+/* The open folders go up with the request and come back drawn: one round trip, not one each. */
 async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = true) {
   const old = $('.lee-files'); if (!old) return;
-  const open = $$('.lee-dir[open]', old).map(n => n.dataset.path).sort((a, b) => a.split('/').length - b.split('/').length);
+  const open = $$('.lee-dir[open]', old).map(n => n.dataset.path);
   const scrollTop = $('#filetree')?.scrollTop || 0;
-  const html = await fetch('/files/panel' + treeQuery()).then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
+  const q = new URLSearchParams();
+  if (treeHidden()) q.set('hidden', '1');
+  if (open.length) q.set('open', open.join('\n'));
+  const html = await fetch('/files/panel?' + q).then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
   const doc = new DOMParser().parseFromString(html, 'text/html'), fresh = doc.querySelector('.lee-files');
   if (!fresh) throw new Error('file tree refresh returned no panel');
   old.replaceWith(fresh); htmx.process(fresh); paintHiddenBtn();
-  for (const path of open) {
-    const dir = $$('.lee-dir').find(n => n.dataset.path === path); if (!dir) continue;
-    dir.open = true;
-    const kids = dir.querySelector(':scope > .lee-kids');
-    const childHtml = await fetch('/tree?path=' + encodeURIComponent(path) + treeQuery('&'),
-                                  {headers: {'HX-Request': 'true'}}).then(r => r.text());
-    kids.innerHTML = childHtml; htmx.process(kids);
-  }
   const wanted = $$('.lee-node').find(n => n.dataset.path === selectPath) || visibleTreeNodes()[0];
   selectTreeNode(wanted); if ($('#filetree')) $('#filetree').scrollTop = scrollTop;
   if (focus) setScope('files');
   status('files refreshed', 'ok');
 }
+
+/* Pushed, not polled: an agent edit, a terminal command or another editor used to stay
+   invisible until someone refreshed. A push never rebuilds the panel -- it reconciles the
+   folders that changed and leaves every other row, its expansion and the scroll alone. */
+const selfWrites = new Map();
+const SELF_WRITE_MS = 4000;
+function noteSelfWrite(...paths) { for (const p of paths) if (p) selfWrites.set(p, performance.now()); }
+function notMine(paths) {
+  const now = performance.now();
+  for (const [p, at] of selfWrites) if (now - at > SELF_WRITE_MS) selfWrites.delete(p);
+  return paths.filter(p => !selfWrites.has(p));
+}
+window.noteSelfWrite = noteSelfWrite;
+
+const GIT_MARKS = ['git-modified', 'git-staged', 'git-untracked', 'git-conflict'];
+function syncTreeRow(row, fresh) {
+  if (row.classList.contains('lee-dir')) return;
+  row.classList.remove(...GIT_MARKS);
+  for (const c of GIT_MARKS) if (fresh.classList.contains(c)) row.classList.add(c);
+  row.querySelectorAll('.lee-tree-git').forEach(b => b.remove());
+  const badge = fresh.querySelector('.lee-tree-git');
+  if (badge) row.appendChild(badge.cloneNode(true));
+}
+// Rows that are still there stay where they are, with whatever they had open inside them.
+async function patchTreeDir(dir) {
+  const kids = dir.querySelector(':scope > .lee-kids'); if (!kids) return;
+  const html = await fetch('/tree?path=' + encodeURIComponent(dir.dataset.path) + treeQuery('&'),
+                           {headers: {'HX-Request': 'true'}}).then(r => r.text());
+  const box = document.createElement('div'); box.innerHTML = html;
+  const have = new Map([...kids.children].map(n => [n.dataset.path, n]));
+  [...box.children].forEach((fresh, i) => {
+    const row = have.get(fresh.dataset.path) || fresh;
+    if (have.has(fresh.dataset.path)) { syncTreeRow(row, fresh); have.delete(fresh.dataset.path); }
+    if (kids.children[i] !== row) kids.insertBefore(row, kids.children[i] || null);
+  });
+  have.forEach(n => n.remove());
+  htmx.process(kids);
+}
+async function patchTree(paths) {
+  const dirs = new Set(paths.map(p => p.replace(/\/[^/]+$/, '')));
+  await Promise.all($$('.lee-dir[open]').filter(n => dirs.has(n.dataset.path)).map(patchTreeDir));
+}
+async function refreshGitTreeMarks() {
+  try { paintGitTree(await api(gitUrl('/git/info'))); } catch (_) {}
+}
+
+let fsWatchTimer = null, fsWatchSeen = [];
+function watchFiles() {
+  const es = new EventSource('/fs/events');
+  es.addEventListener('changed', e => {
+    try { fsWatchSeen.push(...JSON.parse(e.data).paths); } catch (_) { return; }
+    clearTimeout(fsWatchTimer);
+    fsWatchTimer = setTimeout(async () => {
+      const all = fsWatchSeen; fsWatchSeen = [];
+      const theirs = notMine(all);
+      // Our own save changed no filenames, only what git thinks of one.
+      if (theirs.length) await patchTree(theirs).catch(() => {});
+      await refreshGitTreeMarks();
+      if (theirs.some(p => p === lee.path)) { refreshOpenGitMarks(); watchOpenFile(); }
+    }, 250);
+  });
+  es.onerror = () => { es.close(); setTimeout(watchFiles, 3000); };
+  return es;
+}
+window.watchFiles = watchFiles;
 
 async function treeGitAction(op) {
   const node = treeSel();
@@ -9053,6 +9136,7 @@ async function newEntry(kind) {
                                  kind === 'dir' ? 'folder name' : 'filename.py');
   if (!name) return;
   const r = await post('/fs/new', {parent, name, kind});
+  noteSelfWrite(r.entry.path);
   status('created ' + name, 'ok');
   await refreshFileTree(r.entry.path);
   if (kind === 'file') leeOpenFile(r.entry.path);
@@ -9063,6 +9147,7 @@ async function renameEntry() {
   const name = await inputDialog('rename', 'name', old);
   if (!name || name === old) return;
   const r = await post('/fs/rename', {path: sel.dataset.path, name});
+  noteSelfWrite(sel.dataset.path, r.entry.path);
   await refreshFileTree(r.entry.path);
 }
 async function deleteEntry() {
@@ -9073,6 +9158,7 @@ async function deleteEntry() {
     : 'This permanently deletes the file from disk.';
   if (lee.filePrefs.confirmDelete !== false && !await confirmDialog('delete ' + name + ' from disk', warning, 'delete')) return;
   const parent = sel.parentElement?.closest('.lee-node.lee-dir')?.dataset.path;
+  noteSelfWrite(sel.dataset.path);
   await post('/fs/delete', {path: sel.dataset.path});
   await refreshFileTree(parent);
 }
@@ -9478,10 +9564,10 @@ async function boot() {
   observeEditorWidth();
   checkProjectRuntime();
   leeVars();
-  setInterval(leeVars, 2500);          // the kernel's own inspector is the source of truth; poll it
-  setInterval(watchOpenFile, 1000);    // agent, terminal and git writes appear without a page refresh
+  setInterval(whenVisible(leeVars), 2500);   // the kernel's own inspector is the source of truth
+  setInterval(watchOpenFile, 10000);   // a backstop: /fs/events is what actually reports a write
   pollApproval();
-  setInterval(pollApproval, 750);       // catches Rishi approvals raised outside an agent SSE stream
+  approvalLoop();                       // catches Rishi approvals raised outside an agent SSE stream
   applyTheme(readTheme());   // also rewrites a pre-family value into `family:mode`
   // The first paint is server-rendered, so the welcome screen is already on the page when
   // Leela opens on no folder; only its recent list needs filling in.
@@ -9489,11 +9575,16 @@ async function boot() {
   // The first paint is server-rendered without the preference, so it is only wrong when set.
   paintHiddenBtn(); if (treeHidden()) refreshFileTree(undefined, false).catch(() => {});
   refreshProjectPills();
-  setInterval(refreshKernelPill, 5000);
-  setInterval(refreshProjectPills, 5000);
-  setInterval(pollRunLogs, 2000);      // only does anything while the logs pane is open
+  setInterval(whenVisible(refreshKernelPill), 5000);
+  // The pills change only when a root or the cwd does, and every one of those already calls
+  // `refreshProjectPills`. Polling them was 24 requests a minute saying nothing.
+  runLogLoop();
+  watchFiles();
   status('ready', 'ok');
 }
+
+// A window nobody is looking at asks for nothing.
+const whenVisible = fn => () => { if (!document.hidden) fn(); };
 
 document.addEventListener('DOMContentLoaded', boot);
 
@@ -9684,12 +9775,26 @@ async function showConflictCenter() {
     $('[data-safe]', m).onclick = async () => {
       if (!await confirmDialog('Resolve safe conflicts', `Stage ${s.safe} deterministic resolution${s.safe === 1 ? '' : 's'}?`, 'resolve')) return;
       const next = await gitDo('resolve_safe_conflicts', {paths: files.filter(f => f.safe).map(f => f.path)});
-      m.remove(); renderGitPanel(next); status('safe conflicts resolved; review remaining files', 'ok');
-      if ((next.changes || []).some(x => x.conflicted)) showConflictCenter();
+      m.remove(); afterConflictResolved(next, `${s.safe} resolved`);
     };
   } catch (e) { leeFail('git', 'resolve conflicts', e); }
 }
 window.showConflictCenter = showConflictCenter;
+
+// One file resolved is not the task: step to the next, and finish the operation when none remain.
+async function afterConflictResolved(d, done = '') {
+  renderGitPanel(d);
+  const left = (d.changes || []).filter(x => x.conflicted).map(x => x.path);
+  if (left.length) {
+    status(`${done}${done ? ' · ' : ''}${left.length} file${left.length === 1 ? '' : 's'} still conflicted`, 'ok');
+    return showGitConflict(left[0]);
+  }
+  const op = (d.operation || {}).active;
+  if (!op) return status(done || 'every conflict is resolved', 'ok');
+  if (!await confirmDialog(`continue the ${op}`, 'Every conflict is resolved and staged.', 'continue')) return;
+  renderGitPanel(await gitDo('operation_continue'));
+}
+window.afterConflictResolved = afterConflictResolved;
 /* ---- vault reader: a document from the vault, as an editor tab ---- */
 
 function vaultSectionRows(sections, active) {
@@ -9879,14 +9984,28 @@ function branchActions(anchor, d, b) {
     }},
     {separator: true},
     {label: 'Compare with current', detail: `${d.branch} … ${leaf}`, disabled: b.current, run: () => compareBranch(d, b.name)},
-    {label: `Rebase ${d.branch} onto ${leaf}`, disabled: b.current, run: () => gitDo('rebase', {branch: b.name})},
-    {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => gitDo('merge', {branch: b.name})},
+    // Through the previews, as the git panel's identical entries go.
+    {label: `Rebase ${d.branch} onto ${leaf}`, disabled: b.current, run: () => showRebasePreview(b.name, d, branchAct)},
+    {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => showMergePreview(b.name, d, branchAct)},
   ];
   if (!b.remote && !b.current) rows.push({separator: true}, {label: `Delete ${leaf}`, warn: true, run: async () => {
     if (await confirmDialog('delete branch', `Delete ${b.name}? Commits only on it are lost.`, 'delete'))
       gitDo('delete', {branch: b.name, force: !b.merged});
   }});
   openChromeMenu(anchor, rows);
+}
+
+// Where "why is this divergent" usually starts: the PR, and whether its base moved under it.
+async function branchPr(d) {
+  const r = await api(gitUrl('/git/pr', {branch: d.branch})).catch(() => null);
+  const pr = r?.pr;
+  if (!pr) return {id: 'pr', label: 'Pull request', detail: r?.note || 'unavailable', run: () => status(r?.note || 'no pull request', 'ok')};
+  const c = pr.checks || {};
+  const health = c.failing?.length ? `${c.failing.length} check${c.failing.length === 1 ? '' : 's'} red`
+              : c.pending ? `${c.pending} check${c.pending === 1 ? '' : 's'} running` : 'checks green';
+  return {id: 'pr', label: `#${pr.number} ${pr.title}`.slice(0, 60),
+    detail: `${pr.base}${pr.behind_base ? ` · ${pr.behind_base} behind base` : ''} · ${health}`,
+    run: () => window.open(pr.url, '_blank')};
 }
 
 function branchTopActions(d) {
@@ -9901,8 +10020,10 @@ function branchTopActions(d) {
   ];
 }
 
+const branchAct = async (op, extra = {}) => { const d = await gitDo(op, extra); refreshScmIfOpen(d); return d; };
+
 function runBranchAction(id, d) {
-  if (id === 'update') return gitDo('pull');
+  if (id === 'update') return d.ahead && d.behind ? showSyncPlan(d) : gitDo('pull');
   if (id === 'push') return leeGitQuick('push');
   if (id === 'commit') { gitUI.tab = 'changes'; leeLeft('git'); return leeGitRefresh(); }
   if (id === 'clone') return leeCloneRepo();
@@ -9931,10 +10052,11 @@ async function leeBranchMenu(anchor) {
   search = m.querySelector('#branchsearch');
   const list = m.querySelector('#branchlist');
 
+  let prRow = null;
   const paint = () => {
     const q = search.value.trim().toLowerCase();
     const hit = text => !q || String(text).toLowerCase().includes(q);
-    const acts = branchTopActions(d).filter(a => hit(a.label));
+    const acts = [...branchTopActions(d), ...(prRow ? [prRow] : [])].filter(a => hit(a.label));
     const all = (d.branches || []).filter(b => hit(`${b.name} ${b.subject} ${b.author}`));
     const near = recent.map(n => all.find(b => b.name === n && !b.current)).filter(Boolean);
     const rest = all.filter(b => !near.includes(b));
@@ -9960,13 +10082,46 @@ async function leeBranchMenu(anchor) {
     const row = e.target.closest('[data-branch]');
     if (row) { m.remove(); return switchBranch(d, row.dataset.branch); }
     const act = e.target.closest('[data-act]');
-    if (act) { m.remove(); return runBranchAction(act.dataset.act, d); }
+    if (act) { m.remove(); return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d); }
   };
   search.oninput = paint;
   paint();
+  branchPr(d).then(r => { prRow = r; paint(); });
   setTimeout(() => search.focus(), 0);
 }
 window.leeBranchMenu = leeBranchMenu;
+
+/* ------------------------------------------------------------------ diverged */
+// `pull` is --ff-only, so a diverged branch had nowhere to go. Every way out, rehearsed.
+async function showSyncPlan(d) {
+  try {
+    const p = await api(gitUrl('/git/sync-plan', {fetch: 1}));
+    if (!p.upstream) return status(`${p.branch} has no upstream — publish it first`, 'err');
+    if (!p.behind) return status(p.ahead ? `${p.ahead} ahead, nothing to pull` : 'already up to date', 'ok');
+    const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
+    const why = o => o.conflicts.length
+      ? `${o.conflicts.length} file${o.conflicts.length === 1 ? '' : 's'} conflict · ${o.conflicts.slice(0, 4).map(esc).join(' · ')}${o.note ? ' · ' + esc(o.note) : ''}`
+      : o.note ? esc(o.note) : 'nothing conflicts in the rehearsal';
+    const row = o => `<label class="lee-syncopt${o.available ? '' : ' off'}${o.destructive ? ' warn' : ''}">` +
+      `<input type="radio" name="how" value="${o.op}"${o.op === p.recommended ? ' checked' : ''}${o.available ? '' : ' disabled'}>` +
+      `<span><strong>${esc(o.label)}</strong><span class="sub">${why(o)}</span></span></label>`;
+    const m = modal(`<div class="lee-mhead">Sync ${esc(p.branch)}<span class="sub">${p.ahead} ahead · ${p.behind} behind ${esc(p.upstream)}</span></div>` +
+      `<div class="lee-git-merge-preview"><header><strong>${p.relation === 'diverged' ? 'The branches have diverged' : 'Behind the upstream'}</strong>` +
+      `<span>${p.ours.length} commit${p.ours.length === 1 ? '' : 's'} of yours · ${p.theirs.length} of theirs</span></header>${dirty}` +
+      `<div class="lee-syncopts">${p.options.map(row).join('')}</div></div>` +
+      `<div class="lee-mfoot"><button class="lee-btn go" data-sync>sync</button><button class="lee-btn" data-close>cancel</button></div>`);
+    $('[data-close]', m).onclick = () => m.remove();
+    $('[data-sync]', m).onclick = async () => {
+      const how = $('input[name=how]:checked', m)?.value; if (!how) return;
+      const o = p.options.find(x => x.op === how);
+      if (o.destructive && !await confirmDialog(`discard ${p.branch}`, `${o.note || 'This moves the branch to ' + p.upstream}. There is no way back to these commits from the branch.`, 'discard')) return;
+      m.remove();
+      const next = await branchAct('sync', {how});
+      if ((next.changes || []).some(x => x.conflicted)) showConflictCenter();
+    };
+  } catch (e) { leeFail('git', 'sync', e); }
+}
+window.showSyncPlan = showSyncPlan;
 
 /* ------------------------------------------------------------ fetch/pull/push */
 async function leeGitQuick(op) {

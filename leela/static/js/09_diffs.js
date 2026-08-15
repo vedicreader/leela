@@ -102,6 +102,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     if (lee.activeEditor==='secondary' && lee.editors.get('secondary') && lee.secondaryPath) {
       const path=lee.secondaryPath,base_disk_version=draftBaseFor(path);
       const d=await post('/nb/save',{path,text:normalizeSavedText(LeeCM.getDoc(lee.editors.get('secondary'))),base_disk_version,force});
+      noteSelfWrite(path);
       lee.buffers.delete(path);lee.dirtyBuffers.delete(path);await clearDrafts(path);
       saveTabEl = $$('.lee-tab').find(x=>x.title===path); saveTabEl?.classList.remove('dirty');
       setTabSaveState(saveTabEl, 'saved');
@@ -145,6 +146,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     saveTabEl?.classList.remove('dirty');
     setTabSaveState(saveTabEl, 'saved');
     if (!quiet) status('saved', 'ok');
+    noteSelfWrite(documentKey, lee.path);
     refreshProjectPills();
     refreshOpenGitMarks();      // a notebook's marks are per cell, a file's per line
     if (lee.path?.endsWith('/pyproject.toml')) refreshPackageVersions();

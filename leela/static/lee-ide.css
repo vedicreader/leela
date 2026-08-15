@@ -2661,6 +2661,8 @@ kbd {
 .lee-git-merge-preview > label { display: grid; gap: 4px; color: var(--lee-fg4); font-size: 9px; }.lee-git-merge-preview select { padding: 6px; border: 1px solid var(--lee-border); background: var(--lee-bg); color: var(--lee-fg); }
 .lee-git-merge-warning, .lee-git-merge-ok { display: grid; gap: 3px; padding: 8px; border-left: 2px solid var(--lee-red); background: color-mix(in srgb, var(--lee-red) 7%, transparent); }.lee-git-merge-ok { border-left-color: var(--lee-green); background: color-mix(in srgb, var(--lee-green) 6%, transparent); }
 .lee-git-merge-warning span, .lee-git-merge-ok span { color: var(--lee-fg4); font-size: 9px; }
+.lee-syncopts { display: grid; gap: 4px; }
+.lee-syncopt { display: grid; grid-template-columns: 16px minmax(0,1fr); align-items: start; gap: 7px; padding: 7px; border: 1px solid var(--lee-border); cursor: pointer; }.lee-syncopt:has(:checked) { border-color: var(--lee-accent); background: color-mix(in srgb, var(--lee-accent) 7%, transparent); }.lee-syncopt.off { opacity: .45; cursor: default; }.lee-syncopt.warn:has(:checked) { border-color: var(--lee-red); background: color-mix(in srgb, var(--lee-red) 7%, transparent); }.lee-syncopt > span { display: grid; gap: 2px; }.lee-syncopt .sub { color: var(--lee-fg4); font-size: 9px; }
 .lee-git-rebase-commits { display: grid; max-height: 180px; overflow: auto; border-block: 1px solid var(--lee-border); }.lee-git-rebase-commits span { display: grid; grid-template-columns: 62px minmax(0,1fr); gap: 7px; padding: 5px 2px; color: var(--lee-fg2); font-size: 10px; }.lee-git-rebase-commits code { color: var(--lee-fg4); }
 .lee-git-history { display: grid; }
 .lee-git-commit-row.active { border-left: 2px solid var(--lee-accent); background: var(--lee-active-line); }
