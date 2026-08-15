@@ -571,7 +571,7 @@ async function showHistorySession(group, groups) {
     `<span>one continuous model context per session</span></div>` +
     `<select class="lee-select lee-history-select" aria-label="agent history session">${options}</select>` +
     `<span class="lee-history-runs">${group?.code || 0} kernel run${group?.code === 1 ? '' : 's'}</span>` +
-    (resumable ? `<button class="lee-btn go lee-history-resume" title="Put these turns back into the model's context">Resume</button>` : '');
+    (resumable ? `<button class="lee-btn go lee-history-resume" title="Continue this conversation">Resume</button>` : '');
   index.querySelector('select')?.addEventListener('change', e =>
     showHistorySession(groups.find(s => s.id === e.target.value), groups));
   index.querySelector('.lee-history-resume')?.addEventListener('click', () => leeAgentResume(group));
@@ -599,8 +599,7 @@ async function leeAgentResume(group) {
   if (!group) return;
   if (lee.agentBusy) return status('the model is already working', 'err');
   try {
-    const d = await post('/agent/resume', {session: group.id});
-    const log = $('#agentlog');
+    const d = await post('/agent/resume', {session: group.id}), log = $('#agentlog');
     if (log) { log.innerHTML = ''; renderTurns(log, d.turns || [], 'resumed conversation'); log.scrollTop = log.scrollHeight; }
     lee.agentView = 'live'; lee.agentLive = log?.innerHTML || '';
     $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus();

@@ -1645,7 +1645,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 'inline': list(ws.inline_ai.history) if not session else []}
     @rt('/agent/resume')
     async def agent_resume(req):
-        "Continue a saved conversation: its turns go back into the model's context, and onto the screen."
+        "Put a saved conversation back into the model's context, and return its turns."
         d = await req.json()
         if ws.ai.busy: return _fail('cannot resume while the agent is working', 409)
         try: s = await _off_loop(ws.ai.resume_session, str(d.get('session') or 'latest'))

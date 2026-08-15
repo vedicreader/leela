@@ -6,7 +6,8 @@ Succinct. No essays, no preamble, no recap of what I just said. Bullets and numb
 ## Code style
 fastai/fastcore house style, taken to the extreme:
 - Dense. No blank-line padding, no section-banner comments, no ASCII rules.
-- No explanatory prose in comments or docstrings. A docstring is one short line, or absent.
+- No explanatory prose in comments or docstrings. A comment must say what the code cannot;
+  never restate the line below it. A docstring is one short line, or absent.
   Design rationale goes in `docs/`, not in the source.
 - One-line bodies stay on the line: `if not x: return`.
 - Short names. `L`, `Path`, comprehensions, `first`/`ifnone`/`store_attr`/`patch`/`delegates`.
