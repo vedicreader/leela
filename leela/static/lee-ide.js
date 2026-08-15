@@ -7576,8 +7576,7 @@ async function showGitConflict(path) {
           `anyway, markers and all?`, 'stage anyway')) return;
       const next = await gitDo('resolve_conflict', {path, choice: 'resolved', content});
       m.remove();
-      renderGitPanel(next);
-      status(next.outcome?.summary || `${path} staged as resolved`, 'ok');
+      afterConflictResolved(next, `${path} staged`);
     };
     refresh(d.worktree || '', true);
     jumpTo(0);
@@ -7600,9 +7599,7 @@ async function showWholeSideConflict(path, d) {
     const choice = b.dataset.choice;
     if (!await confirmDialog('resolve conflict', `Use ${choice} for ${path} and stage it as resolved?`, 'resolve')) return;
     m.remove();
-    const next = await gitDo('resolve_conflict', {path, choice});
-    renderGitPanel(next);
-    status(next.outcome?.summary || `${path} staged as resolved`, 'ok');
+    afterConflictResolved(await gitDo('resolve_conflict', {path, choice}), `${path} staged`);
   });
 }
 
@@ -9008,6 +9005,23 @@ async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = tru
   status('files refreshed', 'ok');
 }
 
+/* Pushed, not polled. The tree used to know only what the client had just done itself, so an
+   agent edit, a terminal command or another editor stayed invisible until someone refreshed. */
+let fsWatchTimer = null;
+function watchFiles() {
+  const es = new EventSource('/fs/events');
+  es.addEventListener('changed', () => {
+    clearTimeout(fsWatchTimer);
+    fsWatchTimer = setTimeout(() => {
+      refreshFileTree(undefined, false).catch(() => {});
+      refreshOpenGitMarks();
+    }, 250);
+  });
+  es.onerror = () => { es.close(); setTimeout(watchFiles, 3000); };
+  return es;
+}
+window.watchFiles = watchFiles;
+
 async function treeGitAction(op) {
   const node = treeSel();
   if (!node || node.classList.contains('lee-root')) return status('select a file or folder first', 'err');
@@ -9482,6 +9496,7 @@ async function boot() {
   setInterval(refreshKernelPill, 5000);
   setInterval(refreshProjectPills, 5000);
   setInterval(pollRunLogs, 2000);      // only does anything while the logs pane is open
+  watchFiles();
   status('ready', 'ok');
 }
 
@@ -9674,12 +9689,26 @@ async function showConflictCenter() {
     $('[data-safe]', m).onclick = async () => {
       if (!await confirmDialog('Resolve safe conflicts', `Stage ${s.safe} deterministic resolution${s.safe === 1 ? '' : 's'}?`, 'resolve')) return;
       const next = await gitDo('resolve_safe_conflicts', {paths: files.filter(f => f.safe).map(f => f.path)});
-      m.remove(); renderGitPanel(next); status('safe conflicts resolved; review remaining files', 'ok');
-      if ((next.changes || []).some(x => x.conflicted)) showConflictCenter();
+      m.remove(); afterConflictResolved(next, `${s.safe} resolved`);
     };
   } catch (e) { leeFail('git', 'resolve conflicts', e); }
 }
 window.showConflictCenter = showConflictCenter;
+
+// One file resolved is not the task: step to the next, and finish the operation when none remain.
+async function afterConflictResolved(d, done = '') {
+  renderGitPanel(d);
+  const left = (d.changes || []).filter(x => x.conflicted).map(x => x.path);
+  if (left.length) {
+    status(`${done}${done ? ' · ' : ''}${left.length} file${left.length === 1 ? '' : 's'} still conflicted`, 'ok');
+    return showGitConflict(left[0]);
+  }
+  const op = (d.operation || {}).active;
+  if (!op) return status(done || 'every conflict is resolved', 'ok');
+  if (!await confirmDialog(`continue the ${op}`, 'Every conflict is resolved and staged.', 'continue')) return;
+  renderGitPanel(await gitDo('operation_continue'));
+}
+window.afterConflictResolved = afterConflictResolved;
 /* ---- vault reader: a document from the vault, as an editor tab ---- */
 
 function vaultSectionRows(sections, active) {
@@ -9880,6 +9909,19 @@ function branchActions(anchor, d, b) {
   openChromeMenu(anchor, rows);
 }
 
+// Where "why is this divergent" usually starts: the PR, and whether its base moved under it.
+async function branchPr(d) {
+  const r = await api(gitUrl('/git/pr', {branch: d.branch})).catch(() => null);
+  const pr = r?.pr;
+  if (!pr) return {id: 'pr', label: 'Pull request', detail: r?.note || 'unavailable', run: () => status(r?.note || 'no pull request', 'ok')};
+  const c = pr.checks || {};
+  const health = c.failing?.length ? `${c.failing.length} check${c.failing.length === 1 ? '' : 's'} red`
+              : c.pending ? `${c.pending} check${c.pending === 1 ? '' : 's'} running` : 'checks green';
+  return {id: 'pr', label: `#${pr.number} ${pr.title}`.slice(0, 60),
+    detail: `${pr.base}${pr.behind_base ? ` · ${pr.behind_base} behind base` : ''} · ${health}`,
+    run: () => window.open(pr.url, '_blank')};
+}
+
 function branchTopActions(d) {
   const changed = (d.changes || []).length;
   return [
@@ -9924,10 +9966,11 @@ async function leeBranchMenu(anchor) {
   search = m.querySelector('#branchsearch');
   const list = m.querySelector('#branchlist');
 
+  let prRow = null;
   const paint = () => {
     const q = search.value.trim().toLowerCase();
     const hit = text => !q || String(text).toLowerCase().includes(q);
-    const acts = branchTopActions(d).filter(a => hit(a.label));
+    const acts = [...branchTopActions(d), ...(prRow ? [prRow] : [])].filter(a => hit(a.label));
     const all = (d.branches || []).filter(b => hit(`${b.name} ${b.subject} ${b.author}`));
     const near = recent.map(n => all.find(b => b.name === n && !b.current)).filter(Boolean);
     const rest = all.filter(b => !near.includes(b));
@@ -9953,10 +9996,11 @@ async function leeBranchMenu(anchor) {
     const row = e.target.closest('[data-branch]');
     if (row) { m.remove(); return switchBranch(d, row.dataset.branch); }
     const act = e.target.closest('[data-act]');
-    if (act) { m.remove(); return runBranchAction(act.dataset.act, d); }
+    if (act) { m.remove(); return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d); }
   };
   search.oninput = paint;
   paint();
+  branchPr(d).then(r => { prRow = r; paint(); });
   setTimeout(() => search.focus(), 0);
 }
 window.leeBranchMenu = leeBranchMenu;

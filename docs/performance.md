@@ -323,12 +323,28 @@ uncommitted files, and expands 25 folders before refreshing the tree.
   `filter_health`; `resolvedProposalCards` is deleted and `approvalCards` is cleared wherever
   the agent log is.
 
+### The watcher
+
+`blocks/fs/watch.py` is one `watchfiles` thread per workspace over the open roots, filtered by
+the same `SKIP_DIRS` the tree uses, pushed to the browser over `/fs/events`. Write to disk to a
+subscriber getting the event: **79ms best, 100ms median**, against a 200ms debounce. `node_modules`
+and `.git` produce nothing.
+
+Two things it cost to get right. The notify thread is Rust, so `close()` joins it rather than
+only signalling — a watcher still running when the interpreter tears down segfaults, reliably.
+And `ctx` is a capability surface, not the workspace, so `fs_watch` had to be declared in
+`EAGER` and in the fs block's `CAPS`; reaching for an undeclared one is an `AttributeError` at
+first use, which is the design working.
+
+This is also the honest answer to "should we write a Rust module": no, but use one. `watchfiles`
+is `notify` behind a Python API, and it is the piece of this codebase where native code was
+actually the right call.
+
 ## Still to do
 
-1. A filesystem watcher pushed over SSE. Retires the polling model and the staleness both.
-2. Git divergence, items 1–4 above.
-3. `fastlite` in jobs; `EventStream`; `threaded`; `repo_details`; `execnb.shell`.
-4. Minify the bundle. 187KB gzipped is still the second-largest asset, and it is unminified.
-5. Virtualise the tree.
-6. `pygit2` for the read path, if measurement justifies it.
-7. A native fuzzy matcher, if `fuzzy_rank` is still hot after the debounce and the walk cache.
+1. `fastlite` in jobs; `EventStream`; `threaded`; `repo_details`; `execnb.shell`.
+2. Minify the bundle. 187KB gzipped is still the second-largest asset, and it is unminified.
+3. Virtualise the tree.
+4. `pygit2` for the read path, if measurement justifies it.
+5. A native fuzzy matcher, if `fuzzy_rank` is still hot after the debounce and the walk cache.
+6. The shared-state lock in `docs/parallel-threads.md`, before threads ship.

@@ -13,9 +13,23 @@ async function showConflictCenter() {
     $('[data-safe]', m).onclick = async () => {
       if (!await confirmDialog('Resolve safe conflicts', `Stage ${s.safe} deterministic resolution${s.safe === 1 ? '' : 's'}?`, 'resolve')) return;
       const next = await gitDo('resolve_safe_conflicts', {paths: files.filter(f => f.safe).map(f => f.path)});
-      m.remove(); renderGitPanel(next); status('safe conflicts resolved; review remaining files', 'ok');
-      if ((next.changes || []).some(x => x.conflicted)) showConflictCenter();
+      m.remove(); afterConflictResolved(next, `${s.safe} resolved`);
     };
   } catch (e) { leeFail('git', 'resolve conflicts', e); }
 }
 window.showConflictCenter = showConflictCenter;
+
+// One file resolved is not the task: step to the next, and finish the operation when none remain.
+async function afterConflictResolved(d, done = '') {
+  renderGitPanel(d);
+  const left = (d.changes || []).filter(x => x.conflicted).map(x => x.path);
+  if (left.length) {
+    status(`${done}${done ? ' · ' : ''}${left.length} file${left.length === 1 ? '' : 's'} still conflicted`, 'ok');
+    return showGitConflict(left[0]);
+  }
+  const op = (d.operation || {}).active;
+  if (!op) return status(done || 'every conflict is resolved', 'ok');
+  if (!await confirmDialog(`continue the ${op}`, 'Every conflict is resolved and staged.', 'continue')) return;
+  renderGitPanel(await gitDo('operation_continue'));
+}
+window.afterConflictResolved = afterConflictResolved;

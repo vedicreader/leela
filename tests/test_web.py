@@ -2027,3 +2027,24 @@ def test_runtime_broker_refuses_a_thirteenth_heap_without_evicting_live_state(mo
     with pytest.raises(RuntimeError, match='kernel limit reached'):
         asyncio.run(broker.admit(pool, 'second'))
     assert pool.kernels['first'] is alive
+
+def test_the_tree_hears_about_a_change_leela_did_not_make(tmp_path):
+    "Nothing else tells the browser: no watcher meant the tree knew only what the client did."
+    import asyncio, json
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher
+    (tmp_path/'a.py').write_text('x = 1\n')
+    (tmp_path/'node_modules').mkdir()
+    async def run():
+        w = Watcher(Sandbox([tmp_path]), step=50)
+        q = w.subscribe()
+        try:
+            await asyncio.sleep(.4)
+            (tmp_path/'node_modules'/'junk.js').write_text('1\n')
+            with pytest.raises(asyncio.TimeoutError): await asyncio.wait_for(q.get(), .6)
+            (tmp_path/'b.py').write_text('y = 2\n')
+            return await asyncio.wait_for(q.get(), 5)
+        finally: w.close()
+    paths = asyncio.run(run())
+    assert any(p.endswith('b.py') for p in paths)
+    assert not any('node_modules' in p for p in paths), 'the skip list applies to the watcher too'

@@ -51,6 +51,7 @@ async function boot() {
   setInterval(refreshKernelPill, 5000);
   setInterval(refreshProjectPills, 5000);
   setInterval(pollRunLogs, 2000);      // only does anything while the logs pane is open
+  watchFiles();
   status('ready', 'ok');
 }
 

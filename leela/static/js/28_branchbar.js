@@ -104,6 +104,19 @@ function branchActions(anchor, d, b) {
   openChromeMenu(anchor, rows);
 }
 
+// Where "why is this divergent" usually starts: the PR, and whether its base moved under it.
+async function branchPr(d) {
+  const r = await api(gitUrl('/git/pr', {branch: d.branch})).catch(() => null);
+  const pr = r?.pr;
+  if (!pr) return {id: 'pr', label: 'Pull request', detail: r?.note || 'unavailable', run: () => status(r?.note || 'no pull request', 'ok')};
+  const c = pr.checks || {};
+  const health = c.failing?.length ? `${c.failing.length} check${c.failing.length === 1 ? '' : 's'} red`
+              : c.pending ? `${c.pending} check${c.pending === 1 ? '' : 's'} running` : 'checks green';
+  return {id: 'pr', label: `#${pr.number} ${pr.title}`.slice(0, 60),
+    detail: `${pr.base}${pr.behind_base ? ` · ${pr.behind_base} behind base` : ''} · ${health}`,
+    run: () => window.open(pr.url, '_blank')};
+}
+
 function branchTopActions(d) {
   const changed = (d.changes || []).length;
   return [
@@ -148,10 +161,11 @@ async function leeBranchMenu(anchor) {
   search = m.querySelector('#branchsearch');
   const list = m.querySelector('#branchlist');
 
+  let prRow = null;
   const paint = () => {
     const q = search.value.trim().toLowerCase();
     const hit = text => !q || String(text).toLowerCase().includes(q);
-    const acts = branchTopActions(d).filter(a => hit(a.label));
+    const acts = [...branchTopActions(d), ...(prRow ? [prRow] : [])].filter(a => hit(a.label));
     const all = (d.branches || []).filter(b => hit(`${b.name} ${b.subject} ${b.author}`));
     const near = recent.map(n => all.find(b => b.name === n && !b.current)).filter(Boolean);
     const rest = all.filter(b => !near.includes(b));
@@ -177,10 +191,11 @@ async function leeBranchMenu(anchor) {
     const row = e.target.closest('[data-branch]');
     if (row) { m.remove(); return switchBranch(d, row.dataset.branch); }
     const act = e.target.closest('[data-act]');
-    if (act) { m.remove(); return runBranchAction(act.dataset.act, d); }
+    if (act) { m.remove(); return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d); }
   };
   search.oninput = paint;
   paint();
+  branchPr(d).then(r => { prRow = r; paint(); });
   setTimeout(() => search.focus(), 0);
 }
 window.leeBranchMenu = leeBranchMenu;

@@ -81,6 +81,23 @@ async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = tru
   status('files refreshed', 'ok');
 }
 
+/* Pushed, not polled. The tree used to know only what the client had just done itself, so an
+   agent edit, a terminal command or another editor stayed invisible until someone refreshed. */
+let fsWatchTimer = null;
+function watchFiles() {
+  const es = new EventSource('/fs/events');
+  es.addEventListener('changed', () => {
+    clearTimeout(fsWatchTimer);
+    fsWatchTimer = setTimeout(() => {
+      refreshFileTree(undefined, false).catch(() => {});
+      refreshOpenGitMarks();
+    }, 250);
+  });
+  es.onerror = () => { es.close(); setTimeout(watchFiles, 3000); };
+  return es;
+}
+window.watchFiles = watchFiles;
+
 async function treeGitAction(op) {
   const node = treeSel();
   if (!node || node.classList.contains('lee-root')) return status('select a file or folder first', 'err');

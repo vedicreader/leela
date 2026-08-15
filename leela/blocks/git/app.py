@@ -201,6 +201,14 @@ def connect(app, ctx):
             if not incoming: raise GitError('choose a branch to merge')
             return await off_loop(repo_at(repo).merge_preview, incoming)
         except Exception as e: return fail(e)
+    @rt('/git/pr')
+    async def git_pr(repo: str = '', branch: str = ''):
+        "The pull request this branch belongs to, or why there is nothing to say about it."
+        from .hub import pr_context
+        try:
+            r = repo_at(repo)
+            return await off_loop(pr_context, r.root, branch or r.run('branch', '--show-current').strip())
+        except Exception as e: return fail(e)
     @rt('/git/sync-plan')
     async def git_sync_plan(repo: str = '', upstream: str = '', fetch: bool = False):
         "You against your upstream, and every way back rehearsed. What the Sync dialog reads."

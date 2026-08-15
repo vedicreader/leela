@@ -129,6 +129,8 @@ class Workspace:
                  python=None,
                  transport='direct', gateway=None, cdp_port=9223):
         self.fs = Sandbox(roots)
+        from .blocks.fs.watch import Watcher
+        self.fs_watch = Watcher(self.fs)
         from .blocks.runtime.kernels import project_python
         runtime_python = python or project_python(self.fs.roots)
         self.pool = KernelPool(port=port, default_kernel=kernel, default_python=runtime_python,
