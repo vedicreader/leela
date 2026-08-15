@@ -121,9 +121,10 @@ def test_a_host_offers_only_the_tools_it_supports():
     assert 'run_python' not in names and 'notebook_cells' not in names
     names = {t.__name__ for t in tools_for(MemHost_agent())}
     assert 'run_python' not in names
+    from ramabana.git import GIT_WRITE_TOOLS
     assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
             'run_shell', 'memory_forget', 'create_skill',
-            'cancel_watch', 'cart_add', 'cart_remove'} == set(WRITE_TOOLS)
+            'cancel_watch', 'cart_add', 'cart_remove'} | GIT_WRITE_TOOLS == set(WRITE_TOOLS)
     a, _ = fake_agent()
     names = {t.__name__ for t in read_only(a.tools)}
     assert not (names & WRITE_TOOLS)

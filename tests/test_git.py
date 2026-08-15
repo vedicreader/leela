@@ -5,12 +5,13 @@ import subprocess
 import time
 import pytest
 from fastcore.basics import first
-from leela.blocks.agent.ai import GIT_WRITE_TOOLS, WRITE_TOOLS, _git_tools
+from leela.blocks.agent.ai import GIT_WRITE_TOOLS, WRITE_TOOLS
+from ramabana.git import git_tools as _git_tools
 from leela.blocks.git.git import GitError, GitRepo, repo_root
 from leela.workspace import Workspace
 import threading
 from leela.blocks.git.git import GitError, GitRepo
-from leela.blocks.git.safety import GitGateway, classify, gateway
+from ramabana.git import GitGateway, classify, gateway
 from leela.blocks.git.repos import MEMBERS, RepoSet, clone_url, discover
 
 def git(path, *args):
@@ -61,7 +62,7 @@ def test_status_stage_unstage_branch_and_commit(repo_git):
 
 def test_tree_decoration_asks_git_once_per_burst_not_once_per_folder(repo_git, monkeypatch):
     "A file-tree refresh reads `changes()` once per open folder; three git runs each is the lag."
-    from leela.blocks.git import safety
+    from ramabana import git as safety
     runs, real = [], safety.GitGateway._exec
     monkeypatch.setattr(safety.GitGateway, '_exec',
         lambda self, cwd, args, **kw: (runs.append(args[0]), real(self, cwd, args, **kw))[1])
@@ -201,18 +202,18 @@ def test_agent_git_tools_fetch_track_and_report_failures(repo_git, tmp_path):
     assert GIT_WRITE_TOOLS <= WRITE_TOOLS and not (set(GIT_READ_TOOLS) & WRITE_TOOLS), \
         'rehearsing a merge is not approving one'
     assert {'git_divergence', 'git_rebase_preview'} <= set(tools)
-    fetched = tools['git_fetch']()
+    fetched = tools['git_remote']('fetch')
     assert 'origin/from-agent' in fetched
     checked_out = tools['git_checkout']('origin/from-agent')
     assert '"branch": "from-agent"' in checked_out
     assert '"upstream": "origin/from-agent"' in checked_out
-    assert tools['git_status'](str(repo_git.parent)).startswith('git status failed:')
-    from leela.blocks.agent.ai import FAILED_PREFIXES, GIT_TOOLS
+    from ramabana.tools import failed
+    assert failed(tools['git_status'](str(repo_git.parent))), 'a path outside the roots is a message'
+    from leela.blocks.agent.ai import GIT_TOOLS
     assert set(tools) == set(GIT_TOOLS)
-    for name in GIT_TOOLS: assert f'{name.replace("_", " ")} failed' in FAILED_PREFIXES, name
 
 def test_agent_checkout_reports_what_the_switch_said(repo_git, tmp_path):
-    "`git_checkout` surfaces `GitRepo.checkout`'s message, as fetch/pull/push surface theirs."
+    "`git_checkout` carries `GitRepo.checkout`'s message in the result the harness answers with."
     git(repo_git, 'branch', 'other')
     (repo_git/'app.py').write_text('print("uncommitted")\n')
     class Host:
@@ -222,9 +223,9 @@ def test_agent_checkout_reports_what_the_switch_said(repo_git, tmp_path):
             return Path(path or repo_git).resolve()
     checkout = {f.__name__: f for f in _git_tools(Host())}['git_checkout']
     out = checkout('other')
-    assert not out.startswith('git checkout failed'), out
-    assert '"branch": "other"' in out
-    assert out.splitlines()[0].strip() and not out.lstrip().startswith('{'), out[:200]
+    from ramabana.tools import failed
+    assert not failed(out), out
+    assert '"branch": "other"' in out and '"result"' in out, out[:200]
 
 def test_remote_head_is_not_a_branch_and_refs_explain_recency(repo_git, tmp_path):
     remote = tmp_path/'dated.git'
@@ -429,7 +430,7 @@ MIXED_THEIRS = 'shared\ntheirs only\ntail\n'
 
 def test_conflict_blocks_span_the_whole_marker_and_survive_an_empty_side():
     "Each payload must be exactly what its span should become, newline included."
-    from leela.blocks.git.git import _conflict_blocks
+    from ramabana.git import _conflict_blocks
     text = 'a\n<<<<<<< HEAD\nx\n=======\n>>>>>>> o\nb\n'
     block, = _conflict_blocks(text)
     assert (block['ours'], block['theirs']) == ('x\n', '')
@@ -939,7 +940,7 @@ def test_reads_do_not_take_the_index_lock_and_writes_are_not_given_the_flag(repo
     def spy(argv, *a, **kw):
         seen.append(list(argv))
         return real(argv, *a, **kw)
-    monkeypatch.setattr('leela.blocks.git.safety.subprocess.run', spy)
+    monkeypatch.setattr('ramabana.git.subprocess.run', spy)
     g = GitGateway()
     g.run(repo_git_sa, 'status', '--porcelain=v1')
     g.run(repo_git_sa, 'add', '--', 'app.py')
@@ -1007,13 +1008,13 @@ def test_a_foreign_lock_is_retried_and_then_explained(repo_git_sa, monkeypatch):
     "Another Git in the same checkout is a wait, then a sentence -- not a stack trace."
     (repo_git_sa/'.git'/'index.lock').write_text('')
     g = GitGateway()
-    monkeypatch.setattr('leela.blocks.git.safety.LOCK_BACKOFF', .001)
+    monkeypatch.setattr('ramabana.git.LOCK_BACKOFF', .001)
     attempts = []
     real = subprocess.run
     def spy(argv, *a, **kw):
         attempts.append(argv)
         return real(argv, *a, **kw)
-    monkeypatch.setattr('leela.blocks.git.safety.subprocess.run', spy)
+    monkeypatch.setattr('ramabana.git.subprocess.run', spy)
     (repo_git_sa/'app.py').write_text('value = 2\n')
     with pytest.raises(GitError) as e:
         g.run(repo_git_sa, 'add', '--', 'app.py')

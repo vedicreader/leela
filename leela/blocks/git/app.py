@@ -6,7 +6,8 @@ import asyncio
 from pathlib import Path
 
 from ...core.web import fail, off_loop
-from .git import GitError, GitRepo, clone, clone_target
+from ramabana.git import GitError, clone, clone_target
+from .git import GitRepo
 from .repos import RepoSet, clone_url, find_repos, repo_for
 
 __all__ = ['CAPS', 'connect', 'git_paths']

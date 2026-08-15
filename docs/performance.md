@@ -101,8 +101,8 @@ modules with comments intact — 658KB for 10,387 lines, never minified.
 - `#agentlog` itself is never trimmed.
 - `core/session.py:45` — `DocStore.forget` drops `docs`, `buffers` and `bases` but not
   `run_locks`, and nothing else pops it.
-- `blocks/git/safety.py:126` and `:133` — `_locks` and `_env_cache` are keyed by every path ever
-  asked about. The TTL shadows entries; it never evicts one.
+- `ramabana.git:GitGateway._locks` — keyed by every path ever asked about, and never evicted.
+  (`_env_cache` was the other half; `env` is a bounded `flexicache` now.)
 
 ## Merging divergent trees
 
@@ -182,9 +182,9 @@ Everything below is already in `uv.lock`. None of it is a new dependency.
 
 ### `fastcore.xtras.flexicache` — replaces the hand-rolled git cache
 
-`blocks/git/git.py:68-84` is a dict, an `RLock`, a TTL constant, `_cached` and `_invalidate`;
-`blocks/git/safety.py:133-155` is a second copy for `env` and `memo`. Both are `flexicache`
-with a policy, and the policy available is better than the timer:
+`ramabana.git`'s `_cached`/`_invalidate` is a dict, an `RLock` and a TTL constant; `env` was a
+second copy of the same idea and is a bounded `flexicache` now. The rest is the same shape, and
+the policy available is better than the timer:
 
 ```python
 @flexicache(mtime_policy(arg=0), time_policy(5))

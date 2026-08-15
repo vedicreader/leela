@@ -290,6 +290,13 @@ that only the default takes, and no branch goes untested for the alternates.
 
 `RuntimePort` is owned by `blocks/agent`, but the harness it wraps is not in the block.
 `leela/agent/` is six lines of alias over `ramabana`, which imports nothing from leela.
+
+Git is the same arrangement without a port. `ramabana.git` owns the gateway that runs every
+command, the safepoint journal behind `undo`, the porcelain, and the git tools an agent is
+offered inside a checkout; `blocks/git` is the browser surface over it, plus `blame_notebook`,
+which needs the IDE's cell-to-line mapping, and `RepoSet`, which is workspace state rather than
+a git concern. The block sets `gateway().env_for` at import, because knowing that a checkout
+has its own virtualenv is Leela's knowledge, not the harness's.
 `tests/test_agent.py::test_agent_package_does_not_import_leela` enforces that, and it is what
 lets the whole agent loop be tested against a dict rather than an IDE. `blocks/agent/` holds
 the adapter: `ai.py` and `models.py`.

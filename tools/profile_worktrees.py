@@ -65,7 +65,7 @@ def best(f, rounds=3):
 def concurrency(paths):
     "Reads across worktrees, and whether a write held in one blocks reads in the others."
     from leela.blocks.git.git import GitRepo
-    from leela.blocks.git.safety import gateway
+    from ramabana.git import gateway
     repos = [GitRepo.at(p) for p in paths]
     read = lambda r: r._changes_uncached()
     def spread(rs):
