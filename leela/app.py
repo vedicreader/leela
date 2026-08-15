@@ -821,11 +821,15 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 if not task.done(): task.cancel()
             try: await sock.close()
             except Exception: pass
+    # `FastHTML`, not `fast_app`: the latter imports `fasthtml.pico` whatever `pico=` says, and
+    # that costs 212ms and IPython for a stylesheet link this app never uses.
     # Starlette's exclusion list spares `text/event-stream`, so the streams stay unbuffered.
-    app, rt = fast_app(pico=False, default_hdrs=False, hdrs=hdrs,
-                       middleware=(Middleware(GZipMiddleware, minimum_size=512),),
-                       routes=(Mount('/leestatic', Assets(*static_dirs())),
-                               WebSocketRoute('/term/ws', term_ws)))
+    app = FastHTML(default_hdrs=False, hdrs=hdrs,
+                   middleware=(Middleware(GZipMiddleware, minimum_size=512),),
+                   routes=(Mount('/leestatic', Assets(*static_dirs())),
+                           WebSocketRoute('/term/ws', term_ws)))
+    app.static_route_exts()
+    rt = app.route
     _docstore = DocStore(ws)
     _docs: dict[str, Notebook] = _docstore.docs
     _buffers: dict[str, str] = _docstore.buffers

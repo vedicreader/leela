@@ -1096,6 +1096,13 @@ async function pollApproval() {
   } catch (_) {}
 }
 
+// Fast while the model is working -- an approval must not sit unseen. Idle, nothing can raise
+// one but a background job, and a window nobody is looking at can raise nothing at all.
+async function approvalLoop() {
+  if (!document.hidden) await pollApproval();
+  setTimeout(approvalLoop, document.hidden ? 5000 : lee.agentBusy ? 750 : 5000);
+}
+
 function readableDetail(value) {
   const text = String(value || '');
   try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }

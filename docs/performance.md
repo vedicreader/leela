@@ -351,6 +351,44 @@ This is also the honest answer to "should we write a Rust module": no, but use o
 is `notify` behind a Python API, and it is the piece of this codebase where native code was
 actually the right call.
 
+## Startup, and what a desktop app pays while idle
+
+`tools/profile_app.py --server`, a fresh interpreter per run:
+
+| | before | after |
+|---|---|---|
+| build `Workspace` + `ide_app` | 239ms | **75ms** |
+| process start to first page | 536ms | **338ms** |
+| resident, idle | 71MB | **56MB** |
+| heavy deps resident | IPython | **none** |
+
+One line. `fast_app` runs `from .pico import picolink` unconditionally — before it looks at
+`pico=` — and `fasthtml.pico` ends in `try: from IPython import display`. That is 212ms and 402
+modules for a stylesheet link this app passes `pico=False` to refuse. `FastHTML` directly, plus
+the `static_route_exts()` call `fast_app` would have made, skips it. Every other default of the
+two is identical, which is checkable and was checked.
+
+Idle traffic, from `tools/profile_web.py`, measured over twelve seconds of nobody touching
+anything:
+
+| | before | after |
+|---|---|---|
+| requests per minute | 125 | **60** |
+| `/agent/approval` | 80 | 15 |
+| `/tab/watch` | 60 | 6 |
+| `/workspace/info` + `/cwd` | 24 | 0 |
+| `/dev/list` | 30 | 4 |
+
+- `pollApproval` ran at 750ms forever. An approval can only be raised while the model is
+  working, so it stays at 750ms then and drops to 5s otherwise.
+- `watchOpenFile` polled `/tab/watch` every second for changes `/fs/events` now pushes. It is a
+  10s backstop, and the watcher calls it directly when the open file is in a batch.
+- `refreshProjectPills` polled two routes every 5s for data that changes only when a root or the
+  cwd does — and all eight of those paths already call it. The interval is gone.
+- `pollRunLogs` polled `/dev/list` every 2s whether or not a dev server existed. It reschedules
+  itself at 2s while one is alive and 15s when none is.
+- `leeVars` and `refreshKernelPill` skip a hidden window, as `watchOpenFile` already did.
+
 ## Still to do
 
 1. `fastlite` in jobs; `EventStream`; `threaded`; `repo_details`; `execnb.shell`.

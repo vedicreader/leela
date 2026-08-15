@@ -631,7 +631,7 @@ def test_a_branch_change_reaches_every_surface_that_was_derived_from_it():
     assert 'leeReleases()' in fan and 'leeDeploys()' in fan
     pills = JS[JS.index('async function refreshProjectPills'):JS.index('async function leeCwd')]
     assert 'noticeGitState(d)' in pills
-    assert 'setInterval(refreshProjectPills, 5000)' in JS
+    assert 'setInterval(refreshProjectPills' not in JS, 'the pills change only when a root or the cwd does'
 
 
 def test_the_merge_button_always_answers_instead_of_being_disabled():
@@ -997,7 +997,7 @@ def test_source_control_notices_an_edit_and_not_only_a_new_file():
     assert 'refreshProjectPills' in save
     pills = JS[JS.index('async function refreshProjectPills'):JS.index('function projectRepo')]
     assert 'noticeGitState(d)' in pills and "api('/git/info')" in pills
-    assert 'setInterval(refreshProjectPills, 5000)' in JS, 'and an external change lands by poll'
+    assert "watchFiles()" in JS, 'and an external change lands by push, not by poll'
 
 def test_the_editor_pane_fills_its_stage_and_the_splitter_only_exists_when_split():
     "Measured in a browser, not reasoned about: on a 900px window the stage was 577px and the"
@@ -1259,7 +1259,8 @@ def test_the_agent_panel_streams_steps_approvals_and_usage():
     assert "post('/agent/approve', {id: a.id, ok, note, session, tool, args})" in card
     assert "api('/agent/approval')" in JS
     assert 'if (r.pending) showApproval(r.pending)' in JS
-    assert 'setInterval(pollApproval, 750)' in JS
+    assert 'approvalLoop()' in JS and 'lee.agentBusy ? 750 : 5000' in JS, \
+        'fast while the model works, slow when nothing can raise one'
     card = JS[JS.index('function showApproval'):JS.index('async function pollApproval')]
     assert "leePane('right', true)" in card
     assert "leeRight('agent')" in card
@@ -1707,7 +1708,8 @@ def test_browser_watch_detects_an_external_file_write(tmp_path):
         after = client.get('/tab/watch').json()
     assert before['path'] == str(a)
     assert before['disk_version'] != after['disk_version']
-    assert 'setInterval(watchOpenFile, 1000)' in JS
+    assert 'setInterval(watchOpenFile, 10000)' in JS, 'a backstop; /fs/events is the mechanism'
+    assert 'refreshOpenGitMarks(); watchOpenFile();' in JS, 'a push about the open file drives it'
     watch = JS[JS.index('async function watchOpenFile'):JS.index('async function takeDiskVersion')]
     assert "classList.contains('dirty')" in watch and 'await takeDiskVersion(lee.path)' in watch
 

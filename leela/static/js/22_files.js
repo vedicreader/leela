@@ -138,7 +138,7 @@ function watchFiles() {
       // Our own save changed no filenames, only what git thinks of one.
       if (theirs.length) await patchTree(theirs).catch(() => {});
       await refreshGitTreeMarks();
-      if (theirs.some(p => p === lee.path)) refreshOpenGitMarks();
+      if (theirs.some(p => p === lee.path)) { refreshOpenGitMarks(); watchOpenFile(); }
     }, 250);
   });
   es.onerror = () => { es.close(); setTimeout(watchFiles, 3000); };

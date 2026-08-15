@@ -134,6 +134,16 @@ async def watch_probe(page, root, seen):
     out['mine'] = {**await page.evaluate(READ), 'was': before, 'reqs': mark() - at}
     return out
 
+async def idle_traffic(page, seen, secs=12):
+    "What the page asks for when nobody is doing anything. A desktop app pays this all day."
+    at = len(seen)
+    await page.wait_for_timeout(secs * 1000)
+    urls = seen[at:]
+    by = {}
+    for u in urls: by[u.split('?')[0].rsplit('/', 1)[-1] or '/'] = by.get(u.split('?')[0].rsplit('/', 1)[-1] or '/', 0) + 1
+    return {'total': len(urls), 'per_min': round(len(urls) * 60 / secs),
+            'top': sorted(by.items(), key=lambda kv: -kv[1])[:6]}
+
 async def drive(url, dirs, root):
     from playwright.async_api import async_playwright
     async with async_playwright() as pw:
@@ -149,8 +159,9 @@ async def drive(url, dirs, root):
         tree = await page.evaluate(TREE, dirs)
         tree['requests'] = len(requests) - before
         watch = await watch_probe(page, root, requests)
+        idle = await idle_traffic(page, requests)
         await browser.close()
-        return load, tree, watch
+        return load, tree, watch, idle
 
 def table(rows, head):
     w = [max(len(str(r[i])) for r in [head, *rows]) for i in range(len(head))]
@@ -168,7 +179,7 @@ def main(argv=None):
     a = p.parse_args(argv)
     root = make_project(a.dirs, a.per, a.dirty)
     serve(root, a.port)
-    load, tree, watch = asyncio.run(drive(f'http://127.0.0.1:{a.port}/', a.open, root))
+    load, tree, watch, idle = asyncio.run(drive(f'http://127.0.0.1:{a.port}/', a.open, root))
     print(f'\n## one cold page load — {a.dirs * a.per} files, {a.dirty} uncommitted\n')
     table([('bytes on the wire', f"{load['wire']:,}"),
            ('bytes after decoding', f"{load['decoded']:,}"),
@@ -193,6 +204,9 @@ def main(argv=None):
            for name, r in (('a file appears from elsewhere', watch['theirs']),
                            ('the client saves its own', watch['mine']))],
           ('change', 'requests', 'rows', 'folders open', 'scroll', 'rows kept'))
+    print(f"\n## what the page asks for while nobody touches it\n")
+    table([('requests per minute, idle', idle['per_min'])] +
+          [(f'  {name}', n) for name, n in idle['top']], ('measure', 'value'))
     print('\n  A push reconciles only the folder that changed, so expansion, scroll and every\n'
           '  untouched row survive it -- and a write the client made itself is not news.')
 
