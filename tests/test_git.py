@@ -1,5 +1,6 @@
 "The git block: one repository, its safety rails, and the workspace of many."
 
+import json
 import subprocess
 import time
 import pytest
@@ -196,8 +197,10 @@ def test_agent_git_tools_fetch_track_and_report_failures(repo_git, tmp_path):
             if must_exist and not p.exists(): raise FileNotFoundError(p)
             return p
     tools = {f.__name__: f for f in _git_tools(Host())}
-    assert set(tools) == {'git_status', 'git_fetch', 'git_checkout', 'git_pull', 'git_push'}
-    assert GIT_WRITE_TOOLS <= WRITE_TOOLS and 'git_status' not in WRITE_TOOLS
+    from leela.blocks.agent.ai import GIT_READ_TOOLS
+    assert GIT_WRITE_TOOLS <= WRITE_TOOLS and not (set(GIT_READ_TOOLS) & WRITE_TOOLS), \
+        'rehearsing a merge is not approving one'
+    assert {'git_divergence', 'git_rebase_preview'} <= set(tools)
     fetched = tools['git_fetch']()
     assert 'origin/from-agent' in fetched
     checked_out = tools['git_checkout']('origin/from-agent')
@@ -1417,3 +1420,35 @@ def test_a_clean_divergence_prefers_rebase_and_a_branch_only_behind_fast_forward
     assert plan['recommended'] == 'rebase' and not plan['options'][2]['stops_at']
     r.sync('rebase')
     assert r.divergence()['relation'] == 'ahead'
+
+def test_the_agent_can_rehearse_a_divergence_without_being_able_to_run_it(repo_git, tmp_path):
+    "Read-only git tools answer with JSON; the mutations stay behind the approvals gate."
+    from leela.blocks.agent.ai import GIT_READ_TOOLS
+    remote = tmp_path/'agent-diverge.git'
+    git(tmp_path, 'init', '--bare', remote.name)
+    git(repo_git, 'remote', 'add', 'origin', str(remote))
+    git(repo_git, 'push', '-u', 'origin', 'main')
+    git(repo_git, 'switch', '-c', 'theirs')
+    (repo_git/'src'/'app.py').write_text('value = 1\ntheirs = 1\n')
+    git(repo_git, 'commit', '-am', 'theirs')
+    git(repo_git, 'push', 'origin', 'theirs:main')
+    git(repo_git, 'switch', 'main')
+    git(repo_git, 'branch', '-D', 'theirs')
+    (repo_git/'src'/'app.py').write_text('value = 2\n')
+    git(repo_git, 'commit', '-am', 'ours')
+    class Host:
+        roots = [str(repo_git)]
+        def check(self, path, must_exist=False):
+            p = __import__('pathlib').Path(path).resolve()
+            if not p.is_relative_to(repo_git): raise ValueError('outside workspace')
+            return p
+    tools = {f.__name__: f for f in _git_tools(Host())}
+    GitRepo.at(repo_git).fetch()
+    plan = json.loads(tools['git_divergence']())
+    assert plan['relation'] == 'diverged' and plan['ahead'] == 1 and plan['behind'] == 1
+    assert {o['op'] for o in plan['options']} == {'fast-forward', 'merge', 'rebase', 'reset'}
+    assert plan['ours'] and isinstance(plan['ours'][0], str), 'commits arrive short, not whole'
+    preview = json.loads(tools['git_rebase_preview']('origin/main'))
+    assert 'review' not in preview and preview['conflict_likely'] is True
+    assert preview['stops_at']['subject'] == 'ours'
+    assert set(GIT_READ_TOOLS) & set(tools) == set(GIT_READ_TOOLS)

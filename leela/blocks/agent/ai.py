@@ -12,8 +12,11 @@ from ...agent.tools import DENY, MAX_GREP_HITS, Host, clip, tools_for
 from ...agent.spec import SpecHost
 from .video import VideoJobs, video_available, video_tools
 
-GIT_TOOLS = ('git_status', 'git_fetch', 'git_checkout', 'git_pull', 'git_push')
-GIT_WRITE_TOOLS = frozenset(GIT_TOOLS) - {'git_status'}
+GIT_READ_TOOLS = ('git_status', 'git_divergence', 'git_merge_preview', 'git_rebase_preview',
+                  'git_conflicts', 'git_compare')
+GIT_TOOLS = (*GIT_READ_TOOLS, 'git_fetch', 'git_checkout', 'git_pull', 'git_push', 'git_sync',
+             'git_merge', 'git_rebase', 'git_resolve', 'git_operation')
+GIT_WRITE_TOOLS = frozenset(GIT_TOOLS) - set(GIT_READ_TOOLS)
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not', *(f'{t.replace("_", " ")} failed' for t in GIT_TOOLS))
 FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
 WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS
@@ -470,7 +473,55 @@ def _git_tools(host):
     def git_push(path: str = '') -> str:
         "Push the current branch to its configured upstream."
         return report('git push', path, lambda r: r.push())
-    return [git_status, git_fetch, git_checkout, git_pull, git_push]
+    def data(what, path, act):
+        "A read-only answer as JSON, without the whole refreshed status appended to it."
+        try: return clip(json.dumps(act(repo(path)), indent=2), MAX_TOOL_CHARS * 2)
+        except Exception as e: return f'{what} failed: {errstr(e)}'
+    def subjects(cs): return [f"{c['short']} {c['subject']}" for c in cs[:40]]
+    def slim(p):
+        "One preview without the per-file review that would fill the window."
+        keep = ('current', 'incoming', 'onto', 'relation', 'clean', 'dirty', 'untracked',
+                'merge_base', 'conflicts', 'conflict_likely', 'stops_at', 'replayed', 'already_based')
+        out = {k: v for k, v in p.items() if k in keep}
+        if p.get('commits') is not None: out['commits'] = subjects(p['commits'])
+        if p.get('review'): out['changed'] = p['review']['summary']
+        return out
+    def git_divergence(path: str = '') -> str:
+        "How this branch stands against its upstream, and each way back with its conflicts rehearsed."
+        def plan(r):
+            d = r.divergence()
+            return d | {'ours': subjects(d['ours']), 'theirs': subjects(d['theirs'])}
+        return data('git divergence', path, plan)
+    def git_merge_preview(branch: str, path: str = '') -> str:
+        "What merging `branch` would do, and which files would conflict. Changes nothing."
+        return data('git merge preview', path, lambda r: slim(r.merge_preview(str(branch or '').strip())))
+    def git_rebase_preview(onto: str, path: str = '') -> str:
+        "What rebasing onto `onto` would do, and the first commit that would not replay."
+        return data('git rebase preview', path, lambda r: slim(r.rebase_preview(str(onto or '').strip())))
+    def git_conflicts(path: str = '') -> str:
+        "Unresolved files in the paused operation, with how many blocks each needs by hand."
+        return data('git conflicts', path, lambda r: r.conflict_plan())
+    def git_compare(left: str, right: str, path: str = '') -> str:
+        "Compare two refs: how far each has run, and the files between them."
+        return data('git compare', path, lambda r: r.compare(str(left or '').strip(), str(right or '').strip()))
+    def git_sync(how: str = 'rebase', path: str = '') -> str:
+        "Reconcile with the upstream: `fast-forward`, `merge`, `rebase`, or `reset`. Check the plan first."
+        return report('git sync', path, lambda r: r.sync(str(how or 'rebase').strip()))
+    def git_merge(branch: str, path: str = '', strategy: str = 'merge') -> str:
+        "Merge `branch` into the current one, setting uncommitted work aside for the length of it."
+        return report('git merge', path, lambda r: r.merge(str(branch or '').strip(), str(strategy or 'merge').strip()))
+    def git_rebase(onto: str, path: str = '') -> str:
+        "Replay this branch's commits onto `onto`. Stops on the first conflict, as git does."
+        return report('git rebase', path, lambda r: r.rebase(str(onto or '').strip()))
+    def git_resolve(file: str, choice: str, path: str = '') -> str:
+        "Settle one conflicted file and stage it: `ours`, `theirs`, or the `worktree` as it stands."
+        return report('git resolve', path, lambda r: r.resolve_conflict(str(file or '').strip(), str(choice or '').strip()))
+    def git_operation(action: str, path: str = '') -> str:
+        "`continue`, `skip` or `abort` the merge, rebase, cherry-pick or revert now in progress."
+        return report('git operation', path, lambda r: r.operation_action(str(action or '').strip()))
+    return [git_status, git_divergence, git_merge_preview, git_rebase_preview, git_conflicts,
+            git_compare, git_fetch, git_checkout, git_pull, git_push, git_sync, git_merge,
+            git_rebase, git_resolve, git_operation]
 
 def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
     "Leela's blended search as one tool: every backend at once, each hit stamped with what agreed."
