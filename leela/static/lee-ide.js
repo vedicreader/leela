@@ -9869,8 +9869,9 @@ function branchActions(anchor, d, b) {
     }},
     {separator: true},
     {label: 'Compare with current', detail: `${d.branch} … ${leaf}`, disabled: b.current, run: () => compareBranch(d, b.name)},
-    {label: `Rebase ${d.branch} onto ${leaf}`, disabled: b.current, run: () => gitDo('rebase', {branch: b.name})},
-    {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => gitDo('merge', {branch: b.name})},
+    // Through the previews, as the git panel's identical entries go.
+    {label: `Rebase ${d.branch} onto ${leaf}`, disabled: b.current, run: () => showRebasePreview(b.name, d, branchAct)},
+    {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => showMergePreview(b.name, d, branchAct)},
   ];
   if (!b.remote && !b.current) rows.push({separator: true}, {label: `Delete ${leaf}`, warn: true, run: async () => {
     if (await confirmDialog('delete branch', `Delete ${b.name}? Commits only on it are lost.`, 'delete'))
@@ -9891,8 +9892,10 @@ function branchTopActions(d) {
   ];
 }
 
+const branchAct = async (op, extra = {}) => { const d = await gitDo(op, extra); refreshScmIfOpen(d); return d; };
+
 function runBranchAction(id, d) {
-  if (id === 'update') return gitDo('pull');
+  if (id === 'update') return d.ahead && d.behind ? showSyncPlan(d) : gitDo('pull');
   if (id === 'push') return leeGitQuick('push');
   if (id === 'commit') { gitUI.tab = 'changes'; leeLeft('git'); return leeGitRefresh(); }
   if (id === 'clone') return leeCloneRepo();
@@ -9957,6 +9960,38 @@ async function leeBranchMenu(anchor) {
   setTimeout(() => search.focus(), 0);
 }
 window.leeBranchMenu = leeBranchMenu;
+
+/* ------------------------------------------------------------------ diverged */
+// `pull` is --ff-only, so a diverged branch had nowhere to go. Every way out, rehearsed.
+async function showSyncPlan(d) {
+  try {
+    const p = await api(gitUrl('/git/sync-plan', {fetch: 1}));
+    if (!p.upstream) return status(`${p.branch} has no upstream — publish it first`, 'err');
+    if (!p.behind) return status(p.ahead ? `${p.ahead} ahead, nothing to pull` : 'already up to date', 'ok');
+    const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
+    const why = o => o.conflicts.length
+      ? `${o.conflicts.length} file${o.conflicts.length === 1 ? '' : 's'} conflict · ${o.conflicts.slice(0, 4).map(esc).join(' · ')}${o.note ? ' · ' + esc(o.note) : ''}`
+      : o.note ? esc(o.note) : 'nothing conflicts in the rehearsal';
+    const row = o => `<label class="lee-syncopt${o.available ? '' : ' off'}${o.destructive ? ' warn' : ''}">` +
+      `<input type="radio" name="how" value="${o.op}"${o.op === p.recommended ? ' checked' : ''}${o.available ? '' : ' disabled'}>` +
+      `<span><strong>${esc(o.label)}</strong><span class="sub">${why(o)}</span></span></label>`;
+    const m = modal(`<div class="lee-mhead">Sync ${esc(p.branch)}<span class="sub">${p.ahead} ahead · ${p.behind} behind ${esc(p.upstream)}</span></div>` +
+      `<div class="lee-git-merge-preview"><header><strong>${p.relation === 'diverged' ? 'The branches have diverged' : 'Behind the upstream'}</strong>` +
+      `<span>${p.ours.length} commit${p.ours.length === 1 ? '' : 's'} of yours · ${p.theirs.length} of theirs</span></header>${dirty}` +
+      `<div class="lee-syncopts">${p.options.map(row).join('')}</div></div>` +
+      `<div class="lee-mfoot"><button class="lee-btn go" data-sync>sync</button><button class="lee-btn" data-close>cancel</button></div>`);
+    $('[data-close]', m).onclick = () => m.remove();
+    $('[data-sync]', m).onclick = async () => {
+      const how = $('input[name=how]:checked', m)?.value; if (!how) return;
+      const o = p.options.find(x => x.op === how);
+      if (o.destructive && !await confirmDialog(`discard ${p.branch}`, `${o.note || 'This moves the branch to ' + p.upstream}. There is no way back to these commits from the branch.`, 'discard')) return;
+      m.remove();
+      const next = await branchAct('sync', {how});
+      if ((next.changes || []).some(x => x.conflicted)) showConflictCenter();
+    };
+  } catch (e) { leeFail('git', 'sync', e); }
+}
+window.showSyncPlan = showSyncPlan;
 
 /* ------------------------------------------------------------ fetch/pull/push */
 async function leeGitQuick(op) {

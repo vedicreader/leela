@@ -1363,3 +1363,57 @@ def test_owner_name_is_the_shorthand_both_lists_use():
 def test_an_unknown_operation_is_refused_before_anything_runs(workspace, tmp_path):
     with pytest.raises(GitError, match='unknown workspace operation'):
         repo_set(workspace, tmp_path).run('rm -rf')
+
+def test_a_diverged_branch_is_offered_every_way_back_with_its_conflicts_rehearsed(repo_git, tmp_path):
+    "`pull` is --ff-only, so divergence needs a plan: each way out, rehearsed before it runs."
+    remote = tmp_path/'remote.git'
+    git(tmp_path, 'init', '--bare', remote.name)
+    git(repo_git, 'remote', 'add', 'origin', str(remote))
+    git(repo_git, 'push', '-u', 'origin', 'main')
+    git(repo_git, 'switch', '-c', 'upstream-work')
+    (repo_git/'src'/'app.py').write_text('value = 1\nupstream = 1\n')
+    git(repo_git, 'commit', '-am', 'upstream moved')
+    git(repo_git, 'push', 'origin', 'upstream-work:main')
+    git(repo_git, 'switch', 'main')
+    git(repo_git, 'branch', '-D', 'upstream-work')
+    r = GitRepo.at(repo_git)
+    r.fetch()
+    (repo_git/'src'/'app.py').write_text('first = 1\nvalue = 1\n')
+    git(repo_git, 'commit', '-am', 'ours one')
+    (repo_git/'src'/'app.py').write_text('first = 1\nclash = 1\n')
+    git(repo_git, 'commit', '-am', 'ours two')
+    plan = r.divergence()
+    assert (plan['relation'], plan['ahead'], plan['behind']) == ('diverged', 2, 1)
+    ops = {o['op']: o for o in plan['options']}
+    assert not ops['fast-forward']['available'], 'our own commits are in the way'
+    assert ops['merge']['available'] and ops['rebase']['available'] and ops['reset']['destructive']
+    stops = ops['rebase']['stops_at']
+    assert stops and stops['subject'] in ('ours one', 'ours two')
+    assert ops['rebase']['replayed'] < 2, 'a replay that stops has not replayed everything'
+    assert 'src/app.py' in ops['rebase']['conflicts']
+    assert plan['recommended'] == 'merge', 'resolving once beats resolving per replayed commit'
+    out = r.sync('merge')
+    assert out['conflicted'] == ['src/app.py'] and r.divergence()['relation'] == 'diverged'
+    git(repo_git, 'merge', '--abort')
+    assert r.sync('reset')['head'] == r._ask('rev-parse', '--short', 'origin/main')
+
+def test_a_clean_divergence_prefers_rebase_and_a_branch_only_behind_fast_forwards(repo_git, tmp_path):
+    remote = tmp_path/'remote.git'
+    git(tmp_path, 'init', '--bare', remote.name)
+    git(repo_git, 'remote', 'add', 'origin', str(remote))
+    git(repo_git, 'push', '-u', 'origin', 'main')
+    git(repo_git, 'switch', '-c', 'upstream-work')
+    (repo_git/'theirs.py').write_text('theirs = 1\n')
+    git(repo_git, 'add', 'theirs.py'); git(repo_git, 'commit', '-m', 'theirs')
+    git(repo_git, 'push', 'origin', 'upstream-work:main')
+    git(repo_git, 'switch', 'main')
+    git(repo_git, 'branch', '-D', 'upstream-work')
+    r = GitRepo.at(repo_git)
+    r.fetch()
+    assert r.divergence()['recommended'] == 'fast-forward', 'behind only: nothing to reconcile'
+    (repo_git/'ours.py').write_text('ours = 1\n')
+    git(repo_git, 'add', 'ours.py'); git(repo_git, 'commit', '-m', 'ours')
+    plan = r.divergence()
+    assert plan['recommended'] == 'rebase' and not plan['options'][2]['stops_at']
+    r.sync('rebase')
+    assert r.divergence()['relation'] == 'ahead'

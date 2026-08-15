@@ -691,7 +691,6 @@ class GitRepo:
         at, done = onto, []
         for c in commits:
             parent = first(c['parents']) or self.EMPTY_TREE
-            # `commit-tree` only writes an unreferenced object, so it rehearses under the read lock.
             r = _run(self.root, 'merge-tree', '--write-tree', '--name-only',
                 f'--merge-base={parent}', at, c['oid'], check=False)
             tree, names = self._merge_tree_out(r)
@@ -699,7 +698,7 @@ class GitRepo:
                 return done, {'short': c['short'], 'subject': c['subject'], 'oid': c['oid'],
                     'files': names, 'error': '' if tree else (r.stderr or r.stdout).strip()}
             at = _run(self.root, 'commit-tree', tree, '-p', at, '-m', c['short'],
-                kind='read').stdout.strip()
+                kind='read').stdout.strip()      # an unreferenced object: no ref, index or worktree
             done.append(c['short'])
         return done, None
     def _side_by_side(self, path, left, right, from_label, to_label, patch):
@@ -807,23 +806,25 @@ class GitRepo:
             else 'fast-forward' if not ahead else 'diverged')
         merged, likely = self._rehearse(head, other) if behind and ahead else ([], False)
         replayed, stopped = self._replay(other, list(reversed(ours))) if behind and ahead else ([], None)
-        blocked = '' if out['clean'] else f"{_plural(len(out['dirty']), 'tracked file')} uncommitted"
+        # Every path but reset autostashes, so dirt warns rather than blocks.
+        aside = '' if out['clean'] else f'{_plural(len(out["dirty"]), "file")} set aside and put back'
+        note = lambda *xs: ' · '.join(x for x in xs if x)
         opts = [
             {'op': 'fast-forward', 'label': f'Fast-forward to {up}', 'commits': behind,
-                'available': bool(behind) and not ahead, 'conflicts': [], 'note': blocked or
-                ('nothing to fast-forward' if not behind else
-                 f'{_plural(ahead, "commit")} of yours would be left behind' if ahead else '')},
-            {'op': 'merge', 'label': f'Merge {up} into {branch}', 'commits': behind,
-                'available': bool(behind), 'conflicts': merged, 'note': blocked or
-                (f'{_plural(len(merged), "file")} would conflict, resolved once' if likely else '')},
+                'available': bool(behind) and not ahead, 'conflicts': [],
+                'note': note(f'{_plural(ahead, "commit")} of yours in the way' if ahead else '', aside)},
+            {'op': 'merge', 'label': f'Merge {up} into {branch}', 'commits': behind, 'conflicts': merged,
+                'available': bool(behind),
+                'note': note(f'{_plural(len(merged), "file")} to resolve, once' if likely else '', aside)},
             {'op': 'rebase', 'label': f'Rebase {branch} onto {up}', 'commits': ahead,
                 'available': bool(behind and ahead), 'conflicts': (stopped or {}).get('files') or [],
-                'stops_at': stopped, 'replayed': len(replayed), 'note': blocked or
-                (f'stops replaying at {stopped["short"]} — {shorten(stopped["subject"], 50)}'
-                 if stopped else '')},
+                'stops_at': stopped, 'replayed': len(replayed),
+                'note': note(f'stops at {stopped["short"]} — {shorten(stopped["subject"], 44)}'
+                    if stopped else '', aside)},
             {'op': 'reset', 'label': f'Discard {branch} and take {up}', 'commits': ahead,
                 'available': bool(behind), 'conflicts': [], 'destructive': True,
-                'note': f'{_plural(ahead, "commit")} of yours would be lost' if ahead else ''},
+                'note': note(f'{_plural(ahead, "commit")} of yours lost' if ahead else '',
+                    f'{_plural(len(out["dirty"]), "uncommitted file")} lost' if not out['clean'] else '')},
         ]
         out |= {'ahead': ahead, 'behind': behind, 'relation': relation, 'ours': ours, 'theirs': theirs,
             'merge_base': self._ask('merge-base', head, other), 'options': opts}
