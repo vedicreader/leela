@@ -6,24 +6,20 @@
 
 <p align="center"><em>creative workspace that starts with coding</em></p>
 
-A browser IDE for notebooks, files, live variables, research memory, and an agent —
-same shell as a native desktop window.
+A browser IDE for notebooks, files, live variables, research memory, and an agent.
+The same shell opens as a native desktop window.
 
-<video src="docs/media/leela-showcase.mp4" controls width="100%" poster="docs/screenshots/web-showcase-poster.png"></video>
+<video src="docs/media/leela-showcase.mp4" controls width="100%" poster="docs/screenshots/showcase-poster.png"></video>
 
 <p align="center"><a href="docs/media/leela-showcase.mp4">Watch the walkthrough</a> · editor → agent turn → variables → git → palette → search</p>
 
-## Install
+## Install and run
 
 ```sh
 pip install leela                # base
 pip install "leela[github]"      # workflows, releases, deploys
 pip install "leela[gateway]"     # jupygate kernel transport
-```
 
-## Use
-
-```sh
 leela                      # the saved workspace
 leela .                    # a folder
 leela src tests            # one workspace, two roots
@@ -34,57 +30,47 @@ leela --shell webview .    # native desktop window
 `--app` picks the workspace shape. `--shell` picks what opens on top: `chrome`, `webview`, or `none`.
 `leela --help` for transport, kernel, agent, and keymap flags.
 
-## The IDE
+## Walkthrough
 
-### Notebooks and files, side by side
+Notebooks and files share CodeMirror 6. A Python tab runs as a script in its own kernel.
+`▶ file` / `▶ sel`, `mod+e` for recent tabs, atomic autosave.
 
 ![Editor](docs/screenshots/web-editor.png)
 
-CodeMirror 6 for notebooks and text. A `.py` file runs as a script in the tab's own kernel.
-`▶ file` / `▶ sel`, `mod+e` for recent tabs, atomic autosave.
+Every agent call is a lifecycle card. Edit it, read the dry-run diff, approve, reject with
+steering, retry, or roll it back. Autopilot, guided, and directed decide how much of that you see.
+Harness: [ramabana](https://github.com/vedicreader/ramabana) (`leela.agent` is an alias).
 
-### An agent that leaves a trail
-
-![Agent mid-turn](docs/screenshots/web-stream-1-tools.png)
+![Agent mid turn](docs/screenshots/web-stream-1-tools.png)
 
 ![Agent answer](docs/screenshots/web-stream-3-done.png)
 
-Every call is a lifecycle card: edit it, read the dry-run diff, approve, reject with steering,
-retry, or roll it back. Autopilot / guided / directed decide how much of that you see.
-Harness: [ramabana](https://github.com/vedicreader/ramabana) (`leela.agent` is an alias).
-
-### Live variables
+Each tab owns a real kernel with a [dhrishti](https://github.com/vedicreader/dhrishti) inspector
+inside it. Prefix the Variables filter with `=` to evaluate against the watched runtime.
 
 ![Variables](docs/screenshots/web-variables.png)
 
-Each tab owns a real kernel with a [dhrishti](https://github.com/vedicreader/dhrishti) inspector
-inside it. Prefix the filter with `=` to evaluate against the watched runtime.
-
-### Source control
+Source control covers Changes, Review, Branches, History, and All repos.
+Diffs open as editor tabs. Blame reads notebooks as cells. `leela ~/code` answers which
+checkouts are dirty, behind, or unpublished.
 
 ![Git](docs/screenshots/web-git.png)
 
-Changes, Review, Branches, History, Repository, All repos. Diffs as editor tabs; blame reads
-notebooks as cells. `leela ~/code` answers which checkouts are dirty, behind, or unpublished.
-
-### Search and memory
+Code goes through [koshas](https://pypi.org/project/koshas/) (FTS5, embeddings, call graph)
+behind `mod+shift+f`. Prose goes to a [vishalakshi](https://github.com/vedicreader/vishalakshi)
+vault: pages read and sources kept, then recalled instead of fetched again.
 
 ![Code search](docs/screenshots/web-search.png)
 
 ![Memory sources](docs/screenshots/web-memory-sources.png)
 
-[koshas](https://pypi.org/project/koshas/) for code (FTS5, embeddings, call graph) behind
-`mod+shift+f`. [vishalakshi](https://github.com/vedicreader/vishalakshi) vault for prose —
-pages read and research sources, recalled instead of re-fetched.
-
-### Command palette
+Every action has a button, a palette entry (`mod+shift+p`), and a rebindable chord.
+See [docs/desktop.md](docs/desktop.md) and `leela --write-keymap`.
 
 ![Palette](docs/screenshots/web-palette.png)
 
-Every action has a button, a palette entry (`mod+shift+p`), and a rebindable chord.
-Keys: [docs/desktop.md](docs/desktop.md) and `leela --write-keymap`.
-
-### Desktop app
+The desktop build is a native window over the same loopback server. Chrome for the inline
+browser starts when a page needs it, not at launch. Packaging: [docs/desktop.md](docs/desktop.md).
 
 ![Desktop window](docs/screenshots/desktop-window.png)
 
@@ -92,23 +78,18 @@ Keys: [docs/desktop.md](docs/desktop.md) and `leela --write-keymap`.
 
 ![Inline browser](docs/screenshots/desktop-inline-browser.png)
 
-Native window over the same loopback server. Chrome for the inline browser starts when a page
-needs it, not at launch. Packaging and rationale: [docs/desktop.md](docs/desktop.md).
-
 ```sh
 uv sync --extra desktop
 leela --shell webview .
 ```
 
-### Watching a process
+A process leela started under a run configuration is watchable. Anything else joins with one line.
 
 ```json
 {"runs": [
   {"name": "api", "cmd": "uvicorn app:app --port 8000", "watch": "app"}
 ]}
 ```
-
-A process leela started under a run configuration is watchable. Anything else joins with:
 
 ```python
 import dhrishti.serving as ds; ds.serve(name='api')

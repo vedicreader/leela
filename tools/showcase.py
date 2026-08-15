@@ -1,7 +1,7 @@
 """Record the IDE showcase: a walkthrough video plus key stills for the README.
 
 A real server, the real client, a scripted model, and kernels that answer with live
-variables. Playwright drives and records; ffmpeg turns the webm into an mp4.
+variables. Playwright drives and records. ffmpeg turns the webm into an mp4.
 
     python tools/showcase.py
     python tools/showcase.py --stills   # screenshots only
@@ -182,7 +182,7 @@ async def tour(pg, ws, stills=True):
     if nb is not None:
         await pg.evaluate(f"htmxPost('/tab/select?i=' + {nb['i']})")
         await pause(pg, 1200)
-    if stills: await shot(pg, 'web-showcase-end')
+    if stills: await shot(pg, 'showcase-end')
     await pause(pg, 2800)
 
 async def run(*, stills=True, video=True):
@@ -226,7 +226,7 @@ async def run(*, stills=True, video=True):
         shutil.rmtree(rec, ignore_errors=True)
         print(mp4, f'({mp4.stat().st_size/1e6:.1f} MB)')
         # A short poster frame for the README when autoplay is unwanted.
-        poster = OUT/'web-showcase-poster.png'
+        poster = OUT/'showcase-poster.png'
         subprocess.run(['ffmpeg', '-y', '-ss', '3', '-i', str(mp4), '-frames:v', '1', str(poster)],
                        capture_output=True, check=False)
         if poster.exists(): print(poster)
