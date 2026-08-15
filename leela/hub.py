@@ -28,7 +28,9 @@ def workspace_slugs(names):
 
 def workspace_urls(roots, port):
     "Where each root will be served, before `serve_ide` has built the workspaces to say so."
-    return [f'http://{s}.localhost:{port}/' for s in workspace_slugs(Path(r).name for r in roots)]
+    # Resolved, because `serve_ide` slugs resolved roots: a symlink would name another host.
+    names = (Path(r).expanduser().resolve().name for r in roots)
+    return [f'http://{s}.localhost:{port}/' for s in workspace_slugs(names)]
 
 def _headers(scope): return {k.lower(): v for k, v in (scope.get('headers') or ())}
 

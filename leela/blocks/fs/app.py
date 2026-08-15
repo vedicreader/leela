@@ -16,22 +16,24 @@ __all__ = ['CAPS', 'connect', 'SERVED_TYPES']
 
 SERVED_TYPES = {'.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
     '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
-    '.bmp': 'image/bmp'}
+    '.bmp': 'image/bmp', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4',
+    '.ogg': 'audio/ogg', '.flac': 'audio/flac', '.aac': 'audio/aac', '.mp4': 'video/mp4',
+    '.webm': 'video/webm', '.ogv': 'video/ogg', '.mov': 'video/quicktime'}
 
 CAPS = ('fs', 'journal')
 
 def connect(app, ctx):
     rt = app.route
     @rt('/tree')
-    def tree(path: str):
+    def tree(path: str, hidden: bool = False):
         try:
             state = git_tree_state(ctx.fs)
-            return tuple(tree_node(e, state) for e in ctx.fs.ls(path))
+            return tuple(tree_node(e, state, hidden) for e in ctx.fs.ls(path, hidden=hidden))
         except Exception as e: return Div(errstr(e), cls='lee-err')
     @rt('/files/panel')
-    def files_panel_route():
+    def files_panel_route(hidden: bool = False):
         "Refresh only the file pane; the client restores expansion, selection and scroll."
-        return files_panel(ctx.fs)
+        return files_panel(ctx.fs, hidden)
     @rt('/fs/add-root')
     async def add_root_json(req):
         "Add a root without rebuilding the editor, model controls and every other pane."

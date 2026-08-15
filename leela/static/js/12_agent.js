@@ -15,6 +15,9 @@ document.addEventListener('keydown', e => {
 }, true);
 window.addEventListener('blur', () => closeDismissableDisclosures());
 
+// A model that draws or films says so in the picker itself; the rest of what it takes is the tooltip.
+const modelMark = (m) => (m.gen_image ? ' · draws' : '') + (m.gen_video ? ' · films' : '');
+
 async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
   const selects = {agent: $('#agentmodel'), inline: $('#inlinemodel'), completion: $('#completionmodel')};
   if (!selects.agent || !selects.inline || !selects.completion) return;
@@ -24,14 +27,40 @@ async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
     select.innerHTML = '';
     for (const m of (d.models || [])) {
       const option = document.createElement('option');
-      option.value = m.value; option.textContent = `${m.label} · ${m.provider}`;
-      option.title = m.source || ''; select.appendChild(option);
+      option.value = m.value; option.textContent = `${m.label} · ${m.provider}${modelMark(m)}`;
+      option.title = [m.source, m.modalities].filter(Boolean).join(' · ');
+      select.appendChild(option);
     }
     const wanted = d.selected?.[target] || previous[target];
     if ([...select.options].some(o => o.value === wanted)) select.value = wanted;
   }
+  paintJobModels(d);
   const notes = Object.values(d.auth || {}).map(x => x.note).filter(Boolean);
   if (notes.length) selects.agent.title = notes.join(' · ');
+}
+
+// The routed jobs with no control of their own, drawn from what the server reports rather than
+// listed here, so a job ramabana adds arrives with the release that adds it.
+const JOB_TITLES = {subagent: 'delegated searches run on this model',
+                    summary: 'compaction summaries and notebook digests',
+                    classify: 'short classification calls',
+                    oneshot: 'every cheap one-shot job that has no model of its own',
+                    inline: 'the harness inline job, not the prompt-cell assistant'};
+function paintJobModels(d) {
+  const host = $('#jobmodels'); if (!host) return;
+  const jobs = Object.entries(d.jobs || {});
+  host.hidden = !jobs.length;
+  if (!jobs.length) return;
+  const options = (d.models || []).map(m =>
+    `<option value="${esc(m.value)}">${esc(m.label)} · ${esc(m.provider)}${esc(modelMark(m))}</option>`).join('');
+  host.innerHTML = jobs.map(([job, current]) =>
+    `<label title="${esc(JOB_TITLES[job] || '')}">${esc(job)}<select class="lee-select" data-job="${esc(job)}">` +
+    options + `</select></label>`).join('');
+  for (const [job, current] of jobs) {
+    const sel = host.querySelector(`[data-job="${job}"]`);
+    if ([...sel.options].some(o => o.value === current)) sel.value = current;
+    sel.onchange = () => leeAgentModel(job, sel.value);
+  }
 }
 window.leeLoadModels = loadAgentModels;
 
@@ -46,15 +75,13 @@ async function leeAddModel() {
     <details><summary>hosted API settings</summary><label>base URL<input class="lee-input" id="modelbase" placeholder="https://api.example.com/v1"></label><label>API key environment variable<input class="lee-input" id="modelkeyenv" placeholder="OPENAI_API_KEY"></label><label>FastLLM vendor<input class="lee-input" id="modelvendor" placeholder="openai"></label><label>FastLLM API transport<input class="lee-input" id="modelapi" placeholder="openai"></label></details>
     <button class="lee-btn go" id="modelsave">save model</button>
     <h4>saved models</h4><div class="lee-modallist">${saved || '<div class="lee-dim">none yet</div>'}</div>`);
-  /* The runtimes ramabana will accept, and which of them rishi can load here -- `d.runtimes`
-     rather than a list in this file, which drifted out of step once already and left the
-     picker offering MLX after it had been dropped. An unavailable one stays visible but
-     disabled and says what to install: "MLX needs rishi[mlx]" beats a silently missing row. */
-  const RUNTIME_LABELS = {litert: 'LiteRT', mlx: 'MLX', llama: 'llama.cpp', remote: 'hosted API / FastLLM'};
+  /* The runtimes ramabana will accept, and which of them rishi can load here. The list, the
+     label and the remedy all come from `d.runtimes`: kept here they drifted twice, offering MLX
+     after it was dropped and telling you to pip install Cursor. Unavailable stays visible. */
   const rtsel = m.querySelector('#modelruntime');
-  rtsel.innerHTML = (d.runtimes || [{value: 'remote', available: true}]).map(r =>
-    `<option value="${esc(r.value)}"${r.available ? '' : ' disabled'}>${esc(RUNTIME_LABELS[r.value] || r.value)}` +
-    `${r.available ? '' : ' — needs pip install rishi[' + esc(r.value) + ']'}</option>`).join('');
+  rtsel.innerHTML = (d.runtimes || [{value: 'remote', label: 'hosted API / FastLLM', available: true}]).map(r =>
+    `<option value="${esc(r.value)}"${r.available ? '' : ' disabled'}>${esc(r.label || r.value)}` +
+    `${r.available ? '' : ' — ' + esc(r.why || 'unavailable here')}</option>`).join('');
   const firstrt = rtsel.querySelector('option:not([disabled])');
   if (firstrt) rtsel.value = firstrt.value;
 
@@ -73,8 +100,10 @@ async function leeAddModel() {
 }
 window.leeAddModel = leeAddModel;
 
+const MODEL_SELECTS = {agent: '#agentmodel', inline: '#inlinemodel', completion: '#completionmodel'};
 async function leeAgentModel(target, model) {
-  const select = $('#' + (target === 'agent' ? 'agentmodel' : target === 'inline' ? 'inlinemodel' : 'completionmodel'));
+  // A harness job has no select of its own; it has the row `paintJobModels` drew for it.
+  const select = $(MODEL_SELECTS[target] || `#jobmodels [data-job="${target}"]`);
   if (select) select.disabled = true;
   try {
     const d = await post('/agent/model', {target, model});
@@ -126,15 +155,33 @@ async function leeAgentBudget() {
     const d = await post('/agent/budget', {tools: tools?.value.trim(), steps: steps?.value.trim()});
     if (tools) tools.value = String(d.tools);
     if (steps) steps.value = String(d.steps);
+    const quick = $('#agenttoolbudget'); if (quick) quick.value = String(d.tools);
     status(d.note, 'ok');
   } catch (e) {
     status(e.message || String(e), 'err');
     try { const d = await api('/agent/budget/state');
       if (tools) tools.value = String(d.tools); if (steps) steps.value = String(d.steps);
+      const quick = $('#agenttoolbudget'); if (quick) quick.value = String(d.tools);
     } catch (_) { /* leave the boxes alone rather than blank them on a second failure */ }
   }
 }
 window.leeAgentBudget = leeAgentBudget;
+
+async function leeAgentQuickBudget() {
+  const quick = $('#agenttoolbudget'), tools = $('#toolbudget');
+  if (tools) tools.value = quick?.value || 'auto';
+  await leeAgentBudget();
+}
+window.leeAgentQuickBudget = leeAgentQuickBudget;
+
+async function refreshAgentBudget() {
+  const el = $('#agentbudgetstatus'); if (!el) return;
+  try {
+    const d = await api('/agent/status');
+    el.textContent = `${d.tool_calls || 0} / ${d.tool_limit || '—'}`;
+    el.title = `${d.tool_calls || 0} of ${d.tool_limit || 'unknown'} tool calls used this turn`;
+  } catch (_) {}
+}
 
 async function leeLocalMultimodal(enabled) {
   const box = $('#localmultimodal');
@@ -143,6 +190,32 @@ async function leeLocalMultimodal(enabled) {
   status(d.ok ? d.note : (d.error || 'local multimodal setting failed'), d.ok ? 'ok' : 'err');
 }
 window.leeLocalMultimodal = leeLocalMultimodal;
+
+async function leeWorkspaceRepoWrites(enabled) {
+  const box = $('#workspace-repo-writes');
+  try {
+    const d = await post('/agent/workspace-repo-writes', {enabled: !!enabled});
+    if (!d.ok && box) box.checked = !enabled;
+    status(d.ok ? d.note : (d.error || 'workspace repository write setting failed'), d.ok ? 'ok' : 'err');
+  } catch (e) {
+    if (box) box.checked = !enabled;
+    status(String(e.message || e), 'err');
+  }
+}
+window.leeWorkspaceRepoWrites = leeWorkspaceRepoWrites;
+
+async function leeAgentReadOutside(enabled) {
+  const box = $('#agent-read-outside');
+  try {
+    const d = await post('/agent/read-outside', {enabled: !!enabled});
+    if (!d.ok && box) box.checked = !enabled;
+    status(d.ok ? d.note : (d.error || 'read-outside setting failed'), d.ok ? 'ok' : 'err');
+  } catch (e) {
+    if (box) box.checked = !enabled;
+    status(String(e.message || e), 'err');
+  }
+}
+window.leeAgentReadOutside = leeAgentReadOutside;
 
 function leeAgentExpand() {
   const shell = $('#shell'); if (!shell) return;
@@ -519,6 +592,8 @@ async function leeAgentHistory() {
   const d = await api('/agent/history');
   await showHistorySession((d.sessions || [])[0], d.sessions || []);
 }
+async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
+window.leeAgentNew = leeAgentNew;
 window.leeAgentHistory = leeAgentHistory;
 
 async function leeAgentState() {
@@ -904,7 +979,18 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
       if (!await confirmDialog('Undo agent turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
       const d = await post('/agent/rollback-turn', {turn_id: turnId});
       for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
-      bar.classList.add('rolled-back'); $('[data-undo]', bar).disabled = true; status('turn changes rolled back', 'ok');
+      const log = out.parentElement;
+      if (log) {
+        let first = out, last = bar;
+        while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
+        if (first.previousElementSibling?.classList.contains('lee-user-message')) first = first.previousElementSibling;
+        while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
+        for (let node = first, next; node; node = next) {
+          next = node.nextElementSibling; node.remove();
+          if (node === last) break;
+        }
+      }
+      status('turn changes rolled back', 'ok');
     } catch (e) { status(e.message || String(e), 'err'); }
   };
   reviseButton.onclick = () => {
@@ -1205,6 +1291,35 @@ async function leeAgentControl(control) {
 }
 window.leeAgentControl = leeAgentControl;
 
+async function leeAgentAttach(path = '') {
+  const value = String(path || '').trim();
+  if (!value) {
+    const picked = window.prompt('Workspace image path');
+    if (!picked) return;
+    return leeAgentAttach(picked);
+  }
+  try {
+    const d = await post('/agent/attachment', {path: value});
+    lee.agentAttachments.set(d.path, d.name || d.path.split('/').pop());
+    paintAgentAttachments();
+    status('image attached', 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+window.leeAgentAttach = leeAgentAttach;
+
+async function attachPastedImage(blob) {
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const d = await post('/agent/attachment', {data_url: reader.result});
+      lee.agentAttachments.set(d.path, d.name || d.path.split('/').pop());
+      paintAgentAttachments();
+      status('pasted image attached', 'ok');
+    } catch (e) { status(String(e.message || e), 'err'); }
+  };
+  reader.readAsDataURL(blob);
+}
+
 function initAgentComposer() {
   const input = $('#agentprompt'); if (!input || input.dataset.composerReady) return;
   input.dataset.composerReady = '1';
@@ -1219,6 +1334,14 @@ function initAgentComposer() {
     input.style.height = 'auto';
     input.style.height = Math.min(190, Math.max(64, input.scrollHeight)) + 'px';
   };
+  input.addEventListener('paste', e => {
+    const image = [...(e.clipboardData?.items || [])].find(item => item.type.startsWith('image/'));
+    if (image) { e.preventDefault(); attachPastedImage(image.getAsFile()); return; }
+    const text = e.clipboardData?.getData('text/plain')?.trim();
+    if (text && /(?:^|\s)(?:~\/|\/|[A-Za-z]:[\\/]|\.\.?[\/])[^\s]+\.(?:png|jpe?g|gif|webp|bmp)(?:$|\s)/i.test(text)) {
+      e.preventDefault(); leeAgentAttach(text);
+    }
+  });
   input.addEventListener('input', () => {
     grow();
     // Coalesced, because each call walks the project tree. `agentSuggestSeq` already drops a
@@ -1250,6 +1373,28 @@ async function sendAgentCommand(line) {
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 
+/* A generated picture arrives as a data URL on the `done` event. The tool result the model
+ * sees is a path, and a browser cannot draw a filename, so the bytes come separately. */
+function drawTurnMedia(out, media) {
+  for (const m of (media || [])) {
+    const fig = document.createElement('figure');
+    fig.className = 'lee-agent-media';
+    fig.innerHTML = (m.mime || '').startsWith('video/')
+      ? `<video controls src="${m.url}"></video>`
+      : `<img src="${m.url}" alt="generated image">`;
+    out.after(fig);
+  }
+}
+
+function setAgentStatus(state, title) {
+  const el = $('#agentstatus'); if (!el) return;
+  el.classList.remove('working', 'ready', 'idle'); el.classList.add(state);
+  el.title = title || (state === 'working' ? 'agent is working' : state === 'ready' ? 'agent ready' : 'agent idle');
+  const dot = $('.lee-agent-status-dot', el); if (dot) dot.setAttribute('aria-label', el.title);
+  const text = state === 'working' ? 'working' : state === 'ready' ? 'ready' : 'idle';
+  [...el.childNodes].find(n => n.nodeType === Node.TEXT_NODE)?.replaceWith(document.createTextNode(text));
+}
+
 // The assistant's tools edit files on disk, so a turn can change what is on screen.
 // Activity, answer chunks, and final diffs stream independently; each tool row is updated
 // in place so pending work never remains on screen after that step has finished.
@@ -1265,7 +1410,7 @@ async function sendAgent() {
   }
   const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref)];
   lee.agentAttachments.clear(); lee.agentSelections = []; paintAgentAttachments();
-  lee.agentBusy = true; updateAgentRunstrip();
+  lee.agentBusy = true; setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   log.appendChild(userMessage(q)); log.scrollTop = log.scrollHeight;
   status('model is working…');
@@ -1291,7 +1436,7 @@ async function sendAgent() {
       row.animate([{opacity: 0, transform: 'translateY(4px)'}, {opacity: 1, transform: 'translateY(0)'}],
                   {duration: 220, easing: 'cubic-bezier(.16,1,.3,1)'});
     }
-    renderAgentStep(row, a);
+    renderAgentStep(row, a); refreshAgentBudget();
     const lifecycle = approvalCards.get(a.action_id || a.id);
     if (lifecycle && a.done) {
       lifecycle.classList.remove('running', 'proposed'); lifecycle.classList.add(a.ok ? 'complete' : 'failed');
@@ -1333,9 +1478,10 @@ async function sendAgent() {
   });
 
   es.addEventListener('done', async ev => {
-    finished = true; lee.agentBusy = false; es.close(); progress.finish(true); updateAgentRunstrip();
+    finished = true; lee.agentBusy = false; setAgentStatus('ready'); es.close(); progress.finish(true); updateAgentRunstrip(); refreshAgentBudget();
     const d = JSON.parse(ev.data);
     addResponseRevision(out, d.turn_id, raw, d.capabilities || {});
+    drawTurnMedia(out, d.media);
     const usage = usageMeta(d.usage, d.usage_label, d.model); if (usage) out.after(usage);
     for (const e of (d.edits || []))
       agentLog(`<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
@@ -1350,7 +1496,7 @@ async function sendAgent() {
   // A dropped connection must clear both the functional busy lock and its visual state.
   es.onerror = () => {
     if (finished) return;
-    lee.agentBusy = false; progress.finish(false); updateAgentRunstrip();
+    lee.agentBusy = false; setAgentStatus('ready'); progress.finish(false); updateAgentRunstrip();
     status('the model stream ended before it returned a result', 'err'); es.close();
   };
 }

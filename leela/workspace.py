@@ -11,7 +11,7 @@ from .blocks.agent.ai import Assistant, notebook_approvals
 from .blocks.runtime.devserver import DevServers
 from .blocks.fs.fs import Sandbox, Unsafe, lang_for, is_texty
 from .blocks.runtime.kernels import KernelPool
-from .blocks.nb.nb import Notebook
+from .blocks.nb.nb import Notebook, media_outputs
 from .blocks.research.research import Research
 from .blocks.runs.runs import Run, Runs
 from .blocks.search.search import Search
@@ -90,6 +90,8 @@ def budget_value(v, lo, hi):
     return n if lo <= n <= hi else 'auto'
 
 IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'}
+AUDIO_EXTS = {'.wav', '.mp3', '.m4a', '.ogg', '.flac', '.aac'}
+VIDEO_EXTS = {'.mp4', '.webm', '.ogv', '.mov'}
 
 @dataclass
 class Tab(Dictable):
@@ -108,6 +110,8 @@ class Tab(Dictable):
         if self.path.endswith('.ipynb'): self.kind = 'notebook'
         elif self.path.lower().endswith('.pdf'): self.kind = 'pdf'
         elif Path(self.path).suffix.lower() in IMAGE_EXTS: self.kind = 'image'
+        elif Path(self.path).suffix.lower() in AUDIO_EXTS: self.kind = 'audio'
+        elif Path(self.path).suffix.lower() in VIDEO_EXTS: self.kind = 'video'
         if self.private_kernel is None: self.private_kernel = self.kind == 'notebook'
     @property
     def lang(self): return 'python' if self.kind == 'notebook' else lang_for(self.path)
@@ -168,11 +172,14 @@ class Workspace:
         if self.litert_backend: os.environ['LEELA_LITERT_BACKEND'] = self.litert_backend
         self.compact_auto, self.compact_strategy = True, 'surgical'
         self.tool_budget, self.step_budget = 'auto', 'auto'
+        self.allow_workspace_repo_writes = False
+        self.agent_read_outside = False     # reads may leave the open folders; writes never do
         self.active_root = None
         self.agent_state = ''
         self.agent_state_layers = {name: {'text': '', 'enabled': True, 'source': 'workspace'} for name in
                                    ('organization', 'project', 'task', 'preferences', 'branch', 'ephemeral')}
         self.agent_memory_selection = {'agent': [], 'inline': [], 'completion': []}
+        self.job_models = {}                # harness job -> model, for the jobs without a field
         self.screen = (None, '', '')
         self.on_note = None
         self._approval_target = None
@@ -185,6 +192,8 @@ class Workspace:
                                  on_compact=self._compacted, history_name='agent')
             if self.completion_model:
                 self._ai.set_model(self.completion_model, job='completion')
+            for job, name in (self.job_models or {}).items():   # subagent, summary, classify, oneshot
+                if name: self._ai.set_model(name, job=job)
             self.approvals.host = self._ai.host
         return self._ai
     @property
@@ -387,6 +396,7 @@ class Workspace:
         c.reply = f'{text}\n\n{trail}' if trail else text
         c.calls = a.activity.rows(mark=a.activity._mark)
         c.usage = a.turn_use.dict()
+        c.outputs = media_outputs(a.turn_media)
         nb.dirty = True
         return c
     def folder_manifest(self, ref, limit=300):
@@ -409,10 +419,12 @@ class Workspace:
         a, b = int(sel.get('from') or 1), int(sel.get('to') or 1)
         body = str(sel.get('text') or '')[:max_text]
         return f'<attached-selection path="{path}" lines="{a}-{b}">\n{body}\n</attached-selection>'
-    def _attachment_context(self, refs=(), max_file=120_000, max_total=300_000):
-        "Workspace files selected with @, as grounded text context and multimodal image parts."
-        text, images, used = [], [], 0
+    def _attachment_context(self, refs=(), spec=None, max_file=120_000, max_total=300_000):
+        "Workspace files selected with @, as grounded text context and multimodal content parts."
+        from ramabana.cli import MEDIA, Attachment, media_note, media_parts
+        text, images, sound, used = [], [], [], 0
         image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+        audio_exts = {ext for ext, (kind, _) in MEDIA.items() if kind == 'audio'}
         seen, items = set(), []
         for ref in (refs or ()):
             key = json.dumps(ref, sort_keys=True) if isinstance(ref, dict) else str(ref).strip()
@@ -430,6 +442,9 @@ class Workspace:
             if p.suffix.lower() in image_exts:
                 images.append(p.read_bytes())
                 continue
+            if p.suffix.lower() in audio_exts:
+                sound.append(Attachment(p))
+                continue
             raw = p.read_bytes()[:max_file]
             body = raw.decode('utf-8', 'replace')
             remaining = max_total - used
@@ -437,13 +452,16 @@ class Workspace:
             body = body[:remaining]; used += len(body)
             clipped = '\n[attachment clipped]' if len(raw) >= max_file else ''
             text.append(f'<attached-file path="{p}">\n{body}{clipped}\n</attached-file>')
-        return '\n\n'.join(text), images
+        # sound goes out as content parts where the model can hear it, and by path where it cannot
+        if not sound: return '\n\n'.join(text), images
+        text.append(media_note(sound, spec).strip())
+        return '\n\n'.join(text), images + media_parts(sound, spec)
     def _grounding(self, attachments, context):
         "`(context, screen, media)` for one prompt-bar turn: pending capture plus @-selected files."
         png, screen, _ = self.take_screen()
-        attached, images = self._attachment_context(attachments)
+        attached, media = self._attachment_context(attachments, self.ai.model)
         return ('\n\n'.join(x for x in (context, attached) if x), screen,
-                ([png] if png else []) + images)
+                ([png] if png else []) + media)
     def ask(self, prompt, attachments=(), context='', context_path=''):
         "One turn from a prompt bar, grounded by the open notebook and @-selected files."
         context, screen, media = self._grounding(attachments, context)
@@ -461,7 +479,7 @@ class Workspace:
         if not c.is_prompt: raise ValueError(f'cell {i} is a {c.cell_type} cell, not a prompt')
         a = self.inline_ai
         png, screen, _ = self.take_screen()
-        c.reply, c.calls, c.usage = '', [], {}
+        c.reply, c.calls, c.usage, c.outputs = '', [], {}, []
         nb.dirty = True
         self._approval_target = (nb, i)
         started = time.perf_counter()
@@ -486,6 +504,7 @@ class Workspace:
             if (trail := a.turn_md()): c.reply += f'\n\n{trail}'
             c.calls = a.activity.rows(mark=a.activity._mark)
             c.usage = a.turn_use.dict()
+            c.outputs = media_outputs(a.turn_media)
             nb.dirty = True
     @property
     def pending_approval(self):
@@ -746,6 +765,9 @@ class Workspace:
                 'agent_memory_selection': self.agent_memory_selection,
                 'compact_auto': self.compact_auto, 'compact_strategy': self.compact_strategy,
                 'tool_budget': self.tool_budget, 'step_budget': self.step_budget,
+                'allow_workspace_repo_writes': self.allow_workspace_repo_writes,
+                'agent_read_outside': self.agent_read_outside,
+                'job_models': self.job_models,
                 'active_root': str(self.active_root or ''),
                 'saved': time.time()}
     def save(self, path=None):
@@ -777,6 +799,9 @@ class Workspace:
         ws.compact_strategy = str(d.get('compact_strategy') or 'surgical')
         ws.tool_budget = budget_value(d.get('tool_budget'), *TOOL_RANGE)
         ws.step_budget = budget_value(d.get('step_budget'), *STEP_RANGE)
+        ws.allow_workspace_repo_writes = bool(d.get('allow_workspace_repo_writes', False))
+        ws.agent_read_outside = bool(d.get('agent_read_outside', False))
+        ws.job_models = {str(k): str(v) for k, v in (d.get('job_models') or {}).items() if v}
         ws.agent_state = str(d.get('agent_state') or '')
         saved_selection = d.get('agent_memory_selection')
         if isinstance(saved_selection, dict):

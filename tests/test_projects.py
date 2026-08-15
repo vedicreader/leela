@@ -43,6 +43,19 @@ def test_a_corrupt_session_file_does_not_stop_the_app_opening(session_file):
     session_file.write_text('{"folders": [')
     assert projects.last_folders() == []
 
+def test_folders_opened_at_once_do_not_overwrite_each_other(tmp_path, session_file):
+    "Two request threads, each writing the whole file. A session that will not parse reads as none."
+    import threading
+    many = []
+    for i in range(24):
+        (tmp_path/f'p{i}').mkdir()
+        many.append(str(tmp_path/f'p{i}'))
+    threads = [threading.Thread(target=projects.note_folder, args=(p,)) for p in many]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    assert sorted(projects.last_folders()) == sorted(many), 'every folder survived the others'
+    assert json.loads(session_file.read_text()), 'and the file it left is whole'
+
 def test_the_folders_a_launch_opened_are_what_the_next_one_reopens(dirs):
     projects.remember(dirs[:2])
     assert projects.last_folders() == dirs[:2]

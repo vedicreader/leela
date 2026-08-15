@@ -783,7 +783,7 @@ async function loadGitReview() {
     gitUI.review = await api(gitUrl('/git/review', {base: gitUI.reviewBase, head: gitUI.reviewHead, mode: gitUI.reviewMode}));
     gitUI.reviewFile = gitUI.review.files[0]?.path || ''; gitUI.reviewPatch = '';
     renderGitPanel(gitUI.snapshot);
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'review', e); }
 }
 async function loadGitReviewFile(path, asTab = false) {
   if (!gitUI.review) return;
@@ -793,7 +793,7 @@ async function loadGitReviewFile(path, asTab = false) {
     gitUI.reviewPatch = d.patch || '';
     if (asTab) return openGitDiffTab({...d, path, kind: 'review', baseLabel: gitUI.review.base, headLabel: gitUI.review.head, absolutePath: gitUI.snapshot.root + '/' + path, reviewKey: gitReviewKey({...gitUI.review, root: gitUI.snapshot.root}, path), allowWrite: !!d.can_apply && !path.toLowerCase().endsWith('.ipynb')});
     renderGitPanel(gitUI.snapshot);
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'review file', e); }
 }
 function moveGitReviewFile(delta) {
   const files = gitUI.review?.files || [], at = files.findIndex(f => f.path === gitUI.reviewFile);
@@ -819,7 +819,7 @@ async function loadGitResources() {
       const path = b.closest('[data-worktree]').dataset.worktree;
       if (await confirmDialog('remove worktree', `Remove ${path}? Uncommitted work prevents removal.`, 'remove')) renderGitPanel(await gitDo('remove_worktree', {path}));
     });
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'worktrees and submodules', e); }
 }
 function wireGitPanel(host, d) {
   host.querySelectorAll('[data-git-tab]').forEach(b => b.onclick = () => { gitUI.tab = b.dataset.gitTab; if (gitUI.tab !== 'history') gitUI.history = []; renderGitPanel(d); });
@@ -956,7 +956,7 @@ function showReviewHunkApply(d) {
     if (!selected.length) return status('select at least one hunk', 'err');
     if (!await confirmDialog('apply branch hunks', `Apply ${selected.length} selected hunk${selected.length === 1 ? '' : 's'} from ${gitUI.review.head} to the working tree?`, 'apply')) return;
     try { const next = await gitDo('apply_patch', {patch: parts.header + selected.join(''), staged: false}); m.remove(); gitUI.review = null; gitUI.tab = 'changes'; renderGitPanel(next); }
-    catch (e) { status(e.message || String(e), 'err'); }
+    catch (e) { leeFail('git', 'apply hunks', e); }
   };
 }
 async function showMergePreview(branch, d, act) {
@@ -980,7 +980,7 @@ async function showMergePreview(branch, d, act) {
       if (!await confirmDialog('merge branch', `Merge ${branch} into ${p.current} using ${strategy}?`, 'merge')) return;
       m.remove(); act('merge', {branch, strategy});
     };
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'merge preview', e); }
 }
 async function showRebasePreview(branch, d, act) {
   try {
@@ -997,7 +997,7 @@ async function showRebasePreview(branch, d, act) {
       if (!await confirmDialog('rebase branch', `Replay ${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} from ${p.current} onto ${branch}?`, 'rebase')) return;
       m.remove(); act('rebase', {branch});
     };
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'rebase preview', e); }
 }
 /* The branch row's `•••`, as a menu anchored to the button rather than a modal: picking a
    branch to compare against is a glance, not a dialogue. Named for this panel because the
@@ -1040,14 +1040,14 @@ function gitBranchMenu(anchor, branch, d, act) {
 }
 async function loadGitCommitInspector(ref) {
   try { gitUI.selectedCommit = await api(gitUrl('/git/commit/review', {ref})); renderGitPanel(gitUI.snapshot); }
-  catch (e) { status(e.message || String(e), 'err'); }
+  catch (e) { leeFail('git', 'commit', e); }
 }
 async function openGitCommitFile(ref, path) {
   try {
     const d = await api(gitUrl('/git/commit/file', {ref, path}));
     const c = gitUI.selectedCommit;
     return openGitDiffTab({...d, path, kind: 'commit', baseLabel: c?.parents?.[0]?.slice(0, 8) || 'empty tree', headLabel: c?.short || ref.slice(0, 8), absolutePath: gitUI.snapshot.root + '/' + path});
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'commit file', e); }
 }
 async function showGitCommit(ref) {
   try {
@@ -1055,7 +1055,7 @@ async function showGitCommit(ref) {
     const files = c.files.map(f => `<button class="lee-git-commit-file" data-path="${esc(f.path)}"><b>${esc(f.status)}</b><span>${esc(f.path)}</span><small>${f.binary ? 'binary' : `+${f.additions} −${f.deletions}`}</small></button>`).join('');
     const m = modal(`<div class="lee-mhead">${esc(c.short)}<span class="sub">${esc(c.author)} · ${new Date(c.timestamp * 1000).toLocaleString()}</span></div><article class="lee-git-commit-sheet"><h3>${esc(c.message)}</h3><section><b>${c.summary.files} files</b><span>+${c.summary.additions}</span><span>−${c.summary.deletions}</span></section><div>${files}</div></article>`);
     m.querySelectorAll('[data-path]').forEach(b => b.onclick = () => { m.remove(); gitUI.selectedCommit = c; openGitCommitFile(c.oid, b.dataset.path); });
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'commit', e); }
 }
 async function showGitCompare(left, right) {
   if (!left || !right) return status('choose a base and target ref', 'err');
@@ -1068,7 +1068,7 @@ async function showGitReflog() {
     const d = await api(gitUrl('/git/reflog', {limit: 150}));
     const m = modal(`<div class="lee-mhead">reflog<span class="sub">local recovery history · newest first</span></div><div class="lee-git-history">${(d.entries || []).map(x => `<button class="lee-git-commit-row" data-commit="${x.oid}"><span class="lee-git-graph">◆</span><span><strong>${esc(x.subject)}</strong><small>${esc(x.selector)} · ${esc(x.author)} · ${gitRelative(x.timestamp)} · ${esc(x.short)}</small></span></button>`).join('') || '<div class="lee-git-empty-state"><strong>No reflog entries</strong><span>This repository has no local movement history.</span></div>'}</div>`);
     m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'reflog', e); }
 }
 // Three-pane conflict resolution: ours, an editable result, and theirs.
 //
@@ -1271,7 +1271,7 @@ async function showGitConflict(path) {
     };
     refresh(d.worktree || '', true);
     jumpTo(0);
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'resolve conflict', e); }
 }
 
 // Add/add and delete/modify conflicts have no contested lines to work through -- one side has
@@ -1315,7 +1315,7 @@ function blameSelectionRange() {
 async function leeBlame() {
   if (!lee.path) return status('open a file to blame it', 'err');
   let root = gitUI.snapshot?.root;
-  if (!root) { try { root = (await api(gitUrl('/git/info'))).root; } catch (e) { return status(e.message || String(e), 'err'); } }
+  if (!root) { try { root = (await api(gitUrl('/git/info'))).root; } catch (e) { return leeFail('git', 'blame', e); } }
   showGitBlame(root, blameRelative(root, lee.path), blameSelectionRange());
 }
 window.leeBlame = leeBlame;
@@ -1366,7 +1366,7 @@ async function showGitBlame(root, path, range = null) {
       `${range ? '<div class="lee-mfoot"><button class="lee-btn" id="blameall">blame the whole file</button></div>' : ''}`);
     m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
     m.querySelector('#blameall')?.addEventListener('click', () => { m.remove(); showGitBlame(root, path, null); });
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'blame', e); }
 }
 function leeGit() { leeLeft('git'); }
 function leeGitRefresh() { gitUI.snapshot = null; gitUI.history = []; renderGitPanel(); refreshProjectPills(); }

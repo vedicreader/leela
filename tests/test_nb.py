@@ -9,7 +9,7 @@ from fastcore.all import Path
 from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.fs.app import SERVED_TYPES
-from leela.workspace import IMAGE_EXTS, Tab, Workspace
+from leela.workspace import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS, Tab, Workspace
 ROOT = Path(__file__).resolve().parents[1]
 from pathlib import Path
 from leela.app import _python_diagnostics, ide_app
@@ -308,10 +308,14 @@ def test_image_tabs_are_served_but_never_written_over():
     for ext in sorted(IMAGE_EXTS):
         assert Tab(path=f'/tmp/a{ext}').kind == 'image', ext
         assert Tab(path=f'/tmp/a{ext.upper()}').kind == 'image', 'the extension is not case sensitive'
+    for ext in sorted(AUDIO_EXTS):
+        assert Tab(path=f'/tmp/a{ext}').kind == 'audio' and ext in SERVED_TYPES
+    for ext in sorted(VIDEO_EXTS):
+        assert Tab(path=f'/tmp/a{ext}').kind == 'video' and ext in SERVED_TYPES
     assert Tab(path='/tmp/a.py').kind == 'text' and Tab(path='/tmp/a.pdf').kind == 'pdf'
     js = builder.OUT.read_text()
-    assert "lee.kind === 'pdf' || lee.kind === 'image'" in js
     assert 'function mountImage' in js and "st.kind === 'image'" in js
+    assert 'function mountMedia' in js and "st.kind === 'audio' || st.kind === 'video'" in js
     js = builder.OUT.read_text()
     block = js[js.index('function resolveMarkdownImages'):js.index('function renderMarkdown')]
     assert "/^(https?:|data:|blob:|\\/file\\/raw)/" in block, 'an absolute or already-resolved src is left alone'
@@ -405,3 +409,30 @@ def test_common_project_languages_are_detected_from_paths():
         'Dockerfile': 'bash', 'Cargo.lock': 'toml',
     }
     assert {name: lang_for(name) for name in expected} == expected
+
+from leela.blocks.nb.nb import media_output, media_outputs
+
+def test_a_generated_picture_becomes_the_display_data_output_the_renderer_already_draws():
+    o = media_output({'mime': 'image/png', 'data': b'\x89PNG\r\n\x1a\n'})
+    assert o['output_type'] == 'display_data'
+    assert o['data']['image/png'] == 'iVBORw0KGgo='
+    assert '\n' not in o['data']['image/png'], 'the img src is a single base64 line'
+
+def test_generated_video_becomes_a_player_and_any_other_picture_an_img():
+    html = media_output({'mime': 'video/mp4', 'data': b'ftyp'})['data']['text/html']
+    assert html.startswith('<video controls src="data:video/mp4;base64,') and html.endswith('</video>')
+    assert media_output({'mime': 'image/jpeg', 'data': b'jpg'})['data']['text/html'].startswith(
+        '<img src="data:image/jpeg;base64,')
+    assert media_outputs(None) == []
+
+def test_a_prompt_cell_keeps_its_generated_media_across_a_save_and_reload(tmp_path):
+    outputs = media_outputs([{'mime': 'image/png', 'data': b'\x89PNG\r\n\x1a\n'}])
+    nb = Notebook([Cell(source='draw a cat', cell_type='prompt', reply='here it is', outputs=outputs)])
+    nb.save(str(tmp_path/'d.ipynb'))
+    back = Notebook.load(str(tmp_path/'d.ipynb'))
+    assert back[0].cell_type == 'prompt' and back[0].reply == 'here it is'
+    assert back[0].outputs == outputs
+
+def test_the_client_draws_a_prompt_cell_media_output():
+    branch = CLIENT.split('function renderOutputs(c) {')[1].split('    return;')[0]
+    assert 'for (const o of (c.outputs || [])) box.appendChild(outputEl(o));' in branch

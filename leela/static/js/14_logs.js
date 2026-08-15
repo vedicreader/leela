@@ -24,13 +24,22 @@ window.leeLog = leeLog;
 function renderLogs() {
   const el = $('#loglist'); if (!el) return;
   const want = lee.logFilter || '';
-  const rows = lee.logs.filter(r => !want || r.source === want);
-  el.innerHTML = rows.length ? rows.map(r =>
-    `<article class="lee-logrow${r.kind ? ' ' + r.kind : ''}">` +
-    `<div class="lee-loghead"><time>${r.at.toTimeString().slice(0, 8)}</time>` +
-    `<span class="lee-logsource">${esc(r.source)}</span><strong>${esc(r.title)}</strong></div>` +
-    (r.detail ? `<pre class="lee-logdetail">${esc(r.detail)}</pre>` : '') + `</article>`).join('')
-    : `<div class="lee-dim lee-logempty">nothing logged${want ? ' for ' + esc(want) : ''} yet</div>`;
+  if (want === 'history') {
+    const rows = lee.gitHistory || [];
+    el.innerHTML = rows.length ? rows.map(c =>
+      `<article class="lee-logrow"><div class="lee-loghead"><time>${new Date(c.timestamp * 1000).toLocaleString()}</time>` +
+      `<span class="lee-logsource">git</span><strong>${esc(c.short)} ${esc(c.subject)}</strong></div>` +
+      `<pre class="lee-logdetail">${esc(c.author)}${c.decoration ? '\n' + c.decoration : ''}</pre></article>`).join('')
+      : `<div class="lee-dim lee-logempty">no Git history for this repository</div>`;
+  } else {
+    const rows = lee.logs.filter(r => !want || r.source === want);
+    el.innerHTML = rows.length ? rows.map(r =>
+      `<article class="lee-logrow${r.kind ? ' ' + r.kind : ''}">` +
+      `<div class="lee-loghead"><time>${r.at.toTimeString().slice(0, 8)}</time>` +
+      `<span class="lee-logsource">${esc(r.source)}</span><strong>${esc(r.title)}</strong></div>` +
+      (r.detail ? `<pre class="lee-logdetail">${esc(r.detail)}</pre>` : '') + `</article>`).join('')
+      : `<div class="lee-dim lee-logempty">nothing logged${want ? ' for ' + esc(want) : ''} yet</div>`;
+  }
   el.scrollTop = el.scrollHeight;
 }
 
@@ -51,9 +60,26 @@ function firstLine(text, max = 96) {
   return line.length > max ? line.slice(0, max - 1) + '…' : line;
 }
 
-function leeLogFilter(which) {
+/* Said only in the status line, the detail is gone: the toast clips to a sentence and times out.
+   The whole message goes to the log, which opens on a filter that can show it. The error carries
+   that it has been reported, so an outer catch around `gitDo` may call this and not say it twice. */
+function leeFail(source, what, e) {
+  if (e && e.reported) return;
+  if (e) e.reported = true;
+  const detail = (e && e.message) || String(e || '');
+  leeLog(source, `${what} failed`, detail, 'err');
+  showLog(source);
+  status(`${source} ${what} failed — ${firstLine(detail)}`, 'err');
+}
+window.leeFail = leeFail;
+
+async function leeLogFilter(which) {
   lee.logFilter = which || '';
   $$('.lee-logfilter').forEach(b => b.classList.toggle('active', (b.dataset.logFilter || '') === lee.logFilter));
+  if (lee.logFilter === 'history') {
+    try { lee.gitHistory = (await api('/git/history?limit=100&repo=' + encodeURIComponent(gitUI.repo || ''))).commits || []; }
+    catch (e) { lee.gitHistory = []; return leeFail('git', 'history', e); }
+  }
   renderLogs();
 }
 function leeLogClear() { lee.logs = []; renderLogs(); }
@@ -66,14 +92,10 @@ async function leeLogCopy() {
 }
 window.leeLogFilter = leeLogFilter; window.leeLogClear = leeLogClear; window.leeLogCopy = leeLogCopy;
 
-/* Dev servers already keep what they print; `/dev/log` has served it all along with nothing
-   reading it. Tailed only while the pane is open -- an app's output is worth watching when you
-   are looking at it, and not worth a request every five seconds when you are not. */
-lee.runSeen = new Map();
+/* Managed runs keep their output after exit. Polling creates the activity record whether or not
+   Logs is visible; a failed run is a notification that opens the useful filter automatically. */
+lee.runSeen = new Map(); lee.runFinished = new Set();
 async function pollRunLogs() {
-  const dock = $('#bottomdock');
-  if (!dock?.classList.contains('dock-logs')) return;
-  if (lee.logFilter && lee.logFilter !== 'runs') return;
   let servers = [];
   try { servers = (await api('/dev/list')).servers || []; } catch (_) { return; }
   for (const srv of servers) {
@@ -83,10 +105,16 @@ async function pollRunLogs() {
     try { lines = (await api('/dev/log?n=200&path=' + encodeURIComponent(path))).log || []; }
     catch (_) { continue; }
     const seen = lee.runSeen.get(path) || 0;
-    if (lines.length <= seen) { if (lines.length < seen) lee.runSeen.set(path, lines.length); continue; }
-    const fresh = lines.slice(seen);
+    if (lines.length < seen) { lee.runSeen.set(path, 0); lee.runFinished.delete(path); }
+    const fresh = lines.slice(lee.runSeen.get(path) || 0);
     lee.runSeen.set(path, lines.length);
-    leeLog('runs', srv.name || path.split('/').pop(), fresh.join('\n'), srv.alive === false ? 'err' : '');
+    if (fresh.length) leeLog('runs', srv.label || path.split('/').pop(), fresh.join('\n'));
+    if (!srv.alive && srv.returncode !== null && !lee.runFinished.has(path)) {
+      lee.runFinished.add(path);
+      const failed = srv.returncode !== 0;
+      leeLog('runs', `${srv.label || path.split('/').pop()} ${failed ? 'failed' : 'finished'} · exit ${srv.returncode}`, '', failed ? 'err' : 'ok');
+      if (failed) { leeLogFilter('runs'); leeDock('logs'); status(`${srv.label || path.split('/').pop()} failed — exit ${srv.returncode}`, 'err'); }
+    }
   }
 }
 

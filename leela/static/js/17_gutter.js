@@ -267,13 +267,8 @@ async function gitDo(op, extra = {}) {
   } catch (e) {
     /* Without this the status line kept saying "git checkout…" for ever. Git refusing a
        switch because local changes would be overwritten is a normal, fast answer, and it
-       looked identical to a hang -- the one thing a progress message must never do.
-       The message itself goes to the log: git's refusals are multi-line, and the list of
-       files it would overwrite is the part worth reading. */
-    const detail = e.message || String(e);
-    leeLog('git', `${name} failed`, detail, 'err');
-    showLog('git');
-    status(`git ${name} failed — ${firstLine(detail)}`, 'err');
+       looked identical to a hang -- the one thing a progress message must never do. */
+    leeFail('git', name, e);
     throw e;
   } finally { gitUI.busy = ''; }
 }
@@ -430,7 +425,7 @@ function gitReposView() {
 }
 async function loadGitRepos() {
   try { gitUI.repos = await api('/git/repos' + (gitUI.expect ? '?expect=' + encodeURIComponent(gitUI.expect) : '')); }
-  catch (e) { return status(e.message || String(e), 'err'); }
+  catch (e) { return leeFail('git', 'workspace repositories', e); }
   if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);
 }
 async function gitReposDo(op, extra = {}) {
@@ -462,12 +457,7 @@ async function gitReposDo(op, extra = {}) {
     await renderGitPanel();
     refreshProjectPills();
     return d;
-  } catch (e) {
-    const detail = e.message || String(e);
-    leeLog('git', `workspace ${op} failed`, detail, 'err');
-    showLog('git');
-    status(`workspace ${op} failed — ${firstLine(detail)}`, 'err');
-  }
+  } catch (e) { leeFail('git', `workspace ${op}`, e); }
   finally {
     gitUI.reposBusy = null;
     if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);

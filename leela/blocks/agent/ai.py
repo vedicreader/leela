@@ -1,16 +1,16 @@
 "Binding a `Workspace` to the agent harness."
 
 from __future__ import annotations
-
-import functools, inspect, json, os, threading
-
+import functools, inspect, json, os, re, threading
+from fnmatch import fnmatch
 from fastcore.all import L, Path, delegates, first
-
 from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
 from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, preview_for
 from ...agent.tools import MAX_HITS, MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS
-from ...agent.tools import Host, clip, tools_for
+from ...agent.tools import DENY, MAX_GREP_HITS, Host, clip, tools_for
+from ...agent.spec import SpecHost
+from .video import VideoJobs, video_available, video_tools
 
 GIT_TOOLS = ('git_status', 'git_fetch', 'git_checkout', 'git_pull', 'git_push')
 GIT_WRITE_TOOLS = frozenset(GIT_TOOLS) - {'git_status'}
@@ -239,7 +239,13 @@ class Interventions(Approvals):
 
 class WorkspaceHost(Host):
     "A `Workspace`, answering the harness's questions."
+    mk_chat = None                          # `Agent.lend_model` fills this; declaring it is the opt-in
     def __init__(self, ws, session=None): self.ws, self.session = ws, session
+    @property
+    def capabilities(self):
+        "What a workspace has by construction. `session` is left to the probe; see `docs/integration.md`."
+        return {**super().capabilities, 'notebook': True, 'web': True, 'memory': True,
+                'watch': True, 'api': True, 'shell': True}
     @property
     def roots(self): return [str(r) for r in self.ws.fs.roots]
     @property
@@ -247,15 +253,37 @@ class WorkspaceHost(Host):
         "The folder the agent's commands run in: the chosen one, else the first open."
         root = self.ws.project_root
         return str(root) if root else (self.roots[0] if self.roots else '')
-    def check(self, path, must_exist=False):
+    def _readable_outside(self, path):
+        "A path outside the open folders that may still be read, or None. Credentials never are."
+        if not getattr(self.ws, 'agent_read_outside', False): return None
+        p = Path(path).expanduser().resolve()
+        if any(fnmatch(str(p), pat) for pat in DENY): return None
+        return p if p.exists() else None
+    def check(self, path, must_exist=False, reading=False):
         try: return self.ws.fs._check(path, must_exist=must_exist)
         except Unsafe as e:
+            if reading and (outside := self._readable_outside(path)) is not None: return outside
             opened = [t.path for t in self.ws.tabs if t.path]
             hint = f'; open files: {", ".join(opened[-5:])}' if opened else ''
             raise Unsafe(f'{e}{hint}') from e
+    def grep(self, pattern, path_filter='', regex=True, ignore_case=False, limit=MAX_GREP_HITS):
+        "Exact matching through the workspace's own ripgrep, rather than a `read` per file."
+        hits = self.ws.search.search(pattern, limit=limit * 4, regex=regex)
+        if path_filter: hits = hits.filter(lambda h: path_filter.lower() in str(h.path).lower())
+        if not ignore_case:                      # leela's ripgrep leg folds case; a cased ask does not
+            try: rx = re.compile(pattern if regex else re.escape(pattern))
+            except re.error: return None
+            hits = hits.filter(lambda h: rx.search(h.text))
+        return list(hits)[:limit]
     def walk(self): return list(self.ws.fs.walk())
     def read(self, path): return self.ws.fs.read(self.check(path))
-    def write(self, path, text): return self.ws.fs.write(path, text).path
+    def check_write(self, path):
+        target = self.check(path)
+        active = Path(self.project).expanduser().resolve() if self.project else None
+        if len(self.ws.fs.roots) > 1 and active and not target.is_relative_to(active) and not self.ws.allow_workspace_repo_writes:
+            raise Unsafe('writes to another workspace repository are disabled; enable workspace repository writes in agent settings')
+        return target
+    def write(self, path, text): return self.ws.fs.write(self.check_write(path), text).path
     def text_at(self, path): return self.ws.text_at(path)
     def search(self, query, limit=20): return self.ws.search.agent_search(query, limit=limit)
     def search_blend(self, query, limit=20, legs=None):
@@ -289,12 +317,29 @@ class WorkspaceHost(Host):
     def memory_forget(self, doc_id): return self._vault(write=True).forget(doc_id)
     def memory_documents(self, limit=50): return self._vault().all_documents(limit)
     def memory_sections(self, doc_id): return self._vault().sections(doc_id)
+    def ask(self, question, ref=None, instruction='', **kw):
+        "The vault answers with citations, on this session's model. `pii` is not the caller's to set."
+        kw.pop('pii', None)
+        if self.mk_chat is not None: kw.setdefault('mk_chat', self.mk_chat)
+        return self._vault().vault.ask(question, ref=ref, instruction=str(instruction or ''), **kw)
     def remember(self, text, title=None, tags=()):
         return self._vault(write=True)._open().note(str(text), title=title, tags=list(tags or []))
     def watch(self, target, action='url', every='1d', note=None, **kw):
         return self._vault(write=True).watch(target, action=action, every=every, note=note, **kw)
     def unwatch(self, watch_id): return self._vault(write=True).unwatch(watch_id)
     def watches(self, due_only=False): return self._vault().watches(due_only=due_only)
+    def poll(self):
+        "Fire what has come due. A watch files itself into memory, so this needs the write."
+        return self._vault(write=True).poll()
+    # `SpecHost` is a `LocalHost`, so specs are borrowed rather than inherited. The workspace
+    # holds the loaded ones, so they outlive one `WorkspaceHost`.
+    @property
+    def specs(self): return self.ws.__dict__.setdefault('_api_specs', {})
+    @property
+    def _clients(self): return self.ws.__dict__.setdefault('_api_clients', {})
+    headers, timeout = {}, 60.0
+    api_load, api_ops, api_call = SpecHost.api_load, SpecHost.api_ops, SpecHost.api_call
+    api_names, _spec = SpecHost.api_names, SpecHost._spec
     def nb_cells(self, path):
         from ..nb.nb import Notebook
         return [(c.id, c.cell_type, c.source) for c in Notebook.load(self.check(path)).cells]
@@ -517,7 +562,10 @@ class Assistant(Agent):
         self.session_state = str(getattr(ws, 'agent_state', '') or '')
         self._git_toolset = _git_tools(host)
         self._search_toolset = _search_tools(host, legs=None if surface == 'agent' else FAST_SEARCH_LEGS)
+        self.video_jobs = VideoJobs() if video_available() else None
+        self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
         super().__init__(host, model=model, sp=sp, **kwargs)
+        self.lend_model()   # so the vault's `ask` uses this session's engine, not a second one
         def user_steering(instruction: str) -> str:
             "Return a user's intervention after a skipped tool call so the agent can redirect its next step."
             return f'User steering after skipping the proposed call: {instruction}'
@@ -527,7 +575,7 @@ class Assistant(Agent):
     def tools(self):
         if self._tools is None:
             registered = {f.__name__ for f in self.registry.tools}
-            self.registry.tools.extend(f for f in [*self._git_toolset, *self._search_toolset]
+            self.registry.tools.extend(f for f in [*self._git_toolset, *self._search_toolset, *self._video_toolset]
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             built = super().tools
@@ -601,21 +649,15 @@ class Assistant(Agent):
         @functools.wraps(f)
         def wrapper(*args, **kw):
             approvals = self.approvals
-            if approvals is not None and (steer := approvals.consume_steer()):
-                try: call_args = dict(inspect.signature(f).bind_partial(*args, **kw).arguments)
-                except Exception: call_args = dict(kw)
-                self.calls.append((f.__name__, call_args))
-                act = self.activity.start(f.__name__, call_args)
-                out = f'Tool call skipped before execution. User steering: {steer}'
-                self.activity.finish(act, out, ok=False)
-                approvals.observe_result(False)
-                return out
             try: out = run(*args, **kw)
             except Exception:
                 if approvals is not None: approvals.observe_result(False)
                 raise
             ok = not str(out).startswith(FAILED_PREFIXES)
-            if approvals is not None: approvals.observe_result(ok)
+            if approvals is not None:
+                approvals.observe_result(ok)
+                if steer := approvals.consume_steer():
+                    out = f'{out}\n\nUser steering for the next decision: {steer}'
             return out
         return wrapper
     def status(self):
@@ -625,6 +667,10 @@ class Assistant(Agent):
             'count': self.compactor.count, 'note': self.compactor.note,
             'threshold': self.compactor.due(self.backend)}
         return out
+    @property
+    def turn_media(self):
+        "Everything the newest turn has to draw: what the model generated, plus finished video jobs."
+        return self.last_media + (self.video_jobs.unshown() if self.video_jobs else [])
     @property
     def tools_note(self): return f'{len(self.tools)} tools, {len(self.skills)} skills'
 

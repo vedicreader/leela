@@ -129,7 +129,7 @@ function runBranchAction(id, d) {
 async function leeBranchMenu(anchor) {
   let d;
   try { d = await api(gitUrl('/git/info')); }
-  catch (e) { return status(e.message || String(e), 'err'); }
+  catch (e) { return leeFail('git', 'branches', e); }
   const recent = recentBranches(d.root);
   let search = null;
   const m = modal(
@@ -242,7 +242,7 @@ async function leeCloneRepo() {
       status(`cloned ${done.name}`, 'ok');
     } catch (e) {
       go.disabled = false; say.textContent = '';
-      status(e.message || String(e), 'err');
+      leeFail('git', 'clone', e);
     }
   };
   go.onclick = start;

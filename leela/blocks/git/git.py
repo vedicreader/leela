@@ -331,8 +331,11 @@ class GitRepo:
                 except OSError: pass
         return out
     def changes(self):
-        "Current status for file-tree decoration."
+        "Current status. Uncached: the gutter asks right after a save and must see it."
         return self._changes_uncached()
+    def decorations(self):
+        "The same status for the file tree, which asks once per open folder in one refresh."
+        return _cached(self.root, 'changes', self._changes_uncached)
     def _gitdir(self):
         git_dir = Path(self.run('rev-parse', '--git-dir').strip())
         return git_dir if git_dir.is_absolute() else self.root/git_dir
@@ -457,6 +460,16 @@ class GitRepo:
     def stage(self, paths): self._mutate('add', '--', *paths)
     def unstage(self, paths): self._mutate('restore', '--staged', '--', *paths)
     def discard(self, paths): self._mutate('restore', '--worktree', '--', *paths)
+    def ignore(self, path, directory=False):
+        "Add one repository-relative path to .gitignore without duplicating an existing rule."
+        rule = str(path).strip().strip('/') + ('/' if directory else '')
+        if not rule or rule.startswith('../') or '/..' in rule: raise GitError('invalid ignore path')
+        target = self.root/'.gitignore'
+        lines = target.read_text(encoding='utf-8').splitlines() if target.exists() else []
+        if rule not in lines:
+            target.write_text('\n'.join(lines + [rule]) + '\n', encoding='utf-8')
+            _invalidate(self.root)
+        return {'path': str(target), 'rule': rule}
     def write_worktree(self, path, content):
         target = (self.root/str(path)).resolve()
         if not target.is_relative_to(self.root.resolve()):

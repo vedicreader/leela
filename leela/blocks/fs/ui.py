@@ -23,7 +23,7 @@ def git_tree_state(fs):
         if repo.root in seen: continue
         seen.add(repo.root)
         try:
-            for c in repo.changes(): out[str((repo.root/c['path']).resolve())] = c
+            for c in repo.decorations(): out[str((repo.root/c['path']).resolve())] = c
         except GitError: pass
     return out
 
@@ -35,11 +35,12 @@ def _git_class(change):
     if change['staged'] and not change['unstaged']: return 'staged'
     return 'modified'
 
-def tree_node(e, git_state=None):
+def tree_node(e, git_state=None, hidden=False):
     "One file-tree row; directories lazily fetch their children on first open."
     if e.is_dir:
         summary = Summary(Span('▸', cls='lee-caret'), Span(e.name, cls='lee-fname'),
-            hx_get=f'/tree?path={quote(e.path)}', hx_target='next .lee-kids', hx_trigger='click once')
+            hx_get=f'/tree?path={quote(e.path)}' + ('&hidden=1' if hidden else ''),
+            hx_target='next .lee-kids', hx_trigger='click once')
         return Details(summary, Div(cls='lee-kids'), data_path=e.path, role='treeitem',
             cls='lee-node lee-dir' + (' lee-root' if e.is_root else ''), aria_expanded='false', aria_selected='false')
     state = _git_class((git_state or {}).get(str(Path(e.path).resolve())))
@@ -48,10 +49,10 @@ def tree_node(e, git_state=None):
         data_lang=e.lang or '', aria_selected='false',
         onclick=f'event.preventDefault();event.stopPropagation();leeOpenFile({json.dumps(e.path)})')
 
-def files_panel(fs):
+def files_panel(fs, hidden=False):
     state = git_tree_state(fs)
     # With nothing open this pane is the only way to start a session, so it offers, not reports.
-    body = [tree_node(e, state) for e in fs.ls(None)] or [
+    body = [tree_node(e, state, hidden) for e in fs.ls(None)] or [
         Div(Div('no folder open', cls='lee-dim'),
             Button('Open a folder…', cls='lee-btn go', onclick='leeAct("add_root")'),
             cls='lee-tree-empty')]

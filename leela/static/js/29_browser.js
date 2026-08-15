@@ -198,12 +198,15 @@ function wireInput(canvas, view) {
                clicks: e.detail || 1, modifiers: mods(e)});
   });
   // Hover drives menus and link underlines, but at frame rate: a fast mouse fires hundreds/s.
-  let moveDue = false;
+  // The frame sends where the mouse got to, not where it was: a flick ends where it stopped.
+  let moveAt = null;
   canvas.addEventListener('mousemove', e => {
-    if (moveDue) return;
-    moveDue = true;
-    requestAnimationFrame(() => { moveDue = false;
-      view.send({t: 'mouse', kind: 'mouseMoved', ...at(e), button: 'none', modifiers: mods(e)}); });
+    const first = !moveAt;
+    moveAt = {...at(e), modifiers: mods(e)};
+    if (first) requestAnimationFrame(() => {
+      const m = moveAt; moveAt = null;
+      view.send({t: 'mouse', kind: 'mouseMoved', ...m, button: 'none'});
+    });
   });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('wheel', e => {

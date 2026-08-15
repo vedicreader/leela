@@ -28,6 +28,7 @@ def _apply(repo, op, d):
         'stage': lambda: repo.stage(git_paths(d.get('paths'))),
         'unstage': lambda: repo.unstage(git_paths(d.get('paths'))),
         'discard': lambda: repo.discard(git_paths(d.get('paths'))),
+        'ignore': lambda: repo.ignore(git_paths([d.get('path')])[0], bool(d.get('directory'))),
         'write_worktree': lambda: repo.write_worktree(git_paths([d.get('path')])[0], d.get('content') or ''),
         'resolve_conflict': lambda: repo.resolve_conflict(git_paths([d.get('path')])[0], d.get('choice') or '', d.get('content')),
         'resolve_safe_conflicts': lambda: repo.resolve_safe_conflicts(git_paths(d.get('paths')) if d.get('paths') else ()),
@@ -239,6 +240,21 @@ def connect(app, ctx):
         r, absolute = repo_of(path)
         try: return r, str(absolute.relative_to(r.root))
         except ValueError: raise GitError(f'the active {what} is outside this repository')
+    @rt('/git/tree/action')
+    async def git_tree_action(req):
+        "One Git mutation for a tree path, resolved server-side to its repository-relative path."
+        d = await req.json()
+        try:
+            def act():
+                repository, relative = repo_relative(d.get('path') or '', 'tree path')
+                op = str(d.get('op') or '')
+                if op not in ('stage', 'unstage', 'discard', 'ignore'): raise GitError(f'unknown tree Git action: {op}')
+                payload = {'paths': [relative], 'path': relative, 'directory': bool(d.get('directory'))}
+                outcome = _apply(repository, op, payload)
+                snapshot = repository.info()
+                return snapshot | {'outcome': outcome} if isinstance(outcome, dict) else snapshot
+            return await off_loop(act)
+        except Exception as e: return fail(e)
     @rt('/git/file')
     async def git_file(path: str = ''):
         "The active editor file's Git state, always in *its own* repository."

@@ -74,6 +74,7 @@ async function mountTab(expectedPath = '') {
   else if (st.kind === 'web') mountWeb(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'image') mountImage(host, st);
+  else if (st.kind === 'audio' || st.kind === 'video') mountMedia(host, st);
   else if (st.kind === 'notebook') mountNotebook(host, st);
   else await mountFile(host, st);
   if (recoveredDraft) {
@@ -176,6 +177,18 @@ function mountImage(host, st) {
     const fit = body.classList.toggle('fit');
     button.textContent = fit ? 'actual size' : 'fit to window';
   };
+}
+
+function mountMedia(host, st) {
+  const name = (st.path || '').split('/').pop() || st.kind;
+  const raw = '/file/raw/' + encodeURIComponent(name) + '?path=' + encodeURIComponent(st.path);
+  const tag = st.kind === 'audio' ? 'audio' : 'video';
+  host.innerHTML =
+    `<div class="lee-doc"><div class="lee-doc-head"><span>${esc(compactPath(st.path))}</span>` +
+    `<span class="lee-spacer"></span><a class="lee-btn" href="${esc(raw)}" target="_blank" rel="noopener noreferrer">open externally</a>` +
+    `<a class="lee-btn" href="${esc(raw)}&download=true" download>download</a></div>` +
+    `<div class="lee-doc-body lee-media-body"><${tag} class="lee-media" controls src="${esc(raw)}">` +
+    `${esc(name)} could not be played by this browser.</${tag}></div></div>`;
 }
 
 async function mountFile(host, st) {
@@ -684,6 +697,8 @@ function renderOutputs(c) {
       renderMarkdown(reply, c.reply);
       const usage = usageMeta(c.usage, '', c.usage?.model); if (usage) box.appendChild(usage);
     }
+    // pictures and video the turn generated do arrive as nbformat outputs, and draw as any other
+    for (const o of (c.outputs || [])) box.appendChild(outputEl(o));
     return;
   }
   for (const o of (c.outputs || [])) box.appendChild(outputEl(o));

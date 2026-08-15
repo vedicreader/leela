@@ -506,7 +506,20 @@ const OVERVIEW_W = 14;
 
    It is the scroll bar rather than a panel beside one. The native bar is hidden while it is
    shown and this takes over the job, so it never becomes a second thing to scroll -- there
-   is one document and one place that says where you are in it. */
+   is one document and one place that says where you are in it.
+
+   Whose bar, though: CodeMirror usually scrolls itself and in leela it does not -- `.cm-editor`
+   is laid out at the height of the whole file inside `.lee-editor`. Measuring `view.dom` therefore
+   measured the document, and the stripe came out a 14px canvas thousands of pixels tall. */
+// The element that really scrolls: CodeMirror's own, or the pane it is laid out inside.
+function scrollerFor(view) {
+  for (let el = view.scrollDOM; el; el = el.parentElement) {
+    if (el.scrollHeight > el.clientHeight + 4) return el;
+    if (el === document.body) break;
+  }
+  return view.scrollDOM;
+}
+
 function overviewPlugin(mode = 'off', threshold = 120) {
   return ViewPlugin.fromClass(class {
     constructor(view) {
@@ -519,6 +532,13 @@ function overviewPlugin(mode = 'off', threshold = 120) {
         this.dom.setPointerCapture(e.pointerId); e.preventDefault(); this.seek(e);
       });
       this.dom.addEventListener('pointermove', drag);
+      // An outer pane scrolling is not a transaction, so nothing else would redraw or move it.
+      this.frame = 0; this.scroller = null;
+      this.queue = () => {
+        cancelAnimationFrame(this.frame);
+        this.frame = requestAnimationFrame(() => this.draw());
+      };
+      addEventListener('scroll', this.queue, true);
       this.draw();
     }
     update(u) {
@@ -530,7 +550,7 @@ function overviewPlugin(mode = 'off', threshold = 120) {
     seek(e) {
       // The clicked fraction of the file becomes the middle of the viewport -- the same
       // gesture whether you are dragging the thumb or jumping to a mark you spotted.
-      const box = this.dom.getBoundingClientRect(), s = this.view.scrollDOM;
+      const box = this.dom.getBoundingClientRect(), s = this.scroller || this.view.scrollDOM;
       const at = Math.max(0, Math.min(1, (e.clientY - box.top) / (box.height || 1)));
       s.scrollTop = Math.max(0, at * s.scrollHeight - s.clientHeight / 2);
     }
@@ -540,13 +560,21 @@ function overviewPlugin(mode = 'off', threshold = 120) {
     }
     draw() {
       const doc = this.view.state.doc, lines = doc.lines;
-      const shown = mode === 'always' || (mode === 'long' && lines >= threshold);
+      const scroller = this.scroller = scrollerFor(this.view);
+      const shown = (mode === 'always' || (mode === 'long' && lines >= threshold)) &&
+                    scroller.scrollHeight > scroller.clientHeight + 4;
       this.dom.hidden = !shown;
       this.view.dom.classList.toggle('cm-lee-has-overview', shown);
+      // `has-overview` is the notebook stripe's class, hiding the bar of the pane that scrolls.
+      if (scroller !== this.view.scrollDOM) scroller.classList.toggle('has-overview', shown);
       if (!shown) return;
-      const dpr = devicePixelRatio || 1, w = OVERVIEW_W, h = Math.max(40, this.view.dom.clientHeight);
+      const dpr = devicePixelRatio || 1, w = OVERVIEW_W, h = Math.max(40, scroller.clientHeight);
       this.dom.width = w * dpr; this.dom.height = h * dpr;
       this.dom.style.width = w + 'px'; this.dom.style.height = h + 'px';
+      // Absolute inside a document-tall editor: put it at the scrollport's top, measured
+      // against the editor's. Zero whenever CodeMirror scrolls itself.
+      this.dom.style.top = (scroller === this.view.scrollDOM ? 0 :
+        scroller.getBoundingClientRect().top - this.view.dom.getBoundingClientRect().top) + 'px';
       const ctx = this.dom.getContext('2d'); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
       const y = n => (n - 1) / Math.max(1, lines) * h;
 
@@ -579,7 +607,13 @@ function overviewPlugin(mode = 'off', threshold = 120) {
       ctx.fillStyle = this.colour('--lee-fg4', '#6e7681');
       ctx.globalAlpha = .28; ctx.fillRect(0, a, w, Math.max(6, b - a)); ctx.globalAlpha = 1;
     }
-    destroy() { this.view.dom.classList.remove('cm-lee-has-overview'); this.dom.remove(); }
+    destroy() {
+      removeEventListener('scroll', this.queue, true);
+      cancelAnimationFrame(this.frame);
+      this.view.dom.classList.remove('cm-lee-has-overview');
+      this.scroller?.classList.remove('has-overview');
+      this.dom.remove();
+    }
   });
 }
 

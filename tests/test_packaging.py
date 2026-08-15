@@ -134,6 +134,23 @@ def test_the_icons_the_build_needs_are_in_the_tree():
         p = ROOT/'packaging'/'assets'/name
         assert p.is_file() and p.stat().st_size > 1000, f'{name} is missing or empty'
 
+def test_the_build_extras_carry_what_the_build_imports():
+    "`Leela.icns` is built, not committed, and the workflow installs the extras and nothing else."
+    import tomllib
+    extras = tomllib.load(open(ROOT/'pyproject.toml', 'rb'))['project']['optional-dependencies']
+    for which in ('macapp', 'windows'):
+        assert any('pillow' in d.lower() for d in extras[which]), f'{which} cannot build icons'
+
+def test_a_release_says_what_is_missing_rather_than_failing_inside_shutil(monkeypatch):
+    "With the app build skipped and no bundle to package, both platforms say so."
+    import tools.build_release as rel
+    monkeypatch.setenv('LEELA_SKIP_APP_BUILD', '1')
+    monkeypatch.setattr(rel, 'run', lambda *a, **kw: None)
+    monkeypatch.setattr(rel, 'ROOT', Path('/nonexistent-leela-root'))
+    for build in (rel.mac_release, rel.windows_release):
+        with pytest.raises(SystemExit) as e: build()
+        assert 'was not built' in str(e.value)
+
 def test_the_icon_generator_is_reproducible(tmp_path, monkeypatch):
     "The committed PNG must be the one the generator makes, or the two silently diverge."
     pytest.importorskip('PIL')

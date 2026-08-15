@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import time, uuid
+from base64 import b64encode
 from copy import deepcopy
 from dataclasses import dataclass, field
 from fastcore.all import L, Path, ifnone
@@ -11,7 +12,7 @@ from ..runtime.kernels import output_text
 import json
 
 __all__ = ['CELL_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans',
-           'cell_lines', 'cell_at', 'cell_of']
+           'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs']
 
 CELL_TYPES = ('code', 'markdown', 'prompt')
 
@@ -21,6 +22,17 @@ CONTEXT_MODES = ('auto', 'keep', 'discard')
 MAX_UNDO = 100
 
 def cell_id(): return uuid.uuid4().hex[:8]
+
+def media_output(m):
+    "One `{'mime','data'}` a model generated, as the nbformat output that draws it."
+    mime = m.get('mime') or 'image/png'
+    b64 = b64encode(m.get('data') or b'').decode()
+    if mime == 'image/png': return dict(output_type='display_data', data={'image/png': b64}, metadata={})
+    tag = 'video controls' if mime.startswith('video/') else 'img'
+    html = f'<{tag} src="data:{mime};base64,{b64}">' + ('</video>' if mime.startswith('video/') else '')
+    return dict(output_type='display_data', data={'text/html': html}, metadata={})
+
+def media_outputs(media): return [media_output(m) for m in (media or [])]
 
 def _detached(cell):
     "A copy of `cell` with a fresh identity and no running state."
@@ -69,6 +81,7 @@ class Cell(Dictable):
         elif self.is_prompt:
             c['cell_type'] = 'markdown'
             meta.update(kind='prompt', reply=self.reply, calls=list(self.calls), usage=dict(self.usage))
+            if self.outputs: meta['outputs'] = list(self.outputs)   # markdown cells have nowhere else to keep them
             if self.execution_ms is not None: meta['execution_ms'] = round(self.execution_ms, 3)
         elif self.approval is not None: meta.update(self.approval, kind='approval')
         if meta: c['metadata'] = {'leela': meta}
@@ -78,7 +91,8 @@ class Cell(Dictable):
         src = c.get('source', '')
         if isinstance(src, list): src = ''.join(src)
         meta = (c.get('metadata') or {}).get('leela') or {}
-        return cls(source=src, outputs=list(c.get('outputs') or []), id=str(c.get('id') or cell_id()),
+        return cls(source=src, outputs=list(c.get('outputs') or meta.get('outputs') or []),
+            id=str(c.get('id') or cell_id()),
             cell_type='prompt' if meta.get('kind') == 'prompt' else c.get('cell_type', 'code'),
             execution_count=c.get('execution_count'), execution_ms=meta.get('execution_ms'),
             reply=str(meta.get('reply') or ''), calls=list(meta.get('calls') or []), usage=dict(meta.get('usage') or {}),

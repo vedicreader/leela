@@ -3,7 +3,7 @@ import json, re
 from fastcore.all import Path
 from ... import leela_cfg
 
-__all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes']
+__all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks', 'mark_models']
 
 API_KEYS = ('base_url', 'api_key_env', 'vendor_name', 'api_name')
 
@@ -11,10 +11,31 @@ def _runtimes():
     from ...agent.core import RUNTIMES
     return tuple(RUNTIMES)
 
+LABELS = {'litert': 'LiteRT', 'mlx': 'MLX', 'llama': 'llama.cpp', 'remote': 'hosted API / FastLLM',
+          'cursor': 'Cursor agent', 'claude': 'Claude Code'}
+
+def _why(runtime, agents):
+    "What to do about a runtime that cannot be reached. An agent harness is not a pip extra."
+    if runtime in agents: return f'needs the {LABELS.get(runtime, runtime)} CLI or SDK, and a login'
+    return f'needs pip install rishi[{runtime}]'
+
 def runtimes():
-    "Every runtime, and whether rishi can reach it on this machine."
-    from ...agent.core import runtime_available
-    return [{'value': r, 'available': bool(runtime_available(r))} for r in _runtimes()]
+    "Every runtime, whether rishi can reach it here, and what it wants when it cannot."
+    from ...agent.core import AGENTS, runtime_available
+    return [{'value': r, 'label': LABELS.get(r, r), 'available': bool(runtime_available(r)),
+             'why': _why(r, AGENTS)} for r in _runtimes()]
+
+def model_marks(name):
+    "The modality line the CLI banner shows for one model, and whether it can draw."
+    from ...agent.core import resolve, spec_caps
+    try: c = spec_caps(resolve(name))
+    except Exception: return {}
+    return {} if c is None else {'modalities': c.fmt(), 'gen_image': c.gen_image, 'gen_video': c.gen_video}
+
+def mark_models(rows):
+    "Stamp every picker row with what its model accepts and returns. No row may fail the picker."
+    for r in rows: r.update(model_marks(r.get('value')))
+    return rows
 
 def model_path(path=None): return Path(path or leela_cfg/'models.json')
 

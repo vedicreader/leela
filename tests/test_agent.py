@@ -379,6 +379,27 @@ def test_approved_notebook_call_passes_only_activity_identity_metadata(tmp_path)
     row = a.activity.rows()[-1]
     assert row['action_id'] == 'call_notebook' and row['tool'] == 'notebook_cells'
 
+def test_queued_steering_runs_the_current_tool_and_reaches_the_next_decision(tmp_path):
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    ws.approvals.queue_steer('inspect the failing test before editing')
+    tool = next(t for t in ws.ai.tools if t.__name__ == 'list_files')
+    out = tool('')
+    assert 'inspect the failing test before editing' in out
+    assert ws.approvals.state()['queued_steer'] == ''
+
+def test_workspace_repo_writes_are_opt_in_and_persisted(tmp_path):
+    from leela.workspace import Workspace
+    first, second = tmp_path/'one', tmp_path/'two'
+    first.mkdir(); second.mkdir()
+    ws = Workspace(roots=[first, second])
+    tool = next(t for t in ws.ai.tools if t.__name__ == 'create_file')
+    assert 'another workspace repository' in tool(path=str(second/'blocked.py'), text='x = 1\n')
+    ws.allow_workspace_repo_writes = True
+    assert 'wrote' in tool(path=str(second/'allowed.py'), text='x = 1\n')
+    ws.save()
+    assert Workspace.load(ws_path()).allow_workspace_repo_writes
+
 def test_new_agent_setup_keeps_file_and_notebook_access_inside_workspace(tmp_path):
     from leela.blocks.nb.nb import Cell, Notebook
     from leela.workspace import Workspace
@@ -513,6 +534,57 @@ def test_every_watcher_and_the_recorder_both_hear_it():
 
 
 
+
+def test_a_workspace_answers_the_whole_host_protocol(tmp_path, monkeypatch):
+    "Every capability answered rather than probed or absent. `api` is never probed at all."
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'v.db'))
+    from leela.blocks.agent.ai import WorkspaceHost
+    (tmp_path/'a.py').write_text('def hello():\n    return 1\n')
+    h = WorkspaceHost(Workspace(roots=[tmp_path]))
+    assert h.capabilities['api'] and h.capabilities['memory'] and h.capabilities['watch']
+    names = set(named(tools_for(h)))
+    assert {'api_load', 'api_ops', 'api_call', 'ask_memory', 'poll_watches', 'grep'} <= names
+    hits = h.grep('def hello', regex=False)
+    assert [(Path(x.path).name, x.line) for x in hits] == [('a.py', 1)], 'ripgrep, not a read per file'
+    assert h.grep('DEF HELLO', regex=False) == [], 'a cased ask is not answered case-folded'
+    assert h.poll()['ran'] == 0, 'nothing is due, which is an answer rather than a refusal'
+
+def test_reads_may_leave_the_open_folders_only_when_that_is_turned_on(tmp_path, monkeypatch):
+    "Confining writes protects what nobody opened; confining reads costs the sibling checkout."
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'v.db'))
+    from leela.blocks.agent.ai import WorkspaceHost
+    from leela.blocks.fs.fs import Unsafe
+    root, outside = tmp_path/'open', tmp_path/'elsewhere'
+    root.mkdir(); outside.mkdir()
+    (outside/'lib.py').write_text('x = 1\n'); (outside/'.env').write_text('KEY=1\n')
+    ws = Workspace(roots=[root])
+    h = WorkspaceHost(ws)
+    with pytest.raises(Unsafe): h.check(str(outside/'lib.py'), reading=True)
+    ws.agent_read_outside = True
+    assert h.check(str(outside/'lib.py'), reading=True) == (outside/'lib.py').resolve()
+    with pytest.raises(Unsafe): h.check(str(outside/'.env'), reading=True)   # credentials, never
+    with pytest.raises(Unsafe): h.check(str(outside/'lib.py'))               # a write is not a read
+
+def test_every_harness_job_can_be_pointed_at_a_model(tmp_path, monkeypatch):
+    "`subagent`, `summary`, `classify` and `oneshot` were reachable only through the environment."
+    from leela.agent.core import JOBS
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+    assert {'subagent', 'summary', 'classify', 'oneshot'} <= set(JOBS)
+    ws = Workspace(roots=[tmp_path])
+    ws.job_models = {'subagent': 'gemma-e2b'}
+    saved = ws.save(tmp_path/'ws.json')
+    assert Workspace.load(saved).job_models == {'subagent': 'gemma-e2b'}, 'and it survives a restart'
+
+def test_an_agent_harness_is_not_a_pip_extra(monkeypatch):
+    "Cursor and Claude Code are runtimes now; the picker told you to `pip install rishi[cursor]`."
+    from leela.blocks.agent.models import runtimes
+    rows = {r['value']: r for r in runtimes()}
+    assert {'cursor', 'claude'} <= set(rows)
+    assert rows['cursor']['label'] == 'Cursor agent' and rows['claude']['label'] == 'Claude Code'
+    assert 'CLI or SDK' in rows['cursor']['why'] and 'pip install' not in rows['cursor']['why']
+    assert 'pip install rishi[mlx]' in rows['mlx']['why']
 
 def test_older_specialized_openai_models_are_opt_in(monkeypatch):
     monkeypatch.setenv('OPENAI_API_KEY', 'present')
@@ -1032,6 +1104,17 @@ def test_the_sse_endpoint_streams_the_real_app():
     d = _j.loads(done.strip())
     assert d['ok'] and 'edits' in d and d['activity']
 
+def test_agent_stream_rejects_a_second_turn_while_busy(tmp_path):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        with ws.ai.lock:
+            response = client.get('/agent/stream', params={'prompt': 'where?'})
+    assert response.status_code == 409
+    assert 'already working' in response.text
+
 def test_external_rishi_request_uses_the_web_approval_queue():
     from starlette.testclient import TestClient
     from leela.app import ide_app
@@ -1052,6 +1135,16 @@ def test_external_rishi_request_uses_the_web_approval_queue():
         t.join(2)
     response = result['response']
     assert response.status_code == 200 and response.json()['answer']['answer'] is True
+
+def test_workspace_repo_writes_setting_route_persists_and_reports_approval(tmp_path):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        response = client.post('/agent/workspace-repo-writes', json={'enabled': True})
+    assert response.status_code == 200 and response.json()['enabled']
+    assert 'approval rules still apply' in response.json()['note']
 
 def test_prompt_cell_endpoint_streams_into_the_notebook():
     from pathlib import Path
@@ -1646,6 +1739,8 @@ def test_changing_it_does_not_restart_the_conversation(tmp_path):
     with TestClient(ide_app(ws)) as c:
         d = c.post('/agent/budget', json={'tools': 240, 'steps': 60}).json()
         assert d['tools'] == 240 and d['steps'] == 60
+        status = c.get('/agent/status').json()
+        assert {'tool_calls', 'tool_limit', 'step_limit'} <= status.keys()
         assert (agent.tool_budget, agent.step_budget) == (240, 60), 'the live agent was updated in place'
         assert ws.ai is agent, 'and it is the same conversation'
         assert c.post('/agent/budget', json={'tools': 'auto'}).json()['tools'] == 'auto'
@@ -1736,3 +1831,136 @@ def test_kosha_adds_dynamic_patch_methods_to_runtime_completion(tmp_path):
     out=s.merge_completions(code,len(code),{'from':len(code)-2,'matches':['read_text']})
     assert out['matches']==['read_text','read_json']
     assert out['graph'][0]['symbol']=='fastcore.xtras.read_json'
+
+def test_audio_reaches_a_model_that_can_hear_it_and_is_carried_by_path_otherwise(tmp_path, monkeypatch):
+    import ramabana.cli as rcli
+    from leela.workspace import Workspace
+    sound = tmp_path/'note.wav'
+    sound.write_bytes(b'RIFF....WAVE')
+    ws = Workspace(roots=[tmp_path])
+    monkeypatch.setattr(rcli, 'accepts', lambda spec, kind: True)
+    text, media = ws._attachment_context([str(sound)], object())
+    assert media == [b'RIFF....WAVE'] and 'audio above is attached' in text
+    monkeypatch.setattr(rcli, 'accepts', lambda spec, kind: False)
+    text, media = ws._attachment_context([str(sound)], object())
+    assert media == [] and 'attached by path only' in text and str(sound) in text
+
+def test_audio_is_sent_when_the_model_capabilities_are_unknown(tmp_path, monkeypatch):
+    "Withholding on an unknown is how not-knowing silently becomes a smaller agent."
+    import ramabana.core as rcore
+    from leela.workspace import Workspace
+    sound = tmp_path/'note.mp3'
+    sound.write_bytes(b'ID3')
+    monkeypatch.setattr(rcore, '_caps', lambda model_id, runtime: None)
+    ws = Workspace(roots=[tmp_path])
+    _, media = ws._attachment_context([str(sound)], resolve('gpt-4.1'))
+    assert media == [b'ID3']
+
+def test_the_picker_says_what_a_model_takes_and_marks_the_ones_that_can_draw(monkeypatch):
+    import ramabana.core as rcore
+    from types import SimpleNamespace
+    from leela.blocks.agent.models import mark_models
+    caps = {'draws': SimpleNamespace(fmt=lambda: 'in: text image · out: text image', gen_image=True, gen_video=False),
+            'talks': SimpleNamespace(fmt=lambda: 'modalities unknown', gen_image=False, gen_video=False)}
+    monkeypatch.setattr(rcore, 'resolve', lambda name: name)
+    monkeypatch.setattr(rcore, 'spec_caps', lambda spec: caps.get(spec))
+    rows = mark_models([{'value': 'draws'}, {'value': 'talks'}, {'value': 'unresolvable'}])
+    assert rows[0]['gen_image'] and rows[0]['modalities'] == 'in: text image · out: text image'
+    assert not rows[1]['gen_image'] and rows[1]['modalities'] == 'modalities unknown'
+    assert rows[2] == {'value': 'unresolvable'}, 'no one model may blank the picker'
+
+def test_a_model_that_draws_is_marked_in_the_picker_itself():
+    from tests.assets import JS
+    assert "m.gen_image ? ' · draws' : ''" in JS
+
+def test_a_video_job_persists_its_handle_and_is_drawn_once_when_it_finishes(tmp_path, monkeypatch):
+    from leela.blocks.agent import video as V
+    from leela.blocks.nb.nb import media_output
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-key')
+    monkeypatch.setattr(V, '_start', lambda prompt, model, **kw: 'operations/abc')
+    jobs = V.VideoJobs(tmp_path/'jobs.json')
+    tools = {f.__name__: f for f in V.video_tools(None, session=str(tmp_path), jobs=jobs)}
+    assert 'started' in tools['generate_video']('a cat, in the rain', seconds=30)
+    row = jobs.all()[-1]
+    assert (row['state'], row['op'], row['seconds']) == ('running', 'operations/abc', 8)
+    assert V.VideoJobs(tmp_path/'jobs.json').get(row['id'][:4])['op'] == 'operations/abc', 'a handle outlives the process'
+    monkeypatch.setattr(V, '_poll', lambda op: (False, '', ''))
+    assert 'still generating' in tools['video_status'](row['id'])
+    monkeypatch.setattr(V, '_poll', lambda op: (True, 'https://example/v.mp4', ''))
+    monkeypatch.setattr(V, '_fetch', lambda uri: b'MP4BYTES')
+    out = tools['video_status'](row['id'])
+    saved = Path(jobs.get(row['id'])['path'])
+    assert saved.read_bytes() == b'MP4BYTES' and str(saved) in out
+    assert jobs.unshown() == [{'mime': 'video/mp4', 'data': b'MP4BYTES'}]
+    assert jobs.unshown() == [], 'an artifact is drawn once, not on every later turn'
+    assert media_output({'mime': 'video/mp4', 'data': b'MP4BYTES'})['data']['text/html'].startswith('<video controls')
+
+def test_a_failed_video_job_keeps_its_id_and_says_why(tmp_path, monkeypatch):
+    from leela.blocks.agent import video as V
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-key')
+    monkeypatch.setattr(V, '_start', lambda prompt, model, **kw: 'operations/abc')
+    monkeypatch.setattr(V, '_poll', lambda op: (True, '', 'the prompt was rejected'))
+    jobs = V.VideoJobs(tmp_path/'jobs.json')
+    tools = {f.__name__: f for f in V.video_tools(None, session=str(tmp_path), jobs=jobs)}
+    tools['generate_video']('something forbidden')
+    id = jobs.all()[-1]['id']
+    out = tools['video_status'](id)
+    assert id in out and 'failed' in out and 'the prompt was rejected' in out
+    assert jobs.get(id)['state'] == 'failed' and jobs.unshown() == []
+    assert 'no such video job' in tools['video_status']('nope')
+
+def test_video_generation_is_offered_only_where_there_is_a_credential(tmp_path, monkeypatch):
+    from leela.blocks.agent import video as V
+    assert not V.video_available(), 'the suite runs with no provider credentials'
+    tools = {f.__name__: f for f in V.video_tools(None, session=str(tmp_path), jobs=V.VideoJobs(tmp_path/'j.json'))}
+    assert 'GEMINI_API_KEY' in tools['generate_video']('a cat')
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-key')
+    assert V.video_available() and V.video_caps()['out'] == ('video',)
+
+def test_veo_is_described_here_because_litellms_table_has_no_entry_for_it():
+    from leela.agent.core import spec_caps
+    from leela.blocks.agent.video import DFLT_VIDEO, video_caps
+    assert video_caps(DFLT_VIDEO)['provider'] == 'gemini'
+    assert video_caps('no-such-model') is None
+
+
+def test_a_generated_picture_reaches_the_chat_pane_not_only_the_notebook_cell(tmp_path):
+    """`media_outputs` fills a prompt *cell*. The agent pane streams over SSE and ends at `done`,
+    so a picture that never rides on that event is saved and never seen."""
+    from pathlib import Path
+    app_src = Path('leela/app.py').read_text()
+    # two routes end in a `done` event; the agent pane's is the one carrying session usage
+    done = app_src[app_src.index("'session_usage'") - 600:app_src.index("'session_usage'") + 600]
+    assert "'media': _turn_media(a)" in done, 'the done event carries the turn pictures'
+    assert 'def _turn_media(a):' in app_src
+
+    js = Path('leela/static/js/12_agent.js').read_text()
+    assert 'function drawTurnMedia(' in js
+    handler = js[js.index("es.addEventListener('done'"):]
+    handler = handler[:handler.index('await reloadAfterEdits')]
+    assert 'drawTurnMedia(out, d.media)' in handler, 'the pane draws what the event carried'
+
+
+def test_the_turn_pictures_become_data_urls_a_browser_can_draw():
+    "A tool result is a path, and a browser cannot draw a filename."
+    import base64, re
+    from pathlib import Path
+    src = Path('leela/app.py').read_text()
+    body = src[src.index('    def _turn_media(a):'):]
+    body = body[:body.index('\n    @rt(')]
+    import textwrap
+    ns = {}
+    exec(textwrap.dedent(body), ns)
+    fn = ns['_turn_media']
+
+    class A: turn_media = [{'mime': 'image/png', 'data': b'\x89PNG\r\n\x1a\nx'},
+                           {'mime': 'video/mp4', 'data': b'ftyp'}, {'mime': 'image/png', 'data': b''}]
+    rows = fn(A())
+    assert [r['mime'] for r in rows] == ['image/png', 'video/mp4']   # the empty one is dropped
+    assert rows[0]['url'].startswith('data:image/png;base64,')
+    assert base64.b64decode(rows[0]['url'].split(',', 1)[1]) == b'\x89PNG\r\n\x1a\nx'
+
+    class B: turn_media = []
+    assert fn(B()) == []
+    class C: pass
+    assert fn(C()) == []

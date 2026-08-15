@@ -13,6 +13,7 @@ from tests.assets import CSS, JS, SERVER
 import asyncio
 import sys
 from fastcore.all import Path
+from leela.blocks.runtime import devserver
 from leela.blocks.runtime.devserver import DevServer, DevServers, infer_watch, run_command, split_cmd
 from leela.blocks.runs.runs import RUNS_FILE, Run, Runs
 from leela.workspace import _EnvClient
@@ -219,7 +220,11 @@ def test_the_model_dialog_is_told_which_runtimes_exist(tmp_path):
     with TestClient(ide_app(ws)) as c: d = c.get('/agent/models').json()
     assert [r['value'] for r in d['runtimes']] == list(RUNTIMES)
     assert 'd.runtimes' in JS, 'and it builds the select from that rather than a hardcoded list'
-    assert 'rishi[' in JS, 'saying what to install for the ones that are missing'
+    # The remedy moved to the server with the label: `pip install rishi[cursor]` is not how you
+    # get the Cursor agent, and the browser had no way to know that.
+    why = {r['value']: r['why'] for r in d['runtimes']}
+    assert 'rishi[mlx]' in why['mlx'], 'saying what to install for the ones that are missing'
+    assert 'CLI or SDK' in why['cursor'] and 'CLI or SDK' in why['claude']
 
 def test_choosing_the_litert_accelerator_is_remembered_and_exported(tmp_path, monkeypatch):
     "ramabana reads $LEELA_LITERT_BACKEND when it builds an engine."
@@ -268,12 +273,13 @@ def test_a_terminal_is_a_login_shell_in_the_projects_environment():
     block = JS[JS.index('async function gitDo('):]
     block = block[:block.index('\nfunction gitOperationBanner')]
     assert 'catch (e)' in block, 'a failure has to reach the status line'
-    assert 'failed' in block and "'err'" in block
+    assert "leeFail('git', name, e)" in block, 'with its whole detail, in the log'
     assert block.index('catch (e)') < block.index('finally'), 'caught before busy is cleared'
     block = JS[JS.index('async function pollRunLogs'):]
     block = block[:block.index('function leeDock')]
-    assert "classList.contains('dock-logs')" in block and 'return' in block
+    assert "(await api('/dev/list')).servers" in block, 'managed runs are retained even while Logs is closed'
     assert 'lee.runSeen' in block, 'and only new lines are appended'
+    assert 'lee.runFinished' in block, 'a completed run is notified once'
     assert 'prelude' in SERVER, 'the pty takes one'
     assert 'os.write(master, self.prelude.encode()' in SERVER, 'written after the shell starts'
     assert 'export PATH=' in SERVER and '$PATH' in SERVER
@@ -301,11 +307,23 @@ def test_a_workspace_operation_names_the_repositories_it_is_working_on():
 def test_the_logs_pane_holds_what_a_status_line_cannot():
     "Git's refusals are multi-line and the useful part is the file list; a toast clips it."
     assert 'lee-logpanel' in SERVER and "data_dock='logs'" in SERVER, 'a third dock tab'
+    assert 'data_log_filter' in SERVER and "history" in SERVER, 'commit history is separate from git activity'
     assert 'function leeLog(' in JS and 'renderLogs' in JS
+    assert "api('/git/history?limit=100" in JS, 'the history filter reads the selected repository'
     assert "leeLog('git'" in JS, 'git actions log their detail'
     assert "api('/dev/log" in JS, 'and the run log route finally has a reader'
+    assert 'srv.returncode' in JS and "leeDock('logs')" in JS, 'a failed managed run notifies through Logs'
     assert 'showLog(' in JS and 'firstLine(detail)' in JS
     assert '.lee-logdetail' in CSS and 'pre-wrap' in CSS, 'the detail is not clipped'
+
+def test_picking_logs_shows_the_logs_and_not_the_pane_it_replaced():
+    "`.lee-execstrip` names no element, so Logs hid the terminal and left exec in its place."
+    assert '.lee-execstrip' not in CSS, 'the dock hides the exec pane by the class the shell renders'
+    assert 'lee-panel lee-exec' in SERVER
+    rule = CSS[CSS.index('.lee-bottomdock.dock-logs'):CSS.index('.lee-logpanel { display: none')]
+    for cls in ('.lee-exec', '.lee-termpanel'): assert cls in rule, f'{cls} stays visible under Logs'
+    fill = CSS[CSS.index('.lee-bottomdock .lee-dockbody > '):]
+    assert '.lee-logpanel' in fill[:fill.index('}')], 'and Logs fills the dock like the panes it replaces'
 
 
 def test_a_terminal_tab_closes_itself():
@@ -594,6 +612,8 @@ def test_a_run_configuration_becomes_a_watched_process():
     assert infer_watch(['pytest', '-x']) == ''
     assert DevServers.key('uvicorn app:app --port 8000') != DevServers.key('uvicorn app:app --port 8001')
     assert DevServers.key('./x.py') == DevServers.key(str(Path('x.py').resolve()))
+    state = DevServer(script='python x.py').state()
+    assert state['returncode'] is None and state['started'] is None and state['ended'] is None
     with pytest.raises(SystemExit) as e: run_command(['definitely-not-installed', '--x'])
     assert 'cannot run' in str(e.value)
 
@@ -630,6 +650,15 @@ def test_a_module_runs_with_runpy(tmp_path, monkeypatch, capsys):
     monkeypatch.syspath_prepend(str(tmp_path))
     run_command(['python', '-m', 'mymod'])
     assert 'module ran' in capsys.readouterr().out
+
+
+def test_a_failed_dev_command_prints_its_system_exit(monkeypatch, capsys):
+    def fail(argv): raise SystemExit('cassowary failed')
+    monkeypatch.setattr('dhrishti.serving.serve', lambda **kw: (None, 'http://test'))
+    monkeypatch.setattr(devserver, 'run_command', fail)
+    monkeypatch.setattr(devserver.time, 'sleep', lambda _: (_ for _ in ()).throw(KeyboardInterrupt))
+    devserver._child(['--', 'cassowary'])
+    assert 'SystemExit: cassowary failed' in capsys.readouterr().err
 
 
 def test_the_env_list_covers_kernels_and_anything_that_registered(ws, monkeypatch):

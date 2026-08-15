@@ -90,8 +90,10 @@ desktop = [
     "pyobjc-framework-WebKit>=10.1; sys_platform == 'darwin'",
     "pythonnet>=3.0.3; sys_platform == 'win32'",
 ]
-macapp = ["leela[desktop]", "py2app>=0.28.8; sys_platform == 'darwin'"]
-windows = ["leela[desktop]", "py2exe>=0.14.2; sys_platform == 'win32'"]
+# `pillow` because both releases run `tools/build_icons.py`, and `pip install .[macapp]` is
+# all a build machine gets -- a dependency group is not something an extra brings with it.
+macapp = ["leela[desktop]", "py2app>=0.28.8; sys_platform == 'darwin'", "pillow>=10.0"]
+windows = ["leela[desktop]", "py2exe>=0.14.2; sys_platform == 'win32'", "pillow>=10.0"]
 
 [project.urls]
 Repository = "https://github.com/vedicreader/leela"

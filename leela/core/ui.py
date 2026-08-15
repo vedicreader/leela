@@ -65,6 +65,7 @@ BUTTONS = L(
     Btn('new_notebook', '+nb',      'new notebook',                    'files'),
     Btn('new_dir',      '+dir',     'new folder',                      'files'),
     Btn('refresh_files','⟳',        'reread the tree',                 'files'),
+    Btn('show_hidden',  '.*',       'show dotfiles like .gitignore and .github', 'files'),
     Btn('add_root',     'open…',    'open another folder',             'files'),
     Btn('help',         'all',      'every binding',                   'keys'),
     Btn('edit_keys',    'edit',     'change these keys',               'keys'),

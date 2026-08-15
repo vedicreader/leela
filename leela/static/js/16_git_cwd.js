@@ -284,7 +284,7 @@ function showGitFileDiff(path, patch = '', line = 0, rawPatch = '', notebook = f
       try {
         const d = await gitDo('apply_patch', {patch: parts.header + selected.join(''), staged: true, reverse: options.group === 'staged'});
         m.remove(); renderGitPanel(d);
-      } catch (e) { status(e.message || String(e), 'err'); }
+      } catch (e) { leeFail('git', 'stage hunks', e); }
     };
   });
   m.querySelector('#gitexpand').onclick = e => {

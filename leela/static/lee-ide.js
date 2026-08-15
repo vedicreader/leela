@@ -745,8 +745,12 @@ const ACTIONS = {
   complete:     kernelComplete,
   ai_complete:  aiComplete,
   show_docs:    showDocs,
-  show_diff:    showDiff,
-  git_blame:    leeBlame,
+  show_diff:    () => lee.menuSurface === 'file' ? treeDiff() : showDiff(),
+  git_blame:    () => lee.menuSurface === 'file' ? treeBlame() : leeBlame(),
+  git_stage:    () => treeGitAction('stage'),
+  git_unstage:  () => treeGitAction('unstage'),
+  git_discard:  () => treeGitAction('discard'),
+  git_ignore:   () => treeGitAction('ignore'),
   clip_to_vault: leeClipToVault,
   find_similar: findSimilar,
   code_map:     codeMap,
@@ -771,6 +775,7 @@ const ACTIONS = {
   find_repo:    findRepo,
   remove_root:  removeRoot,
   refresh_files: () => refreshFileTree(),
+  show_hidden:  toggleHidden,
   up_dir:       treeCollapse,
   filter_files: () => status('filter the tree with ctrl+p'),
 
@@ -1319,6 +1324,7 @@ async function mountTab(expectedPath = '') {
   else if (st.kind === 'web') mountWeb(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'image') mountImage(host, st);
+  else if (st.kind === 'audio' || st.kind === 'video') mountMedia(host, st);
   else if (st.kind === 'notebook') mountNotebook(host, st);
   else await mountFile(host, st);
   if (recoveredDraft) {
@@ -1421,6 +1427,18 @@ function mountImage(host, st) {
     const fit = body.classList.toggle('fit');
     button.textContent = fit ? 'actual size' : 'fit to window';
   };
+}
+
+function mountMedia(host, st) {
+  const name = (st.path || '').split('/').pop() || st.kind;
+  const raw = '/file/raw/' + encodeURIComponent(name) + '?path=' + encodeURIComponent(st.path);
+  const tag = st.kind === 'audio' ? 'audio' : 'video';
+  host.innerHTML =
+    `<div class="lee-doc"><div class="lee-doc-head"><span>${esc(compactPath(st.path))}</span>` +
+    `<span class="lee-spacer"></span><a class="lee-btn" href="${esc(raw)}" target="_blank" rel="noopener noreferrer">open externally</a>` +
+    `<a class="lee-btn" href="${esc(raw)}&download=true" download>download</a></div>` +
+    `<div class="lee-doc-body lee-media-body"><${tag} class="lee-media" controls src="${esc(raw)}">` +
+    `${esc(name)} could not be played by this browser.</${tag}></div></div>`;
 }
 
 async function mountFile(host, st) {
@@ -1929,6 +1947,8 @@ function renderOutputs(c) {
       renderMarkdown(reply, c.reply);
       const usage = usageMeta(c.usage, '', c.usage?.model); if (usage) box.appendChild(usage);
     }
+    // pictures and video the turn generated do arrive as nbformat outputs, and draw as any other
+    for (const o of (c.outputs || [])) box.appendChild(outputEl(o));
     return;
   }
   for (const o of (c.outputs || [])) box.appendChild(outputEl(o));
@@ -3335,6 +3355,9 @@ document.addEventListener('keydown', e => {
 }, true);
 window.addEventListener('blur', () => closeDismissableDisclosures());
 
+// A model that draws or films says so in the picker itself; the rest of what it takes is the tooltip.
+const modelMark = (m) => (m.gen_image ? ' · draws' : '') + (m.gen_video ? ' · films' : '');
+
 async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
   const selects = {agent: $('#agentmodel'), inline: $('#inlinemodel'), completion: $('#completionmodel')};
   if (!selects.agent || !selects.inline || !selects.completion) return;
@@ -3344,14 +3367,40 @@ async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
     select.innerHTML = '';
     for (const m of (d.models || [])) {
       const option = document.createElement('option');
-      option.value = m.value; option.textContent = `${m.label} · ${m.provider}`;
-      option.title = m.source || ''; select.appendChild(option);
+      option.value = m.value; option.textContent = `${m.label} · ${m.provider}${modelMark(m)}`;
+      option.title = [m.source, m.modalities].filter(Boolean).join(' · ');
+      select.appendChild(option);
     }
     const wanted = d.selected?.[target] || previous[target];
     if ([...select.options].some(o => o.value === wanted)) select.value = wanted;
   }
+  paintJobModels(d);
   const notes = Object.values(d.auth || {}).map(x => x.note).filter(Boolean);
   if (notes.length) selects.agent.title = notes.join(' · ');
+}
+
+// The routed jobs with no control of their own, drawn from what the server reports rather than
+// listed here, so a job ramabana adds arrives with the release that adds it.
+const JOB_TITLES = {subagent: 'delegated searches run on this model',
+                    summary: 'compaction summaries and notebook digests',
+                    classify: 'short classification calls',
+                    oneshot: 'every cheap one-shot job that has no model of its own',
+                    inline: 'the harness inline job, not the prompt-cell assistant'};
+function paintJobModels(d) {
+  const host = $('#jobmodels'); if (!host) return;
+  const jobs = Object.entries(d.jobs || {});
+  host.hidden = !jobs.length;
+  if (!jobs.length) return;
+  const options = (d.models || []).map(m =>
+    `<option value="${esc(m.value)}">${esc(m.label)} · ${esc(m.provider)}${esc(modelMark(m))}</option>`).join('');
+  host.innerHTML = jobs.map(([job, current]) =>
+    `<label title="${esc(JOB_TITLES[job] || '')}">${esc(job)}<select class="lee-select" data-job="${esc(job)}">` +
+    options + `</select></label>`).join('');
+  for (const [job, current] of jobs) {
+    const sel = host.querySelector(`[data-job="${job}"]`);
+    if ([...sel.options].some(o => o.value === current)) sel.value = current;
+    sel.onchange = () => leeAgentModel(job, sel.value);
+  }
 }
 window.leeLoadModels = loadAgentModels;
 
@@ -3366,15 +3415,13 @@ async function leeAddModel() {
     <details><summary>hosted API settings</summary><label>base URL<input class="lee-input" id="modelbase" placeholder="https://api.example.com/v1"></label><label>API key environment variable<input class="lee-input" id="modelkeyenv" placeholder="OPENAI_API_KEY"></label><label>FastLLM vendor<input class="lee-input" id="modelvendor" placeholder="openai"></label><label>FastLLM API transport<input class="lee-input" id="modelapi" placeholder="openai"></label></details>
     <button class="lee-btn go" id="modelsave">save model</button>
     <h4>saved models</h4><div class="lee-modallist">${saved || '<div class="lee-dim">none yet</div>'}</div>`);
-  /* The runtimes ramabana will accept, and which of them rishi can load here -- `d.runtimes`
-     rather than a list in this file, which drifted out of step once already and left the
-     picker offering MLX after it had been dropped. An unavailable one stays visible but
-     disabled and says what to install: "MLX needs rishi[mlx]" beats a silently missing row. */
-  const RUNTIME_LABELS = {litert: 'LiteRT', mlx: 'MLX', llama: 'llama.cpp', remote: 'hosted API / FastLLM'};
+  /* The runtimes ramabana will accept, and which of them rishi can load here. The list, the
+     label and the remedy all come from `d.runtimes`: kept here they drifted twice, offering MLX
+     after it was dropped and telling you to pip install Cursor. Unavailable stays visible. */
   const rtsel = m.querySelector('#modelruntime');
-  rtsel.innerHTML = (d.runtimes || [{value: 'remote', available: true}]).map(r =>
-    `<option value="${esc(r.value)}"${r.available ? '' : ' disabled'}>${esc(RUNTIME_LABELS[r.value] || r.value)}` +
-    `${r.available ? '' : ' — needs pip install rishi[' + esc(r.value) + ']'}</option>`).join('');
+  rtsel.innerHTML = (d.runtimes || [{value: 'remote', label: 'hosted API / FastLLM', available: true}]).map(r =>
+    `<option value="${esc(r.value)}"${r.available ? '' : ' disabled'}>${esc(r.label || r.value)}` +
+    `${r.available ? '' : ' — ' + esc(r.why || 'unavailable here')}</option>`).join('');
   const firstrt = rtsel.querySelector('option:not([disabled])');
   if (firstrt) rtsel.value = firstrt.value;
 
@@ -3393,8 +3440,10 @@ async function leeAddModel() {
 }
 window.leeAddModel = leeAddModel;
 
+const MODEL_SELECTS = {agent: '#agentmodel', inline: '#inlinemodel', completion: '#completionmodel'};
 async function leeAgentModel(target, model) {
-  const select = $('#' + (target === 'agent' ? 'agentmodel' : target === 'inline' ? 'inlinemodel' : 'completionmodel'));
+  // A harness job has no select of its own; it has the row `paintJobModels` drew for it.
+  const select = $(MODEL_SELECTS[target] || `#jobmodels [data-job="${target}"]`);
   if (select) select.disabled = true;
   try {
     const d = await post('/agent/model', {target, model});
@@ -3446,15 +3495,33 @@ async function leeAgentBudget() {
     const d = await post('/agent/budget', {tools: tools?.value.trim(), steps: steps?.value.trim()});
     if (tools) tools.value = String(d.tools);
     if (steps) steps.value = String(d.steps);
+    const quick = $('#agenttoolbudget'); if (quick) quick.value = String(d.tools);
     status(d.note, 'ok');
   } catch (e) {
     status(e.message || String(e), 'err');
     try { const d = await api('/agent/budget/state');
       if (tools) tools.value = String(d.tools); if (steps) steps.value = String(d.steps);
+      const quick = $('#agenttoolbudget'); if (quick) quick.value = String(d.tools);
     } catch (_) { /* leave the boxes alone rather than blank them on a second failure */ }
   }
 }
 window.leeAgentBudget = leeAgentBudget;
+
+async function leeAgentQuickBudget() {
+  const quick = $('#agenttoolbudget'), tools = $('#toolbudget');
+  if (tools) tools.value = quick?.value || 'auto';
+  await leeAgentBudget();
+}
+window.leeAgentQuickBudget = leeAgentQuickBudget;
+
+async function refreshAgentBudget() {
+  const el = $('#agentbudgetstatus'); if (!el) return;
+  try {
+    const d = await api('/agent/status');
+    el.textContent = `${d.tool_calls || 0} / ${d.tool_limit || '—'}`;
+    el.title = `${d.tool_calls || 0} of ${d.tool_limit || 'unknown'} tool calls used this turn`;
+  } catch (_) {}
+}
 
 async function leeLocalMultimodal(enabled) {
   const box = $('#localmultimodal');
@@ -3463,6 +3530,32 @@ async function leeLocalMultimodal(enabled) {
   status(d.ok ? d.note : (d.error || 'local multimodal setting failed'), d.ok ? 'ok' : 'err');
 }
 window.leeLocalMultimodal = leeLocalMultimodal;
+
+async function leeWorkspaceRepoWrites(enabled) {
+  const box = $('#workspace-repo-writes');
+  try {
+    const d = await post('/agent/workspace-repo-writes', {enabled: !!enabled});
+    if (!d.ok && box) box.checked = !enabled;
+    status(d.ok ? d.note : (d.error || 'workspace repository write setting failed'), d.ok ? 'ok' : 'err');
+  } catch (e) {
+    if (box) box.checked = !enabled;
+    status(String(e.message || e), 'err');
+  }
+}
+window.leeWorkspaceRepoWrites = leeWorkspaceRepoWrites;
+
+async function leeAgentReadOutside(enabled) {
+  const box = $('#agent-read-outside');
+  try {
+    const d = await post('/agent/read-outside', {enabled: !!enabled});
+    if (!d.ok && box) box.checked = !enabled;
+    status(d.ok ? d.note : (d.error || 'read-outside setting failed'), d.ok ? 'ok' : 'err');
+  } catch (e) {
+    if (box) box.checked = !enabled;
+    status(String(e.message || e), 'err');
+  }
+}
+window.leeAgentReadOutside = leeAgentReadOutside;
 
 function leeAgentExpand() {
   const shell = $('#shell'); if (!shell) return;
@@ -3839,6 +3932,8 @@ async function leeAgentHistory() {
   const d = await api('/agent/history');
   await showHistorySession((d.sessions || [])[0], d.sessions || []);
 }
+async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
+window.leeAgentNew = leeAgentNew;
 window.leeAgentHistory = leeAgentHistory;
 
 async function leeAgentState() {
@@ -4224,7 +4319,18 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
       if (!await confirmDialog('Undo agent turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
       const d = await post('/agent/rollback-turn', {turn_id: turnId});
       for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
-      bar.classList.add('rolled-back'); $('[data-undo]', bar).disabled = true; status('turn changes rolled back', 'ok');
+      const log = out.parentElement;
+      if (log) {
+        let first = out, last = bar;
+        while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
+        if (first.previousElementSibling?.classList.contains('lee-user-message')) first = first.previousElementSibling;
+        while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
+        for (let node = first, next; node; node = next) {
+          next = node.nextElementSibling; node.remove();
+          if (node === last) break;
+        }
+      }
+      status('turn changes rolled back', 'ok');
     } catch (e) { status(e.message || String(e), 'err'); }
   };
   reviseButton.onclick = () => {
@@ -4525,6 +4631,35 @@ async function leeAgentControl(control) {
 }
 window.leeAgentControl = leeAgentControl;
 
+async function leeAgentAttach(path = '') {
+  const value = String(path || '').trim();
+  if (!value) {
+    const picked = window.prompt('Workspace image path');
+    if (!picked) return;
+    return leeAgentAttach(picked);
+  }
+  try {
+    const d = await post('/agent/attachment', {path: value});
+    lee.agentAttachments.set(d.path, d.name || d.path.split('/').pop());
+    paintAgentAttachments();
+    status('image attached', 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+window.leeAgentAttach = leeAgentAttach;
+
+async function attachPastedImage(blob) {
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const d = await post('/agent/attachment', {data_url: reader.result});
+      lee.agentAttachments.set(d.path, d.name || d.path.split('/').pop());
+      paintAgentAttachments();
+      status('pasted image attached', 'ok');
+    } catch (e) { status(String(e.message || e), 'err'); }
+  };
+  reader.readAsDataURL(blob);
+}
+
 function initAgentComposer() {
   const input = $('#agentprompt'); if (!input || input.dataset.composerReady) return;
   input.dataset.composerReady = '1';
@@ -4539,6 +4674,14 @@ function initAgentComposer() {
     input.style.height = 'auto';
     input.style.height = Math.min(190, Math.max(64, input.scrollHeight)) + 'px';
   };
+  input.addEventListener('paste', e => {
+    const image = [...(e.clipboardData?.items || [])].find(item => item.type.startsWith('image/'));
+    if (image) { e.preventDefault(); attachPastedImage(image.getAsFile()); return; }
+    const text = e.clipboardData?.getData('text/plain')?.trim();
+    if (text && /(?:^|\s)(?:~\/|\/|[A-Za-z]:[\\/]|\.\.?[\/])[^\s]+\.(?:png|jpe?g|gif|webp|bmp)(?:$|\s)/i.test(text)) {
+      e.preventDefault(); leeAgentAttach(text);
+    }
+  });
   input.addEventListener('input', () => {
     grow();
     // Coalesced, because each call walks the project tree. `agentSuggestSeq` already drops a
@@ -4570,6 +4713,28 @@ async function sendAgentCommand(line) {
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 
+/* A generated picture arrives as a data URL on the `done` event. The tool result the model
+ * sees is a path, and a browser cannot draw a filename, so the bytes come separately. */
+function drawTurnMedia(out, media) {
+  for (const m of (media || [])) {
+    const fig = document.createElement('figure');
+    fig.className = 'lee-agent-media';
+    fig.innerHTML = (m.mime || '').startsWith('video/')
+      ? `<video controls src="${m.url}"></video>`
+      : `<img src="${m.url}" alt="generated image">`;
+    out.after(fig);
+  }
+}
+
+function setAgentStatus(state, title) {
+  const el = $('#agentstatus'); if (!el) return;
+  el.classList.remove('working', 'ready', 'idle'); el.classList.add(state);
+  el.title = title || (state === 'working' ? 'agent is working' : state === 'ready' ? 'agent ready' : 'agent idle');
+  const dot = $('.lee-agent-status-dot', el); if (dot) dot.setAttribute('aria-label', el.title);
+  const text = state === 'working' ? 'working' : state === 'ready' ? 'ready' : 'idle';
+  [...el.childNodes].find(n => n.nodeType === Node.TEXT_NODE)?.replaceWith(document.createTextNode(text));
+}
+
 // The assistant's tools edit files on disk, so a turn can change what is on screen.
 // Activity, answer chunks, and final diffs stream independently; each tool row is updated
 // in place so pending work never remains on screen after that step has finished.
@@ -4585,7 +4750,7 @@ async function sendAgent() {
   }
   const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref)];
   lee.agentAttachments.clear(); lee.agentSelections = []; paintAgentAttachments();
-  lee.agentBusy = true; updateAgentRunstrip();
+  lee.agentBusy = true; setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   log.appendChild(userMessage(q)); log.scrollTop = log.scrollHeight;
   status('model is working…');
@@ -4611,7 +4776,7 @@ async function sendAgent() {
       row.animate([{opacity: 0, transform: 'translateY(4px)'}, {opacity: 1, transform: 'translateY(0)'}],
                   {duration: 220, easing: 'cubic-bezier(.16,1,.3,1)'});
     }
-    renderAgentStep(row, a);
+    renderAgentStep(row, a); refreshAgentBudget();
     const lifecycle = approvalCards.get(a.action_id || a.id);
     if (lifecycle && a.done) {
       lifecycle.classList.remove('running', 'proposed'); lifecycle.classList.add(a.ok ? 'complete' : 'failed');
@@ -4653,9 +4818,10 @@ async function sendAgent() {
   });
 
   es.addEventListener('done', async ev => {
-    finished = true; lee.agentBusy = false; es.close(); progress.finish(true); updateAgentRunstrip();
+    finished = true; lee.agentBusy = false; setAgentStatus('ready'); es.close(); progress.finish(true); updateAgentRunstrip(); refreshAgentBudget();
     const d = JSON.parse(ev.data);
     addResponseRevision(out, d.turn_id, raw, d.capabilities || {});
+    drawTurnMedia(out, d.media);
     const usage = usageMeta(d.usage, d.usage_label, d.model); if (usage) out.after(usage);
     for (const e of (d.edits || []))
       agentLog(`<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
@@ -4670,7 +4836,7 @@ async function sendAgent() {
   // A dropped connection must clear both the functional busy lock and its visual state.
   es.onerror = () => {
     if (finished) return;
-    lee.agentBusy = false; progress.finish(false); updateAgentRunstrip();
+    lee.agentBusy = false; setAgentStatus('ready'); progress.finish(false); updateAgentRunstrip();
     status('the model stream ended before it returned a result', 'err'); es.close();
   };
 }
@@ -4948,13 +5114,22 @@ window.leeLog = leeLog;
 function renderLogs() {
   const el = $('#loglist'); if (!el) return;
   const want = lee.logFilter || '';
-  const rows = lee.logs.filter(r => !want || r.source === want);
-  el.innerHTML = rows.length ? rows.map(r =>
-    `<article class="lee-logrow${r.kind ? ' ' + r.kind : ''}">` +
-    `<div class="lee-loghead"><time>${r.at.toTimeString().slice(0, 8)}</time>` +
-    `<span class="lee-logsource">${esc(r.source)}</span><strong>${esc(r.title)}</strong></div>` +
-    (r.detail ? `<pre class="lee-logdetail">${esc(r.detail)}</pre>` : '') + `</article>`).join('')
-    : `<div class="lee-dim lee-logempty">nothing logged${want ? ' for ' + esc(want) : ''} yet</div>`;
+  if (want === 'history') {
+    const rows = lee.gitHistory || [];
+    el.innerHTML = rows.length ? rows.map(c =>
+      `<article class="lee-logrow"><div class="lee-loghead"><time>${new Date(c.timestamp * 1000).toLocaleString()}</time>` +
+      `<span class="lee-logsource">git</span><strong>${esc(c.short)} ${esc(c.subject)}</strong></div>` +
+      `<pre class="lee-logdetail">${esc(c.author)}${c.decoration ? '\n' + c.decoration : ''}</pre></article>`).join('')
+      : `<div class="lee-dim lee-logempty">no Git history for this repository</div>`;
+  } else {
+    const rows = lee.logs.filter(r => !want || r.source === want);
+    el.innerHTML = rows.length ? rows.map(r =>
+      `<article class="lee-logrow${r.kind ? ' ' + r.kind : ''}">` +
+      `<div class="lee-loghead"><time>${r.at.toTimeString().slice(0, 8)}</time>` +
+      `<span class="lee-logsource">${esc(r.source)}</span><strong>${esc(r.title)}</strong></div>` +
+      (r.detail ? `<pre class="lee-logdetail">${esc(r.detail)}</pre>` : '') + `</article>`).join('')
+      : `<div class="lee-dim lee-logempty">nothing logged${want ? ' for ' + esc(want) : ''} yet</div>`;
+  }
   el.scrollTop = el.scrollHeight;
 }
 
@@ -4975,9 +5150,26 @@ function firstLine(text, max = 96) {
   return line.length > max ? line.slice(0, max - 1) + '…' : line;
 }
 
-function leeLogFilter(which) {
+/* Said only in the status line, the detail is gone: the toast clips to a sentence and times out.
+   The whole message goes to the log, which opens on a filter that can show it. The error carries
+   that it has been reported, so an outer catch around `gitDo` may call this and not say it twice. */
+function leeFail(source, what, e) {
+  if (e && e.reported) return;
+  if (e) e.reported = true;
+  const detail = (e && e.message) || String(e || '');
+  leeLog(source, `${what} failed`, detail, 'err');
+  showLog(source);
+  status(`${source} ${what} failed — ${firstLine(detail)}`, 'err');
+}
+window.leeFail = leeFail;
+
+async function leeLogFilter(which) {
   lee.logFilter = which || '';
   $$('.lee-logfilter').forEach(b => b.classList.toggle('active', (b.dataset.logFilter || '') === lee.logFilter));
+  if (lee.logFilter === 'history') {
+    try { lee.gitHistory = (await api('/git/history?limit=100&repo=' + encodeURIComponent(gitUI.repo || ''))).commits || []; }
+    catch (e) { lee.gitHistory = []; return leeFail('git', 'history', e); }
+  }
   renderLogs();
 }
 function leeLogClear() { lee.logs = []; renderLogs(); }
@@ -4990,14 +5182,10 @@ async function leeLogCopy() {
 }
 window.leeLogFilter = leeLogFilter; window.leeLogClear = leeLogClear; window.leeLogCopy = leeLogCopy;
 
-/* Dev servers already keep what they print; `/dev/log` has served it all along with nothing
-   reading it. Tailed only while the pane is open -- an app's output is worth watching when you
-   are looking at it, and not worth a request every five seconds when you are not. */
-lee.runSeen = new Map();
+/* Managed runs keep their output after exit. Polling creates the activity record whether or not
+   Logs is visible; a failed run is a notification that opens the useful filter automatically. */
+lee.runSeen = new Map(); lee.runFinished = new Set();
 async function pollRunLogs() {
-  const dock = $('#bottomdock');
-  if (!dock?.classList.contains('dock-logs')) return;
-  if (lee.logFilter && lee.logFilter !== 'runs') return;
   let servers = [];
   try { servers = (await api('/dev/list')).servers || []; } catch (_) { return; }
   for (const srv of servers) {
@@ -5007,10 +5195,16 @@ async function pollRunLogs() {
     try { lines = (await api('/dev/log?n=200&path=' + encodeURIComponent(path))).log || []; }
     catch (_) { continue; }
     const seen = lee.runSeen.get(path) || 0;
-    if (lines.length <= seen) { if (lines.length < seen) lee.runSeen.set(path, lines.length); continue; }
-    const fresh = lines.slice(seen);
+    if (lines.length < seen) { lee.runSeen.set(path, 0); lee.runFinished.delete(path); }
+    const fresh = lines.slice(lee.runSeen.get(path) || 0);
     lee.runSeen.set(path, lines.length);
-    leeLog('runs', srv.name || path.split('/').pop(), fresh.join('\n'), srv.alive === false ? 'err' : '');
+    if (fresh.length) leeLog('runs', srv.label || path.split('/').pop(), fresh.join('\n'));
+    if (!srv.alive && srv.returncode !== null && !lee.runFinished.has(path)) {
+      lee.runFinished.add(path);
+      const failed = srv.returncode !== 0;
+      leeLog('runs', `${srv.label || path.split('/').pop()} ${failed ? 'failed' : 'finished'} · exit ${srv.returncode}`, '', failed ? 'err' : 'ok');
+      if (failed) { leeLogFilter('runs'); leeDock('logs'); status(`${srv.label || path.split('/').pop()} failed — exit ${srv.returncode}`, 'err'); }
+    }
   }
 }
 
@@ -5625,7 +5819,7 @@ function showGitFileDiff(path, patch = '', line = 0, rawPatch = '', notebook = f
       try {
         const d = await gitDo('apply_patch', {patch: parts.header + selected.join(''), staged: true, reverse: options.group === 'staged'});
         m.remove(); renderGitPanel(d);
-      } catch (e) { status(e.message || String(e), 'err'); }
+      } catch (e) { leeFail('git', 'stage hunks', e); }
     };
   });
   m.querySelector('#gitexpand').onclick = e => {
@@ -5903,13 +6097,8 @@ async function gitDo(op, extra = {}) {
   } catch (e) {
     /* Without this the status line kept saying "git checkout…" for ever. Git refusing a
        switch because local changes would be overwritten is a normal, fast answer, and it
-       looked identical to a hang -- the one thing a progress message must never do.
-       The message itself goes to the log: git's refusals are multi-line, and the list of
-       files it would overwrite is the part worth reading. */
-    const detail = e.message || String(e);
-    leeLog('git', `${name} failed`, detail, 'err');
-    showLog('git');
-    status(`git ${name} failed — ${firstLine(detail)}`, 'err');
+       looked identical to a hang -- the one thing a progress message must never do. */
+    leeFail('git', name, e);
     throw e;
   } finally { gitUI.busy = ''; }
 }
@@ -6066,7 +6255,7 @@ function gitReposView() {
 }
 async function loadGitRepos() {
   try { gitUI.repos = await api('/git/repos' + (gitUI.expect ? '?expect=' + encodeURIComponent(gitUI.expect) : '')); }
-  catch (e) { return status(e.message || String(e), 'err'); }
+  catch (e) { return leeFail('git', 'workspace repositories', e); }
   if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);
 }
 async function gitReposDo(op, extra = {}) {
@@ -6098,12 +6287,7 @@ async function gitReposDo(op, extra = {}) {
     await renderGitPanel();
     refreshProjectPills();
     return d;
-  } catch (e) {
-    const detail = e.message || String(e);
-    leeLog('git', `workspace ${op} failed`, detail, 'err');
-    showLog('git');
-    status(`workspace ${op} failed — ${firstLine(detail)}`, 'err');
-  }
+  } catch (e) { leeFail('git', `workspace ${op}`, e); }
   finally {
     gitUI.reposBusy = null;
     if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);
@@ -6907,7 +7091,7 @@ async function loadGitReview() {
     gitUI.review = await api(gitUrl('/git/review', {base: gitUI.reviewBase, head: gitUI.reviewHead, mode: gitUI.reviewMode}));
     gitUI.reviewFile = gitUI.review.files[0]?.path || ''; gitUI.reviewPatch = '';
     renderGitPanel(gitUI.snapshot);
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'review', e); }
 }
 async function loadGitReviewFile(path, asTab = false) {
   if (!gitUI.review) return;
@@ -6917,7 +7101,7 @@ async function loadGitReviewFile(path, asTab = false) {
     gitUI.reviewPatch = d.patch || '';
     if (asTab) return openGitDiffTab({...d, path, kind: 'review', baseLabel: gitUI.review.base, headLabel: gitUI.review.head, absolutePath: gitUI.snapshot.root + '/' + path, reviewKey: gitReviewKey({...gitUI.review, root: gitUI.snapshot.root}, path), allowWrite: !!d.can_apply && !path.toLowerCase().endsWith('.ipynb')});
     renderGitPanel(gitUI.snapshot);
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'review file', e); }
 }
 function moveGitReviewFile(delta) {
   const files = gitUI.review?.files || [], at = files.findIndex(f => f.path === gitUI.reviewFile);
@@ -6943,7 +7127,7 @@ async function loadGitResources() {
       const path = b.closest('[data-worktree]').dataset.worktree;
       if (await confirmDialog('remove worktree', `Remove ${path}? Uncommitted work prevents removal.`, 'remove')) renderGitPanel(await gitDo('remove_worktree', {path}));
     });
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'worktrees and submodules', e); }
 }
 function wireGitPanel(host, d) {
   host.querySelectorAll('[data-git-tab]').forEach(b => b.onclick = () => { gitUI.tab = b.dataset.gitTab; if (gitUI.tab !== 'history') gitUI.history = []; renderGitPanel(d); });
@@ -7080,7 +7264,7 @@ function showReviewHunkApply(d) {
     if (!selected.length) return status('select at least one hunk', 'err');
     if (!await confirmDialog('apply branch hunks', `Apply ${selected.length} selected hunk${selected.length === 1 ? '' : 's'} from ${gitUI.review.head} to the working tree?`, 'apply')) return;
     try { const next = await gitDo('apply_patch', {patch: parts.header + selected.join(''), staged: false}); m.remove(); gitUI.review = null; gitUI.tab = 'changes'; renderGitPanel(next); }
-    catch (e) { status(e.message || String(e), 'err'); }
+    catch (e) { leeFail('git', 'apply hunks', e); }
   };
 }
 async function showMergePreview(branch, d, act) {
@@ -7104,7 +7288,7 @@ async function showMergePreview(branch, d, act) {
       if (!await confirmDialog('merge branch', `Merge ${branch} into ${p.current} using ${strategy}?`, 'merge')) return;
       m.remove(); act('merge', {branch, strategy});
     };
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'merge preview', e); }
 }
 async function showRebasePreview(branch, d, act) {
   try {
@@ -7121,7 +7305,7 @@ async function showRebasePreview(branch, d, act) {
       if (!await confirmDialog('rebase branch', `Replay ${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} from ${p.current} onto ${branch}?`, 'rebase')) return;
       m.remove(); act('rebase', {branch});
     };
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'rebase preview', e); }
 }
 /* The branch row's `•••`, as a menu anchored to the button rather than a modal: picking a
    branch to compare against is a glance, not a dialogue. Named for this panel because the
@@ -7164,14 +7348,14 @@ function gitBranchMenu(anchor, branch, d, act) {
 }
 async function loadGitCommitInspector(ref) {
   try { gitUI.selectedCommit = await api(gitUrl('/git/commit/review', {ref})); renderGitPanel(gitUI.snapshot); }
-  catch (e) { status(e.message || String(e), 'err'); }
+  catch (e) { leeFail('git', 'commit', e); }
 }
 async function openGitCommitFile(ref, path) {
   try {
     const d = await api(gitUrl('/git/commit/file', {ref, path}));
     const c = gitUI.selectedCommit;
     return openGitDiffTab({...d, path, kind: 'commit', baseLabel: c?.parents?.[0]?.slice(0, 8) || 'empty tree', headLabel: c?.short || ref.slice(0, 8), absolutePath: gitUI.snapshot.root + '/' + path});
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'commit file', e); }
 }
 async function showGitCommit(ref) {
   try {
@@ -7179,7 +7363,7 @@ async function showGitCommit(ref) {
     const files = c.files.map(f => `<button class="lee-git-commit-file" data-path="${esc(f.path)}"><b>${esc(f.status)}</b><span>${esc(f.path)}</span><small>${f.binary ? 'binary' : `+${f.additions} −${f.deletions}`}</small></button>`).join('');
     const m = modal(`<div class="lee-mhead">${esc(c.short)}<span class="sub">${esc(c.author)} · ${new Date(c.timestamp * 1000).toLocaleString()}</span></div><article class="lee-git-commit-sheet"><h3>${esc(c.message)}</h3><section><b>${c.summary.files} files</b><span>+${c.summary.additions}</span><span>−${c.summary.deletions}</span></section><div>${files}</div></article>`);
     m.querySelectorAll('[data-path]').forEach(b => b.onclick = () => { m.remove(); gitUI.selectedCommit = c; openGitCommitFile(c.oid, b.dataset.path); });
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'commit', e); }
 }
 async function showGitCompare(left, right) {
   if (!left || !right) return status('choose a base and target ref', 'err');
@@ -7192,7 +7376,7 @@ async function showGitReflog() {
     const d = await api(gitUrl('/git/reflog', {limit: 150}));
     const m = modal(`<div class="lee-mhead">reflog<span class="sub">local recovery history · newest first</span></div><div class="lee-git-history">${(d.entries || []).map(x => `<button class="lee-git-commit-row" data-commit="${x.oid}"><span class="lee-git-graph">◆</span><span><strong>${esc(x.subject)}</strong><small>${esc(x.selector)} · ${esc(x.author)} · ${gitRelative(x.timestamp)} · ${esc(x.short)}</small></span></button>`).join('') || '<div class="lee-git-empty-state"><strong>No reflog entries</strong><span>This repository has no local movement history.</span></div>'}</div>`);
     m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'reflog', e); }
 }
 // Three-pane conflict resolution: ours, an editable result, and theirs.
 //
@@ -7395,7 +7579,7 @@ async function showGitConflict(path) {
     };
     refresh(d.worktree || '', true);
     jumpTo(0);
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'resolve conflict', e); }
 }
 
 // Add/add and delete/modify conflicts have no contested lines to work through -- one side has
@@ -7439,7 +7623,7 @@ function blameSelectionRange() {
 async function leeBlame() {
   if (!lee.path) return status('open a file to blame it', 'err');
   let root = gitUI.snapshot?.root;
-  if (!root) { try { root = (await api(gitUrl('/git/info'))).root; } catch (e) { return status(e.message || String(e), 'err'); } }
+  if (!root) { try { root = (await api(gitUrl('/git/info'))).root; } catch (e) { return leeFail('git', 'blame', e); } }
   showGitBlame(root, blameRelative(root, lee.path), blameSelectionRange());
 }
 window.leeBlame = leeBlame;
@@ -7490,7 +7674,7 @@ async function showGitBlame(root, path, range = null) {
       `${range ? '<div class="lee-mfoot"><button class="lee-btn" id="blameall">blame the whole file</button></div>' : ''}`);
     m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
     m.querySelector('#blameall')?.addEventListener('click', () => { m.remove(); showGitBlame(root, path, null); });
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'blame', e); }
 }
 function leeGit() { leeLeft('git'); }
 function leeGitRefresh() { gitUI.snapshot = null; gitUI.history = []; renderGitPanel(); refreshProjectPills(); }
@@ -8748,12 +8932,29 @@ function moveTreeSelection(d) {
   const at = Math.max(0, nodes.indexOf(treeSel()));
   selectTreeNode(nodes[Math.max(0, Math.min(nodes.length - 1, at + d))]);
 }
+/* Dotfiles are off by default because most of them are machinery, and on by choice because
+   `.gitignore`, `.github` and `.env` are files you edit. `.venv` and `node_modules` are on
+   neither side of this: the server's skip list drops them whatever the toggle says. */
+function treeHidden() { return localStorage.getItem('lee-tree-hidden') === '1'; }
+function treeQuery(sep = '?') { return treeHidden() ? sep + 'hidden=1' : ''; }
+function paintHiddenBtn() {
+  $$('[data-action="show_hidden"]').forEach(b => {
+    b.classList.toggle('on', treeHidden());
+    b.setAttribute('aria-pressed', String(treeHidden()));
+  });
+}
+async function toggleHidden() {
+  localStorage.setItem('lee-tree-hidden', treeHidden() ? '0' : '1');
+  await refreshFileTree(undefined, false);
+  status(treeHidden() ? 'showing dotfiles' : 'hiding dotfiles', 'ok');
+}
+window.treeHidden = treeHidden; window.toggleHidden = toggleHidden; window.paintHiddenBtn = paintHiddenBtn;
 async function loadTreeDir(n) {
   if (!n?.classList.contains('lee-dir')) return;
   const kids = n.querySelector(':scope > .lee-kids');
   n.open = true; n.setAttribute('aria-expanded', 'true');
   if (kids && !kids.children.length) {
-    kids.innerHTML = await fetch('/tree?path=' + encodeURIComponent(n.dataset.path),
+    kids.innerHTML = await fetch('/tree?path=' + encodeURIComponent(n.dataset.path) + treeQuery('&'),
                                  {headers: {'HX-Request': 'true'}}).then(r => r.text());
     htmx.process(kids);
   }
@@ -8784,15 +8985,15 @@ async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = tru
   const old = $('.lee-files'); if (!old) return;
   const open = $$('.lee-dir[open]', old).map(n => n.dataset.path).sort((a, b) => a.split('/').length - b.split('/').length);
   const scrollTop = $('#filetree')?.scrollTop || 0;
-  const html = await fetch('/files/panel').then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
+  const html = await fetch('/files/panel' + treeQuery()).then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
   const doc = new DOMParser().parseFromString(html, 'text/html'), fresh = doc.querySelector('.lee-files');
   if (!fresh) throw new Error('file tree refresh returned no panel');
-  old.replaceWith(fresh); htmx.process(fresh);
+  old.replaceWith(fresh); htmx.process(fresh); paintHiddenBtn();
   for (const path of open) {
     const dir = $$('.lee-dir').find(n => n.dataset.path === path); if (!dir) continue;
     dir.open = true;
     const kids = dir.querySelector(':scope > .lee-kids');
-    const childHtml = await fetch('/tree?path=' + encodeURIComponent(path),
+    const childHtml = await fetch('/tree?path=' + encodeURIComponent(path) + treeQuery('&'),
                                   {headers: {'HX-Request': 'true'}}).then(r => r.text());
     kids.innerHTML = childHtml; htmx.process(kids);
   }
@@ -8800,6 +9001,32 @@ async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = tru
   selectTreeNode(wanted); if ($('#filetree')) $('#filetree').scrollTop = scrollTop;
   if (focus) setScope('files');
   status('files refreshed', 'ok');
+}
+
+async function treeGitAction(op) {
+  const node = treeSel();
+  if (!node || node.classList.contains('lee-root')) return status('select a file or folder first', 'err');
+  const directory = node.classList.contains('lee-dir'), name = node.dataset.path.split('/').pop();
+  if (op === 'discard' && !await confirmDialog(`discard changes in ${name}`, 'This restores the selected tracked file from HEAD.', 'discard')) return;
+  if (op === 'ignore' && !await confirmDialog(`ignore ${name}`, `Add ${name}${directory ? '/' : ''} to this repository's .gitignore.`, 'ignore')) return;
+  try {
+    const d = await post('/git/tree/action', {op, path: node.dataset.path, directory});
+    gitUI.snapshot = d; paintGitPill(d);
+    if (op === 'ignore' && d.outcome?.path) await leeOpenFile(d.outcome.path);
+    await refreshFileTree(node.dataset.path, false);
+  } catch (e) { leeFail('git', op, e); }
+}
+
+async function treeBlame() {
+  const node = treeSel();
+  if (!node || node.classList.contains('lee-dir')) return status('select a file to blame', 'err');
+  await leeOpenFile(node.dataset.path); await leeBlame();
+}
+
+async function treeDiff() {
+  const node = treeSel();
+  if (!node || node.classList.contains('lee-dir')) return status('select a file to compare', 'err');
+  await leeOpenFile(node.dataset.path); showDiff();
 }
 
 async function newEntry(kind) {
@@ -8868,14 +9095,13 @@ async function addRoot(find = false) {
   const hint = m.querySelector('#folderhint'), openBtn = m.querySelector('#folderopen');
   // In the packaged app the platform's own chooser is the obvious way to find a folder, and
   // the only one that does not require knowing the path. In a browser tab there is none.
+  // Wired now and shown when the bridge arrives, which is not always by the time this opens.
   const browse = m.querySelector('#folderbrowse');
-  if (inShell()) {
-    browse.hidden = false;
-    browse.onclick = async () => {
-      const picked = await nativeFolder();
-      if (picked) { m.remove(); openFolder(picked); }
-    };
-  }
+  browse.onclick = async () => {
+    const picked = await nativeFolder();
+    if (picked) { m.remove(); openFolder(picked); }
+  };
+  shellReady().then(ok => { if (ok) browse.hidden = false; });
   let base = '', dirs = [], rows = [], sel = 0, lastDir = null, seq = 0, timer = null;
 
   const dirOf = v => { const i = v.lastIndexOf('/'); return i < 0 ? '' : v.slice(0, i + 1); };
@@ -9245,6 +9471,8 @@ async function boot() {
   // The first paint is server-rendered, so the welcome screen is already on the page when
   // Leela opens on no folder; only its recent list needs filling in.
   if ($('#leerecent')) paintRecent();
+  // The first paint is server-rendered without the preference, so it is only wrong when set.
+  paintHiddenBtn(); if (treeHidden()) refreshFileTree(undefined, false).catch(() => {});
   refreshProjectPills();
   setInterval(refreshKernelPill, 5000);
   setInterval(refreshProjectPills, 5000);
@@ -9444,7 +9672,7 @@ async function showConflictCenter() {
       m.remove(); renderGitPanel(next); status('safe conflicts resolved; review remaining files', 'ok');
       if ((next.changes || []).some(x => x.conflicted)) showConflictCenter();
     };
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'resolve conflicts', e); }
 }
 window.showConflictCenter = showConflictCenter;
 /* ---- vault reader: a document from the vault, as an editor tab ---- */
@@ -9672,7 +9900,7 @@ function runBranchAction(id, d) {
 async function leeBranchMenu(anchor) {
   let d;
   try { d = await api(gitUrl('/git/info')); }
-  catch (e) { return status(e.message || String(e), 'err'); }
+  catch (e) { return leeFail('git', 'branches', e); }
   const recent = recentBranches(d.root);
   let search = null;
   const m = modal(
@@ -9785,7 +10013,7 @@ async function leeCloneRepo() {
       status(`cloned ${done.name}`, 'ok');
     } catch (e) {
       go.disabled = false; say.textContent = '';
-      status(e.message || String(e), 'err');
+      leeFail('git', 'clone', e);
     }
   };
   go.onclick = start;
@@ -9993,12 +10221,15 @@ function wireInput(canvas, view) {
                clicks: e.detail || 1, modifiers: mods(e)});
   });
   // Hover drives menus and link underlines, but at frame rate: a fast mouse fires hundreds/s.
-  let moveDue = false;
+  // The frame sends where the mouse got to, not where it was: a flick ends where it stopped.
+  let moveAt = null;
   canvas.addEventListener('mousemove', e => {
-    if (moveDue) return;
-    moveDue = true;
-    requestAnimationFrame(() => { moveDue = false;
-      view.send({t: 'mouse', kind: 'mouseMoved', ...at(e), button: 'none', modifiers: mods(e)}); });
+    const first = !moveAt;
+    moveAt = {...at(e), modifiers: mods(e)};
+    if (first) requestAnimationFrame(() => {
+      const m = moveAt; moveAt = null;
+      view.send({t: 'mouse', kind: 'mouseMoved', ...m, button: 'none'});
+    });
   });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('wheel', e => {
@@ -10093,21 +10324,44 @@ window.leePickWeb = pickWebTab;
 const inShell = () => Boolean(window.pywebview?.api?.pick_folder);
 const shortHome = p => lee.home && p.startsWith(lee.home) ? '~' + p.slice(lee.home.length) : p;
 
-// The platform folder chooser, or null if there is none or it was cancelled. pywebview injects
-// its bridge asynchronously, so a click in the first moments after load waits for it.
-async function nativeFolder(waitMs = 1500) {
+// pywebview injects its bridge asynchronously, so "is there a native chooser" is answered a
+// moment later -- never by one synchronous look at load.
+async function shellReady(waitMs = 1500) {
   for (const end = Date.now() + waitMs; !inShell() && Date.now() < end;)
     await new Promise(r => setTimeout(r, 50));
-  if (!inShell()) return null;
+  return inShell();
+}
+window.leeShellReady = shellReady;
+
+// The platform folder chooser, or null if there is none or it was cancelled.
+async function nativeFolder() {
+  if (!await shellReady()) return null;
   try { return await window.pywebview.api.pick_folder(); }
   catch (e) { return status(`folder chooser: ${e.message || e}`, 'err'), null; }
 }
 
+// A recent folder can have been renamed or deleted. htmx does not swap a 4xx and `htmx.ajax`
+// resolves anyway, so the refusal is on the event or nowhere -- and the screen said "opening…".
 async function openFolder(path) {
   if (!path) return;
-  status(`opening ${path.split('/').pop()}…`);
-  await htmx.ajax('POST', '/fs/add_root?path=' + encodeURIComponent(path),
-                  {target: 'body', swap: 'outerHTML'});
+  const name = path.split('/').pop();
+  status(`opening ${name}…`);
+  let why = '';
+  const note = e => { why = e.detail.xhr?.responseText || e.detail.error || 'no answer'; };
+  document.body.addEventListener('htmx:responseError', note);
+  document.body.addEventListener('htmx:sendError', note);
+  try {
+    await htmx.ajax('POST', '/fs/add_root?path=' + encodeURIComponent(path),
+                    {target: 'body', swap: 'outerHTML'});
+  } finally {
+    document.body.removeEventListener('htmx:responseError', note);
+    document.body.removeEventListener('htmx:sendError', note);
+  }
+  if (why) leeFail('project', `opening ${name}`, new Error(jsonError(why)));
+}
+// A refused route answers `{"ok": false, "error": …}`; anything else is shown as it came.
+function jsonError(text) {
+  try { return JSON.parse(text).error || text; } catch (_) { return text; }
 }
 window.leeOpenFolder = openFolder;
 

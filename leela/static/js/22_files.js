@@ -14,12 +14,29 @@ function moveTreeSelection(d) {
   const at = Math.max(0, nodes.indexOf(treeSel()));
   selectTreeNode(nodes[Math.max(0, Math.min(nodes.length - 1, at + d))]);
 }
+/* Dotfiles are off by default because most of them are machinery, and on by choice because
+   `.gitignore`, `.github` and `.env` are files you edit. `.venv` and `node_modules` are on
+   neither side of this: the server's skip list drops them whatever the toggle says. */
+function treeHidden() { return localStorage.getItem('lee-tree-hidden') === '1'; }
+function treeQuery(sep = '?') { return treeHidden() ? sep + 'hidden=1' : ''; }
+function paintHiddenBtn() {
+  $$('[data-action="show_hidden"]').forEach(b => {
+    b.classList.toggle('on', treeHidden());
+    b.setAttribute('aria-pressed', String(treeHidden()));
+  });
+}
+async function toggleHidden() {
+  localStorage.setItem('lee-tree-hidden', treeHidden() ? '0' : '1');
+  await refreshFileTree(undefined, false);
+  status(treeHidden() ? 'showing dotfiles' : 'hiding dotfiles', 'ok');
+}
+window.treeHidden = treeHidden; window.toggleHidden = toggleHidden; window.paintHiddenBtn = paintHiddenBtn;
 async function loadTreeDir(n) {
   if (!n?.classList.contains('lee-dir')) return;
   const kids = n.querySelector(':scope > .lee-kids');
   n.open = true; n.setAttribute('aria-expanded', 'true');
   if (kids && !kids.children.length) {
-    kids.innerHTML = await fetch('/tree?path=' + encodeURIComponent(n.dataset.path),
+    kids.innerHTML = await fetch('/tree?path=' + encodeURIComponent(n.dataset.path) + treeQuery('&'),
                                  {headers: {'HX-Request': 'true'}}).then(r => r.text());
     htmx.process(kids);
   }
@@ -50,15 +67,15 @@ async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = tru
   const old = $('.lee-files'); if (!old) return;
   const open = $$('.lee-dir[open]', old).map(n => n.dataset.path).sort((a, b) => a.split('/').length - b.split('/').length);
   const scrollTop = $('#filetree')?.scrollTop || 0;
-  const html = await fetch('/files/panel').then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
+  const html = await fetch('/files/panel' + treeQuery()).then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
   const doc = new DOMParser().parseFromString(html, 'text/html'), fresh = doc.querySelector('.lee-files');
   if (!fresh) throw new Error('file tree refresh returned no panel');
-  old.replaceWith(fresh); htmx.process(fresh);
+  old.replaceWith(fresh); htmx.process(fresh); paintHiddenBtn();
   for (const path of open) {
     const dir = $$('.lee-dir').find(n => n.dataset.path === path); if (!dir) continue;
     dir.open = true;
     const kids = dir.querySelector(':scope > .lee-kids');
-    const childHtml = await fetch('/tree?path=' + encodeURIComponent(path),
+    const childHtml = await fetch('/tree?path=' + encodeURIComponent(path) + treeQuery('&'),
                                   {headers: {'HX-Request': 'true'}}).then(r => r.text());
     kids.innerHTML = childHtml; htmx.process(kids);
   }
@@ -66,6 +83,32 @@ async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = tru
   selectTreeNode(wanted); if ($('#filetree')) $('#filetree').scrollTop = scrollTop;
   if (focus) setScope('files');
   status('files refreshed', 'ok');
+}
+
+async function treeGitAction(op) {
+  const node = treeSel();
+  if (!node || node.classList.contains('lee-root')) return status('select a file or folder first', 'err');
+  const directory = node.classList.contains('lee-dir'), name = node.dataset.path.split('/').pop();
+  if (op === 'discard' && !await confirmDialog(`discard changes in ${name}`, 'This restores the selected tracked file from HEAD.', 'discard')) return;
+  if (op === 'ignore' && !await confirmDialog(`ignore ${name}`, `Add ${name}${directory ? '/' : ''} to this repository's .gitignore.`, 'ignore')) return;
+  try {
+    const d = await post('/git/tree/action', {op, path: node.dataset.path, directory});
+    gitUI.snapshot = d; paintGitPill(d);
+    if (op === 'ignore' && d.outcome?.path) await leeOpenFile(d.outcome.path);
+    await refreshFileTree(node.dataset.path, false);
+  } catch (e) { leeFail('git', op, e); }
+}
+
+async function treeBlame() {
+  const node = treeSel();
+  if (!node || node.classList.contains('lee-dir')) return status('select a file to blame', 'err');
+  await leeOpenFile(node.dataset.path); await leeBlame();
+}
+
+async function treeDiff() {
+  const node = treeSel();
+  if (!node || node.classList.contains('lee-dir')) return status('select a file to compare', 'err');
+  await leeOpenFile(node.dataset.path); showDiff();
 }
 
 async function newEntry(kind) {
@@ -134,14 +177,13 @@ async function addRoot(find = false) {
   const hint = m.querySelector('#folderhint'), openBtn = m.querySelector('#folderopen');
   // In the packaged app the platform's own chooser is the obvious way to find a folder, and
   // the only one that does not require knowing the path. In a browser tab there is none.
+  // Wired now and shown when the bridge arrives, which is not always by the time this opens.
   const browse = m.querySelector('#folderbrowse');
-  if (inShell()) {
-    browse.hidden = false;
-    browse.onclick = async () => {
-      const picked = await nativeFolder();
-      if (picked) { m.remove(); openFolder(picked); }
-    };
-  }
+  browse.onclick = async () => {
+    const picked = await nativeFolder();
+    if (picked) { m.remove(); openFolder(picked); }
+  };
+  shellReady().then(ok => { if (ok) browse.hidden = false; });
   let base = '', dirs = [], rows = [], sel = 0, lastDir = null, seq = 0, timer = null;
 
   const dirOf = v => { const i = v.lastIndexOf('/'); return i < 0 ? '' : v.slice(0, i + 1); };

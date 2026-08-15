@@ -58,6 +58,32 @@ def test_status_stage_unstage_branch_and_commit(repo_git):
     r.commit('save work')
     assert r.info()['clean']
 
+def test_tree_decoration_asks_git_once_per_burst_not_once_per_folder(repo_git, monkeypatch):
+    "A file-tree refresh reads `changes()` once per open folder; three git runs each is the lag."
+    from leela.blocks.git import safety
+    runs, real = [], safety.GitGateway._exec
+    monkeypatch.setattr(safety.GitGateway, '_exec',
+        lambda self, cwd, args, **kw: (runs.append(args[0]), real(self, cwd, args, **kw))[1])
+    r = GitRepo.at(repo_git)
+    (repo_git/'src'/'app.py').write_text('value = 2\n')
+    r.decorations(); runs.clear()
+    for _ in range(8): r.decorations()
+    assert not runs, f'every open folder pays for its own status: {runs}'
+    seeded = r.info()['changes']; runs.clear()
+    assert r.decorations() == seeded and not runs, '`info` seeds the same answer'
+    r.stage(['src/app.py'])
+    assert first(c for c in r.decorations() if c['path'] == 'src/app.py')['staged'], 'a write invalidates it'
+    runs.clear(); r.changes()
+    assert runs, 'the gutter still asks git directly -- it reads this straight after a save'
+
+def test_ignore_adds_one_repository_relative_rule(repo_git):
+    r = GitRepo.at(repo_git)
+    rule = r.ignore('cache', directory=True)
+    assert rule['rule'] == 'cache/' and (repo_git/'.gitignore').read_text() == 'cache/\n'
+    r.ignore('cache', directory=True)
+    assert (repo_git/'.gitignore').read_text() == 'cache/\n'
+    with pytest.raises(GitError): r.ignore('../outside')
+
 def test_fetch_exposes_remote_branches_and_checkout_tracks_them(repo_git, tmp_path):
     remote = tmp_path/'remote.git'
     git(tmp_path, 'init', '--bare', remote.name)
@@ -990,6 +1016,19 @@ def test_a_foreign_lock_is_retried_and_then_explained(repo_git_sa, monkeypatch):
         g.run(repo_git_sa, 'add', '--', 'app.py')
     assert len(attempts) > 1, 'a foreign lock should be waited on, not failed at once'
     assert 'Another Git process' in str(e.value) and 'Nothing was changed' in str(e.value)
+
+def test_a_refusal_reports_both_streams(repo_git_sa):
+    "Git diagnoses on stderr and lists on stdout; a refusal is worth nothing without the list."
+    git(repo_git_sa, 'checkout', '-b', 'other')
+    (repo_git_sa/'app.py').write_text('value = 2\n')
+    git(repo_git_sa, 'commit', '-am', 'theirs')
+    git(repo_git_sa, 'checkout', 'main')
+    (repo_git_sa/'app.py').write_text('value = 3\n')
+    git(repo_git_sa, 'commit', '-am', 'ours')
+    with pytest.raises(GitError) as e:
+        GitGateway().run(repo_git_sa, 'merge', 'other')
+    assert 'Automatic merge failed' in str(e.value), 'the diagnosis, from stderr'
+    assert 'CONFLICT' in str(e.value) and 'app.py' in str(e.value), 'the files, from stdout'
 
 def test_a_safepoint_keeps_uncommitted_work_and_undo_puts_it_back(repo_git_sa):
     r = GitRepo.at(repo_git_sa)

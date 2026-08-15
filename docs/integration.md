@@ -126,6 +126,34 @@ at mechanism is what makes an A/B meaningful.
 it. `tests/test_core.py` asserts that it conforms, so the port cannot drift away from the
 thing it was taken from.
 
+## The other direction: what `WorkspaceHost` owes the harness
+
+`Backend` is the port Leela consumes. `ramabana.tools.Host` is the port Leela *implements* — the
+application under the agent — and it grows as the harness does. An unimplemented method is not an
+error; it is a tool group that quietly does not appear. Three rules, each learned the hard way.
+
+**Declare capabilities rather than being probed.** `tools_for` asks `Host.capabilities`, and
+probes with a live call only where the host does not say. The probe is the first thing to touch a
+host, so `memory_tree('')` opened the vault — an embedding model — on the first `Agent.tools`
+access. `WorkspaceHost.capabilities` answers for everything a workspace has by construction, and
+leaves `session` to the probe: it is the one that depends on whether a kernel is live.
+
+**`api` is never probed.** An unloaded specification is not a missing capability, so the group is
+gated on the declaration alone: implement `api_load`, `api_ops` and `api_call`, say nothing, and
+get no API tools and no error. Leela borrows the three from `ramabana.spec.SpecHost`, which is a
+`LocalHost` and so cannot be inherited — they are about specifications, not about a sandbox.
+
+**The sandbox has two halves.** `check(path, reading=True)` is asked for a path a tool will only
+read. Confining writes stops the agent damaging something nobody opened; confining reads stops it
+answering from a sibling checkout or a library in the venv. `agent_read_outside` opens the read
+half alone, refuses the credential paths in `tools.DENY` regardless, and leaves enumeration
+confined — `walk` never leaves the open folders, so a read outside is a path the model was told,
+never one it found by looking.
+
+`Agent.lend_model` is the same obligation pointing the other way: a host that builds its own chats
+declares `mk_chat = None` to opt in, and the agent fills it, so the vault answers on the model
+being talked to instead of loading a second engine from `$VISHALAKSHI_MODEL`.
+
 ## Where memory and search stay separate
 
 They are two ports rather than one retrieval port, and that is not an accident of history.

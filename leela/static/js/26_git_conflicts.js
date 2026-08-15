@@ -16,6 +16,6 @@ async function showConflictCenter() {
       m.remove(); renderGitPanel(next); status('safe conflicts resolved; review remaining files', 'ok');
       if ((next.changes || []).some(x => x.conflicted)) showConflictCenter();
     };
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { leeFail('git', 'resolve conflicts', e); }
 }
 window.showConflictCenter = showConflictCenter;

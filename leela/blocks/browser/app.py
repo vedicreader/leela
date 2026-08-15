@@ -102,13 +102,13 @@ def _socket(app, ctx, browser):
                                                scale=hello.get('scale') or 1, owner=mine)
             cast = True
             await say(t='ready', w=w, h=h, **await browser.state(tid))
+            # Guarded: Chrome dying here left a cast nobody stops and a socket nobody closes.
+            cdp, page = await browser.cdp(), await browser.page(tid)
         except Exception as e:
             await say(t='error', error=errstr(e))
+            if cast: _detach(browser.stop_cast(tid, mine))
             await sock.close()
             return
-
-        cdp = await browser.cdp()
-        page = await browser.page(tid)
 
         async def to_client():
             "Screencast frames for this page only, acked so Chrome keeps sending them."

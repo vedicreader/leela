@@ -32,14 +32,14 @@ class Browser:
         self.note = ''
         self._cdp = self._loop = None
         self._pages, self._casts = {}, {}   # target -> its `Page`; target -> its cast's owner
-        self._lock = asyncio.Lock()
+        self._lock, self._attaching = asyncio.Lock(), asyncio.Lock()
 
     async def cdp(self):
         "The live CDP connection, starting Chrome if nothing is listening yet."
         async with self._lock:
             loop = asyncio.get_running_loop()
             if self._cdp is not None and self._cdp.is_open and self._loop is loop: return self._cdp
-            self._cdp, self._pages, self._loop = None, {}, loop
+            self._cdp, self._pages, self._casts, self._loop = None, {}, {}, loop
             try: from fossick.cdp import cdp_connect
             except ImportError as e:
                 raise BrowserUnavailable(f'the inline browser needs fossick ({errstr(e)})') from e
@@ -75,7 +75,7 @@ class Browser:
 
     async def close(self):
         "Drop Leela's connection. Chrome and its profile outlive it, on purpose."
-        cdp, self._cdp, self._pages, self._loop = self._cdp, None, {}, None
+        cdp, self._cdp, self._pages, self._casts, self._loop = self._cdp, None, {}, {}, None
         if cdp is None: return
         try: await cdp.close()
         except Exception: pass
@@ -83,9 +83,13 @@ class Browser:
     async def page(self, tid):
         "The `Page` for target `tid`, attaching to one Leela did not open itself."
         if (p := self._pages.get(tid)) is not None and p.is_open: return p
-        from fastcdp import Page
-        self._pages[tid] = p = await Page.new(tid, await self.cdp())
-        return p
+        cdp = await self.cdp()
+        # Attaching twice is two sessions, of which the cache keeps one; the other hears nothing.
+        async with self._attaching:
+            if (p := self._pages.get(tid)) is not None and p.is_open: return p
+            from fastcdp import Page
+            self._pages[tid] = p = await Page.new(tid, cdp)
+            return p
 
     def _as_page(self, t):
         "One CDP target row as a `WebPage`."
@@ -109,7 +113,7 @@ class Browser:
 
     async def shut(self, tid):
         "Close one page in Chrome and forget its session."
-        p = self._pages.pop(tid, None)
+        p, _ = self._pages.pop(tid, None), self._casts.pop(tid, None)
         cdp = await self.cdp()
         try: await cdp.target.closeTarget(targetId=tid)
         except Exception: pass

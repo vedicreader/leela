@@ -335,6 +335,8 @@ body {
 /* Keep the narrow file header legible: notebook and refresh remain one click away in ⋯. */
 .lee-files .lee-bar-files .lee-btn:nth-child(2),
 .lee-files .lee-bar-files .lee-btn:nth-child(4) { display: none; }
+/* A toggle has to say which way it is set; the rest of the bar is momentary. */
+.lee-phead .lee-btn.on { background: var(--lee-sel); color: var(--lee-fg); }
 
 .lee-cellbtns { display: flex; gap: 1px; justify-content: flex-end; opacity: 0; transition: opacity .14s; }
 .cm-lee-breakpoints { width: 13px; cursor: pointer; }
@@ -441,6 +443,11 @@ body {
   border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1);
 }
 .lee-ptitle { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--lee-fg4); font-weight: 600; }
+.lee-agent-status { display: inline-flex; align-items: center; gap: 4px; color: var(--lee-green); font: 10px/1 var(--lee-mono); text-transform: lowercase; }
+.lee-agent-status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 16%, transparent); }
+.lee-agent-status.working { color: var(--lee-blue); }
+.lee-agent-status.working .lee-agent-status-dot { animation: lee-agent-pulse 1.1s ease-in-out infinite; }
+@keyframes lee-agent-pulse { 0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 14%, transparent); opacity: .72; } 50% { box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 22%, transparent); opacity: 1; } }
 .lee-keyscope { color: var(--lee-accent); font: 10px/1 var(--lee-mono); }
 .lee-files { flex: 1 1 auto; }
 .lee-keys  { flex: none; max-height: 34%; border-top: 1px solid var(--lee-border); }
@@ -657,6 +664,7 @@ kbd {
 .lee-docktab.active { border-color: var(--lee-border); background: var(--lee-bg2); color: var(--lee-fg); }
 .lee-dockbody { height: calc(100% - 25px); min-height: 0; }
 .lee-bottomdock .lee-dockbody > .lee-exec,
+.lee-bottomdock .lee-dockbody > .lee-logpanel,
 .lee-bottomdock .lee-dockbody > .lee-termpanel { height: 100%; max-height: none; border-top: 0; }
 .lee-bottomdock.dock-exec .lee-termpanel, .lee-bottomdock.dock-term .lee-exec,
 .lee-bottomdock.dock-term .lee-agent { display: none; }
@@ -1544,7 +1552,7 @@ kbd {
    itself from rendered as a 300px band down the middle of the text instead of a 14px edge. The
    plugin still sets the attribute for the bitmap; this pins the box whatever the bitmap says. */
 .cm-lee-overview { position: absolute; top: 0; right: 0; z-index: 2; height: 100%; width: 14px;
-  border-left: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-bg) 92%, transparent);
+  border-left: 1px solid var(--lee-border); background: var(--lee-bg, #0d1117);
   cursor: default; touch-action: none; }
 .cm-lee-overview[hidden] { display: none; }
 .cm-editor.cm-lee-has-overview .cm-scroller { padding-right: 15px; scrollbar-width: none; }
@@ -1619,8 +1627,9 @@ kbd {
   line-height: 1.5; font-family: var(--lee-mono); border-radius: 6px 6px 3px 3px;
 }
 .lee-composer-footer { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; min-width: 0; padding-top: 7px; }
-.lee-composer-primary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(74px, .58fr) minmax(92px, .72fr); gap: 5px; min-width: 0; }
-.lee-composer-model, .lee-composer-control, .lee-composer-reasoning { width: 100%; min-width: 0; }
+.lee-composer-primary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(74px, .58fr) minmax(92px, .72fr) 58px auto; gap: 5px; min-width: 0; }
+.lee-composer-model, .lee-composer-control, .lee-composer-reasoning, .lee-composer-budget { width: 100%; min-width: 0; }
+.lee-agent-budget-status { color: var(--lee-fg4); font: 10px var(--lee-mono); white-space: nowrap; }
 .lee-composer-send { min-width: 52px; min-height: 29px; flex: none; font-weight: 650; }
 .lee-agent-composer { padding: 8px 9px 9px; }
 .lee-agent-composer .lee-prompt { border-color: color-mix(in srgb, var(--lee-border) 82%, var(--lee-fg4)); background: var(--lee-bg); }
@@ -1661,8 +1670,11 @@ kbd {
 .lee-routing-popover label { display: grid; grid-template-columns: 82px minmax(0,1fr); align-items: center; gap: 7px;
   color: var(--lee-fg4); font-size: 10px; }
 .lee-routing-popover label.lee-check-setting { display: flex; grid-column: 1 / -1; }
+#jobmodels { display: grid; gap: 8px; }
+#jobmodels[hidden] { display: none; }
 .lee-agent-attachments { display: flex; gap: 5px; padding-bottom: 5px; overflow-x: auto; }
 .lee-agent-attachments:empty { display: none; }
+.lee-agent-attachbar { display: flex; justify-content: flex-end; padding-bottom: 5px; }
 .lee-agent-attachment {
   display: inline-flex; align-items: center; gap: 5px; max-width: 210px; padding: 3px 5px 3px 7px;
   border: 1px solid var(--lee-border); border-radius: 4px; background: var(--lee-bg2);
@@ -2768,7 +2780,7 @@ kbd {
 
 /* -------------------------------------------------------------- the logs pane
    Detail a status line cannot hold: git's multi-line refusals, and what a running app prints. */
-.lee-bottomdock.dock-logs .lee-execstrip,
+.lee-bottomdock.dock-logs .lee-exec,
 .lee-bottomdock.dock-logs .lee-termpanel { display: none; }
 .lee-bottomdock.dock-logs .lee-logpanel { display: flex; }
 .lee-logpanel { display: none; flex-direction: column; min-height: 0; flex: 1; }
@@ -3019,3 +3031,7 @@ kbd {
 .lee-branch-more { flex: none; padding: 0 4px; border-radius: 3px; color: var(--lee-fg4); opacity: 0; }
 .lee-branch-row:hover .lee-branch-more, .lee-branch-row:focus-visible .lee-branch-more { opacity: 1; }
 .lee-branch-more:hover { background: var(--lee-bg3, var(--lee-bg1)); color: var(--lee-fg); }
+
+/* A generated picture in the agent pane: fits the pane, never the browser's intrinsic size. */
+.lee-agent-media { margin: .5rem 0; }
+.lee-agent-media img, .lee-agent-media video { max-width: 100%; height: auto; border-radius: 6px; display: block; }

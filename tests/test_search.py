@@ -39,6 +39,7 @@ def test_kosha_is_bound_to_the_workspace_not_the_packaged_apps_cwd(monkeypatch, 
     assert s._kosha() is not None
     assert seen[0]['dir'] == tmp_path.resolve()
     assert seen[0]['install_skill'] is False
+    assert seen[0]['busy_timeout'] == 30000
     assert 'xdg_dir' not in seen[0]
     assert seen[1] == {'pyproject': False}
 
@@ -73,6 +74,18 @@ def test_kosha_sync_indexes_notebook_cells_through_the_normal_repo_pipeline(monk
     repo = next(data for kind, data in seen if kind == 'repo')
     assert '.ipynb' in repo['exts']
     assert result['ok'] and result['notebook_cells'] == 1
+
+
+def test_kosha_sync_is_serial(monkeypatch, tmp_path):
+    seen = {}
+    class Writer:
+        root = tmp_path
+        def sync(self, **kwargs): seen.update(kwargs)
+        def status(self, **kwargs): return {}
+    s = Search(Sandbox([tmp_path]))
+    monkeypatch.setattr(s, '_make_kosha', lambda: Writer())
+    assert s._sync(notebooks=False, graph=False)['ok']
+    assert 'in_parallel' not in seen
 
 def test_search_keeps_reading_while_the_separate_writer_syncs(monkeypatch,tmp_path):
     import time

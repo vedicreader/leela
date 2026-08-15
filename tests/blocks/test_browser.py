@@ -205,6 +205,38 @@ def test_the_stream_belongs_to_the_socket_rather_than_to_each_start(ws):
     asyncio.run(_drive_owned(b, {'t': 'resume', 'w': 800, 'h': 600}, mine))
     assert started == [mine] and b._casts['T1'] is mine
 
+def test_two_attachers_to_one_page_get_the_same_session(monkeypatch):
+    """Attaching twice is two CDP sessions, of which the cache keeps one.
+
+    The caller left holding the other filters frames by a session id nothing will ever send,
+    so its screencast is silent -- and the session it holds is never closed.
+    """
+    import fastcdp
+    b, made = Browser(port=1), []
+
+    class FakePage:
+        is_open = True
+        @staticmethod
+        async def new(tid, cdp):
+            await asyncio.sleep(0)          # the window: the other attacher runs here
+            made.append(tid)
+            return FakePage()
+
+    monkeypatch.setattr(fastcdp, 'Page', FakePage, raising=False)
+    monkeypatch.setattr(b, 'cdp', lambda: asyncio.sleep(0))
+    first, second = asyncio.run(_both(b, 'T1'))
+    assert made == ['T1'] and first is second is b._pages['T1']
+
+async def _both(browser, tid): return await asyncio.gather(browser.page(tid), browser.page(tid))
+
+def test_closing_a_page_forgets_the_cast_it_was_streaming(monkeypatch):
+    "Chrome does not reuse target ids, so an entry left behind is one nothing will ever clear."
+    b = Browser(port=1)
+    b._pages['T1'], b._casts['T1'] = object(), object()
+    monkeypatch.setattr(b, 'cdp', lambda: asyncio.sleep(0))
+    assert asyncio.run(b.shut('T1')) is True
+    assert 'T1' not in b._casts and 'T1' not in b._pages
+
 async def _drive_owned(browser, cmd, owner):
     from leela.blocks.browser.app import _drive
 

@@ -1,7 +1,7 @@
 "Run any command from the IDE under a live inspector in the same process, so its namespace is."
 
 from __future__ import annotations
-import asyncio, os, signal, sys, time
+import asyncio, os, signal, sys, time, traceback
 from collections import deque
 from dataclasses import dataclass
 from fastcore.all import Path, L, first
@@ -43,7 +43,7 @@ class DevServer:
         self.log = deque(maxlen=self.max_log)
         self.base = None
         self.app_url = None
-        self.started = None
+        self.started = self.ended = None
         self._reader = None
     @property
     def alive(self): return self.proc is not None and self.proc.returncode is None
@@ -72,7 +72,7 @@ class DevServer:
     async def start(self):
         "Spawn the app and begin draining its output. Returns self once the inspector registers."
         if self.alive: return self
-        self.log.clear(); self.base = self.app_url = None
+        self.log.clear(); self.base = self.app_url = self.ended = None
         self.proc = await asyncio.create_subprocess_exec(
             *self._cmd(), cwd=self._cwd(), env={**os.environ, **(self.env or {})},
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
@@ -92,6 +92,8 @@ class DevServer:
             if s.startswith('[leela]') or self.app_url is not None: continue
             if any(h in s.lower() for h in _URL_HINTS) and (i := s.find('http://')) >= 0:
                 self.app_url = s[i:].split()[0].rstrip('.,')
+        await self.proc.wait()
+        self.ended = time.time()
     async def _await_inspector(self, tries=60):
         "Wait for the child's own registry entry, matched on pid."
         for _ in range(tries):
@@ -120,8 +122,9 @@ class DevServer:
     def tail(self, n=40): return list(self.log)[-n:]
     def state(self):
         return {'label': self.label, 'script': self.script, 'cmd': ' '.join(self.argv),
-            'alive': self.alive, 'pid': self.pid, 'watch': self.watch or infer_watch(self.argv),
-            'base': self.base, 'app_url': self.app_url,
+            'alive': self.alive, 'pid': self.pid, 'returncode': self.proc.returncode if self.proc else None,
+            'watch': self.watch or infer_watch(self.argv), 'base': self.base, 'app_url': self.app_url,
+            'started': self.started, 'ended': self.ended,
             'uptime': (time.time() - self.started) if self.started and self.alive else 0}
 
 class DevServers:
@@ -239,7 +242,7 @@ def _child(argv=None):
     try: body()
     except KeyboardInterrupt: pass
     except SystemExit as e:
-        if e.code: print(f'[leela] {e}', flush=True)
+        if e.code: traceback.print_exception(e)
     finally:
         print('[leela] command exited; inspector still live', flush=True)
         try:

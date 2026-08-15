@@ -551,6 +551,7 @@ def _log_panel():
         Div(Span('logs', cls='lee-ptitle'),
             Button('all', cls='lee-logfilter active', data_log_filter='', onclick='leeLogFilter("")'),
             Button('git', cls='lee-logfilter', data_log_filter='git', onclick='leeLogFilter("git")'),
+            Button('history', cls='lee-logfilter', data_log_filter='history', onclick='leeLogFilter("history")'),
             Button('runs', cls='lee-logfilter', data_log_filter='runs', onclick='leeLogFilter("runs")'),
             Span(cls='lee-spacer'),
             Button('copy', cls='lee-icon', title='copy the visible log', onclick='leeLogCopy()'),
@@ -622,10 +623,13 @@ def _agent_panel(ws):
         cls='lee-agent-welcome')
     return Section(
         Div(Div(Span('agent', cls='lee-ptitle'),
+                Span(Span(cls='lee-agent-status-dot'), 'ready', id='agentstatus', cls='lee-agent-status ready', title='agent ready'),
                 Span('state active' if has_state else 'no state', id='agentnames', cls='lee-agent-state-badge'),
                 cls='lee-agent-heading'),
             Span(cls='lee-spacer'),
-            Div(Button('history', id='agenthistory', cls='lee-btn', title='toggle conversation history',
+            Div(Button('new chat', id='agentnew', cls='lee-btn', title='start a new conversation',
+                       onclick='leeAgentNew()'),
+                Button('history', id='agenthistory', cls='lee-btn', title='toggle conversation history',
                        onclick='leeAgentHistory()'),
                 Button('memory', id='agentmemory', cls='lee-btn', title='choose notes for agent, prompt cells, and completion',
                        onclick='leeMemoryNotes()'),
@@ -644,6 +648,7 @@ def _agent_panel(ws):
                 Button('Queue', cls='lee-btn', type='button', onclick='leeQueueSteer()'),
                 cls='lee-agent-steer'),
             Div(id='agentattachments', cls='lee-agent-attachments', aria_live='polite'),
+            Div(Button('attach image', id='agentattach', cls='lee-btn', type='button', title='attach a workspace image path or paste a screenshot', onclick='leeAgentAttach()'), cls='lee-agent-attachbar'),
             Textarea(id='agentprompt', cls='lee-input lee-prompt', rows='2',
                      placeholder=f'ask, / for commands, @ for files…  ({chord_display("agent_send")})',
                      autocomplete='off', aria_autocomplete='list', aria_controls='agentsuggest'),
@@ -660,12 +665,20 @@ def _agent_panel(ws):
                     Select(Option('automatic reasoning', value='auto'), Option('low reasoning', value='low'),
                            Option('medium reasoning', value='medium'), Option('high reasoning', value='high'),
                            id='agentreasoning', cls='lee-select lee-composer-reasoning',
-                           title='reasoning effort for cloud models'), cls='lee-composer-primary'),
+                           title='reasoning effort for cloud models'),
+                    Select(*[Option(v, value=v, selected=str(ws.tool_budget) == v)
+                             for v in ('auto', '80', '160', '240', '400')],
+                           id='agenttoolbudget', cls='lee-select lee-composer-budget',
+                           onchange='leeAgentQuickBudget()', aria_label='tool calls per turn',
+                           title='tool calls allowed per turn'),
+                    Span(id='agentbudgetstatus', cls='lee-agent-budget-status',
+                         title='tool calls used in this turn'), cls='lee-composer-primary'),
                 Details(Summary('settings'),
                     Div(Label('prompt cells', Select(Option('loading…', value=inline_model), id='inlinemodel',
                               cls='lee-select', onchange='leeAgentModel("inline", this.value)')),
                         Label('completion', Select(Option('loading…', value=completion_model), id='completionmodel',
                               cls='lee-select', onchange='leeAgentModel("completion", this.value)')),
+                        Div(id='jobmodels'),   # the harness's other jobs, drawn from /agent/models
                         Label(Input(type='checkbox', id='autocompact', checked=ws.compact_auto,
                                     onchange='leeAgentCompaction()'), ' compact automatically',
                               cls='lee-check-setting', title='rewrite old context before it reaches the model limit'),
@@ -688,6 +701,13 @@ def _agent_panel(ws):
                                     onchange='leeLocalMultimodal(this.checked)'),
                               ' local image/audio encoders', cls='lee-check-setting',
                               title='Reload local LiteRT engines with vision and audio support'),
+                        Label(Input(type='checkbox', id='workspace-repo-writes', checked=ws.allow_workspace_repo_writes,
+                                    onchange='leeWorkspaceRepoWrites(this.checked)'), ' allow writes to other workspace repos',
+                              cls='lee-check-setting', title='Keep approval prompts, but allow approved writes to any repository added to this workspace'),
+                        Label(Input(type='checkbox', id='agent-read-outside', checked=ws.agent_read_outside,
+                                    onchange='leeAgentReadOutside(this.checked)'), ' read outside the open folders',
+                              cls='lee-check-setting',
+                              title='Let the agent read a named path anywhere (a sibling checkout, a library in the venv). Writes stay confined; credential files stay refused'),
                         Label(Input(type='checkbox', id='legacymodels', checked=True,
                                     onchange='leeLoadModels(this.checked)'), ' show older models',
                               cls='lee-check-setting'),
@@ -1585,6 +1605,33 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if len(png) > 9_000_000: return _fail('screen capture is larger than 9 MB', 413)
         ws.put_screen(png=png, note='a screenshot from the browser')
         return {'ok': True, 'bytes': len(png)}
+    @rt('/agent/attachment')
+    async def agent_attachment(req):
+        """Save a pasted image inside the active workspace and return its attachment path."""
+        d = await req.json()
+        path = str(d.get('path') or '').strip()
+        if path:
+            image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+            p = ws.fs._check(path, must_exist=True)
+            if not p.is_file() or p.suffix.lower() not in image_exts:
+                return _fail('attachment is not a workspace image')
+            return {'ok': True, 'path': str(p), 'name': p.name}
+        url = str(d.get('data_url') or '')
+        if not url.startswith('data:image/'):
+            return _fail('no image attachment')
+        if len(url) > 12_000_000:
+            return _fail('image attachment is larger than 9 MB', 413)
+        import base64
+        try: data = base64.b64decode(url.split(',', 1)[1], validate=True)
+        except Exception as e: return _fail(e)
+        if len(data) > 9_000_000: return _fail('image attachment is larger than 9 MB', 413)
+        ext = '.png' if url.startswith('data:image/png') else '.jpg'
+        folder = ws.cwd_for() / '.leela-attachments'
+        folder.mkdir(parents=True, exist_ok=True)
+        p = folder / f'paste-{os.urandom(6).hex()}{ext}'
+        p.write_bytes(data)
+        return {'ok': True, 'path': str(p), 'name': p.name}
+
     @rt('/agent/info')
     async def agent_info(): return await _api('/agent/api/info') or {'mode': 'off'}
     @rt('/agent/sessions')
@@ -1596,6 +1643,17 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         return {'id': live.get('id'), 'path': live.get('path'), 'cells': live.get('cells', []),
                 'agent': list(ws.ai.history) if not session else [],
                 'inline': list(ws.inline_ai.history) if not session else []}
+    @rt('/agent/new')
+    async def agent_new():
+        if ws.ai.busy: return _fail('cannot start a new conversation while the agent is working', 409)
+        from .blocks.agent.ai import Assistant
+        old = ws._ai
+        ws._ai = Assistant(ws, model=old.model.name, surface='agent', local_multimodal=ws.local_multimodal,
+                           on_compact=ws._compacted, history_name='agent')
+        ws.approvals.host = ws._ai.host
+        old.close()
+        return {'ok': True, 'session': ws.ai.session_id}
+
     @rt('/agent/history')
     async def agent_history():
         "All durable turns grouped by model-context session, newest session first."
@@ -1606,7 +1664,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     @rt('/agent/models')
     def agent_models(legacy: bool = True):
         from .agent.core import DFLT_LOCAL, available_models, auth_status, resolve
-        from .blocks.agent.models import load_models, runtimes
+        from .blocks.agent.models import load_models, mark_models, runtimes
         notes = {}
         def _try(what, f, dflt=None):
             "`f()`, or `dflt` and a note saying why: no one failure may blank the picker."
@@ -1643,10 +1701,17 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             if spec is None: return current
             return ifnone(first(r['value'] for r in rows
                                 if (s := _spec(r['value'])) and s.model_id == spec.model_id), current)
-        return {'models': rows, 'saved':saved, 'notes': notes,
+        # The routed jobs with no field of their own, reported chosen or not.
+        jobs = {}
+        if ws._ai is not None:
+            from .agent.core import JOBS
+            jobs = {j: _name(f'{j} model', lambda j=j: ws.ai.routing.name_for(j), '')
+                    for j in JOBS if j not in ('turn', 'completion')}
+        return {'models': mark_models(rows), 'saved':saved, 'notes': notes,
                 'auth': _try('auth', auth_status, {}) or {}, 'runtimes': _try('runtimes', runtimes, []) or [],
+                'jobs': jobs,
                 'selected': {'agent': selected(agent), 'inline': selected(inline),
-                             'completion': selected(completion)}}
+                             'completion': selected(completion), **jobs}}
     @rt('/agent/models/add')
     async def agent_models_add(req):
         "Save a Hugging Face repo/URL or hosted provider model alias."
@@ -1687,6 +1752,22 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             return {'ok': True, 'local_multimodal': enabled,
                     'note': f'local image/audio encoders {"enabled" if enabled else "disabled"}'}
         except Exception as e: return _fail(e)
+    @rt('/agent/workspace-repo-writes')
+    async def agent_workspace_repo_writes(req):
+        d = await req.json(); enabled = d.get('enabled')
+        if not isinstance(enabled, bool): return _fail('enabled must be true or false')
+        ws.allow_workspace_repo_writes = enabled; ws.save()
+        return {'ok': True, 'enabled': enabled,
+                'note': f'workspace repository writes {"enabled" if enabled else "disabled"}; approval rules still apply'}
+    @rt('/agent/read-outside')
+    async def agent_read_outside(req):
+        "Reads outside the open folders. Writes are unaffected, and credentials stay refused."
+        d = await req.json(); enabled = d.get('enabled')
+        if not isinstance(enabled, bool): return _fail('enabled must be true or false')
+        ws.agent_read_outside = enabled; ws.save()
+        return {'ok': True, 'enabled': enabled,
+                'note': f'reads outside the open folders {"allowed" if enabled else "refused"}; writes are unchanged'}
+
     @rt('/agent/compaction')
     async def agent_compaction(req):
         "Configure visible automatic compaction without restarting the model conversation."
@@ -1725,15 +1806,20 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     async def agent_model(req):
         d = await req.json()
         try:
+            from .agent.core import JOBS
             from .blocks.agent.models import load_models
             load_models()
+            # `agent` and `inline` are two assistants, each on its own `turn`; the rest are jobs.
             target = d.get('target', 'agent')
+            if target not in ('agent', 'inline') and target not in JOBS:
+                return _fail(f'unknown model target {target!r}')
             assistant = ws.inline_ai if target == 'inline' else ws.ai
-            job = 'completion' if target == 'completion' else 'turn'
+            job = 'turn' if target in ('agent', 'inline') else target
             spec = assistant.set_model((d.get('model') or '').strip(), job=job)
             if target == 'inline': ws.inline_model = spec.name
             elif target == 'completion': ws.completion_model = spec.name
             elif target == 'agent': ws.model = spec.name
+            else: ws.job_models[job] = spec.name
             ws.save()
             return {'ok': True, 'target': target, 'model': spec.name, 'note': model_note(spec)}
         except Exception as e: return _fail(e)
@@ -1944,6 +2030,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             return _fail('reasoning must be auto, low, medium or high')
         reasoning = None if reasoning in ('', 'auto') else reasoning
         a = ws.ai
+        if a.busy: return _fail('the assistant is already working; use steering or stop it first', 409)
         async def events():
             import queue as _q
             out, done = _q.Queue(), object()
@@ -1996,7 +2083,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             if not finished: return
             await task
             capabilities = a.turn_capabilities(a.current_turn_id)
-            yield _sse('done', {'ok': a.ready, 'note': a.note,
+            yield _sse('done', {'ok': a.ready, 'note': a.note, 'media': _turn_media(a),
                                 'usage': a.turn_use.dict(), 'usage_label': repr(a.turn_use),
                                 'session_usage': a.use.dict(), 'session_usage_label': repr(a.use),
                                 'model': a.model.name, 'turn_id': a.current_turn_id,
@@ -2006,6 +2093,17 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                                 'edits': _edit_diffs(a)})
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+    def _turn_media(a):
+        "Pictures the turn produced, as data URLs. A tool result is a path, which a browser cannot draw."
+        import base64
+        out = []
+        for m in (getattr(a, 'turn_media', None) or []):
+            data = m.get('data')
+            if not data: continue
+            out.append({'mime': m.get('mime') or 'image/png',
+                        'url': f"data:{m.get('mime') or 'image/png'};base64,{base64.b64encode(data).decode()}"})
+        return out
+
     @rt('/agent/approval')
     def agent_approval():
         "The call waiting for a person, or None. It stays inline so the rest of the IDE remains usable."
@@ -2108,14 +2206,16 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     @rt('/agent/approval/request')
     async def agent_approval_request(req):
         "Ask for a decision in this browser on behalf of an external Rishi session."
-        d = await req.json()
+        try: d = await req.json()
+        except Exception as e: return _fail(f'approval request must be valid JSON: {e}')
         tc = d.get('tool_call') or {}
         fn = tc.get('function') or {} if isinstance(tc, dict) else {}
         name, args = fn.get('name'), fn.get('arguments', {})
+        if args in (None, ''): args = {}
         if not name: return _fail('tool_call.function.name is required')
         if isinstance(args, str):
             try: args = json.loads(args)
-            except Exception: return _fail('tool_call.function.arguments must be an object or JSON object')
+            except json.JSONDecodeError as e: return _fail(f'tool_call.function.arguments is not valid JSON at position {e.pos}')
         if not isinstance(args, dict): return _fail('tool_call.function.arguments must be an object')
         try: timeout = min(3600, max(1, float(d.get('timeout', ws.approvals.timeout))))
         except (TypeError, ValueError): return _fail('timeout must be a number of seconds')

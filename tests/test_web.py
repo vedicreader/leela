@@ -467,11 +467,33 @@ def test_panels_refresh_themselves_and_keep_secrets_server_side():
     assert 'e.secret ?' in block, 'a secret and a variable are drawn differently'
     ops = JS[JS.index('async function refreshFileTree'):JS.index('document.addEventListener(\'click\'')]
     assert 'location.reload()' not in ops
-    assert "fetch('/files/panel')" in ops
+    assert "fetch('/files/panel' + treeQuery())" in ops, 'the panel, at the dotfile setting in force'
     assert "old.replaceWith(fresh)" in ops
     first = workspace_slug('My Project')
     second = workspace_slug('My Project', [first])
     assert first == 'my-project' and second == 'my-project-2'
+
+def test_the_tree_hides_dotfiles_until_the_toggle_asks_for_them(tmp_path):
+    "`.gitignore` is a file you edit; `.venv` is not, and one control must not conflate them."
+    (tmp_path/'.gitignore').write_text('build/\n')
+    (tmp_path/'.venv').mkdir(); (tmp_path/'sub').mkdir()
+    (tmp_path/'app.py').write_text('x = 1\n')
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        ask = lambda **kw: client.get('/tree', params={'path': str(tmp_path), **kw},
+                                      headers={'HX-Request': 'true'}).text
+        plain, shown = ask(), ask(hidden=True)
+    assert '.gitignore' not in plain and '.gitignore' in shown
+    assert '.venv' not in plain and '.venv' not in shown, 'the skip list is not what this toggles'
+    assert 'hidden=1' in shown and 'hidden=1' not in plain, 'a folder opened from here keeps showing them'
+    assert "Btn('show_hidden'" in read('leela/core/ui.py'), 'and the files bar can turn it on'
+    assert 'show_hidden:' in JS and "localStorage" in JS[JS.index('function treeHidden'):JS.index('async function refreshFileTree')]
+
+def test_a_window_is_pointed_at_the_host_the_server_will_answer_to(tmp_path):
+    "`serve_ide` slugs resolved roots, so a symlinked folder must not be slugged by its link."
+    from leela.hub import workspace_urls
+    (tmp_path/'real-name').mkdir()
+    (tmp_path/'link').symlink_to(tmp_path/'real-name')
+    assert workspace_urls([tmp_path/'link'], 5001) == ['http://real-name.localhost:5001/']
 
 
 
@@ -545,11 +567,53 @@ def test_a_failed_git_action_opens_the_log_it_just_wrote():
     assert "if (lee.logFilter && lee.logFilter !== source) leeLogFilter('')" in show, \
         'a filter that would hide the new row is cleared'
     assert "leeDock('logs')" in show
-    failed = JS[JS.index('async function gitDo('):JS.index('function gitOperationBanner')]
-    assert failed.index("leeLog('git'") < failed.index("showLog('git')"), 'written, then shown'
-    assert 'status(`git ${name} failed — ${firstLine(detail)}`' in failed, \
+    fail = JS[JS.index('function leeFail('):JS.index('window.leeFail')]
+    assert fail.index('leeLog(source') < fail.index('showLog(source)'), 'written, then shown'
+    assert 'status(`${source} ${what} failed — ${firstLine(detail)}`' in fail, \
         "git's first line is usually the whole story, so the toast carries it"
+    assert 'e.reported' in fail, 'an outer catch around a reported failure does not say it twice'
     assert 'see logs' not in JS, 'nothing tells you to go and look any more'
+
+def test_the_model_picker_reads_its_runtimes_from_the_server():
+    "Labels and remedies drifted here once already; an agent harness is not a pip extra."
+    block = JS[JS.index('async function leeAddModel('):JS.index('window.leeAddModel')]
+    assert 'RUNTIME_LABELS' not in block, 'the list of runtimes does not live in the browser'
+    assert 'r.label' in block and 'r.why' in block
+    jobs = JS[JS.index('function paintJobModels('):JS.index('async function leeAgentModel(')]
+    assert 'd.jobs' in block or 'd.jobs' in jobs, 'the routable jobs come from the server too'
+    assert 'data-job=' in jobs and 'leeAgentModel(job' in jobs
+    switch = JS[JS.index('async function leeAgentModel('):JS.index('window.leeAgentModel')]
+    assert 'MODEL_SELECTS[target]' in switch, 'a job row is not the completion select'
+
+def test_opening_a_project_says_so_when_it_cannot():
+    "htmx does not swap a 4xx and resolves anyway, so the refusal has to be read off the event."
+    block = JS[JS.index('async function openFolder('):JS.index('function jsonError(')]
+    assert "'htmx:responseError'" in block and "'htmx:sendError'" in block
+    assert 'leeFail(' in block, 'and a folder that has gone is not left saying "opening…"'
+    assert 'removeEventListener' in block, 'one listener per open, not one per open for ever'
+
+def test_the_native_folder_chooser_appears_when_its_bridge_does():
+    "`pywebview.api` is injected asynchronously; asked once at load the answer is often no."
+    block = JS[JS.index('async function addRoot('):JS.index("let base = ''")]
+    assert 'shellReady()' in block and 'browse.onclick' in block
+    assert 'if (inShell())' not in block, 'the button is wired before the bridge is asked about'
+
+def test_the_page_is_hovered_where_the_mouse_stopped():
+    "A frame-rate throttle that keeps the first move of each frame drops the one that matters."
+    block = JS[JS.index("canvas.addEventListener('mousemove'"):JS.index("canvas.addEventListener('contextmenu'")]
+    assert 'moveAt = null' in block, 'the pending move is cleared as it is sent'
+    assert block.index('moveAt = {') < block.index('requestAnimationFrame'), \
+        'every move updates the position; the frame sends the latest one'
+
+def test_every_git_failure_reaches_the_log_not_only_the_status_line():
+    "The detail of a refusal is the point of it, and a toast cannot hold it."
+    for name in ('16_git_cwd', '17_gutter', '26_git_conflicts', '28_branchbar'):
+        assert "status(e.message || String(e), 'err')" not in read(f'leela/static/js/{name}.js'), \
+            f'{name} reports a failure without logging its detail'
+    panel = read('leela/static/js/18_pipelines.js')
+    panel = panel[panel.index('async function loadGitReview('):panel.index('function leeGit()')]
+    assert "status(e.message || String(e), 'err')" not in panel, \
+        'the Git panel reports a failure without logging its detail'
 
 
 def test_a_branch_change_reaches_every_surface_that_was_derived_from_it():
@@ -1053,6 +1117,16 @@ def test_indent_detection_copies_tabs_or_space_units_without_treating_alignment_
     assert 'function indentColumns' in editor and '--lee-indent-cols' in editor
     assert 'background-repeat: no-repeat' in CSS
 
+def test_the_overview_stripe_measures_the_pane_that_scrolls():
+    "It measured `view.dom`, which here is the whole file: a 14px canvas thousands of pixels tall."
+    plugin = EDITOR[EDITOR.index('function scrollerFor('):EDITOR.index('const stickyPlugin')]
+    assert 'scrollHeight > el.clientHeight' in plugin, 'the element that really scrolls'
+    assert 'scroller.clientHeight' in plugin and 'this.view.dom.clientHeight' not in plugin
+    assert "addEventListener('scroll'" in plugin, 'an outer pane scrolling is not a transaction'
+    assert "removeEventListener('scroll'" in plugin, 'and the listener goes when the view does'
+    assert "classList.toggle('has-overview'" in plugin, "the scrolling pane's own bar is the one hidden"
+    assert '.lee-editor.has-overview { scrollbar-width:none; }' in CSS
+
 def test_editor_extensions_are_live_preferences():
     editor = EDITOR
     assert 'function overviewPlugin' in editor and 'const stickyPlugin' in editor
@@ -1130,8 +1204,10 @@ def test_agent_teleprompter_exposes_control_modes_and_editable_tool_calls():
     from leela.workspace import Workspace
     html = to_xml(_agent_panel(Workspace(roots=[])))
     assert 'id="agentcontrol"' in html
+    assert 'id="agenttoolbudget"' in html and 'id="agentbudgetstatus"' in html
     assert all(f'value="{mode}"' in html for mode in ('autopilot', 'guided', 'directed'))
     assert "post('/agent/control', {control})" in JS
+    assert 'async function leeAgentQuickBudget()' in JS and "api('/agent/status')" in JS
     assert 'data-tool' in JS and 'data-args' in JS
     assert "post('/agent/approve', {id: a.id, ok, note, session, tool, args})" in JS
     assert "post('/agent/run-policy', {policy, count:" in JS
@@ -1484,9 +1560,11 @@ def test_agent_pane_has_model_history_and_expand_controls():
     html = str(_agent_panel(Workspace(roots=[])))
     assert 'agentmodel' in html and 'leeAgentModel' in html
     assert 'localmultimodal' in html and 'leeLocalMultimodal' in html
+    assert 'workspace-repo-writes' in html and 'leeWorkspaceRepoWrites' in html
     assert 'leeAgentHistory' in html and 'leeAgentExpand' in html
     assert html.count('>transcript</button>') == 0
     assert '/agent/history' in JS and 'function renderSessionCells' in JS
+    assert '/agent/workspace-repo-writes' in JS and 'function leeWorkspaceRepoWrites' in JS
     assert 'function showHistorySession' in JS and 'context continued across these turns' in JS
     assert 'lee-session-code' in JS and '.lee-history-index' in CSS
     assert 'agent-expanded' in CSS and 'lee-dock-split' in JS
@@ -1543,6 +1621,21 @@ def test_every_model_choice_is_saved_and_restored(tmp_path):
         assert client.post('/agent/model', json={'target': 'completion', 'model': 'gemma-e4b'}).json()['ok']
     restored = Workspace.load(path)
     assert (restored.model, restored.inline_model, restored.completion_model) == ('gemma-12b', 'gemma-e2b', 'gemma-e4b')
+
+def test_the_jobs_without_a_control_of_their_own_are_still_choosable(tmp_path):
+    "A sub-agent runs on a model somebody chose; the only way to say which was the environment."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    path = tmp_path/'workspace.json'
+    ws = Workspace(roots=[]); ws._state_path = path
+    with TestClient(ide_app(ws)) as client:
+        assert client.post('/agent/model', json={'target': 'subagent', 'model': 'gemma-e2b'}).json()['ok']
+        refused = client.post('/agent/model', json={'target': 'nonsense', 'model': 'gemma-e2b'}).json()
+        assert refused['ok'] is False and 'nonsense' in refused['error']
+        jobs = client.get('/agent/models').json()['jobs']
+    assert jobs['subagent'] == 'gemma-e2b' and 'summary' in jobs, 'reported chosen or not'
+    assert Workspace.load(path).job_models == {'subagent': 'gemma-e2b'}
 
 
 def test_configured_agent_does_not_offer_setup_again():

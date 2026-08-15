@@ -45,6 +45,8 @@ async function boot() {
   // The first paint is server-rendered, so the welcome screen is already on the page when
   // Leela opens on no folder; only its recent list needs filling in.
   if ($('#leerecent')) paintRecent();
+  // The first paint is server-rendered without the preference, so it is only wrong when set.
+  paintHiddenBtn(); if (treeHidden()) refreshFileTree(undefined, false).catch(() => {});
   refreshProjectPills();
   setInterval(refreshKernelPill, 5000);
   setInterval(refreshProjectPills, 5000);

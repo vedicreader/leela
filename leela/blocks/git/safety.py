@@ -180,7 +180,9 @@ class GitGateway:
             if not FOREIGN_LOCK.search(p.stderr or ''): break
             time.sleep(LOCK_BACKOFF * 2 ** attempt)
         if check and p.returncode:
-            message = (p.stderr or p.stdout or f'git exited {p.returncode}').strip()
+            # Both streams: git diagnoses on stderr and names the files on stdout. stderr leads.
+            message = '\n'.join(x for x in ((p.stderr or '').strip(), (p.stdout or '').strip())
+                                if x) or f'git exited {p.returncode}'
             if FOREIGN_LOCK.search(message):
                 message += ('\n\nAnother Git process is using this repository -- a terminal, an '
                     'agent, or an editor elsewhere. Nothing was changed.')

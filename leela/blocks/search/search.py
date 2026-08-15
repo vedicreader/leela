@@ -98,7 +98,7 @@ class Search:
         "A fresh Kosha handle: separate SQLite connections for readers and the sync writer."
         from kosha import Kosha
         root=self.fs.roots[0] if self.fs.roots else None
-        k=Kosha(dir=root,install_skill=False)
+        k=Kosha(dir=root,install_skill=False,busy_timeout=30000)
         k.status(pyproject=False)
         return k
     def _kosha(self):
@@ -530,7 +530,7 @@ class Search:
             from kosha.core import code_exts, file_parse
             exts = code_exts + (',.ipynb' if notebooks else '')
             if notebooks: k.update_repo(dir=k.root, exts=exts, verbose=False, embed=True)
-            else: k.sync(dir=k.root, pyproject=False, in_parallel=True, sync_graph=graph, verbose=False)
+            else: k.sync(dir=k.root, pyproject=False, sync_graph=graph, verbose=False)
             indexed = sum(len(file_parse(Path(p))) for p in self.fs.walk()
                 if notebooks and p.suffix.lower() == '.ipynb')
             if graph and notebooks:

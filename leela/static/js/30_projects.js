@@ -10,21 +10,44 @@
 const inShell = () => Boolean(window.pywebview?.api?.pick_folder);
 const shortHome = p => lee.home && p.startsWith(lee.home) ? '~' + p.slice(lee.home.length) : p;
 
-// The platform folder chooser, or null if there is none or it was cancelled. pywebview injects
-// its bridge asynchronously, so a click in the first moments after load waits for it.
-async function nativeFolder(waitMs = 1500) {
+// pywebview injects its bridge asynchronously, so "is there a native chooser" is answered a
+// moment later -- never by one synchronous look at load.
+async function shellReady(waitMs = 1500) {
   for (const end = Date.now() + waitMs; !inShell() && Date.now() < end;)
     await new Promise(r => setTimeout(r, 50));
-  if (!inShell()) return null;
+  return inShell();
+}
+window.leeShellReady = shellReady;
+
+// The platform folder chooser, or null if there is none or it was cancelled.
+async function nativeFolder() {
+  if (!await shellReady()) return null;
   try { return await window.pywebview.api.pick_folder(); }
   catch (e) { return status(`folder chooser: ${e.message || e}`, 'err'), null; }
 }
 
+// A recent folder can have been renamed or deleted. htmx does not swap a 4xx and `htmx.ajax`
+// resolves anyway, so the refusal is on the event or nowhere -- and the screen said "opening…".
 async function openFolder(path) {
   if (!path) return;
-  status(`opening ${path.split('/').pop()}…`);
-  await htmx.ajax('POST', '/fs/add_root?path=' + encodeURIComponent(path),
-                  {target: 'body', swap: 'outerHTML'});
+  const name = path.split('/').pop();
+  status(`opening ${name}…`);
+  let why = '';
+  const note = e => { why = e.detail.xhr?.responseText || e.detail.error || 'no answer'; };
+  document.body.addEventListener('htmx:responseError', note);
+  document.body.addEventListener('htmx:sendError', note);
+  try {
+    await htmx.ajax('POST', '/fs/add_root?path=' + encodeURIComponent(path),
+                    {target: 'body', swap: 'outerHTML'});
+  } finally {
+    document.body.removeEventListener('htmx:responseError', note);
+    document.body.removeEventListener('htmx:sendError', note);
+  }
+  if (why) leeFail('project', `opening ${name}`, new Error(jsonError(why)));
+}
+// A refused route answers `{"ok": false, "error": …}`; anything else is shown as it came.
+function jsonError(text) {
+  try { return JSON.parse(text).error || text; } catch (_) { return text; }
 }
 window.leeOpenFolder = openFolder;
 
