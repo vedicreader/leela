@@ -93,12 +93,48 @@ TREE = '''async (n) => {
           heapMB: +((performance.memory?.usedJSHeapSize || 0) / 1048576).toFixed(1)};
 }'''
 
+ARM = '''() => {
+  const tree = document.querySelector('#filetree');
+  tree.scrollTop = 90;
+  const row = document.querySelector('.lee-file');
+  window.__row = row;
+  return {dirs: document.querySelectorAll('.lee-dir[open]').length,
+          rows: document.querySelectorAll('.lee-node').length, scroll: tree.scrollTop};
+}'''
+
+READ = '''() => ({
+  dirs: document.querySelectorAll('.lee-dir[open]').length,
+  rows: document.querySelectorAll('.lee-node').length,
+  scroll: document.querySelector('#filetree').scrollTop,
+  kept: document.contains(window.__row),
+})'''
+
 def chrome_path():
     "The Chromium playwright will actually find, whichever build is installed beside it."
     from fastcore.all import first
     return str(first(Path('/opt/pw-browsers').glob('chromium-*/chrome-linux/chrome')) or '') or None
 
-async def drive(url, dirs):
+TREE_URLS = ('/tree?', '/files/panel', '/git/info')
+
+async def watch_probe(page, root, seen):
+    "One change from outside, and one the client made itself, with the tree armed either way."
+    out = {}
+    mark = lambda: len([u for u in seen if any(x in u for x in TREE_URLS)])
+    opened = await page.evaluate("() => [...document.querySelectorAll('.lee-dir[open]')].map(d => d.dataset.path)")
+    home = Path(opened[-1]) if opened else Path(root)
+    before, at = await page.evaluate(ARM), mark()
+    (home/'from_elsewhere.py').write_text('brand = "new"\n')
+    await page.wait_for_timeout(1400)
+    out['theirs'] = {**await page.evaluate(READ), 'was': before, 'reqs': mark() - at}
+    before, at = await page.evaluate(ARM), mark()
+    mine = home/'mine.py'
+    await page.evaluate("p => window.noteSelfWrite(p)", str(mine))
+    mine.write_text('saved = "by me"\n')
+    await page.wait_for_timeout(1400)
+    out['mine'] = {**await page.evaluate(READ), 'was': before, 'reqs': mark() - at}
+    return out
+
+async def drive(url, dirs, root):
     from playwright.async_api import async_playwright
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(executable_path=chrome_path(),
@@ -112,8 +148,9 @@ async def drive(url, dirs):
         before = len(requests)
         tree = await page.evaluate(TREE, dirs)
         tree['requests'] = len(requests) - before
+        watch = await watch_probe(page, root, requests)
         await browser.close()
-        return load, tree
+        return load, tree, watch
 
 def table(rows, head):
     w = [max(len(str(r[i])) for r in [head, *rows]) for i in range(len(head))]
@@ -131,7 +168,7 @@ def main(argv=None):
     a = p.parse_args(argv)
     root = make_project(a.dirs, a.per, a.dirty)
     serve(root, a.port)
-    load, tree = asyncio.run(drive(f'http://127.0.0.1:{a.port}/', a.open))
+    load, tree, watch = asyncio.run(drive(f'http://127.0.0.1:{a.port}/', a.open, root))
     print(f'\n## one cold page load — {a.dirs * a.per} files, {a.dirty} uncommitted\n')
     table([('bytes on the wire', f"{load['wire']:,}"),
            ('bytes after decoding', f"{load['decoded']:,}"),
@@ -150,5 +187,13 @@ def main(argv=None):
            ('20 arrow-key moves', f"{tree['navMs']}ms"),
            ('DOM nodes after', f"{tree['nodes']:,}"),
            ('JS heap after', f"{tree['heapMB']}MB")], ('measure', 'value'))
+    print('\n## one change from outside, and one the client made itself\n')
+    table([(name, r['reqs'], f"{r['was']['rows']} → {r['rows']}", f"{r['was']['dirs']} → {r['dirs']}",
+            f"{r['was']['scroll']} → {r['scroll']}", 'yes' if r['kept'] else 'NO')
+           for name, r in (('a file appears from elsewhere', watch['theirs']),
+                           ('the client saves its own', watch['mine']))],
+          ('change', 'requests', 'rows', 'folders open', 'scroll', 'rows kept'))
+    print('\n  A push reconciles only the folder that changed, so expansion, scroll and every\n'
+          '  untouched row survive it -- and a write the client made itself is not news.')
 
 if __name__ == '__main__': main()

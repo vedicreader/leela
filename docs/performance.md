@@ -330,6 +330,17 @@ the same `SKIP_DIRS` the tree uses, pushed to the browser over `/fs/events`. Wri
 subscriber getting the event: **79ms best, 100ms median**, against a 200ms debounce. `node_modules`
 and `.git` produce nothing.
 
+A push never rebuilds the panel. `patchTreeDir` reconciles one folder's children against the
+server by `data-path`: rows that are still there stay where they are, with whatever they had
+open inside them, and only their Git decoration is synced. And a write the client made itself
+is not news — `noteSelfWrite` marks the paths that autosave and the four tree mutations write,
+and those are dropped from the batch, leaving one `/git/info` to repaint the badges.
+
+| a change lands | requests | rows | folders open | scroll | rows kept |
+|---|---|---|---|---|---|
+| a file appears from elsewhere | 2 | 283 → 284 | 25 → 25 | 90 → 90 | yes |
+| the client saves its own | 1 | 284 → 284 | 25 → 25 | 90 → 90 | yes |
+
 Two things it cost to get right. The notify thread is Rust, so `close()` joins it rather than
 only signalling — a watcher still running when the interpreter tears down segfaults, reliably.
 And `ctx` is a capability surface, not the workspace, so `fs_watch` had to be declared in

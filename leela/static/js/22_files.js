@@ -81,16 +81,64 @@ async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = tru
   status('files refreshed', 'ok');
 }
 
-/* Pushed, not polled. The tree used to know only what the client had just done itself, so an
-   agent edit, a terminal command or another editor stayed invisible until someone refreshed. */
-let fsWatchTimer = null;
+/* Pushed, not polled: an agent edit, a terminal command or another editor used to stay
+   invisible until someone refreshed. A push never rebuilds the panel -- it reconciles the
+   folders that changed and leaves every other row, its expansion and the scroll alone. */
+const selfWrites = new Map();
+const SELF_WRITE_MS = 4000;
+function noteSelfWrite(...paths) { for (const p of paths) if (p) selfWrites.set(p, performance.now()); }
+function notMine(paths) {
+  const now = performance.now();
+  for (const [p, at] of selfWrites) if (now - at > SELF_WRITE_MS) selfWrites.delete(p);
+  return paths.filter(p => !selfWrites.has(p));
+}
+window.noteSelfWrite = noteSelfWrite;
+
+const GIT_MARKS = ['git-modified', 'git-staged', 'git-untracked', 'git-conflict'];
+function syncTreeRow(row, fresh) {
+  if (row.classList.contains('lee-dir')) return;
+  row.classList.remove(...GIT_MARKS);
+  for (const c of GIT_MARKS) if (fresh.classList.contains(c)) row.classList.add(c);
+  row.querySelectorAll('.lee-tree-git').forEach(b => b.remove());
+  const badge = fresh.querySelector('.lee-tree-git');
+  if (badge) row.appendChild(badge.cloneNode(true));
+}
+// Rows that are still there stay where they are, with whatever they had open inside them.
+async function patchTreeDir(dir) {
+  const kids = dir.querySelector(':scope > .lee-kids'); if (!kids) return;
+  const html = await fetch('/tree?path=' + encodeURIComponent(dir.dataset.path) + treeQuery('&'),
+                           {headers: {'HX-Request': 'true'}}).then(r => r.text());
+  const box = document.createElement('div'); box.innerHTML = html;
+  const have = new Map([...kids.children].map(n => [n.dataset.path, n]));
+  [...box.children].forEach((fresh, i) => {
+    const row = have.get(fresh.dataset.path) || fresh;
+    if (have.has(fresh.dataset.path)) { syncTreeRow(row, fresh); have.delete(fresh.dataset.path); }
+    if (kids.children[i] !== row) kids.insertBefore(row, kids.children[i] || null);
+  });
+  have.forEach(n => n.remove());
+  htmx.process(kids);
+}
+async function patchTree(paths) {
+  const dirs = new Set(paths.map(p => p.replace(/\/[^/]+$/, '')));
+  await Promise.all($$('.lee-dir[open]').filter(n => dirs.has(n.dataset.path)).map(patchTreeDir));
+}
+async function refreshGitTreeMarks() {
+  try { paintGitTree(await api(gitUrl('/git/info'))); } catch (_) {}
+}
+
+let fsWatchTimer = null, fsWatchSeen = [];
 function watchFiles() {
   const es = new EventSource('/fs/events');
-  es.addEventListener('changed', () => {
+  es.addEventListener('changed', e => {
+    try { fsWatchSeen.push(...JSON.parse(e.data).paths); } catch (_) { return; }
     clearTimeout(fsWatchTimer);
-    fsWatchTimer = setTimeout(() => {
-      refreshFileTree(undefined, false).catch(() => {});
-      refreshOpenGitMarks();
+    fsWatchTimer = setTimeout(async () => {
+      const all = fsWatchSeen; fsWatchSeen = [];
+      const theirs = notMine(all);
+      // Our own save changed no filenames, only what git thinks of one.
+      if (theirs.length) await patchTree(theirs).catch(() => {});
+      await refreshGitTreeMarks();
+      if (theirs.some(p => p === lee.path)) refreshOpenGitMarks();
     }, 250);
   });
   es.onerror = () => { es.close(); setTimeout(watchFiles, 3000); };
@@ -133,6 +181,7 @@ async function newEntry(kind) {
                                  kind === 'dir' ? 'folder name' : 'filename.py');
   if (!name) return;
   const r = await post('/fs/new', {parent, name, kind});
+  noteSelfWrite(r.entry.path);
   status('created ' + name, 'ok');
   await refreshFileTree(r.entry.path);
   if (kind === 'file') leeOpenFile(r.entry.path);
@@ -143,6 +192,7 @@ async function renameEntry() {
   const name = await inputDialog('rename', 'name', old);
   if (!name || name === old) return;
   const r = await post('/fs/rename', {path: sel.dataset.path, name});
+  noteSelfWrite(sel.dataset.path, r.entry.path);
   await refreshFileTree(r.entry.path);
 }
 async function deleteEntry() {
@@ -153,6 +203,7 @@ async function deleteEntry() {
     : 'This permanently deletes the file from disk.';
   if (lee.filePrefs.confirmDelete !== false && !await confirmDialog('delete ' + name + ' from disk', warning, 'delete')) return;
   const parent = sel.parentElement?.closest('.lee-node.lee-dir')?.dataset.path;
+  noteSelfWrite(sel.dataset.path);
   await post('/fs/delete', {path: sel.dataset.path});
   await refreshFileTree(parent);
 }
