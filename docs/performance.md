@@ -106,40 +106,72 @@ modules with comments intact — 658KB for 10,387 lines, never minified.
 
 ## Merging divergent trees
 
-The complaint is that there are no options. There are almost none, and the ones that exist
-resolve the cases that were never hard.
+The primitives are mostly there. `git.py` has `merge_preview`/`rebase_preview` (relation, merge
+base, dirty-tree warning, rehearsed conflicts, full review), `conflict_plan`,
+`resolve_safe_conflicts`, `conflict_versions`/`resolve_conflict`, `operation_action` for
+continue/skip/abort, safepoints and `undo` through `safety.py`, and `RepoSet.overview` across
+the workspace. What is missing is not primitives — it is paths through them.
 
-- `resolve_safe_conflicts` (`blocks/git/git.py:808`) removes a conflict block only when
-  `ours == theirs` — where git had no reason to conflict in the first place.
-- `_conflict_blocks` (`:20`) parses `<<<<<<<`/`=======`/`>>>>>>>`, which is
-  `merge.conflictStyle=merge`. The base is not on disk, so a three-way view is not even
-  possible from what is written.
-- `rerere` is never enabled or consulted. On a divergent rebase you resolve the same conflict
-  once per replayed commit, by hand, every time.
-- `_rehearse` (`:674`) already does the right thing — `git merge-tree --write-tree` merges in
-  memory and touches nothing — and then throws away everything except the file names. The tree
-  OID and the conflicted stages are discarded.
-- Once a merge starts the UI offers continue/skip/abort and a per-file `ours`/`theirs`/
-  `worktree`/`resolved`. Nothing at hunk level, though `_patch_hunks` and `apply_patch` already
-  exist and are wired to staging.
-- The merge modal (`static/js/18_pipelines.js:973`) offers merge/squash/ff-only and no strategy
-  options at all.
+1. **Divergence has no route at all.** `pull()` is hard-wired `--ff-only` (`git.py:538`), and
+   "Update Project" calls `gitDo('pull')` (`static/js/28_branchbar.js:119`). A branch 3 ahead
+   and 5 behind gets git's raw `fatal: Not possible to fast-forward, aborting`. There is no
+   pull-with-rebase, no merge/rebase/reset choice, and nothing computes "you vs your upstream":
+   both previews take an explicit branch and nobody passes `@{upstream}`.
+2. **Two branch menus, two behaviours.** The git panel's menu goes through the previews
+   (`static/js/18_pipelines.js:1024-1025`); the top branch bar's identically labelled entries
+   call `gitDo('rebase'|'merge')` directly (`static/js/28_branchbar.js:96-97`). Which control
+   you click decides whether you get a rehearsal or a bare mutation.
+3. **Rebase conflict prediction is structurally wrong.** `_rehearse` (`git.py:674`) does one
+   `merge-tree` of the whole branch onto the target, but a rebase replays commit by commit. It
+   misses conflicts that only appear at commit 3 and invents ones the replay never reaches. It
+   also parses `merge-tree --name-only` by string prefix, and needs git ≥ 2.38 with no fallback.
+4. **The agent cannot help.** Five tools — status, fetch, checkout, pull, push
+   (`blocks/agent/ai.py:473`). It cannot merge, rebase, inspect a conflict, or commit. Talking
+   someone through a divergence is exactly what the model is good at, and it has no access.
+5. **No rebase plan.** No `--onto`, no reorder/squash/drop, no autosquash. `rebase(branch)` is
+   the whole surface (`git.py:565`).
+6. **Multi-repo inherits the dead end.** `RepoSet.run('pull')` calls the same ff-only pull
+   (`repos.py:160-166`), so one diverged repo in a workspace of twelve returns a raw error row.
+7. **No GitHub context.** Nothing asks which PR a branch belongs to, whether its base moved, or
+   whether checks are red — where most "why is this divergent" questions actually start.
 
-What to add, cheapest first:
+Underneath, the resolution surface is thin: `resolve_safe_conflicts` (`:808`) only removes
+blocks where `ours == theirs`, which is where git had no reason to conflict; `_conflict_blocks`
+(`:20`) parses the `merge` conflict style, so the base is not on disk and a three-way view is
+not possible from what is written; `rerere` is never enabled; and once a merge starts there is
+nothing at hunk level, though `_patch_hunks` and `apply_patch` already exist for staging.
 
-1. `merge.conflictStyle=zdiff3` for leela's merges. One config; the base lands in the worktree
-   and a real three-way pane becomes possible.
-2. `rerere.enabled` and `rerere.autoupdate`, surfaced in the conflict centre. Free, and it is
-   the single largest win available on a divergent tree.
-3. Keep the `merge-tree --write-tree` output. The entire conflict set — every hunk, with base,
-   ours and theirs — can be shown and partly resolved before the worktree is touched.
-4. Widen the auto-resolution classes past `ours == theirs`: whitespace and EOL-only
-   differences, one side unchanged from base, blocks that are a pure union.
-5. Hunk-level take-ours/take-theirs, using the machinery that already stages hunks.
-6. `-Xours` / `-Xtheirs` / `-Xrenormalize` / `-Xfind-renames`, and `--update-refs` and
-   `--rebase-merges` on rebase, as choices in the preview.
-7. A cell-level merge driver for `.ipynb`. The repository already reads notebooks as cells for
-   blame and diff; conflicts are the one place it does not.
+In order:
+
+1. **`GitRepo.divergence()`** — one call: upstream, ahead/behind, dirty state, and each option
+   (fast-forward, merge, rebase, reset-to-upstream, stash-first) rehearsed with its predicted
+   conflicts and commit counts. Route `/git/sync-plan`. This is the missing primitive;
+   everything below reads it.
+2. **A Sync dialog** replacing "Update Project" whenever ahead and behind are both non-zero,
+   driven by that plan — and delete the two direct `gitDo` calls in `28_branchbar.js` so both
+   menus rehearse.
+3. **Honest rebase rehearsal** — replay each commit onto the moving base with `merge-tree` and
+   report the first that conflicts, by subject. This is what a walkthrough narrates, and it
+   fixes 3 above.
+4. **Agent tools over the existing methods** — read-only first (`git_divergence`,
+   `git_merge_preview`, `git_rebase_preview`, `git_conflicts`, `git_compare`), then guarded
+   writes (`git_merge`, `git_rebase`, `git_resolve`, `git_operation`) through the approvals path
+   that already gates `GIT_WRITE_TOOLS`. Biggest lever per line: it turns existing JSON into an
+   explanation.
+5. **A conflict stepper** — `conflict_plan` already ranks safe against manual; add
+   next/previous, apply-safe, and auto-continue the operation when nothing is left.
+6. **PR context behind the `github` extra** — branch → PR, base, mergeable state, checks,
+   "N behind base", in the branch bar. The only piece that needs ghapi.
+7. **`RepoSet.run('sync')`** — the same plan per repo, reporting which need a decision rather
+   than erroring.
+
+1–4 are the substance and are self-contained in `git.py`, `blocks/git/app.py`, two JS modules
+and `blocks/agent/ai.py`. New mutations go through `_guarded` and need `classify()` entries in
+`safety.py` for `pull --rebase` and `rebase --onto`.
+
+Cheap and orthogonal to all of the above: `merge.conflictStyle=zdiff3` puts the base in the
+worktree, and `rerere.enabled`/`rerere.autoupdate` stops you resolving the same conflict once
+per replayed commit. Both are config.
 
 ## Less code: what a dependency already does
 
@@ -249,33 +281,51 @@ read path entirely. It also changes filter, hook and config resolution semantics
 `safety.py` is built around `subprocess` and its foreign-lock retry. Measure it against the
 numbers above before committing to it.
 
+**`fastgit` is not a dependency** and is not worth making one. It is a thin subprocess wrapper;
+leela's `_run` already carries timeouts, read/write/net classification, index-lock retry,
+safepoints and cache invalidation, none of which `fastgit.Git` has a notion of. The one idea
+worth stealing is its `_ok1` set — exit 1 from `merge-tree`, `diff` and friends is data, not
+failure — which `_attempt` and `_rehearse` currently hand-roll.
+
+**`ghapi`** arrives only through the `github` extra, via gheasy, which already owns the token
+and the `GhApi` instance. A GitHub layer is therefore cheap, but it has to degrade cleanly when
+the extra is absent, the way the workflow panels already do.
+
 **SQLite-WASM solves a problem leela does not have.** The client is not querying locally; it is
 waiting on serial HTTP. The one thing a client store would help is caching the tree snapshot
 across a reload, and IndexedDB is already in use for editor drafts. Adding a WASM SQLite is
 another megabyte onto a bundle that is not yet gzipped.
 
-## Order to do it in
+## Done, and what it bought
 
-Tier 1 — hours, and every one of them is measured above:
+`tools/profile_web.py` drives a real Chromium over a generated 720-file checkout with 40
+uncommitted files, and expands 25 folders before refreshing the tree.
 
-1. `GZipMiddleware`. 2.28MB → 675KB.
-2. One shared git state per tree refresh; `defer` on the two large scripts.
-3. Debounce, sequence-guard and cache `/fs/find`.
-4. Memoise `repo_root`.
-5. `Promise.all` the tree waterfall, or one batched endpoint.
-6. `paintGitTree` map; delete the `approvalCards` and `resolvedProposalCards` entries.
-7. `flexicache` over the two hand-rolled caches — less code and better invalidation together.
+| | before | after |
+|---|---|---|
+| bytes on the wire, cold load | 2,160,789 | **703,696** |
+| `load` event | 429ms | 347ms |
+| HTTP requests, one tree refresh | 26 | **1** |
+| `refreshFileTree` | 384.9ms | **98.9ms** |
+| `paintGitTree`, 40 changes | 4.0ms | 1.8ms |
 
-Tier 2 — days:
+- `GZipMiddleware` in `app.py`, and `defer` on `htmx.min.js` and `lee-cm6.js`.
+- `/files/panel?open=` draws the folders the client had expanded, so a refresh is one request
+  instead of one per folder. `tree_node` takes `fs` and `opened` and recurses.
+- `_walked` memoises the quick-open tree walk; the overlay debounces at 120ms and guards with a
+  sequence counter, as the folder picker already did.
+- `_toplevel` memoises `rev-parse --show-toplevel`.
+- `paintGitTree` indexes the rows into a `Map` once.
+- `flexicache` replaces `GitGateway._env_cache` and the `memo` indirection behind
+  `filter_health`; `resolvedProposalCards` is deleted and `approvalCards` is cleared wherever
+  the agent log is.
 
-8. A filesystem watcher pushed over SSE. Retires the polling model and the staleness both.
-9. `zdiff3`, `rerere`, hunk-level conflict resolution.
-10. `fastlite` in jobs; `EventStream`; `threaded`; `repo_details`; `execnb.shell`.
-11. Minify the bundle.
-12. Virtualise the tree.
+## Still to do
 
-Tier 3 — measure first:
-
-13. `merge-tree`-driven conflict preview that never touches the worktree.
-14. `pygit2` for the read path.
-15. A native fuzzy matcher, if it is still hot.
+1. A filesystem watcher pushed over SSE. Retires the polling model and the staleness both.
+2. Git divergence, items 1–4 above.
+3. `fastlite` in jobs; `EventStream`; `threaded`; `repo_details`; `execnb.shell`.
+4. Minify the bundle. 187KB gzipped is still the second-largest asset, and it is unminified.
+5. Virtualise the tree.
+6. `pygit2` for the read path, if measurement justifies it.
+7. A native fuzzy matcher, if `fuzzy_rank` is still hot after the debounce and the walk cache.

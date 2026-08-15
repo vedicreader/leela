@@ -31,9 +31,9 @@ def connect(app, ctx):
             return tuple(tree_node(e, state, hidden) for e in ctx.fs.ls(path, hidden=hidden))
         except Exception as e: return Div(errstr(e), cls='lee-err')
     @rt('/files/panel')
-    def files_panel_route(hidden: bool = False):
-        "Refresh only the file pane; the client restores expansion, selection and scroll."
-        return files_panel(ctx.fs, hidden)
+    def files_panel_route(hidden: bool = False, open: str = ''):
+        "Refresh only the file pane. `open` are the folders the client had expanded, drawn with it."
+        return files_panel(ctx.fs, hidden, [p for p in open.split('\n') if p])
     @rt('/fs/add-root')
     async def add_root_json(req):
         "Add a root without rebuilding the editor, model controls and every other pane."

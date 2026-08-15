@@ -3899,7 +3899,7 @@ function renderTurns(log, turns, heading) {
 }
 const sessionTime = s => s.started ? new Date(s.started * 1000).toLocaleString() : s.id.replace(/^agent_/, '');
 async function showHistorySession(group, groups) {
-  const log = $('#agentlog'); if (!log) return; log.innerHTML = '';
+  const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
   const index = document.createElement('nav'); index.className = 'lee-history-index';
   const options = (groups || []).map(s => {
     const models = (s.models || []).map(m => m.split('/').pop()).join(' + ') || 'execution';
@@ -3932,7 +3932,7 @@ async function leeAgentHistory() {
   const d = await api('/agent/history');
   await showHistorySession((d.sessions || [])[0], d.sessions || []);
 }
-async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
+async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; approvalCards.clear(); const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
 window.leeAgentNew = leeAgentNew;
 window.leeAgentHistory = leeAgentHistory;
 
@@ -4077,7 +4077,8 @@ function agentLog(html) {
 /* A write pauses Rishi's tool loop until it is answered. Keep the question in the agent
  * pane rather than a modal, so the rest of the IDE remains usable while the model waits.
  * The same event is used by agent-chat and notebook prompt-cell streams. */
-const approvalCards = new Map(), resolvedProposalCards = [];
+// Cleared wherever the log is: these are its nodes, and a detached one is held forever.
+const approvalCards = new Map();
 function proposalArgs(card) {
   const schema = card._schema, args = {};
   for (const field of (schema?.fields || [])) {
@@ -4256,7 +4257,6 @@ function showApproval(a) {
       const resolvedTool = ok ? tool : a.tool;
       card.dataset.tool = resolvedTool; card.dataset.resolvedTool = resolvedTool;
       card.dataset.retryable = String(!!byName.get(resolvedTool)?.retryable);
-      resolvedProposalCards.push(card);
       $('.lee-approval-actions', card).innerHTML = `<span>${ok ? (changed ? 'Edited call is running' : 'Running approved tool') : (note ? 'Not run · your direction was sent to the agent' : 'Not run')}</span>` +
         (ok && card.dataset.retryable === 'true' ? `<button class="lee-btn" data-retry title="Run this read-only tool again without changing the conversation">Run again</button>` : '') +
         (ok && ['edit_file','create_file'].includes(resolvedTool) ? `<button class="lee-btn warn" data-rollback disabled>Undo file change</button>` : '');
@@ -5535,13 +5535,15 @@ window.leeTheme = leeTheme; window.leeEditorSettings = editorSettings;
 
 /* ---------------------------------------------------------- cwd and source control */
 function paintGitTree(d) {
+  const rows = new Map();   // indexed once, not re-queried and rescanned per change
+
   $$('.lee-file').forEach(row => {
     row.classList.remove('git-modified', 'git-staged', 'git-untracked', 'git-conflict');
     row.querySelectorAll('.lee-tree-git').forEach(badge => badge.remove());
+    rows.set(row.dataset.path, row);
   });
   for (const c of (d.changes || [])) {
-    const path = d.root + '/' + c.path;
-    const row = $$('.lee-file').find(x => x.dataset.path === path); if (!row) continue;
+    const row = rows.get(d.root + '/' + c.path); if (!row) continue;
     const state = c.conflicted ? 'conflict' : c.untracked ? 'untracked' : c.staged && !c.unstaged ? 'staged' : 'modified';
     row.classList.add('git-' + state);
     const badge = document.createElement('span'); badge.className = 'lee-tree-git'; badge.textContent = state[0].toUpperCase();
@@ -8307,9 +8309,16 @@ async function quickOpen(searchMode) {
   };
   const go = () => { const h = hits[sel]; if (h) { m.remove(); leeOpenFile(h.path); } };
   list.addEventListener('click', e => { const r = e.target.closest('.lee-mrow'); if (r) { sel = +r.dataset.i; go(); } });
-  input.addEventListener('input', async () => {
-    const q = input.value.trim();
-    hits = (await api('/fs/find?q=' + encodeURIComponent(q))).hits; sel = 0; paint();
+  // Each search walks the whole tree, so it is debounced and sequenced like the folder picker.
+  let seq = 0, timer = null;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const mine = ++seq, q = input.value.trim();
+      const found = (await api('/fs/find?q=' + encodeURIComponent(q))).hits;
+      if (mine !== seq) return;
+      hits = found; sel = 0; paint();
+    }, 120);
   });
   paint(); setTimeout(() => input.focus(), 0);
 }
@@ -8981,22 +8990,18 @@ function treeCollapse() {
   }
   selectTreeNode(n.parentElement?.closest('.lee-node.lee-dir') || n);
 }
+/* The open folders go up with the request and come back drawn: one round trip, not one each. */
 async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = true) {
   const old = $('.lee-files'); if (!old) return;
-  const open = $$('.lee-dir[open]', old).map(n => n.dataset.path).sort((a, b) => a.split('/').length - b.split('/').length);
+  const open = $$('.lee-dir[open]', old).map(n => n.dataset.path);
   const scrollTop = $('#filetree')?.scrollTop || 0;
-  const html = await fetch('/files/panel' + treeQuery()).then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
+  const q = new URLSearchParams();
+  if (treeHidden()) q.set('hidden', '1');
+  if (open.length) q.set('open', open.join('\n'));
+  const html = await fetch('/files/panel?' + q).then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
   const doc = new DOMParser().parseFromString(html, 'text/html'), fresh = doc.querySelector('.lee-files');
   if (!fresh) throw new Error('file tree refresh returned no panel');
   old.replaceWith(fresh); htmx.process(fresh); paintHiddenBtn();
-  for (const path of open) {
-    const dir = $$('.lee-dir').find(n => n.dataset.path === path); if (!dir) continue;
-    dir.open = true;
-    const kids = dir.querySelector(':scope > .lee-kids');
-    const childHtml = await fetch('/tree?path=' + encodeURIComponent(path) + treeQuery('&'),
-                                  {headers: {'HX-Request': 'true'}}).then(r => r.text());
-    kids.innerHTML = childHtml; htmx.process(kids);
-  }
   const wanted = $$('.lee-node').find(n => n.dataset.path === selectPath) || visibleTreeNodes()[0];
   selectTreeNode(wanted); if ($('#filetree')) $('#filetree').scrollTop = scrollTop;
   if (focus) setScope('files');

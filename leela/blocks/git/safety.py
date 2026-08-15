@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 
 from fastcore.all import Path, first
+from fastcore.xtras import flexicache, time_policy
 
 __all__ = ['GitError', 'GitGateway', 'Safepoint', 'classify', 'gateway']
 
@@ -119,7 +120,6 @@ class GitGateway:
     def __init__(self):
         self._locks = {}
         self._registry = threading.Lock()
-        self._env_cache = {}
         self._exe = None
     def _lock(self, root):
         key = str(root)
@@ -130,29 +130,15 @@ class GitGateway:
         if self._exe is None: self._exe = shutil.which('git') or ''
         if not self._exe: raise GitError('git is not installed or not on PATH')
         return self._exe
-    def env(self, cwd, ttl=30):
+    @flexicache(time_policy(30), maxsize=64)
+    def env(self, cwd):
         "The checkout's own environment, or None to inherit Leela's."
-        key = str(cwd)
-        hit = self._env_cache.get(key)
-        if hit and time.monotonic() - hit[0] < ttl: return hit[1]
         from ..runtime.kernels import project_python, venv_env
         p = Path(cwd).expanduser().resolve()
-        value = None
         for d in (p, *p.parents):
-            if (py := project_python([d])):
-                value = venv_env(py)
-                break
+            if (py := project_python([d])): return venv_env(py)
             if (d/'.git').exists(): break
-        self._env_cache[key] = (time.monotonic(), value)
-        return value
-    def memo(self, cwd, key, make, ttl=60):
-        "A per-repository answer that changes on the timescale of the environment, not the tree."
-        cache_key = (str(cwd), key)
-        hit = self._env_cache.get(cache_key)
-        if hit and time.monotonic() - hit[0] < ttl: return hit[1]
-        value = make()
-        self._env_cache[cache_key] = (time.monotonic(), value)
-        return value
+        return None
     def resolves(self, cwd, command):
         "Where a configured filter or hook command would actually be found, or `''`."
         try: parts = shlex.split(str(command or ''))

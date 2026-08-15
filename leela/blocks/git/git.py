@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from fastcore.all import Path, first
+from fastcore.xtras import flexicache, time_policy
 
 from ..nb.nb import source_spans
 from .safety import GitError, gateway
@@ -33,13 +34,16 @@ def _conflict_blocks(text):
         out.append({'start': start, 'end': finish, 'ours': ours, 'theirs': theirs}); pos = finish
     return out
 
+@flexicache(time_policy(5), maxsize=256)
+def _toplevel(p):
+    r = _run(p, 'rev-parse', '--show-toplevel', check=False)
+    return Path(r.stdout.strip()).resolve() if r.returncode == 0 and r.stdout.strip() else None
+
 def repo_root(path):
     "The containing worktree root, or `None` when path is not in a repository."
     p = Path(path).expanduser().resolve()
     if p.is_file(): p = p.parent
-    try:
-        r = _run(p, 'rev-parse', '--show-toplevel', check=False)
-        return Path(r.stdout.strip()).resolve() if r.returncode == 0 and r.stdout.strip() else None
+    try: return _toplevel(p)
     except (OSError, GitError): return None
 
 def url_name(url):
@@ -339,32 +343,31 @@ class GitRepo:
     def _gitdir(self):
         git_dir = Path(self.run('rev-parse', '--git-dir').strip())
         return git_dir if git_dir.is_absolute() else self.root/git_dir
+    @flexicache(time_policy(60), maxsize=32)
     def filter_health(self):
         "Whether this repository's content filters can actually run."
-        def probe():
-            names = set()
-            for p in (self.root/'.gitattributes', self._gitdir()/'info'/'attributes'):
-                try:
-                    names.update(re.findall(r'filter=([\w.+-]+)', p.read_text(encoding='utf-8',
-                        errors='replace')))
-                except OSError:
-                    continue
-            rows = []
-            for name in sorted(names):
-                def config(field): return self._ask('config', '--get', f'filter.{name}.{field}')
-                clean, smudge = config('clean'), config('smudge')
-                command = clean or smudge
-                resolved = gateway().resolves(self.root, command) if command else ''
-                rows.append({
-                    'name': name, 'clean': clean, 'smudge': smudge,
-                    'required': config('required').lower() == 'true', 'resolved': resolved,
-                    'configured': bool(command),
-                    'ok': bool(command) and bool(resolved),
-                })
-            broken = [r for r in rows if not r['ok']]
-            return {'filters': rows, 'ok': not broken,
-                'explain': _explain_filters(broken) if broken else ''}
-        return gateway().memo(self.root, 'filters', probe)
+        names = set()
+        for p in (self.root/'.gitattributes', self._gitdir()/'info'/'attributes'):
+            try:
+                names.update(re.findall(r'filter=([\w.+-]+)', p.read_text(encoding='utf-8',
+                    errors='replace')))
+            except OSError:
+                continue
+        rows = []
+        for name in sorted(names):
+            def config(field): return self._ask('config', '--get', f'filter.{name}.{field}')
+            clean, smudge = config('clean'), config('smudge')
+            command = clean or smudge
+            resolved = gateway().resolves(self.root, command) if command else ''
+            rows.append({
+                'name': name, 'clean': clean, 'smudge': smudge,
+                'required': config('required').lower() == 'true', 'resolved': resolved,
+                'configured': bool(command),
+                'ok': bool(command) and bool(resolved),
+            })
+        broken = [r for r in rows if not r['ok']]
+        return {'filters': rows, 'ok': not broken,
+            'explain': _explain_filters(broken) if broken else ''}
     def _operation(self):
         git_dir = self._gitdir()
         checks = (

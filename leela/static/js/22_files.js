@@ -63,22 +63,18 @@ function treeCollapse() {
   }
   selectTreeNode(n.parentElement?.closest('.lee-node.lee-dir') || n);
 }
+/* The open folders go up with the request and come back drawn: one round trip, not one each. */
 async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = true) {
   const old = $('.lee-files'); if (!old) return;
-  const open = $$('.lee-dir[open]', old).map(n => n.dataset.path).sort((a, b) => a.split('/').length - b.split('/').length);
+  const open = $$('.lee-dir[open]', old).map(n => n.dataset.path);
   const scrollTop = $('#filetree')?.scrollTop || 0;
-  const html = await fetch('/files/panel' + treeQuery()).then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
+  const q = new URLSearchParams();
+  if (treeHidden()) q.set('hidden', '1');
+  if (open.length) q.set('open', open.join('\n'));
+  const html = await fetch('/files/panel?' + q).then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
   const doc = new DOMParser().parseFromString(html, 'text/html'), fresh = doc.querySelector('.lee-files');
   if (!fresh) throw new Error('file tree refresh returned no panel');
   old.replaceWith(fresh); htmx.process(fresh); paintHiddenBtn();
-  for (const path of open) {
-    const dir = $$('.lee-dir').find(n => n.dataset.path === path); if (!dir) continue;
-    dir.open = true;
-    const kids = dir.querySelector(':scope > .lee-kids');
-    const childHtml = await fetch('/tree?path=' + encodeURIComponent(path) + treeQuery('&'),
-                                  {headers: {'HX-Request': 'true'}}).then(r => r.text());
-    kids.innerHTML = childHtml; htmx.process(kids);
-  }
   const wanted = $$('.lee-node').find(n => n.dataset.path === selectPath) || visibleTreeNodes()[0];
   selectTreeNode(wanted); if ($('#filetree')) $('#filetree').scrollTop = scrollTop;
   if (focus) setScope('files');

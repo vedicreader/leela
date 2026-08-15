@@ -467,7 +467,9 @@ def test_panels_refresh_themselves_and_keep_secrets_server_side():
     assert 'e.secret ?' in block, 'a secret and a variable are drawn differently'
     ops = JS[JS.index('async function refreshFileTree'):JS.index('document.addEventListener(\'click\'')]
     assert 'location.reload()' not in ops
-    assert "fetch('/files/panel' + treeQuery())" in ops, 'the panel, at the dotfile setting in force'
+    assert "fetch('/files/panel?' + q)" in ops, 'the panel, at the dotfile setting in force'
+    assert "q.set('hidden', '1')" in ops and "q.set('open', open.join('\\n'))" in ops, \
+        'one request carrying the expansion, not one round trip per open folder'
     assert "old.replaceWith(fresh)" in ops
     first = workspace_slug('My Project')
     second = workspace_slug('My Project', [first])

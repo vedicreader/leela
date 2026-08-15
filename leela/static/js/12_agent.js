@@ -559,7 +559,7 @@ function renderTurns(log, turns, heading) {
 }
 const sessionTime = s => s.started ? new Date(s.started * 1000).toLocaleString() : s.id.replace(/^agent_/, '');
 async function showHistorySession(group, groups) {
-  const log = $('#agentlog'); if (!log) return; log.innerHTML = '';
+  const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
   const index = document.createElement('nav'); index.className = 'lee-history-index';
   const options = (groups || []).map(s => {
     const models = (s.models || []).map(m => m.split('/').pop()).join(' + ') || 'execution';
@@ -592,7 +592,7 @@ async function leeAgentHistory() {
   const d = await api('/agent/history');
   await showHistorySession((d.sessions || [])[0], d.sessions || []);
 }
-async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
+async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; approvalCards.clear(); const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
 window.leeAgentNew = leeAgentNew;
 window.leeAgentHistory = leeAgentHistory;
 
@@ -737,7 +737,8 @@ function agentLog(html) {
 /* A write pauses Rishi's tool loop until it is answered. Keep the question in the agent
  * pane rather than a modal, so the rest of the IDE remains usable while the model waits.
  * The same event is used by agent-chat and notebook prompt-cell streams. */
-const approvalCards = new Map(), resolvedProposalCards = [];
+// Cleared wherever the log is: these are its nodes, and a detached one is held forever.
+const approvalCards = new Map();
 function proposalArgs(card) {
   const schema = card._schema, args = {};
   for (const field of (schema?.fields || [])) {
@@ -916,7 +917,6 @@ function showApproval(a) {
       const resolvedTool = ok ? tool : a.tool;
       card.dataset.tool = resolvedTool; card.dataset.resolvedTool = resolvedTool;
       card.dataset.retryable = String(!!byName.get(resolvedTool)?.retryable);
-      resolvedProposalCards.push(card);
       $('.lee-approval-actions', card).innerHTML = `<span>${ok ? (changed ? 'Edited call is running' : 'Running approved tool') : (note ? 'Not run · your direction was sent to the agent' : 'Not run')}</span>` +
         (ok && card.dataset.retryable === 'true' ? `<button class="lee-btn" data-retry title="Run this read-only tool again without changing the conversation">Run again</button>` : '') +
         (ok && ['edit_file','create_file'].includes(resolvedTool) ? `<button class="lee-btn warn" data-rollback disabled>Undo file change</button>` : '');

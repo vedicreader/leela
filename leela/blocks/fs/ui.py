@@ -35,24 +35,32 @@ def _git_class(change):
     if change['staged'] and not change['unstaged']: return 'staged'
     return 'modified'
 
-def tree_node(e, git_state=None, hidden=False):
-    "One file-tree row; directories lazily fetch their children on first open."
+def _kids(fs, path, git_state, hidden, opened):
+    try: return [tree_node(e, git_state, hidden, fs, opened) for e in fs.ls(path, hidden=hidden)]
+    except OSError: return []
+
+def tree_node(e, git_state=None, hidden=False, fs=None, opened=frozenset()):
+    "One file-tree row. A folder in `opened` is drawn expanded rather than fetched on click."
     if e.is_dir:
-        summary = Summary(Span('▸', cls='lee-caret'), Span(e.name, cls='lee-fname'),
-            hx_get=f'/tree?path={quote(e.path)}' + ('&hidden=1' if hidden else ''),
+        rows = _kids(fs, e.path, git_state, hidden, opened) if fs is not None and e.path in opened else []
+        # Drawn children and the lazy fetch together would give the folder two copies of itself.
+        lazy = {} if rows else dict(hx_get=f'/tree?path={quote(e.path)}' + ('&hidden=1' if hidden else ''),
             hx_target='next .lee-kids', hx_trigger='click once')
-        return Details(summary, Div(cls='lee-kids'), data_path=e.path, role='treeitem',
-            cls='lee-node lee-dir' + (' lee-root' if e.is_root else ''), aria_expanded='false', aria_selected='false')
+        summary = Summary(Span('▸', cls='lee-caret'), Span(e.name, cls='lee-fname'), **lazy)
+        return Details(summary, Div(*rows, cls='lee-kids'), data_path=e.path, role='treeitem',
+            cls='lee-node lee-dir' + (' lee-root' if e.is_root else ''), open=bool(rows),
+            aria_expanded='true' if rows else 'false', aria_selected='false')
     state = _git_class((git_state or {}).get(str(Path(e.path).resolve())))
     return Div(Span(e.name, cls='lee-fname'), Span(state[:1].upper(), cls='lee-tree-git') if state else '',
         cls='lee-node lee-file' + (f' git-{state}' if state else ''), data_path=e.path, role='treeitem',
         data_lang=e.lang or '', aria_selected='false',
         onclick=f'event.preventDefault();event.stopPropagation();leeOpenFile({json.dumps(e.path)})')
 
-def files_panel(fs, hidden=False):
+def files_panel(fs, hidden=False, opened=()):
     state = git_tree_state(fs)
+    opened = frozenset(str(p) for p in opened)
     # With nothing open this pane is the only way to start a session, so it offers, not reports.
-    body = [tree_node(e, state, hidden) for e in fs.ls(None)] or [
+    body = [tree_node(e, state, hidden, fs, opened) for e in fs.ls(None)] or [
         Div(Div('no folder open', cls='lee-dim'),
             Button('Open a folder…', cls='lee-btn go', onclick='leeAct("add_root")'),
             cls='lee-tree-empty')]
