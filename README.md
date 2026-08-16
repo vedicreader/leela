@@ -77,18 +77,10 @@ search the live web again.
 
 ### The vault
 
-**Tools → The vault…** opens a workbench as a tab: the shelves and what is on them, one search
-across all of them, and every way of putting something in. A folder shows its import plan —
-which shelves, which categories, which generated paths it will leave out — before it indexes
-anything. A page, a paper, a repository or a video needs no reader named: paste the address.
-Feeds are followed on a cadence and filed as ordinary documents, so what they said is searched
-and cited with everything else. An OpenAPI or discovery document can be read, searched, and
-filed as one section per operation.
-
-And you can ask about named documents. `@` in the composer now reaches the vault as well as the
-project, every row and every search hit has an **ask** button, and *attach every hit* puts a
-whole result set behind one question. An attached section is read as that section, not as the
-document around it. See [the vault](docs/vault.md).
+Tools > Vault opens a workbench tab for shelves, search, imports, feeds, API specifications, and topics.
+Paste a page, paper, repository, video, or folder. Folder imports show their plan before indexing.
+`@` completes vault documents. Search results and document rows can attach sections to an agent question.
+See [the vault](docs/vault.md).
 
 ![Searching the vault, and attaching what it found](docs/screenshots/vault-workbench.png)
 

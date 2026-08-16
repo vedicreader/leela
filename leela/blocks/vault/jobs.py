@@ -1,5 +1,3 @@
-"Queued work with a visible state, and a cadence for the work that repeats."
-
 from __future__ import annotations
 
 import json, os, re, shlex, sqlite3, subprocess, threading, time, uuid
@@ -16,13 +14,11 @@ TERMINAL = ('complete', 'error')
 UNITS = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 604800}
 
 def every_seconds(spec, default=3600):
-    "`30m`, `6h`, `1d` as seconds. Unreadable means the default, never zero: zero is a busy loop."
     m = re.fullmatch(r'\s*(\d+)\s*([smhdw])?\s*', str(spec or '').lower())
     if not m: return default
     return max(60, int(m.group(1)) * UNITS.get(m.group(2) or 'h', 3600))
 
 def cadence(seconds):
-    "How often, in words, at the coarsest unit that divides it."
     seconds = int(seconds or 0)
     for n, label in ((604800, 'week'), (86400, 'day'), (3600, 'hour'), (60, 'minute')):
         if seconds and not seconds % n:
@@ -38,13 +34,11 @@ class JobError(RuntimeError):
     pass
 
 def _jsonable(o):
-    "fastcore `L` is not a list subclass, and vishalakshi returns them, so json cannot see inside."
     if isinstance(o, (L, set)): return list(o)
     if isinstance(o, Path): return str(o)
     return str(o)
 
 class Job:
-    "One row, as the browser reads it."
     __slots__ = ('id', 'kind', 'target', 'params', 'status', 'progress', 'current', 'result',
         'error', 'created_at', 'started_at', 'finished_at')
     def __init__(self, id, kind, target='', params=None, status='queued', progress=0.0, current='',
@@ -59,7 +53,6 @@ class Job:
     def dict(self): return {n: getattr(self, n) for n in self.__slots__} | dict(active=self.active)
 
 class Jobs:
-    "Every job for one workspace, in one SQLite file beside the rest of its state."
     def __init__(self, path, memory=None):
         self.path, self.memory = Path(path), memory
         self.note, self._handlers, self._lock = '', {}, threading.Lock()
@@ -88,7 +81,6 @@ class Jobs:
         if r is None: raise JobError(f'no job {jid}')
         return self._row(r)
     def forget(self, jid):
-        "Drop a finished job's row. A dead card that can only be retried can never be cleared."
         job = self.get(jid)
         if job.active: raise JobError('that job is still running')
         with self._db() as c: c.execute('DELETE FROM jobs WHERE id=?', (jid,))
@@ -103,7 +95,6 @@ class Jobs:
         sets = ', '.join(f'{k}=?' for k in kv)
         with self._db() as c: c.execute(f'update jobs set {sets} where id=?', (*kv.values(), str(jid)))
     def register(self, kind, fn):
-        "What `kind` does. `fn(job, report) -> result`."
         self._handlers[kind] = fn
         return fn
     def new(self, kind, target='', **params):
@@ -114,7 +105,6 @@ class Jobs:
                 (job.id, kind, job.target, json.dumps(job.params, default=_jsonable), 'queued', 0.0, '', job.created_at))
         return job
     def launch(self, jid):
-        "Start `jid` on its own thread. Returns at once; the row is how you watch it."
         job = self.get(jid)
         if job.status == 'running': raise JobError(f'job {jid} is already running')
         fn = self._handlers.get(job.kind)
@@ -123,7 +113,6 @@ class Jobs:
         threading.Thread(target=self._run, args=(jid, fn), daemon=True, name=f'leela-job-{jid}').start()
         return self.get(jid)
     def start(self, kind, target='', **params):
-        "`new` then `launch`, which is what a route almost always wants."
         return self.launch(self.new(kind, target, **params).id)
     def _run(self, jid, fn):
         try:
@@ -131,7 +120,6 @@ class Jobs:
             self.update(jid, status='complete', progress=1.0, result=out, finished_at=time.time())
         except Exception as e: self.update(jid, status='error', error=errstr(e)[:900], finished_at=time.time())
     def recover(self):
-        "Re-queue what a restart interrupted, and fail the rest with a reason."
         out = dict(resumed=[], failed=[])
         for job in self.all(limit=200):
             if not job.active: continue
@@ -146,7 +134,6 @@ class Jobs:
         self.note = f"recovered {len(out['resumed'])}, failed {len(out['failed'])}"
         return out
     def tick(self, seconds=None):
-        "Poll due watches every `seconds`, on a daemon thread. Idempotent; `0` disables it."
         secs = int(ifnone(seconds, os.getenv('LEELA_POLL_SECONDS') or 0))
         if secs <= 0 or self._ticking: return None
         self._ticking = True
@@ -164,20 +151,17 @@ class Jobs:
         threading.Thread(target=loop, daemon=True, name='leela-job-tick').start()
         return secs
     def poll_due(self):
-        "Run every watch that has come due, under a lock so two ticks cannot overlap."
         if self.memory is None: return dict(note='no vault', ran=0, checked=0)
         if not self._lock.acquire(blocking=False): return dict(note='a poll is already running', ran=0, checked=0)
         try: return self.memory.poll()
         finally: self._lock.release()
     def reindex_due(self):
-        "Re-clip filed documents whose file has changed, under the same lock as the watches."
         if self.memory is None: return dict(note='no vault', checked=0, reindexed=0)
         if not self._lock.acquire(blocking=False): return dict(note='a poll is already running', checked=0, reindexed=0)
         try: return self.memory.reindex_changed()
         finally: self._lock.release()
 
 def run_script(argv, cwd=None, timeout=SCRIPT_TIMEOUT):
-    "One command, no shell, output captured. What a `script` cadence runs."
     cmd = shlex.split(argv) if isinstance(argv, str) else [str(a) for a in argv]
     if not cmd: raise JobError('nothing to run')
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)

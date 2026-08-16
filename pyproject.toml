@@ -19,7 +19,7 @@ classifiers = [
 # leela never does, and `starlette`, `uvicorn`, `numpy`, `packaging` and `httpx2` went in
 # because leela imports them and was relying on fasthtml and kosha to supply them.
 dependencies = [
-    "ramabana[all]>=0.1.4",         # the agent core. `leela.agent` is an alias for it, not a copy of it.
+    "ramabana[all]>=0.1.8",         # the agent core. `leela.agent` is an alias for it, not a copy of it.
     # 0.1.4 is the turn budget leela's settings drive: `max_tool_calls`/`max_steps`
     # as `auto` or a number, and `/tool-budget` and `/steps` to change them mid-conversation.
     # It owns rishi and fastllm; leela imports neither directly.
