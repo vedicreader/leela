@@ -2,19 +2,6 @@
 function researchDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch (_) { return 'source'; }
 }
-// The original page, in a Leela tab rather than a browser Leela cannot see. The fallback is
-// not a formality: a source install without a Chrome to drive still has to be able to open a
-// link, and it opens it the way it always did.
-async function openWebpage(url) {
-  if (!url) return status('choose a source first', 'err');
-  let ready = {};
-  try { ready = await api('/browser/ready'); } catch (_) {}
-  // `ok` is "there is a Chrome to drive", not "it is already up". Chrome is started by the
-  // first page that needs one, so a cold browser is a short wait, not a missing feature.
-  if (!ready.ok) return window.open(url, '_blank', 'noopener,noreferrer');
-  if (!ready.running) status('starting the browser…');
-  return openWebTab(url);
-}
 async function saveDoc(doc, kind) {
   doc = doc || lee.lastDoc; if (!doc) return status('nothing fetched yet', 'err');
   if (kind === 'notebook' && !doc.url) return status('a research digest can be saved as markdown; source pages can become notebooks', 'err');
@@ -101,7 +88,7 @@ function researchWorkspace(mode = 'search', value = '') {
         Object.assign(doc, result.doc); activeDoc = doc; lee.lastDoc = doc; setActions(doc);
       } catch (e) { reader.innerHTML = `<div class="lee-research-error"><strong>Could not read this source</strong><p>${esc(e.message || e)}</p>` +
         `<button class="lee-btn" data-open-fallback>Open the original webpage</button></div>`;
-        $('[data-open-fallback]', reader).onclick = () => openWebpage(doc.url); return; }
+        $('[data-open-fallback]', reader).onclick = () => openExternal(doc.url); return; }
     }
     reader.innerHTML = '';
     if ((doc.sections || []).length > 1) {
@@ -175,7 +162,7 @@ function researchWorkspace(mode = 'search', value = '') {
     $('[data-thought-title]', reader).oninput = e => { activeDoc.title = e.target.value || 'Research notes'; };
     $('[data-thought-title]', reader).focus();
   };
-  $('[data-open]', m).onclick = () => openWebpage(activeDoc?.url);
+  $('[data-open]', m).onclick = () => openExternal(activeDoc?.url);
   $('[data-save]', m).onclick = () => activeDoc && saveDoc(activeDoc, 'markdown');
   $('[data-notebook]', m).onclick = () => activeDoc && saveDoc(activeDoc, 'notebook');
   $('[data-memory-note]', m).onclick = () => {

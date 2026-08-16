@@ -9,7 +9,7 @@ from ..fs.fs import Unsafe
 from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, preview_for
 from ...agent.tools import MAX_HITS, MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS
 from ...agent.tools import DENY, MAX_GREP_HITS, Host, clip, failed, tools_for
-from ...agent.spec import SpecHost
+from ...agent.spec import MAX_OPS, SpecHost
 from ..vault.jobs import cadence
 from .video import VideoJobs, video_available, video_tools
 
@@ -35,20 +35,12 @@ STATE_TEMPLATE = """# Agent charter
 [The outcome it should move toward.]
 
 ## Hard boundaries
-- Never claim a tool ran unless its result confirms it.
-- Never overwrite user changes or bypass workspace safety checks.
 - [Project-specific non-negotiable rules.]
 
 ## Routing rules
-- Repository behavior or implementation questions → search code, then read the exact source.
-- Current external facts → search the web, then read an authoritative source.
-- Runtime state → inspect the live namespace before executing a change.
 - [When this workspace expects a specialized tool or skill.]
 
 ## Tool practices
-- Read before editing; use exact paths and current hash addresses.
-- Prefer the narrowest tool that produces the requested result.
-- Verify writes and execution from tool results, not from intention.
 - [Project-specific tool conventions.]
 
 ## Verification
@@ -345,6 +337,8 @@ class WorkspaceHost(Host):
     @property
     def headers(self): return self.ws.__dict__.setdefault('_api_headers', {})
     @property
+    def spec_info(self): return self.ws.__dict__.setdefault('_api_spec_info', {})
+    @property
     def _creds(self):
         "One user's keys, read where the workbench writes them rather than held on the host."
         from ..vault.spec import CREDS
@@ -367,8 +361,6 @@ class WorkspaceHost(Host):
         if CREDS.reach(name) != 'local' or self.model_local is None: return None
         local, model = self.model_local()
         if local: return None
-        # "not a model on this machine" rather than "hosted": a name resolving to nothing is
-        # neither, and refusing it is right for the same reason.
         return (f'{name} is marked local-only and this conversation runs on {model}, which is not a '
                 f'model on this machine. Nothing was sent. Switch to a local model, or change the '
                 f'reach of {name} on the vault workbench.')
@@ -382,11 +374,11 @@ class WorkspaceHost(Host):
             got = self._clients[key] = (seal, OpenAPIClient(parsed, timeout=self.timeout, sync=True,
                                                             headers={**self.headers, **expand(creds)}))
         return got[1]
-    timeout = 60.0
+    timeout, max_ops = 60.0, MAX_OPS
     model_local = None      # `Assistant` fills this once there is a turn model to ask about
     api_load, api_ops = SpecHost.api_load, SpecHost.api_ops
     api_fetch = SpecHost.api_call       # ungated: the person reading the page owns the data on it
-    api_names, _spec = SpecHost.api_names, SpecHost._spec
+    api_names, _spec, _page = SpecHost.api_names, SpecHost._spec, SpecHost._page
     def api_call(self, operation, name='', **params):
         "What a model reaches through, which is why reach is enforced here and not in `api_fetch`."
         from ..vault.spec import SpecError
@@ -658,6 +650,9 @@ class Assistant(Agent):
         if self.busy: raise RuntimeError('cannot change the LiteRT backend while the assistant is working')
         os.environ['LEELA_LITERT_BACKEND'] = which
         for key in [k for k in self._backends if k[0] == 'litert']: self._backends.pop(key).close()
+        # engines outlive backends now, so the old accelerator's have to go too, or the next chat is
+        # handed the build this call was meant to replace
+        if self.engines is not None: self.engines.drop('litert')
         self.note = f'LiteRT backend {which}'
         return which
     @delegates(Agent.__init__)
@@ -668,10 +663,13 @@ class Assistant(Agent):
         sp=None,
         approve=None,
         surface='agent',
+        engines=True,      # share loaded engines with the rest of the daemon; an `EngineBroker`, or False
         **kwargs
     ):
         from .models import load_models
+        from ..runtime.engines import engine_broker
         load_models()
+        self.engines = engine_broker() if engines is True else (engines or None)
         host = WorkspaceHost(ws, session)
         kwargs.setdefault('cfg', leela_cfg)
         kwargs.setdefault('approvals', getattr(ws, 'approvals', None))
@@ -695,6 +693,13 @@ class Assistant(Agent):
             return f'User steering after skipping the proposed call: {instruction}'
         self._steering_tool = user_steering
         self.turn_transactions = {}
+    def _be(self, job='turn'):
+        """The backend for `job`, on an engine the whole daemon shares rather than a copy of the
+        weights per workspace. Attached before the backend builds its chat, so rishi borrows it."""
+        be = super()._be(job)
+        if self.engines is not None: self.engines.attach(be)
+        return be
+
     @property
     def tools(self):
         if self._tools is None:

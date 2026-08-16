@@ -1036,6 +1036,11 @@ kbd {
 .lee-agent-runstrip { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 5px 8px; border-top: 1px solid var(--lee-border);
   background: color-mix(in srgb, var(--lee-bg1) 92%, transparent); box-shadow: inset 0 1px color-mix(in srgb, var(--lee-fg) 3%, transparent); }
 .lee-agent-runstrip[hidden] { display: none; }
+.lee-agent-harness-banner { padding: 6px 9px; border-top: 1px solid var(--lee-warning);
+  background: color-mix(in srgb, var(--lee-warning) 12%, transparent); color: var(--lee-fg);
+  font-size: 11px; line-height: 1.45; }
+.lee-agent-harness-banner[hidden] { display: none; }
+.lee-agent-harness-banner strong { color: var(--lee-warning); }
 .lee-agent-run-state { overflow: hidden; color: var(--lee-fg2); font: 600 9.5px/1.3 var(--lee-mono); text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; }
 .lee-agent-steer { display: grid; grid-template-columns: 1fr auto; gap: 5px; padding-bottom: 5px; }
 .lee-agent-steer .lee-input { margin: 0; }
@@ -2505,7 +2510,6 @@ kbd {
 .lee-dep-files i { padding: 2px 5px; border: 1px solid var(--lee-border); border-radius: 3px; color: var(--lee-fg4); font: normal 8px/1.4 var(--lee-mono); opacity: .55; }
 .lee-dep-files i.has { border-color: var(--lee-green); color: var(--lee-green); opacity: 1; }
 
-/* --- the workflow builder ------------------------------------------------------ */
 .lee-bld { display: grid; }
 .lee-bld-head { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 6px 7px; border-bottom: 1px solid var(--lee-border); }
 .lee-bld-section { display: grid; gap: 4px; padding: 6px 7px; border-bottom: 1px solid var(--lee-border); }
@@ -2525,7 +2529,6 @@ kbd {
 .lee-bld-opt > small { color: var(--lee-fg4); font: 8px/1.4 var(--lee-mono); }
 .lee-bld-opt input[type="checkbox"] { justify-self: start; }
 
-/* --- servers, tunnels, DNS, packages ------------------------------------------- */
 .lee-inf-status { display: flex; flex-wrap: wrap; gap: 3px; padding: 6px 7px; border-bottom: 1px solid var(--lee-border); }
 .lee-inf-status i { padding: 2px 5px; border: 1px solid var(--lee-border); border-radius: 3px; color: var(--lee-fg4); font: normal 8px/1.4 var(--lee-mono); opacity: .55; }
 .lee-inf-status i.has { border-color: var(--lee-green); color: var(--lee-green); opacity: 1; }
@@ -2747,14 +2750,11 @@ kbd {
 .lee-git-conflict summary { padding: 8px; color: var(--lee-fg4); cursor: pointer; font: 9px/1 var(--lee-mono); }
 @media (max-width: 760px) { .lee-git-conflict { grid-template-columns: 1fr; min-width: 0; } }
 
-/* Why files will not stay staged, and the way back from the last thing that moved. */
 .lee-git-filters span { white-space: pre-wrap; }
 .lee-git-undo { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-bottom: 1px solid var(--lee-border); color: var(--lee-fg4); font: 9px/1.4 var(--lee-mono); }
 .lee-git-undo button { border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg1); color: var(--lee-accent); cursor: pointer; font: 9px/1 var(--lee-mono); padding: 4px 8px; }
 .lee-git-undo button:hover { border-color: var(--lee-accent); }
 
-/* Three-pane conflict resolution. The result pane is the widest of the three because it is
-   the one being written in; the sides are for reading. */
 .lee-modal-merge3 .lee-modalbox { width: min(96vw, 1600px); height: min(88vh, 900px); }
 .lee-git-merge3 { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
 .lee-merge3-bar { display: flex; align-items: center; gap: 6px; padding: 7px 9px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg2); }
@@ -2773,30 +2773,22 @@ kbd {
 .lee-merge3-foot { display: flex; align-items: center; gap: 10px; padding: 8px 9px; border-top: 1px solid var(--lee-border); }
 .lee-merge3-foot [data-resolve] { margin-left: auto; }
 
-/* A contested block, and the one being worked on. Both are backgrounds rather than edge bars:
-   a conflict is a region you read, not a line you glance at. */
 .cm-line.cm-lee-change-conflict { background: color-mix(in srgb, var(--lee-orange) 12%, transparent); box-shadow: inset 3px 0 0 var(--lee-orange); }
 .cm-line.cm-lee-change-conflict-active { background: color-mix(in srgb, var(--lee-orange) 24%, transparent); box-shadow: inset 3px 0 0 var(--lee-orange); }
 @media (max-width: 980px) { .lee-merge3-panes { grid-auto-flow: row; grid-auto-columns: auto; overflow: auto; } .lee-merge3-panes > section { min-height: 220px; border-right: 0; border-bottom: 1px solid var(--lee-border); } }
 
-/* the open-folder dialog's one box: filters what is listed, and finds repositories below it */
 .lee-folderwhere { margin-left: auto; padding-left: 12px; font-size: 11px; opacity: .65;
                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
 .lee-foundhead { padding: 8px 8px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
 
-/* the open-folder dialog says when it is searching: a slow walk and an empty result look the same */
 .lee-searching { display: flex; align-items: center; gap: 8px; padding: 10px 8px; font-size: 12px; opacity: .7; }
 .lee-spin { width: 11px; height: 11px; border: 2px solid currentColor; border-right-color: transparent;
             border-radius: 50%; animation: lee-spin .7s linear infinite; flex: none; }
 @keyframes lee-spin { to { transform: rotate(360deg); } }
 
-/* a repository the workspace operation is currently working on: "which one is slow" is the
-   question a fan-out across several checkouts always raises */
 .lee-git-repo-row.working { opacity: .75; }
 .lee-git-repo-row.working strong::after { content: ' · working…'; font-weight: 400; opacity: .7; font-size: 11px; }
 
-/* -------------------------------------------------------------- the logs pane
-   Detail a status line cannot hold: git's multi-line refusals, and what a running app prints. */
 .lee-bottomdock.dock-logs .lee-exec,
 .lee-bottomdock.dock-logs .lee-termpanel { display: none; }
 .lee-bottomdock.dock-logs .lee-logpanel { display: flex; }
@@ -2826,11 +2818,6 @@ kbd {
 .lee-termtab:hover .lee-termtab-x, .lee-termtab.active .lee-termtab-x { opacity: .55; }
 .lee-termtab-x:hover { opacity: 1; }
 
-/* ---- tight layout: quieter, thinner, less blocky chrome.
-   This started as the cursor theme's own look, but density and palette are separate tastes --
-   cursor's tightness with leela's colours is a real thing to want -- so it is keyed on
-   `data-density` and every family can wear it. Nothing here sets a colour that is not a token,
-   which is what lets it combine with any variant. `relaxed` is simply the absence of these rules. ---- */
 :root[data-theme="cursor"] body {
   font-family: "Segoe UI", "Helvetica Neue", ui-sans-serif, sans-serif;
 }
@@ -3140,6 +3127,11 @@ kbd {
 .lee-wb-verb.post, .lee-wb-verb.put, .lee-wb-verb.patch { color: var(--lee-orange); }
 .lee-wb-verb.delete { color: var(--lee-red); }
 .lee-wb-ops { display: flex; flex-direction: column; gap: 8px; }
+.lee-wb-callview { display: flex; flex-direction: column; gap: 8px; margin-top: 14px;
+                   padding-top: 12px; border-top: 1px solid var(--lee-border); }
+.lee-wb-apiout { max-height: 24rem; overflow: auto; margin: 0; padding: 10px 12px; border-radius: 6px;
+                 background: var(--lee-bg1); border: 1px solid var(--lee-border);
+                 font: 10px/1.6 var(--lee-mono); color: var(--lee-fg3); white-space: pre-wrap; }
 
 .lee-wb-topiccards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
 .lee-wb-topic { display: flex; flex-direction: column; gap: 5px; padding: 11px 13px; border-radius: 6px;

@@ -24,6 +24,17 @@ def test_the_browser_will_not_be_pointed_at_the_machine_it_is_running_on(url):
 def test_a_non_web_scheme_is_refused():
     with pytest.raises(Exception): Browser().check('file:///etc/passwd')
 
+def test_a_page_you_read_opens_in_your_own_browser_rather_than_the_driven_one(monkeypatch):
+    "The CDP profile is fresh, so a story read through it meets a bot wall. Yours has your session."
+    from leela.workspace import Workspace
+    opened = []
+    monkeypatch.setattr('webbrowser.open_new_tab', lambda url: opened.append(url) or True)
+    with TestClient(ide_app(Workspace(roots=[]))) as c:
+        assert c.get('/browser/external?url=https://example.com/a').json()['ok']
+        refused = c.get('/browser/external?url=file:///etc/passwd').json()
+    assert opened == ['https://example.com/a']
+    assert refused.get('ok') is False and 'not an http address' in refused['error']
+
 def test_an_empty_url_is_refused_before_anything_is_started():
     with pytest.raises(ValueError): Browser().check('   ')
 

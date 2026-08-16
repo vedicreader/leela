@@ -285,35 +285,60 @@ def connect(app, ctx):
     def _root(): return str(ctx.fs.roots[0]) if ctx.fs.roots else ''
     @rt('/vault/workbench')
     async def workbench(view: str = 'browse', vault: str = '', shelf: str = '', q: str = '',
-                        src: str = '', match: str = '', feed: str = ''):
+                        src: str = '', match: str = '', feed: str = '', name: str = ''):
         try:
-            body = await off_loop(_view, view, vault, shelf, q, src, match, feed)
+            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name)
+            ctx.session.note_vault_view(view)
             return ui.workbench(_mem(vault), ctx.vaults, view, body=body)
         except Exception as e: return fail(e)
-    def _view(view, vault='', shelf='', q='', src='', match='', feed=''):
+    def _view(view, vault='', shelf='', q='', src='', match='', feed='', name=''):
         m = _mem(vault)
         if view == 'find': return ui.find_view(m, vault, q=q, shelf=shelf)
         if view == 'add': return ui.add_view(m, vault, jobs=ctx.jobs, root=_root())
         if view == 'news': return ui.news_view(m, vault, feeds=ctx.feeds, q=q, feed=feed)
-        if view == 'specs': return ui.specs_view(m, vault, **_spec_kw(src, match))
+        if view == 'specs': return ui.specs_view(m, vault, **_spec_kw(src, match, name))
         if view == 'topics': return ui.topics_view(m, vault)
         return ui.browse_view(m, vault, shelf=shelf, q=q)
-    def _spec_kw(src='', match=''):
+    def _api_host():
+        "A host over this workspace: the specs it loads live on the workspace, so the agent has them."
+        from ..agent.ai import WorkspaceHost
+        return WorkspaceHost(ctx.session)
+    def _spec_kw(src='', match='', name=''):
         from .spec import CREDS
         kw = dict(src=src, match=match, creds=CREDS.policies())
         if not src.strip(): return kw
         try:
-            from .spec import load_spec, op_row, spec_ops
-            rows = [dict(op_row(o)) for o in spec_ops(load_spec(src))]
-            want = match.strip().lower()
-            if want: rows = [o for o in rows if want in json.dumps(o).lower()]
-            return dict(kw, ops=rows)
+            host = _api_host()
+            key = host.api_load(src, name)['name']
+            return dict(kw, ops=host.api_ops(name=key, match=match, limit=0), name=key)
         except Exception as e: return dict(kw, error=errstr(e))
     @rt('/vault/view/{view}')
     async def workbench_view(view: str, vault: str = '', shelf: str = '', q: str = '',
-                             src: str = '', match: str = '', feed: str = ''):
-        try: return await off_loop(_view, view, vault, shelf, q, src, match, feed)
+                             src: str = '', match: str = '', feed: str = '', name: str = ''):
+        try:
+            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name)
+            ctx.session.note_vault_view(view)     # the swap is the tab moving, and it outlives it
+            return body
         except Exception as e: return fail(e)
+    @rt('/vault/apis/form')
+    def apis_form(operation: str = '', name: str = ''):
+        "One row's operation, moved into the call form rather than typed out of the table."
+        try: ops = _api_host().api_ops(name=name, limit=0) if name else ()
+        except Exception: ops = ()
+        return ui.call_panel(name, operation, '', ops)
+    @rt('/vault/apis/call')
+    async def apis_call(operation: str, name: str = '', params: str = ''):
+        """Call one operation and show what came back.
+
+        `api_fetch`, not `api_call`: the reach gate is about a model reading the answer, and the
+        person looking at this page is the person whose data it is.
+        """
+        try:
+            kw = json.loads(params) if str(params or '').strip() else {}
+            if not isinstance(kw, dict): raise ValueError('the parameters must be a JSON object')
+            out = await off_loop(lambda: _api_host().api_fetch(operation, name=name, **kw))
+            return ui.api_result(out, f'{operation} answered')
+        except Exception as e: return Div(errstr(e), cls='lee-job-error')
     @rt('/vault/plan')
     async def vault_plan(target: str, vault: str = ''):
         try:

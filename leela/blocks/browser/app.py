@@ -1,7 +1,8 @@
 "The inline browser's surface. `/browser/ws` pairs a Leela tab with one CDP target."
 
 from __future__ import annotations
-import asyncio, base64, json
+import asyncio, base64, json, webbrowser
+from urllib.parse import urlparse
 
 from fasthtml.common import Div
 from starlette.routing import WebSocketRoute
@@ -23,6 +24,20 @@ def connect(app, ctx):
     def browser_ready():
         "Could a page be opened here? `ok` is a Chrome to drive, `running` is one already up."
         return {'ok': browser.available(), 'running': browser.running(), 'port': browser.port}
+
+    @rt('/browser/external')
+    def browser_external(url: str = ''):
+        """Open `url` in the machine's own browser, which is where your sessions are.
+
+        The CDP Chrome is a fresh automation profile: Medium and its like answer it with a bot
+        wall, and it is there for ramabana and fossick to drive. Reading is not driving.
+        """
+        try:
+            if urlparse(url).scheme not in ('http', 'https'):
+                raise ValueError(f'{url[:80]!r} is not an http address')
+            if not webbrowser.open_new_tab(url): raise RuntimeError('no browser answered')
+            return {'ok': True, 'url': url}
+        except Exception as e: return fail(e)
 
     @rt('/browser/tabs')
     async def browser_tabs():

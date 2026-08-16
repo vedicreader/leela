@@ -361,6 +361,26 @@ def test_a_half_typed_path_browses_what_exists_and_returns_the_rest(tmp_path):
         asked = c.get('/fs/browse', params={'path': str(tmp_path/'.hid')}).json()
         assert '.hidden' in [x['name'] for x in asked['dirs']], 'until they are asked for by name'
 
+def test_the_picker_starts_where_your_projects_are_rather_than_at_home(tmp_path, monkeypatch):
+    "Home is a long list of things that are not projects, so `o` opened onto the wrong list."
+    from leela.blocks.settings import settings as S
+    (code := tmp_path/'code').mkdir(); (mine := tmp_path/'elsewhere').mkdir()
+    monkeypatch.setattr(S, 'CODE_FOLDER', str(code))
+    monkeypatch.setattr(S, 'USER_SETTINGS_FILE', tmp_path/'settings.json')
+    client, _ = _client(tmp_path)
+    with client as c:
+        assert c.get('/fs/browse', params={'path': ''}).json()['path'] == str(code)
+        c.post('/settings/save', json={'scope': 'user', 'section': 'workbench',
+                                       'values': {'projectFolder': str(mine)}})
+        assert c.get('/fs/browse', params={'path': ''}).json()['path'] == str(mine), 'and a setting wins'
+
+def test_a_start_folder_that_is_not_there_falls_back_rather_than_failing(tmp_path, monkeypatch):
+    from leela.blocks.settings.settings import start_folder
+    from leela.blocks.settings import settings as S
+    monkeypatch.setattr(S, 'CODE_FOLDER', str(tmp_path/'no-such-folder'))
+    monkeypatch.setattr(S, 'USER_SETTINGS_FILE', tmp_path/'settings.json')
+    assert start_folder() == Path.home()
+
 def test_opening_a_folder_redraws_the_tree_before_selecting_the_new_root():
     "Order matters: activating selects the new root's node, which must exist by then."
     block = JS[JS.index('async function addRoot'):]

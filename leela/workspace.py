@@ -304,6 +304,13 @@ class Workspace:
             return self.tabs[i]
         return self._add_tab(Tab(path='', kind='vaultwb', ref=view, scratch=True, title='vault',
                                  private_kernel=False))
+    def note_vault_view(self, view):
+        "Which section the workbench is showing. Reopening the tab is not starting it over."
+        t = first(t for t in self.tabs if t.kind == 'vaultwb')
+        if t is None or not view or t.ref == view: return None
+        t.ref = view
+        self.save()
+        return t
     def open_web(self, target, title=''):
         "Open a CDP target as a tab, focusing it if that page is already cast."
         if (i := first(i for i, t in enumerate(self.tabs)

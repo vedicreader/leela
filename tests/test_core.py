@@ -1090,9 +1090,29 @@ def test_a_link_in_rendered_markdown_opens_a_tab_rather_than_taking_over_the_app
     js = builder.OUT.read_text()
     block = js[js.index('function routeMarkdownLinks'):js.index('function renderMarkdown')]
     assert "target = '_blank'" in block and 'noopener' in block
-    assert 'openWebpage(' in block, 'the desktop app has a CDP Chrome to put the tab in'
+    assert 'openExternal(' in block, 'in your own browser, with your own sessions'
     assert 'e.metaKey' in block, 'a modified click still belongs to the browser'
     assert 'routeMarkdownLinks(el)' in js, 'and every markdown surface goes through the one funnel'
+
+def test_one_click_opens_one_tab():
+    """Both openers ran: the anchor's own `_blank` and `window.open` beside it, and the shell
+    answers `window.open` with null while opening the page anyway. Two tabs, one story.
+    """
+    js = builder.OUT.read_text()
+    block = js[js.index('function routeMarkdownLinks'):js.index('function renderMarkdown')]
+    assert 'if (!window.pywebview) return;' in block, 'a browser tab opens its own links'
+    opener = js[js.index('async function openExternal'):js.index('function routeMarkdownLinks')]
+    assert '!window.pywebview && window.open' in opener, 'and the shell opens through the server'
+
+def test_reading_a_page_never_goes_through_the_cdp_chrome():
+    """A story read in the automation profile meets a bot wall, and the profile is there for
+    ramabana and fossick. `/browser/open` stays the deliberate 'put it in a Leela tab' action.
+    """
+    js = builder.OUT.read_text()
+    block = js[js.index('async function openExternal'):js.index('function routeMarkdownLinks')]
+    assert "window.open(url, '_blank'" in block and "'/browser/external'" in block
+    assert '/browser/open' not in block and 'openWebTab' not in block
+    assert 'openWebpage' not in js, 'the CDP reading path is gone rather than left to drift'
 
 
 def test_boot_asks_for_a_pending_approval_once_rather_than_twice():

@@ -347,3 +347,19 @@ def test_the_workbench_is_one_tab_however_often_it_is_opened(tmp_path, monkeypat
     ws.open_vault_workbench('find')
     assert [t.kind for t in ws.tabs] == ['vaultwb']
     assert ws.tab.ref == 'find', 'reopening it should move to the view asked for'
+
+def test_the_workbench_reopens_on_the_section_you_left_it_on(tmp_path, monkeypatch):
+    """Reading a story opens a document tab. Coming back to the vault showed `browse`: the
+    section was swapped into the page and never recorded on the tab that remembers it.
+    """
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'vault.db'))
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+    ws = Workspace(roots=[str(tmp_path)]); ws._state_path = tmp_path/'workspace.json'
+    ws.open_vault_workbench()
+    with TestClient(ide_app(ws)) as c:
+        assert c.get('/vault/view/news').status_code == 200
+        assert ws.tab.ref == 'news', 'the swap moved the tab, not just the page'
+        assert c.get('/vault/workbench?view=specs').status_code == 200
+        assert ws.tab.ref == 'specs', 'however the section was asked for'

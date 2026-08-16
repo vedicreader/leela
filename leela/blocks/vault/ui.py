@@ -4,9 +4,9 @@ import json, re
 from datetime import datetime
 from urllib.parse import urlencode
 
-from fasthtml.common import (Article, Button, Code, Details, Div, Form, Hidden, Input, Mark,
-                             Option, Pre, Progress, Section, Select, Small, Span, Strong, Summary,
-                             Table, Tbody, Td, Textarea, Th, Thead, Tr)
+from fasthtml.common import (Article, Button, Code, Datalist, Details, Div, Form, Hidden, Input,
+                             Mark, Option, Pre, Progress, Section, Select, Small, Span, Strong,
+                             Summary, Table, Tbody, Td, Textarea, Th, Thead, Tr)
 
 from ..memory.memory import source_kind
 from ..memory.vaults import ACCESS
@@ -16,7 +16,8 @@ from .news import news_rows
 
 __all__ = ['job_card', 'pii_badge', 'vault_panel', 'vault_browse', 'vault_docs', 'vault_tree',
            'tidy_list', 'watch_list', 'workbench', 'browse_view', 'find_view', 'add_view',
-           'news_view', 'specs_view', 'creds_panel', 'creds_view', 'topics_view', 'import_plan', 'ops_table', 'PII_COVERS',
+           'news_view', 'specs_view', 'creds_panel', 'creds_view', 'topics_view', 'import_plan',
+           'ops_table', 'call_form', 'call_panel', 'api_result', 'PII_COVERS',
            'VIEWS', 'KINDS']
 
 POLL_MS = 1200
@@ -548,21 +549,59 @@ def news_view(memory, vault='', feeds=None, error='', q='', feed='', **_):
               'about X this week?” is answered out of the vault, citing the item.', cls='lee-dim'),
         cls='lee-wb-newsview')
 
-def ops_table(rows, src='', match=''):
+def _op_cell(o, name):
+    "The operation name is what a call is made by, so it is a button that fills the call form."
+    op = o.get('name') or ''
+    if not op: return Td(Small('—'))
+    return Td(Form(Hidden(name='name', value=name), Hidden(name='operation', value=op),
+                   Button(op, cls='lee-btn quiet', type='submit', title=o.get('signature') or op),
+                   hx_get='/vault/apis/form', hx_target='#vaultwbcall', hx_swap='innerHTML'))
+
+def ops_table(rows, src='', match='', name=''):
     "What a loaded specification offers, which is the only readable form a big one has."
     if not rows: return Div('No operation matched.', cls='lee-vault-empty')
     # Every cell is escaped: a specification is somebody else's document, fetched from a url.
-    body = [Tr(Td(Span(o['verb'], cls=f"lee-wb-verb {o['verb'].lower()}")), Td(Code(o['path'])),
-               Td(o.get('summary') or ''), Td(Small(', '.join(o.get('required') or []) or '—')),
+    body = [Tr(_op_cell(o, name), Td(Span(o['verb'], cls=f"lee-wb-verb {o['verb'].lower()}")),
+               Td(Code(o['path'])), Td(o.get('summary') or ''),
+               Td(Small(', '.join(o.get('required') or []) or '—')),
                Td(Small(o.get('group') or ''))) for o in rows[:400]]
     return Div(Small(f'{len(rows)} operations' + (f' matching “{match}”' if match else ''), cls='lee-dim'),
-        Div(Table(Thead(Tr(Th(''), Th('endpoint'), Th('what it does'), Th('required'), Th('group'))),
-                  Tbody(*body), cls='lee-wb-table'), cls='lee-wb-tablewrap'),
+        Div(Table(Thead(Tr(Th('call it'), Th(''), Th('endpoint'), Th('what it does'), Th('required'),
+                           Th('group'))), Tbody(*body), cls='lee-wb-table'), cls='lee-wb-tablewrap'),
         Form(Hidden(name='target', value=src), Hidden(name='kind', value='clip_api_spec'),
              Button('file it in the vault', cls='lee-btn go', type='submit',
                     title='one document, one section per operation — then ask about it like a paper'),
              hx_post='/clip', hx_target='#vaultwbjobs', hx_swap='afterbegin'),
         cls='lee-wb-ops')
+
+def call_form(name='', operation='', params='', ops=()):
+    "Run one operation from the page. The answer goes to the person who asked for it, ungated."
+    names = [o.get('name') for o in (ops or []) if o.get('name')]
+    return Div(
+        Form(Input(name='name', value=name, cls='lee-input', placeholder='which api', size='12'),
+             Input(name='operation', value=operation, cls='lee-input', required=True,
+                   autocomplete='off', list='vaultwbops', placeholder='which operation'),
+             Textarea(params or '', name='params', cls='lee-input', rows='2',
+                      placeholder='{"parameter": "value"}  — a JSON object, or empty'),
+             Button('call it', cls='lee-btn go', type='submit'),
+             Datalist(*[Option(value=n) for n in names[:400]], id='vaultwbops'),
+             hx_post='/vault/apis/call', hx_target='#vaultwbout', hx_swap='innerHTML',
+             cls='lee-wb-form'),
+        Small('the call goes out from here with the headers kept beside the spec, so this is a real '
+              'response. an api marked local-only still answers you: the reach gate is about which '
+              'model may read it.', cls='lee-dim'),
+        Div(id='vaultwbout'))
+
+def call_panel(name='', operation='', params='', ops=()):
+    "The call form under its own legend, which is what a row's button swaps in."
+    return Div(Div(Span('call one of them', cls='lee-vault-legend'), cls='lee-wb-cardhead'),
+               call_form(name, operation, params, ops))
+
+def api_result(out, note=''):
+    "What an operation answered, as it came back."
+    text = out if isinstance(out, str) else json.dumps(out, indent=2, default=str)
+    return Div(Small(note, cls='lee-dim') if note else None,
+        Pre(Code(text[:40000] + ('\n…' if len(text) > 40000 else '')), cls='lee-wb-apiout'))
 
 def _policy_row(name, pol):
     "One spec: the headers it sends, the variables behind them, and who may call it."
@@ -600,7 +639,7 @@ def creds_view(policies=None, error=''):
               'sending anything.', cls='lee-dim'),
         id='vaultwbcreds', cls='lee-wb-credsview')
 
-def specs_view(memory, vault='', src='', match='', ops=None, error='', creds=None, **_):
+def specs_view(memory, vault='', src='', match='', ops=None, error='', creds=None, name='', **_):
     "A described endpoint is a document you can ask about, once it is in the vault."
     load = Form(Input(name='src', value=src, cls='lee-input', required=True, autocomplete='off',
                       placeholder='an OpenAPI url or path, or a Google discovery document'),
@@ -609,7 +648,7 @@ def specs_view(memory, vault='', src='', match='', ops=None, error='', creds=Non
         hx_get='/vault/view/specs', hx_target='#vaultwbbody', hx_swap='innerHTML', cls='lee-wb-form')
     from .spec import EXAMPLES
     # something that answers on the first click: no key, no sign-up, and a response worth reading
-    demo = Div(*[Form(Hidden(name='src', value=x.path), Hidden(name='match', value=''),
+    demo = Div(*[Form(Hidden(name='src', value=x.path), Hidden(name='name', value=x.name),
                       Button(x.label.lower(), cls='lee-btn', type='submit', title=x.note),
                       hx_get='/vault/view/specs', hx_target='#vaultwbbody', hx_swap='innerHTML')
                  for x in EXAMPLES], cls='lee-wb-form')
@@ -618,10 +657,14 @@ def specs_view(memory, vault='', src='', match='', ops=None, error='', creds=Non
                   'returns a deployment?” is answered out of the vault, citing the operation. the '
                   'bundled examples above are keyless.', cls='lee-dim')
     body = (Div(error, cls='lee-job-error') if error else
-            ops_table(ops, src, match) if ops is not None else
+            ops_table(ops, src, match, name) if ops is not None else
             empty('load a specification', 'then search its operations, and file the ones you will ask about.'))
+    from .spec import example_for
+    ex = example_for(name)
+    call = Div(call_panel(name, ex.call if ex else '', ex.params if ex else '', ops) if ops else None,
+               id='vaultwbcall', cls='lee-wb-callview')
     return Div(Div(Span('a specification', cls='lee-vault-legend'), cls='lee-wb-cardhead'), load, demo, about,
-        body, creds_view(creds), Div(id='vaultwbjobs', cls='lee-vault-jobs'), cls='lee-wb-specs')
+        body, call, creds_view(creds), Div(id='vaultwbjobs', cls='lee-vault-jobs'), cls='lee-wb-specs')
 
 def topics_view(memory, vault='', **_):
     "What the corpus is about, from the entity graph rather than from anybody's folder names."

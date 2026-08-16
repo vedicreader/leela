@@ -62,8 +62,6 @@ function readEditorPrefs() {
       old.fontFamily = match || 'System monospace';
     }
     if (typeof old.wordWrap === 'boolean') old.wordWrap = old.wordWrap ? 'viewport' : 'off';
-    // Two renames of the same setting: the boolean it started as, and the name it had
-    // while it drew a picture of the text rather than marking up the scrollbar.
     if ('minimap' in old && !old.minimapMode) old.minimapMode = old.minimap ? 'always' : 'off';
     if (old.minimapMode && !old.overviewMode) old.overviewMode = old.minimapMode;
     if (old.minimapThreshold && !old.overviewThreshold) old.overviewThreshold = old.minimapThreshold;
@@ -115,9 +113,6 @@ async function editBreakpoint(path,line,view){const all=JSON.parse(localStorage.
   $('[data-remove]',m).onclick=()=>{const rows=(lee.breakpoints.get(path)||[]).filter(x=>x!==line);rememberBreakpoints(path,rows);delete all[`${path}:${line}`];localStorage.setItem('lee-breakpoint-details',JSON.stringify(all));LeeCM.setBreakpoints(view,rows);m.remove();};
   $('[data-save]',m).onclick=()=>{const rows=[...new Set([...(lee.breakpoints.get(path)||[]),line])].sort((a,b)=>a-b);rememberBreakpoints(path,rows);all[`${path}:${line}`]={condition:$('[data-condition]',m).value.trim(),hitCondition:$('[data-hit]',m).value.trim(),logMessage:$('[data-log]',m).value.trim()};localStorage.setItem('lee-breakpoint-details',JSON.stringify(all));LeeCM.setBreakpoints(view,rows);if(lee.directDebug)post('/debug/breakpoints',{path,breakpoints:detailedBreakpoints(path)});m.remove();};}
 
-/* Durable browser drafts. indexed-cache is intentionally not used here: it caches static
- * asset Blobs, while editor recovery needs keyed mutable records and atomic replacement.
- * Native IndexedDB is the smaller and more appropriate primitive. */
 const DRAFT_DB = 'leela-editor-drafts', DRAFT_STORE = 'drafts';
 let draftDBPromise = null;
 function draftDB() {
@@ -213,10 +208,7 @@ async function restoreDrafts(st) {
   let rows = [];
   try { rows = await draftsFor(documentKey); } catch (_) { return false; }
   if (!rows.length) return false;
-  // A draft record is not itself evidence of unsaved work. Records can survive a crash
-  // after the disk write but before IndexedDB cleanup; treating an identical record as a
-  // recovery marked the clean tab dirty, then autosave compared its stale base and opened
-  // the keep/overwrite dialog on every mount.
+
   let recovered = false;
   if (st.kind === 'text') {
     const row = rows.sort((a, b) => b.updatedAt - a.updatedAt)[0];
@@ -321,8 +313,6 @@ function portableToolSummary(tool, args) {
   return `${tool.replaceAll('_', ' ')}${body ? ' · ' + body : ''}`;
 }
 function polishActivityGroup(el) {
-  // Markdown keeps a standards-compliant list for plain Jupyter. In Leela, collapse that
-  // scaffolding into one compact timeline so a dozen calls occupy a dozen rows, not a page.
   $$('ul, ol', el).forEach(list => {
     const rows = $$('.lee-agent-step', list);
     if (!rows.length) return;
@@ -340,8 +330,6 @@ function polishActivityGroup(el) {
   });
 }
 function upgradePortableToolMarkdown(el) {
-  // Rishi's formatter emits portable JSON so plain Jupyter can retain tool activity.
-  // In the IDE that JSON becomes the same compact disclosure row as native live activity.
   $$('pre > code', el).forEach(code => {
     const payload = portableToolPayload(code.textContent || ''); if (!payload) return;
     const row = document.createElement('details');
@@ -350,7 +338,6 @@ function upgradePortableToolMarkdown(el) {
     const container = code.parentElement.closest('details') || code.parentElement;
     container.replaceWith(row);
   });
-  // The pending portable line is redundant once its completed disclosure exists.
   $$('li', el).forEach(li => {
     if (/[⏳⌛]/u.test(li.textContent || '') && li.querySelector('code')) li.remove();
   });
@@ -363,9 +350,6 @@ function enhanceCodeBlocks(el) {
     const pre = code.parentElement, text = code.textContent || '';
     const declared = [...code.classList].find(x => x.startsWith('language-')) || '';
     const lang = codeLang(declared);
-    // Every explicitly tagged supported language gets the editor's syntax surface.
-    // Promotion stays Python-only: highlighting a TOML or JS answer must not imply that a
-    // Python notebook kernel can execute it. Untagged and huge blocks remain lightweight.
     const python = /^(language-)?(py|python)$/.test(declared.toLowerCase());
     const named = declared.replace(/^language-/, '').toLowerCase();
     if (!declared || !CODE_LANGS[named] || text.length > 40000) return;
@@ -384,19 +368,7 @@ function addMarkdownCellAction(el) {
   button.onclick = () => promoteCodeToNotebook(el.dataset.markdown, 'markdown');
   bar.appendChild(button); el.appendChild(bar);
 }
-// `onRender` runs on the fragment mdhtml just produced, before anything else touches it.
-// A caller that has something to say about *which source lines* a block came from -- the
-// rendered diff below is the one that does -- has to see the elements the renderer emitted,
-// in the order it emitted them, and the code-block upgrade replaces `<pre>` with an editor
-// surface. So the annotation goes first, and a throw in it cannot cost the reader the
-// rendering it was annotating.
-/* A markdown file's images are written relative to the file, and the browser resolves them
-   against the *page*, so every figure in a rendered document was a broken link. Rewrite them
-   through `/file/raw`, which already serves image bytes from inside the workspace.
 
-   An http source is left alone, and so is anything that will not resolve: a picture that is
-   plainly missing is honest, where one rewritten to a URL that 403s looks like a bug in leela.
-   The base is `data-md-base`, set by whichever surface knows which file this came from. */
 function resolveMarkdownImages(el) {
   const base = el.closest('[data-md-base]')?.dataset.mdBase || '';
   $$('img', el).forEach(img => {
@@ -410,10 +382,13 @@ function resolveMarkdownImages(el) {
   });
 }
 
-// A feed item ends in `[url](url)`, and a bare href navigates whatever is showing it. In the
-// browser that loses the IDE; in the desktop webview there is no back button to come home with.
-// `openWebpage` puts the page in a tab -- the CDP Chrome the desktop app already drives, or a
-// browser tab where there is no Chrome to drive.
+async function openExternal(url) {
+  if (!url) return status('choose a source first', 'err');
+  if (!window.pywebview && window.open(url, '_blank', 'noopener,noreferrer')) return;
+  try { await post('/browser/external', {url}); }
+  catch (e) { status(`could not open ${url}: ${e.message || e}`, 'err'); }
+}
+
 function routeMarkdownLinks(el) {
   $$('a[href]', el).forEach(a => {
     const href = a.getAttribute('href') || '';
@@ -421,8 +396,9 @@ function routeMarkdownLinks(el) {
     a.dataset.leeLink = '1'; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.addEventListener('click', e => {
       if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // the browser's to handle
+      if (!window.pywebview) return;
       e.preventDefault(); e.stopPropagation();
-      openWebpage(href);
+      openExternal(href);
     });
   });
 }
@@ -434,8 +410,6 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
   const seq = el._leeMarkdownSeq;
   clearTimeout(el._leeMarkdownTimer);
   el._leeMarkdownAbort?.abort();
-  // Streaming can deliver many partial documents per second. Render only the newest one;
-  // until mdhtml answers, plain text is the safe fallback rather than client-side raw HTML.
   el._leeMarkdownTimer = setTimeout(async () => {
     const controller = new AbortController(); el._leeMarkdownAbort = controller;
     try {
@@ -456,9 +430,6 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
     } catch (e) {
       if (e.name === 'AbortError' || seq !== el._leeMarkdownSeq || !el.isConnected) return;
       el.textContent = el.dataset.markdown;
-      // A stream repaint or app restart can invalidate an in-flight fragment. Keep the
-      // readable source in place and annotate this surface; do not emit dozens of global
-      // error toasts while the conversation is still mounting.
       el.dataset.markdownWarnings = `renderer unavailable: ${e.message || e}`;
       if (!el._leeMarkdownReported) {
         el._leeMarkdownReported = true;
@@ -514,8 +485,6 @@ function status(msg, kind) {
     clearTimeout(statusTimer); el.classList.remove('show');
     setTimeout(() => { el.hidden = true; el.textContent = ''; }, 180);
   };
-  // Re-adding `show` on a fresh frame restarts the entrance motion even when one status
-  // immediately replaces another (running cell 2 after running cell 1).
   el.className = `lee-status ${tone}`;
   requestAnimationFrame(() => el.classList.add('show'));
   const ttl = tone === 'busy' ? 0 : tone === 'err' ? 8000 : tone === 'ok' ? 3200 : 5000;
