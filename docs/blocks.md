@@ -39,3 +39,5 @@ connect_all(app, workspace, BLOCKS, gate=gate, catalog=catalog)
 ```
 
 Keep wiring order in one place.
+
+`ramabana.git` owns the gateway, the safepoint journal behind `undo`, the porcelain, and the git tools an agent gets inside a checkout. `blocks/git` is the browser surface over it, plus `blame_notebook` and `RepoSet`. The block sets `gateway().env_for` at import: a checkout's own virtualenv is leela's knowledge, not the harness's.

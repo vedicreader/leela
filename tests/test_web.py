@@ -467,7 +467,9 @@ def test_panels_refresh_themselves_and_keep_secrets_server_side():
     assert 'e.secret ?' in block, 'a secret and a variable are drawn differently'
     ops = JS[JS.index('async function refreshFileTree'):JS.index('document.addEventListener(\'click\'')]
     assert 'location.reload()' not in ops
-    assert "fetch('/files/panel' + treeQuery())" in ops, 'the panel, at the dotfile setting in force'
+    assert "fetch('/files/panel?' + q)" in ops, 'the panel, at the dotfile setting in force'
+    assert "q.set('hidden', '1')" in ops and "q.set('open', open.join('\\n'))" in ops, \
+        'one request carrying the expansion, not one round trip per open folder'
     assert "old.replaceWith(fresh)" in ops
     first = workspace_slug('My Project')
     second = workspace_slug('My Project', [first])
@@ -629,7 +631,7 @@ def test_a_branch_change_reaches_every_surface_that_was_derived_from_it():
     assert 'leeReleases()' in fan and 'leeDeploys()' in fan
     pills = JS[JS.index('async function refreshProjectPills'):JS.index('async function leeCwd')]
     assert 'noticeGitState(d)' in pills
-    assert 'setInterval(refreshProjectPills, 5000)' in JS
+    assert 'setInterval(refreshProjectPills' not in JS, 'the pills change only when a root or the cwd does'
 
 
 def test_the_merge_button_always_answers_instead_of_being_disabled():
@@ -995,7 +997,25 @@ def test_source_control_notices_an_edit_and_not_only_a_new_file():
     assert 'refreshProjectPills' in save
     pills = JS[JS.index('async function refreshProjectPills'):JS.index('function projectRepo')]
     assert 'noticeGitState(d)' in pills and "api('/git/info')" in pills
-    assert 'setInterval(refreshProjectPills, 5000)' in JS, 'and an external change lands by poll'
+    assert "watchFiles()" in JS, 'and an external change lands by push, not by poll'
+
+def test_a_pushed_change_redraws_the_nearest_open_folder_and_cannot_be_starved():
+    "The push rewrite lost two kinds of change the full refresh had always shown."
+    patch = JS[JS.index('async function patchTree(paths)'):JS.index('async function refreshGitTreeMarks')]
+    assert "p.startsWith(d + '/')" in patch and 'best.dataset.path.length' in patch, \
+        'a new folder is open nowhere, so its own path matches no open row'
+    assert "replace(/\\/[^/]+$/, '')" not in patch, 'the literal parent was the bug'
+    watch = JS[JS.index('function watchFiles()'):JS.index('window.watchFiles')]
+    assert 'FS_MAX_WAIT' in watch and 'fsWatchSince' in watch, \
+        'a build writes without pause, and a timer that only resets never fires'
+    assert 'FS_MAX_SEEN' in watch, 'and the backlog it accumulates meanwhile is bounded'
+    assert '}, wait);' in watch, 'the deadline is what the timer is actually set to'
+
+def test_the_compressor_leaves_every_event_stream_alone():
+    "GZip went on the app for the cold load. Buffering the streams would have paid for it."
+    from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES
+    assert 'text/event-stream' in DEFAULT_EXCLUDED_CONTENT_TYPES, \
+        'below starlette 1.6 this list has no streams in it and /fs/events arrives at the end'
 
 def test_the_editor_pane_fills_its_stage_and_the_splitter_only_exists_when_split():
     "Measured in a browser, not reasoned about: on a 900px window the stage was 577px and the"
@@ -1257,7 +1277,8 @@ def test_the_agent_panel_streams_steps_approvals_and_usage():
     assert "post('/agent/approve', {id: a.id, ok, note, session, tool, args})" in card
     assert "api('/agent/approval')" in JS
     assert 'if (r.pending) showApproval(r.pending)' in JS
-    assert 'setInterval(pollApproval, 750)' in JS
+    assert 'approvalLoop()' in JS and 'lee.agentBusy ? 750 : 5000' in JS, \
+        'fast while the model works, slow when nothing can raise one'
     card = JS[JS.index('function showApproval'):JS.index('async function pollApproval')]
     assert "leePane('right', true)" in card
     assert "leeRight('agent')" in card
@@ -1545,6 +1566,25 @@ def test_history_groups_turns_by_context_session_without_rendering_every_turn():
     assert 'groups.find' in history
     assert "(s.models || []).map" in history
 
+def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(tmp_path):
+    "History showed the turns and left the model with none of them."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    model = ws.ai.model.name
+    ws.ai.history = [{'session': 'agent-a', 'at': 1, 'model': model, 'prompt': 'remember cedar', 'reply': 'noted'},
+                     {'session': 'agent-a', 'at': 2, 'model': model, 'prompt': 'what was it?', 'reply': 'cedar'}]
+    with TestClient(ide_app(ws)) as client:
+        d = client.post('/agent/resume', json={'session': 'agent-a'}).json()
+        missing = client.post('/agent/resume', json={'session': 'legacy-1'})
+    assert d['session'] == 'agent-a' and [t['prompt'] for t in d['turns']] == ['remember cedar', 'what was it?']
+    assert ws.ai.session_id == 'agent-a'
+    assert ws.ai.backend._resume_hist[-1] == {'role': 'assistant', 'content': 'cedar'}
+    assert missing.status_code == 400
+    assert "post('/agent/resume', {session: group.id})" in JS and 'lee-history-resume' in JS
+    assert "renderTurns(log, d.turns || [], 'resumed conversation')" in JS
+
 def test_routing_popover_closes_on_outside_click_and_escape():
     from leela.app import _agent_panel
     from leela.workspace import Workspace
@@ -1705,7 +1745,8 @@ def test_browser_watch_detects_an_external_file_write(tmp_path):
         after = client.get('/tab/watch').json()
     assert before['path'] == str(a)
     assert before['disk_version'] != after['disk_version']
-    assert 'setInterval(watchOpenFile, 1000)' in JS
+    assert 'setInterval(watchOpenFile, 10000)' in JS, 'a backstop; /fs/events is the mechanism'
+    assert 'refreshOpenGitMarks(); watchOpenFile();' in JS, 'a push about the open file drives it'
     watch = JS[JS.index('async function watchOpenFile'):JS.index('async function takeDiskVersion')]
     assert "classList.contains('dirty')" in watch and 'await takeDiskVersion(lee.path)' in watch
 
@@ -2025,3 +2066,47 @@ def test_runtime_broker_refuses_a_thirteenth_heap_without_evicting_live_state(mo
     with pytest.raises(RuntimeError, match='kernel limit reached'):
         asyncio.run(broker.admit(pool, 'second'))
     assert pool.kernels['first'] is alive
+
+def test_the_tree_hears_about_a_change_leela_did_not_make(tmp_path):
+    "Without a watcher the tree knew only what the client itself had done."
+    import asyncio, json
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher
+    (tmp_path/'a.py').write_text('x = 1\n')
+    (tmp_path/'node_modules').mkdir()
+    async def run():
+        w = Watcher(Sandbox([tmp_path]), step=50)
+        q = w.subscribe()
+        try:
+            await asyncio.sleep(.4)
+            (tmp_path/'node_modules'/'junk.js').write_text('1\n')
+            with pytest.raises(asyncio.TimeoutError): await asyncio.wait_for(q.get(), .6)
+            (tmp_path/'b.py').write_text('y = 2\n')
+            return await asyncio.wait_for(q.get(), 5)
+        finally: w.close()
+    paths = asyncio.run(run())
+    assert any(p.endswith('b.py') for p in paths)
+    assert not any('node_modules' in p for p in paths), 'the skip list applies to the watcher too'
+
+def test_the_last_reader_leaving_does_not_stall_the_loop_and_the_next_one_is_watched_again(tmp_path):
+    "`unsubscribe` runs on the event loop, and the Rust watcher takes `rust_timeout` to notice."
+    import asyncio, time
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher
+    async def run():
+        w = Watcher(Sandbox([tmp_path]), step=50)
+        q = w.subscribe()
+        await asyncio.sleep(.3)
+        at = time.monotonic()
+        w.unsubscribe(q)
+        spent, first = time.monotonic() - at, w.thread
+        second = w.subscribe()
+        try:
+            await asyncio.sleep(.3)
+            (tmp_path/'c.py').write_text('z = 3\n')
+            return spent, first, w.thread, await asyncio.wait_for(second.get(), 5)
+        finally: w.close()
+    spent, first, second, paths = asyncio.run(run())
+    assert spent < .2, f'the last tab closing blocked the loop for {spent:.2f}s'
+    assert second is not first, 'a stopping thread is not a running one'
+    assert any(p.endswith('c.py') for p in paths), 'and the next reader is watched again'

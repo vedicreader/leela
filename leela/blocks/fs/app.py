@@ -7,7 +7,7 @@ from fastcore.all import Path
 from fasthtml.common import Div
 
 from ... import errstr
-from ...core.web import fail
+from ...core.web import fail, sse
 from ...core.text import fuzzy_rank
 from .fs import lang_for
 from .ui import files_panel, git_tree_state, tree_node
@@ -20,7 +20,7 @@ SERVED_TYPES = {'.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/j
     '.ogg': 'audio/ogg', '.flac': 'audio/flac', '.aac': 'audio/aac', '.mp4': 'video/mp4',
     '.webm': 'video/webm', '.ogv': 'video/ogg', '.mov': 'video/quicktime'}
 
-CAPS = ('fs', 'journal')
+CAPS = ('fs', 'fs_watch', 'journal')
 
 def connect(app, ctx):
     rt = app.route
@@ -31,15 +31,28 @@ def connect(app, ctx):
             return tuple(tree_node(e, state, hidden) for e in ctx.fs.ls(path, hidden=hidden))
         except Exception as e: return Div(errstr(e), cls='lee-err')
     @rt('/files/panel')
-    def files_panel_route(hidden: bool = False):
-        "Refresh only the file pane; the client restores expansion, selection and scroll."
-        return files_panel(ctx.fs, hidden)
+    def files_panel_route(hidden: bool = False, open: str = ''):
+        "Refresh only the file pane. `open` are the folders the client had expanded, drawn with it."
+        return files_panel(ctx.fs, hidden, [p for p in open.split('\n') if p])
+    @rt('/fs/events')
+    async def fs_events():
+        "Changes on disk, pushed. Everything else in the tree is the client watching itself."
+        from starlette.responses import StreamingResponse
+        async def events():
+            q = ctx.fs_watch.subscribe()   # a client that never iterates this never runs the finally
+            try:
+                while True: yield sse('changed', {'paths': await q.get()})
+            finally: ctx.fs_watch.unsubscribe(q)
+        return StreamingResponse(events(), media_type='text/event-stream',
+            headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
     @rt('/fs/add-root')
     async def add_root_json(req):
         "Add a root without rebuilding the editor, model controls and every other pane."
         from ...core.projects import note_folder
         path = (await req.json()).get('path') or ''
-        try: ctx.session.add_root(path); ctx.session.save(); note_folder(path)
+        try:
+            ctx.session.add_root(path); ctx.session.save(); note_folder(path)
+            ctx.fs_watch.start(restart=True)
         except Exception as e: return fail(e)
         return {'ok': True}
     @rt('/fs/recent')

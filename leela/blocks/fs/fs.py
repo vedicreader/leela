@@ -5,6 +5,7 @@ import os, re
 from dataclasses import dataclass
 from fastcore.all import Path, L, globtastic, atomic_save, mkdir as fc_mkdir
 from fastcore.shutil import move as fc_move
+from fastcore.xtras import flexicache, time_policy
 
 from ... import Dictable
 
@@ -33,6 +34,20 @@ MAX_EDIT_BYTES = 4_000_000
 
 class Unsafe(Exception):
     "A path that resolves outside every open root, or an operation refused for safety."
+
+_GEN = 0
+def _changed():
+    "Our own writes skip `_walked`'s window."
+    global _GEN; _GEN += 1
+
+@flexicache(time_policy(2), maxsize=16)
+def _walked(roots, hidden, limit, gen):
+    out = L()
+    for r in roots:
+        out += globtastic(r, skip_folder_re=_SKIP_RE, skip_file_re=None if hidden else r'^\.',
+            folder_re=None if hidden else r'^[^.]', func=Path)
+        if len(out) >= limit: break
+    return out[:limit]
 
 def lang_for(p):
     "Language id for a path, including conventional extensionless project files."
@@ -102,12 +117,8 @@ class Sandbox:
         return L(p.ls()).filter(keep).sorted(key=lambda c: (not c.is_dir(), c.name.lower())).map(self.entry)
     def walk(self, ref=None, hidden=False, limit=20000):
         "Every file under `ref` (or all roots), for quick-open, capped at `limit`."
-        out = L()
-        for r in (self.roots if ref is None else [self._check(ref, must_exist=True)]):
-            out += globtastic(r, skip_folder_re=_SKIP_RE, skip_file_re=None if hidden else r'^\.',
-                folder_re=None if hidden else r'^[^.]', func=Path)
-            if len(out) >= limit: break
-        return out[:limit]
+        roots = self.roots if ref is None else L([self._check(ref, must_exist=True)])
+        return _walked(tuple(str(r) for r in roots), hidden, limit, _GEN)
     def read(self, ref):
         "Text contents of a file. Refuses binaries and anything too big to sanely edit."
         p = self._check(ref, must_exist=True)
@@ -122,6 +133,7 @@ class Sandbox:
         "Write text atomically, so a crash mid-save leaves the previous file intact."
         p = self._check(ref)
         with atomic_save(p, mode='w', encoding='utf-8') as f: f.write(text)
+        _changed()
         return self.entry(p)
     def touch(self, ref):
         "Create an empty file; refuses to clobber an existing one."
@@ -129,10 +141,12 @@ class Sandbox:
         if p.exists(): raise FileExistsError(str(p))
         p.parent.mkdir(parents=True, exist_ok=True)
         p.touch()
+        _changed()
         return self.entry(p)
     def mkdir(self, ref):
         p = self._check(ref)
         if p.exists(): raise FileExistsError(str(p))
+        _changed()
         return self.entry(fc_mkdir(p, parents=True))
     def rename(self, ref, name):
         "Rename in place. `name` must be a bare filename: a path here would write outside the folder."
@@ -141,6 +155,7 @@ class Sandbox:
         dst = self._check(p.parent/name)
         if dst.exists(): raise FileExistsError(str(dst))
         p.rename(dst)
+        _changed()
         return self.entry(dst)
     def move(self, ref, dest_dir):
         "Move into another directory; both ends are checked."
@@ -151,10 +166,12 @@ class Sandbox:
         dst = d/p.name
         if dst.exists(): raise FileExistsError(str(dst))
         fc_move(p, dst)
+        _changed()
         return self.entry(dst)
     def delete(self, ref):
         "Delete a file, or a directory and its contents. Refuses to delete an open root."
         p = self._check(ref, must_exist=True)
         if p in self.roots: raise Unsafe('close the folder instead of deleting an open root')
         p.delete()
+        _changed()
         return str(p)

@@ -559,19 +559,22 @@ function renderTurns(log, turns, heading) {
 }
 const sessionTime = s => s.started ? new Date(s.started * 1000).toLocaleString() : s.id.replace(/^agent_/, '');
 async function showHistorySession(group, groups) {
-  const log = $('#agentlog'); if (!log) return; log.innerHTML = '';
+  const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
   const index = document.createElement('nav'); index.className = 'lee-history-index';
   const options = (groups || []).map(s => {
     const models = (s.models || []).map(m => m.split('/').pop()).join(' + ') || 'execution';
     const label = `${sessionTime(s)} · ${models} · ${s.turns.length} turn${s.turns.length === 1 ? '' : 's'}`;
     return `<option value="${esc(s.id)}"${s.id === group?.id ? ' selected' : ''}>${esc(label)}</option>`;
   }).join('');
+  const resumable = !!group && !group.id.startsWith('legacy-') && (group.turns || []).length > 0;
   index.innerHTML = `<div class="lee-history-heading"><strong>History</strong>` +
     `<span>one continuous model context per session</span></div>` +
     `<select class="lee-select lee-history-select" aria-label="agent history session">${options}</select>` +
-    `<span class="lee-history-runs">${group?.code || 0} kernel run${group?.code === 1 ? '' : 's'}</span>`;
+    `<span class="lee-history-runs">${group?.code || 0} kernel run${group?.code === 1 ? '' : 's'}</span>` +
+    (resumable ? `<button class="lee-btn go lee-history-resume" title="Continue this conversation">Resume</button>` : '');
   index.querySelector('select')?.addEventListener('change', e =>
     showHistorySession(groups.find(s => s.id === e.target.value), groups));
+  index.querySelector('.lee-history-resume')?.addEventListener('click', () => leeAgentResume(group));
   log.appendChild(index);
   if (!group) { log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>'); return; }
   log.insertAdjacentHTML('beforeend', `<div class="lee-history-session-head"><strong>${esc(sessionTime(group))}</strong>` +
@@ -592,8 +595,20 @@ async function leeAgentHistory() {
   const d = await api('/agent/history');
   await showHistorySession((d.sessions || [])[0], d.sessions || []);
 }
-async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
+async function leeAgentResume(group) {
+  if (!group) return;
+  if (lee.agentBusy) return status('the model is already working', 'err');
+  try {
+    const d = await post('/agent/resume', {session: group.id}), log = $('#agentlog');
+    if (log) { log.innerHTML = ''; renderTurns(log, d.turns || [], 'resumed conversation'); log.scrollTop = log.scrollHeight; }
+    lee.agentView = 'live'; lee.agentLive = log?.innerHTML || '';
+    $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus();
+    status(d.note || `resumed ${d.session}`, 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; approvalCards.clear(); const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
 window.leeAgentNew = leeAgentNew;
+window.leeAgentResume = leeAgentResume;
 window.leeAgentHistory = leeAgentHistory;
 
 async function leeAgentState() {
@@ -737,7 +752,8 @@ function agentLog(html) {
 /* A write pauses Rishi's tool loop until it is answered. Keep the question in the agent
  * pane rather than a modal, so the rest of the IDE remains usable while the model waits.
  * The same event is used by agent-chat and notebook prompt-cell streams. */
-const approvalCards = new Map(), resolvedProposalCards = [];
+// These are the log's own nodes. A detached one is held forever.
+const approvalCards = new Map();
 function proposalArgs(card) {
   const schema = card._schema, args = {};
   for (const field of (schema?.fields || [])) {
@@ -916,7 +932,6 @@ function showApproval(a) {
       const resolvedTool = ok ? tool : a.tool;
       card.dataset.tool = resolvedTool; card.dataset.resolvedTool = resolvedTool;
       card.dataset.retryable = String(!!byName.get(resolvedTool)?.retryable);
-      resolvedProposalCards.push(card);
       $('.lee-approval-actions', card).innerHTML = `<span>${ok ? (changed ? 'Edited call is running' : 'Running approved tool') : (note ? 'Not run · your direction was sent to the agent' : 'Not run')}</span>` +
         (ok && card.dataset.retryable === 'true' ? `<button class="lee-btn" data-retry title="Run this read-only tool again without changing the conversation">Run again</button>` : '') +
         (ok && ['edit_file','create_file'].includes(resolvedTool) ? `<button class="lee-btn warn" data-rollback disabled>Undo file change</button>` : '');
@@ -1103,6 +1118,13 @@ async function pollApproval() {
     const r = await api('/agent/approval');
     if (r.pending) showApproval(r.pending);
   } catch (_) {}
+}
+
+// An approval must not sit unseen while the model works. Idle, only a background job
+// raises one, and a window nobody is looking at raises nothing.
+async function approvalLoop() {
+  if (!document.hidden) await pollApproval();
+  setTimeout(approvalLoop, document.hidden ? 5000 : lee.agentBusy ? 750 : 5000);
 }
 
 function readableDetail(value) {

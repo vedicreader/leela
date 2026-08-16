@@ -1266,8 +1266,7 @@ async function showGitConflict(path) {
           `anyway, markers and all?`, 'stage anyway')) return;
       const next = await gitDo('resolve_conflict', {path, choice: 'resolved', content});
       m.remove();
-      renderGitPanel(next);
-      status(next.outcome?.summary || `${path} staged as resolved`, 'ok');
+      afterConflictResolved(next, `${path} staged`);
     };
     refresh(d.worktree || '', true);
     jumpTo(0);
@@ -1290,9 +1289,7 @@ async function showWholeSideConflict(path, d) {
     const choice = b.dataset.choice;
     if (!await confirmDialog('resolve conflict', `Use ${choice} for ${path} and stage it as resolved?`, 'resolve')) return;
     m.remove();
-    const next = await gitDo('resolve_conflict', {path, choice});
-    renderGitPanel(next);
-    status(next.outcome?.summary || `${path} staged as resolved`, 'ok');
+    afterConflictResolved(await gitDo('resolve_conflict', {path, choice}), `${path} staged`);
   });
 }
 

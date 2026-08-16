@@ -701,7 +701,7 @@ kbd {
 .lee-history-turn { padding: 9px 0 12px; border-bottom: 1px solid var(--lee-border); }
 .lee-history-index {
   position: sticky; top: 0; z-index: 2; display: grid;
-  grid-template-columns: minmax(120px, auto) minmax(220px, 1fr) auto; align-items: center; gap: 10px;
+  grid-template-columns: minmax(120px, auto) minmax(220px, 1fr) auto auto; align-items: center; gap: 10px;
   padding: 7px 8px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1);
 }
 .lee-history-heading { display: flex; flex-direction: column; min-width: 0; }
@@ -709,6 +709,7 @@ kbd {
 .lee-history-heading span { overflow: hidden; color: var(--lee-fg4); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .lee-history-select { width: 100%; min-width: 0; font-family: var(--lee-mono); }
 .lee-history-runs { color: var(--lee-fg4); font: 9.5px/1 var(--lee-mono); white-space: nowrap; }
+.lee-history-resume { white-space: nowrap; }
 .lee-history-session-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 4px 4px; }
 .lee-history-session-head strong { color: var(--lee-fg); font-size: 11px; }
 .lee-history-session-head span { color: var(--lee-green); font-size: 9.5px; }
@@ -2674,6 +2675,8 @@ kbd {
 .lee-git-merge-preview > label { display: grid; gap: 4px; color: var(--lee-fg4); font-size: 9px; }.lee-git-merge-preview select { padding: 6px; border: 1px solid var(--lee-border); background: var(--lee-bg); color: var(--lee-fg); }
 .lee-git-merge-warning, .lee-git-merge-ok { display: grid; gap: 3px; padding: 8px; border-left: 2px solid var(--lee-red); background: color-mix(in srgb, var(--lee-red) 7%, transparent); }.lee-git-merge-ok { border-left-color: var(--lee-green); background: color-mix(in srgb, var(--lee-green) 6%, transparent); }
 .lee-git-merge-warning span, .lee-git-merge-ok span { color: var(--lee-fg4); font-size: 9px; }
+.lee-syncopts { display: grid; gap: 4px; }
+.lee-syncopt { display: grid; grid-template-columns: 16px minmax(0,1fr); align-items: start; gap: 7px; padding: 7px; border: 1px solid var(--lee-border); cursor: pointer; }.lee-syncopt:has(:checked) { border-color: var(--lee-accent); background: color-mix(in srgb, var(--lee-accent) 7%, transparent); }.lee-syncopt.off { opacity: .45; cursor: default; }.lee-syncopt.warn:has(:checked) { border-color: var(--lee-red); background: color-mix(in srgb, var(--lee-red) 7%, transparent); }.lee-syncopt > span { display: grid; gap: 2px; }.lee-syncopt .sub { color: var(--lee-fg4); font-size: 9px; }
 .lee-git-rebase-commits { display: grid; max-height: 180px; overflow: auto; border-block: 1px solid var(--lee-border); }.lee-git-rebase-commits span { display: grid; grid-template-columns: 62px minmax(0,1fr); gap: 7px; padding: 5px 2px; color: var(--lee-fg2); font-size: 10px; }.lee-git-rebase-commits code { color: var(--lee-fg4); }
 .lee-git-history { display: grid; }
 .lee-git-commit-row.active { border-left: 2px solid var(--lee-accent); background: var(--lee-active-line); }

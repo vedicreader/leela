@@ -5,8 +5,8 @@ from fastcore.basics import store_attr
 
 __all__ = ['Ctx', 'CAPABILITIES', 'EAGER', 'LAZY', 'APP', 'Block', 'connect_all', 'block_caps']
 
-EAGER = ('fs', 'pool', 'search', 'memory', 'research', 'runs', 'journal', 'terms', 'dev',
-         'approvals', 'jobs', 'vaults', 'feeds', 'browser')
+EAGER = ('fs', 'fs_watch', 'pool', 'search', 'memory', 'research', 'runs', 'journal', 'terms',
+         'dev', 'approvals', 'jobs', 'vaults', 'feeds', 'browser')
 
 LAZY = ('ai', 'inline_ai', 'completer', 'lsp', 'tab', 'pending_approval')
 

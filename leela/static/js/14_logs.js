@@ -97,7 +97,7 @@ window.leeLogFilter = leeLogFilter; window.leeLogClear = leeLogClear; window.lee
 lee.runSeen = new Map(); lee.runFinished = new Set();
 async function pollRunLogs() {
   let servers = [];
-  try { servers = (await api('/dev/list')).servers || []; } catch (_) { return; }
+  try { servers = (await api('/dev/list')).servers || []; } catch (_) { return false; }
   for (const srv of servers) {
     const path = srv.path || srv.script || '';
     if (!path) continue;
@@ -116,6 +116,13 @@ async function pollRunLogs() {
       if (failed) { leeLogFilter('runs'); leeDock('logs'); status(`${srv.label || path.split('/').pop()} failed — exit ${srv.returncode}`, 'err'); }
     }
   }
+  return servers.length;
+}
+
+// A dev server's output has to arrive promptly. An empty list has nothing to say for 15s.
+async function runLogLoop() {
+  const busy = await pollRunLogs();
+  setTimeout(runLogLoop, busy ? 2000 : 15000);
 }
 
 function leeDock(which) {

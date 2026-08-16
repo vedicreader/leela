@@ -121,9 +121,10 @@ def test_a_host_offers_only_the_tools_it_supports():
     assert 'run_python' not in names and 'notebook_cells' not in names
     names = {t.__name__ for t in tools_for(MemHost_agent())}
     assert 'run_python' not in names
+    from ramabana.git import GIT_WRITE_TOOLS
     assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
             'run_shell', 'memory_forget', 'create_skill',
-            'cancel_watch', 'cart_add', 'cart_remove', 'git_remote', 'git_checkout'} == set(WRITE_TOOLS)
+            'cancel_watch', 'cart_add', 'cart_remove'} | GIT_WRITE_TOOLS == set(WRITE_TOOLS)
     a, _ = fake_agent()
     names = {t.__name__ for t in read_only(a.tools)}
     assert not (names & WRITE_TOOLS)
@@ -1615,6 +1616,15 @@ def test_a_site_packages_under_an_oddly_named_venv_is_still_skipped(tmp_path):
     (tmp_path/'mine.py').write_text('y = 2\n')
     ws = Workspace(roots=[tmp_path])
     assert [p.name for p in ws.fs.walk(tmp_path)] == ['mine.py']
+
+def test_a_file_leela_just_wrote_can_be_found_before_the_walk_cache_expires(tmp_path):
+    "The walk is cached to keep quick-open cheap. Our own writes skip the window."
+    ws = Workspace(roots=[tmp_path])
+    assert [p.name for p in ws.fs.walk(tmp_path)] == []
+    ws.fs.write(tmp_path/'fresh.py', 'x = 1\n')
+    assert [p.name for p in ws.fs.walk(tmp_path)] == ['fresh.py'], 'stale for 2s was the bug'
+    ws.fs.delete(tmp_path/'fresh.py')
+    assert [p.name for p in ws.fs.walk(tmp_path)] == []
 
 
 

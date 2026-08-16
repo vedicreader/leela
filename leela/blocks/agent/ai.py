@@ -8,14 +8,14 @@ from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
 from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, preview_for
 from ...agent.tools import MAX_HITS, MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS
-from ...agent.tools import DENY, MAX_GREP_HITS, Host, clip, tools_for
+from ...agent.tools import DENY, MAX_GREP_HITS, Host, clip, failed, tools_for
 from ...agent.spec import SpecHost
 from ..vault.jobs import cadence
 from .video import VideoJobs, video_available, video_tools
 
-GIT_TOOLS = ('git_status', 'git_fetch', 'git_checkout', 'git_pull', 'git_push')
-GIT_WRITE_TOOLS = frozenset(GIT_TOOLS) - {'git_status'}
-FAILED_PREFIXES = ('edit failed', 'write failed', 'could not', *(f'{t.replace("_", " ")} failed' for t in GIT_TOOLS))
+from ramabana.git import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS
+
+FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
 FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
 WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS | NEWS_WRITE_TOOLS
@@ -456,47 +456,6 @@ class WorkspaceHost(Host):
             try: fn(text)
             except Exception: pass
 
-def _git_tools(host):
-    "Git operations bound to an open repository and kept inside workspace roots."
-    from ..git.git import GitRepo
-    def repo(path=''):
-        roots = [Path(r).expanduser().resolve() for r in host.roots]
-        if not roots: raise ValueError('open a project folder first')
-        selected = host.check(path or getattr(host, 'project', '') or roots[0], must_exist=True)
-        found = GitRepo.at(selected)
-        if not any(found.root == root or found.root.is_relative_to(root) for root in roots):
-            raise ValueError(f'Git root {found.root} is outside the open folders; open the repository root first')
-        return found
-    def result(r, output=''):
-        if isinstance(output, dict): output = output.get('summary') or output.get('message') or ''
-        info = r.info()
-        summary = {'root': info['root'], 'branch': info['branch'], 'upstream': info['upstream'],
-            'ahead': info['ahead'], 'behind': info['behind'], 'clean': info['clean'],
-            'branches': info['branches'], 'changes': info['changes']}
-        return ((output.strip() + '\n') if output and output.strip() else '') + json.dumps(summary, indent=2)
-    def report(what, path, act=None):
-        "Run one operation on the selected repository and report it with the refreshed status."
-        try:
-            r = repo(path)
-            return clip(result(r, act(r) if act else ''), MAX_TOOL_CHARS * 2)
-        except Exception as e: return f'{what} failed: {errstr(e)}'
-    def git_status(path: str = '') -> str:
-        "Show repository status, local and remote branches, upstream, and changed files."
-        return report('git status', path)
-    def git_fetch(path: str = '') -> str:
-        "Fetch and prune remote refs, then return the refreshed branch status."
-        return report('git fetch', path, lambda r: r.fetch())
-    def git_checkout(branch: str, path: str = '') -> str:
-        "Switch to a local branch or create a local tracking branch from `REMOTE/BRANCH`."
-        return report('git checkout', path, lambda r: r.checkout(str(branch or '').strip()))
-    def git_pull(path: str = '') -> str:
-        "Fast-forward the current branch from its configured upstream."
-        return report('git pull', path, lambda r: r.pull())
-    def git_push(path: str = '') -> str:
-        "Push the current branch to its configured upstream."
-        return report('git push', path, lambda r: r.push())
-    return [git_status, git_fetch, git_checkout, git_pull, git_push]
-
 def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
     "Leela's blended search as one tool: every backend at once, each hit stamped with what agreed."
     def search_all(query: str) -> str:
@@ -667,7 +626,6 @@ class Assistant(Agent):
             kwargs['approvals'] = _PolicyApprovals(approve)
         self.ws, self.surface = ws, surface
         self.session_state = str(getattr(ws, 'agent_state', '') or '')
-        self._git_toolset = _git_tools(host)
         self._news_toolset = _news_tools(host)
         self._search_toolset = _search_tools(host, legs=None if surface == 'agent' else FAST_SEARCH_LEGS)
         self.video_jobs = VideoJobs() if video_available() else None
@@ -683,8 +641,8 @@ class Assistant(Agent):
     def tools(self):
         if self._tools is None:
             registered = {f.__name__ for f in self.registry.tools}
-            self.registry.tools.extend(f for f in [*self._git_toolset, *self._news_toolset,
-                                                   *self._search_toolset, *self._video_toolset]
+            self.registry.tools.extend(f for f in [*self._news_toolset, *self._search_toolset,
+                                                   *self._video_toolset]
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             built = super().tools
@@ -762,7 +720,7 @@ class Assistant(Agent):
             except Exception:
                 if approvals is not None: approvals.observe_result(False)
                 raise
-            ok = not str(out).startswith(FAILED_PREFIXES)
+            ok = not (failed(out) or str(out).startswith(FAILED_PREFIXES))
             if approvals is not None:
                 approvals.observe_result(ok)
                 if steer := approvals.consume_steer():
@@ -798,4 +756,4 @@ class _PolicyApprovals(Approvals):
 def ide_tools(ws, session=None):
     "Every tool the agent gets, bound to one `Workspace`."
     host = WorkspaceHost(ws, session)
-    return tools_for(host, extra=_git_tools(host) + _news_tools(host) + _search_tools(host))
+    return tools_for(host, extra=_news_tools(host) + _search_tools(host))

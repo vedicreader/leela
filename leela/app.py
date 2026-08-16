@@ -5,6 +5,8 @@ import ast, asyncio, ipaddress, json, os, re, shutil, subprocess, sys, warnings
 from itertools import accumulate
 from urllib.parse import quote
 from fasthtml.common import *
+from starlette.middleware import Middleware
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.routing import WebSocketRoute
 
 from .core.inspectors import PROFILES, SORTS
@@ -754,7 +756,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     _runstate = RunState()
     running_cells = _runstate.cells
     hdrs = (Link(rel='icon', href=_asset('favicon.svg'), type='image/svg+xml'),
-            Script(src=_asset('htmx.min.js')),
+            Script(src=_asset('htmx.min.js'), defer=True),
             Script("""try { const legacy = {system: 'leela:system:relaxed', dark: 'leela:dark:relaxed', light: 'leela:light:relaxed', cursor: 'cursor:light:tight'};
 const stored = localStorage.getItem('lee-theme') || 'cursor:light:tight';
 const [family, mode, density] = (stored.includes(':') ? stored : legacy[stored] || 'cursor:light:tight').split(':');
@@ -763,7 +765,7 @@ document.documentElement.dataset.theme = family;
 document.documentElement.dataset.mode = resolved;
 document.documentElement.dataset.density = density || (family === 'cursor' ? 'tight' : 'relaxed');
 document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
-            Script(src=_asset('lee-cm6.js')),
+            Script(src=_asset('lee-cm6.js'), defer=True),
             Link(rel='stylesheet', href=_asset('lee-term.css')),
             Link(rel='stylesheet', href=_asset('lee-ide.css')),
             Script(src=_asset('lee-ide.js'), defer=True))
@@ -820,9 +822,15 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 if not task.done(): task.cancel()
             try: await sock.close()
             except Exception: pass
-    app, rt = fast_app(pico=False, default_hdrs=False, hdrs=hdrs,
-                       routes=(Mount('/leestatic', Assets(*static_dirs())),
-                               WebSocketRoute('/term/ws', term_ws)))
+    # `fast_app` imports `fasthtml.pico` whatever `pico=` says. That costs 212ms and IPython
+    # for a stylesheet link this app never uses.
+    # Starlette's exclusion list spares `text/event-stream`. The streams stay unbuffered.
+    app = FastHTML(default_hdrs=False, hdrs=hdrs,
+                   middleware=(Middleware(GZipMiddleware, minimum_size=512),),
+                   routes=(Mount('/leestatic', Assets(*static_dirs())),
+                           WebSocketRoute('/term/ws', term_ws)))
+    app.static_route_exts()
+    rt = app.route
     _docstore = DocStore(ws)
     _docs: dict[str, Notebook] = _docstore.docs
     _buffers: dict[str, str] = _docstore.buffers
@@ -1644,6 +1652,16 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         return {'id': live.get('id'), 'path': live.get('path'), 'cells': live.get('cells', []),
                 'agent': list(ws.ai.history) if not session else [],
                 'inline': list(ws.inline_ai.history) if not session else []}
+    @rt('/agent/resume')
+    async def agent_resume(req):
+        "Put a saved conversation back into the model's context, and return its turns."
+        d = await req.json()
+        if ws.ai.busy: return _fail('cannot resume while the agent is working', 409)
+        try: s = await _off_loop(ws.ai.resume_session, str(d.get('session') or 'latest'))
+        except Exception as e: return _fail(e)
+        return {'ok': True, 'session': s['id'], 'note': ws.ai.note,
+                'turns': [t for t in ws.ai.history if t.get('session') == s['id']]}
+
     @rt('/agent/new')
     async def agent_new():
         if ws.ai.busy: return _fail('cannot start a new conversation while the agent is working', 409)
