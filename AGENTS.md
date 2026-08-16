@@ -16,8 +16,8 @@ Everything above is `AnswerDotAI/aai-coding`, `prompts/core.md`, verbatim. Every
 
 Leela's house style is fastai/fastcore taken to the extreme, and `CLAUDE.md` in this repository states it in full. Read it before writing code here, whichever harness you are.
 
-`leela.agent` is an alias for the `ramabana` package, not a copy of it. The same holds for the other libraries Leela composes. A behaviour that belongs to the agent core belongs in Ramabana, so when a change wants to reach into one of these seams, say so rather than reimplementing the behaviour on Leela's side.
+`leela.agent` is an alias for the `ramabana` package, not a copy of it. The same holds for the other libraries Leela composes. A behaviour that belongs to the agent core belongs in Ramabana. When a change wants to reach into one of these seams, say so rather than reimplementing it on Leela's side.
 
-For the prose that ships with the work -- docstrings, comments, READMEs, commit messages, PR descriptions -- read the `write_docs` skill; for narrative writing read `write_prose`; for the design a codebase is derived from, `theory`. All three arrive with `ramabana` as pyskills, so `read_skill` finds them and no copy lives here.
+Read the `write_docs` skill before writing docstrings, comments, READMEs, commit messages or PR descriptions. Read `write_prose` for narrative writing. Read `theory` for the design a codebase grew from. All three arrive with `ramabana` as pyskills, so `read_skill` finds them and no copy lives here.
 
-For every behavior-changing change, add or update a focused regression test that reproduces the prior fault and verifies the repaired contract, then run it and the project's relevant checks before reporting completion.
+For every behavior-changing change, add or update a focused regression test that reproduces the prior fault and verifies the repaired contract. Run it and the project's relevant checks before reporting completion.

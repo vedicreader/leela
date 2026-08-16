@@ -417,6 +417,23 @@ def test_workspace_repo_writes_are_opt_in_and_persisted(tmp_path):
     ws.save()
     assert Workspace.load(ws_path()).allow_workspace_repo_writes
 
+def test_subagent_writes_are_opt_in_persisted_and_reach_the_assistant(tmp_path):
+    "The checkbox is the front of it; the setting has to survive a restart and reach the `Agent`."
+    from ramabana.tools import WRITE_TOOLS, read_only
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    assert ws.subagent_writes is False and ws.ai.subagent_writes is False
+    assert not ({t.__name__ for t in read_only(ws.ai.tools)} & WRITE_TOOLS)
+
+    ws.ai.set_subagent_writes(True)
+    assert 'create_file' in {t.__name__ for t in read_only(ws.ai.tools, writes=True)}
+    assert ws.ai._sub_plain() is ws.ai.tools
+
+    ws.subagent_writes = True; ws.save()
+    back = Workspace.load(ws_path(), port=0)
+    assert back.subagent_writes and back.ai.subagent_writes
+
+
 def test_new_agent_setup_keeps_file_and_notebook_access_inside_workspace(tmp_path):
     from leela.blocks.nb.nb import Cell, Notebook
     from leela.workspace import Workspace
@@ -652,9 +669,9 @@ def test_skills_are_discovered_and_selected_by_the_prompt():
     assert 'exhash' in found, 'exhash ships the editing reference leela used to paste by hand'
     assert found['exhash'].source == 'pyskill'
     assert found['exhash'].text().strip()
-    for n in ('coding_patterns', 'theory', 'write_prose', 'write_docs'):   # what AGENTS.md sends agents to
+    for n in ('coding_patterns', 'theory', 'write_prose', 'write_docs'):   # what AGENTS.md points at
         assert found[n].source == 'pyskill' and found[n].where == f'ramabana.{n}'
-        assert 'more chars]' not in found[n].text(), f'{n} reaches the agent clipped'
+        assert 'more chars]' not in found[n].text(), n
     ss = [Skill('editskill', 'pyskill'), Skill('editor', 'pyskill')]
     assert find(ss, 'edit') is None
     assert find(ss, 'editskill').name == 'editskill'

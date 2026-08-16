@@ -712,6 +712,10 @@ def _agent_panel(ws):
                         Label(Input(type='checkbox', id='workspace-repo-writes', checked=ws.allow_workspace_repo_writes,
                                     onchange='leeWorkspaceRepoWrites(this.checked)'), ' allow writes to other workspace repos',
                               cls='lee-check-setting', title='Keep approval prompts, but allow approved writes to any repository added to this workspace'),
+                        Label(Input(type='checkbox', id='subagent-writes', checked=ws.subagent_writes,
+                                    onchange='leeSubagentWrites(this.checked)'), ' sub-agents may write',
+                              cls='lee-check-setting',
+                              title='Delegated sub-agents get the write tools as well as the read ones. Edits, commands and Python, each recorded and put through the same approval prompts. Off, they can only report what they found'),
                         Label(Input(type='checkbox', id='agent-read-outside', checked=ws.agent_read_outside,
                                     onchange='leeAgentReadOutside(this.checked)'), ' read outside the open folders',
                               cls='lee-check-setting',
@@ -1783,6 +1787,20 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         ws.allow_workspace_repo_writes = enabled; ws.save()
         return {'ok': True, 'enabled': enabled,
                 'note': f'workspace repository writes {"enabled" if enabled else "disabled"}; approval rules still apply'}
+    @rt('/agent/subagent-writes')
+    async def agent_subagent_writes(req):
+        "Whether delegated sub-agents get the write tools. Approvals and recording apply either way."
+        d = await req.json(); enabled = d.get('enabled')
+        if not isinstance(enabled, bool): return _fail('enabled must be true or false')
+        try:
+            live = _live_assistants()
+            if any(a.busy for a in live): raise RuntimeError('cannot change sub-agent writes while an assistant is working')
+            for a in live: a.set_subagent_writes(enabled)
+        except Exception as e: return _fail(e)
+        ws.subagent_writes = enabled; ws.save()
+        return {'ok': True, 'enabled': enabled,
+                'note': ('sub-agents may write, run commands and run Python. Every call is recorded and approved'
+                         if enabled else 'sub-agents read only again')}
     @rt('/agent/read-outside')
     async def agent_read_outside(req):
         "Reads outside the open folders. Writes are unaffected, and credentials stay refused."
