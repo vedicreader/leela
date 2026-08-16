@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 
 from fastcore.all import Path
-from ramabana.git import (GitError, GitRepo as _GitRepo, _conflict_blocks, _run, _unborn, clone, clone_target,
-                          gateway, repo_root, shorten, url_name)
+from ramabana.git import GitError, GitRepo as _GitRepo, _unborn, clone, clone_target, gateway, repo_root
 
 from ..nb.nb import source_spans as _source_spans
 

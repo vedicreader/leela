@@ -6,7 +6,7 @@ Drives a real Chromium over a generated project, so the numbers are the ones a u
     python tools/profile_web.py --dirs 40       # a wider tree
 """
 from __future__ import annotations
-import argparse, asyncio, json, subprocess, sys, tempfile, threading, time
+import argparse, asyncio, subprocess, sys, tempfile, threading, time
 from fastcore.all import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -204,7 +204,7 @@ def main(argv=None):
            for name, r in (('a file appears from elsewhere', watch['theirs']),
                            ('the client saves its own', watch['mine']))],
           ('change', 'requests', 'rows', 'folders open', 'scroll', 'rows kept'))
-    print(f"\n## what the page asks for while nobody touches it\n")
+    print("\n## what the page asks for while nobody touches it\n")
     table([('requests per minute, idle', idle['per_min'])] +
           [(f'  {name}', n) for name, n in idle['top']], ('measure', 'value'))
     print('\n  A push reconciles only the folder that changed, so expansion, scroll and every\n'

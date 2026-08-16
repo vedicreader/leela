@@ -36,8 +36,10 @@ def _git_class(change):
     return 'modified'
 
 def _kids(fs, path, git_state, hidden, opened):
+    # A remembered folder that has since been deleted, or left with its root, draws nothing --
+    # it must not take the whole pane down with it.
     try: return [tree_node(e, git_state, hidden, fs, opened) for e in fs.ls(path, hidden=hidden)]
-    except OSError: return []
+    except Exception: return []
 
 def tree_node(e, git_state=None, hidden=False, fs=None, opened=frozenset()):
     "One file-tree row. A folder in `opened` is drawn expanded rather than fetched on click."

@@ -8,7 +8,7 @@ them at once, and holding a Workspace open per thread.
     python tools/profile_worktrees.py -n 8       # eight threads
 """
 from __future__ import annotations
-import argparse, json, os, shutil, subprocess, sys, tempfile, threading, time
+import argparse, os, shutil, subprocess, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from fastcore.all import Path
 
