@@ -5,7 +5,7 @@ from leela.blocks.workflows.workflows import WorkflowError, Workflows, levels
 import time
 from starlette.testclient import TestClient
 from leela.app import ide_app
-from leela.blocks.jobs.jobs import JobError, Jobs
+from leela.blocks.vault.jobs import JobError, Jobs
 from leela.workspace import Workspace
 from leela.blocks.workflows.wfbuild import PRESETS, TRIGGERS, compose, load_spec, preset_rows, save_spec
 

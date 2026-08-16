@@ -71,6 +71,7 @@ async function mountTab(expectedPath = '') {
   }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
   if (st.kind === 'vault') await mountVault(host, st);
+  else if (st.kind === 'vaultwb') await mountVaultWorkbench(host, st);
   else if (st.kind === 'web') mountWeb(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'image') mountImage(host, st);

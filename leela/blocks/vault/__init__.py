@@ -1,4 +1,4 @@
-"Queued work with a visible state, and the cadence for the work that repeats."
+"The vault: what is in it, what puts things in it, and the queued work that does the putting."
 
 from .._lazy import lazy_app
 

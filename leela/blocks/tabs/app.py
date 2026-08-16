@@ -77,6 +77,9 @@ def connect(app, ctx):
         if t.kind == 'vault':
             vault, shelf, doc = (t.ref.split('|') + ['', '', ''])[:3]
             return {'kind': 'vault', 'title': t.title, 'vault': vault, 'shelf': shelf, 'doc': doc}
+        if t.kind == 'vaultwb':
+            # A place rather than a document: the client asks `/vault/workbench` for the markup.
+            return {'kind': 'vaultwb', 'title': t.title, 'view': t.ref or 'browse'}
         if t.kind == 'web':
             # Same shape again: the page lives in Chrome, and the panel opens `/browser/ws`.
             return {'kind': 'web', 'title': t.title, 'target': t.ref}

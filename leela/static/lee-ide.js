@@ -25,6 +25,9 @@ const lee = {
   // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
   // path->name map: two selections in one file are two contexts, not one key overwriting itself.
   agentSelections: [],
+  // Vault documents and sections queued for the next turn. A vault ref is not a path, so it
+  // cannot live in `agentAttachments`; `ref` -> {vault, shelf, doc, title} keyed the same way.
+  vaultRefs: new Map(),
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
@@ -1321,6 +1324,7 @@ async function mountTab(expectedPath = '') {
   }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
   if (st.kind === 'vault') await mountVault(host, st);
+  else if (st.kind === 'vaultwb') await mountVaultWorkbench(host, st);
   else if (st.kind === 'web') mountWeb(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'image') mountImage(host, st);
@@ -4536,7 +4540,11 @@ function paintAgentAttachments() {
   const sels = lee.agentSelections.map((s, i) =>
     `<span class="lee-agent-attachment selection" title="${esc(s.path)}"><span>${esc(s.label)}</span>` +
     `<button type="button" data-sel="${i}" aria-label="remove ${esc(s.label)}">remove</button></span>`).join('');
-  host.innerHTML = active + sels + [...lee.agentAttachments.entries()].map(([path, name]) =>
+  const vaulted = [...lee.vaultRefs.entries()].map(([key, r]) =>
+    `<span class="lee-agent-attachment vault" title="${esc(r.vault || 'vault')} · ${esc(r.shelf || 'main')}">` +
+    `<span>${esc(r.title)}</span>` +
+    `<button type="button" data-vault-ref="${esc(key)}" aria-label="remove ${esc(r.title)}">remove</button></span>`).join('');
+  host.innerHTML = active + sels + vaulted + [...lee.agentAttachments.entries()].map(([path, name]) =>
     `<span class="lee-agent-attachment${name.endsWith('/') ? ' folder' : ''}" title="${esc(path)}"><span>${esc(name)}</span>` +
     `<button type="button" data-path="${esc(path)}" aria-label="remove ${esc(name)}">remove</button></span>`).join('') + states;
   $$('.lee-agent-state-suggestion', host).forEach(b => b.onclick = async () => {
@@ -4545,6 +4553,9 @@ function paintAgentAttachments() {
   });
   $$('[data-sel]', host).forEach(b => b.onclick = () => {
     lee.agentSelections.splice(+b.dataset.sel, 1); paintAgentAttachments();
+  });
+  $$('[data-vault-ref]', host).forEach(b => b.onclick = () => {
+    lee.vaultRefs.delete(b.dataset.vaultRef); paintAgentAttachments();
   });
   $$('[data-path]', host).forEach(b => b.onclick = () => {
     const name = lee.agentAttachments.get(b.dataset.path);
@@ -4575,6 +4586,12 @@ function chooseAgentSuggest(i = lee.agentSuggestAt) {
     const at = input.selectionStart, before = input.value.slice(0, at);
     const left = before.replace(/(^|\s)\/(?:[A-Za-z_][\w-]*)?$/, `$1/${item.name} `);
     input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
+  } else if (item.kind === 'vault') {
+    attachVaultRef(item);
+    const at = input.selectionStart, before = input.value.slice(0, at);
+    const left = before.replace(/(^|\s)@[^\s@]*$/, `$1@${item.name} `);
+    input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
+    paintAgentAttachments();
   } else {
     // The token *stays*. Removing it left the sentence reading "look at and tell me why",
     // with the thing being talked about visible only as a chip somewhere else. What you typed
@@ -4614,11 +4631,20 @@ async function updateAgentSuggest() {
     // `@` means "in this project", not "anywhere the workspace can reach": with several
     // checkouts open, the unscoped list is mostly files from a project you are not in.
     // `dirs`: a folder is somewhere to look, and attaching one is how you say "read around here".
-    const d = await api('/fs/find?dirs=1&scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=12');
+    // The vault answers the same `@`, because "this document" is the same gesture whether the
+    // document is a file you have open or a paper you filed a month ago.
+    // Both are capped, and capped short: a list where one source fills the visible rows is a list
+    // that only has one source, whatever the other one returned.
+    const [f, v] = await Promise.all([
+      api('/fs/find?dirs=1&scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=7').catch(() => ({})),
+      api('/vault/mentions?limit=5&q=' + encodeURIComponent(mention[1])).catch(() => ({}))]);
     if (seq !== agentSuggestSeq) return;
-    lee.agentSuggest = (d.hits || []).slice(0, 12).map(f => ({kind: f.kind === 'folder' ? 'folder' : 'file',
-      path: f.path, name: f.name, label: '@' + f.name,
-      detail: (f.kind === 'folder' ? 'folder · ' : '') + compactPath(f.path)}));
+    const files = (f.hits || []).slice(0, 7).map(x => ({kind: x.kind === 'folder' ? 'folder' : 'file',
+      path: x.path, name: x.name, label: '@' + x.name,
+      detail: (x.kind === 'folder' ? 'folder · ' : '') + compactPath(x.path)}));
+    const vaulted = (v.mentions || []).map(x => ({kind: 'vault', vault: x.vault, shelf: x.shelf,
+      doc: x.doc, name: x.title, title: x.title, label: '@' + x.title, detail: 'vault · ' + x.detail}));
+    lee.agentSuggest = [...files, ...vaulted];
   } else return closeAgentSuggest();
   lee.agentSuggestAt = 0; paintAgentSuggest();
 }
@@ -4748,8 +4774,9 @@ async function sendAgent() {
     const head = q.slice(1).split(/\s/, 1)[0];
     if ((lee.agentVocabulary?.commands || []).some(c => c.name === head)) return sendAgentCommand(q);
   }
-  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref)];
-  lee.agentAttachments.clear(); lee.agentSelections = []; paintAgentAttachments();
+  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref),
+                       ...lee.vaultRefs.values()];
+  lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
   lee.agentBusy = true; setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   log.appendChild(userMessage(q)); log.scrollTop = log.scrollHeight;
@@ -8211,6 +8238,7 @@ function leeToolsMenu(anchor) {
     {label: 'Command palette', detail: displayChord('mod+shift+p'), run: () => leeAct('palette')},
     {label: 'Recent files', detail: displayChord('mod+e'), run: () => leeAct('recent_tabs')},
     {separator: true},
+    {label: 'The vault…', detail: 'browse, search, and put things in', run: () => leeVaultWorkbench()},
     {label: 'Research workspace…', run: () => leeAct('research')},
     {label: 'Read webpage…', run: () => leeAct('read_url')},
     {label: 'Browse a page…', detail: displayChord('alt+shift+o'), run: () => leeAct('browse_url')},
@@ -9675,7 +9703,70 @@ async function showConflictCenter() {
   } catch (e) { leeFail('git', 'resolve conflicts', e); }
 }
 window.showConflictCenter = showConflictCenter;
-/* ---- vault reader: a document from the vault, as an editor tab ---- */
+/* ---- the vault: a document as a tab, and the workbench that browses them all ---- */
+
+/* The workbench is server-rendered and swaps its own body, so mounting it is one fetch and
+   htmx owns everything after that. The tab holds only which view was last open. */
+async function mountVaultWorkbench(host, st) {
+  host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>opening the vault</small></div>';
+  try {
+    await htmx.ajax('GET', '/vault/workbench?view=' + encodeURIComponent(st.view || 'browse'),
+                    {target: host, swap: 'innerHTML'});
+  } catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+}
+window.mountVaultWorkbench = mountVaultWorkbench;
+
+async function leeVaultWorkbench(view = 'browse') {
+  await htmx.ajax('POST', '/vault/workbench/open?view=' + encodeURIComponent(view),
+                  {target: '#tabbar', swap: 'outerHTML'});
+  return mountTab();
+}
+window.leeVaultWorkbench = leeVaultWorkbench;
+
+/* Filtering is client-side because the rows are already here: a shelf of two hundred documents
+   is one payload, and a keystroke that costs a request is a keystroke you feel. */
+function leeVaultFilter(input) {
+  const want = input.value.trim().toLowerCase(), wrap = input.closest('.lee-wb-main');
+  let shown = 0;
+  $$('.lee-vault-docrow', wrap).forEach(row => {
+    const hit = !want || row.textContent.toLowerCase().includes(want);
+    row.hidden = !hit; if (hit) shown++;
+  });
+  const count = $('.lee-wb-count', wrap);
+  if (count) count.textContent = `${shown} shown`;
+}
+window.leeVaultFilter = leeVaultFilter;
+
+/* ---- attaching a vault document to the next question ---- */
+
+function attachVaultRef({vault = '', shelf = '', doc = '', title = ''}) {
+  if (!doc) return null;
+  lee.vaultRefs.set(`${vault}|${shelf}|${doc}`, {kind: 'vault', vault, shelf, doc, title: title || doc});
+  return title || doc;
+}
+window.attachVaultRef = attachVaultRef;
+
+function leeVaultAsk(btn) {
+  const name = attachVaultRef(btn.dataset);
+  if (!name) return;
+  paintAgentAttachments();
+  leeRight('agent');
+  $('#agentprompt')?.focus();
+  status(`${name} is attached to the next question`, 'ok');
+}
+window.leeVaultAsk = leeVaultAsk;
+
+/* Every hit on the find view at once: "what do all of these say about X" is one question,
+   and attaching them one at a time is the same question typed six times. */
+function leeVaultAskAll(btn) {
+  const rows = $$('.lee-wb-hit .lee-vault-ask', btn.closest('.lee-wb-find'));
+  rows.forEach(b => attachVaultRef(b.dataset));
+  paintAgentAttachments();
+  leeRight('agent');
+  status(`${rows.length} section${rows.length === 1 ? '' : 's'} attached`, 'ok');
+}
+window.leeVaultAskAll = leeVaultAskAll;
+
 
 function vaultSectionRows(sections, active) {
   if (!sections.length) return '<div class="lee-dim">No section structure was extracted.</div>';

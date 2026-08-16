@@ -6,7 +6,7 @@ from leela.blocks.memory.memory import GLOBAL, Memory, safe_shelf
 from leela.blocks.research.research import Doc
 from leela.core.block import Ctx
 from fasthtml.common import to_xml
-from leela.blocks.jobs.app import PII_COVERS, _tidy_list, _tidy_row, job_card, pii_badge, vault_panel
+from leela.blocks.vault.ui import PII_COVERS, _tidy_row, job_card, pii_badge, tidy_list, vault_panel
 from leela.blocks.keys.menus import MENUS
 from leela.blocks.memory.memory import Memory
 from leela.core.keys import lookup
@@ -76,7 +76,7 @@ def test_the_tidy_list_is_asked_for_rather_than_rendered_with_the_panel(tmp_path
     assert 'lee-tidy-row' not in panel, 'nothing is scored until review is pressed'
 
 def test_an_empty_shelf_says_so_instead_of_rendering_no_rows(tmp_path):
-    html = to_xml(_tidy_list(_mem(tmp_path)))
+    html = to_xml(tidy_list(_mem(tmp_path)))
     assert 'id="vaulttidy"' in html and 'too small to have an opinion' in html
 
 

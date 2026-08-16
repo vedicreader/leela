@@ -25,6 +25,9 @@ const lee = {
   // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
   // path->name map: two selections in one file are two contexts, not one key overwriting itself.
   agentSelections: [],
+  // Vault documents and sections queued for the next turn. A vault ref is not a path, so it
+  // cannot live in `agentAttachments`; `ref` -> {vault, shelf, doc, title} keyed the same way.
+  vaultRefs: new Map(),
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),

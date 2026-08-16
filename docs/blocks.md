@@ -62,7 +62,7 @@ def connect(app, ctx):
 Wiring is ordered, in one place:
 
 ```python
-BLOCKS = [keys_block, settings_block, search_block, memory_block, jobs_block, ...]
+BLOCKS = [keys_block, settings_block, search_block, memory_block, vault_block, ...]
 connect_all(app, workspace, BLOCKS, gate=gate, catalog=catalog)
 ```
 
@@ -85,7 +85,7 @@ CAPS = ('fs', 'journal')     # ctx.fs and ctx.journal work. ctx.memory raises
 Two kinds of thing hang off a workspace, and only one of them is a capability.
 
 Capabilities are services a block uses: `fs`, `pool`, `search`, `memory`, `research`, `runs`,
-`journal`, `terms`, `dev`, `approvals`, `jobs`, `vaults`, `ai`, `inline_ai`, `completer`,
+`journal`, `terms`, `dev`, `approvals`, `jobs`, `vaults`, `feeds`, `ai`, `inline_ai`, `completer`,
 `lsp`, `tab`, `pending_approval`. They are declared, narrowed, and swappable.
 
 Session state is the mutable facts about this workspace, shared by everything: `tabs`,
@@ -169,14 +169,14 @@ checked to fail when its rule is broken, because a guard that cannot fail is wor
 
 ## Extraction status
 
-Blocks move out of `ide_app` a group at a time. Twenty-one blocks are connected and serve 178
-of the 273 registered routes. The closure in `leela/app.py` still serves 93, and a `Mount` and
+Blocks move out of `ide_app` a group at a time. Twenty-one blocks are connected and serve 201
+of the 301 registered routes. The closure in `leela/app.py` still serves 97, and a `Mount` and
 a `HostRoute` account for the last two.
 
 | block | routes | caps |
 |---|---|---|
-| `jobs` | 35 | `fs`, `memory`, `search`, `jobs`, `tab`, `vaults` |
-| `git` | 24 | `fs`, `jobs` |
+| `vault` | 48 | `fs`, `memory`, `search`, `jobs`, `tab`, `vaults`, `feeds` |
+| `git` | 25 | `fs`, `jobs` |
 | `runtime` | 16 | `fs`, `pool`, `dev`, `terms`, `tab`, `docs` |
 | `fs` | 11 | `fs`, `journal` |
 | `search` | 10 | `search`, `fs` |

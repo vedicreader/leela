@@ -14,7 +14,6 @@ from .blocks import drive as drive_block
 from .blocks import editor as editor_block
 from .blocks import fs as fs_block
 from .blocks import git as git_block
-from .blocks import jobs as jobs_block
 from .blocks import keys as keys_block
 from .blocks import lsp as lsp_block
 from .blocks import memory as memory_block
@@ -29,6 +28,7 @@ from .blocks import stack as stack_block
 from .blocks import term as term_block
 from .blocks import tabs as tabs_block
 from .blocks import vars as vars_block
+from .blocks import vault as vault_block
 from .blocks import workflows as workflows_block
 from .blocks import workspace as workspace_block
 from .blocks.term.app import term_cwd
@@ -61,7 +61,7 @@ from .agent.runtime import estimate_tokens
 
 __all__ = ['ide_app', 'serve_ide']
 
-BLOCKS = [keys_block, settings_block, search_block, memory_block, jobs_block,
+BLOCKS = [keys_block, settings_block, search_block, memory_block, vault_block,
           research_block, browser_block, term_block, runs_block, workspace_block, git_block,
           workflows_block, pipelines_block, drive_block, stack_block,
           fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block, refactor_block]
@@ -492,6 +492,7 @@ def _empty_editor():
         Div(Button('Open a folder', cls='lee-btn go', onclick='leeAct("add_root")'),
             Button('Open file', cls='lee-btn', onclick='leeAct("quick_open")'),
             Button('New notebook', cls='lee-btn', onclick='leeAct("new_notebook")'),
+            Button('Open the vault', cls='lee-btn', onclick='leeVaultWorkbench()'),
             Button('Research a topic', cls='lee-btn', onclick='leeAct("research")'),
             Button('Ask the agent', cls='lee-btn', onclick='leeAct("focus_agent")'),
             cls='lee-empty-actions'),

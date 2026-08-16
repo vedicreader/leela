@@ -1196,7 +1196,11 @@ function paintAgentAttachments() {
   const sels = lee.agentSelections.map((s, i) =>
     `<span class="lee-agent-attachment selection" title="${esc(s.path)}"><span>${esc(s.label)}</span>` +
     `<button type="button" data-sel="${i}" aria-label="remove ${esc(s.label)}">remove</button></span>`).join('');
-  host.innerHTML = active + sels + [...lee.agentAttachments.entries()].map(([path, name]) =>
+  const vaulted = [...lee.vaultRefs.entries()].map(([key, r]) =>
+    `<span class="lee-agent-attachment vault" title="${esc(r.vault || 'vault')} · ${esc(r.shelf || 'main')}">` +
+    `<span>${esc(r.title)}</span>` +
+    `<button type="button" data-vault-ref="${esc(key)}" aria-label="remove ${esc(r.title)}">remove</button></span>`).join('');
+  host.innerHTML = active + sels + vaulted + [...lee.agentAttachments.entries()].map(([path, name]) =>
     `<span class="lee-agent-attachment${name.endsWith('/') ? ' folder' : ''}" title="${esc(path)}"><span>${esc(name)}</span>` +
     `<button type="button" data-path="${esc(path)}" aria-label="remove ${esc(name)}">remove</button></span>`).join('') + states;
   $$('.lee-agent-state-suggestion', host).forEach(b => b.onclick = async () => {
@@ -1205,6 +1209,9 @@ function paintAgentAttachments() {
   });
   $$('[data-sel]', host).forEach(b => b.onclick = () => {
     lee.agentSelections.splice(+b.dataset.sel, 1); paintAgentAttachments();
+  });
+  $$('[data-vault-ref]', host).forEach(b => b.onclick = () => {
+    lee.vaultRefs.delete(b.dataset.vaultRef); paintAgentAttachments();
   });
   $$('[data-path]', host).forEach(b => b.onclick = () => {
     const name = lee.agentAttachments.get(b.dataset.path);
@@ -1235,6 +1242,12 @@ function chooseAgentSuggest(i = lee.agentSuggestAt) {
     const at = input.selectionStart, before = input.value.slice(0, at);
     const left = before.replace(/(^|\s)\/(?:[A-Za-z_][\w-]*)?$/, `$1/${item.name} `);
     input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
+  } else if (item.kind === 'vault') {
+    attachVaultRef(item);
+    const at = input.selectionStart, before = input.value.slice(0, at);
+    const left = before.replace(/(^|\s)@[^\s@]*$/, `$1@${item.name} `);
+    input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
+    paintAgentAttachments();
   } else {
     // The token *stays*. Removing it left the sentence reading "look at and tell me why",
     // with the thing being talked about visible only as a chip somewhere else. What you typed
@@ -1274,11 +1287,20 @@ async function updateAgentSuggest() {
     // `@` means "in this project", not "anywhere the workspace can reach": with several
     // checkouts open, the unscoped list is mostly files from a project you are not in.
     // `dirs`: a folder is somewhere to look, and attaching one is how you say "read around here".
-    const d = await api('/fs/find?dirs=1&scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=12');
+    // The vault answers the same `@`, because "this document" is the same gesture whether the
+    // document is a file you have open or a paper you filed a month ago.
+    // Both are capped, and capped short: a list where one source fills the visible rows is a list
+    // that only has one source, whatever the other one returned.
+    const [f, v] = await Promise.all([
+      api('/fs/find?dirs=1&scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=7').catch(() => ({})),
+      api('/vault/mentions?limit=5&q=' + encodeURIComponent(mention[1])).catch(() => ({}))]);
     if (seq !== agentSuggestSeq) return;
-    lee.agentSuggest = (d.hits || []).slice(0, 12).map(f => ({kind: f.kind === 'folder' ? 'folder' : 'file',
-      path: f.path, name: f.name, label: '@' + f.name,
-      detail: (f.kind === 'folder' ? 'folder · ' : '') + compactPath(f.path)}));
+    const files = (f.hits || []).slice(0, 7).map(x => ({kind: x.kind === 'folder' ? 'folder' : 'file',
+      path: x.path, name: x.name, label: '@' + x.name,
+      detail: (x.kind === 'folder' ? 'folder · ' : '') + compactPath(x.path)}));
+    const vaulted = (v.mentions || []).map(x => ({kind: 'vault', vault: x.vault, shelf: x.shelf,
+      doc: x.doc, name: x.title, title: x.title, label: '@' + x.title, detail: 'vault · ' + x.detail}));
+    lee.agentSuggest = [...files, ...vaulted];
   } else return closeAgentSuggest();
   lee.agentSuggestAt = 0; paintAgentSuggest();
 }
@@ -1408,8 +1430,9 @@ async function sendAgent() {
     const head = q.slice(1).split(/\s/, 1)[0];
     if ((lee.agentVocabulary?.commands || []).some(c => c.name === head)) return sendAgentCommand(q);
   }
-  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref)];
-  lee.agentAttachments.clear(); lee.agentSelections = []; paintAgentAttachments();
+  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref),
+                       ...lee.vaultRefs.values()];
+  lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
   lee.agentBusy = true; setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   log.appendChild(userMessage(q)); log.scrollTop = log.scrollHeight;

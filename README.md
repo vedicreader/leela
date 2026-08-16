@@ -75,6 +75,23 @@ over litesearch. It holds every page read and every research source. The agent r
 with `memory_search`, `memory_tree`, `memory_read` and `memory_topics`, rather than paying to
 search the live web again.
 
+### The vault
+
+**Tools → The vault…** opens a workbench as a tab: the shelves and what is on them, one search
+across all of them, and every way of putting something in. A folder shows its import plan —
+which shelves, which categories, which generated paths it will leave out — before it indexes
+anything. A page, a paper, a repository or a video needs no reader named: paste the address.
+Feeds are followed on a cadence and filed as ordinary documents, so what they said is searched
+and cited with everything else. An OpenAPI or discovery document can be read, searched, and
+filed as one section per operation.
+
+And you can ask about named documents. `@` in the composer now reaches the vault as well as the
+project, every row and every search hit has an **ask** button, and *attach every hit* puts a
+whole result set behind one question. An attached section is read as that section, not as the
+document around it. See [the vault](docs/vault.md).
+
+![Searching the vault, and attaching what it found](docs/screenshots/vault-workbench.png)
+
 ### Research
 
 [fossick](https://github.com/vedicreader/fossick) runs the web search and the extraction to
@@ -184,9 +201,10 @@ leela/
     projects.py   which folders are open, and which were open lately
     inspectors.py dhrishti's registry and menus, without importing dhrishti
   blocks/         one folder per feature: `connect(app, ctx)` plus a `CAPS` tuple
-    nb git search memory agent runtime research jobs workflows pipelines drive
+    nb git search memory agent runtime research workflows pipelines drive
     fs term keys tabs vars runs stack refactor lsp debug editor settings workspace
     browser       a CDP page as a tab: screencast in, input out
+    vault         the corpus, what fills it, and the queue that does the filling
   workspace.py    open folders, open tabs, and which kernel each tab talks to
   app.py          the FastHTML IDE: `ide_app`, `serve_ide`
   desktop.py      the native window: pywebview, the CDP boot, the macOS open event

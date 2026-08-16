@@ -8,7 +8,8 @@ from fastcore.all import L, Path
 from ... import errstr
 from .jobs import JobError, run_script
 
-__all__ = ['DOC_EXTS', 'clip_docs', 'clip_codebase', 'clip_api_spec', 'register_all']
+__all__ = ['DOC_EXTS', 'clip_docs', 'clip_codebase', 'clip_api_spec', 'clip_tree', 'acquire_one',
+           'connect_graph', 'register_all']
 
 DOC_EXTS = frozenset({'.md', '.markdown', '.txt', '.rst', '.pdf', '.ipynb', '.html', '.htm'})
 
@@ -93,11 +94,62 @@ def clip_api_spec(memory, job, report):
     return dict(source=src, title=title, operations=len(ops), pointer=doc,
         groups=sorted({o['group'] for o in ops if o.get('group')}))
 
-def register_all(jobs, memory, search=None, cwd=None):
+def clip_tree(memory, job, report):
+    "A folder onto the shelves its own structure implies, committed shelf by shelf."
+    from .acquire import plan_tree
+    plan = plan_tree(job.target)
+    if not plan.files: raise JobError(f'no clippable document under {job.target}')
+    done = set(job.params.get('_resume', {}).get('done', []) if job.resumable else [])
+    out = dict(root=str(plan.root), files=[], skipped=len(plan.skipped), n=len(plan.files),
+        shelves=plan.shelves, categories=plan.categories)
+    groups = {}
+    for x in plan.files:
+        if str(x.path) not in done: groups.setdefault((x.shelf, x.category), []).append(x.path)
+    seen = len(done)
+    for (shelf, category), paths in groups.items():
+        meta = dict(category=category, clipped_from='folder', import_root=str(plan.root), clip_job=job.id)
+        for i in range(0, len(paths), BATCH):
+            batch = paths[i:i + BATCH]
+            rows = memory.clip(batch, shelf=shelf, meta=meta)
+            for p, r in zip(batch, rows or [{}] * len(batch)):
+                out['files'].append(dict(path=str(p), shelf=shelf, category=category,
+                    doc_id=r.get('doc_id') or r.get('id'), status='skipped' if r.get('skipped') else 'clipped'))
+                done.add(str(p))
+            seen += len(batch)
+            report(progress=0.05 + 0.9 * seen / len(plan.files), current=f'{shelf} · {seen} of {len(plan.files)}',
+                result=out, params=dict(job.params, _resume=dict(done=sorted(done))))
+    return out
+
+def acquire_one(memory, job, report):
+    "One source, through the reader its shape asks for."
+    from .acquire import detect
+    action = job.params.get('action') or detect(job.target)
+    if action == 'clip': return clip_docs(memory, job, report)
+    report(current=f'{action} {job.target}', progress=0.2)
+    kw = {k: v for k, v in job.params.items() if k not in ('action', 'shelf', '_resume', 'from')}
+    return dict(memory.acquire(action, job.target, shelf=job.params.get('shelf'), **kw), action=action)
+
+def connect_graph(memory, job, report):
+    "Entities and topics across every populated shelf, which is what a cluster map reads."
+    out, names = {}, memory._populated()
+    for i, name in enumerate(names):
+        report(progress=0.05 + 0.9 * i / max(1, len(names)), current=name)
+        try: out[name] = dict(memory._store(name).connect())
+        except Exception as e: out[name] = dict(error=errstr(e))
+    return dict(shelves=out, topics=len(memory.clusters().get('clusters') or []))
+
+def register_all(jobs, memory, search=None, cwd=None, feeds=None):
     "Wire every clip kind, plus the two general ones, onto a `Jobs`."
     jobs.register('clip', lambda job, report: clip_docs(memory, job, report))
+    jobs.register('clip_tree', lambda job, report: clip_tree(memory, job, report))
+    jobs.register('acquire', lambda job, report: acquire_one(memory, job, report))
+    jobs.register('connect', lambda job, report: connect_graph(memory, job, report))
     jobs.register('clip_codebase', lambda job, report: clip_codebase(memory, search, job, report))
     jobs.register('clip_api_spec', lambda job, report: clip_api_spec(memory, job, report))
+    if feeds is not None:
+        from .news import poll_feeds
+        jobs.register('feeds', lambda job, report: poll_feeds(memory, feeds,
+            force=bool(job.params.get('force')), report=report))
     jobs.register('tidy', lambda job, report: dict(candidates=memory.noisy_candidates(
         shelf=job.params.get('shelf'), k=int(job.params.get('k') or 20))))
     jobs.register('poll', lambda job, report: jobs.poll_due())

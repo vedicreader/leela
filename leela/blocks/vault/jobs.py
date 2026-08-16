@@ -2,16 +2,33 @@
 
 from __future__ import annotations
 
-import json, os, shlex, sqlite3, subprocess, threading, time, uuid
+import json, os, re, shlex, sqlite3, subprocess, threading, time, uuid
 from functools import partial
 from fastcore.all import L, Path, ifnone, store_attr
 
 from ... import errstr
 
-__all__ = ['Job', 'Jobs', 'JobError', 'ACTIVE', 'TERMINAL']
+__all__ = ['Job', 'Jobs', 'JobError', 'ACTIVE', 'TERMINAL', 'every_seconds', 'cadence']
 
 ACTIVE = ('queued', 'running')
 TERMINAL = ('complete', 'error')
+
+UNITS = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 604800}
+
+def every_seconds(spec, default=3600):
+    "`30m`, `6h`, `1d` as seconds. Unreadable means the default, never zero: zero is a busy loop."
+    m = re.fullmatch(r'\s*(\d+)\s*([smhdw])?\s*', str(spec or '').lower())
+    if not m: return default
+    return max(60, int(m.group(1)) * UNITS.get(m.group(2) or 'h', 3600))
+
+def cadence(seconds):
+    "How often, in words, at the coarsest unit that divides it."
+    seconds = int(seconds or 0)
+    for n, label in ((604800, 'week'), (86400, 'day'), (3600, 'hour'), (60, 'minute')):
+        if seconds and not seconds % n:
+            v = seconds // n
+            return f'every {v} {label}' + ('s' if v != 1 else '')
+    return f'every {seconds} seconds'
 
 SCRIPT_TIMEOUT = 900
 

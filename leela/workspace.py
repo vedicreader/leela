@@ -149,10 +149,12 @@ class Workspace:
         from .core.session import OperationJournal
         journal_key = hashlib.sha256('\0'.join(map(str, self.fs.roots)).encode()).hexdigest()[:16]
         self.journal = OperationJournal(leela_cfg/'journals'/f'{journal_key}.json', self.fs)
-        from .blocks.jobs.clip import register_all
-        from .blocks.jobs.jobs import Jobs
+        from .blocks.vault.clip import register_all
+        from .blocks.vault.jobs import Jobs
+        from .blocks.vault.news import Feeds
+        self.feeds = Feeds()
         self.jobs = Jobs(leela_cfg/'jobs'/f'{journal_key}.db', memory=self.memory)
-        register_all(self.jobs, self.memory, search=self.search, cwd=root)
+        register_all(self.jobs, self.memory, search=self.search, cwd=root, feeds=self.feeds)
         self._lsp = None
         self.env_base = None
         self.terms = Terminals(cwd=first(self.fs.roots))
@@ -288,6 +290,14 @@ class Workspace:
             return self.tabs[i]
         return self._add_tab(Tab(path='', kind='vault', ref=ref, scratch=True,
                                  title=title or doc_id, private_kernel=False))
+    def open_vault_workbench(self, view='browse'):
+        "Open the vault workbench as a tab. One is enough: it is a place, not a document."
+        if (i := first(i for i, t in enumerate(self.tabs) if t.kind == 'vaultwb')) is not None:
+            self.tabs[i].ref = view
+            self.active = i
+            return self.tabs[i]
+        return self._add_tab(Tab(path='', kind='vaultwb', ref=view, scratch=True, title='vault',
+                                 private_kernel=False))
     def open_web(self, target, title=''):
         "Open a CDP target as a tab, focusing it if that page is already cast."
         if (i := first(i for i, t in enumerate(self.tabs)
@@ -419,6 +429,20 @@ class Workspace:
         a, b = int(sel.get('from') or 1), int(sel.get('to') or 1)
         body = str(sel.get('text') or '')[:max_text]
         return f'<attached-selection path="{path}" lines="{a}-{b}">\n{body}\n</attached-selection>'
+    def _vault_context(self, ref, max_text=60_000):
+        "One vault document or section, as grounded text the turn can quote and cite."
+        doc, shelf, vault = str(ref.get('doc') or ''), str(ref.get('shelf') or ''), str(ref.get('vault') or '')
+        m = self.vaults.memory(vault or None)
+        # A section id carries its document's id before the `#`. `shelf_text` reads only the part
+        # that was pointed at, which is the whole reason attaching a citation beats attaching a book.
+        row = m.document(doc.split('#')[0], shelf or None)
+        title = ref.get('title') or row.get('title') or doc
+        body = m.shelf_text(doc, shelf or None, max_text)
+        if not body: raise ValueError(f'{title}: nothing readable in the vault')
+        src = f' source="{row.get("source")}"' if row.get('source') else ''
+        return (f'<attached-document vault="{vault or self.vaults.active.name}" shelf="{shelf or "main"}" '
+                f'title="{title}"{src}>\n{body}\n</attached-document>')
+
     def _attachment_context(self, refs=(), spec=None, max_file=120_000, max_total=300_000):
         "Workspace files selected with @, as grounded text context and multimodal content parts."
         from ramabana.cli import MEDIA, Attachment, media_note, media_parts
@@ -433,6 +457,9 @@ class Workspace:
         for ref in items:
             if isinstance(ref, dict) and ref.get('kind') == 'selection':
                 text.append(self._selection_context(ref))
+                continue
+            if isinstance(ref, dict) and ref.get('kind') == 'vault':
+                text.append(self._vault_context(ref))
                 continue
             p = self.fs._check(ref, must_exist=True)
             if p.is_dir():

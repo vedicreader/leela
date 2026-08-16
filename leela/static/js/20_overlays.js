@@ -290,6 +290,7 @@ function leeToolsMenu(anchor) {
     {label: 'Command palette', detail: displayChord('mod+shift+p'), run: () => leeAct('palette')},
     {label: 'Recent files', detail: displayChord('mod+e'), run: () => leeAct('recent_tabs')},
     {separator: true},
+    {label: 'The vault…', detail: 'browse, search, and put things in', run: () => leeVaultWorkbench()},
     {label: 'Research workspace…', run: () => leeAct('research')},
     {label: 'Read webpage…', run: () => leeAct('read_url')},
     {label: 'Browse a page…', detail: displayChord('alt+shift+o'), run: () => leeAct('browse_url')},
