@@ -26,12 +26,15 @@ class Watcher:
         self.start()
         return q
     def unsubscribe(self, q):
+        # Signalled, not joined: this runs on the event loop, and the Rust watcher takes
+        # `rust_timeout` to notice. The join is `close`'s, and `close` runs off the loop.
         self.subs.discard(q)
-        if not self.subs: self.close()
+        if not self.subs and self.stop: self.stop.set()
     def start(self, restart=False):
         "Watch the roots as they are now. `restart` picks up a folder opened since."
         roots = tuple(sorted(str(r) for r in self.fs.roots))
-        if self.thread and self.thread.is_alive() and not (restart or roots != self.roots): return
+        running = self.thread and self.thread.is_alive() and self.stop and not self.stop.is_set()
+        if running and not (restart or roots != self.roots): return
         self.close()
         if not roots: return
         self.roots, self.loop, self.stop = roots, asyncio.get_running_loop(), threading.Event()
@@ -55,7 +58,10 @@ class Watcher:
             self._push(sorted({p for _change, p in batch})[:MAX_BATCH])
     def _push(self, paths):
         for q in list(self.subs):
-            self.loop.call_soon_threadsafe(self._offer, q, paths)
+            # A loop that has closed under us ends the watch, rather than killing this thread
+            # on the first batch after a restart and leaving a watcher nobody can stop.
+            try: self.loop.call_soon_threadsafe(self._offer, q, paths)
+            except RuntimeError: return self.stop.set() if self.stop else None
     @staticmethod
     def _offer(q, paths):
         # A browser that stopped reading must not hold the watcher; a dropped batch is a

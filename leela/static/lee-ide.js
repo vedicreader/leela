@@ -9073,28 +9073,44 @@ async function patchTreeDir(dir) {
   have.forEach(n => n.remove());
   htmx.process(kids);
 }
+/* The nearest open ancestor, not the literal parent: a new folder's own path is open nowhere,
+   and matching on it alone left every file created inside one invisible until a full refresh. */
 async function patchTree(paths) {
-  const dirs = new Set(paths.map(p => p.replace(/\/[^/]+$/, '')));
-  await Promise.all($$('.lee-dir[open]').filter(n => dirs.has(n.dataset.path)).map(patchTreeDir));
+  const open = $$('.lee-dir[open]'), want = new Set();
+  for (const p of paths) {
+    let best = null;
+    for (const n of open) {
+      const d = n.dataset.path;
+      if ((p === d || p.startsWith(d + '/')) && (!best || d.length > best.dataset.path.length)) best = n;
+    }
+    if (best) want.add(best);
+  }
+  await Promise.all([...want].map(patchTreeDir));
 }
 async function refreshGitTreeMarks() {
   try { paintGitTree(await api(gitUrl('/git/info'))); } catch (_) {}
 }
 
-let fsWatchTimer = null, fsWatchSeen = [];
+let fsWatchTimer = null, fsWatchSeen = [], fsWatchSince = 0;
+const FS_DEBOUNCE = 250, FS_MAX_WAIT = 1000, FS_MAX_SEEN = 2000;
 function watchFiles() {
   const es = new EventSource('/fs/events');
   es.addEventListener('changed', e => {
     try { fsWatchSeen.push(...JSON.parse(e.data).paths); } catch (_) { return; }
+    // Debounced, but with a deadline: a build or an install writes without pause, and a timer
+    // that only ever resets is a tree that never redraws while anything is happening.
+    if (fsWatchSeen.length > FS_MAX_SEEN) fsWatchSeen = fsWatchSeen.slice(-FS_MAX_SEEN);
+    if (!fsWatchSince) fsWatchSince = performance.now();
     clearTimeout(fsWatchTimer);
+    const wait = Math.max(0, Math.min(FS_DEBOUNCE, fsWatchSince + FS_MAX_WAIT - performance.now()));
     fsWatchTimer = setTimeout(async () => {
-      const all = fsWatchSeen; fsWatchSeen = [];
+      const all = fsWatchSeen; fsWatchSeen = []; fsWatchSince = 0;
       const theirs = notMine(all);
       // Our own save changed no filenames, only what git thinks of one.
       if (theirs.length) await patchTree(theirs).catch(() => {});
       await refreshGitTreeMarks();
       if (theirs.some(p => p === lee.path)) { refreshOpenGitMarks(); watchOpenFile(); }
-    }, 250);
+    }, wait);
   });
   es.onerror = () => { es.close(); setTimeout(watchFiles, 3000); };
   return es;

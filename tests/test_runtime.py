@@ -156,8 +156,8 @@ def test_a_git_terminal_gets_the_project_environment_too(tmp_path):
 
 def test_git_itself_runs_with_the_checkouts_environment(tmp_path):
     "A hook is a console script of the repository being committed to, not of Leela."
-    from leela.blocks.git.git import gateway          # importing the block is what wires `env_for`
-    g = gateway()
+    from leela.blocks.git.git import wire_env
+    g = wire_env()
     root = tmp_path/'proj'; py = _venv(root); (root/'.git').mkdir()
     env = g.env(root/'sub'/'deeper')
     assert env['PATH'].split(os.pathsep)[0] == str(py.parent), 'found by searching upwards'

@@ -9,7 +9,7 @@ from ramabana.git import GitError, GitRepo as _GitRepo, _unborn, clone, clone_ta
 
 from ..nb.nb import source_spans as _source_spans
 
-__all__ = ['GitRepo', 'GitError', 'repo_root', 'clone', 'clone_target']
+__all__ = ['GitRepo', 'GitError', 'repo_root', 'clone', 'clone_target', 'wire_env']
 
 def _project_env(cwd):
     "A checkout's own virtualenv environment, so its hooks and filters run under it."
@@ -20,7 +20,10 @@ def _project_env(cwd):
         if (d/'.git').exists(): break
     return None
 
-gateway().env_for = _project_env
+def wire_env():
+    "Git runs under the checkout's own virtualenv. Called by `Workspace`, not by importing this."
+    gateway().env_for = _project_env
+    return gateway()
 
 class GitRepo(_GitRepo):
     "The harness's repository, plus what only an IDE that opens notebooks can say about one."

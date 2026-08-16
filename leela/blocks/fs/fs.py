@@ -35,8 +35,13 @@ MAX_EDIT_BYTES = 4_000_000
 class Unsafe(Exception):
     "A path that resolves outside every open root, or an operation refused for safety."
 
+_GEN = 0
+def _changed():
+    "A write of our own must not wait out `_walked`'s window before it can be found."
+    global _GEN; _GEN += 1
+
 @flexicache(time_policy(2), maxsize=16)
-def _walked(roots, hidden, limit):
+def _walked(roots, hidden, limit, gen):
     out = L()
     for r in roots:
         out += globtastic(r, skip_folder_re=_SKIP_RE, skip_file_re=None if hidden else r'^\.',
@@ -113,7 +118,7 @@ class Sandbox:
     def walk(self, ref=None, hidden=False, limit=20000):
         "Every file under `ref` (or all roots), for quick-open, capped at `limit`."
         roots = self.roots if ref is None else L([self._check(ref, must_exist=True)])
-        return _walked(tuple(str(r) for r in roots), hidden, limit)
+        return _walked(tuple(str(r) for r in roots), hidden, limit, _GEN)
     def read(self, ref):
         "Text contents of a file. Refuses binaries and anything too big to sanely edit."
         p = self._check(ref, must_exist=True)
@@ -128,6 +133,7 @@ class Sandbox:
         "Write text atomically, so a crash mid-save leaves the previous file intact."
         p = self._check(ref)
         with atomic_save(p, mode='w', encoding='utf-8') as f: f.write(text)
+        _changed()
         return self.entry(p)
     def touch(self, ref):
         "Create an empty file; refuses to clobber an existing one."
@@ -135,10 +141,12 @@ class Sandbox:
         if p.exists(): raise FileExistsError(str(p))
         p.parent.mkdir(parents=True, exist_ok=True)
         p.touch()
+        _changed()
         return self.entry(p)
     def mkdir(self, ref):
         p = self._check(ref)
         if p.exists(): raise FileExistsError(str(p))
+        _changed()
         return self.entry(fc_mkdir(p, parents=True))
     def rename(self, ref, name):
         "Rename in place. `name` must be a bare filename: a path here would write outside the folder."
@@ -147,6 +155,7 @@ class Sandbox:
         dst = self._check(p.parent/name)
         if dst.exists(): raise FileExistsError(str(dst))
         p.rename(dst)
+        _changed()
         return self.entry(dst)
     def move(self, ref, dest_dir):
         "Move into another directory; both ends are checked."
@@ -157,10 +166,12 @@ class Sandbox:
         dst = d/p.name
         if dst.exists(): raise FileExistsError(str(dst))
         fc_move(p, dst)
+        _changed()
         return self.entry(dst)
     def delete(self, ref):
         "Delete a file, or a directory and its contents. Refuses to delete an open root."
         p = self._check(ref, must_exist=True)
         if p in self.roots: raise Unsafe('close the folder instead of deleting an open root')
         p.delete()
+        _changed()
         return str(p)

@@ -37,7 +37,10 @@ dependencies = [
     "litesearch>=0.1.27",      # store.ann_neighbors / peers / clusters under Search and the vault
     "mdhtml>=0.1.21",          # bounded, paste-safe Markdown -> structural MDHTML
     "python-fasthtml>=0.14.9", # the web frontend
-    "starlette>=0.40.0",       # Mount, StaticFiles, WebSocketRoute, TestClient. Via fasthtml, but
+    # 1.6.0, not 0.40: `GZipMiddleware` is on the app now, and only from that version does its
+    # excluded-content-type list hold `text/event-stream`. Below it every SSE stream Leela has --
+    # /fs/events, the agent, the run logs -- is buffered by the compressor and arrives at the end.
+    "starlette>=1.6.0",        # Mount, StaticFiles, WebSocketRoute, TestClient. Via fasthtml, but
     "uvicorn>=0.30.0",         # leela imports both by name, so it says so rather than assuming
     "httpx2>=2.10.0",          # the HTTP client: dhrishti's inspector API, gateway, model listing
     "numpy>=1.26",             # search reads Kosha's embedding vectors as arrays
