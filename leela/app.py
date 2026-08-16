@@ -646,6 +646,11 @@ def _agent_panel(ws):
             Button('Pause after current', cls='lee-btn', type='button', data_agent_pause='1'),
             Button('Stop', cls='lee-btn warn', type='button', data_agent_stop='1'),
             cls='lee-agent-runstrip', id='agentrunstrip', hidden=True, aria_live='polite'),
+        Div(Strong('Cursor agent mode.'),
+            ' Cursor runs a tool only in agent mode, and its own shell and file edits come with that. '
+            'They act in this workspace without passing through Leela\u2019s approvals, held only by '
+            'Cursor\u2019s sandbox. Another runtime if you want every write gated.',
+            id='agentharnessbanner', cls='lee-agent-harness-banner', hidden=True, role='status'),
         Div(Div(id='agentsteerqueue', cls='lee-agent-steerqueue', aria_live='polite'),
             Div(Input(id='agentsteer', cls='lee-input', placeholder='Steer after the current call…'),
                 Button('Queue', cls='lee-btn', type='button', onclick='leeQueueSteer()'),

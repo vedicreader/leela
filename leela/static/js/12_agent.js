@@ -18,6 +18,14 @@ window.addEventListener('blur', () => closeDismissableDisclosures());
 // A model that draws or films says so in the picker itself; the rest of what it takes is the tooltip.
 const modelMark = (m) => (m.gen_image ? ' · draws' : '') + (m.gen_video ? ' · films' : '');
 
+// Cursor is the one runtime whose own tools act outside Leela's approvals, so the pane says so
+// while such a model is chosen. The wording lives in the markup; this only decides when it shows.
+let MODEL_RUNTIMES = {};
+function markHarness(model) {
+  const banner = $('#agentharnessbanner');
+  if (banner) banner.hidden = MODEL_RUNTIMES[model] !== 'cursor';
+}
+
 async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
   const selects = {agent: $('#agentmodel'), inline: $('#inlinemodel'), completion: $('#completionmodel')};
   if (!selects.agent || !selects.inline || !selects.completion) return;
@@ -34,6 +42,8 @@ async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
     const wanted = d.selected?.[target] || previous[target];
     if ([...select.options].some(o => o.value === wanted)) select.value = wanted;
   }
+  MODEL_RUNTIMES = Object.fromEntries((d.models || []).map(m => [m.value, m.runtime || '']));
+  markHarness(selects.agent.value);
   paintJobModels(d);
   const notes = Object.values(d.auth || {}).map(x => x.note).filter(Boolean);
   if (notes.length) selects.agent.title = notes.join(' · ');
@@ -107,6 +117,7 @@ async function leeAgentModel(target, model) {
   if (select) select.disabled = true;
   try {
     const d = await post('/agent/model', {target, model});
+    if (d.ok && target === 'agent') markHarness(model);
     status(d.ok ? `${target} model saved: ${d.model}` : (d.error || 'model switch failed'), d.ok ? 'ok' : 'err');
     if (d.ok && target === 'completion') api('/complete/warm').catch(() => {});
     if (!d.ok) await loadAgentModels();
