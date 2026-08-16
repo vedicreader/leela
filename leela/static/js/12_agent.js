@@ -752,7 +752,7 @@ function agentLog(html) {
 /* A write pauses Rishi's tool loop until it is answered. Keep the question in the agent
  * pane rather than a modal, so the rest of the IDE remains usable while the model waits.
  * The same event is used by agent-chat and notebook prompt-cell streams. */
-// Cleared wherever the log is: these are its nodes, and a detached one is held forever.
+// These are the log's own nodes. A detached one is held forever.
 const approvalCards = new Map();
 function proposalArgs(card) {
   const schema = card._schema, args = {};
@@ -1111,8 +1111,8 @@ async function pollApproval() {
   } catch (_) {}
 }
 
-// Fast while the model is working -- an approval must not sit unseen. Idle, nothing can raise
-// one but a background job, and a window nobody is looking at can raise nothing at all.
+// An approval must not sit unseen while the model works. Idle, only a background job
+// raises one, and a window nobody is looking at raises nothing.
 async function approvalLoop() {
   if (!document.hidden) await pollApproval();
   setTimeout(approvalLoop, document.hidden ? 5000 : lee.agentBusy ? 750 : 5000);

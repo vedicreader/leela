@@ -119,7 +119,7 @@ async function pollRunLogs() {
   return servers.length;
 }
 
-// A dev server's output has to arrive promptly; an empty list has nothing to say for 15s.
+// A dev server's output has to arrive promptly. An empty list has nothing to say for 15s.
 async function runLogLoop() {
   const busy = await pollRunLogs();
   setTimeout(runLogLoop, busy ? 2000 : 15000);

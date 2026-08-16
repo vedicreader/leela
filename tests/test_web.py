@@ -1567,7 +1567,7 @@ def test_history_groups_turns_by_context_session_without_rendering_every_turn():
     assert "(s.models || []).map" in history
 
 def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(tmp_path):
-    "History was a read-only view: it showed the turns and left the model with none of them."
+    "History showed the turns and left the model with none of them."
     from starlette.testclient import TestClient
     from leela.app import ide_app
     from leela.workspace import Workspace
@@ -2068,7 +2068,7 @@ def test_runtime_broker_refuses_a_thirteenth_heap_without_evicting_live_state(mo
     assert pool.kernels['first'] is alive
 
 def test_the_tree_hears_about_a_change_leela_did_not_make(tmp_path):
-    "Nothing else tells the browser: no watcher meant the tree knew only what the client did."
+    "Without a watcher the tree knew only what the client itself had done."
     import asyncio, json
     from leela.blocks.fs.fs import Sandbox
     from leela.blocks.fs.watch import Watcher

@@ -1,4 +1,4 @@
-"Changes leela did not make itself: the agent's, a terminal's, another editor's."
+"Changes leela did not make itself. The agent's, a terminal's, another editor's."
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ RUST_TIMEOUT = 500      # how long the watcher can take to notice it was stopped
 WAIT = 3
 
 class Watcher:
-    "One watchfiles thread over the open roots; subscribers get debounced batches of paths."
+    "One watchfiles thread over the open roots. Subscribers get debounced batches of paths."
     def __init__(self, fs, step=200):
         store_attr()
         self.subs, self.stop, self.thread, self.loop, self.roots = set(), None, None, None, ()
@@ -41,8 +41,7 @@ class Watcher:
                                        name='leela-fs-watch')
         self.thread.start()
     def close(self):
-        # Joined, not just signalled: the notify thread is Rust, and one still running when
-        # the interpreter tears down segfaults.
+        # The notify thread is Rust. One still running at interpreter teardown segfaults.
         thread, stop = self.thread, self.stop
         self.thread = self.stop = None
         if stop: stop.set()
@@ -60,6 +59,5 @@ class Watcher:
         for q in list(self.subs): self.loop.call_soon_threadsafe(self._offer, q, paths)
     @staticmethod
     def _offer(q, paths):
-        # A browser that stopped reading must not hold the watcher; a dropped batch is a
-        # refresh it will get from the next one.
+        # A browser that stopped reading must not hold the watcher. The next batch refreshes it.
         if not q.full(): q.put_nowait(paths)

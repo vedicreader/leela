@@ -19,7 +19,7 @@ async function showConflictCenter() {
 }
 window.showConflictCenter = showConflictCenter;
 
-// One file resolved is not the task: step to the next, and finish the operation when none remain.
+// Step to the next file, and finish the operation when none remain.
 async function afterConflictResolved(d, done = '') {
   renderGitPanel(d);
   const left = (d.changes || []).filter(x => x.conflicted).map(x => x.path);

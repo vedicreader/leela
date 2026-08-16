@@ -1,6 +1,6 @@
 /* ---------------------------------------------------------- cwd and source control */
 function paintGitTree(d) {
-  const rows = new Map();   // indexed once, not re-queried and rescanned per change
+  const rows = new Map();   // indexed once rather than rescanned per change
 
   $$('.lee-file').forEach(row => {
     row.classList.remove('git-modified', 'git-staged', 'git-untracked', 'git-conflict');

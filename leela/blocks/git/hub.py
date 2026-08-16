@@ -19,7 +19,7 @@ def hub_available():
     except ImportError: return False
 
 def _api(root):
-    "gheasy owns the token and the GhApi instance; this only asks it for one."
+    "gheasy owns the token and the GhApi instance. This only asks it for one."
     from gheasy.core import _gh_api, _get_repo_slug
     slug = _get_repo_slug(root)
     if not slug: raise GitError('this repository has no GitHub remote')
@@ -37,7 +37,7 @@ def _checks(api, owner, name, sha):
 
 @flexicache(time_policy(60), maxsize=32)
 def pr_context(root, branch):
-    "Branch to pull request: its base, whether that base has moved, and how its checks stand."
+    "A branch's pull request, its base, how far that base has moved, and how its checks stand."
     if not hub_available(): return {'available': False, 'note': MISSING}
     try:
         api, owner, name = _api(root)

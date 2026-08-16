@@ -4094,7 +4094,7 @@ function agentLog(html) {
 /* A write pauses Rishi's tool loop until it is answered. Keep the question in the agent
  * pane rather than a modal, so the rest of the IDE remains usable while the model waits.
  * The same event is used by agent-chat and notebook prompt-cell streams. */
-// Cleared wherever the log is: these are its nodes, and a detached one is held forever.
+// These are the log's own nodes. A detached one is held forever.
 const approvalCards = new Map();
 function proposalArgs(card) {
   const schema = card._schema, args = {};
@@ -4453,8 +4453,8 @@ async function pollApproval() {
   } catch (_) {}
 }
 
-// Fast while the model is working -- an approval must not sit unseen. Idle, nothing can raise
-// one but a background job, and a window nobody is looking at can raise nothing at all.
+// An approval must not sit unseen while the model works. Idle, only a background job
+// raises one, and a window nobody is looking at raises nothing.
 async function approvalLoop() {
   if (!document.hidden) await pollApproval();
   setTimeout(approvalLoop, document.hidden ? 5000 : lee.agentBusy ? 750 : 5000);
@@ -5233,7 +5233,7 @@ async function pollRunLogs() {
   return servers.length;
 }
 
-// A dev server's output has to arrive promptly; an empty list has nothing to say for 15s.
+// A dev server's output has to arrive promptly. An empty list has nothing to say for 15s.
 async function runLogLoop() {
   const busy = await pollRunLogs();
   setTimeout(runLogLoop, busy ? 2000 : 15000);
@@ -5566,7 +5566,7 @@ window.leeTheme = leeTheme; window.leeEditorSettings = editorSettings;
 
 /* ---------------------------------------------------------- cwd and source control */
 function paintGitTree(d) {
-  const rows = new Map();   // indexed once, not re-queried and rescanned per change
+  const rows = new Map();   // indexed once rather than rescanned per change
 
   $$('.lee-file').forEach(row => {
     row.classList.remove('git-modified', 'git-staged', 'git-untracked', 'git-conflict');
@@ -8337,7 +8337,7 @@ async function quickOpen(searchMode) {
   };
   const go = () => { const h = hits[sel]; if (h) { m.remove(); leeOpenFile(h.path); } };
   list.addEventListener('click', e => { const r = e.target.closest('.lee-mrow'); if (r) { sel = +r.dataset.i; go(); } });
-  // Each search walks the whole tree, so it is debounced and sequenced like the folder picker.
+  // Each search walks the whole tree. Debounced and sequenced like the folder picker.
   let seq = 0, timer = null;
   input.addEventListener('input', () => {
     clearTimeout(timer);
@@ -9795,7 +9795,7 @@ async function showConflictCenter() {
 }
 window.showConflictCenter = showConflictCenter;
 
-// One file resolved is not the task: step to the next, and finish the operation when none remain.
+// Step to the next file, and finish the operation when none remain.
 async function afterConflictResolved(d, done = '') {
   renderGitPanel(d);
   const left = (d.changes || []).filter(x => x.conflicted).map(x => x.path);

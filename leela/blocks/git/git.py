@@ -1,4 +1,4 @@
-"Leela's Git surface: ramabana's porcelain, and the notebook half the IDE adds to it."
+"Ramabana's porcelain, and the notebook half the IDE adds to it."
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from ..nb.nb import source_spans as _source_spans
 __all__ = ['GitRepo', 'GitError', 'repo_root', 'clone', 'clone_target', 'wire_env']
 
 def _project_env(cwd):
-    "A checkout's own virtualenv environment, so its hooks and filters run under it."
+    "The virtualenv a checkout's own hooks and filters run under."
     from ..runtime.kernels import project_python, venv_env
     p = Path(cwd).expanduser().resolve()
     for d in (p, *p.parents):

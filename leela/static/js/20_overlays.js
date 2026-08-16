@@ -386,7 +386,7 @@ async function quickOpen(searchMode) {
   };
   const go = () => { const h = hits[sel]; if (h) { m.remove(); leeOpenFile(h.path); } };
   list.addEventListener('click', e => { const r = e.target.closest('.lee-mrow'); if (r) { sel = +r.dataset.i; go(); } });
-  // Each search walks the whole tree, so it is debounced and sequenced like the folder picker.
+  // Each search walks the whole tree. Debounced and sequenced like the folder picker.
   let seq = 0, timer = null;
   input.addEventListener('input', () => {
     clearTimeout(timer);

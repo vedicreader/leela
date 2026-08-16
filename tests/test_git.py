@@ -1369,7 +1369,7 @@ def test_an_unknown_operation_is_refused_before_anything_runs(workspace, tmp_pat
         repo_set(workspace, tmp_path).run('rm -rf')
 
 def test_a_diverged_branch_is_offered_every_way_back_with_its_conflicts_rehearsed(repo_git, tmp_path):
-    "`pull` is --ff-only, so divergence needs a plan: each way out, rehearsed before it runs."
+    "`pull` is --ff-only. Divergence needs a plan, each way out rehearsed before it runs."
     remote = tmp_path/'remote.git'
     git(tmp_path, 'init', '--bare', remote.name)
     git(repo_git, 'remote', 'add', 'origin', str(remote))
@@ -1423,7 +1423,7 @@ def test_a_clean_divergence_prefers_rebase_and_a_branch_only_behind_fast_forward
     assert r.divergence()['relation'] == 'ahead'
 
 def test_the_agent_can_rehearse_a_divergence_without_being_able_to_run_it(repo_git, tmp_path):
-    "Read-only git tools answer with JSON; the mutations stay behind the approvals gate."
+    "Read-only git tools answer with JSON. The mutations stay behind the approvals gate."
     from leela.blocks.agent.ai import GIT_READ_TOOLS
     remote = tmp_path/'agent-diverge.git'
     git(tmp_path, 'init', '--bare', remote.name)

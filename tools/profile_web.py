@@ -61,8 +61,8 @@ MEASURE = '''() => {
 }'''
 
 TREE = '''async (n) => {
-  // Expand until `n` directories are open -- breadth first, because the roots are all
-  // that exist before the first one is fetched.
+  // Expand until `n` directories are open, breadth first. Only the roots exist before
+  // the first fetch.
   while (document.querySelectorAll('.lee-dir[open]').length < n) {
     const next = [...document.querySelectorAll('.lee-dir')].filter(d => !d.open);
     if (!next.length) break;
