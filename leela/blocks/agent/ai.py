@@ -220,7 +220,7 @@ class Interventions(Approvals):
                         'branch_id': a.branch_id,
                         'parent_action_id': a.parent_action_id,
                         'tool': a.tool, 'args': dict(a.args)})
-            elif tool_call.get('id'):
+            else:
                 instruction = ('The user rejected this tool call. Do not retry this call or an '
                     'equivalent action unless the user explicitly asks for it later.')
                 if a.note: instruction += f' User direction: {a.note}'

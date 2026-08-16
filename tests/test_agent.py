@@ -330,6 +330,21 @@ def test_rejection_ignores_rewritten_or_malformed_call_fields():
     assert resolved.args == {'path': 'original.py', 'commands': '[]'}
     assert resolved.note == 'use the notebook instead'
 
+def test_a_steer_lands_on_a_tool_call_that_carries_no_id():
+    "A local model's tool call often has no `id`, and the steer used to be dropped for those."
+    from leela.blocks.agent.ai import Interventions
+    ap = Interventions(tools={'edit_file'}, mode='ask', control='directed', timeout=2)
+    stop = ap.listen(); tc = {'function': {'name': 'edit_file', 'arguments': {'path': 'a.py'}}}
+    def steer():
+        for _ in range(200):
+            if ap.pending is not None: return ap.queue_steer('read the test first')
+            time.sleep(.005)
+    threading.Thread(target=steer, daemon=True).start()
+    try: assert ap.gate(tc)
+    finally: stop()
+    assert tc['function']['name'] == 'user_steering'
+    assert 'read the test first' in tc['function']['arguments']['instruction']
+
 @pytest.mark.parametrize('note', ['', 'edit the notebook source instead'])
 def test_refusal_becomes_a_do_not_retry_tool_result_with_optional_direction(note):
     from leela.blocks.agent.ai import Interventions
@@ -961,9 +976,12 @@ def test_an_approval_exchange_is_written_into_the_notebook():
                 return ws.answer_approval(a.id, False, 'that file is generated')
             time.sleep(0.01)
     threading.Thread(target=answer, daemon=True).start()
-    d = ws.approvals.gate({'function': {'name': 'edit_file', 'arguments': {'path': 'gen.py'}}})
+    tc = {'function': {'name': 'edit_file', 'arguments': {'path': 'gen.py'}}}
+    d = ws.approvals.gate(tc)
     stop()
-    assert not d and 'that file is generated' in d.reply()
+    # a refusal is handed back as steering, the same for a call with an id and one without
+    assert d is True and tc['function']['name'] == 'user_steering'
+    assert 'that file is generated' in tc['function']['arguments']['instruction']
     states = [(c.cell_type, (c.approval or {}).get('state')) for c in nb.cells]
     assert states == [('prompt', None), ('markdown', 'pending'), ('markdown', 'refused')]
     assert 'that file is generated' in nb[2].source
