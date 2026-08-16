@@ -410,10 +410,24 @@ function resolveMarkdownImages(el) {
   });
 }
 
-// A feed item ends in `[url](url)`, and a bare href navigates whatever is showing it. In the
-// browser that loses the IDE; in the desktop webview there is no back button to come home with.
-// `openWebpage` puts the page in a tab -- the CDP Chrome the desktop app already drives, or a
-// browser tab where there is no Chrome to drive.
+// A page you are reading opens in your own browser, where your own sessions are. Not the CDP
+// Chrome: that is a fresh automation profile, so Medium and its like answer it with a bot wall,
+// and it is there for ramabana and fossick to drive. `window.open` is the whole answer in a
+// browser; the desktop webview has no tab strip to open into, so the server opens it instead.
+// One opener, never two: the native shell hands `_blank` to the system browser itself and still
+// answers `window.open` with null, so trying both put the same story in two Chrome tabs.
+async function openExternal(url) {
+  if (!url) return status('choose a source first', 'err');
+  if (!window.pywebview && window.open(url, '_blank', 'noopener,noreferrer')) return;
+  try { await post('/browser/external', {url}); }
+  catch (e) { status(`could not open ${url}: ${e.message || e}`, 'err'); }
+}
+
+// A feed item ends in `[url](url)`, and a bare href navigates whatever is showing it. A browser
+// tab already knows what `target="_blank"` means, so there it is left alone -- opening it again
+// from script is how one story became two tabs. The webview has no tab strip and no back button,
+// so there the click is taken over. Asked at click time: the shell bridge arrives after the
+// first render, so a link drawn early would otherwise be misjudged for the life of the page.
 function routeMarkdownLinks(el) {
   $$('a[href]', el).forEach(a => {
     const href = a.getAttribute('href') || '';
@@ -421,8 +435,9 @@ function routeMarkdownLinks(el) {
     a.dataset.leeLink = '1'; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.addEventListener('click', e => {
       if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // the browser's to handle
+      if (!window.pywebview) return;
       e.preventDefault(); e.stopPropagation();
-      openWebpage(href);
+      openExternal(href);
     });
   });
 }

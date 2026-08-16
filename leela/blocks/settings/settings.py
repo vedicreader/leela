@@ -7,7 +7,12 @@ from fastcore.all import Path, atomic_save
 
 from ... import leela_cfg
 
-__all__ = ['DEFAULT_SETTINGS', 'Settings', 'USER_SETTINGS_FILE', 'WORKSPACE_SETTINGS_FILE']
+__all__ = ['DEFAULT_SETTINGS', 'Settings', 'USER_SETTINGS_FILE', 'WORKSPACE_SETTINGS_FILE',
+           'CODE_FOLDER', 'start_folder']
+
+#: Where a folder picker with nothing to go on starts, when it is there. Home is a long list of
+#: things that are not projects, and the first keystroke of every open was `c`, `o`, `d`, `e`.
+CODE_FOLDER = '~/code'
 
 USER_SETTINGS_FILE = Path(leela_cfg)/'settings.json'
 WORKSPACE_SETTINGS_FILE = '.leela/settings.json'
@@ -35,6 +40,7 @@ DEFAULT_SETTINGS = {
     'workbench': {
         'breadcrumbs': 'pathAndSymbols', 'restoreEditors': True,
         'problemsScope': 'workspace', 'dependencyHints': True,
+        'projectFolder': '',            # where the folder picker starts; empty means find one
     },
     'debug': {
         'justMyCode': True, 'stopOnEntry': False, 'subProcess': True,
@@ -180,3 +186,10 @@ class Settings:
         else: current = {}
         _write(path, current)
         return self.describe(language)
+
+def start_folder(root=None, settings=None):
+    "Where the folder picker opens: `workbench.projectFolder`, else `~/code`, else home."
+    values = (settings or Settings(root)).effective().get('workbench') or {}
+    for want in (str(values.get('projectFolder') or '').strip(), CODE_FOLDER):
+        if want and (p := Path(want).expanduser()).is_dir(): return p
+    return Path.home()

@@ -19,63 +19,36 @@ classifiers = [
 # leela never does, and `starlette`, `uvicorn`, `numpy`, `packaging` and `httpx2` went in
 # because leela imports them and was relying on fasthtml and kosha to supply them.
 dependencies = [
-    "ramabana[all]>=0.1.9",         # the agent core. `leela.agent` is an alias for it, not a copy of it.
-    # 0.1.7 owns git: `ramabana.git` is the gateway, the safepoints and the porcelain this
-    # block used to hold, and the git tools the agent is offered inside a checkout.
-    # 0.1.9 keys API credentials by spec and resolves an operation named after its own group.
-    # 0.1.4 is the turn budget leela's settings drive: `max_tool_calls`/`max_steps`
-    # as `auto` or a number, and `/tool-budget` and `/steps` to change them mid-conversation.
-    # It owns rishi and fastllm; leela imports neither directly.
-    "fastcore>=1.7.0",         # Path, L, patch, docments: the vocabulary leela is written in
-    "exhash>=0.4.10",          # hash-verified line and cell edits behind edit_file/edit_cell
-    "fossick>=0.1.11",         # web search and page-to-markdown for research; cdp_app for --app windows.
-    # 0.1.11 is the RRF-fused `search` and the `research` that reports
-    # what it could not read, rather than counting it as a source.
-    "ipykernel>=7.3.0",        # standard kernel launcher. Not imported: launched as a subprocess,
-    "ipymini>=0.0.1",          # and kept here so leela's own venv is a usable kernel target
-    "jupyter-client>=8.9.1",   # leela <-> kernel: execute, complete, interrupt, restart
-    "koshas>=0.1.0",           # code index behind search: FTS5 + embeddings + call graph, similar/peers
-    "litesearch>=0.1.27",      # store.ann_neighbors / peers / clusters under Search and the vault
-    "mdhtml>=0.1.21",          # bounded, paste-safe Markdown -> structural MDHTML
-    "python-fasthtml>=0.14.9", # the web frontend
-    # `GZipMiddleware` is on the app now, and 1.6.0 is where its excluded content types gained
-    # `text/event-stream`. Below that it buffers every stream Leela has: /fs/events, the agent,
-    # the run logs.
-    "starlette>=1.6.0",        # Mount, StaticFiles, WebSocketRoute, TestClient. Via fasthtml, but
-    "uvicorn>=0.30.0",         # leela imports both by name, so it says so rather than assuming
-    "httpx2>=2.10.0",          # the HTTP client: dhrishti's inspector API, gateway, model listing
-    "numpy>=1.26",             # search reads Kosha's embedding vectors as arrays
-    "packaging>=24.0",         # comparing installed versions for the editor's package hints
-    "pyyaml>=6.0",             # reading a YAML OpenAPI spec, and the workflow files on disk
-    "dhrishti>=0.1.2",         # the inspection engine: namespace -> node tree, as a JSON API in-kernel
-    "watchfiles>=1.0",       # the file tree is pushed, not polled: Rust notify, one thread per workspace
-    "vishalakshi>=0.1.8",      # the vault behind memory: prose shelves, topics, federated recall,
-    # doc_marks, the noise ranker, and the pii report whose `ner=` and
-    # `scanned_ner` the vault block's badge reads
+    "ramabana[all]>=0.1.9",
+    "fastcore>=1.7.0",
+    "exhash>=0.4.10",
+    "fossick>=0.1.11",
+    "ipykernel>=7.3.0",
+    "ipymini>=0.0.1",
+    "jupyter-client>=8.9.1",
+    "koshas>=0.1.0",
+    "litesearch>=0.1.27",
+    "mdhtml>=0.1.21",
+    "python-fasthtml>=0.14.9",
+    "starlette>=1.6.0",
+    "uvicorn>=0.30.0",
+    "httpx2>=2.10.0",
+    "numpy>=1.26",
+    "packaging>=24.0",
+    "pyyaml>=6.0",
+    "dhrishti>=0.1.2",
+    "watchfiles>=1.0",
+    "vishalakshi>=0.1.8",
 ]
 
 [project.optional-dependencies]
-# Optional Python-only Jupyter kernel with subshell/unlock helpers. When installed and
-# selected (--kernel ipymini), leela routes agent execs and shell-channel calls through
-# a subshell so they don't queue behind a long-running cell.
 ipymini = [] # compatibility extra; ipymini now ships with Leela
 lsp = ["pyright>=1.1.400"]
-# GitHub Actions and the release pipeline. gheasy owns the GitHub half -- repository
-# resolution, the token, GhApi, the generated workflow, secret/variable routing -- and
-# dockeasy owns the credential store and the project build detection. Leela calls them;
-# without this extra the panels still read the local files and say what to install.
 github = [
     "gheasy>=0.0.6",
     "dockeasy>=0.0.5",
-    # `infra.py` tells you to install `leela[github]` to get servers and DNS, so the extra has
-    # to actually carry them: vpseasy provisions the Hetzner VPS, cfeasy opens the Cloudflare
-    # tunnel. The name is now narrower than its contents -- this is the whole deploy leg.
     "vpseasy>=0.0.18",
     "cfeasy>=0.0.4",
-    # `core/envs.py` reads and writes through dockeasy, and reaches for the two libraries
-    # dockeasy stores in by name: python-dotenv owns the file format, keyring the keychain
-    # entry. They belong to this extra rather than the base install, because without dockeasy
-    # there is nothing for them to do.
     "python-dotenv>=1.0.0",
     "keyring>=25.0.0",
 ]
@@ -84,21 +57,13 @@ gateway = [
     "jupyasyncclient>=0.2.1",
     "jupywire>=0.1.1",
 ]
-# Everything optional at once, so a checkout is one command. Platform builds stay out: they
-# are for making a release, not for working on leela.
 all = ["leela[github,gateway,lsp]"]
-# The native desktop window. Runtime, not build tooling: `leela --shell webview` uses it from
-# a source checkout, and it is what the frozen app's main thread runs. Each platform's webview
-# is the one the OS already ships -- WKWebView, WebView2, WebKitGTK -- so this only pulls in
-# the binding, and the Linux binding comes from the distribution's own `python3-gi`.
 desktop = [
     "pywebview>=5.3",
     "pyobjc-framework-Cocoa>=10.1; sys_platform == 'darwin'",
     "pyobjc-framework-WebKit>=10.1; sys_platform == 'darwin'",
     "pythonnet>=3.0.3; sys_platform == 'win32'",
 ]
-# `pillow` because both releases run `tools/build_icons.py`, and `pip install .[macapp]` is
-# all a build machine gets -- a dependency group is not something an extra brings with it.
 macapp = ["leela[desktop]", "py2app>=0.28.8; sys_platform == 'darwin'", "pillow>=10.0"]
 windows = ["leela[desktop]", "py2exe>=0.14.2; sys_platform == 'win32'", "pillow>=10.0"]
 
@@ -110,8 +75,6 @@ leela = "leela.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["leela"]
-# `static/js/` is the source the committed `static/lee-ide.js` is built from, so shipping it
-# would put the same ~570 KB in the wheel twice. `tools/build_ide_js.py --check` keeps them equal.
 exclude = ["leela/static/js"]
 
 [tool.hatch.build.targets.sdist]
@@ -121,9 +84,6 @@ include = ["/leela", "/README.md", "/pyproject.toml"]
 path = "leela/__init__.py"
 
 [dependency-groups]
-# `uv sync --group dev` installs the lot: every extra plus everything the suite imports. One
-# command for a checkout, and the same rule as the runtime dependencies -- what the tests
-# import is declared, rather than arriving because something else happened to pull it in.
 dev = [
     "fastaistyle>=0.0.17",
     "leela[all]",
@@ -132,27 +92,20 @@ dev = [
 test = [
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
-    "nbformat>=5.10.0",                 # to assert the notebooks leela writes stay valid for Jupyter
-    "playwright>=1.40",                 # the browser tests in test_web_keys and friends
-    "pandas>=2.0",                      # a DataFrame in the variable panel fixtures
-    "rishi>=0.1.7",                     # leela does not import it; these tests reach past ramabana
-    "pywebview>=5.3",                   # test_desktop_shell asserts on the window it would open
-    "pillow>=10.0",                     # tools/build_icons.py, which test_packaging runs
-    "setuptools>=68.0",                 # the packaging definitions test_packaging imports are setup scripts
+    "nbformat>=5.10.0",
+    "playwright>=1.40",
+    "pandas>=2.0",
+    "rishi>=0.1.7",
+    "pywebview>=5.3",
+    "pillow>=10.0",
+    "setuptools>=68.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# 108 of 857 tests take 81% of the runtime: playwright browsers, real kernels, a real model.
-# They are excluded by default so the working loop is ~54s instead of ~290s, and nothing is
-# deleted to get there -- `pytest -m slow` runs exactly those, `pytest -m ""` runs everything,
-# and CI should use the latter.
 addopts = "-m 'not slow'"
 markers = ["slow: drives a browser, starts a kernel, or loads a model"]
 
 [tool.uv.sources]
 leela = { workspace = true }
-# The agent core is developed alongside leela rather than released ahead of it, so a
-# checkout resolves it from the sibling directory. The `ramabana>=0.1.1` requirement above is what an index install gets;
-# cloud/agent installs clone the sibling when `../ramabana` is missing.
 ramabana = { path = "../ramabana", editable = true }

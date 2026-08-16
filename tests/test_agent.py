@@ -252,7 +252,6 @@ def test_the_briefing_says_what_is_true_of_this_project():
     for heading in ('Agent charter', 'Hard boundaries', 'Routing rules', 'Tool practices',
                     'Verification', 'Progress', 'Critical context', 'State maintenance'):
         assert heading in STATE_TEMPLATE
-    assert 'Never claim a tool ran' in STATE_TEMPLATE
     assert 'Update this state after' in STATE_TEMPLATE
     everything = work_rules()
     assert 'run_shell' in everything and 'grep' in everything

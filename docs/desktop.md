@@ -20,6 +20,8 @@ Project folders come from launch arguments, saved folders, native folder pickers
 
 Chrome renders pages. Leela sends JPEG frames to a canvas and forwards input through CDP. Navigation uses `fossick.core.check_url`; private addresses require `FOSSICK_ALLOW_PRIVATE`.
 
+The driven Chrome is for ramabana and fossick. A link you click in a feed item, an agent reply or a vault document goes to your own browser instead, through `openExternal`: `window.open` where there is a tab strip, and `/browser/external` where there is not, which hands the URL to the machine's default browser. The automation profile carries none of your sessions. A story read through it meets a bot wall. The same story in your own Chrome does not. `/browser/open` stays the deliberate "put this page in a Leela tab" action.
+
 CDP constraints:
 
 - use a socket only from its creating loop

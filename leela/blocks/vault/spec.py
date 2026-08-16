@@ -7,7 +7,7 @@ from fastcore.all import AttrDict, Path, L, first, risinstance
 from ... import errstr, leela_cfg
 
 __all__ = ['load_spec', 'op_row', 'spec_ops', 'Creds', 'CREDS', 'cred_key', 'parse_headers', 'redact',
-           'ENV_RE', 'REACH', 'EXAMPLES', 'env_vars', 'env_status', 'expand']
+           'ENV_RE', 'REACH', 'EXAMPLES', 'example_for', 'env_vars', 'env_status', 'expand']
 
 try: import ramabana.spec as _spec
 except ImportError: _spec = None
@@ -18,10 +18,17 @@ _SPECS = Path(__file__).parent/'specs'
 #: Described apis anyone can call: no key, no sign-up, and an answer worth pairing with a document.
 EXAMPLES = (
     AttrDict(name='azure-prices', path=str(_SPECS/'azure-retail-prices.json'),
-             label='Azure retail prices', note='every published meter and its list price, no key'),
+             label='Azure retail prices', note='every published meter and its list price, no key',
+             call='prices', params='{"filter": "serviceName eq \'Virtual Machines\' and '
+                                   'armRegionName eq \'westeurope\' and armSkuName eq \'Standard_D4s_v5\'"}'),
     AttrDict(name='frankfurter', path=str(_SPECS/'frankfurter.json'),
-             label='Exchange rates', note='European Central Bank reference rates, no key'),
+             label='Exchange rates', note='European Central Bank reference rates, no key',
+             call='latest', params='{"base": "USD", "symbols": "EUR,GBP"}'),
 )
+
+def example_for(name):
+    "The bundled example a loaded spec is, or None. Its call is what the page offers to run."
+    return first(x for x in EXAMPLES if x.name == str(name))
 
 def _ramabana(name):
     "`ramabana.spec.<name>`, or None on a ramabana that does not ship the parser."

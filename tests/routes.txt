@@ -54,6 +54,7 @@ GET,POST /agent/turn-transaction
 GET,POST /agent/workspace-repo-writes
 GET,POST /browser/attach
 GET,POST /browser/close
+GET,POST /browser/external
 GET,POST /browser/markdown
 GET,POST /browser/open
 GET,POST /browser/ready
@@ -246,7 +247,9 @@ GET,POST /vars/set
 GET,POST /vault/access
 GET,POST /vault/acquire
 GET,POST /vault/activate
+GET,POST /vault/apis/call
 GET,POST /vault/apis/creds
+GET,POST /vault/apis/form
 GET,POST /vault/attach
 GET,POST /vault/browse
 GET,POST /vault/connect

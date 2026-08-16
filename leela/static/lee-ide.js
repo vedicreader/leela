@@ -410,10 +410,24 @@ function resolveMarkdownImages(el) {
   });
 }
 
-// A feed item ends in `[url](url)`, and a bare href navigates whatever is showing it. In the
-// browser that loses the IDE; in the desktop webview there is no back button to come home with.
-// `openWebpage` puts the page in a tab -- the CDP Chrome the desktop app already drives, or a
-// browser tab where there is no Chrome to drive.
+// A page you are reading opens in your own browser, where your own sessions are. Not the CDP
+// Chrome: that is a fresh automation profile, so Medium and its like answer it with a bot wall,
+// and it is there for ramabana and fossick to drive. `window.open` is the whole answer in a
+// browser; the desktop webview has no tab strip to open into, so the server opens it instead.
+// One opener, never two: the native shell hands `_blank` to the system browser itself and still
+// answers `window.open` with null, so trying both put the same story in two Chrome tabs.
+async function openExternal(url) {
+  if (!url) return status('choose a source first', 'err');
+  if (!window.pywebview && window.open(url, '_blank', 'noopener,noreferrer')) return;
+  try { await post('/browser/external', {url}); }
+  catch (e) { status(`could not open ${url}: ${e.message || e}`, 'err'); }
+}
+
+// A feed item ends in `[url](url)`, and a bare href navigates whatever is showing it. A browser
+// tab already knows what `target="_blank"` means, so there it is left alone -- opening it again
+// from script is how one story became two tabs. The webview has no tab strip and no back button,
+// so there the click is taken over. Asked at click time: the shell bridge arrives after the
+// first render, so a link drawn early would otherwise be misjudged for the life of the page.
 function routeMarkdownLinks(el) {
   $$('a[href]', el).forEach(a => {
     const href = a.getAttribute('href') || '';
@@ -421,8 +435,9 @@ function routeMarkdownLinks(el) {
     a.dataset.leeLink = '1'; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.addEventListener('click', e => {
       if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // the browser's to handle
+      if (!window.pywebview) return;
       e.preventDefault(); e.stopPropagation();
-      openWebpage(href);
+      openExternal(href);
     });
   });
 }
@@ -3419,6 +3434,14 @@ window.addEventListener('blur', () => closeDismissableDisclosures());
 // A model that draws or films says so in the picker itself; the rest of what it takes is the tooltip.
 const modelMark = (m) => (m.gen_image ? ' · draws' : '') + (m.gen_video ? ' · films' : '');
 
+// Cursor is the one runtime whose own tools act outside Leela's approvals, so the pane says so
+// while such a model is chosen. The wording lives in the markup; this only decides when it shows.
+let MODEL_RUNTIMES = {};
+function markHarness(model) {
+  const banner = $('#agentharnessbanner');
+  if (banner) banner.hidden = MODEL_RUNTIMES[model] !== 'cursor';
+}
+
 async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
   const selects = {agent: $('#agentmodel'), inline: $('#inlinemodel'), completion: $('#completionmodel')};
   if (!selects.agent || !selects.inline || !selects.completion) return;
@@ -3435,6 +3458,8 @@ async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
     const wanted = d.selected?.[target] || previous[target];
     if ([...select.options].some(o => o.value === wanted)) select.value = wanted;
   }
+  MODEL_RUNTIMES = Object.fromEntries((d.models || []).map(m => [m.value, m.runtime || '']));
+  markHarness(selects.agent.value);
   paintJobModels(d);
   const notes = Object.values(d.auth || {}).map(x => x.note).filter(Boolean);
   if (notes.length) selects.agent.title = notes.join(' · ');
@@ -3508,6 +3533,7 @@ async function leeAgentModel(target, model) {
   if (select) select.disabled = true;
   try {
     const d = await post('/agent/model', {target, model});
+    if (d.ok && target === 'agent') markHarness(model);
     status(d.ok ? `${target} model saved: ${d.model}` : (d.error || 'model switch failed'), d.ok ? 'ok' : 'err');
     if (d.ok && target === 'completion') api('/complete/warm').catch(() => {});
     if (!d.ok) await loadAgentModels();
@@ -5616,6 +5642,8 @@ async function editorSettings(languageScope = null) {
     select('files','autoSave','Auto save',[['off','Off'],['afterDelay','After delay'],['onFocusChange','On editor focus change'],['onWindowChange','On window focus change']]) +
     field('files','autoSaveDelay','Delay (ms)',`<input class="lee-input" data-setting type="number" min="100" max="60000" value="${lee.filePrefs.autoSaveDelay||900}">`) + `</div>` +
     `<div class="lee-settings-checks">${check('files','trimTrailingWhitespace','Trim trailing whitespace')}${check('files','trimFinalNewlines','Remove final blank lines')}${check('files','insertFinalNewline','Ensure final newline')}${check('files','formatOnSave','Format on save')}${check('files','confirmDelete','Confirm destructive deletes')}</div></div>` +
+    `<div class="lee-settings-group"><h4>Opening folders</h4><div class="lee-settings-grid">` +
+    `<label class="wide">Where the folder picker starts<input class="lee-input" data-pref-section="workbench" data-pref="projectFolder" value="${esc(lee.workbenchPrefs.projectFolder||'')}" placeholder="~/code"><small>Empty falls back to ~/code, then your home folder.</small></label></div></div>` +
     `<div class="lee-setting-row"><span><strong>Crash recovery</strong><small>Unsaved drafts stay in IndexedDB and external writes require review.</small></span><span class="lee-setting-state">always on</span></div></section>` +
     `<section data-settings-section="debug" hidden><h3>Run & debug</h3><p>Defaults for notebook DAP and direct debugpy sessions.</p><div class="lee-settings-checks">` +
     `${check('debug','justMyCode','Just my code')}${check('debug','stopOnEntry','Stop on entry')}${check('debug','subProcess','Debug subprocesses')}${check('debug','showInlineValues','Inline paused values')}${check('debug','breakOnRaised','Break on raised exceptions')}${check('debug','breakOnUncaught','Break on uncaught exceptions')}</div>` +
@@ -7828,19 +7856,6 @@ window.leeNbdevPrepare = leeNbdevPrepare;
 function researchDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch (_) { return 'source'; }
 }
-// The original page, in a Leela tab rather than a browser Leela cannot see. The fallback is
-// not a formality: a source install without a Chrome to drive still has to be able to open a
-// link, and it opens it the way it always did.
-async function openWebpage(url) {
-  if (!url) return status('choose a source first', 'err');
-  let ready = {};
-  try { ready = await api('/browser/ready'); } catch (_) {}
-  // `ok` is "there is a Chrome to drive", not "it is already up". Chrome is started by the
-  // first page that needs one, so a cold browser is a short wait, not a missing feature.
-  if (!ready.ok) return window.open(url, '_blank', 'noopener,noreferrer');
-  if (!ready.running) status('starting the browser…');
-  return openWebTab(url);
-}
 async function saveDoc(doc, kind) {
   doc = doc || lee.lastDoc; if (!doc) return status('nothing fetched yet', 'err');
   if (kind === 'notebook' && !doc.url) return status('a research digest can be saved as markdown; source pages can become notebooks', 'err');
@@ -7927,7 +7942,7 @@ function researchWorkspace(mode = 'search', value = '') {
         Object.assign(doc, result.doc); activeDoc = doc; lee.lastDoc = doc; setActions(doc);
       } catch (e) { reader.innerHTML = `<div class="lee-research-error"><strong>Could not read this source</strong><p>${esc(e.message || e)}</p>` +
         `<button class="lee-btn" data-open-fallback>Open the original webpage</button></div>`;
-        $('[data-open-fallback]', reader).onclick = () => openWebpage(doc.url); return; }
+        $('[data-open-fallback]', reader).onclick = () => openExternal(doc.url); return; }
     }
     reader.innerHTML = '';
     if ((doc.sections || []).length > 1) {
@@ -8001,7 +8016,7 @@ function researchWorkspace(mode = 'search', value = '') {
     $('[data-thought-title]', reader).oninput = e => { activeDoc.title = e.target.value || 'Research notes'; };
     $('[data-thought-title]', reader).focus();
   };
-  $('[data-open]', m).onclick = () => openWebpage(activeDoc?.url);
+  $('[data-open]', m).onclick = () => openExternal(activeDoc?.url);
   $('[data-save]', m).onclick = () => activeDoc && saveDoc(activeDoc, 'markdown');
   $('[data-notebook]', m).onclick = () => activeDoc && saveDoc(activeDoc, 'notebook');
   $('[data-memory-note]', m).onclick = () => {

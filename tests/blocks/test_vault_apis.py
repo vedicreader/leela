@@ -201,7 +201,7 @@ def test_a_local_model_may_call_it_and_a_cloud_reach_gates_nobody(tmp_path, monk
 
 def test_a_loaded_spec_is_named_in_the_briefing_rather_than_looked_up(tmp_path, kept):
     h = host(tmp_path)
-    h.spec_info = {'stripe': dict(title='Stripe', operations=2, groups=['balance'])}
+    h.spec_info['stripe'] = dict(title='Stripe', operations=2, groups=['balance'])
     kept.set('stripe', {'Authorization': 'Bearer k'}, reach='local')
     out = api_context(h)
     assert 'stripe' in out and 'Stripe — 2 operations' in out and 'balance' in out
@@ -209,6 +209,81 @@ def test_a_loaded_spec_is_named_in_the_briefing_rather_than_looked_up(tmp_path, 
 
 def test_no_spec_loaded_costs_the_briefing_nothing():
     assert api_context(WorkspaceHost(Workspace(roots=[]))) == ''
+
+
+# ── calling one from the page ───────────────────────────────────────────────
+
+@pytest.fixture
+def called(monkeypatch):
+    "A client that records what it was built with and answers whatever it is asked."
+    seen = {}
+    class Fake:
+        def __init__(self, parsed, headers=None, **kw): seen['headers'] = dict(headers or {})
+        def latest(self, **kw): return {'asked': kw}
+    monkeypatch.setattr('fastspec.oapi.OpenAPIClient', Fake)
+    return seen
+
+def _client(tmp_path):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    ws = Workspace(roots=[tmp_path])
+    return ws, TestClient(ide_app(ws))
+
+def _load(c, ex):
+    return c.get('/vault/view/specs', params={'src': ex.path, 'name': ex.name})
+
+def test_the_page_and_the_agent_hold_the_same_spec(tmp_path):
+    "A spec loaded on the page is the one `api_call` reaches; two copies would answer differently."
+    from leela.blocks.vault.spec import EXAMPLES
+    ws, client = _client(tmp_path)
+    with client as c: html = _load(c, EXAMPLES[1]).text
+    assert 'frankfurter' in sorted(ws.__dict__.get('_api_specs') or {})
+    assert '/vault/apis/call' in html and 'latest' in html, 'and it offers the call'
+
+def test_an_example_arrives_with_its_call_written_out(tmp_path):
+    from leela.blocks.vault.spec import EXAMPLES
+    _, client = _client(tmp_path)
+    with client as c: html = _load(c, EXAMPLES[1]).text
+    assert EXAMPLES[1].params in html, 'a keyless example answers on the first click'
+
+def test_an_operation_called_from_the_page_answers_with_what_came_back(tmp_path, called):
+    from leela.blocks.vault.spec import EXAMPLES
+    _, client = _client(tmp_path)
+    with client as c:
+        _load(c, EXAMPLES[1])
+        out = c.post('/vault/apis/call', headers={'HX-Request': 'true'},
+                     data={'operation': 'latest', 'name': 'frankfurter',
+                           'params': '{"base": "USD"}'}).text
+    assert 'USD' in out and 'latest answered' in out
+
+def test_parameters_that_are_not_an_object_are_refused_before_anything_is_sent(tmp_path, called):
+    from leela.blocks.vault.spec import EXAMPLES
+    _, client = _client(tmp_path)
+    with client as c:
+        _load(c, EXAMPLES[1])
+        out = c.post('/vault/apis/call', headers={'HX-Request': 'true'},
+                     data={'operation': 'latest', 'name': 'frankfurter', 'params': '[1, 2]'}).text
+    assert 'JSON object' in out
+
+def test_the_page_is_not_gated_on_the_model_a_local_only_api_refuses(tmp_path, called, kept):
+    "The reach gate is about a model reading the answer; this reader is whose data it is."
+    from leela.blocks.vault.spec import EXAMPLES
+    kept.set('frankfurter', {}, reach='local')
+    _, client = _client(tmp_path)
+    with client as c:
+        _load(c, EXAMPLES[1])
+        out = c.post('/vault/apis/call', headers={'HX-Request': 'true'},
+                     data={'operation': 'latest', 'name': 'frankfurter'}).text
+    assert 'answered' in out and 'local-only' not in out
+
+def test_a_row_moves_its_operation_into_the_call_form(tmp_path):
+    from leela.blocks.vault.spec import EXAMPLES
+    _, client = _client(tmp_path)
+    with client as c:
+        _load(c, EXAMPLES[1])
+        out = c.get('/vault/apis/form', headers={'HX-Request': 'true'},
+                    params={'name': 'frankfurter', 'operation': 'currencies'}).text
+    assert 'currencies' in out and '/vault/apis/call' in out
 
 
 # ── the page ────────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ from ...core.web import fail, sse
 from ...core.text import fuzzy_rank
 from .fs import lang_for
 from .ui import files_panel, git_tree_state, tree_node
+from ..settings.settings import start_folder
 
 __all__ = ['CAPS', 'connect', 'SERVED_TYPES']
 
@@ -75,7 +76,7 @@ def connect(app, ctx):
     def fs_browse(path: str = ''):
         "Directories for the in-app folder picker. Files are intentionally never exposed here."
         try:
-            p = Path(path or Path.home()).expanduser()
+            p = Path(path or start_folder(ctx.session.project_root)).expanduser()
             partial = ''
             if not p.is_dir() and not str(path).endswith('/'): partial, p = p.name, p.parent
             p = p.resolve()

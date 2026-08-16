@@ -1036,6 +1036,11 @@ kbd {
 .lee-agent-runstrip { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 5px 8px; border-top: 1px solid var(--lee-border);
   background: color-mix(in srgb, var(--lee-bg1) 92%, transparent); box-shadow: inset 0 1px color-mix(in srgb, var(--lee-fg) 3%, transparent); }
 .lee-agent-runstrip[hidden] { display: none; }
+.lee-agent-harness-banner { padding: 6px 9px; border-top: 1px solid var(--lee-warning);
+  background: color-mix(in srgb, var(--lee-warning) 12%, transparent); color: var(--lee-fg);
+  font-size: 11px; line-height: 1.45; }
+.lee-agent-harness-banner[hidden] { display: none; }
+.lee-agent-harness-banner strong { color: var(--lee-warning); }
 .lee-agent-run-state { overflow: hidden; color: var(--lee-fg2); font: 600 9.5px/1.3 var(--lee-mono); text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; }
 .lee-agent-steer { display: grid; grid-template-columns: 1fr auto; gap: 5px; padding-bottom: 5px; }
 .lee-agent-steer .lee-input { margin: 0; }
@@ -3140,6 +3145,11 @@ kbd {
 .lee-wb-verb.post, .lee-wb-verb.put, .lee-wb-verb.patch { color: var(--lee-orange); }
 .lee-wb-verb.delete { color: var(--lee-red); }
 .lee-wb-ops { display: flex; flex-direction: column; gap: 8px; }
+.lee-wb-callview { display: flex; flex-direction: column; gap: 8px; margin-top: 14px;
+                   padding-top: 12px; border-top: 1px solid var(--lee-border); }
+.lee-wb-apiout { max-height: 24rem; overflow: auto; margin: 0; padding: 10px 12px; border-radius: 6px;
+                 background: var(--lee-bg1); border: 1px solid var(--lee-border);
+                 font: 10px/1.6 var(--lee-mono); color: var(--lee-fg3); white-space: pre-wrap; }
 
 .lee-wb-topiccards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
 .lee-wb-topic { display: flex; flex-direction: column; gap: 5px; padding: 11px 13px; border-radius: 6px;
