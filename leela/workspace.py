@@ -149,7 +149,7 @@ class Workspace:
         self.research = Research(self.fs, memory=self.memory)
         from .blocks.browser.browser import Browser
         self.browser = Browser(port=cdp_port)
-        self.runs = Runs(first(self.fs.roots))
+        self._runs = None
         from .core.session import OperationJournal
         journal_key = hashlib.sha256('\0'.join(map(str, self.fs.roots)).encode()).hexdigest()[:16]
         self.journal = OperationJournal(leela_cfg/'journals'/f'{journal_key}.json', self.fs)
@@ -235,7 +235,6 @@ class Workspace:
                 except Exception: pass
     def add_root(self, p):
         r = self.fs.add_root(p)
-        if self.runs.root is None: self.runs = Runs(self.fs.roots[0])
         if not self.pool.kernels and self.pool.default_python is None:
             from .blocks.runtime.kernels import project_python
             if (py := project_python([r])): self.pool.choose(python=py)
@@ -268,6 +267,12 @@ class Workspace:
         "The folder the project surfaces are about: the chosen one, else the first open folder."
         if self.active_root and self.active_root in self.fs.roots: return self.active_root
         return first(self.fs.roots)
+    @property
+    def runs(self):
+        "The saved runs of the folder the project surfaces are about, which is not always the first opened."
+        root = self.project_root
+        if self._runs is None or self._runs.root != root: self._runs = Runs(root)
+        return self._runs
     def _add_tab(self, t):
         "Append a tab, focus it, and point the variable panel back at its kernel."
         self.tabs.append(t)

@@ -5,10 +5,12 @@ from fastcore.basics import store_attr
 
 __all__ = ['Ctx', 'CAPABILITIES', 'EAGER', 'LAZY', 'APP', 'Block', 'connect_all', 'block_caps']
 
-EAGER = ('fs', 'fs_watch', 'pool', 'search', 'memory', 'research', 'runs', 'journal', 'terms',
+EAGER = ('fs', 'fs_watch', 'pool', 'search', 'memory', 'research', 'journal', 'terms',
          'dev', 'approvals', 'jobs', 'vaults', 'feeds', 'browser')
 
-LAZY = ('ai', 'inline_ai', 'completer', 'lsp', 'tab', 'pending_approval')
+# `runs` follows the active project root, so a block that copied it at connect would answer for
+# whichever folder happened to open first
+LAZY = ('ai', 'inline_ai', 'completer', 'lsp', 'tab', 'pending_approval', 'runs')
 
 APP = ('docs', 'debug', 'running', 'gate', 'catalog')
 

@@ -947,3 +947,20 @@ def test_leela_can_redirect_both_transcript_streams(tmp_path):
         assert s.log_path.exists()
     finally:
         set_logging(dir='leela_sessions', agent_dir='leela_agent_sessions')
+
+
+def test_the_runs_file_follows_the_folder_you_chose(tmp_path):
+    "The bug git had, in the runs surface: open one folder, add a second, switch, runs stayed behind."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    a, b = tmp_path/'leela', tmp_path/'cassowary'
+    a.mkdir(); b.mkdir()
+    ws = Workspace(roots=[a, b])
+    assert ws.runs.root == a, 'precondition: the first folder'
+    with TestClient(ide_app(ws)) as client:
+        assert client.get('/runs').json()['path'].startswith(str(a))
+        assert client.post('/workspace/activate', json={'path': str(b)}).json()['ok'] is True
+        assert client.get('/runtime/info').json()['root'] == str(b)
+        assert client.get('/runs').json()['path'].startswith(str(b)), 'the chosen folder, not the first'
+    assert ws.runs.root == b
