@@ -10,13 +10,15 @@ from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, p
 from ...agent.tools import MAX_HITS, MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS
 from ...agent.tools import DENY, MAX_GREP_HITS, Host, clip, tools_for
 from ...agent.spec import SpecHost
+from ..vault.jobs import cadence
 from .video import VideoJobs, video_available, video_tools
 
 GIT_TOOLS = ('git_status', 'git_fetch', 'git_checkout', 'git_pull', 'git_push')
 GIT_WRITE_TOOLS = frozenset(GIT_TOOLS) - {'git_status'}
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not', *(f'{t.replace("_", " ")} failed' for t in GIT_TOOLS))
 FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
-WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS
+NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
+WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS | NEWS_WRITE_TOOLS
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools',
            'notebook_approvals', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
@@ -123,6 +125,9 @@ class Interventions(Approvals):
         with self._state_lock:
             self.queued_steer = str(text or '').strip()
             if self.queued_steer: self.run_policy, self.pause_next = {'kind': 'once', 'remaining': 1}, False
+            a = self.current if self.queued_steer and self.current is not None and self.current.pending else None
+            if a is not None: self.queued_steer = ''
+        if a is not None: self.answer(a.id, False, text)
         return self.queued_steer
     def consume_steer(self):
         with self._state_lock:
@@ -337,9 +342,29 @@ class WorkspaceHost(Host):
     def specs(self): return self.ws.__dict__.setdefault('_api_specs', {})
     @property
     def _clients(self): return self.ws.__dict__.setdefault('_api_clients', {})
-    headers, timeout = {}, 60.0
+    @property
+    def headers(self): return self.ws.__dict__.setdefault('_api_headers', {})
+    @property
+    def _creds(self):
+        "One user's keys, read where the workbench writes them rather than held on the host."
+        from ..vault.spec import CREDS
+        return CREDS.all()
+    def api_creds(self, name, headers=None):
+        "Set what is sent with calls to one spec and nothing else; `headers=None` clears it."
+        from ..vault.spec import CREDS
+        return CREDS.set(name, headers)
+    def _client(self, key, parsed):
+        "Cached against the credentials too, so a key set on the page reaches a running host."
+        creds = self._creds.get(key, {})
+        seal, got = tuple(sorted(creds.items())), self._clients.get(key)
+        if got is None or got[0] != seal:
+            from fastspec.oapi import OpenAPIClient
+            got = self._clients[key] = (seal, OpenAPIClient(parsed, timeout=self.timeout, sync=True,
+                                                            headers={**self.headers, **creds}))
+        return got[1]
+    timeout = 60.0
     api_load, api_ops, api_call = SpecHost.api_load, SpecHost.api_ops, SpecHost.api_call
-    api_names, _spec = SpecHost.api_names, SpecHost._spec
+    api_names, api_keyed, _spec = SpecHost.api_names, SpecHost.api_keyed, SpecHost._spec
     def nb_cells(self, path):
         from ..nb.nb import Notebook
         return [(c.id, c.cell_type, c.source) for c in Notebook.load(self.check(path)).cells]
@@ -484,6 +509,88 @@ def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
         return clip(f'[{host.search_note}]\n' + '\n'.join(rows), mx)
     return [search_all]
 
+def _news_tools(host, mx=MAX_TOOL_CHARS):
+    """The feeds and the loaded specs, as tools.
+
+    Feed items are on the `news` shelf and the memory tools read the main one, so the feeds
+    answered a search by luck and `memory_read` cannot open an item at all.
+    """
+    from ..vault.news import NEWS_SHELF, fetch_feed, feed_title, news_rows, poll_feeds
+    def feeds():
+        f = getattr(host.ws, 'feeds', None)
+        if f is None: raise ValueError('this workspace follows no sources')
+        return f
+    def story(d, chars=240):
+        m = d.get('meta') or {}
+        return dict(doc_id=d.get('doc_id') or d.get('id'), title=d.get('title'), feed=m.get('feed'),
+            published=str(m.get('published') or '')[:19], author=m.get('author'),
+            link=d.get('source'), summary=str(m.get('summary') or '')[:chars])
+    def news_feeds() -> str:
+        """Which sources this vault follows, how often each is read, and what it last said.
+
+        Feed items are filed on the `news` shelf, not the main one, so `memory_search` reaches them
+        only in passing. Use `news_latest` to read them and `news_story` to open one.
+        """
+        try: rows = [dict(url=f.url, title=f.title, every=f.every, enabled=f.enabled,
+                          last_status=f.last_status or 'not read yet', new_since_last_read=f.items)
+                     for f in feeds()]
+        except Exception as e: return f'news_feeds failed: {errstr(e)}'
+        return clip(json.dumps(rows, default=str), mx)
+    def news_latest(match: str = '', feed: str = '', limit: int = 20) -> str:
+        """Recent feed items, newest first: headline, source, date, standfirst and `doc_id`.
+
+        `match` narrows by headline or standfirst, `feed` by the source's name. This reads what is
+        already filed; call `news_refresh` first when the question is about today.
+        """
+        try: found = news_rows(host._vault(), match=match, feed=feed, limit=max(1, int(limit)))
+        except Exception as e: return f'news_latest failed: {errstr(e)}'
+        if not found: return 'nothing on the news shelf matches that.'
+        return clip(json.dumps([story(x) for x in found], default=str), mx * 2)
+    def news_story(doc: str) -> str:
+        """One feed item in full, by the `doc_id` or the headline `news_latest` reported.
+
+        `memory_read` cannot open this: it reads the main shelf, and feed items are on `news`.
+        """
+        text = host._vault().document_text(doc, shelf=NEWS_SHELF)
+        if not text: return f'no such item on the news shelf: {doc!r}. Call news_latest for what is there.'
+        return clip(text, mx * 2)
+    def news_follow(url: str, title: str = '', every: str = '1h') -> str:
+        """Follow a source and read it now. `url` may be the site itself — its feed is found for you.
+
+        A source refused here carries no feed at all, which is worth reporting rather than retrying
+        with a guessed `/rss.xml`. `every` says when to read it *again*.
+        """
+        try: f = feeds().add(url, title, every)
+        except Exception as e: return f'could not follow that: {errstr(e)}'
+        out = poll_feeds(host._vault(write=True), feeds(), only=f.id)
+        return f"following {f.title} at {f.url}, {cadence(f.seconds)}; filed {out['added']} items."
+    def news_unfollow(url: str) -> str:
+        "Stop following one source. What it already filed stays in the vault."
+        f = first(x for x in feeds() if url in (x.id, x.url, x.title))
+        if f is None: return f'not following {url!r}. Call news_feeds to see what is followed.'
+        feeds().remove(f.id)
+        return f'stopped following {f.title or f.url}; its items remain on the news shelf.'
+    def news_refresh(feed: str = '') -> str:
+        """Read followed sources now and file whatever is new. Returns what came in, per feed.
+
+        `feed` is one source's address or title, from `news_feeds`; every one when omitted.
+        """
+        try: out = poll_feeds(host._vault(write=True), feeds(), force=True, only=feed)
+        except Exception as e: return f'news_refresh failed: {errstr(e)}'
+        if not out['feeds']: return f'not following {feed!r}. Call news_feeds to see what is followed.'
+        return clip(json.dumps(out, default=str), mx)
+    def api_keys() -> str:
+        """Which loaded specs carry credentials, and which headers they send — never the values.
+
+        A call to a spec with no credentials goes out unauthenticated, which most APIs answer with
+        401. Say that plainly rather than retrying: the key is added on the vault's specs page.
+        """
+        keyed, loaded = host.api_keyed(), sorted(host.specs)
+        if not loaded: return 'no specification is loaded; call api_load first.'
+        return json.dumps({n: keyed.get(n) or 'no credentials — calls go out unauthenticated'
+                           for n in loaded}, default=str)
+    return [news_feeds, news_latest, news_story, news_follow, news_unfollow, news_refresh, api_keys]
+
 def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, host=None):
     "An `Approvals` that writes the whole exchange into the notebook."
     from ..nb.nb import Cell
@@ -561,6 +668,7 @@ class Assistant(Agent):
         self.ws, self.surface = ws, surface
         self.session_state = str(getattr(ws, 'agent_state', '') or '')
         self._git_toolset = _git_tools(host)
+        self._news_toolset = _news_tools(host)
         self._search_toolset = _search_tools(host, legs=None if surface == 'agent' else FAST_SEARCH_LEGS)
         self.video_jobs = VideoJobs() if video_available() else None
         self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
@@ -575,7 +683,8 @@ class Assistant(Agent):
     def tools(self):
         if self._tools is None:
             registered = {f.__name__ for f in self.registry.tools}
-            self.registry.tools.extend(f for f in [*self._git_toolset, *self._search_toolset, *self._video_toolset]
+            self.registry.tools.extend(f for f in [*self._git_toolset, *self._news_toolset,
+                                                   *self._search_toolset, *self._video_toolset]
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             built = super().tools
@@ -689,4 +798,4 @@ class _PolicyApprovals(Approvals):
 def ide_tools(ws, session=None):
     "Every tool the agent gets, bound to one `Workspace`."
     host = WorkspaceHost(ws, session)
-    return tools_for(host, extra=_git_tools(host) + _search_tools(host))
+    return tools_for(host, extra=_git_tools(host) + _news_tools(host) + _search_tools(host))

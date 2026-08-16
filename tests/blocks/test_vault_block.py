@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import json, time
 
 import pytest
 from fasthtml.common import to_xml
@@ -10,7 +10,8 @@ from fasthtml.common import to_xml
 from leela.blocks.memory.memory import Memory
 from leela.blocks.vault.acquire import ACTIONS, category_for, detect, plan_tree
 from leela.blocks.vault.jobs import cadence, every_seconds
-from leela.blocks.vault.news import Feed, Feeds, feed_title, item_markdown, parse_feed
+from leela.blocks.vault.news import (Feed, Feeds, feed_title, item_markdown, news_rows, parse_feed,
+                                     poll_feeds)
 from leela.blocks.vault import ui
 from leela.workspace import Workspace
 
@@ -140,6 +141,72 @@ def test_a_feed_row_missing_its_url_is_dropped_rather_than_taking_the_file_with_
                                                                   {'url': 'https://ok.test'}]}))
     assert [r.url for r in Feeds(p)] == ['https://ok.test']
 
+# ── reading one source, and what a story keeps ──────────────────────────────
+
+class _Shelf:
+    "Enough of `Memory` for `poll_feeds`: what has been filed, and what was already there."
+    def __init__(self, docs=()): self.docs = list(docs)
+    def all_documents(self, limit=200, shelves=None, kind=None): return list(self.docs)
+    def file_news(self, text, title='', source='', meta=None):
+        self.docs.append(dict(id=f'n{len(self.docs)}', title=title, source=source, text=text,
+                              meta=dict(meta or {})))
+        return self.docs[-1]
+
+@pytest.fixture
+def followed(tmp_path, monkeypatch):
+    "Two sources, both just read, so nothing is due and the narrowing is what decides."
+    from leela.blocks.vault import news as N
+    monkeypatch.setattr(N, 'fetch_feed', lambda url, timeout=30: (url, RSS if 'blog' in url else ATOM))
+    f = Feeds(tmp_path/'feeds.json')
+    for url, title in (('https://blog.test/feed', 'A blog'), ('https://journal.test/feed', 'A journal')):
+        f.rows.append(Feed(url=url, title=title, last_run=time.time()))
+    return f.save()
+
+def test_a_source_nobody_is_waiting_on_is_not_read(followed):
+    assert poll_feeds(_Shelf(), followed)['feeds'] == 0
+
+@pytest.mark.parametrize('only', ['https://blog.test/feed', 'A blog'])
+def test_one_source_is_read_on_its_own_when_it_is_named(followed, only):
+    "A feed nobody is waiting on should not cost a read of the others."
+    out = poll_feeds(_Shelf(), followed, only=only)
+    assert out['feeds'] == 1 and out['added'] == 2
+    assert out['results'][0]['title'] == 'A blog'
+
+def test_a_source_is_named_by_its_id_too(followed):
+    fid = followed.rows[1].id
+    assert poll_feeds(_Shelf(), followed, only=fid)['results'][0]['title'] == 'A journal'
+
+def test_naming_a_source_nobody_follows_reads_nothing_rather_than_everything(followed):
+    assert poll_feeds(_Shelf(), followed, only='https://nowhere.test')['feeds'] == 0
+
+def test_the_standfirst_is_kept_so_a_page_of_stories_is_one_query(followed):
+    "The front page prints a first paragraph per story; reading forty documents for it is forty queries."
+    m = _Shelf()
+    poll_feeds(m, followed, only='A blog')
+    assert m.docs[0]['meta']['summary'] == 'Something else'
+
+# ── the news shelf, narrowed ────────────────────────────────────────────────
+
+STORIES = [
+    dict(id='a', title='Rates hold', source='https://blog.test/1',
+         meta=dict(feed='A blog', published='2026-08-14T09:00:00+00:00', summary='The bank waited.')),
+    dict(id='b', title='A quiet day', source='https://journal.test/2',
+         meta=dict(feed='A journal', published='2026-08-15T09:00:00+00:00', summary='Rates were dull.')),
+]
+
+def test_the_shelf_reads_newest_first_by_the_date_the_feed_carried():
+    assert [x['id'] for x in news_rows(_Shelf(STORIES))] == ['b', 'a']
+
+def test_a_headline_and_a_standfirst_are_both_searchable():
+    assert [x['id'] for x in news_rows(_Shelf(STORIES), match='rates')] == ['b', 'a']
+    assert [x['id'] for x in news_rows(_Shelf(STORIES), match='hold')] == ['a']
+
+def test_the_front_page_narrows_to_one_paper():
+    assert [x['id'] for x in news_rows(_Shelf(STORIES), feed='A journal')] == ['b']
+
+def test_a_limit_takes_the_newest_rather_than_the_first_filed():
+    assert [x['id'] for x in news_rows(_Shelf(STORIES), limit=1)] == ['b']
+
 # ── the workbench ───────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -207,6 +274,24 @@ def test_every_view_renders_over_an_empty_vault(tmp_path):
     assert to_xml(ui.add_view(m, 'workspace', jobs=None, root=str(tmp_path)))
     assert to_xml(ui.news_view(m, 'workspace', feeds=Feeds(tmp_path/'f.json')))
     assert to_xml(ui.specs_view(m, 'workspace'))
+
+def test_every_source_carries_its_own_read_it_now(tmp_path, followed):
+    "A feed nobody is waiting on should not cost a read of the others."
+    html = to_xml(ui.news_view(_Shelf(), 'workspace', feeds=followed))
+    assert html.count('/vault/news/pull') == 2
+
+def test_the_source_narrowing_is_a_picker_over_what_is_followed(tmp_path, followed):
+    "A name half-remembered is the one narrowing nobody types right."
+    html = to_xml(ui.news_view(_Shelf(), 'workspace', feeds=followed))
+    assert 'name="feed"' in html and 'A blog' in html and 'A journal' in html
+
+def test_the_front_page_shows_only_the_paper_asked_for(tmp_path, followed):
+    html = to_xml(ui.news_view(_Shelf(STORIES), 'workspace', feeds=followed, feed='A journal'))
+    assert 'A quiet day' in html and 'Rates hold' not in html
+
+def test_a_story_carries_the_standfirst_the_feed_wrote(tmp_path, followed):
+    html = to_xml(ui.news_view(_Shelf(STORIES), 'workspace', feeds=followed))
+    assert 'The bank waited.' in html
 
 def test_the_specs_view_says_what_filing_a_specification_buys(filled):
     rows = [{'verb': 'GET', 'path': '/deployments', 'summary': 'list them', 'required': ['id'],

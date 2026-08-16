@@ -960,6 +960,23 @@ function editableResponse(raw) {
   return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function markTurnUndone(out, bar, files, revise) {
+  // `rollback_turn` restores files; it does not touch model history. Deleting the transcript
+  // said the agent had forgotten a turn it still carries.
+  let first = out, last = bar;
+  while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
+  while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
+  for (let node = first; node; node = node.nextElementSibling) {
+    if (node !== bar) node.classList.add('lee-turn-undone');   // the bar carries the explanation
+    if (node === last) break;
+  }
+  const note = document.createElement('span');
+  note.textContent = `${files} file${files === 1 ? '' : 's'} restored · the agent still remembers this turn`;
+  bar.classList.add('lee-turn-undone-bar');
+  bar.replaceChildren(note, ...(revise ? [revise] : []));
+  return bar;
+}
+
 function addResponseRevision(out, turnId, raw, capabilities = {}) {
   if (!turnId || !out || !raw.trim()) return;
   const bar = document.createElement('div'); bar.className = 'lee-response-revision';
@@ -978,18 +995,10 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
         ? `\n\nCannot undo external effects: ${tx.transaction.irreversible.join(', ')}` : '';
       if (!await confirmDialog('Undo agent turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
       const d = await post('/agent/rollback-turn', {turn_id: turnId});
+      // Marked before the files are reloaded: a reload that raises used to leave the reply
+      // standing as though nothing had happened.
+      markTurnUndone(out, bar, (d.paths || []).length, capabilities.revisable ? reviseButton : null);
       for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
-      const log = out.parentElement;
-      if (log) {
-        let first = out, last = bar;
-        while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
-        if (first.previousElementSibling?.classList.contains('lee-user-message')) first = first.previousElementSibling;
-        while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
-        for (let node = first, next; node; node = next) {
-          next = node.nextElementSibling; node.remove();
-          if (node === last) break;
-        }
-      }
       status('turn changes rolled back', 'ok');
     } catch (e) { status(e.message || String(e), 'err'); }
   };

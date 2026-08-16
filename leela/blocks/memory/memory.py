@@ -166,7 +166,12 @@ class Memory:
         except Exception as e:
             self.note = f'could not list memory ({errstr(e)})'
             return []
-    def document_text(self, doc_id):
+    def document_text(self, doc_id, shelf=None):
+        if shelf:
+            try: return str(self._shelf(shelf).document(str(doc_id)).text or '').strip()
+            except Exception as e:
+                self.note = f'could not read remembered document ({errstr(e)})'
+                return ''
         try: return str(self._open().document(str(doc_id)).text or '').strip()
         except Exception:
             try: return str(self._agent().document(str(doc_id)).text or '').strip()

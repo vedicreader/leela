@@ -1,5 +1,3 @@
-"Everything the vault shows: the side rail, and the workbench that opens as a tab."
-
 from __future__ import annotations
 
 import json, re
@@ -14,10 +12,11 @@ from ..memory.memory import source_kind
 from ..memory.vaults import ACCESS
 from .acquire import ACTIONS
 from .jobs import cadence
+from .news import news_rows
 
 __all__ = ['job_card', 'pii_badge', 'vault_panel', 'vault_browse', 'vault_docs', 'vault_tree',
            'tidy_list', 'watch_list', 'workbench', 'browse_view', 'find_view', 'add_view',
-           'news_view', 'specs_view', 'topics_view', 'import_plan', 'ops_table', 'PII_COVERS',
+           'news_view', 'specs_view', 'creds_panel', 'creds_view', 'topics_view', 'import_plan', 'ops_table', 'PII_COVERS',
            'VIEWS', 'KINDS']
 
 POLL_MS = 1200
@@ -25,12 +24,9 @@ POLL_MS = 1200
 PII_COVERS = ('covers pattern kinds and titled names — a bare name or loose address is never '
               'looked for, so this says what was found, never that there is nothing')
 
-#: The workbench's own sections, in the order somebody works through them.
 VIEWS = (('browse', 'what is in it'), ('find', 'search it'), ('add', 'put something in'),
          ('news', 'what the feeds said'), ('specs', 'ask an api'), ('topics', 'what it is about'))
 
-#: One glyph per document kind, so a shelf reads as a shelf rather than a list of strings. The
-#: vault names a clipped file by its extension and an acquired source by what read it, so both.
 KINDS = {'pdf': '▤', 'web': '◍', 'html': '◍', 'htm': '◍', 'news': '⚑', 'rss': '⚑',
          'code': '⌘', 'codebase': '⌘', 'api': '⚙', 'api_spec': '⚙', 'json': '⚙', 'yaml': '⚙',
          'arxiv': '✎', 'youtube': '▶', 'note': '✎', 'agent-note': '✎', 'agent-state': '◆',
@@ -50,20 +46,15 @@ def _when(ts):
 def empty(title, body, *extra):
     return Div(Strong(title), Span(body), *extra, cls='lee-wb-empty')
 
-# ── jobs ────────────────────────────────────────────────────────────────────
-
 def _kinds(kinds):
-    "`email×3, person×1` — what was found, densest first, and never more than fits on a badge."
     return ', '.join(f'{k}×{n}' for k, n in sorted((kinds or {}).items(), key=lambda kv: -kv[1])[:4])
 
 def pii_badge(report):
-    "One document's PII report as a badge. `has_pii` is the vault's, override included."
     if not report.get('doc_id') and report.get('note'): return Span('pii unavailable', cls='lee-pii', title=report['note'])
     if not report.get('has_pii'): return Span('no pattern found', cls='lee-pii clear', title=PII_COVERS)
     return Span(_kinds(report.get('kinds')), cls='lee-pii found', title=PII_COVERS)
 
 def _clip_pii_badge(pii):
-    "The same judgement over a whole clip, from the summary `clip_docs` files in its result."
     docs = pii.get('documents') or []
     if not docs: return Span('no pattern found', cls='lee-pii clear', title=PII_COVERS)
     return Span(f"pii in {len(docs)} document{'' if len(docs) == 1 else 's'} · {_kinds(pii.get('kinds'))}",
@@ -77,12 +68,10 @@ def _one_line(k, v):
     return f'{k}: {v}'
 
 def _summarise(result, mx=40):
-    "The parts of a result worth reading in a card, rather than its whole JSON."
     if not isinstance(result, dict): return str(result)[:2000]
     return '\n'.join(_one_line(k, v) for k, v in list(result.items())[:mx])
 
 def job_card(job):
-    "One job, as a fragment that keeps asking until it is finished and then stops."
     d = job.dict()
     active = d['active']
     attrs = dict(hx_get=f"/jobs/{d['id']}", hx_trigger=f'load delay:{POLL_MS}ms', hx_swap='outerHTML') if active else {}
@@ -103,27 +92,21 @@ def job_card(job):
     if d['result']: body.append(Details(Summary('details'), Pre(_summarise(d['result']), cls='lee-job-result')))
     return Div(*body, cls=f"lee-job {d['status']}", id=f"job-{d['id']}", **attrs)
 
-# ── the tidy list ───────────────────────────────────────────────────────────
-
 def _why(row, n=3):
-    "The features that put a document at this rank, strongest first, as the score's tooltip."
     feats = sorted(((k, v) for k, v in row.items() if isinstance(v, (int, float)) and k != 'score'),
         key=lambda kv: -abs(kv[1]))[:n]
     return ' · '.join(f'{k} {v:+.1f}' for k, v in feats) or 'ranked with no standout feature'
 
 def _judge(doc, shelf, noisy, label, cls):
-    "One judgement, as a form: `mark_noisy` writes to `doc_marks`, so it outlives re-ingestion."
     return Form(Hidden(name='doc', value=doc), Hidden(name='shelf', value=shelf),
         Hidden(name='noisy', value=str(noisy).lower()), Button(label, cls=cls, type='submit'),
         hx_post='/vault/noisy', hx_target='closest .lee-tidy-row', hx_swap='outerHTML')
 
 def _pii_slot(doc, shelf=''):
-    "A badge that fetches itself when its row is seen: a PII scan reads the whole document."
     return Span('scanning…', cls='lee-pii pending', hx_trigger='revealed', hx_swap='outerHTML',
         hx_get='/vault/pii/badge?' + _q(doc=doc, shelf=shelf))
 
 def _tidy_row(row, shelf=''):
-    "One noise candidate: what it is, why it ranks, whether it is somebody's business, and the call."
     doc = str(row.get('doc_id') or '')
     return Div(Span(row.get('title') or doc, cls='lee-tidy-title', title=doc),
         Span(f"{row.get('score') or 0:.2f}", cls='lee-tidy-score', title=_why(row)),
@@ -138,8 +121,6 @@ def tidy_list(memory, shelf='', k=20):
             [Div('Nothing looks like noise, or the shelf is too small to have an opinion.', cls='lee-vault-empty')])
     return Div(*body, id='vaulttidy', cls='lee-vault-tidyrows')
 
-# ── watches ─────────────────────────────────────────────────────────────────
-
 def _watch_row(w):
     every = w.get('every') or 0
     return Div(Span(w.get('action', ''), cls='lee-watch-action'),
@@ -153,10 +134,7 @@ def watch_list(watches):
     rows = [_watch_row(w) for w in watches] or [Div('Nothing on a cadence.', cls='lee-vault-empty')]
     return Div(*rows, id='vaultwatches', cls='lee-vault-watches')
 
-# ── documents, as rows and as a tree ────────────────────────────────────────
-
 def _ask_button(doc, shelf, vault, title, label='ask'):
-    "Attach this document to the next question, rather than opening it to copy out of it."
     return Button(label, cls='lee-btn lee-vault-ask', title='attach this to the next question',
         data_doc=doc, data_shelf=shelf, data_vault=vault, data_title=title,
         onclick='leeVaultAsk(this)')
@@ -200,7 +178,6 @@ def _group_of(row):
     return 'notes', str(row.get('title') or row.get('doc_id') or '')
 
 def _strip_prefix(paths):
-    "The common leading folders shared by every path, which are chrome rather than structure."
     parts = [p.split('/') for p in paths]
     if not parts: return 0
     common = 0
@@ -210,7 +187,6 @@ def _strip_prefix(paths):
     return common
 
 def _placed(memory, shelf='', limit=2000):
-    "Every document keyed by where it sits: `<shelf>/[<group>/]<folders...>/<leaf>`."
     rows = memory.all_documents(limit=limit, shelves=[shelf] if shelf else None)
     by_shelf = {}
     for r in rows: by_shelf.setdefault(str(r.get('shelf') or 'main'), []).append(r)
@@ -229,7 +205,6 @@ def _placed(memory, shelf='', limit=2000):
     return out
 
 def _nest(placed):
-    "The flat keys as a tree of `{name: subtree}` with documents at the leaves."
     root = {}
     for key, r in placed:
         parts = key.split('/')
@@ -239,7 +214,6 @@ def _nest(placed):
     return root
 
 def _tree_rows(node, vault, at='', open_folders=(), depth=0, elid='vaultbrowse', notes=None):
-    "One subtree, descending only into folders that are open."
     out = []
     for name in sorted(k for k in node if k != ''):
         path = f'{at}/{name}'.strip('/')
@@ -257,7 +231,6 @@ def _tree_rows(node, vault, at='', open_folders=(), depth=0, elid='vaultbrowse',
     return out
 
 def vault_tree(memory, vault='', shelf='', open_folders=None, limit=2000, elid='vaultbrowse'):
-    "The vault as a tree you can walk, with `open_folders` deciding how far it is unfolded."
     placed = _placed(memory, shelf, limit)
     node = _nest(placed)
     counts = {}
@@ -270,7 +243,6 @@ def vault_tree(memory, vault='', shelf='', open_folders=None, limit=2000, elid='
                id=f'{elid}tree', cls='lee-vault-tree')
 
 def vault_browse(memory, q='', vault='', shelf='', limit=60, open_folders=None, elid='vaultbrowse'):
-    "The browse block: which vault is open, a search box scoped to it, and the rows."
     return Div(Span(f'documents · {vault}' if vault else 'documents', cls='lee-vault-legend'),
         Form(Hidden(name='vault', value=vault), Hidden(name='shelf', value=shelf),
             Hidden(name='open', value='|'.join(open_folders) if open_folders is not None else ''),
@@ -282,16 +254,12 @@ def vault_browse(memory, q='', vault='', shelf='', limit=60, open_folders=None, 
             else vault_tree(memory, vault, shelf, open_folders, elid=elid),
         id=elid, cls='lee-vault-browse')
 
-# ── the side rail ───────────────────────────────────────────────────────────
-
 def _clip_form(target, kind, label, hint):
-    "One clip action. HTMX posts it and swaps the returned card in, so no script drives this."
     return Form(Input(name='target', cls='lee-input', value=target or '', placeholder=hint, autocomplete='off'),
         Hidden(name='kind', value=kind), Button(label, cls='lee-btn go', type='submit'),
         cls='lee-clip-form', hx_post='/clip', hx_target='#vaultjobs', hx_swap='afterbegin')
 
 def _vault_row(r):
-    "One vault: click the name to read it, the dot to make it active, plus who may write to it."
     name, act = r['name'], ('lee-shelf-name mine' if r['active'] else 'lee-shelf-name')
     hid = Hidden(name='name', value=name)
     return Div(Button(name, cls=act + ' lee-vault-open', title=f"{r['path']} — browse this vault",
@@ -361,10 +329,7 @@ def vault_panel(memory, jobs, active_path='', root='', vaults=None):
             cls='lee-vault-tidy'),
         cls='lee-panel lee-vault', id='vaultpanel')
 
-# ── the workbench ───────────────────────────────────────────────────────────
-
 def _swap(view, vault='', **kw):
-    "Every workbench control swaps the body in place; the tab itself never reloads."
     return dict(hx_get='/vault/view/' + view + (('?' + q) if (q := _q(vault=vault, **kw)) else ''),
                 hx_target='#vaultwbbody', hx_swap='innerHTML')
 
@@ -375,7 +340,6 @@ def workbench(memory, vaults, view='browse', body=None, **kw):
     "The whole surface: which vault, which section, and the section itself."
     stats, names = memory.vault_stats(), vaults.dict()
     active = names.get('active', '')
-    # `wb`: activating from here wants the workbench back, not the JSON the rail's version returns.
     picker = Select(*[Option(r['name'], value=r['name'], selected=r['name'] == active)
                       for r in names.get('vaults', [])], cls='lee-input lee-wb-vault',
                     aria_label='which vault', title=str(memory.path), name='name',
@@ -525,14 +489,34 @@ def _feed_row(f):
         Small(f['url'], cls='lee-dim'),
         Small(f"{cadence(f['seconds'])} · last read {_when(f['last_run'])} · {f['last_status'] or 'not read yet'}",
               cls='lee-dim' if f['last_status'] in ('ok', '') else 'lee-job-error'),
-        Div(Form(Hidden(name='fid', value=f['id']), Hidden(name='enabled', value=str(not f['enabled']).lower()),
+        Div(Form(Hidden(name='fid', value=f['id']), Button('read it now', cls='lee-btn', type='submit'),
+                 hx_post='/vault/news/pull', hx_target='#vaultwbbody', hx_swap='innerHTML'),
+            Form(Hidden(name='fid', value=f['id']), Hidden(name='enabled', value=str(not f['enabled']).lower()),
                  Button('resume' if not f['enabled'] else 'pause', cls='lee-btn', type='submit'),
                  hx_post='/vault/news/toggle', hx_target='#vaultwbbody', hx_swap='innerHTML'),
             Form(Hidden(name='fid', value=f['id']), Button('stop following', cls='lee-btn warn', type='submit'),
                  hx_post='/vault/news/remove', hx_target='#vaultwbbody', hx_swap='innerHTML'),
             cls='lee-wb-feedactions'), cls='lee-wb-feed')
 
-def news_view(memory, vault='', feeds=None, error='', **_):
+def _story(d, vault=''):
+    "One story under the source, dateline and standfirst the feed wrote."
+    m = d.get('meta') or {}
+    line = ' · '.join(x for x in (m.get('feed'), (m.get('published') or '')[:10], m.get('author')) if x)
+    return Div(_doc_row(d, vault), Small(line, cls='lee-dim') if line else None,
+        Small(str(m.get('summary')), cls='lee-wb-standfirst') if m.get('summary') else None,
+        cls='lee-wb-story')
+
+def _narrow(rows, q='', feed=''):
+    "A picker over what is followed: a name half-remembered is the one nobody types right."
+    names = [f['title'] or f['url'] for f in rows]
+    return Form(
+        Select(Option('every source', value=''),
+               *[Option(n, value=n, selected=(n == feed)) for n in names], name='feed', cls='lee-input'),
+        Input(name='q', value=q, cls='lee-input', placeholder='a headline', size='12'),
+        Button('narrow', cls='lee-btn', type='submit'),
+        hx_get='/vault/view/news', hx_target='#vaultwbbody', hx_swap='innerHTML', cls='lee-wb-form')
+
+def news_view(memory, vault='', feeds=None, error='', q='', feed='', **_):
     "Follow a source, read it on a cadence, and keep what it said with everything else."
     rows = (feeds.dict() if feeds else {'feeds': []})['feeds']
     add = Form(Input(name='url', cls='lee-input', required=True, autocomplete='off',
@@ -544,19 +528,22 @@ def news_view(memory, vault='', feeds=None, error='', **_):
         hx_post='/vault/news/add', hx_target='#vaultwbbody', hx_swap='innerHTML', cls='lee-wb-form')
     read = Form(Hidden(name='force', value='true'), Button('read every feed now', cls='lee-btn go', type='submit'),
         hx_post='/vault/news/poll', hx_target='#vaultwbjobs', hx_swap='afterbegin')
-    docs = memory.all_documents(limit=120, shelves=['news'])
+    docs = news_rows(memory, match=q, feed=feed, limit=120)
     days = {}
     for d in docs: days.setdefault(_day((d.get('meta') or {}).get('published') or ''), []).append(d)
-    items = ([Div(Span(day, cls='lee-vault-legend'), Div(*[_doc_row(x, vault) for x in rows_], cls='lee-vault-docs'))
+    items = ([Div(Span(day, cls='lee-vault-legend'), Div(*[_story(x, vault) for x in rows_], cls='lee-vault-docs'))
               for day, rows_ in days.items()] if docs else
-             [empty('nothing has come in yet', 'follow a feed and read it now — items land on the news shelf.')])
+             [empty('nothing to show', 'nothing matches that narrowing.' if (q or feed) else
+                    'follow a feed and read it now — items land on the news shelf.')])
     return Div(
         Div(Span('feeds', cls='lee-vault-legend'), Span(cls='lee-spacer'), read, cls='lee-wb-cardhead'),
         Div(error, cls='lee-job-error') if error else None,
         add,
         Div(*[_feed_row(f) for f in rows] or [Div('No feeds yet.', cls='lee-vault-empty')], cls='lee-wb-feeds'),
         Div(id='vaultwbjobs', cls='lee-vault-jobs'),
-        Div(Span('what they said', cls='lee-vault-legend'), *items, cls='lee-wb-news'),
+        Div(Span('what they said', cls='lee-vault-legend'), Span(cls='lee-spacer'), _narrow(rows, q, feed),
+            cls='lee-wb-cardhead'),
+        Div(*items, cls='lee-wb-news'),
         Small('every item is an ordinary document on the news shelf, so “what did the feeds say '
               'about X this week?” is answered out of the vault, citing the item.', cls='lee-dim'),
         cls='lee-wb-newsview')
@@ -577,7 +564,28 @@ def ops_table(rows, src='', match=''):
              hx_post='/clip', hx_target='#vaultwbjobs', hx_swap='afterbegin'),
         cls='lee-wb-ops')
 
-def specs_view(memory, vault='', src='', match='', ops=None, error='', **_):
+def creds_panel(keyed):
+    "Which specs are keyed and which headers they send. The values are never rendered."
+    rows = [Div(Strong(name), Span(cls='lee-spacer'), Span(', '.join(names), cls='lee-shelf-count'),
+                cls='lee-wb-feedhead') for name, names in sorted((keyed or {}).items())]
+    return Div(*(rows or [Small('no api carries a key, so calls go out unauthenticated — which most '
+                                'apis answer with 401.', cls='lee-dim')]), cls='lee-wb-creds')
+
+def creds_view(keyed=None, error=''):
+    "The keys panel, which is its own swap target: a key is set without reloading the page."
+    form = Form(Input(name='name', cls='lee-input', required=True, autocomplete='off',
+                      placeholder='which api, as api_load named it'),
+        Input(name='headers', cls='lee-input', autocomplete='off',
+              placeholder='Authorization: Bearer …   (one per line, empty to forget it)'),
+        Button('keep it', cls='lee-btn go', type='submit'),
+        hx_post='/vault/apis/creds', hx_target='#vaultwbcreds', hx_swap='outerHTML', cls='lee-wb-form')
+    return Div(Div(Span('the keys a real call needs', cls='lee-vault-legend'), cls='lee-wb-cardhead'),
+        Div(error, cls='lee-job-error') if error else None, creds_panel(keyed), form,
+        Small('a key is kept where leela keeps its secrets, sent only with calls to the api it '
+              'belongs to, and never given to the model.', cls='lee-dim'),
+        id='vaultwbcreds', cls='lee-wb-credsview')
+
+def specs_view(memory, vault='', src='', match='', ops=None, error='', creds=None, **_):
     "A described endpoint is a document you can ask about, once it is in the vault."
     load = Form(Input(name='src', value=src, cls='lee-input', required=True, autocomplete='off',
                       placeholder='an OpenAPI url or path, or a Google discovery document'),
@@ -592,7 +600,7 @@ def specs_view(memory, vault='', src='', match='', ops=None, error='', **_):
             ops_table(ops, src, match) if ops is not None else
             empty('load a specification', 'then search its operations, and file the ones you will ask about.'))
     return Div(Div(Span('a specification', cls='lee-vault-legend'), cls='lee-wb-cardhead'), load, about,
-        body, Div(id='vaultwbjobs', cls='lee-vault-jobs'), cls='lee-wb-specs')
+        body, creds_view(creds), Div(id='vaultwbjobs', cls='lee-vault-jobs'), cls='lee-wb-specs')
 
 def topics_view(memory, vault='', **_):
     "What the corpus is about, from the entity graph rather than from anybody's folder names."

@@ -242,6 +242,7 @@ GET,POST /vars/set
 GET,POST /vault/access
 GET,POST /vault/acquire
 GET,POST /vault/activate
+GET,POST /vault/apis/creds
 GET,POST /vault/attach
 GET,POST /vault/browse
 GET,POST /vault/connect
@@ -255,6 +256,7 @@ GET,POST /vault/mentions
 GET,POST /vault/news/add
 GET,POST /vault/news/feeds
 GET,POST /vault/news/poll
+GET,POST /vault/news/pull
 GET,POST /vault/news/remove
 GET,POST /vault/news/toggle
 GET,POST /vault/noisy

@@ -1,5 +1,3 @@
-"The vault's routes: what is in it, what goes into it, and the queued work that puts it there."
-
 from __future__ import annotations
 
 import json, re
@@ -40,7 +38,6 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/clip')
     def clip(target: str, kind: str = 'clip', shelf: str = '', origin: str = ''):
-        "Start a clip. `kind` picks the pipeline, because they are not one shape."
         try:
             if kind not in ('clip', 'clip_tree', 'clip_codebase', 'clip_api_spec'):
                 raise ValueError(f'unknown clip kind {kind!r}')
@@ -48,7 +45,6 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/panel')
     def panel():
-        "The whole rail as one fragment. The tab's own path pre-fills the document form."
         try:
             roots = ctx.fs.roots
             return vault_panel(ctx.memory, ctx.jobs, active_path=getattr(ctx.tab, 'path', '') or '',
@@ -60,24 +56,20 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/pii')
     async def vault_pii(doc: str, shelf: str = ''):
-        "The report for one document, with what it does and does not look for."
         try:
             r = await off_loop(ctx.memory.pii, doc, shelf or None)
             return dict(r, covers='titled names and pattern kinds; a bare name is not found')
         except Exception as e: return fail(e)
     @rt('/vault/pii/badge')
     async def vault_pii_badge(doc: str, shelf: str = ''):
-        "The same report as a badge. A failure is a badge too: a row must not lose its actions."
         try: return pii_badge(await off_loop(ctx.memory.pii, doc, shelf or None))
         except Exception as e: return Span('pii unavailable', cls='lee-pii', title=errstr(e))
     @rt('/vault/tidy')
     def tidy(shelf: str = '', k: int = 20):
-        "The same ranking as a job, for a shelf big enough that scoring it is not a request."
         try: return job_card(ctx.jobs.start('tidy', shelf or '', shelf=shelf or None, k=k))
         except Exception as e: return fail(e)
     @rt('/vault/reindex')
     async def vault_reindex(shelf: str = ''):
-        "Re-read clipped files that changed on disk, now rather than at the next sweep."
         try:
             r = await off_loop(ctx.memory.reindex_changed, [shelf] if shelf else None)
             said = (f"re-indexed {r['reindexed']} of {r['checked']} filed documents" +
@@ -87,12 +79,10 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/tidy/list')
     async def tidy_list(shelf: str = '', k: int = 20):
-        "Candidates the vault thinks dilute retrieval, each with the two judgements available."
         try: return await off_loop(ui.tidy_list, ctx.memory, shelf, k)
         except Exception as e: return fail(e)
     @rt('/vault/noisy')
     async def mark_noisy(doc: str, shelf: str = '', noisy: bool = True, reason: str = ''):
-        "Judge one candidate. The row it replaces says which way, because the list will not refetch."
         try:
             await off_loop(lambda: ctx.memory.mark_noisy(doc, shelf=shelf or None, noisy=noisy, reason=reason))
             return Div(Span('dropped from search' if noisy else 'kept', cls='lee-tidy-judged'),
@@ -105,7 +95,6 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/watch')
     async def watch(target: str, action: str = 'url', every: str = '1d', note: str = '', shelf: str = ''):
-        "Keep something fresh, or come back to it. The cadence is a vault watch row."
         try:
             if not target.strip(): raise ValueError('nothing to watch')
             await off_loop(lambda: ctx.memory.watch(target, action=action, every=every,
@@ -120,20 +109,15 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/poll')
     def poll():
-        "Run what is due now, rather than waiting for the tick."
         try: return job_card(ctx.jobs.start('poll'))
         except Exception as e: return fail(e)
     def _mem(vault=''):
-        "The `Memory` for a named vault, defaulting to the active one."
         return ctx.vaults.memory(vault or None)
     def _elid(spec):
-        "The caller's element id, kept to word characters: it is written into an id and a selector."
         return re.sub(r'[^A-Za-z0-9_-]', '', str(spec or ''))[:40] or 'vaultbrowse'
     def _open(spec):
-        "The open folders, as sent: `a|a/b|web`. Pipe-separated because `/` is in the paths."
         return None if spec is None else tuple(x for x in str(spec).split('|') if x)
     def _writable(vault='', who='you'):
-        "Refuse a write to a vault attached read-only, rather than doing it and reporting success."
         ref = ctx.vaults.get(vault or None)
         if ref is None: raise KeyError(vault)
         ok = ref.agent_writable if who == 'agent' else ref.writable
@@ -141,7 +125,6 @@ def connect(app, ctx):
         return ref
     @rt('/vault/list')
     def vault_list():
-        "Every vault leela can reach, which is active, and what may write to each."
         try: return ctx.vaults.dict()
         except Exception as e: return fail(e)
     @rt('/vault/attach')
@@ -158,7 +141,6 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/activate')
     def vault_activate(name: str, wb: bool = False):
-        "Choose the vault every vault surface is about. The workbench asks for itself back."
         try:
             ref = ctx.vaults.activate(name)
             if wb: return ui.workbench(_mem(ref.name), ctx.vaults, 'browse', vault=ref.name)
@@ -166,7 +148,6 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/access')
     def vault_access(name: str, access: str = '', agent: str = ''):
-        "Set what a person may do here, what the model may, or both in one call."
         try:
             if access: ctx.vaults.set_access(name, access)
             if agent: ctx.vaults.set_agent(name, agent.lower() in ('1', 'true', 'yes', 'on'))
@@ -176,7 +157,6 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/documents')
     async def vault_documents(vault: str = '', shelf: str = '', kind: str = '', limit: int = 200):
-        "Every document, or one shelf's, newest first. Each row says which shelf it lives in."
         try:
             m = _mem(vault)
             rows = await off_loop(m.all_documents, limit, [shelf] if shelf else None, kind or None)
@@ -185,7 +165,6 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/search')
     async def vault_search(q: str, vault: str = '', shelf: str = '', limit: int = 20):
-        "Search across shelves and land on sections, so a hit is somewhere you can open."
         try:
             m = _mem(vault)
             hits = await off_loop(m.search_all, q, limit, [shelf] if shelf else None)
@@ -193,7 +172,6 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/mentions')
     async def vault_mentions(q: str = '', vault: str = '', limit: int = 8):
-        "What `@` in the composer offers out of the vault: documents by title, then matching sections."
         try:
             m, want = _mem(vault), q.strip().lower()
             docs = await off_loop(m.all_documents, 400, None, None)
@@ -212,7 +190,6 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/doc')
     async def vault_doc(doc: str, vault: str = '', shelf: str = ''):
-        "One document: its row, its sections, its privacy report, and the evidence behind it."
         try:
             m = _mem(vault)
             row = await off_loop(m.document, doc, shelf or None)
@@ -224,7 +201,6 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/section')
     async def vault_section(node: str, vault: str = '', shelf: str = ''):
-        "One section's text plus what sits near it, which is what a citation has to be able to show."
         try:
             m = _mem(vault)
             sec = await off_loop(m.shelf_read, node, shelf or None)
@@ -232,7 +208,6 @@ def connect(app, ctx):
             return {'section': sec, 'related': await off_loop(m.related, node, shelf or None), 'note': m.note}
         except Exception as e: return fail(e)
     def _refused(e):
-        "A permission refusal is 403, so a client can tell it from a malformed request."
         return fail(e, 403 if isinstance(e, PermissionError) else 400)
     @rt('/vault/shelf/move')
     async def vault_move(doc: str, target: str, vault: str = '', shelf: str = ''):
@@ -248,7 +223,6 @@ def connect(app, ctx):
         except Exception as e: return _refused(e)
     @rt('/vault/not-pii')
     async def vault_not_pii(doc: str, vault: str = '', shelf: str = '', clear: bool = True, reason: str = ''):
-        "Override the PII report, or restore automatic detection. Written to `doc_marks`, so it lasts."
         try:
             _writable(vault)
             m = _mem(vault)
@@ -257,21 +231,18 @@ def connect(app, ctx):
         except Exception as e: return _refused(e)
     @rt('/vault/open')
     def vault_open(doc: str, shelf: str = '', vault: str = '', title: str = ''):
-        "Open a vault document as an editor tab, and hand the tab bar back to htmx."
         try:
             ctx.session.open_vault_doc(doc, shelf=shelf, vault=vault, title=title)
             return tab_bar(ctx.session)
         except Exception as e: return fail(e)
     @rt('/vault/workbench/open')
     def workbench_open(view: str = 'browse'):
-        "Open the workbench as a tab, which is where the vault gets room to be browsed."
         try:
             ctx.session.open_vault_workbench(view)
             return tab_bar(ctx.session)
         except Exception as e: return fail(e)
     @rt('/vault/find')
     async def vault_find():
-        "Vault files on this machine, so attaching one is a pick rather than a typed path."
         try:
             seen = {r['path'] for r in ctx.vaults.dict().get('vaults', [])}
             found, roots = [], [Path('~/.vishalakshi').expanduser(), Path('~/.leela').expanduser(),
@@ -290,7 +261,6 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/source')
     def vault_source(doc: str, shelf: str = '', vault: str = ''):
-        "Where a document came from, so the client knows whether there is a file to open."
         try:
             row = _mem(vault).document(doc, shelf or None)
             src = str(row.get('source') or '')
@@ -304,61 +274,54 @@ def connect(app, ctx):
     @rt('/vault/browse')
     async def vault_browse_route(q: str = '', vault: str = '', shelf: str = '', limit: int = 60,
                                  open: str = None, elid: str = 'vaultbrowse'):
-        "The tree, or the hits for a query. One fragment, swapped in either way."
         try: return await off_loop(vault_browse, _mem(vault), q, vault, shelf, limit, _open(open), _elid(elid))
         except Exception as e: return fail(e)
     @rt('/vault/tree')
     async def vault_tree_route(vault: str = '', shelf: str = '', open: str = None, limit: int = 2000,
                                elid: str = 'vaultbrowse'):
-        "Just the tree, for expanding and collapsing a folder without redrawing the search box."
         try: return await off_loop(vault_tree, _mem(vault), vault, shelf, _open(open), limit, _elid(elid))
         except Exception as e: return fail(e)
 
-    # ── the workbench ───────────────────────────────────────────────────────
     def _root(): return str(ctx.fs.roots[0]) if ctx.fs.roots else ''
     @rt('/vault/workbench')
     async def workbench(view: str = 'browse', vault: str = '', shelf: str = '', q: str = '',
-                        src: str = '', match: str = ''):
-        "The whole surface, which is what the tab mounts."
+                        src: str = '', match: str = '', feed: str = ''):
         try:
-            body = await off_loop(_view, view, vault, shelf, q, src, match)
+            body = await off_loop(_view, view, vault, shelf, q, src, match, feed)
             return ui.workbench(_mem(vault), ctx.vaults, view, body=body)
         except Exception as e: return fail(e)
-    def _view(view, vault='', shelf='', q='', src='', match=''):
-        "One section of the workbench. Each is a plain call over the vault it names."
+    def _view(view, vault='', shelf='', q='', src='', match='', feed=''):
         m = _mem(vault)
         if view == 'find': return ui.find_view(m, vault, q=q, shelf=shelf)
         if view == 'add': return ui.add_view(m, vault, jobs=ctx.jobs, root=_root())
-        if view == 'news': return ui.news_view(m, vault, feeds=ctx.feeds)
+        if view == 'news': return ui.news_view(m, vault, feeds=ctx.feeds, q=q, feed=feed)
         if view == 'specs': return ui.specs_view(m, vault, **_spec_kw(src, match))
         if view == 'topics': return ui.topics_view(m, vault)
         return ui.browse_view(m, vault, shelf=shelf, q=q)
     def _spec_kw(src='', match=''):
-        "Reading a specification is the one workbench view that has to fetch something first."
-        if not src.strip(): return dict(src=src, match=match)
+        from .spec import CREDS
+        kw = dict(src=src, match=match, creds=CREDS.keyed())
+        if not src.strip(): return kw
         try:
             from .spec import load_spec, op_row, spec_ops
             rows = [dict(op_row(o)) for o in spec_ops(load_spec(src))]
             want = match.strip().lower()
             if want: rows = [o for o in rows if want in json.dumps(o).lower()]
-            return dict(src=src, match=match, ops=rows)
-        except Exception as e: return dict(src=src, match=match, error=errstr(e))
+            return dict(kw, ops=rows)
+        except Exception as e: return dict(kw, error=errstr(e))
     @rt('/vault/view/{view}')
     async def workbench_view(view: str, vault: str = '', shelf: str = '', q: str = '',
-                             src: str = '', match: str = ''):
-        "One section, swapped into the body. The tab, the vault picker and the metrics stay put."
-        try: return await off_loop(_view, view, vault, shelf, q, src, match)
+                             src: str = '', match: str = '', feed: str = ''):
+        try: return await off_loop(_view, view, vault, shelf, q, src, match, feed)
         except Exception as e: return fail(e)
     @rt('/vault/plan')
     async def vault_plan(target: str, vault: str = ''):
-        "What indexing a folder would do, before it does any of it."
         try:
             from .acquire import plan_tree
             return ui.import_plan(await off_loop(plan_tree, target))
         except Exception as e: return Div(errstr(e), cls='lee-job-error')
     @rt('/vault/acquire')
     def vault_acquire(target: str, action: str = '', shelf: str = '', vault: str = ''):
-        "Point a reader at one source. A blank action means the address decides which reader."
         try:
             from .acquire import detect
             if not target.strip(): raise ValueError('nothing to bring in')
@@ -368,7 +331,6 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/vault/note')
     async def vault_note(text: str, title: str = '', shelf: str = '', vault: str = ''):
-        "Write something down. It is filed like anything else, and searched with everything else."
         try:
             _writable(vault)
             if not text.strip(): raise ValueError('nothing to keep')
@@ -379,14 +341,31 @@ def connect(app, ctx):
         except Exception as e: return _refused(e)
     @rt('/vault/connect')
     def vault_connect(vault: str = ''):
-        "Build the entity graph and its topics, which is what the topic view reads."
         try: return job_card(ctx.jobs.start('connect'))
         except Exception as e: return fail(e)
+    def _read_now(vault, only):
+        "Read one source on the way in: a cadence says when to read it *again*."
+        from .news import poll_feeds
+        m = _mem(vault)
+        try: poll_feeds(m, ctx.feeds, only=only)
+        except Exception as e: return ui.news_view(m, vault, feeds=ctx.feeds, error=errstr(e))
+        return ui.news_view(m, vault, feeds=ctx.feeds)
+    @rt('/vault/apis/creds')
+    def apis_creds(name: str, headers: str = ''):
+        "Keep one spec's headers. The values go where leela keeps secrets, never back to the page."
+        from .spec import CREDS, parse_headers
+        try: CREDS.set(name, parse_headers(headers))
+        except Exception as e: return ui.creds_view(CREDS.keyed(), error=errstr(e))
+        return ui.creds_view(CREDS.keyed(), error=CREDS.note)
     @rt('/vault/news/add')
     async def news_add(url: str, title: str = '', every: str = '1h', vault: str = ''):
         try:
-            await off_loop(ctx.feeds.add, url, title, every)
-            return ui.news_view(_mem(vault), vault, feeds=ctx.feeds)
+            f = await off_loop(ctx.feeds.add, url, title, every)
+            return await off_loop(_read_now, vault, f.id)
+        except Exception as e: return ui.news_view(_mem(vault), vault, feeds=ctx.feeds, error=errstr(e))
+    @rt('/vault/news/pull')
+    async def news_pull(fid: str, vault: str = ''):
+        try: return await off_loop(_read_now, vault, fid)
         except Exception as e: return ui.news_view(_mem(vault), vault, feeds=ctx.feeds, error=errstr(e))
     @rt('/vault/news/remove')
     def news_remove(fid: str, vault: str = ''):
@@ -402,7 +381,6 @@ def connect(app, ctx):
         except Exception as e: return ui.news_view(_mem(vault), vault, feeds=ctx.feeds, error=errstr(e))
     @rt('/vault/news/poll')
     def news_poll(force: bool = False):
-        "Read the feeds as a job, because one slow source must not hold the page."
         try: return job_card(ctx.jobs.start('feeds', force=force))
         except Exception as e: return fail(e)
     @rt('/vault/news/feeds')

@@ -388,7 +388,17 @@ body {
 .lee-cell-summary { display: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                     color: var(--lee-fg4); font: 11px/1.4 var(--lee-mono); }
 .lee-cell.collapsed { min-height: 30px; }
-.lee-cell.collapsed .lee-cell-summary { display: block; }
+.lee-cell.collapsed .lee-cell-summary { display: block; margin-right: auto; }
+/* Where the cell sits and how big it is. The gutter's `[n]` is the execution count, which is
+   neither, so the banner carries the position; the id is in the tooltip and one click away. */
+.lee-cell-meta { display: flex; align-items: baseline; gap: 5px; margin-right: auto; padding: 1px 4px;
+                 border: 1px solid transparent; border-radius: 3px; background: none;
+                 color: var(--lee-fg4); font: 9.5px/1.4 var(--lee-mono); cursor: copy; }
+.lee-cell-meta:hover { border-color: var(--lee-border); background: var(--lee-bg2); color: var(--lee-fg2); }
+.lee-cell-no { color: var(--lee-fg2); font-variant-numeric: tabular-nums; }
+.lee-cell.sel .lee-cell-no { color: var(--lee-accent); }
+.lee-cell-size { opacity: .75; white-space: nowrap; }
+.lee-cell.collapsed .lee-cell-meta { margin-right: 6px; }
 .lee-cell.collapsed .lee-cm, .lee-cell.collapsed [id^="out-"],
 .lee-cell.collapsed .lee-model-running { display: none; }
 .lee-cell.collapsed .lee-cellmain { min-height: 29px; }
@@ -1113,6 +1123,10 @@ kbd {
 .lee-agent-state-suggestion { padding: 3px 7px; border: 1px solid var(--lee-aqua); border-radius: 3px; background: transparent; color: var(--lee-aqua); cursor: pointer; font: 9px/1.3 var(--lee-mono); }
 .lee-response-revision { display: flex; align-items: center; gap: 6px; margin: 3px 4px 12px; padding-top: 7px; border-top: 1px solid var(--lee-border); }
 .lee-response-revision span { margin-right: auto; color: var(--lee-fg4); font: 9px/1.3 var(--lee-mono); }.lee-response-revision.rolled-back { opacity: .65; }
+/* A rolled-back turn is dimmed, not deleted: the files are restored, the model still has the turn. */
+.lee-turn-undone { opacity: .42; filter: saturate(.5); }
+.lee-turn-undone-bar { border-top-style: dashed; }
+.lee-turn-undone-bar span { color: var(--lee-fg2); }
 .lee-response-editor-modal .lee-modalbox { width: min(1120px, 94vw); height: min(780px, 92vh); max-height: 92vh; }
 .lee-revision-explainer { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 16px; padding: 11px 14px; border-bottom: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-aqua) 4%, var(--lee-bg1)); }
 .lee-revision-explainer strong { color: var(--lee-fg); font: 600 10.5px/1.45 var(--lee-mono); }
@@ -3100,7 +3114,15 @@ kbd {
 .lee-wb-feedhead { display: flex; align-items: center; gap: 8px; font-size: 11px; }
 .lee-wb-feedactions { display: flex; gap: 6px; margin-top: 3px; }
 .lee-wb-news { display: flex; flex-direction: column; gap: 10px; }
-.lee-wb-news .lee-vault-docs { max-height: none; }
+.lee-wb-news .lee-vault-docs { max-height: none; gap: 8px; }
+.lee-wb-story { display: flex; flex-direction: column; gap: 1px; }
+.lee-wb-story .lee-dim { padding-left: 22px; }
+.lee-wb-standfirst { padding-left: 22px; color: var(--lee-fg2); font: 10px/1.5 var(--lee-mono); }
+
+.lee-wb-credsview { display: flex; flex-direction: column; gap: 8px; margin-top: 14px;
+                    padding-top: 12px; border-top: 1px solid var(--lee-border); }
+.lee-wb-creds { display: flex; flex-direction: column; gap: 4px; }
+.lee-wb-creds .lee-wb-feedhead { padding: 6px 10px; border-radius: 6px; background: var(--lee-bg1); }
 
 .lee-wb-tablewrap { max-height: 30rem; overflow: auto; border: 1px solid var(--lee-border); border-radius: 6px; }
 .lee-wb-table { width: 100%; border-collapse: collapse; font: 10px/1.6 var(--lee-mono); }

@@ -328,6 +328,22 @@ def test_image_tabs_are_served_but_never_written_over():
 
 
 
+def test_a_cell_banner_says_where_the_cell_is_and_how_to_reference_it():
+    """The gutter carries the execution count, which is not the cell's position and is blank
+    until it runs. Its place in the notebook, its kind and its size belong on the banner."""
+    js = builder.OUT.read_text()
+    block = js[js.index('function cellEl('):js.index('function setCellCollapsed')]
+    assert 'lee-cell-meta' in block and 'lee-cell-no' in block and 'lee-cell-size' in block
+    assert 'leeCopyCellId' in block, 'the id is what references a cell, so it is one click away'
+    meta = js[js.index('function paintCellMeta'):js.index('function copyCellId')]
+    assert "'#' + (i + 1)" in meta, 'the number is the position, counted from one'
+    title = js[js.index('function cellMetaTitle'):js.index('function paintCellMeta')]
+    assert 'lee.cells.length' in title and 'chars' in title and 'id ' in title
+    assert 'outputs' in title, 'and what the last run left behind'
+    css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
+    assert '.lee-cell-meta' in css and '.lee-cell-no' in css
+
+
 def test_the_tab_payload_carries_no_bytes_and_the_raw_route_serves_them(tmp_path):
     "Base64ing a whole image into every tab switch is what the pdf kind already avoids."
     (tmp_path/'shot.png').write_bytes(PNG)

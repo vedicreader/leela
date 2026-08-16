@@ -410,6 +410,23 @@ function resolveMarkdownImages(el) {
   });
 }
 
+// A feed item ends in `[url](url)`, and a bare href navigates whatever is showing it. In the
+// browser that loses the IDE; in the desktop webview there is no back button to come home with.
+// `openWebpage` puts the page in a tab -- the CDP Chrome the desktop app already drives, or a
+// browser tab where there is no Chrome to drive.
+function routeMarkdownLinks(el) {
+  $$('a[href]', el).forEach(a => {
+    const href = a.getAttribute('href') || '';
+    if (!/^https?:/i.test(href) || a.dataset.leeLink) return;
+    a.dataset.leeLink = '1'; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.addEventListener('click', e => {
+      if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // the browser's to handle
+      e.preventDefault(); e.stopPropagation();
+      openWebpage(href);
+    });
+  });
+}
+
 function renderMarkdown(el, text, allowRaw = false, onRender = null) {
   if (!el) return;
   el.dataset.markdown = String(text || '');
@@ -433,7 +450,7 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
       el._leeCodeFrame = requestAnimationFrame(() => {
         el._leeCodeFrame = 0;
         if (onRender) try { onRender(el); } catch (e) { console.warn('Leela markdown annotation:', e); }
-        resolveMarkdownImages(el);
+        resolveMarkdownImages(el); routeMarkdownLinks(el);
         upgradePortableToolMarkdown(el); enhanceCodeBlocks(el); addMarkdownCellAction(el);
       });
     } catch (e) {
@@ -1669,6 +1686,7 @@ function patchNotebook(host, before, cells, op = '') {
       const buttons = $('.lee-cellbtns', el); if (buttons) buttons.innerHTML = cellButtons(i);
       const summary = $('.lee-cell-summary', el);
       if (summary) summary.textContent = String(c.source || '').trim().split('\n')[0] || 'empty cell';
+      paintCellMeta(el, c, i);   // an insert above renumbers every cell after it
       const gutter = $('#g-' + c.id); if (gutter) gutter.textContent = gutterFor(c);
       const context = $('.lee-cell-context', el); if (context) paintCellContext(context, c);
       setCellState(c, cellState(c)); setCellTime(c, c.execution_ms, c.running);
@@ -1711,6 +1729,7 @@ function setCellState(c, state, label = '') {
   badge.title = label || ({done: 'ran successfully in the current kernel', error: 'run failed in the current kernel',
     previous: 'saved output from a previous kernel; run this cell to restore its variables', running: 'running'}[state] || 'not run');
   badge.setAttribute('aria-label', badge.title);
+  refreshCellMeta(c);           // the run count and the outputs it left are in the tooltip
   queueNotebookOverview();      // a failure is one of the two things the stripe reports
 }
 function markPreviousRuns() {
@@ -1736,6 +1755,38 @@ function setCellTime(c, ms, running = false) {
   el.classList.toggle('previous', previous);
   el.title = running ? 'current execution time' : previous ? 'duration of the saved run; its variables are not in this kernel' : 'last execution time';
 }
+
+/* The banner says where a cell sits and how big it is. The gutter carries the execution
+ * count, which is neither: it is blank until the cell runs, and it renumbers on every rerun.
+ * The tooltip carries what a developer needs to reference the cell -- its id -- and what the
+ * last run left behind. */
+const cellKind = (c) => ({code: 'py', markdown: 'md', prompt: 'prompt'}[c.cell_type] || c.cell_type);
+const cellLines = (c) => String(c.source || '').split('\n').length;
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+function cellMetaTitle(c, i) {
+  const src = String(c.source || '');
+  const rows = [`cell ${i + 1} of ${lee.cells.length} · ${c.cell_type} · ${plural(cellLines(c), 'line')}, ${src.length} chars`];
+  if (c.cell_type === 'code')
+    rows.push([c.execution_count == null ? 'not run' : `run ${c.execution_count}`,
+               formatCellTime(c.execution_ms), plural((c.outputs || []).length, 'output')].filter(Boolean).join(' · '));
+  rows.push(`id ${c.id}`, 'click to copy the id');
+  return rows.join('\n');
+}
+function paintCellMeta(el, c, i) {
+  const meta = el && $('.lee-cell-meta', el); if (!meta) return;
+  $('.lee-cell-no', meta).textContent = '#' + (i + 1);
+  $('.lee-cell-size', meta).textContent = `${cellKind(c)} · ${plural(cellLines(c), 'line')}`;
+  meta.dataset.cellId = c.id; meta.title = cellMetaTitle(c, i);
+}
+function copyCellId(button) {
+  navigator.clipboard?.writeText(button.dataset.cellId || '');
+  status('cell id copied', 'ok');
+}
+function refreshCellMeta(c) {
+  const el = $(`.lee-cell[data-id="${c.id}"]`);
+  if (el) paintCellMeta(el, c, +el.dataset.i);
+}
+window.leeCopyCellId = copyCellId;
 
 /* The per-cell controls, from the same table the toolbar comes from. They act on the cell
  * they are drawn in rather than on the selected one -- clicking ▶ on the third cell has
@@ -1786,6 +1837,10 @@ function cellEl(c, i) {
     `<button class="lee-cell-fold" title="collapse cell" aria-label="collapse cell">${lee.collapsedCells.has(c.id) ? '+' : '−'}</button>` +
     `<div class="lee-execution-count" id="g-${c.id}">${gutterFor(c)}</div></div>` +
     `<div class="lee-cellmain"><div class="lee-cell-chrome">` +
+    `<button class="lee-cell-meta" data-cell-id="${esc(c.id)}" title="${esc(cellMetaTitle(c, i))}" ` +
+    `onclick="event.stopPropagation();leeCopyCellId(this)">` +
+    `<span class="lee-cell-no">#${i + 1}</span>` +
+    `<span class="lee-cell-size">${esc(cellKind(c))} · ${esc(plural(cellLines(c), 'line'))}</span></button>` +
     `<span class="lee-cell-summary">${esc(String(c.source || '').trim().split('\n')[0] || 'empty cell')}</span>` +
     `<span class="lee-cell-state ${state}" id="state-${c.id}" ` +
     `title="${state === 'done' ? 'ran successfully in the current kernel' : state === 'error' ? 'run failed in the current kernel' : state === 'previous' ? 'saved output from a previous kernel; run to restore variables' : 'not run'}">${stateSvg(state)}</span>` +
@@ -4304,6 +4359,23 @@ function editableResponse(raw) {
   return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function markTurnUndone(out, bar, files, revise) {
+  // `rollback_turn` restores files; it does not touch model history. Deleting the transcript
+  // said the agent had forgotten a turn it still carries.
+  let first = out, last = bar;
+  while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
+  while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
+  for (let node = first; node; node = node.nextElementSibling) {
+    if (node !== bar) node.classList.add('lee-turn-undone');   // the bar carries the explanation
+    if (node === last) break;
+  }
+  const note = document.createElement('span');
+  note.textContent = `${files} file${files === 1 ? '' : 's'} restored · the agent still remembers this turn`;
+  bar.classList.add('lee-turn-undone-bar');
+  bar.replaceChildren(note, ...(revise ? [revise] : []));
+  return bar;
+}
+
 function addResponseRevision(out, turnId, raw, capabilities = {}) {
   if (!turnId || !out || !raw.trim()) return;
   const bar = document.createElement('div'); bar.className = 'lee-response-revision';
@@ -4322,18 +4394,10 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
         ? `\n\nCannot undo external effects: ${tx.transaction.irreversible.join(', ')}` : '';
       if (!await confirmDialog('Undo agent turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
       const d = await post('/agent/rollback-turn', {turn_id: turnId});
+      // Marked before the files are reloaded: a reload that raises used to leave the reply
+      // standing as though nothing had happened.
+      markTurnUndone(out, bar, (d.paths || []).length, capabilities.revisable ? reviseButton : null);
       for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
-      const log = out.parentElement;
-      if (log) {
-        let first = out, last = bar;
-        while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
-        if (first.previousElementSibling?.classList.contains('lee-user-message')) first = first.previousElementSibling;
-        while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
-        for (let node = first, next; node; node = next) {
-          next = node.nextElementSibling; node.remove();
-          if (node === last) break;
-        }
-      }
       status('turn changes rolled back', 'ok');
     } catch (e) { status(e.message || String(e), 'err'); }
   };

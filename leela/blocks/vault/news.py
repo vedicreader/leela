@@ -1,11 +1,3 @@
-"""Feeds, and the items they bring in.
-
-Nothing underneath reads a feed: fossick's `news` is a news *search*, and a vault watch is a page,
-a query, arXiv, YouTube or a reminder. So RSS and Atom are parsed here with the standard library —
-two element shapes do not warrant a dependency — and each item is filed as an ordinary vault
-document on the `news` shelf. Everything the vault already does then applies to it.
-"""
-
 from __future__ import annotations
 
 import json, os, re, time
@@ -21,7 +13,7 @@ from ... import Dictable, errstr, leela_cfg
 from .jobs import every_seconds
 
 __all__ = ['NEWS_SHELF', 'Feed', 'Feeds', 'feeds_path', 'fetch_feed', 'parse_feed', 'feed_title',
-           'item_markdown', 'poll_feeds']
+           'item_markdown', 'news_rows', 'poll_feeds', 'published']
 
 NEWS_SHELF = 'news'
 
@@ -34,12 +26,10 @@ _HREF = re.compile(r'href=["\']([^"\']+)["\']', re.I)
 def _text(el): return '' if el is None else ' '.join(''.join(el.itertext()).split())
 
 def _plain(s, n=600):
-    "A feed summary as text. Only a block boundary is a space — `</b>.` must not become `b .`"
     s = ' '.join(_TAGS.sub('', _BLOCK.sub(' ', str(s or ''))).split())
     return s[:n] + '…' if len(s) > n else s
 
 def _when(raw):
-    "A feed date as ISO. RSS uses RFC 822, Atom uses ISO 8601, and both lie sometimes."
     raw = (raw or '').strip()
     if not raw: return ''
     for parse in (parsedate_to_datetime, datetime.fromisoformat):
@@ -67,7 +57,6 @@ def _atom_entries(root):
                        published=_when(_text(e.find(f'{_ATOM}updated')) or _text(e.find(f'{_ATOM}published'))))
 
 def feed_title(xml):
-    "What the feed calls itself."
     try: root = ET.fromstring(str(xml).strip())
     except ET.ParseError: return ''
     for path in ('channel/title', f'{_ATOM}title', 'title'):
@@ -75,16 +64,14 @@ def feed_title(xml):
     return ''
 
 def parse_feed(xml):
-    "Every item in an RSS or Atom document, in the order the feed gives them."
     try: root = ET.fromstring(str(xml).strip())
     except ET.ParseError: return L()
     rows = L(_rss_items(root)) if root.tag == 'rss' or root.find('channel') is not None else L()
     if not rows: rows = L(_atom_entries(root))
-    if not rows: rows = L(_rss_items(root))          # an RSS body without the usual wrapper
+    if not rows: rows = L(_rss_items(root))
     return rows.filter(lambda x: x.title and x.link)
 
 def _get(url, timeout=30):
-    "Through fossick, which is leela's web layer everywhere else."
     from fossick import get_page
     r = get_page(url, timeout=timeout)
     body = getattr(r, 'body', None)
@@ -92,16 +79,9 @@ def _get(url, timeout=30):
                                      else str(body or getattr(r, 'text', '') or ''))
 
 def _alternates(html):
-    "The feeds a page advertises in `<link rel=alternate type=application/rss+xml>`."
     return [m.group(1) for tag in _ALT.findall(html or '') if (m := _HREF.search(tag))]
 
 def fetch_feed(url, timeout=30):
-    """`(url, xml)` for the feed at `url`, or for the one the page there advertises.
-
-    Sites disagree about where a feed lives (`/feed.xml`, `/rss.xml`, `/index.xml`), and somebody
-    following a source knows its address, not its feed's. So a page that is not a feed is asked
-    what its feed is, which is what the `alternate` link is for.
-    """
     status, body = _get(url, timeout)
     if status == 200 and parse_feed(body): return url, body
     for href in _alternates(body):
@@ -113,7 +93,6 @@ def fetch_feed(url, timeout=30):
     raise ValueError(f'{url} is not an rss or atom feed')
 
 def item_markdown(item, source=''):
-    "One item as the document the vault stores: its own heading, then what the feed said."
     meta = ' · '.join(x for x in (source, (item.published or '')[:10], item.author) if x)
     return f"# {item.title}\n\n{meta}\n\n{item.summary or '(the feed gave no summary)'}\n\n[{item.link}]({item.link})\n"
 
@@ -121,7 +100,6 @@ def feeds_path(): return leela_cfg/'feeds.json'
 
 @dataclass
 class Feed(Dictable):
-    "One followed source."
     url: str
     title: str = ''
     every: str = '1h'
@@ -143,7 +121,6 @@ class Feed(Dictable):
     def dict(self): return {**super().dict(), 'id': self.id, 'due': self.due, 'seconds': self.seconds}
 
 class Feeds:
-    "The followed feeds, as a file beside the attached vaults."
     def __init__(self, path=None):
         self.file, self.note = Path(path) if path else feeds_path(), ''
         self.rows = self._load()
@@ -171,7 +148,6 @@ class Feeds:
     def get(self, fid): return first(r for r in self.rows if r.id == fid)
     def dict(self): return {'feeds': [r.dict() for r in self.rows], 'note': self.note}
     def add(self, url, title='', every='1h'):
-        "Follow a source. The feed is resolved now, so a page that carries none is refused here."
         url, xml = fetch_feed(url)
         if (already := first(r for r in self.rows if r.url == url)):
             self.note = f'already following {already.title or already.url}'
@@ -200,14 +176,25 @@ class Feeds:
         self.save()
         return f
 
-def poll_feeds(memory, feeds, force=False, report=None):
-    """Read every due feed and file what is new on the news shelf.
+def published(doc): return str((doc.get('meta') or {}).get('published') or '')
 
-    A feed republishes the same items every time, so the link is the identity: an item already
-    held is left alone rather than re-embedded, and a feed that carries its whole history costs
-    nothing after the first read.
-    """
-    rows = [f for f in feeds if force or f.due]
+def news_rows(memory, match='', feed='', limit=0, scan=500):
+    "The news shelf newest first by the date the feed carried, narrowed by headline or by source."
+    rows = L(memory.all_documents(limit=scan, shelves=[NEWS_SHELF])).sorted(published, reverse=True)
+    if match:
+        m = match.lower()
+        rows = rows.filter(lambda x: m in str(x.get('title') or '').lower()
+                           or m in str((x.get('meta') or {}).get('summary') or '').lower())
+    if feed:
+        f = feed.lower()
+        rows = rows.filter(lambda x: f in str((x.get('meta') or {}).get('feed') or '').lower()
+                           or f in str((x.get('meta') or {}).get('feed_url') or '').lower())
+    return rows[:limit] if limit else rows
+
+def _named(f, only): return only in (f.id, f.url) or only == f.title
+
+def poll_feeds(memory, feeds, force=False, only='', report=None):
+    rows = [f for f in feeds if _named(f, only)] if only else [f for f in feeds if force or f.due]
     known = {str(d.get('source') or '') for d in memory.all_documents(limit=5000, shelves=[NEWS_SHELF])}
     out = []
     for i, f in enumerate(rows):
@@ -223,9 +210,11 @@ def poll_feeds(memory, feeds, force=False, report=None):
         for it in items:
             if it.link in known: continue
             try:
+                # `summary` again in `meta`: the page prints a standfirst per story, and reading
+                # forty documents to print forty first paragraphs is forty queries.
                 memory.file_news(item_markdown(it, title), title=it.title, source=it.link,
                                  meta={'feed': title, 'feed_url': url, 'published': it.published,
-                                       'author': it.author})
+                                       'author': it.author, 'summary': it.summary})
                 known.add(it.link); added += 1
             except Exception: pass
         feeds.mark(f.id, 'ok', added, title)
