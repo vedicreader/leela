@@ -264,7 +264,8 @@ def test_the_briefing_says_what_is_true_of_this_project():
     assert 'ERROR:' in narrow
     assert 'inside the folders above' in narrow
     real = {t.__name__ for t in tools_for(MemHost())} | {'notebook_cells', 'delegate_parallel',
-                                                         'memory_search', 'web_search', 'run_python'}
+                                                         'memory_search', 'web_search', 'run_python',
+                                                         'read_skill'}   # only present with `get_skills`
     assert {tool for tool, _ in RULES if tool} <= real
     h = MemHost({'/proj/AGENTS.md': '# House rules\n\nUse uv, never pip.\n'})
     ctx = project_context(h)
@@ -651,6 +652,9 @@ def test_skills_are_discovered_and_selected_by_the_prompt():
     assert 'exhash' in found, 'exhash ships the editing reference leela used to paste by hand'
     assert found['exhash'].source == 'pyskill'
     assert found['exhash'].text().strip()
+    for n in ('coding_patterns', 'theory', 'write_prose', 'write_docs'):   # what AGENTS.md sends agents to
+        assert found[n].source == 'pyskill' and found[n].where == f'ramabana.{n}'
+        assert 'more chars]' not in found[n].text(), f'{n} reaches the agent clipped'
     ss = [Skill('editskill', 'pyskill'), Skill('editor', 'pyskill')]
     assert find(ss, 'edit') is None
     assert find(ss, 'editskill').name == 'editskill'
