@@ -51,7 +51,7 @@ def test_source_control_refreshes_when_the_working_directory_switches():
     cwd = JS[JS.index('async function leeCwd'):JS.index('window.leeCwd')]
     assert 'refreshScmIfOpen()' in cwd, 'a new cwd can imply a different repository'
     branch = JS[JS.index('async function leeBranchMenu'):JS.index('window.leeBranchMenu')]
-    assert "api(gitUrl('/git/info'))" in branch
+    assert "gitInfo(gitUrl('/git/info'))" in branch, 'and through the guard, not bare `api`' 
     assert "async def git_info(repo: str = '')" in (ROOT / 'leela/blocks/git/app.py').read_text()
 
 def test_nbdev_prepare_uses_settings_ini_and_initialises_uv(tmp_path):

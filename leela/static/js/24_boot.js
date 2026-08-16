@@ -37,10 +37,9 @@ async function boot() {
   observeEditorWidth();
   checkProjectRuntime();
   leeVars();
-  setInterval(leeVars, 2500);          // the kernel's own inspector is the source of truth; poll it
-  setInterval(watchOpenFile, 1000);    // agent, terminal and git writes appear without a page refresh
-  pollApproval();
-  setInterval(pollApproval, 750);       // catches Rishi approvals raised outside an agent SSE stream
+  setInterval(whenVisible(leeVars), 2500);   // the kernel's own inspector is the source of truth
+  setInterval(watchOpenFile, 10000);   // a backstop: /fs/events is what actually reports a write
+  approvalLoop();                       // catches Rishi approvals raised outside an agent SSE stream
   applyTheme(readTheme());   // also rewrites a pre-family value into `family:mode`
   // The first paint is server-rendered, so the welcome screen is already on the page when
   // Leela opens on no folder; only its recent list needs filling in.
@@ -48,11 +47,16 @@ async function boot() {
   // The first paint is server-rendered without the preference, so it is only wrong when set.
   paintHiddenBtn(); if (treeHidden()) refreshFileTree(undefined, false).catch(() => {});
   refreshProjectPills();
-  setInterval(refreshKernelPill, 5000);
-  setInterval(refreshProjectPills, 5000);
-  setInterval(pollRunLogs, 2000);      // only does anything while the logs pane is open
+  setInterval(whenVisible(refreshKernelPill), 5000);
+  // The pills change only when a root or the cwd does, and every one of those already calls
+  // `refreshProjectPills`. Polling them was 24 requests a minute saying nothing.
+  runLogLoop();
+  watchFiles();
   status('ready', 'ok');
 }
+
+// A window nobody is looking at asks for nothing.
+const whenVisible = fn => () => { if (!document.hidden) fn(); };
 
 document.addEventListener('DOMContentLoaded', boot);
 

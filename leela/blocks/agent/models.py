@@ -26,11 +26,15 @@ def runtimes():
              'why': _why(r, AGENTS)} for r in _runtimes()]
 
 def model_marks(name):
-    "The modality line the CLI banner shows for one model, and whether it can draw."
+    "The modality line the CLI banner shows for one model, its runtime, and whether it can draw."
     from ...agent.core import resolve, spec_caps
-    try: c = spec_caps(resolve(name))
+    try: spec = resolve(name)
     except Exception: return {}
-    return {} if c is None else {'modalities': c.fmt(), 'gen_image': c.gen_image, 'gen_video': c.gen_video}
+    out = {'runtime': rt} if (rt := getattr(spec, 'runtime', None)) else {}   # the pane warns on cursor
+    try: c = spec_caps(spec)
+    except Exception: c = None
+    return out if c is None else {**out, 'modalities': c.fmt(), 'gen_image': c.gen_image,
+                                  'gen_video': c.gen_video}
 
 def mark_models(rows):
     "Stamp every picker row with what its model accepts and returns. No row may fail the picker."

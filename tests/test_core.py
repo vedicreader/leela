@@ -1081,3 +1081,25 @@ if __name__ == '__main__':
             print(f'{n:>4}  {tag} {m:<{width}}')
         blocks = sum(n for m, n in counts.items() if m.startswith('leela.blocks'))
         print(f'\n{blocks} routes served by blocks, {counts.get(CLOSURE, 0)} still by the ide_app closure')
+
+
+def test_a_link_in_rendered_markdown_opens_a_tab_rather_than_taking_over_the_app():
+    """A feed item ends in `[url](url)`. Clicked in the vault reader a bare href navigated the
+    whole IDE away, and the desktop webview has no back button to come home with.
+    """
+    js = builder.OUT.read_text()
+    block = js[js.index('function routeMarkdownLinks'):js.index('function renderMarkdown')]
+    assert "target = '_blank'" in block and 'noopener' in block
+    assert 'openWebpage(' in block, 'the desktop app has a CDP Chrome to put the tab in'
+    assert 'e.metaKey' in block, 'a modified click still belongs to the browser'
+    assert 'routeMarkdownLinks(el)' in js, 'and every markdown surface goes through the one funnel'
+
+
+def test_boot_asks_for_a_pending_approval_once_rather_than_twice():
+    """`setInterval(pollApproval, 750)` waited 750ms before its first call, so boot polled once
+    eagerly. `approvalLoop` polls on entry, which left the eager call a duplicate request.
+    """
+    js = builder.OUT.read_text()
+    block = js[js.index('async function boot()'):js.index('const whenVisible')]
+    assert 'approvalLoop();' in block
+    assert 'pollApproval();' not in block, 'approvalLoop already polls before its first timeout'

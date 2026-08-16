@@ -1,12 +1,14 @@
 /* ---------------------------------------------------------- cwd and source control */
 function paintGitTree(d) {
+  const rows = new Map();   // indexed once rather than rescanned per change
+
   $$('.lee-file').forEach(row => {
     row.classList.remove('git-modified', 'git-staged', 'git-untracked', 'git-conflict');
     row.querySelectorAll('.lee-tree-git').forEach(badge => badge.remove());
+    rows.set(row.dataset.path, row);
   });
   for (const c of (d.changes || [])) {
-    const path = d.root + '/' + c.path;
-    const row = $$('.lee-file').find(x => x.dataset.path === path); if (!row) continue;
+    const row = rows.get(d.root + '/' + c.path); if (!row) continue;
     const state = c.conflicted ? 'conflict' : c.untracked ? 'untracked' : c.staged && !c.unstaged ? 'staged' : 'modified';
     row.classList.add('git-' + state);
     const badge = document.createElement('span'); badge.className = 'lee-tree-git'; badge.textContent = state[0].toUpperCase();
@@ -211,7 +213,7 @@ async function refreshProjectPills() {
   try {
     // Bare, not `gitUrl`: the pill and the tree badges describe the repository the active tab
     // is in, so a panel pinned elsewhere must not repaint them.
-    const d = await api('/git/info');
+    const d = await gitInfo();
     const git = $('#gitpill'); if (!git) return;
     const n = (d.changes || []).length;
     git.textContent = `${d.branch}${n ? ' · ' + n : ''}`;
@@ -222,6 +224,18 @@ async function refreshProjectPills() {
   } catch (_) {
     const git = $('#gitpill'); if (git) { git.textContent = 'no git'; git.className = 'lee-branch-switcher'; }
   }
+}
+
+// `/git/info` answers 200 with `repo: false` outside a checkout. A surface that only works
+// inside one wants the throw it always had; chrome wants to go quiet.
+async function gitInfo(url = '/git/info') {
+  const d = await api(url);
+  if (d && d.repo === false) throw new Error(d.note || 'not inside a Git repository');
+  return d;
+}
+async function gitInfoOrNull(url = '/git/info') {
+  try { const d = await api(url); return d && d.repo === false ? null : d; }
+  catch (_) { return null; }
 }
 
 async function leeCwd() {

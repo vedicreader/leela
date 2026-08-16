@@ -6,7 +6,8 @@ import asyncio
 from pathlib import Path
 
 from ...core.web import fail, off_loop
-from .git import GitError, GitRepo, clone, clone_target
+from ramabana.git import GitError, clone, clone_target, repo_root
+from .git import GitRepo
 from .repos import RepoSet, clone_url, find_repos, repo_for
 
 __all__ = ['CAPS', 'connect', 'git_paths']
@@ -44,6 +45,7 @@ def _apply(repo, op, d):
         'commit': lambda: repo.commit(d.get('message') or '', bool(d.get('amend'))),
         'fetch': lambda: repo.fetch(d.get('remote') or '', bool(d.get('prune', True))),
         'pull': lambda: repo.pull(),
+        'sync': lambda: repo.sync(d.get('how') or 'rebase', d.get('upstream') or ''),
         'push': lambda: repo.push(bool(d.get('publish')), bool(d.get('force_with_lease'))),
         'stash': lambda: repo.stash(d.get('message') or ''),
         'stash_pop': lambda: repo.stash_pop(d.get('ref') or 'stash@{0}'),
@@ -87,7 +89,13 @@ def connect(app, ctx):
         return GitRepo.at(repo_for(ctx.session, target))
     @rt('/git/info')
     async def git_info(repo: str = ''):
-        try: return await off_loop(lambda: repo_at(repo).info())
+        "`repo: False` rather than a 400: absence is one of the two answers this question has."
+        try:
+            target = repo_for(ctx.session, repo)
+            if repo_root(target) is None:
+                return {'ok': True, 'repo': False, 'root': '',
+                        'note': f'{Path(target).name or target} is not inside a Git repository'}
+            return dict(await off_loop(lambda: GitRepo.at(target).info()), repo=True)
         except Exception as e: return fail(e)
     @rt('/git/action')
     async def git_action(req):
@@ -199,6 +207,19 @@ def connect(app, ctx):
         try:
             if not incoming: raise GitError('choose a branch to merge')
             return await off_loop(repo_at(repo).merge_preview, incoming)
+        except Exception as e: return fail(e)
+    @rt('/git/pr')
+    async def git_pr(repo: str = '', branch: str = ''):
+        "The pull request this branch belongs to, or why there is nothing to say about it."
+        from .hub import pr_context
+        try:
+            r = repo_at(repo)
+            return await off_loop(pr_context, r.root, branch or r.run('branch', '--show-current').strip())
+        except Exception as e: return fail(e)
+    @rt('/git/sync-plan')
+    async def git_sync_plan(repo: str = '', upstream: str = '', fetch: bool = False):
+        "You against your upstream, and every way back rehearsed. What the Sync dialog reads."
+        try: return await off_loop(repo_at(repo).divergence, upstream, fetch)
         except Exception as e: return fail(e)
     @rt('/git/rebase-preview')
     async def git_rebase_preview(onto: str = '', repo: str = ''):

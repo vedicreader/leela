@@ -1,4 +1,67 @@
-/* ---- vault reader: a document from the vault, as an editor tab ---- */
+/* ---- the vault: a document as a tab, and the workbench that browses them all ---- */
+
+/* The workbench is server-rendered and swaps its own body, so mounting it is one fetch and
+   htmx owns everything after that. The tab holds only which view was last open. */
+async function mountVaultWorkbench(host, st) {
+  host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>opening the vault</small></div>';
+  try {
+    await htmx.ajax('GET', '/vault/workbench?view=' + encodeURIComponent(st.view || 'browse'),
+                    {target: host, swap: 'innerHTML'});
+  } catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+}
+window.mountVaultWorkbench = mountVaultWorkbench;
+
+async function leeVaultWorkbench(view = 'browse') {
+  await htmx.ajax('POST', '/vault/workbench/open?view=' + encodeURIComponent(view),
+                  {target: '#tabbar', swap: 'outerHTML'});
+  return mountTab();
+}
+window.leeVaultWorkbench = leeVaultWorkbench;
+
+/* Filtering is client-side because the rows are already here: a shelf of two hundred documents
+   is one payload, and a keystroke that costs a request is a keystroke you feel. */
+function leeVaultFilter(input) {
+  const want = input.value.trim().toLowerCase(), wrap = input.closest('.lee-wb-main');
+  let shown = 0;
+  $$('.lee-vault-docrow', wrap).forEach(row => {
+    const hit = !want || row.textContent.toLowerCase().includes(want);
+    row.hidden = !hit; if (hit) shown++;
+  });
+  const count = $('.lee-wb-count', wrap);
+  if (count) count.textContent = `${shown} shown`;
+}
+window.leeVaultFilter = leeVaultFilter;
+
+/* ---- attaching a vault document to the next question ---- */
+
+function attachVaultRef({vault = '', shelf = '', doc = '', title = ''}) {
+  if (!doc) return null;
+  lee.vaultRefs.set(`${vault}|${shelf}|${doc}`, {kind: 'vault', vault, shelf, doc, title: title || doc});
+  return title || doc;
+}
+window.attachVaultRef = attachVaultRef;
+
+function leeVaultAsk(btn) {
+  const name = attachVaultRef(btn.dataset);
+  if (!name) return;
+  paintAgentAttachments();
+  leeRight('agent');
+  $('#agentprompt')?.focus();
+  status(`${name} is attached to the next question`, 'ok');
+}
+window.leeVaultAsk = leeVaultAsk;
+
+/* Every hit on the find view at once: "what do all of these say about X" is one question,
+   and attaching them one at a time is the same question typed six times. */
+function leeVaultAskAll(btn) {
+  const rows = $$('.lee-wb-hit .lee-vault-ask', btn.closest('.lee-wb-find'));
+  rows.forEach(b => attachVaultRef(b.dataset));
+  paintAgentAttachments();
+  leeRight('agent');
+  status(`${rows.length} section${rows.length === 1 ? '' : 's'} attached`, 'ok');
+}
+window.leeVaultAskAll = leeVaultAskAll;
+
 
 function vaultSectionRows(sections, active) {
   if (!sections.length) return '<div class="lee-dim">No section structure was extracted.</div>';

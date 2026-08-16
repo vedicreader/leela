@@ -1,81 +1,42 @@
 # Browser workbench
 
-Leela is a browser-only IDE. Its workbench keeps project files, notebooks, live Python
-state, terminals, source control, research, and the coding agent in one loopback-only app.
+Loopback-only browser IDE for files, notebooks, kernels, terminals, Git, research, and agents.
 
 ## Settings
 
-Open Tools, then Settings, or press `Command+,` (`Control+,` elsewhere). Four layers decide
-an editing setting, in this order: Leela's defaults, `~/.config/leela/settings.json`, the
-project's `.leela/settings.json`, then the user and workspace language overrides. Local
-storage keeps browser-only geometry. The settings header picks the User or Workspace scope,
-and all languages, Python, or Markdown.
+Tools > Settings, or Command+, / Control+,.
 
-JetBrains Mono and Fira Code variable fonts are bundled as WOFF2 assets, so selecting them
-works offline and does not silently fall back to the system font. The ligature proof row
-shows `!=`, `->`, `=>`, `<=`, `>=`, `===`, and `::` while toggling OpenType `liga` and `calt`.
-A change to typography, wrapping, visual columns, whitespace, indentation guides, line
-numbers, bracket colors, cursor style, sticky symbols or the long-file overview updates an
-open CodeMirror editor in place. None of them remount it.
+Settings order:
 
-File settings control autosave timing, final newlines, trailing whitespace, delete
-confirmation, and format-on-save. Python formatting uses Ruff or Black from the selected
-project environment. JSON uses Leela's own structural formatter. IndexedDB recovery and external
-write conflict review remain enabled independently of autosave.
+1. Leela defaults
+2. `~/.config/leela/settings.json`
+3. `.leela/settings.json`
+4. user and workspace language overrides
 
-## Notebook cells
+Browser geometry uses local storage. File settings cover autosave, whitespace, final newlines, confirmation, and formatting. Python uses Ruff or Black from the selected environment.
 
-Use the cell gutter to drag a cell. The cell menu includes run above/below/all, insert,
-move, duplicate, copy, cut, paste above/below, split, merge, change type, clear output,
-and delete. Structural operations have notebook-level undo and redo. Text editing keeps CodeMirror's
-character-level history. Shift-click selects a cell range, and copy, cut,
-paste, delete, and gutter dragging operate on that range as one undoable operation.
+## Notebooks
 
-## Runtime and debugging configuration
+The gutter supports drag, run, insert, move, duplicate, copy, cut, paste, split, merge, type changes, and output clearing. Structural edits have notebook undo and redo.
 
-The kernel picker chooses the launcher and Python interpreter. A run configuration has a field for the command, the working
-directory, the watched module, inspector attachment, explicit environment values, and a
-project-relative dotenv file such as `.env.local`.
-Keep secrets in an ignored dotenv file rather than `.leela/runs.json`.
+Each cell banner carries its position, kind, and line count. The gutter's `[n]` is the execution count, which is neither: it is blank until the cell runs and renumbers on every rerun. Hovering the label adds the character count, the last run's duration, and its output count. Clicking it copies the cell id.
 
-A run configuration can instead launch or attach with debugpy. A direct session covers files,
-modules, tests and applications. It carries arguments, environment, `justMyCode`,
-stop-on-entry, subprocesses, the Django, Jinja and gevent options, and a loopback attach host
-and port. While it runs you get source breakpoints, conditions, hit counts, logpoints,
-exception policy, call stacks, locals, evaluation, and continue, step over, step in and step
-out. Leela offers to install debugpy into the selected project environment. It never exposes
-a non-loopback attach port by default. Notebook cells retain
-their ipykernel Jupyter-DAP path and use the same debugger UI.
+## Runtime and debugging
 
-## Workspace history
+The kernel picker selects the launcher and interpreter. Run configurations support command, directory, module watch, environment, dotenv files, and debugpy. Debugging supports breakpoints, conditions, hit counts, logpoints, stacks, locals, evaluation, and stepping. Attach binds to loopback only.
 
-Every successful file save creates a persistent checkpoint outside the repository. Open Tools,
-then Workspace history, to inspect and undo them. Undo is atomic and refused
-when any affected file no longer matches the recorded output, so it cannot overwrite a
-newer external change.
+## History and conflicts
 
-## File conflicts
+File saves create persistent checkpoints outside the repository. Workspace history can inspect and undo unchanged outputs. External changes open CodeMirror merge. Notebook merges operate per cell.
 
-Autosave uses disk-version checks and IndexedDB recovery. If the file changed externally, choose merge
-changes. CodeMirror's two-pane merge view opens with the current disk content on the left and
-the editable result on the right. Saving the result creates a new disk version rather than
-replacing either side. Notebooks use the same merge engine cell by cell, preserving their structural
-boundaries while resolving source conflicts.
+## Language service
 
-## Python language service
+Leela starts `pyright-langserver` lazily when available. Unsaved Python buffers use LSP diagnostics with compiler diagnostics.
 
-When `pyright-langserver` is available, Leela starts and owns it lazily for the open
-project. Unsaved `.py` buffers are synchronized through LSP and Pyright diagnostics join
-Python compiler diagnostics in CodeMirror. Settings reports whether Pyright is optional,
-available, or connected.
+## Navigation
 
-## Navigation aids
-
-Editor settings can enable a lightweight CodeMirror minimap with a viewport overview.
-Sticky navigation follows the nearest Python class or function while the document scrolls.
-Both are isolated editor extensions and can be changed without remounting open documents.
+Optional minimap and sticky symbols update open editors without remounting them.
 
 ## Kernel failures
 
-The kernel pill changes to a warning when its authenticated inspector cannot be reached.
-Open the kernel picker to see the transport error and restart the exact kernel.
+The kernel pill reports inspector failures. The kernel picker shows the error and restarts the selected kernel.

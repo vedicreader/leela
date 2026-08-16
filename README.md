@@ -75,6 +75,15 @@ over litesearch. It holds every page read and every research source. The agent r
 with `memory_search`, `memory_tree`, `memory_read` and `memory_topics`, rather than paying to
 search the live web again.
 
+### The vault
+
+Tools > Vault opens a workbench tab for shelves, search, imports, feeds, API specifications, and topics.
+Paste a page, paper, repository, video, or folder. Folder imports show their plan before indexing.
+`@` completes vault documents. Search results and document rows can attach sections to an agent question.
+See [the vault](docs/vault.md).
+
+![Searching the vault, and attaching what it found](docs/screenshots/vault-workbench.png)
+
 ### Research
 
 [fossick](https://github.com/vedicreader/fossick) runs the web search and the extraction to
@@ -184,9 +193,10 @@ leela/
     projects.py   which folders are open, and which were open lately
     inspectors.py dhrishti's registry and menus, without importing dhrishti
   blocks/         one folder per feature: `connect(app, ctx)` plus a `CAPS` tuple
-    nb git search memory agent runtime research jobs workflows pipelines drive
+    nb git search memory agent runtime research workflows pipelines drive
     fs term keys tabs vars runs stack refactor lsp debug editor settings workspace
     browser       a CDP page as a tab: screencast in, input out
+    vault         the corpus, what fills it, and the queue that does the filling
   workspace.py    open folders, open tabs, and which kernel each tab talks to
   app.py          the FastHTML IDE: `ide_app`, `serve_ide`
   desktop.py      the native window: pywebview, the CDP boot, the macOS open event

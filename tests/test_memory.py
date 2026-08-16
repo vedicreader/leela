@@ -221,7 +221,7 @@ def test_a_cadence_is_a_watch_and_a_url_watch_forces_a_refetch(mem_vault):
 
 def test_a_clips_pii_report_covers_what_that_clip_wrote(mem_vault, tmp_path):
     "The summary is about the documents this job clipped, not about the shelf."
-    from leela.blocks.jobs.clip import _pii_summary
+    from leela.blocks.vault.clip import _pii_summary
     (tmp_path/'cv.md').write_text('# CV\n\nDr Charles Babbage, ada@example.com, 555-123-4567.\n')
     (tmp_path/'clean.md').write_text('# Notes\n\nRanking and recall, no one in particular.\n')
     rows = {r['title']: r['doc_id'] for r in mem_vault.clip(sorted(tmp_path.glob('*.md')))}

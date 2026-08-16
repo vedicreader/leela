@@ -121,9 +121,10 @@ def test_a_host_offers_only_the_tools_it_supports():
     assert 'run_python' not in names and 'notebook_cells' not in names
     names = {t.__name__ for t in tools_for(MemHost_agent())}
     assert 'run_python' not in names
+    from ramabana.git import GIT_WRITE_TOOLS
     assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
             'run_shell', 'memory_forget', 'create_skill',
-            'cancel_watch', 'cart_add', 'cart_remove'} == set(WRITE_TOOLS)
+            'cancel_watch', 'cart_add', 'cart_remove'} | GIT_WRITE_TOOLS == set(WRITE_TOOLS)
     a, _ = fake_agent()
     names = {t.__name__ for t in read_only(a.tools)}
     assert not (names & WRITE_TOOLS)
@@ -300,6 +301,21 @@ def test_directed_checkpoint_can_rewrite_the_live_tool_call():
     assert decision and decision.edited
     assert tc['function'] == {'name': 'view_file', 'arguments': {'path': 'README.md'}}
     assert decision.reply() == 'Approved by the user. Note from the user: look here instead'
+
+def test_queued_steering_interrupts_a_pending_checkpoint():
+    from leela.blocks.agent.ai import Interventions
+    ap = Interventions(tools={'edit_file'}, mode='ask', control='directed', timeout=2)
+    stop = ap.listen(); tc = {'id': 'call_edit', 'function': {'name': 'edit_file', 'arguments': {'path': 'a.py'}}}
+    def steer():
+        for _ in range(200):
+            if ap.pending is not None: return ap.queue_steer('inspect the failing test first')
+            time.sleep(.005)
+    threading.Thread(target=steer, daemon=True).start()
+    try: assert ap.gate(tc)
+    finally: stop()
+    assert tc['function']['name'] == 'user_steering'
+    assert 'inspect the failing test first' in tc['function']['arguments']['instruction']
+    assert ap.state()['queued_steer'] == ''
 
 def test_rejection_ignores_rewritten_or_malformed_call_fields():
     from leela.blocks.agent.ai import Interventions
@@ -1601,6 +1617,15 @@ def test_a_site_packages_under_an_oddly_named_venv_is_still_skipped(tmp_path):
     ws = Workspace(roots=[tmp_path])
     assert [p.name for p in ws.fs.walk(tmp_path)] == ['mine.py']
 
+def test_a_file_leela_just_wrote_can_be_found_before_the_walk_cache_expires(tmp_path):
+    "The walk is cached to keep quick-open cheap. Our own writes skip the window."
+    ws = Workspace(roots=[tmp_path])
+    assert [p.name for p in ws.fs.walk(tmp_path)] == []
+    ws.fs.write(tmp_path/'fresh.py', 'x = 1\n')
+    assert [p.name for p in ws.fs.walk(tmp_path)] == ['fresh.py'], 'stale for 2s was the bug'
+    ws.fs.delete(tmp_path/'fresh.py')
+    assert [p.name for p in ws.fs.walk(tmp_path)] == []
+
 
 
 
@@ -1964,3 +1989,17 @@ def test_the_turn_pictures_become_data_urls_a_browser_can_draw():
     assert fn(B()) == []
     class C: pass
     assert fn(C()) == []
+
+
+def test_an_undone_turn_is_dimmed_rather_than_deleted():
+    """`rollback_turn` restores files and leaves model history alone.
+
+    Deleting the transcript said the agent had forgotten a turn it still carries, and the reply
+    stayed on screen whenever the file reload before it raised.
+    """
+    js = builder.OUT.read_text()
+    block = js[js.index('function markTurnUndone'):js.index('async function retryProposal')]
+    assert 'lee-turn-undone' in block, 'the rolled-back turn is marked in the view'
+    assert 'node.remove()' not in block, 'and is not deleted out from under the model'
+    assert 'still remembers' in block, 'the bar says what undo did not do'
+    assert '.lee-turn-undone' in (ROOT/'leela'/'static'/'lee-ide.css').read_text()

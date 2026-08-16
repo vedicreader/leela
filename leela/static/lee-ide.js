@@ -25,6 +25,9 @@ const lee = {
   // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
   // path->name map: two selections in one file are two contexts, not one key overwriting itself.
   agentSelections: [],
+  // Vault documents and sections queued for the next turn. A vault ref is not a path, so it
+  // cannot live in `agentAttachments`; `ref` -> {vault, shelf, doc, title} keyed the same way.
+  vaultRefs: new Map(),
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
@@ -407,6 +410,23 @@ function resolveMarkdownImages(el) {
   });
 }
 
+// A feed item ends in `[url](url)`, and a bare href navigates whatever is showing it. In the
+// browser that loses the IDE; in the desktop webview there is no back button to come home with.
+// `openWebpage` puts the page in a tab -- the CDP Chrome the desktop app already drives, or a
+// browser tab where there is no Chrome to drive.
+function routeMarkdownLinks(el) {
+  $$('a[href]', el).forEach(a => {
+    const href = a.getAttribute('href') || '';
+    if (!/^https?:/i.test(href) || a.dataset.leeLink) return;
+    a.dataset.leeLink = '1'; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.addEventListener('click', e => {
+      if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // the browser's to handle
+      e.preventDefault(); e.stopPropagation();
+      openWebpage(href);
+    });
+  });
+}
+
 function renderMarkdown(el, text, allowRaw = false, onRender = null) {
   if (!el) return;
   el.dataset.markdown = String(text || '');
@@ -430,7 +450,7 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
       el._leeCodeFrame = requestAnimationFrame(() => {
         el._leeCodeFrame = 0;
         if (onRender) try { onRender(el); } catch (e) { console.warn('Leela markdown annotation:', e); }
-        resolveMarkdownImages(el);
+        resolveMarkdownImages(el); routeMarkdownLinks(el);
         upgradePortableToolMarkdown(el); enhanceCodeBlocks(el); addMarkdownCellAction(el);
       });
     } catch (e) {
@@ -1321,6 +1341,7 @@ async function mountTab(expectedPath = '') {
   }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
   if (st.kind === 'vault') await mountVault(host, st);
+  else if (st.kind === 'vaultwb') await mountVaultWorkbench(host, st);
   else if (st.kind === 'web') mountWeb(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'image') mountImage(host, st);
@@ -1665,6 +1686,7 @@ function patchNotebook(host, before, cells, op = '') {
       const buttons = $('.lee-cellbtns', el); if (buttons) buttons.innerHTML = cellButtons(i);
       const summary = $('.lee-cell-summary', el);
       if (summary) summary.textContent = String(c.source || '').trim().split('\n')[0] || 'empty cell';
+      paintCellMeta(el, c, i);   // an insert above renumbers every cell after it
       const gutter = $('#g-' + c.id); if (gutter) gutter.textContent = gutterFor(c);
       const context = $('.lee-cell-context', el); if (context) paintCellContext(context, c);
       setCellState(c, cellState(c)); setCellTime(c, c.execution_ms, c.running);
@@ -1707,6 +1729,7 @@ function setCellState(c, state, label = '') {
   badge.title = label || ({done: 'ran successfully in the current kernel', error: 'run failed in the current kernel',
     previous: 'saved output from a previous kernel; run this cell to restore its variables', running: 'running'}[state] || 'not run');
   badge.setAttribute('aria-label', badge.title);
+  refreshCellMeta(c);           // the run count and the outputs it left are in the tooltip
   queueNotebookOverview();      // a failure is one of the two things the stripe reports
 }
 function markPreviousRuns() {
@@ -1732,6 +1755,38 @@ function setCellTime(c, ms, running = false) {
   el.classList.toggle('previous', previous);
   el.title = running ? 'current execution time' : previous ? 'duration of the saved run; its variables are not in this kernel' : 'last execution time';
 }
+
+/* The banner says where a cell sits and how big it is. The gutter carries the execution
+ * count, which is neither: it is blank until the cell runs, and it renumbers on every rerun.
+ * The tooltip carries what a developer needs to reference the cell -- its id -- and what the
+ * last run left behind. */
+const cellKind = (c) => ({code: 'py', markdown: 'md', prompt: 'prompt'}[c.cell_type] || c.cell_type);
+const cellLines = (c) => String(c.source || '').split('\n').length;
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+function cellMetaTitle(c, i) {
+  const src = String(c.source || '');
+  const rows = [`cell ${i + 1} of ${lee.cells.length} · ${c.cell_type} · ${plural(cellLines(c), 'line')}, ${src.length} chars`];
+  if (c.cell_type === 'code')
+    rows.push([c.execution_count == null ? 'not run' : `run ${c.execution_count}`,
+               formatCellTime(c.execution_ms), plural((c.outputs || []).length, 'output')].filter(Boolean).join(' · '));
+  rows.push(`id ${c.id}`, 'click to copy the id');
+  return rows.join('\n');
+}
+function paintCellMeta(el, c, i) {
+  const meta = el && $('.lee-cell-meta', el); if (!meta) return;
+  $('.lee-cell-no', meta).textContent = '#' + (i + 1);
+  $('.lee-cell-size', meta).textContent = `${cellKind(c)} · ${plural(cellLines(c), 'line')}`;
+  meta.dataset.cellId = c.id; meta.title = cellMetaTitle(c, i);
+}
+function copyCellId(button) {
+  navigator.clipboard?.writeText(button.dataset.cellId || '');
+  status('cell id copied', 'ok');
+}
+function refreshCellMeta(c) {
+  const el = $(`.lee-cell[data-id="${c.id}"]`);
+  if (el) paintCellMeta(el, c, +el.dataset.i);
+}
+window.leeCopyCellId = copyCellId;
 
 /* The per-cell controls, from the same table the toolbar comes from. They act on the cell
  * they are drawn in rather than on the selected one -- clicking ▶ on the third cell has
@@ -1782,6 +1837,10 @@ function cellEl(c, i) {
     `<button class="lee-cell-fold" title="collapse cell" aria-label="collapse cell">${lee.collapsedCells.has(c.id) ? '+' : '−'}</button>` +
     `<div class="lee-execution-count" id="g-${c.id}">${gutterFor(c)}</div></div>` +
     `<div class="lee-cellmain"><div class="lee-cell-chrome">` +
+    `<button class="lee-cell-meta" data-cell-id="${esc(c.id)}" title="${esc(cellMetaTitle(c, i))}" ` +
+    `onclick="event.stopPropagation();leeCopyCellId(this)">` +
+    `<span class="lee-cell-no">#${i + 1}</span>` +
+    `<span class="lee-cell-size">${esc(cellKind(c))} · ${esc(plural(cellLines(c), 'line'))}</span></button>` +
     `<span class="lee-cell-summary">${esc(String(c.source || '').trim().split('\n')[0] || 'empty cell')}</span>` +
     `<span class="lee-cell-state ${state}" id="state-${c.id}" ` +
     `title="${state === 'done' ? 'ran successfully in the current kernel' : state === 'error' ? 'run failed in the current kernel' : state === 'previous' ? 'saved output from a previous kernel; run to restore variables' : 'not run'}">${stateSvg(state)}</span>` +
@@ -2990,6 +3049,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     if (lee.activeEditor==='secondary' && lee.editors.get('secondary') && lee.secondaryPath) {
       const path=lee.secondaryPath,base_disk_version=draftBaseFor(path);
       const d=await post('/nb/save',{path,text:normalizeSavedText(LeeCM.getDoc(lee.editors.get('secondary'))),base_disk_version,force});
+      noteSelfWrite(path);
       lee.buffers.delete(path);lee.dirtyBuffers.delete(path);await clearDrafts(path);
       saveTabEl = $$('.lee-tab').find(x=>x.title===path); saveTabEl?.classList.remove('dirty');
       setTabSaveState(saveTabEl, 'saved');
@@ -3033,6 +3093,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     saveTabEl?.classList.remove('dirty');
     setTabSaveState(saveTabEl, 'saved');
     if (!quiet) status('saved', 'ok');
+    noteSelfWrite(documentKey, lee.path);
     refreshProjectPills();
     refreshOpenGitMarks();      // a notebook's marks are per cell, a file's per line
     if (lee.path?.endsWith('/pyproject.toml')) refreshPackageVersions();
@@ -3899,19 +3960,22 @@ function renderTurns(log, turns, heading) {
 }
 const sessionTime = s => s.started ? new Date(s.started * 1000).toLocaleString() : s.id.replace(/^agent_/, '');
 async function showHistorySession(group, groups) {
-  const log = $('#agentlog'); if (!log) return; log.innerHTML = '';
+  const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
   const index = document.createElement('nav'); index.className = 'lee-history-index';
   const options = (groups || []).map(s => {
     const models = (s.models || []).map(m => m.split('/').pop()).join(' + ') || 'execution';
     const label = `${sessionTime(s)} · ${models} · ${s.turns.length} turn${s.turns.length === 1 ? '' : 's'}`;
     return `<option value="${esc(s.id)}"${s.id === group?.id ? ' selected' : ''}>${esc(label)}</option>`;
   }).join('');
+  const resumable = !!group && !group.id.startsWith('legacy-') && (group.turns || []).length > 0;
   index.innerHTML = `<div class="lee-history-heading"><strong>History</strong>` +
     `<span>one continuous model context per session</span></div>` +
     `<select class="lee-select lee-history-select" aria-label="agent history session">${options}</select>` +
-    `<span class="lee-history-runs">${group?.code || 0} kernel run${group?.code === 1 ? '' : 's'}</span>`;
+    `<span class="lee-history-runs">${group?.code || 0} kernel run${group?.code === 1 ? '' : 's'}</span>` +
+    (resumable ? `<button class="lee-btn go lee-history-resume" title="Continue this conversation">Resume</button>` : '');
   index.querySelector('select')?.addEventListener('change', e =>
     showHistorySession(groups.find(s => s.id === e.target.value), groups));
+  index.querySelector('.lee-history-resume')?.addEventListener('click', () => leeAgentResume(group));
   log.appendChild(index);
   if (!group) { log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>'); return; }
   log.insertAdjacentHTML('beforeend', `<div class="lee-history-session-head"><strong>${esc(sessionTime(group))}</strong>` +
@@ -3932,8 +3996,20 @@ async function leeAgentHistory() {
   const d = await api('/agent/history');
   await showHistorySession((d.sessions || [])[0], d.sessions || []);
 }
-async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
+async function leeAgentResume(group) {
+  if (!group) return;
+  if (lee.agentBusy) return status('the model is already working', 'err');
+  try {
+    const d = await post('/agent/resume', {session: group.id}), log = $('#agentlog');
+    if (log) { log.innerHTML = ''; renderTurns(log, d.turns || [], 'resumed conversation'); log.scrollTop = log.scrollHeight; }
+    lee.agentView = 'live'; lee.agentLive = log?.innerHTML || '';
+    $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus();
+    status(d.note || `resumed ${d.session}`, 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; approvalCards.clear(); const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
 window.leeAgentNew = leeAgentNew;
+window.leeAgentResume = leeAgentResume;
 window.leeAgentHistory = leeAgentHistory;
 
 async function leeAgentState() {
@@ -4077,7 +4153,8 @@ function agentLog(html) {
 /* A write pauses Rishi's tool loop until it is answered. Keep the question in the agent
  * pane rather than a modal, so the rest of the IDE remains usable while the model waits.
  * The same event is used by agent-chat and notebook prompt-cell streams. */
-const approvalCards = new Map(), resolvedProposalCards = [];
+// These are the log's own nodes. A detached one is held forever.
+const approvalCards = new Map();
 function proposalArgs(card) {
   const schema = card._schema, args = {};
   for (const field of (schema?.fields || [])) {
@@ -4256,7 +4333,6 @@ function showApproval(a) {
       const resolvedTool = ok ? tool : a.tool;
       card.dataset.tool = resolvedTool; card.dataset.resolvedTool = resolvedTool;
       card.dataset.retryable = String(!!byName.get(resolvedTool)?.retryable);
-      resolvedProposalCards.push(card);
       $('.lee-approval-actions', card).innerHTML = `<span>${ok ? (changed ? 'Edited call is running' : 'Running approved tool') : (note ? 'Not run · your direction was sent to the agent' : 'Not run')}</span>` +
         (ok && card.dataset.retryable === 'true' ? `<button class="lee-btn" data-retry title="Run this read-only tool again without changing the conversation">Run again</button>` : '') +
         (ok && ['edit_file','create_file'].includes(resolvedTool) ? `<button class="lee-btn warn" data-rollback disabled>Undo file change</button>` : '');
@@ -4300,6 +4376,23 @@ function editableResponse(raw) {
   return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function markTurnUndone(out, bar, files, revise) {
+  // `rollback_turn` restores files; it does not touch model history. Deleting the transcript
+  // said the agent had forgotten a turn it still carries.
+  let first = out, last = bar;
+  while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
+  while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
+  for (let node = first; node; node = node.nextElementSibling) {
+    if (node !== bar) node.classList.add('lee-turn-undone');   // the bar carries the explanation
+    if (node === last) break;
+  }
+  const note = document.createElement('span');
+  note.textContent = `${files} file${files === 1 ? '' : 's'} restored · the agent still remembers this turn`;
+  bar.classList.add('lee-turn-undone-bar');
+  bar.replaceChildren(note, ...(revise ? [revise] : []));
+  return bar;
+}
+
 function addResponseRevision(out, turnId, raw, capabilities = {}) {
   if (!turnId || !out || !raw.trim()) return;
   const bar = document.createElement('div'); bar.className = 'lee-response-revision';
@@ -4318,18 +4411,10 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
         ? `\n\nCannot undo external effects: ${tx.transaction.irreversible.join(', ')}` : '';
       if (!await confirmDialog('Undo agent turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
       const d = await post('/agent/rollback-turn', {turn_id: turnId});
+      // Marked before the files are reloaded: a reload that raises used to leave the reply
+      // standing as though nothing had happened.
+      markTurnUndone(out, bar, (d.paths || []).length, capabilities.revisable ? reviseButton : null);
       for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
-      const log = out.parentElement;
-      if (log) {
-        let first = out, last = bar;
-        while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
-        if (first.previousElementSibling?.classList.contains('lee-user-message')) first = first.previousElementSibling;
-        while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
-        for (let node = first, next; node; node = next) {
-          next = node.nextElementSibling; node.remove();
-          if (node === last) break;
-        }
-      }
       status('turn changes rolled back', 'ok');
     } catch (e) { status(e.message || String(e), 'err'); }
   };
@@ -4436,6 +4521,13 @@ async function pollApproval() {
   } catch (_) {}
 }
 
+// An approval must not sit unseen while the model works. Idle, only a background job
+// raises one, and a window nobody is looking at raises nothing.
+async function approvalLoop() {
+  if (!document.hidden) await pollApproval();
+  setTimeout(approvalLoop, document.hidden ? 5000 : lee.agentBusy ? 750 : 5000);
+}
+
 function readableDetail(value) {
   const text = String(value || '');
   try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
@@ -4536,7 +4628,11 @@ function paintAgentAttachments() {
   const sels = lee.agentSelections.map((s, i) =>
     `<span class="lee-agent-attachment selection" title="${esc(s.path)}"><span>${esc(s.label)}</span>` +
     `<button type="button" data-sel="${i}" aria-label="remove ${esc(s.label)}">remove</button></span>`).join('');
-  host.innerHTML = active + sels + [...lee.agentAttachments.entries()].map(([path, name]) =>
+  const vaulted = [...lee.vaultRefs.entries()].map(([key, r]) =>
+    `<span class="lee-agent-attachment vault" title="${esc(r.vault || 'vault')} · ${esc(r.shelf || 'main')}">` +
+    `<span>${esc(r.title)}</span>` +
+    `<button type="button" data-vault-ref="${esc(key)}" aria-label="remove ${esc(r.title)}">remove</button></span>`).join('');
+  host.innerHTML = active + sels + vaulted + [...lee.agentAttachments.entries()].map(([path, name]) =>
     `<span class="lee-agent-attachment${name.endsWith('/') ? ' folder' : ''}" title="${esc(path)}"><span>${esc(name)}</span>` +
     `<button type="button" data-path="${esc(path)}" aria-label="remove ${esc(name)}">remove</button></span>`).join('') + states;
   $$('.lee-agent-state-suggestion', host).forEach(b => b.onclick = async () => {
@@ -4545,6 +4641,9 @@ function paintAgentAttachments() {
   });
   $$('[data-sel]', host).forEach(b => b.onclick = () => {
     lee.agentSelections.splice(+b.dataset.sel, 1); paintAgentAttachments();
+  });
+  $$('[data-vault-ref]', host).forEach(b => b.onclick = () => {
+    lee.vaultRefs.delete(b.dataset.vaultRef); paintAgentAttachments();
   });
   $$('[data-path]', host).forEach(b => b.onclick = () => {
     const name = lee.agentAttachments.get(b.dataset.path);
@@ -4575,6 +4674,12 @@ function chooseAgentSuggest(i = lee.agentSuggestAt) {
     const at = input.selectionStart, before = input.value.slice(0, at);
     const left = before.replace(/(^|\s)\/(?:[A-Za-z_][\w-]*)?$/, `$1/${item.name} `);
     input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
+  } else if (item.kind === 'vault') {
+    attachVaultRef(item);
+    const at = input.selectionStart, before = input.value.slice(0, at);
+    const left = before.replace(/(^|\s)@[^\s@]*$/, `$1@${item.name} `);
+    input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
+    paintAgentAttachments();
   } else {
     // The token *stays*. Removing it left the sentence reading "look at and tell me why",
     // with the thing being talked about visible only as a chip somewhere else. What you typed
@@ -4614,11 +4719,20 @@ async function updateAgentSuggest() {
     // `@` means "in this project", not "anywhere the workspace can reach": with several
     // checkouts open, the unscoped list is mostly files from a project you are not in.
     // `dirs`: a folder is somewhere to look, and attaching one is how you say "read around here".
-    const d = await api('/fs/find?dirs=1&scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=12');
+    // The vault answers the same `@`, because "this document" is the same gesture whether the
+    // document is a file you have open or a paper you filed a month ago.
+    // Both are capped, and capped short: a list where one source fills the visible rows is a list
+    // that only has one source, whatever the other one returned.
+    const [f, v] = await Promise.all([
+      api('/fs/find?dirs=1&scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=7').catch(() => ({})),
+      api('/vault/mentions?limit=5&q=' + encodeURIComponent(mention[1])).catch(() => ({}))]);
     if (seq !== agentSuggestSeq) return;
-    lee.agentSuggest = (d.hits || []).slice(0, 12).map(f => ({kind: f.kind === 'folder' ? 'folder' : 'file',
-      path: f.path, name: f.name, label: '@' + f.name,
-      detail: (f.kind === 'folder' ? 'folder · ' : '') + compactPath(f.path)}));
+    const files = (f.hits || []).slice(0, 7).map(x => ({kind: x.kind === 'folder' ? 'folder' : 'file',
+      path: x.path, name: x.name, label: '@' + x.name,
+      detail: (x.kind === 'folder' ? 'folder · ' : '') + compactPath(x.path)}));
+    const vaulted = (v.mentions || []).map(x => ({kind: 'vault', vault: x.vault, shelf: x.shelf,
+      doc: x.doc, name: x.title, title: x.title, label: '@' + x.title, detail: 'vault · ' + x.detail}));
+    lee.agentSuggest = [...files, ...vaulted];
   } else return closeAgentSuggest();
   lee.agentSuggestAt = 0; paintAgentSuggest();
 }
@@ -4748,8 +4862,9 @@ async function sendAgent() {
     const head = q.slice(1).split(/\s/, 1)[0];
     if ((lee.agentVocabulary?.commands || []).some(c => c.name === head)) return sendAgentCommand(q);
   }
-  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref)];
-  lee.agentAttachments.clear(); lee.agentSelections = []; paintAgentAttachments();
+  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref),
+                       ...lee.vaultRefs.values()];
+  lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
   lee.agentBusy = true; setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   log.appendChild(userMessage(q)); log.scrollTop = log.scrollHeight;
@@ -5187,7 +5302,7 @@ window.leeLogFilter = leeLogFilter; window.leeLogClear = leeLogClear; window.lee
 lee.runSeen = new Map(); lee.runFinished = new Set();
 async function pollRunLogs() {
   let servers = [];
-  try { servers = (await api('/dev/list')).servers || []; } catch (_) { return; }
+  try { servers = (await api('/dev/list')).servers || []; } catch (_) { return false; }
   for (const srv of servers) {
     const path = srv.path || srv.script || '';
     if (!path) continue;
@@ -5206,6 +5321,13 @@ async function pollRunLogs() {
       if (failed) { leeLogFilter('runs'); leeDock('logs'); status(`${srv.label || path.split('/').pop()} failed — exit ${srv.returncode}`, 'err'); }
     }
   }
+  return servers.length;
+}
+
+// A dev server's output has to arrive promptly. An empty list has nothing to say for 15s.
+async function runLogLoop() {
+  const busy = await pollRunLogs();
+  setTimeout(runLogLoop, busy ? 2000 : 15000);
 }
 
 function leeDock(which) {
@@ -5535,13 +5657,15 @@ window.leeTheme = leeTheme; window.leeEditorSettings = editorSettings;
 
 /* ---------------------------------------------------------- cwd and source control */
 function paintGitTree(d) {
+  const rows = new Map();   // indexed once rather than rescanned per change
+
   $$('.lee-file').forEach(row => {
     row.classList.remove('git-modified', 'git-staged', 'git-untracked', 'git-conflict');
     row.querySelectorAll('.lee-tree-git').forEach(badge => badge.remove());
+    rows.set(row.dataset.path, row);
   });
   for (const c of (d.changes || [])) {
-    const path = d.root + '/' + c.path;
-    const row = $$('.lee-file').find(x => x.dataset.path === path); if (!row) continue;
+    const row = rows.get(d.root + '/' + c.path); if (!row) continue;
     const state = c.conflicted ? 'conflict' : c.untracked ? 'untracked' : c.staged && !c.unstaged ? 'staged' : 'modified';
     row.classList.add('git-' + state);
     const badge = document.createElement('span'); badge.className = 'lee-tree-git'; badge.textContent = state[0].toUpperCase();
@@ -5746,7 +5870,7 @@ async function refreshProjectPills() {
   try {
     // Bare, not `gitUrl`: the pill and the tree badges describe the repository the active tab
     // is in, so a panel pinned elsewhere must not repaint them.
-    const d = await api('/git/info');
+    const d = await gitInfo();
     const git = $('#gitpill'); if (!git) return;
     const n = (d.changes || []).length;
     git.textContent = `${d.branch}${n ? ' · ' + n : ''}`;
@@ -5757,6 +5881,18 @@ async function refreshProjectPills() {
   } catch (_) {
     const git = $('#gitpill'); if (git) { git.textContent = 'no git'; git.className = 'lee-branch-switcher'; }
   }
+}
+
+// `/git/info` answers 200 with `repo: false` outside a checkout. A surface that only works
+// inside one wants the throw it always had; chrome wants to go quiet.
+async function gitInfo(url = '/git/info') {
+  const d = await api(url);
+  if (d && d.repo === false) throw new Error(d.note || 'not inside a Git repository');
+  return d;
+}
+async function gitInfoOrNull(url = '/git/info') {
+  try { const d = await api(url); return d && d.repo === false ? null : d; }
+  catch (_) { return null; }
 }
 
 async function leeCwd() {
@@ -6009,7 +6145,7 @@ async function commitChangeHunk(path, h, message) {
    * this stages the hunk and commits -- which means anything already staged rides along. Rather
    * than quietly widening a one-hunk commit, or quietly unstaging work someone deliberately
    * staged, the choice is put to whoever is looking at it. */
-  const snapshot = gitUI.snapshot || await api('/git/info').catch(() => null);
+  const snapshot = gitUI.snapshot || await gitInfoOrNull();
   const staged = (snapshot?.changes || []).filter(c => c.staged && c.path !== path).map(c => c.path);
   if (staged.length) {
     const shown = staged.slice(0, 3).join(', ') + (staged.length > 3 ? `, and ${staged.length - 3} more` : '');
@@ -7064,7 +7200,7 @@ async function renderGitPanel(snapshot = null) {
   }
   if (!snapshot && !gitUI.snapshot) host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading repository</small></div>';
   let d = snapshot || gitUI.snapshot;
-  try { if (!d) d = await api(gitUrl('/git/info')); }
+  try { if (!d) d = await gitInfo(gitUrl('/git/info')); }
   catch (e) {
     // Still draw the nav: a workspace whose active folder is not a checkout can have five
     // other repositories in it, and Repos is how you reach them.
@@ -7574,8 +7710,7 @@ async function showGitConflict(path) {
           `anyway, markers and all?`, 'stage anyway')) return;
       const next = await gitDo('resolve_conflict', {path, choice: 'resolved', content});
       m.remove();
-      renderGitPanel(next);
-      status(next.outcome?.summary || `${path} staged as resolved`, 'ok');
+      afterConflictResolved(next, `${path} staged`);
     };
     refresh(d.worktree || '', true);
     jumpTo(0);
@@ -7598,9 +7733,7 @@ async function showWholeSideConflict(path, d) {
     const choice = b.dataset.choice;
     if (!await confirmDialog('resolve conflict', `Use ${choice} for ${path} and stage it as resolved?`, 'resolve')) return;
     m.remove();
-    const next = await gitDo('resolve_conflict', {path, choice});
-    renderGitPanel(next);
-    status(next.outcome?.summary || `${path} staged as resolved`, 'ok');
+    afterConflictResolved(await gitDo('resolve_conflict', {path, choice}), `${path} staged`);
   });
 }
 
@@ -7623,7 +7756,7 @@ function blameSelectionRange() {
 async function leeBlame() {
   if (!lee.path) return status('open a file to blame it', 'err');
   let root = gitUI.snapshot?.root;
-  if (!root) { try { root = (await api(gitUrl('/git/info'))).root; } catch (e) { return leeFail('git', 'blame', e); } }
+  if (!root) { try { root = (await gitInfo(gitUrl('/git/info'))).root; } catch (e) { return leeFail('git', 'blame', e); } }
   showGitBlame(root, blameRelative(root, lee.path), blameSelectionRange());
 }
 window.leeBlame = leeBlame;
@@ -8211,6 +8344,7 @@ function leeToolsMenu(anchor) {
     {label: 'Command palette', detail: displayChord('mod+shift+p'), run: () => leeAct('palette')},
     {label: 'Recent files', detail: displayChord('mod+e'), run: () => leeAct('recent_tabs')},
     {separator: true},
+    {label: 'The vault…', detail: 'browse, search, and put things in', run: () => leeVaultWorkbench()},
     {label: 'Research workspace…', run: () => leeAct('research')},
     {label: 'Read webpage…', run: () => leeAct('read_url')},
     {label: 'Browse a page…', detail: displayChord('alt+shift+o'), run: () => leeAct('browse_url')},
@@ -8307,9 +8441,16 @@ async function quickOpen(searchMode) {
   };
   const go = () => { const h = hits[sel]; if (h) { m.remove(); leeOpenFile(h.path); } };
   list.addEventListener('click', e => { const r = e.target.closest('.lee-mrow'); if (r) { sel = +r.dataset.i; go(); } });
-  input.addEventListener('input', async () => {
-    const q = input.value.trim();
-    hits = (await api('/fs/find?q=' + encodeURIComponent(q))).hits; sel = 0; paint();
+  // Each search walks the whole tree. Debounced and sequenced like the folder picker.
+  let seq = 0, timer = null;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const mine = ++seq, q = input.value.trim();
+      const found = (await api('/fs/find?q=' + encodeURIComponent(q))).hits;
+      if (mine !== seq) return;
+      hits = found; sel = 0; paint();
+    }, 120);
   });
   paint(); setTimeout(() => input.focus(), 0);
 }
@@ -8981,27 +9122,111 @@ function treeCollapse() {
   }
   selectTreeNode(n.parentElement?.closest('.lee-node.lee-dir') || n);
 }
+/* The open folders go up with the request and come back drawn: one round trip, not one each. */
 async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = true) {
   const old = $('.lee-files'); if (!old) return;
-  const open = $$('.lee-dir[open]', old).map(n => n.dataset.path).sort((a, b) => a.split('/').length - b.split('/').length);
+  const open = $$('.lee-dir[open]', old).map(n => n.dataset.path);
   const scrollTop = $('#filetree')?.scrollTop || 0;
-  const html = await fetch('/files/panel' + treeQuery()).then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
+  const q = new URLSearchParams();
+  if (treeHidden()) q.set('hidden', '1');
+  if (open.length) q.set('open', open.join('\n'));
+  const html = await fetch('/files/panel?' + q).then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
   const doc = new DOMParser().parseFromString(html, 'text/html'), fresh = doc.querySelector('.lee-files');
   if (!fresh) throw new Error('file tree refresh returned no panel');
   old.replaceWith(fresh); htmx.process(fresh); paintHiddenBtn();
-  for (const path of open) {
-    const dir = $$('.lee-dir').find(n => n.dataset.path === path); if (!dir) continue;
-    dir.open = true;
-    const kids = dir.querySelector(':scope > .lee-kids');
-    const childHtml = await fetch('/tree?path=' + encodeURIComponent(path) + treeQuery('&'),
-                                  {headers: {'HX-Request': 'true'}}).then(r => r.text());
-    kids.innerHTML = childHtml; htmx.process(kids);
-  }
   const wanted = $$('.lee-node').find(n => n.dataset.path === selectPath) || visibleTreeNodes()[0];
   selectTreeNode(wanted); if ($('#filetree')) $('#filetree').scrollTop = scrollTop;
   if (focus) setScope('files');
   status('files refreshed', 'ok');
 }
+
+/* Pushed, not polled: an agent edit, a terminal command or another editor used to stay
+   invisible until someone refreshed. A push never rebuilds the panel -- it reconciles the
+   folders that changed and leaves every other row, its expansion and the scroll alone. */
+const selfWrites = new Map();
+const SELF_WRITE_MS = 4000;
+function noteSelfWrite(...paths) { for (const p of paths) if (p) selfWrites.set(p, performance.now()); }
+function notMine(paths) {
+  const now = performance.now();
+  for (const [p, at] of selfWrites) if (now - at > SELF_WRITE_MS) selfWrites.delete(p);
+  return paths.filter(p => !selfWrites.has(p));
+}
+window.noteSelfWrite = noteSelfWrite;
+
+const GIT_MARKS = ['git-modified', 'git-staged', 'git-untracked', 'git-conflict'];
+function syncTreeRow(row, fresh) {
+  if (row.classList.contains('lee-dir')) return;
+  row.classList.remove(...GIT_MARKS);
+  for (const c of GIT_MARKS) if (fresh.classList.contains(c)) row.classList.add(c);
+  row.querySelectorAll('.lee-tree-git').forEach(b => b.remove());
+  const badge = fresh.querySelector('.lee-tree-git');
+  if (badge) row.appendChild(badge.cloneNode(true));
+}
+// Rows that are still there stay where they are, with whatever they had open inside them.
+async function patchTreeDir(dir) {
+  const kids = dir.querySelector(':scope > .lee-kids'); if (!kids) return;
+  const html = await fetch('/tree?path=' + encodeURIComponent(dir.dataset.path) + treeQuery('&'),
+                           {headers: {'HX-Request': 'true'}}).then(r => r.text());
+  const box = document.createElement('div'); box.innerHTML = html;
+  const have = new Map([...kids.children].map(n => [n.dataset.path, n]));
+  [...box.children].forEach((fresh, i) => {
+    const row = have.get(fresh.dataset.path) || fresh;
+    if (have.has(fresh.dataset.path)) { syncTreeRow(row, fresh); have.delete(fresh.dataset.path); }
+    if (kids.children[i] !== row) kids.insertBefore(row, kids.children[i] || null);
+  });
+  have.forEach(n => n.remove());
+  htmx.process(kids);
+}
+/* A new folder's own path is open nowhere. Redraw the nearest open ancestor. */
+async function patchTree(paths) {
+  const open = $$('.lee-dir[open]'), want = new Set();
+  for (const p of paths) {
+    let best = null;
+    for (const n of open) {
+      const d = n.dataset.path;
+      if ((p === d || p.startsWith(d + '/')) && (!best || d.length > best.dataset.path.length)) best = n;
+    }
+    if (best) want.add(best);
+  }
+  await Promise.all([...want].map(patchTreeDir));
+}
+async function refreshGitTreeMarks() {
+  const d = await gitInfoOrNull(gitUrl('/git/info'));
+  if (d) paintGitTree(d);
+}
+
+let fsWatchTimer = null, fsWatchSeen = [], fsWatchSince = 0;
+const FS_DEBOUNCE = 250, FS_MAX_WAIT = 1000, FS_MAX_SEEN = 2000;
+// Too many changes to name, so nothing is named: redraw rather than patch.
+function resyncFiles() {
+  clearTimeout(fsWatchTimer); fsWatchSeen = []; fsWatchSince = 0;
+  refreshFileTree(undefined, false).catch(() => {});
+  refreshGitTreeMarks(); watchOpenFile();
+}
+function watchFiles() {
+  const es = new EventSource('/fs/events');
+  es.addEventListener('changed', e => {
+    let d; try { d = JSON.parse(e.data); } catch (_) { return; }
+    if (d.resync) return resyncFiles();
+    fsWatchSeen.push(...d.paths);
+    // A build writes without pause. A timer that only resets never fires.
+    if (fsWatchSeen.length > FS_MAX_SEEN) fsWatchSeen = fsWatchSeen.slice(-FS_MAX_SEEN);
+    if (!fsWatchSince) fsWatchSince = performance.now();
+    clearTimeout(fsWatchTimer);
+    const wait = Math.max(0, Math.min(FS_DEBOUNCE, fsWatchSince + FS_MAX_WAIT - performance.now()));
+    fsWatchTimer = setTimeout(async () => {
+      const all = fsWatchSeen; fsWatchSeen = []; fsWatchSince = 0;
+      const theirs = notMine(all);
+      // Our own save changed no filenames, only what git thinks of one.
+      if (theirs.length) await patchTree(theirs).catch(() => {});
+      await refreshGitTreeMarks();
+      if (theirs.some(p => p === lee.path)) { refreshOpenGitMarks(); watchOpenFile(); }
+    }, wait);
+  });
+  es.onerror = () => { es.close(); setTimeout(watchFiles, 3000); };
+  return es;
+}
+window.watchFiles = watchFiles;
 
 async function treeGitAction(op) {
   const node = treeSel();
@@ -9038,6 +9263,7 @@ async function newEntry(kind) {
                                  kind === 'dir' ? 'folder name' : 'filename.py');
   if (!name) return;
   const r = await post('/fs/new', {parent, name, kind});
+  noteSelfWrite(r.entry.path);
   status('created ' + name, 'ok');
   await refreshFileTree(r.entry.path);
   if (kind === 'file') leeOpenFile(r.entry.path);
@@ -9048,6 +9274,7 @@ async function renameEntry() {
   const name = await inputDialog('rename', 'name', old);
   if (!name || name === old) return;
   const r = await post('/fs/rename', {path: sel.dataset.path, name});
+  noteSelfWrite(sel.dataset.path, r.entry.path);
   await refreshFileTree(r.entry.path);
 }
 async function deleteEntry() {
@@ -9058,6 +9285,7 @@ async function deleteEntry() {
     : 'This permanently deletes the file from disk.';
   if (lee.filePrefs.confirmDelete !== false && !await confirmDialog('delete ' + name + ' from disk', warning, 'delete')) return;
   const parent = sel.parentElement?.closest('.lee-node.lee-dir')?.dataset.path;
+  noteSelfWrite(sel.dataset.path);
   await post('/fs/delete', {path: sel.dataset.path});
   await refreshFileTree(parent);
 }
@@ -9463,10 +9691,9 @@ async function boot() {
   observeEditorWidth();
   checkProjectRuntime();
   leeVars();
-  setInterval(leeVars, 2500);          // the kernel's own inspector is the source of truth; poll it
-  setInterval(watchOpenFile, 1000);    // agent, terminal and git writes appear without a page refresh
-  pollApproval();
-  setInterval(pollApproval, 750);       // catches Rishi approvals raised outside an agent SSE stream
+  setInterval(whenVisible(leeVars), 2500);   // the kernel's own inspector is the source of truth
+  setInterval(watchOpenFile, 10000);   // a backstop: /fs/events is what actually reports a write
+  approvalLoop();                       // catches Rishi approvals raised outside an agent SSE stream
   applyTheme(readTheme());   // also rewrites a pre-family value into `family:mode`
   // The first paint is server-rendered, so the welcome screen is already on the page when
   // Leela opens on no folder; only its recent list needs filling in.
@@ -9474,11 +9701,16 @@ async function boot() {
   // The first paint is server-rendered without the preference, so it is only wrong when set.
   paintHiddenBtn(); if (treeHidden()) refreshFileTree(undefined, false).catch(() => {});
   refreshProjectPills();
-  setInterval(refreshKernelPill, 5000);
-  setInterval(refreshProjectPills, 5000);
-  setInterval(pollRunLogs, 2000);      // only does anything while the logs pane is open
+  setInterval(whenVisible(refreshKernelPill), 5000);
+  // The pills change only when a root or the cwd does, and every one of those already calls
+  // `refreshProjectPills`. Polling them was 24 requests a minute saying nothing.
+  runLogLoop();
+  watchFiles();
   status('ready', 'ok');
 }
+
+// A window nobody is looking at asks for nothing.
+const whenVisible = fn => () => { if (!document.hidden) fn(); };
 
 document.addEventListener('DOMContentLoaded', boot);
 
@@ -9669,13 +9901,90 @@ async function showConflictCenter() {
     $('[data-safe]', m).onclick = async () => {
       if (!await confirmDialog('Resolve safe conflicts', `Stage ${s.safe} deterministic resolution${s.safe === 1 ? '' : 's'}?`, 'resolve')) return;
       const next = await gitDo('resolve_safe_conflicts', {paths: files.filter(f => f.safe).map(f => f.path)});
-      m.remove(); renderGitPanel(next); status('safe conflicts resolved; review remaining files', 'ok');
-      if ((next.changes || []).some(x => x.conflicted)) showConflictCenter();
+      m.remove(); afterConflictResolved(next, `${s.safe} resolved`);
     };
   } catch (e) { leeFail('git', 'resolve conflicts', e); }
 }
 window.showConflictCenter = showConflictCenter;
-/* ---- vault reader: a document from the vault, as an editor tab ---- */
+
+// Step to the next file, and finish the operation when none remain.
+async function afterConflictResolved(d, done = '') {
+  renderGitPanel(d);
+  const left = (d.changes || []).filter(x => x.conflicted).map(x => x.path);
+  if (left.length) {
+    status(`${done}${done ? ' · ' : ''}${left.length} file${left.length === 1 ? '' : 's'} still conflicted`, 'ok');
+    return showGitConflict(left[0]);
+  }
+  const op = (d.operation || {}).active;
+  if (!op) return status(done || 'every conflict is resolved', 'ok');
+  if (!await confirmDialog(`continue the ${op}`, 'Every conflict is resolved and staged.', 'continue')) return;
+  renderGitPanel(await gitDo('operation_continue'));
+}
+window.afterConflictResolved = afterConflictResolved;
+/* ---- the vault: a document as a tab, and the workbench that browses them all ---- */
+
+/* The workbench is server-rendered and swaps its own body, so mounting it is one fetch and
+   htmx owns everything after that. The tab holds only which view was last open. */
+async function mountVaultWorkbench(host, st) {
+  host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>opening the vault</small></div>';
+  try {
+    await htmx.ajax('GET', '/vault/workbench?view=' + encodeURIComponent(st.view || 'browse'),
+                    {target: host, swap: 'innerHTML'});
+  } catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+}
+window.mountVaultWorkbench = mountVaultWorkbench;
+
+async function leeVaultWorkbench(view = 'browse') {
+  await htmx.ajax('POST', '/vault/workbench/open?view=' + encodeURIComponent(view),
+                  {target: '#tabbar', swap: 'outerHTML'});
+  return mountTab();
+}
+window.leeVaultWorkbench = leeVaultWorkbench;
+
+/* Filtering is client-side because the rows are already here: a shelf of two hundred documents
+   is one payload, and a keystroke that costs a request is a keystroke you feel. */
+function leeVaultFilter(input) {
+  const want = input.value.trim().toLowerCase(), wrap = input.closest('.lee-wb-main');
+  let shown = 0;
+  $$('.lee-vault-docrow', wrap).forEach(row => {
+    const hit = !want || row.textContent.toLowerCase().includes(want);
+    row.hidden = !hit; if (hit) shown++;
+  });
+  const count = $('.lee-wb-count', wrap);
+  if (count) count.textContent = `${shown} shown`;
+}
+window.leeVaultFilter = leeVaultFilter;
+
+/* ---- attaching a vault document to the next question ---- */
+
+function attachVaultRef({vault = '', shelf = '', doc = '', title = ''}) {
+  if (!doc) return null;
+  lee.vaultRefs.set(`${vault}|${shelf}|${doc}`, {kind: 'vault', vault, shelf, doc, title: title || doc});
+  return title || doc;
+}
+window.attachVaultRef = attachVaultRef;
+
+function leeVaultAsk(btn) {
+  const name = attachVaultRef(btn.dataset);
+  if (!name) return;
+  paintAgentAttachments();
+  leeRight('agent');
+  $('#agentprompt')?.focus();
+  status(`${name} is attached to the next question`, 'ok');
+}
+window.leeVaultAsk = leeVaultAsk;
+
+/* Every hit on the find view at once: "what do all of these say about X" is one question,
+   and attaching them one at a time is the same question typed six times. */
+function leeVaultAskAll(btn) {
+  const rows = $$('.lee-wb-hit .lee-vault-ask', btn.closest('.lee-wb-find'));
+  rows.forEach(b => attachVaultRef(b.dataset));
+  paintAgentAttachments();
+  leeRight('agent');
+  status(`${rows.length} section${rows.length === 1 ? '' : 's'} attached`, 'ok');
+}
+window.leeVaultAskAll = leeVaultAskAll;
+
 
 function vaultSectionRows(sections, active) {
   if (!sections.length) return '<div class="lee-dim">No section structure was extracted.</div>';
@@ -9864,14 +10173,28 @@ function branchActions(anchor, d, b) {
     }},
     {separator: true},
     {label: 'Compare with current', detail: `${d.branch} … ${leaf}`, disabled: b.current, run: () => compareBranch(d, b.name)},
-    {label: `Rebase ${d.branch} onto ${leaf}`, disabled: b.current, run: () => gitDo('rebase', {branch: b.name})},
-    {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => gitDo('merge', {branch: b.name})},
+    // Through the previews, as the git panel's identical entries go.
+    {label: `Rebase ${d.branch} onto ${leaf}`, disabled: b.current, run: () => showRebasePreview(b.name, d, branchAct)},
+    {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => showMergePreview(b.name, d, branchAct)},
   ];
   if (!b.remote && !b.current) rows.push({separator: true}, {label: `Delete ${leaf}`, warn: true, run: async () => {
     if (await confirmDialog('delete branch', `Delete ${b.name}? Commits only on it are lost.`, 'delete'))
       gitDo('delete', {branch: b.name, force: !b.merged});
   }});
   openChromeMenu(anchor, rows);
+}
+
+// Where "why is this divergent" usually starts: the PR, and whether its base moved under it.
+async function branchPr(d) {
+  const r = await api(gitUrl('/git/pr', {branch: d.branch})).catch(() => null);
+  const pr = r?.pr;
+  if (!pr) return {id: 'pr', label: 'Pull request', detail: r?.note || 'unavailable', run: () => status(r?.note || 'no pull request', 'ok')};
+  const c = pr.checks || {};
+  const health = c.failing?.length ? `${c.failing.length} check${c.failing.length === 1 ? '' : 's'} red`
+              : c.pending ? `${c.pending} check${c.pending === 1 ? '' : 's'} running` : 'checks green';
+  return {id: 'pr', label: `#${pr.number} ${pr.title}`.slice(0, 60),
+    detail: `${pr.base}${pr.behind_base ? ` · ${pr.behind_base} behind base` : ''} · ${health}`,
+    run: () => window.open(pr.url, '_blank')};
 }
 
 function branchTopActions(d) {
@@ -9886,8 +10209,10 @@ function branchTopActions(d) {
   ];
 }
 
+const branchAct = async (op, extra = {}) => { const d = await gitDo(op, extra); refreshScmIfOpen(d); return d; };
+
 function runBranchAction(id, d) {
-  if (id === 'update') return gitDo('pull');
+  if (id === 'update') return d.ahead && d.behind ? showSyncPlan(d) : gitDo('pull');
   if (id === 'push') return leeGitQuick('push');
   if (id === 'commit') { gitUI.tab = 'changes'; leeLeft('git'); return leeGitRefresh(); }
   if (id === 'clone') return leeCloneRepo();
@@ -9899,7 +10224,7 @@ function runBranchAction(id, d) {
 
 async function leeBranchMenu(anchor) {
   let d;
-  try { d = await api(gitUrl('/git/info')); }
+  try { d = await gitInfo(gitUrl('/git/info')); }
   catch (e) { return leeFail('git', 'branches', e); }
   const recent = recentBranches(d.root);
   let search = null;
@@ -9916,10 +10241,11 @@ async function leeBranchMenu(anchor) {
   search = m.querySelector('#branchsearch');
   const list = m.querySelector('#branchlist');
 
+  let prRow = null;
   const paint = () => {
     const q = search.value.trim().toLowerCase();
     const hit = text => !q || String(text).toLowerCase().includes(q);
-    const acts = branchTopActions(d).filter(a => hit(a.label));
+    const acts = [...branchTopActions(d), ...(prRow ? [prRow] : [])].filter(a => hit(a.label));
     const all = (d.branches || []).filter(b => hit(`${b.name} ${b.subject} ${b.author}`));
     const near = recent.map(n => all.find(b => b.name === n && !b.current)).filter(Boolean);
     const rest = all.filter(b => !near.includes(b));
@@ -9945,13 +10271,52 @@ async function leeBranchMenu(anchor) {
     const row = e.target.closest('[data-branch]');
     if (row) { m.remove(); return switchBranch(d, row.dataset.branch); }
     const act = e.target.closest('[data-act]');
-    if (act) { m.remove(); return runBranchAction(act.dataset.act, d); }
+    if (act) { m.remove(); return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d); }
   };
   search.oninput = paint;
   paint();
+  branchPr(d).then(r => { prRow = r; paint(); });
   setTimeout(() => search.focus(), 0);
 }
 window.leeBranchMenu = leeBranchMenu;
+
+/* ------------------------------------------------------------------ diverged */
+// `pull` is --ff-only, so a diverged branch had nowhere to go. Every way out, rehearsed.
+async function showSyncPlan(d) {
+  try {
+    const p = await api(gitUrl('/git/sync-plan', {fetch: 1}));
+    if (!p.upstream) return status(`${p.branch} has no upstream — publish it first`, 'err');
+    if (!p.behind) return status(p.ahead ? `${p.ahead} ahead, nothing to pull` : 'already up to date', 'ok');
+    const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
+    // Only `merge` and `rebase` are rehearsed, so only they carry `conflicts`; none carries a name.
+    const SYNC_LABEL = {'fast-forward': 'Fast-forward', merge: 'Merge', rebase: 'Rebase',
+                        reset: 'Reset to the upstream'};
+    const why = o => {
+      const c = o.conflicts || [];
+      return c.length
+        ? `${c.length} file${c.length === 1 ? '' : 's'} conflict · ${c.slice(0, 4).map(esc).join(' · ')}${o.note ? ' · ' + esc(o.note) : ''}`
+        : o.note ? esc(o.note) : 'nothing conflicts in the rehearsal';
+    };
+    const row = o => `<label class="lee-syncopt${o.available ? '' : ' off'}${o.destructive ? ' warn' : ''}">` +
+      `<input type="radio" name="how" value="${o.op}"${o.op === p.recommended ? ' checked' : ''}${o.available ? '' : ' disabled'}>` +
+      `<span><strong>${esc(SYNC_LABEL[o.op] || o.op)}</strong><span class="sub">${why(o)}</span></span></label>`;
+    const m = modal(`<div class="lee-mhead">Sync ${esc(p.branch)}<span class="sub">${p.ahead} ahead · ${p.behind} behind ${esc(p.upstream)}</span></div>` +
+      `<div class="lee-git-merge-preview"><header><strong>${p.relation === 'diverged' ? 'The branches have diverged' : 'Behind the upstream'}</strong>` +
+      `<span>${p.ours.length} commit${p.ours.length === 1 ? '' : 's'} of yours · ${p.theirs.length} of theirs</span></header>${dirty}` +
+      `<div class="lee-syncopts">${p.options.map(row).join('')}</div></div>` +
+      `<div class="lee-mfoot"><button class="lee-btn go" data-sync>sync</button><button class="lee-btn" data-close>cancel</button></div>`);
+    $('[data-close]', m).onclick = () => m.remove();
+    $('[data-sync]', m).onclick = async () => {
+      const how = $('input[name=how]:checked', m)?.value; if (!how) return;
+      const o = p.options.find(x => x.op === how);
+      if (o.destructive && !await confirmDialog(`discard ${p.branch}`, `${o.note || 'This moves the branch to ' + p.upstream}. There is no way back to these commits from the branch.`, 'discard')) return;
+      m.remove();
+      const next = await branchAct('sync', {how});
+      if ((next.changes || []).some(x => x.conflicted)) showConflictCenter();
+    };
+  } catch (e) { leeFail('git', 'sync', e); }
+}
+window.showSyncPlan = showSyncPlan;
 
 /* ------------------------------------------------------------ fetch/pull/push */
 async function leeGitQuick(op) {
@@ -9960,7 +10325,7 @@ async function leeGitQuick(op) {
   try {
     // Push is the one that needs to know where it stands: an unpublished branch has nowhere
     // to push to, and saying "nothing to push" would be the wrong half of the truth.
-    const publish = op === 'push' && !(gitUI.snapshot || await api(gitUrl('/git/info'))).upstream;
+    const publish = op === 'push' && !(gitUI.snapshot || await gitInfo(gitUrl('/git/info'))).upstream;
     await gitDo(op, op === 'push' ? {publish} : {});
     refreshScmIfOpen();
   } catch (_) { /* gitDo already logged it, showed the log, and said so in the status line */ }

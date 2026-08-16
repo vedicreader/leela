@@ -8,17 +8,19 @@ from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
 from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, preview_for
 from ...agent.tools import MAX_HITS, MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS
-from ...agent.tools import DENY, MAX_GREP_HITS, Host, clip, tools_for
+from ...agent.tools import DENY, MAX_GREP_HITS, Host, clip, failed, tools_for
 from ...agent.spec import SpecHost
+from ..vault.jobs import cadence
 from .video import VideoJobs, video_available, video_tools
 
-GIT_TOOLS = ('git_status', 'git_fetch', 'git_checkout', 'git_pull', 'git_push')
-GIT_WRITE_TOOLS = frozenset(GIT_TOOLS) - {'git_status'}
-FAILED_PREFIXES = ('edit failed', 'write failed', 'could not', *(f'{t.replace("_", " ")} failed' for t in GIT_TOOLS))
-FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
-WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS
+from ramabana.git import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS   # re-exported: leela names them
 
-__all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools',
+FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
+FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
+NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
+WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS | NEWS_WRITE_TOOLS
+
+__all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_context',
            'notebook_approvals', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
 
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
@@ -123,6 +125,9 @@ class Interventions(Approvals):
         with self._state_lock:
             self.queued_steer = str(text or '').strip()
             if self.queued_steer: self.run_policy, self.pause_next = {'kind': 'once', 'remaining': 1}, False
+            a = self.current if self.queued_steer and self.current is not None and self.current.pending else None
+            if a is not None: self.queued_steer = ''
+        if a is not None: self.answer(a.id, False, text)
         return self.queued_steer
     def consume_steer(self):
         with self._state_lock:
@@ -337,9 +342,57 @@ class WorkspaceHost(Host):
     def specs(self): return self.ws.__dict__.setdefault('_api_specs', {})
     @property
     def _clients(self): return self.ws.__dict__.setdefault('_api_clients', {})
-    headers, timeout = {}, 60.0
-    api_load, api_ops, api_call = SpecHost.api_load, SpecHost.api_ops, SpecHost.api_call
+    @property
+    def headers(self): return self.ws.__dict__.setdefault('_api_headers', {})
+    @property
+    def _creds(self):
+        "One user's keys, read where the workbench writes them rather than held on the host."
+        from ..vault.spec import CREDS
+        return CREDS.all()
+    def api_creds(self, name, headers=None, reach=None):
+        "Set what is sent with calls to one spec and nothing else; `headers=None` clears it."
+        from ..vault.spec import CREDS
+        return CREDS.set(name, headers, reach=reach)
+    def api_keyed(self):
+        """What may be said about each spec out loud: header names, the variables behind them, reach.
+
+        Read off the index rather than the values, so a keyless spec marked local-only is here too.
+        """
+        from ..vault.spec import CREDS, env_status
+        return {n: dict(headers=p['headers'], reach=p['reach'], env=env_status(p['refs']))
+                for n, p in CREDS.policies().items()}
+    def reach_refusal(self, name):
+        "Why a model may not call this spec, or None."
+        from ..vault.spec import CREDS
+        if CREDS.reach(name) != 'local' or self.model_local is None: return None
+        local, model = self.model_local()
+        if local: return None
+        # "not a model on this machine" rather than "hosted": a name resolving to nothing is
+        # neither, and refusing it is right for the same reason.
+        return (f'{name} is marked local-only and this conversation runs on {model}, which is not a '
+                f'model on this machine. Nothing was sent. Switch to a local model, or change the '
+                f'reach of {name} on the vault workbench.')
+    def _client(self, key, parsed):
+        "Cached against the credentials too, so a key set on the page reaches a running host."
+        from ..vault.spec import expand
+        creds = self._creds.get(key, {})
+        seal, got = tuple(sorted(creds.items())), self._clients.get(key)
+        if got is None or got[0] != seal:
+            from fastspec.oapi import OpenAPIClient
+            got = self._clients[key] = (seal, OpenAPIClient(parsed, timeout=self.timeout, sync=True,
+                                                            headers={**self.headers, **expand(creds)}))
+        return got[1]
+    timeout = 60.0
+    model_local = None      # `Assistant` fills this once there is a turn model to ask about
+    api_load, api_ops = SpecHost.api_load, SpecHost.api_ops
+    api_fetch = SpecHost.api_call       # ungated: the person reading the page owns the data on it
     api_names, _spec = SpecHost.api_names, SpecHost._spec
+    def api_call(self, operation, name='', **params):
+        "What a model reaches through, which is why reach is enforced here and not in `api_fetch`."
+        from ..vault.spec import SpecError
+        key, _ = self._spec(name)
+        if refusal := self.reach_refusal(key): raise SpecError(refusal)
+        return self.api_fetch(operation, key, **params)
     def nb_cells(self, path):
         from ..nb.nb import Notebook
         return [(c.id, c.cell_type, c.source) for c in Notebook.load(self.check(path)).cells]
@@ -431,47 +484,6 @@ class WorkspaceHost(Host):
             try: fn(text)
             except Exception: pass
 
-def _git_tools(host):
-    "Git operations bound to an open repository and kept inside workspace roots."
-    from ..git.git import GitRepo
-    def repo(path=''):
-        roots = [Path(r).expanduser().resolve() for r in host.roots]
-        if not roots: raise ValueError('open a project folder first')
-        selected = host.check(path or getattr(host, 'project', '') or roots[0], must_exist=True)
-        found = GitRepo.at(selected)
-        if not any(found.root == root or found.root.is_relative_to(root) for root in roots):
-            raise ValueError(f'Git root {found.root} is outside the open folders; open the repository root first')
-        return found
-    def result(r, output=''):
-        if isinstance(output, dict): output = output.get('summary') or output.get('message') or ''
-        info = r.info()
-        summary = {'root': info['root'], 'branch': info['branch'], 'upstream': info['upstream'],
-            'ahead': info['ahead'], 'behind': info['behind'], 'clean': info['clean'],
-            'branches': info['branches'], 'changes': info['changes']}
-        return ((output.strip() + '\n') if output and output.strip() else '') + json.dumps(summary, indent=2)
-    def report(what, path, act=None):
-        "Run one operation on the selected repository and report it with the refreshed status."
-        try:
-            r = repo(path)
-            return clip(result(r, act(r) if act else ''), MAX_TOOL_CHARS * 2)
-        except Exception as e: return f'{what} failed: {errstr(e)}'
-    def git_status(path: str = '') -> str:
-        "Show repository status, local and remote branches, upstream, and changed files."
-        return report('git status', path)
-    def git_fetch(path: str = '') -> str:
-        "Fetch and prune remote refs, then return the refreshed branch status."
-        return report('git fetch', path, lambda r: r.fetch())
-    def git_checkout(branch: str, path: str = '') -> str:
-        "Switch to a local branch or create a local tracking branch from `REMOTE/BRANCH`."
-        return report('git checkout', path, lambda r: r.checkout(str(branch or '').strip()))
-    def git_pull(path: str = '') -> str:
-        "Fast-forward the current branch from its configured upstream."
-        return report('git pull', path, lambda r: r.pull())
-    def git_push(path: str = '') -> str:
-        "Push the current branch to its configured upstream."
-        return report('git push', path, lambda r: r.push())
-    return [git_status, git_fetch, git_checkout, git_pull, git_push]
-
 def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
     "Leela's blended search as one tool: every backend at once, each hit stamped with what agreed."
     def search_all(query: str) -> str:
@@ -483,6 +495,117 @@ def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
             f'  [{"+".join(getattr(h, "sources", None) or [])}]')
         return clip(f'[{host.search_note}]\n' + '\n'.join(rows), mx)
     return [search_all]
+
+def _news_tools(host, mx=MAX_TOOL_CHARS):
+    "The feeds and the loaded specs, as tools. The memory tools read the main shelf; feeds are on `news`."
+    from ..vault.news import NEWS_SHELF, fetch_feed, feed_title, news_rows, poll_feeds
+    def feeds():
+        f = getattr(host.ws, 'feeds', None)
+        if f is None: raise ValueError('this workspace follows no sources')
+        return f
+    def story(d, chars=240):
+        m = d.get('meta') or {}
+        return dict(doc_id=d.get('doc_id') or d.get('id'), title=d.get('title'), feed=m.get('feed'),
+            published=str(m.get('published') or '')[:19], author=m.get('author'),
+            link=d.get('source'), summary=str(m.get('summary') or '')[:chars])
+    def news_feeds() -> str:
+        """Which sources this vault follows, how often each is read, and what it last said.
+
+        Feed items are filed on the `news` shelf, not the main one, so `memory_search` reaches them
+        only in passing. Use `news_latest` to read them and `news_story` to open one.
+        """
+        try: rows = [dict(url=f.url, title=f.title, every=f.every, enabled=f.enabled,
+                          last_status=f.last_status or 'not read yet', new_since_last_read=f.items)
+                     for f in feeds()]
+        except Exception as e: return f'news_feeds failed: {errstr(e)}'
+        return clip(json.dumps(rows, default=str), mx)
+    def news_latest(match: str = '', feed: str = '', limit: int = 20) -> str:
+        """Recent feed items, newest first: headline, source, date, standfirst and `doc_id`.
+
+        `match` narrows by headline or standfirst, `feed` by the source's name. This reads what is
+        already filed; call `news_refresh` first when the question is about today.
+        """
+        try: found = news_rows(host._vault(), match=match, feed=feed, limit=max(1, int(limit)))
+        except Exception as e: return f'news_latest failed: {errstr(e)}'
+        if not found: return 'nothing on the news shelf matches that.'
+        return clip(json.dumps([story(x) for x in found], default=str), mx * 2)
+    def news_story(doc: str) -> str:
+        """One feed item in full, by the `doc_id` or the headline `news_latest` reported.
+
+        `memory_read` cannot open this: it reads the main shelf, and feed items are on `news`.
+        """
+        text = host._vault().document_text(doc, shelf=NEWS_SHELF)
+        if not text: return f'no such item on the news shelf: {doc!r}. Call news_latest for what is there.'
+        return clip(text, mx * 2)
+    def news_follow(url: str, title: str = '', every: str = '1h') -> str:
+        """Follow a source and read it now. `url` may be the site itself — its feed is found for you.
+
+        A source refused here carries no feed at all, which is worth reporting rather than retrying
+        with a guessed `/rss.xml`. `every` says when to read it *again*.
+        """
+        try: f = feeds().add(url, title, every)
+        except Exception as e: return f'could not follow that: {errstr(e)}'
+        out = poll_feeds(host._vault(write=True), feeds(), only=f.id)
+        return f"following {f.title} at {f.url}, {cadence(f.seconds)}; filed {out['added']} items."
+    def news_unfollow(url: str) -> str:
+        "Stop following one source. What it already filed stays in the vault."
+        f = first(x for x in feeds() if url in (x.id, x.url, x.title))
+        if f is None: return f'not following {url!r}. Call news_feeds to see what is followed.'
+        feeds().remove(f.id)
+        return f'stopped following {f.title or f.url}; its items remain on the news shelf.'
+    def news_refresh(feed: str = '') -> str:
+        """Read followed sources now and file whatever is new. Returns what came in, per feed.
+
+        `feed` is one source's address or title, from `news_feeds`; every one when omitted.
+        """
+        try: out = poll_feeds(host._vault(write=True), feeds(), force=True, only=feed)
+        except Exception as e: return f'news_refresh failed: {errstr(e)}'
+        if not out['feeds']: return f'not following {feed!r}. Call news_feeds to see what is followed.'
+        return clip(json.dumps(out, default=str), mx)
+    def api_access() -> str:
+        """What each loaded spec sends, what backs it, and which models may call it.
+
+        Header names and environment variable names; never a value. A spec with no credentials goes
+        out unauthenticated, which most APIs answer with 401 — say so rather than retrying. One
+        marked local-only refuses on a hosted model, and the refusal names what to change.
+        """
+        from ..vault.spec import EXAMPLES
+        keyed, loaded = host.api_keyed(), sorted(host.specs)
+        if not loaded:
+            ex = ', '.join(f'api_load({x.path!r})' for x in EXAMPLES)
+            return f'no specification is loaded; call api_load first. Keyless examples: {ex}.'
+        rows = {n: keyed.get(n) or dict(headers=[], reach='cloud', env={}) for n in loaded}
+        for n, r in rows.items():
+            if not r['headers']: r['note'] = 'no credentials — calls go out unauthenticated'
+            if refusal := host.reach_refusal(n): r['refused'] = refusal
+        return clip(json.dumps(rows, default=str), mx)
+    return [news_feeds, news_latest, news_story, news_follow, news_unfollow, news_refresh, api_access]
+
+def api_context(host):
+    """The specs already loaded in this session, as something the model is told rather than finds.
+
+    Without it the agent re-loads a spec the page loaded a minute ago, guesses at group names, and
+    discovers a local-only api by being refused. Header names only: a value never reaches a briefing.
+    """
+    names = sorted(getattr(host, 'specs', {}) or {})
+    if not names: return ''
+    keyed, rows = host.api_keyed(), []
+    for n in names:
+        info, pol = dict(getattr(host, 'spec_info', {}).get(n) or {}), keyed.get(n) or {}
+        groups, ops = info.get('groups') or [], info.get('operations')
+        bits = [f"{info.get('title') or n} — {ops} operation{'' if ops == 1 else 's'} in "
+                f"{len(groups)} group{'' if len(groups) == 1 else 's'}"]
+        if groups[:8]: bits.append('groups: ' + ', '.join(groups[:8]) + ('…' if len(groups) > 8 else ''))
+        if pol.get('headers'): bits.append('sends ' + ', '.join(pol['headers']))
+        if missing := [k for k, ok in (pol.get('env') or {}).items() if not ok]:
+            bits.append(f"but nothing here sets {', '.join(missing)}, so a call will fail")
+        if pol.get('reach') == 'local': bits.append('local-only: a hosted model may not call it')
+        rows.append(f'- `{n}`: ' + '. '.join(bits) + '.')
+    return ('\n\n## APIs loaded in this session\n\n' + '\n'.join(rows) + """
+
+These are loaded already — do not `api_load` them again. `api_ops(name=…, match=…)` finds the
+operation and `api_call` runs it; say which one answered. A spec marked local-only refuses on a
+hosted model rather than sending anything, and the refusal names what to change.""")
 
 def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, host=None):
     "An `Approvals` that writes the whole exchange into the notebook."
@@ -560,11 +683,12 @@ class Assistant(Agent):
             kwargs['approvals'] = _PolicyApprovals(approve)
         self.ws, self.surface = ws, surface
         self.session_state = str(getattr(ws, 'agent_state', '') or '')
-        self._git_toolset = _git_tools(host)
+        self._news_toolset = _news_tools(host)
         self._search_toolset = _search_tools(host, legs=None if surface == 'agent' else FAST_SEARCH_LEGS)
         self.video_jobs = VideoJobs() if video_available() else None
         self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
         super().__init__(host, model=model, sp=sp, **kwargs)
+        host.model_local = self.model_local     # a local-only api is gated on the turn model
         self.lend_model()   # so the vault's `ask` uses this session's engine, not a second one
         def user_steering(instruction: str) -> str:
             "Return a user's intervention after a skipped tool call so the agent can redirect its next step."
@@ -575,15 +699,20 @@ class Assistant(Agent):
     def tools(self):
         if self._tools is None:
             registered = {f.__name__ for f in self.registry.tools}
-            self.registry.tools.extend(f for f in [*self._git_toolset, *self._search_toolset, *self._video_toolset]
+            self.registry.tools.extend(f for f in [*self._news_toolset, *self._search_toolset,
+                                                   *self._video_toolset]
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             built = super().tools
             self._plain = [f for f in self._plain if f.__name__ not in GIT_WRITE_TOOLS]
             return built
         return super().tools
+    def model_local(self):
+        "Whether this turn's model runs on this machine, and what it is called."
+        spec = self.spec_or_none()
+        return (bool(spec and spec.local), spec.name if spec else 'an unresolved model')
     def system_prompt(self):
-        base = super().system_prompt()
+        base = super().system_prompt() + api_context(self.host)
         layers = getattr(self.ws, 'agent_state_layers', {})
         enabled = [(name, row.get('text', '')) for name, row in layers.items()
             if row.get('enabled', True) and str(row.get('text', '')).strip()]
@@ -653,7 +782,7 @@ class Assistant(Agent):
             except Exception:
                 if approvals is not None: approvals.observe_result(False)
                 raise
-            ok = not str(out).startswith(FAILED_PREFIXES)
+            ok = not (failed(out) or str(out).startswith(FAILED_PREFIXES))
             if approvals is not None:
                 approvals.observe_result(ok)
                 if steer := approvals.consume_steer():
@@ -689,4 +818,4 @@ class _PolicyApprovals(Approvals):
 def ide_tools(ws, session=None):
     "Every tool the agent gets, bound to one `Workspace`."
     host = WorkspaceHost(ws, session)
-    return tools_for(host, extra=_git_tools(host) + _search_tools(host))
+    return tools_for(host, extra=_news_tools(host) + _search_tools(host))

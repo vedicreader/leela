@@ -10,9 +10,12 @@ try: from ramabana.vault import safe_shelf as _safe_shelf
 except ImportError:
     def _safe_shelf(name=None, default='main'): return re.sub(r'[^a-z0-9_]+', '_', str(name or default).lower()).strip('_') or default
 
-__all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'source_kind', 'GLOBAL']
+__all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'source_kind', 'GLOBAL', 'ACQUIRE']
 
 GLOBAL = 'leela'
+
+#: The vault readers a person can point at something, each named for what it reads.
+ACQUIRE = ('grab', 'web', 'crawl', 'note', 'harvest', 'github', 'arxiv', 'youtube', 'pdf')
 
 def source_kind(source):
     "What a document's `source` actually is: a file on disk, a web page, or neither of those."
@@ -163,7 +166,12 @@ class Memory:
         except Exception as e:
             self.note = f'could not list memory ({errstr(e)})'
             return []
-    def document_text(self, doc_id):
+    def document_text(self, doc_id, shelf=None):
+        if shelf:
+            try: return str(self._shelf(shelf).document(str(doc_id)).text or '').strip()
+            except Exception as e:
+                self.note = f'could not read remembered document ({errstr(e)})'
+                return ''
         try: return str(self._open().document(str(doc_id)).text or '').strip()
         except Exception:
             try: return str(self._agent().document(str(doc_id)).text or '').strip()
@@ -328,6 +336,14 @@ class Memory:
                 walk(x.get('children'), at + 1)
         walk(self.shelf_toc(doc_id, shelf, depth))
         return out
+    def shelf_text(self, ref, shelf=None, max_chars=60_000):
+        "The readable text behind a reference, in whichever shelf holds it — a whole document, or one section."
+        ref = str(ref)
+        if '#' in ref: return str(self.shelf_read(ref, shelf, max_chars).get('text') or '').strip()
+        try: return str(self._shelf(shelf).document(ref).text or '').strip()[:max_chars]
+        except Exception as e:
+            self.note = f'could not read document ({errstr(e)})'
+            return ''
     def shelf_read(self, node_id, shelf=None, max_chars=40_000):
         "One section, in whichever shelf holds it."
         try: return dict(self._shelf(shelf).read(node_id, max_chars=max_chars) or {})
@@ -387,6 +403,26 @@ class Memory:
             return []
         self.note = f'clipped {len(paths)} file(s) into {v.name}'
         return [dict(r) for r in (out or [])]
+    def acquire(self, action, target, shelf=None, **params):
+        "Bring one source in, through whichever vault reader can actually read it."
+        if action not in ACQUIRE: raise ValueError(f'unknown acquisition {action!r}')
+        v = self._shelf(shelf)
+        out = getattr(v, action)(target, **params)
+        self.note = f'{action}: {target}'
+        return dict(out) if isinstance(out, dict) else {'documents': [dict(r) for r in L(out)]}
+    def file_news(self, text, title, source, shelf='news', meta=None):
+        "One feed item as an ordinary document, which is what makes it searched and cited like the rest."
+        return dict(self._shelf(shelf).add(text, title, source=source, kind='news', meta=dict(meta or {})))
+    def vault_stats(self, shelves=None):
+        "Documents, sections and chunks across every shelf worth reading, plus the encoder behind them."
+        names = L(shelves if shelves is not None else self._populated()).map(self._shelf_name).unique()
+        out, enc = dict(docs=0, nodes=0, chunks=0, shelves=len(names)), ''
+        for name in names:
+            try: st = self._store(name).stats()
+            except Exception: continue
+            for k in ('docs', 'nodes', 'chunks'): out[k] += int(st.get(k) or 0)
+            enc = enc or str(st.get('encoder') or '')
+        return dict(out, encoder=enc or ('offline' if self.offline else 'unknown'), path=str(self.path))
     def note_pointer(self, title, text, shelf=None, meta=None):
         "One document standing for something not stored as prose — a code index, an API spec."
         v = self._shelf(shelf)

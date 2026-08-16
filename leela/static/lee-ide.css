@@ -388,7 +388,17 @@ body {
 .lee-cell-summary { display: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                     color: var(--lee-fg4); font: 11px/1.4 var(--lee-mono); }
 .lee-cell.collapsed { min-height: 30px; }
-.lee-cell.collapsed .lee-cell-summary { display: block; }
+.lee-cell.collapsed .lee-cell-summary { display: block; margin-right: auto; }
+/* Where the cell sits and how big it is. The gutter's `[n]` is the execution count, which is
+   neither, so the banner carries the position; the id is in the tooltip and one click away. */
+.lee-cell-meta { display: flex; align-items: baseline; gap: 5px; margin-right: auto; padding: 1px 4px;
+                 border: 1px solid transparent; border-radius: 3px; background: none;
+                 color: var(--lee-fg4); font: 9.5px/1.4 var(--lee-mono); cursor: copy; }
+.lee-cell-meta:hover { border-color: var(--lee-border); background: var(--lee-bg2); color: var(--lee-fg2); }
+.lee-cell-no { color: var(--lee-fg2); font-variant-numeric: tabular-nums; }
+.lee-cell.sel .lee-cell-no { color: var(--lee-accent); }
+.lee-cell-size { opacity: .75; white-space: nowrap; }
+.lee-cell.collapsed .lee-cell-meta { margin-right: 6px; }
 .lee-cell.collapsed .lee-cm, .lee-cell.collapsed [id^="out-"],
 .lee-cell.collapsed .lee-model-running { display: none; }
 .lee-cell.collapsed .lee-cellmain { min-height: 29px; }
@@ -691,7 +701,7 @@ kbd {
 .lee-history-turn { padding: 9px 0 12px; border-bottom: 1px solid var(--lee-border); }
 .lee-history-index {
   position: sticky; top: 0; z-index: 2; display: grid;
-  grid-template-columns: minmax(120px, auto) minmax(220px, 1fr) auto; align-items: center; gap: 10px;
+  grid-template-columns: minmax(120px, auto) minmax(220px, 1fr) auto auto; align-items: center; gap: 10px;
   padding: 7px 8px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1);
 }
 .lee-history-heading { display: flex; flex-direction: column; min-width: 0; }
@@ -699,6 +709,7 @@ kbd {
 .lee-history-heading span { overflow: hidden; color: var(--lee-fg4); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .lee-history-select { width: 100%; min-width: 0; font-family: var(--lee-mono); }
 .lee-history-runs { color: var(--lee-fg4); font: 9.5px/1 var(--lee-mono); white-space: nowrap; }
+.lee-history-resume { white-space: nowrap; }
 .lee-history-session-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 4px 4px; }
 .lee-history-session-head strong { color: var(--lee-fg); font-size: 11px; }
 .lee-history-session-head span { color: var(--lee-green); font-size: 9.5px; }
@@ -1113,6 +1124,10 @@ kbd {
 .lee-agent-state-suggestion { padding: 3px 7px; border: 1px solid var(--lee-aqua); border-radius: 3px; background: transparent; color: var(--lee-aqua); cursor: pointer; font: 9px/1.3 var(--lee-mono); }
 .lee-response-revision { display: flex; align-items: center; gap: 6px; margin: 3px 4px 12px; padding-top: 7px; border-top: 1px solid var(--lee-border); }
 .lee-response-revision span { margin-right: auto; color: var(--lee-fg4); font: 9px/1.3 var(--lee-mono); }.lee-response-revision.rolled-back { opacity: .65; }
+/* A rolled-back turn is dimmed, not deleted: the files are restored, the model still has the turn. */
+.lee-turn-undone { opacity: .42; filter: saturate(.5); }
+.lee-turn-undone-bar { border-top-style: dashed; }
+.lee-turn-undone-bar span { color: var(--lee-fg2); }
 .lee-response-editor-modal .lee-modalbox { width: min(1120px, 94vw); height: min(780px, 92vh); max-height: 92vh; }
 .lee-revision-explainer { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 16px; padding: 11px 14px; border-bottom: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-aqua) 4%, var(--lee-bg1)); }
 .lee-revision-explainer strong { color: var(--lee-fg); font: 600 10.5px/1.45 var(--lee-mono); }
@@ -2660,6 +2675,8 @@ kbd {
 .lee-git-merge-preview > label { display: grid; gap: 4px; color: var(--lee-fg4); font-size: 9px; }.lee-git-merge-preview select { padding: 6px; border: 1px solid var(--lee-border); background: var(--lee-bg); color: var(--lee-fg); }
 .lee-git-merge-warning, .lee-git-merge-ok { display: grid; gap: 3px; padding: 8px; border-left: 2px solid var(--lee-red); background: color-mix(in srgb, var(--lee-red) 7%, transparent); }.lee-git-merge-ok { border-left-color: var(--lee-green); background: color-mix(in srgb, var(--lee-green) 6%, transparent); }
 .lee-git-merge-warning span, .lee-git-merge-ok span { color: var(--lee-fg4); font-size: 9px; }
+.lee-syncopts { display: grid; gap: 4px; }
+.lee-syncopt { display: grid; grid-template-columns: 16px minmax(0,1fr); align-items: start; gap: 7px; padding: 7px; border: 1px solid var(--lee-border); cursor: pointer; }.lee-syncopt:has(:checked) { border-color: var(--lee-accent); background: color-mix(in srgb, var(--lee-accent) 7%, transparent); }.lee-syncopt.off { opacity: .45; cursor: default; }.lee-syncopt.warn:has(:checked) { border-color: var(--lee-red); background: color-mix(in srgb, var(--lee-red) 7%, transparent); }.lee-syncopt > span { display: grid; gap: 2px; }.lee-syncopt .sub { color: var(--lee-fg4); font-size: 9px; }
 .lee-git-rebase-commits { display: grid; max-height: 180px; overflow: auto; border-block: 1px solid var(--lee-border); }.lee-git-rebase-commits span { display: grid; grid-template-columns: 62px minmax(0,1fr); gap: 7px; padding: 5px 2px; color: var(--lee-fg2); font-size: 10px; }.lee-git-rebase-commits code { color: var(--lee-fg4); }
 .lee-git-history { display: grid; }
 .lee-git-commit-row.active { border-left: 2px solid var(--lee-accent); background: var(--lee-active-line); }
@@ -3005,6 +3022,138 @@ kbd {
                  color: var(--lee-fg2); cursor: pointer; font: 10px/1.4 var(--lee-mono);
                  text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .lee-vault-doc:hover { color: var(--lee-accent); }
+.lee-vault-glyph { flex: none; width: 14px; color: var(--lee-fg4); text-align: center; font-size: 11px; }
+.lee-vault-ask { flex: none; opacity: 0; font-size: 9px; padding: 2px 6px; }
+.lee-vault-docrow:hover .lee-vault-ask, .lee-vault-docrow:focus-within .lee-vault-ask { opacity: 1; }
+
+/* ---- the vault workbench: the rail's contents, given a whole tab to be legible in ---- */
+.lee-wb { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--lee-bg); }
+.lee-wb-head { display: flex; align-items: center; gap: 10px; flex: none; padding: 8px 14px;
+               border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1); }
+.lee-wb-mark { color: var(--lee-accent); font: 600 12px/1 var(--lee-mono); letter-spacing: .1em;
+               text-transform: uppercase; }
+.lee-wb-vault { width: auto; min-width: 110px; }
+.lee-wb-tabs { display: flex; gap: 2px; }
+.lee-wb-tab { padding: 4px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--lee-fg3);
+              cursor: pointer; font: 11px/1.4 var(--lee-mono); }
+.lee-wb-tab:hover { background: var(--lee-bg2); color: var(--lee-fg); }
+.lee-wb-tab.active { background: var(--lee-bg2); color: var(--lee-accent); font-weight: 600; }
+.lee-wb-metrics { display: flex; gap: 16px; }
+.lee-wb-metric { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
+.lee-wb-metric strong { color: var(--lee-fg); font: 600 12px/1.2 var(--lee-mono); }
+.lee-wb-metric span { color: var(--lee-fg4); font: 9px/1 var(--lee-mono); letter-spacing: .04em; }
+.lee-wb-body { flex: 1; min-height: 0; overflow: auto; }
+.lee-wb-empty { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 28px 22px;
+                color: var(--lee-fg4); font: 11px/1.6 var(--lee-mono); max-width: 62ch; }
+.lee-wb-empty strong { color: var(--lee-fg2); font-size: 13px; }
+
+.lee-wb-split { display: grid; grid-template-columns: 190px minmax(0, 1fr); height: 100%; min-height: 0; }
+.lee-wb-rail { display: flex; flex-direction: column; gap: 1px; padding: 10px 8px; overflow: auto;
+               border-right: 1px solid var(--lee-border); background: var(--lee-bg1); }
+.lee-wb-shelf { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px; border: 0;
+                border-radius: 4px; background: none; color: var(--lee-fg2); cursor: pointer;
+                font: 11px/1.5 var(--lee-mono); text-align: left; }
+.lee-wb-shelf > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-wb-shelf:hover { background: var(--lee-bg2); color: var(--lee-fg); }
+.lee-wb-shelf.active { background: var(--lee-bg2); color: var(--lee-accent); font-weight: 600; }
+.lee-wb-main { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.lee-wb-filterbar { display: flex; align-items: center; gap: 10px; flex: none; padding: 10px 14px;
+                    border-bottom: 1px solid var(--lee-border); }
+.lee-wb-filter { flex: 1; }
+.lee-wb-count { color: var(--lee-fg4); font: 10px/1 var(--lee-mono); white-space: nowrap; }
+.lee-wb-docs { max-height: none; padding: 0 14px; }
+.lee-wb-docs .lee-vault-docrow { padding: 2px 0; }
+.lee-wb-docs .lee-vault-doc { font-size: 11px; padding: 5px 2px; }
+
+.lee-wb-find { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; }
+.lee-wb-search { display: flex; gap: 8px; }
+.lee-wb-search .lee-input { flex: 1; }
+.lee-wb-findfoot { display: flex; align-items: center; gap: 10px; }
+.lee-wb-hits { display: flex; flex-direction: column; gap: 10px; }
+.lee-wb-hit { display: flex; flex-direction: column; gap: 5px; padding: 10px 12px; border-radius: 6px;
+              border: 1px solid var(--lee-border); background: var(--lee-bg1); }
+.lee-wb-hit:hover { border-color: color-mix(in srgb, var(--lee-accent) 45%, var(--lee-border)); }
+.lee-wb-hithead { display: flex; align-items: center; gap: 8px; }
+.lee-wb-hithead .lee-vault-doc { flex: 0 1 auto; font-weight: 600; }
+.lee-wb-leg { padding: 1px 5px; border-radius: 3px; background: var(--lee-bg2); color: var(--lee-fg4);
+              font: 9px/1.6 var(--lee-mono); }
+.lee-wb-leg.kw { color: var(--lee-green); }
+.lee-wb-leg.vec { color: var(--lee-accent); }
+.lee-wb-snippet { color: var(--lee-fg3); font: 11px/1.6 var(--lee-mono); }
+.lee-wb-snippet mark { background: color-mix(in srgb, var(--lee-accent) 26%, transparent); color: var(--lee-fg); }
+.lee-wb-hitfoot { display: flex; align-items: center; gap: 8px; }
+.lee-wb-hitfoot .lee-vault-ask { opacity: 1; }
+
+.lee-wb-add, .lee-wb-newsview, .lee-wb-specs, .lee-wb-topics {
+  display: flex; flex-direction: column; gap: 14px; padding: 16px 18px; }
+.lee-wb-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.lee-wb-card { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 6px;
+               border: 1px solid var(--lee-border); background: var(--lee-bg1); }
+.lee-wb-cardhead { display: flex; align-items: center; gap: 10px; }
+.lee-wb-form { display: flex; flex-wrap: wrap; gap: 6px; }
+.lee-wb-form .lee-input { flex: 1; min-width: 140px; }
+/* The note is the one thing here you write rather than point at, so it gets its own rows. */
+.lee-wb-card:has(.lee-wb-note) { grid-column: 1 / -1; }
+.lee-wb-form:has(.lee-wb-note) { flex-direction: column; align-items: flex-start; }
+.lee-wb-form:has(.lee-wb-note) .lee-input { flex: none; width: 100%; }
+.lee-wb-form .lee-wb-note { flex: none; width: 100%; font: 11px/1.6 var(--lee-mono); resize: vertical; }
+.lee-wb-plan { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; padding: 10px 12px;
+               border-radius: 6px; border: 1px solid var(--lee-border); background: var(--lee-bg2); }
+.lee-wb-plan-head { display: flex; align-items: baseline; gap: 6px; font: 11px/1.4 var(--lee-mono); }
+.lee-wb-plan-head small { color: var(--lee-fg4); overflow: hidden; text-overflow: ellipsis; }
+.lee-wb-plan-shelves { display: flex; flex-wrap: wrap; gap: 10px; font: 10px/1.4 var(--lee-mono); }
+.lee-wb-plan-shelves > div { display: flex; gap: 5px; }
+.lee-wb-plan-shelves span { color: var(--lee-fg4); }
+.lee-wb-plan-cats { display: flex; flex-wrap: wrap; gap: 4px; }
+.lee-wb-badge { padding: 1px 6px; border-radius: 3px; background: var(--lee-bg1); color: var(--lee-fg4);
+                font: 9px/1.7 var(--lee-mono); }
+.lee-wb-plan-files { max-height: 220px; overflow: auto; font: 10px/1.6 var(--lee-mono); color: var(--lee-fg3); }
+.lee-wb-plan-files > div { display: flex; justify-content: space-between; gap: 12px; }
+.lee-wb-plan-files small { color: var(--lee-fg4); }
+
+.lee-wb-feeds { display: flex; flex-direction: column; gap: 8px; }
+.lee-wb-feed { display: flex; flex-direction: column; gap: 3px; padding: 9px 12px; border-radius: 6px;
+               border: 1px solid var(--lee-border); background: var(--lee-bg1); font: 10px/1.5 var(--lee-mono); }
+.lee-wb-feedhead { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.lee-wb-feedactions { display: flex; gap: 6px; margin-top: 3px; }
+.lee-wb-news { display: flex; flex-direction: column; gap: 10px; }
+.lee-wb-news .lee-vault-docs { max-height: none; gap: 8px; }
+.lee-wb-story { display: flex; flex-direction: column; gap: 1px; }
+.lee-wb-story .lee-dim { padding-left: 22px; }
+.lee-wb-standfirst { padding-left: 22px; color: var(--lee-fg2); font: 10px/1.5 var(--lee-mono); }
+
+.lee-wb-credsview { display: flex; flex-direction: column; gap: 8px; margin-top: 14px;
+                    padding-top: 12px; border-top: 1px solid var(--lee-border); }
+.lee-wb-creds { display: flex; flex-direction: column; gap: 4px; }
+.lee-wb-creds .lee-wb-feedhead { padding: 6px 10px; border-radius: 6px; background: var(--lee-bg1); }
+
+.lee-wb-tablewrap { max-height: 30rem; overflow: auto; border: 1px solid var(--lee-border); border-radius: 6px; }
+.lee-wb-table { width: 100%; border-collapse: collapse; font: 10px/1.6 var(--lee-mono); }
+.lee-wb-table th { position: sticky; top: 0; padding: 6px 8px; background: var(--lee-bg2); color: var(--lee-fg4);
+                   text-align: left; font-weight: 600; }
+.lee-wb-table td { padding: 5px 8px; border-top: 1px solid var(--lee-border); color: var(--lee-fg3);
+                   vertical-align: top; }
+.lee-wb-table tr:hover td { background: var(--lee-bg1); }
+.lee-wb-verb { padding: 1px 5px; border-radius: 3px; background: var(--lee-bg2); color: var(--lee-fg4);
+               font: 600 9px/1.6 var(--lee-mono); }
+.lee-wb-verb.get { color: var(--lee-green); }
+.lee-wb-verb.post, .lee-wb-verb.put, .lee-wb-verb.patch { color: var(--lee-orange); }
+.lee-wb-verb.delete { color: var(--lee-red); }
+.lee-wb-ops { display: flex; flex-direction: column; gap: 8px; }
+
+.lee-wb-topiccards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.lee-wb-topic { display: flex; flex-direction: column; gap: 5px; padding: 11px 13px; border-radius: 6px;
+                background: var(--lee-bg1); font: 10px/1.5 var(--lee-mono);
+                border: 1px solid var(--lee-border);
+                border-left: calc(var(--w, 1) * 2px) solid color-mix(in srgb, var(--lee-accent) 70%, transparent); }
+.lee-wb-topic strong { color: var(--lee-fg); font-size: 12px; }
+.lee-wb-topic small { color: var(--lee-fg4); }
+.lee-wb-topichead { display: flex; align-items: center; }
+.lee-wb-topic .lee-vault-docs { max-height: 180px; }
+
+/* A vault chip in the composer reads as evidence rather than as a file on disk. */
+.lee-agent-attachment.vault { border-color: color-mix(in srgb, var(--lee-accent) 50%, var(--lee-border)); }
+.lee-agent-attachment.vault > span:first-child::before { content: '❋ '; color: var(--lee-accent); }
 
 /* ---- branch popup and the remote actions beside the pill ---- */
 .lee-git-quickbar { display: flex; align-items: center; gap: 1px; flex: none; }

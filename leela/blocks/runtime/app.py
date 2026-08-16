@@ -16,8 +16,11 @@ def connect(app, ctx):
     session = ctx.session
     @rt('/runtime/broker')
     def runtime_broker():
+        from .engines import engine_broker
         broker = getattr(ctx.pool, 'broker', None)
-        return broker.status() if broker else {'live': len(ctx.pool.kernels), 'limit': None, 'runtimes': []}
+        out = (broker.status() if broker else
+               {'live': len(ctx.pool.kernels), 'limit': None, 'runtimes': []})
+        return {**out, 'models': engine_broker().status()}   # weights, alongside namespaces
     @rt('/runtime/info')
     async def runtime_info():
         from .kernels import project_python

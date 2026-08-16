@@ -18,6 +18,14 @@ window.addEventListener('blur', () => closeDismissableDisclosures());
 // A model that draws or films says so in the picker itself; the rest of what it takes is the tooltip.
 const modelMark = (m) => (m.gen_image ? ' · draws' : '') + (m.gen_video ? ' · films' : '');
 
+// Cursor is the one runtime whose own tools act outside Leela's approvals, so the pane says so
+// while such a model is chosen. The wording lives in the markup; this only decides when it shows.
+let MODEL_RUNTIMES = {};
+function markHarness(model) {
+  const banner = $('#agentharnessbanner');
+  if (banner) banner.hidden = MODEL_RUNTIMES[model] !== 'cursor';
+}
+
 async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
   const selects = {agent: $('#agentmodel'), inline: $('#inlinemodel'), completion: $('#completionmodel')};
   if (!selects.agent || !selects.inline || !selects.completion) return;
@@ -34,6 +42,8 @@ async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
     const wanted = d.selected?.[target] || previous[target];
     if ([...select.options].some(o => o.value === wanted)) select.value = wanted;
   }
+  MODEL_RUNTIMES = Object.fromEntries((d.models || []).map(m => [m.value, m.runtime || '']));
+  markHarness(selects.agent.value);
   paintJobModels(d);
   const notes = Object.values(d.auth || {}).map(x => x.note).filter(Boolean);
   if (notes.length) selects.agent.title = notes.join(' · ');
@@ -107,6 +117,7 @@ async function leeAgentModel(target, model) {
   if (select) select.disabled = true;
   try {
     const d = await post('/agent/model', {target, model});
+    if (d.ok && target === 'agent') markHarness(model);
     status(d.ok ? `${target} model saved: ${d.model}` : (d.error || 'model switch failed'), d.ok ? 'ok' : 'err');
     if (d.ok && target === 'completion') api('/complete/warm').catch(() => {});
     if (!d.ok) await loadAgentModels();
@@ -559,19 +570,22 @@ function renderTurns(log, turns, heading) {
 }
 const sessionTime = s => s.started ? new Date(s.started * 1000).toLocaleString() : s.id.replace(/^agent_/, '');
 async function showHistorySession(group, groups) {
-  const log = $('#agentlog'); if (!log) return; log.innerHTML = '';
+  const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
   const index = document.createElement('nav'); index.className = 'lee-history-index';
   const options = (groups || []).map(s => {
     const models = (s.models || []).map(m => m.split('/').pop()).join(' + ') || 'execution';
     const label = `${sessionTime(s)} · ${models} · ${s.turns.length} turn${s.turns.length === 1 ? '' : 's'}`;
     return `<option value="${esc(s.id)}"${s.id === group?.id ? ' selected' : ''}>${esc(label)}</option>`;
   }).join('');
+  const resumable = !!group && !group.id.startsWith('legacy-') && (group.turns || []).length > 0;
   index.innerHTML = `<div class="lee-history-heading"><strong>History</strong>` +
     `<span>one continuous model context per session</span></div>` +
     `<select class="lee-select lee-history-select" aria-label="agent history session">${options}</select>` +
-    `<span class="lee-history-runs">${group?.code || 0} kernel run${group?.code === 1 ? '' : 's'}</span>`;
+    `<span class="lee-history-runs">${group?.code || 0} kernel run${group?.code === 1 ? '' : 's'}</span>` +
+    (resumable ? `<button class="lee-btn go lee-history-resume" title="Continue this conversation">Resume</button>` : '');
   index.querySelector('select')?.addEventListener('change', e =>
     showHistorySession(groups.find(s => s.id === e.target.value), groups));
+  index.querySelector('.lee-history-resume')?.addEventListener('click', () => leeAgentResume(group));
   log.appendChild(index);
   if (!group) { log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>'); return; }
   log.insertAdjacentHTML('beforeend', `<div class="lee-history-session-head"><strong>${esc(sessionTime(group))}</strong>` +
@@ -592,8 +606,20 @@ async function leeAgentHistory() {
   const d = await api('/agent/history');
   await showHistorySession((d.sessions || [])[0], d.sessions || []);
 }
-async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
+async function leeAgentResume(group) {
+  if (!group) return;
+  if (lee.agentBusy) return status('the model is already working', 'err');
+  try {
+    const d = await post('/agent/resume', {session: group.id}), log = $('#agentlog');
+    if (log) { log.innerHTML = ''; renderTurns(log, d.turns || [], 'resumed conversation'); log.scrollTop = log.scrollHeight; }
+    lee.agentView = 'live'; lee.agentLive = log?.innerHTML || '';
+    $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus();
+    status(d.note || `resumed ${d.session}`, 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; approvalCards.clear(); const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
 window.leeAgentNew = leeAgentNew;
+window.leeAgentResume = leeAgentResume;
 window.leeAgentHistory = leeAgentHistory;
 
 async function leeAgentState() {
@@ -737,7 +763,8 @@ function agentLog(html) {
 /* A write pauses Rishi's tool loop until it is answered. Keep the question in the agent
  * pane rather than a modal, so the rest of the IDE remains usable while the model waits.
  * The same event is used by agent-chat and notebook prompt-cell streams. */
-const approvalCards = new Map(), resolvedProposalCards = [];
+// These are the log's own nodes. A detached one is held forever.
+const approvalCards = new Map();
 function proposalArgs(card) {
   const schema = card._schema, args = {};
   for (const field of (schema?.fields || [])) {
@@ -916,7 +943,6 @@ function showApproval(a) {
       const resolvedTool = ok ? tool : a.tool;
       card.dataset.tool = resolvedTool; card.dataset.resolvedTool = resolvedTool;
       card.dataset.retryable = String(!!byName.get(resolvedTool)?.retryable);
-      resolvedProposalCards.push(card);
       $('.lee-approval-actions', card).innerHTML = `<span>${ok ? (changed ? 'Edited call is running' : 'Running approved tool') : (note ? 'Not run · your direction was sent to the agent' : 'Not run')}</span>` +
         (ok && card.dataset.retryable === 'true' ? `<button class="lee-btn" data-retry title="Run this read-only tool again without changing the conversation">Run again</button>` : '') +
         (ok && ['edit_file','create_file'].includes(resolvedTool) ? `<button class="lee-btn warn" data-rollback disabled>Undo file change</button>` : '');
@@ -960,6 +986,23 @@ function editableResponse(raw) {
   return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function markTurnUndone(out, bar, files, revise) {
+  // `rollback_turn` restores files; it does not touch model history. Deleting the transcript
+  // said the agent had forgotten a turn it still carries.
+  let first = out, last = bar;
+  while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
+  while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
+  for (let node = first; node; node = node.nextElementSibling) {
+    if (node !== bar) node.classList.add('lee-turn-undone');   // the bar carries the explanation
+    if (node === last) break;
+  }
+  const note = document.createElement('span');
+  note.textContent = `${files} file${files === 1 ? '' : 's'} restored · the agent still remembers this turn`;
+  bar.classList.add('lee-turn-undone-bar');
+  bar.replaceChildren(note, ...(revise ? [revise] : []));
+  return bar;
+}
+
 function addResponseRevision(out, turnId, raw, capabilities = {}) {
   if (!turnId || !out || !raw.trim()) return;
   const bar = document.createElement('div'); bar.className = 'lee-response-revision';
@@ -978,18 +1021,10 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
         ? `\n\nCannot undo external effects: ${tx.transaction.irreversible.join(', ')}` : '';
       if (!await confirmDialog('Undo agent turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
       const d = await post('/agent/rollback-turn', {turn_id: turnId});
+      // Marked before the files are reloaded: a reload that raises used to leave the reply
+      // standing as though nothing had happened.
+      markTurnUndone(out, bar, (d.paths || []).length, capabilities.revisable ? reviseButton : null);
       for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
-      const log = out.parentElement;
-      if (log) {
-        let first = out, last = bar;
-        while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
-        if (first.previousElementSibling?.classList.contains('lee-user-message')) first = first.previousElementSibling;
-        while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
-        for (let node = first, next; node; node = next) {
-          next = node.nextElementSibling; node.remove();
-          if (node === last) break;
-        }
-      }
       status('turn changes rolled back', 'ok');
     } catch (e) { status(e.message || String(e), 'err'); }
   };
@@ -1096,6 +1131,13 @@ async function pollApproval() {
   } catch (_) {}
 }
 
+// An approval must not sit unseen while the model works. Idle, only a background job
+// raises one, and a window nobody is looking at raises nothing.
+async function approvalLoop() {
+  if (!document.hidden) await pollApproval();
+  setTimeout(approvalLoop, document.hidden ? 5000 : lee.agentBusy ? 750 : 5000);
+}
+
 function readableDetail(value) {
   const text = String(value || '');
   try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
@@ -1196,7 +1238,11 @@ function paintAgentAttachments() {
   const sels = lee.agentSelections.map((s, i) =>
     `<span class="lee-agent-attachment selection" title="${esc(s.path)}"><span>${esc(s.label)}</span>` +
     `<button type="button" data-sel="${i}" aria-label="remove ${esc(s.label)}">remove</button></span>`).join('');
-  host.innerHTML = active + sels + [...lee.agentAttachments.entries()].map(([path, name]) =>
+  const vaulted = [...lee.vaultRefs.entries()].map(([key, r]) =>
+    `<span class="lee-agent-attachment vault" title="${esc(r.vault || 'vault')} · ${esc(r.shelf || 'main')}">` +
+    `<span>${esc(r.title)}</span>` +
+    `<button type="button" data-vault-ref="${esc(key)}" aria-label="remove ${esc(r.title)}">remove</button></span>`).join('');
+  host.innerHTML = active + sels + vaulted + [...lee.agentAttachments.entries()].map(([path, name]) =>
     `<span class="lee-agent-attachment${name.endsWith('/') ? ' folder' : ''}" title="${esc(path)}"><span>${esc(name)}</span>` +
     `<button type="button" data-path="${esc(path)}" aria-label="remove ${esc(name)}">remove</button></span>`).join('') + states;
   $$('.lee-agent-state-suggestion', host).forEach(b => b.onclick = async () => {
@@ -1205,6 +1251,9 @@ function paintAgentAttachments() {
   });
   $$('[data-sel]', host).forEach(b => b.onclick = () => {
     lee.agentSelections.splice(+b.dataset.sel, 1); paintAgentAttachments();
+  });
+  $$('[data-vault-ref]', host).forEach(b => b.onclick = () => {
+    lee.vaultRefs.delete(b.dataset.vaultRef); paintAgentAttachments();
   });
   $$('[data-path]', host).forEach(b => b.onclick = () => {
     const name = lee.agentAttachments.get(b.dataset.path);
@@ -1235,6 +1284,12 @@ function chooseAgentSuggest(i = lee.agentSuggestAt) {
     const at = input.selectionStart, before = input.value.slice(0, at);
     const left = before.replace(/(^|\s)\/(?:[A-Za-z_][\w-]*)?$/, `$1/${item.name} `);
     input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
+  } else if (item.kind === 'vault') {
+    attachVaultRef(item);
+    const at = input.selectionStart, before = input.value.slice(0, at);
+    const left = before.replace(/(^|\s)@[^\s@]*$/, `$1@${item.name} `);
+    input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
+    paintAgentAttachments();
   } else {
     // The token *stays*. Removing it left the sentence reading "look at and tell me why",
     // with the thing being talked about visible only as a chip somewhere else. What you typed
@@ -1274,11 +1329,20 @@ async function updateAgentSuggest() {
     // `@` means "in this project", not "anywhere the workspace can reach": with several
     // checkouts open, the unscoped list is mostly files from a project you are not in.
     // `dirs`: a folder is somewhere to look, and attaching one is how you say "read around here".
-    const d = await api('/fs/find?dirs=1&scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=12');
+    // The vault answers the same `@`, because "this document" is the same gesture whether the
+    // document is a file you have open or a paper you filed a month ago.
+    // Both are capped, and capped short: a list where one source fills the visible rows is a list
+    // that only has one source, whatever the other one returned.
+    const [f, v] = await Promise.all([
+      api('/fs/find?dirs=1&scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=7').catch(() => ({})),
+      api('/vault/mentions?limit=5&q=' + encodeURIComponent(mention[1])).catch(() => ({}))]);
     if (seq !== agentSuggestSeq) return;
-    lee.agentSuggest = (d.hits || []).slice(0, 12).map(f => ({kind: f.kind === 'folder' ? 'folder' : 'file',
-      path: f.path, name: f.name, label: '@' + f.name,
-      detail: (f.kind === 'folder' ? 'folder · ' : '') + compactPath(f.path)}));
+    const files = (f.hits || []).slice(0, 7).map(x => ({kind: x.kind === 'folder' ? 'folder' : 'file',
+      path: x.path, name: x.name, label: '@' + x.name,
+      detail: (x.kind === 'folder' ? 'folder · ' : '') + compactPath(x.path)}));
+    const vaulted = (v.mentions || []).map(x => ({kind: 'vault', vault: x.vault, shelf: x.shelf,
+      doc: x.doc, name: x.title, title: x.title, label: '@' + x.title, detail: 'vault · ' + x.detail}));
+    lee.agentSuggest = [...files, ...vaulted];
   } else return closeAgentSuggest();
   lee.agentSuggestAt = 0; paintAgentSuggest();
 }
@@ -1408,8 +1472,9 @@ async function sendAgent() {
     const head = q.slice(1).split(/\s/, 1)[0];
     if ((lee.agentVocabulary?.commands || []).some(c => c.name === head)) return sendAgentCommand(q);
   }
-  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref)];
-  lee.agentAttachments.clear(); lee.agentSelections = []; paintAgentAttachments();
+  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref),
+                       ...lee.vaultRefs.values()];
+  lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
   lee.agentBusy = true; setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   log.appendChild(userMessage(q)); log.scrollTop = log.scrollHeight;

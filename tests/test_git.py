@@ -1,15 +1,17 @@
 "The git block: one repository, its safety rails, and the workspace of many."
 
+import json
 import subprocess
 import time
 import pytest
 from fastcore.basics import first
-from leela.blocks.agent.ai import GIT_WRITE_TOOLS, WRITE_TOOLS, _git_tools
+from leela.blocks.agent.ai import GIT_WRITE_TOOLS, WRITE_TOOLS
+from ramabana.git import git_tools as _git_tools
 from leela.blocks.git.git import GitError, GitRepo, repo_root
 from leela.workspace import Workspace
 import threading
 from leela.blocks.git.git import GitError, GitRepo
-from leela.blocks.git.safety import GitGateway, classify, gateway
+from ramabana.git import GitGateway, classify, gateway
 from leela.blocks.git.repos import MEMBERS, RepoSet, clone_url, discover
 
 def git(path, *args):
@@ -60,7 +62,7 @@ def test_status_stage_unstage_branch_and_commit(repo_git):
 
 def test_tree_decoration_asks_git_once_per_burst_not_once_per_folder(repo_git, monkeypatch):
     "A file-tree refresh reads `changes()` once per open folder; three git runs each is the lag."
-    from leela.blocks.git import safety
+    from ramabana import git as safety
     runs, real = [], safety.GitGateway._exec
     monkeypatch.setattr(safety.GitGateway, '_exec',
         lambda self, cwd, args, **kw: (runs.append(args[0]), real(self, cwd, args, **kw))[1])
@@ -196,20 +198,22 @@ def test_agent_git_tools_fetch_track_and_report_failures(repo_git, tmp_path):
             if must_exist and not p.exists(): raise FileNotFoundError(p)
             return p
     tools = {f.__name__: f for f in _git_tools(Host())}
-    assert set(tools) == {'git_status', 'git_fetch', 'git_checkout', 'git_pull', 'git_push'}
-    assert GIT_WRITE_TOOLS <= WRITE_TOOLS and 'git_status' not in WRITE_TOOLS
-    fetched = tools['git_fetch']()
+    from leela.blocks.agent.ai import GIT_READ_TOOLS
+    assert GIT_WRITE_TOOLS <= WRITE_TOOLS and not (set(GIT_READ_TOOLS) & WRITE_TOOLS), \
+        'rehearsing a merge is not approving one'
+    assert {'git_divergence', 'git_rebase_preview'} <= set(tools)
+    fetched = tools['git_remote']('fetch')
     assert 'origin/from-agent' in fetched
     checked_out = tools['git_checkout']('origin/from-agent')
     assert '"branch": "from-agent"' in checked_out
     assert '"upstream": "origin/from-agent"' in checked_out
-    assert tools['git_status'](str(repo_git.parent)).startswith('git status failed:')
-    from leela.blocks.agent.ai import FAILED_PREFIXES, GIT_TOOLS
+    from ramabana.tools import failed
+    assert failed(tools['git_status'](str(repo_git.parent))), 'a path outside the roots is a message'
+    from leela.blocks.agent.ai import GIT_TOOLS
     assert set(tools) == set(GIT_TOOLS)
-    for name in GIT_TOOLS: assert f'{name.replace("_", " ")} failed' in FAILED_PREFIXES, name
 
 def test_agent_checkout_reports_what_the_switch_said(repo_git, tmp_path):
-    "`git_checkout` surfaces `GitRepo.checkout`'s message, as fetch/pull/push surface theirs."
+    "`git_checkout` carries `GitRepo.checkout`'s message in the result the harness answers with."
     git(repo_git, 'branch', 'other')
     (repo_git/'app.py').write_text('print("uncommitted")\n')
     class Host:
@@ -219,9 +223,9 @@ def test_agent_checkout_reports_what_the_switch_said(repo_git, tmp_path):
             return Path(path or repo_git).resolve()
     checkout = {f.__name__: f for f in _git_tools(Host())}['git_checkout']
     out = checkout('other')
-    assert not out.startswith('git checkout failed'), out
-    assert '"branch": "other"' in out
-    assert out.splitlines()[0].strip() and not out.lstrip().startswith('{'), out[:200]
+    from ramabana.tools import failed
+    assert not failed(out), out
+    assert '"branch": "other"' in out and '"result"' in out, out[:200]
 
 def test_remote_head_is_not_a_branch_and_refs_explain_recency(repo_git, tmp_path):
     remote = tmp_path/'dated.git'
@@ -426,7 +430,7 @@ MIXED_THEIRS = 'shared\ntheirs only\ntail\n'
 
 def test_conflict_blocks_span_the_whole_marker_and_survive_an_empty_side():
     "Each payload must be exactly what its span should become, newline included."
-    from leela.blocks.git.git import _conflict_blocks
+    from ramabana.git import _conflict_blocks
     text = 'a\n<<<<<<< HEAD\nx\n=======\n>>>>>>> o\nb\n'
     block, = _conflict_blocks(text)
     assert (block['ours'], block['theirs']) == ('x\n', '')
@@ -936,7 +940,7 @@ def test_reads_do_not_take_the_index_lock_and_writes_are_not_given_the_flag(repo
     def spy(argv, *a, **kw):
         seen.append(list(argv))
         return real(argv, *a, **kw)
-    monkeypatch.setattr('leela.blocks.git.safety.subprocess.run', spy)
+    monkeypatch.setattr('ramabana.git.subprocess.run', spy)
     g = GitGateway()
     g.run(repo_git_sa, 'status', '--porcelain=v1')
     g.run(repo_git_sa, 'add', '--', 'app.py')
@@ -1004,13 +1008,13 @@ def test_a_foreign_lock_is_retried_and_then_explained(repo_git_sa, monkeypatch):
     "Another Git in the same checkout is a wait, then a sentence -- not a stack trace."
     (repo_git_sa/'.git'/'index.lock').write_text('')
     g = GitGateway()
-    monkeypatch.setattr('leela.blocks.git.safety.LOCK_BACKOFF', .001)
+    monkeypatch.setattr('ramabana.git.LOCK_BACKOFF', .001)
     attempts = []
     real = subprocess.run
     def spy(argv, *a, **kw):
         attempts.append(argv)
         return real(argv, *a, **kw)
-    monkeypatch.setattr('leela.blocks.git.safety.subprocess.run', spy)
+    monkeypatch.setattr('ramabana.git.subprocess.run', spy)
     (repo_git_sa/'app.py').write_text('value = 2\n')
     with pytest.raises(GitError) as e:
         g.run(repo_git_sa, 'add', '--', 'app.py')
@@ -1363,3 +1367,196 @@ def test_owner_name_is_the_shorthand_both_lists_use():
 def test_an_unknown_operation_is_refused_before_anything_runs(workspace, tmp_path):
     with pytest.raises(GitError, match='unknown workspace operation'):
         repo_set(workspace, tmp_path).run('rm -rf')
+
+def test_a_diverged_branch_is_offered_every_way_back_with_its_conflicts_rehearsed(repo_git, tmp_path):
+    "`pull` is --ff-only. Divergence needs a plan, each way out rehearsed before it runs."
+    remote = tmp_path/'remote.git'
+    git(tmp_path, 'init', '--bare', remote.name)
+    git(repo_git, 'remote', 'add', 'origin', str(remote))
+    git(repo_git, 'push', '-u', 'origin', 'main')
+    git(repo_git, 'switch', '-c', 'upstream-work')
+    (repo_git/'src'/'app.py').write_text('value = 1\nupstream = 1\n')
+    git(repo_git, 'commit', '-am', 'upstream moved')
+    git(repo_git, 'push', 'origin', 'upstream-work:main')
+    git(repo_git, 'switch', 'main')
+    git(repo_git, 'branch', '-D', 'upstream-work')
+    r = GitRepo.at(repo_git)
+    r.fetch()
+    (repo_git/'src'/'app.py').write_text('first = 1\nvalue = 1\n')
+    git(repo_git, 'commit', '-am', 'ours one')
+    (repo_git/'src'/'app.py').write_text('first = 1\nclash = 1\n')
+    git(repo_git, 'commit', '-am', 'ours two')
+    plan = r.divergence()
+    assert (plan['relation'], plan['ahead'], plan['behind']) == ('diverged', 2, 1)
+    ops = {o['op']: o for o in plan['options']}
+    assert not ops['fast-forward']['available'], 'our own commits are in the way'
+    assert ops['merge']['available'] and ops['rebase']['available'] and ops['reset']['destructive']
+    stops = ops['rebase']['stops_at']
+    assert stops and stops['subject'] in ('ours one', 'ours two')
+    assert ops['rebase']['replayed'] < 2, 'a replay that stops has not replayed everything'
+    assert 'src/app.py' in ops['rebase']['conflicts']
+    assert plan['recommended'] == 'merge', 'resolving once beats resolving per replayed commit'
+    out = r.sync('merge')
+    assert out['conflicted'] == ['src/app.py'] and r.divergence()['relation'] == 'diverged'
+    git(repo_git, 'merge', '--abort')
+    assert r.sync('reset')['head'] == r._ask('rev-parse', '--short', 'origin/main')
+
+def test_a_clean_divergence_prefers_rebase_and_a_branch_only_behind_fast_forwards(repo_git, tmp_path):
+    remote = tmp_path/'remote.git'
+    git(tmp_path, 'init', '--bare', remote.name)
+    git(repo_git, 'remote', 'add', 'origin', str(remote))
+    git(repo_git, 'push', '-u', 'origin', 'main')
+    git(repo_git, 'switch', '-c', 'upstream-work')
+    (repo_git/'theirs.py').write_text('theirs = 1\n')
+    git(repo_git, 'add', 'theirs.py'); git(repo_git, 'commit', '-m', 'theirs')
+    git(repo_git, 'push', 'origin', 'upstream-work:main')
+    git(repo_git, 'switch', 'main')
+    git(repo_git, 'branch', '-D', 'upstream-work')
+    r = GitRepo.at(repo_git)
+    r.fetch()
+    assert r.divergence()['recommended'] == 'fast-forward', 'behind only: nothing to reconcile'
+    (repo_git/'ours.py').write_text('ours = 1\n')
+    git(repo_git, 'add', 'ours.py'); git(repo_git, 'commit', '-m', 'ours')
+    plan = r.divergence()
+    assert plan['recommended'] == 'rebase' and not plan['options'][2]['stops_at']
+    r.sync('rebase')
+    assert r.divergence()['relation'] == 'ahead'
+
+def test_the_agent_can_rehearse_a_divergence_without_being_able_to_run_it(repo_git, tmp_path):
+    "Read-only git tools answer with JSON. The mutations stay behind the approvals gate."
+    from leela.blocks.agent.ai import GIT_READ_TOOLS
+    remote = tmp_path/'agent-diverge.git'
+    git(tmp_path, 'init', '--bare', remote.name)
+    git(repo_git, 'remote', 'add', 'origin', str(remote))
+    git(repo_git, 'push', '-u', 'origin', 'main')
+    git(repo_git, 'switch', '-c', 'theirs')
+    (repo_git/'src'/'app.py').write_text('value = 1\ntheirs = 1\n')
+    git(repo_git, 'commit', '-am', 'theirs')
+    git(repo_git, 'push', 'origin', 'theirs:main')
+    git(repo_git, 'switch', 'main')
+    git(repo_git, 'branch', '-D', 'theirs')
+    (repo_git/'src'/'app.py').write_text('value = 2\n')
+    git(repo_git, 'commit', '-am', 'ours')
+    class Host:
+        roots = [str(repo_git)]
+        def check(self, path, must_exist=False):
+            p = __import__('pathlib').Path(path).resolve()
+            if not p.is_relative_to(repo_git): raise ValueError('outside workspace')
+            return p
+    tools = {f.__name__: f for f in _git_tools(Host())}
+    GitRepo.at(repo_git).fetch()
+    plan = json.loads(tools['git_divergence']())
+    assert plan['relation'] == 'diverged' and plan['ahead'] == 1 and plan['behind'] == 1
+    assert {o['op'] for o in plan['options']} == {'fast-forward', 'merge', 'rebase', 'reset'}
+    assert plan['ours'] and isinstance(plan['ours'][0], str), 'commits arrive short, not whole'
+    preview = json.loads(tools['git_rebase_preview']('origin/main'))
+    assert 'review' not in preview and preview['conflict_likely'] is True
+    assert preview['stops_at']['subject'] == 'ours'
+    assert set(GIT_READ_TOOLS) & set(tools) == set(GIT_READ_TOOLS)
+
+
+def test_a_folder_without_a_repository_is_an_answer_not_an_error(tmp_path):
+    """Every boot in a non-repo folder logged a console error, because "there is no repository
+    here" came back as HTTP 400 -- which also made a real 400 from this route indistinguishable.
+    """
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    plain = tmp_path/'notes'; plain.mkdir(); (plain/'a.md').write_text('# a\n')
+    with TestClient(ide_app(Workspace(roots=[plain]))) as client:
+        r = client.get('/git/info')
+        assert r.status_code == 200, 'a folder with no git in it is not a client error'
+        assert r.json()['repo'] is False and 'not inside a Git repository' in r.json()['note']
+
+def test_a_folder_with_a_repository_says_so_beside_the_branch(tmp_path):
+    "The flag has to be positive too, or every real checkout reads as repo-less."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    with TestClient(ide_app(Workspace(roots=[_repo(tmp_path/'r', 'main')]))) as client:
+        d = client.get('/git/info').json()
+        assert d['repo'] is True and d['branch'] == 'main'
+
+def test_a_real_git_failure_is_still_a_400(tmp_path):
+    "Only absence is an answer; a broken call stays an error the client can report."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    with TestClient(ide_app(Workspace(roots=[_repo(tmp_path/'r', 'main')]))) as client:
+        assert client.get('/git/info', params={'repo': '/nowhere/at/all'}).status_code == 400
+
+
+def test_no_checkout_is_read_through_one_helper_rather_than_six_catches():
+    "Six call sites relied on the throw; one of them has to keep it and five have to not."
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'tools'))
+    import build_ide_js as builder
+    js = builder.OUT.read_text()
+    block = js[js.index('async function gitInfo('):js.index('async function leeCwd')]
+    assert "d.repo === false" in block, 'the flag is what says there is no checkout'
+    assert 'throw new Error' in block, 'a surface that only works inside a repo still says so'
+    assert 'gitInfoOrNull' in block, 'and one that decorates the chrome just goes quiet'
+    for caller in ('await gitInfoOrNull(gitUrl', 'gitUI.snapshot || await gitInfoOrNull',
+                   'await gitInfo(gitUrl'):
+        assert caller in js, caller
+    assert "await api('/git/info')" not in js, 'no caller reaches the route without the guard'
+
+
+def test_the_sync_dialog_survives_the_options_that_carry_no_conflicts(tmp_path):
+    """`divergence` puts `conflicts` on `merge` and `rebase` only, and no option carries a
+    `label`. Reading either unguarded killed the dialog on the first option, every time.
+    """
+    import sys
+    from pathlib import Path as _P
+    sys.path.insert(0, str(_P(__file__).resolve().parents[1]/'tools'))
+    import build_ide_js as builder
+    from ramabana.git import GitRepo
+    a = _repo(tmp_path/'up', 'main')
+    git(a, 'clone', str(a), str(tmp_path/'down'))
+    down = tmp_path/'down'
+    (down/'mine.txt').write_text('mine\n'); git(down, 'add', '.'); git(down, 'commit', '-m', 'mine')
+    (a/'theirs.txt').write_text('theirs\n'); git(a, 'add', '.'); git(a, 'commit', '-m', 'theirs')
+    git(down, 'fetch', 'origin')
+    plan = GitRepo.at(down).divergence()
+    assert plan['relation'] == 'diverged'
+    bare = [o['op'] for o in plan['options'] if 'conflicts' not in o]
+    assert bare, 'precondition: some options carry no conflicts list'
+    assert not [o for o in plan['options'] if 'label' in o], 'precondition: none carry a label'
+    js = builder.OUT.read_text()
+    block = js[js.index('async function showSyncPlan'):js.index('window.showSyncPlan = showSyncPlan')]
+    assert 'o.conflicts || []' in block, 'an option without a conflicts list must still render'
+    assert 'esc(o.label)' not in block, 'the server sends no label; the row would be blank'
+
+
+def test_the_pull_request_panel_calls_github_the_way_ghapi_binds_it(monkeypatch, tmp_path):
+    """`GhApi(owner=, repo=)` fills `/repos/{owner}/{repo}/...` itself, so passing them again
+    positionally bound them to *query* parameters: `pulls.list` filtered on a base branch named
+    after the owner and `compare_commits` dropped its fourth argument.
+    """
+    import sys, types
+    from leela.blocks.git import hub
+    seen = {}
+    class Group:
+        def __init__(self, name): self.name = name
+        def __getattr__(self, op):
+            def go(*a, **kw):
+                seen[f'{self.name}.{op}'] = (a, kw)
+                if op == 'list': return [{'number': 7, 'title': 'T', 'html_url': 'u', 'draft': False,
+                                          'base': {'ref': 'main'}, 'head': {'sha': 'deadbeef'}}]
+                if op == 'compare_commits': return {'behind_by': 2, 'ahead_by': 1}
+                return {'check_runs': [{'name': 'ci', 'conclusion': 'success', 'status': 'completed'}]}
+            return go
+    api = types.SimpleNamespace(pulls=Group('pulls'), repos=Group('repos'), checks=Group('checks'))
+    fake = types.ModuleType('gheasy.core')
+    fake._gh_api = lambda token=None, path='.': ('vedicreader', 'leela', api)
+    fake._get_repo_slug = lambda path='.': ('vedicreader', 'leela')
+    fake._resolve_gh_token = lambda: 'tok'
+    monkeypatch.setitem(sys.modules, 'gheasy.core', fake)
+    monkeypatch.setattr(hub, 'hub_available', lambda: True)
+
+    out = hub.pr_context.__wrapped__(str(tmp_path), 'my-branch')
+    assert out['pr'], out.get('note')
+    assert out['pr']['number'] == 7 and out['pr']['behind_base'] == 2
+
+    assert seen['pulls.list'][0] == (), 'owner and repo are already bound to the client'
+    assert seen['pulls.list'][1]['head'] == 'vedicreader:my-branch'
+    assert seen['repos.compare_commits'][0] == ('main...my-branch',), 'one basehead, not four args'
+    assert seen['checks.list_for_ref'][0] == ('deadbeef',)

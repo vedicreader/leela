@@ -1,5 +1,3 @@
-"What clipping a thing into the vault means, which depends on what the thing is."
-
 from __future__ import annotations
 
 from collections import Counter
@@ -8,7 +6,8 @@ from fastcore.all import L, Path
 from ... import errstr
 from .jobs import JobError, run_script
 
-__all__ = ['DOC_EXTS', 'clip_docs', 'clip_codebase', 'clip_api_spec', 'register_all']
+__all__ = ['DOC_EXTS', 'clip_docs', 'clip_codebase', 'clip_api_spec', 'clip_tree', 'acquire_one',
+           'connect_graph', 'register_all']
 
 DOC_EXTS = frozenset({'.md', '.markdown', '.txt', '.rst', '.pdf', '.ipynb', '.html', '.htm'})
 
@@ -21,7 +20,6 @@ def _files(target, exts=DOC_EXTS):
     return sorted(f for f in p.rglob('*') if f.is_file() and f.suffix.lower() in exts)
 
 def clip_docs(memory, job, report):
-    "Prose into the workspace shelf, committed in batches so partial work is usable."
     shelf, files = job.params.get('shelf'), _files(job.target)
     if not files: raise JobError(f'no clippable document under {job.target}')
     done = job.params.get('_resume', {}).get('done', []) if job.resumable else []
@@ -43,7 +41,6 @@ def clip_docs(memory, job, report):
     return out
 
 def _pii_summary(memory, doc_ids, shelf):
-    "Which of the documents just clipped carry personal information, per the vault's own report."
     kinds, flagged = Counter(), []
     for did in L(doc_ids).filter():
         r = memory.pii(did, shelf=shelf)
@@ -53,7 +50,6 @@ def _pii_summary(memory, doc_ids, shelf):
     return dict(documents=flagged, kinds=dict(kinds), covers='titled names and pattern kinds')
 
 def clip_codebase(memory, search, job, report):
-    "Index the repository with kosha, then file one pointer document naming that index."
     root = Path(job.target)
     if not root.is_dir(): raise JobError(f'{job.target} is not a folder')
     report(current=f'indexing {root.name}', progress=0.1)
@@ -73,7 +69,6 @@ def clip_codebase(memory, search, job, report):
         note='source is not duplicated into the shelf; the index is federated at query time')
 
 def clip_api_spec(memory, job, report):
-    "One document per spec, one section per operation, so an endpoint stays addressable."
     from .spec import load_spec, op_row, spec_ops
     report(current='reading the specification', progress=0.1)
     spec, src = load_spec(job.target), str(job.target)
@@ -93,11 +88,58 @@ def clip_api_spec(memory, job, report):
     return dict(source=src, title=title, operations=len(ops), pointer=doc,
         groups=sorted({o['group'] for o in ops if o.get('group')}))
 
-def register_all(jobs, memory, search=None, cwd=None):
-    "Wire every clip kind, plus the two general ones, onto a `Jobs`."
+def clip_tree(memory, job, report):
+    from .acquire import plan_tree
+    plan = plan_tree(job.target)
+    if not plan.files: raise JobError(f'no clippable document under {job.target}')
+    done = set(job.params.get('_resume', {}).get('done', []) if job.resumable else [])
+    out = dict(root=str(plan.root), files=[], skipped=len(plan.skipped), n=len(plan.files),
+        shelves=plan.shelves, categories=plan.categories)
+    groups = {}
+    for x in plan.files:
+        if str(x.path) not in done: groups.setdefault((x.shelf, x.category), []).append(x.path)
+    seen = len(done)
+    for (shelf, category), paths in groups.items():
+        meta = dict(category=category, clipped_from='folder', import_root=str(plan.root), clip_job=job.id)
+        for i in range(0, len(paths), BATCH):
+            batch = paths[i:i + BATCH]
+            rows = memory.clip(batch, shelf=shelf, meta=meta)
+            for p, r in zip(batch, rows or [{}] * len(batch)):
+                out['files'].append(dict(path=str(p), shelf=shelf, category=category,
+                    doc_id=r.get('doc_id') or r.get('id'), status='skipped' if r.get('skipped') else 'clipped'))
+                done.add(str(p))
+            seen += len(batch)
+            report(progress=0.05 + 0.9 * seen / len(plan.files), current=f'{shelf} · {seen} of {len(plan.files)}',
+                result=out, params=dict(job.params, _resume=dict(done=sorted(done))))
+    return out
+
+def acquire_one(memory, job, report):
+    from .acquire import detect
+    action = job.params.get('action') or detect(job.target)
+    if action == 'clip': return clip_docs(memory, job, report)
+    report(current=f'{action} {job.target}', progress=0.2)
+    kw = {k: v for k, v in job.params.items() if k not in ('action', 'shelf', '_resume', 'from')}
+    return dict(memory.acquire(action, job.target, shelf=job.params.get('shelf'), **kw), action=action)
+
+def connect_graph(memory, job, report):
+    out, names = {}, memory._populated()
+    for i, name in enumerate(names):
+        report(progress=0.05 + 0.9 * i / max(1, len(names)), current=name)
+        try: out[name] = dict(memory._store(name).connect())
+        except Exception as e: out[name] = dict(error=errstr(e))
+    return dict(shelves=out, topics=len(memory.clusters().get('clusters') or []))
+
+def register_all(jobs, memory, search=None, cwd=None, feeds=None):
     jobs.register('clip', lambda job, report: clip_docs(memory, job, report))
+    jobs.register('clip_tree', lambda job, report: clip_tree(memory, job, report))
+    jobs.register('acquire', lambda job, report: acquire_one(memory, job, report))
+    jobs.register('connect', lambda job, report: connect_graph(memory, job, report))
     jobs.register('clip_codebase', lambda job, report: clip_codebase(memory, search, job, report))
     jobs.register('clip_api_spec', lambda job, report: clip_api_spec(memory, job, report))
+    if feeds is not None:
+        from .news import poll_feeds
+        jobs.register('feeds', lambda job, report: poll_feeds(memory, feeds,
+            force=bool(job.params.get('force')), only=job.params.get('only') or '', report=report))
     jobs.register('tidy', lambda job, report: dict(candidates=memory.noisy_candidates(
         shelf=job.params.get('shelf'), k=int(job.params.get('k') or 20))))
     jobs.register('poll', lambda job, report: jobs.poll_due())
@@ -106,7 +148,6 @@ def register_all(jobs, memory, search=None, cwd=None):
     return jobs
 
 def _migrate(job, report):
-    "The memory migration as a job, so it has progress and a retry instead of a terminal."
     from ...migrate_memory import migrate
     report(current='reading the old store', progress=0.2)
     return migrate(shelf=job.params.get('shelf') or 'leela', vault_path=job.params.get('vault'),

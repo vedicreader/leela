@@ -467,7 +467,9 @@ def test_panels_refresh_themselves_and_keep_secrets_server_side():
     assert 'e.secret ?' in block, 'a secret and a variable are drawn differently'
     ops = JS[JS.index('async function refreshFileTree'):JS.index('document.addEventListener(\'click\'')]
     assert 'location.reload()' not in ops
-    assert "fetch('/files/panel' + treeQuery())" in ops, 'the panel, at the dotfile setting in force'
+    assert "fetch('/files/panel?' + q)" in ops, 'the panel, at the dotfile setting in force'
+    assert "q.set('hidden', '1')" in ops and "q.set('open', open.join('\\n'))" in ops, \
+        'one request carrying the expansion, not one round trip per open folder'
     assert "old.replaceWith(fresh)" in ops
     first = workspace_slug('My Project')
     second = workspace_slug('My Project', [first])
@@ -629,7 +631,7 @@ def test_a_branch_change_reaches_every_surface_that_was_derived_from_it():
     assert 'leeReleases()' in fan and 'leeDeploys()' in fan
     pills = JS[JS.index('async function refreshProjectPills'):JS.index('async function leeCwd')]
     assert 'noticeGitState(d)' in pills
-    assert 'setInterval(refreshProjectPills, 5000)' in JS
+    assert 'setInterval(refreshProjectPills' not in JS, 'the pills change only when a root or the cwd does'
 
 
 def test_the_merge_button_always_answers_instead_of_being_disabled():
@@ -994,8 +996,26 @@ def test_source_control_notices_an_edit_and_not_only_a_new_file():
     save = JS[JS.index('async function saveTab'):JS.index('async function saveAllTabs')]
     assert 'refreshProjectPills' in save
     pills = JS[JS.index('async function refreshProjectPills'):JS.index('function projectRepo')]
-    assert 'noticeGitState(d)' in pills and "api('/git/info')" in pills
-    assert 'setInterval(refreshProjectPills, 5000)' in JS, 'and an external change lands by poll'
+    assert 'noticeGitState(d)' in pills and 'gitInfo()' in pills
+    assert "watchFiles()" in JS, 'and an external change lands by push, not by poll'
+
+def test_a_pushed_change_redraws_the_nearest_open_folder_and_cannot_be_starved():
+    "The push rewrite lost two kinds of change the full refresh had always shown."
+    patch = JS[JS.index('async function patchTree(paths)'):JS.index('async function refreshGitTreeMarks')]
+    assert "p.startsWith(d + '/')" in patch and 'best.dataset.path.length' in patch, \
+        'a new folder is open nowhere, so its own path matches no open row'
+    assert "replace(/\\/[^/]+$/, '')" not in patch, 'the literal parent was the bug'
+    watch = JS[JS.index('function watchFiles()'):JS.index('window.watchFiles')]
+    assert 'FS_MAX_WAIT' in watch and 'fsWatchSince' in watch, \
+        'a build writes without pause, and a timer that only resets never fires'
+    assert 'FS_MAX_SEEN' in watch, 'and the backlog it accumulates meanwhile is bounded'
+    assert '}, wait);' in watch, 'the deadline is what the timer is actually set to'
+
+def test_the_compressor_leaves_every_event_stream_alone():
+    "GZip went on the app for the cold load. Buffering the streams would have paid for it."
+    from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES
+    assert 'text/event-stream' in DEFAULT_EXCLUDED_CONTENT_TYPES, \
+        'below starlette 1.6 this list has no streams in it and /fs/events arrives at the end'
 
 def test_the_editor_pane_fills_its_stage_and_the_splitter_only_exists_when_split():
     "Measured in a browser, not reasoned about: on a 900px window the stage was 577px and the"
@@ -1257,7 +1277,8 @@ def test_the_agent_panel_streams_steps_approvals_and_usage():
     assert "post('/agent/approve', {id: a.id, ok, note, session, tool, args})" in card
     assert "api('/agent/approval')" in JS
     assert 'if (r.pending) showApproval(r.pending)' in JS
-    assert 'setInterval(pollApproval, 750)' in JS
+    assert 'approvalLoop()' in JS and 'lee.agentBusy ? 750 : 5000' in JS, \
+        'fast while the model works, slow when nothing can raise one'
     card = JS[JS.index('function showApproval'):JS.index('async function pollApproval')]
     assert "leePane('right', true)" in card
     assert "leeRight('agent')" in card
@@ -1545,6 +1566,25 @@ def test_history_groups_turns_by_context_session_without_rendering_every_turn():
     assert 'groups.find' in history
     assert "(s.models || []).map" in history
 
+def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(tmp_path):
+    "History showed the turns and left the model with none of them."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    model = ws.ai.model.name
+    ws.ai.history = [{'session': 'agent-a', 'at': 1, 'model': model, 'prompt': 'remember cedar', 'reply': 'noted'},
+                     {'session': 'agent-a', 'at': 2, 'model': model, 'prompt': 'what was it?', 'reply': 'cedar'}]
+    with TestClient(ide_app(ws)) as client:
+        d = client.post('/agent/resume', json={'session': 'agent-a'}).json()
+        missing = client.post('/agent/resume', json={'session': 'legacy-1'})
+    assert d['session'] == 'agent-a' and [t['prompt'] for t in d['turns']] == ['remember cedar', 'what was it?']
+    assert ws.ai.session_id == 'agent-a'
+    assert ws.ai.backend._resume_hist[-1] == {'role': 'assistant', 'content': 'cedar'}
+    assert missing.status_code == 400
+    assert "post('/agent/resume', {session: group.id})" in JS and 'lee-history-resume' in JS
+    assert "renderTurns(log, d.turns || [], 'resumed conversation')" in JS
+
 def test_routing_popover_closes_on_outside_click_and_escape():
     from leela.app import _agent_panel
     from leela.workspace import Workspace
@@ -1630,6 +1670,8 @@ def test_the_jobs_without_a_control_of_their_own_are_still_choosable(tmp_path):
     path = tmp_path/'workspace.json'
     ws = Workspace(roots=[]); ws._state_path = path
     with TestClient(ide_app(ws)) as client:
+        fresh = client.get('/agent/models').json()['jobs']
+        assert 'subagent' in fresh and 'summary' in fresh and ws._ai is None
         assert client.post('/agent/model', json={'target': 'subagent', 'model': 'gemma-e2b'}).json()['ok']
         refused = client.post('/agent/model', json={'target': 'nonsense', 'model': 'gemma-e2b'}).json()
         assert refused['ok'] is False and 'nonsense' in refused['error']
@@ -1705,7 +1747,8 @@ def test_browser_watch_detects_an_external_file_write(tmp_path):
         after = client.get('/tab/watch').json()
     assert before['path'] == str(a)
     assert before['disk_version'] != after['disk_version']
-    assert 'setInterval(watchOpenFile, 1000)' in JS
+    assert 'setInterval(watchOpenFile, 10000)' in JS, 'a backstop; /fs/events is the mechanism'
+    assert 'refreshOpenGitMarks(); watchOpenFile();' in JS, 'a push about the open file drives it'
     watch = JS[JS.index('async function watchOpenFile'):JS.index('async function takeDiskVersion')]
     assert "classList.contains('dirty')" in watch and 'await takeDiskVersion(lee.path)' in watch
 
@@ -2025,3 +2068,148 @@ def test_runtime_broker_refuses_a_thirteenth_heap_without_evicting_live_state(mo
     with pytest.raises(RuntimeError, match='kernel limit reached'):
         asyncio.run(broker.admit(pool, 'second'))
     assert pool.kernels['first'] is alive
+
+def test_the_tree_hears_about_a_change_leela_did_not_make(tmp_path):
+    "Without a watcher the tree knew only what the client itself had done."
+    import asyncio, json
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher
+    (tmp_path/'a.py').write_text('x = 1\n')
+    (tmp_path/'node_modules').mkdir()
+    async def run():
+        w = Watcher(Sandbox([tmp_path]), step=50)
+        q = w.subscribe()
+        try:
+            await asyncio.sleep(.4)
+            # macOS replays the setup mkdir as a batch of its own once the watch settles.
+            while not q.empty(): q.get_nowait()
+            (tmp_path/'node_modules'/'junk.js').write_text('1\n')
+            with pytest.raises(asyncio.TimeoutError): await asyncio.wait_for(q.get(), .6)
+            (tmp_path/'b.py').write_text('y = 2\n')
+            return (await asyncio.wait_for(q.get(), 5))[0]
+        finally: w.close()
+    paths = asyncio.run(run())
+    assert any(p.endswith('b.py') for p in paths)
+    assert not any('node_modules' in p for p in paths), 'the skip list applies to the watcher too'
+
+def test_the_last_reader_leaving_does_not_stall_the_loop_and_the_next_one_is_watched_again(tmp_path):
+    "`unsubscribe` runs on the event loop, and the Rust watcher takes `rust_timeout` to notice."
+    import asyncio, time
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher
+    async def run():
+        w = Watcher(Sandbox([tmp_path]), step=50)
+        q = w.subscribe()
+        await asyncio.sleep(.3)
+        at = time.monotonic()
+        w.unsubscribe(q)
+        spent, first = time.monotonic() - at, w.thread
+        second = w.subscribe()
+        try:
+            await asyncio.sleep(.3)
+            (tmp_path/'c.py').write_text('z = 3\n')
+            return spent, first, w.thread, (await asyncio.wait_for(second.get(), 5))[0]
+        finally: w.close()
+    spent, first, second, paths = asyncio.run(run())
+    assert spent < .2, f'the last tab closing blocked the loop for {spent:.2f}s'
+    assert second is not first, 'a stopping thread is not a running one'
+    assert any(p.endswith('c.py') for p in paths), 'and the next reader is watched again'
+
+
+def test_a_folder_opened_after_boot_is_watched_too(tmp_path):
+    """`subscribe` was the only other caller of `start`, and it runs once per page load. Opening
+    a folder from the welcome screen left the watcher with the empty root set it booted with.
+    """
+    import asyncio
+    from leela.workspace import Workspace
+    a, b = tmp_path/'a', tmp_path/'b'
+    a.mkdir(); b.mkdir()
+    ws = Workspace(roots=[a])
+    async def run():
+        q = ws.fs_watch.subscribe()
+        await asyncio.sleep(.4)
+        while not q.empty(): q.get_nowait()
+        ws.add_root(b)
+        await asyncio.sleep(.5)
+        while not q.empty(): q.get_nowait()
+        (b/'new.py').write_text('x = 1\n')
+        return (await asyncio.wait_for(q.get(), 5))[0]
+    try: paths = asyncio.run(run())
+    finally: ws.fs_watch.close()
+    assert any('new.py' in p for p in paths), 'the folder opened after boot is watched'
+
+def test_opening_a_folder_off_the_event_loop_is_not_an_error(tmp_path):
+    "`/fs/add_root` is a sync route, so `add_root` runs in a threadpool with no running loop."
+    from leela.workspace import Workspace
+    a, b = tmp_path/'a', tmp_path/'b'
+    a.mkdir(); b.mkdir()
+    ws = Workspace(roots=[a])
+    ws.add_root(b)                      # no loop here, and none is needed
+    assert str(b) in [str(r) for r in ws.fs.roots]
+    ws.fs_watch.close()
+
+def test_shutdown_stops_the_watcher_thread(tmp_path):
+    "The module says a Rust thread alive at interpreter teardown segfaults; nothing stopped it."
+    import asyncio
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    async def run():
+        ws.fs_watch.subscribe()
+        await asyncio.sleep(.3)
+        assert ws.fs_watch.thread and ws.fs_watch.thread.is_alive()
+    asyncio.run(run())
+    asyncio.run(ws.shutdown())
+    assert ws.fs_watch.thread is None, 'shutdown owns the join'
+
+
+def test_replacing_the_watcher_does_not_wait_for_the_old_thread(tmp_path):
+    "`start` calls `close`, and a join on the event loop freezes every socket in the process."
+    import asyncio
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher
+    async def run():
+        w = Watcher(Sandbox([tmp_path]))
+        w.subscribe()
+        await asyncio.sleep(.3)
+        old = w.thread
+        w.close(wait=False)
+        return old, old.is_alive()
+    old, running = asyncio.run(run())
+    old.join(5)
+    assert running, 'the replacement must not wait for the old thread to notice'
+    assert not old.is_alive(), 'and it still stops'
+
+def test_a_batch_too_big_to_send_asks_for_a_resync_instead_of_dropping_it(tmp_path):
+    """Batches are deltas, not snapshots, so a truncated or dropped one is lost for good: the
+    tree keeps showing files that are gone until something unrelated happens to touch it.
+    """
+    import asyncio
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher, MAX_BATCH
+    async def run():
+        w = Watcher(Sandbox([tmp_path]))
+        q, out = w.subscribe(), []
+        w._push([f'{tmp_path}/f{i}.py' for i in range(MAX_BATCH + 5)])
+        await asyncio.sleep(.05)
+        out.append(q.get_nowait())
+        for _ in range(q.maxsize + 3): w._push([f'{tmp_path}/x.py'])
+        await asyncio.sleep(.05)
+        while not q.empty(): out.append(q.get_nowait())
+        w.close()
+        return out
+    batches = asyncio.run(run())
+    assert batches[0] == ([], True), 'too many paths to carry is a resync, not a truncation'
+    assert ([], True) in batches[1:], 'a full queue is a resync too'
+
+def test_the_event_stream_carries_the_resync_flag(tmp_path):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        pass
+    src = (ROOT/'leela'/'blocks'/'fs'/'app.py').read_text()
+    assert "'resync': resync" in src, 'the client cannot ask for a full refresh it is never told about'
+    js = (ROOT/'leela'/'static'/'lee-ide.js').read_text()
+    watch = js[js.index('function resyncFiles()'):js.index('window.watchFiles')]
+    assert 'd.resync' in watch and 'refreshFileTree' in watch, 'and it redraws the whole tree when told'

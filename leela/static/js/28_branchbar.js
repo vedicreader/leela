@@ -93,14 +93,28 @@ function branchActions(anchor, d, b) {
     }},
     {separator: true},
     {label: 'Compare with current', detail: `${d.branch} … ${leaf}`, disabled: b.current, run: () => compareBranch(d, b.name)},
-    {label: `Rebase ${d.branch} onto ${leaf}`, disabled: b.current, run: () => gitDo('rebase', {branch: b.name})},
-    {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => gitDo('merge', {branch: b.name})},
+    // Through the previews, as the git panel's identical entries go.
+    {label: `Rebase ${d.branch} onto ${leaf}`, disabled: b.current, run: () => showRebasePreview(b.name, d, branchAct)},
+    {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => showMergePreview(b.name, d, branchAct)},
   ];
   if (!b.remote && !b.current) rows.push({separator: true}, {label: `Delete ${leaf}`, warn: true, run: async () => {
     if (await confirmDialog('delete branch', `Delete ${b.name}? Commits only on it are lost.`, 'delete'))
       gitDo('delete', {branch: b.name, force: !b.merged});
   }});
   openChromeMenu(anchor, rows);
+}
+
+// Where "why is this divergent" usually starts: the PR, and whether its base moved under it.
+async function branchPr(d) {
+  const r = await api(gitUrl('/git/pr', {branch: d.branch})).catch(() => null);
+  const pr = r?.pr;
+  if (!pr) return {id: 'pr', label: 'Pull request', detail: r?.note || 'unavailable', run: () => status(r?.note || 'no pull request', 'ok')};
+  const c = pr.checks || {};
+  const health = c.failing?.length ? `${c.failing.length} check${c.failing.length === 1 ? '' : 's'} red`
+              : c.pending ? `${c.pending} check${c.pending === 1 ? '' : 's'} running` : 'checks green';
+  return {id: 'pr', label: `#${pr.number} ${pr.title}`.slice(0, 60),
+    detail: `${pr.base}${pr.behind_base ? ` · ${pr.behind_base} behind base` : ''} · ${health}`,
+    run: () => window.open(pr.url, '_blank')};
 }
 
 function branchTopActions(d) {
@@ -115,8 +129,10 @@ function branchTopActions(d) {
   ];
 }
 
+const branchAct = async (op, extra = {}) => { const d = await gitDo(op, extra); refreshScmIfOpen(d); return d; };
+
 function runBranchAction(id, d) {
-  if (id === 'update') return gitDo('pull');
+  if (id === 'update') return d.ahead && d.behind ? showSyncPlan(d) : gitDo('pull');
   if (id === 'push') return leeGitQuick('push');
   if (id === 'commit') { gitUI.tab = 'changes'; leeLeft('git'); return leeGitRefresh(); }
   if (id === 'clone') return leeCloneRepo();
@@ -128,7 +144,7 @@ function runBranchAction(id, d) {
 
 async function leeBranchMenu(anchor) {
   let d;
-  try { d = await api(gitUrl('/git/info')); }
+  try { d = await gitInfo(gitUrl('/git/info')); }
   catch (e) { return leeFail('git', 'branches', e); }
   const recent = recentBranches(d.root);
   let search = null;
@@ -145,10 +161,11 @@ async function leeBranchMenu(anchor) {
   search = m.querySelector('#branchsearch');
   const list = m.querySelector('#branchlist');
 
+  let prRow = null;
   const paint = () => {
     const q = search.value.trim().toLowerCase();
     const hit = text => !q || String(text).toLowerCase().includes(q);
-    const acts = branchTopActions(d).filter(a => hit(a.label));
+    const acts = [...branchTopActions(d), ...(prRow ? [prRow] : [])].filter(a => hit(a.label));
     const all = (d.branches || []).filter(b => hit(`${b.name} ${b.subject} ${b.author}`));
     const near = recent.map(n => all.find(b => b.name === n && !b.current)).filter(Boolean);
     const rest = all.filter(b => !near.includes(b));
@@ -174,13 +191,52 @@ async function leeBranchMenu(anchor) {
     const row = e.target.closest('[data-branch]');
     if (row) { m.remove(); return switchBranch(d, row.dataset.branch); }
     const act = e.target.closest('[data-act]');
-    if (act) { m.remove(); return runBranchAction(act.dataset.act, d); }
+    if (act) { m.remove(); return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d); }
   };
   search.oninput = paint;
   paint();
+  branchPr(d).then(r => { prRow = r; paint(); });
   setTimeout(() => search.focus(), 0);
 }
 window.leeBranchMenu = leeBranchMenu;
+
+/* ------------------------------------------------------------------ diverged */
+// `pull` is --ff-only, so a diverged branch had nowhere to go. Every way out, rehearsed.
+async function showSyncPlan(d) {
+  try {
+    const p = await api(gitUrl('/git/sync-plan', {fetch: 1}));
+    if (!p.upstream) return status(`${p.branch} has no upstream — publish it first`, 'err');
+    if (!p.behind) return status(p.ahead ? `${p.ahead} ahead, nothing to pull` : 'already up to date', 'ok');
+    const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
+    // Only `merge` and `rebase` are rehearsed, so only they carry `conflicts`; none carries a name.
+    const SYNC_LABEL = {'fast-forward': 'Fast-forward', merge: 'Merge', rebase: 'Rebase',
+                        reset: 'Reset to the upstream'};
+    const why = o => {
+      const c = o.conflicts || [];
+      return c.length
+        ? `${c.length} file${c.length === 1 ? '' : 's'} conflict · ${c.slice(0, 4).map(esc).join(' · ')}${o.note ? ' · ' + esc(o.note) : ''}`
+        : o.note ? esc(o.note) : 'nothing conflicts in the rehearsal';
+    };
+    const row = o => `<label class="lee-syncopt${o.available ? '' : ' off'}${o.destructive ? ' warn' : ''}">` +
+      `<input type="radio" name="how" value="${o.op}"${o.op === p.recommended ? ' checked' : ''}${o.available ? '' : ' disabled'}>` +
+      `<span><strong>${esc(SYNC_LABEL[o.op] || o.op)}</strong><span class="sub">${why(o)}</span></span></label>`;
+    const m = modal(`<div class="lee-mhead">Sync ${esc(p.branch)}<span class="sub">${p.ahead} ahead · ${p.behind} behind ${esc(p.upstream)}</span></div>` +
+      `<div class="lee-git-merge-preview"><header><strong>${p.relation === 'diverged' ? 'The branches have diverged' : 'Behind the upstream'}</strong>` +
+      `<span>${p.ours.length} commit${p.ours.length === 1 ? '' : 's'} of yours · ${p.theirs.length} of theirs</span></header>${dirty}` +
+      `<div class="lee-syncopts">${p.options.map(row).join('')}</div></div>` +
+      `<div class="lee-mfoot"><button class="lee-btn go" data-sync>sync</button><button class="lee-btn" data-close>cancel</button></div>`);
+    $('[data-close]', m).onclick = () => m.remove();
+    $('[data-sync]', m).onclick = async () => {
+      const how = $('input[name=how]:checked', m)?.value; if (!how) return;
+      const o = p.options.find(x => x.op === how);
+      if (o.destructive && !await confirmDialog(`discard ${p.branch}`, `${o.note || 'This moves the branch to ' + p.upstream}. There is no way back to these commits from the branch.`, 'discard')) return;
+      m.remove();
+      const next = await branchAct('sync', {how});
+      if ((next.changes || []).some(x => x.conflicted)) showConflictCenter();
+    };
+  } catch (e) { leeFail('git', 'sync', e); }
+}
+window.showSyncPlan = showSyncPlan;
 
 /* ------------------------------------------------------------ fetch/pull/push */
 async function leeGitQuick(op) {
@@ -189,7 +245,7 @@ async function leeGitQuick(op) {
   try {
     // Push is the one that needs to know where it stands: an unpublished branch has nowhere
     // to push to, and saying "nothing to push" would be the wrong half of the truth.
-    const publish = op === 'push' && !(gitUI.snapshot || await api(gitUrl('/git/info'))).upstream;
+    const publish = op === 'push' && !(gitUI.snapshot || await gitInfo(gitUrl('/git/info'))).upstream;
     await gitDo(op, op === 'push' ? {publish} : {});
     refreshScmIfOpen();
   } catch (_) { /* gitDo already logged it, showed the log, and said so in the status line */ }

@@ -25,6 +25,9 @@ const lee = {
   // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
   // path->name map: two selections in one file are two contexts, not one key overwriting itself.
   agentSelections: [],
+  // Vault documents and sections queued for the next turn. A vault ref is not a path, so it
+  // cannot live in `agentAttachments`; `ref` -> {vault, shelf, doc, title} keyed the same way.
+  vaultRefs: new Map(),
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
@@ -407,6 +410,23 @@ function resolveMarkdownImages(el) {
   });
 }
 
+// A feed item ends in `[url](url)`, and a bare href navigates whatever is showing it. In the
+// browser that loses the IDE; in the desktop webview there is no back button to come home with.
+// `openWebpage` puts the page in a tab -- the CDP Chrome the desktop app already drives, or a
+// browser tab where there is no Chrome to drive.
+function routeMarkdownLinks(el) {
+  $$('a[href]', el).forEach(a => {
+    const href = a.getAttribute('href') || '';
+    if (!/^https?:/i.test(href) || a.dataset.leeLink) return;
+    a.dataset.leeLink = '1'; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.addEventListener('click', e => {
+      if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // the browser's to handle
+      e.preventDefault(); e.stopPropagation();
+      openWebpage(href);
+    });
+  });
+}
+
 function renderMarkdown(el, text, allowRaw = false, onRender = null) {
   if (!el) return;
   el.dataset.markdown = String(text || '');
@@ -430,7 +450,7 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
       el._leeCodeFrame = requestAnimationFrame(() => {
         el._leeCodeFrame = 0;
         if (onRender) try { onRender(el); } catch (e) { console.warn('Leela markdown annotation:', e); }
-        resolveMarkdownImages(el);
+        resolveMarkdownImages(el); routeMarkdownLinks(el);
         upgradePortableToolMarkdown(el); enhanceCodeBlocks(el); addMarkdownCellAction(el);
       });
     } catch (e) {
