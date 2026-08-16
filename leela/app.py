@@ -1721,11 +1721,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             return ifnone(first(r['value'] for r in rows
                                 if (s := _spec(r['value'])) and s.model_id == spec.model_id), current)
         # The routed jobs with no field of their own, reported chosen or not.
-        jobs = {}
-        if ws._ai is not None:
-            from .agent.core import JOBS
-            jobs = {j: _name(f'{j} model', lambda j=j: ws.ai.routing.name_for(j), '')
-                    for j in JOBS if j not in ('turn', 'completion')}
+        from .agent.core import JOBS, Routing
+        routing = ws.ai.routing if ws._ai is not None else Routing(turn=agent)
+        if ws._ai is None: routing.policy.update(ws.job_models)
+        jobs = {j: _name(f'{j} model', lambda j=j: routing.name_for(j), '')
+                for j in JOBS if j not in ('turn', 'completion')}
         return {'models': mark_models(rows), 'saved':saved, 'notes': notes,
                 'auth': _try('auth', auth_status, {}) or {}, 'runtimes': _try('runtimes', runtimes, []) or [],
                 'jobs': jobs,

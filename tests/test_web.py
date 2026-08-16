@@ -1670,6 +1670,8 @@ def test_the_jobs_without_a_control_of_their_own_are_still_choosable(tmp_path):
     path = tmp_path/'workspace.json'
     ws = Workspace(roots=[]); ws._state_path = path
     with TestClient(ide_app(ws)) as client:
+        fresh = client.get('/agent/models').json()['jobs']
+        assert 'subagent' in fresh and 'summary' in fresh and ws._ai is None
         assert client.post('/agent/model', json={'target': 'subagent', 'model': 'gemma-e2b'}).json()['ok']
         refused = client.post('/agent/model', json={'target': 'nonsense', 'model': 'gemma-e2b'}).json()
         assert refused['ok'] is False and 'nonsense' in refused['error']
