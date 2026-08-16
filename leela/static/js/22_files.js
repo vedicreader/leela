@@ -138,10 +138,18 @@ async function refreshGitTreeMarks() {
 
 let fsWatchTimer = null, fsWatchSeen = [], fsWatchSince = 0;
 const FS_DEBOUNCE = 250, FS_MAX_WAIT = 1000, FS_MAX_SEEN = 2000;
+// Too many changes to name, so nothing is named: redraw rather than patch.
+function resyncFiles() {
+  clearTimeout(fsWatchTimer); fsWatchSeen = []; fsWatchSince = 0;
+  refreshFileTree(undefined, false).catch(() => {});
+  refreshGitTreeMarks(); watchOpenFile();
+}
 function watchFiles() {
   const es = new EventSource('/fs/events');
   es.addEventListener('changed', e => {
-    try { fsWatchSeen.push(...JSON.parse(e.data).paths); } catch (_) { return; }
+    let d; try { d = JSON.parse(e.data); } catch (_) { return; }
+    if (d.resync) return resyncFiles();
+    fsWatchSeen.push(...d.paths);
     // A build writes without pause. A timer that only resets never fires.
     if (fsWatchSeen.length > FS_MAX_SEEN) fsWatchSeen = fsWatchSeen.slice(-FS_MAX_SEEN);
     if (!fsWatchSince) fsWatchSince = performance.now();

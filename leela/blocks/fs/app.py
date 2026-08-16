@@ -41,7 +41,9 @@ def connect(app, ctx):
         async def events():
             q = ctx.fs_watch.subscribe()   # a client that never iterates this never runs the finally
             try:
-                while True: yield sse('changed', {'paths': await q.get()})
+                while True:
+                    paths, resync = await q.get()
+                    yield sse('changed', {'paths': paths, 'resync': resync})
             finally: ctx.fs_watch.unsubscribe(q)
         return StreamingResponse(events(), media_type='text/event-stream',
             headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})

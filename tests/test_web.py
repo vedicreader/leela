@@ -2084,7 +2084,7 @@ def test_the_tree_hears_about_a_change_leela_did_not_make(tmp_path):
             (tmp_path/'node_modules'/'junk.js').write_text('1\n')
             with pytest.raises(asyncio.TimeoutError): await asyncio.wait_for(q.get(), .6)
             (tmp_path/'b.py').write_text('y = 2\n')
-            return await asyncio.wait_for(q.get(), 5)
+            return (await asyncio.wait_for(q.get(), 5))[0]
         finally: w.close()
     paths = asyncio.run(run())
     assert any(p.endswith('b.py') for p in paths)
@@ -2106,7 +2106,7 @@ def test_the_last_reader_leaving_does_not_stall_the_loop_and_the_next_one_is_wat
         try:
             await asyncio.sleep(.3)
             (tmp_path/'c.py').write_text('z = 3\n')
-            return spent, first, w.thread, await asyncio.wait_for(second.get(), 5)
+            return spent, first, w.thread, (await asyncio.wait_for(second.get(), 5))[0]
         finally: w.close()
     spent, first, second, paths = asyncio.run(run())
     assert spent < .2, f'the last tab closing blocked the loop for {spent:.2f}s'
@@ -2131,7 +2131,7 @@ def test_a_folder_opened_after_boot_is_watched_too(tmp_path):
         await asyncio.sleep(.5)
         while not q.empty(): q.get_nowait()
         (b/'new.py').write_text('x = 1\n')
-        return await asyncio.wait_for(q.get(), 5)
+        return (await asyncio.wait_for(q.get(), 5))[0]
     try: paths = asyncio.run(run())
     finally: ws.fs_watch.close()
     assert any('new.py' in p for p in paths), 'the folder opened after boot is watched'
@@ -2158,3 +2158,56 @@ def test_shutdown_stops_the_watcher_thread(tmp_path):
     asyncio.run(run())
     asyncio.run(ws.shutdown())
     assert ws.fs_watch.thread is None, 'shutdown owns the join'
+
+
+def test_replacing_the_watcher_does_not_wait_for_the_old_thread(tmp_path):
+    "`start` calls `close`, and a join on the event loop freezes every socket in the process."
+    import asyncio
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher
+    async def run():
+        w = Watcher(Sandbox([tmp_path]))
+        w.subscribe()
+        await asyncio.sleep(.3)
+        old = w.thread
+        w.close(wait=False)
+        return old, old.is_alive()
+    old, running = asyncio.run(run())
+    old.join(5)
+    assert running, 'the replacement must not wait for the old thread to notice'
+    assert not old.is_alive(), 'and it still stops'
+
+def test_a_batch_too_big_to_send_asks_for_a_resync_instead_of_dropping_it(tmp_path):
+    """Batches are deltas, not snapshots, so a truncated or dropped one is lost for good: the
+    tree keeps showing files that are gone until something unrelated happens to touch it.
+    """
+    import asyncio
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher, MAX_BATCH
+    async def run():
+        w = Watcher(Sandbox([tmp_path]))
+        q, out = w.subscribe(), []
+        w._push([f'{tmp_path}/f{i}.py' for i in range(MAX_BATCH + 5)])
+        await asyncio.sleep(.05)
+        out.append(q.get_nowait())
+        for _ in range(q.maxsize + 3): w._push([f'{tmp_path}/x.py'])
+        await asyncio.sleep(.05)
+        while not q.empty(): out.append(q.get_nowait())
+        w.close()
+        return out
+    batches = asyncio.run(run())
+    assert batches[0] == ([], True), 'too many paths to carry is a resync, not a truncation'
+    assert ([], True) in batches[1:], 'a full queue is a resync too'
+
+def test_the_event_stream_carries_the_resync_flag(tmp_path):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        pass
+    src = (ROOT/'leela'/'blocks'/'fs'/'app.py').read_text()
+    assert "'resync': resync" in src, 'the client cannot ask for a full refresh it is never told about'
+    js = (ROOT/'leela'/'static'/'lee-ide.js').read_text()
+    watch = js[js.index('function resyncFiles()'):js.index('window.watchFiles')]
+    assert 'd.resync' in watch and 'refreshFileTree' in watch, 'and it redraws the whole tree when told'

@@ -38,18 +38,19 @@ class Watcher:
         try: loop = asyncio.get_running_loop()
         except RuntimeError: loop = self.loop
         if loop is None: return
-        self.close()
+        self.close(wait=False)
         if not roots: return
         self.roots, self.loop, self.stop = roots, loop, threading.Event()
         self.thread = threading.Thread(target=self._run, args=(roots, self.stop), daemon=True,
                                        name='leela-fs-watch')
         self.thread.start()
-    def close(self):
-        # The notify thread is Rust. One still running at interpreter teardown segfaults.
+    def close(self, wait=True):
+        # The notify thread is Rust: one alive at interpreter teardown segfaults. Teardown joins.
+        # A replacement does not, and the two overlap until the old one notices `stop`.
         thread, stop = self.thread, self.stop
         self.thread = self.stop = None
         if stop: stop.set()
-        if thread and thread is not threading.current_thread(): thread.join(timeout=WAIT)
+        if wait and thread and thread is not threading.current_thread(): thread.join(timeout=WAIT)
     def _run(self, roots, stop):
         try: from watchfiles import watch
         except ImportError: return
@@ -57,11 +58,15 @@ class Watcher:
         for batch in watch(*roots, stop_event=stop, watch_filter=keep, debounce=self.step,
                            rust_timeout=RUST_TIMEOUT):
             if stop.is_set(): return
-            try: self._push(sorted({p for _change, p in batch})[:MAX_BATCH])
+            try: self._push(sorted({p for _change, p in batch}))
             except RuntimeError: return                      # the loop closed under us
-    def _push(self, paths):
-        for q in list(self.subs): self.loop.call_soon_threadsafe(self._offer, q, paths)
+    def _push(self, paths, resync=False):
+        # A batch is a delta, so one lost is lost for good. Too many to carry is a redraw instead.
+        if len(paths) > MAX_BATCH: paths, resync = [], True
+        for q in list(self.subs): self.loop.call_soon_threadsafe(self._offer, q, paths, resync)
     @staticmethod
-    def _offer(q, paths):
-        # A browser that stopped reading must not hold the watcher. The next batch refreshes it.
-        if not q.full(): q.put_nowait(paths)
+    def _offer(q, paths, resync=False):
+        if q.full():
+            while not q.empty(): q.get_nowait()
+            paths, resync = [], True
+        q.put_nowait((paths, resync))
