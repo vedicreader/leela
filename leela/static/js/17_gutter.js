@@ -179,7 +179,7 @@ async function commitChangeHunk(path, h, message) {
    * this stages the hunk and commits -- which means anything already staged rides along. Rather
    * than quietly widening a one-hunk commit, or quietly unstaging work someone deliberately
    * staged, the choice is put to whoever is looking at it. */
-  const snapshot = gitUI.snapshot || await api('/git/info').catch(() => null);
+  const snapshot = gitUI.snapshot || await gitInfoOrNull();
   const staged = (snapshot?.changes || []).filter(c => c.staged && c.path !== path).map(c => c.path);
   if (staged.length) {
     const shown = staged.slice(0, 3).join(', ') + (staged.length > 3 ? `, and ${staged.length - 3} more` : '');

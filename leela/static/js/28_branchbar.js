@@ -144,7 +144,7 @@ function runBranchAction(id, d) {
 
 async function leeBranchMenu(anchor) {
   let d;
-  try { d = await api(gitUrl('/git/info')); }
+  try { d = await gitInfo(gitUrl('/git/info')); }
   catch (e) { return leeFail('git', 'branches', e); }
   const recent = recentBranches(d.root);
   let search = null;
@@ -208,12 +208,18 @@ async function showSyncPlan(d) {
     if (!p.upstream) return status(`${p.branch} has no upstream — publish it first`, 'err');
     if (!p.behind) return status(p.ahead ? `${p.ahead} ahead, nothing to pull` : 'already up to date', 'ok');
     const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
-    const why = o => o.conflicts.length
-      ? `${o.conflicts.length} file${o.conflicts.length === 1 ? '' : 's'} conflict · ${o.conflicts.slice(0, 4).map(esc).join(' · ')}${o.note ? ' · ' + esc(o.note) : ''}`
-      : o.note ? esc(o.note) : 'nothing conflicts in the rehearsal';
+    // Only `merge` and `rebase` are rehearsed, so only they carry `conflicts`; none carries a name.
+    const SYNC_LABEL = {'fast-forward': 'Fast-forward', merge: 'Merge', rebase: 'Rebase',
+                        reset: 'Reset to the upstream'};
+    const why = o => {
+      const c = o.conflicts || [];
+      return c.length
+        ? `${c.length} file${c.length === 1 ? '' : 's'} conflict · ${c.slice(0, 4).map(esc).join(' · ')}${o.note ? ' · ' + esc(o.note) : ''}`
+        : o.note ? esc(o.note) : 'nothing conflicts in the rehearsal';
+    };
     const row = o => `<label class="lee-syncopt${o.available ? '' : ' off'}${o.destructive ? ' warn' : ''}">` +
       `<input type="radio" name="how" value="${o.op}"${o.op === p.recommended ? ' checked' : ''}${o.available ? '' : ' disabled'}>` +
-      `<span><strong>${esc(o.label)}</strong><span class="sub">${why(o)}</span></span></label>`;
+      `<span><strong>${esc(SYNC_LABEL[o.op] || o.op)}</strong><span class="sub">${why(o)}</span></span></label>`;
     const m = modal(`<div class="lee-mhead">Sync ${esc(p.branch)}<span class="sub">${p.ahead} ahead · ${p.behind} behind ${esc(p.upstream)}</span></div>` +
       `<div class="lee-git-merge-preview"><header><strong>${p.relation === 'diverged' ? 'The branches have diverged' : 'Behind the upstream'}</strong>` +
       `<span>${p.ours.length} commit${p.ours.length === 1 ? '' : 's'} of yours · ${p.theirs.length} of theirs</span></header>${dirty}` +
@@ -239,7 +245,7 @@ async function leeGitQuick(op) {
   try {
     // Push is the one that needs to know where it stands: an unpublished branch has nowhere
     // to push to, and saying "nothing to push" would be the wrong half of the truth.
-    const publish = op === 'push' && !(gitUI.snapshot || await api(gitUrl('/git/info'))).upstream;
+    const publish = op === 'push' && !(gitUI.snapshot || await gitInfo(gitUrl('/git/info'))).upstream;
     await gitDo(op, op === 'push' ? {publish} : {});
     refreshScmIfOpen();
   } catch (_) { /* gitDo already logged it, showed the log, and said so in the status line */ }

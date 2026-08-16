@@ -19,7 +19,7 @@ Browser geometry uses local storage. File settings cover autosave, whitespace, f
 
 The gutter supports drag, run, insert, move, duplicate, copy, cut, paste, split, merge, type changes, and output clearing. Structural edits have notebook undo and redo.
 
-Each cell banner carries its position, kind, and line count. The gutter's `[n]` is the execution count, which is neither: it is blank until the cell runs and renumbers on every rerun. Hovering the banner label reports the position out of the total, the character count, the last run's duration and output count, and the cell id. Clicking it copies the id.
+Each cell banner carries its position, kind, and line count. The gutter's `[n]` is the execution count, which is neither: it is blank until the cell runs and renumbers on every rerun. Hovering the label adds the character count, the last run's duration, and its output count. Clicking it copies the cell id.
 
 ## Runtime and debugging
 

@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 
 from ...core.web import fail, off_loop
-from ramabana.git import GitError, clone, clone_target
+from ramabana.git import GitError, clone, clone_target, repo_root
 from .git import GitRepo
 from .repos import RepoSet, clone_url, find_repos, repo_for
 
@@ -89,7 +89,13 @@ def connect(app, ctx):
         return GitRepo.at(repo_for(ctx.session, target))
     @rt('/git/info')
     async def git_info(repo: str = ''):
-        try: return await off_loop(lambda: repo_at(repo).info())
+        "`repo: False` rather than a 400: absence is one of the two answers this question has."
+        try:
+            target = repo_for(ctx.session, repo)
+            if repo_root(target) is None:
+                return {'ok': True, 'repo': False, 'root': '',
+                        'note': f'{Path(target).name or target} is not inside a Git repository'}
+            return dict(await off_loop(lambda: GitRepo.at(target).info()), repo=True)
         except Exception as e: return fail(e)
     @rt('/git/action')
     async def git_action(req):

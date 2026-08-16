@@ -1093,3 +1093,13 @@ def test_a_link_in_rendered_markdown_opens_a_tab_rather_than_taking_over_the_app
     assert 'openWebpage(' in block, 'the desktop app has a CDP Chrome to put the tab in'
     assert 'e.metaKey' in block, 'a modified click still belongs to the browser'
     assert 'routeMarkdownLinks(el)' in js, 'and every markdown surface goes through the one funnel'
+
+
+def test_boot_asks_for_a_pending_approval_once_rather_than_twice():
+    """`setInterval(pollApproval, 750)` waited 750ms before its first call, so boot polled once
+    eagerly. `approvalLoop` polls on entry, which left the eager call a duplicate request.
+    """
+    js = builder.OUT.read_text()
+    block = js[js.index('async function boot()'):js.index('const whenVisible')]
+    assert 'approvalLoop();' in block
+    assert 'pollApproval();' not in block, 'approvalLoop already polls before its first timeout'

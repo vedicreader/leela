@@ -5870,7 +5870,7 @@ async function refreshProjectPills() {
   try {
     // Bare, not `gitUrl`: the pill and the tree badges describe the repository the active tab
     // is in, so a panel pinned elsewhere must not repaint them.
-    const d = await api('/git/info');
+    const d = await gitInfo();
     const git = $('#gitpill'); if (!git) return;
     const n = (d.changes || []).length;
     git.textContent = `${d.branch}${n ? ' · ' + n : ''}`;
@@ -5881,6 +5881,18 @@ async function refreshProjectPills() {
   } catch (_) {
     const git = $('#gitpill'); if (git) { git.textContent = 'no git'; git.className = 'lee-branch-switcher'; }
   }
+}
+
+// `/git/info` answers 200 with `repo: false` outside a checkout. A surface that only works
+// inside one wants the throw it always had; chrome wants to go quiet.
+async function gitInfo(url = '/git/info') {
+  const d = await api(url);
+  if (d && d.repo === false) throw new Error(d.note || 'not inside a Git repository');
+  return d;
+}
+async function gitInfoOrNull(url = '/git/info') {
+  try { const d = await api(url); return d && d.repo === false ? null : d; }
+  catch (_) { return null; }
 }
 
 async function leeCwd() {
@@ -6133,7 +6145,7 @@ async function commitChangeHunk(path, h, message) {
    * this stages the hunk and commits -- which means anything already staged rides along. Rather
    * than quietly widening a one-hunk commit, or quietly unstaging work someone deliberately
    * staged, the choice is put to whoever is looking at it. */
-  const snapshot = gitUI.snapshot || await api('/git/info').catch(() => null);
+  const snapshot = gitUI.snapshot || await gitInfoOrNull();
   const staged = (snapshot?.changes || []).filter(c => c.staged && c.path !== path).map(c => c.path);
   if (staged.length) {
     const shown = staged.slice(0, 3).join(', ') + (staged.length > 3 ? `, and ${staged.length - 3} more` : '');
@@ -7188,7 +7200,7 @@ async function renderGitPanel(snapshot = null) {
   }
   if (!snapshot && !gitUI.snapshot) host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading repository</small></div>';
   let d = snapshot || gitUI.snapshot;
-  try { if (!d) d = await api(gitUrl('/git/info')); }
+  try { if (!d) d = await gitInfo(gitUrl('/git/info')); }
   catch (e) {
     // Still draw the nav: a workspace whose active folder is not a checkout can have five
     // other repositories in it, and Repos is how you reach them.
@@ -7744,7 +7756,7 @@ function blameSelectionRange() {
 async function leeBlame() {
   if (!lee.path) return status('open a file to blame it', 'err');
   let root = gitUI.snapshot?.root;
-  if (!root) { try { root = (await api(gitUrl('/git/info'))).root; } catch (e) { return leeFail('git', 'blame', e); } }
+  if (!root) { try { root = (await gitInfo(gitUrl('/git/info'))).root; } catch (e) { return leeFail('git', 'blame', e); } }
   showGitBlame(root, blameRelative(root, lee.path), blameSelectionRange());
 }
 window.leeBlame = leeBlame;
@@ -9179,7 +9191,8 @@ async function patchTree(paths) {
   await Promise.all([...want].map(patchTreeDir));
 }
 async function refreshGitTreeMarks() {
-  try { paintGitTree(await api(gitUrl('/git/info'))); } catch (_) {}
+  const d = await gitInfoOrNull(gitUrl('/git/info'));
+  if (d) paintGitTree(d);
 }
 
 let fsWatchTimer = null, fsWatchSeen = [], fsWatchSince = 0;
@@ -9672,7 +9685,6 @@ async function boot() {
   leeVars();
   setInterval(whenVisible(leeVars), 2500);   // the kernel's own inspector is the source of truth
   setInterval(watchOpenFile, 10000);   // a backstop: /fs/events is what actually reports a write
-  pollApproval();
   approvalLoop();                       // catches Rishi approvals raised outside an agent SSE stream
   applyTheme(readTheme());   // also rewrites a pre-family value into `family:mode`
   // The first paint is server-rendered, so the welcome screen is already on the page when
@@ -10204,7 +10216,7 @@ function runBranchAction(id, d) {
 
 async function leeBranchMenu(anchor) {
   let d;
-  try { d = await api(gitUrl('/git/info')); }
+  try { d = await gitInfo(gitUrl('/git/info')); }
   catch (e) { return leeFail('git', 'branches', e); }
   const recent = recentBranches(d.root);
   let search = null;
@@ -10268,12 +10280,18 @@ async function showSyncPlan(d) {
     if (!p.upstream) return status(`${p.branch} has no upstream — publish it first`, 'err');
     if (!p.behind) return status(p.ahead ? `${p.ahead} ahead, nothing to pull` : 'already up to date', 'ok');
     const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
-    const why = o => o.conflicts.length
-      ? `${o.conflicts.length} file${o.conflicts.length === 1 ? '' : 's'} conflict · ${o.conflicts.slice(0, 4).map(esc).join(' · ')}${o.note ? ' · ' + esc(o.note) : ''}`
-      : o.note ? esc(o.note) : 'nothing conflicts in the rehearsal';
+    // Only `merge` and `rebase` are rehearsed, so only they carry `conflicts`; none carries a name.
+    const SYNC_LABEL = {'fast-forward': 'Fast-forward', merge: 'Merge', rebase: 'Rebase',
+                        reset: 'Reset to the upstream'};
+    const why = o => {
+      const c = o.conflicts || [];
+      return c.length
+        ? `${c.length} file${c.length === 1 ? '' : 's'} conflict · ${c.slice(0, 4).map(esc).join(' · ')}${o.note ? ' · ' + esc(o.note) : ''}`
+        : o.note ? esc(o.note) : 'nothing conflicts in the rehearsal';
+    };
     const row = o => `<label class="lee-syncopt${o.available ? '' : ' off'}${o.destructive ? ' warn' : ''}">` +
       `<input type="radio" name="how" value="${o.op}"${o.op === p.recommended ? ' checked' : ''}${o.available ? '' : ' disabled'}>` +
-      `<span><strong>${esc(o.label)}</strong><span class="sub">${why(o)}</span></span></label>`;
+      `<span><strong>${esc(SYNC_LABEL[o.op] || o.op)}</strong><span class="sub">${why(o)}</span></span></label>`;
     const m = modal(`<div class="lee-mhead">Sync ${esc(p.branch)}<span class="sub">${p.ahead} ahead · ${p.behind} behind ${esc(p.upstream)}</span></div>` +
       `<div class="lee-git-merge-preview"><header><strong>${p.relation === 'diverged' ? 'The branches have diverged' : 'Behind the upstream'}</strong>` +
       `<span>${p.ours.length} commit${p.ours.length === 1 ? '' : 's'} of yours · ${p.theirs.length} of theirs</span></header>${dirty}` +
@@ -10299,7 +10317,7 @@ async function leeGitQuick(op) {
   try {
     // Push is the one that needs to know where it stands: an unpublished branch has nowhere
     // to push to, and saying "nothing to push" would be the wrong half of the truth.
-    const publish = op === 'push' && !(gitUI.snapshot || await api(gitUrl('/git/info'))).upstream;
+    const publish = op === 'push' && !(gitUI.snapshot || await gitInfo(gitUrl('/git/info'))).upstream;
     await gitDo(op, op === 'push' ? {publish} : {});
     refreshScmIfOpen();
   } catch (_) { /* gitDo already logged it, showed the log, and said so in the status line */ }

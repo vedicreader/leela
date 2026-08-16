@@ -34,9 +34,13 @@ class Watcher:
         roots = tuple(sorted(str(r) for r in self.fs.roots))
         running = self.thread and self.thread.is_alive() and self.stop and not self.stop.is_set()
         if running and not (restart or roots != self.roots): return
+        # A folder opens through a sync route: no loop here, but `subscribe` captured one.
+        try: loop = asyncio.get_running_loop()
+        except RuntimeError: loop = self.loop
+        if loop is None: return
         self.close()
         if not roots: return
-        self.roots, self.loop, self.stop = roots, asyncio.get_running_loop(), threading.Event()
+        self.roots, self.loop, self.stop = roots, loop, threading.Event()
         self.thread = threading.Thread(target=self._run, args=(roots, self.stop), daemon=True,
                                        name='leela-fs-watch')
         self.thread.start()

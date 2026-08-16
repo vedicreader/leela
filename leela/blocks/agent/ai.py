@@ -13,7 +13,7 @@ from ...agent.spec import SpecHost
 from ..vault.jobs import cadence
 from .video import VideoJobs, video_available, video_tools
 
-from ramabana.git import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS
+from ramabana.git import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS   # re-exported: leela names them
 
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
 FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
@@ -469,11 +469,7 @@ def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
     return [search_all]
 
 def _news_tools(host, mx=MAX_TOOL_CHARS):
-    """The feeds and the loaded specs, as tools.
-
-    Feed items are on the `news` shelf and the memory tools read the main one, so the feeds
-    answered a search by luck and `memory_read` cannot open an item at all.
-    """
+    "The feeds and the loaded specs, as tools. The memory tools read the main shelf; feeds are on `news`."
     from ..vault.news import NEWS_SHELF, fetch_feed, feed_title, news_rows, poll_feeds
     def feeds():
         f = getattr(host.ws, 'feeds', None)

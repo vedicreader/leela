@@ -39,7 +39,6 @@ async function boot() {
   leeVars();
   setInterval(whenVisible(leeVars), 2500);   // the kernel's own inspector is the source of truth
   setInterval(watchOpenFile, 10000);   // a backstop: /fs/events is what actually reports a write
-  pollApproval();
   approvalLoop();                       // catches Rishi approvals raised outside an agent SSE stream
   applyTheme(readTheme());   // also rewrites a pre-family value into `family:mode`
   // The first paint is server-rendered, so the welcome screen is already on the page when

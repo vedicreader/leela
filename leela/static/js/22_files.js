@@ -132,7 +132,8 @@ async function patchTree(paths) {
   await Promise.all([...want].map(patchTreeDir));
 }
 async function refreshGitTreeMarks() {
-  try { paintGitTree(await api(gitUrl('/git/info'))); } catch (_) {}
+  const d = await gitInfoOrNull(gitUrl('/git/info'));
+  if (d) paintGitTree(d);
 }
 
 let fsWatchTimer = null, fsWatchSeen = [], fsWatchSince = 0;

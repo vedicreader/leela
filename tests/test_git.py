@@ -1453,3 +1453,110 @@ def test_the_agent_can_rehearse_a_divergence_without_being_able_to_run_it(repo_g
     assert 'review' not in preview and preview['conflict_likely'] is True
     assert preview['stops_at']['subject'] == 'ours'
     assert set(GIT_READ_TOOLS) & set(tools) == set(GIT_READ_TOOLS)
+
+
+def test_a_folder_without_a_repository_is_an_answer_not_an_error(tmp_path):
+    """Every boot in a non-repo folder logged a console error, because "there is no repository
+    here" came back as HTTP 400 -- which also made a real 400 from this route indistinguishable.
+    """
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    plain = tmp_path/'notes'; plain.mkdir(); (plain/'a.md').write_text('# a\n')
+    with TestClient(ide_app(Workspace(roots=[plain]))) as client:
+        r = client.get('/git/info')
+        assert r.status_code == 200, 'a folder with no git in it is not a client error'
+        assert r.json()['repo'] is False and 'not inside a Git repository' in r.json()['note']
+
+def test_a_folder_with_a_repository_says_so_beside_the_branch(tmp_path):
+    "The flag has to be positive too, or every real checkout reads as repo-less."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    with TestClient(ide_app(Workspace(roots=[_repo(tmp_path/'r', 'main')]))) as client:
+        d = client.get('/git/info').json()
+        assert d['repo'] is True and d['branch'] == 'main'
+
+def test_a_real_git_failure_is_still_a_400(tmp_path):
+    "Only absence is an answer; a broken call stays an error the client can report."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    with TestClient(ide_app(Workspace(roots=[_repo(tmp_path/'r', 'main')]))) as client:
+        assert client.get('/git/info', params={'repo': '/nowhere/at/all'}).status_code == 400
+
+
+def test_no_checkout_is_read_through_one_helper_rather_than_six_catches():
+    "Six call sites relied on the throw; one of them has to keep it and five have to not."
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'tools'))
+    import build_ide_js as builder
+    js = builder.OUT.read_text()
+    block = js[js.index('async function gitInfo('):js.index('async function leeCwd')]
+    assert "d.repo === false" in block, 'the flag is what says there is no checkout'
+    assert 'throw new Error' in block, 'a surface that only works inside a repo still says so'
+    assert 'gitInfoOrNull' in block, 'and one that decorates the chrome just goes quiet'
+    for caller in ('await gitInfoOrNull(gitUrl', 'gitUI.snapshot || await gitInfoOrNull',
+                   'await gitInfo(gitUrl'):
+        assert caller in js, caller
+    assert "await api('/git/info')" not in js, 'no caller reaches the route without the guard'
+
+
+def test_the_sync_dialog_survives_the_options_that_carry_no_conflicts(tmp_path):
+    """`divergence` puts `conflicts` on `merge` and `rebase` only, and no option carries a
+    `label`. Reading either unguarded killed the dialog on the first option, every time.
+    """
+    import sys
+    from pathlib import Path as _P
+    sys.path.insert(0, str(_P(__file__).resolve().parents[1]/'tools'))
+    import build_ide_js as builder
+    from ramabana.git import GitRepo
+    a = _repo(tmp_path/'up', 'main')
+    git(a, 'clone', str(a), str(tmp_path/'down'))
+    down = tmp_path/'down'
+    (down/'mine.txt').write_text('mine\n'); git(down, 'add', '.'); git(down, 'commit', '-m', 'mine')
+    (a/'theirs.txt').write_text('theirs\n'); git(a, 'add', '.'); git(a, 'commit', '-m', 'theirs')
+    git(down, 'fetch', 'origin')
+    plan = GitRepo.at(down).divergence()
+    assert plan['relation'] == 'diverged'
+    bare = [o['op'] for o in plan['options'] if 'conflicts' not in o]
+    assert bare, 'precondition: some options carry no conflicts list'
+    assert not [o for o in plan['options'] if 'label' in o], 'precondition: none carry a label'
+    js = builder.OUT.read_text()
+    block = js[js.index('async function showSyncPlan'):js.index('window.showSyncPlan = showSyncPlan')]
+    assert 'o.conflicts || []' in block, 'an option without a conflicts list must still render'
+    assert 'esc(o.label)' not in block, 'the server sends no label; the row would be blank'
+
+
+def test_the_pull_request_panel_calls_github_the_way_ghapi_binds_it(monkeypatch, tmp_path):
+    """`GhApi(owner=, repo=)` fills `/repos/{owner}/{repo}/...` itself, so passing them again
+    positionally bound them to *query* parameters: `pulls.list` filtered on a base branch named
+    after the owner and `compare_commits` dropped its fourth argument.
+    """
+    import sys, types
+    from leela.blocks.git import hub
+    seen = {}
+    class Group:
+        def __init__(self, name): self.name = name
+        def __getattr__(self, op):
+            def go(*a, **kw):
+                seen[f'{self.name}.{op}'] = (a, kw)
+                if op == 'list': return [{'number': 7, 'title': 'T', 'html_url': 'u', 'draft': False,
+                                          'base': {'ref': 'main'}, 'head': {'sha': 'deadbeef'}}]
+                if op == 'compare_commits': return {'behind_by': 2, 'ahead_by': 1}
+                return {'check_runs': [{'name': 'ci', 'conclusion': 'success', 'status': 'completed'}]}
+            return go
+    api = types.SimpleNamespace(pulls=Group('pulls'), repos=Group('repos'), checks=Group('checks'))
+    fake = types.ModuleType('gheasy.core')
+    fake._gh_api = lambda token=None, path='.': ('vedicreader', 'leela', api)
+    fake._get_repo_slug = lambda path='.': ('vedicreader', 'leela')
+    fake._resolve_gh_token = lambda: 'tok'
+    monkeypatch.setitem(sys.modules, 'gheasy.core', fake)
+    monkeypatch.setattr(hub, 'hub_available', lambda: True)
+
+    out = hub.pr_context.__wrapped__(str(tmp_path), 'my-branch')
+    assert out['pr'], out.get('note')
+    assert out['pr']['number'] == 7 and out['pr']['behind_base'] == 2
+
+    assert seen['pulls.list'][0] == (), 'owner and repo are already bound to the client'
+    assert seen['pulls.list'][1]['head'] == 'vedicreader:my-branch'
+    assert seen['repos.compare_commits'][0] == ('main...my-branch',), 'one basehead, not four args'
+    assert seen['checks.list_for_ref'][0] == ('deadbeef',)

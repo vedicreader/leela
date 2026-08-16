@@ -996,7 +996,7 @@ def test_source_control_notices_an_edit_and_not_only_a_new_file():
     save = JS[JS.index('async function saveTab'):JS.index('async function saveAllTabs')]
     assert 'refreshProjectPills' in save
     pills = JS[JS.index('async function refreshProjectPills'):JS.index('function projectRepo')]
-    assert 'noticeGitState(d)' in pills and "api('/git/info')" in pills
+    assert 'noticeGitState(d)' in pills and 'gitInfo()' in pills
     assert "watchFiles()" in JS, 'and an external change lands by push, not by poll'
 
 def test_a_pushed_change_redraws_the_nearest_open_folder_and_cannot_be_starved():
@@ -2079,6 +2079,8 @@ def test_the_tree_hears_about_a_change_leela_did_not_make(tmp_path):
         q = w.subscribe()
         try:
             await asyncio.sleep(.4)
+            # macOS replays the setup mkdir as a batch of its own once the watch settles.
+            while not q.empty(): q.get_nowait()
             (tmp_path/'node_modules'/'junk.js').write_text('1\n')
             with pytest.raises(asyncio.TimeoutError): await asyncio.wait_for(q.get(), .6)
             (tmp_path/'b.py').write_text('y = 2\n')
@@ -2110,3 +2112,49 @@ def test_the_last_reader_leaving_does_not_stall_the_loop_and_the_next_one_is_wat
     assert spent < .2, f'the last tab closing blocked the loop for {spent:.2f}s'
     assert second is not first, 'a stopping thread is not a running one'
     assert any(p.endswith('c.py') for p in paths), 'and the next reader is watched again'
+
+
+def test_a_folder_opened_after_boot_is_watched_too(tmp_path):
+    """`subscribe` was the only other caller of `start`, and it runs once per page load. Opening
+    a folder from the welcome screen left the watcher with the empty root set it booted with.
+    """
+    import asyncio
+    from leela.workspace import Workspace
+    a, b = tmp_path/'a', tmp_path/'b'
+    a.mkdir(); b.mkdir()
+    ws = Workspace(roots=[a])
+    async def run():
+        q = ws.fs_watch.subscribe()
+        await asyncio.sleep(.4)
+        while not q.empty(): q.get_nowait()
+        ws.add_root(b)
+        await asyncio.sleep(.5)
+        while not q.empty(): q.get_nowait()
+        (b/'new.py').write_text('x = 1\n')
+        return await asyncio.wait_for(q.get(), 5)
+    try: paths = asyncio.run(run())
+    finally: ws.fs_watch.close()
+    assert any('new.py' in p for p in paths), 'the folder opened after boot is watched'
+
+def test_opening_a_folder_off_the_event_loop_is_not_an_error(tmp_path):
+    "`/fs/add_root` is a sync route, so `add_root` runs in a threadpool with no running loop."
+    from leela.workspace import Workspace
+    a, b = tmp_path/'a', tmp_path/'b'
+    a.mkdir(); b.mkdir()
+    ws = Workspace(roots=[a])
+    ws.add_root(b)                      # no loop here, and none is needed
+    assert str(b) in [str(r) for r in ws.fs.roots]
+    ws.fs_watch.close()
+
+def test_shutdown_stops_the_watcher_thread(tmp_path):
+    "The module says a Rust thread alive at interpreter teardown segfaults; nothing stopped it."
+    import asyncio
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    async def run():
+        ws.fs_watch.subscribe()
+        await asyncio.sleep(.3)
+        assert ws.fs_watch.thread and ws.fs_watch.thread.is_alive()
+    asyncio.run(run())
+    asyncio.run(ws.shutdown())
+    assert ws.fs_watch.thread is None, 'shutdown owns the join'

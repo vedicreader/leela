@@ -213,7 +213,7 @@ async function refreshProjectPills() {
   try {
     // Bare, not `gitUrl`: the pill and the tree badges describe the repository the active tab
     // is in, so a panel pinned elsewhere must not repaint them.
-    const d = await api('/git/info');
+    const d = await gitInfo();
     const git = $('#gitpill'); if (!git) return;
     const n = (d.changes || []).length;
     git.textContent = `${d.branch}${n ? ' · ' + n : ''}`;
@@ -224,6 +224,18 @@ async function refreshProjectPills() {
   } catch (_) {
     const git = $('#gitpill'); if (git) { git.textContent = 'no git'; git.className = 'lee-branch-switcher'; }
   }
+}
+
+// `/git/info` answers 200 with `repo: false` outside a checkout. A surface that only works
+// inside one wants the throw it always had; chrome wants to go quiet.
+async function gitInfo(url = '/git/info') {
+  const d = await api(url);
+  if (d && d.repo === false) throw new Error(d.note || 'not inside a Git repository');
+  return d;
+}
+async function gitInfoOrNull(url = '/git/info') {
+  try { const d = await api(url); return d && d.repo === false ? null : d; }
+  catch (_) { return null; }
 }
 
 async function leeCwd() {

@@ -19,17 +19,15 @@ def hub_available():
     except ImportError: return False
 
 def _api(root):
-    "gheasy owns the token and the GhApi instance. This only asks it for one."
-    from gheasy.core import _gh_api, _get_repo_slug
-    slug = _get_repo_slug(root)
-    if not slug: raise GitError('this repository has no GitHub remote')
-    owner, _, name = str(slug).partition('/')
-    if not name: raise GitError(f'cannot read owner/name from {slug}')
-    return _gh_api(), owner, name
+    "gheasy owns the token and the client; `GhApi` binds owner and repo, so calls do not repeat them."
+    from gheasy.core import _gh_api, _resolve_gh_token
+    try: owner, name, api = _gh_api(token=_resolve_gh_token(), path=root)
+    except ValueError as e: raise GitError(f'this repository has no GitHub remote ({e})') from e
+    return api, owner, name
 
-def _checks(api, owner, name, sha):
+def _checks(api, sha):
     "Check runs for one commit, as counts and the names that are not green."
-    try: runs = api.checks.list_for_ref(owner, name, sha, per_page=100)['check_runs']
+    try: runs = api.checks.list_for_ref(sha, per_page=100)['check_runs']
     except Exception: return {}
     bad = [r['name'] for r in runs if r['conclusion'] not in (None, 'success', 'neutral', 'skipped')]
     return {'total': len(runs), 'failing': bad[:12],
@@ -41,15 +39,15 @@ def pr_context(root, branch):
     if not hub_available(): return {'available': False, 'note': MISSING}
     try:
         api, owner, name = _api(root)
-        prs = api.pulls.list(owner, name, head=f'{owner}:{branch}', state='open', per_page=5)
+        prs = api.pulls.list(head=f'{owner}:{branch}', state='open', per_page=5)
         pr = first(prs)
         if pr is None: return {'available': True, 'pr': None, 'note': f'no open pull request for {branch}'}
-        cmp = api.repos.compare_commits(owner, name, pr['base']['ref'], branch)
+        cmp = api.repos.compare_commits(f"{pr['base']['ref']}...{branch}")
         return {'available': True, 'note': '', 'pr': {
             'number': pr['number'], 'title': pr['title'], 'url': pr['html_url'],
             'base': pr['base']['ref'], 'draft': bool(pr.get('draft')),
             'mergeable_state': pr.get('mergeable_state') or '',
             'behind_base': cmp['behind_by'], 'ahead_of_base': cmp['ahead_by'],
-            'checks': _checks(api, owner, name, pr['head']['sha'])}}
+            'checks': _checks(api, pr['head']['sha'])}}
     except Exception as e:
         return {'available': True, 'pr': None, 'note': f'GitHub: {e}'}

@@ -756,7 +756,7 @@ async function renderGitPanel(snapshot = null) {
   }
   if (!snapshot && !gitUI.snapshot) host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading repository</small></div>';
   let d = snapshot || gitUI.snapshot;
-  try { if (!d) d = await api(gitUrl('/git/info')); }
+  try { if (!d) d = await gitInfo(gitUrl('/git/info')); }
   catch (e) {
     // Still draw the nav: a workspace whose active folder is not a checkout can have five
     // other repositories in it, and Repos is how you reach them.
@@ -1312,7 +1312,7 @@ function blameSelectionRange() {
 async function leeBlame() {
   if (!lee.path) return status('open a file to blame it', 'err');
   let root = gitUI.snapshot?.root;
-  if (!root) { try { root = (await api(gitUrl('/git/info'))).root; } catch (e) { return leeFail('git', 'blame', e); } }
+  if (!root) { try { root = (await gitInfo(gitUrl('/git/info'))).root; } catch (e) { return leeFail('git', 'blame', e); } }
   showGitBlame(root, blameRelative(root, lee.path), blameSelectionRange());
 }
 window.leeBlame = leeBlame;

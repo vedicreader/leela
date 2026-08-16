@@ -240,6 +240,7 @@ class Workspace:
             from .blocks.runtime.kernels import project_python
             if (py := project_python([r])): self.pool.choose(python=py)
         self._rebrief_agents()
+        self.fs_watch.start(restart=True)
         return r
     def drop_root(self, p):
         "Close a folder, and every tab that lived inside it."
@@ -247,6 +248,7 @@ class Workspace:
         self.tabs = self.tabs.filter(lambda t: not (t.path and Path(t.path).is_relative_to(r)))
         self.active = min(self.active, max(0, len(self.tabs)-1))
         self._rebrief_agents()
+        self.fs_watch.start(restart=True)
         return r
     @property
     def tab(self): return self.tabs[self.active] if self.tabs else None
@@ -745,6 +747,7 @@ class Workspace:
     async def shutdown(self):
         "Stop every kernel, dev server, terminal and model this workspace started."
         self.terms.close_all()
+        self.fs_watch.close()
         if self._ai is not None: self._ai.close()
         if self._inline_ai is not None: self._inline_ai.close()
         if self._lsp is not None: self._lsp.close()
