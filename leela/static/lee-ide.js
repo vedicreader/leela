@@ -62,8 +62,6 @@ function readEditorPrefs() {
       old.fontFamily = match || 'System monospace';
     }
     if (typeof old.wordWrap === 'boolean') old.wordWrap = old.wordWrap ? 'viewport' : 'off';
-    // Two renames of the same setting: the boolean it started as, and the name it had
-    // while it drew a picture of the text rather than marking up the scrollbar.
     if ('minimap' in old && !old.minimapMode) old.minimapMode = old.minimap ? 'always' : 'off';
     if (old.minimapMode && !old.overviewMode) old.overviewMode = old.minimapMode;
     if (old.minimapThreshold && !old.overviewThreshold) old.overviewThreshold = old.minimapThreshold;
@@ -115,9 +113,6 @@ async function editBreakpoint(path,line,view){const all=JSON.parse(localStorage.
   $('[data-remove]',m).onclick=()=>{const rows=(lee.breakpoints.get(path)||[]).filter(x=>x!==line);rememberBreakpoints(path,rows);delete all[`${path}:${line}`];localStorage.setItem('lee-breakpoint-details',JSON.stringify(all));LeeCM.setBreakpoints(view,rows);m.remove();};
   $('[data-save]',m).onclick=()=>{const rows=[...new Set([...(lee.breakpoints.get(path)||[]),line])].sort((a,b)=>a-b);rememberBreakpoints(path,rows);all[`${path}:${line}`]={condition:$('[data-condition]',m).value.trim(),hitCondition:$('[data-hit]',m).value.trim(),logMessage:$('[data-log]',m).value.trim()};localStorage.setItem('lee-breakpoint-details',JSON.stringify(all));LeeCM.setBreakpoints(view,rows);if(lee.directDebug)post('/debug/breakpoints',{path,breakpoints:detailedBreakpoints(path)});m.remove();};}
 
-/* Durable browser drafts. indexed-cache is intentionally not used here: it caches static
- * asset Blobs, while editor recovery needs keyed mutable records and atomic replacement.
- * Native IndexedDB is the smaller and more appropriate primitive. */
 const DRAFT_DB = 'leela-editor-drafts', DRAFT_STORE = 'drafts';
 let draftDBPromise = null;
 function draftDB() {
@@ -213,10 +208,7 @@ async function restoreDrafts(st) {
   let rows = [];
   try { rows = await draftsFor(documentKey); } catch (_) { return false; }
   if (!rows.length) return false;
-  // A draft record is not itself evidence of unsaved work. Records can survive a crash
-  // after the disk write but before IndexedDB cleanup; treating an identical record as a
-  // recovery marked the clean tab dirty, then autosave compared its stale base and opened
-  // the keep/overwrite dialog on every mount.
+
   let recovered = false;
   if (st.kind === 'text') {
     const row = rows.sort((a, b) => b.updatedAt - a.updatedAt)[0];
@@ -321,8 +313,6 @@ function portableToolSummary(tool, args) {
   return `${tool.replaceAll('_', ' ')}${body ? ' · ' + body : ''}`;
 }
 function polishActivityGroup(el) {
-  // Markdown keeps a standards-compliant list for plain Jupyter. In Leela, collapse that
-  // scaffolding into one compact timeline so a dozen calls occupy a dozen rows, not a page.
   $$('ul, ol', el).forEach(list => {
     const rows = $$('.lee-agent-step', list);
     if (!rows.length) return;
@@ -340,8 +330,6 @@ function polishActivityGroup(el) {
   });
 }
 function upgradePortableToolMarkdown(el) {
-  // Rishi's formatter emits portable JSON so plain Jupyter can retain tool activity.
-  // In the IDE that JSON becomes the same compact disclosure row as native live activity.
   $$('pre > code', el).forEach(code => {
     const payload = portableToolPayload(code.textContent || ''); if (!payload) return;
     const row = document.createElement('details');
@@ -350,7 +338,6 @@ function upgradePortableToolMarkdown(el) {
     const container = code.parentElement.closest('details') || code.parentElement;
     container.replaceWith(row);
   });
-  // The pending portable line is redundant once its completed disclosure exists.
   $$('li', el).forEach(li => {
     if (/[⏳⌛]/u.test(li.textContent || '') && li.querySelector('code')) li.remove();
   });
@@ -363,9 +350,6 @@ function enhanceCodeBlocks(el) {
     const pre = code.parentElement, text = code.textContent || '';
     const declared = [...code.classList].find(x => x.startsWith('language-')) || '';
     const lang = codeLang(declared);
-    // Every explicitly tagged supported language gets the editor's syntax surface.
-    // Promotion stays Python-only: highlighting a TOML or JS answer must not imply that a
-    // Python notebook kernel can execute it. Untagged and huge blocks remain lightweight.
     const python = /^(language-)?(py|python)$/.test(declared.toLowerCase());
     const named = declared.replace(/^language-/, '').toLowerCase();
     if (!declared || !CODE_LANGS[named] || text.length > 40000) return;
@@ -384,6 +368,7 @@ function addMarkdownCellAction(el) {
   button.onclick = () => promoteCodeToNotebook(el.dataset.markdown, 'markdown');
   bar.appendChild(button); el.appendChild(bar);
 }
+
 function resolveMarkdownImages(el) {
   const base = el.closest('[data-md-base]')?.dataset.mdBase || '';
   $$('img', el).forEach(img => {
@@ -445,9 +430,6 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
     } catch (e) {
       if (e.name === 'AbortError' || seq !== el._leeMarkdownSeq || !el.isConnected) return;
       el.textContent = el.dataset.markdown;
-      // A stream repaint or app restart can invalidate an in-flight fragment. Keep the
-      // readable source in place and annotate this surface; do not emit dozens of global
-      // error toasts while the conversation is still mounting.
       el.dataset.markdownWarnings = `renderer unavailable: ${e.message || e}`;
       if (!el._leeMarkdownReported) {
         el._leeMarkdownReported = true;
@@ -533,6 +515,9 @@ async function loadKeys() {
 function renderContextKeys(scope = lee.scope) {
   const host = $('#keytoast'), tag = $('#keyscope');
   if (!host || !lee.keys.length) return;
+  // This panel is a glanceable contextual cheat sheet, not the full keymap. Commands
+  // marked help-only stay in the searchable help/settings surfaces instead of pushing the
+  // file tree and editor off screen when the editor scope has dozens of actions.
   const local = lee.keys.filter(k => k.scope === scope && k.label && k.key && ['footer','toast'].includes(k.show)).slice(0, 8);
   const global = lee.keys.filter(k => k.scope === 'global' && k.show === 'toast' && k.label && k.key).slice(0, 4);
   const rows = local.concat(global);
@@ -542,14 +527,23 @@ function renderContextKeys(scope = lee.scope) {
     `<span>${esc(k.label)}</span></div>`).join('') : '<div class="lee-dim">no keys in this context</div>';
 }
 
+/* One application-level keyboard router owns every app command. CodeMirror owns editing
+ * commands and xterm owns pty input, but neither gets a duplicate copy of this map. A
+ * capturing listener is intentional: an accepted app command is resolved before an editor
+ * can consume it; an unaccepted event is untouched and continues normally. */
 const TERM_ESCAPES = new Set(['help', 'quit', 'palette', 'settings', 'toggle_left', 'toggle_right']);
 const EDITING_SCOPES = new Set(['editor', 'exec', 'agent', 'term']);
 
 function eventContext(e) {
   const path = e.composedPath ? e.composedPath() : [e.target];
   const inPath = selector => path.some(n => n instanceof Element && n.matches(selector));
+  // Overlays own their keyboard while open. Their local handler receives the event after
+  // this router leaves it alone; commands behind a dialog must never fire accidentally.
   if (inPath('.lee-modal, .lee-ctxmenu')) return 'overlay';
   if (inPath('#termwrap, .xterm')) return 'term';
+  // A live page wants its own keyboard as much as a shell does -- Gmail's `j`, a site's `/`
+  // search -- so the inline browser is routed exactly like the terminal, and for the same
+  // reason. It has to come before `#editor`, which contains it.
   if (inPath('.lee-webview')) return 'web';
   if (inPath('#agentprompt, .lee-agent')) return 'agent';
   if (inPath('#execbox, .lee-exec')) return 'exec';
@@ -569,7 +563,15 @@ function isTextEntry(el) {
 
 function chordMatches(c, e) {
   if (e.isComposing || e.key === 'Process' || e.repeat) return false;
+  // macOS reports Caps Lock remapped to Hyper as all four modifiers. Other platforms and
+  // some Karabiner/browser combinations expose only Ctrl+Alt+Shift—the Command/Meta bit
+  // is not portable there. Hyper explicitly accepts either shape; ordinary `mod` remains
+  // strict, so regular shortcuts do not become ambiguous.
   if (c.hyper) {
+    // Hyper remappers agree on Ctrl+Alt but Safari/Chrome occasionally omit either the
+    // synthetic Shift or Meta bit for named keys. Require the stable pair plus one of the
+    // two high modifiers; this accepts both browser shapes without colliding with normal
+    // two-modifier shortcuts.
     if (!e.ctrlKey || !e.altKey || !(e.shiftKey || e.metaKey)) return false;
   } else {
     const wantCtrl = !!c.ctrl || (!!c.mod && !MAC);
@@ -577,6 +579,9 @@ function chordMatches(c, e) {
     if (wantCtrl !== e.ctrlKey || wantMeta !== e.metaKey || !!c.alt !== e.altKey || !!c.shift !== e.shiftKey)
       return false;
   }
+  // Every modified shortcut is matched by physical code when available. Karabiner/Hyper
+  // can transform `event.key` (not just Option-printable characters), while `event.code`
+  // remains Enter, KeyR, ArrowDown, and so on.
   if (c.code && (c.mod || c.ctrl || c.alt || c.hyper)) return c.code === e.code;
   return c.key.toLowerCase() === (e.key || '').toLowerCase();
 }
@@ -584,6 +589,8 @@ function chordMatches(c, e) {
 const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.test(c.key);
 function findBinding(e, scope) {
   if (scope === 'overlay') return null;
+  // `term` and `web` both hand the keyboard to something that is not Leela, keeping only the
+  // chords that get you back out again.
   const allowed = (scope === 'term' || scope === 'web')
     ? k => k.scope === scope || k.action.startsWith('focus_') || TERM_ESCAPES.has(k.action)
     : k => k.scope === scope || k.scope === 'global';
@@ -592,6 +599,8 @@ function findBinding(e, scope) {
     if (!allowed(k)) continue;
     const chord = k.chords.find(c => chordMatches(c, e));
     if (!chord || (guard && !firesInTextEntry(chord))) continue;
+    // Standard Copy/Cut become whole-cell operations only when a notebook cell has no
+    // text selection. Selected source keeps the browser/CodeMirror clipboard semantics.
     if (['cell_copy', 'cell_cut'].includes(k.action)) {
       if (lee.kind !== 'notebook') continue;
       const inEditor = e.composedPath?.().some(n => n instanceof Element && n.matches('.cm-editor'));
@@ -606,6 +615,8 @@ function findBinding(e, scope) {
 
 window.addEventListener('keydown', e => {
   const scope = eventContext(e), match = findBinding(e, scope);
+  // Kept on `lee` deliberately: the key editor and DevTools can distinguish "Chrome did
+  // not deliver it" from "the router rejected it" using the last real event.
   lee.lastKeyEvent = {key: e.key, code: e.code, ctrl: e.ctrlKey, alt: e.altKey,
                       shift: e.shiftKey, meta: e.metaKey, scope,
                       action: match?.binding.action || '', trusted: e.isTrusted};
@@ -820,6 +831,9 @@ async function closeTab(index = null) {
 }
 window.leeCloseTab = closeTab;
 async function closeTabs(which) {
+  // `others`, `right` and `saved`, the three a browser offers after a morning of opening
+  // files. The reference point is the tab the menu was opened on, not the active one -- a
+  // right-click on a background tab selects it first, but the menu is still about that tab.
   const at = lee.menuTab == null ? activeTabIndex() : lee.menuTab;
   lee.menuTab = null;
   if (at < 0) return;
@@ -895,6 +909,8 @@ function shiftTab(d) {
 function layoutTabs() {
   const bar = $('#tabbar'), more = $('#taboverflow'); if (!bar || !more) return;
   const tabs = $$('.lee-tab', bar), active = Math.max(0, activeTabIndex());
+  // Keep a calm, finite strip. The active file and its neighbours remain spatially
+  // meaningful; every other open document is one click away in the overflow menu.
   const breakpointCap = innerWidth >= 1700 ? 7 : innerWidth >= 1300 ? 5 : innerWidth >= 960 ? 4 : 2;
   const cap = Math.max(1, Math.min(breakpointCap, Math.floor(bar.clientWidth / 138) || 1));
   const keep = new Set();
@@ -921,6 +937,8 @@ function leeTabOverflow(anchor) {
   openChromeMenu(anchor, rows);
 }
 window.leeTabOverflow = leeTabOverflow;
+// Returns htmx's promise: closing several tabs has to await each swap, because the server
+// addresses tabs by index and the next index is only true once the strip has been rebuilt.
 function htmxPost(url) { return htmx.ajax('POST', url, {target: '#tabbar', swap: 'outerHTML'}); }
 let openFileVersion=0;
 function gitDiffTabKey(data) { return encodeURIComponent(`${data.kind || 'review'}\0${data.base || ''}\0${data.head || ''}\0${data.path}`); }
@@ -990,15 +1008,43 @@ function gitDiffNotebookHtml(patch, data) {
 }
 window.openGitDiffTab = openGitDiffTab;
 
+/* ----------------------------------------------------- a Markdown diff, read as Markdown
+ * A third way of reading the same diff, beside unified and side by side, and the only one in
+ * which a README reads like a README: the new document rendered, with a bar in the margin
+ * beside every block that changed and the line-level change shown *inside* a fenced block.
+ *
+ * The rendering is `/markdown/render`, unchanged and still `allow_raw: false` -- Markdown out
+ * of a repository is untrusted input and this surface widens nothing. What makes the marks
+ * placeable is `/markdown/diff`, which pairs the two versions block against block and reports
+ * each block's source lines and the tag it should render as. Lines could not do this on their
+ * own: a rendered paragraph has no line numbers, and an edit at the top of a file moves every
+ * line below it while moving no blocks at all.
+ */
 const MARKDOWN_PATH = /\.(?:md|markdown|mdown|mkdn?)$/i;
 const isMarkdownPath = path => MARKDOWN_PATH.test(String(path || ''));
 
+// mdhtml's own top-level nodes, in document order. The footnotes section is generated from the
+// definitions rather than from a block of its own, so it never carries a mark; a comment is a
+// node a raw-HTML block legitimately produces, so it counts as a carrier even though there is
+// nothing to draw beside it -- dropping it would silently shift every block after it.
 function markdownCarriers(el) {
   return [...el.childNodes].filter(n => n.nodeType === 8 ||
     (n.nodeType === 1 && !(n.tagName === 'SECTION' && n.classList.contains('footnotes'))));
 }
 const markdownTagOf = n => n.nodeType === 1 ? n.tagName.toLowerCase() : '#comment';
 
+/* Which element each block became. This is the crux of the whole view, and the part that has
+ * to be allowed to fail: the server names the blocks in source order with the tag each is
+ * expected to render as, and this walks the rendered nodes in that same order checking every
+ * expectation it can. One mismatch, or one node no block claimed, and the answer is `null` --
+ * a raw HTML block that produced two elements shifts everything after it, and a change bar
+ * beside the wrong paragraph is a false statement about the diff. Nothing is drawn then, and
+ * the surface says why rather than quietly looking correct.
+ *
+ * The answer is *positions*, not nodes, because the code-block upgrade later swaps each `<pre>`
+ * for an editor surface in the same place. A caller that has to wait for a request before it can
+ * draw reads the tags now and the nodes again afterwards, and the positions still hold.
+ */
 function alignMarkdownBlocks(tags, rows) {
   const pairs = [];
   let at = 0;
@@ -1013,6 +1059,12 @@ function alignMarkdownBlocks(tags, rows) {
   return at === tags.length ? pairs : null;
 }
 
+/* The line-level change inside one fenced block: the lines as they read now, additions on
+ * green and removals struck through on pink, with `tokenDiffHtml` marking the words that
+ * actually moved in a line that was edited. An LCS over lines is the same shape as the token
+ * diff one level down and is affordable at a code fence's length; a pathologically long fence
+ * falls back to "all of the old, then all of the new" rather than allocating a large matrix.
+ */
 function markdownCodeDiffHtml(before, after) {
   const a = String(before ?? '').replace(/\n$/, '').split('\n');
   const b = String(after ?? '').replace(/\n$/, '').split('\n');
@@ -1030,6 +1082,8 @@ function markdownCodeDiffHtml(before, after) {
     else if (j < m && (i >= n || dp[i][j + 1] >= dp[i + 1][j])) rows.push({kind: 'add', now: b[j++]});
     else rows.push({kind: 'del', old: a[i++]});
   }
+  // A removal immediately followed by an addition is one line somebody edited, and the words
+  // that changed in it are the thing worth pointing at on both halves.
   return rows.map((r, k) => {
     if (r.kind === 'ctx') return line('ctx', esc(r.now));
     if (r.kind === 'del') {
@@ -1041,6 +1095,8 @@ function markdownCodeDiffHtml(before, after) {
   }).join('');
 }
 
+// Pink for text that changed, green for text that is new, amber for a code fence -- the three
+// the reader has to tell apart at a glance, and the same three the gutter already uses.
 const markdownChangeKind = row => row.status === 'added' ? 'added'
   : row.status !== 'modified' ? '' : row.type === 'code_block' ? 'code' : 'modified';
 
@@ -1048,11 +1104,19 @@ function paintMarkdownDiff(doc, rows) {
   const nodes = markdownCarriers(doc), pairs = alignMarkdownBlocks(nodes.map(markdownTagOf), rows);
   const note = doc.parentElement?.querySelector('[data-md-diff-note]');
   if (!pairs) { if (note) note.hidden = false; return false; }
+  // A removed block has nothing left to render, so it is reported on the block that now stands
+  // where it stood: a second, thinner mark and the old text in the tooltip. Removals with
+  // nothing after them belong to the last block in the document.
   let removed = [], last = null;
   for (const {row, at} of pairs) {
     if (row.status === 'removed') { removed.push(row); continue; }
     const node = nodes[at];
     let host = node;
+    // A fenced block is the one place a rendering can carry a line diff itself, and it is also
+    // the one place the mark cannot simply be put on the element: `enhanceCodeBlocks` replaces
+    // every `pre > code` with an editor surface a moment after this runs. An edited fence
+    // becomes the interleaved diff, which has no `<code>` for the upgrade to find; a fence that
+    // is new keeps its highlighted rendering and gets a wrapper to hold the mark instead.
     if (row.type === 'code_block' && node?.nodeType === 1 && node.tagName === 'PRE'
         && (row.status !== 'equal' || removed.length)) {
       host = document.createElement('div');
@@ -1223,8 +1287,12 @@ async function mountTab(expectedPath = '') {
   const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
   if(mountVersion!==mountTabVersion)return;
   const recoveredDraft = await restoreDrafts(st);
+  // Only the tab's own editors are torn down. The exec strip belongs to the app, not
+  // to the tab, and destroying it here would silently leave the box unmounted.
   lee.cellObserver?.disconnect(); lee.cellObserver = null;
   lee.editors.forEach((v, k) => { if (k !== 'exec') { LeeCM.destroy(v); lee.editors.delete(k); } });
+  // A screencast is a live encode in Chrome for as long as it is running, so leaving the tab
+  // has to stop it. The page itself stays open; the tab reattaches to it on the way back.
   closeWebView();
   const host = $('#editor'); if (!host) return;
   lee.kind = st.kind; lee.path = st.path || ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
@@ -1232,7 +1300,9 @@ async function mountTab(expectedPath = '') {
   updateToolbarForKind(st.kind);
   rememberRecentTab(st);
   lee.diskVersion = st.disk_version || ''; lee.seenDiskVersion = lee.diskVersion;
+  // Tab navigation always returns Run and Variables to that tab's private kernel.
   paintEnv('');
+  // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
   if (!st.kind) {
     host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? '');
     paintRecent();
@@ -1255,6 +1325,10 @@ async function mountTab(expectedPath = '') {
   if (lee.pendingLocation && (!lee.pendingLocation.path || lee.pendingLocation.path === st.path)) {
     const loc = lee.pendingLocation; lee.pendingLocation = null;
     requestAnimationFrame(() => {
+      // A notebook is a column of editors, each with its own line 1, so a location in one has
+      // to name the cell. `cellIndex` is the fallback for a notebook whose cells carry no ids
+      // of their own (anything written before nbformat 4.5), and the debug decorations are only
+      // for the debugger: a search result is somewhere to go, not the line being executed.
       if ((loc.cellId || loc.cellIndex >= 0) && lee.kind === 'notebook') {
         let i = loc.cellId ? lee.cells.findIndex(c => c.id === loc.cellId) : -1;
         if (i < 0 && loc.cellIndex >= 0 && loc.cellIndex < lee.cells.length) i = loc.cellIndex;
@@ -1301,7 +1375,15 @@ function rememberBuffer(key, payload) {
   }, 120));
 }
 
+// A PDF, in the viewer the browser already ships. Reimplementing one on a canvas would be a
+// worse viewer and a large amount of code, and we are in a browser after all -- so the whole
+// feature is an `<iframe>` pointed at the bytes, plus the two things an iframe cannot do for
+// itself: open the file outside Leela, and say something useful if the viewer is disabled.
 function mountPdf(host, st) {
+  // The filename goes in the *path* as well as the query, because the browser's own viewer titles
+  // itself from the last path segment -- so `/file/raw?path=…` opened every document called
+  // "raw". The segment is decoration: the server still resolves the file from `path` alone, and
+  // must, or a name in a URL would become a way to ask for a different file.
   const name = (st.path || '').split('/').pop() || 'document.pdf';
   const raw = '/file/raw/' + encodeURIComponent(name) + '?path=' + encodeURIComponent(st.path);
   host.innerHTML =
@@ -1313,6 +1395,9 @@ function mountPdf(host, st) {
     `<noscript class="lee-dim">This view needs the browser's PDF viewer.</noscript></div></div>`;
 }
 
+/* An image, in the same chrome as a PDF. Fit is the default because an image opened from a
+   vault or a file tree is being *identified*, not inspected; actual size is one click away and
+   the dimensions are shown either way, since "is this the 2x asset" is the usual question. */
 function mountImage(host, st) {
   const name = (st.path || '').split('/').pop() || 'image';
   const raw = '/file/raw/' + encodeURIComponent(name) + '?path=' + encodeURIComponent(st.path);
@@ -1349,6 +1434,10 @@ function mountMedia(host, st) {
 async function mountFile(host, st) {
   const isProject = st.path?.endsWith('/pyproject.toml') || st.title === 'pyproject.toml';
   const crumbMode=lee.workbenchPrefs.breadcrumbs||'pathAndSymbols',crumb=crumbMode==='off'?'':`<nav class="lee-breadcrumbs" id="editorcrumbs" aria-label="File and symbol path"><span>${esc(compactPath(st.path||st.title||''))}</span></nav>`;
+  // Markdown gets a rendered pane beside the editor. The editor stays mounted in every view and
+  // is merely hidden by CSS when only the rendering is showing -- everything that reaches for
+  // `lee.editors.get('file')` (saving, autosave, blame, the change gutter, jump-to-line) keeps
+  // working, and "rendered" is a way of *looking* at the file rather than a different kind of tab.
   const isMd = (st.lang || '') === 'markdown';
   const view = isMd ? (localStorage.getItem('lee-md-view') || 'split') : '';
   host.innerHTML = crumb + (isProject ? '<div class="lee-package-summary" id="packagebar" hidden></div>' : '') +
@@ -1357,6 +1446,8 @@ async function mountFile(host, st) {
               `<button class="lee-seg${v === view ? ' active' : ''}" data-md-view="${v}">${v}</button>`).join('') +
             `</div><span class="lee-spacer"></span>` +
             `<span class="lee-dim">the change gutter and blame stay on the source</span></div>` : '') +
+    // `data-md-base` is this file's folder: a figure written `![](img/a.png)` is relative to the
+    // document, not to the page the renderer drops it into.
     (isMd ? `<div class="lee-md-stage" data-view="${view}" data-md-base="${esc((st.path || '').slice(0, (st.path || '').lastIndexOf('/')))}">` +
             `<div class="lee-cm" id="filecm"></div>` +
             `<div class="lee-md-preview" id="mdpreview" data-markdown=""></div></div>`
@@ -1370,6 +1461,8 @@ async function mountFile(host, st) {
   lee.fileGit = git;
   const key = st.path || st.title;
   const v = createEditor($('#filecm'), {
+    // A cached value is authoritative only after an actual user edit. This guard prevents
+    // stale/programmatic empty entries from blanking a freshly loaded file or run result.
     doc: lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : (st.text || ''),
     lang: st.lang || 'python', lineNums: true, lintPath: st.path || '',
     completeUrl: '/complete', changedLines: git.ranges || [], breakpoints: lee.breakpoints.get(st.path)||[],
@@ -1380,11 +1473,15 @@ async function mountFile(host, st) {
     },
     onChange: txt => {
       rememberBuffer(key, {path: key, kind: 'text', text: txt}); markDirty();
+      // The preview follows the buffer, not the file: `renderMarkdown` is already debounced and
+      // drops superseded renders, so this is safe to call on every keystroke.
       if (isMd) renderMarkdown($('#mdpreview'), txt);
     },
   });
   lee.editors.set('file', v);
   if (isMd) {
+    // The rendered pane carries the same change marks as the gutter beside it, placed by block
+    // rather than by line. Only this first render is annotated; see `paintMarkdownFileChanges`.
     renderMarkdown($('#mdpreview'), LeeCM.getDoc(v), false,
                    el => paintMarkdownFileChanges(el, git.ranges || []));
     $('#mdview').onclick = e => {
@@ -1393,6 +1490,8 @@ async function mountFile(host, st) {
       localStorage.setItem('lee-md-view', next);
       $('.lee-md-stage').dataset.view = next;
       $$('#mdview .lee-seg').forEach(x => x.classList.toggle('active', x === b));
+      // The editor was display:none a moment ago, so CodeMirror has stale measurements and will
+      // draw the cursor in the wrong place until it re-measures.
       if (next !== 'rendered') requestAnimationFrame(() => LeeCM.focus(v));
     };
   }
@@ -1526,6 +1625,8 @@ function mountNotebook(host, st) {
 }
 
 function patchNotebook(host, before, cells, op = '') {
+  // Keep unchanged cell DOM and CodeMirror views alive. Moving those nodes is effectively
+  // free and, unlike rebuilding the notebook, cannot flash blank or reset the viewport.
   lee.cellObserver?.disconnect();
   const oldCells = new Map(before.map(c => [c.id, c]));
   const oldEls = new Map($$('.lee-cell', host).map(el => [el.dataset.id, el]));
@@ -1564,6 +1665,8 @@ function patchNotebook(host, before, cells, op = '') {
   });
   paintSel();
   observeNotebookCells(host, cells);
+  // `className` is rewritten above for every reused cell, so the marks are reapplied from
+  // what was last read rather than refetched -- the disk has not moved, only the DOM.
   repaintNotebookGitMarks();
   queueNotebookOverview();
 }
@@ -1575,6 +1678,8 @@ function ensureCellMounted(i) {
   return lee.editors.get(c.id);
 }
 
+// A prompt cell's gutter is its own mark, so the three kinds are told apart at a glance
+// without reading any of them.
 const gutterFor = (c) => c.cell_type === 'code' ? '[' + (c.execution_count ?? ' ') + ']'
                        : c.cell_type === 'prompt' ? '✦' : 'md';
 const cellState = (c) => c.running ? 'running' : c.cell_type === 'code' && c.execution_count != null
@@ -1620,6 +1725,10 @@ function setCellTime(c, ms, running = false) {
   el.title = running ? 'current execution time' : previous ? 'duration of the saved run; its variables are not in this kernel' : 'last execution time';
 }
 
+/* The banner says where a cell sits and how big it is. The gutter carries the execution
+ * count, which is neither: it is blank until the cell runs, and it renumbers on every rerun.
+ * The tooltip carries what a developer needs to reference the cell -- its id -- and what the
+ * last run left behind. */
 const cellKind = (c) => ({code: 'py', markdown: 'md', prompt: 'prompt'}[c.cell_type] || c.cell_type);
 const cellLines = (c) => String(c.source || '').split('\n').length;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -1648,6 +1757,9 @@ function refreshCellMeta(c) {
 }
 window.leeCopyCellId = copyCellId;
 
+/* The per-cell controls, from the same table the toolbar comes from. They act on the cell
+ * they are drawn in rather than on the selected one -- clicking ▶ on the third cell has
+ * to run the third cell, whatever the cursor was doing. */
 const contextLabel = mode => ({keep: 'keep context', discard: 'discard first', auto: 'context auto'}[mode] || 'context auto');
 function paintCellContext(button, c) {
   const mode = c.context_mode || 'auto';
@@ -1799,6 +1911,8 @@ async function moveCellTo(from, to) {
 function mountCell(c, i) {
   if (lee.editors.has(c.id)) return;
   const key = `${lee.path || 'scratch'}:${c.id}`;
+  // Only a docChanged transaction marks a buffer authoritative. A stale empty cache must
+  // never replace the non-empty source returned by /tab/state after running a cell.
   const source = lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : c.source;
   c.source = source;
   const v = createEditor($('#cm-' + c.id), {
@@ -1807,6 +1921,8 @@ function mountCell(c, i) {
     completeUrl: c.cell_type === 'code' ? '/complete' : null,
     onDefinition: c.cell_type === 'code' ? name => findDefinition(name) : null,
     breakpoints: lee.breakpoints.get(c.id) || [],
+    // Line numbers relative to this cell, which is the only place they are drawn. A cell
+    // mounted after the marks arrived would otherwise stay unmarked until the next save.
     changedLines: (lee.notebookGit?.lines || {})[c.id] || [],
     onBreakpoint: c.cell_type === 'code' ? lines => rememberBreakpoints(c.id, lines) : null,
     settings: {overviewMode:'off'},
@@ -1843,6 +1959,8 @@ function renderOutputs(c) {
     for (const v of (el._leeCodeViews || [])) try { LeeCM.destroy(v); } catch {}
   });
   box.innerHTML = '';
+  // A prompt cell's "output" is the answer, and it is stored in the cell rather than in
+  // an nbformat output -- so it renders from its own fields.
   if (c.cell_type === 'prompt') {
     if ((c.calls || []).length) {
       const steps = document.createElement('div'); steps.className = 'lee-agent-steps lee-cell-agent-steps';
@@ -2004,6 +2122,8 @@ function focusCell(i) {
   selectCell(i);
   const c = lee.cells[lee.sel]; if (!c) return;
   const cell = $(`.lee-cell[data-i="${lee.sel}"]`);
+  // CodeMirror focuses its own scroller but cannot reveal itself inside the notebook's
+  // outer scroller. Run-and-advance therefore used to move the caret below the viewport.
   cell?.scrollIntoView({block: 'nearest', inline: 'nearest'});
   const v = ensureCellMounted(lee.sel);
   if (v) requestAnimationFrame(() => LeeCM.focus(v));
@@ -2060,7 +2180,15 @@ function markDirty() {
   if (t) { t.classList.add('dirty'); setTabSaveState(t, 'pending'); }
   scheduleAutoSave();
 }
+/* Put a position in the middle of the view rather than merely inside it.
 
+   `scrollIntoView` moves the *minimum* distance, so a match below the fold arrives on the last
+   visible line with nothing under it -- and a search result is something you are about to read
+   around, not just look at. Written against `scrollDOM` rather than CodeMirror's own centring
+   effect: the vendored bundle is committed and rebuilding it needs node.
+
+   A notebook scrolls its column of cells, not the cell's own editor, so the element that can
+   actually move is the one that gets scrolled. */
 function centreOnPos(v, pos) {
   const coords = v.coordsAtPos(pos); if (!coords) return;
   const own = v.scrollDOM, host = own.scrollHeight - own.clientHeight > 4 ? own : $('#editor');
@@ -2079,9 +2207,15 @@ function jumpToLine(line) {
   requestAnimationFrame(() => centreOnPos(v, pos));
 }
 function openLocation(hit) {
+  // A hit in a notebook reports two coordinates: `line` in the .ipynb JSON, which is what
+  // ripgrep and blame speak, and the cell plus the line inside it, which is the only pair an
+  // editor can open. Prefer the second when the server placed the hit; a notebook hit it could
+  // not place keeps the file line, and lands nowhere, rather than opening a cell chosen at random.
   const name = hit.path.split('/').pop();
   const inCell = Number(hit.cell_line) > 0;
   if (!inCell && /\.ipynb$/i.test(hit.path)) {
+    // Nowhere to scroll to: the JSON line is not a line of any cell's editor, and jumping to
+    // it inside whichever cell happens to be selected would look like an answer.
     leeOpenFile(hit.path);
     return status(`${name} — line ${hit.line} of the notebook file is in no cell`, 'info');
   }
@@ -2679,6 +2813,10 @@ function kernelComplete() {
   LeeCM.startCompletion(v);
 }
 
+/* Two completions, two different questions. alt+/ asks the kernel what names
+ * exist -- instant, and right by construction because it is the real namespace.
+ * This asks the model what should come next, which costs a forward pass, so it is
+ * never fired by typing and the suggestion stays ghost text until tab accepts it. */
 function closeSelectionHelp() { $('.lee-selection-tools')?.remove(); }
 function selectionEditor() {
   if (!['editor', 'exec'].includes(lee.scope)) return null;
@@ -2942,6 +3080,9 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
 }
 
 async function saveAllTabs() {
+  // The active editor is saved through the same version-checked path as ordinary autosave.
+  // Inactive editors are mirrored to the server within 120ms; let pending mirrors land
+  // rather than cancelling their timers and accidentally saving the previous snapshot.
   if (!lee.kind) return status('nothing to save', 'err');
   if (!lee.path) return status('save the unnamed tab individually first', 'err');
   const activeDirty = !!$('.lee-tab.active.dirty');
@@ -3022,6 +3163,9 @@ window.leeExecClear = leeExecClear;
 /* ------------------------------------------------------------------ variables */
 async function leeVars() {
   const box = $('#vars'); if (!box || document.hidden) return;
+  // Polling is a refresh, not a queue. A slow inspector used to let the 2.5s interval
+  // stack an unbounded number of fetches and full-tree DOM rebuilds until Chrome declared
+  // the page unresponsive. Coalesce every request that arrives while one is in flight.
   if (lee.varsBusy) { lee.varsPending = true; return; }
   lee.varsBusy = true;
   try { await refreshVars(box); }
@@ -3104,6 +3248,9 @@ function debugVar(v) {
 }
 
 function varRow(n, depth = 0) {
+  // new/edited is a statement about the namespace, so it only makes sense for top-level
+  // names -- tagging a DataFrame's own `shape` as "(new)" is noise, not news. Nor does
+  // the very first render, where by definition everything is new.
   const tag = (depth || !lee.varSeen) ? ''
             : (!(n.name in lee.varPrev)) ? '<span class="lee-vnew"> (new)</span>'
             : (lee.varPrev[n.name] !== n.value ? '<span class="lee-vedit"> (edited)</span>' : '');
@@ -3272,6 +3419,8 @@ async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
   if (notes.length) selects.agent.title = notes.join(' · ');
 }
 
+// The routed jobs with no control of their own, drawn from what the server reports rather than
+// listed here, so a job ramabana adds arrives with the release that adds it.
 const JOB_TITLES = {subagent: 'delegated searches run on this model',
                     summary: 'compaction summaries and notebook digests',
                     classify: 'short classification calls',
@@ -3356,6 +3505,13 @@ async function leeAgentCompaction() {
 }
 window.leeAgentCompaction = leeAgentCompaction;
 
+/* How much work one turn may do. `auto` lets ramabana size it from the prompt; a number pins it.
+   The fields are written back from the answer, so a refusal leaves the box showing what is
+   actually in force rather than the rejected text. */
+/* The highlighted range, queued as context for the next turn.
+
+   Sent as text rather than as `path:from-to` for the agent to go and read: the buffer may be
+   unsaved, and what you highlighted is what you meant, not what happens to be on disk. */
 function leeAgentSelection() {
   const v = curEditor();
   if (!v) return status('put the cursor in some code first', 'err');
