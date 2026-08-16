@@ -39,9 +39,7 @@ def connect(app, ctx):
         "Changes on disk, pushed. Everything else in the tree is the client watching itself."
         from starlette.responses import StreamingResponse
         async def events():
-            # Subscribed here, not above it: a client that goes away before the body is
-            # iterated never runs the `finally`, and its queue is held for the session.
-            q = ctx.fs_watch.subscribe()
+            q = ctx.fs_watch.subscribe()   # a client that never iterates this never runs the finally
             try:
                 while True: yield sse('changed', {'paths': await q.get()})
             finally: ctx.fs_watch.unsubscribe(q)

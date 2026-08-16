@@ -1000,7 +1000,7 @@ def test_source_control_notices_an_edit_and_not_only_a_new_file():
     assert "watchFiles()" in JS, 'and an external change lands by push, not by poll'
 
 def test_a_pushed_change_redraws_the_nearest_open_folder_and_cannot_be_starved():
-    "Two ways the push rewrite lost changes the full refresh it replaced had always shown."
+    "The push rewrite lost two kinds of change the full refresh had always shown."
     patch = JS[JS.index('async function patchTree(paths)'):JS.index('async function refreshGitTreeMarks')]
     assert "p.startsWith(d + '/')" in patch and 'best.dataset.path.length' in patch, \
         'a new folder is open nowhere, so its own path matches no open row'
@@ -1012,7 +1012,7 @@ def test_a_pushed_change_redraws_the_nearest_open_folder_and_cannot_be_starved()
     assert '}, wait);' in watch, 'the deadline is what the timer is actually set to'
 
 def test_the_compressor_leaves_every_event_stream_alone():
-    "GZip went on the app for the cold load; buffering the streams would have paid for it."
+    "GZip went on the app for the cold load. Buffering the streams would have paid for it."
     from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES
     assert 'text/event-stream' in DEFAULT_EXCLUDED_CONTENT_TYPES, \
         'below starlette 1.6 this list has no streams in it and /fs/events arrives at the end'

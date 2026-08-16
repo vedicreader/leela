@@ -36,8 +36,7 @@ def _git_class(change):
     return 'modified'
 
 def _kids(fs, path, git_state, hidden, opened):
-    # A remembered folder that has since been deleted, or left with its root, draws nothing --
-    # it must not take the whole pane down with it.
+    # A remembered folder can be gone, or outside the roots, by the time this draws.
     try: return [tree_node(e, git_state, hidden, fs, opened) for e in fs.ls(path, hidden=hidden)]
     except Exception: return []
 

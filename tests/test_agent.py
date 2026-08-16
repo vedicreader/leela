@@ -1603,7 +1603,7 @@ def test_a_site_packages_under_an_oddly_named_venv_is_still_skipped(tmp_path):
     assert [p.name for p in ws.fs.walk(tmp_path)] == ['mine.py']
 
 def test_a_file_leela_just_wrote_can_be_found_before_the_walk_cache_expires(tmp_path):
-    "The walk is cached to keep quick-open cheap; our own writes must not wait the window out."
+    "The walk is cached to keep quick-open cheap. Our own writes skip the window."
     ws = Workspace(roots=[tmp_path])
     assert [p.name for p in ws.fs.walk(tmp_path)] == []
     ws.fs.write(tmp_path/'fresh.py', 'x = 1\n')

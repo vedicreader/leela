@@ -37,7 +37,7 @@ class Unsafe(Exception):
 
 _GEN = 0
 def _changed():
-    "A write of our own must not wait out `_walked`'s window before it can be found."
+    "Our own writes skip `_walked`'s window."
     global _GEN; _GEN += 1
 
 @flexicache(time_policy(2), maxsize=16)

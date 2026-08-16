@@ -118,8 +118,7 @@ async function patchTreeDir(dir) {
   have.forEach(n => n.remove());
   htmx.process(kids);
 }
-/* The nearest open ancestor, not the literal parent: a new folder's own path is open nowhere,
-   and matching on it alone left every file created inside one invisible until a full refresh. */
+/* A new folder's own path is open nowhere. Redraw the nearest open ancestor. */
 async function patchTree(paths) {
   const open = $$('.lee-dir[open]'), want = new Set();
   for (const p of paths) {
@@ -142,8 +141,7 @@ function watchFiles() {
   const es = new EventSource('/fs/events');
   es.addEventListener('changed', e => {
     try { fsWatchSeen.push(...JSON.parse(e.data).paths); } catch (_) { return; }
-    // Debounced, but with a deadline: a build or an install writes without pause, and a timer
-    // that only ever resets is a tree that never redraws while anything is happening.
+    // A build writes without pause. A timer that only resets never fires.
     if (fsWatchSeen.length > FS_MAX_SEEN) fsWatchSeen = fsWatchSeen.slice(-FS_MAX_SEEN);
     if (!fsWatchSince) fsWatchSince = performance.now();
     clearTimeout(fsWatchTimer);

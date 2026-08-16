@@ -21,7 +21,7 @@ def _project_env(cwd):
     return None
 
 def wire_env():
-    "Git runs under the checkout's own virtualenv. Called by `Workspace`, not by importing this."
+    "Git runs under the checkout's own virtualenv. `Workspace` calls this."
     gateway().env_for = _project_env
     return gateway()
 
