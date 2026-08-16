@@ -330,6 +330,25 @@ def test_rejection_ignores_rewritten_or_malformed_call_fields():
     assert resolved.args == {'path': 'original.py', 'commands': '[]'}
     assert resolved.note == 'use the notebook instead'
 
+def test_a_steer_no_tool_call_consumed_rides_the_next_turn(tmp_path):
+    "Queued while the model was writing its answer, it waited for a tool call that never came."
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    ws.approvals.queue_steer('use the notebook, not the script')
+    out = ws.ai._steered('carry on')
+    assert out == 'carry on\n\nUser steering: use the notebook, not the script'
+    assert ws.approvals.state()['queued_steer'] == '', 'and it is not delivered twice'
+    assert ws.ai._steered('carry on') == 'carry on'
+
+def test_a_steer_survives_a_turn_it_cannot_ride(tmp_path):
+    "A multimodal prompt keeps the steer queued rather than dropping it."
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    ws.approvals.queue_steer('check the fixture first')
+    parts = [{'type': 'text', 'text': 'look'}]
+    assert ws.ai._steered(parts) is parts
+    assert ws.approvals.state()['queued_steer'] == 'check the fixture first'
+
 def test_a_steer_lands_on_a_tool_call_that_carries_no_id():
     "A local model's tool call often has no `id`, and the steer used to be dropped for those."
     from leela.blocks.agent.ai import Interventions

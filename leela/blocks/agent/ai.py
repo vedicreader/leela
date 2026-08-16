@@ -221,6 +221,8 @@ class Interventions(Approvals):
                         'parent_action_id': a.parent_action_id,
                         'tool': a.tool, 'args': dict(a.args)})
             else:
+                # A bare backend denial reads to a model as a transient permission failure and it
+                # proposes the same call again, so "no" resolves as a durable instruction.
                 instruction = ('The user rejected this tool call. Do not retry this call or an '
                     'equivalent action unless the user explicitly asks for it later.')
                 if a.note: instruction += f' User direction: {a.note}'
@@ -693,6 +695,20 @@ class Assistant(Agent):
             return f'User steering after skipping the proposed call: {instruction}'
         self._steering_tool = user_steering
         self.turn_transactions = {}
+    def _steered(self, prompt):
+        """Fold in a steer that no tool result consumed.
+
+        A queued steer is delivered by appending it to the next tool result, so one queued while the
+        model was writing its answer waited for a tool call that never came. Text prompts only: a
+        multimodal turn leaves it queued rather than dropping it.
+        """
+        if self.approvals is None or not isinstance(prompt, str): return prompt
+        steer = self.approvals.consume_steer()
+        return f'{prompt}\n\nUser steering: {steer}'.strip() if steer else prompt
+
+    def _prepare(self, prompt):
+        return super()._prepare(self._steered(prompt))
+
     def _be(self, job='turn'):
         """The backend for `job`, on an engine the whole daemon shares rather than a copy of the
         weights per workspace. Attached before the backend builds its chat, so rishi borrows it."""
