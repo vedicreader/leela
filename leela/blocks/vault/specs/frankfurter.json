@@ -1,0 +1,102 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Frankfurter",
+    "version": "1.0.0",
+    "description": "Reference exchange rates published by the European Central Bank. No key, no sign-up and no rate limit, which is what makes it the example: load it, find an operation, call it, and read a real response."
+  },
+  "servers": [{ "url": "https://api.frankfurter.dev" }],
+  "paths": {
+    "/v1/currencies": {
+      "get": {
+        "operationId": "currencies",
+        "tags": ["rates"],
+        "summary": "Every currency the bank publishes, as code and name",
+        "responses": {
+          "200": {
+            "description": "currency code to currency name",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "additionalProperties": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/latest": {
+      "get": {
+        "operationId": "latest",
+        "tags": ["rates"],
+        "summary": "The most recent rates, quoted against one base currency",
+        "parameters": [
+          {
+            "name": "base",
+            "in": "query",
+            "description": "the currency the rates are quoted in; EUR when omitted",
+            "schema": { "type": "string", "example": "USD" }
+          },
+          {
+            "name": "symbols",
+            "in": "query",
+            "description": "comma-separated currencies to return; every one when omitted",
+            "schema": { "type": "string", "example": "EUR,GBP,JPY" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the rates, the base they are quoted in, and the date they were published",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Rates" } } }
+          }
+        }
+      }
+    },
+    "/v1/{date}": {
+      "get": {
+        "operationId": "on_date",
+        "tags": ["rates"],
+        "summary": "The rates published on one date, or the last publication before it",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "path",
+            "required": true,
+            "description": "an ISO date, or two joined by `..` for a series",
+            "schema": { "type": "string", "example": "2024-01-02" }
+          },
+          {
+            "name": "base",
+            "in": "query",
+            "description": "the currency the rates are quoted in; EUR when omitted",
+            "schema": { "type": "string", "example": "USD" }
+          },
+          {
+            "name": "symbols",
+            "in": "query",
+            "description": "comma-separated currencies to return; every one when omitted",
+            "schema": { "type": "string", "example": "EUR,GBP" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the rates published on or before that date",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Rates" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Rates": {
+        "type": "object",
+        "properties": {
+          "amount": { "type": "number" },
+          "base": { "type": "string" },
+          "date": { "type": "string" },
+          "rates": { "type": "object", "additionalProperties": { "type": "number" } }
+        }
+      }
+    }
+  }
+}

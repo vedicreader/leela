@@ -300,7 +300,7 @@ def connect(app, ctx):
         return ui.browse_view(m, vault, shelf=shelf, q=q)
     def _spec_kw(src='', match=''):
         from .spec import CREDS
-        kw = dict(src=src, match=match, creds=CREDS.keyed())
+        kw = dict(src=src, match=match, creds=CREDS.policies())
         if not src.strip(): return kw
         try:
             from .spec import load_spec, op_row, spec_ops
@@ -351,12 +351,12 @@ def connect(app, ctx):
         except Exception as e: return ui.news_view(m, vault, feeds=ctx.feeds, error=errstr(e))
         return ui.news_view(m, vault, feeds=ctx.feeds)
     @rt('/vault/apis/creds')
-    def apis_creds(name: str, headers: str = ''):
-        "Keep one spec's headers. The values go where leela keeps secrets, never back to the page."
+    def apis_creds(name: str, headers: str = '', reach: str = 'cloud'):
+        "Keep one spec's headers and who may call it. The values go where leela keeps secrets."
         from .spec import CREDS, parse_headers
-        try: CREDS.set(name, parse_headers(headers))
-        except Exception as e: return ui.creds_view(CREDS.keyed(), error=errstr(e))
-        return ui.creds_view(CREDS.keyed(), error=CREDS.note)
+        try: CREDS.set(name, parse_headers(headers), reach=reach)
+        except Exception as e: return ui.creds_view(CREDS.policies(), error=errstr(e))
+        return ui.creds_view(CREDS.policies(), error=CREDS.note)
     @rt('/vault/news/add')
     async def news_add(url: str, title: str = '', every: str = '1h', vault: str = ''):
         try:

@@ -20,7 +20,7 @@ FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
 WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS | NEWS_WRITE_TOOLS
 
-__all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools',
+__all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_context',
            'notebook_approvals', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
 
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
@@ -349,22 +349,50 @@ class WorkspaceHost(Host):
         "One user's keys, read where the workbench writes them rather than held on the host."
         from ..vault.spec import CREDS
         return CREDS.all()
-    def api_creds(self, name, headers=None):
+    def api_creds(self, name, headers=None, reach=None):
         "Set what is sent with calls to one spec and nothing else; `headers=None` clears it."
         from ..vault.spec import CREDS
-        return CREDS.set(name, headers)
+        return CREDS.set(name, headers, reach=reach)
+    def api_keyed(self):
+        """What may be said about each spec out loud: header names, the variables behind them, reach.
+
+        Read off the index rather than the values, so a keyless spec marked local-only is here too.
+        """
+        from ..vault.spec import CREDS, env_status
+        return {n: dict(headers=p['headers'], reach=p['reach'], env=env_status(p['refs']))
+                for n, p in CREDS.policies().items()}
+    def reach_refusal(self, name):
+        "Why a model may not call this spec, or None."
+        from ..vault.spec import CREDS
+        if CREDS.reach(name) != 'local' or self.model_local is None: return None
+        local, model = self.model_local()
+        if local: return None
+        # "not a model on this machine" rather than "hosted": a name resolving to nothing is
+        # neither, and refusing it is right for the same reason.
+        return (f'{name} is marked local-only and this conversation runs on {model}, which is not a '
+                f'model on this machine. Nothing was sent. Switch to a local model, or change the '
+                f'reach of {name} on the vault workbench.')
     def _client(self, key, parsed):
         "Cached against the credentials too, so a key set on the page reaches a running host."
+        from ..vault.spec import expand
         creds = self._creds.get(key, {})
         seal, got = tuple(sorted(creds.items())), self._clients.get(key)
         if got is None or got[0] != seal:
             from fastspec.oapi import OpenAPIClient
             got = self._clients[key] = (seal, OpenAPIClient(parsed, timeout=self.timeout, sync=True,
-                                                            headers={**self.headers, **creds}))
+                                                            headers={**self.headers, **expand(creds)}))
         return got[1]
     timeout = 60.0
-    api_load, api_ops, api_call = SpecHost.api_load, SpecHost.api_ops, SpecHost.api_call
-    api_names, api_keyed, _spec = SpecHost.api_names, SpecHost.api_keyed, SpecHost._spec
+    model_local = None      # `Assistant` fills this once there is a turn model to ask about
+    api_load, api_ops = SpecHost.api_load, SpecHost.api_ops
+    api_fetch = SpecHost.api_call       # ungated: the person reading the page owns the data on it
+    api_names, _spec = SpecHost.api_names, SpecHost._spec
+    def api_call(self, operation, name='', **params):
+        "What a model reaches through, which is why reach is enforced here and not in `api_fetch`."
+        from ..vault.spec import SpecError
+        key, _ = self._spec(name)
+        if refusal := self.reach_refusal(key): raise SpecError(refusal)
+        return self.api_fetch(operation, key, **params)
     def nb_cells(self, path):
         from ..nb.nb import Notebook
         return [(c.id, c.cell_type, c.source) for c in Notebook.load(self.check(path)).cells]
@@ -534,17 +562,50 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         except Exception as e: return f'news_refresh failed: {errstr(e)}'
         if not out['feeds']: return f'not following {feed!r}. Call news_feeds to see what is followed.'
         return clip(json.dumps(out, default=str), mx)
-    def api_keys() -> str:
-        """Which loaded specs carry credentials, and which headers they send — never the values.
+    def api_access() -> str:
+        """What each loaded spec sends, what backs it, and which models may call it.
 
-        A call to a spec with no credentials goes out unauthenticated, which most APIs answer with
-        401. Say that plainly rather than retrying: the key is added on the vault's specs page.
+        Header names and environment variable names; never a value. A spec with no credentials goes
+        out unauthenticated, which most APIs answer with 401 — say so rather than retrying. One
+        marked local-only refuses on a hosted model, and the refusal names what to change.
         """
+        from ..vault.spec import EXAMPLES
         keyed, loaded = host.api_keyed(), sorted(host.specs)
-        if not loaded: return 'no specification is loaded; call api_load first.'
-        return json.dumps({n: keyed.get(n) or 'no credentials — calls go out unauthenticated'
-                           for n in loaded}, default=str)
-    return [news_feeds, news_latest, news_story, news_follow, news_unfollow, news_refresh, api_keys]
+        if not loaded:
+            ex = ', '.join(f'api_load({x.path!r})' for x in EXAMPLES)
+            return f'no specification is loaded; call api_load first. Keyless examples: {ex}.'
+        rows = {n: keyed.get(n) or dict(headers=[], reach='cloud', env={}) for n in loaded}
+        for n, r in rows.items():
+            if not r['headers']: r['note'] = 'no credentials — calls go out unauthenticated'
+            if refusal := host.reach_refusal(n): r['refused'] = refusal
+        return clip(json.dumps(rows, default=str), mx)
+    return [news_feeds, news_latest, news_story, news_follow, news_unfollow, news_refresh, api_access]
+
+def api_context(host):
+    """The specs already loaded in this session, as something the model is told rather than finds.
+
+    Without it the agent re-loads a spec the page loaded a minute ago, guesses at group names, and
+    discovers a local-only api by being refused. Header names only: a value never reaches a briefing.
+    """
+    names = sorted(getattr(host, 'specs', {}) or {})
+    if not names: return ''
+    keyed, rows = host.api_keyed(), []
+    for n in names:
+        info, pol = dict(getattr(host, 'spec_info', {}).get(n) or {}), keyed.get(n) or {}
+        groups, ops = info.get('groups') or [], info.get('operations')
+        bits = [f"{info.get('title') or n} — {ops} operation{'' if ops == 1 else 's'} in "
+                f"{len(groups)} group{'' if len(groups) == 1 else 's'}"]
+        if groups[:8]: bits.append('groups: ' + ', '.join(groups[:8]) + ('…' if len(groups) > 8 else ''))
+        if pol.get('headers'): bits.append('sends ' + ', '.join(pol['headers']))
+        if missing := [k for k, ok in (pol.get('env') or {}).items() if not ok]:
+            bits.append(f"but nothing here sets {', '.join(missing)}, so a call will fail")
+        if pol.get('reach') == 'local': bits.append('local-only: a hosted model may not call it')
+        rows.append(f'- `{n}`: ' + '. '.join(bits) + '.')
+    return ('\n\n## APIs loaded in this session\n\n' + '\n'.join(rows) + """
+
+These are loaded already — do not `api_load` them again. `api_ops(name=…, match=…)` finds the
+operation and `api_call` runs it; say which one answered. A spec marked local-only refuses on a
+hosted model rather than sending anything, and the refusal names what to change.""")
 
 def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, host=None):
     "An `Approvals` that writes the whole exchange into the notebook."
@@ -627,6 +688,7 @@ class Assistant(Agent):
         self.video_jobs = VideoJobs() if video_available() else None
         self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
         super().__init__(host, model=model, sp=sp, **kwargs)
+        host.model_local = self.model_local     # a local-only api is gated on the turn model
         self.lend_model()   # so the vault's `ask` uses this session's engine, not a second one
         def user_steering(instruction: str) -> str:
             "Return a user's intervention after a skipped tool call so the agent can redirect its next step."
@@ -645,8 +707,12 @@ class Assistant(Agent):
             self._plain = [f for f in self._plain if f.__name__ not in GIT_WRITE_TOOLS]
             return built
         return super().tools
+    def model_local(self):
+        "Whether this turn's model runs on this machine, and what it is called."
+        spec = self.spec_or_none()
+        return (bool(spec and spec.local), spec.name if spec else 'an unresolved model')
     def system_prompt(self):
-        base = super().system_prompt()
+        base = super().system_prompt() + api_context(self.host)
         layers = getattr(self.ws, 'agent_state_layers', {})
         enabled = [(name, row.get('text', '')) for name, row in layers.items()
             if row.get('enabled', True) and str(row.get('text', '')).strip()]

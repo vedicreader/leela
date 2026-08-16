@@ -564,25 +564,40 @@ def ops_table(rows, src='', match=''):
              hx_post='/clip', hx_target='#vaultwbjobs', hx_swap='afterbegin'),
         cls='lee-wb-ops')
 
-def creds_panel(keyed):
-    "Which specs are keyed and which headers they send. The values are never rendered."
-    rows = [Div(Strong(name), Span(cls='lee-spacer'), Span(', '.join(names), cls='lee-shelf-count'),
-                cls='lee-wb-feedhead') for name, names in sorted((keyed or {}).items())]
+def _policy_row(name, pol):
+    "One spec: the headers it sends, the variables behind them, and who may call it."
+    from .spec import env_status
+    headers, reach = pol.get('headers') or [], pol.get('reach', 'cloud')
+    env = env_status(pol.get('refs') or [])
+    return Div(Div(Strong(name), Span(cls='lee-spacer'),
+                   Span('local only' if reach == 'local' else 'any model', cls='lee-shelf-count'),
+                   Span(', '.join(headers) or 'no key', cls='lee-shelf-count'), cls='lee-wb-feedhead'),
+        *[Small(f'${{{k}}} is ' + ('set here' if ok else 'not set — a call will fail'),
+                cls='lee-dim' if ok else 'lee-job-error') for k, ok in env.items()])
+
+def creds_panel(policies):
+    "What each api sends and who may call it. A value is never rendered."
+    rows = [_policy_row(name, pol) for name, pol in sorted((policies or {}).items())]
     return Div(*(rows or [Small('no api carries a key, so calls go out unauthenticated — which most '
                                 'apis answer with 401.', cls='lee-dim')]), cls='lee-wb-creds')
 
-def creds_view(keyed=None, error=''):
+def creds_view(policies=None, error=''):
     "The keys panel, which is its own swap target: a key is set without reloading the page."
     form = Form(Input(name='name', cls='lee-input', required=True, autocomplete='off',
                       placeholder='which api, as api_load named it'),
         Input(name='headers', cls='lee-input', autocomplete='off',
-              placeholder='Authorization: Bearer …   (one per line, empty to forget it)'),
+              placeholder='Authorization: Bearer ${COSTING_TOKEN}   (one per line, empty to forget it)'),
+        Select(Option('any model may call it', value='cloud'),
+               Option('local models only', value='local'), name='reach', cls='lee-input'),
         Button('keep it', cls='lee-btn go', type='submit'),
         hx_post='/vault/apis/creds', hx_target='#vaultwbcreds', hx_swap='outerHTML', cls='lee-wb-form')
     return Div(Div(Span('the keys a real call needs', cls='lee-vault-legend'), cls='lee-wb-cardhead'),
-        Div(error, cls='lee-job-error') if error else None, creds_panel(keyed), form,
+        Div(error, cls='lee-job-error') if error else None, creds_panel(policies), form,
         Small('a key is kept where leela keeps its secrets, sent only with calls to the api it '
-              'belongs to, and never given to the model.', cls='lee-dim'),
+              'belongs to, and never given to the model. a header may name an environment variable '
+              'instead — write ', Code('Bearer ${COSTING_TOKEN}'), ' and rotating the variable '
+              'rotates the credential. an api marked local-only refuses a hosted model rather than '
+              'sending anything.', cls='lee-dim'),
         id='vaultwbcreds', cls='lee-wb-credsview')
 
 def specs_view(memory, vault='', src='', match='', ops=None, error='', creds=None, **_):
@@ -592,14 +607,20 @@ def specs_view(memory, vault='', src='', match='', ops=None, error='', creds=Non
         Input(name='match', value=match, cls='lee-input', placeholder='search the operations', size='12'),
         Button('read it', cls='lee-btn go', type='submit'),
         hx_get='/vault/view/specs', hx_target='#vaultwbbody', hx_swap='innerHTML', cls='lee-wb-form')
+    from .spec import EXAMPLES
+    # something that answers on the first click: no key, no sign-up, and a response worth reading
+    demo = Div(*[Form(Hidden(name='src', value=x.path), Hidden(name='match', value=''),
+                      Button(x.label.lower(), cls='lee-btn', type='submit', title=x.note),
+                      hx_get='/vault/view/specs', hx_target='#vaultwbbody', hx_swap='innerHTML')
+                 for x in EXAMPLES], cls='lee-wb-form')
     about = Small('a real catalogue does not fit on a page, and a spec is not held anywhere until '
                   'you file it. filing writes every operation as its own section, so “which call '
-                  'returns a deployment?” is answered out of the vault, citing the operation.',
-                  cls='lee-dim')
+                  'returns a deployment?” is answered out of the vault, citing the operation. the '
+                  'bundled examples above are keyless.', cls='lee-dim')
     body = (Div(error, cls='lee-job-error') if error else
             ops_table(ops, src, match) if ops is not None else
             empty('load a specification', 'then search its operations, and file the ones you will ask about.'))
-    return Div(Div(Span('a specification', cls='lee-vault-legend'), cls='lee-wb-cardhead'), load, about,
+    return Div(Div(Span('a specification', cls='lee-vault-legend'), cls='lee-wb-cardhead'), load, demo, about,
         body, creds_view(creds), Div(id='vaultwbjobs', cls='lee-vault-jobs'), cls='lee-wb-specs')
 
 def topics_view(memory, vault='', **_):

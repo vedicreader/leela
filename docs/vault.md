@@ -27,6 +27,12 @@ Following a source reads it once. The cadence governs later reads. Each source c
 
 The memory tools read the main shelf. Feed items sit on `news`. The agent gets its own: `news_latest`, `news_story`, `news_feeds`, `news_refresh`, `news_follow`, `news_unfollow`. The three that write go in front of the user.
 
-The specs view takes API keys, one header per line, and keeps them where leela keeps its secrets. Each key travels only with calls to the spec it belongs to. `api_keys` names the keyed specs and their header names. It never hands the model a value. An unauthenticated 401 becomes something the agent explains rather than retries.
+The specs view takes API keys, one header per line, and keeps them where leela keeps its secrets. Each key travels only with calls to the spec it belongs to. Two bundled examples load on a click: Azure retail prices and ECB exchange rates. Neither wants a key.
+
+A header value may name an environment variable instead. Write `Authorization: Bearer ${COSTING_TOKEN}`. Leela stores the reference. The secret stays in the environment, and rotating the variable rotates the credential. The panel says which variables this machine sets and which it does not. A name with nothing behind it refuses the call. A literal `${...}` sent as a key comes back as a bare 401.
+
+Each spec is `cloud` or `local`. A local-only spec refuses a call from a hosted model and sends nothing. The refusal names both ways out. It refuses rather than reroutes. Switching models in the middle of a turn would hand the same numbers to the hosted model that had already read the question. The gate sits on `api_call`, which the agent reaches. The page calls `api_fetch`. The person reading the response owns the data in it.
+
+The briefing names the specs this session holds: operation counts, groups, the headers each sends, its reach. The agent then leaves alone a spec the page loaded a minute ago. `api_access` answers the same live for a spec that arrives during a turn. Header names and variable names only. A value never reaches the model. An unauthenticated 401 becomes something the agent explains rather than retries.
 
 Use notebooks and the live kernel for table analysis. PII reports appear on document rows and tidy candidates.

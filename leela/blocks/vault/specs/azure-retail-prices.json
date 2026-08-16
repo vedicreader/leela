@@ -1,0 +1,86 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Azure Retail Prices",
+    "version": "2023-01-01-preview",
+    "description": "Every published Azure meter and its list price. No key and no sign-up, which makes it the worked example for costing: ask it what a SKU lists at, and ask the vault what your own agreement says about the same one."
+  },
+  "servers": [{ "url": "https://prices.azure.com" }],
+  "paths": {
+    "/api/retail/prices": {
+      "get": {
+        "operationId": "prices",
+        "tags": ["retail"],
+        "summary": "List prices, narrowed by an OData filter over service, region, SKU and meter",
+        "description": "`filter` is OData over the fields each item carries: `serviceName`, `armRegionName`, `armSkuName`, `meterName`, `productName`, `priceType`. One page is 100 items; `skip` walks the rest.",
+        "parameters": [
+          {
+            "name": "$filter",
+            "in": "query",
+            "description": "an OData filter, for example: serviceName eq 'Virtual Machines' and armRegionName eq 'westeurope' and armSkuName eq 'Standard_D4s_v5'",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "currencyCode",
+            "in": "query",
+            "description": "the currency prices are quoted in; USD when omitted",
+            "schema": { "type": "string", "example": "EUR" }
+          },
+          {
+            "name": "$skip",
+            "in": "query",
+            "description": "items to skip, in hundreds: the page size is fixed at 100",
+            "schema": { "type": "integer" }
+          },
+          {
+            "name": "api-version",
+            "in": "query",
+            "description": "the price schema to answer with",
+            "schema": { "type": "string", "example": "2023-01-01-preview" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "one page of meters and their list prices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "BillingCurrency": { "type": "string" },
+                    "Count": { "type": "integer" },
+                    "NextPageLink": { "type": "string", "nullable": true },
+                    "Items": { "type": "array", "items": { "$ref": "#/components/schemas/Price" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Price": {
+        "type": "object",
+        "properties": {
+          "serviceName": { "type": "string" },
+          "serviceFamily": { "type": "string" },
+          "productName": { "type": "string" },
+          "skuName": { "type": "string" },
+          "armSkuName": { "type": "string" },
+          "meterName": { "type": "string" },
+          "armRegionName": { "type": "string" },
+          "location": { "type": "string" },
+          "retailPrice": { "type": "number" },
+          "unitPrice": { "type": "number" },
+          "unitOfMeasure": { "type": "string" },
+          "currencyCode": { "type": "string" },
+          "type": { "type": "string" },
+          "effectiveStartDate": { "type": "string" }
+        }
+      }
+    }
+  }
+}

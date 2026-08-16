@@ -10,9 +10,10 @@ from __future__ import annotations
 import pytest
 from fasthtml.common import to_xml
 
-from leela.blocks.agent.ai import WorkspaceHost, ide_tools
+from leela.blocks.agent.ai import WorkspaceHost, api_context, ide_tools
 from leela.blocks.vault import ui
-from leela.blocks.vault.spec import Creds, cred_key, parse_headers, redact
+from leela.blocks.vault.spec import (Creds, SpecError, cred_key, env_status, env_vars, expand,
+                                     parse_headers, redact)
 from leela.workspace import Workspace
 
 
@@ -37,6 +38,23 @@ def test_headers_are_one_per_line_and_rubbish_is_dropped():
 
 def test_a_secret_is_shown_by_its_tail_only():
     assert redact('sk_live_abcdefgh') == '…efgh' and redact('xy') == '…'
+
+def test_a_variable_reference_names_something_rather_than_carrying_it_so_it_stays_whole():
+    assert redact('Bearer ${COSTING_TOKEN}') == 'Bearer ${COSTING_TOKEN}'
+
+
+# ── the environment behind a header ─────────────────────────────────────────
+
+def test_only_a_braced_name_is_a_reference():
+    "A bare `$NAME` would claim any dollar inside a literal secret."
+    assert env_vars({'A': 'Bearer ${T}', 'B': '$PLAIN'}) == ['T']
+
+def test_what_is_missing_here_is_reported_rather_than_sent():
+    headers = {'Authorization': 'Bearer ${COSTING_TOKEN}'}
+    assert env_status(headers, {}) == {'COSTING_TOKEN': False}
+    assert expand(headers, {'COSTING_TOKEN': 'k1'}) == {'Authorization': 'Bearer k1'}
+    with pytest.raises(SpecError) as e: expand(headers, {})
+    assert 'COSTING_TOKEN' in str(e.value) and 'nothing was sent' in str(e.value)
 
 def test_one_spec_is_one_key_whatever_its_name_looks_like():
     assert cred_key('Azure OpenAI') == cred_key('azure-openai') != cred_key('stripe')
@@ -75,6 +93,28 @@ def test_what_is_reported_is_header_names_and_never_values(tmp_path):
 
 def test_credentials_need_a_spec_to_belong_to(tmp_path):
     with pytest.raises(ValueError): creds(tmp_path).set('  ', {'A': 'b'})
+
+def test_the_index_records_which_variables_back_a_header_and_not_what_they_hold(tmp_path):
+    p = tmp_path/'c.json'
+    Creds(path=p, store=_Store()).set('costing', {'Authorization': 'Bearer ${COSTING_TOKEN}'})
+    assert Creds(path=p, store=_Store()).policies()['costing']['refs'] == ['COSTING_TOKEN']
+
+def test_an_index_written_before_there_was_a_policy_still_reads(tmp_path):
+    p = tmp_path/'c.json'
+    p.write_text('{"stripe": ["Authorization"]}')
+    assert Creds(path=p, store=_Store()).policies()['stripe'] == dict(
+        headers=['Authorization'], refs=[], reach='cloud')
+
+def test_reach_outlives_the_key_because_a_keyless_api_is_worth_marking(tmp_path):
+    c = creds(tmp_path)
+    c.set('azure-prices', {}, reach='local')
+    assert c.keyed() == {} and c.reach('azure-prices') == 'local'
+
+def test_setting_a_key_leaves_the_reach_alone(tmp_path):
+    c = creds(tmp_path)
+    c.set('costing', {}, reach='local')
+    c.set('costing', {'X-Api-Key': 'k'})
+    assert c.reach('costing') == 'local'
 
 
 # ── the host that calls ─────────────────────────────────────────────────────
@@ -115,12 +155,72 @@ def test_a_key_set_on_the_page_reaches_a_host_that_is_already_running(tmp_path, 
     kept.set('stripe', {'Authorization': 'Bearer sk_live_1'})
     assert h._client('stripe', h.specs['stripe']).headers['Authorization'] == 'Bearer sk_live_1'
 
+def test_a_header_may_name_a_variable_and_the_call_carries_what_it_holds(tmp_path, monkeypatch, kept):
+    monkeypatch.setattr('fastspec.oapi.OpenAPIClient',
+                        lambda parsed, headers=None, **kw: FakeClient(headers or {}))
+    monkeypatch.setenv('LEELA_TEST_TOKEN', 'k1')
+    h = host(tmp_path)
+    h.api_creds('stripe', {'Authorization': 'Bearer ${LEELA_TEST_TOKEN}'})
+    assert h._client('stripe', h.specs['stripe']).headers['Authorization'] == 'Bearer k1'
+
+def test_a_variable_nothing_sets_refuses_the_call_rather_than_sending_the_reference(tmp_path, monkeypatch, kept):
+    monkeypatch.setattr('fastspec.oapi.OpenAPIClient',
+                        lambda parsed, headers=None, **kw: FakeClient(headers or {}))
+    monkeypatch.delenv('LEELA_TEST_TOKEN', raising=False)
+    h = host(tmp_path)
+    h.api_creds('stripe', {'Authorization': 'Bearer ${LEELA_TEST_TOKEN}'})
+    with pytest.raises(SpecError) as e: h.api_call('get_balance', name='stripe')
+    assert 'LEELA_TEST_TOKEN' in str(e.value)
+
+
+# ── who may see what it answers ─────────────────────────────────────────────
+
+def test_a_local_only_api_refuses_a_hosted_model_and_sends_nothing(tmp_path, monkeypatch, kept):
+    monkeypatch.setattr('fastspec.oapi.OpenAPIClient',
+                        lambda parsed, headers=None, **kw: FakeClient(headers or {}))
+    h = host(tmp_path)
+    h.api_creds('stripe', {}, reach='local')
+    h.model_local = lambda: (False, 'claude-opus-5')
+    with pytest.raises(SpecError) as e: h.api_call('get_balance', name='stripe')
+    assert 'local-only' in str(e.value) and 'claude-opus-5' in str(e.value)
+    assert h.api_fetch('get_balance', 'stripe') == {'ok': 'get_balance'}, 'the page is ungated'
+
+def test_a_local_model_may_call_it_and_a_cloud_reach_gates_nobody(tmp_path, monkeypatch, kept):
+    monkeypatch.setattr('fastspec.oapi.OpenAPIClient',
+                        lambda parsed, headers=None, **kw: FakeClient(headers or {}))
+    h = host(tmp_path)
+    h.api_creds('stripe', {}, reach='local')
+    h.model_local = lambda: (True, 'qwen3-4b')
+    assert h.api_call('get_balance', name='stripe') == {'ok': 'get_balance'}
+    h.api_creds('stripe', {}, reach='cloud')
+    h.model_local = lambda: (False, 'claude-opus-5')
+    assert h.api_call('get_balance', name='stripe') == {'ok': 'get_balance'}
+
+
+# ── what the briefing says ──────────────────────────────────────────────────
+
+def test_a_loaded_spec_is_named_in_the_briefing_rather_than_looked_up(tmp_path, kept):
+    h = host(tmp_path)
+    h.spec_info = {'stripe': dict(title='Stripe', operations=2, groups=['balance'])}
+    kept.set('stripe', {'Authorization': 'Bearer k'}, reach='local')
+    out = api_context(h)
+    assert 'stripe' in out and 'Stripe — 2 operations' in out and 'balance' in out
+    assert 'Authorization' in out and 'local-only' in out and 'Bearer k' not in out
+
+def test_no_spec_loaded_costs_the_briefing_nothing():
+    assert api_context(WorkspaceHost(Workspace(roots=[]))) == ''
+
 
 # ── the page ────────────────────────────────────────────────────────────────
 
 def test_the_panel_shows_the_header_names_and_none_of_the_secret():
-    out = to_xml(ui.creds_panel({'stripe': ['Authorization']}))
+    out = to_xml(ui.creds_panel({'stripe': dict(headers=['Authorization'], refs=[], reach='cloud')}))
     assert 'stripe' in out and 'Authorization' in out
+
+def test_the_panel_says_which_variable_is_missing_and_which_api_is_local_only():
+    out = to_xml(ui.creds_panel({'costing': dict(headers=['Authorization'],
+                                                 refs=['LEELA_NOT_SET_ANYWHERE'], reach='local')}))
+    assert 'LEELA_NOT_SET_ANYWHERE' in out and 'not set' in out and 'local only' in out
 
 def test_the_panel_says_what_no_credentials_means():
     assert '401' in to_xml(ui.creds_panel({}))
@@ -149,7 +249,7 @@ def named(tools): return {t.__name__ for t in tools}
 def test_the_feeds_are_reachable_from_a_turn(tmp_path):
     "Feed items are on the `news` shelf, and the memory tools read the main one."
     assert {'news_feeds', 'news_latest', 'news_story', 'news_follow', 'news_unfollow',
-            'news_refresh', 'api_keys'} <= named(ide_tools(Workspace(roots=[tmp_path])))
+            'news_refresh', 'api_access'} <= named(ide_tools(Workspace(roots=[tmp_path])))
 
 def test_the_three_that_write_go_in_front_of_the_user():
     from leela.blocks.agent.ai import WRITE_TOOLS
@@ -184,11 +284,12 @@ def test_what_is_followed_is_reported_without_reading_anything(tmp_path):
 
 def test_an_unkeyed_spec_is_something_to_explain_rather_than_retry(tmp_path):
     tools = {t.__name__: t for t in ide_tools(Workspace(roots=[tmp_path]))}
-    assert 'api_load' in tools['api_keys']()
+    out = tools['api_access']()
+    assert 'api_load' in out and 'azure-retail-prices.json' in out, 'and a keyless one to try'
 
-def test_api_keys_reports_the_header_name_and_not_the_value(tmp_path, kept):
+def test_api_access_reports_the_header_name_and_not_the_value(tmp_path, kept):
     ws = Workspace(roots=[tmp_path])
     ws.__dict__.setdefault('_api_specs', {})['stripe'] = object()
     kept.set('stripe', {'Authorization': 'Bearer sk_live_supersecret'})
-    out = {t.__name__: t for t in ide_tools(ws)}['api_keys']()
+    out = {t.__name__: t for t in ide_tools(ws)}['api_access']()
     assert 'Authorization' in out and 'sk_live_supersecret' not in out
