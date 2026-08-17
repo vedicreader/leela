@@ -1585,3 +1585,55 @@ def test_the_branch_list_is_the_thing_that_scrolls():
     css = read('leela/static/lee-ide.css')
     assert '.lee-modallist { overflow: auto;' in css
     assert '.lee-branchlist { max-height:' in css, 'bounded, so it scrolls rather than the page'
+
+
+def test_switching_a_branch_repaints_the_modal_instead_of_leaving_it_stale():
+    """The modal closed on a row click and stayed open, unchanged, on every other route to a
+    checkout -- so the tick sat against the branch you had just left and each ••• entry was
+    offered against the old HEAD. `/git/action` answers with the same `info()` `/git/info` does,
+    so the reply is repaint material."""
+    from tests.assets import read
+    src = read('leela/static/js/28_branchbar.js')
+    switch = src[src.index('async function switchBranch'):src.index('function compareBranch')]
+    assert 'return fresh;' in switch and 'fresh.outcome' in switch, 'the snapshot goes back, not just the outcome'
+
+    body = src[src.index('async function leeBranchMenu'):src.index('window.leeBranchMenu')]
+    assert 'const reload = (fresh)' in body
+    for want in ('d = fresh;', 'recent = recentBranches(d.root)', 'prRow = null;', 'paint();'):
+        assert want in body, want
+    assert 'sub.textContent =' in body, 'the "on <branch>" heading follows HEAD too'
+    assert '!m.isConnected' in body, 'a reply arriving after the modal closed repaints nothing'
+
+    row = body[body.index("closest('[data-branch]')"):body.index("closest('[data-act]')")]
+    assert '.then(reload)' in row, 'a row checkout refreshes'
+    assert 'm.remove()' in row and 'b.current' in row, 'except the current branch, which is not a switch'
+
+def test_every_mutation_in_the_branch_modal_reports_back():
+    "The ••• menu changes the repository too; it took no callback, so nothing could repaint."
+    from tests.assets import read
+    src = read('leela/static/js/28_branchbar.js')
+    acts = src[src.index('function branchActions'):src.index('async function branchPr')]
+    assert 'function branchActions(anchor, d, b, after' in acts
+    assert 'await branchAct(op, extra)' in acts, 'previews and creates go through one wrapper'
+    for op in ("act('create'", "act('delete'"):
+        assert op in acts, op
+    assert 'showRebasePreview(b.name, d, act)' in acts and 'showMergePreview(b.name, d, act)' in acts
+    assert 'after(await switchBranch(d, b.name))' in acts
+    body = src[src.index('async function leeBranchMenu'):src.index('window.leeBranchMenu')]
+    assert 'branchActions(more, d, (d.branches || []).find(b => b.name === more.dataset.more), reload)' in body
+
+def test_a_refused_checkout_does_not_become_an_unhandled_rejection():
+    "`gitDo` re-throws what it has already reported, and a refused switch is a normal answer."
+    from tests.assets import read
+    src = read('leela/static/js/28_branchbar.js')
+    assert '.then(reload).catch(() => {})' in src
+    assert 'try { return after(await branchAct(op, extra)); } catch (_) {}' in src
+
+def test_the_pull_request_row_belongs_to_the_branch_it_was_asked_about():
+    "It arrives late; two quick switches would land the first answer under the second heading."
+    from tests.assets import read
+    src = read('leela/static/js/28_branchbar.js')
+    body = src[src.index('async function leeBranchMenu'):src.index('window.leeBranchMenu')]
+    assert 'const asked = d.branch;' in body
+    assert 'd.branch === asked' in body
+    assert body.count('showPr()') >= 2, 'on open, and again after every change'

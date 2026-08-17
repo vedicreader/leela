@@ -10283,11 +10283,14 @@ async function switchBranch(d, name) {
   if (!b || b.current) return leeLeft('git');
   rememberBranch(d.root, name);
   // A remote-only branch is checked out by its leaf name; Git creates the tracking branch.
-  const out = (await gitDo('checkout', {branch: b.remote ? branchLeaf(b) : name})).outcome || {};
+  // The whole snapshot goes back, not just the outcome: `/git/action` answers with the same
+  // `info()` that `/git/info` does, so a caller showing branches can repaint from the reply.
+  const fresh = await gitDo('checkout', {branch: b.remote ? branchLeaf(b) : name});
+  const out = fresh.outcome || {};
   // A switch moves HEAD, so `summary` always says so -- and that buries the one sentence that
   // matters, which is what became of work the switch had to set aside. Say it instead.
   if (out.message) { leeLog('git', 'checkout', out.message, 'ok'); status(`git checkout · ${firstLine(out.message)}`, 'ok'); }
-  return out;
+  return fresh;
 }
 
 function compareBranch(d, name) {
@@ -10295,24 +10298,28 @@ function compareBranch(d, name) {
   leeLeft('git'); leeGitRefresh();
 }
 
-function branchActions(anchor, d, b) {
+// `after` takes the snapshot each mutation answers with, so whatever opened this menu can show
+// the repository as it is now rather than as it was when it was opened.
+function branchActions(anchor, d, b, after = (x) => x) {
   if (!b) return;
   const leaf = branchLeaf(b);
+  const act = async (op, extra) => { try { return after(await branchAct(op, extra)); } catch (_) {} };
   const rows = [
-    {label: `Checkout ${leaf}`, disabled: b.current, run: () => switchBranch(d, b.name)},
+    {label: `Checkout ${leaf}`, disabled: b.current,
+     run: async () => { try { after(await switchBranch(d, b.name)); } catch (_) {} }},
     {label: 'New Branch from…', detail: b.name, run: async () => {
       const branch = await inputDialog('new branch', `Branch name, starting at ${b.name}`, '', 'feature/name');
-      if (branch) gitDo('create', {branch, start: b.name});
+      if (branch) await act('create', {branch, start: b.name});
     }},
     {separator: true},
     {label: 'Compare with current', detail: `${d.branch} … ${leaf}`, disabled: b.current, run: () => compareBranch(d, b.name)},
     // Through the previews, as the git panel's identical entries go.
-    {label: `Rebase ${d.branch} onto ${leaf}`, disabled: b.current, run: () => showRebasePreview(b.name, d, branchAct)},
-    {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => showMergePreview(b.name, d, branchAct)},
+    {label: `Rebase ${d.branch} onto ${leaf}`, disabled: b.current, run: () => showRebasePreview(b.name, d, act)},
+    {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => showMergePreview(b.name, d, act)},
   ];
   if (!b.remote && !b.current) rows.push({separator: true}, {label: `Delete ${leaf}`, warn: true, run: async () => {
     if (await confirmDialog('delete branch', `Delete ${b.name}? Commits only on it are lost.`, 'delete'))
-      gitDo('delete', {branch: b.name, force: !b.merged});
+      await act('delete', {branch: b.name, force: !b.merged});
   }});
   openChromeMenu(anchor, rows);
 }
@@ -10359,7 +10366,7 @@ async function leeBranchMenu(anchor) {
   let d;
   try { d = await gitInfo(gitUrl('/git/info')); }
   catch (e) { return leeFail('git', 'branches', e); }
-  const recent = recentBranches(d.root);
+  let recent = recentBranches(d.root);
   let search = null;
   const m = modal(
     `<div class="lee-mhead">Git Branches<span class="sub">${esc(gitRepoName(d.root))} · on ${esc(d.branch)}</span></div>` +
@@ -10373,6 +10380,7 @@ async function leeBranchMenu(anchor) {
     null, {className: 'lee-branchmodal', storageKey: 'branches'});
   search = m.querySelector('#branchsearch');
   const list = m.querySelector('#branchlist');
+  const sub = m.querySelector('.lee-mhead .sub');
 
   let prRow = null;
   /* `keep` is why expanding a folder no longer throws you back to the top. This repaints by
@@ -10404,9 +10412,32 @@ async function leeBranchMenu(anchor) {
     list.scrollTop = at;
   };
 
+  /* A modal that goes on describing the branch you just left is worse than no modal: the tick is
+     against the wrong row and every action below it is offered against the old HEAD. Each
+     mutation answers with a whole `info()`, so take it and repaint rather than closing.
+
+     `recent` is re-read because checking out writes to it, and `prRow` is dropped because the
+     pull request belongs to the branch that was current when it was fetched. */
+  // The pull request is the branch's, and it arrives late. Two switches in quick succession would
+  // otherwise let the first answer land under the second branch's heading.
+  const showPr = () => {
+    const asked = d.branch;
+    branchPr(d).then(r => { if (m.isConnected && d.branch === asked) { prRow = r; paint(); } });
+  };
+  const reload = (fresh) => {
+    if (!m.isConnected || !fresh || !fresh.branches) return fresh;
+    d = fresh;
+    recent = recentBranches(d.root);
+    if (sub) sub.textContent = `${gitRepoName(d.root)} · on ${d.branch}`;
+    prRow = null;
+    paint();
+    showPr();
+    return fresh;
+  };
+
   list.onclick = e => {
     const more = e.target.closest('[data-more]');
-    if (more) return branchActions(more, d, (d.branches || []).find(b => b.name === more.dataset.more));
+    if (more) return branchActions(more, d, (d.branches || []).find(b => b.name === more.dataset.more), reload);
     const folder = e.target.closest('[data-folder]');
     if (folder) {
       const name = folder.dataset.folder;
@@ -10414,13 +10445,20 @@ async function leeBranchMenu(anchor) {
       return paint();
     }
     const row = e.target.closest('[data-branch]');
-    if (row) { m.remove(); return switchBranch(d, row.dataset.branch); }
+    if (row) {
+      const b = (d.branches || []).find(x => x.name === row.dataset.branch);
+      // Picking the branch already checked out is not a switch, it is "show me this repository".
+      if (b && b.current) { m.remove(); return leeLeft('git'); }
+      // `gitDo` re-throws what it has already reported -- a refused checkout is a normal answer,
+      // and the modal is still describing the branch that refused to be left.
+      return switchBranch(d, row.dataset.branch).then(reload).catch(() => {});
+    }
     const act = e.target.closest('[data-act]');
     if (act) { m.remove(); return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d); }
   };
   search.oninput = () => paint(false);
   paint();
-  branchPr(d).then(r => { prRow = r; paint(); });
+  showPr();
   setTimeout(() => search.focus(), 0);
 }
 window.leeBranchMenu = leeBranchMenu;
