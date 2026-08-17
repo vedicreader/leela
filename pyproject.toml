@@ -24,7 +24,7 @@ dependencies = [
     "ipymini>=0.0.1",
     "jupyter-client>=8.9.1",
     "koshas>=0.1.0",
-    "litesearch>=0.1.27",
+    "litesearch>=0.1.28",
     "mdhtml>=0.1.21",
     "python-fasthtml>=0.14.9",
     "starlette>=1.6.0",        # 1.6.0 excludes text/event-stream from GZip; below it every stream buffers
@@ -42,7 +42,7 @@ dependencies = [
 ipymini = [] # compatibility extra; ipymini now ships with Leela
 lsp = ["pyright>=1.1.400"]
 github = [
-    "gheasy>=0.0.6",
+    "gheasy>=0.0.7",
     "dockeasy>=0.0.5",
     "vpseasy>=0.0.18",
     "cfeasy>=0.0.4",
