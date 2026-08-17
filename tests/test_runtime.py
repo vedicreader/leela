@@ -964,3 +964,34 @@ def test_the_runs_file_follows_the_folder_you_chose(tmp_path):
         assert client.get('/runtime/info').json()['root'] == str(b)
         assert client.get('/runs').json()['path'].startswith(str(b)), 'the chosen folder, not the first'
     assert ws.runs.root == b
+
+
+def test_the_pickers_unsaved_configuration_starts_the_file_it_names(tmp_path, monkeypatch):
+    """`/runs` offers a configuration for the open file so the picker is never empty, and that one
+    is saved nowhere. Its name therefore resolves to no configuration and to no file, so starting
+    it has to fall back to the path -- the only handle it has that means anything."""
+    from types import SimpleNamespace
+    root = tmp_path/'cassowary'; root.mkdir()
+    main = root/'main.py'; main.write_text('print("up")\n')
+    ws = Workspace(roots=[root])
+    ws.open(str(main))
+
+    started = {}
+    async def fake_start(script, **kw):
+        started.update(script=script, **kw)
+        return SimpleNamespace(alive=True, state=lambda: {'label': 'main', 'cmd': script},
+                               tail=lambda n=20: ['up'])
+    monkeypatch.setattr(ws.dev, 'start', fake_start)
+
+    with TestClient(ide_app(ws)) as client:
+        here = client.get('/runs').json()['here']
+        assert here and here['name'] == 'main', 'precondition: the picker offers the open file'
+        r = client.get(f'/dev/start?name={here["name"]}&path={here["cmd"]}').json()
+        assert r.get('ok'), r
+        assert started['script'] == str(main)
+
+        # ...and a saved name still wins, or every configuration would run as whatever file its
+        # command line happens to start with.
+        ws.runs.add(Run(name='api', cmd='uvicorn app:app --port 8000', watch='app'))
+        assert client.get('/dev/start?name=api&path=uvicorn app:app --port 8000').json()['ok']
+    assert started['script'] == 'uvicorn app:app --port 8000'

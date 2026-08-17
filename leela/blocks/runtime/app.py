@@ -132,8 +132,11 @@ def connect(app, ctx):
     @rt('/dev/start')
     async def dev_start(path: str = '', name: str = ''):
         "Start a run configuration (`name`) or a file (`path`) under a live inspector."
+        # The picker offers an unsaved configuration for the open file, so it is never empty. That
+        # one's name matches no saved configuration, and `run` reads a name it cannot find as a
+        # path -- of a file called `main`, not `main.py`. On that one only the path resolves.
         try:
-            s = await session.run(name or path)
+            s = await session.run(name if session.runs.get(name) else (path or name))
             return {'ok': s.alive, **s.state(), 'log': s.tail(20)}
         except Exception as e: return fail(e)
     @rt('/dev/stop')
