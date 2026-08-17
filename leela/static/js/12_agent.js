@@ -1127,11 +1127,15 @@ function runPolicyLabel(policy) {
     reads: 'read-only calls', until_failure: 'until failure', completion: 'to completion'};
   return names[policy.kind] || policy.kind;
 }
+/* Most callers pass no state -- a turn starting, a stream tick, a turn ending -- and a steer is
+   not theirs to forget. Only a payload that actually carries `queued_steer` may change it, so
+   the acknowledgement survives until the server says the steer was taken. */
 function updateAgentRunstrip(state = {}) {
   const strip = $('#agentrunstrip'); if (!strip) return;
+  if ('queued_steer' in state) setQueuedSteer(state.queued_steer || '');
   strip.hidden = !lee.agentBusy && !state.waiting;
   const label = state.waiting ? `Waiting · ${state.waiting}`
-    : state.queued_steer ? 'Steering queued · applies after current call'
+    : lee.queuedSteer ? 'Steering queued · applies after current call'
     : state.run_policy ? `Running automatically · ${runPolicyLabel(state.run_policy)}`
     : `${($('#agentcontrol')?.value || 'guided').toUpperCase()} · agent working`;
   $('.lee-agent-run-state', strip).textContent = label;
@@ -1143,14 +1147,27 @@ async function pauseAgentAfterCurrent() {
   const d = await post('/agent/run-policy', {policy: 'pause'}); updateAgentRunstrip(d);
   status('agent will pause before the next call', 'ok');
 }
+/* The chip and the run strip are one fact, so they are set in one place. A steer answered
+   straight into a waiting checkpoint comes back already consumed -- it went to the model rather
+   than into the queue -- and saying "queued" about it would be a lie the next tick erases. */
+function setQueuedSteer(text, shown = '') {
+  lee.queuedSteer = text || '';
+  const queue = $('#agentsteerqueue'); if (!queue) return;
+  if (!lee.queuedSteer) return void (queue.innerHTML = '');
+  queue.innerHTML = `<span>Steering queued</span><strong>${esc(shown || lee.queuedSteer)}</strong>` +
+                    `<button type="button">Cancel</button>`;
+  $('button', queue).onclick = async () => {
+    try { await post('/agent/steer', {cancel: true}); } catch (e) { return status(e.message || String(e), 'err'); }
+    setQueuedSteer(''); updateAgentRunstrip();
+  };
+}
 async function leeQueueSteer() {
   const input = $('#agentsteer'), text = input?.value.trim(); if (!text) return status('write a steering instruction first', 'err');
   try {
     const d = await post('/agent/steer', {text}); input.value = '';
-    const queue = $('#agentsteerqueue');
-    queue.innerHTML = `<span>Steering queued</span><strong>${esc(text)}</strong><button type="button">Cancel</button>`;
-    $('button', queue).onclick = async () => { await post('/agent/steer', {cancel: true}); queue.innerHTML = ''; updateAgentRunstrip(); };
-    updateAgentRunstrip(d); status('steering queued after the current call', 'ok');
+    setQueuedSteer(d.queued_steer || '', text);
+    updateAgentRunstrip(d);
+    status(d.queued_steer ? 'steering queued after the current call' : 'steering sent to the agent', 'ok');
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 window.leeQueueSteer = leeQueueSteer;
@@ -1420,6 +1437,13 @@ function initAgentComposer() {
   input.dataset.composerReady = '1';
   $('[data-agent-pause]')?.addEventListener('click', pauseAgentAfterCurrent);
   $('[data-agent-stop]')?.addEventListener('click', stopAgent);
+  /* A one-line box with a placeholder telling you to write in it takes Enter, or it is a box
+     that eats what you typed. It is not in a form and has no default action, so nothing
+     happened at all -- which read as steering being broken rather than never sent. */
+  $('#agentsteer')?.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    e.preventDefault(); leeQueueSteer();
+  });
   const reasoning = $('#agentreasoning');
   if (reasoning) {
     reasoning.value = localStorage.getItem('lee-agent-reasoning') || 'auto';

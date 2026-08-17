@@ -2039,3 +2039,57 @@ def test_an_undone_turn_is_dimmed_rather_than_deleted():
     assert 'node.remove()' not in block, 'and is not deleted out from under the model'
     assert 'still remembers' in block, 'the bar says what undo did not do'
     assert '.lee-turn-undone' in (ROOT/'leela'/'static'/'lee-ide.css').read_text()
+
+
+def test_the_steer_box_takes_the_key_you_press_in_it():
+    """Two fixes landed on delivering a steer while none of them was ever queued: the box is a
+    bare <input> in a <div>, so Enter had no default action and no handler, and the text sat
+    there. Only the Queue button worked, and nothing said so."""
+    from tests.assets import read
+    js = read('leela/static/js/12_agent.js')
+    block = js[js.index('function initAgentComposer'):js.index('async function sendAgentCommand')]
+    assert "$('#agentsteer')?.addEventListener('keydown'" in block
+    assert 'leeQueueSteer()' in block and 'e.preventDefault()' in block
+    assert 'e.shiftKey' in block, 'shift+enter is not a submit'
+
+def test_a_queued_steer_is_still_acknowledged_a_second_later():
+    """`updateAgentRunstrip()` is called with no state on every turn start, stream tick and turn
+    end. Each one used to reset the label to `agent working`, so a steer that had been accepted
+    stopped saying so almost immediately -- which looks exactly like it was dropped."""
+    from tests.assets import read
+    js = read('leela/static/js/12_agent.js')
+    strip = js[js.index('function updateAgentRunstrip'):js.index('async function pauseAgentAfterCurrent')]
+    assert "if ('queued_steer' in state)" in strip, 'only a payload that carries it may change it'
+    assert 'lee.queuedSteer ?' in strip, 'and the label reads the remembered one'
+    assert 'state.queued_steer ?' not in strip, 'not the argument, which is usually absent'
+
+def test_the_chip_and_the_strip_cannot_disagree():
+    "One setter, so a steer answered straight into a checkpoint is not reported as still queued."
+    from tests.assets import read
+    js = read('leela/static/js/12_agent.js')
+    assert 'function setQueuedSteer(' in js
+    q = js[js.index('async function leeQueueSteer'):js.index('window.leeQueueSteer')]
+    assert 'setQueuedSteer(d.queued_steer' in q, 'the server says whether it queued or was taken'
+    assert 'queue.innerHTML =' not in q, 'the chip is not written a second way here'
+
+def test_the_stream_clears_a_steer_the_agent_has_taken():
+    "The execution event carries approvals.state(), so the chip goes when the steer is consumed."
+    from tests.assets import read
+    server = read('leela/app.py')
+    assert "state = ws.approvals.state()" in server
+    assert "_sse('execution', state)" in server
+    js = read('leela/static/js/12_agent.js')
+    assert "es.addEventListener('execution', ev => updateAgentRunstrip(JSON.parse(ev.data)))" in js
+
+def test_a_steer_rides_the_next_tool_result(tmp_path):
+    """The path the UI actually promises -- 'applies after current call' -- and the only one of
+    the three with no test. It is what a steer queued mid-call takes."""
+    from leela.workspace import Workspace
+    (tmp_path/'a.py').write_text('x = 1\n')
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    view = next(t for t in ws.ai.tools if t.__name__ == 'view_file')
+    ws.approvals.queue_steer('read the test first')
+    out = str(view(str(tmp_path/'a.py')))
+    assert out.endswith('User steering for the next decision: read the test first')
+    assert ws.approvals.state()['queued_steer'] == '', 'and it is not delivered twice'
+    assert 'steering' not in str(view(str(tmp_path/'a.py'))).lower()
