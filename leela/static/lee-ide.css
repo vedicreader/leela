@@ -1876,6 +1876,11 @@ kbd {
 .lee-modal.lee-git-diff-expanded .lee-modalbox { width: 96vw; max-height: 96vh; margin: 0 auto; }
 .lee-modal.lee-git-diff-expanded .lee-git-patch { max-height: none; flex: 1 1 auto; }
 .lee-modalbox .lee-input { margin: 8px; }
+/* `.lee-input` grows, which is what a search bar in a row wants. A modal box is a column, so a
+   search box directly in one grew *taller* instead, and took every pixel the list could not use
+   once its max-height was reached. Worst in a repo with few branches: the shorter the list, the
+   bigger the box. */
+.lee-modalbox > .lee-input { flex: none; }
 .lee-modalbox { position: relative; }
 .lee-modal-close, .lee-modal-expand { position: absolute; top: 5px; z-index: 3; width: 24px; height: 24px;
   display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px;

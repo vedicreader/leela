@@ -1637,3 +1637,13 @@ def test_the_pull_request_row_belongs_to_the_branch_it_was_asked_about():
     assert 'const asked = d.branch;' in body
     assert 'd.branch === asked' in body
     assert body.count('showPr()') >= 2, 'on open, and again after every change'
+
+
+def test_the_branch_search_box_does_not_grow_into_the_list():
+    """`.lee-input` grows, which is what a search bar in a row wants. A modal box is a column, so
+    the branch modal's search box grew *taller* and took every pixel the list could not use once
+    its max-height was reached -- worst in a repo with few branches, where it filled the modal."""
+    from tests.assets import CSS
+    assert '.lee-input { flex: 1 1 auto; }' in CSS, 'the rule this guards against is still there'
+    assert '.lee-modalbox > .lee-input { flex: none; }' in CSS
+    assert '.lee-branchlist { max-height: min(58vh, 520px); }' in CSS, 'the cap that made it visible'
