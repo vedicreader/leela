@@ -31,6 +31,8 @@ async function boot() {
   initSplits();
   mountExec();
   initAgentComposer();
+  // The agent pane is client-owned, so a reload starts it blank; the turns are on disk.
+  rehydrateAgentLive();
   await mountTab();
   layoutTabs();
   new ResizeObserver(layoutTabs).observe($('#header'));
@@ -65,5 +67,5 @@ document.addEventListener('htmx:afterSwap', (e) => {
   // A tab change swaps only the tab bar; re-mount the editor for whatever is now active.
   if (id === 'tabbar') { mountTab().then(leeVars); refreshProjectPills(); requestAnimationFrame(layoutTabs); }
   // Adding a folder rebuilds the whole shell, so everything the client owns is remounted.
-  else if (id === 'shell') { lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); mountTab().then(leeVars); requestAnimationFrame(layoutTabs); }
+  else if (id === 'shell') { lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); requestAnimationFrame(layoutTabs); }
 });

@@ -600,6 +600,32 @@ async function showHistorySession(group, groups) {
   }
   log.scrollTop = 0;
 }
+/* The live pane is DOM only: a reload, or an htmx swap of the shell, leaves it blank while the
+   turns are still on disk. Repaint them from `/agent/history` on mount. The current session is
+   the honest case -- those turns really are in the model's context. On a fresh process the
+   session id is new and empty, so the newest prior session is shown instead, marked as out of
+   context with its own Resume: rendering it silently would claim a context the model lacks. */
+async function rehydrateAgentLive() {
+  const log = $('#agentlog');
+  if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentHydrating) return;
+  lee.agentHydrating = true;
+  try {
+    const d = await api('/agent/history'), groups = d.sessions || [];
+    const live = groups.find(s => s.id === d.current), carried = !(live?.turns || []).length;
+    const group = carried ? groups.find(s => (s.turns || []).length) : live;
+    if (!group) return;
+    const held = document.createElement('div');
+    renderTurns(held, group.turns, carried ? `previous conversation · ${sessionTime(group)}` : 'earlier in this conversation');
+    if (carried) held.insertAdjacentHTML('beforeend',
+      `<div class="lee-history-carry"><span>Not in the model's context yet.</span>` +
+      `<button class="lee-btn go" onclick="leeAgentResumeId('${esc(group.id)}')">Resume</button></div>`);
+    $('.lee-agent-welcome', log)?.remove();
+    log.prepend(...held.children);
+    lee.agentLive = log.innerHTML;
+    log.scrollTop = log.scrollHeight;
+  } catch (e) { /* an empty pane beats a boot that dies on a cold agent */ }
+  finally { lee.agentHydrating = false; }
+}
 async function leeAgentHistory() {
   if (lee.agentView === 'history') return restoreAgentLive();
   rememberAgentLive(); lee.agentView = 'history'; $('#agenthistory')?.classList.add('active');
@@ -618,9 +644,14 @@ async function leeAgentResume(group) {
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; approvalCards.clear(); const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
+// The rehydrated banner survives `restoreAgentLive`, which round-trips the pane through
+// innerHTML: an id in an onclick attribute outlives that, a bound listener does not.
+const leeAgentResumeId = id => leeAgentResume({id});
 window.leeAgentNew = leeAgentNew;
 window.leeAgentResume = leeAgentResume;
+window.leeAgentResumeId = leeAgentResumeId;
 window.leeAgentHistory = leeAgentHistory;
+window.rehydrateAgentLive = rehydrateAgentLive;
 
 async function leeAgentState() {
   try {

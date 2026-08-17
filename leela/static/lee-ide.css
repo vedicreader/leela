@@ -710,6 +710,8 @@ kbd {
 .lee-history-select { width: 100%; min-width: 0; font-family: var(--lee-mono); }
 .lee-history-runs { color: var(--lee-fg4); font: 9.5px/1 var(--lee-mono); white-space: nowrap; }
 .lee-history-resume { white-space: nowrap; }
+.lee-history-carry { display: flex; align-items: center; gap: 8px; margin: 6px 0 12px; padding: 7px 8px; border-left: 2px solid var(--lee-yellow); background: color-mix(in srgb, var(--lee-yellow) 5%, var(--lee-bg)); }
+.lee-history-carry span { color: var(--lee-fg4); font-size: 10px; }
 .lee-history-session-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 4px 4px; }
 .lee-history-session-head strong { color: var(--lee-fg); font-size: 11px; }
 .lee-history-session-head span { color: var(--lee-green); font-size: 9.5px; }
