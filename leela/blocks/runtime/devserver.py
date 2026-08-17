@@ -17,6 +17,22 @@ SCROLLBACK = 200_000
 #: afterwards, so the process outliving the command is not the command still running.
 _EXITED = re.compile(r'^\[leela\] command exited \((-?\d+)\)')
 
+def leela_path():
+    "Leela's own importable paths, for a child running under some other project's interpreter."
+    return [p for p in sys.path if p and os.path.isabs(p) and os.path.exists(p)]
+
+def _boot_src(paths=None):
+    """Source that runs `_child` under an interpreter that has never heard of leela.
+
+    `-m` cannot: the module is not on that interpreter's path yet. Nor can PYTHONPATH, which
+    *prepends* -- leela's copy of fasthtml would then shadow the project's own.
+    """
+    paths = leela_path() if paths is None else list(paths)
+    return ('import sys\n'
+            f'sys.path.extend([p for p in {paths!r} if p not in sys.path])\n'
+            'from leela.blocks.runtime.devserver import _child\n'
+            '_child(sys.argv[1:])\n')
+
 def split_cmd(cmd):
     "A command line as argv. Accepts a list already split, or a string to split like a shell."
     if not isinstance(cmd, str): return [str(c) for c in cmd]
@@ -43,6 +59,7 @@ class DevServer:
     max_log: int = 400
     watch: str = ''
     env: dict | None = None
+    python: str | None = None   # the project's interpreter; None runs the app in leela's own
     def __post_init__(self):
         self.pty = None
         self.log = deque(maxlen=self.max_log)
@@ -77,8 +94,14 @@ class DevServer:
         return Path(a[0]).stem if self.is_script else ' '.join(a[:2])
     def _cmd(self):
         w = self.watch or infer_watch(self.argv)
-        return [sys.executable, '-u', '-m', 'leela.blocks.runtime.devserver', '--port', str(self.port),
-            '--name', self.label, *(['--watch', w] if w else []), '--', *self.argv]
+        args = ['--port', str(self.port), '--name', self.label,
+                *(['--watch', w] if w else []), '--', *self.argv]
+        if not self.python or str(self.python) == sys.executable:
+            return [sys.executable, '-u', '-m', 'leela.blocks.runtime.devserver', *args]
+        # The app belongs in its own project's environment, so that interpreter runs it. Leela's
+        # own path is *appended*, never prepended: it is here to supply the harness and the
+        # inspector, and a project's copy of anything it also ships must still win.
+        return [str(self.python), '-u', '-c', _boot_src(), *args]
     def _cwd(self):
         if self.cwd: return str(self.cwd)
         a = self.argv[0]
@@ -92,7 +115,9 @@ class DevServer:
         self.command_code = None
         # A pty rather than a pipe: an app writes colour and progress to a terminal, and a great
         # many of them say nothing at all into a pipe because they see they are not on one.
-        self.pty = Pty(self._cmd(), cwd=self._cwd(), env={**os.environ, **(self.env or {})})
+        from .kernels import venv_env
+        env = venv_env(self.python, {**os.environ, **(self.env or {})})
+        self.pty = Pty(self._cmd(), cwd=self._cwd(), env=env)
         self.pty.start()
         self.started = time.time()
         self._reader = asyncio.create_task(self._drain())

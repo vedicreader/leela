@@ -1050,3 +1050,33 @@ def test_a_reloader_is_called_out_wherever_it_is_switched_on():
     assert _wants_reload('uvicorn.run(app, reload = True)')
     assert not _wants_reload("serve('app', 'site', reload=False)")
     assert not _wants_reload('print("no reloader here")')
+
+
+def test_a_run_happens_in_the_project_environment_not_leelas(tmp_path):
+    """A release step already resolves its interpreter from the project. A run did not: it went
+    through `sys.executable`, so an app's imports came out of leela's site-packages."""
+    from leela.blocks.runtime.devserver import _boot_src, leela_path
+    py = _venv(tmp_path)
+    s = DevServer(script=str(tmp_path/'app.py'), python=str(py))
+    cmd = s._cmd()
+    assert cmd[0] == str(py) and cmd[1] == '-u' and cmd[2] == '-c', 'the project runs its own app'
+    assert '-m' not in cmd, 'leela is not on that interpreter path yet, so -m cannot reach it'
+    assert cmd[-1] == str(tmp_path/'app.py')
+    # ...and leela is appended, so a project's copy of anything leela also ships still wins.
+    boot = _boot_src(['/leela/pkgs'])
+    assert 'sys.path.extend(' in boot and 'sys.path.insert' not in boot
+    assert '_child(sys.argv[1:])' in boot
+    assert all(os.path.isabs(p) for p in leela_path())
+
+def test_a_run_with_no_project_interpreter_still_uses_leelas(tmp_path):
+    "Nothing to resolve is not a failure; it is the old behaviour, which was right when alone."
+    s = DevServer(script=str(tmp_path/'app.py'))
+    assert s._cmd()[:4] == [sys.executable, '-u', '-m', 'leela.blocks.runtime.devserver']
+
+def test_the_run_environment_points_at_the_project_venv(tmp_path):
+    "PATH, VIRTUAL_ENV and UV_PROJECT_ENVIRONMENT, so a subprocess of the app lands there too."
+    from leela.blocks.runtime.kernels import venv_env
+    py = _venv(tmp_path)
+    env = venv_env(str(py), {'PATH': '/usr/bin'})
+    assert env['VIRTUAL_ENV'] == str(tmp_path/'.venv')
+    assert env['PATH'].split(os.pathsep)[0] == str(py.parent)

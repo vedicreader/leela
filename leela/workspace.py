@@ -683,8 +683,11 @@ class Workspace:
             r = self.runs.for_file(p)
             if save: self.runs.add(r)
         root = self.project_root
-        return await self.dev.start(r.cmd, cwd=r.resolved_cwd(root) if root else None,
-                                    name=r.name, watch=r.watch, env=r.resolved_env(root))
+        cwd = r.resolved_cwd(root) if root else None
+        # An app belongs in its own project's environment, the way a release step already does.
+        from .blocks.runtime.kernels import python_for
+        return await self.dev.start(r.cmd, cwd=cwd, name=r.name, watch=r.watch,
+                                    env=r.resolved_env(root), python=python_for(cwd or root, self))
     def kernel_options(self, tab=None):
         "Everything a kernel picker needs, so neither frontend has to know how kernels work."
         from .blocks.runtime.kernels import KERNELS, find_pythons, ipymini_available
