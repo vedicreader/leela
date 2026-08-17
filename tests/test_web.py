@@ -461,7 +461,8 @@ def test_panels_refresh_themselves_and_keep_secrets_server_side():
     assert "url: kind === 'drive' ? '/drive/ws' : '/pipeline/ws'" in JS
     assert "openReleaseTerm(root = '', kind = 'release')" in JS
     assert 'def pipeline_socket(' in read('leela/core/web.py')
-    assert SERVER.count("pipeline_socket(app, '") == 2, 'both blocks register through it'
+    assert SERVER.count("pipeline_socket(app, '") == 3, 'pipelines, drive and runs register through it'
+    assert "pipeline_socket(app, '/run/ws'" in SERVER, 'a run is watched on its own pty'
     block = JS[JS.index('function wfEnvRows'):JS.index('function renderWorkflowsPanel')]
     assert "'••••••••'" in block or '••••••••' in block
     assert 'e.secret ?' in block, 'a secret and a variable are drawn differently'

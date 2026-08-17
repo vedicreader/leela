@@ -80,6 +80,9 @@ async function runApp() {
     if (!s.ok) return status(s.error || 'failed to start', 'err');
     agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)} — ${esc(s.cmd)}</span></div>` +
              `<div class="lee-runline"><span class="res">${esc((s.log || []).join('\n'))}</span></div>`);
+    // A dev server's output is the thing you watch, so open the terminal it is on rather than
+    // leaving it to be found under a dock tab and a filter.
+    leeRunTerm(s.script || r.cmd, s.label).catch(e => status(String(e.message || e), 'err'));
     if (s.base) {
       // Running from the picker is an explicit choice of runtime. Connect the variable
       // panel immediately instead of making the user repeat that choice in “env…”.

@@ -5325,11 +5325,14 @@ async function pollRunLogs() {
     const fresh = lines.slice(lee.runSeen.get(path) || 0);
     lee.runSeen.set(path, lines.length);
     if (fresh.length) leeLog('runs', srv.label || path.split('/').pop(), fresh.join('\n'));
-    if (!srv.alive && srv.returncode !== null && !lee.runFinished.has(path)) {
+    // `running`, not `alive`: the child keeps the inspector up after the command returns, so a run
+    // that died on its first line reported itself healthy for as long as leela stayed open.
+    const code = srv.code !== undefined && srv.code !== null ? srv.code : srv.returncode;
+    if (!srv.running && code !== null && code !== undefined && !lee.runFinished.has(path)) {
       lee.runFinished.add(path);
-      const failed = srv.returncode !== 0;
-      leeLog('runs', `${srv.label || path.split('/').pop()} ${failed ? 'failed' : 'finished'} · exit ${srv.returncode}`, '', failed ? 'err' : 'ok');
-      if (failed) { leeLogFilter('runs'); leeDock('logs'); status(`${srv.label || path.split('/').pop()} failed — exit ${srv.returncode}`, 'err'); }
+      const failed = code !== 0;
+      leeLog('runs', `${srv.label || path.split('/').pop()} ${failed ? 'failed' : 'finished'} · exit ${code}`, '', failed ? 'err' : 'ok');
+      if (failed) { leeLogFilter('runs'); leeDock('logs'); status(`${srv.label || path.split('/').pop()} failed — exit ${code}`, 'err'); }
     }
   }
   return servers.length;
@@ -5427,6 +5430,33 @@ async function openReleaseTerm(root = '', kind = 'release') {
   });
   lee.terms.set(id, record); switchTerm(id);
 }
+/* A run's own terminal. The Logs pane answers "what happened"; this answers "what is it doing",
+   which for a dev server is the whole of the job -- colour, progress, a traceback as it lands, and
+   a keyboard, so ctrl-c reaches the app. Same component as the shell, pointed at `/run/ws`, which
+   hands back the pty the run is already on rather than starting anything. */
+async function leeRunTerm(path, label = '') {
+  if (!path) return;
+  await loadTermBundle();
+  const d = await api('/term/info');
+  if (!d.enabled) return status(d.why, 'err');
+  const id = 'run:' + path, prior = lee.terms.get(id);
+  if (prior && !prior.exited) return switchTerm(id);
+  if (prior) { prior.view.dispose(); prior.host.remove(); lee.terms.delete(id); }
+  $('#shell').classList.add('show-term');
+  const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
+  const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
+  host.dataset.term = id; parent.appendChild(host);
+  const name = label || path.split('/').pop();
+  const record = {id, kind: 'run', label: name, cwd: path, host, view: null};
+  record.view = LeeTerm.create(host, {
+    token: d.token, cwd: path, kind: 'run', id, url: '/run/ws',
+    onStatus: m => status(`${name}: ${m}`),
+    onExit: () => { record.exited = true; paintTermTabs(); },
+  });
+  lee.terms.set(id, record); switchTerm(id);
+}
+window.leeRunTerm = leeRunTerm;
+
 // Reconnect to a pty that is already running, rather than starting one. Same component and the
 // same id, so the server hands back the session it still has -- which is what makes the process
 // inside it visible in a tab, and therefore closable.
@@ -8875,6 +8905,9 @@ async function runApp() {
     if (!s.ok) return status(s.error || 'failed to start', 'err');
     agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)} — ${esc(s.cmd)}</span></div>` +
              `<div class="lee-runline"><span class="res">${esc((s.log || []).join('\n'))}</span></div>`);
+    // A dev server's output is the thing you watch, so open the terminal it is on rather than
+    // leaving it to be found under a dock tab and a filter.
+    leeRunTerm(s.script || r.cmd, s.label).catch(e => status(String(e.message || e), 'err'));
     if (s.base) {
       // Running from the picker is an explicit choice of runtime. Connect the variable
       // panel immediately instead of making the user repeat that choice in “env…”.

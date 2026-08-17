@@ -307,4 +307,5 @@ Mount /leestatic
 WebSocketRoute /browser/ws
 WebSocketRoute /drive/ws
 WebSocketRoute /pipeline/ws
+WebSocketRoute /run/ws
 WebSocketRoute /term/ws

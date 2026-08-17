@@ -1,16 +1,21 @@
 "Run any command from the IDE under a live inspector in the same process, so its namespace is."
 
 from __future__ import annotations
-import asyncio, os, signal, sys, time, traceback
+import asyncio, os, re, signal, sys, time, traceback
 from collections import deque
 from dataclasses import dataclass
 from fastcore.all import Path, L, first
+from fastcore.xtras import clean_cli_output
 
 from ...core.inspectors import active
 
 __all__ = ['DevServer', 'DevServers']
 
 _URL_HINTS = ('running on', 'listening on', 'http://')
+SCROLLBACK = 200_000
+#: The child says this once the command it was given has returned; it keeps the inspector up
+#: afterwards, so the process outliving the command is not the command still running.
+_EXITED = re.compile(r'^\[leela\] command exited \((-?\d+)\)')
 
 def split_cmd(cmd):
     "A command line as argv. Accepts a list already split, or a string to split like a shell."
@@ -39,16 +44,25 @@ class DevServer:
     watch: str = ''
     env: dict | None = None
     def __post_init__(self):
-        self.proc = None
+        self.pty = None
         self.log = deque(maxlen=self.max_log)
         self.base = None
         self.app_url = None
         self.started = self.ended = None
         self._reader = None
+        self.command_code = None
+        self.screen = bytearray()    # raw terminal bytes, for a viewer that attaches late
+        self._subs = set()
     @property
-    def alive(self): return self.proc is not None and self.proc.returncode is None
+    def proc(self): return self.pty.proc if self.pty else None
     @property
-    def pid(self): return self.proc.pid if self.proc else None
+    def alive(self): return self.pty is not None and self.pty.alive
+    @property
+    def running(self):
+        "Whether the *command* is still going. The inspector outlives it, and `alive` follows that."
+        return self.alive and self.command_code is None
+    @property
+    def pid(self): return self.pty.pid if self.pty else None
     @property
     def argv(self): return split_cmd(self.script) + [str(a) for a in self.args]
     @property
@@ -70,30 +84,57 @@ class DevServer:
         a = self.argv[0]
         return str(Path(a).parent) if a.endswith('.py') else os.getcwd()
     async def start(self):
-        "Spawn the app and begin draining its output. Returns self once the inspector registers."
+        "Spawn the app on a pty and begin draining it. Returns self once the inspector registers."
         if self.alive: return self
-        self.log.clear(); self.base = self.app_url = self.ended = None
-        self.proc = await asyncio.create_subprocess_exec(
-            *self._cmd(), cwd=self._cwd(), env={**os.environ, **(self.env or {})},
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True)
+        from ..term.term import Pty
+        self.log.clear(); self.screen.clear()
+        self.base = self.app_url = self.ended = None
+        self.command_code = None
+        # A pty rather than a pipe: an app writes colour and progress to a terminal, and a great
+        # many of them say nothing at all into a pipe because they see they are not on one.
+        self.pty = Pty(self._cmd(), cwd=self._cwd(), env={**os.environ, **(self.env or {})})
+        self.pty.start()
         self.started = time.time()
         self._reader = asyncio.create_task(self._drain())
         await self._await_inspector()
         return self
     async def _drain(self):
-        "Pump the child's combined output into the ring buffer, scraping its URL as it goes."
-        assert self.proc and self.proc.stdout
-        while True:
-            line = await self.proc.stdout.readline()
-            if not line: break
-            s = line.decode('utf-8', 'replace').rstrip()
-            self.log.append(s)
-            if s.startswith('[leela]') or self.app_url is not None: continue
-            if any(h in s.lower() for h in _URL_HINTS) and (i := s.find('http://')) >= 0:
-                self.app_url = s[i:].split()[0].rstrip('.,')
-        await self.proc.wait()
+        "Feed the child's terminal to its viewers, and its lines to the ring buffer."
+        rest = bytearray()
+        def on_data(data):
+            self._broadcast(data)
+            rest.extend(data)
+            while (i := rest.find(b'\n')) >= 0:
+                self._line(bytes(rest[:i])); del rest[:i + 1]
+        await self.pty.stream(on_data)
+        if rest: self._line(bytes(rest))
         self.ended = time.time()
+    def _line(self, raw):
+        "One output line, kept for `/dev/log`: the escape codes belong to the terminal, not a list."
+        s = clean_cli_output(raw.decode('utf-8', 'replace').rstrip('\r\n')).rstrip()
+        self.log.append(s)
+        if (m := _EXITED.match(s)): self.command_code = int(m.group(1))
+        if s.startswith('[leela]') or self.app_url is not None: return
+        if any(h in s.lower() for h in _URL_HINTS) and (i := s.find('http://')) >= 0:
+            self.app_url = s[i:].split()[0].rstrip('.,')
+    def subscribe(self):
+        "A queue of terminal frames for one viewer, primed with what has already scrolled by."
+        q = asyncio.Queue()
+        if self.screen: q.put_nowait(bytes(self.screen))
+        self._subs.add(q)
+        return q
+    def unsubscribe(self, q): self._subs.discard(q)
+    def _broadcast(self, data):
+        self.screen += data
+        if len(self.screen) > SCROLLBACK: del self.screen[:-SCROLLBACK]
+        for q in list(self._subs):
+            try: q.put_nowait(data)
+            except Exception: self._subs.discard(q)
+    def write(self, data):
+        "Keystrokes into the running app -- a debugger prompt, or ctrl-c."
+        if self.pty is not None: self.pty.write(data)
+    def resize(self, cols, rows):
+        if self.pty is not None: self.pty.resize(cols, rows)
     async def _await_inspector(self, tries=60):
         "Wait for the child's own registry entry, matched on pid."
         for _ in range(tries):
@@ -106,13 +147,16 @@ class DevServer:
     async def stop(self, grace=3.0):
         "Terminate the whole process group; a web server usually has children of its own."
         if not self.alive: return
-        try: os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+        proc = self.proc
+        try: os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
-            try: self.proc.terminate()
+            try: proc.terminate()
             except ProcessLookupError: pass
-        try: await asyncio.wait_for(self.proc.wait(), grace)
-        except asyncio.TimeoutError:
-            try: os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
+        for _ in range(max(1, int(grace * 10))):
+            if proc.poll() is not None: break
+            await asyncio.sleep(0.1)
+        else:
+            try: os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except Exception: pass
         if self._reader: self._reader.cancel()
         self.base = self.app_url = None
@@ -122,7 +166,8 @@ class DevServer:
     def tail(self, n=40): return list(self.log)[-n:]
     def state(self):
         return {'label': self.label, 'script': self.script, 'cmd': ' '.join(self.argv),
-            'alive': self.alive, 'pid': self.pid, 'returncode': self.proc.returncode if self.proc else None,
+            'alive': self.alive, 'running': self.running, 'code': self.command_code,
+            'pid': self.pid, 'returncode': self.proc.returncode if self.proc else None,
             'watch': self.watch or infer_watch(self.argv), 'base': self.base, 'app_url': self.app_url,
             'started': self.started, 'ended': self.ended,
             'uptime': (time.time() - self.started) if self.started and self.alive else 0}
@@ -137,7 +182,9 @@ class DevServers:
         return str(Path(s).resolve()) if s.endswith('.py') and ' ' not in s else s
     async def start(self, script, **kw):
         key = self.key(script)
-        if (s := self.servers.get(key)) is not None and s.alive: return s
+        # `running`, not `alive`: a server whose command died is what the caller is trying to replace.
+        if (s := self.servers.get(key)) is not None and s.running: return s
+        if s is not None and s.alive: await s.stop()
         s = self.servers[key] = DevServer(script=key, port=self.port, **kw)
         await s.start()
         return s
@@ -174,6 +221,19 @@ def _watch_module(name):
     except Exception as e:
         print(f'[leela] could not watch {name}: {type(e).__name__}: {e}', flush=True)
         return None
+
+_RELOAD_SRC = re.compile(r'reload\s*=\s*True')
+
+def _wants_reload(text):
+    "Whether a script turns a reloader on in code, which `--reload` in an argv cannot show."
+    return bool(_RELOAD_SRC.search(text or ''))
+
+def _warn_reload(why):
+    "Say once that a reloader moves the app out of the process the inspector is in."
+    if not why: return
+    print(f'[leela] a reloader is on ({why}). It runs your app in a child process, so the '
+        'inspector here will not see its namespace -- and on a port already in use the reloader '
+        'exits, leaving this run with nothing in it. Turn reload off to inspect it.', flush=True)
 
 def _entry_point(name):
     "An installed console script by name (`uvicorn`, `flask`, `pytest`), as a callable, or None."
@@ -224,27 +284,32 @@ def _child(argv=None):
     watch = a.watch or infer_watch(cmd)
     sys.path.insert(0, os.getcwd())
     label = a.name or watch or Path(cmd[0]).stem
+    code = 0
     if len(cmd) == 1 and cmd[0].endswith('.py'):
         mod, script = _script_module(cmd[0])
         _, base = serve(port=a.port, ns=mod.__dict__, name=label)
         print(f'[leela] inspector live at {base}', flush=True)
         sys.argv = [str(script)]
         sys.path.insert(0, str(script.parent))
-        body = lambda: exec(compile(script.read_text(), str(script), 'exec'), mod.__dict__)
+        text = script.read_text()
+        _warn_reload('this script asks for it' if _wants_reload(text) else '')
+        body = lambda: exec(compile(text, str(script), 'exec'), mod.__dict__)
     else:
         _, base = serve(port=a.port, ns={'__name__': '__main__'}, name=label)
         print(f'[leela] inspector live at {base}', flush=True)
-        if any(c == '--reload' for c in cmd):
-            print('[leela] --reload runs your app in a child process; the inspector is in '
-                'this one and will not see it. Drop --reload to inspect it.', flush=True)
+        _warn_reload('the command asks for it' if any(c == '--reload' for c in cmd) else '')
         if watch: _watch_module(watch)
         body = lambda: run_command(cmd)
     try: body()
-    except KeyboardInterrupt: pass
+    except KeyboardInterrupt: code = 130
     except SystemExit as e:
-        if e.code: traceback.print_exception(e)
+        code = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
+        if code: traceback.print_exception(e)
+    except Exception:
+        code = 1
+        traceback.print_exc()
     finally:
-        print('[leela] command exited; inspector still live', flush=True)
+        print(f'[leela] command exited ({code}); inspector still live', flush=True)
         try:
             while True: time.sleep(1)
         except KeyboardInterrupt: pass

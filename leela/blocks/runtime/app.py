@@ -5,11 +5,11 @@ from __future__ import annotations
 import os, shutil
 
 from ... import errstr
-from ...core.web import fail, off_loop
+from ...core.web import fail, off_loop, pipeline_socket
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('fs', 'pool', 'dev', 'terms', 'tab', 'docs')
+CAPS = ('fs', 'pool', 'dev', 'terms', 'tab', 'docs', 'runs', 'gate')
 
 def connect(app, ctx):
     rt = app.route
@@ -136,7 +136,7 @@ def connect(app, ctx):
         # one's name matches no saved configuration, and `run` reads a name it cannot find as a
         # path -- of a file called `main`, not `main.py`. On that one only the path resolves.
         try:
-            s = await session.run(name if session.runs.get(name) else (path or name))
+            s = await session.run(name if ctx.runs.get(name) else (path or name))
             return {'ok': s.alive, **s.state(), 'log': s.tail(20)}
         except Exception as e: return fail(e)
     @rt('/dev/stop')
@@ -147,3 +147,9 @@ def connect(app, ctx):
     def dev_log(path: str, n: int = 60):
         s = ctx.dev.get(path)
         return {'log': s.tail(n) if s else [], **(s.state() if s else {})}
+    def _run_pty(hello):
+        "Which run a terminal is attaching to. `cwd` carries it: that is the field the client sends."
+        s = ctx.dev.get(hello.get('path') or hello.get('cwd') or '')
+        if s is None: raise LookupError('that run is not running')
+        return s
+    pipeline_socket(app, '/run/ws', ctx.gate, _run_pty)

@@ -995,3 +995,58 @@ def test_the_pickers_unsaved_configuration_starts_the_file_it_names(tmp_path, mo
         ws.runs.add(Run(name='api', cmd='uvicorn app:app --port 8000', watch='app'))
         assert client.get('/dev/start?name=api&path=uvicorn app:app --port 8000').json()['ok']
     assert started['script'] == 'uvicorn app:app --port 8000'
+
+
+SCRATCH_RUNS = """\
+import sys
+print('hello from the run')
+sys.exit({code})
+"""
+
+async def _finished(s, tries=80):
+    "Start `s` and wait for its command to return; the inspector keeps the process up after."
+    await s.start()
+    for _ in range(tries):
+        if not s.running: break
+        await asyncio.sleep(0.2)
+    return s
+
+def test_a_run_reports_the_command_not_the_inspector(tmp_path):
+    """The child keeps the inspector up after the command returns, so process liveness says nothing
+    about whether the app is running. A run that died on its first line reported itself healthy for
+    as long as leela stayed open, and Logs could never announce the failure."""
+    p = tmp_path/'boom.py'; p.write_text(SCRATCH_RUNS.format(code=3))
+    s = asyncio.run(_finished(DevServer(script=str(p), port=9471)))
+    try:
+        assert s.alive, 'the inspector outlives the command, by design'
+        assert not s.running and s.command_code == 3, 'but the command is over, and it failed'
+        assert s.state()['code'] == 3 and s.state()['running'] is False
+        assert any('hello from the run' in l for l in s.tail(20)), 'its output was captured'
+        assert any('SystemExit: 3' in l for l in s.tail(20)), 'and so was why it stopped'
+    finally: asyncio.run(s.stop())
+
+def test_a_run_that_succeeds_says_zero(tmp_path):
+    p = tmp_path/'fine.py'; p.write_text(SCRATCH_RUNS.format(code=0))
+    s = asyncio.run(_finished(DevServer(script=str(p), port=9472)))
+    try: assert s.command_code == 0 and not s.running
+    finally: asyncio.run(s.stop())
+
+def test_a_run_is_on_a_terminal_its_viewers_can_attach_to(tmp_path):
+    "The output is bytes on a pty, so a terminal can show it -- colour, cursor moves and all."
+    p = tmp_path/'fine.py'; p.write_text(SCRATCH_RUNS.format(code=0))
+    s = asyncio.run(_finished(DevServer(script=str(p), port=9473)))
+    try:
+        assert b'hello from the run' in bytes(s.screen)
+        q = s.subscribe()
+        assert q.get_nowait(), 'a late viewer is primed with what already scrolled by'
+        s.unsubscribe(q); assert q not in s._subs
+    finally: asyncio.run(s.stop())
+
+def test_a_reloader_is_called_out_wherever_it_is_switched_on():
+    """`--reload` in a command line was already warned about. Set in code it was not, and that is
+    the common shape -- `serve(..., reload=True)` in the script the picker offers to run."""
+    from leela.blocks.runtime.devserver import _wants_reload
+    assert _wants_reload("serve('app', 'site', port=8000, reload=True)")
+    assert _wants_reload('uvicorn.run(app, reload = True)')
+    assert not _wants_reload("serve('app', 'site', reload=False)")
+    assert not _wants_reload('print("no reloader here")')
