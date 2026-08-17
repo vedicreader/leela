@@ -2093,3 +2093,42 @@ def test_a_steer_rides_the_next_tool_result(tmp_path):
     assert out.endswith('User steering for the next decision: read the test first')
     assert ws.approvals.state()['queued_steer'] == '', 'and it is not delivered twice'
     assert 'steering' not in str(view(str(tmp_path/'a.py'))).lower()
+
+
+def test_delegation_never_gets_the_git_write_tools(monkeypatch):
+    """Leela's Git writes are kept off the delegation surface. Filtering `_plain` only covered the
+    branch that returns it: a sub-agent sized to a different model is built from `registry.tools`,
+    and a writing one is handed the recorded wrappers. Neither passes through `_plain`, so both
+    arrived holding `git_push`."""
+    from leela.agent.agent import Agent
+    from leela.blocks.agent.ai import GIT_WRITE_TOOLS, Assistant
+
+    def git_push(): pass
+    def git_checkout(): pass
+    def git_pull(): pass
+    def git_status(): pass
+    def view_file(): pass
+
+    a = Assistant.__new__(Assistant)          # the method reads nothing off the instance
+    branches = ([git_push, git_status, view_file],      # `_plain`, the branch that was covered
+                [git_checkout, git_pull, view_file],    # `_subtools`, built from the registry
+                [git_push, git_checkout, git_status],   # the recorded wrappers a writer is given
+                [])
+    for branch in branches:
+        monkeypatch.setattr(Agent, '_sub_plain', lambda self, b=branch: list(b))
+        names = {f.__name__ for f in a._sub_plain()}
+        assert not (names & GIT_WRITE_TOOLS), f'git writes reached delegation via {branch}'
+        assert names == {f.__name__ for f in branch} - GIT_WRITE_TOOLS, 'and nothing else was taken'
+
+    # Reading git is not writing git, and must survive.
+    monkeypatch.setattr(Agent, '_sub_plain', lambda self: [git_status, view_file])
+    assert {f.__name__ for f in a._sub_plain()} == {'git_status', 'view_file'}
+
+def test_the_turn_model_keeps_the_git_writes_it_is_not_advertised():
+    "The refusal is about delegation. The turn model still has them; the briefing just does not sell them."
+    from tests.assets import read
+    src = read('leela/blocks/agent/ai.py')
+    body = src[src.index('    def tools(self):'):src.index('    def _sub_plain(self):')]
+    assert 'built = super().tools' in body and 'return built' in body
+    assert 'self._plain = [f for f in self._plain' in body, 'the briefing is what is narrowed'
+    assert 'built = [' not in body, 'what the model can call is never filtered here'

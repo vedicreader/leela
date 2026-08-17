@@ -725,9 +725,22 @@ class Assistant(Agent):
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             built = super().tools
+            # `_plain` is what the briefing is written from. The turn model keeps the Git writes --
+            # `built` is untouched -- but is not invited to reach for them; asking is what a Git
+            # write is for. Delegation is refused them outright, in `_sub_plain`.
             self._plain = [f for f in self._plain if f.__name__ not in GIT_WRITE_TOOLS]
             return built
         return super().tools
+
+    def _sub_plain(self):
+        """No delegated agent gets leela's Git writes, whichever list upstream hands back.
+
+        Filtering `_plain` alone only covered the branch that returns it. A sub-agent sized to a
+        different model is built from `registry.tools` instead, and one allowed to write is given
+        the recorded wrappers -- neither passes through `_plain`, so both arrived holding
+        `git_push`. The refusal belongs on what delegation is actually given.
+        """
+        return [f for f in super()._sub_plain() if f.__name__ not in GIT_WRITE_TOOLS]
     def model_local(self):
         "Whether this turn's model runs on this machine, and what it is called."
         spec = self.spec_or_none()
