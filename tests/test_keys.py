@@ -25,7 +25,9 @@ def test_every_action_is_bound_reachable_and_documented():
     assert not (runs - clickable), f'run commands without buttons: {sorted(runs - clickable)}'
     t = tip('run_cell')
     assert 'run cell' in t and 'mod+enter' in t and 'f5' not in t
-    assert tip('run_selection') == 'run the selection  (hyper+s)'
+    # Named for where it runs: it is the one run command that is still the kernel, now that
+    # running a script means a managed process with its own terminal.
+    assert tip('run_selection') == 'run the selection in the kernel  (hyper+s)'
     known = {k.action for k in DEFAULTS}
     used = {item.action for rows in MENUS.values() for item in rows if item.action}
     assert not (used - known)

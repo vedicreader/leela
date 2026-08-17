@@ -10,20 +10,31 @@ function execLine(code, text, ok) {
   log.appendChild(line); log.scrollTop = log.scrollHeight;
 }
 
-/* Run the open .py as a script, in the tab's own kernel: `__main__`, an argv, and a
- * traceback that points at the file -- but with everything it defines left in the
- * namespace the variable panel is watching, which a subprocess could not do. */
+/* Run the open .py. One door, and it is the managed one: its own process, the project's
+ * interpreter, a terminal to watch it in, and a pill that says it is running.
+ *
+ * It used to execute the file inside the tab's kernel. That is lovely for a script that ends --
+ * `__main__`, an argv, and everything it defines left in the namespace the variable panel is
+ * watching -- and quietly awful for one that does not. A server never returned, so the kernel
+ * was held, nothing appeared until you killed it, and what the app printed went to whatever
+ * terminal leela itself was started from. Two ways to run a file, one of which swallowed the
+ * tool without saying so, is the confusion. There is one now.
+ *
+ * A saved configuration for this file still wins, so `python -m x` or an argv is honoured
+ * rather than second-guessed. Scratch code is `run selection`, which is still the kernel. */
 async function runFile() {
   if (lee.kind !== 'text') return status('this is a notebook — run its cells, or “▶ all”', 'err');
-  if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true))
+  const path = lee.path || '';
+  if (!path.endsWith('.py')) return status('only a .py file can be run — try “run selection”', 'err');
+  if ($('.lee-tab.active.dirty') && !await saveTab(true))
     return status('save the file before running it', 'err');
-  const v = lee.editors.get('file');
-  const name = (lee.path || '').split('/').pop();
-  status('running ' + name + '…');
-  const r = await post('/run/file', {text: v ? LeeCM.getDoc(v) : null});
-  execLine('▶ ' + r.label, r.text, r.ok);
-  status(r.ok ? r.label + ' finished' : r.label + ' raised — see the exec log', r.ok ? 'ok' : 'err');
-  leeVars();
+  const here = path.split('/').pop();
+  let cfg = null;
+  try {
+    const d = await api('/runs');
+    cfg = (d.runs || []).find(r => r.cmd === path || (r.cmd || '').split(/\s+/).some(a => a === path || a.endsWith('/' + here) || a === here));
+  } catch (_) {}
+  return startRun(cfg || {name: '', cmd: path});
 }
 
 /* Just the selected code. Read straight off the CodeMirror state rather than through

@@ -2553,20 +2553,31 @@ function execLine(code, text, ok) {
   log.appendChild(line); log.scrollTop = log.scrollHeight;
 }
 
-/* Run the open .py as a script, in the tab's own kernel: `__main__`, an argv, and a
- * traceback that points at the file -- but with everything it defines left in the
- * namespace the variable panel is watching, which a subprocess could not do. */
+/* Run the open .py. One door, and it is the managed one: its own process, the project's
+ * interpreter, a terminal to watch it in, and a pill that says it is running.
+ *
+ * It used to execute the file inside the tab's kernel. That is lovely for a script that ends --
+ * `__main__`, an argv, and everything it defines left in the namespace the variable panel is
+ * watching -- and quietly awful for one that does not. A server never returned, so the kernel
+ * was held, nothing appeared until you killed it, and what the app printed went to whatever
+ * terminal leela itself was started from. Two ways to run a file, one of which swallowed the
+ * tool without saying so, is the confusion. There is one now.
+ *
+ * A saved configuration for this file still wins, so `python -m x` or an argv is honoured
+ * rather than second-guessed. Scratch code is `run selection`, which is still the kernel. */
 async function runFile() {
   if (lee.kind !== 'text') return status('this is a notebook — run its cells, or “▶ all”', 'err');
-  if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true))
+  const path = lee.path || '';
+  if (!path.endsWith('.py')) return status('only a .py file can be run — try “run selection”', 'err');
+  if ($('.lee-tab.active.dirty') && !await saveTab(true))
     return status('save the file before running it', 'err');
-  const v = lee.editors.get('file');
-  const name = (lee.path || '').split('/').pop();
-  status('running ' + name + '…');
-  const r = await post('/run/file', {text: v ? LeeCM.getDoc(v) : null});
-  execLine('▶ ' + r.label, r.text, r.ok);
-  status(r.ok ? r.label + ' finished' : r.label + ' raised — see the exec log', r.ok ? 'ok' : 'err');
-  leeVars();
+  const here = path.split('/').pop();
+  let cfg = null;
+  try {
+    const d = await api('/runs');
+    cfg = (d.runs || []).find(r => r.cmd === path || (r.cmd || '').split(/\s+/).some(a => a === path || a.endsWith('/' + here) || a === here));
+  } catch (_) {}
+  return startRun(cfg || {name: '', cmd: path});
 }
 
 /* Just the selected code. Read straight off the CodeMirror state rather than through
@@ -8934,6 +8945,32 @@ async function codeMap() {
  * terminal: the inspector is *inside* it, so the variable panel can watch the app's own
  * module while it serves. A process started anywhere else has to opt in with
  * `dhrishti.serving.serve()`; the picker says so, because everyone asks. */
+/* Starting one, wherever the request came from: the picker, or Run on an open file. Both have
+   to land in the same place or there are two kinds of running script again, which is the thing
+   that made this confusing. */
+async function startRun(r) {
+  if (r.debug) return startDirectDebug(r);
+  status(`starting ${r.name || (r.cmd || '').split('/').pop()}…`);
+  const s = await api('/dev/start?name=' + encodeURIComponent(r.name || '') +
+                      '&path=' + encodeURIComponent(r.cmd));
+  if (!s.ok) return status(s.error || 'failed to start', 'err');
+  agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)} — ${esc(s.cmd)}</span></div>` +
+           `<div class="lee-runline"><span class="res">${esc((s.log || []).join('\n'))}</span></div>`);
+  // A dev server's output is the thing you watch, so open the terminal it is on rather than
+  // leaving it to be found under a dock tab and a filter.
+  leeRunTerm(s.script || r.cmd, s.label).catch(e => status(String(e.message || e), 'err'));
+  if (s.base) {
+    // Running is an explicit choice of runtime. Connect the variable panel immediately instead
+    // of making the user repeat that choice in “env…”.
+    await post('/envs/watch', {base: s.base});
+    paintEnv(s.label);
+  }
+  status(`${s.label} running · app ${s.app_url || '?'} · ` +
+         (s.base ? 'variables connected' : 'inspector pending'), 'ok');
+  pollRunLogs(); leeVars();
+}
+window.startRun = startRun;
+
 async function runApp() {
   const d = await api('/runs');
   const opts = (d.runs || []).concat(d.here ? [d.here] : []);
@@ -8941,27 +8978,7 @@ async function runApp() {
     editRuns();
     return status('no run configurations yet — here is the file', 'err');
   }
-  const start = async (r) => {
-    if(r.debug)return startDirectDebug(r);
-    status(`starting ${r.name}…`);
-    const s = await api('/dev/start?name=' + encodeURIComponent(r.name) +
-                        '&path=' + encodeURIComponent(r.cmd));
-    if (!s.ok) return status(s.error || 'failed to start', 'err');
-    agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)} — ${esc(s.cmd)}</span></div>` +
-             `<div class="lee-runline"><span class="res">${esc((s.log || []).join('\n'))}</span></div>`);
-    // A dev server's output is the thing you watch, so open the terminal it is on rather than
-    // leaving it to be found under a dock tab and a filter.
-    leeRunTerm(s.script || r.cmd, s.label).catch(e => status(String(e.message || e), 'err'));
-    if (s.base) {
-      // Running from the picker is an explicit choice of runtime. Connect the variable
-      // panel immediately instead of making the user repeat that choice in “env…”.
-      await post('/envs/watch', {base: s.base});
-      paintEnv(s.label);
-    }
-    status(`${s.label} running · app ${s.app_url || '?'} · ` +
-           (s.base ? 'variables connected' : 'inspector pending'), 'ok');
-    leeVars();
-  };
+  const start = startRun;
   if (opts.length === 1) return start(opts[0]);
   const m = modal(
     `<div class="lee-mhead">run<span class="sub">${esc(d.path || 'no project folder')}</span></div>` +

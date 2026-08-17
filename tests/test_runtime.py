@@ -1104,3 +1104,45 @@ def test_the_runs_pill_reads_the_poll_that_already_runs():
     assert 'leeRunTerm(' in menu, 'choosing a run opens the terminal it is on'
     paint = JS[JS.index('function paintRunsPill'):JS.index('function runState')]
     assert 'lee-pill-err' in paint and 'lee-pill-on' in paint and 'lee-pill-off' in paint
+
+
+def test_running_a_script_has_one_door_and_it_is_the_managed_one():
+    """Run used to execute the file inside the tab's kernel. A script that ends is fine there; a
+    server never returns, so it held the kernel, showed nothing until killed, and printed to
+    whatever terminal leela was started from. Both run commands now mean one thing each."""
+    src = read('leela/static/js/05_run_file.js')
+    body = src[src.index('async function runFile'):src.index('async function runSelection')]
+    assert 'startRun(' in body, 'Run starts a managed run'
+    assert "post('/run/file'" not in body, 'and never the kernel path that swallowed the tool'
+    assert "endsWith('.py')" in body, 'a non-script says so rather than failing obscurely'
+    # ...while the scratch tool stays exactly what it was.
+    sel = src[src.index('async function runSelection'):src.index('async function runRange')]
+    assert "post('/run/code'" in sel, 'run selection is still the kernel'
+
+def test_both_ways_in_start_a_run_the_same_way():
+    "The picker and Run on an open file share one path, or there are two kinds of run again."
+    src = read('leela/static/js/21_similar.js')
+    assert 'async function startRun(r)' in src
+    assert src.count("api('/dev/start?name='") == 1, 'one place starts a run'
+    start = src[src.index('async function startRun'):src.index('async function runApp')]
+    for want in ('leeRunTerm(', "post('/envs/watch'", 'pollRunLogs()'):
+        assert want in start, want
+
+def test_a_saved_configuration_still_wins_for_the_open_file():
+    "`python -m x`, or an argv, is honoured rather than second-guessed into a bare path."
+    src = read('leela/static/js/05_run_file.js')
+    body = src[src.index('async function runFile'):src.index('async function runSelection')]
+    assert "api('/runs')" in body and 'd.runs || []' in body
+    assert 'cfg ||' in body, 'and falling back to the plain file when there is none'
+
+def test_leelas_own_polling_is_not_the_apps_output():
+    """The variable panel asks the inspector for /api/rows every 2.5s, and the inspector shares
+    the app's stdout -- so the run log filled with leela watching the run."""
+    from leela.blocks.runtime.devserver import _inspector_path
+    assert _inspector_path('/api/rows?profile=minimal&sort=recent')
+    assert _inspector_path('/agent/api/transcript')
+    assert not _inspector_path('/api/orders')
+    assert not _inspector_path('/')
+    src = read('leela/blocks/runtime/devserver.py')
+    assert '_quiet_inspector_access()' in src[src.index('def _child'):], 'installed in the child'
+    assert "getLogger('uvicorn.access')" in src, 'at the logger, so the terminal is quiet too'
