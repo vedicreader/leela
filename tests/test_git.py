@@ -1647,3 +1647,22 @@ def test_the_branch_search_box_does_not_grow_into_the_list():
     assert '.lee-input { flex: 1 1 auto; }' in CSS, 'the rule this guards against is still there'
     assert '.lee-modalbox > .lee-input { flex: none; }' in CSS
     assert '.lee-branchlist { max-height: min(58vh, 520px); }' in CSS, 'the cap that made it visible'
+
+def test_the_pull_request_panel_refuses_an_awaitable_github_client(monkeypatch, tmp_path):
+    """`GhApi` defaults to `sync=False`, so `pulls.list(...)` handed back a coroutine nobody awaited:
+    `first` raised, the bare `except` turned it into a note, and the panel never showed a PR."""
+    import sys, types
+    from leela.blocks.git import hub
+    class AsyncOp:
+        async def __call__(self, *a, **kw): return []
+    class Pulls: list = AsyncOp()
+    api = types.SimpleNamespace(pulls=Pulls())
+    fake = types.ModuleType('gheasy.core')
+    fake._gh_api = lambda token=None, path='.': ('vedicreader', 'leela', api)
+    fake._resolve_gh_token = lambda: 'tok'
+    monkeypatch.setitem(sys.modules, 'gheasy.core', fake)
+    built, owner, name = hub._api(str(tmp_path))
+    assert built is not api, 'an awaitable client must not be handed to a blocking caller'
+    from inspect import iscoroutinefunction
+    assert not iscoroutinefunction(type(built.pulls.list).__call__)
+    assert (owner, name) == ('vedicreader', 'leela')

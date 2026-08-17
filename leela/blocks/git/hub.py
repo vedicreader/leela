@@ -18,12 +18,22 @@ def hub_available():
         return True
     except ImportError: return False
 
+def _blocking(api, owner, name):
+    """`GhApi` builds awaitable operations unless asked otherwise, and nothing here awaits: an async
+    client returns a coroutine that `first` cannot read, so every lookup became `GitHub: ...`."""
+    from inspect import iscoroutinefunction
+    op = getattr(getattr(api, 'pulls', None), 'list', None)
+    if op is None or not iscoroutinefunction(type(op).__call__): return api
+    from ghapi.core import GhApi
+    from gheasy.core import _resolve_gh_token
+    return GhApi(owner=owner, repo=name, token=_resolve_gh_token(), sync=True)
+
 def _api(root):
     "gheasy owns the token and the client; `GhApi` binds owner and repo, so calls do not repeat them."
     from gheasy.core import _gh_api, _resolve_gh_token
     try: owner, name, api = _gh_api(token=_resolve_gh_token(), path=root)
     except ValueError as e: raise GitError(f'this repository has no GitHub remote ({e})') from e
-    return api, owner, name
+    return _blocking(api, owner, name), owner, name
 
 def _checks(api, sha):
     "Check runs for one commit, as counts and the names that are not green."
