@@ -5311,9 +5311,53 @@ window.leeLogFilter = leeLogFilter; window.leeLogClear = leeLogClear; window.lee
 /* Managed runs keep their output after exit. Polling creates the activity record whether or not
    Logs is visible; a failed run is a notification that opens the useful filter automatically. */
 lee.runSeen = new Map(); lee.runFinished = new Set();
+lee.runs = [];
+
+/* What is running, next to the kernel it is not. A dev server has no window of its own -- it is a
+   process leela started and can end, and until this there was nowhere that said so: the only
+   evidence a run existed was output arriving, which is exactly what a broken one does not do. */
+function paintRunsPill() {
+  const pill = $('#runspill'); if (!pill) return;
+  const runs = lee.runs || [];
+  const live = runs.filter(s => s.running !== false);
+  const dead = runs.filter(s => s.running === false && s.code);
+  pill.className = 'lee-pill ' + (dead.length ? 'lee-pill-err' : live.length ? 'lee-pill-on' : 'lee-pill-off');
+  pill.textContent = live.length === 1 ? '▶ ' + (live[0].label || 'run')
+    : live.length ? `▶ ${live.length} runs`
+    : dead.length ? `⚠ ${dead.length} stopped` : '○ runs';
+  pill.title = runs.length ? runs.map(s => `${s.label}: ${runState(s)}`).join('\n')
+                           : 'nothing running — click to start a script';
+}
+function runState(s) {
+  if (s.running === false) return s.code ? `exited ${s.code}` : 'finished';
+  return 'running' + (s.app_url ? ' · ' + s.app_url : s.pid ? ' · pid ' + s.pid : '');
+}
+async function leeRunsMenu(anchor) {
+  await pollRunLogs();
+  const runs = lee.runs || [];
+  const rows = runs.map(s => ({
+    label: (s.running === false ? '⚠ ' : '▶ ') + (s.label || s.path),
+    detail: runState(s), run: () => leeRunTerm(s.script || s.path, s.label),
+  }));
+  if (rows.length) rows.push({separator: true});
+  for (const s of runs.filter(s => s.running !== false)) rows.push({
+    label: 'stop ' + (s.label || s.path), warn: true,
+    run: async () => {
+      try { await api('/dev/stop?path=' + encodeURIComponent(s.script || s.path)); }
+      catch (e) { return status(String(e.message || e), 'err'); }
+      status(`${s.label} stopped`, 'ok'); pollRunLogs();
+    },
+  });
+  rows.push({label: rows.length ? 'run another script…' : 'run a script…', run: () => runApp()});
+  openChromeMenu(anchor, rows);
+}
+window.leeRunsMenu = leeRunsMenu;
+
 async function pollRunLogs() {
   let servers = [];
-  try { servers = (await api('/dev/list')).servers || []; } catch (_) { return false; }
+  try { servers = (await api('/dev/list')).servers || []; } catch (_) { lee.runs = []; paintRunsPill(); return false; }
+  lee.runs = servers.map(s => ({...s, path: s.path || s.script || ''}));
+  paintRunsPill();
   for (const srv of servers) {
     const path = srv.path || srv.script || '';
     if (!path) continue;

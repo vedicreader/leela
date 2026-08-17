@@ -340,6 +340,10 @@ def _header(ws):
         Button('⋯', id='taboverflow', cls='lee-tab-overflow', title='all open files',
                aria_label='all open files', onclick='leeTabOverflow(this)'),
         Span(cls='lee-spacer'),
+        # Filled in by the poll that already reads /dev/list; server-rendered only so the header
+        # does not reflow when the first one arrives.
+        Button('○ runs', id='runspill', cls='lee-pill lee-pill-off',
+               title='scripts running under leela', onclick='leeRunsMenu(this)'),
         _kernel_pill(ws),
         cls='lee-header', id='header')
 

@@ -9,7 +9,7 @@ from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.runtime.kernels import nearest_python, project_python
 from leela.workspace import Workspace
-from tests.assets import CSS, JS, SERVER
+from tests.assets import CSS, JS, SERVER, read
 import asyncio
 import sys
 from fastcore.all import Path
@@ -1080,3 +1080,27 @@ def test_the_run_environment_points_at_the_project_venv(tmp_path):
     env = venv_env(str(py), {'PATH': '/usr/bin'})
     assert env['VIRTUAL_ENV'] == str(tmp_path/'.venv')
     assert env['PATH'].split(os.pathsep)[0] == str(py.parent)
+
+
+def test_the_header_says_what_is_running_beside_the_kernel(tmp_path):
+    """A dev server has no window of its own. Until this the only evidence one existed was output
+    arriving in a dock -- which is exactly what a run that failed to start does not produce."""
+    client, _ = _client(tmp_path)
+    with client as c: page = c.get('/').text
+    assert 'id="runspill"' in page, 'server-rendered, so the header does not reflow on first poll'
+    assert 'leeRunsMenu(this)' in page
+    assert page.index('id="runspill"') < page.index('id="kpill"'), 'beside the kernel pill'
+
+def test_the_runs_pill_reads_the_poll_that_already_runs():
+    "One /dev/list poll feeds the pill, the Logs pane and the menu; a second poller would drift."
+    block = JS[JS.index('async function pollRunLogs'):JS.index('async function runLogLoop')]
+    assert 'paintRunsPill()' in block and 'lee.runs =' in block
+    # `JS` is every static .js, so the generated bundle repeats each module: count the module.
+    assert read('leela/static/js/14_logs.js').count("api('/dev/list')") == 1, \
+        'the pill did not add a poller of its own'
+    menu = JS[JS.index('async function leeRunsMenu'):JS.index('async function pollRunLogs')]
+    assert 'await pollRunLogs()' in menu, 'opening the menu refreshes rather than showing a cache'
+    assert "'/dev/stop?path='" in menu and 'runApp()' in menu, 'stop one, or start another'
+    assert 'leeRunTerm(' in menu, 'choosing a run opens the terminal it is on'
+    paint = JS[JS.index('function paintRunsPill'):JS.index('function runState')]
+    assert 'lee-pill-err' in paint and 'lee-pill-on' in paint and 'lee-pill-off' in paint
