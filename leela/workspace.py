@@ -691,10 +691,14 @@ class Workspace:
                                     env=r.resolved_env(root), python=python_for(cwd or root, self))
     def kernel_options(self, tab=None):
         "Everything a kernel picker needs, so neither frontend has to know how kernels work."
-        from .blocks.runtime.kernels import KERNELS, find_pythons, ipymini_available
+        from .blocks.runtime.kernels import KERNELS, find_pythons, ipymini_available, python_for
         t = tab or self.tab
         k = self.kernel_peek(t)
-        cur_py = self.pool.default_python
+        # What this tab's kernel is actually started under -- `Workspace.kernel` resolves the same
+        # way. `default_python` is one interpreter for the whole workspace, adopted from whichever
+        # folder was opened first, so a notebook in the second repo was told it belonged to the
+        # first and had to be pointed at its own venv by hand.
+        cur_py = python_for(self.cwd_for(t), self)
         return {
             'key': self.kernel_key(t),
             'alive': bool(k and k.alive),

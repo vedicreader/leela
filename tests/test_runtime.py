@@ -1159,3 +1159,38 @@ def test_leelas_own_polling_is_not_the_apps_output():
     finally: log.removeHandler(Cap)
     assert seen == ['/orders', '/'], 'the host still logs its own traffic'
     assert 'uvicorn.access' not in read('leela/blocks/runtime/devserver.py'), 'no copy here'
+
+
+def test_a_notebook_gets_its_own_repos_venv_without_being_asked(tmp_path):
+    """Two folders open, each with an environment. `default_python` is one interpreter for the
+    whole workspace, adopted from whichever was opened first, so everything in the second repo
+    was told it belonged to the first and had to be pointed at its own venv by hand."""
+    a, b = tmp_path/'first', tmp_path/'second'
+    a.mkdir(); b.mkdir()
+    pa, pb = _venv(a), _venv(b)
+    (b/'nb.ipynb').write_text('{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
+    ws = Workspace(roots=[a, b])
+    assert ws.pool.default_python == str(pa), 'precondition: the first folder still sets the default'
+
+    tab = ws.open(str(b/'nb.ipynb'))
+    opts = ws.kernel_options(tab)
+    assert opts['python'] == str(pb), 'the picker names the venv this notebook actually runs in'
+    current = [p['path'] for p in opts['pythons'] if p['current']]
+    assert current == [str(pb)], 'and marks it selected, so there is nothing to choose'
+
+    # ...which is the interpreter `Workspace.kernel` would have started it under all along.
+    from leela.blocks.runtime.kernels import python_for
+    assert python_for(ws.cwd_for(tab), ws) == str(pb)
+
+    # ...and a tab in the first folder still answers with the first folder's.
+    (a/'x.py').write_text('x = 1\n')
+    assert ws.kernel_options(ws.open(str(a/'x.py')))['python'] == str(pa)
+
+def test_the_debug_surfaces_follow_the_same_interpreter_as_the_tab(tmp_path):
+    "A debugger that lands in another repo's venv reports that repo's debugpy, not this one's."
+    src = read('leela/app.py')
+    for route in ("@rt('/debug/capabilities')", "@rt('/debug/install')", "@rt('/debug/start')"):
+        block = src[src.index(route):]
+        block = block[:block.index('    @rt(', 10)]
+        assert 'python_for(' in block, route
+        assert 'pool.default_python' not in block, f'{route} still keys off the first folder opened'

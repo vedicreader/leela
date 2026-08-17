@@ -1502,14 +1502,14 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     @rt('/debug/capabilities')
     def debug_capabilities():
         from .blocks.debug.debug import debugpy_available
-        from .blocks.runtime.kernels import project_python
-        python = ws.pool.default_python or project_python(ws.fs.roots) or sys.executable
+        from .blocks.runtime.kernels import python_for
+        python = python_for(ws.cwd_for(), ws) or sys.executable
         return {'python': str(python), 'debugpy': debugpy_available(python),
                 'notebook': True, 'direct': debugpy_available(python)}
     @rt('/debug/install')
     async def debug_install(req):
-        from .blocks.runtime.kernels import project_python
-        d = await req.json(); python = d.get('python') or ws.pool.default_python or project_python(ws.fs.roots)
+        from .blocks.runtime.kernels import python_for
+        d = await req.json(); python = d.get('python') or python_for(ws.cwd_for(), ws)
         if not python: return _fail('choose a project interpreter first')
         def install():
             uv = shutil.which('uv')
@@ -1523,14 +1523,15 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     async def debug_start(req):
         "Launch a Python file/module or attach through a direct debugpy DAP session."
         from .blocks.debug.debug import DebugSession
-        from .blocks.runtime.kernels import project_python
+        from .blocks.runtime.kernels import python_for
         d = await req.json(); name = d.get('name') or ''
         run = ws.runs.get(name) if name else None
         config = run.dict() if run else dict(d)
         root = ws.project_root or Path.cwd()
-        python = d.get('python') or ws.pool.default_python or project_python(ws.fs.roots) or sys.executable
         cwd = config.get('cwd') or str(root)
         if cwd and not Path(cwd).is_absolute(): cwd = str((root/str(cwd)).resolve())
+        # Resolved after `cwd`, so the debugger lands in the venv of whatever is being debugged.
+        python = d.get('python') or python_for(cwd, ws) or sys.executable
         program = config.get('program') or (ws.tab.path if ws.tab and (ws.tab.path or '').endswith('.py') else '')
         if program and not Path(program).is_absolute(): program = str((root/program).resolve())
         config.update(program=program, cwd=cwd, justMyCode=config.get('justMyCode', True),
