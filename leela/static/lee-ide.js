@@ -3609,6 +3609,19 @@ async function leeAgentReadOutside(enabled) {
 }
 window.leeAgentReadOutside = leeAgentReadOutside;
 
+async function leeSubagentWrites(enabled) {
+  const box = $('#subagent-writes');
+  try {
+    const d = await post('/agent/subagent-writes', {enabled: !!enabled});
+    if (!d.ok && box) box.checked = !enabled;
+    status(d.ok ? d.note : (d.error || 'sub-agent write setting failed'), d.ok ? 'ok' : 'err');
+  } catch (e) {
+    if (box) box.checked = !enabled;
+    status(String(e.message || e), 'err');
+  }
+}
+window.leeSubagentWrites = leeSubagentWrites;
+
 function leeAgentExpand() {
   const shell = $('#shell'); if (!shell) return;
   leeRight('agent'); shell.classList.toggle('agent-focus');

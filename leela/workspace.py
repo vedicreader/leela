@@ -180,6 +180,7 @@ class Workspace:
         self.tool_budget, self.step_budget = 'auto', 'auto'
         self.allow_workspace_repo_writes = False
         self.agent_read_outside = False     # reads may leave the open folders; writes never do
+        self.subagent_writes = False        # delegated sub-agents may only read unless this is on
         self.active_root = None
         self.agent_state = ''
         self.agent_state_layers = {name: {'text': '', 'enabled': True, 'source': 'workspace'} for name in
@@ -816,6 +817,7 @@ class Workspace:
                 'tool_budget': self.tool_budget, 'step_budget': self.step_budget,
                 'allow_workspace_repo_writes': self.allow_workspace_repo_writes,
                 'agent_read_outside': self.agent_read_outside,
+                'subagent_writes': self.subagent_writes,
                 'job_models': self.job_models,
                 'active_root': str(self.active_root or ''),
                 'saved': time.time()}
@@ -850,6 +852,7 @@ class Workspace:
         ws.step_budget = budget_value(d.get('step_budget'), *STEP_RANGE)
         ws.allow_workspace_repo_writes = bool(d.get('allow_workspace_repo_writes', False))
         ws.agent_read_outside = bool(d.get('agent_read_outside', False))
+        ws.subagent_writes = bool(d.get('subagent_writes', False))
         ws.job_models = {str(k): str(v) for k, v in (d.get('job_models') or {}).items() if v}
         ws.agent_state = str(d.get('agent_state') or '')
         saved_selection = d.get('agent_memory_selection')

@@ -679,6 +679,7 @@ class Assistant(Agent):
         kwargs.setdefault('compact_strategy', getattr(ws, 'compact_strategy', 'surgical'))
         kwargs.setdefault('max_tool_calls', getattr(ws, 'tool_budget', 'auto'))
         kwargs.setdefault('max_steps', getattr(ws, 'step_budget', 'auto'))
+        kwargs.setdefault('subagent_writes', getattr(ws, 'subagent_writes', False))
         if approve is not None and kwargs.get('approvals') is None:
             kwargs['approvals'] = _PolicyApprovals(approve)
         self.ws, self.surface = ws, surface

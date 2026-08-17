@@ -1,5 +1,15 @@
 # Working on leela
 
+`AGENTS.md` carries the harness-neutral rules every agent reads, vendored from `AnswerDotAI/aai-coding`,
+`prompts/core.md`. Leela's own additions sit below its `## Added here` heading. Drift is one command:
+
+    curl -sS https://raw.githubusercontent.com/AnswerDotAI/aai-coding/main/prompts/core.md | diff - AGENTS.md
+
+Re-fetch and re-append to take an upstream change. Never edit the vendored half. This file is what is
+specific to Leela and Claude.
+
+@AGENTS.md
+
 ## Talking to me
 Succinct. No essays, no preamble, no recap of what I just said. Bullets and numbers over prose.
 
@@ -16,3 +26,15 @@ fastai/fastcore house style, taken to the extreme:
   `fossick` (web search, CDP), `dhrishti` (inspection), `exhash`, `mdhtml`.
 - `leela.agent` is an alias for `ramabana`, not a copy. Same for the other libs: thin seams only.
 - Prefer consolidating small modules over adding new ones.
+
+## Writing
+The rules live in `ramabana`'s pyskills, not here. `read_skill` finds them. No copy belongs in this repo.
+- `write_docs`: docstrings, comments, READMEs, changelogs, commit messages, PR descriptions, messages
+  to a person. Voiceless GDS register. Read it before writing any of them.
+- `write_prose`: anything with a voice on the page: `docs/`, announcements, release notes.
+- `theory`: Naur's programming-as-theory-building. Read it when asked for the Theory of something.
+- `coding_patterns`: the standards behind the Code style section above. Every Ramabana briefing
+  already carries it inline.
+
+Both writing skills ban the same things: em dashes, hedging, filler transitions, restatement, the
+banned-word lists, hard-wrapped paragraphs. Bullets and numbers over prose still holds here.
