@@ -1407,7 +1407,7 @@ wheels = [
 
 [[package]]
 name = "gheasy"
-version = "0.0.6"
+version = "0.0.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cyclopts" },
@@ -1416,9 +1416,9 @@ dependencies = [
     { name = "ruamel-yaml" },
     { name = "tomlkit" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/11/f1/743308d8cbe8df8762bda5f002456282fefcd8776983ea2d8dc3fbb413f4/gheasy-0.0.6.tar.gz", hash = "sha256:2a877a882ec2d8285170c8f00c15cb73b89c20ef1a65dc8a0c321e93d87c8e3e", size = 28125, upload-time = "2026-07-29T23:48:12.001Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6f/e4/8ef330bb2441765f18547a55a0b132350cadc5f527ca69f75dae003246d8/gheasy-0.0.7.tar.gz", hash = "sha256:508a023cffe93a67658aa81c63c4135435bcb78e565b6ac64c08566d8de348c6", size = 28188, upload-time = "2026-08-17T06:07:22.652Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/e5/bf9a30fe48cdb7950c46fdb46fd51e84ef5377ee11ceb141660b336eaa4b/gheasy-0.0.6-py3-none-any.whl", hash = "sha256:c9f6d4cc9d353cabfbd9028e002eb5de29ae4b5671b3ed465f3f407581ee14a8", size = 29554, upload-time = "2026-07-29T23:48:10.897Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/aa/68a8e46c0642c314277ca720e348d05c886441dc81f046151e30cf7d52f7/gheasy-0.0.7-py3-none-any.whl", hash = "sha256:69141fdb5e2eb5edee64e7d419f093b4be1d8d0c3f43cd225e11a3fac4344ce5", size = 29618, upload-time = "2026-08-17T06:07:21.414Z" },
 ]
 
 [[package]]
@@ -2594,7 +2594,7 @@ wheels = [
 
 [[package]]
 name = "litesearch"
-version = "0.1.27"
+version = "0.1.28"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chonkie" },
@@ -2613,9 +2613,9 @@ dependencies = [
     { name = "usearch" },
     { name = "yake" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5d/96/414496f1f4e24365b2fb43ad6571663121f3736c56fd6ea139c18cb5e2d4/litesearch-0.1.27.tar.gz", hash = "sha256:f60926c398062f95ba89abbf932e8d6548bf44b1aaee3b05b47b2e860d4f5479", size = 95540, upload-time = "2026-08-12T06:37:04.618Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6f/c7/165a0d0c3ab0c2d1a852d9d82c7bfd338b5fb0622bb4b57b1a1e775b41ac/litesearch-0.1.28.tar.gz", hash = "sha256:944c274759a591a3be1b91003847d44abc0b4ecf17187a84ba4ea9350a21f3a8", size = 95591, upload-time = "2026-08-17T06:05:05.378Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b8/dd/2c9c9962726a453c4fd94ff68d305bd819afad4e4293bc65f7417accb0d4/litesearch-0.1.27-py3-none-any.whl", hash = "sha256:030f969ebc68d153d7ae5d047fa3dee43a49be3d458c251200abda2c14beb5cc", size = 100072, upload-time = "2026-08-12T06:37:03.428Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/a3/f11fd4277fa9bddc76d78c40dfc3590a01256ea3469ad534874e01594fa5/litesearch-0.1.28-py3-none-any.whl", hash = "sha256:7b985257875be915335abf71123337443640632939e6da7ebd75957d17cd60df", size = 100143, upload-time = "2026-08-17T06:05:03.877Z" },
 ]
 
 [package.optional-dependencies]
