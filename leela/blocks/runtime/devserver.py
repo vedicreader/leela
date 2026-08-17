@@ -247,30 +247,6 @@ def _watch_module(name):
         print(f'[leela] could not watch {name}: {type(e).__name__}: {e}', flush=True)
         return None
 
-#: dhrishti's inspector rides in the app's own process, so its access log is the app's output.
-#: The variable panel asks it for these every 2.5 seconds, forever, which buries whatever the app
-#: itself had to say under leela watching it.
-_INSPECTOR_ROUTES = frozenset(('/api/rows', '/api/expand', '/api/grid', '/api/result', '/api/envs',
-    '/api/exec', '/api/promote', '/api/sessions', '/api/session', '/api/set', '/api/history'))
-
-def _inspector_path(path):
-    p = str(path or '').split('?')[0]
-    return p in _INSPECTOR_ROUTES or p.startswith('/agent/api/')
-
-def _quiet_inspector_access():
-    """Drop the inspector's own access lines, at the logger rather than in the text downstream.
-
-    uvicorn passes `(client, method, path, version, status)` as the record's args, so this reads
-    the path rather than re-parsing a formatted line -- and it reaches the terminal and the log
-    alike, which filtering `_line` afterwards would not.
-    """
-    import logging
-    class _Drop(logging.Filter):
-        def filter(self, r):
-            args = r.args if isinstance(r.args, tuple) else ()
-            return not (len(args) > 2 and _inspector_path(args[2]))
-    logging.getLogger('uvicorn.access').addFilter(_Drop())
-
 _RELOAD_SRC = re.compile(r'reload\s*=\s*True')
 
 def _wants_reload(text):
@@ -332,7 +308,6 @@ def _child(argv=None):
     if not cmd: raise SystemExit('nothing to run')
     watch = a.watch or infer_watch(cmd)
     sys.path.insert(0, os.getcwd())
-    _quiet_inspector_access()
     label = a.name or watch or Path(cmd[0]).stem
     code = 0
     if len(cmd) == 1 and cmd[0].endswith('.py'):

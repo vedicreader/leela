@@ -1137,12 +1137,25 @@ def test_a_saved_configuration_still_wins_for_the_open_file():
 
 def test_leelas_own_polling_is_not_the_apps_output():
     """The variable panel asks the inspector for /api/rows every 2.5s, and the inspector shares
-    the app's stdout -- so the run log filled with leela watching the run."""
-    from leela.blocks.runtime.devserver import _inspector_path
-    assert _inspector_path('/api/rows?profile=minimal&sort=recent')
-    assert _inspector_path('/agent/api/transcript')
-    assert not _inspector_path('/api/orders')
-    assert not _inspector_path('/')
-    src = read('leela/blocks/runtime/devserver.py')
-    assert '_quiet_inspector_access()' in src[src.index('def _child'):], 'installed in the child'
-    assert "getLogger('uvicorn.access')" in src, 'at the logger, so the terminal is quiet too'
+    the app's stdout -- so a run's log filled up with leela watching the run.
+
+    dhrishti owns that, not leela: it is the one that knows which routes are its own, and it is
+    the thing riding in someone else's process. Leela keeps no copy of the route list."""
+    import logging, logging.config
+    import dhrishti.serving as ds
+    from uvicorn.config import LOGGING_CONFIG
+    assert '/api/rows' in ds._own_paths(), 'derived from the app, not hand-copied'
+    ds.quiet_access_log(); ds.quiet_access_log()
+    log = logging.getLogger('uvicorn.access')
+    assert sum(type(f).__name__ == '_DropOwn' for f in log.filters) == 1, 'installed once'
+    logging.config.dictConfig(dict(LOGGING_CONFIG))    # the host's own uvicorn, starting after
+    seen = []
+    class Cap(logging.Handler):
+        def emit(self, r): seen.append(r.args[2])
+    log.addHandler(Cap()); log.setLevel(logging.INFO)
+    try:
+        for p in ('/api/rows?profile=minimal', '/agent/api/transcript', '/orders', '/'):
+            log.info('%s - "%s %s HTTP/%s" %d', '127.0.0.1:1', 'GET', p, '1.1', 200)
+    finally: log.removeHandler(Cap)
+    assert seen == ['/orders', '/'], 'the host still logs its own traffic'
+    assert 'uvicorn.access' not in read('leela/blocks/runtime/devserver.py'), 'no copy here'
