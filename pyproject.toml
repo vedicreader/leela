@@ -33,7 +33,7 @@ dependencies = [
     "numpy>=1.26",
     "packaging>=24.0",
     "pyyaml>=6.0",
-    "dhrishti>=0.1.2",
+    "dhrishti>=0.1.3",
     "watchfiles>=1.0",
     "vishalakshi>=0.1.8",
 ]
@@ -105,5 +105,3 @@ markers = ["slow: drives a browser, starts a kernel, or loads a model"]
 
 [tool.uv.sources]
 leela = { workspace = true }
-ramabana = { path = "../ramabana", editable = true }
-dhrishti = { path = "../dhrishti", editable = true }
