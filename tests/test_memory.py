@@ -645,3 +645,22 @@ def test_nothing_is_written_without_apply(tmp_path):
     assert len(dry['moved']) == 1 and dry['applied'] is False
     from vishalakshi import Vault
     assert not Vault(tmp_path/'vault.db', store='leela', offline=True).sources()
+
+def test_every_shelf_shares_one_encoder(tmp_path):
+    "Each `mk_encoder` builds its own ~1GB matrix, so a shelf must never resolve a second one."
+    m = Memory(shelf='proj', path=tmp_path/'vault.db', offline=True)
+    for shelf in ('proj', GLOBAL, 'rishi', 'cassowary'): m._store(shelf)
+    assert len(m._stores) == 4
+    assert len({id(v.enc.model) for v in m._stores.values()}) == 1
+
+def test_encoder_is_shared_across_memories_and_vault_files(tmp_path):
+    "Two vault files are two `Memory` objects; the weights behind them are still one."
+    a = Memory(shelf='one', path=tmp_path/'a.db', offline=True)._store('one')
+    b = Memory(shelf='two', path=tmp_path/'b.db', offline=True)._store('two')
+    assert a.enc.model is b.enc.model
+
+def test_a_prebuilt_encoder_is_passed_through_untouched(tmp_path):
+    "`shared_encoder` caches names; anything already built is the caller's object to keep."
+    from leela.blocks.memory.memory import shared_encoder
+    built = shared_encoder(None, offline=True)
+    assert shared_encoder(built, offline=True) is built

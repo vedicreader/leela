@@ -1,7 +1,7 @@
 "Durable prose memory over a vishalakshi vault."
 
 from __future__ import annotations
-import hashlib, os, re, time, uuid
+import hashlib, os, re, threading, time, uuid
 from fastcore.all import L, Path, first, risinstance
 
 from ... import errstr
@@ -10,7 +10,8 @@ try: from ramabana.vault import safe_shelf as _safe_shelf
 except ImportError:
     def _safe_shelf(name=None, default='main'): return re.sub(r'[^a-z0-9_]+', '_', str(name or default).lower()).strip('_') or default
 
-__all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'source_kind', 'GLOBAL', 'ACQUIRE']
+__all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'shared_encoder', 'source_kind',
+           'GLOBAL', 'ACQUIRE']
 
 GLOBAL = 'leela'
 
@@ -51,6 +52,18 @@ def memory_shelf(root=None):
 
 def _offline(): return os.getenv('LEELA_MEMORY_OFFLINE', '').lower() in ('1', 'true', 'yes')
 
+_ENC_LOCK, _ENCODERS = threading.Lock(), {}
+
+def shared_encoder(enc=None, offline=False):
+    "One built encoder per (name, offline); `mk_encoder` loads a fresh ~1GB matrix on every call."
+    if enc is not None and not isinstance(enc, str): return enc
+    key = (enc, bool(offline))
+    with _ENC_LOCK:   # held across the load: two shelves opening at once must not both fetch it
+        if key not in _ENCODERS:
+            from vishalakshi.core import mk_encoder
+            _ENCODERS[key] = mk_encoder(enc, offline=offline)
+        return _ENCODERS[key]
+
 def _registered_encoder(path, store):
     "Encoder that wrote `store`, read from the registry without opening a Vault."
     import sqlite3
@@ -75,7 +88,8 @@ class Memory:
             from vishalakshi import Vault
             store = 'store' if name in (None, '', 'main') else safe_shelf(name)
             enc = None if self.offline else (_registered_encoder(self.path, store) or self.encoder)
-            self._stores[name] = Vault(self.path, store=store, encoder=enc, offline=self.offline)
+            self._stores[name] = Vault(self.path, store=store, encoder=shared_encoder(enc, self.offline),
+                                       offline=self.offline)
             self.note = f'vault at {self.path} · {self.shelf_name}'
         return self._stores[name]
     def _open(self): return self._store(self.shelf_name)
