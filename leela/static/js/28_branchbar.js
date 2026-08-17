@@ -162,7 +162,18 @@ async function leeBranchMenu(anchor) {
   const list = m.querySelector('#branchlist');
 
   let prRow = null;
-  const paint = () => {
+  /* `keep` is why expanding a folder no longer throws you back to the top. This repaints by
+     replacing the list's children, and replacing the children of a scrolled element puts it at
+     scrollTop 0 -- so opening `remote/` half way down scrolled the whole modal away from the
+     thing that was just clicked. Nothing was navigating, so there was no default to prevent:
+     the rows are buttons in a div, and the jump is the rebuild.
+
+     Restoring the old offset is exact for a fold, which only ever adds or removes rows *below*
+     the folder clicked, leaving everything above it the same height. A shorter list after a
+     collapse just clamps. Typing is the one repaint that should go back to the top: those are
+     different results, not the same list rearranged. */
+  const paint = (keep = true) => {
+    const at = keep ? list.scrollTop : 0;
     const q = search.value.trim().toLowerCase();
     const hit = text => !q || String(text).toLowerCase().includes(q);
     const acts = [...branchTopActions(d), ...(prRow ? [prRow] : [])].filter(a => hit(a.label));
@@ -177,6 +188,7 @@ async function leeBranchMenu(anchor) {
       branchGroup('Local', rest.filter(b => !b.remote), true) +
       branchGroup('Remote', rest.filter(b => b.remote), true) ||
       '<div class="lee-dim">nothing matches</div>';
+    list.scrollTop = at;
   };
 
   list.onclick = e => {
@@ -193,7 +205,7 @@ async function leeBranchMenu(anchor) {
     const act = e.target.closest('[data-act]');
     if (act) { m.remove(); return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d); }
   };
-  search.oninput = paint;
+  search.oninput = () => paint(false);
   paint();
   branchPr(d).then(r => { prRow = r; paint(); });
   setTimeout(() => search.focus(), 0);

@@ -1560,3 +1560,28 @@ def test_the_pull_request_panel_calls_github_the_way_ghapi_binds_it(monkeypatch,
     assert seen['pulls.list'][1]['head'] == 'vedicreader:my-branch'
     assert seen['repos.compare_commits'][0] == ('main...my-branch',), 'one basehead, not four args'
     assert seen['checks.list_for_ref'][0] == ('deadbeef',)
+
+
+def test_expanding_a_branch_folder_leaves_the_list_where_it_was():
+    """Opening `remote/` half way down the branch modal scrolled it back to the top, so the row
+    just clicked was off screen. Nothing navigates -- the rows are buttons in a div -- so there
+    was no default to prevent: `paint` replaces the list's children, and replacing the children
+    of a scrolled element resets its scrollTop."""
+    from tests.assets import read
+    src = read('leela/static/js/28_branchbar.js')
+    body = src[src.index('async function leeBranchMenu'):src.index('window.leeBranchMenu')]
+    assert 'const paint = (keep = true)' in body
+    assert 'const at = keep ? list.scrollTop : 0;' in body
+    assert 'list.scrollTop = at;' in body, 'restored after the rebuild, not before'
+    assert body.index('list.innerHTML =') < body.index('list.scrollTop = at;')
+    # A fold keeps its place; typing is a different result set and belongs at the top.
+    assert 'search.oninput = () => paint(false);' in body
+    fold = body[body.index('data-folder'):]
+    assert 'return paint();' in fold, 'the fold repaints with the offset kept'
+
+def test_the_branch_list_is_the_thing_that_scrolls():
+    "The fix restores `#branchlist`, so it has to be the scroll container and not the modal box."
+    from tests.assets import read
+    css = read('leela/static/lee-ide.css')
+    assert '.lee-modallist { overflow: auto;' in css
+    assert '.lee-branchlist { max-height:' in css, 'bounded, so it scrolls rather than the page'
