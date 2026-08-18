@@ -20,7 +20,33 @@ def connect(app, ctx):
         broker = getattr(ctx.pool, 'broker', None)
         out = (broker.status() if broker else
                {'live': len(ctx.pool.kernels), 'limit': None, 'runtimes': []})
-        return {**out, 'models': engine_broker().status()}   # weights, alongside namespaces
+        return {**out, 'models': engine_broker().status(),   # weights, alongside namespaces
+                'auto_manage': bool(getattr(broker, 'auto_manage', False)),
+                'idle': ctx.pool.idle}
+    @rt('/runtime/close')
+    async def runtime_close(req):
+        "Close one runtime by key. The limit dialog answers with the key it was offered."
+        d = await req.json()
+        if not (key := str(d.get('key') or '')): return fail('key is required')
+        broker = getattr(ctx.pool, 'broker', None)
+        for p in (broker.pools if broker else [ctx.pool]):   # the offer may name another workspace's
+            if key not in p.kernels: continue
+            if p.kernels[key].busy: return fail('that runtime is running a cell')
+            await p.close(key)
+            return {'ok': True, 'key': key}
+        return fail('no runtime with that key')
+    @rt('/runtime/auto-manage')
+    async def runtime_auto_manage(req):
+        "Whether leela closes the stalest idle kernel at the ceiling instead of asking."
+        d = await req.json(); enabled = d.get('enabled')
+        if not isinstance(enabled, bool): return fail('enabled must be true or false')
+        broker = getattr(ctx.pool, 'broker', None)
+        if broker is None: return fail('no kernel broker is registered')
+        broker.auto_manage = enabled
+        session.kernels_auto_manage = enabled; session.save()
+        return {'ok': True, 'enabled': enabled,
+                'note': ('leela closes the longest-idle runtime to make room'
+                         if enabled else 'leela asks before closing a runtime')}
     @rt('/runtime/info')
     async def runtime_info():
         from .kernels import project_python
@@ -75,14 +101,18 @@ def connect(app, ctx):
     @rt('/kernel/info')
     async def k_info():
         from pathlib import Path
-        k = await session.runtime()
+        from .kernels import KernelLimit
+        try: k = await session.runtime()
+        except KernelLimit as e: return fail(e)
+        evicted = getattr(k, 'evicted', None); k.evicted = None
         return {'alive': bool(k and k.alive), 'base': k.base if k else None,
             'pid': k.pid if k else None,
             'key': getattr(k, 'name', '') or Path(session.kernel_key()).name or 'kernel',
             'boot_error': k.boot_error if k else None,
             'api_error': getattr(k, 'last_api_error', '') if k else '',
             'cwd': str(session.cwd_for() or ''),
-            'tabs': [{'running': t.running, 'dirty': t.dirty} for t in session.tabs]}
+            'tabs': [{'running': t.running, 'dirty': t.dirty} for t in session.tabs],
+            **({'evicted': evicted} if evicted else {})}
     @rt('/kernel/options')
     def k_options():
         "What the kernel picker shows: the launchers, the interpreters, and what is running."
@@ -102,7 +132,9 @@ def connect(app, ctx):
         session.watch_env(None)
         t.cwd = str(cwd) if cwd else ''
         await ctx.pool.close(key)
-        k = await session.kernel(t)
+        from .kernels import KernelLimit
+        try: k = await session.kernel(t)
+        except KernelLimit as e: return fail(e)
         ctx.docs.mark_all_stale()
         session.save()
         return {'ok': True, 'cwd': str(session.cwd_for(t) or ''), 'base': k.base if k else None}

@@ -1147,6 +1147,9 @@ function updateAgentRunstrip(state = {}) {
   const strip = $('#agentrunstrip'); if (!strip) return;
   if ('queued_steer' in state) setQueuedSteer(state.queued_steer || '');
   strip.hidden = !lee.agentBusy && !state.waiting;
+  /* Forcing means stopping the turn in flight, so it is only an action while there is one. Idle it
+     would just be the prompt box with a red button, which is what made the row look wrong. */
+  const force = $('#agentforce'); if (force) force.hidden = strip.hidden;
   const label = state.waiting ? `Waiting · ${state.waiting}`
     : lee.queuedSteer ? 'Steering queued · applies after current call'
     : state.run_policy ? `Running automatically · ${runPolicyLabel(state.run_policy)}`
@@ -1184,6 +1187,34 @@ async function leeQueueSteer() {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 window.leeQueueSteer = leeQueueSteer;
+
+/* Queueing waits for a tool call, and a turn that is writing its answer never makes another one,
+   so a steer aimed at what the model is doing right now arrived after it had finished doing it.
+   Forcing stops the turn and sends the instruction as the next one instead. The send waits for
+   the stopped turn's `done`, because a new turn is refused while the old one holds the lock. */
+async function leeForceSteer() {
+  if (!lee.agentBusy) return status('nothing is running to force; ask in the prompt box instead', 'err');
+  const input = $('#agentsteer'), text = input?.value.trim(); if (!text) return status('write a steering instruction first', 'err');
+  try {
+    const d = await post('/agent/steer', {text, force: true});
+    input.value = ''; setQueuedSteer(''); updateAgentRunstrip(d);
+    if (!d.stopped) return void reseedSteer(text);
+    lee.forcedSteer = text;
+    status('stopping the turn, then steering from your instruction', 'ok');
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+window.leeForceSteer = leeForceSteer;
+
+function reseedSteer(text) {
+  const el = $('#agentprompt'); if (!el) return;
+  el.value = text; sendAgent();
+}
+
+function reseedForcedSteer() {
+  const text = lee.forcedSteer; if (!text) return;
+  lee.forcedSteer = '';
+  reseedSteer(text);
+}
 
 async function pollApproval() {
   try {
@@ -1454,8 +1485,8 @@ function initAgentComposer() {
      that eats what you typed. It is not in a form and has no default action, so nothing
      happened at all -- which read as steering being broken rather than never sent. */
   $('#agentsteer')?.addEventListener('keydown', e => {
-    if (e.key !== 'Enter' || e.shiftKey) return;
-    e.preventDefault(); leeQueueSteer();
+    if (e.key !== 'Enter') return;
+    e.preventDefault(); (e.shiftKey ? leeForceSteer : leeQueueSteer)();
   });
   const reasoning = $('#agentreasoning');
   if (reasoning) {
@@ -1624,6 +1655,7 @@ async function sendAgent() {
     if ((d.problems || []).length) status(d.problems[d.problems.length - 1], 'err');
     else status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
     await reloadAfterEdits(d.edits || []);
+    reseedForcedSteer();
   });
 
   // A dropped connection must clear both the functional busy lock and its visual state.
@@ -1631,6 +1663,7 @@ async function sendAgent() {
     if (finished) return;
     lee.agentBusy = false; setAgentStatus('ready'); progress.finish(false); updateAgentRunstrip();
     status('the model stream ended before it returned a result', 'err'); es.close();
+    reseedForcedSteer();
   };
 }
 

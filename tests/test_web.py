@@ -256,6 +256,31 @@ def test_pyproject_dependencies_get_runtime_version_pills(tmp_path):
     assert 'LeeCM.setPackageVersions' in JS and 'lee-package-summary' in JS
     assert '.cm-lee-package.missing' in CSS and '.lee-package-popover' in CSS
 
+def test_a_pyproject_is_annotated_from_the_venv_beside_it(tmp_path):
+    """One interpreter answered for every open project at once.
+
+    With two checkouts open, the pills on the second one's pyproject were read out of the first
+    one's environment, so a checkout holding a newer release of a shared dependency was reported at
+    the older one's version. The formatter picked its ruff the same way.
+    """
+    import os, sys
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    roots = []
+    for name in ('one', 'two'):
+        root = tmp_path/name
+        (root/'.venv'/'bin').mkdir(parents=True)
+        os.symlink(sys.executable, root/'.venv'/'bin'/'python')
+        (root/'pyproject.toml').write_text('[project]\nname="%s"\nversion="0.1"\ndependencies=["pytest>=1"]\n' % name)
+        roots.append(root)
+    ws = Workspace(roots=roots)
+    with TestClient(ide_app(ws)) as client:
+        for root in roots:
+            d = client.get('/editor/packages', params={'path': str(root/'pyproject.toml')}).json()
+            assert d['summary']['python'] == str(root/'.venv'/'bin'/'python'), \
+                "the pills came from another project's environment"
+
 def test_the_notebook_surface_mounts_patches_and_folds_cells():
     assert 'function notebookHeadings' in JS and 'function notebookToc' in JS
     assert 'function setCellCollapsed' in JS and 'cell_collapse:' in JS
@@ -2214,3 +2239,87 @@ def test_the_event_stream_carries_the_resync_flag(tmp_path):
     js = (ROOT/'leela'/'static'/'lee-ide.js').read_text()
     watch = js[js.index('function resyncFiles()'):js.index('window.watchFiles')]
     assert 'd.resync' in watch and 'refreshFileTree' in watch, 'and it redraws the whole tree when told'
+
+def test_the_kernel_limit_is_offered_rather_than_just_reported(tmp_path):
+    """`admit` used to raise a bare error and the browser could only print it. The ceiling is the
+    one failure a person can answer, so `api` offers the room and retries once."""
+    body = JS[JS.index('async function api('):JS.index('const post =')]
+    assert 'body.kernel_limit' in body and 'offerKernelRoom' in body
+    assert 'retried' in body, 'one retry, so a wrong answer cannot loop'
+    offer = JS[JS.index('async function offerKernelRoom'):JS.index('async function setKernelAutoManage')]
+    assert 'confirmDialog' in offer, 'nothing closes without a yes'
+    assert "post('/runtime/close'" in offer and 'c.key' in offer
+    assert 'if (!c) return false' in offer, 'all runtimes busy means there is nothing to offer'
+    pill = JS[JS.index('async function refreshKernelPill'):JS.index('async function checkProjectRuntime')]
+    assert 'd.evicted' in pill and 'status(`closed ${d.evicted.name} runtime' in pill
+
+def test_the_settings_pane_can_mute_the_kernel_limit_prompt(tmp_path):
+    "The mute switch the user asked for: leela manages the ceiling itself."
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        page = client.get('/').text
+    assert 'kernels-auto-manage' in page and 'setKernelAutoManage(this.checked)' in page
+    assert "post('/runtime/auto-manage'" in JS
+    picker = JS[JS.index('async function pickKernel'):JS.index('async function offerKernelRoom')]
+    assert 'auto_manage' in (ROOT/'leela'/'workspace.py').read_text()
+    assert 'kernel-auto-manage' in picker and 'setKernelAutoManage(e.target.checked)' in picker
+
+def _one_cell_nb(src):
+    return json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {}, 'cells': [
+        {'cell_type': 'code', 'source': src, 'metadata': {}, 'outputs': [],
+         'execution_count': None, 'id': 'c1'}]})
+
+def test_an_open_notebook_does_not_resurrect_itself_over_newer_work(tmp_path):
+    """`/tab/state` served the cached notebook stamped with the version now on disk, so the browser
+    sent that back as its base, `/nb/save` found base and disk equal, and the old branch's cells
+    overwrote the new ones. Opening the tab was enough: no unsaved edit was needed. The live notebook
+    stays authoritative because it carries outputs the file does not, so the fix is the stamp."""
+    p = tmp_path/'core.ipynb'
+    p.write_text(_one_cell_nb('X = "branch-a"'))
+    ws = Workspace(roots=[tmp_path]); tab = ws.open(p)
+    with TestClient(ide_app(ws)) as client:
+        first = client.get('/tab/state', params={'path': tab.path}).json()
+        assert first['cells'][0]['source'] == 'X = "branch-a"' and not first.get('stale')
+        p.write_text(_one_cell_nb('X = "branch-b"'))          # a branch switch, a rebase, an agent
+        after = client.get('/tab/state', params={'path': tab.path}).json()
+        r = client.post('/nb/save', json={'path': tab.path,
+                                          'base_disk_version': after['disk_version'],
+                                          'cells': [{'i': 0, 'source': 'X = "branch-a"'}]})
+        assert 'branch-b' in p.read_text(), 'the newer work must survive the stale save'
+        assert r.status_code == 409, 'the save guard catches it instead of overwriting'
+        assert after['disk_version'] == first['disk_version'], 'stamped with what it was read at'
+        assert after.get('stale') is True, 'the file has moved under the copy being served'
+
+def test_an_unsaved_draft_is_kept_but_reported_against_what_it_came_from(tmp_path):
+    "A dirty tab is the person's own work, so it survives; the save guard is what must fire."
+    p = tmp_path/'mod.py'
+    p.write_text('VALUE = "branch-a"\n')
+    ws = Workspace(roots=[tmp_path]); tab = ws.open(p)
+    with TestClient(ide_app(ws)) as client:
+        opened = client.get('/tab/state', params={'path': tab.path}).json()
+        client.post('/tab/buffer', json={'path': tab.path, 'kind': 'text',
+                                         'text': 'VALUE = "my-edit"\n',
+                                         'base_disk_version': opened['disk_version']})
+        p.write_text('VALUE = "branch-b"\n')
+        after = client.get('/tab/state', params={'path': tab.path}).json()
+        assert after['text'].strip() == 'VALUE = "my-edit"', 'unsaved typing is never dropped'
+        assert after['stale'] is True
+        assert after['disk_version'] == opened['disk_version'], 'reported against its own base'
+        r = client.post('/nb/save', json={'path': tab.path,
+                                          'base_disk_version': after['disk_version'],
+                                          'text': 'VALUE = "my-edit"\n'})
+        assert r.status_code == 409, 'the save guard now has a stale base to catch'
+    assert 'branch-b' in p.read_text(), 'the newer work on disk is still there'
+
+def test_saving_makes_the_cached_copy_current_again(tmp_path):
+    "After a save the cache matches the file, so the next read must not be called stale."
+    p = tmp_path/'core.ipynb'
+    p.write_text(_one_cell_nb('X = 1'))
+    ws = Workspace(roots=[tmp_path]); tab = ws.open(p)
+    with TestClient(ide_app(ws)) as client:
+        opened = client.get('/tab/state', params={'path': tab.path}).json()
+        r = client.post('/nb/save', json={'path': tab.path,
+                                          'base_disk_version': opened['disk_version'],
+                                          'cells': [{'i': 0, 'source': 'X = 2'}]}).json()
+        assert r['ok']
+        again = client.get('/tab/state', params={'path': tab.path}).json()
+        assert again['cells'][0]['source'] == 'X = 2' and not again['stale']

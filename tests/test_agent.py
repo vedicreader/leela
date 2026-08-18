@@ -1033,15 +1033,24 @@ def test_an_approval_exchange_is_written_into_the_notebook():
     assert states == [('prompt', None), ('markdown', 'pending'), ('markdown', 'refused')]
     assert 'that file is generated' in nb[2].source
 
-def test_workspace_path_refusal_names_the_files_that_are_open(tmp_path):
+def test_workspace_path_refusal_names_the_folders_that_are_open(tmp_path):
+    """The gate is the open roots, and it used to name the open tabs instead.
+
+    A refusal listing five files that happened to be open read as a path or quoting bug in one of
+    them, so the fix people reached for was to re-quote a path that was never the problem.
+    """
     from leela.blocks.agent.ai import WorkspaceHost
     from leela.workspace import Workspace
     p = tmp_path/'dialog.ipynb'
     p.write_text('{}')
     ws = Workspace(roots=[tmp_path])
     ws.open(p)
-    with pytest.raises(Exception) as e: WorkspaceHost(ws).check('/Users/719/dialog.ipynb')
-    assert str(p) in str(e.value) and 'open files' in str(e.value)
+    with pytest.raises(Exception) as e: WorkspaceHost(ws).check('/Users/719/dialog.ipynb', reading=True)
+    msg = str(e.value)
+    assert 'open folders' in msg and str(tmp_path) in msg
+    assert 'open files' not in msg, 'the tabs are not what the refusal is about'
+    assert 'reading outside the open folders' in msg, 'and the setting that would have allowed it'
+
 
 def test_workspace_agent_reaches_the_live_kernel_inspector():
     from leela.blocks.agent.ai import WorkspaceHost
@@ -2077,8 +2086,8 @@ def test_the_steer_box_takes_the_key_you_press_in_it():
     js = read('leela/static/js/12_agent.js')
     block = js[js.index('function initAgentComposer'):js.index('async function sendAgentCommand')]
     assert "$('#agentsteer')?.addEventListener('keydown'" in block
-    assert 'leeQueueSteer()' in block and 'e.preventDefault()' in block
-    assert 'e.shiftKey' in block, 'shift+enter is not a submit'
+    assert 'leeQueueSteer' in block and 'e.preventDefault()' in block
+    assert 'leeForceSteer' in block, 'and shift+enter forces rather than queueing'
 
 def test_a_queued_steer_is_still_acknowledged_a_second_later():
     """`updateAgentRunstrip()` is called with no state on every turn start, stream tick and turn
@@ -2160,3 +2169,73 @@ def test_the_turn_model_keeps_the_git_writes_it_is_not_advertised():
     assert 'built = super().tools' in body and 'return built' in body
     assert 'self._plain = [f for f in self._plain' in body, 'the briefing is what is narrowed'
     assert 'built = [' not in body, 'what the model can call is never filtered here'
+
+
+def test_stopping_a_cloud_turn_reports_that_it_was_running(tmp_path, monkeypatch):
+    """`rishi.Chat` has no `cancel`, so the backend swallowed the `AttributeError` and answered
+    False for every cloud model. Stop said "the assistant is not running" about a turn that was,
+    having already released the approval, so there was no way to stop anything."""
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    a = ws.ai
+    assert a.cancel() is False, 'idle is the one time that answer is true'
+    a.lock.acquire()
+    try: assert a.cancel() is True
+    finally: a.lock.release()
+    assert ws.approvals.state()['stopping'] is True
+
+def test_a_stopped_turn_refuses_the_calls_still_to_come(tmp_path):
+    "Leela cannot cancel a cloud completion, but it owns the tool loop, so that is what stops."
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    ws.approvals.stop()
+    tc = {'id': 'c1', 'function': {'name': 'list_files', 'arguments': {'path': ''}}}
+    assert ws.approvals.gate(tc) is True
+    assert tc['function']['name'] == 'user_steering'
+    assert 'stopped this turn' in tc['function']['arguments']['instruction']
+
+def test_the_next_turn_clears_the_stop(tmp_path):
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    ws.approvals.stop()
+    ws.ai._prepare('carry on')
+    assert ws.approvals.state()['stopping'] is False
+
+def test_forcing_a_steer_stops_the_turn_instead_of_queueing_it(tmp_path):
+    """A queued steer waits for a tool call, and a turn writing its answer never makes another one,
+    so it landed a turn late. Forcing stops the turn and hands the text back to be sent as the
+    next one."""
+    from leela.workspace import Workspace
+    from leela.app import ide_app
+    from starlette.testclient import TestClient
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as c:
+        ws.ai.lock.acquire()
+        try: d = c.post('/agent/steer', json={'text': 'read the test first', 'force': True}).json()
+        finally: ws.ai.lock.release()
+    assert d['ok'] and d['forced'] and d['stopped']
+    assert d['text'] == 'read the test first'
+    assert d['queued_steer'] == '', 'forcing never queues; the browser sends it as the next turn'
+    assert d['stopping'] is True
+
+def test_the_steer_box_forces_on_shift_enter_and_reseeds_after_done():
+    from tests.assets import read
+    js = read('leela/static/js/12_agent.js')
+    assert "(e.shiftKey ? leeForceSteer : leeQueueSteer)()" in js
+    assert js.count('    reseedForcedSteer();') == 2, 'a finished turn and a dropped stream both reseed'
+    assert "post('/agent/steer', {text, force: true})" in js
+
+
+def test_force_is_offered_only_while_there_is_a_turn_to_force():
+    """Three controls in a two-column grid put Force on a row of its own under the input, and it
+    was offered while nothing was running, where it means nothing but a red button."""
+    from tests.assets import read
+    css = read('leela/static/lee-ide.css')
+    assert '.lee-agent-steer { display: grid; grid-template-columns: minmax(0, 1fr) auto auto;' in css, \
+        'the input and both buttons share one row'
+    app = read('leela/app.py')
+    assert "Button('Force', id='agentforce'" in app and 'hidden=True' in app
+    js = read('leela/static/js/12_agent.js')
+    assert "force.hidden = strip.hidden" in js, 'it appears and goes with the run strip'
+    assert "if (!lee.agentBusy) return status('nothing is running to force" in js, \
+        'and shift+enter says so rather than silently sending'

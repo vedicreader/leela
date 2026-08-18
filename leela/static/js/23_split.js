@@ -71,6 +71,7 @@ async function refreshKernelPill() {
     pill.textContent = (d.api_error ? '⚠ ' : d.alive ? '⏺ ' : '○ ') + (d.key || '').split('/').pop();
     pill.title = (d.base || 'no inspector') + (d.cwd ? ' · cwd ' + d.cwd : '') +
                  (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '');
+    if (d.evicted) status(`closed ${d.evicted.name} runtime to make room; its in-memory variables were cleared`);
     (d.tabs || []).forEach((state, i) => {
       const tab = $(`.lee-tab[data-i="${i}"]`); if (!tab) return;
       let run = tab.querySelector('.lee-tab-run');

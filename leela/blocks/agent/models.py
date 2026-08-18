@@ -12,11 +12,13 @@ def _runtimes():
     return tuple(RUNTIMES)
 
 LABELS = {'litert': 'LiteRT', 'mlx': 'MLX', 'llama': 'llama.cpp', 'remote': 'hosted API / FastLLM',
-          'cursor': 'Cursor agent', 'claude': 'Claude Code'}
+          'cursor': 'Cursor agent', 'claude': 'Claude Code', 'copilot': 'GitHub Copilot'}
 
 def _why(runtime, agents):
     "What to do about a runtime that cannot be reached. An agent harness is not a pip extra."
     if runtime in agents: return f'needs the {LABELS.get(runtime, runtime)} CLI or SDK, and a login'
+    # the extra alone reaches nothing: Copilot wants an editor sign-in or `copilot_login()` too
+    if runtime == 'copilot': return 'needs pip install rishi[copilot], and a Copilot sign-in'
     return f'needs pip install rishi[{runtime}]'
 
 def runtimes():

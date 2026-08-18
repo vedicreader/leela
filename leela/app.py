@@ -657,7 +657,11 @@ def _agent_panel(ws):
             id='agentharnessbanner', cls='lee-agent-harness-banner', hidden=True, role='status'),
         Div(Div(id='agentsteerqueue', cls='lee-agent-steerqueue', aria_live='polite'),
             Div(Input(id='agentsteer', cls='lee-input', placeholder='Steer after the current call…'),
-                Button('Queue', cls='lee-btn', type='button', onclick='leeQueueSteer()'),
+                Button('Queue', cls='lee-btn', type='button', onclick='leeQueueSteer()',
+                       title='wait for the next tool call, then hand this to the model'),
+                Button('Force', id='agentforce', cls='lee-btn warn', type='button', hidden=True,
+                       onclick='leeForceSteer()',
+                       title='stop the turn now and start the next one from this instruction'),
                 cls='lee-agent-steer'),
             Div(id='agentattachments', cls='lee-agent-attachments', aria_live='polite'),
             Div(Button('attach image', id='agentattach', cls='lee-btn', type='button', title='attach a workspace image path or paste a screenshot', onclick='leeAgentAttach()'), cls='lee-agent-attachbar'),
@@ -713,6 +717,10 @@ def _agent_panel(ws):
                                     onchange='leeLocalMultimodal(this.checked)'),
                               ' local image/audio encoders', cls='lee-check-setting',
                               title='Reload local LiteRT engines with vision and audio support'),
+                        Label(Input(type='checkbox', id='kernels-auto-manage', checked=ws.kernels_auto_manage,
+                                    onchange='setKernelAutoManage(this.checked)'),
+                              ' leela manages the runtime limit', cls='lee-check-setting',
+                              title='At the kernel limit, close the longest-idle runtime instead of asking'),
                         Label(Input(type='checkbox', id='workspace-repo-writes', checked=ws.allow_workspace_repo_writes,
                                     onchange='leeWorkspaceRepoWrites(this.checked)'), ' allow writes to other workspace repos',
                               cls='lee-check-setting', title='Keep approval prompts, but allow approved writes to any repository added to this workspace'),
@@ -848,6 +856,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     _docs: dict[str, Notebook] = _docstore.docs
     _buffers: dict[str, str] = _docstore.buffers
     _buffer_bases: dict[str, str] = _docstore.bases
+    _doc_versions: dict[str, str] = _docstore.versions
     _run_locks: dict[str, asyncio.Lock] = _docstore.run_locks
     _debug = {'kernel': None, 'origin_path': '', 'cell_id': ''}
     _direct_debug = {'session': None, 'task': None, 'name': ''}
@@ -1270,6 +1279,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 _buffers.pop(t.path or t.title, None)
             t.dirty = False
             _buffer_bases.pop(t.path or t.title, None)
+            # what is cached now matches the file again, so this is the version it was read at
+            _doc_versions[t.path or t.title] = _disk_version(t.path)
             after = Path(target).read_text(encoding='utf-8', errors='replace') if target and Path(target).exists() else None
             operation = ws.journal.record(f'Save {t.title}', [(target, before, after)], kind='save')
             return {'ok': True, 'path': t.path, 'disk_version': _disk_version(t.path),
@@ -1297,6 +1308,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                     _buffers.pop(key, None)
                 t.dirty = False
                 _buffer_bases.pop(key, None)
+                _doc_versions[key] = _disk_version(t.path)
                 saved += 1
             except Exception as e: errors.append(f'{t.title}: {errstr(e)}')
         ws.save()
@@ -2176,13 +2188,22 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         return {'ok': True, 'policy': policy, **ws.approvals.state()}
     @rt('/agent/steer')
     async def agent_steer(req):
-        "Queue guidance after the current tool; the next proposed call is skipped and replaced by it."
+        """Queue guidance after the current tool; the next proposed call is skipped and replaced by it.
+
+        `force` does not queue. It stops the turn in flight and hands the text back, for the browser
+        to send as the next turn once the stopped one has finished unwinding. A queued steer waits
+        for a tool call, and a turn writing its answer never makes another one.
+        """
         d = await req.json()
         text = (d.get('text') or '').strip()
         if d.get('cancel'):
             ws.approvals.queue_steer('')
             return {'ok': True, **ws.approvals.state()}
         if not text: return _fail('steering instruction is empty')
+        if d.get('force'):
+            try: stopped = bool(ws.ai.cancel())
+            except Exception as e: return _fail(errstr(e))
+            return {'ok': True, 'forced': True, 'stopped': stopped, 'text': text, **ws.approvals.state()}
         ws.approvals.queue_steer(text)
         return {'ok': True, **ws.approvals.state()}
     @rt('/agent/tool-preview')
@@ -2353,9 +2374,10 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             if requested_transport != 'auto': raise
             transport = 'direct'
             print(f'  gateway unavailable; using direct kernel transport: {errstr(e)}')
+    from .blocks.runtime.kernels import RuntimeBroker
+    broker = RuntimeBroker()   # every shape gets the ceiling; only `--app` used to
     if app_window and roots:
-        from .blocks.runtime.kernels import RuntimeBroker
-        sites, hub, broker = [], None, RuntimeBroker()
+        sites, hub = [], None
         for i, (root, slug) in enumerate(zip(roots, workspace_slugs(r.name for r in roots))):
             state = leela_cfg/'workspaces'/f'{slug}.json'
             kw = dict(port=kernel_port + i * 100, agent=agent, kernel=kernel, model=model,
@@ -2365,6 +2387,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             state.parent.mkdir(parents=True, exist_ok=True)
             ws._state_path = state
             broker.register(ws.pool)
+            if ws.kernels_auto_manage: broker.auto_manage = True
             if root not in ws.fs.roots: ws.add_root(root)
             if ws.restore_remembered_agent_state(): ws.save()
             ws.jobs.tick()
@@ -2400,6 +2423,9 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             kw['inline_model'] = remembered.get('inline_model') or 'gpt-mini'
             kw['completion_model'] = remembered.get('completion_model') or 'gpt-4.1'
             ws = Workspace(**kw)
+        broker.register(ws.pool)
+        # one ceiling for the process, so any workspace asking leela to manage it turns it on
+        if ws.kernels_auto_manage: broker.auto_manage = True
         for r in roots: ws.add_root(r)
         # A shell launch means "here"; a frozen one has no such answer, so: welcome screen.
         if not ws.fs.roots and not getattr(sys, 'frozen', False): ws.add_root(os.getcwd())

@@ -6,6 +6,7 @@ from fasthtml.common import JSONResponse
 
 from ...core.session import kernel_api
 from ...core.web import fail
+from ..runtime.kernels import KernelLimit
 
 __all__ = ['CAPS', 'connect']
 
@@ -23,7 +24,8 @@ def connect(app, ctx):
     async def inspect_route(req):
         "Signature and docstring for the name at the cursor, from the object that is actually loaded."
         d = await req.json()
-        k = await session.runtime()
+        try: k = await session.runtime()
+        except KernelLimit as e: return fail(e)
         txt = await k.inspect_obj(d.get('code', ''), int(d.get('pos', 0)), int(d.get('detail', 0))) if k else ''
         return {'text': txt, 'note': '' if txt else 'the kernel knows nothing about that name'}
     @rt('/vars/eval')
@@ -32,7 +34,8 @@ def connect(app, ctx):
         d = await req.json()
         code, scope = (d.get('code') or '').strip(), d.get('scope', 'live')
         if not code: return fail('enter a Python expression after =')
-        k = await session.runtime()
+        try: k = await session.runtime()
+        except KernelLimit as e: return fail(e)
         params = {'code': code, 'scope': 'overlay' if scope == 'agent' else 'global'}
         r = await k.api(_api_path('exec', scope), params, timeout=120) if k else None
         if r is None: return fail('no runtime answered')
@@ -40,7 +43,8 @@ def connect(app, ctx):
                 'result': r.get('result'), 'scope': scope}
     @rt('/vars')
     async def vars_route(profile: str = 'minimal', sort: str = 'recent', scope: str = 'live'):
-        runtime = await session.runtime()
+        try: runtime = await session.runtime()
+        except KernelLimit as e: return fail(e)
         r = await runtime.api(_api_path('rows', scope), {'profile': profile, 'sort': sort}, 15) if runtime else None
         identity = ((getattr(runtime, 'base', None) or
                      (f'kernel:{session.kernel_key()}' if runtime is not None else 'none')) + f':{scope}')

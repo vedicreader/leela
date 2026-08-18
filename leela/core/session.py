@@ -15,12 +15,15 @@ async def kernel_api(session, path, params=None, timeout=15, tab=None):
 
 class DocStore:
     "Open notebooks and unsaved file text, keyed by tab."
-    __slots__ = ('session', 'docs', 'buffers', 'bases', 'run_locks')
+    __slots__ = ('session', 'docs', 'buffers', 'bases', 'versions', 'run_locks')
     def __init__(self, session):
         self.session = session
         self.docs = {}
         self.buffers = {}
         self.bases = {}
+        #: The `disk_version` each cached document was read at. What is held matches that, not what
+        #: is on disk now, and a branch switch is the difference.
+        self.versions = {}
         self.run_locks = {}
     @staticmethod
     def key(tab): return None if tab is None else (tab.path or tab.title)
@@ -44,7 +47,7 @@ class DocStore:
             for c in nb.cells: c.fresh = False
     def forget(self, key):
         "Drop everything held for one tab. Safe to call for a key that was never opened."
-        for d in (self.docs, self.buffers, self.bases): d.pop(key, None)
+        for d in (self.docs, self.buffers, self.bases, self.versions): d.pop(key, None)
 
 class DebugState:
     "Which kernel is paused, and where the frame it stopped in came from."

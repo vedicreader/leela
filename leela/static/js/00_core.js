@@ -439,12 +439,14 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
   }, 32);
 }
 
-async function api(url, opts) {
+async function api(url, opts, retried) {
   const r = await fetch(url, opts);
   const ct = r.headers.get('content-type') || '';
   const body = ct.includes('json') ? await r.json() : await r.text();
-  if (!r.ok) throw new Error((body && body.error) || r.statusText);
-  return body;
+  if (r.ok) return body;
+  /* The kernel ceiling is the one failure a person can answer. Offer the room, then try once more. */
+  if (!retried && body && body.kernel_limit && await offerKernelRoom(body)) return api(url, opts, true);
+  throw new Error((body && body.error) || r.statusText);
 }
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify(data || {})});

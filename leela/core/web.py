@@ -45,8 +45,10 @@ class Assets:
 
 def fail(err, code=400):
     "The IDE's JSON error shape. `err` is an exception (reported `Type: message`) or a ready string."
-    return JSONResponse({'ok': False, 'error': errstr(err) if isinstance(err, Exception) else str(err)},
-                        status_code=code)
+    body = {'ok': False, 'error': errstr(err) if isinstance(err, Exception) else str(err)}
+    # The kernel ceiling is the one failure a person can answer, so it travels with what to offer.
+    if getattr(err, 'limit', None): body |= {'kernel_limit': err.limit, 'candidate': err.candidate}
+    return JSONResponse(body, status_code=code)
 
 def sse(event, data):
     "One server-sent event. Newlines in the payload would end the frame, so it goes as JSON."

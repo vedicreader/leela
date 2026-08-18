@@ -439,12 +439,14 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
   }, 32);
 }
 
-async function api(url, opts) {
+async function api(url, opts, retried) {
   const r = await fetch(url, opts);
   const ct = r.headers.get('content-type') || '';
   const body = ct.includes('json') ? await r.json() : await r.text();
-  if (!r.ok) throw new Error((body && body.error) || r.statusText);
-  return body;
+  if (r.ok) return body;
+  /* The kernel ceiling is the one failure a person can answer. Offer the room, then try once more. */
+  if (!retried && body && body.kernel_limit && await offerKernelRoom(body)) return api(url, opts, true);
+  throw new Error((body && body.error) || r.statusText);
 }
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify(data || {})});
@@ -2650,11 +2652,17 @@ async function pickKernel() {
     `<h4>interpreter</h4><div class="lee-modallist">${pys}</div>` +
     `<div class="lee-runtime-cwd"><span>working directory</span><code>${esc(o.cwd || '')}</code>` +
     `<button class="lee-btn" id="kernelcwd">change</button></div>` +
+    `<label class="lee-check-setting"><input type="checkbox" id="kernel-auto-manage"${o.auto_manage ? ' checked' : ''}> leela manages the runtime limit</label>` +
+    `<div class="lee-dim">at the limit, closes the longest-idle runtime instead of asking</div>` +
     `<div class="lee-mfoot"><button class="lee-btn" id="kernelattach">` +
     `${o.private ? 'attach to folder kernel' : 'give this tab its own kernel'}</button>` +
     `<span class="lee-dim">notebooks default to their own kernel; files share by folder</span></div>`);
   const reconnect = $('[data-kernel-reconnect]', m);
   if (reconnect) reconnect.onclick = async () => { await post('/kernel/restart'); m.remove(); status('kernel restarted', 'ok'); };
+  m.querySelector('#kernel-auto-manage').onchange = async (e) => {
+    try { e.target.checked = await setKernelAutoManage(e.target.checked); }
+    catch (err) { e.target.checked = !e.target.checked; status(String(err.message || err), 'err'); }
+  };
   m.querySelector('#kernelcwd').onclick = async () => {
     const cwd = await inputDialog('kernel working directory', 'folder inside an open project',
                                   o.cwd || '', '/path/to/project');
@@ -2693,6 +2701,25 @@ async function pickKernel() {
   });
 }
 
+
+/* The kernel ceiling names the runtime it would close and waits for an answer. `settings > runtimes`
+ * mutes this, and leela closes the longest-idle one itself. */
+async function offerKernelRoom(body) {
+  const c = body.candidate;
+  if (!c) return false;                       // every runtime is busy, so there is nothing to offer
+  const mins = Math.round((c.idle_for || 0) / 60);
+  const idle = mins >= 1 ? `, idle ${mins} min` : '';
+  if (!await confirmDialog('kernel limit reached',
+      `${body.kernel_limit} runtimes are open, which is the limit. ` +
+      `Close ${c.name}${idle} to make room?`, `close ${c.name}`)) return false;
+  try { await post('/runtime/close', {key: c.key}); return true; }
+  catch (e) { console.warn('Leela could not close that runtime:', e); return false; }
+}
+
+async function setKernelAutoManage(enabled) {
+  const r = await post('/runtime/auto-manage', {enabled: !!enabled});
+  return r.enabled;
+}
 /* ---------------------------------------------------------- the keymap */
 /* Editable here, because the alternative is telling someone whose terminal or browser
  * eats ctrl+enter to go and find a JSON file. Saving re-reads it server-side and reloads
@@ -4528,6 +4555,9 @@ function updateAgentRunstrip(state = {}) {
   const strip = $('#agentrunstrip'); if (!strip) return;
   if ('queued_steer' in state) setQueuedSteer(state.queued_steer || '');
   strip.hidden = !lee.agentBusy && !state.waiting;
+  /* Forcing means stopping the turn in flight, so it is only an action while there is one. Idle it
+     would just be the prompt box with a red button, which is what made the row look wrong. */
+  const force = $('#agentforce'); if (force) force.hidden = strip.hidden;
   const label = state.waiting ? `Waiting · ${state.waiting}`
     : lee.queuedSteer ? 'Steering queued · applies after current call'
     : state.run_policy ? `Running automatically · ${runPolicyLabel(state.run_policy)}`
@@ -4565,6 +4595,34 @@ async function leeQueueSteer() {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 window.leeQueueSteer = leeQueueSteer;
+
+/* Queueing waits for a tool call, and a turn that is writing its answer never makes another one,
+   so a steer aimed at what the model is doing right now arrived after it had finished doing it.
+   Forcing stops the turn and sends the instruction as the next one instead. The send waits for
+   the stopped turn's `done`, because a new turn is refused while the old one holds the lock. */
+async function leeForceSteer() {
+  if (!lee.agentBusy) return status('nothing is running to force; ask in the prompt box instead', 'err');
+  const input = $('#agentsteer'), text = input?.value.trim(); if (!text) return status('write a steering instruction first', 'err');
+  try {
+    const d = await post('/agent/steer', {text, force: true});
+    input.value = ''; setQueuedSteer(''); updateAgentRunstrip(d);
+    if (!d.stopped) return void reseedSteer(text);
+    lee.forcedSteer = text;
+    status('stopping the turn, then steering from your instruction', 'ok');
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+window.leeForceSteer = leeForceSteer;
+
+function reseedSteer(text) {
+  const el = $('#agentprompt'); if (!el) return;
+  el.value = text; sendAgent();
+}
+
+function reseedForcedSteer() {
+  const text = lee.forcedSteer; if (!text) return;
+  lee.forcedSteer = '';
+  reseedSteer(text);
+}
 
 async function pollApproval() {
   try {
@@ -4835,8 +4893,8 @@ function initAgentComposer() {
      that eats what you typed. It is not in a form and has no default action, so nothing
      happened at all -- which read as steering being broken rather than never sent. */
   $('#agentsteer')?.addEventListener('keydown', e => {
-    if (e.key !== 'Enter' || e.shiftKey) return;
-    e.preventDefault(); leeQueueSteer();
+    if (e.key !== 'Enter') return;
+    e.preventDefault(); (e.shiftKey ? leeForceSteer : leeQueueSteer)();
   });
   const reasoning = $('#agentreasoning');
   if (reasoning) {
@@ -5005,6 +5063,7 @@ async function sendAgent() {
     if ((d.problems || []).length) status(d.problems[d.problems.length - 1], 'err');
     else status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
     await reloadAfterEdits(d.edits || []);
+    reseedForcedSteer();
   });
 
   // A dropped connection must clear both the functional busy lock and its visual state.
@@ -5012,6 +5071,7 @@ async function sendAgent() {
     if (finished) return;
     lee.agentBusy = false; setAgentStatus('ready'); progress.finish(false); updateAgentRunstrip();
     status('the model stream ended before it returned a result', 'err'); es.close();
+    reseedForcedSteer();
   };
 }
 
@@ -9713,6 +9773,7 @@ async function refreshKernelPill() {
     pill.textContent = (d.api_error ? '⚠ ' : d.alive ? '⏺ ' : '○ ') + (d.key || '').split('/').pop();
     pill.title = (d.base || 'no inspector') + (d.cwd ? ' · cwd ' + d.cwd : '') +
                  (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '');
+    if (d.evicted) status(`closed ${d.evicted.name} runtime to make room; its in-memory variables were cleared`);
     (d.tabs || []).forEach((state, i) => {
       const tab = $(`.lee-tab[data-i="${i}"]`); if (!tab) return;
       let run = tab.querySelector('.lee-tab-run');
@@ -10339,8 +10400,10 @@ async function branchPr(d) {
 
 function branchTopActions(d) {
   const changed = (d.changes || []).length;
+  const remotes = (d.branches || []).filter(b => b.remote).length;
   return [
     {id: 'update', label: 'Update Project', detail: d.behind ? `${d.behind} behind ${d.upstream}` : 'pull, autostashing local work'},
+    {id: 'fetch', label: 'Fetch', detail: remotes ? `refresh ${remotes} remote branch${remotes === 1 ? '' : 'es'}` : 'refresh remote branches'},
     {id: 'commit', label: 'Commit…', detail: changed ? `${changed} changed file${changed === 1 ? '' : 's'}` : 'working tree clean'},
     {id: 'push', label: 'Push', detail: !d.upstream ? 'publish this branch' : d.ahead ? `${d.ahead} ahead` : 'nothing to push'},
     {id: 'new', label: 'New Branch…', detail: `from ${d.branch}`},
@@ -10454,7 +10517,13 @@ async function leeBranchMenu(anchor) {
       return switchBranch(d, row.dataset.branch).then(reload).catch(() => {});
     }
     const act = e.target.closest('[data-act]');
-    if (act) { m.remove(); return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d); }
+    if (act) {
+      // Fetching is what you do *before* picking a branch, so it repaints the list it just
+      // refreshed rather than closing over it like every other action here.
+      if (act.dataset.act === 'fetch') return branchAct('fetch').then(reload).catch(() => {});
+      m.remove();
+      return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d);
+    }
   };
   search.oninput = () => paint(false);
   paint();

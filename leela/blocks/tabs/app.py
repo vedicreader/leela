@@ -42,9 +42,9 @@ def connect(app, ctx):
     @rt('/tab/close')
     async def tab_close(i: int):
         key = session.kernel_key(session.tabs[i]) if 0 <= i < len(session.tabs) else None
-        private = bool(0 <= i < len(session.tabs) and session.tabs[i].private_kernel)
         session.close(i); session.watch_env(None); session.save()
-        if private and key: await ctx.pool.close(key)
+        # A private key names one tab, a folder key names several. Both go when the last of them does.
+        if key and not any(session.kernel_key(t) == key for t in session.tabs): await ctx.pool.close(key)
         return tab_bar(session)
     @rt('/tab/move')
     def tab_move(i: int, j: int):
@@ -56,21 +56,36 @@ def connect(app, ctx):
         session.new_scratch(kind)
         session.watch_env(None)
         return tab_bar(session)
+    def _held(t):
+        """The version the cached copy of `t` was read at, and whether the file has moved since.
+
+        A branch switch, a rebase or another editor replaces the file while a tab still holds the old
+        one. The copy stays authoritative, because it carries outputs and cell state the file does not.
+        Stamping it with the version now on disk is what did the damage: the browser sent that back as
+        its base, `/nb/save` compared base against disk, found them equal, and wrote the old content
+        over the new. Reported against the version it was actually read at, the guard catches it."""
+        key, now = t.path or t.title, disk_version(t.path) if t.path else ''
+        was = docs.versions.get(key)
+        return (now, False) if was is None or was == now else (was, True)
+
     @rt('/tab/state')
     def tab_state(path: str = ''):
         "Everything needed to mount the active tab, or an open tab addressed by absolute path."
         want = str(Path(path).expanduser().resolve()) if path else ''
         t = first(session.tabs, lambda x: x.path == want) if path else ctx.tab
         if t is None: return {'kind': None}
+        held, stale = _held(t)
         if t.kind == 'notebook':
             key = t.path or t.title
             try:
                 nb = docs.docs.get(key)
-                if nb is None: nb = Notebook.load(t.path) if t.path else Notebook.blank()
+                if nb is None:
+                    nb = Notebook.load(t.path) if t.path else Notebook.blank()
+                    docs.versions[key] = held
             except Exception as e: return {'kind': 'error', 'error': errstr(e)}
             docs.docs[key] = nb
             return {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
-                    'disk_version': disk_version(t.path), 'cells': [c.dict() for c in nb.cells]}
+                    'disk_version': held, 'stale': stale, 'cells': [c.dict() for c in nb.cells]}
         if t.kind in ('pdf', 'image'):
             return {'kind': t.kind, 'path': t.path, 'title': t.title,
                     'disk_version': disk_version(t.path)}
@@ -85,10 +100,13 @@ def connect(app, ctx):
             return {'kind': 'web', 'title': t.title, 'target': t.ref}
         try:
             key = t.path or t.title
-            text = docs.buffers[key] if key in docs.buffers else (ctx.fs.read(t.path) if t.path else '')
+            if key in docs.buffers: text = docs.buffers[key]
+            else:
+                text = ctx.fs.read(t.path) if t.path else ''
+                docs.versions[key] = held
         except Exception as e: return {'kind': 'error', 'error': errstr(e)}
         return {'kind': 'text', 'path': t.path, 'title': t.title, 'lang': t.lang or '',
-                'disk_version': disk_version(t.path), 'text': text}
+                'disk_version': held, 'stale': stale, 'text': text}
     @rt('/tab/disk')
     def tab_disk(path: str = ''):
         "Current on-disk text for the explicit conflict/merge editor."
@@ -123,6 +141,7 @@ def connect(app, ctx):
         tab = first(session.tabs, lambda t: docs.key(t) == path)
         if tab is None: return fail('that tab is no longer open')
         docs.bases.setdefault(path, str(d.get('base_disk_version') or disk_version(tab.path)))
+        docs.versions.setdefault(path, docs.bases[path])   # a draft descends from what was read
         if kind == 'notebook':
             nb = docs.docs.get(path)
             i = int(d.get('i', -1))

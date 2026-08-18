@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import socket, threading, urllib.error, urllib.request
+import json, socket, threading, urllib.error, urllib.request
 
 import pytest
 
@@ -93,3 +93,13 @@ def test_a_desktop_launch_with_no_folder_does_not_open_your_home_directory(monke
     assert 'Open a folder' in body
     import json
     assert json.load(get(f'http://127.0.0.1:{port}/workspace/info'))['roots'] == []
+
+def test_a_plain_workspace_has_a_kernel_ceiling(tmp_path):
+    """`RuntimeBroker` was built only inside the `--app` branch, so a plain `leela` registered no
+    broker: `admit` never ran, `LEELA_MAX_KERNELS` never applied, and kernels accumulated without
+    a ceiling until the machine noticed."""
+    (tmp_path/'one').mkdir()
+    port = serve(roots=[str(tmp_path/'one')])
+    out = json.loads(get(f'http://127.0.0.1:{port}/runtime/broker').read())
+    assert out['limit'] is not None, 'no broker registered, so nothing caps the kernels'
+    assert out['limit'] >= 1
