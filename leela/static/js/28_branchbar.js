@@ -126,8 +126,10 @@ async function branchPr(d) {
 
 function branchTopActions(d) {
   const changed = (d.changes || []).length;
+  const remotes = (d.branches || []).filter(b => b.remote).length;
   return [
     {id: 'update', label: 'Update Project', detail: d.behind ? `${d.behind} behind ${d.upstream}` : 'pull, autostashing local work'},
+    {id: 'fetch', label: 'Fetch', detail: remotes ? `refresh ${remotes} remote branch${remotes === 1 ? '' : 'es'}` : 'refresh remote branches'},
     {id: 'commit', label: 'Commit…', detail: changed ? `${changed} changed file${changed === 1 ? '' : 's'}` : 'working tree clean'},
     {id: 'push', label: 'Push', detail: !d.upstream ? 'publish this branch' : d.ahead ? `${d.ahead} ahead` : 'nothing to push'},
     {id: 'new', label: 'New Branch…', detail: `from ${d.branch}`},
@@ -241,7 +243,13 @@ async function leeBranchMenu(anchor) {
       return switchBranch(d, row.dataset.branch).then(reload).catch(() => {});
     }
     const act = e.target.closest('[data-act]');
-    if (act) { m.remove(); return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d); }
+    if (act) {
+      // Fetching is what you do *before* picking a branch, so it repaints the list it just
+      // refreshed rather than closing over it like every other action here.
+      if (act.dataset.act === 'fetch') return branchAct('fetch').then(reload).catch(() => {});
+      m.remove();
+      return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d);
+    }
   };
   search.oninput = () => paint(false);
   paint();

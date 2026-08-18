@@ -16,7 +16,7 @@ classifiers = [
 ]
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
-    "ramabana[all]>=0.1.11",   # 0.1.11 takes `subagent_writes`
+    "ramabana[all]>=0.1.11",
     "fastcore>=1.7.0",
     "exhash>=0.4.10",
     "fossick>=0.1.11",
@@ -84,6 +84,7 @@ path = "leela/__init__.py"
 dev = [
     "fastaistyle>=0.0.17",
     "leela[all]",
+    "rishi[all]>=0.1.18",
     {include-group = "test"},
 ]
 test = [

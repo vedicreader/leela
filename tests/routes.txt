@@ -212,7 +212,9 @@ GET,POST /run/file
 GET,POST /runs
 GET,POST /runs/file
 GET,POST /runs/save
+GET,POST /runtime/auto-manage
 GET,POST /runtime/broker
+GET,POST /runtime/close
 GET,POST /runtime/create
 GET,POST /runtime/info
 GET,POST /runtime/support

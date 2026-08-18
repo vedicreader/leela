@@ -1622,6 +1622,23 @@ def test_every_mutation_in_the_branch_modal_reports_back():
     body = src[src.index('async function leeBranchMenu'):src.index('window.leeBranchMenu')]
     assert 'branchActions(more, d, (d.branches || []).find(b => b.name === more.dataset.more), reload)' in body
 
+def test_fetch_is_offered_in_the_branch_modal_and_keeps_it_open():
+    """Picking a remote branch you cannot see is not a choice.
+
+    Every other top action closes the modal, which is right for them and wrong for this one:
+    fetching is what you do before choosing, so it repaints the list it has just refreshed.
+    """
+    from tests.assets import read
+    src = read('leela/static/js/28_branchbar.js')
+    acts = src[src.index('function branchTopActions'):src.index('const branchAct')]
+    assert "{id: 'fetch', label: 'Fetch'" in acts
+    assert 'remote branch' in acts, 'and it says how many refs it is refreshing'
+    body = src[src.index('async function leeBranchMenu'):src.index('window.leeBranchMenu')]
+    assert "if (act.dataset.act === 'fetch') return branchAct('fetch').then(reload)" in body
+    assert body.index("act.dataset.act === 'fetch'") < body.index('m.remove();\n      return act.dataset.act'), \
+        'the fetch branch has to come before the close'
+
+
 def test_a_refused_checkout_does_not_become_an_unhandled_rejection():
     "`gitDo` re-throws what it has already reported, and a refused switch is a normal answer."
     from tests.assets import read

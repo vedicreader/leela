@@ -1,7 +1,7 @@
 "Managed ipykernels: execution over the shell channel, inspection over HTTP to an in-kernel."
 
 from __future__ import annotations
-import asyncio, importlib.util, os, sys, queue, shutil, tempfile, uuid, warnings
+import asyncio, importlib.util, os, sys, queue, shutil, tempfile, time, uuid, warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from fastcore.all import store_attr, ifnone, first, L
@@ -14,6 +14,7 @@ from ...core.inspectors import reg_dir, active
 from .support import clean_env
 
 __all__ = ['ExecOutcome', 'Kernel', 'GatewayKernel', 'GatewayService', 'KernelPool', 'RuntimeBroker',
+           'KernelLimit',
            'bootstrap_src', 'output_text', 'ipymini_available', 'find_pythons', 'project_python',
            'nearest_python', 'python_for', 'venv_env', 'run_file_src']
 
@@ -204,6 +205,20 @@ def _spec(python=None, name='python3', kernel='ipykernel'):
 
 class _Inspector:
     "The inspector-client half shared by `Kernel` and `GatewayKernel`."
+    last_used = 0.
+    def touch(self):
+        "Stamp activity. The idle sweep measures from here, so anything that uses a kernel says so."
+        self.last_used = time.time()
+        return self
+    @property
+    def busy(self):
+        "A cell is running on this kernel. The sweep never takes one of these."
+        t = getattr(self, '_exec_task', None)
+        return t is not None and not t.done()
+    @property
+    def idle_for(self):
+        "Seconds since this kernel was last used; 0 while it is running something."
+        return 0. if self.busy else max(0., time.time() - self.last_used)
     @property
     def kernel_kind(self):
         "Which launcher this kernel was started with: 'ipykernel' or 'ipymini'."
@@ -375,12 +390,14 @@ class Kernel(_Inspector):
             if not self.alive: return ExecOutcome(ok=False, error='kernel is not running')
             task = asyncio.current_task()
             self._exec_task = task
+            self.touch()
             try:
                 msg_id = self.kc.execute(code, silent=silent, store_history=store_history,
                     allow_stdin=False)
                 outs = await self._collect(msg_id, on_output, timeout, on_debug)
                 reply = await self._reply(msg_id, timeout)
             finally:
+                self.touch()
                 if self._exec_task is task: self._exec_task = None
         c = reply.get('content', {}) if reply else {}
         err = None
@@ -618,6 +635,7 @@ class GatewayKernel(_Inspector):
         async with self._exec_lock:
             task = asyncio.current_task()
             self._exec_task = task
+            self.touch()
             run = self.kc.run(code, silent=silent, store_history=store_history)
             outputs = []
             try:
@@ -626,6 +644,7 @@ class GatewayKernel(_Inspector):
                     if on_output: on_output(output)
             except Exception as e: return ExecOutcome(ok=False, outputs=outputs, error=str(e))
             finally:
+                self.touch()
                 if self._exec_task is task: self._exec_task = None
         reply = (run.reply or {}).get('content', {})
         error = None if run.status == 'ok' else f"{reply.get('ename', run.status)}: {reply.get('evalue', '')}".rstrip(': ')
@@ -653,10 +672,24 @@ class GatewayKernel(_Inspector):
         if self.kc: await _give_up_after(self._release())
         self.kc, self.base, self._alive = None, None, False
 
+#: How long a kernel may sit unused before the sweep closes it. `LEELA_KERNEL_IDLE=0` turns it off.
+IDLE_SECONDS = 30*60
+#: How often the sweep looks.
+SWEEP_SECONDS = 60
+
+class KernelLimit(RuntimeError):
+    """The ceiling is reached. `candidate` is the kernel a person can be offered, or None when every
+    one of them is running something and there is nothing safe to take."""
+    def __init__(self, msg, candidate=None, limit=0):
+        super().__init__(msg)
+        self.candidate, self.limit = candidate, limit
+
 class RuntimeBroker:
     "Process ceiling across the kernel pools of every web workspace; never evicts a live namespace."
-    def __init__(self, max_kernels=None):
+    def __init__(self, max_kernels=None, auto_manage=None):
         self.max_kernels = int(max_kernels or os.environ.get('LEELA_MAX_KERNELS', 12))
+        self.auto_manage = bool(ifnone(auto_manage,
+            os.environ.get('LEELA_KERNEL_AUTO', '').lower() in ('1', 'true', 'yes')))
         self.pools, self._lock, self._reserved = [], asyncio.Lock(), set()
     def register(self, pool):
         if pool not in self.pools: self.pools.append(pool)
@@ -670,22 +703,45 @@ class RuntimeBroker:
         return {'live': len(self.live), 'limit': self.max_kernels,
             'runtimes': [{'key': str(key), 'pid': kernel.pid, 'kind': kernel.kernel_kind,
                 'cwd': str(kernel.cwd or '')} for _, key, kernel in self.live]}
+    def stalest(self):
+        "The idle kernel that has waited longest, as `(pool, key, kernel)`. None while all are busy."
+        idle = [row for row in self.live if not row[2].busy]
+        return max(idle, key=lambda row: row[2].idle_for) if idle else None
+    def _candidate(self):
+        "What the limit dialog needs to name the kernel it is offering to close."
+        if (row := self.stalest()) is None: return None
+        _, key, k = row
+        return {'key': str(key), 'name': Path(str(getattr(k, 'cwd', '') or key)).name,
+                'cwd': str(getattr(k, 'cwd', '') or ''), 'pid': getattr(k, 'pid', None),
+                'idle_for': int(k.idle_for)}
     async def admit(self, pool, key):
-        token = (id(pool), key)
+        token, evicted = (id(pool), key), None
         async with self._lock:
             if token in self._reserved or key in pool._starting: return
             if len(self.live) + len(self._reserved) >= self.max_kernels:
-                raise RuntimeError(f'kernel limit reached ({self.max_kernels}); close an idle runtime '
-                    'or set LEELA_MAX_KERNELS to a larger value')
+                row = self.stalest()
+                if row is None: raise KernelLimit(
+                    f'kernel limit reached ({self.max_kernels}) and every runtime is busy; stop one '
+                    'or set LEELA_MAX_KERNELS to a larger value', limit=self.max_kernels)
+                if not self.auto_manage: raise KernelLimit(
+                    f'kernel limit reached ({self.max_kernels}); close an idle runtime '
+                    'or set LEELA_MAX_KERNELS to a larger value',
+                    candidate=self._candidate(), limit=self.max_kernels)
+                evicted = self._candidate()
+                vpool, vkey, _ = row
+                await vpool.close(vkey)   # `close` never takes this lock, so holding it is safe
             self._reserved.add(token)
+        return evicted
     async def release(self, pool, key):
         async with self._lock: self._reserved.discard((id(pool), key))
 
 class KernelPool:
     "The IDE's kernels, keyed by an id the workspace assigns (usually a tab or a folder root)."
     def __init__(self, port=8000, default_kernel='ipykernel', default_python=None, broker=None,
-        transport='direct', gateway=None):
+        transport='direct', gateway=None, idle=None):
         self.port, self.kernels, self._starting, self.broker = port, {}, {}, None
+        self.idle = int(ifnone(idle, os.environ.get('LEELA_KERNEL_IDLE', IDLE_SECONDS)))
+        self._sweep = None
         self.transport = transport if transport in ('direct', 'gateway') else 'direct'
         self.gateway = gateway
         if broker is not None: broker.register(self)
@@ -701,9 +757,10 @@ class KernelPool:
         return {'kernel': self.default_kernel, 'python': self.default_python}
     async def get(self, key, **kw):
         "The kernel for `key`, starting it once even when several browser panels ask together."
+        self._sweeping()
         if (task := self._starting.get(key)) is not None: return await asyncio.shield(task)
-        if (k := self.kernels.get(key)) is not None and k.alive: return k
-        if self.broker is not None: await self.broker.admit(self, key)
+        if (k := self.kernels.get(key)) is not None and k.alive: return k.touch()
+        evicted = await self.broker.admit(self, key) if self.broker is not None else None
         async def start_one():
             kw.setdefault('kernel', self.default_kernel)
             kw.setdefault('python', self.default_python)
@@ -712,6 +769,8 @@ class KernelPool:
                 if self.gateway is None: self.gateway = GatewayService().start()
                 kw['gateway'] = self.gateway
             k = self.kernels[key] = cls(port=self.port, **kw)
+            k.evicted = evicted
+            k.touch()
             try: return await k.start()
             except BaseException:
                 if self.kernels.get(key) is k: self.kernels.pop(key, None)
@@ -724,6 +783,23 @@ class KernelPool:
             if task.done() and self._starting.get(key) is task:
                 self._starting.pop(key, None)
                 if self.broker is not None: await self.broker.release(self, key)
+    async def reap(self):
+        "Close what nobody has touched for `idle` seconds. A running cell is never taken."
+        if self.idle <= 0: return []
+        stale = [k for k, v in self.kernels.items()
+                 if k not in self._starting and not v.busy and v.idle_for > self.idle]
+        for k in stale: await self.close(k)
+        return stale
+    def _sweeping(self):
+        "Start the idle sweep on first use: `get` is the only thing that ever adds a kernel."
+        if self.idle > 0 and (self._sweep is None or self._sweep.done()):
+            self._sweep = asyncio.create_task(self._sweep_loop())
+    async def _sweep_loop(self):
+        while True:
+            await asyncio.sleep(min(SWEEP_SECONDS, max(1, self.idle)))
+            try: await self.reap()
+            except asyncio.CancelledError: raise
+            except Exception: pass
     def peek(self, key):
         "A completed live kernel, never the object currently being started."
         if key in self._starting: return None
@@ -735,6 +811,7 @@ class KernelPool:
             except BaseException: pass
         if (k := self.kernels.pop(key, None)) is not None: await k.shutdown()
     async def close_all(self):
+        if self._sweep is not None: self._sweep.cancel(); self._sweep = None
         tasks = list(self._starting.values())
         if tasks: await asyncio.gather(*[asyncio.shield(task) for task in tasks], return_exceptions=True)
         await asyncio.gather(*[k.shutdown() for k in self.kernels.values()], return_exceptions=True)

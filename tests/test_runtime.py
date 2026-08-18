@@ -1194,3 +1194,225 @@ def test_the_debug_surfaces_follow_the_same_interpreter_as_the_tab(tmp_path):
         block = block[:block.index('    @rt(', 10)]
         assert 'python_for(' in block, route
         assert 'pool.default_python' not in block, f'{route} still keys off the first folder opened'
+
+def test_closing_the_last_tab_of_a_folder_closes_its_kernel(tmp_path):
+    """Only private kernels were closed on `/tab/close`, so a folder kernel outlived every tab that
+    used it. Twenty of them accumulated in one session."""
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    proj, other = tmp_path/'proj', tmp_path/'other'
+    proj.mkdir(); other.mkdir()
+    a, b = other/'a.py', other/'b.py'
+    a.write_text('a = 1\n'); b.write_text('b = 2\n')
+    nb = other/'n.ipynb'; _notebook(nb)
+    ws = Workspace(roots=[proj, other])
+    closed = []
+    async def fake_close(key): closed.append(key)
+    ws.pool.close = fake_close
+    ws.open(a); ws.open(b); ws.open(nb)
+    folder, private = ws.kernel_key(ws.tabs[0]), ws.kernel_key(ws.tabs[2])
+    assert folder == str(other) and private == f'tab:{nb}'
+    with TestClient(ide_app(ws)) as client:
+        client.post(f'/tab/close?i=2')                    # the notebook: its key names only itself
+        assert closed == [private]
+        client.post(f'/tab/close?i=1')                    # b.py: a.py still holds the folder kernel
+        assert closed == [private]
+        client.post(f'/tab/close?i=0')                    # a.py: the last tab of that folder
+        assert closed == [private, folder]
+
+def test_a_folder_kernel_survives_while_any_of_its_tabs_is_open(tmp_path):
+    "The folder key names several tabs, so the count that matters is how many are left."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    a, b = tmp_path/'a.py', tmp_path/'b.py'
+    a.write_text('a = 1\n'); b.write_text('b = 2\n')
+    ws = Workspace(roots=[tmp_path])
+    closed = []
+    async def fake_close(key): closed.append(key)
+    ws.pool.close = fake_close
+    ws.open(a); ws.open(b)
+    assert ws.kernel_key(ws.tabs[0]) == ws.kernel_key(ws.tabs[1]) == str(tmp_path)
+    with TestClient(ide_app(ws)) as client:
+        client.post('/tab/close?i=1')
+        assert closed == [], 'a.py is still open on that kernel'
+        client.post('/tab/close?i=0')
+    assert closed == [str(tmp_path)]
+
+class _FakeKernel:
+    "Enough of a kernel for the sweep: it is alive, it can be busy, and it can be shut down."
+    def __init__(self): self.alive, self._exec_task, self.shutdown_calls = True, None, 0
+    async def shutdown(self): self.shutdown_calls += 1; self.alive = False
+
+def _pooled(idle=60):
+    from leela.blocks.runtime.kernels import KernelPool, _Inspector
+    for n in ('touch', 'busy', 'idle_for'): setattr(_FakeKernel, n, getattr(_Inspector, n))
+    return KernelPool(idle=idle)
+
+def test_the_sweep_closes_a_kernel_nobody_has_used(tmp_path):
+    """Kernels were never evicted, so a session accumulated twenty of them: 130 threads and
+    1.4GB before anything ran."""
+    import asyncio, time
+    pool = _pooled(idle=60)
+    fresh, stale = _FakeKernel(), _FakeKernel()
+    fresh.touch()
+    stale.last_used = time.time() - 600
+    pool.kernels.update({'fresh': fresh, 'stale': stale})
+    assert asyncio.run(pool.reap()) == ['stale']
+    assert stale.shutdown_calls == 1 and fresh.shutdown_calls == 0
+    assert 'stale' not in pool.kernels and 'fresh' in pool.kernels
+
+def test_the_sweep_never_takes_a_kernel_that_is_running_a_cell():
+    "A long cell is exactly the work a person would lose, so `busy` outranks the clock."
+    import asyncio, time
+    pool = _pooled(idle=60)
+    k = _FakeKernel(); k.last_used = time.time() - 6000
+    async def go():
+        k._exec_task = asyncio.create_task(asyncio.sleep(5))
+        pool.kernels['busy'] = k
+        assert k.busy and k.idle_for == 0
+        assert await pool.reap() == []
+        k._exec_task.cancel()
+    asyncio.run(go())
+    assert k.shutdown_calls == 0 and 'busy' in pool.kernels
+
+def test_the_sweep_is_off_when_the_idle_window_is_zero():
+    "`LEELA_KERNEL_IDLE=0` is how someone keeps every namespace for as long as leela runs."
+    import asyncio, time
+    pool = _pooled(idle=0)
+    k = _FakeKernel(); k.last_used = time.time() - 10_000
+    pool.kernels['old'] = k
+    assert asyncio.run(pool.reap()) == []
+    assert k.shutdown_calls == 0
+
+def _broker_with(n, busy=(), **kw):
+    "A broker over one pool holding `n` fake kernels, the named ones running a cell."
+    from leela.blocks.runtime.kernels import RuntimeBroker
+    import time
+    b = RuntimeBroker(max_kernels=n, **kw)
+    pool = _pooled(idle=0)
+    b.register(pool)
+    for i in range(n):
+        k = _FakeKernel(); k.cwd = f'/tmp/proj{i}'; k.last_used = time.time() - (i + 1) * 100
+        if i in busy: k._exec_task = object.__new__(type('T', (), {'done': lambda self: False}))
+        pool.kernels[f'k{i}'] = k
+    return b, pool
+
+def test_the_kernel_limit_names_the_kernel_it_offers_to_close():
+    """`admit` raised a bare RuntimeError, so the UI had nothing to offer but the text. It now
+    carries the stalest idle kernel."""
+    import asyncio
+    from leela.blocks.runtime.kernels import KernelLimit
+    b, pool = _broker_with(3)
+    with pytest.raises(KernelLimit) as e: asyncio.run(b.admit(pool, 'new'))
+    assert e.value.limit == 3
+    assert e.value.candidate['key'] == 'k2', 'the longest-idle one is what gets offered'
+    assert e.value.candidate['name'] == 'proj2' and e.value.candidate['idle_for'] >= 300
+    assert all(k.shutdown_calls == 0 for k in pool.kernels.values()), 'nothing closes without a yes'
+
+def test_runtime_limit_is_structured_for_every_live_runtime_request(tmp_path):
+    from leela.blocks.runtime.kernels import KernelLimit
+    ws = Workspace(roots=[tmp_path])
+    e = KernelLimit('kernel limit reached (1)', candidate={'key': 'old', 'name': 'old', 'idle_for': 0}, limit=1)
+    async def runtime(): raise e
+    ws.runtime = runtime
+    with TestClient(ide_app(ws)) as client:
+        requests = [('get', '/kernel/info', {}), ('get', '/vars', {}),
+                    ('post', '/inspect', {'json': {'code': '', 'pos': 0}}),
+                    ('post', '/vars/eval', {'json': {'code': '1'}})]
+        for method, path, kw in requests:
+            r = getattr(client, method)(path, **kw)
+            assert r.status_code == 400 and r.json()['kernel_limit'] == 1
+            assert r.json()['candidate']['key'] == 'old'
+
+
+def test_kernel_info_reports_an_auto_eviction_once(tmp_path):
+    from types import SimpleNamespace
+    ws = Workspace(roots=[tmp_path])
+    k = SimpleNamespace(alive=True, base=None, pid=1, name='new', boot_error=None, last_api_error='',
+                        evicted={'key': 'old', 'name': 'old-project'})
+    async def runtime(): return k
+    ws.runtime = runtime
+    with TestClient(ide_app(ws)) as client:
+        assert client.get('/kernel/info').json()['evicted']['name'] == 'old-project'
+        assert 'evicted' not in client.get('/kernel/info').json()
+
+
+def test_auto_manage_closes_the_stalest_kernel_instead_of_asking():
+    "The mute setting: leela manages the ceiling itself and never raises."
+    import asyncio
+    b, pool = _broker_with(3, auto_manage=True)
+    evicted = asyncio.run(b.admit(pool, 'new'))
+    assert 'k2' not in pool.kernels, 'the stalest idle one made room'
+    assert pool.kernels['k0'].shutdown_calls == 0 and pool.kernels['k1'].shutdown_calls == 0
+    assert evicted['key'] == 'k2' and evicted['name'] == 'proj2'
+
+def test_a_ceiling_of_busy_kernels_offers_nothing_and_says_so():
+    "Nothing is safe to take, so there is no candidate and auto-manage cannot help either."
+    import asyncio
+    from leela.blocks.runtime.kernels import KernelLimit
+    for auto in (False, True):
+        b, pool = _broker_with(2, busy=(0, 1), auto_manage=auto)
+        with pytest.raises(KernelLimit) as e: asyncio.run(b.admit(pool, 'new'))
+        assert e.value.candidate is None and 'busy' in str(e.value)
+
+def test_the_auto_manage_setting_round_trips_and_reaches_the_broker(tmp_path):
+    "The mute switch: saved with the workspace, and applied to the ceiling that enforces it."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.blocks.runtime.kernels import RuntimeBroker
+    ws = Workspace(roots=[tmp_path])
+    RuntimeBroker().register(ws.pool)
+    assert ws.kernels_auto_manage is False and ws.pool.broker.auto_manage is False
+    with TestClient(ide_app(ws)) as client:
+        r = client.post('/runtime/auto-manage', json={'enabled': True}).json()
+        assert r['ok'] and r['enabled'] is True
+        assert ws.pool.broker.auto_manage is True and ws.kernels_auto_manage is True
+        assert client.get('/runtime/broker').json()['auto_manage'] is True
+        assert client.post('/runtime/auto-manage', json={'enabled': 'yes'}).json()['ok'] is False
+    assert ws.state()['kernels_auto_manage'] is True, 'and it survives a save'
+
+def test_the_limit_error_travels_with_the_kernel_it_offers():
+    "`fail` is what every route returns, so the dialog gets its candidate wherever the limit is hit."
+    import json as _json
+    from leela.core.web import fail
+    from leela.blocks.runtime.kernels import KernelLimit
+    e = KernelLimit('kernel limit reached (12)', candidate={'key': 'k2', 'name': 'proj2',
+                                                           'idle_for': 300, 'cwd': '', 'pid': 1}, limit=12)
+    body = _json.loads(bytes(fail(e).body))
+    assert body['ok'] is False and body['kernel_limit'] == 12
+    assert body['candidate']['name'] == 'proj2' and body['candidate']['idle_for'] == 300
+    plain = _json.loads(bytes(fail(ValueError('nope')).body))
+    assert 'candidate' not in plain and 'kernel_limit' not in plain
+
+def test_the_limit_dialog_can_close_the_runtime_it_was_offered(tmp_path):
+    "The other half of the offer: the key it named is the key it can close."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.blocks.runtime.kernels import RuntimeBroker
+    ws = Workspace(roots=[tmp_path])
+    RuntimeBroker().register(ws.pool)
+    from leela.blocks.runtime.kernels import _Inspector
+    for n in ('touch', 'busy', 'idle_for'): setattr(_FakeKernel, n, getattr(_Inspector, n))
+    k = _FakeKernel(); k.touch(); ws.pool.kernels['k9'] = k
+    with TestClient(ide_app(ws)) as client:
+        assert client.post('/runtime/close', json={'key': 'nope'}).json()['ok'] is False
+        assert client.post('/runtime/close', json={}).json()['ok'] is False
+        r = client.post('/runtime/close', json={'key': 'k9'}).json()
+        assert r['ok'] and r['key'] == 'k9'
+    assert k.shutdown_calls == 1 and 'k9' not in ws.pool.kernels
+
+def test_a_busy_runtime_is_refused_even_when_named(tmp_path):
+    "The offer only ever names an idle kernel, but the route is reachable on its own."
+    import asyncio
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    ws = Workspace(roots=[tmp_path])
+    from leela.blocks.runtime.kernels import _Inspector
+    for n in ('touch', 'busy', 'idle_for'): setattr(_FakeKernel, n, getattr(_Inspector, n))
+    k = _FakeKernel(); k.touch()
+    k._exec_task = object.__new__(type('T', (), {'done': lambda self: False}))
+    ws.pool.kernels['hot'] = k
+    with TestClient(ide_app(ws)) as client:
+        out = client.post('/runtime/close', json={'key': 'hot'}).json()
+    assert out['ok'] is False and 'running' in out['error']
+    assert k.shutdown_calls == 0

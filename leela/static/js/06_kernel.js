@@ -24,11 +24,17 @@ async function pickKernel() {
     `<h4>interpreter</h4><div class="lee-modallist">${pys}</div>` +
     `<div class="lee-runtime-cwd"><span>working directory</span><code>${esc(o.cwd || '')}</code>` +
     `<button class="lee-btn" id="kernelcwd">change</button></div>` +
+    `<label class="lee-check-setting"><input type="checkbox" id="kernel-auto-manage"${o.auto_manage ? ' checked' : ''}> leela manages the runtime limit</label>` +
+    `<div class="lee-dim">at the limit, closes the longest-idle runtime instead of asking</div>` +
     `<div class="lee-mfoot"><button class="lee-btn" id="kernelattach">` +
     `${o.private ? 'attach to folder kernel' : 'give this tab its own kernel'}</button>` +
     `<span class="lee-dim">notebooks default to their own kernel; files share by folder</span></div>`);
   const reconnect = $('[data-kernel-reconnect]', m);
   if (reconnect) reconnect.onclick = async () => { await post('/kernel/restart'); m.remove(); status('kernel restarted', 'ok'); };
+  m.querySelector('#kernel-auto-manage').onchange = async (e) => {
+    try { e.target.checked = await setKernelAutoManage(e.target.checked); }
+    catch (err) { e.target.checked = !e.target.checked; status(String(err.message || err), 'err'); }
+  };
   m.querySelector('#kernelcwd').onclick = async () => {
     const cwd = await inputDialog('kernel working directory', 'folder inside an open project',
                                   o.cwd || '', '/path/to/project');
@@ -67,3 +73,22 @@ async function pickKernel() {
   });
 }
 
+
+/* The kernel ceiling names the runtime it would close and waits for an answer. `settings > runtimes`
+ * mutes this, and leela closes the longest-idle one itself. */
+async function offerKernelRoom(body) {
+  const c = body.candidate;
+  if (!c) return false;                       // every runtime is busy, so there is nothing to offer
+  const mins = Math.round((c.idle_for || 0) / 60);
+  const idle = mins >= 1 ? `, idle ${mins} min` : '';
+  if (!await confirmDialog('kernel limit reached',
+      `${body.kernel_limit} runtimes are open, which is the limit. ` +
+      `Close ${c.name}${idle} to make room?`, `close ${c.name}`)) return false;
+  try { await post('/runtime/close', {key: c.key}); return true; }
+  catch (e) { console.warn('Leela could not close that runtime:', e); return false; }
+}
+
+async function setKernelAutoManage(enabled) {
+  const r = await post('/runtime/auto-manage', {enabled: !!enabled});
+  return r.enabled;
+}

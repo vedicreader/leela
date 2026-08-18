@@ -24,6 +24,7 @@ __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_cont
            'notebook_approvals', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
 
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
+STOP_NOTE = 'the user stopped this turn'
 GUIDED_TOOLS = WRITE_TOOLS | frozenset({'web_search', 'read_url', 'research'})
 
 STATE_TEMPLATE = """# Agent charter
@@ -96,6 +97,7 @@ class Interventions(Approvals):
         self.run_policy = None
         self.pause_next = False
         self.queued_steer = ''
+        self.stopping = False
         self._state_lock = threading.Lock()
         self._execution_meta = []
     def set_control(self, control):
@@ -113,6 +115,12 @@ class Interventions(Approvals):
         return dict(self.run_policy)
     def set_pause_next(self):
         with self._state_lock: self.pause_next, self.run_policy = True, None
+    def stop(self, note=STOP_NOTE):
+        "Refuse every call still to come this turn, and release the one already waiting."
+        with self._state_lock: self.stopping, self.run_policy, self.pause_next = True, None, False
+        self.cancel_all(note)
+    def resume(self):
+        with self._state_lock: self.stopping = False
     def queue_steer(self, text):
         with self._state_lock:
             self.queued_steer = str(text or '').strip()
@@ -164,7 +172,7 @@ class Interventions(Approvals):
     def state(self):
         with self._state_lock:
             return {'control': self.control, 'run_policy': dict(self.run_policy) if self.run_policy else None,
-                'pause_next': self.pause_next, 'queued_steer': self.queued_steer}
+                'pause_next': self.pause_next, 'queued_steer': self.queued_steer, 'stopping': self.stopping}
     def request(self, name, args, force=False, timeout=None, action_id='', revision=0,
         branch_id='main', parent_action_id=''):
         args = dict(args or {})
@@ -180,6 +188,7 @@ class Interventions(Approvals):
         if self.host is not None and name in {'edit_file', 'create_file'} and args.get('path'):
             a.before = self.host.text_at(args['path'])
         self.history.append(a)
+        if self.stopping: return a.resolve(False, STOP_NOTE)
         if not checkpoint: return a.resolve(True)
         if required and self.mode == 'auto' and self.control != 'directed': return a.resolve(True)
         if required and self.mode == 'off':
@@ -223,8 +232,11 @@ class Interventions(Approvals):
             else:
                 # A bare backend denial reads to a model as a transient permission failure and it
                 # proposes the same call again, so "no" resolves as a durable instruction.
-                instruction = ('The user rejected this tool call. Do not retry this call or an '
-                    'equivalent action unless the user explicitly asks for it later.')
+                instruction = (('The user stopped this turn. Do not run this call or any other one. '
+                    'Stop now and reply with a short summary of what you had already done.')
+                    if self.stopping else
+                    ('The user rejected this tool call. Do not retry this call or an '
+                    'equivalent action unless the user explicitly asks for it later.'))
                 if a.note: instruction += f' User direction: {a.note}'
                 fn['name'], fn['arguments'] = 'user_steering', {'instruction': instruction}
                 return True
@@ -262,8 +274,11 @@ class WorkspaceHost(Host):
         try: return self.ws.fs._check(path, must_exist=must_exist)
         except Unsafe as e:
             if reading and (outside := self._readable_outside(path)) is not None: return outside
-            opened = [t.path for t in self.ws.tabs if t.path]
-            hint = f'; open files: {", ".join(opened[-5:])}' if opened else ''
+            # The gate is the open roots, not the open tabs; naming the tabs sent people looking
+            # for a quoting or path bug in a file they could already see listed.
+            hint = f'; open folders: {", ".join(self.roots)}' if self.roots else ''
+            if reading and not getattr(self.ws, 'agent_read_outside', False):
+                hint += '; open the folder, or turn on reading outside the open folders in agent settings'
             raise Unsafe(f'{e}{hint}') from e
     def grep(self, pattern, path_filter='', regex=True, ignore_case=False, limit=MAX_GREP_HITS):
         "Exact matching through the workspace's own ripgrep, rather than a `read` per file."
@@ -708,7 +723,24 @@ class Assistant(Agent):
         return f'{prompt}\n\nUser steering: {steer}'.strip() if steer else prompt
 
     def _prepare(self, prompt):
+        if self.approvals is not None and hasattr(self.approvals, 'resume'): self.approvals.resume()
         return super()._prepare(self._steered(prompt))
+
+    def cancel(self):
+        """Stop the turn in flight, and say whether there was one.
+
+        `rishi.Chat` has no `cancel`, so the backend's own swallows an `AttributeError` and reports
+        False for every cloud model: Stop always answered "the assistant is not running" while
+        having already released the approval. What Leela can end is the tool loop, so `stopping`
+        refuses each remaining call, and `busy` is what the answer is about.
+        """
+        running = self.busy
+        if self.approvals is not None:
+            if hasattr(self.approvals, 'stop'): self.approvals.stop()
+            else: self.approvals.cancel_all('the turn was stopped')
+        try: self._be('turn').cancel()
+        except Exception: pass
+        return running
 
     def _be(self, job='turn'):
         """The backend for `job`, on an engine the whole daemon shares rather than a copy of the

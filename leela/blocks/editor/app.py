@@ -102,10 +102,12 @@ def connect(app, ctx):
             if lang == 'json':
                 formatted = json.dumps(json.loads(text), indent=2, ensure_ascii=False) + '\n'
             elif lang == 'python':
-                from ..runtime.kernels import project_python
-                python = ctx.pool.default_python or project_python(ctx.fs.roots) or sys.executable
+                from ..runtime.kernels import python_for
                 # ruff finds `pyproject.toml` from `cwd`, so it must be the folder the *file* is in.
                 cwd = _format_cwd(ctx, d.get('path'))
+                # and the formatter has to come from that folder's own environment: the first open
+                # root's venv was being used to format files belonging to any of the others
+                python = python_for(cwd, session=ctx) or sys.executable
                 def format_python():
                     "ruff first, then black; whichever the project has, with the first one's output winning."
                     failures = []
@@ -122,10 +124,14 @@ def connect(app, ctx):
     @rt('/editor/packages')
     def editor_packages(path: str):
         "Installed-version annotations for a workspace pyproject.toml."
+        from ..runtime.kernels import python_for
         try:
             p = ctx.fs._check(path, must_exist=True)
             if p.name != 'pyproject.toml': return {'packages': [], 'summary': {}}
-            python = ctx.pool.default_python or sys.executable
+            # the versions a pyproject is annotated with are the ones installed beside it. One
+            # interpreter for the whole workspace answered for every open project at once, so a
+            # second checkout holding a newer release was reported at the first one's version.
+            python = python_for(p.parent, session=ctx) or sys.executable
             rows = project_package_rows(p, python)
             return {'packages': rows, 'summary': {
                 'total': len(rows), 'installed': sum(r['installed'] is not None for r in rows),

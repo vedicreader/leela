@@ -123,6 +123,7 @@ class Workspace:
                  inline_model=None,
                  completion_model=None,
                  local_multimodal=False,
+                 kernels_auto_manage=False,
                  litert_backend='',
                  approvals='ask',
                  agent_scope='overlay',
@@ -174,6 +175,7 @@ class Workspace:
         self.inline_model = inline_model or model_env('MODEL_INLINE') or 'gpt-mini'
         self.completion_model = completion_model or model_env('MODEL_COMPLETION') or 'gpt-4.1'
         self.local_multimodal = bool(local_multimodal)
+        self.kernels_auto_manage = bool(kernels_auto_manage)
         self.litert_backend = str(litert_backend or '').lower()
         if self.litert_backend: os.environ['LEELA_LITERT_BACKEND'] = self.litert_backend
         self.compact_auto, self.compact_strategy = True, 'surgical'
@@ -715,6 +717,7 @@ class Workspace:
             'pythons': [{**p, 'current': p['path'] == cur_py or (cur_py is None and i == 0)}
                         for i, p in enumerate(find_pythons(self.fs.roots))],
             'python': cur_py,
+            'auto_manage': self.kernels_auto_manage,
         }
     async def set_kernel(self, kind=None, python=False, private=None, tab=None, restart=True):
         "Point a tab at a different kernel, and start it."
@@ -814,6 +817,7 @@ class Workspace:
                 'active': self.active, 'model': self.model, 'inline_model': self.inline_model,
                 'completion_model': self.completion_model,
                 'local_multimodal': self.local_multimodal, 'litert_backend': self.litert_backend,
+                'kernels_auto_manage': self.kernels_auto_manage,
                 'agent_state': self.agent_state,
                 'agent_state_layers': self.agent_state_layers,
                 'agent_memory_selection': self.agent_memory_selection,
@@ -834,6 +838,7 @@ class Workspace:
     @classmethod
     def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel',
              model=None, inline_model=None, completion_model=None, local_multimodal=None,
+             kernels_auto_manage=None,
              litert_backend=None,
              approvals='ask', agent_scope='overlay', python=None, transport='direct', gateway=None,
              cdp_port=9223):
@@ -846,6 +851,7 @@ class Workspace:
                  inline_model=ifnone(inline_model, d.get('inline_model') or 'gpt-mini'),
                  completion_model=ifnone(completion_model, d.get('completion_model') or 'gpt-4.1'),
                  local_multimodal=ifnone(local_multimodal, d.get('local_multimodal', False)),
+                 kernels_auto_manage=ifnone(kernels_auto_manage, d.get('kernels_auto_manage', False)),
                  litert_backend=ifnone(litert_backend, d.get('litert_backend', '')),
                  approvals=approvals, agent_scope=agent_scope, python=python,
                  transport=transport, gateway=gateway)
