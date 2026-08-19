@@ -100,10 +100,13 @@ async function mountTab(expectedPath = '') {
             paintDebugInlineValues(view, loc.line, lee.debugState?.variables);
           }
           jumpToLine(loc.line);
+          if (loc.column) { const at = view.state.doc.line(loc.line).from + loc.column; LeeCM.setSelection(view, at, at + String(loc.symbol || '').length); }
         }
       } else {
         jumpToLine(loc.line);
-        if (loc.debug && lee.editors.get('file')) {
+        const view = lee.editors.get('file');
+        if (view && loc.column) { const at = view.state.doc.line(loc.line).from + loc.column; LeeCM.setSelection(view, at, at + String(loc.symbol || '').length); }
+        if (loc.debug && view) {
           LeeCM.setDebugLine(lee.editors.get('file'), loc.line);
           paintDebugInlineValues(lee.editors.get('file'), loc.line, lee.debugState?.variables);
         }
@@ -112,7 +115,7 @@ async function mountTab(expectedPath = '') {
   }
   restoreTabLocation(st, hadPendingLocation);
   refreshKernelPill();
-  if ($('#left')?.classList.contains('left-symbols')) leeSymbols();
+  if (lee.kind === 'text' || lee.kind === 'notebook') leeSymbols();
   paintAgentAttachments();
   try { const split=JSON.parse(localStorage.getItem('lee-editor-split')||'null'); if(split?.path&&split.path!==st.path) await mountSecondary(split.path,split.direction); }
   catch (_) { localStorage.removeItem('lee-editor-split'); }
@@ -981,7 +984,7 @@ function openLocation(hit) {
     return status(`${name} — line ${hit.line} of the notebook file is in no cell`, 'info');
   }
   const line = inCell ? Number(hit.cell_line) : hit.line;
-  lee.pendingLocation = {path: hit.path, line,
+  lee.pendingLocation = {path: hit.path, line, column: Number(hit.column || 0), symbol: hit.symbol || '',
                          cellId: hit.cell || '',
                          cellIndex: Number.isFinite(hit.cell_index) ? Number(hit.cell_index) : -1};
   leeOpenFile(hit.path);

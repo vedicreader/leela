@@ -659,9 +659,9 @@ def _agent_panel(ws):
             Div(Input(id='agentsteer', cls='lee-input', placeholder='Steer after the current call…'),
                 Button('Queue', cls='lee-btn', type='button', onclick='leeQueueSteer()',
                        title='wait for the next tool call, then hand this to the model'),
-                Button('Force', id='agentforce', cls='lee-btn warn', type='button', hidden=True,
+                Button('Stop and send next', id='agentforce', cls='lee-btn warn', type='button', hidden=True,
                        onclick='leeForceSteer()',
-                       title='stop the turn now and start the next one from this instruction'),
+                       title='cancel the active run, then send this draft once cancellation is terminal'),
                 cls='lee-agent-steer'),
             Div(id='agentattachments', cls='lee-agent-attachments', aria_live='polite'),
             Div(Button('attach image', id='agentattach', cls='lee-btn', type='button', title='attach a workspace image path or paste a screenshot', onclick='leeAgentAttach()'), cls='lee-agent-attachbar'),
@@ -1695,6 +1695,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         old = ws._ai
         ws._ai = Assistant(ws, model=old.model.name, surface='agent', local_multimodal=ws.local_multimodal,
                            on_compact=ws._compacted, history_name='agent')
+        ws.sync_agent_routing(ws._ai)
         ws.approvals.host = ws._ai.host
         old.close()
         return {'ok': True, 'session': ws.ai.session_id}
@@ -2069,13 +2070,23 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         "Whether the assistant is loaded, what model it is on, and what it is doing right now."
         return ws.ai.status()
     @rt('/agent/stop')
-    def agent_stop():
-        "Ask the model to stop generating. The turn in flight returns whatever it already had."
+    async def agent_stop(req):
+        "Cancel the foreground root run."
         try:
-            if ws.ai.cancel(): return {'ok': True}
-            return {'ok': False, 'error': 'the assistant is not running'}
-        except Exception as e:
-            return {'ok': False, 'error': errstr(e)}
+            d = await req.json()
+        except Exception: d = {}
+        try: return {'ok': True, **ws.ai.cancel((d.get('run_id') or '').strip())}
+        except Exception as e: return {'ok': False, 'error': errstr(e)}
+    @rt('/agent/runs')
+    def agent_runs(): return {'runs': ws.ai.runs(active=True)}
+    @rt('/agent/runs/{run_id}/cancel')
+    def agent_run_cancel(run_id: str):
+        try: return {'ok': True, **ws.ai.cancel(run_id)}
+        except Exception as e: return {'ok': False, 'error': errstr(e)}
+    @rt('/agent/runs/{run_id}/terminate')
+    def agent_run_terminate(run_id: str):
+        try: return {'ok': True, **ws.ai.terminate(run_id)}
+        except Exception as e: return {'ok': False, 'error': errstr(e)}
     @rt('/agent/stream')
     async def agent_stream(req):
         "One turn as server-sent events, so the browser fills in as the model writes."
@@ -2104,6 +2115,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 finally: out.put((done, None))
             loop = asyncio.get_running_loop()
             task = loop.run_in_executor(None, pump)
+            run_id = ''
             finished, approval_id, activity_versions, execution_version = False, None, {}, None
             compact_count = a.compactor.count
             def changed_activity(): return _activity_changes(a, activity_versions)
@@ -2117,7 +2129,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                         compact_count = a.compactor.count
                         yield _sse('compaction', {'count': compact_count, 'strategy': a.compactor.strategy,
                                                   'note': a.compactor.note, 'text': a.compactor.last})
-                    state = ws.approvals.state()
+                    runs = a.runs(active=True)
+                    if not run_id and runs: run_id = runs[-1]['id']
+                    state = {**ws.approvals.state(), 'runs': runs}
                     version = json.dumps(state, sort_keys=True)
                     if version != execution_version:
                         execution_version = version
@@ -2129,6 +2143,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                         yield _sse('approval', proposal)
                     for row in changed_activity(): yield _sse('activity', row)
                     if await req.is_disconnected(): break
+                    run = a.run(run_id) if run_id else None
+                    if run is not None and run.cancelled and run.terminal:
+                        finished = True
+                        yield _sse('run', run.dict())
+                        break
                     if kind is None: continue
                     if kind is done:
                         finished = True
@@ -2137,9 +2156,16 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                     yield _sse(kind, {'text': val} if kind == 'chunk' else {'error': val})
             finally:
                 if not finished:
-                    try: a.cancel()
+                    if not run_id:
+                        end = loop.time() + a.cancel_grace
+                        while not run_id and not task.done() and loop.time() < end:
+                            runs = a.runs(active=True)
+                            if runs: run_id = runs[-1]['id']
+                            else: await asyncio.sleep(0.01)
+                    try: a.cancel(run_id)
                     except Exception: pass
             if not finished: return
+            if not task.done(): return
             await task
             capabilities = a.turn_capabilities(a.current_turn_id)
             yield _sse('done', {'ok': a.ready, 'note': a.note, 'media': _turn_media(a),
@@ -2190,9 +2216,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     async def agent_steer(req):
         """Queue guidance after the current tool; the next proposed call is skipped and replaced by it.
 
-        `force` does not queue. It stops the turn in flight and hands the text back, for the browser
-        to send as the next turn once the stopped one has finished unwinding. A queued steer waits
-        for a tool call, and a turn writing its answer never makes another one.
+        `force` cancels the foreground run and returns the unsent text. A queued steer waits for a
+        tool call, and a turn writing its answer never makes another one.
         """
         d = await req.json()
         text = (d.get('text') or '').strip()
@@ -2201,9 +2226,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             return {'ok': True, **ws.approvals.state()}
         if not text: return _fail('steering instruction is empty')
         if d.get('force'):
-            try: stopped = bool(ws.ai.cancel())
+            try: run = ws.ai.cancel()
             except Exception as e: return _fail(errstr(e))
-            return {'ok': True, 'forced': True, 'stopped': stopped, 'text': text, **ws.approvals.state()}
+            return {'ok': True, 'forced': True, 'run': run, 'text': text, **ws.approvals.state()}
         ws.approvals.queue_steer(text)
         return {'ok': True, **ws.approvals.state()}
     @rt('/agent/tool-preview')

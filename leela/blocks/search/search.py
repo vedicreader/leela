@@ -1,7 +1,7 @@
 "Predictable human search (rg unless a mode is picked), semantic agent search, and every hit."
 
 from __future__ import annotations
-import json, re, shutil, subprocess
+import ast, json, re, shutil, subprocess
 from dataclasses import dataclass, field
 from fastcore.all import L, Path, ifnone, store_attr
 from fastcore.aio import athreaded
@@ -63,6 +63,7 @@ class Hit(Dictable):
     cell: str = ''
     cell_index: int = -1
     cell_line: int = 0
+    column: int = 0
 
 @dataclass
 class Cluster:
@@ -487,10 +488,35 @@ class Search:
             return self.similar(path, line, limit)
         self.backend, self.note = res.method or 'cluster', res.note
         return self._hits_from(res.hits, res.method or 'cluster')
-    def definitions(self, name, path=None, limit=30):
+    def _import_alias(self, name, path):
+        if not path: return None
+        try:
+            text = self.fs.read(path); tree = ast.parse(text)
+        except Exception: return None
+        lines = text.splitlines()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)): continue
+            for alias in node.names:
+                if alias.asname != name: continue
+                original = alias.name
+                line_no = alias.lineno
+                source = lines[line_no - 1] if line_no <= len(lines) else ''
+                start = len(source.encode()[:alias.col_offset].decode(errors='ignore'))
+                end = len(source.encode()[:alias.end_col_offset].decode(errors='ignore'))
+                segment = source[start:end]
+                column = start + max(0, segment.rfind(name))
+                hit = Hit(str(path), line_no, source.strip()[:200], 'definition', name, column=column)
+                return original, hit
+        return None
+
+    def definitions(self, name, path=None, limit=30, _seen=None):
         "Exact definitions for `name`: Kosha metadata first, live files as fallback."
         name = (name or '').strip()
-        if not re.match(r'^[_A-Za-z]\w*$', name): return L()
+        if limit <= 0 or not re.match(r'^[_A-Za-z]\w*$', name): return L()
+        seen = set(_seen or ())
+        key = (str(path or ''), name)
+        if key in seen: return L()
+        seen.add(key)
         out = L()
         if (k := self._kosha()) is not None:
             try:
@@ -504,8 +530,14 @@ class Search:
                     if hit.symbol == name: out.append(hit)
                     if len(out) >= limit: break
                 if len(out) >= limit: break
+        alias = self._import_alias(name, path)
+        if alias:
+            original, binding = alias
+            targets = self.definitions(original, path, limit - 1, seen)
+            merged = [*targets, binding, *out]
+            out = L(dict(((h.path, h.line, h.symbol), h) for h in reversed(merged)).values())[::-1]
         here = str(Path(path).resolve()) if path else ''
-        out = out.sorted(key=lambda h: (str(Path(h.path).resolve()) != here, h.line))
+        if not alias: out = out.sorted(key=lambda h: (str(Path(h.path).resolve()) != here, h.line))
         self.backend, self.note = ('kosha', 'exact symbol metadata + code graph') if out else ('scan', 'no definition found')
         return self._place(out[:limit])
     def usages(self, name, limit=200):
@@ -557,8 +589,8 @@ class Search:
         fallback = self._rg(q, limit)
         self.note = f'Kosha returned no existing paths; {self.note}'
         return self._place(fallback)
-    ALL_LEGS = ('symbols', 'rg', 'fts', 'ann')
-    LEG_PRIORITY = {'symbols': 100, 'rg': 80, 'fts': 60, 'ann': 40}
+    ALL_LEGS = ('files', 'symbols', 'rg', 'fts', 'ann')
+    LEG_PRIORITY = {'files': 110, 'symbols': 100, 'rg': 80, 'fts': 60, 'ann': 40}
     @staticmethod
     def hit_key(hit):
         "What makes two hits the same hit, so two engines finding one location merge into one row."
@@ -573,9 +605,19 @@ class Search:
         if query and query in text: relevance += 40
         if leaf and leaf in filename: relevance += 20
         return relevance + min(10.0, abs(float(hit.score or 0.0)))
+    def _files(self, q, limit=40):
+        "Workspace paths whose filename or relative path contains `q`."
+        query, out = q.casefold(), L()
+        for path in self.fs.walk():
+            if query not in str(path).casefold(): continue
+            out.append(Hit(str(path), 1, Path(path).name, kind='file'))
+            if len(out) >= limit: break
+        return out
+
     def _runners(self, q, limit, regex=False, exts=(), roots=None):
         "The `all` legs as callables, each returning hits or None. Only rg can be narrowed."
-        return {'rg': lambda: self._rg(q, limit, regex, exts, roots),
+        return {'files': lambda: self._files(q, limit),
+            'rg': lambda: self._rg(q, limit, regex, exts, roots),
             'symbols': lambda: self._symbols(q, limit),
             'fts': lambda: self._fts(q, limit),
             'ann': lambda: self._ann(q, limit)}
@@ -645,7 +687,7 @@ class Search:
         for i, line in enumerate(text.split('\n'), 1):
             if (m := _DEF_RE.match(line)):
                 out.append(Hit(path=str(path), line=i, text=line.strip()[:200],
-                    kind='symbol', symbol=m.group(3), score=float(len(m.group(1)))))
+                    kind='symbol', symbol=m.group(3), score=float(len(m.group(1))), column=m.start(3)))
         return out
     def _nb_symbols(self, path):
         "Defs and classes in a notebook's code cells, addressed by cell *and* by file line."
@@ -662,7 +704,7 @@ class Search:
                 if (m := _DEF_RE.match(str(line))):
                     out.append(Hit(path=str(path), line=(span[0] + n - 1) if span else 0,
                         text=str(line).strip()[:200], kind='symbol', symbol=m.group(3),
-                        score=float(len(m.group(1))), cell=cid, cell_index=i, cell_line=n))
+                        score=float(len(m.group(1))), cell=cid, cell_index=i, cell_line=n, column=m.start(3)))
         return out
     def _place(self, hits):
         "Give every notebook hit the cell and in-cell line that make it openable."
