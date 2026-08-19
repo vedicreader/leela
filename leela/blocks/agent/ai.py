@@ -726,21 +726,20 @@ class Assistant(Agent):
         if self.approvals is not None and hasattr(self.approvals, 'resume'): self.approvals.resume()
         return super()._prepare(self._steered(prompt))
 
-    def cancel(self):
-        """Stop the turn in flight, and say whether there was one.
-
-        `rishi.Chat` has no `cancel`, so the backend's own swallows an `AttributeError` and reports
-        False for every cloud model: Stop always answered "the assistant is not running" while
-        having already released the approval. What Leela can end is the tool loop, so `stopping`
-        refuses each remaining call, and `busy` is what the answer is about.
-        """
-        running = self.busy
+    def cancel(self, run_id='', grace=None):
+        "Cancel one run and preserve Leela's pending-approval state."
+        run = self.run(run_id)
         if self.approvals is not None:
-            if hasattr(self.approvals, 'stop'): self.approvals.stop()
-            else: self.approvals.cancel_all('the turn was stopped')
-        try: self._be('turn').cancel()
-        except Exception: pass
-        return running
+            if getattr(run, 'kind', 'root') == 'root' and hasattr(self.approvals, 'stop'): self.approvals.stop()
+            else: self.approvals.cancel_all('the run was cancelled')
+        return super().cancel(run_id, grace)
+    def terminate(self, run_id=''):
+        "Terminate one run through Ramabana's lifecycle API."
+        run = self.run(run_id)
+        if self.approvals is not None:
+            if getattr(run, 'kind', 'root') == 'root' and hasattr(self.approvals, 'stop'): self.approvals.stop()
+            else: self.approvals.cancel_all('the run was terminated')
+        return super().terminate(run_id)
 
     def _be(self, job='turn'):
         """The backend for `job`, on an engine the whole daemon shares rather than a copy of the

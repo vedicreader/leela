@@ -29,6 +29,35 @@ def test_definition_and_usage_fallbacks_report_exact_locations(tmp_path):
     assert [(h.path, h.line) for h in defs] == [(str(p), 1)]
     assert [(h.path, h.line) for h in uses] == [(str(p), 1), (str(p), 4)]
 
+def test_definition_follows_an_import_alias_and_keeps_its_binding_as_fallback(tmp_path):
+    target, caller = tmp_path/'target.py', tmp_path/'caller.py'
+    target.write_text('class original:\n    pass\n')
+    caller.write_text('from target import original as alias\n\nvalue = alias()\n')
+    hits = Search(Sandbox([tmp_path]), prefer_kosha=False).definitions('alias', caller)
+    assert [(Path(h.path).name, h.line, h.symbol, h.column) for h in hits] == [
+        ('target.py', 1, 'original', 6), ('caller.py', 1, 'alias', 31)]
+
+def test_definition_keeps_an_unresolved_import_alias_binding(tmp_path):
+    caller = tmp_path/'caller.py'
+    caller.write_text('import unavailable_package as alias\n')
+    hits = Search(Sandbox([tmp_path]), prefer_kosha=False).definitions('alias', caller)
+    assert [(Path(h.path).name, h.line, h.symbol) for h in hits] == [('caller.py', 1, 'alias')]
+
+def test_definition_alias_cycles_and_zero_limits_terminate(tmp_path):
+    caller = tmp_path/'caller.py'
+    caller.write_text('from package import same as same\nfrom package import other as alias\nfrom package import alias as other\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    assert [(h.line, h.symbol) for h in s.definitions('same', caller)] == [(1, 'same')]
+    assert [(h.line, h.symbol) for h in s.definitions('alias', caller)] == [(3, 'other'), (2, 'alias')]
+    assert s.definitions('alias', caller, limit=0) == []
+
+def test_definition_alias_column_counts_unicode_characters_not_utf8_bytes(tmp_path):
+    caller = tmp_path/'caller.py'
+    source = 'π = 1; from target import original as alias\n'
+    caller.write_text(source)
+    hit = Search(Sandbox([tmp_path]), prefer_kosha=False).definitions('alias', caller)[-1]
+    assert hit.column == source.index('alias')
+
 def test_kosha_is_bound_to_the_workspace_not_the_packaged_apps_cwd(monkeypatch, tmp_path):
     seen = []
     class FakeKosha:
@@ -186,6 +215,17 @@ def test_all_mode_merges_every_backend_and_ranks_exact_symbols_first(monkeypatch
     assert hits[1].sources == ['rg', 'fts']
     assert s.backend == 'all' and all(name in s.note for name in ('rg', 'symbols', 'fts', 'ann'))
 
+def test_all_mode_finds_file_names_without_matching_their_contents(tmp_path):
+    wanted = tmp_path/'billing_report.py'
+    wanted.write_text('total = 1\n')
+    (tmp_path/'billing_notes.md').write_text('nothing relevant\n')
+    hits = Search(Sandbox([tmp_path]), prefer_kosha=False).search('billing', mode='all')
+    files = [h for h in hits if h.kind == 'file']
+    assert [(Path(h.path).name, h.line, h.sources) for h in files] == [
+        ('billing_notes.md', 1, ['files']), ('billing_report.py', 1, ['files'])]
+    py = Search(Sandbox([tmp_path]), prefer_kosha=False).search('billing', mode='all', exts=['py'])
+    assert [Path(h.path).name for h in py if h.kind == 'file'] == ['billing_report.py']
+
 def test_search_modes_are_explicit_not_inferred_from_the_query(monkeypatch, tmp_path):
     s = Search(Sandbox([tmp_path]))
     called = []
@@ -268,6 +308,7 @@ def test_a_notebooks_symbols_are_read_from_its_cells_not_from_its_json(tmp_path)
     assert [(h.symbol, h.cell, h.cell_index, h.cell_line) for h in syms] == [
         ('alpha', 'c1', 1, 3), ('Beta', 'c2', 2, 1), ('gamma', 'c2', 2, 2)]
     assert [h.score for h in syms] == [0.0, 0.0, 4.0], 'indent depth still nests a method'
+    assert [h.column for h in syms] == [4, 6, 8]
     lines = p.read_text().splitlines()
     for h in syms: assert h.symbol in lines[h.line - 1], 'the file line is the JSON line holding it'
 

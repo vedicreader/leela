@@ -166,6 +166,7 @@ def test_left_activity_bar_has_a_pycharm_style_file_structure(tmp_path):
     html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
     assert 'data-left="symbols"' in html and 'id="symbols"' in html
     assert 'async function leeSymbols()' in JS and "api('/outline?path='" in JS
+    assert "h.kind === 'file' ? 'FILE'" in JS
     assert '.lee-symbol-row' in CSS and '.lee-left.left-symbols' in CSS
 
 def test_a_hit_in_a_notebook_opens_the_cell_that_holds_it():
@@ -181,8 +182,11 @@ def test_a_hit_in_a_notebook_opens_the_cell_that_holds_it():
     assert 'if (loc.debug) {' in landing
     outline = JS[JS.index('async function leeSymbols()'):JS.index('window.leeSymbols')]
     assert "lee.kind !== 'notebook'" in outline, 'a notebook has structure worth outlining'
-    assert 'data-cell-index=' in outline and 'data-cell-line=' in outline
-    assert 'cell_line: +row.dataset.cellLine' in outline
+    assert 'data-cell-index=' in outline and 'data-cell-line=' in outline and 'data-column=' in outline
+    assert 'cell_line: +row.dataset.cellLine' in outline and 'column: +row.dataset.column' in outline
+    assert 'if (path !== lee.path) return' in outline and 'path: path' in outline
+    assert 'column: Number(hit.column || 0)' in open_at
+    assert 'loc.column' in landing and 'LeeCM.setSelection' in landing
 
 def test_agent_model_and_reasoning_live_below_the_growing_prompt(tmp_path):
     html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
@@ -337,8 +341,13 @@ def test_the_notebook_surface_mounts_patches_and_folds_cells():
 def test_workspace_panes_can_minimise_and_restore_independently(tmp_path):
     html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
     assert html.count('lee-pane-min') >= 3 and html.count('lee-pane-restore') == 3
+    for label, side in (('files', 'left'), ('tools', 'right'), ('terminal / exec', 'bottom')):
+        assert f'>{label}</button>' in html and f'leePane("{side}", true)' in html
     assert 'function leePane' in JS and "'no-bottom'" in JS
     assert '.lee-app.no-bottom .lee-bottomdock' in CSS
+    assert 'border: 1px solid var(--lee-accent)' in CSS
+    assert '.lee-pane-restore:hover, .lee-pane-restore:focus-visible' in CSS
+    assert '.lee-pane-restore:active' in CSS
 
 def test_the_file_and_agent_panes_can_be_pinned_or_left_to_auto_close(tmp_path):
     "Unpinned, a pane closes when you work elsewhere; pinned is the default and the old behaviour."
@@ -1344,6 +1353,11 @@ def test_agent_memory_workbench_edits_notes_and_routes_each_model_surface():
     assert '.lee-memory-workbench' in CSS and '.lee-memory-target' in CSS
     assert '.lee-memory-note-empty[hidden] { display: none; }' in CSS
     assert '.lee-memory-note-card' in CSS and '.lee-memory-note-routes' in CSS
+    memory = JS[JS.index('async function leeAgentMemory'):JS.index('window.leeAgentMemory')]
+    assert 'setTimeout(saveNote, 700)' in memory and "key.toLowerCase() === 's'" in memory
+    assert 'box.beforeClose' in memory and 'if (saving) await saving' in memory
+    assert 'Save failed ·' in memory and 'return false' in memory
+    assert 'height: 100dvh !important' in CSS and 'grid-template-rows: minmax(0, 1fr) auto' in CSS
 
 
 def test_agent_execution_ui_has_run_policies_previews_steering_and_state_memory():

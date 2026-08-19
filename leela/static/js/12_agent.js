@@ -321,6 +321,7 @@ async function leeAgentMemory(focusId = '', draft = {}) {
       Object.entries(data.selected || {}).map(([target, ids]) => [target, new Set(ids || [])]));
     let active = focusId === '__new__' ? {id: '', title: draft.title || '', text: draft.text || ''} :
       (data.notes || []).find(note => String(note.id) === String(focusId)) || data.notes?.[0] || null;
+    let saveNote = async () => false;
     const box = modal(`<div class="lee-mhead">Agent memory<span class="sub">durable notes with explicit model routing</span></div>` +
       `<div class="lee-memory-workbench"><aside class="lee-memory-note-list"><header><strong>Notes</strong>` +
       `<button class="lee-btn" data-new-note>New note</button></header><input class="lee-input" data-note-filter placeholder="Filter notes…">` +
@@ -337,14 +338,18 @@ async function leeAgentMemory(focusId = '', draft = {}) {
       `<div class="lee-memory-budget" data-memory-budget></div></aside></div>` +
       `<div class="lee-mfoot"><button class="lee-btn warn" data-delete-note disabled>Delete note</button>` +
       `<span class="lee-spacer"></span><span class="lee-dim" data-note-status>Notes are durable; routing is saved with this workspace.</span>` +
-      `<button class="lee-btn go" data-save-note disabled>Save note</button></div>`, null, null,
-      {className: 'lee-agent-memory-modal', storageKey: 'agent-memory-v2'});
+      `<button class="lee-btn go" data-save-note disabled>Save note</button></div>`, e => {
+        if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') {
+          e.preventDefault(); e.stopPropagation(); saveNote();
+        }
+      }, null, {className: 'lee-agent-memory-modal', storageKey: 'agent-memory-v2'});
     const list = $('[data-note-list]', box), form = $('[data-note-form]', box), empty = $('[data-note-empty]', box);
     const title = $('[data-note-title]', box), textHost = $('[data-note-text]', box), targets = $('[data-memory-targets]', box);
     const stateView = createEditor(textHost, {doc: '', lang: 'markdown', lineNums: true,
       placeholder: '# Context\n\nWrite only information that should influence a model…'});
     const noteText = {get value() { return LeeCM.getDoc(stateView); }, set value(value) { LeeCM.setDoc(stateView, String(value || '')); }};
     const labels = data.targets || {agent: 'Agent conversation', inline: 'Prompt cells', completion: 'Code completion'};
+    let saveTimer = null, saving = null;
     const hasUnsavedChanges = () => !!active && (title.value !== (active.title || '') || noteText.value !== (active.text || ''));
     const mayLeaveNote = async () => !hasUnsavedChanges() || await confirmDialog(
       'discard unsaved note changes', 'Switch notes without saving the edits in the current note?', 'discard edits');
@@ -395,17 +400,35 @@ async function leeAgentMemory(focusId = '', draft = {}) {
     const newNote = async () => { if (!await mayLeaveNote()) return; active = {id: '', title: '', text: ''}; paint(); title.focus(); };
     $('[data-new-note]', box).onclick = newNote; $('[data-empty-new]', box).onclick = newNote;
     $('[data-note-filter]', box).oninput = e => paintList(e.target.value);
-    const markDirty = () => { $('[data-note-status]', box).textContent = 'Unsaved changes'; paintBudget(); };
+    const button = $('[data-save-note]', box), noteStatus = $('[data-note-status]', box);
+    saveNote = async () => {
+      clearTimeout(saveTimer);
+      if (!active || !hasUnsavedChanges()) return true;
+      if (saving) return saving;
+      const oldId = String(active.id || ''), nextTitle = title.value, nextText = noteText.value;
+      const requestedTargets = $$('[data-memory-target]:checked', targets).map(input => input.dataset.memoryTarget);
+      button.disabled = true; button.textContent = 'Saving…'; noteStatus.textContent = 'Saving changes…';
+      saving = post('/agent/memory/save', {id: oldId, title: nextTitle, text: nextText, targets: requestedTargets}).then(result => {
+        const id = String(result.id || oldId), previous = active;
+        active = {...previous, id, title: nextTitle, text: nextText};
+        const at = data.notes.findIndex(note => String(note.id) === oldId);
+        if (at >= 0) data.notes[at] = active; else data.notes.push(active);
+        for (const target of Object.keys(selected)) { selected[target].delete(oldId); if (requestedTargets.includes(target)) selected[target].add(id); }
+        noteStatus.textContent = 'Saved'; button.textContent = 'Save note'; paintList($('[data-note-filter]', box).value); paintTargets(); paintBudget();
+        lee.memoryLoaded = false; status(oldId ? 'memory note updated' : 'memory note created', 'ok'); return true;
+      }).catch(e => {
+        noteStatus.textContent = `Save failed · ${e.message || e}`; button.textContent = 'Retry save'; status(e.message || String(e), 'err'); return false;
+      }).finally(() => { saving = null; button.disabled = !active; });
+      return saving;
+    };
+    const markDirty = () => {
+      noteStatus.textContent = 'Unsaved changes'; paintBudget(); clearTimeout(saveTimer);
+      if (noteText.value.trim()) saveTimer = setTimeout(saveNote, 700);
+    };
     title.oninput = markDirty;
     stateView.dom.addEventListener('input', markDirty);
-    $('[data-save-note]', box).onclick = async () => {
-      const button = $('[data-save-note]', box); button.disabled = true; button.textContent = 'Saving…';
-      try {
-        const oldId = String(active.id || ''), requestedTargets = $$('[data-memory-target]:checked', targets).map(input => input.dataset.memoryTarget);
-        const result = await post('/agent/memory/save', {id: oldId, title: title.value, text: noteText.value, targets: requestedTargets});
-        box.remove(); lee.memoryLoaded = false; status(oldId ? 'memory note updated' : 'memory note created', 'ok'); leeMemoryNotes();
-      } catch (e) { button.disabled = false; button.textContent = 'Save note'; status(e.message || String(e), 'err'); }
-    };
+    button.onclick = saveNote;
+    box.beforeClose = async () => { clearTimeout(saveTimer); if (saving) await saving; return !hasUnsavedChanges() || await saveNote(); };
     $('[data-delete-note]', box).onclick = async () => {
       if (!active?.id || !await confirmDialog('delete memory note', `Delete “${active.title || 'Untitled note'}” from memory and every model route?`, 'delete')) return;
       await post('/agent/memory/delete', {id: active.id}); box.remove(); lee.memoryLoaded = false; status('memory note deleted', 'ok'); leeMemoryNotes();
@@ -1146,18 +1169,27 @@ function runPolicyLabel(policy) {
 function updateAgentRunstrip(state = {}) {
   const strip = $('#agentrunstrip'); if (!strip) return;
   if ('queued_steer' in state) setQueuedSteer(state.queued_steer || '');
-  strip.hidden = !lee.agentBusy && !state.waiting;
-  /* Forcing means stopping the turn in flight, so it is only an action while there is one. Idle it
-     would just be the prompt box with a red button, which is what made the row look wrong. */
-  const force = $('#agentforce'); if (force) force.hidden = strip.hidden;
-  const label = state.waiting ? `Waiting · ${state.waiting}`
-    : lee.queuedSteer ? 'Steering queued · applies after current call'
+  if ('runs' in state) lee.agentRuns = state.runs || [];
+  const runs = lee.agentRuns || [], active = runs.length > 0;
+  strip.hidden = !active && !lee.agentBusy && !state.waiting;
+  const force = $('#agentforce'); if (force) force.hidden = !active;
+  const rootLabel = state.waiting ? `Waiting · ${state.waiting}`
+    : lee.queuedSteer ? 'Steering queued · applies after the current tool call'
     : state.run_policy ? `Running automatically · ${runPolicyLabel(state.run_policy)}`
     : `${($('#agentcontrol')?.value || 'guided').toUpperCase()} · agent working`;
-  $('.lee-agent-run-state', strip).textContent = label;
-  strip.onclick = e => {
-    if (state.waiting && !e.target.closest('button')) approvalCards.get([...approvalCards.keys()].at(-1))?.scrollIntoView({block: 'center'});
-  };
+  const flattenRuns = rows => rows.flatMap(r => [r, ...flattenRuns(r.children || [])]);
+  const flat = flattenRuns(runs);
+  $('.lee-agent-run-state', strip).innerHTML = flat.length ? flat.map(r => {
+    const elapsed = r.started ? Math.max(0, Date.now() / 1000 - r.started) : 0;
+    const who = r.kind === 'child' ? `${r.model || 'Subagent'} subagent` : (r.model || 'Agent');
+    const action = r.question || rootLabel;
+    return `<span class="lee-agent-run"><span>${esc(r.state === 'cancelling' ? `Cancelling ${who}…` : `${who} · ${action} · ${Math.floor(elapsed / 60)}:${String(Math.floor(elapsed % 60)).padStart(2, '0')}`)}</span><button type="button" data-stop-run="${esc(r.id)}">Stop</button></span>`;
+  }).join('') : esc(rootLabel);
+  $$('[data-stop-run]', strip).forEach(btn => btn.onclick = async e => {
+    e.stopPropagation();
+    try { const d = await post(`/agent/runs/${encodeURIComponent(btn.dataset.stopRun)}/cancel`, {}); updateAgentRunstrip({runs: (await api('/agent/runs')).runs}); status(d.state, 'ok'); }
+    catch (err) { status(err.message || String(err), 'err'); }
+  });
 }
 async function pauseAgentAfterCurrent() {
   const d = await post('/agent/run-policy', {policy: 'pause'}); updateAgentRunstrip(d);
@@ -1183,24 +1215,22 @@ async function leeQueueSteer() {
     const d = await post('/agent/steer', {text}); input.value = '';
     setQueuedSteer(d.queued_steer || '', text);
     updateAgentRunstrip(d);
-    status(d.queued_steer ? 'steering queued after the current call' : 'steering sent to the agent', 'ok');
+    status(d.queued_steer ? 'steering queued after the current tool call' : 'steering sent to the agent', 'ok');
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 window.leeQueueSteer = leeQueueSteer;
 
-/* Queueing waits for a tool call, and a turn that is writing its answer never makes another one,
-   so a steer aimed at what the model is doing right now arrived after it had finished doing it.
-   Forcing stops the turn and sends the instruction as the next one instead. The send waits for
-   the stopped turn's `done`, because a new turn is refused while the old one holds the lock. */
+/* Stop the target run before sending the draft as a new turn. */
 async function leeForceSteer() {
   if (!lee.agentBusy) return status('nothing is running to force; ask in the prompt box instead', 'err');
   const input = $('#agentsteer'), text = input?.value.trim(); if (!text) return status('write a steering instruction first', 'err');
   try {
     const d = await post('/agent/steer', {text, force: true});
-    input.value = ''; setQueuedSteer(''); updateAgentRunstrip(d);
-    if (!d.stopped) return void reseedSteer(text);
-    lee.forcedSteer = text;
-    status('stopping the turn, then steering from your instruction', 'ok');
+    input.value = ''; setQueuedSteer(''); updateAgentRunstrip({runs: []});
+    const run = d.run || {};
+    if (!['cancelled', 'detached', 'terminated'].includes(run.state)) { input.value = text; return status(`run is ${run.state || 'cancelling'}; draft kept`, 'ok'); }
+    reseedSteer(text);
+    status(run.state === 'detached' ? 'provider detached; sending the saved draft' : 'run cancelled; sending the saved draft', 'ok');
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 window.leeForceSteer = leeForceSteer;
@@ -1208,12 +1238,6 @@ window.leeForceSteer = leeForceSteer;
 function reseedSteer(text) {
   const el = $('#agentprompt'); if (!el) return;
   el.value = text; sendAgent();
-}
-
-function reseedForcedSteer() {
-  const text = lee.forcedSteer; if (!text) return;
-  lee.forcedSteer = '';
-  reseedSteer(text);
 }
 
 async function pollApproval() {
@@ -1631,6 +1655,11 @@ async function sendAgent() {
 
   es.addEventListener('approval', ev => { progress.phase('Waiting for your approval'); showApproval(JSON.parse(ev.data)); });
   es.addEventListener('execution', ev => updateAgentRunstrip(JSON.parse(ev.data)));
+  es.addEventListener('run', ev => {
+    const run = JSON.parse(ev.data); lee.agentRuns = (lee.agentRuns || []).filter(r => r.id !== run.id);
+    lee.agentBusy = false; setAgentStatus('ready'); progress.finish(run.state !== 'detached'); updateAgentRunstrip({runs: lee.agentRuns});
+    status(run.state === 'detached' ? 'provider detached; no further output will be used' : run.state, 'ok'); es.close();
+  });
   es.addEventListener('compaction', ev => {
     const d = JSON.parse(ev.data), note = document.createElement('details'); note.className = 'lee-compaction-event';
     note.innerHTML = `<summary>Context compacted automatically · ${esc(d.strategy)} · ${esc(d.note)}</summary><pre>${esc(d.text || '')}</pre>`;
@@ -1642,7 +1671,7 @@ async function sendAgent() {
   });
 
   es.addEventListener('done', async ev => {
-    finished = true; lee.agentBusy = false; setAgentStatus('ready'); es.close(); progress.finish(true); updateAgentRunstrip(); refreshAgentBudget();
+    finished = true; lee.agentBusy = false; lee.agentRuns = []; setAgentStatus('ready'); es.close(); progress.finish(true); updateAgentRunstrip({runs: []}); refreshAgentBudget();
     const d = JSON.parse(ev.data);
     addResponseRevision(out, d.turn_id, raw, d.capabilities || {});
     drawTurnMedia(out, d.media);
@@ -1655,15 +1684,13 @@ async function sendAgent() {
     if ((d.problems || []).length) status(d.problems[d.problems.length - 1], 'err');
     else status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
     await reloadAfterEdits(d.edits || []);
-    reseedForcedSteer();
   });
 
   // A dropped connection must clear both the functional busy lock and its visual state.
   es.onerror = () => {
     if (finished) return;
-    lee.agentBusy = false; setAgentStatus('ready'); progress.finish(false); updateAgentRunstrip();
+    lee.agentBusy = false; lee.agentRuns = []; setAgentStatus('ready'); progress.finish(false); updateAgentRunstrip({runs: []});
     status('the model stream ended before it returned a result', 'err'); es.close();
-    reseedForcedSteer();
   };
 }
 
@@ -1741,8 +1768,9 @@ async function reloadAfterEdits(edits) {
 }
 
 async function stopAgent() {
-  const d = await post('/agent/stop');
-  status(d.ok ? 'asked the model to stop' : d.error, d.ok ? 'ok' : 'err');
+  const d = await post('/agent/stop', {});
+  updateAgentRunstrip({runs: (await api('/agent/runs')).runs});
+  status(d.ok ? d.state : d.error, d.ok ? 'ok' : 'err');
 }
 
 /* Failures with nowhere else to go: a compaction the engine refused, a completion that

@@ -44,6 +44,9 @@ GET,POST /agent/state/suggest
 GET,POST /agent/state/template
 GET,POST /agent/state/update
 GET,POST /agent/states
+GET,POST /agent/runs
+GET,POST /agent/runs/{run_id}/cancel
+GET,POST /agent/runs/{run_id}/terminate
 GET,POST /agent/status
 GET,POST /agent/steer
 GET,POST /agent/stop

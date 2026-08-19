@@ -193,16 +193,21 @@ class Workspace:
         self.on_note = None
         self._approval_target = None
         self.approvals = notebook_approvals(lambda: self._approval_target, mode=approvals)
+    def sync_agent_routing(self, ai=None):
+        "Apply saved agent-job choices to a live assistant."
+        ai = ai or self.ai
+        routes = {'completion': self.completion_model, **(self.job_models or {})}
+        for job, name in routes.items():
+            if name and ai.routing.name_for(job) != name: ai.set_model(name, job=job)
+        return ai
+
     @property
     def ai(self):
         "The agent-pane assistant: durable conversation and the model chosen for agentic work."
         if self._ai is None:
             self._ai = Assistant(self, model=self.model, surface='agent', local_multimodal=self.local_multimodal,
                                  on_compact=self._compacted, history_name='agent')
-            if self.completion_model:
-                self._ai.set_model(self.completion_model, job='completion')
-            for job, name in (self.job_models or {}).items():   # subagent, summary, classify, oneshot
-                if name: self._ai.set_model(name, job=job)
+            self.sync_agent_routing(self._ai)
             self.approvals.host = self._ai.host
         return self._ai
     @property
@@ -512,11 +517,13 @@ class Workspace:
                 ([png] if png else []) + media)
     def ask(self, prompt, attachments=(), context='', context_path=''):
         "One turn from a prompt bar, grounded by the open notebook and @-selected files."
+        self.sync_agent_routing()
         context, screen, media = self._grounding(attachments, context)
         return self.ai.ask_with(prompt, context=context, screen=screen, image=media or None,
                                 context_path=context_path)
     def ask_stream(self, prompt, attachments=(), reasoning=None, context='', context_path=''):
         "The same turn, yielding markdown as it arrives."
+        self.sync_agent_routing()
         context, screen, media = self._grounding(attachments, context)
         kw = {'reasoning_effort': reasoning} if reasoning and not self.ai.model.local else {}
         return self.ai.stream_with(prompt, context=context, screen=screen, image=media or None,

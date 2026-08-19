@@ -38,11 +38,16 @@ function modal(inner, onKey, onClose, options = {}) {
   const nativeRemove = m.remove.bind(m);
   const focusables = () => $$('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])', box)
     .filter(el => !el.hidden && el.getClientRects().length);
+  const requestClose = async () => {
+    if (m.beforeClose && !await m.beforeClose()) return false;
+    m.remove(); return true;
+  };
+  m.requestClose = requestClose;
   const key = (e) => {
     // Nested dialogs (for example “change cwd” from the kernel picker) form a stack.
     // Only the top one owns keys; otherwise one Escape closes every layer at once.
     if ($$('.lee-modal').at(-1) !== m) return;
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); m.remove(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); requestClose(); return; }
     if (e.key === 'Tab') {
       const items = focusables(); if (!items.length) { e.preventDefault(); box.focus(); return; }
       const at = items.indexOf(document.activeElement);
@@ -125,8 +130,8 @@ function modal(inner, onKey, onClose, options = {}) {
     const oldRemove = m.remove;
     m.remove = () => { sizeObserver.disconnect(); oldRemove(); };
   }
-  m.querySelector('.lee-modal-close').onclick = () => m.remove();
-  m.addEventListener('mousedown', e => { if (e.target === m) m.remove(); });
+  m.querySelector('.lee-modal-close').onclick = requestClose;
+  m.addEventListener('mousedown', e => { if (e.target === m) requestClose(); });
   document.addEventListener('keydown', key, true);
   document.body.appendChild(m);
   requestAnimationFrame(() => {
@@ -521,7 +526,7 @@ async function codeSearch() {
       const f = h.path.split('/').pop() || h.package || 'environment';
       const foundBy = (h.sources || [h.kind]).join(' + ');
       return `<button class="lee-search-result${i === sel ? ' sel' : ''}" data-i="${i}">` +
-        `<span class="lee-search-result-kind">${esc(h.kind.startsWith('env-') ? 'PKG' : h.symbol ? 'SYM' : 'TXT')}</span>` +
+        `<span class="lee-search-result-kind">${esc(h.kind.startsWith('env-') ? 'PKG' : h.kind === 'file' ? 'FILE' : h.symbol ? 'SYM' : 'TXT')}</span>` +
         `<span><strong>${esc(h.symbol || h.text.split('\n')[0].slice(0, 90))}</strong>` +
         `<small>${esc(h.package ? h.package + ' · ' : '')}${esc(f)}:${h.line}</small></span>` +
         `<em>${esc(foundBy)}</em></button>`;
@@ -706,7 +711,7 @@ async function syncCodeIndex() {
 
 async function leeSymbols() {
   const host = $('#symbols'), label = $('#symbolfile'); if (!host) return;
-  const name = compactPath(lee.path || ''); if (label) label.textContent = name ? '· ' + name : '';
+  const path = lee.path, name = compactPath(path || ''); if (label) label.textContent = name ? '· ' + name : '';
   // Notebooks are included: their defs and classes are real structure, and the server reads
   // them out of the cells rather than out of the JSON. The outline is of the file on disk, so
   // a def typed and not yet saved appears once autosave has run.
@@ -715,7 +720,8 @@ async function leeSymbols() {
   }
   host.innerHTML = '<div class="lee-symbol-loading">Reading structure…</div>';
   try {
-    const d = await api('/outline?path=' + encodeURIComponent(lee.path));
+    const d = await api('/outline?path=' + encodeURIComponent(path));
+    if (path !== lee.path) return;
     const rows = d.symbols || [];
     host.innerHTML = rows.length ? rows.map((s, i) => {
       const depth = Math.max(0, Math.floor(Number(s.score || 0) / 4));
@@ -725,17 +731,17 @@ async function leeSymbols() {
       const cellLine = Number(s.cell_line || 0), cellIndex = Number(s.cell_index ?? -1);
       const where = cellLine > 0 ? `${cellIndex + 1}:${cellLine}` : String(Number(s.line || 1));
       return `<button class="lee-symbol-row" role="treeitem" style="--depth:${depth}" ` +
-        `data-line="${Number(s.line || 1)}" data-cell="${esc(s.cell || '')}" ` +
+        `data-line="${Number(s.line || 1)}" data-column="${Number(s.column || 0)}" data-cell="${esc(s.cell || '')}" ` +
         `data-cell-index="${cellIndex}" data-cell-line="${cellLine}">` +
         `<span class="lee-symbol-kind">${kind === 'class' ? 'C' : 'ƒ'}</span>` +
         `<span>${esc(s.symbol)}</span><small>${esc(where)}</small></button>`;
     }).join('') : '<div class="lee-dim">No functions or classes in this file.</div>';
     $$('.lee-symbol-row', host).forEach(row => row.onclick = () => {
-      openLocation({path: lee.path, line: +row.dataset.line, cell: row.dataset.cell,
+      openLocation({path: path, line: +row.dataset.line, column: +row.dataset.column, cell: row.dataset.cell,
                     cell_index: +row.dataset.cellIndex, cell_line: +row.dataset.cellLine});
       if (matchMedia('(max-width: 1100px)').matches) leePane('left', false);
     });
-  } catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+  } catch (e) { if (path === lee.path) host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
 }
 window.leeSymbols = leeSymbols;
 

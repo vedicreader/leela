@@ -651,6 +651,29 @@ def test_every_harness_job_can_be_pointed_at_a_model(tmp_path, monkeypatch):
     saved = ws.save(tmp_path/'ws.json')
     assert Workspace.load(saved).job_models == {'subagent': 'gemma-e2b'}, 'and it survives a restart'
 
+
+def test_saved_job_models_are_reapplied_before_each_agent_turn(tmp_path):
+    ws = Workspace(roots=[tmp_path])
+    ai = ws.ai
+    ws.job_models = {'subagent': 'gemma-e2b', 'summary': 'gemma-e4b'}
+    ai.ask_with = lambda *args, **kwargs: 'done'
+    assert ws.ask('question') == 'done'
+    assert ai.routing.name_for('subagent') == 'gemma-e2b'
+    assert ai.routing.name_for('summary') == 'gemma-e4b'
+
+
+def test_a_new_conversation_keeps_every_saved_job_model(tmp_path):
+    ws = Workspace(roots=[tmp_path])
+    ws.completion_model = 'gemma-e2b'
+    ws.job_models = {'oneshot': 'gemma-e2b', 'classify': 'gemma-e4b',
+                     'summary': 'gemma-e2b', 'subagent': 'gemma-e4b'}
+    old = ws.ai
+    with TestClient(ide_app(ws)) as client:
+        assert client.post('/agent/new').json()['ok']
+    assert ws.ai is not old
+    assert ws.ai.routing.name_for('completion') == 'gemma-e2b'
+    assert {job: ws.ai.routing.name_for(job) for job in ws.job_models} == ws.job_models
+
 def test_an_agent_harness_is_not_a_pip_extra(monkeypatch):
     "Cursor and Claude Code are runtimes now; the picker told you to `pip install rishi[cursor]`."
     from leela.blocks.agent.models import runtimes
@@ -2113,10 +2136,11 @@ def test_the_stream_clears_a_steer_the_agent_has_taken():
     "The execution event carries approvals.state(), so the chip goes when the steer is consumed."
     from tests.assets import read
     server = read('leela/app.py')
-    assert "state = ws.approvals.state()" in server
+    assert "state = {**ws.approvals.state(), 'runs': runs}" in server
     assert "_sse('execution', state)" in server
     js = read('leela/static/js/12_agent.js')
     assert "es.addEventListener('execution', ev => updateAgentRunstrip(JSON.parse(ev.data)))" in js
+    assert "updateAgentRunstrip({runs: []})" in js
 
 def test_a_steer_rides_the_next_tool_result(tmp_path):
     """The path the UI actually promises -- 'applies after current call' -- and the only one of
@@ -2171,21 +2195,20 @@ def test_the_turn_model_keeps_the_git_writes_it_is_not_advertised():
     assert 'built = [' not in body, 'what the model can call is never filtered here'
 
 
-def test_stopping_a_cloud_turn_reports_that_it_was_running(tmp_path, monkeypatch):
-    """`rishi.Chat` has no `cancel`, so the backend swallowed the `AttributeError` and answered
-    False for every cloud model. Stop said "the assistant is not running" about a turn that was,
-    having already released the approval, so there was no way to stop anything."""
+def test_stopping_a_cloud_turn_returns_its_terminal_run_state(tmp_path):
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     a = ws.ai
-    assert a.cancel() is False, 'idle is the one time that answer is true'
-    a.lock.acquire()
-    try: assert a.cancel() is True
-    finally: a.lock.release()
+    assert a.cancel()['state'] == 'idle'
+    backend = type('Backend', (), {'cancel': lambda self: False})()
+    run = a._new_run('cloud request'); run.start(backend)
+    result = a.cancel(run.id, grace=0)
+    assert result['state'] == 'detached'
     assert ws.approvals.state()['stopping'] is True
+    assert a.status()['runs'] == []
 
-def test_a_stopped_turn_refuses_the_calls_still_to_come(tmp_path):
-    "Leela cannot cancel a cloud completion, but it owns the tool loop, so that is what stops."
+def test_a_cancelled_turn_refuses_the_calls_still_to_come(tmp_path):
+    "Approval cancellation remains part of Stop after provider cancellation moves to Ramabana."
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path], approvals='auto')
     ws.approvals.stop()
@@ -2201,28 +2224,27 @@ def test_the_next_turn_clears_the_stop(tmp_path):
     ws.ai._prepare('carry on')
     assert ws.approvals.state()['stopping'] is False
 
-def test_forcing_a_steer_stops_the_turn_instead_of_queueing_it(tmp_path):
-    """A queued steer waits for a tool call, and a turn writing its answer never makes another one,
-    so it landed a turn late. Forcing stops the turn and hands the text back to be sent as the
-    next one."""
+def test_stop_and_send_next_returns_the_exact_terminal_run(tmp_path):
     from leela.workspace import Workspace
     from leela.app import ide_app
     from starlette.testclient import TestClient
     ws = Workspace(roots=[tmp_path])
+    ws.ai.cancel_grace = 0
+    backend = type('Backend', (), {'cancel': lambda self: False})()
+    run = ws.ai._new_run('cloud request'); run.start(backend)
     with TestClient(ide_app(ws)) as c:
-        ws.ai.lock.acquire()
-        try: d = c.post('/agent/steer', json={'text': 'read the test first', 'force': True}).json()
-        finally: ws.ai.lock.release()
-    assert d['ok'] and d['forced'] and d['stopped']
+        d = c.post('/agent/steer', json={'text': 'read the test first', 'force': True}).json()
+    assert d['ok'] and d['forced'] and d['run']['id'] == run.id
+    assert d['run']['state'] == 'detached'
     assert d['text'] == 'read the test first'
-    assert d['queued_steer'] == '', 'forcing never queues; the browser sends it as the next turn'
-    assert d['stopping'] is True
+    assert d['queued_steer'] == ''
 
-def test_the_steer_box_forces_on_shift_enter_and_reseeds_after_done():
+def test_stop_and_send_next_waits_for_the_exact_terminal_result():
     from tests.assets import read
     js = read('leela/static/js/12_agent.js')
     assert "(e.shiftKey ? leeForceSteer : leeQueueSteer)()" in js
-    assert js.count('    reseedForcedSteer();') == 2, 'a finished turn and a dropped stream both reseed'
+    assert 'reseedForcedSteer' not in js
+    assert "['cancelled', 'detached', 'terminated'].includes(run.state)" in js
     assert "post('/agent/steer', {text, force: true})" in js
 
 
@@ -2234,8 +2256,52 @@ def test_force_is_offered_only_while_there_is_a_turn_to_force():
     assert '.lee-agent-steer { display: grid; grid-template-columns: minmax(0, 1fr) auto auto;' in css, \
         'the input and both buttons share one row'
     app = read('leela/app.py')
-    assert "Button('Force', id='agentforce'" in app and 'hidden=True' in app
+    assert "Button('Stop and send next', id='agentforce'" in app and 'hidden=True' in app
     js = read('leela/static/js/12_agent.js')
-    assert "force.hidden = strip.hidden" in js, 'it appears and goes with the run strip'
+    assert "force.hidden = !active" in js, 'it appears only for an active registered run'
+    assert 'data-stop-run' in js and 'Subagent' in js
+    assert '...flattenRuns(r.children || [])' in js, 'nested descendants get the same lifecycle controls'
     assert "if (!lee.agentBusy) return status('nothing is running to force" in js, \
         'and shift+enter says so rather than silently sending'
+
+def test_agent_run_routes_return_structured_states(tmp_path):
+    from leela.workspace import Workspace
+    from leela.app import ide_app
+    from starlette.testclient import TestClient
+    ws = Workspace(roots=[tmp_path])
+    ws.ai.cancel_grace = 0
+    backend = type('Backend', (), {'cancel': lambda self: False, 'close': lambda self: None})()
+    root = ws.ai._new_run('root'); root.start(backend)
+    child = root.child('investigate', 'copilot'); child.start(backend)
+    with TestClient(ide_app(ws)) as c:
+        status = c.get('/agent/status').json()
+        assert status['runs'][0]['children'][0]['id'] == child.id
+        cancelled = c.post(f'/agent/runs/{child.id}/cancel', json={}).json()
+        assert cancelled['ok'] and cancelled['id'] == child.id and cancelled['state'] == 'detached'
+        assert ws.approvals.state()['stopping'] is False, 'a child Stop must not stop its parent or siblings'
+        stopped = c.post('/agent/stop', json={'run_id': root.id}).json()
+        assert stopped['ok'] and stopped['id'] == root.id and stopped['state'] == 'detached'
+        terminated = c.post(f'/agent/runs/{root.id}/terminate', json={}).json()
+        assert terminated['ok'] and terminated['state'] == 'terminated'
+
+@pytest.mark.asyncio
+async def test_workspace_shutdown_cancels_agent_runs_before_close(tmp_path):
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    a, order = ws.ai, []
+    a.cancel_grace = 0
+    backend = type('Backend', (), {
+        'cancel': lambda self: order.append('cancel') or False,
+        'close': lambda self: order.append('close')})()
+    run = a._new_run('shutdown'); run.start(backend)
+    a._backends[('fake', 'shutdown')] = backend
+    await ws.shutdown()
+    assert order[:2] == ['cancel', 'close']
+    assert run.state == 'detached'
+
+def test_stream_disconnect_waits_only_for_the_exact_run_registration():
+    from tests.assets import read
+    server = read('leela/app.py')
+    assert 'end = loop.time() + a.cancel_grace' in server
+    assert "if runs: run_id = runs[-1]['id']" in server
+    assert 'a.cancel(run_id)' in server

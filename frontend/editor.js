@@ -13,7 +13,7 @@ import {EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLin
         drawSelection, rectangularSelection, crosshairCursor, Decoration, WidgetType,
         gutter, GutterMarker, placeholder as cmPlaceholder, ViewPlugin, highlightSpecialChars} from "@codemirror/view";
 import {defaultKeymap, history, historyKeymap, indentWithTab} from "@codemirror/commands";
-import {searchKeymap, highlightSelectionMatches} from "@codemirror/search";
+import {searchKeymap, highlightSelectionMatches, openSearchPanel} from "@codemirror/search";
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap,
         startCompletion as cmStartCompletion} from "@codemirror/autocomplete";
 import {syntaxHighlighting, HighlightStyle, indentUnit, bracketMatching,
@@ -483,6 +483,12 @@ const ghostKeymap = Prec.highest(keymap.of([
   {key: "Tab", run: acceptGhost},
   {key: "Escape", run: (v) => (ghost(v) ? (clearGhost(v), true) : false)},
 ]));
+function bindFind(view) {
+  view.contentDOM.addEventListener("keydown", event => {
+    if (event.key.toLowerCase() !== "f" || event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return;
+    event.preventDefault(); event.stopPropagation(); openSearchPanel(view);
+  });
+}
 
 // Turn the Python-side chord table into CodeMirror bindings. Anything the app
 // did not ask for is not bound here at all, so it reaches the document handler.
@@ -816,6 +822,7 @@ export function create(el, opts = {}) {
   }));
 
   const view = new EditorView({state: EditorState.create({doc, extensions: exts}), parent: el});
+  bindFind(view);
   view._lee = {language, editable, linting, preferences, lintUrl, lintPath, readOnly, lang, lineNums};
   if (changedLines.length) setChangedLines(view, changedLines);
   if (breakpoints.length) setBreakpoints(view, breakpoints);
@@ -837,6 +844,7 @@ export function createMerge(el, opts = {}) {
       if (u.docChanged && onChange) onChange(u.state.doc.toString());
     })]},
   });
+  bindFind(merge.a); bindFind(merge.b);
   return merge;
 }
 export const mergeResult = merge => merge.b.state.doc.toString();

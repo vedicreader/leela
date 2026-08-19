@@ -251,6 +251,71 @@ def test_platform_mod_enter_runs_the_exec_editor():
         }""")
     assert _run(go) == {'ran': True, 'prevented': True, 'scope': 'exec'}
 
+def test_platform_find_searches_the_complete_codemirror_document():
+    async def go(pg):
+        await pg.evaluate("""() => {
+          const host = document.createElement('div'); host.id = 'search-test';
+          host.style.cssText = 'height:120px;position:fixed;inset:80px 20px auto 20px'; document.body.appendChild(host);
+          const lines = Array.from({length: 400}, (_, i) => i === 350 ? 'whole-file-target' : `line ${i}`);
+          window._searchTestView = LeeCM.create(host, {doc: lines.join('\\n'), lang: 'python', lineNums: true});
+          LeeCM.focus(window._searchTestView);
+        }""")
+        claimed = await pg.evaluate("""() => {
+          const event = new KeyboardEvent('keydown', {key:'f', code:'KeyF', metaKey:MAC, ctrlKey:!MAC,
+            bubbles:true, cancelable:true});
+          document.activeElement.dispatchEvent(event); return event.defaultPrevented;
+        }""")
+        await pg.wait_for_selector('#search-test .cm-search input[main-field]')
+        search = pg.locator('#search-test .cm-search input[main-field]')
+        await search.fill('whole-file-target')
+        await search.dispatch_event('change')
+        await search.press('Enter')
+        found = await pg.evaluate("""() => ({
+          selection: LeeCM.selection(window._searchTestView).text,
+          top: document.querySelector('#search-test .cm-scroller').scrollTop,
+          doc: LeeCM.getDoc(window._searchTestView)
+        })""")
+        await search.fill('missing-target')
+        await search.dispatch_event('change')
+        await search.press('Enter')
+        unchanged = await pg.evaluate('LeeCM.getDoc(window._searchTestView)')
+        await search.press('Escape')
+        closed = await pg.locator('#search-test .cm-search').count()
+        merge = await pg.evaluate("""() => {
+          const host = document.createElement('div'); host.id = 'merge-search-test'; host.style.height = '120px';
+          document.body.appendChild(host); window._mergeSearch = LeeCM.createMerge(host, {left:'left target', right:'right target'});
+          const editor = host.querySelector('.cm-editor'); editor.querySelector('.cm-content').focus();
+          const event = new KeyboardEvent('keydown', {key:'f', code:'KeyF', metaKey:MAC, ctrlKey:!MAC,
+            bubbles:true, cancelable:true}); editor.querySelector('.cm-content').dispatchEvent(event);
+          return event.defaultPrevented;
+        }""")
+        await pg.wait_for_selector('#merge-search-test .cm-search input[main-field]')
+        return claimed, found, unchanged, closed, merge
+    claimed, found, unchanged, closed, merge = _run(go)
+    assert claimed and merge and found['selection'] == 'whole-file-target'
+    assert unchanged == found['doc'] and closed == 0
+
+def test_horizontal_editor_scroll_keeps_the_gutter_fixed_and_opaque():
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const make = (id, merge = false) => {
+            const host = document.createElement('div'); host.id = id; host.style.cssText = 'width:320px;height:120px;overflow:auto'; document.body.appendChild(host);
+            const doc = 'value = ' + 'x'.repeat(500);
+            if (merge) LeeCM.createMerge(host, {left:doc, right:doc, settings:{wordWrap:'off'}}); else LeeCM.create(host, {doc, lineNums:true, settings:{wordWrap:'off'}});
+            return [...host.querySelectorAll('.cm-editor')].map(editor => {
+              const inner = editor.querySelector('.cm-scroller'), gutter = editor.querySelector('.cm-gutters');
+              editor.querySelector('.cm-content').style.minWidth = '1200px';
+              const scroller = inner; scroller.scrollLeft = 240;
+              const before = scroller.getBoundingClientRect(), after = gutter.getBoundingClientRect(), style = getComputedStyle(gutter);
+              return {delta: Math.round(after.left - before.left), background: style.backgroundColor, position: style.position, left: style.left};
+            });
+          };
+          return [...make('gutter-test'), ...make('merge-gutter-test', true)];
+        }""")
+    rows = _run(go)
+    assert len(rows) == 3 and all(row['position'] == 'sticky' and row['left'] == '0px' and abs(row['delta']) <= 1 for row in rows)
+    assert all(row['background'] not in ('rgba(0, 0, 0, 0)', 'transparent') for row in rows)
+
 def test_option_shift_arrows_reach_cell_movement():
     async def go(pg):
         await pg.evaluate("leeAct('focus_editor')")
