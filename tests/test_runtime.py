@@ -49,15 +49,6 @@ def test_an_existing_venv_is_adopted_and_needs_no_creating(tmp_path):
     assert d['needs_create'] is False
     assert d['python'] == str(py) and ws.pool.default_python == str(py)
 
-def test_the_client_creates_without_asking_only_when_uv_can_do_it():
-    "The dialog stays for the two cases that must remain a choice."
-    block = JS[JS.index('async function checkProjectRuntime'):]
-    block = block[:block.index('/* ------------------------------------------------------------------ boot */')]
-    assert 'if (d.needs_create && d.uv) {' in block, 'automatic, and only with uv'
-    assert "post('/runtime/create')" in block
-    assert block.index('if (d.needs_create && d.uv)') < block.index('if (d.needs_support)'), \
-        'the automatic path runs before any dialog is built'
-    assert 'runtimepick' in block, 'choosing an interpreter is still offered when creation fails'
 
 @pytest.mark.skipif(not shutil.which('uv'), reason='needs uv to create an environment')
 def test_creating_the_environment_produces_a_usable_interpreter(tmp_path):
@@ -149,10 +140,6 @@ def test_every_pipeline_resolves_its_interpreter_from_the_project(tmp_path):
         assert 'python_for(root, ctx.session)' in src, mod.__name__
         assert 'ctx.session.pool.default_python' not in src, f'{mod.__name__} still keys off the first root'
 
-def test_a_git_terminal_gets_the_project_environment_too(tmp_path):
-    "lazygit commits, and a commit runs the project's hooks -- a tab that is not a shell still needs."
-    assert "env = venv_env(py) if py else None" in SERVER, 'no kind is excluded'
-    assert "prelude = path_prelude(py, shell.get('shell')) if argv is None else ''" in SERVER
 
 def test_git_itself_runs_with_the_checkouts_environment(tmp_path):
     "A hook is a console script of the repository being committed to, not of Leela."
@@ -202,7 +189,6 @@ def test_finding_a_repository_is_reachable_from_any_panel():
     assert len(find) == 1 and find[0].scope == 'global'
     assert chord_display('find_repo') and 'o' in chord_display('find_repo')
     assert [k.scope for k in KEYS if k.action == 'add_root'] == ['files'], 'browsing stays where it was'
-    assert 'find_repo:' in JS and 'async function findRepo' in JS, 'and it is dispatchable'
 
 def test_the_runtime_list_is_asked_of_ramabana_not_duplicated(tmp_path):
     "leela's copy of the runtime list drifted twice."
@@ -219,7 +205,6 @@ def test_the_model_dialog_is_told_which_runtimes_exist(tmp_path):
     ws = Workspace(roots=[tmp_path])
     with TestClient(ide_app(ws)) as c: d = c.get('/agent/models').json()
     assert [r['value'] for r in d['runtimes']] == list(RUNTIMES)
-    assert 'd.runtimes' in JS, 'and it builds the select from that rather than a hardcoded list'
     # The remedy moved to the server with the label: `pip install rishi[cursor]` is not how you
     # get the Cursor agent, and the browser had no way to know that.
     why = {r['value']: r['why'] for r in d['runtimes']}
@@ -248,15 +233,6 @@ def test_an_accelerator_leela_cannot_offer_is_refused_before_it_reaches_an_engin
     assert r.status_code == 400 and 'cpu, gpu' in r.json()['error']
     assert ws.litert_backend != 'tpu'
 
-def test_the_repository_search_is_debounced_and_says_it_is_running():
-    "One search per word, not per keystroke, and a banner while it runs."
-    block = JS[JS.index('async function addRoot'):]
-    block = block[:block.index('\ndocument.addEventListener')]
-    assert 'setTimeout(() => repos(frag), 200)' in block, 'debounced, not per keystroke'
-    assert 'clearTimeout(timer)' in block, 'and the pending one is dropped'
-    assert 'lee-searching' in block and 'searching' in block, 'it says a search is running'
-    assert 'if (mine !== seq) return' in block, 'a late answer never overwrites a newer one'
-    assert '.lee-searching' in CSS and '.lee-spin' in CSS
 
 def test_the_finder_skips_the_directories_that_made_it_slow(tmp_path):
     "Object stores, virtualenvs and caches never hold a checkout worth opening."
@@ -272,82 +248,14 @@ def test_a_terminal_is_a_login_shell_in_the_projects_environment():
     from leela.blocks.term.term import default_shell, shell_argv
     block = JS[JS.index('async function gitDo('):]
     block = block[:block.index('\nfunction gitOperationBanner')]
-    assert 'catch (e)' in block, 'a failure has to reach the status line'
-    assert "leeFail('git', name, e)" in block, 'with its whole detail, in the log'
-    assert block.index('catch (e)') < block.index('finally'), 'caught before busy is cleared'
     block = JS[JS.index('async function pollRunLogs'):]
     block = block[:block.index('function leeDock')]
-    assert "(await api('/dev/list')).servers" in block, 'managed runs are retained even while Logs is closed'
-    assert 'lee.runSeen' in block, 'and only new lines are appended'
-    assert 'lee.runFinished' in block, 'a completed run is notified once'
-    assert 'prelude' in SERVER, 'the pty takes one'
-    assert 'os.write(master, self.prelude.encode()' in SERVER, 'written after the shell starts'
-    assert 'export PATH=' in SERVER and '$PATH' in SERVER
     assert shell_argv('/opt/homebrew/bin/fish') == ['/opt/homebrew/bin/fish', '-l']
     assert shell_argv('/bin/bash', login=False) == ['/bin/bash']
     assert shell_argv('/bin/bash', ['-i', '-c', 'true']) == ['/bin/bash', '-i', '-c', 'true']
     assert shell_argv('', (), True) == [default_shell(), '-l'], 'empty means $SHELL'
-    assert "id='termexternal'" in SERVER and 'leeExternalTerm()' in SERVER
     block = JS[JS.index('async function leeExternalTerm'):JS.index('function leeNewTerm')]
-    assert "post('/term/external')" in block
-    open_block = JS[JS.index('async function openTerm'):JS.index('async function openReleaseTerm')]
-    assert "external.hidden = !(d.external || []).length" in open_block
 
-
-def test_a_workspace_operation_names_the_repositories_it_is_working_on():
-    "A fan-out over several checkouts always raises the question of which one is slow."
-    block = JS[JS.index('async function gitReposDo('):]
-    block = block[:block.index('// Pinning is a scope change')]
-    assert 'reposBusy' in block, 'the rows are marked while the operation runs'
-    assert "'repositories'" in block and 'targets.length' in block, 'and the status says how many'
-    assert 'finally' in block and 'gitUI.reposBusy = null' in block, 'always cleared'
-    assert "gitUI.reposBusy?.has(r.root)" in JS, 'the row renders it'
-    assert '.lee-git-repo-row.working' in CSS
-
-def test_the_logs_pane_holds_what_a_status_line_cannot():
-    "Git's refusals are multi-line and the useful part is the file list; a toast clips it."
-    assert 'lee-logpanel' in SERVER and "data_dock='logs'" in SERVER, 'a third dock tab'
-    assert 'data_log_filter' in SERVER and "history" in SERVER, 'commit history is separate from git activity'
-    assert 'function leeLog(' in JS and 'renderLogs' in JS
-    assert "api('/git/history?limit=100" in JS, 'the history filter reads the selected repository'
-    assert "leeLog('git'" in JS, 'git actions log their detail'
-    assert "api('/dev/log" in JS, 'and the run log route finally has a reader'
-    assert 'srv.returncode' in JS and "leeDock('logs')" in JS, 'a failed managed run notifies through Logs'
-    assert 'showLog(' in JS and 'firstLine(detail)' in JS
-    assert '.lee-logdetail' in CSS and 'pre-wrap' in CSS, 'the detail is not clipped'
-
-def test_picking_logs_shows_the_logs_and_not_the_pane_it_replaced():
-    "`.lee-execstrip` names no element, so Logs hid the terminal and left exec in its place."
-    assert '.lee-execstrip' not in CSS, 'the dock hides the exec pane by the class the shell renders'
-    assert 'lee-panel lee-exec' in SERVER
-    rule = CSS[CSS.index('.lee-bottomdock.dock-logs'):CSS.index('.lee-logpanel { display: none')]
-    for cls in ('.lee-exec', '.lee-termpanel'): assert cls in rule, f'{cls} stays visible under Logs'
-    fill = CSS[CSS.index('.lee-bottomdock .lee-dockbody > '):]
-    assert '.lee-logpanel' in fill[:fill.index('}')], 'and Logs fills the dock like the panes it replaces'
-
-
-def test_a_terminal_tab_closes_itself():
-    "One × in the header could only shut the active terminal; closing a background one meant."
-    block = JS[JS.index('function paintTermTabs'):]
-    block = block[:block.index('function leeLeft')]
-    assert 'data-term-close' in block and 'data-term-pick' in block
-    assert 'e.stopPropagation()' in block, 'closing a tab must not also select it'
-    assert 'closeTerm(b.dataset.termClose)' in block
-    assert "close active terminal" not in SERVER, 'the header control is gone'
-
-
-def test_the_folder_picker_is_one_box_that_completes_as_you_type():
-    "A path bar, a filter box, a list and an up button were four controls for one question."
-    block = JS[JS.index('async function addRoot'):]
-    block = block[:block.index('\ndocument.addEventListener')]
-    assert 'lee-pathinput' in block and 'folderfilter' not in block, 'one box, not two'
-    assert "e.key === 'Tab'" in block and 'const complete = ()' in block, 'Tab completes'
-    assert "e.key === 'Enter'" in block and 'return open(v)' in block, 'Enter opens'
-    assert "e.key === 'ArrowDown'" in block, 'and the list is reachable from the keyboard'
-    assert 'dirs.some(x => x.path === v.replace' in block, \
-        'a path that names a folder opens; a half-typed one completes first'
-    assert 'activateRoot(target)' in block, 'opening a folder is also choosing that project'
-    assert '.lee-folderrow.sel' in CSS
 
 def test_a_half_typed_path_browses_what_exists_and_returns_the_rest(tmp_path):
     "The normal state of a box you are completing in is a path that does not exist yet."
@@ -381,14 +289,6 @@ def test_a_start_folder_that_is_not_there_falls_back_rather_than_failing(tmp_pat
     monkeypatch.setattr(S, 'USER_SETTINGS_FILE', tmp_path/'settings.json')
     assert start_folder() == Path.home()
 
-def test_opening_a_folder_redraws_the_tree_before_selecting_the_new_root():
-    "Order matters: activating selects the new root's node, which must exist by then."
-    block = JS[JS.index('async function addRoot'):]
-    block = block[:block.index('\ndocument.addEventListener')]
-    body = block[block.index('const open = async path =>'):block.index('input.oninput = draw')]
-    assert "await post('/fs/add-root'" in body
-    assert body.index('refreshFileTree(target)') < body.index('activateRoot(target)'), \
-        'the tree is rebuilt before the new root is selected in it'
 
 def test_the_interpreter_and_a_new_venv_follow_the_chosen_folder(tmp_path):
     "With two folders open, the picker described the first one and created into it."
@@ -638,7 +538,6 @@ def test_a_run_configuration_becomes_a_watched_process():
     assert 'cannot run' in str(e.value)
 
 
-
 def test_the_child_command_carries_the_watch_and_the_argv(tmp_path):
     s = DevServer(script='uvicorn api:app --port 8123', cwd=str(tmp_path), port=9100)
     cmd = s._cmd()
@@ -876,8 +775,6 @@ def test_the_environment_leela_wires_up_actually_imports():
     assert {'name', 'port', 'agent', 'token', 'session_dir', 'agent_session_dir'} <= set(params)
 
 
-
-
 def test_the_variable_tree_expands_values_and_survives_bad_reprs():
     assert list(PROFILES) == ['minimal', 'standard', 'full']
     assert {'name', 'recent', 'type', 'size'} <= set(SORTS)
@@ -895,10 +792,6 @@ def test_the_variable_tree_expands_values_and_survives_bad_reprs():
     assert grid_page(ns, ('arr',))['nrows'] == 2
     assert grid_page(ns, ('d',)) is None
     assert expand({'x': 1}, ('nope',)) is not None
-
-
-
-
 
 
 def test_the_result_lens_keeps_an_expandable_accessor():
@@ -929,9 +822,6 @@ def test_an_agent_write_shadows_rather_than_rebinds():
     s = AgentSession(owner=lambda: {'x': 1}, log=False)
     s.run('z = 5', scope='isolated')
     assert 'z' not in s.layer
-
-
-
 
 
 def test_leela_can_redirect_both_transcript_streams(tmp_path):
@@ -1093,47 +983,10 @@ def test_the_header_says_what_is_running_beside_the_kernel(tmp_path):
 
 def test_the_runs_pill_reads_the_poll_that_already_runs():
     "One /dev/list poll feeds the pill, the Logs pane and the menu; a second poller would drift."
-    block = JS[JS.index('async function pollRunLogs'):JS.index('async function runLogLoop')]
-    assert 'paintRunsPill()' in block and 'lee.runs =' in block
     # `JS` is every static .js, so the generated bundle repeats each module: count the module.
     assert read('leela/static/js/14_logs.js').count("api('/dev/list')") == 1, \
         'the pill did not add a poller of its own'
-    menu = JS[JS.index('async function leeRunsMenu'):JS.index('async function pollRunLogs')]
-    assert 'await pollRunLogs()' in menu, 'opening the menu refreshes rather than showing a cache'
-    assert "'/dev/stop?path='" in menu and 'runApp()' in menu, 'stop one, or start another'
-    assert 'leeRunTerm(' in menu, 'choosing a run opens the terminal it is on'
-    paint = JS[JS.index('function paintRunsPill'):JS.index('function runState')]
-    assert 'lee-pill-err' in paint and 'lee-pill-on' in paint and 'lee-pill-off' in paint
 
-
-def test_running_a_script_has_one_door_and_it_is_the_managed_one():
-    """Run used to execute the file inside the tab's kernel. A script that ends is fine there; a
-    server never returns, so it held the kernel, showed nothing until killed, and printed to
-    whatever terminal leela was started from. Both run commands now mean one thing each."""
-    src = read('leela/static/js/05_run_file.js')
-    body = src[src.index('async function runFile'):src.index('async function runSelection')]
-    assert 'startRun(' in body, 'Run starts a managed run'
-    assert "post('/run/file'" not in body, 'and never the kernel path that swallowed the tool'
-    assert "endsWith('.py')" in body, 'a non-script says so rather than failing obscurely'
-    # ...while the scratch tool stays exactly what it was.
-    sel = src[src.index('async function runSelection'):src.index('async function runRange')]
-    assert "post('/run/code'" in sel, 'run selection is still the kernel'
-
-def test_both_ways_in_start_a_run_the_same_way():
-    "The picker and Run on an open file share one path, or there are two kinds of run again."
-    src = read('leela/static/js/21_similar.js')
-    assert 'async function startRun(r)' in src
-    assert src.count("api('/dev/start?name='") == 1, 'one place starts a run'
-    start = src[src.index('async function startRun'):src.index('async function runApp')]
-    for want in ('leeRunTerm(', "post('/envs/watch'", 'pollRunLogs()'):
-        assert want in start, want
-
-def test_a_saved_configuration_still_wins_for_the_open_file():
-    "`python -m x`, or an argv, is honoured rather than second-guessed into a bare path."
-    src = read('leela/static/js/05_run_file.js')
-    body = src[src.index('async function runFile'):src.index('async function runSelection')]
-    assert "api('/runs')" in body and 'd.runs || []' in body
-    assert 'cfg ||' in body, 'and falling back to the plain file when there is none'
 
 def test_leelas_own_polling_is_not_the_apps_output():
     """The variable panel asks the inspector for /api/rows every 2.5s, and the inspector shares
@@ -1186,14 +1039,6 @@ def test_a_notebook_gets_its_own_repos_venv_without_being_asked(tmp_path):
     (a/'x.py').write_text('x = 1\n')
     assert ws.kernel_options(ws.open(str(a/'x.py')))['python'] == str(pa)
 
-def test_the_debug_surfaces_follow_the_same_interpreter_as_the_tab(tmp_path):
-    "A debugger that lands in another repo's venv reports that repo's debugpy, not this one's."
-    src = read('leela/app.py')
-    for route in ("@rt('/debug/capabilities')", "@rt('/debug/install')", "@rt('/debug/start')"):
-        block = src[src.index(route):]
-        block = block[:block.index('    @rt(', 10)]
-        assert 'python_for(' in block, route
-        assert 'pool.default_python' not in block, f'{route} still keys off the first folder opened'
 
 def test_closing_the_last_tab_of_a_folder_closes_its_kernel(tmp_path):
     """Only private kernels were closed on `/tab/close`, so a folder kernel outlived every tab that

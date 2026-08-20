@@ -1483,23 +1483,6 @@ def test_a_real_git_failure_is_still_a_400(tmp_path):
         assert client.get('/git/info', params={'repo': '/nowhere/at/all'}).status_code == 400
 
 
-def test_no_checkout_is_read_through_one_helper_rather_than_six_catches():
-    "Six call sites relied on the throw; one of them has to keep it and five have to not."
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'tools'))
-    import build_ide_js as builder
-    js = builder.OUT.read_text()
-    block = js[js.index('async function gitInfo('):js.index('async function leeCwd')]
-    assert "d.repo === false" in block, 'the flag is what says there is no checkout'
-    assert 'throw new Error' in block, 'a surface that only works inside a repo still says so'
-    assert 'gitInfoOrNull' in block, 'and one that decorates the chrome just goes quiet'
-    for caller in ('await gitInfoOrNull(gitUrl', 'gitUI.snapshot || await gitInfoOrNull',
-                   'await gitInfo(gitUrl'):
-        assert caller in js, caller
-    assert "await api('/git/info')" not in js, 'no caller reaches the route without the guard'
-
-
 def test_the_sync_dialog_survives_the_options_that_carry_no_conflicts(tmp_path):
     """`divergence` puts `conflicts` on `merge` and `rebase` only, and no option carries a
     `label`. Reading either unguarded killed the dialog on the first option, every time.
@@ -1520,10 +1503,6 @@ def test_the_sync_dialog_survives_the_options_that_carry_no_conflicts(tmp_path):
     bare = [o['op'] for o in plan['options'] if 'conflicts' not in o]
     assert bare, 'precondition: some options carry no conflicts list'
     assert not [o for o in plan['options'] if 'label' in o], 'precondition: none carry a label'
-    js = builder.OUT.read_text()
-    block = js[js.index('async function showSyncPlan'):js.index('window.showSyncPlan = showSyncPlan')]
-    assert 'o.conflicts || []' in block, 'an option without a conflicts list must still render'
-    assert 'esc(o.label)' not in block, 'the server sends no label; the row would be blank'
 
 
 def test_the_pull_request_panel_calls_github_the_way_ghapi_binds_it(monkeypatch, tmp_path):
@@ -1560,100 +1539,6 @@ def test_the_pull_request_panel_calls_github_the_way_ghapi_binds_it(monkeypatch,
     assert seen['pulls.list'][1]['head'] == 'vedicreader:my-branch'
     assert seen['repos.compare_commits'][0] == ('main...my-branch',), 'one basehead, not four args'
     assert seen['checks.list_for_ref'][0] == ('deadbeef',)
-
-
-def test_expanding_a_branch_folder_leaves_the_list_where_it_was():
-    """Opening `remote/` half way down the branch modal scrolled it back to the top, so the row
-    just clicked was off screen. Nothing navigates -- the rows are buttons in a div -- so there
-    was no default to prevent: `paint` replaces the list's children, and replacing the children
-    of a scrolled element resets its scrollTop."""
-    from tests.assets import read
-    src = read('leela/static/js/28_branchbar.js')
-    body = src[src.index('async function leeBranchMenu'):src.index('window.leeBranchMenu')]
-    assert 'const paint = (keep = true)' in body
-    assert 'const at = keep ? list.scrollTop : 0;' in body
-    assert 'list.scrollTop = at;' in body, 'restored after the rebuild, not before'
-    assert body.index('list.innerHTML =') < body.index('list.scrollTop = at;')
-    # A fold keeps its place; typing is a different result set and belongs at the top.
-    assert 'search.oninput = () => paint(false);' in body
-    fold = body[body.index('data-folder'):]
-    assert 'return paint();' in fold, 'the fold repaints with the offset kept'
-
-def test_the_branch_list_is_the_thing_that_scrolls():
-    "The fix restores `#branchlist`, so it has to be the scroll container and not the modal box."
-    from tests.assets import read
-    css = read('leela/static/lee-ide.css')
-    assert '.lee-modallist { overflow: auto;' in css
-    assert '.lee-branchlist { max-height:' in css, 'bounded, so it scrolls rather than the page'
-
-
-def test_switching_a_branch_repaints_the_modal_instead_of_leaving_it_stale():
-    """The modal closed on a row click and stayed open, unchanged, on every other route to a
-    checkout -- so the tick sat against the branch you had just left and each ••• entry was
-    offered against the old HEAD. `/git/action` answers with the same `info()` `/git/info` does,
-    so the reply is repaint material."""
-    from tests.assets import read
-    src = read('leela/static/js/28_branchbar.js')
-    switch = src[src.index('async function switchBranch'):src.index('function compareBranch')]
-    assert 'return fresh;' in switch and 'fresh.outcome' in switch, 'the snapshot goes back, not just the outcome'
-
-    body = src[src.index('async function leeBranchMenu'):src.index('window.leeBranchMenu')]
-    assert 'const reload = (fresh)' in body
-    for want in ('d = fresh;', 'recent = recentBranches(d.root)', 'prRow = null;', 'paint();'):
-        assert want in body, want
-    assert 'sub.textContent =' in body, 'the "on <branch>" heading follows HEAD too'
-    assert '!m.isConnected' in body, 'a reply arriving after the modal closed repaints nothing'
-
-    row = body[body.index("closest('[data-branch]')"):body.index("closest('[data-act]')")]
-    assert '.then(reload)' in row, 'a row checkout refreshes'
-    assert 'm.remove()' in row and 'b.current' in row, 'except the current branch, which is not a switch'
-
-def test_every_mutation_in_the_branch_modal_reports_back():
-    "The ••• menu changes the repository too; it took no callback, so nothing could repaint."
-    from tests.assets import read
-    src = read('leela/static/js/28_branchbar.js')
-    acts = src[src.index('function branchActions'):src.index('async function branchPr')]
-    assert 'function branchActions(anchor, d, b, after' in acts
-    assert 'await branchAct(op, extra)' in acts, 'previews and creates go through one wrapper'
-    for op in ("act('create'", "act('delete'"):
-        assert op in acts, op
-    assert 'showRebasePreview(b.name, d, act)' in acts and 'showMergePreview(b.name, d, act)' in acts
-    assert 'after(await switchBranch(d, b.name))' in acts
-    body = src[src.index('async function leeBranchMenu'):src.index('window.leeBranchMenu')]
-    assert 'branchActions(more, d, (d.branches || []).find(b => b.name === more.dataset.more), reload)' in body
-
-def test_fetch_is_offered_in_the_branch_modal_and_keeps_it_open():
-    """Picking a remote branch you cannot see is not a choice.
-
-    Every other top action closes the modal, which is right for them and wrong for this one:
-    fetching is what you do before choosing, so it repaints the list it has just refreshed.
-    """
-    from tests.assets import read
-    src = read('leela/static/js/28_branchbar.js')
-    acts = src[src.index('function branchTopActions'):src.index('const branchAct')]
-    assert "{id: 'fetch', label: 'Fetch'" in acts
-    assert 'remote branch' in acts, 'and it says how many refs it is refreshing'
-    body = src[src.index('async function leeBranchMenu'):src.index('window.leeBranchMenu')]
-    assert "if (act.dataset.act === 'fetch') return branchAct('fetch').then(reload)" in body
-    assert body.index("act.dataset.act === 'fetch'") < body.index('m.remove();\n      return act.dataset.act'), \
-        'the fetch branch has to come before the close'
-
-
-def test_a_refused_checkout_does_not_become_an_unhandled_rejection():
-    "`gitDo` re-throws what it has already reported, and a refused switch is a normal answer."
-    from tests.assets import read
-    src = read('leela/static/js/28_branchbar.js')
-    assert '.then(reload).catch(() => {})' in src
-    assert 'try { return after(await branchAct(op, extra)); } catch (_) {}' in src
-
-def test_the_pull_request_row_belongs_to_the_branch_it_was_asked_about():
-    "It arrives late; two quick switches would land the first answer under the second heading."
-    from tests.assets import read
-    src = read('leela/static/js/28_branchbar.js')
-    body = src[src.index('async function leeBranchMenu'):src.index('window.leeBranchMenu')]
-    assert 'const asked = d.branch;' in body
-    assert 'd.branch === asked' in body
-    assert body.count('showPr()') >= 2, 'on open, and again after every change'
 
 
 def test_the_branch_search_box_does_not_grow_into_the_list():

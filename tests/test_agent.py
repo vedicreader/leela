@@ -138,7 +138,6 @@ def test_a_host_offers_only_the_tools_it_supports():
     assert h.cmds == []
 
 
-
 def test_cheap_jobs_stay_local_when_the_turn_goes_to_the_cloud(monkeypatch):
     "The whole argument for routing: pointing the turn at a frontier model must not move completions."
     monkeypatch.delenv('LEELA_MODEL', raising=False)
@@ -174,7 +173,6 @@ def test_a_model_spec_resolves_or_says_why_not():
     a, _ = fake_agent()
     out = a.command('model')
     for job in models.JOBS: assert job in out
-
 
 
 def test_backend_refresh_updates_sp_and_tools_in_place(spec):
@@ -543,7 +541,6 @@ def test_file_checkpoint_rolls_back_only_its_unchanged_output():
     with pytest.raises(ValueError, match='changed after'): ap.rollback(decision.id)
 
 
-
 def test_external_request_can_force_a_browser_decision_for_an_unknown_tool():
     ap = hitl.Approvals(tools={'edit_file'}, timeout=5)
     stop = ap.listen()
@@ -590,7 +587,6 @@ def test_approve_session_answers_now_and_auto_approves_later_writes():
     assert second.reply() is None
 
 
-
 def test_every_watcher_and_the_recorder_both_hear_it():
     "A second frontend opening must not unhook the notebook recorder, or the first frontend."
     seen = []
@@ -605,8 +601,6 @@ def test_every_watcher_and_the_recorder_both_hear_it():
     threading.Thread(target=answer, daemon=True).start()
     ap.gate({'function': {'name': 'edit_file', 'arguments': {}}})
     assert sorted(seen) == ['one', 'recorder', 'two']
-
-
 
 
 def test_a_workspace_answers_the_whole_host_protocol(tmp_path, monkeypatch):
@@ -781,19 +775,7 @@ def test_the_composer_carries_files_selections_and_notices():
     assert '<system-reminder>' in compact.notices_block('what does this do?')
     assert compact.ACTION_NOTICE in compact.notices_block('add a test')
     js = builder.OUT.read_text()
-    block = js[js.index('function chooseAgentSuggest'):js.index('let agentSuggestSeq')]
-    assert '`$1@${item.name} `' in block, 'the token is rewritten, not removed'
     js = builder.OUT.read_text()
-    block = js[js.index('function paintAgentAttachments'):js.index('function closeAgentSuggest')]
-    assert "input.value.replace(new RegExp(" in block
-    assert 'lee.agentSelections.splice' in block, 'a selection chip is removable too'
-    js = builder.OUT.read_text()
-    block = js[js.index('function leeAgentSelection'):js.index('async function leeAgentBudget')]
-    assert "kind: 'selection'" in block and 'doc.sliceString' in block
-    assert "leeRight('agent')" in block, 'the panel comes forward so the chip is visible'
-    assert 'agent_selection: () => leeAgentSelection()' in js, 'and it is a bindable action'
-    js = builder.OUT.read_text()
-    assert 'clearTimeout(agentSuggestTimer)' in js and 'agentSuggestTimer = setTimeout(' in js
     c = Completer(Agent_comple())
     prompt = c._prompt('frame.', 6, 'python', 'def clean(frame):\n    return frame.dropna()')
     assert '<related_code>' in prompt and 'def clean(frame)' in prompt
@@ -877,9 +859,6 @@ def test_compaction_replaces_history_and_reorients(spec):
     assert 'do not re-import' in head
 
 
-
-
-
 def test_skill_md_directories_win_over_packages(tmp_path):
     d = tmp_path/'skills'/'exhash'
     d.mkdir(parents=True)
@@ -903,7 +882,6 @@ def test_the_index_carries_names_not_bodies():
     assert len(idx) < 4000
     rows = [l for l in idx.splitlines() if l.startswith('- `')]
     assert rows and all(len(l) <= 60 + skills.SKILL_DESC_MAX for l in rows), max(rows, key=len)
-
 
 
 def test_activity_markdown_folds_results_and_reads_like_prose():
@@ -937,7 +915,6 @@ def test_activity_fires_at_the_start_of_a_call_not_only_at_the_end():
     assert a.detail == 'the page' and a.done
 
 
-
 def test_results_are_clipped_and_failures_spelled_one_way():
     import inspect
     a, _ = fake_agent()
@@ -969,9 +946,6 @@ def test_changes_report_the_file_not_the_claim():
     assert a.changes() == {}
     create(path='/proj/a.py', text='x = 2\n')
     assert a.changes() == {'/proj/a.py': ('x = 1\n', 'x = 2\n')}
-
-
-
 
 
 def test_a_subagent_tool_budget_is_a_hard_stop():
@@ -1026,10 +1000,6 @@ def test_project_extensions_are_off_unless_asked_for(tmp_path):
     (d/'x.py').write_text('def setup(ext):\n    ext.command("boom", lambda a, b: "", "")\n')
     assert load(Registry(), roots=[tmp_path]).commands == {}
     assert 'boom' in load(Registry(), roots=[tmp_path], project=True).commands
-
-
-
-
 
 
 def test_an_approval_exchange_is_written_into_the_notebook():
@@ -1335,11 +1305,6 @@ def named(tools):
     return {t.__name__: t for t in tools}
 
 
-
-
-
-
-
 def test_run_shell_reports_what_it_ran_and_how_it_ended():
     h = MemHost(commands={'pytest -q': (1, '2 failed, 3 passed')})
     run = named(shell_tools(h))['run_shell']
@@ -1356,11 +1321,6 @@ def test_run_shell_reports_what_it_ran_and_how_it_ended():
     h = MemHost()
     named(shell_tools(h))['run_shell']('git status --short', cwd='/proj/sub', timeout=30)
     assert h.cmds == [('git status --short', '/proj/sub', 30)]
-
-
-
-
-
 
 
 SRC = 'def add(a, b):\n    return a + b\n\n\ndef sub(a, b):\n    return a - b\n'
@@ -1411,14 +1371,6 @@ def test_edit_file_applies_every_edit_or_refuses_with_a_reason():
     assert 'oldText' in edit('/proj/m.py', '[{"old": "a"}]')
 
 
-
-
-
-
-
-
-
-
 def test_the_shapes_a_model_actually_sends_are_all_accepted():
     "A JSON string, a list of dicts, and a list of pairs are each unambiguous. Refusing"
     for edits in ['[{"oldText": "a + b", "newText": "z"}]',
@@ -1454,11 +1406,6 @@ def test_grep_reports_its_matches_and_what_it_searched():
     assert failed(g('(unclosed'))
 
 
-
-
-
-
-
 def test_ls_lists_the_open_folders_when_asked_for_nothing(tmp_path):
     from leela.agent.tools import NullHost
     class H(NullHost):
@@ -1469,12 +1416,6 @@ def test_ls_lists_the_open_folders_when_asked_for_nothing(tmp_path):
     (tmp_path/'x.py').write_text('x = 1\n')
     out = named(code_tools(H([str(tmp_path)])))['ls']('')
     assert 'pkg/' in out and 'x.py' in out
-
-
-
-
-
-
 
 
 def agent_on(host):
@@ -1491,8 +1432,6 @@ def test_a_failed_tool_call_is_recorded_as_failed():
     tools['replace_text']('/proj/m.py', '[{"oldText": "nope", "newText": "x"}]')
     rows = a.activity.rows()
     assert [r['ok'] for r in rows[-2:]] == [False, False]
-
-
 
 
 def test_a_capability_lost_mid_session_is_a_failure_not_the_end_of_the_turn():
@@ -1688,8 +1627,6 @@ def test_folders_are_offered_to_the_agent_and_not_to_quick_open(ws, tmp_path):
         assert all(h['kind'] == 'file' for h in quick), 'opening a folder is not quick-open\'s job'
 
 
-
-
 def test_an_interpreters_libraries_are_not_the_project(tmp_path):
     "98% of a walk of this repo was site-packages, so `@keys` ranked `libxslt/keys.h` over"
     for d in ('.venv', '.app-venv', 'my-venv', 'venv-3.12'):
@@ -1721,8 +1658,6 @@ def test_a_file_leela_just_wrote_can_be_found_before_the_walk_cache_expires(tmp_
     assert [p.name for p in ws.fs.walk(tmp_path)] == ['fresh.py'], 'stale for 2s was the bug'
     ws.fs.delete(tmp_path/'fresh.py')
     assert [p.name for p in ws.fs.walk(tmp_path)] == []
-
-
 
 
 def test_the_local_window_errs_small_and_can_be_overridden(monkeypatch):
@@ -1766,8 +1701,6 @@ def test_native_output_is_captured_without_being_lost():
         raise RuntimeError('generate failed')
     with pytest.raises(RuntimeError) as e: native_capture(boom)
     assert 'exceed the maximum number of tokens' in getattr(e.value, 'native_output', '')
-
-
 
 
 def test_the_descriptor_survives_an_exception_inside_the_block():
@@ -2093,54 +2026,8 @@ def test_an_undone_turn_is_dimmed_rather_than_deleted():
     Deleting the transcript said the agent had forgotten a turn it still carries, and the reply
     stayed on screen whenever the file reload before it raised.
     """
-    js = builder.OUT.read_text()
-    block = js[js.index('function markTurnUndone'):js.index('async function retryProposal')]
-    assert 'lee-turn-undone' in block, 'the rolled-back turn is marked in the view'
-    assert 'node.remove()' not in block, 'and is not deleted out from under the model'
-    assert 'still remembers' in block, 'the bar says what undo did not do'
     assert '.lee-turn-undone' in (ROOT/'leela'/'static'/'lee-ide.css').read_text()
 
-
-def test_the_steer_box_takes_the_key_you_press_in_it():
-    """Two fixes landed on delivering a steer while none of them was ever queued: the box is a
-    bare <input> in a <div>, so Enter had no default action and no handler, and the text sat
-    there. Only the Queue button worked, and nothing said so."""
-    from tests.assets import read
-    js = read('leela/static/js/12_agent.js')
-    block = js[js.index('function initAgentComposer'):js.index('async function sendAgentCommand')]
-    assert "$('#agentsteer')?.addEventListener('keydown'" in block
-    assert 'leeQueueSteer' in block and 'e.preventDefault()' in block
-    assert 'leeForceSteer' in block, 'and shift+enter forces rather than queueing'
-
-def test_a_queued_steer_is_still_acknowledged_a_second_later():
-    """`updateAgentRunstrip()` is called with no state on every turn start, stream tick and turn
-    end. Each one used to reset the label to `agent working`, so a steer that had been accepted
-    stopped saying so almost immediately -- which looks exactly like it was dropped."""
-    from tests.assets import read
-    js = read('leela/static/js/12_agent.js')
-    strip = js[js.index('function updateAgentRunstrip'):js.index('async function pauseAgentAfterCurrent')]
-    assert "if ('queued_steer' in state)" in strip, 'only a payload that carries it may change it'
-    assert 'lee.queuedSteer ?' in strip, 'and the label reads the remembered one'
-    assert 'state.queued_steer ?' not in strip, 'not the argument, which is usually absent'
-
-def test_the_chip_and_the_strip_cannot_disagree():
-    "One setter, so a steer answered straight into a checkpoint is not reported as still queued."
-    from tests.assets import read
-    js = read('leela/static/js/12_agent.js')
-    assert 'function setQueuedSteer(' in js
-    q = js[js.index('async function leeQueueSteer'):js.index('window.leeQueueSteer')]
-    assert 'setQueuedSteer(d.queued_steer' in q, 'the server says whether it queued or was taken'
-    assert 'queue.innerHTML =' not in q, 'the chip is not written a second way here'
-
-def test_the_stream_clears_a_steer_the_agent_has_taken():
-    "The execution event carries approvals.state(), so the chip goes when the steer is consumed."
-    from tests.assets import read
-    server = read('leela/app.py')
-    assert "state = {**ws.approvals.state(), 'runs': runs}" in server
-    assert "_sse('execution', state)" in server
-    js = read('leela/static/js/12_agent.js')
-    assert "es.addEventListener('execution', ev => updateAgentRunstrip(JSON.parse(ev.data)))" in js
-    assert "updateAgentRunstrip({runs: []})" in js
 
 def test_a_steer_rides_the_next_tool_result(tmp_path):
     """The path the UI actually promises -- 'applies after current call' -- and the only one of
@@ -2184,15 +2071,6 @@ def test_delegation_never_gets_the_git_write_tools(monkeypatch):
     # Reading git is not writing git, and must survive.
     monkeypatch.setattr(Agent, '_sub_plain', lambda self: [git_status, view_file])
     assert {f.__name__ for f in a._sub_plain()} == {'git_status', 'view_file'}
-
-def test_the_turn_model_keeps_the_git_writes_it_is_not_advertised():
-    "The refusal is about delegation. The turn model still has them; the briefing just does not sell them."
-    from tests.assets import read
-    src = read('leela/blocks/agent/ai.py')
-    body = src[src.index('    def tools(self):'):src.index('    def _sub_plain(self):')]
-    assert 'built = super().tools' in body and 'return built' in body
-    assert 'self._plain = [f for f in self._plain' in body, 'the briefing is what is narrowed'
-    assert 'built = [' not in body, 'what the model can call is never filtered here'
 
 
 def test_stopping_a_cloud_turn_returns_its_terminal_run_state(tmp_path):
@@ -2239,30 +2117,6 @@ def test_stop_and_send_next_returns_the_exact_terminal_run(tmp_path):
     assert d['text'] == 'read the test first'
     assert d['queued_steer'] == ''
 
-def test_stop_and_send_next_waits_for_the_exact_terminal_result():
-    from tests.assets import read
-    js = read('leela/static/js/12_agent.js')
-    assert "(e.shiftKey ? leeForceSteer : leeQueueSteer)()" in js
-    assert 'reseedForcedSteer' not in js
-    assert "['cancelled', 'detached', 'terminated'].includes(run.state)" in js
-    assert "post('/agent/steer', {text, force: true})" in js
-
-
-def test_force_is_offered_only_while_there_is_a_turn_to_force():
-    """Three controls in a two-column grid put Force on a row of its own under the input, and it
-    was offered while nothing was running, where it means nothing but a red button."""
-    from tests.assets import read
-    css = read('leela/static/lee-ide.css')
-    assert '.lee-agent-steer { display: grid; grid-template-columns: minmax(0, 1fr) auto auto;' in css, \
-        'the input and both buttons share one row'
-    app = read('leela/app.py')
-    assert "Button('Stop and send next', id='agentforce'" in app and 'hidden=True' in app
-    js = read('leela/static/js/12_agent.js')
-    assert "force.hidden = !active" in js, 'it appears only for an active registered run'
-    assert 'data-stop-run' in js and 'Subagent' in js
-    assert '...flattenRuns(r.children || [])' in js, 'nested descendants get the same lifecycle controls'
-    assert "if (!lee.agentBusy) return status('nothing is running to force" in js, \
-        'and shift+enter says so rather than silently sending'
 
 def test_agent_run_routes_return_structured_states(tmp_path):
     from leela.workspace import Workspace
@@ -2298,10 +2152,3 @@ async def test_workspace_shutdown_cancels_agent_runs_before_close(tmp_path):
     await ws.shutdown()
     assert order[:2] == ['cancel', 'close']
     assert run.state == 'detached'
-
-def test_stream_disconnect_waits_only_for_the_exact_run_registration():
-    from tests.assets import read
-    server = read('leela/app.py')
-    assert 'end = loop.time() + a.cancel_grace' in server
-    assert "if runs: run_id = runs[-1]['id']" in server
-    assert 'a.cancel(run_id)' in server

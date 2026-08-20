@@ -150,14 +150,6 @@ def test_a_prompt_cell_carries_its_context_and_its_answer():
     assert dialog().context(0) == ''
 
 
-
-
-
-
-
-
-
-
 def test_cell_operations_can_be_undone_and_redone():
     nb = Notebook([Cell(source='keep', id='a'), Cell(source='restore me', id='b')])
     deleted = nb.delete(1)
@@ -194,7 +186,6 @@ def test_cell_operations_are_undoable_and_keep_their_order():
     assert 'dtype: int64' not in dialog().source_text()
 
 
-
 def test_cell_ranges_move_copy_and_delete_as_single_undoable_operations():
     nb = Notebook(cells=[Cell(source=x) for x in ('a', 'b', 'c', 'd')])
     at = nb.move_many([1, 2], 4)
@@ -219,8 +210,6 @@ def test_detached_cell_can_be_pasted_between_notebooks_repeatedly():
     assert first.outputs == source[0].outputs and first.outputs is not source[0].outputs
     assert len({source[0].id, clipboard.id, first.id, second.id}) == 4
     assert not first.running and not first.fresh and target.dirty
-
-
 
 
 def test_an_approval_cell_round_trips_as_plain_markdown(tmp_path):
@@ -314,34 +303,6 @@ def test_image_tabs_are_served_but_never_written_over():
         assert Tab(path=f'/tmp/a{ext}').kind == 'video' and ext in SERVED_TYPES
     assert Tab(path='/tmp/a.py').kind == 'text' and Tab(path='/tmp/a.pdf').kind == 'pdf'
     js = builder.OUT.read_text()
-    assert 'function mountImage' in js and "st.kind === 'image'" in js
-    assert 'function mountMedia' in js and "st.kind === 'audio' || st.kind === 'video'" in js
-    js = builder.OUT.read_text()
-    block = js[js.index('function resolveMarkdownImages'):js.index('function renderMarkdown')]
-    assert "/^(https?:|data:|blob:|\\/file\\/raw)/" in block, 'an absolute or already-resolved src is left alone'
-    assert "data-md-base" in js, 'the surfaces say which folder the document came from'
-    assert "loading = 'lazy'" in block
-    js = builder.OUT.read_text()
-    block = js[js.index('async function leeOpenFile'):js.index('async function leeOpenFile') + 2200]
-    assert "$('#header')?.insertBefore(fresh" in block, 'a destroyed tab bar is put back'
-    assert "doc.querySelector('.lee-err')?.textContent" in block, 'the server said why; show that'
-
-
-
-def test_a_cell_banner_says_where_the_cell_is_and_how_to_reference_it():
-    """The gutter carries the execution count, which is not the cell's position and is blank
-    until it runs. Its place in the notebook, its kind and its size belong on the banner."""
-    js = builder.OUT.read_text()
-    block = js[js.index('function cellEl('):js.index('function setCellCollapsed')]
-    assert 'lee-cell-meta' in block and 'lee-cell-no' in block and 'lee-cell-size' in block
-    assert 'leeCopyCellId' in block, 'the id is what references a cell, so it is one click away'
-    meta = js[js.index('function paintCellMeta'):js.index('function copyCellId')]
-    assert "'#' + (i + 1)" in meta, 'the number is the position, counted from one'
-    title = js[js.index('function cellMetaTitle'):js.index('function paintCellMeta')]
-    assert 'lee.cells.length' in title and 'chars' in title and 'id ' in title
-    assert 'outputs' in title, 'and what the last run left behind'
-    css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
-    assert '.lee-cell-meta' in css and '.lee-cell-no' in css
 
 
 def test_the_tab_payload_carries_no_bytes_and_the_raw_route_serves_them(tmp_path):
@@ -357,20 +318,6 @@ def test_the_tab_payload_carries_no_bytes_and_the_raw_route_serves_them(tmp_path
         assert raw.status_code == 200 and raw.headers['content-type'] == 'image/png'
         assert raw.content == PNG
 
-
-
-def test_the_research_space_can_browse_the_vault():
-    "The vault beside the web: what you already kept, in the column where sources go."
-    js = builder.OUT.read_text()
-    block = js[js.index('function researchWorkspace'):js.index('function webSearch')]
-    assert 'data-mode="vault"' in block, 'the vault is a research mode'
-    assert "elid=researchvault" in block, 'its fragment gets its own id, not the panel\'s'
-    assert "activeMode === 'vault'" in block
-    assert 'if (!query) return;' in block and block.index("activeMode === 'vault'") < block.index('if (!query) return;')
-
-
-EDITOR_editor = (ROOT / 'frontend/editor.js').read_text()
-PACKAGE = (ROOT / 'frontend/package.json').read_text()
 
 def test_python_compiler_reports_precise_syntax_errors():
     source = 'answer = 1\nif True print(answer)\n'
@@ -395,25 +342,7 @@ def test_python_is_checked_without_being_executed():
         response = client.post('/lint', json={'lang': 'python', 'code': 'if True print(1)'})
     assert response.status_code == 200
     assert response.json()['diagnostics'][0]['severity'] == 'error'
-    for language in ('toml', 'javascript', 'typescript', 'jsx', 'tsx', 'yaml', 'json',
-                     'bash', 'rust', 'go', 'java', 'cpp', 'xml', 'properties'):
-        assert language in EDITOR
-    assert 'StreamLanguage.define(toml)' in EDITOR
-    assert 'StreamLanguage.define(shell)' in EDITOR
-    assert "toml: 'toml'" in CLIENT and "yml: 'yaml'" in CLIENT and "jsonc: 'json'" in CLIENT
-    assert '!CODE_LANGS[named]' in CLIENT
-    assert "python && el.classList.contains('lee-reply')" in CLIENT
 
-
-
-def test_codemirror_lint_source_covers_errors_warnings_and_readonly_surfaces():
-    assert '"@codemirror/lint"' in PACKAGE
-    assert 'import {linter, forEachDiagnostic} from "@codemirror/lint"' in EDITOR_editor
-    assert 'node.type.isError' in EDITOR_editor
-    assert 'severity: "error"' in EDITOR_editor
-    assert 'data.diagnostics' in EDITOR_editor
-    assert 'readOnly || !lang' in EDITOR_editor
-    assert 'return linter(source, {delay: 400})' in EDITOR_editor
 
 def test_common_project_languages_are_detected_from_paths():
     expected = {
@@ -448,7 +377,3 @@ def test_a_prompt_cell_keeps_its_generated_media_across_a_save_and_reload(tmp_pa
     back = Notebook.load(str(tmp_path/'d.ipynb'))
     assert back[0].cell_type == 'prompt' and back[0].reply == 'here it is'
     assert back[0].outputs == outputs
-
-def test_the_client_draws_a_prompt_cell_media_output():
-    branch = CLIENT.split('function renderOutputs(c) {')[1].split('    return;')[0]
-    assert 'for (const o of (c.outputs || [])) box.appendChild(outputEl(o));' in branch

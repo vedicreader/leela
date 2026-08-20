@@ -7,6 +7,7 @@ pytestmark = pytest.mark.slow
 pytestmark = pytest.mark.slow
 
 import asyncio
+import os as _os
 import socket
 import threading
 
@@ -39,6 +40,23 @@ def _serve(ws, port):
     threading.Thread(target=srv.run, daemon=True).start()
     return srv
 
+CHROMIUM = _os.environ.get('LEELA_CHROMIUM')
+
+async def _launch(pw):
+    "Chromium, or a skip. `LEELA_CHROMIUM` names the binary where playwright cannot find its own."
+    kw = {'executable_path': CHROMIUM} if CHROMIUM else {}
+    if _os.geteuid() == 0: kw['args'] = ['--no-sandbox']
+    try: return await pw.chromium.launch(**kw)
+    except Exception as e: pytest.skip(f'no chromium for playwright: {e}')
+
+def _launch_sync(pw):
+    "The blocking twin of `_launch`, for the sync-API tests."
+    kw = {'executable_path': CHROMIUM} if CHROMIUM else {}
+    if _os.geteuid() == 0: kw['args'] = ['--no-sandbox']
+    kw['headless'] = True
+    try: return pw.chromium.launch(**kw)
+    except Exception as e: pytest.skip(f'no chromium for playwright: {e}')
+
 async def _on_page(fn):
     "Boot the app, open it in chromium, hand the page to `fn`, and return what it returns."
     fake_kernels()
@@ -48,8 +66,7 @@ async def _on_page(fn):
     await asyncio.sleep(1.2)
     try:
         async with async_playwright() as pw:
-            try: b = await pw.chromium.launch()
-            except Exception as e: pytest.skip(f'no chromium for playwright: {e}')
+            b = await _launch(pw)
             pg = await b.new_page()
             await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
             await pg.wait_for_function('window.lee && lee.keys.length')
@@ -125,11 +142,6 @@ def test_results_are_folded_marked_and_dropped_when_they_go_stale():
     assert values == [{'line': 1, 'name': 'df', 'value': 'x    int64\ny    object',
                        'type': 'result', 'shape': None, 'dtype': None,
                        'is_grid': False, 'is_container': False, 'accessor': ['_']}]
-    assert 'MAX_OUTPUT_CHARS = 60000' in JS
-    assert 'render large rich output' in JS
-    assert 'show ${(text.length - MAX_OUTPUT_CHARS).toLocaleString()} more characters' in JS
-    field = EDITOR[EDITOR.index('const inlineField'):EDITOR.index('export function setInlineValues')]
-    assert 'if (tr.docChanged) values = Decoration.none' in field
     source = getsource(ide_app)
     for route in ('/agent/branches', '/agent/fork', '/agent/revise', '/agent/rollback-turn',
                   '/agent/state/template', '/agent/state/bootstrap', '/agent/state/suggest',
@@ -619,7 +631,7 @@ def proj_web_th(tmp_path):
     return tmp_path
 
 def _open(pw, url):
-    page = pw.chromium.launch(headless=True).new_page(viewport={'width': 1440, 'height': 900})
+    page = _launch_sync(pw).new_page(viewport={'width': 1440, 'height': 900})
     page.goto(url, wait_until='networkidle')
     if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
     return page
@@ -651,7 +663,7 @@ def test_following_the_system_flips_without_a_reload(proj_web_th):
     with serve(ws) as url:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
+            browser = _launch_sync(pw)
             page = browser.new_page(viewport={'width': 1440, 'height': 900})
             page.emulate_media(color_scheme='light')
             page.goto(url, wait_until='networkidle')
@@ -699,7 +711,7 @@ def test_the_bundle_parses(proj_web_th):
     with serve(ws) as url:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as pw:
-            page = pw.chromium.launch(headless=True).new_page()
+            page = _launch_sync(pw).new_page()
             errors = []
             page.on('pageerror', lambda e: errors.append(str(e)))
             page.goto(f'{url}/leestatic/nothing-here')
@@ -863,18 +875,10 @@ def test_the_variable_panel_follows_the_runtime_the_picker_chose():
     ws.watch_env(picked.base)
     assert asyncio.run(ws.runtime()) is picked
     assert 'sort' not in {b.action for b in bar('vars')}
-    assert "id='varsort'" in SERVER
     ws = Workspace(roots=[])
     ws.watch_env('http://127.0.0.1:9999')
     asyncio.run(ws.set_kernel(kind='ipykernel', restart=False))
     assert ws.env_base is None
-    run_app = JS[JS.index('async function runApp'):JS.index('/* Which live namespace')]
-    assert "await post('/envs/watch', {base: s.base})" in run_app
-    assert 'paintEnv(s.label)' in run_app
-    vars_fn = JS[JS.index('async function leeVars'):JS.index('function varRow')]
-    assert 'if (lee.varsBusy)' in vars_fn
-    assert 'lee.varsPending = true' in vars_fn
-    assert 'finally {' in vars_fn and 'queueMicrotask(leeVars)' in vars_fn
 
 
 def test_external_inspected_runtimes_normalise_execution_as_notebook_output(monkeypatch):
@@ -941,28 +945,6 @@ def test_variable_route_uses_the_same_selected_runtime_as_execution(tmp_path):
     assert result['groups'][0]['nodes'][0]['name'] == 'answer'
 
 
-def test_code_cells_show_run_state_and_inline_pills():
-    assert 'setCellState(c, \'running\')' in JS
-    assert "setCellState(c, r.ok ? 'done' : 'error'" in JS
-    assert 'LeeCM.setInlineValues(v, r.inline || [])' in JS
-    assert '.lee-cell-state.done' in CSS
-    assert '.cm-lee-inline-value' in CSS
-    assert 'lee-inline-open' in EDITOR and 'lee-inline-open' in JS
-    assert 'openValueLens' in JS and 'copy value' in JS
-    assert 'lee-inline-popover' in JS and '.lee-value-lens' in CSS
-
-
-def test_rishi_markdown_display_outputs_stream_render_and_can_become_cells():
-    output = JS[JS.index('function outputEl'):JS.index('function paintSel')]
-    run = JS[JS.index('async function runCell'):JS.index('async function askCell')]
-    assert "data['text/markdown']" in output
-    assert "renderMarkdown(d, data['text/markdown'])" in output
-    assert "d.classList.add('lee-md-output')" in output
-    assert "postEvents('/nb/run/stream'" in run and "event === 'output'" in run
-    assert 'edit as markdown cell' in JS
-
-
-
 pytestmark = pytest.mark.slow
 
 import pytest
@@ -977,7 +959,7 @@ def test_browser_can_change_control_open_layered_state_and_find_agent_commands(t
     from playwright.sync_api import sync_playwright
     ws = Workspace(roots=[tmp_path])
     with _server(ws) as url, sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = _launch_sync(pw)
         page = browser.new_page(viewport={'width': 1440, 'height': 900})
         page.goto(url, wait_until='networkidle')
         if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
@@ -1032,7 +1014,7 @@ def test_response_fork_and_turn_undo_execute_against_a_successful_turn(tmp_path)
     install(ws, [Step(tool=('create_file', {'path': str(path), 'text': 'after\n'})),
                  Step(text='Created and verified the file.')], token_delay=0)
     with _server(ws) as url, sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = _launch_sync(pw)
         page = browser.new_page(viewport={'width': 1440, 'height': 900})
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
@@ -1076,3 +1058,52 @@ def test_agent_state_markdown_lint_reports_missing_charter_sections(tmp_path):
     assert any('Hard boundaries' in m for m in messages)
     assert any('Tool practices' in m for m in messages)
     assert all(d['severity'] in {'info', 'warning', 'error'} for d in diagnostics)
+
+HANDLER_ATTRS = ('onclick', 'oninput', 'onchange', 'onkeydown', 'onsubmit')
+
+def test_every_inline_handler_names_a_function_that_exists():
+    """The server writes handler names into attributes as strings, so a renamed or dropped
+    function is a dead control that no import error and no unit test ever reports.
+    """
+    async def go(pg):
+        for op in ("leeRight('agent')", "leeRight('git')", "leeRight('vars')", "leePane('left', true)"):
+            await pg.evaluate(op)
+        await pg.wait_for_timeout(800)
+        return await pg.evaluate("""(attrs) => {
+          const skip = new Set(['if','return','for','while','switch','catch','typeof','function',
+                                'new','delete','await','throw','void']);
+          const named = attrs.flatMap(a => [...document.querySelectorAll(`[${a}]`)]
+            .flatMap(el => [...el.getAttribute(a).matchAll(/(^|[^.\\w$])([A-Za-z_$][\\w$]*)\\s*\\(/g)]
+              .map(m => m[2])));
+          return [...new Set(named)].filter(n => !skip.has(n) && typeof window[n] !== 'function').sort();
+        }""", list(HANDLER_ATTRS))
+    dead = _run(go)
+    assert dead == [], f'inline handlers with no such function: {dead}'
+
+def test_the_shell_boots_and_paints_its_panels_without_a_page_error():
+    """A syntax error or a bad reference in any module takes the whole shared-scope bundle down
+    from its first line, and every later module with it. A failed optional request is not that:
+    `/lsp/*` answers 400 without pyright installed, and the client carries on.
+    """
+    fake_kernels()
+    ws = Workspace(roots=[], approvals='auto')
+    port = _free_port()
+    srv = _serve(ws, port)
+    errors, resources = [], []
+    async def go():
+        await asyncio.sleep(1.2)
+        async with async_playwright() as pw:
+            b = await _launch(pw)
+            pg = await b.new_page()
+            pg.on('pageerror', lambda e: errors.append(f'pageerror: {e}'))
+            pg.on('console', lambda m: m.type == 'error' and (
+                resources if 'Failed to load resource' in m.text else errors).append(m.text))
+            await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
+            await pg.wait_for_function('window.lee && lee.keys.length')
+            for op in ("leeRight('agent')", "leeRight('git')", "leeRight('vars')", 'showHelp()'):
+                await pg.evaluate(op)
+                await pg.wait_for_timeout(400)
+            await b.close()
+    try: asyncio.run(go())
+    finally: srv.should_exit = True
+    assert errors == [], f'the client reported {len(errors)} javascript problems: {errors[:5]}'

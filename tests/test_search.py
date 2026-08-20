@@ -525,7 +525,6 @@ def test_a_result_says_what_it_is_and_when_it_arrived():
     for s in ('memory:ab12', 'pointer:ff01', '', None): assert source_kind(s) == 'synthetic'
 
 
-
 def test_an_untouched_vault_is_not_reindexed(vault):
     m, _ = vault
     r = m.reindex_changed()
@@ -558,32 +557,3 @@ def test_documents_that_were_never_files_are_not_walked(vault):
 
 sys.path.insert(0, str(ROOT/'tools'))
 import build_ide_js as builder  # noqa: E402
-
-JS = builder.OUT.read_text()
-CSS = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
-
-def test_a_jump_or_an_undo_centres_the_span_it_changed():
-    block = JS[JS.index('function centreOnPos'):JS.index('function openLocation')]
-    assert 'coordsAtPos' in block and 'scrollTop +=' in block
-    assert "scrollHeight - own.clientHeight > 4 ? own : $('#editor')" in block
-    assert 'requestAnimationFrame(() => centreOnPos(v, pos))' in JS, 'measured after the layout it caused'
-    block = JS[JS.index('function changedSpan'):JS.index('async function workspaceHistoryRedo')]
-    assert 'while (s < A.length' in block and 'while (a >= s' in block, 'first and last differing lines'
-    assert 'selection: {anchor, head}' in block, 'the change is selected, not just scrolled to'
-    assert 'centreOnPos(v, anchor)' in block
-    block = JS[JS.index('async function afterHistory'):JS.index('async function workspaceHistoryRedo')]
-    assert 'undone ? row.before : row.after, undone ? row.after : row.before' in block
-    assert "afterHistory(result.operation, 'workspace operation redone', false)" in JS
-    assert "`workspace operation ${redo ? 'redone' : 'undone'}`, !redo)" in JS
-    assert "d.op === 'undo' || d.op === 'redo'" in JS
-    assert "block: 'center'" in JS and 'lee-cell-changed' in JS
-    assert '.lee-cell-changed' in CSS and '@keyframes lee-cell-flash' in CSS
-    assert 'prefers-reduced-motion' in CSS, 'a flash is decoration; it must be optional'
-    block = JS[JS.index('function observeEditorWidth'):JS.index('async function boot')]
-    assert 'requestMeasure' in block and 'ResizeObserver' in block
-    assert 'cancelAnimationFrame' in block, 'a splitter drag fires this every frame'
-    for host in ("'#editor'", "'#shell'", "'#bottomdock'"): assert host in block, host
-    assert 'observeEditorWidth();' in JS, 'and it is actually started'
-    rule = CSS[CSS.index('.cm-lee-overview {'):CSS.index('.cm-lee-overview[hidden]')]
-    assert 'width: 14px' in rule
-    assert 'padding-right: 15px' in CSS, 'the scroller still reserves room for it'

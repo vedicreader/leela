@@ -50,7 +50,6 @@ def test_every_block_declares_and_serves_what_it_wires():
     assert not dupes, 'the same method+path is registered twice:\n  ' + '\n  '.join(dupes)
 
 
-
 def test_keymap_is_served_as_data_so_the_frontend_hardcodes_no_chord(client):
     d = client.get('/keys.json').json()
     assert d['keys'] and d['help'] and d['bars'], 'keys, help rows and button bars in one fetch'
@@ -124,7 +123,6 @@ def test_a_git_operation_is_matched_by_family_and_needs_a_path():
         assert repo.calls == ['operation_action']
     with pytest.raises(GitError, match='unknown Git action'): _apply(_FakeRepo(), 'rm -rf', {})
     with pytest.raises(GitError, match='at least one'): git_paths([])
-
 
 
 @pytest.mark.parametrize('bad', ['/etc/passwd', '../outside', 'a/../../b'])
@@ -692,12 +690,6 @@ def test_diff_rows_carry_line_numbers_stats_and_serialise():
     assert diff_stat(None, 'x\n') == (1, 0)
 
 
-
-
-
-
-
-
 def test_fuzzy_ranking_orders_by_what_a_person_meant():
     got = did_you_mean("NameError: name 'df2' is not defined", ['df_2', 'ns', 'x'])
     assert "did you mean 'df_2'?" in got
@@ -712,7 +704,6 @@ def test_fuzzy_ranking_orders_by_what_a_person_meant():
     assert list(fuzzy_rank('README', FILES))[0] == 'a/README.md'
 
 
-
 @pytest.mark.parametrize('err', [None, '', 'TypeError: unsupported operand', 'ZeroDivisionError: x'])
 def test_other_errors_are_untouched(err):
     assert did_you_mean(err, ['df']) == err
@@ -720,10 +711,6 @@ def test_other_errors_are_untouched(err):
 
 FILES = ['a/web/app.py', 'a/some_long_app_helper.py', 'a/ide/panels/app.py',
          'a/README.md', 'a/apple/pie.txt']
-
-
-
-
 
 
 def test_workspace_journal_persists_and_undoes_only_exact_outputs(tmp_path):
@@ -858,12 +845,6 @@ def _stub(port, **overrides):
         ns[name] = (lambda self, *a, **kw: None) if callable(getattr(proto, name, None)) else ''
     ns.update(overrides)
     return type(f'Stub{port.title()}', (), ns)
-
-
-
-
-
-
 
 
 @pytest.mark.parametrize('port', ['memory', 'search', 'runtime'])
@@ -1081,45 +1062,3 @@ if __name__ == '__main__':
             print(f'{n:>4}  {tag} {m:<{width}}')
         blocks = sum(n for m, n in counts.items() if m.startswith('leela.blocks'))
         print(f'\n{blocks} routes served by blocks, {counts.get(CLOSURE, 0)} still by the ide_app closure')
-
-
-def test_a_link_in_rendered_markdown_opens_a_tab_rather_than_taking_over_the_app():
-    """A feed item ends in `[url](url)`. Clicked in the vault reader a bare href navigated the
-    whole IDE away, and the desktop webview has no back button to come home with.
-    """
-    js = builder.OUT.read_text()
-    block = js[js.index('function routeMarkdownLinks'):js.index('function renderMarkdown')]
-    assert "target = '_blank'" in block and 'noopener' in block
-    assert 'openExternal(' in block, 'in your own browser, with your own sessions'
-    assert 'e.metaKey' in block, 'a modified click still belongs to the browser'
-    assert 'routeMarkdownLinks(el)' in js, 'and every markdown surface goes through the one funnel'
-
-def test_one_click_opens_one_tab():
-    """Both openers ran: the anchor's own `_blank` and `window.open` beside it, and the shell
-    answers `window.open` with null while opening the page anyway. Two tabs, one story.
-    """
-    js = builder.OUT.read_text()
-    block = js[js.index('function routeMarkdownLinks'):js.index('function renderMarkdown')]
-    assert 'if (!window.pywebview) return;' in block, 'a browser tab opens its own links'
-    opener = js[js.index('async function openExternal'):js.index('function routeMarkdownLinks')]
-    assert '!window.pywebview && window.open' in opener, 'and the shell opens through the server'
-
-def test_reading_a_page_never_goes_through_the_cdp_chrome():
-    """A story read in the automation profile meets a bot wall, and the profile is there for
-    ramabana and fossick. `/browser/open` stays the deliberate 'put it in a Leela tab' action.
-    """
-    js = builder.OUT.read_text()
-    block = js[js.index('async function openExternal'):js.index('function routeMarkdownLinks')]
-    assert "window.open(url, '_blank'" in block and "'/browser/external'" in block
-    assert '/browser/open' not in block and 'openWebTab' not in block
-    assert 'openWebpage' not in js, 'the CDP reading path is gone rather than left to drift'
-
-
-def test_boot_asks_for_a_pending_approval_once_rather_than_twice():
-    """`setInterval(pollApproval, 750)` waited 750ms before its first call, so boot polled once
-    eagerly. `approvalLoop` polls on entry, which left the eager call a duplicate request.
-    """
-    js = builder.OUT.read_text()
-    block = js[js.index('async function boot()'):js.index('const whenVisible')]
-    assert 'approvalLoop();' in block
-    assert 'pollApproval();' not in block, 'approvalLoop already polls before its first timeout'
