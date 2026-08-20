@@ -1216,6 +1216,59 @@ def test_the_sse_endpoint_streams_the_real_app():
     d = _j.loads(done.strip())
     assert d['ok'] and 'edits' in d and d['activity']
 
+def test_httpcore_does_not_reclose_a_generator_during_generator_exit():
+    import httpcore2._utils as core_utils
+    closed = []
+    async def stream():
+        try: yield b'chunk'
+        finally: closed.append(True)
+    async def run():
+        iterator = stream()
+        assert await anext(iterator) == b'chunk'
+        try:
+            async with core_utils.safe_async_iterate(iterator): raise GeneratorExit
+        except GeneratorExit: pass
+        assert iterator.ag_frame is not None
+        async with core_utils.safe_async_iterate(iterator): pass
+    asyncio.run(run())
+    assert closed == [True]
+
+def test_fasttransport_uses_the_sse_context_for_malformed_events():
+    import fasttransport.core as ft
+    class Response:
+        headers = {}
+        def raise_for_status(self): pass
+    class Source:
+        response = Response()
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def __aiter__(self): return self
+        async def __anext__(self): return type('Event', (), {'data': '{'})()
+    class Client:
+        def stream(self, *args, **kwargs): raise AssertionError('stream() bypassed the SSE context')
+        def sse(self, *args, **kwargs): return Source()
+    async def run():
+        with pytest.raises(ft.ProtocolError):
+            async for _ in ft.AsyncTransport(client=Client()).stream('GET', 'https://example.test'): pass
+    asyncio.run(run())
+
+def test_agent_stream_turns_backend_errors_into_messages_and_recovers(monkeypatch):
+    ws = Workspace(roots=[])
+    calls = []
+    def ask_stream(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1: raise json.JSONDecodeError('unterminated provider response', '', 0)
+        yield 'recovered'
+    monkeypatch.setattr(ws, 'ask_stream', ask_stream)
+    with TestClient(ide_app(ws)) as client:
+        first = client.get('/agent/stream', params={'prompt': 'first'}).text
+        second = client.get('/agent/stream', params={'prompt': 'second'}).text
+    assert 'event: chunk' in first
+    assert 'JSONDecodeError: unterminated provider response' in first
+    assert 'event: error' not in first
+    assert 'event: done' in first
+    assert 'recovered' in second and 'event: done' in second
+
 def test_agent_stream_rejects_a_second_turn_while_busy(tmp_path):
     from starlette.testclient import TestClient
     from leela.app import ide_app

@@ -63,6 +63,51 @@ from .agent.runtime import estimate_tokens
 
 __all__ = ['ide_app', 'serve_ide']
 
+def _patch_fasttransport():
+    "Keep the response context as the sole owner of an SSE iterator's cleanup."
+    import fasttransport.core as ft
+    if getattr(ft.AsyncTransport.stream, '_leela_patched', False): return
+    from contextlib import asynccontextmanager
+    from inspect import isasyncgen
+    import httpcore2._utils as core_utils
+    import httpcore2._async.connection_pool as connection_pool
+    import httpcore2._async.http11 as http11
+    import httpcore2._async.http2 as http2
+    @asynccontextmanager
+    async def safe_async_iterate(iterable_or_iterator):
+        iterator = iterable_or_iterator if hasattr(iterable_or_iterator, '__anext__') else iterable_or_iterator.__aiter__()
+        try: yield iterator
+        except GeneratorExit: raise
+        finally:
+            if isasyncgen(iterator) and sys.exc_info()[0] is not GeneratorExit: await iterator.aclose()
+    core_utils.safe_async_iterate = safe_async_iterate
+    connection_pool.safe_async_iterate = safe_async_iterate
+    http11.safe_async_iterate = safe_async_iterate
+    http2.safe_async_iterate = safe_async_iterate
+    async def stream(self, method, url, *, headers=None, params=None, json=None, data=None, files=None):
+        async with self._client() as client:
+            async with client.sse(url, method=method, headers=self._request_headers(headers, files=files),
+                                  params=params, json=json, data=data, files=files, max_event_size=None) as source:
+                resp = source.response
+                try: resp.raise_for_status()
+                except ft.httpx2.HTTPStatusError as e:
+                    try: await resp.aread()
+                    except Exception: pass
+                    e.args = (f'{e}\n{resp.text}',)
+                    raise
+                if 'content-type' not in resp.headers: resp.headers['content-type'] = 'text/event-stream'
+                async for event in source:
+                    if not event.data: continue
+                    if event.data == '[DONE]': return
+                    try: raw = ft.jsonlib.loads(event.data)
+                    except ft.jsonlib.JSONDecodeError as e: raise ft.ProtocolError(f'Invalid SSE JSON: {e}') from e
+                    if isinstance(raw, dict): yield raw
+                    else: raise ft.ProtocolError(f'Expected SSE JSON object, got {type(raw).__name__}')
+    stream._leela_patched = True
+    ft.AsyncTransport.stream = stream
+
+_patch_fasttransport()
+
 BLOCKS = [keys_block, settings_block, search_block, memory_block, vault_block,
           research_block, browser_block, term_block, runs_block, workspace_block, git_block,
           workflows_block, pipelines_block, drive_block, stack_block,
@@ -2111,7 +2156,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                     context_path = nb.path if nb is not None else ''
                     for c in ws.ask_stream(q, attachments=attachments, reasoning=reasoning,
                                            context=context, context_path=context_path): out.put(('chunk', c))
-                except Exception as e: out.put(('error', errstr(e)))
+                except Exception as e: out.put(('chunk', errstr(e)))
                 finally: out.put((done, None))
             loop = asyncio.get_running_loop()
             task = loop.run_in_executor(None, pump)
