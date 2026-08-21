@@ -1,43 +1,16 @@
 "The web IDE."
 
 from __future__ import annotations
-import ast, asyncio, ipaddress, json, os, re, shutil, subprocess, sys, warnings
+import asyncio, ipaddress, json, os, re, sys, warnings
 from itertools import accumulate
-from urllib.parse import quote
 from fasthtml.common import *
 from starlette.middleware import Middleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.routing import WebSocketRoute
 
-from .blocks.agent.turns import activity_changes as _activity_changes
-from .blocks.agent.turns import edit_diffs as _edit_diffs
-from .blocks.agent.turns import tool_schemas as _tool_schemas
+from .blocks import BLOCKS
 from .core.inspectors import PROFILES, SORTS
 from . import errstr
-from .blocks import browser as browser_block
-from .blocks import agent as agent_block
-from .blocks import debug as debug_block
-from .blocks import drive as drive_block
-from .blocks import editor as editor_block
-from .blocks import fs as fs_block
-from .blocks import git as git_block
-from .blocks import keys as keys_block
-from .blocks import lsp as lsp_block
-from .blocks import memory as memory_block
-from .blocks import pipelines as pipelines_block
-from .blocks import research as research_block
-from .blocks import refactor as refactor_block
-from .blocks import runs as runs_block
-from .blocks import runtime as runtime_block
-from .blocks import search as search_block
-from .blocks import settings as settings_block
-from .blocks import stack as stack_block
-from .blocks import term as term_block
-from .blocks import tabs as tabs_block
-from .blocks import vars as vars_block
-from .blocks import vault as vault_block
-from .blocks import workflows as workflows_block
-from .blocks import workspace as workspace_block
 from .blocks.term.app import term_cwd
 from .core.ui import bar as btn_bar
 from .core import DebugState, DocStore, RunState, connect_all
@@ -53,27 +26,17 @@ from .core.web import asset as _asset
 from .core.web import diff_payload as _diff
 from .core.web import fail as _fail
 from .core.web import off_loop as _off_loop
-from .core.web import sse as _sse
 from .core.web import Assets, static_dirs
-from .core.text import did_you_mean, fuzzy_rank
+from .core.text import did_you_mean
 from .core.text import md_block_diff, md_blocks, md_change_kinds
-from .blocks.fs.fs import lang_for
-from .blocks.debug.debug import frame_path, open_path
-from .blocks.git.git import GitRepo, GitError
+from .blocks.debug.debug import notebook_state_ui, paused_kernel
 from .core.keys import by_scope, chord_display, toast_rows
-from .blocks.nb.nb import Notebook, Cell
+from .blocks.nb.nb import Notebook
 from .blocks.term.term import TerminalGate, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
 from .workspace import STEP_RANGE, TOOL_RANGE, Workspace
-from .agent.core import model_note
-from .agent.runtime import estimate_tokens
 
 __all__ = ['ide_app', 'serve_ide']
 
-BLOCKS = [keys_block, settings_block, search_block, memory_block, vault_block, debug_block,
-          agent_block,
-          research_block, browser_block, term_block, runs_block, workspace_block, git_block,
-          workflows_block, pipelines_block, drive_block, stack_block,
-          fs_block, lsp_block, vars_block, runtime_block, tabs_block, editor_block, refactor_block]
 
 def _term_python(ws, cwd=None):
     "The interpreter a terminal opened at `cwd` should be inside. See `python_for`."
@@ -120,81 +83,6 @@ def _python_diagnostics(source, filename='<cell>'):
                           'message': str(warning.message), 'source': 'Python',
                           'code': warning.category.__name__})
     return found
-
-
-def _assigned_lines(source):
-    "Top-level bindings made by Python source, as ``[(line, name)]``."
-    try: tree = ast.parse(source or '')
-    except SyntaxError: return []
-    found = []
-    def target(node, line=None):
-        if isinstance(node, ast.Name): found.append((line or node.lineno, node.id))
-        elif isinstance(node, (ast.Tuple, ast.List)):
-            for child in node.elts: target(child, line)
-        elif isinstance(node, ast.Starred): target(node.value, line)
-    class Bindings(ast.NodeVisitor):
-        def visit_Assign(self, node):
-            for t in node.targets: target(t, node.lineno)
-            self.visit(node.value)
-        def visit_AnnAssign(self, node):
-            target(node.target, node.lineno)
-            if node.value: self.visit(node.value)
-        def visit_AugAssign(self, node): target(node.target, node.lineno); self.visit(node.value)
-        def visit_NamedExpr(self, node): target(node.target, node.lineno); self.visit(node.value)
-        def visit_For(self, node):
-            target(node.target, node.lineno)
-            for child in (*node.body, *node.orelse): self.visit(child)
-        visit_AsyncFor = visit_For
-        def visit_With(self, node):
-            for item in node.items:
-                if item.optional_vars: target(item.optional_vars, node.lineno)
-            for child in node.body: self.visit(child)
-        visit_AsyncWith = visit_With
-        def visit_Import(self, node):
-            for a in node.names: found.append((node.lineno, a.asname or a.name.split('.')[0]))
-        visit_ImportFrom = visit_Import
-        def visit_FunctionDef(self, node): found.append((node.lineno, node.name))
-        visit_AsyncFunctionDef = visit_FunctionDef
-        def visit_ClassDef(self, node): found.append((node.lineno, node.name))
-    Bindings().visit(tree)
-    return list(dict.fromkeys(found))
-
-def _inline_values(source, groups, outputs=(), result_info=None):
-    "Kernel values for bindings and a final expression, located on their source lines."
-    rows = {n.get('name'): n for g in groups or [] for n in g.get('nodes', [])}
-    out = []
-    for line, name in _assigned_lines(source):
-        if (row := rows.get(name)) is not None:
-            out.append({'line': line, 'name': name, 'value': row.get('value', ''),
-                        'type': row.get('type', ''), 'shape': row.get('shape'),
-                        'dtype': row.get('dtype'), 'is_grid': bool(row.get('is_grid')),
-                        'accessor': row.get('accessor') or [name]})
-    output_result = first(o for o in reversed(outputs or ()) if o.get('output_type') == 'execute_result')
-    if output_result:
-        try:
-            expr = ast.parse(source or '').body[-1]
-            if isinstance(expr, ast.Expr):
-                root = expr.value
-                while isinstance(root, (ast.Attribute, ast.Subscript, ast.Call)):
-                    root = root.value if not isinstance(root, ast.Call) else root.func
-                name = root.id if isinstance(root, ast.Name) else 'result'
-                value = (output_result.get('data') or {}).get('text/plain', '')
-                info = dict(result_info or {})
-                out.append({'line': expr.lineno, 'name': name, 'value': info.get('value', value),
-                            'type': info.get('type', 'result'), 'shape': info.get('shape'),
-                            'dtype': info.get('dtype'), 'is_grid': bool(info.get('is_grid')),
-                            'is_container': bool(info.get('is_container')),
-                            'accessor': info.get('accessor') or ['_']})
-        except (SyntaxError, IndexError): pass
-    return out
-
-async def _cell_extras(k, cell):
-    "Inspector rows and the rich last result for a finished cell, or `(None, None)`."
-    if not k or cell.has_error: return None, None
-    rows = await k.api('/api/rows', {'profile': 'full', 'sort': 'name'}, timeout=2)
-    has_result = any(o.get('output_type') == 'execute_result' for o in cell.outputs)
-    latest = await k.api('/api/result', timeout=2) if has_result else None
-    return rows, (latest or {}).get('result')
 
 
 async def _explain(k, err, scope='live'):
@@ -749,25 +637,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     def _doc():
         t = ws.tab
         return None if t is None else _docs.get(t.path or t.title)
-    def _dbg(method=None):
-        "The kernel holding the paused notebook debugger, when it can serve `method`."
-        k = _debugstate.kernel
-        return k if k is not None and (method is None or hasattr(k, method)) else None
-    def _open_path(path): return open_path(ws.fs, path)
-    def _debug_ui(state):
-        "Map temporary cell sources back to the notebook and mark project files safe to open."
-        state.update(origin_path=_debugstate.origin_path, cell_id=_debugstate.cell_id)
-        temp = state.get('source')
-        cell_sources = _debugstate.cell_sources
-        for frame in state.get('frames', []):
-            path = frame_path(frame)
-            cell_id = cell_sources.get(path)
-            if path == temp or cell_id:
-                frame['open_path'] = _debugstate.origin_path or ''
-                frame['cell_id'] = cell_id or _debugstate.cell_id or ''
-            else:
-                frame['open_path'] = _open_path(path)
-        return state
+    def _dbg(method=None): return paused_kernel(_debugstate, method)
+    def _debug_ui(state): return notebook_state_ui(_debugstate, ws.fs, state)
     def _previous_runs():
         "A reset namespace makes every saved output historical, even though it remains useful."
         _docstore.mark_all_stale()
@@ -828,339 +699,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         try: ws.add_root(path); ws.save(); note_folder(path)
         except Exception as e: return _fail(str(e))
         return _shell(ws, gate)
-    @rt('/nb/run')
-    async def nb_run(req):
-        "Run one cell against its submitting tab's kernel and return its outputs."
-        d = await req.json()
-        owner_tab, nb, run_lock = _run_owner(d)
-        i = int(d.get('i', 0))
-        if nb is None: return _fail('no notebook open')
-        if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
-            return _fail('that cell is no longer at this position', 409)
-        nb[i].source = d.get('source', nb[i].source)
-        async with run_lock:
-            k = await _k(owner_tab)
-            owner_tab.running += 1
-            try: c = await nb.run(i, k)
-            finally: owner_tab.running = max(0, owner_tab.running - 1)
-        if owner_tab: owner_tab.dirty = True
-        rows, result = await _cell_extras(k, c)
-        return {'ok': not c.has_error, 'i': i, 'cell': c.dict(), 'result': result,
-                'inline': _inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)}
-    @rt('/nb/run/stream')
-    async def nb_run_stream(req):
-        "Run a cell while streaming its evolving Jupyter outputs as SSE."
-        d = await req.json()
-        owner_tab, nb, run_lock = _run_owner(d)
-        i = int(d.get('i', 0))
-        if nb is None: return _fail('no notebook open')
-        if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
-            return _fail('that cell is no longer at this position', 409)
-        nb[i].source = d.get('source', nb[i].source)
-        await _off_loop(ws.initialize_empty_notebooks, ws.cwd_for(owner_tab))
-        await run_lock.acquire()
-        try: k = await _k(owner_tab)
-        except BaseException:
-            run_lock.release()
-            raise
-        async def events():
-            q = asyncio.Queue()
-            if owner_tab: owner_tab.running += 1
-            def emitted(_i, _output): q.put_nowait([dict(x) for x in nb[i].outputs])
-            task = asyncio.create_task(nb.run(i, k, on_output=emitted))
-            run_key = ((owner_tab.path or owner_tab.title) if owner_tab else '', nb[i].id)
-            running_cells[run_key] = (k, task)
-            try:
-                while not task.done() or not q.empty():
-                    try: outputs = await asyncio.wait_for(q.get(), 0.12)
-                    except asyncio.TimeoutError: continue
-                    while not q.empty(): outputs = q.get_nowait()
-                    yield _sse('output', {'i': i, 'outputs': outputs})
-                c = await task
-                if owner_tab: owner_tab.dirty = True
-                rows, result = await _cell_extras(k, c)
-                yield _sse('done', {'ok': not c.has_error, 'i': i, 'cell': c.dict(), 'result': result,
-                                    'inline': _inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)})
-            except Exception as e:
-                yield _sse('error', {'text': errstr(e)})
-            finally:
-                owner_tab.running = max(0, owner_tab.running - 1)
-                if running_cells.get(run_key, (None,))[1:] == (task,): running_cells.pop(run_key, None)
-                if not task.done(): task.cancel()
-                run_lock.release()
-        return StreamingResponse(events(), media_type='text/event-stream',
-                                 headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-    @rt('/nb/debug/stream')
-    async def nb_debug_stream(req):
-        "Debug one code cell through ipykernel's Jupyter Debug Protocol."
-        d = await req.json()
-        owner_tab, nb, run_lock = _run_owner(d)
-        i = int(d.get('i', 0))
-        if nb is None or not (0 <= i < len(nb)):
-            return _fail(f'no cell {i}')
-        if d.get('id') and nb[i].id != d['id']:
-            return _fail('that cell is no longer at this position', 409)
-        if nb[i].cell_type != 'code': return _fail('only code cells can be debugged')
-        nb[i].source = d.get('source', nb[i].source)
-        await run_lock.acquire()
-        try: k = await _k(owner_tab)
-        except BaseException:
-            run_lock.release()
-            raise
-        if getattr(k, 'kernel_kind', None) != 'ipykernel' or not hasattr(k, 'debug_start'):
-            run_lock.release()
-            return _fail('cell debugging currently requires a direct ipykernel runtime')
-        if _debugstate.paused:
-            run_lock.release()
-            return _fail('a debugger session is already active', 409)
-        breakpoints = d.get('breakpoints') or []
-        _debugstate.kernel, _debugstate.origin_path, _debugstate.cell_id = k, owner_tab.path, nb[i].id
-        async def events():
-            q, c = asyncio.Queue(), nb[i]
-            c.clear(); c.running = True
-            if owner_tab: owner_tab.running += 1
-            started = asyncio.get_running_loop().time()
-            try:
-                notebook_sources = [(cell.id, cell.source) for cell in nb.cells if cell.cell_type == 'code']
-                verified = await k.debug_start(c.source, breakpoints, notebook_sources)
-                yield _sse('ready', {'i': i, 'breakpoints': verified})
-                def output(_out): q.put_nowait(('output', None))
-                def debug(event): q.put_nowait(('debug', event))
-                task = asyncio.create_task(k.execute(c.source, on_output=output, on_debug=debug))
-                while not task.done() or not q.empty():
-                    try: kind, value = await asyncio.wait_for(q.get(), .12)
-                    except asyncio.TimeoutError: continue
-                    if kind == 'output':
-                        continue
-                    if value.get('event') == 'stopped':
-                        state = await k.debug_state((value.get('body') or {}).get('threadId'))
-                        yield _sse('stopped', _debug_ui(state))
-                    elif value.get('event') == 'continued':
-                        yield _sse('continued', value.get('body') or {})
-                result = await task
-                c.outputs, c.execution_count = result.outputs, result.execution_count
-                c.execution_ms = (asyncio.get_running_loop().time() - started) * 1000
-                c.fresh = True
-                if owner_tab: owner_tab.dirty = True
-                yield _sse('done', {'ok': result.ok, 'i': i, 'cell': c.dict(),
-                                    'error': result.error})
-            except Exception as e:
-                yield _sse('error', {'text': errstr(e)})
-            finally:
-                c.running = False
-                owner_tab.running = max(0, owner_tab.running - 1)
-                try: await k.debug_stop()
-                except Exception: pass
-                if _debugstate.kernel is k: _debugstate.clear()
-                run_lock.release()
-        return StreamingResponse(events(), media_type='text/event-stream',
-                                 headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-    @rt('/nb/debug/state')
-    async def nb_debug_state(frame_id: int = 0):
-        if (k := _dbg('debug_state')) is None: return _fail('no ipykernel debugger is active')
-        try:
-            state = await k.debug_state(frame_id=frame_id or None)
-            return _debug_ui(state)
-        except Exception as e: return _fail(e)
-    @rt('/nb/debug/source')
-    async def nb_debug_source(frame_id: int):
-        "Source for a stack frame outside the workspace, addressed by trusted frame id—not a client path."
-        if (k := _dbg()) is None: return _fail('no ipykernel debugger is active')
-        try:
-            state = await k.debug_state(frame_id=frame_id)
-            frame = first(f for f in state.get('frames', []) if f.get('id') == frame_id)
-            if frame is None: return _fail('debug frame is no longer available')
-            source = frame.get('source') or {}
-            reply = await k.debug_request('source', {'source': source,
-                                                      'sourceReference': source.get('sourceReference', 0)})
-            return {'content': reply.get('body', {}).get('content', ''), 'line': frame.get('line'),
-                    'path': source.get('path', ''), 'name': frame.get('name', '')}
-        except Exception as e: return _fail(e)
-    @rt('/nb/debug/variables')
-    async def nb_debug_variables(reference: int):
-        if (k := _dbg('debug_variables')) is None: return _fail('no ipykernel debugger is active')
-        try: return {'variables': await k.debug_variables(reference)}
-        except Exception as e: return _fail(e)
-    @rt('/nb/debug/evaluate')
-    async def nb_debug_evaluate(req):
-        d, k = await req.json(), _dbg('debug_evaluate')
-        if k is None: return _fail('no ipykernel debugger is active')
-        try:
-            body = await k.debug_evaluate(d.get('code', ''), d.get('frame_id'))
-            return {'ok': True, **body}
-        except Exception as e: return _fail(e)
-    @rt('/nb/debug/control')
-    async def nb_debug_control(req):
-        d, k = await req.json(), _dbg('debug_control')
-        if k is None: return _fail('no ipykernel debugger is active')
-        try:
-            await k.debug_control(d.get('command', ''), d.get('thread_id'))
-            return {'ok': True, 'command': d.get('command')}
-        except Exception as e: return _fail(e)
-    @rt('/nb/debug/stop')
-    async def nb_debug_stop():
-        if (k := _dbg('debug_stop')) is None: return _fail('no ipykernel debugger is active')
-        try:
-            await k.debug_stop()
-            await k.interrupt()
-            return {'ok': True}
-        except Exception as e: return _fail(e)
-    @rt('/nb/ask')
-    async def nb_ask(req):
-        "Run a prompt cell: the assistant answers, with the notebook above it as context."
-        d = await req.json()
-        nb, i = _doc(), int(d.get('i', 0))
-        if nb is None: return _fail('no notebook open')
-        if not (0 <= i < len(nb)): return _fail(f'no cell {i}')
-        nb[i].source = d.get('source', nb[i].source)
-        try: c = await _off_loop(ws.ask_cell, nb, i)
-        except Exception as e: return _fail(e)
-        if ws.tab: ws.tab.dirty = True
-        a = ws.inline_ai
-        return {'ok': a.ready, 'i': i, 'cell': c.dict(), 'note': a.note,
-                'problems': a.problems,
-                'cells': [x.dict() for x in nb.cells],
-                'activity': a.activity.rows(mark=a.activity._mark),
-                'edits': _edit_diffs(a)}
-    @rt('/nb/ask/stream')
-    async def nb_ask_stream(req):
-        "Stream a prompt cell into its own reply area as markdown arrives."
-        d = await req.json()
-        nb, i = _doc(), int(d.get('i', 0))
-        if nb is None: return _fail('no notebook open')
-        if not (0 <= i < len(nb)): return _fail(f'no cell {i}')
-        nb[i].source = d.get('source', nb[i].source)
-        nb[i].running = True
-        owner_tab = ws.tab
-        if owner_tab: owner_tab.running += 1
-        a = ws.inline_ai
-        async def events():
-            import queue as _q
-            out, done = _q.Queue(), object()
-            def pump():
-                try:
-                    for chunk in ws.ask_cell_stream(nb, i): out.put(('chunk', chunk))
-                except Exception as e: out.put(('error', errstr(e)))
-                finally: out.put((done, None))
-            task = asyncio.get_running_loop().run_in_executor(None, pump)
-            approval_id, activity_versions = None, {}
-            def changed_activity(): return _activity_changes(a, activity_versions)
-            try:
-                while True:
-                    try: kind, value = await _off_loop(out.get, True, 0.25)
-                    except _q.Empty: kind = value = None
-                    pending = ws.pending_approval
-                    if pending is not None and pending.id != approval_id:
-                        approval_id = pending.id
-                        proposal = {**pending.dict(), 'schemas': _tool_schemas(a)}
-                        yield _sse('approval', proposal)
-                    for row in changed_activity(): yield _sse('activity', row)
-                    if await req.is_disconnected():
-                        a.cancel()
-                        return
-                    if kind is None: continue
-                    if kind is done:
-                        for row in changed_activity(): yield _sse('activity', row)
-                        break
-                    yield _sse(kind, {'text': value})
-                await task
-                c = nb[i]
-                yield _sse('done', {'ok': a.ready, 'i': i, 'cell': c.dict(), 'note': a.note,
-                                    'usage': a.turn_use.dict(), 'usage_label': repr(a.turn_use),
-                                    'problems': a.problems,
-                                    'cells': [x.dict() for x in nb.cells],
-                                    'activity': a.activity.rows(mark=a.activity._mark),
-                                    'edits': _edit_diffs(a)})
-            finally:
-                nb[i].running = False
-                if owner_tab is not None:
-                    owner_tab.running = max(0, owner_tab.running - 1)
-                    owner_tab.dirty = True
-        return StreamingResponse(events(), media_type='text/event-stream',
-                                 headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-    @rt('/nb/edit')
-    async def nb_edit(req):
-        "Structural edits: insert / delete / move / type / split / merge."
-        d = await req.json()
-        nb = _doc()
-        if nb is None: return _fail('no notebook open')
-        op, i = d.get('op'), int(d.get('i', 0))
-        for src in d.get('sources', []):
-            j = int(src.get('i', -1))
-            if 0 <= j < len(nb): nb[j].source = src.get('source', nb[j].source)
-        if op == 'insert': nb.insert(i, Cell(source=d.get('source', ''), cell_type=d.get('cell_type', 'code')))
-        elif op == 'delete': nb.delete(i)
-        elif op == 'delete_many': nb.delete_many(d.get('indices') or [i])
-        elif op == 'move': nb.move(i, int(d.get('d', 1)))
-        elif op == 'move_many': i = nb.move_many(d.get('indices') or [i], int(d.get('target', i)))
-        elif op == 'type':
-            nb.cycle_type(i) if d.get('cycle') else nb.set_type(i, d.get('cell_type', 'code'))
-        elif op == 'split': nb.split(i, int(d.get('offset', 0)))
-        elif op == 'duplicate': nb.duplicate(i)
-        elif op in ('paste', 'paste_many'):
-            raws = d.get('cells') if op == 'paste_many' else [d.get('cell')]
-            if not isinstance(raws, list) or not raws or not all(isinstance(raw, dict) for raw in raws):
-                return _fail('cell clipboard is empty')
-            fields = Cell.__dataclass_fields__
-            try: pasted = [Cell(**{name: raw[name] for name in fields if name in raw}) for raw in raws]
-            except (TypeError, ValueError) as e: return _fail(f'invalid cell clipboard: {e}')
-            nb.paste_many(i, pasted)
-        elif op == 'merge_above': nb.merge(i - 1) if i > 0 else None
-        elif op == 'merge_below': nb.merge(i)
-        elif op == 'clear_cell': nb.clear_cell(i)
-        elif op == 'undo':
-            if (at := nb.undo()) is None: return _fail('no cell operation to undo')
-        elif op == 'redo':
-            if (at := nb.redo()) is None: return _fail('no cell operation to redo')
-        elif op == 'merge': nb.merge(i)
-        elif op == 'source':
-            nb[i].source = d.get('source', '')
-            nb.dirty = True
-        elif op == 'context':
-            mode = str(d.get('mode') or 'auto')
-            if mode not in ('auto', 'keep', 'discard'): return _fail('context mode must be auto, keep or discard')
-            nb._checkpoint(i)
-            nb[i].context_mode = mode
-            nb.dirty = True
-        elif op == 'clear': nb.clear_all()
-        else: return _fail(f'unknown op {op!r}')
-        if ws.tab: ws.tab.dirty = nb.dirty
-        return {'ok': True, 'cells': [c.dict() for c in nb.cells],
-                'index': at if op in ('undo', 'redo') else i}
-    @rt('/nb/save')
-    async def nb_save(req):
-        d=await req.json();path=str(d.get('path') or '')
-        t=(first(x for x in ws.tabs if x.path==path) if path else ws.tab)
-        if t is None:return _fail('nothing open')
-        current_version = _disk_version(t.path)
-        base_version = str(d.get('base_disk_version') or '')
-        if base_version and current_version != base_version and not d.get('force'):
-            return _fail('the file changed on disk after this browser draft began; review it before overwriting', 409)
-        try:
-            target = t.path or d.get('path')
-            before = Path(target).read_text(encoding='utf-8', errors='replace') if target and Path(target).exists() else None
-            if t.kind == 'notebook':
-                nb=_docs.get(t.path or t.title)
-                if nb is None:
-                    try:nb=Notebook.load(t.path) if t.path else Notebook.blank()
-                    except Exception:return _fail('no notebook')
-                    _docs[t.path or t.title]=nb
-                for c in d.get('cells', []):
-                    if 0 <= c['i'] < len(nb): nb[c['i']].source = c['source']
-                nb.save(t.path or d.get('path'), sandbox=ws.fs)
-            else:
-                ws.fs.write(t.path, d.get('text', ''))
-                _buffers.pop(t.path or t.title, None)
-            t.dirty = False
-            _buffer_bases.pop(t.path or t.title, None)
-            # what is cached now matches the file again, so this is the version it was read at
-            _doc_versions[t.path or t.title] = _disk_version(t.path)
-            after = Path(target).read_text(encoding='utf-8', errors='replace') if target and Path(target).exists() else None
-            operation = ws.journal.record(f'Save {t.title}', [(target, before, after)], kind='save')
-            return {'ok': True, 'path': t.path, 'disk_version': _disk_version(t.path),
-                    'operation_id': operation['id'] if operation else ''}
-        except Exception as e:
-            return _fail(e)
     @rt('/tabs/save-all')
     async def tabs_save_all():
         "Persist every dirty open tab, including buffers belonging to inactive tabs."
@@ -1411,15 +949,6 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         return {'ok': True, 'bytes': len(png)}
 
 
-    @rt('/nb/interrupt')
-    async def nb_interrupt(req):
-        "Interrupt one exact running cell, force-restarting its managed kernel if needed."
-        d = await req.json()
-        item = running_cells.get((d.get('path') or '', d.get('id') or ''))
-        if item is None: return _fail('that cell is not running')
-        k, _task = item
-        if not hasattr(k, 'stop'): return _fail('this external runtime cannot be stopped safely')
-        return await k.stop(timeout=2.0)
     connect_all(app, ws, BLOCKS, docs=_docstore, debug=_debugstate, running=_runstate, gate=gate,
                 catalog=workspace_catalog)
     return app

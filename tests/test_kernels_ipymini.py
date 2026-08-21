@@ -269,7 +269,6 @@ def test_fallback_when_ipymini_missing(monkeypatch):
     assert any('ipymini' in str(w.message).lower() for w in ws)
 
 def test_cli_default_kernel_is_ipykernel(monkeypatch):
-    import argparse
     from leela import cli
     seen = {}
     def fake_run(roots, **kw): seen.update(kw); seen['_roots'] = roots

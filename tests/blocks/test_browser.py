@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio, base64, functools, http.server, json, threading
+import asyncio, functools, http.server, json, threading
 from pathlib import Path
 
 import pytest

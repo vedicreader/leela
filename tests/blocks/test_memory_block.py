@@ -8,7 +8,6 @@ from leela.core.block import Ctx
 from fasthtml.common import to_xml
 from leela.blocks.vault.ui import PII_COVERS, _tidy_row, job_card, pii_badge, tidy_list, vault_panel
 from leela.blocks.keys.menus import MENUS
-from leela.blocks.memory.memory import Memory
 from leela.core.keys import lookup
 
 def test_a_clip_is_reachable_everywhere_and_wears_what_was_found_in_it():
@@ -68,7 +67,6 @@ class _Jobs:
 def _mem(tmp_path, shelf='proj'): return Memory(shelf=shelf, path=tmp_path/'v.db', offline=True)
 
 
-
 def test_the_tidy_list_is_asked_for_rather_than_rendered_with_the_panel(tmp_path):
     "Ranking reads every document, so the panel ships an empty target and a button."
     panel = to_xml(vault_panel(_mem(tmp_path), _Jobs()))
@@ -78,8 +76,6 @@ def test_the_tidy_list_is_asked_for_rather_than_rendered_with_the_panel(tmp_path
 def test_an_empty_shelf_says_so_instead_of_rendering_no_rows(tmp_path):
     html = to_xml(tidy_list(_mem(tmp_path)))
     assert 'id="vaulttidy"' in html and 'too small to have an opinion' in html
-
-
 
 
 def test_oneshot_seed_replays_without_a_live_model(tmp_path):

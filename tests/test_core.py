@@ -14,9 +14,9 @@ from leela.core import Ctx, connect_all
 from leela.app import BLOCKS, ide_app
 from leela.workspace import Workspace
 ROOT = Path(__file__).resolve().parents[1]
-from leela.core import (APP, CAPABILITIES, Ctx, DebugState, DocStore, MemoryPort, RunState,
-                        RuntimePort, SearchPort, connect_all)
-from leela.core.text import (DiffRow, closest, diff_label, diff_rows, diff_stat,
+from leela.core import (CAPABILITIES, DebugState, DocStore, MemoryPort, RunState,
+                        RuntimePort, SearchPort)
+from leela.core.text import (closest, diff_label, diff_rows, diff_stat,
                                 did_you_mean, fuzzy_rank, udiff)
 from leela.blocks.fs.fs import Sandbox
 from leela.core.session import OperationJournal
@@ -27,7 +27,6 @@ from leela.blocks.settings.settings import DEFAULT_SETTINGS, Settings
 import asyncio
 from leela.core.envs import EnvStore
 from tests.conftest import TEST_CONFIG_HOME
-from leela.app import ide_app
 from fastcore.all import Path
 
 @pytest.fixture(scope='module')
@@ -135,7 +134,6 @@ def test_git_pathspecs_from_the_browser_cannot_escape_the_repository(bad):
 @pytest.fixture
 def workspace_client(tmp_path, monkeypatch):
     "A workspace holding two checkouts, served by the real app."
-    import subprocess
     import leela.blocks.git.repos
     monkeypatch.setattr(leela.blocks.git.repos, 'leela_cfg', tmp_path/'cfg')
     def git(cwd, *args): subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True)
@@ -190,8 +188,6 @@ def test_an_unknown_workspace_operation_is_refused(workspace_client):
 @pytest.fixture
 def project_client(tmp_path, monkeypatch):
     "A workspace holding one project with a workflow file and a release plan."
-    import json
-    import subprocess
     import leela.blocks.git.repos
     monkeypatch.setattr(leela.blocks.git.repos, 'leela_cfg', tmp_path/'cfg')
     root = tmp_path/'proj'
@@ -333,8 +329,6 @@ def test_an_unknown_infrastructure_action_is_refused(project_client):
 
 def test_blame_answers_in_cells_for_a_notebook_and_lines_for_a_file(project_client):
     "One route, two shapes, because a notebook blamed as text answers the wrong question."
-    import json
-    import subprocess
     client, root = project_client
     nb = {'cells': [{'cell_type': 'code', 'id': 'c1', 'metadata': {}, 'execution_count': None,
                      'outputs': [], 'source': ['x = 1\n', 'y = 2\n']}],
@@ -771,8 +765,6 @@ def clean_registry():
 
 def test_conformance_checks_a_port_without_constructing_it():
     from leela.agent.runtime import Backend
-    from leela.workspace import Workspace
-    from leela.core import MemoryPort
     for port in ('memory', 'search', 'runtime'):
         assert 'leela' in providers_for(port)
     ws = Workspace(roots=[])
@@ -824,7 +816,6 @@ def test_a_broken_provider_never_falls_back_to_the_builtin(monkeypatch):
 
 def test_a_registered_alternate_is_what_the_workspace_builds(monkeypatch):
     "End to end: the switch really changes what a Workspace ends up holding."
-    from leela.workspace import Workspace
     sentinel = object()
     providers.register('memory', 'fake', lambda **kw: sentinel)
     monkeypatch.setenv('LEELA_MEMORY', 'fake')
@@ -832,7 +823,6 @@ def test_a_registered_alternate_is_what_the_workspace_builds(monkeypatch):
 
 def test_the_default_workspace_still_builds_the_builtin(monkeypatch):
     from leela.blocks.memory.memory import Memory
-    from leela.workspace import Workspace
     monkeypatch.delenv('LEELA_MEMORY', raising=False)
     assert isinstance(Workspace(roots=[]).memory, Memory)
 
@@ -958,7 +948,6 @@ def test_the_config_dir_stays_inside_the_temp_dir():
 
 def test_a_workspace_writes_its_memory_and_journal_under_the_temp_dir(tmp_path):
     "The two a `Workspace` opens on construction, which is how the real store got polluted."
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     assert str(ws.memory.path).startswith(TEST_CONFIG_HOME)
     assert str(ws.journal.path).startswith(TEST_CONFIG_HOME)
@@ -1023,7 +1012,6 @@ def test_the_browser_url_surface_is_unchanged():
 
 
 sys.path.insert(0, str(ROOT/'tools'))
-import build_ide_js as builder  # noqa: E402
 
 def test_an_interpreters_libraries_are_not_the_project(tmp_path):
     "98% of a walk of this repo was site-packages, so `@keys` ranked `libxslt/keys.h` over"
@@ -1062,3 +1050,17 @@ if __name__ == '__main__':
             print(f'{n:>4}  {tag} {m:<{width}}')
         blocks = sum(n for m, n in counts.items() if m.startswith('leela.blocks'))
         print(f'\n{blocks} routes served by blocks, {counts.get(CLOSURE, 0)} still by the ide_app closure')
+
+def test_the_wiring_order_lives_with_the_blocks_not_with_the_application():
+    """`app.py` held 25 aliased imports and the list. A block could not be added without
+    editing the application, and the list could disagree with what is on disk.
+    """
+    from leela import blocks
+    folders = {p.name for p in BLOCKS_DIR.iterdir() if (p/'__init__.py').is_file()}
+    assert set(blocks.NAMES) == folders, 'the order and the folders on disk disagree'
+    assert len(blocks.NAMES) == len(set(blocks.NAMES)), 'a block is wired twice'
+    assert [m.__name__.split('.')[-1] for m in BLOCKS] == list(blocks.NAMES)
+    import ast
+    imported = {a.asname for n in ast.walk(ast.parse((ROOT/'leela/app.py').read_text()))
+                if isinstance(n, ast.ImportFrom) for a in n.names if (a.asname or '').endswith('_block')}
+    assert imported == set(), f'app.py still aliases blocks one by one: {sorted(imported)}'

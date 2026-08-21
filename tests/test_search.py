@@ -8,7 +8,6 @@ from leela.blocks.search.search import Hit, Search
 import time
 import pytest
 from leela.blocks.memory.memory import Memory, _added_epoch, source_kind
-import sys
 from fastcore.all import Path
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -117,7 +116,6 @@ def test_kosha_sync_is_serial(monkeypatch, tmp_path):
     assert 'in_parallel' not in seen
 
 def test_search_keeps_reading_while_the_separate_writer_syncs(monkeypatch,tmp_path):
-    import time
     started,release=threading.Event(),threading.Event()
     current=tmp_path/'core.py'; current.write_text('def live(): pass\n')
     class Reader:
@@ -444,7 +442,6 @@ def test_the_streaming_search_reports_each_backend_as_it_finishes(tmp_path):
     assert legs['ann']['hits'] == [] and 'unavailable' in legs['ann']['note']
 
 def test_the_stream_says_so_when_there_is_nothing_to_search_for(tmp_path):
-    import json as _json
     from starlette.testclient import TestClient
     from leela.app import ide_app
     from leela.workspace import Workspace
@@ -556,4 +553,3 @@ def test_documents_that_were_never_files_are_not_walked(vault):
     assert before == 2, 'only filed documents are candidates'
 
 sys.path.insert(0, str(ROOT/'tools'))
-import build_ide_js as builder  # noqa: E402

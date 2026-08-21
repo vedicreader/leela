@@ -10,7 +10,6 @@ from ramabana.git import git_tools as _git_tools
 from leela.blocks.git.git import GitError, GitRepo, repo_root
 from leela.workspace import Workspace
 import threading
-from leela.blocks.git.git import GitError, GitRepo
 from ramabana.git import GitGateway, classify, gateway
 from leela.blocks.git.repos import MEMBERS, RepoSet, clone_url, discover
 
@@ -488,7 +487,6 @@ NOTEBOOK = {
 }
 
 def write_nb(path, cells):
-    import json
     doc = {**NOTEBOOK, 'cells': cells}
     path.write_text(json.dumps(doc, indent=1) + '\n')
     return path
@@ -547,7 +545,6 @@ def test_an_uncommitted_notebook_line_is_marked_rather_than_attributed(repo_git)
 
 def test_a_notebook_that_cannot_be_mapped_says_so_instead_of_guessing(repo_git):
     "A wrong line here attributes someone else's code to you, so it reports nothing instead."
-    import json
     (repo_git/'min.ipynb').write_text(json.dumps(NOTEBOOK))
     git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', 'minified')
     d = GitRepo.at(repo_git).blame_notebook('min.ipynb')
@@ -559,7 +556,6 @@ def test_a_file_that_is_not_a_notebook_falls_back_to_lines(repo_git):
     assert not d['notebook'] and d['error'] and d['lines'], 'the raw blame is still returned'
 
 def _ipynb(cells):
-    import json
     return json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {}, 'cells': [
         {'cell_type': 'code', 'source': src, 'metadata': {}, 'outputs': [],
          'execution_count': None, 'id': cid} for cid, src in cells]}) + '\n'
@@ -1490,7 +1486,6 @@ def test_the_sync_dialog_survives_the_options_that_carry_no_conflicts(tmp_path):
     import sys
     from pathlib import Path as _P
     sys.path.insert(0, str(_P(__file__).resolve().parents[1]/'tools'))
-    import build_ide_js as builder
     from ramabana.git import GitRepo
     a = _repo(tmp_path/'up', 'main')
     git(a, 'clone', str(a), str(tmp_path/'down'))

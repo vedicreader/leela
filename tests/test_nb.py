@@ -12,10 +12,8 @@ from leela.blocks.fs.app import SERVED_TYPES
 from leela.workspace import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS, Tab, Workspace
 ROOT = Path(__file__).resolve().parents[1]
 from pathlib import Path
-from leela.app import _python_diagnostics, ide_app
-from leela.workspace import Workspace
+from leela.app import _python_diagnostics
 from leela.blocks.fs.fs import lang_for
-from tests.assets import EDITOR, JS as CLIENT
 
 def dialog():
     "A notebook with all three cell types, one prompt answered and one not."
@@ -50,7 +48,6 @@ def test_a_zero_byte_notebook_opens_as_a_new_document(tmp_path):
     assert json.loads(p.read_text())['nbformat'] == 4
 
 def test_project_execution_initializes_only_zero_byte_notebook_placeholders(tmp_path):
-    from leela.workspace import Workspace
     good, empty, malformed = tmp_path/'good.ipynb', tmp_path/'empty.ipynb', tmp_path/'broken.ipynb'
     Notebook.blank(good).save(); empty.touch(); malformed.write_text('{not json')
     ws = Workspace(roots=[tmp_path])
@@ -59,7 +56,6 @@ def test_project_execution_initializes_only_zero_byte_notebook_placeholders(tmp_
     assert malformed.read_text() == '{not json'
 
 def test_creating_an_ipynb_by_filename_writes_valid_json(tmp_path):
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     p = tmp_path / 'new.ipynb'
     ws.create_document(p)
@@ -160,7 +156,6 @@ def test_cell_operations_can_be_undone_and_redone():
     assert [c.id for c in nb.cells] == ['a']
 
 def test_cell_operations_are_undoable_and_keep_their_order():
-    from leela.blocks.nb.nb import Cell, Notebook
     nb = Notebook([Cell(source='a'), Cell(source='b')])
     nb.delete(1)
     nb.undo()
@@ -214,7 +209,6 @@ def test_detached_cell_can_be_pasted_between_notebooks_repeatedly():
 
 def test_an_approval_cell_round_trips_as_plain_markdown(tmp_path):
     "The exchange between the agent and the person is saved with the work."
-    from leela.blocks.nb.nb import Cell, Notebook
     nb = Notebook([Cell(source='fix the bug', cell_type='prompt')])
     c = Cell(source='**🔐 approval needed — `edit_file`**', cell_type='markdown')
     c.approval = {'kind': 'approval', 'id': 'ab12', 'tool': 'edit_file', 'state': 'refused'}
@@ -238,7 +232,6 @@ def test_cell_context_policy_survives_the_notebook_round_trip(tmp_path):
     assert [back[0].context_mode, back[1].context_mode, back[2].context_mode] == ['keep', 'discard', 'auto']
 
 def test_ordinary_cells_carry_no_approval_metadata(tmp_path):
-    from leela.blocks.nb.nb import Cell, Notebook
     nb = Notebook([Cell(source='x = 1')])
     nb.save(p := tmp_path/'d.ipynb')
     assert Notebook.load(p)[0].approval is None

@@ -9,7 +9,7 @@ from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.runtime.kernels import nearest_python, project_python
 from leela.workspace import Workspace
-from tests.assets import CSS, JS, SERVER, read
+from tests.assets import JS, read
 import asyncio
 import sys
 from fastcore.all import Path
@@ -217,7 +217,6 @@ def test_choosing_the_litert_accelerator_is_remembered_and_exported(tmp_path, mo
     ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'ws.json'
     with TestClient(ide_app(ws)) as c:
         assert c.post('/agent/settings', json={'litert_backend': 'gpu'}).json()['litert_backend'] == 'gpu'
-    import os
     assert os.environ['LEELA_LITERT_BACKEND'] == 'gpu' and ws.litert_backend == 'gpu'
     assert ws.state()['litert_backend'] == 'gpu', 'and it is written to the workspace'
     monkeypatch.delenv('LEELA_LITERT_BACKEND', raising=False)
@@ -368,7 +367,7 @@ def test_opening_a_terminal_really_builds_its_argv_from_the_settings(tmp_path):
 
 def test_a_notebook_gets_its_own_project_venv_not_the_last_one_chosen(tmp_path):
     "The reported failure: opening a notebook under `nbs/` ran it in another checkout's venv."
-    from leela.blocks.runtime.kernels import nearest_python, python_for
+    from leela.blocks.runtime.kernels import python_for
     a, b = tmp_path/'repo-a', tmp_path/'repo-b'
     pa, pb = _venv(a), _venv(b)
     (b/'nbs').mkdir(parents=True)
@@ -607,7 +606,6 @@ def test_watching_an_env_that_died_falls_back_rather_than_going_blank(ws, monkey
 
 def test_a_watched_env_executes_through_its_owner_inspector(monkeypatch):
     "A picked runtime has no shell channel, but its inspector owns the live namespace."
-    import asyncio
     e = _EnvClient('http://127.0.0.1:9500', 'api')
     async def answer(path, params=None, timeout=15):
         assert path == '/api/exec' and params == {'code': '1+1', 'scope': 'global'}
@@ -841,9 +839,6 @@ def test_leela_can_redirect_both_transcript_streams(tmp_path):
 
 def test_the_runs_file_follows_the_folder_you_chose(tmp_path):
     "The bug git had, in the runs surface: open one folder, add a second, switch, runs stayed behind."
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     a, b = tmp_path/'leela', tmp_path/'cassowary'
     a.mkdir(); b.mkdir()
     ws = Workspace(roots=[a, b])
@@ -995,7 +990,6 @@ def test_leelas_own_polling_is_not_the_apps_output():
     dhrishti owns that, not leela: it is the one that knows which routes are its own, and it is
     the thing riding in someone else's process. Leela keeps no copy of the route list."""
     import logging, logging.config
-    import dhrishti.serving as ds
     from uvicorn.config import LOGGING_CONFIG
     assert '/api/rows' in ds._own_paths(), 'derived from the app, not hand-copied'
     ds.quiet_access_log(); ds.quiet_access_log()
@@ -1043,8 +1037,6 @@ def test_a_notebook_gets_its_own_repos_venv_without_being_asked(tmp_path):
 def test_closing_the_last_tab_of_a_folder_closes_its_kernel(tmp_path):
     """Only private kernels were closed on `/tab/close`, so a folder kernel outlived every tab that
     used it. Twenty of them accumulated in one session."""
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
     proj, other = tmp_path/'proj', tmp_path/'other'
     proj.mkdir(); other.mkdir()
     a, b = other/'a.py', other/'b.py'
@@ -1067,8 +1059,6 @@ def test_closing_the_last_tab_of_a_folder_closes_its_kernel(tmp_path):
 
 def test_a_folder_kernel_survives_while_any_of_its_tabs_is_open(tmp_path):
     "The folder key names several tabs, so the count that matters is how many are left."
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
     a, b = tmp_path/'a.py', tmp_path/'b.py'
     a.write_text('a = 1\n'); b.write_text('b = 2\n')
     ws = Workspace(roots=[tmp_path])
@@ -1145,7 +1135,6 @@ def _broker_with(n, busy=(), **kw):
 def test_the_kernel_limit_names_the_kernel_it_offers_to_close():
     """`admit` raised a bare RuntimeError, so the UI had nothing to offer but the text. It now
     carries the stalest idle kernel."""
-    import asyncio
     from leela.blocks.runtime.kernels import KernelLimit
     b, pool = _broker_with(3)
     with pytest.raises(KernelLimit) as e: asyncio.run(b.admit(pool, 'new'))
@@ -1184,7 +1173,6 @@ def test_kernel_info_reports_an_auto_eviction_once(tmp_path):
 
 def test_auto_manage_closes_the_stalest_kernel_instead_of_asking():
     "The mute setting: leela manages the ceiling itself and never raises."
-    import asyncio
     b, pool = _broker_with(3, auto_manage=True)
     evicted = asyncio.run(b.admit(pool, 'new'))
     assert 'k2' not in pool.kernels, 'the stalest idle one made room'
@@ -1193,7 +1181,6 @@ def test_auto_manage_closes_the_stalest_kernel_instead_of_asking():
 
 def test_a_ceiling_of_busy_kernels_offers_nothing_and_says_so():
     "Nothing is safe to take, so there is no candidate and auto-manage cannot help either."
-    import asyncio
     from leela.blocks.runtime.kernels import KernelLimit
     for auto in (False, True):
         b, pool = _broker_with(2, busy=(0, 1), auto_manage=auto)
@@ -1202,8 +1189,6 @@ def test_a_ceiling_of_busy_kernels_offers_nothing_and_says_so():
 
 def test_the_auto_manage_setting_round_trips_and_reaches_the_broker(tmp_path):
     "The mute switch: saved with the workspace, and applied to the ceiling that enforces it."
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
     from leela.blocks.runtime.kernels import RuntimeBroker
     ws = Workspace(roots=[tmp_path])
     RuntimeBroker().register(ws.pool)
@@ -1231,8 +1216,6 @@ def test_the_limit_error_travels_with_the_kernel_it_offers():
 
 def test_the_limit_dialog_can_close_the_runtime_it_was_offered(tmp_path):
     "The other half of the offer: the key it named is the key it can close."
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
     from leela.blocks.runtime.kernels import RuntimeBroker
     ws = Workspace(roots=[tmp_path])
     RuntimeBroker().register(ws.pool)
@@ -1248,9 +1231,6 @@ def test_the_limit_dialog_can_close_the_runtime_it_was_offered(tmp_path):
 
 def test_a_busy_runtime_is_refused_even_when_named(tmp_path):
     "The offer only ever names an idle kernel, but the route is reachable on its own."
-    import asyncio
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
     ws = Workspace(roots=[tmp_path])
     from leela.blocks.runtime.kernels import _Inspector
     for n in ('touch', 'busy', 'idle_for'): setattr(_FakeKernel, n, getattr(_Inspector, n))

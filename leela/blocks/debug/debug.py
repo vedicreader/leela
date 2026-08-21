@@ -4,7 +4,8 @@ from __future__ import annotations
 import json, queue, subprocess, threading, time
 from pathlib import Path
 
-__all__ = ['DebugSession', 'debugpy_available', 'frame_path', 'open_path']
+__all__ = ['DebugSession', 'debugpy_available', 'frame_path', 'open_path',
+           'paused_kernel', 'notebook_state_ui']
 
 DAP_COMMANDS = {'continue': 'continue', 'next': 'next', 'stepIn': 'stepIn',
                 'stepOut': 'stepOut', 'pause': 'pause'}
@@ -187,3 +188,21 @@ def open_path(fs, path):
     "The workspace file a debug frame refers to, or '' when it is outside the sandbox."
     try: return str(fs._check(path, must_exist=True))
     except Exception: return ''
+
+def paused_kernel(state, method=None):
+    "The kernel holding the paused notebook debugger, when it can serve `method`."
+    k = state.kernel
+    return k if k is not None and (method is None or hasattr(k, method)) else None
+
+def notebook_state_ui(state, fs, ui):
+    "Map temporary cell sources back to the notebook and mark project files safe to open."
+    ui.update(origin_path=state.origin_path, cell_id=state.cell_id)
+    temp, sources = ui.get('source'), state.cell_sources
+    for frame in ui.get('frames', []):
+        path = frame_path(frame)
+        cell_id = sources.get(path)
+        if path == temp or cell_id:
+            frame['open_path'] = state.origin_path or ''
+            frame['cell_id'] = cell_id or state.cell_id or ''
+        else: frame['open_path'] = open_path(fs, path)
+    return ui

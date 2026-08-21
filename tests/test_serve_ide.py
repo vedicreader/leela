@@ -82,7 +82,6 @@ def test_the_cdp_port_reaches_the_workspaces_browser(tmp_path):
     (tmp_path/'one').mkdir()
     port = serve(roots=[str(tmp_path/'one')], app_window=True, cdp_port=9876, gateway_port=0)
     d = get(f'http://127.0.0.1:{port}/browser/ready', host=f'one.localhost:{port}')
-    import json
     assert json.load(d)['port'] == 9876
 
 def test_a_desktop_launch_with_no_folder_does_not_open_your_home_directory(monkeypatch):
@@ -91,7 +90,6 @@ def test_a_desktop_launch_with_no_folder_does_not_open_your_home_directory(monke
     port = serve(roots=[])
     body = get(f'http://127.0.0.1:{port}/').read().decode()
     assert 'Open a folder' in body
-    import json
     assert json.load(get(f'http://127.0.0.1:{port}/workspace/info'))['roots'] == []
 
 def test_a_plain_workspace_has_a_kernel_ceiling(tmp_path):

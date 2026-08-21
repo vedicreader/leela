@@ -10,7 +10,6 @@ pytestmark = pytest.mark.slow
 import asyncio
 import time
 
-import pytest
 
 from leela.blocks.runtime.kernels import Kernel, ipymini_available
 
@@ -225,7 +224,6 @@ def test_overlay_still_refuses_to_touch_what_the_user_made(tmp_path, kind):
 def test_a_host_can_refuse_overlay():
     "`--agent-scope isolated` is the setting for a machine where even a scratch layer is unwanted."
     from leela.blocks.agent.ai import WorkspaceHost
-    from leela.workspace import Workspace
     assert WorkspaceHost(Workspace(roots=[])).scopes == ('isolated', 'overlay')
     assert WorkspaceHost(Workspace(roots=[], agent_scope='isolated')).scopes == ('isolated',)
 
@@ -248,11 +246,9 @@ def test_the_isolated_sandbox_is_narrower_than_it_looks(tmp_path, kind):
 
 pytestmark = pytest.mark.slow
 
-import asyncio
 import os
 from pathlib import Path
 
-import pytest
 
 from leela.agent.core import LOCAL, local_ctx
 from leela.blocks.nb.nb import Notebook

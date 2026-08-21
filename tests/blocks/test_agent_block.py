@@ -5,7 +5,6 @@ whether the route was reachable and broke the moment the routes moved. Ask the a
 """
 
 from __future__ import annotations
-from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.workspace import Workspace
 

@@ -1,6 +1,5 @@
 "The agent: tools, briefing, context window, routing and budgets."
 
-import asyncio
 import threading
 import time
 import pytest
@@ -9,13 +8,13 @@ from leela.agent import core as models, runtime as compact, tools as skills
 from leela.agent.runtime import Backend, Usage
 from leela.agent.agent import Agent, prompt_directives, tool_plan
 from leela.agent.tools import Registry, load
-from leela.agent.tools import Host, NullHost
+from leela.agent.tools import NullHost
 from leela.agent.tools import WRITE_TOOLS, tools_for
 from fastcore.all import first
 from leela.agent.agent import RULES, project_context, system_prompt, work_rules
 from leela.agent.testing import MemHost
-from leela.agent.tools import (ERR, WRITE_TOOLS, clip, clip_lines, err, failed, file_tools,
-                               code_tools, shell_tools, tools_for)
+from leela.agent.tools import (ERR, clip, clip_lines, err, failed, file_tools,
+                               code_tools, shell_tools)
 import sys
 from fastcore.all import Path
 from starlette.testclient import TestClient
@@ -27,10 +26,9 @@ from leela.agent.runtime import Compactor, RESERVE, threshold
 from leela.agent.core import DFLT_LOCAL_CTX, env, local_ctx, resolve
 from leela.agent.runtime import captured, interesting
 from leela.agent.runtime import capture as native_capture
-from leela.workspace import STEP_RANGE, TOOL_RANGE, Workspace, budget_value, ws_path
+from leela.workspace import STEP_RANGE, TOOL_RANGE, budget_value, ws_path
 import json
 from leela.blocks.agent.models import delete_model,load_models,save_model
-from leela.agent.core import resolve
 from leela.blocks.fs.fs import Sandbox
 from leela.blocks.search.search import Search
 from leela.agent.agent import Completer
@@ -114,8 +112,6 @@ def test_agent_package_does_not_import_leela():
 def test_a_host_offers_only_the_tools_it_supports():
     from leela.agent.tools import read_only
     from leela.blocks.agent.ai import WorkspaceHost
-    from leela.workspace import Workspace
-    from leela.agent.tools import NullHost
     names = {t.__name__ for t in tools_for(NullHost(['/x']))}
     assert 'search_code' in names and 'view_file' in names
     assert 'run_python' not in names and 'notebook_cells' not in names
@@ -209,7 +205,7 @@ def test_agent_refresh_rebriefs_a_running_turn_backend():
     assert a._skills is not None and a._tools is not None
 
 def test_a_turn_records_its_activity_usage_and_changes():
-    from leela.app import _sse
+    from leela.core.web import sse as _sse
     a = Agent(MemHost_agent(), extensions=False, subagents=False)
     _ = a.tools
     a.refresh()
@@ -331,7 +327,6 @@ def test_rejection_ignores_rewritten_or_malformed_call_fields():
 
 def test_a_steer_no_tool_call_consumed_rides_the_next_turn(tmp_path):
     "Queued while the model was writing its answer, it waited for a tool call that never came."
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path], approvals='auto')
     ws.approvals.queue_steer('use the notebook, not the script')
     out = ws.ai._steered('carry on')
@@ -341,7 +336,6 @@ def test_a_steer_no_tool_call_consumed_rides_the_next_turn(tmp_path):
 
 def test_a_steer_survives_a_turn_it_cannot_ride(tmp_path):
     "A multimodal prompt keeps the steer queued rather than dropping it."
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path], approvals='auto')
     ws.approvals.queue_steer('check the fixture first')
     parts = [{'type': 'text', 'text': 'look'}]
@@ -413,9 +407,7 @@ def test_count_and_until_failure_policies_have_explicit_stop_conditions():
     assert ap.run_policy is None and ap.pause_next
 
 def test_approved_notebook_call_passes_only_activity_identity_metadata(tmp_path):
-    from leela.blocks.agent.ai import Interventions
     from leela.blocks.nb.nb import Cell, Notebook
-    from leela.workspace import Workspace
     p = tmp_path/'sample.ipynb'; Notebook([Cell(source='x = 1')]).save(p)
     ws = Workspace(roots=[tmp_path], approvals='auto'); a = ws.ai
     a.approvals.control = 'autopilot'
@@ -428,7 +420,6 @@ def test_approved_notebook_call_passes_only_activity_identity_metadata(tmp_path)
     assert row['action_id'] == 'call_notebook' and row['tool'] == 'notebook_cells'
 
 def test_queued_steering_runs_the_current_tool_and_reaches_the_next_decision(tmp_path):
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path], approvals='auto')
     ws.approvals.queue_steer('inspect the failing test before editing')
     tool = next(t for t in ws.ai.tools if t.__name__ == 'list_files')
@@ -437,7 +428,6 @@ def test_queued_steering_runs_the_current_tool_and_reaches_the_next_decision(tmp
     assert ws.approvals.state()['queued_steer'] == ''
 
 def test_workspace_repo_writes_are_opt_in_and_persisted(tmp_path):
-    from leela.workspace import Workspace
     first, second = tmp_path/'one', tmp_path/'two'
     first.mkdir(); second.mkdir()
     ws = Workspace(roots=[first, second])
@@ -451,7 +441,6 @@ def test_workspace_repo_writes_are_opt_in_and_persisted(tmp_path):
 def test_subagent_writes_are_opt_in_persisted_and_reach_the_assistant(tmp_path):
     "The checkbox is the front of it; the setting has to survive a restart and reach the `Agent`."
     from ramabana.tools import WRITE_TOOLS, read_only
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     assert ws.subagent_writes is False and ws.ai.subagent_writes is False
     assert not ({t.__name__ for t in read_only(ws.ai.tools)} & WRITE_TOOLS)
@@ -474,7 +463,6 @@ def test_subagent_writes_are_opt_in_persisted_and_reach_the_assistant(tmp_path):
 
 def test_new_agent_setup_keeps_file_and_notebook_access_inside_workspace(tmp_path):
     from leela.blocks.nb.nb import Cell, Notebook
-    from leela.workspace import Workspace
     file = tmp_path/'a.py'; file.write_text('x = 1\n')
     notebook = tmp_path/'a.ipynb'; Notebook([Cell(source='y = 2')]).save(notebook)
     ws = Workspace(roots=[tmp_path], approvals='auto'); tools = {t.__name__: t for t in ws.ai.tools}
@@ -1003,7 +991,6 @@ def test_project_extensions_are_off_unless_asked_for(tmp_path):
 def test_an_approval_exchange_is_written_into_the_notebook():
     "The request, the refusal and the reason land as cells beside the prompt that caused"
     from leela.blocks.nb.nb import Cell, Notebook
-    from leela.workspace import Workspace
     ws = Workspace(roots=[])
     nb = Notebook([Cell(source='fix it', cell_type='prompt')])
     ws._approval_target = (nb, 0)
@@ -1031,7 +1018,6 @@ def test_workspace_path_refusal_names_the_folders_that_are_open(tmp_path):
     them, so the fix people reached for was to re-quote a path that was never the problem.
     """
     from leela.blocks.agent.ai import WorkspaceHost
-    from leela.workspace import Workspace
     p = tmp_path/'dialog.ipynb'
     p.write_text('{}')
     ws = Workspace(roots=[tmp_path])
@@ -1045,7 +1031,6 @@ def test_workspace_path_refusal_names_the_folders_that_are_open(tmp_path):
 
 def test_workspace_agent_reaches_the_live_kernel_inspector():
     from leela.blocks.agent.ai import WorkspaceHost
-    from leela.workspace import Workspace
     class K:
         base = 'http://kernel'
         def __init__(self): self.calls = []
@@ -1075,7 +1060,6 @@ def test_a_stream_yields_before_it_finishes(spec):
 
 
 def test_agent_prompt_bar_accepts_the_open_notebook_context(tmp_path):
-    from leela.workspace import Workspace
     seen = {}
     class A:
         class Model: local = True
@@ -1111,7 +1095,6 @@ def test_local_multimodal_is_forwarded_to_rishi(monkeypatch):
 
 
 def test_prompt_cells_and_agent_chat_have_separate_assistants_and_histories():
-    from leela.workspace import Workspace
     ws = Workspace(roots=[], model='gemma-12b', inline_model='gemma-e2b')
     assert ws.ai is not ws.inline_ai
     assert ws.ai.model.name == 'gemma-12b'
@@ -1122,7 +1105,6 @@ def test_prompt_cells_and_agent_chat_have_separate_assistants_and_histories():
 def test_a_prompt_cell_fills_in_as_the_answer_arrives():
     "`ask_cell_stream` appends to `cell.reply` on the way past, so repainting the cell"
     from leela.blocks.nb.nb import Cell, Notebook
-    from leela.workspace import Workspace
     from tests.fakemodel import Step, install
     ws = Workspace(roots=[])
     install(ws, [Step(text='the answer is four')], token_delay=0)
@@ -1137,7 +1119,6 @@ def test_a_prompt_cell_fills_in_as_the_answer_arrives():
 
 def test_a_streamed_cell_still_gets_its_activity_trail():
     from leela.blocks.nb.nb import Cell, Notebook
-    from leela.workspace import Workspace
     from tests.fakemodel import Step, install
     ws = Workspace(roots=[])
     ws.add_root('.')
@@ -1150,7 +1131,6 @@ def test_a_streamed_cell_still_gets_its_activity_trail():
 
 
 def test_workspace_at_attachments_are_grounded_and_sandboxed(tmp_path):
-    from leela.workspace import Workspace
     p = tmp_path/'notes.txt'; p.write_text('the attached fact')
     ws = Workspace(roots=[tmp_path])
     context, images = ws._attachment_context([str(p)])
@@ -1160,9 +1140,6 @@ def test_workspace_at_attachments_are_grounded_and_sandboxed(tmp_path):
 def test_the_sse_endpoint_streams_the_real_app():
     "Drive the actual route, not a mock of it."
     pytest.importorskip('starlette.testclient')
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     from tests.fakemodel import Step, install
     ws = Workspace(roots=[])
     ws.add_root('.')
@@ -1185,9 +1162,6 @@ def test_the_sse_endpoint_streams_the_real_app():
     assert d['ok'] and 'edits' in d and d['activity']
 
 def test_agent_stream_rejects_a_second_turn_while_busy(tmp_path):
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     with TestClient(ide_app(ws)) as client:
         with ws.ai.lock:
@@ -1196,9 +1170,6 @@ def test_agent_stream_rejects_a_second_turn_while_busy(tmp_path):
     assert 'already working' in response.text
 
 def test_external_rishi_request_uses_the_web_approval_queue():
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     ws = Workspace(roots=[])
     result = {}
     with TestClient(ide_app(ws)) as client:
@@ -1217,9 +1188,6 @@ def test_external_rishi_request_uses_the_web_approval_queue():
     assert response.status_code == 200 and response.json()['answer']['answer'] is True
 
 def test_workspace_repo_writes_setting_route_persists_and_reports_approval(tmp_path):
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     with TestClient(ide_app(ws)) as client:
         response = client.post('/agent/workspace-repo-writes', json={'enabled': True})
@@ -1228,9 +1196,6 @@ def test_workspace_repo_writes_setting_route_persists_and_reports_approval(tmp_p
 
 def test_prompt_cell_endpoint_streams_into_the_notebook():
     from pathlib import Path
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     from tests.fakemodel import Step, install
     p = Path(__file__).parent/'fixtures'/'dialog.ipynb'
     ws = Workspace(roots=[p.parent], approvals='auto')
@@ -1279,9 +1244,6 @@ def test_one_unresolvable_model_does_not_blank_the_whole_picker(monkeypatch):
     "A model that will not resolve costs its own row, not the model list."
     from tokenize import TokenError
     from fastcore.basics import first
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     broken, real = 'codex/gpt-5.6-terra', models.resolve
     def resolve(name, *a, **kw):
         if name == broken: raise TokenError('unterminated string literal (detected at line 19)', (19, 62))
@@ -1405,7 +1367,6 @@ def test_grep_reports_its_matches_and_what_it_searched():
 
 
 def test_ls_lists_the_open_folders_when_asked_for_nothing(tmp_path):
-    from leela.agent.tools import NullHost
     class H(NullHost):
         def check(self, path, must_exist=False):
             from pathlib import Path
@@ -1447,7 +1408,6 @@ def test_a_capability_lost_mid_session_is_a_failure_not_the_end_of_the_turn():
 @pytest.fixture
 def project(tmp_path):
     from leela.blocks.agent.ai import WorkspaceHost
-    from leela.workspace import Workspace
     (tmp_path/'src').mkdir()
     (tmp_path/'src'/'app.py').write_text('value = 1\n')
     return WorkspaceHost(Workspace(roots=[tmp_path]))
@@ -1481,7 +1441,7 @@ def test_a_hung_command_is_killed_and_says_so(project):
 
 def test_a_timeout_takes_the_children_with_it(project):
     "`pytest -n 4` behind a pipe leaves children that outlive the shell, and a leaked"
-    import os, signal, time
+    import os, time
     marker = project.roots[0] + '/child.pid'
     project.run_cmd(f'(sleep 30 & echo $! > {marker}); sleep 30', timeout=2)
     pid = int(open(marker).read().strip())
@@ -1572,7 +1532,6 @@ def test_both_surfaces_offer_the_blend_and_a_sub_agent_keeps_it(project):
     assert 'search_code' in named(ide_tools(project))
 
 sys.path.insert(0, str(ROOT/'tools'))
-import build_ide_js as builder  # noqa: E402
 
 @pytest.fixture
 def ws(tmp_path):
@@ -1820,7 +1779,6 @@ def test_a_saved_budget_outside_the_range_falls_back_to_auto(tmp_path):
     ws = Workspace(roots=[tmp_path])
     ws.tool_budget = 160
     ws.save()
-    import json
     d = json.loads(ws_path().read_text()); d['tool_budget'] = 9999
     ws_path().write_text(json.dumps(d))
     assert Workspace.load(ws_path()).tool_budget == 'auto'
@@ -1886,7 +1844,6 @@ def test_kosha_adds_dynamic_patch_methods_to_runtime_completion(tmp_path):
 
 def test_audio_reaches_a_model_that_can_hear_it_and_is_carried_by_path_otherwise(tmp_path, monkeypatch):
     import ramabana.cli as rcli
-    from leela.workspace import Workspace
     sound = tmp_path/'note.wav'
     sound.write_bytes(b'RIFF....WAVE')
     ws = Workspace(roots=[tmp_path])
@@ -1900,7 +1857,6 @@ def test_audio_reaches_a_model_that_can_hear_it_and_is_carried_by_path_otherwise
 def test_audio_is_sent_when_the_model_capabilities_are_unknown(tmp_path, monkeypatch):
     "Withholding on an unknown is how not-knowing silently becomes a smaller agent."
     import ramabana.core as rcore
-    from leela.workspace import Workspace
     sound = tmp_path/'note.mp3'
     sound.write_bytes(b'ID3')
     monkeypatch.setattr(rcore, '_caps', lambda model_id, runtime: None)
@@ -1970,7 +1926,6 @@ def test_video_generation_is_offered_only_where_there_is_a_credential(tmp_path, 
     assert V.video_available() and V.video_caps()['out'] == ('video',)
 
 def test_veo_is_described_here_because_litellms_table_has_no_entry_for_it():
-    from leela.agent.core import spec_caps
     from leela.blocks.agent.video import DFLT_VIDEO, video_caps
     assert video_caps(DFLT_VIDEO)['provider'] == 'gemini'
     assert video_caps('no-such-model') is None
@@ -1994,7 +1949,6 @@ def test_the_turn_pictures_become_data_urls_a_browser_can_draw():
 def test_a_steer_rides_the_next_tool_result(tmp_path):
     """The path the UI actually promises -- 'applies after current call' -- and the only one of
     the three with no test. It is what a steer queued mid-call takes."""
-    from leela.workspace import Workspace
     (tmp_path/'a.py').write_text('x = 1\n')
     ws = Workspace(roots=[tmp_path], approvals='auto')
     view = next(t for t in ws.ai.tools if t.__name__ == 'view_file')
@@ -2010,7 +1964,6 @@ def test_delegation_never_gets_the_git_write_tools(monkeypatch):
     branch that returns it: a sub-agent sized to a different model is built from `registry.tools`,
     and a writing one is handed the recorded wrappers. Neither passes through `_plain`, so both
     arrived holding `git_push`."""
-    from leela.agent.agent import Agent
     from leela.blocks.agent.ai import GIT_WRITE_TOOLS, Assistant
 
     def git_push(): pass
@@ -2036,7 +1989,6 @@ def test_delegation_never_gets_the_git_write_tools(monkeypatch):
 
 
 def test_stopping_a_cloud_turn_returns_its_terminal_run_state(tmp_path):
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     a = ws.ai
     assert a.cancel()['state'] == 'idle'
@@ -2049,7 +2001,6 @@ def test_stopping_a_cloud_turn_returns_its_terminal_run_state(tmp_path):
 
 def test_a_cancelled_turn_refuses_the_calls_still_to_come(tmp_path):
     "Approval cancellation remains part of Stop after provider cancellation moves to Ramabana."
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path], approvals='auto')
     ws.approvals.stop()
     tc = {'id': 'c1', 'function': {'name': 'list_files', 'arguments': {'path': ''}}}
@@ -2058,16 +2009,12 @@ def test_a_cancelled_turn_refuses_the_calls_still_to_come(tmp_path):
     assert 'stopped this turn' in tc['function']['arguments']['instruction']
 
 def test_the_next_turn_clears_the_stop(tmp_path):
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path], approvals='auto')
     ws.approvals.stop()
     ws.ai._prepare('carry on')
     assert ws.approvals.state()['stopping'] is False
 
 def test_stop_and_send_next_returns_the_exact_terminal_run(tmp_path):
-    from leela.workspace import Workspace
-    from leela.app import ide_app
-    from starlette.testclient import TestClient
     ws = Workspace(roots=[tmp_path])
     ws.ai.cancel_grace = 0
     backend = type('Backend', (), {'cancel': lambda self: False})()
@@ -2081,9 +2028,6 @@ def test_stop_and_send_next_returns_the_exact_terminal_run(tmp_path):
 
 
 def test_agent_run_routes_return_structured_states(tmp_path):
-    from leela.workspace import Workspace
-    from leela.app import ide_app
-    from starlette.testclient import TestClient
     ws = Workspace(roots=[tmp_path])
     ws.ai.cancel_grace = 0
     backend = type('Backend', (), {'cancel': lambda self: False, 'close': lambda self: None})()
@@ -2102,7 +2046,6 @@ def test_agent_run_routes_return_structured_states(tmp_path):
 
 @pytest.mark.asyncio
 async def test_workspace_shutdown_cancels_agent_runs_before_close(tmp_path):
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     a, order = ws.ai, []
     a.cancel_grace = 0

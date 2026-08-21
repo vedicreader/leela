@@ -296,7 +296,6 @@ def test_the_snippets_follow_the_values_until_a_plan_is_saved(tmp_path):
 
 def test_running_one_part_runs_only_that_part(tmp_path):
     "The normal move here is one library call; carrying on would defeat the point."
-    import asyncio
     root = project_drive(tmp_path/'p')
     d = Drive(root, env=FakeStore_drive())
     d.save([{'id': 'a', 'label': 'first', 'cmd': 'echo alpha'},
@@ -314,7 +313,6 @@ def test_running_one_part_runs_only_that_part(tmp_path):
 class FakeStore_infra:
     def __init__(self, **values): self.values = values
     def get(self, key, secret=True): return self.values.get(key, '')
-
 
 
 def test_the_token_does_not_outlive_the_call(monkeypatch):
@@ -420,7 +418,6 @@ def test_a_traceback_blames_the_deepest_frame_that_is_yours():
     assert b['error'].startswith('TypeError')
     only_theirs = '\n'.join(l for l in VENV_TRACEBACK.splitlines() if 'cfeasy' not in l)
     assert blame(only_theirs)['package'] == ''
-
 
 
 def test_a_checkout_shadowed_by_an_installed_copy_is_the_row_worth_seeing(tmp_path, monkeypatch):

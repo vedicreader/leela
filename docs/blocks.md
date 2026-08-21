@@ -34,10 +34,20 @@ Common capabilities: `fs`, `pool`, `search`, `memory`, `research`, `runs`, `jour
 `leela/core/ports.py` defines `MemoryPort`, `SearchPort`, and `RuntimePort`. Owning blocks register default providers. Run `python -m leela.conformance <port> <name>` for alternates.
 
 ```python
-BLOCKS = [keys_block, settings_block, search_block, memory_block, vault_block]
-connect_all(app, workspace, BLOCKS, gate=gate, catalog=catalog)
+from .blocks import BLOCKS
+connect_all(app, workspace, BLOCKS, docs=docs, debug=debug, running=running, gate=gate, catalog=catalog)
 ```
 
-Keep wiring order in one place.
+Wiring order is `leela/blocks/__init__.py`'s `NAMES`, so a block is added by making the folder
+and naming it there. `test_core.py` asserts `NAMES` and the folders on disk agree.
+
+`core.session` holds what an application session owns and hands to blocks: `DocStore` for open
+documents (`ctx.docs`), `DebugState` for whichever debugger is paused (`ctx.debug`), `RunState`
+for in-flight cells (`ctx.running`).
+
+`blocks/agent` is the largest: `turns.py` shapes one turn for the browser, `models.py` is the
+picker's catalogue, `ai.py` the assistant, `app.py` the 56 routes. `blocks/nb` owns the notebook
+document and the routes that run and save it. `blocks/debug` owns both debuggers, the direct
+debugpy session and the notebook one, over the single `DebugState`.
 
 `ramabana.git` owns the gateway, the safepoint journal behind `undo`, the porcelain, and the git tools an agent gets inside a checkout. `blocks/git` is the browser surface over it, plus `blame_notebook` and `RepoSet`. The block sets `gateway().env_for` at import: a checkout's own virtualenv is leela's knowledge, not the harness's.

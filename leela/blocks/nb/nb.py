@@ -1,18 +1,18 @@
 "The notebook document: cells, outputs, the .ipynb on disk, and source spans."
 
 from __future__ import annotations
-import time, uuid
+import ast, time, uuid
 from base64 import b64encode
 from copy import deepcopy
 from dataclasses import dataclass, field
-from fastcore.all import L, Path, ifnone
+from fastcore.all import first, L, Path, ifnone
 from fastcore.nbio import read_nb, write_nb, new_nb, nb2str
 from ... import Dictable
 from ..runtime.kernels import output_text
 import json
 
 __all__ = ['CELL_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans',
-           'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs']
+           'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras']
 
 CELL_TYPES = ('code', 'markdown', 'prompt')
 
@@ -391,3 +391,77 @@ def cell_of(text, snippet, cells=None):
     if len(found) != 1: return None
     i, n = found[0]
     return _at(cells, spans, i, n)
+
+def assigned_lines(source):
+    "Top-level bindings made by Python source, as ``[(line, name)]``."
+    try: tree = ast.parse(source or '')
+    except SyntaxError: return []
+    found = []
+    def target(node, line=None):
+        if isinstance(node, ast.Name): found.append((line or node.lineno, node.id))
+        elif isinstance(node, (ast.Tuple, ast.List)):
+            for child in node.elts: target(child, line)
+        elif isinstance(node, ast.Starred): target(node.value, line)
+    class Bindings(ast.NodeVisitor):
+        def visit_Assign(self, node):
+            for t in node.targets: target(t, node.lineno)
+            self.visit(node.value)
+        def visit_AnnAssign(self, node):
+            target(node.target, node.lineno)
+            if node.value: self.visit(node.value)
+        def visit_AugAssign(self, node): target(node.target, node.lineno); self.visit(node.value)
+        def visit_NamedExpr(self, node): target(node.target, node.lineno); self.visit(node.value)
+        def visit_For(self, node):
+            target(node.target, node.lineno)
+            for child in (*node.body, *node.orelse): self.visit(child)
+        visit_AsyncFor = visit_For
+        def visit_With(self, node):
+            for item in node.items:
+                if item.optional_vars: target(item.optional_vars, node.lineno)
+            for child in node.body: self.visit(child)
+        visit_AsyncWith = visit_With
+        def visit_Import(self, node):
+            for a in node.names: found.append((node.lineno, a.asname or a.name.split('.')[0]))
+        visit_ImportFrom = visit_Import
+        def visit_FunctionDef(self, node): found.append((node.lineno, node.name))
+        visit_AsyncFunctionDef = visit_FunctionDef
+        def visit_ClassDef(self, node): found.append((node.lineno, node.name))
+    Bindings().visit(tree)
+    return list(dict.fromkeys(found))
+
+def inline_values(source, groups, outputs=(), result_info=None):
+    "Kernel values for bindings and a final expression, located on their source lines."
+    rows = {n.get('name'): n for g in groups or [] for n in g.get('nodes', [])}
+    out = []
+    for line, name in assigned_lines(source):
+        if (row := rows.get(name)) is not None:
+            out.append({'line': line, 'name': name, 'value': row.get('value', ''),
+                        'type': row.get('type', ''), 'shape': row.get('shape'),
+                        'dtype': row.get('dtype'), 'is_grid': bool(row.get('is_grid')),
+                        'accessor': row.get('accessor') or [name]})
+    output_result = first(o for o in reversed(outputs or ()) if o.get('output_type') == 'execute_result')
+    if output_result:
+        try:
+            expr = ast.parse(source or '').body[-1]
+            if isinstance(expr, ast.Expr):
+                root = expr.value
+                while isinstance(root, (ast.Attribute, ast.Subscript, ast.Call)):
+                    root = root.value if not isinstance(root, ast.Call) else root.func
+                name = root.id if isinstance(root, ast.Name) else 'result'
+                value = (output_result.get('data') or {}).get('text/plain', '')
+                info = dict(result_info or {})
+                out.append({'line': expr.lineno, 'name': name, 'value': info.get('value', value),
+                            'type': info.get('type', 'result'), 'shape': info.get('shape'),
+                            'dtype': info.get('dtype'), 'is_grid': bool(info.get('is_grid')),
+                            'is_container': bool(info.get('is_container')),
+                            'accessor': info.get('accessor') or ['_']})
+        except (SyntaxError, IndexError): pass
+    return out
+
+async def cell_extras(k, cell):
+    "Inspector rows and the rich last result for a finished cell, or `(None, None)`."
+    if not k or cell.has_error: return None, None
+    rows = await k.api('/api/rows', {'profile': 'full', 'sort': 'name'}, timeout=2)
+    has_result = any(o.get('output_type') == 'execute_result' for o in cell.outputs)
+    latest = await k.api('/api/result', timeout=2) if has_result else None
+    return rows, (latest or {}).get('result')

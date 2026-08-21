@@ -11,7 +11,6 @@ import os as _os
 import socket
 import threading
 
-import pytest
 
 pytest.importorskip('playwright.async_api')
 from playwright.async_api import async_playwright   # noqa: E402
@@ -125,7 +124,6 @@ def test_every_hyper_default_matches_its_physical_browser_event():
     assert rows and all(r['code'] and r['matches'] for r in rows), rows
 
 def test_results_are_folded_marked_and_dropped_when_they_go_stale():
-    from inspect import getsource
     async def go(pg):
         await pg.evaluate("leeAct('focus_vars')")
         await pg.type('#varfilter', 'og/123')
@@ -142,11 +140,11 @@ def test_results_are_folded_marked_and_dropped_when_they_go_stale():
     assert values == [{'line': 1, 'name': 'df', 'value': 'x    int64\ny    object',
                        'type': 'result', 'shape': None, 'dtype': None,
                        'is_grid': False, 'is_container': False, 'accessor': ['_']}]
-    source = getsource(ide_app)
+    served = {getattr(r, 'path', '') for r in ide_app(Workspace(roots=[])).routes}
     for route in ('/agent/branches', '/agent/fork', '/agent/revise', '/agent/rollback-turn',
                   '/agent/state/template', '/agent/state/bootstrap', '/agent/state/suggest',
                   '/agent/state/diagnostics', '/agent/state/update', '/agent/compaction'):
-        assert route in source
+        assert route in served, route
 
 
 def test_a_scoped_letter_still_fires_when_no_text_field_has_it():
@@ -619,7 +617,6 @@ pytestmark = pytest.mark.slow
 
 from conftest import serve
 
-from leela.workspace import Workspace
 
 pytest.importorskip('playwright.sync_api')
 
@@ -742,11 +739,6 @@ def test_the_picker_lists_families_with_a_variant_control(proj_web_th):
 
 pytestmark = pytest.mark.slow
 
-import pytest
-
-from conftest import serve
-
-from leela.workspace import Workspace
 
 pytest.importorskip('playwright.sync_api')
 
@@ -836,13 +828,11 @@ def test_a_document_in_the_panel_opens_as_a_reader_tab(proj_web_va):
 
 pytestmark = pytest.mark.slow
 
-import asyncio
 
 from leela.core.ui import bar
-from leela.app import _assigned_lines, _inline_values, ide_app
-from leela.workspace import Workspace, _EnvClient
+from leela.blocks.nb.nb import assigned_lines as _assigned_lines, inline_values as _inline_values
+from leela.workspace import _EnvClient
 
-from tests.assets import JS, CSS, SERVER, EDITOR
 
 def test_python_bindings_are_mapped_to_the_lines_that_create_them():
     source = """import pandas as pd
@@ -947,12 +937,9 @@ def test_variable_route_uses_the_same_selected_runtime_as_execution(tmp_path):
 
 pytestmark = pytest.mark.slow
 
-import pytest
 
 from conftest import serve as _server
 
-from leela.app import ide_app
-from leela.workspace import Workspace
 
 @pytest.mark.skipif(__import__('importlib').util.find_spec('playwright') is None, reason='playwright is not installed')
 def test_browser_can_change_control_open_layered_state_and_find_agent_commands(tmp_path):

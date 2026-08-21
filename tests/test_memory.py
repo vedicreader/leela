@@ -6,12 +6,10 @@ from leela.blocks.memory.memory import GLOBAL, Memory
 from leela.blocks.research.research import Doc, Research
 from leela.blocks.fs.fs import Sandbox
 import pytest
-from leela.blocks.memory.memory import GLOBAL, Memory, memory_shelf, safe_shelf
-from leela.blocks.memory.memory import Memory
-from leela.blocks.memory.vaults import WORKSPACE, VaultRef, Vaults
+from leela.blocks.memory.memory import memory_shelf, safe_shelf
+from leela.blocks.memory.vaults import WORKSPACE, Vaults
 from starlette.testclient import TestClient
 from leela.app import ide_app
-from leela.blocks.memory.vaults import WORKSPACE
 from leela.workspace import Workspace
 import sqlite3
 from leela.migrate_memory import migrate, read_old
@@ -121,22 +119,18 @@ def test_agent_notes_do_not_leak_into_project_documents(tmp_path):
     assert [d['title'] for d in mem.agent_notes()] == ['Private']
 
 def test_workspace_persists_the_active_agent_state(tmp_path):
-    from leela.workspace import Workspace
     state_file = tmp_path/'workspace.json'
     ws = Workspace(roots=[tmp_path]); ws.agent_state = '# Goal\n\nStart from reviewed context.'; ws.save(state_file)
     restored = Workspace.load(state_file)
     assert restored.agent_state == ws.agent_state
 
 def test_workspace_persists_per_surface_memory_routing(tmp_path):
-    from leela.workspace import Workspace
     path = tmp_path/'workspace.json'; ws = Workspace(roots=[tmp_path])
     ws.agent_memory_selection = {'agent': ['one'], 'inline': ['one', 'two'], 'completion': ['two']}
     ws.save(path); restored = Workspace.load(path)
     assert restored.agent_memory_selection == ws.agent_memory_selection
 
 def test_workspace_load_restores_a_remembered_agent_state_for_the_project(tmp_path, monkeypatch):
-    from leela.blocks.memory.memory import Memory
-    from leela.workspace import Workspace
     root = tmp_path/'project'; root.mkdir()
     monkeypatch.setattr(Memory, 'agent_states', lambda self: [{
         'id': 'remembered', 'meta': {'agent': {'roots': [str(root)]}}}])

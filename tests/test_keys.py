@@ -2,12 +2,9 @@
 
 import json
 import pytest
-from leela.core import keys as K
 from leela.core.keys import (DEFAULTS, KEYS, apply_overrides, help_rows,
                         keymap_json, lookup, read_overrides, web_keymap)
 from leela.core.ui import BARS, BUTTONS, bar, tip
-from leela.core.keys import KEYS
-from leela.core.keys import DEFAULTS
 from leela.blocks.keys.menus import MENUS, web_menus
 
 def test_every_action_is_bound_reachable_and_documented():
@@ -35,8 +32,6 @@ def test_every_action_is_bound_reachable_and_documented():
     open_row = next(row for row in rows if row.get('action') == 'open')
     assert open_row['label'] == 'open / toggle folder'
     assert open_row['chord'] == 'enter'
-
-
 
 
 def test_run_commands_follow_pycharm_jupyter_gestures_without_function_keys():
@@ -77,7 +72,6 @@ def test_definition_clipboard_and_notebook_navigation_use_practical_chords():
     assert lookup('cell_last').key == 'mod+end'
     assert lookup('cell_page_up').key == 'alt+pageup'
     assert lookup('cell_page_down').key == 'alt+pagedown'
-
 
 
 def test_pycharm_notebook_actions_are_bound_and_discoverable():
@@ -147,9 +141,6 @@ def test_every_bar_has_buttons(name):
     assert len(bar(name)) > 0
 
 
-
-
-
 def test_project_roots_are_removed_from_the_workspace_not_deleted_from_disk():
     root_actions = [row.action for row in MENUS['root'] if row.action]
     assert 'remove_root' in root_actions
@@ -163,7 +154,6 @@ def test_cell_menu_exposes_cross_notebook_clipboard_without_stealing_text_shortc
     by_action = {k.action: k.key for k in DEFAULTS}
     assert by_action['cell_paste_above'] == '' and by_action['cell_paste_below'] == ''
     assert by_action['cell_copy'] == 'mod+c' and by_action['cell_cut'] == 'mod+x'
-    from pathlib import Path
     from tests.assets import JS as js
     assert "['cell_copy', 'cell_cut'].includes(k.action)" in js
     assert "lee.kind !== 'notebook'" in js

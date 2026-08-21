@@ -4,18 +4,13 @@ from fasthtml.common import to_xml
 from leela.blocks.term.term import TerminalGate
 from leela.app import _shell
 from leela.workspace import Workspace
-from tests.assets import CSS, JS, SERVER, read
+from tests.assets import read
 from pathlib import Path
 from leela.blocks.runtime.kernels import bootstrap_src, project_python
 ROOT = Path(__file__).resolve().parents[1]
-from tests.assets import JS, CSS, EDITOR
-from tests.assets import JS, CSS, SERVER, AGENT
 import json
-import re
 from starlette.testclient import TestClient
 from leela.app import ide_app
-from tests.assets import JS
-from tests.assets import JS, CSS
 import asyncio
 from unittest.mock import Mock
 import pytest
@@ -66,8 +61,6 @@ def test_agent_vocabulary_exposes_commands_tools_and_project_skills(tmp_path):
     skill = tmp_path/'.agents/skills/notebook-tests/SKILL.md'
     skill.parent.mkdir(parents=True)
     skill.write_text('---\nname: notebook-tests\ndescription: How this project tests notebooks.\n---\n\nDo it carefully.\n')
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
     with TestClient(ide_app(Workspace(roots=[tmp_path], model='sonnet'))) as client:
         vocabulary = client.get('/agent/commands').json()
     assert {'commands', 'tools', 'skills'} <= vocabulary.keys()
@@ -76,9 +69,6 @@ def test_agent_vocabulary_exposes_commands_tools_and_project_skills(tmp_path):
 
 
 def test_pyproject_dependencies_get_runtime_version_pills(tmp_path):
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     p = tmp_path/'pyproject.toml'
     p.write_text('[project]\nname="demo"\nversion="0.1"\nkeywords=["package-that-does-not-exist"]\n'
                  'dependencies=[\n  "pytest>=1", # a deliberately long comment after the declaration\n]\n'
@@ -101,9 +91,6 @@ def test_a_pyproject_is_annotated_from_the_venv_beside_it(tmp_path):
     the older one's version. The formatter picked its ruff the same way.
     """
     import os, sys
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     roots = []
     for name in ('one', 'two'):
         root = tmp_path/name
@@ -184,8 +171,6 @@ def test_every_git_failure_reaches_the_log_not_only_the_status_line():
 
 def test_a_pdf_opens_in_the_browsers_own_viewer(tmp_path):
     "We are in a browser, so the viewer already exists -- the feature is handing the bytes over."
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
     pdf = tmp_path/'paper.pdf'
     pdf.write_bytes(b'%PDF-1.4\ntrailer\n%%EOF\n')
     ws = Workspace(roots=[tmp_path])
@@ -225,8 +210,6 @@ def test_a_markdown_file_gets_the_same_change_hunks_as_code(tmp_path):
 
 def _md_render(text):
     "One document through the real renderer, exactly as the browser asks for it."
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
     with TestClient(ide_app(Workspace(roots=[]))) as client:
         r = client.post('/markdown/render', json={'text': text, 'allow_raw': False})
     assert r.status_code == 200, r.text
@@ -339,8 +322,6 @@ def test_a_line_range_from_git_lands_on_the_block_that_holds_it():
     assert kinds == [None, 'added', 'removed']
     both = md_change_kinds(blocks, [{'from': 1, 'to': 8, 'kind': 'modified'}])
     assert both == ['modified', 'modified', 'modified']
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
     with TestClient(ide_app(Workspace(roots=[]))) as client:
         got = client.post('/markdown/blocks', json={'text': '# t\n\nprose\n',
                                                     'ranges': [{'from': 3, 'to': 3, 'kind': 'added'}]}).json()
@@ -351,8 +332,6 @@ def test_a_line_range_from_git_lands_on_the_block_that_holds_it():
 
 def test_a_pdf_is_served_under_its_own_name_and_fills_the_pane(tmp_path):
     'Two things were wrong with the viewer: it was short, and every document was called "raw".'
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
     pdf = tmp_path/'2306.14881.pdf'; pdf.write_bytes(b'%PDF-1.4\n%%EOF\n')
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c:
         named = c.get('/file/raw/2306.14881.pdf', params={'path': str(pdf)})
@@ -395,7 +374,6 @@ def test_variables_and_runtimes_follow_the_active_tab():
     assert 'import dhrishti.serving as ls' in src
     assert src.index('sys.path.append(_p)') < src.index('import dhrishti.serving as ls')
     from leela.app import _vars_panel
-    from leela.workspace import Workspace
     html = str(_vars_panel(Workspace(roots=[])))
     assert '>agent</button>' in html and 'leeScope("agent")' in html
 
@@ -410,7 +388,6 @@ def test_one_keyboard_router_reaches_every_panel():
 def test_terminal_starts_inside_the_project_uv_environment():
     "One builder, used by the pty and by every release, deploy and drive step alike."
     import inspect, os
-    from leela.app import ide_app
     from leela.blocks.runtime.kernels import venv_env
     env = venv_env('/proj/.venv/bin/python', {'PATH': '/usr/bin'})
     assert env['VIRTUAL_ENV'] == env['UV_PROJECT_ENVIRONMENT'] == '/proj/.venv'
@@ -423,7 +400,6 @@ def test_editor_extensions_are_live_preferences():
 
 
 def test_editor_toolbar_keeps_contextual_actions_and_moves_the_rest_to_kebab():
-    from fasthtml.common import to_xml
     from leela.app import _toolbar
     html = to_xml(_toolbar())
     assert 'data-action="run_cell"' in html and 'data-action="run_file"' in html
@@ -431,9 +407,7 @@ def test_editor_toolbar_keeps_contextual_actions_and_moves_the_rest_to_kebab():
     assert 'leeEditorMenu(this)' in html and 'more editor actions' in html
 
 def test_agent_teleprompter_exposes_control_modes_and_editable_tool_calls():
-    from fasthtml.common import to_xml
     from leela.app import _agent_panel
-    from leela.workspace import Workspace
     html = to_xml(_agent_panel(Workspace(roots=[])))
     assert 'id="agentcontrol"' in html
     assert 'id="agenttoolbudget"' in html and 'id="agentbudgetstatus"' in html
@@ -442,9 +416,7 @@ def test_agent_teleprompter_exposes_control_modes_and_editable_tool_calls():
 
 def test_the_agent_panel_streams_steps_approvals_and_usage():
     from leela.app import _agent_panel
-    from leela.workspace import Workspace
     html=str(_agent_panel(Workspace(roots=[])))
-    from leela.workspace import Workspace
     ws = Workspace(roots=[])
     assert ws.inline_model == 'gpt-mini'
     assert ws.completion_model == 'gpt-4.1'
@@ -453,16 +425,12 @@ def test_the_agent_panel_streams_steps_approvals_and_usage():
 
 def test_tool_schema_only_marks_read_only_calls_as_rerunnable(tmp_path):
     from leela.blocks.agent.turns import tool_schemas as _tool_schemas
-    from leela.workspace import Workspace
     rows = {row['name']: row for row in _tool_schemas(Workspace(roots=[tmp_path]).ai)}
     assert rows['run_shell']['changes_state'] and not rows['run_shell']['retryable']
     assert not rows['view_file']['changes_state'] and rows['view_file']['retryable']
 
 
 def test_agent_control_route_changes_checkpoint_policy_without_starting_a_model(tmp_path):
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     with TestClient(ide_app(ws)) as client:
         r = client.post('/agent/control', json={'control': 'directed'})
@@ -472,19 +440,12 @@ def test_agent_control_route_changes_checkpoint_policy_without_starting_a_model(
     assert bad.status_code == 400
 
 def test_agent_and_variables_share_the_right_tabs_while_exec_and_terminal_share_the_bottom():
-    from fasthtml.common import to_xml
-    from leela.app import _shell
-    from leela.blocks.term.term import TerminalGate
-    from leela.workspace import Workspace
     html = to_xml(_shell(Workspace(roots=[]), TerminalGate()))
     assert 'lee-righttabs' in html and 'data-right="agent"' in html and 'data-right="vars"' in html
     assert 'lee-docktabs' in html and 'data-dock="exec"' in html and 'data-dock="term"' in html
 
 
 def test_screen_capture_route_rejects_oversized_payloads_before_decoding(tmp_path):
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         response = client.post('/screen', json={'data_url': 'data:image/png;base64,' + 'A' * 12_000_001})
     assert response.status_code == 413
@@ -493,9 +454,6 @@ def test_screen_capture_route_rejects_oversized_payloads_before_decoding(tmp_pat
 
 def test_one_static_prefix_serves_both_the_authored_and_vendored_asset_trees(tmp_path):
     "`/leestatic` spans `leela/static` and `leela/vendor` as if they were one folder."
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         authored = client.get('/leestatic/lee-ide.css')
         vendored = client.get('/leestatic/lee-cm6.js')
@@ -507,9 +465,6 @@ def test_one_static_prefix_serves_both_the_authored_and_vendored_asset_trees(tmp
 
 
 def test_selection_help_uses_summary_and_completion_jobs_without_editing(tmp_path, monkeypatch):
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     calls = []
     class FakeAI:
@@ -527,9 +482,6 @@ def test_selection_help_uses_summary_and_completion_jobs_without_editing(tmp_pat
     assert [c[0] for c in calls] == ['summary', 'completion']
 
 def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         raw = '```{=html}\n<img src=x onerror=alert(1)>\n```'
         safe = client.post('/markdown/render', json={'text': raw, 'allow_raw': False}).json()['html']
@@ -540,23 +492,17 @@ def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
 
 def test_model_discovery_does_not_block_shell_render_or_editor_mount():
     from leela.app import _agent_panel
-    from leela.workspace import Workspace
     html = str(_agent_panel(Workspace(roots=[])))
     assert html.count('loading…') == 3
 
 
 def test_terminal_bundle_loads_only_when_the_terminal_opens():
     from leela.app import _asset, _shell
-    from leela.blocks.term.term import TerminalGate
-    from leela.workspace import Workspace
     html = str(_shell(Workspace(roots=[]), TerminalGate()))
     assert f'<script src="{_asset("lee-term.js")}">' not in html
 
 
 def test_mdhtml_rendering_is_paste_safe_and_reports_unclosed_constructs():
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     with TestClient(ide_app(Workspace(roots=[]))) as client:
         response = client.post('/markdown/render', json={
             'text': '<style>body{display:none}</style>\n\n<script>alert(1)</script>\n\n# visible'})
@@ -567,9 +513,6 @@ def test_mdhtml_rendering_is_paste_safe_and_reports_unclosed_constructs():
         assert '<h1>visible</h1>' in html
 
 def test_mdhtml_keeps_explicit_html_passthrough_deliberate():
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     with TestClient(ide_app(Workspace(roots=[]))) as client:
         response = client.post('/markdown/render', json={'text': '```{=html}\n<kbd>explicit</kbd>\n```'})
         assert response.status_code == 200
@@ -591,9 +534,6 @@ def test_history_groups_turns_by_context_session_without_rendering_every_turn():
 
 def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(tmp_path):
     "History showed the turns and left the model with none of them."
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     model = ws.ai.model.name
     ws.ai.history = [{'session': 'agent-a', 'at': 1, 'model': model, 'prompt': 'remember cedar', 'reply': 'noted'},
@@ -608,13 +548,11 @@ def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(t
 
 def test_routing_popover_closes_on_outside_click_and_escape():
     from leela.app import _agent_panel
-    from leela.workspace import Workspace
     html = str(_agent_panel(Workspace(roots=[])))
     assert 'lee-dismissable' in html
 
 def test_agent_pane_has_model_history_and_expand_controls():
     from leela.app import _agent_panel
-    from leela.workspace import Workspace
     html = str(_agent_panel(Workspace(roots=[])))
     assert 'agentmodel' in html and 'leeAgentModel' in html
     assert 'localmultimodal' in html and 'leeLocalMultimodal' in html
@@ -625,7 +563,6 @@ def test_agent_pane_has_model_history_and_expand_controls():
 
 def test_agent_state_refresh_uses_current_project_evidence(tmp_path):
     from leela.blocks.agent.turns import project_state_context as _project_state_context
-    from leela.workspace import Workspace
     (tmp_path/'pyproject.toml').write_text('[project]\nname = "current-code"\n')
     (tmp_path/'module.py').write_text('def current_api():\n    return 1\n')
     context = _project_state_context(Workspace(roots=[tmp_path]))
@@ -633,10 +570,8 @@ def test_agent_state_refresh_uses_current_project_evidence(tmp_path):
 
 
 def test_model_picker_shows_older_models_by_default(monkeypatch):
-    from starlette.testclient import TestClient
     from leela.agent import core as models
     from leela.app import _agent_panel, ide_app
-    from leela.workspace import Workspace
     monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
     monkeypatch.setattr(models, '_oai_cache', (float('inf'), ['gpt-4.1', 'gpt-5.6-luna']))
     ws = Workspace(roots=[])
@@ -646,10 +581,7 @@ def test_model_picker_shows_older_models_by_default(monkeypatch):
     assert 'openai/gpt-4.1' in values
 
 def test_model_selector_endpoint_exposes_sources_not_secrets(monkeypatch):
-    from starlette.testclient import TestClient
     from leela.agent import core as models
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     monkeypatch.setenv('OPENAI_API_KEY', 'top-secret')
     monkeypatch.setattr(models, '_oai_cache', (float('inf'), ['gpt-5.4']))
     with TestClient(ide_app(Workspace(roots=[]))) as client:
@@ -659,9 +591,6 @@ def test_model_selector_endpoint_exposes_sources_not_secrets(monkeypatch):
     assert 'top-secret' not in str(data)
 
 def test_every_model_choice_is_saved_and_restored(tmp_path):
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     path = tmp_path/'workspace.json'
     ws = Workspace(roots=[]); ws._state_path = path
     with TestClient(ide_app(ws)) as client:
@@ -673,9 +602,6 @@ def test_every_model_choice_is_saved_and_restored(tmp_path):
 
 def test_the_jobs_without_a_control_of_their_own_are_still_choosable(tmp_path):
     "A sub-agent runs on a model somebody chose; the only way to say which was the environment."
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     path = tmp_path/'workspace.json'
     ws = Workspace(roots=[]); ws._state_path = path
     with TestClient(ide_app(ws)) as client:
@@ -691,7 +617,6 @@ def test_the_jobs_without_a_control_of_their_own_are_still_choosable(tmp_path):
 
 def test_configured_agent_does_not_offer_setup_again():
     from leela.app import _agent_panel
-    from leela.workspace import Workspace
     ws = Workspace(roots=[])
     ws.agent_state_layers['project']['text'] = '# Goal\n\nMaintain this project.'
     html = str(_agent_panel(ws))
@@ -699,9 +624,6 @@ def test_configured_agent_does_not_offer_setup_again():
     assert 'Set up agent state' not in html
 
 def test_agent_memory_api_selects_notes_per_surface_and_rebriefs(tmp_path):
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'workspace.json'
     with TestClient(ide_app(ws)) as client:
         saved = client.post('/agent/memory/save', json={
@@ -716,9 +638,6 @@ def test_agent_memory_api_selects_notes_per_surface_and_rebriefs(tmp_path):
     assert '<user_memory>' in ws.completer._prompt('x = ', 4, 'python')
 
 def test_local_multimodal_setting_is_persisted_from_the_ui(tmp_path):
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
     ws = Workspace(roots=[])
     ws._state_path = tmp_path/'workspace.json'
     with TestClient(ide_app(ws)) as client:
@@ -765,7 +684,6 @@ def test_same_named_files_in_different_roots_keep_absolute_identity(tmp_path):
         client.post('/tab/open',params={'path':str(a)})
         assert client.get('/tab/state').json()['cells'][0]['source']=='RAMABANA'
     assert len(ws.tabs)==2 and {t.path for t in ws.tabs}=={str(a.resolve()),str(b.resolve())}
-    from fasthtml.common import to_xml
     from leela.app import _tab_bar
     tabs=to_xml(_tab_bar(ws));assert 'ramabana/00_core.ipynb' in tabs and 'rishi/00_core.ipynb' in tabs
 
@@ -958,7 +876,6 @@ def test_runtime_broker_refuses_a_thirteenth_heap_without_evicting_live_state(mo
 
 def test_the_tree_hears_about_a_change_leela_did_not_make(tmp_path):
     "Without a watcher the tree knew only what the client itself had done."
-    import asyncio, json
     from leela.blocks.fs.fs import Sandbox
     from leela.blocks.fs.watch import Watcher
     (tmp_path/'a.py').write_text('x = 1\n')
@@ -1007,8 +924,6 @@ def test_a_folder_opened_after_boot_is_watched_too(tmp_path):
     """`subscribe` was the only other caller of `start`, and it runs once per page load. Opening
     a folder from the welcome screen left the watcher with the empty root set it booted with.
     """
-    import asyncio
-    from leela.workspace import Workspace
     a, b = tmp_path/'a', tmp_path/'b'
     a.mkdir(); b.mkdir()
     ws = Workspace(roots=[a])
@@ -1027,7 +942,6 @@ def test_a_folder_opened_after_boot_is_watched_too(tmp_path):
 
 def test_opening_a_folder_off_the_event_loop_is_not_an_error(tmp_path):
     "`/fs/add_root` is a sync route, so `add_root` runs in a threadpool with no running loop."
-    from leela.workspace import Workspace
     a, b = tmp_path/'a', tmp_path/'b'
     a.mkdir(); b.mkdir()
     ws = Workspace(roots=[a])
@@ -1037,8 +951,6 @@ def test_opening_a_folder_off_the_event_loop_is_not_an_error(tmp_path):
 
 def test_shutdown_stops_the_watcher_thread(tmp_path):
     "The module says a Rust thread alive at interpreter teardown segfaults; nothing stopped it."
-    import asyncio
-    from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     async def run():
         ws.fs_watch.subscribe()
@@ -1051,7 +963,6 @@ def test_shutdown_stops_the_watcher_thread(tmp_path):
 
 def test_replacing_the_watcher_does_not_wait_for_the_old_thread(tmp_path):
     "`start` calls `close`, and a join on the event loop freezes every socket in the process."
-    import asyncio
     from leela.blocks.fs.fs import Sandbox
     from leela.blocks.fs.watch import Watcher
     async def run():
@@ -1070,7 +981,6 @@ def test_a_batch_too_big_to_send_asks_for_a_resync_instead_of_dropping_it(tmp_pa
     """Batches are deltas, not snapshots, so a truncated or dropped one is lost for good: the
     tree keeps showing files that are gone until something unrelated happens to touch it.
     """
-    import asyncio
     from leela.blocks.fs.fs import Sandbox
     from leela.blocks.fs.watch import Watcher, MAX_BATCH
     async def run():
