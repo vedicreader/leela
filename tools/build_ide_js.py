@@ -46,9 +46,10 @@ LAYERS = {
         'blocks/pipelines/releases.js', 'blocks/pipelines/deploys.js', 'blocks/drive/drive.js',
         'blocks/git/panel.js', 'blocks/git/branchmenu.js', 'blocks/git/conflictpanes.js',
         'blocks/git/blame.js', 'blocks/research/research.js', 'static/js/overlays.js',
-        'blocks/search/search.js', 'blocks/search/similar.js', 'blocks/runs/config.js',
+        'blocks/search/search.js', 'blocks/search/find.js', 'blocks/search/similar.js', 'blocks/runs/config.js',
         'blocks/keys/palette.js', 'blocks/fs/files.js', 'blocks/editor/split.js',
-        'static/js/boot.js', 'blocks/refactor/refactor.js', 'blocks/git/conflictfiles.js',
+        'static/js/boot.js', 'blocks/refactor/refactor.js', 'blocks/refactor/move.js',
+        'blocks/git/conflictfiles.js',
         'blocks/vault/reader.js', 'blocks/git/branchbar.js', 'blocks/browser/browser.js',
         'blocks/workspace/projects.js'
     ],

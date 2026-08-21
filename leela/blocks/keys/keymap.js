@@ -110,9 +110,7 @@ function findBinding(e, scope) {
       const selection = curEditor() ? LeeCM.selection(curEditor()) : null;
       if (inEditor && selection?.from !== selection?.to) continue;
     }
-    // Cmd+F only belongs to Leela when the document is a notebook, where one CodeMirror panel
-    // would search one cell. Anywhere else the event is left alone and the editor's own panel opens.
-    if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down', 'find_in_file'].includes(k.action)
+    if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down'].includes(k.action)
         && lee.kind !== 'notebook') continue;
     return {binding: k, chord};
   }

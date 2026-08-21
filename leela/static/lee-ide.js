@@ -3949,87 +3949,7 @@ function bindModClick() {
     gotoDeclaration(word, editorPlace(view));
   }, true);
 }
-/* Cmd+F in a notebook. CodeMirror's own panel searches the one cell it belongs to, which is never
-   the question being asked: a notebook is one document to the person reading it. This walks every
-   cell's live text, selects each match where it lives, and says which one of how many. */
-const nbCellText = i => {
-  const c = lee.cells[i]; if (!c) return '';
-  const v = lee.editors.get(c.id);
-  return v ? LeeCM.getDoc(v) : String(c.source || '');
-};
-function nbFindMatches(q) {
-  const out = [], needle = String(q || '').toLowerCase();
-  if (!needle) return out;
-  for (let i = 0; i < lee.cells.length; i++) {
-    const text = nbCellText(i).toLowerCase();
-    for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length))
-      out.push({cell: i, from: at, to: at + needle.length});
-  }
-  return out;
-}
-function nbFindPaint() {
-  const bar = $('#nbfind'); if (!bar) return;
-  const q = $('#nbfindq', bar).value, hits = nbFindMatches(q), at = lee.nbFind?.at ?? -1;
-  lee.nbFind = {q, hits, at: at < hits.length ? at : -1};
-  $('#nbfindcount', bar).textContent = !q ? '' : !hits.length ? 'no matches'
-    : `${(lee.nbFind.at < 0 ? 0 : lee.nbFind.at) + 1} of ${hits.length}`;
-  bar.classList.toggle('empty', !!q && !hits.length);
-}
-function nbFindStep(direction) {
-  const bar = $('#nbfind'), state = lee.nbFind;
-  if (!bar || !state?.hits.length) return;
-  const n = state.hits.length;
-  state.at = ((state.at + direction) % n + n) % n;
-  const hit = state.hits[state.at];
-  focusCell(hit.cell);
-  const view = ensureCellMounted(hit.cell);
-  if (view) LeeCM.setSelection(view, hit.from, hit.to);
-  $('#nbfindcount', bar).textContent = `${state.at + 1} of ${n}`;
-  // `focusCell` and `setSelection` both take the focus, and each does it a frame apart. The
-  // query is where the typing belongs, so it is claimed back after both have had their turn.
-  requestAnimationFrame(() => requestAnimationFrame(() => $('#nbfindq', bar)?.focus()));
-}
-function nbFindClose() {
-  const bar = $('#nbfind'); if (bar) bar.hidden = true;
-  lee.nbFind = null;
-  const v = curEditor(); if (v) LeeCM.focus(v);
-}
-function nbFind() {
-  if (lee.kind !== 'notebook') return status('open a notebook to search across its cells', 'err');
-  let bar = $('#nbfind');
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.id = 'nbfind'; bar.className = 'lee-find-bar'; bar.setAttribute('role', 'search');
-    bar.innerHTML = '<input class="lee-input" id="nbfindq" spellcheck="false" ' +
-      'placeholder="find in every cell" aria-label="find in every cell">' +
-      '<span class="lee-find-count" id="nbfindcount" aria-live="polite"></span>' +
-      '<button type="button" data-find="prev" title="previous match (shift+enter)">↑</button>' +
-      '<button type="button" data-find="next" title="next match (enter)">↓</button>' +
-      '<button type="button" data-find="close" title="close (esc)">✕</button>';
-    document.body.appendChild(bar);
-    bar.addEventListener('click', e => {
-      const b = e.target.closest('[data-find]'); if (!b) return;
-      if (b.dataset.find === 'close') return nbFindClose();
-      nbFindStep(b.dataset.find === 'next' ? 1 : -1);
-    });
-    const input = $('#nbfindq', bar);
-    input.addEventListener('input', nbFindPaint);
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { e.preventDefault(); return nbFindClose(); }
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      if (!lee.nbFind?.hits.length) nbFindPaint();
-      nbFindStep(e.shiftKey ? -1 : 1);
-    });
-  }
-  bar.hidden = false;
-  const input = $('#nbfindq', bar), view = curEditor(), held = view ? LeeCM.selection(view) : null;
-  if (held && held.from !== held.to && !held.text.includes('\n')) input.value = held.text;
-  lee.nbFind = null;
-  nbFindPaint();
-  input.focus(); input.select();
-}
-window.gotoDeclaration = gotoDeclaration; window.nbFind = nbFind; window.bindModClick = bindModClick;
+window.gotoDeclaration = gotoDeclaration; window.bindModClick = bindModClick;
 
 async function renameSymbol() {
   const name=cursorWord(),view=curEditor();
@@ -4088,6 +4008,179 @@ async function leeSymbols() {
 }
 window.leeSymbols = leeSymbols;
 
+/* --------------------------------------------------------------------- find */
+/* One find pane for both shapes of document. CodeMirror's own panel searches the one cell it
+   belongs to, which is never what is being asked of a notebook, and it offered no regex or
+   replace where the cell bar did. This is the single mod+f: regex, case, whole word and
+   replace, over a file or over every cell. */
+
+const FIND_FLAGS = 'lee-find-flags';
+const MAX_FIND_HITS = 5000;
+
+const cellText = i => {
+  const c = lee.cells[i]; if (!c) return '';
+  const v = lee.editors.get(c.id);
+  return v ? LeeCM.getDoc(v) : String(c.source || '');
+};
+
+function findFlags() {
+  if (!lee.findFlags) {
+    try { lee.findFlags = JSON.parse(localStorage.getItem(FIND_FLAGS)) || {}; }
+    catch (_) { lee.findFlags = {}; }
+  }
+  return lee.findFlags;
+}
+
+function findRe(q) {
+  const f = findFlags();
+  let body = f.regex ? q : q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (f.word) body = `\\b(?:${body})\\b`;
+  return new RegExp(body, 'g' + (f.case ? '' : 'i'));
+}
+
+/* `-1` is the open file; anything else is a cell index. Whichever the tab holds, the pane
+   walks the live text rather than what was last saved. */
+const findDocs = () => lee.kind === 'notebook' ? lee.cells.map((_, i) => i) : (curEditor() ? [-1] : []);
+const findText = i => i < 0 ? (curEditor() ? LeeCM.getDoc(curEditor()) : '') : cellText(i);
+const findView = i => i < 0 ? curEditor() : ensureCellMounted(i);
+
+/* Null means the pattern itself is broken, which is a different thing to say than "no matches". */
+function findMatches(q) {
+  if (!q) return [];
+  let re;
+  try { re = findRe(q); } catch (_) { return null; }
+  const out = [];
+  for (const i of findDocs()) {
+    const text = findText(i);
+    re.lastIndex = 0;
+    for (let m; (m = re.exec(text));) {
+      out.push({doc: i, from: m.index, to: m.index + m[0].length});
+      if (!m[0].length) re.lastIndex++;
+      if (out.length >= MAX_FIND_HITS) return out;
+    }
+  }
+  return out;
+}
+
+function findPaint() {
+  const bar = $('#leefind'); if (!bar) return;
+  const q = $('#leefindq', bar).value, hits = findMatches(q), at = lee.find?.at ?? -1;
+  lee.find = {q, hits: hits || [], at: hits && at < hits.length ? at : -1, bad: hits === null};
+  $('#leefindcount', bar).textContent = !q ? '' : hits === null ? 'bad pattern'
+    : !hits.length ? 'no matches' : `${(lee.find.at < 0 ? 0 : lee.find.at) + 1} of ${hits.length}`;
+  bar.classList.toggle('empty', !!q && !lee.find.hits.length);
+  $$('[data-find-flag]', bar).forEach(b => b.classList.toggle('on', !!findFlags()[b.dataset.findFlag]));
+}
+
+function findStep(direction) {
+  const bar = $('#leefind'), state = lee.find;
+  if (!bar || !state?.hits.length) return;
+  const n = state.hits.length;
+  state.at = ((state.at + direction) % n + n) % n;
+  const hit = state.hits[state.at];
+  if (hit.doc >= 0) focusCell(hit.doc);
+  const view = findView(hit.doc);
+  if (view) LeeCM.setSelection(view, hit.from, hit.to);
+  $('#leefindcount', bar).textContent = `${state.at + 1} of ${n}`;
+  // `focusCell` and `setSelection` both take the focus, a frame apart. The query is where the
+  // typing belongs, so it is claimed back after both have had their turn.
+  requestAnimationFrame(() => requestAnimationFrame(() => $('#leefindq', bar)?.focus()));
+}
+
+function findReplaceOne() {
+  const state = lee.find; if (!state?.hits.length) return findPaint();
+  if (state.at < 0) return findStep(1);
+  const hit = state.hits[state.at], view = findView(hit.doc);
+  if (!view) return;
+  const text = findText(hit.doc).slice(hit.from, hit.to);
+  LeeCM.replaceRange(view, hit.from, hit.to, text.replace(findRe(state.q), $('#leefindr').value));
+  const was = state.at;
+  findPaint();
+  lee.find.at = Math.min(was, lee.find.hits.length - 1) - 1;
+  findStep(1);
+}
+
+function findReplaceAll() {
+  const state = lee.find; if (!state?.hits.length) return findPaint();
+  const to = $('#leefindr').value, done = new Set(state.hits.map(h => h.doc));
+  let n = 0;
+  for (const i of done) {
+    const view = findView(i); if (!view) continue;
+    const before = findText(i), after = before.replace(findRe(state.q), to);
+    if (after === before) continue;
+    n += state.hits.filter(h => h.doc === i).length;
+    LeeCM.setDoc(view, after);
+  }
+  lee.find = null; findPaint();
+  status(`replaced ${n} match${n === 1 ? '' : 'es'}`, 'ok');
+}
+
+function findClose() {
+  const bar = $('#leefind'); if (bar) bar.hidden = true;
+  lee.find = null;
+  const v = curEditor(); if (v) LeeCM.focus(v);
+}
+
+function findMake() {
+  const bar = document.createElement('div');
+  bar.id = 'leefind'; bar.className = 'lee-find-bar'; bar.setAttribute('role', 'search');
+  bar.innerHTML =
+    `<div class="lee-find-row">` +
+      `<input class="lee-input" id="leefindq" spellcheck="false" placeholder="find" aria-label="find">` +
+      `<button type="button" data-find-flag="regex" title="regular expression" aria-label="regular expression">.*</button>` +
+      `<button type="button" data-find-flag="case" title="match case" aria-label="match case">Aa</button>` +
+      `<button type="button" data-find-flag="word" title="whole word" aria-label="whole word">|ab|</button>` +
+      `<span class="lee-find-count" id="leefindcount" aria-live="polite"></span>` +
+      `<button type="button" data-find="prev" title="previous match (shift+enter)">&#8593;</button>` +
+      `<button type="button" data-find="next" title="next match (enter)">&#8595;</button>` +
+      `<button type="button" data-find="close" title="close (esc)">&#10005;</button>` +
+    `</div><div class="lee-find-row">` +
+      `<input class="lee-input" id="leefindr" spellcheck="false" placeholder="replace" aria-label="replace">` +
+      `<button type="button" data-find="one" title="replace this match">replace</button>` +
+      `<button type="button" data-find="all" title="replace every match">all</button>` +
+    `</div>`;
+  document.body.appendChild(bar);
+  bar.addEventListener('click', e => {
+    const flag = e.target.closest('[data-find-flag]');
+    if (flag) {
+      const f = findFlags();
+      f[flag.dataset.findFlag] = !f[flag.dataset.findFlag];
+      try { localStorage.setItem(FIND_FLAGS, JSON.stringify(f)); } catch (_) {}
+      lee.find = null; findPaint(); $('#leefindq', bar).focus();
+      return;
+    }
+    const b = e.target.closest('[data-find]'); if (!b) return;
+    if (b.dataset.find === 'close') return findClose();
+    if (b.dataset.find === 'one') return findReplaceOne();
+    if (b.dataset.find === 'all') return findReplaceAll();
+    findStep(b.dataset.find === 'next' ? 1 : -1);
+  });
+  const step = e => {
+    if (e.key === 'Escape') { e.preventDefault(); return findClose(); }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (!lee.find?.hits.length) findPaint();
+    findStep(e.shiftKey ? -1 : 1);
+  };
+  $('#leefindq', bar).addEventListener('input', findPaint);
+  $('#leefindq', bar).addEventListener('keydown', step);
+  $('#leefindr', bar).addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.preventDefault(); return findClose(); }
+    if (e.key === 'Enter') { e.preventDefault(); findReplaceOne(); }
+  });
+  return bar;
+}
+
+function leeFind() {
+  if (!findDocs().length) return status('open a file to search it', 'err');
+  const bar = $('#leefind') || findMake();
+  bar.hidden = false;
+  const input = $('#leefindq', bar), view = curEditor(), held = view ? LeeCM.selection(view) : null;
+  if (held && held.from !== held.to && !held.text.includes('\n')) input.value = held.text;
+  lee.find = null;
+  findPaint();
+  input.focus(); input.select();
+}
 /* ---- similarity: what else in this codebase looks like the thing under the cursor ---- */
 function cursorLine() {
   if (lee.kind === 'notebook') {
@@ -5214,6 +5307,99 @@ ACTIONS.extract_method = () => extractRefactor('method');
 ACTIONS.inline_variable = inlineVariable;
 ACTIONS.move_line_up = () => moveLines(-1);
 ACTIONS.move_line_down = () => moveLines(1);
+/* ------------------------------------------------------------------- move */
+/* F6: lift whole functions and classes into another file. Unlike extract and inline this
+   changes several files at once, so it previews before it writes and every file it would
+   touch is its own row. */
+
+function moveSymbolAt(symbols, pos) {
+  const here = symbols.find(s => pos >= s.start && pos <= s.end);
+  return here ? [here.name] : [];
+}
+
+function moveRows(files, keep, selected) {
+  return files.map((f, i) => {
+    const fixed = keep.includes(f.path);
+    const note = f.before === null ? 'new file' : `${f.edits} change${f.edits === 1 ? '' : 's'}`;
+    return `<details class="lee-moverow" data-move-file="${i}">` +
+      `<summary><input type="checkbox" data-move-path="${esc(f.path)}"${selected.has(f.path) ? ' checked' : ''}` +
+      `${fixed ? ' disabled title="the move needs this file"' : ''}>` +
+      `<strong>${esc(compactPath(f.path))}</strong><span class="sub">${note}</span></summary>` +
+      `<div class="lee-movediff" data-move-diff="${i}"></div></details>`;
+  }).join('');
+}
+
+/* The diff is built when its row is opened, not when the list is drawn. A move across a dozen
+   call sites would otherwise mount a dozen merge views nobody asked to see. */
+function moveDiffs(m, files) {
+  const built = [];
+  $$('[data-move-file]', m).forEach(row => row.addEventListener('toggle', () => {
+    const i = +row.dataset.moveFile;
+    if (!row.open || built[i]) return;
+    const f = files[i];
+    built[i] = LeeCM.createMerge($(`[data-move-diff="${i}"]`, row), {
+      left: f.before || '', right: f.after, lang: codeLang('', f.path),
+      settings: lee.editorPrefs, readOnlyRight: true, revertControls: false});
+  }));
+  return () => built.forEach(v => v && LeeCM.destroyMerge(v));
+}
+
+async function movePreview(m, body, opened) {
+  let data;
+  try { data = await post('/refactor/move', body); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  const keep = [body.path, body.dest], selected = new Set(data.files.map(f => f.path));
+  const notes = (data.notes || []).map(n => `<div class="lee-movenote">${esc(n)}</div>`).join('');
+  m.querySelector('.lee-modalbox').innerHTML =
+    `<div class="lee-mhead">Move preview<span class="sub">${data.summary.files} file${data.summary.files === 1 ? '' : 's'}</span></div>` +
+    notes + `<div class="lee-modallist">${moveRows(data.files, keep, selected)}</div>` +
+    `<div class="lee-mfoot"><button class="lee-btn go" data-move-apply>Apply</button>` +
+    `<button class="lee-btn" data-move-cancel>Cancel</button></div>`;
+  const drop = moveDiffs(m, data.files);
+  const close = () => { drop(); m.remove(); };
+  $('[data-move-cancel]', m).onclick = close;
+  $('[data-move-apply]', m).onclick = async () => {
+    const paths = $$('[data-move-path]:checked', m).map(x => x.dataset.movePath);
+    try {
+      const r = await post('/refactor/apply', {token: data.token, paths});
+      close();
+      if (opened && paths.concat(keep).includes(lee.path)) await takeDiskVersion(lee.path);
+      refreshFileTree(undefined, false);
+      status(`moved into ${compactPath(body.dest)} · ${r.paths.length} file${r.paths.length === 1 ? '' : 's'}`, 'ok');
+    } catch (e) { status(e.message || String(e), 'err'); }
+  };
+}
+
+async function moveSymbol() {
+  const view = refactorTarget(); if (!view) return;
+  let found;
+  try { found = await post('/refactor/symbols', {path: lee.path}); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  if (!found.symbols.length) return status('no top-level function or class to move', 'err');
+  const chosen = new Set(moveSymbolAt(found.symbols, LeeCM.cursor(view)));
+  const files = (await api('/fs/find')).hits.filter(h => h.path.endsWith('.py') && h.path !== lee.path);
+  const m = modal(`<div class="lee-mhead">Move to file<span class="sub">${esc(found.module)}</span></div>` +
+    `<div class="lee-modallist lee-movepick">${found.symbols.map(s =>
+      `<label class="lee-mrow"><input type="checkbox" data-move-name="${esc(s.name)}"${chosen.has(s.name) ? ' checked' : ''}>` +
+      `<strong>${esc(s.name)}</strong><span class="sub">${s.kind} · line ${s.line}</span></label>`).join('')}</div>` +
+    `<label>Into<input class="lee-input" data-move-dest list="lee-move-files" placeholder="path/to/module.py" autofocus></label>` +
+    `<datalist id="lee-move-files">${files.slice(0, 500).map(h => `<option value="${esc(h.path)}">`).join('')}</datalist>` +
+    `<label><input type="checkbox" data-move-shim checked> keep a re-export in ${esc(compactPath(lee.path))}</label>` +
+    `<div class="lee-mfoot"><button class="lee-btn go" data-move-go>Preview</button>` +
+    `<button class="lee-btn" data-move-cancel>Cancel</button></div>`);
+  $('[data-move-cancel]', m).onclick = () => m.remove();
+  $('[data-move-go]', m).onclick = async () => {
+    const go = $('[data-move-go]', m); go.disabled = true;
+    const names = $$('[data-move-name]:checked', m).map(x => x.dataset.moveName);
+    const dest = $('[data-move-dest]', m).value.trim();
+    if (!names.length) { go.disabled = false; return status('choose what to move', 'err'); }
+    if (!dest) { go.disabled = false; return status('name the file to move it into', 'err'); }
+    await movePreview(m, {path: lee.path, names, dest, shim: $('[data-move-shim]', m).checked}, true);
+    go.disabled = false;
+  };
+}
+
+ACTIONS.move_symbol = moveSymbol;
 /* --------------------------------------------------------- git conflicts */
 async function showConflictCenter() {
   try {

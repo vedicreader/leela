@@ -226,7 +226,9 @@ GET,POST /outline
 GET,POST /project/nbdev_prepare
 GET,POST /refactor/apply
 GET,POST /refactor/inline
+GET,POST /refactor/move
 GET,POST /refactor/preview
+GET,POST /refactor/symbols
 GET,POST /releases
 GET,POST /releases/action
 GET,POST /releases/tail

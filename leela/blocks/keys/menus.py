@@ -31,7 +31,7 @@ MENUS = {
               S(), S('add_root'), S('refresh_files')),
     'editor': L(S('complete'), S('ai_complete'), S('show_docs'), S(), S('find_similar'),
                 S('code_map'), S('git_blame'), S(), S('extract_variable'), S('extract_method'),
-                S('extract_constant'), S('inline_variable'), S('rename_symbol'),
+                S('extract_constant'), S('inline_variable'), S('move_symbol'), S('rename_symbol'),
                 S('replace_workspace'), S(), S('move_line_up'), S('move_line_down'),
                 S(), S('run_selection'), S('agent_selection'), S('comment')),
     'cell': L(S('run_cell'), S('run_advance'), S('run_insert'), S(), S('run_above'),

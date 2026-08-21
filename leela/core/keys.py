@@ -100,6 +100,7 @@ DEFAULTS = L(
     Key('extract_method',   'mod+alt+m',      'global', 'extract method / function'),
     Key('extract_constant', 'mod+alt+c',      'global', 'extract constant'),
     Key('inline_variable',  'mod+alt+n',      'global', 'inline variable'),
+    Key('move_symbol',      'mod+alt+f',      'global', 'move function or class to a file', 'toast'),
     Key('sync_index',       'hyper+i',        'global', 'sync Kosha index'),
     Key('save',             'mod+s',         'global', 'save',                'toast'),
     Key('save_all',         'alt+shift+s',   'global', 'save all'),

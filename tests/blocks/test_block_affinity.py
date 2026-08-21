@@ -39,7 +39,7 @@ CROSS_BLOCK_VIEWS = {'blocks/agent/memory.js': 'the agent panel\'s workbench ove
 PURE_DOM = {'cells.js', 'gutter.js', 'conflictpanes.js', 'conflictfiles.js', 'terminal.js',
             'keymap.js', 'boot.js', 'core.js', 'focus.js', 'overlays.js', 'actions.js',
             'views.js', 'state.js', 'palette.js', 'split.js', 'tabs.js', 'mount.js',
-            'markdown.js', 'media.js', 'panel.js', 'blame.js', 'builder.js', 'projects.js',
+            'markdown.js', 'media.js', 'panel.js', 'blame.js', 'builder.js', 'projects.js', 'find.js',
             'diffs.js', 'motion.js', 'prompt.js', 'exec.js', 'runfile.js', 'reload.js'}
 
 def owners(text):
