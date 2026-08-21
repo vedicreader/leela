@@ -2,11 +2,10 @@
  *
  * Sources live with the feature they serve: `leela/blocks/<block>/*.js`, and this shared
  * vocabulary in `leela/static/js/`. `tools/build_ide_js.py` concatenates them, in the order
- * its `LAYERS` fixes, into the bundle `core.web.IDE_BUNDLES` names.
+ * its `LAYERS` fixes, into the bundles `core.web.IDE_BUNDLES` names.
  *
- * One bundle, one script tag: the modules share a scope, so `$`, `esc` and `lee` are declared
- * here once and read by every later module. `ACTIONS` is why it is still one tag -- see the
- * note above `LAYERS`.
+ * Three script tags, one lexical scope, executed in order, so `lee`, `$` and `esc` are declared
+ * here once and read by every later module.
  *
  * The keymap is fetched from /keys.json (leela.core.keys). Dispatch is scope-aware:
  * `lee.scope` must match or be 'global', else the browser/CodeMirror keep the chord.
@@ -26,6 +25,9 @@ const lee = {
   breakpoints: new Map(), debugThread: null, debugCell: null, debugState: null, directDebug: false, debugWatches: [],
   shownProblems: new Set(),   // agent failures already written into the pane, so they show once
   agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
+  agentStream: null, agentStreamGen: 0, agentTitle: '', agentThread: '',
+  agentThreadDrafts: new Map(),
+  nbFind: null,                // the notebook find bar's query, its matches and where it is
   // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
   // path->name map: two selections in one file are two contexts, not one key overwriting itself.
   agentSelections: [],
@@ -35,7 +37,7 @@ const lee = {
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
-  editorPrefs: null, settingsMeta: null, filePrefs: {}, workbenchPrefs: {}, debugPrefs: {},
+  editorPrefs: null, settingsMeta: null, filePrefs: {}, workbenchPrefs: {}, debugPrefs: {}, backupPrefs: {},
   theme: null,               // {family, mode, density}; mode may be 'system', resolved at paint time
   gitDiffTabs: new Map(), activeGitTab: '', gitMergeView: null,
 };
@@ -95,6 +97,7 @@ async function loadSettings(language = '') {
     const d = await api('/settings?language=' + encodeURIComponent(language));
     lee.settingsMeta = d; lee.filePrefs = d.effective.files || {};
     lee.workbenchPrefs = d.effective.workbench || {}; lee.debugPrefs = d.effective.debug || {};
+    lee.backupPrefs = d.effective.backups || {}; lee.agentPrefs = d.effective.agent || {};
     applyEditorPrefs(d.effective.editor || EDITOR_DEFAULTS);
   } catch (_) { applyEditorPrefs(lee.editorPrefs); }
 }
@@ -362,6 +365,17 @@ function enhanceCodeBlocks(el) {
                                            python && el.classList.contains('lee-reply')));
   });
 }
+/* This copies an answer into the open notebook, so it needs one. Offering it while a `.py` tab is
+   focused meant a control that was always there and usually inert, and only said so after a click.
+   It is hidden rather than disabled, and comes back the moment a notebook tab is focused. */
+function markdownCellActionState(button) {
+  const ready = lee.kind === 'notebook';
+  const bar = button.closest('.lee-reply-actions') || button;
+  bar.hidden = !ready;
+  button.disabled = !ready;
+  button.title = 'insert this as a markdown cell in the open notebook';
+}
+function refreshMarkdownCellActions() { $$('.lee-reply-actions button').forEach(markdownCellActionState); }
 function addMarkdownCellAction(el) {
   if (!el.dataset.markdown.trim() ||
       (!el.classList.contains('lee-reply') && !el.classList.contains('lee-md-output'))) return;
@@ -370,6 +384,7 @@ function addMarkdownCellAction(el) {
   button.textContent = el.classList.contains('lee-reply')
     ? 'edit response as markdown cell' : 'edit as markdown cell';
   button.onclick = () => promoteCodeToNotebook(el.dataset.markdown, 'markdown');
+  markdownCellActionState(button);
   bar.appendChild(button); el.appendChild(bar);
 }
 
@@ -450,7 +465,9 @@ async function api(url, opts, retried) {
   if (r.ok) return body;
   /* The kernel ceiling is the one failure a person can answer. Offer the room, then try once more. */
   if (!retried && body && body.kernel_limit && await offerKernelRoom(body)) return api(url, opts, true);
-  throw new Error((body && body.error) || r.statusText);
+  /* Thread-aware routes answer with `code` and `message`; the rest with `error`. Either is the
+     one sentence a person can act on, and `statusText` ("Conflict") never is. */
+  throw new Error((body && (body.error || body.message)) || r.statusText);
 }
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify(data || {})});
@@ -613,7 +630,10 @@ function findBinding(e, scope) {
       const selection = curEditor() ? LeeCM.selection(curEditor()) : null;
       if (inEditor && selection?.from !== selection?.to) continue;
     }
-    if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down'].includes(k.action) && lee.kind !== 'notebook') continue;
+    // Cmd+F only belongs to Leela when the document is a notebook, where one CodeMirror panel
+    // would search one cell. Anywhere else the event is left alone and the editor's own panel opens.
+    if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down', 'find_in_file'].includes(k.action)
+        && lee.kind !== 'notebook') continue;
     return {binding: k, chord};
   }
   return null;
@@ -646,7 +666,10 @@ const ACTIONS = {
   settings:     () => editorSettings(),
   quick_open:   () => quickOpen(),
   code_search:  () => codeSearch(),
-  find_definition: () => findDefinition(),
+  find_definition: () => gotoDeclaration(),
+  find_definition_only: () => findDefinition(),
+  find_in_file: () => nbFind(),
+  local_history: () => leeLocalHistory(),
   find_usages: () => findUsages(),
   rename_symbol: () => renameSymbol(),
   agent_selection: () => leeAgentSelection(),
@@ -747,6 +770,10 @@ const ACTIONS = {
   git_discard:  () => treeGitAction('discard'),
   git_ignore:   () => treeGitAction('ignore'),
   clip_to_vault: () => leeClipToVault(),
+  memory_notes: () => leeMemoryNotes(),
+  new_memory_note: () => leeNewMemoryNote(),
+  open_vault: () => leeVaultWorkbench(),
+  format_doc:   () => leeFormatDoc(),
   find_similar: () => findSimilar(),
   code_map:     () => codeMap(),
 
@@ -786,7 +813,10 @@ const ACTIONS = {
   profile_standard: () => setProfile('standard'),
   profile_full:     () => setProfile('full'),
 
+  agent_new:    () => leeAgentNew(),
+  agent_threads: () => $('#agentthreads')?.focus(),
   agent_send:   () => sendAgent(),
+  agent_steer_force: () => sendAgent(true),
   agent_stop:   () => stopAgent(),
   agent_tools:  () => agentTools(),
 
@@ -1253,6 +1283,7 @@ function updateToolbarForKind(kind) {
   for (const [action, shown] of Object.entries(visibility)) {
     const button = $(`#toolbar [data-action="${action}"]`); if (button) button.hidden = !shown;
   }
+  refreshMarkdownCellActions();   // whether a reply can become a cell depends on this tab
 }
 
 let mountTabVersion=0;
@@ -2731,37 +2762,127 @@ async function setKernelAutoManage(enabled) {
 /* Editable here, because the alternative is telling someone whose terminal or browser
  * eats ctrl+enter to go and find a JSON file. Saving re-reads it server-side and reloads
  * the table this client dispatches on, so a new chord works on the next keystroke. */
+/* A chord as this app writes them: `[mod+][ctrl+][alt+][shift+]base`, in that order, with `mod`
+   standing for the platform's own command key. Built from a real keystroke so nobody has to know
+   the grammar to bind a key. */
+const CHORD_BASE = {' ': 'space', 'Escape': 'esc', 'ArrowUp': 'up', 'ArrowDown': 'down',
+                    'ArrowLeft': 'left', 'ArrowRight': 'right', 'Backspace': 'backspace',
+                    'Enter': 'enter', 'Tab': 'tab', 'Delete': 'delete'};
+const CHORD_SKIP = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Dead']);
+function chordFromEvent(e) {
+  if (CHORD_SKIP.has(e.key)) return '';
+  const mac = navigator.platform.toLowerCase().includes('mac');
+  const parts = [];
+  if (mac ? e.metaKey : e.ctrlKey) parts.push('mod');
+  if (mac && e.ctrlKey) parts.push('ctrl');
+  if (e.altKey) parts.push('alt');
+  if (e.shiftKey) parts.push('shift');
+  const base = CHORD_BASE[e.key] || (e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase());
+  parts.push(base);
+  return parts.join('+');
+}
+
+/* Editable here, because the alternative is telling someone whose terminal or browser eats
+ * ctrl+enter to go and find a JSON file. It was that JSON file for a while, which meant knowing
+ * the grammar and finding out about a clash only after saving. Now it is a row per action, a field
+ * that takes the keystroke itself, and the server's own conflict check on every change. */
 async function editKeys() {
   const d = await api('/keys/file');
+  const rows = () => (lee.keys || []).filter(k => k.label || k.scope !== 'global');
   const m = modal(
     `<div class="lee-mhead">keybindings<span class="sub">${esc(d.path)}</span></div>` +
-    `<div class="lee-dim">action → chord, or several separated by spaces; "" unbinds it. ` +
-    `A chord is [mod+][ctrl+][alt+][shift+]base; mod is ⌘ on this Mac and ctrl elsewhere.</div>` +
+    `<div class="lee-keyfilter"><input class="lee-input" id="keysearch" placeholder="filter by action, description or chord…" autofocus>` +
+    `<span class="lee-dim" id="keycount"></span></div>` +
     `<div id="keynotes"></div>` +
-    `<textarea class="lee-keyedit" id="keytext" spellcheck="false"></textarea>` +
-    `<div class="lee-mfoot"><button class="lee-btn go" id="keysave">save</button>` +
-    `<button class="lee-btn" id="keyreset">restore defaults</button></div>`);
-  const ta = m.querySelector('#keytext');
-  ta.value = d.text;
-  const notes = (ns) => {
-    m.querySelector('#keynotes').innerHTML = (ns || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('');
+    `<div class="lee-keytable" id="keyrows"></div>` +
+    `<div class="lee-mfoot"><button class="lee-btn" id="keyjson">edit as JSON…</button><span class="lee-spacer"></span>` +
+    `<button class="lee-btn" id="keyreset">restore defaults</button>` +
+    `<button class="lee-btn go" id="keysave">save</button></div>`,
+    null, null, {className: 'lee-keys-modal', storageKey: 'keybindings'});
+  const notes = ns => {
+    const host = m.querySelector('#keynotes');
+    host.innerHTML = (ns || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('');
+    host.hidden = !(ns || []).length;
   };
-  notes(d.notes);
-  const applied = (r) => {
+  const edited = new Map();                       // action -> chord, only what a person changed
+  const chordOf = k => edited.has(k.action) ? edited.get(k.action) : (k.key || '');
+  const paint = () => {
+    const q = (m.querySelector('#keysearch').value || '').toLowerCase();
+    const shown = rows().filter(k => !q ||
+      [k.action, k.label, k.scope, chordOf(k)].join(' ').toLowerCase().includes(q));
+    m.querySelector('#keycount').textContent = `${shown.length} of ${rows().length}`;
+    m.querySelector('#keyrows').innerHTML = shown.map(k =>
+      `<div class="lee-keyrow${edited.has(k.action) ? ' changed' : ''}" data-action="${esc(k.action)}">` +
+      `<span class="lee-keyrow-name"><strong>${esc(k.label || k.action)}</strong>` +
+      `<small>${esc(k.action)} · ${esc(k.scope)}</small></span>` +
+      `<input class="lee-input lee-keyrow-chord" data-chord value="${esc(chordOf(k))}" ` +
+      `placeholder="unbound" spellcheck="false" aria-label="chord for ${esc(k.action)}">` +
+      `<button type="button" data-record title="press the keys you want">record</button>` +
+      `<button type="button" data-clear title="unbind">clear</button></div>`).join('') ||
+      `<div class="lee-dim">nothing matches</div>`;
+  };
+  /* The server decides what conflicts, using the same check the save runs, so a warning here
+     cannot promise something the save then refuses. */
+  let checking = null;
+  const check = async () => {
+    if (!edited.size) return notes(d.notes);
+    clearTimeout(checking);
+    checking = setTimeout(async () => {
+      try {
+        const r = await post('/keys/check', {keys: Object.fromEntries(edited)});
+        notes(r.notes);
+        if (r.notes.length) status(r.notes[0], 'err');
+      } catch (e) { notes([String(e.message || e)]); }
+    }, 180);
+  };
+  const setChord = (action, chord) => {
+    const original = (lee.keys.find(k => k.action === action)?.key) || '';
+    if (chord === original) edited.delete(action); else edited.set(action, chord);
+    paint(); check();
+  };
+  m.querySelector('#keyrows').addEventListener('click', e => {
+    const row = e.target.closest('[data-action]'); if (!row) return;
+    const action = row.dataset.action, field = $('[data-chord]', row);
+    if (e.target.closest('[data-clear]')) return setChord(action, '');
+    if (!e.target.closest('[data-record]')) return;
+    field.value = ''; field.placeholder = 'press the keys…'; field.classList.add('recording'); field.focus();
+  });
+  m.querySelector('#keyrows').addEventListener('keydown', e => {
+    const field = e.target.closest('[data-chord]'); if (!field) return;
+    if (!field.classList.contains('recording')) return;   // typed, not recorded: let it through
+    e.preventDefault(); e.stopPropagation();
+    if (e.key === 'Escape') { field.classList.remove('recording'); field.placeholder = 'unbound'; return paint(); }
+    const chord = chordFromEvent(e); if (!chord) return;
+    field.classList.remove('recording'); field.placeholder = 'unbound';
+    setChord(field.closest('[data-action]').dataset.action, chord);
+  }, true);
+  m.querySelector('#keyrows').addEventListener('change', e => {
+    const field = e.target.closest('[data-chord]'); if (!field) return;
+    setChord(field.closest('[data-action]').dataset.action, field.value.trim());
+  });
+  m.querySelector('#keysearch').addEventListener('input', paint);
+  const applied = r => {
     lee.keys = r.keys; lee.help = r.help; lee.keyNotes = r.notes || [];
-    notes(r.notes);
+    edited.clear(); notes(r.notes); paint();
     status(r.notes.length ? 'saved, but some entries were skipped' : 'keys saved and live', 'ok');
     remountEditors();
   };
   m.querySelector('#keysave').onclick = async () => {
-    try { applied(await post('/keys/save', {text: ta.value})); }
+    const map = Object.fromEntries((lee.keys || []).map(k => [k.action, chordOf(k)]));
+    try { applied(await post('/keys/save', {text: JSON.stringify({keys: map}, null, 2)})); }
     catch (e) { status(String(e.message || e), 'err'); }
   };
   m.querySelector('#keyreset').onclick = async () => {
-    const r = await post('/keys/reset');
-    ta.value = JSON.stringify({keys: Object.fromEntries(r.keys.map(k => [k.action, k.key]))}, null, 2);
-    applied(r);
+    if (!await confirmDialog('Restore default keybindings', 'Every chord you have changed goes back to leela\u2019s own.', 'restore defaults')) return;
+    applied(await post('/keys/reset'));
   };
+  m.querySelector('#keyjson').onclick = async () => {
+    const text = await textDialog('Keybindings as JSON', d.path, d.text);
+    if (text == null) return;
+    try { applied(await post('/keys/save', {text})); }
+    catch (e) { status(String(e.message || e), 'err'); }
+  };
+  notes(d.notes); paint();
 }
 
 /* CodeMirror captures its own keymap at creation, so a rebound chord only reaches the
@@ -2969,6 +3090,59 @@ function diffModal(title, label, rows) {
                 <div class="lee-diff">${diffHtml(rows)}</div>`);
 }
 
+/* Local history. Undo is one step back, and after an agent, a tool or another editor has been
+   through the tree the question is what the file said an hour ago. Every version Leela saw is
+   kept, and this is where one gets picked. */
+async function leeLocalHistory(path = lee.path) {
+  if (!path) return status('open a file to see its history', 'err');
+  let d;
+  try { d = await api('/history/file?path=' + encodeURIComponent(path)); }
+  catch (e) { return status(String(e.message || e), 'err'); }
+  const versions = d.versions || [], name = path.split('/').pop();
+  const m = modal(`<div class="lee-mhead">local history<span class="sub">${esc(name)}</span></div>` +
+    `<div class="lee-lh"><nav class="lee-lh-list" id="lhrows" aria-label="kept versions"></nav>` +
+    `<div class="lee-lh-view" id="lhview"></div></div>`, null, null, {storageKey: 'localhistory'});
+  const rows = $('#lhrows', m), view = $('#lhview', m);
+  if (!versions.length) {
+    view.innerHTML = '<div class="lee-dim">Nothing kept for this file yet. A save, an agent edit, ' +
+      'or a write from outside Leela starts its history.</div>';
+    return;
+  }
+  const when = at => new Date((at || 0) * 1000).toLocaleString();
+  rows.innerHTML = versions.map((v, i) =>
+    `<button type="button" class="lee-lh-row${i ? '' : ' active'}" data-version="${esc(v.id)}">` +
+    `<strong>${esc(v.label)}</strong><span>${esc(when(v.at))} · ${Number(v.bytes || 0).toLocaleString()} bytes` +
+    `</span></button>`).join('');
+  const show = async id => {
+    $$('[data-version]', m).forEach(b => b.classList.toggle('active', b.dataset.version === id));
+    view.innerHTML = '<div class="lee-dim">reading…</div>';
+    let held;
+    try { held = await api('/history/version?id=' + encodeURIComponent(id)); }
+    catch (e) { view.innerHTML = `<div class="lee-err">${esc(String(e.message || e))}</div>`; return; }
+    view.innerHTML = `<header class="lee-lh-head"><span>${esc(held.label)} · ${esc(when(held.at))}</span>` +
+      `<span class="lee-spacer"></span>` +
+      `<button type="button" class="lee-btn go" data-restore="${esc(id)}">restore this version</button></header>` +
+      ((held.rows || []).length ? `<div class="lee-diff">${diffHtml(held.rows)}</div>`
+        : '<div class="lee-dim">identical to what is on disk now</div>');
+  };
+  m.addEventListener('click', async e => {
+    const pick = e.target.closest('[data-version]');
+    if (pick) return show(pick.dataset.version);
+    const back = e.target.closest('[data-restore]');
+    if (!back) return;
+    back.disabled = true;
+    try {
+      const out = await post('/history/restore', {id: back.dataset.restore});
+      m.remove();
+      await post('/tab/reload', {path: out.path});
+      await mountTab();
+      status(`${out.path.split('/').pop()} restored · ${out.label || 'from local history'}`, 'ok');
+    } catch (err) { back.disabled = false; status(String(err.message || err), 'err'); }
+  });
+  show(versions[0].id);
+}
+window.leeLocalHistory = leeLocalHistory;
+
 // The dirty dot says *that* a tab changed. This says what changed -- the question
 // actually worth answering before a save, or after something moved the file underneath.
 function bufferBody() {
@@ -3123,6 +3297,22 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     return false;
   }
 }
+
+/* Every JSON config in this app is written by a program and read by a person, so most of them
+   arrive as one long line. The formatter already exists for format-on-save; this is the same call
+   asked for on purpose, and it edits the buffer rather than the file so it stays undoable. */
+async function leeFormatDoc() {
+  const view = lee.editors.get(lee.scope === 'exec' ? 'exec' : 'file');
+  if (!view) return status('open a file to format', 'err');
+  const text = LeeCM.getDoc(view), lang = curLang();
+  try {
+    const d = await post('/editor/format', {path: lee.path, lang, text});
+    if (d.text === text) return status(`${lang} already formatted`, 'ok');
+    LeeCM.setDoc(view, d.text);
+    status(`formatted ${lang}${lee.path ? ' · ' + lee.path.split('/').pop() : ''} · save to keep it`, 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+window.leeFormatDoc = leeFormatDoc;
 
 async function saveAllTabs() {
   // The active editor is saved through the same version-checked path as ordinary autosave.

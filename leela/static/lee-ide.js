@@ -65,11 +65,66 @@ function leeLeft(which = 'files') {
   else { setScope('files'); requestAnimationFrame(() => $('#filetree')?.focus()); }
 }
 window.leeLeft = leeLeft;
+/* ---- expand: one slot, one mode, one writer ----
+
+   `wide` gives the pane the dominant share of the grid it already sits in; `full` lifts it over
+   the whole shell. Only one slot is expanded at a time. Everything expansion touches -- the
+   `#shell` classes, the agent panel's timeline layout, every button label -- is written by
+   `leeSyncExpand` from the stored value and from nothing else, so the four cannot disagree.
+   Closing the pane clears it: a wide grid track behind a hidden pane is the dead space that a
+   boolean nobody else knew about used to leave. */
+const PANE_HIDDEN = {left: 'no-left', right: 'no-right', bottom: 'no-bottom'};
+const EXPAND_MODES = ['wide', 'full'];
+
+function leeExpandState() {
+  const [which, mode] = (localStorage.getItem('lee-expand') || '').split(':');
+  return PANE_HIDDEN[which] && EXPAND_MODES.includes(mode) ? {which, mode} : {which: '', mode: ''};
+}
+function leeSyncExpand() {
+  const shell = $('#shell'); if (!shell) return;
+  let {which, mode} = leeExpandState();
+  // A pane hidden by a reload, or by anything that forgot to say so, cannot stay expanded.
+  if (which && shell.classList.contains(PANE_HIDDEN[which])) { which = mode = ''; localStorage.setItem('lee-expand', ''); }
+  for (const slot in PANE_HIDDEN) shell.classList.toggle('expand-' + slot, slot === which);
+  for (const m of EXPAND_MODES) shell.classList.toggle('expand-' + m, m === mode);
+  $('.lee-agent')?.classList.toggle('timeline-workspace', which === 'right' && !!mode);
+  $$('[data-pane-expand]').forEach(b => {
+    const slot = b.dataset.paneExpand, own = slot === which ? mode : '';
+    const label = own === 'wide' ? 'full screen' : own === 'full' ? 'restore' : 'expand';
+    b.textContent = b.dataset.paneExpandIcon ? (own === 'full' ? '\u2921' : '\u2922') : label;
+    b.title = `${label} the ${slot} pane`;
+    b.setAttribute('aria-label', `${label} the ${slot} pane`);
+    b.setAttribute('aria-pressed', String(!!own));
+  });
+}
+function leeExpand(which = '', mode = '') {
+  const wanted = PANE_HIDDEN[which] && EXPAND_MODES.includes(mode) ? which + ':' + mode : '';
+  if (wanted) leePane(which, true);
+  localStorage.setItem('lee-expand', wanted);
+  leeSyncExpand();
+  requestAnimationFrame(() => lee.term?.refit());
+}
+function leeExpandPane(which) {
+  const cur = leeExpandState(), mode = cur.which !== which ? 'wide' : cur.mode === 'wide' ? 'full' : '';
+  leeExpand(which, mode);
+  status(`${which} pane ${mode === 'wide' ? 'expanded' : mode === 'full' ? 'full screen' : 'restored'}`);
+}
+window.leeExpand = leeExpand; window.leeExpandPane = leeExpandPane;
+
+// Full screen hides the layout you would otherwise click back from, so Escape is the way out.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || $$('.lee-modal').length || leeExpandState().mode !== 'full') return;
+  e.preventDefault(); e.stopPropagation(); leeExpand('');
+}, true);
+
 function leePane(which, show = null, persist = true) {
   const shell = $('#shell'); if (!shell) return;
-  const cls = which === 'left' ? 'no-left' : which === 'right' ? 'no-right' : 'no-bottom';
+  const cls = PANE_HIDDEN[which] || 'no-bottom';
   const hidden = show === null ? !shell.classList.contains(cls) : !show;
   shell.classList.toggle(cls, hidden);
+  // Closing the pane that is expanded: without this its grid track stays wide and the
+  // hidden pane keeps the room, which is the dead space this used to leave behind.
+  if (hidden && leeExpandState().which === which) leeExpand('');
   if (matchMedia('(max-width: 1100px)').matches && which !== 'bottom') {
     shell.classList.toggle('mobile-' + which, !hidden);
     if (!hidden) {
@@ -81,6 +136,7 @@ function leePane(which, show = null, persist = true) {
   // An auto-close is not a preference: the pane was got out of the way for one keystroke, and
   // recording it as hidden would mean it never came back after a reload.
   if (persist) localStorage.setItem('lee-pane-' + which, hidden ? 'hidden' : 'shown');
+  leeSyncExpand();
   if (!hidden && which === 'bottom') requestAnimationFrame(() => lee.term?.refit());
 }
 window.leePane = leePane;
@@ -475,11 +531,7 @@ try {
 } catch (e) {}
 
 function leeTermExpand() {
-  const centre = $('.lee-centre'); if (!centre) return;
-  leeDock('term');
-  centre.classList.toggle('term-expanded');
-  const expanded = centre.classList.contains('term-expanded');
-  $('#termexpand').textContent = expanded ? 'restore' : 'expand';
+  leeDock('term'); leeExpandPane('bottom');
   requestAnimationFrame(() => { lee.term?.refit(); lee.term?.focus(); });
 }
 window.leeTermExpand = leeTermExpand;
@@ -492,7 +544,7 @@ function closeTerm(id = lee.activeTerm) {
   if (next) switchTerm(next);
   else {
     paintTermTabs(); $('#shell').classList.remove('show-term'); leeDock('exec');
-    $('.lee-centre')?.classList.remove('term-expanded'); setScope('editor');
+    leeExpand(''); setScope('editor');
   }
   // A shell or lazygit may have changed the working tree under us.
   refreshFileTree(undefined, false).catch(e => status(String(e.message || e), 'err'));
@@ -570,14 +622,16 @@ async function editorSettings(languageScope = null) {
         originalTheme = readTheme();
   let saved = false, previewView = null;
   const selected = (value, current) => value === current ? ' selected' : '';
-  const checked = (section, key) => (section === 'editor' ? lee.editorPrefs : section === 'files' ? lee.filePrefs :
-    section === 'workbench' ? lee.workbenchPrefs : lee.debugPrefs)[key] ? ' checked' : '';
+  const prefsOf = section => section === 'editor' ? lee.editorPrefs : section === 'files' ? lee.filePrefs :
+    section === 'workbench' ? lee.workbenchPrefs : section === 'backups' ? (lee.backupPrefs || {}) :
+    section === 'agent' ? (lee.agentPrefs || {}) : lee.debugPrefs;
+  const checked = (section, key) => prefsOf(section)[key] ? ' checked' : '';
   const fontSelect = CODE_FONTS.map(([name, detail]) =>
     `<option value="${esc(name)}"${selected(name, lee.editorPrefs.fontFamily)}>${esc(name)} — ${esc(detail)}</option>`).join('');
   const field = (section, key, label, input, help='') => `<label>${label}${input.replace('data-setting', `data-pref-section="${section}" data-pref="${key}"`)}${help ? `<small>${help}</small>` : ''}</label>`;
   const check = (section, key, label, help='') => `<label class="lee-settings-toggle"><input type="checkbox" data-pref-section="${section}" data-pref="${key}"${checked(section,key)}><span>${label}${help ? `<small>${help}</small>` : ''}</span></label>`;
   const select = (section, key, label, values, help='') => field(section,key,label,
-    `<select class="lee-select" data-setting>${values.map(([value,text]) => `<option value="${value}"${selected(value,(section==='editor'?lee.editorPrefs:section==='files'?lee.filePrefs:section==='workbench'?lee.workbenchPrefs:lee.debugPrefs)[key])}>${text}</option>`).join('')}</select>`,help);
+    `<select class="lee-select" data-setting>${values.map(([value,text]) => `<option value="${value}"${selected(value,prefsOf(section)[key])}>${text}</option>`).join('')}</select>`,help);
   const swatch = (family, mode) => {
     const [bg, bg1, accent] = THEMES[family][themeMode(mode)];
     return `background: linear-gradient(135deg, ${bg} 0 42%, ${bg1} 42% 62%, ${accent} 62%)`;
@@ -596,6 +650,8 @@ async function editorSettings(languageScope = null) {
     `<div class="lee-settings-layout"><nav class="lee-settings-nav" aria-label="Settings sections">` +
     `<button class="active" data-settings-page="editor">Text editor</button><button data-settings-page="appearance">Appearance</button>` +
     `<button data-settings-page="files">Files & save</button><button data-settings-page="debug">Run & debug</button>` +
+    `<button data-settings-page="agent">Agent</button>` +
+    `<button data-settings-page="backups">Backups</button>` +
     `<button data-settings-page="keys">Keybindings</button></nav><div class="lee-settings-content">` +
     `<section data-settings-section="editor"><div class="lee-settings-title"><span>Text editor</span><kbd>${esc(displayChord(lee.keys.find(k=>k.action==='settings')?.key||'mod+,'))}</kbd></div>` +
     `<p>Editing behavior updates live. Portable values are saved as JSON, not trapped in this browser.</p>` +
@@ -639,6 +695,33 @@ async function editorSettings(languageScope = null) {
     `<section data-settings-section="debug" hidden><h3>Run & debug</h3><p>Defaults for notebook DAP and direct debugpy sessions.</p><div class="lee-settings-checks">` +
     `${check('debug','justMyCode','Just my code')}${check('debug','stopOnEntry','Stop on entry')}${check('debug','subProcess','Debug subprocesses')}${check('debug','showInlineValues','Inline paused values')}${check('debug','breakOnRaised','Break on raised exceptions')}${check('debug','breakOnUncaught','Break on uncaught exceptions')}</div>` +
     `<div class="lee-setting-row"><span><strong>debugpy</strong><small>Python files, modules, tests, applications, and attach sessions use the selected project interpreter.</small></span><button class="lee-btn" data-open-runs>Run configurations…</button></div></section>` +
+    `<section data-settings-section="agent" hidden><h3>Agent</h3>` +
+    `<p>Where this agent's durable conversations live. Ramabana writes the log, the session names, ` +
+    `the branches and the plans from the same code Leela drives, so one folder can serve both: ` +
+    `point this at Ramabana's config dir and the conversations you had in the CLI are the ` +
+    `conversations you see here.</p>` +
+    `<div class="lee-settings-grid"><label class="wide">Conversation folder` +
+    `<input class="lee-input" data-pref-section="agent" data-pref="configFolder" spellcheck="false" ` +
+    `placeholder="${esc(lee.settingsMeta?.paths?.user?.replace(/settings\.json$/, '') || '')}" ` +
+    `value="${esc(lee.agentPrefs?.configFolder || '')}">` +
+    `<small>Empty means Leela's own config dir, which is where it has always been. ` +
+    `Backups and the pre-write copy follow this folder. Conversations already open keep the folder ` +
+    `they started in, so restart Leela after changing it.</small></label></div></section>` +
+    `<section data-settings-section="backups" hidden><h3>Backups</h3>` +
+    `<p>Dated copies of what cannot be rebuilt: conversations and their titles, branches, notes, ` +
+    `workspaces, keymaps and settings. A copy is also taken before anything overwrites the ` +
+    `conversation log, whatever the cadence says.</p>` +
+    `<div class="lee-settings-group"><div class="lee-settings-grid">` +
+    select('backups','cadence','Cadence',[['off','Off (pre-write copies only)'],['hourly','Hourly'],['sixhourly','Every six hours'],['daily','Daily'],['weekly','Weekly']],'How often a dated copy is taken while Leela is running.') +
+    field('backups','keepNewest','Keep newest',`<input class="lee-input" data-setting type="number" min="1" max="50" value="${lee.backupPrefs?.keepNewest??5}">`) +
+    `<label class="wide">Age bands (days)<input class="lee-input" data-pref-section="backups" data-pref="ageBands" value="${esc(lee.backupPrefs?.ageBands||'2,14,60')}"><small>One copy is kept inside each band, so a mistake noticed weeks later still has something to go back to.</small></label>` +
+    `</div></div>` +
+    `<div class="lee-settings-group"><h4>What a copy holds</h4>` +
+    `<div class="lee-settings-checks" data-backup-entries>reading…</div>` +
+    `<small>Anything unticked is not copied. Journals alone are tens of megabytes; the vault is a live database outside the config dir.</small></div>` +
+    `<div class="lee-setting-row"><span><strong>Take one now</strong><small data-backup-dir></small></span>` +
+    `<button class="lee-btn" data-backup-now>Back up now</button></div>` +
+    `<div class="lee-settings-group"><h4>Restore</h4><div data-backup-list class="lee-backup-list">reading…</div></div></section>` +
     `<section data-settings-section="keys" hidden><h3>Keybindings</h3><p>Every command can be rebound from the same single-source keymap.</p><button class="lee-btn" data-open-keys>Edit keybindings…</button></section>` +
     `</div></div><div class="lee-mfoot"><button class="lee-btn" data-reset>Reset this section</button><span class="lee-spacer"></span><button class="lee-btn" data-cancel>Cancel</button><button class="lee-btn go" data-save>Save settings</button></div>`,
     null,()=>{if(previewView)LeeCM.destroy(previewView);if(!saved){applyEditorPrefs(original);lee.filePrefs=originalFiles;lee.workbenchPrefs=originalWorkbench;lee.debugPrefs=originalDebug;applyTheme(originalTheme);}},
@@ -646,9 +729,11 @@ async function editorSettings(languageScope = null) {
   api('/lsp/status').then(d=>{const el=$('[data-lsp-state]',m);if(el){el.textContent=d.available?(d.alive?'connected':'available'):'optional';el.title=d.note||'';}}).catch(()=>{});
   await document.fonts.ready;
   previewView=createEditor($('#settingspreview',m),{doc:'# Programming ligatures and line guides\nfrom pathlib import Path\n\ndef compare(left: int, right: int) -> bool:\n    return left != right and left <= 100  # => result\n',lang:'python',lineNums:true});
-  const sections={editor:lee.editorPrefs,files:lee.filePrefs,workbench:lee.workbenchPrefs,debug:lee.debugPrefs};
+  const sections={editor:lee.editorPrefs,files:lee.filePrefs,workbench:lee.workbenchPrefs,debug:lee.debugPrefs,backups:lee.backupPrefs||{},agent:lee.agentPrefs||{}};
   const initialSections=Object.fromEntries(Object.entries(sections).map(([name,values])=>[name,{...values}]));
-  const update=()=>{$$('[data-pref]',m).forEach(input=>{const target=sections[input.dataset.prefSection];target[input.dataset.pref]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;});applyEditorPrefs(sections.editor);LeeCM.configure(previewView,sections.editor);};
+  const update=()=>{$$('[data-pref]',m).forEach(input=>{const target=sections[input.dataset.prefSection];target[input.dataset.pref]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;});
+    const entries=$$('[data-backup-entry]',m); if(entries.length)sections.backups.include=entries.filter(b=>b.checked).map(b=>b.dataset.backupEntry);
+    applyEditorPrefs(sections.editor);LeeCM.configure(previewView,sections.editor);};
   $$('[data-pref]',m).forEach(input=>input.addEventListener('input',update));
   let page='editor';
   $$('[data-settings-page]',m).forEach(button=>button.onclick=()=>{page=button.dataset.settingsPage;$$('[data-settings-page]',m).forEach(x=>x.classList.toggle('active',x===button));$$('[data-settings-section]',m).forEach(x=>x.hidden=x.dataset.settingsSection!==page);});
@@ -667,7 +752,43 @@ async function editorSettings(languageScope = null) {
   $$('[data-theme-density]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,density:b.dataset.themeDensity});paintPicker();});
   $('[data-reset]',m).onclick=async()=>{const section=page==='appearance'?'editor':page; if(!sections[section])return;await post('/settings/reset',{scope:scope.value,section,language:language.value});saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
   $('[data-cancel]',m).onclick=()=>m.remove();
-  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>value!==initialSections[section][key]));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})`,'ok');};
+  const same=(a,b)=>Array.isArray(a)||Array.isArray(b)?JSON.stringify(a)===JSON.stringify(b):a===b;
+  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})`,'ok');};
+  /* Restoring is a write over live state, so the list says what each copy holds and asks first. */
+  const paintBackups=async()=>{
+    const list=$('[data-backup-list]',m); if(!list) return;
+    let d; try{ d=await api('/backups'); }catch(e){ list.textContent=String(e.message||e); return; }
+    $('[data-backup-dir]',m).textContent=d.dir;
+    /* Painted once: a repaint after a run would drop ticks the person has not saved yet. */
+    const chooser=$('[data-backup-entries]',m);
+    if(chooser&&!$('[data-backup-entry]',chooser)){
+      chooser.innerHTML=(d.entries||[]).map(e=>`<label class="lee-settings-toggle">`+
+        `<input type="checkbox" data-backup-entry="${esc(e.name)}"${e.chosen?' checked':''}>`+
+        `<span>${esc(e.label)}<small>${esc(e.name)}</small></span></label>`).join('');
+      chooser.addEventListener('change',update);
+    }
+    if(!d.backups.length){ list.innerHTML='<div class="lee-dim">no copies yet</div>'; return; }
+    list.innerHTML=d.backups.map(b=>`<div class="lee-backup-row"><span><strong>${esc(b.name)}</strong>`+
+      `<small>${b.files} file${b.files===1?'':'s'} · ${Math.max(1,Math.round(b.bytes/1024))} KB`+
+      `${b.archived?'':' · uncompressed'}${b.reason?` · ${esc(b.reason)}`:''}`+
+      `${b.entries&&b.entries.length?`<br>${esc(b.entries.join(', '))}`:''}</small></span>`+
+      `<button class="lee-btn" data-restore="${esc(b.name)}">restore</button></div>`).join('');
+    $$('[data-restore]',list).forEach(button=>button.onclick=async()=>{
+      const name=button.dataset.restore;
+      if(!await confirmDialog('Restore this backup',
+        `Put the copy from ${name} back over the current conversations, notes and settings? `+
+        `A copy of what it replaces is kept first.`,'restore')) return;
+      try{ const out=await post('/backups/restore',{name});
+           status(`restored ${out.restored.length} item(s) from ${name} · ${out.note}`,'ok'); }
+      catch(e){ status(String(e.message||e),'err'); }
+    });
+  };
+  $('[data-backup-now]',m).onclick=async()=>{
+    try{ const out=await post('/backups/run',{reason:'asked for'});
+         status(out.name?`backed up as ${out.name}`:'nothing to back up yet','ok'); await paintBackups(); }
+    catch(e){ status(String(e.message||e),'err'); }
+  };
+  paintBackups();
   $('[data-open-keys]',m).onclick=()=>{saved=true;m.remove();editKeys();};
   $('[data-open-runs]',m).onclick=()=>{saved=true;m.remove();editRuns();};
 }
@@ -3059,6 +3180,19 @@ async function leeClipToVault() {
 }
 window.leeClipToVault = leeClipToVault;
 /* ------------------------------------------------------------------ overlays */
+function modalViewport() {
+  const v = window.visualViewport;
+  return {left: v?.offsetLeft || 0, top: v?.offsetTop || 0, width: v?.width || innerWidth, height: v?.height || innerHeight};
+}
+function fitModal(m) {
+  const box = $('.lee-modalbox', m), v = modalViewport(), gap = 8; if (!box) return;
+  box.style.maxWidth = Math.max(0, v.width - gap * 2) + 'px';
+  box.style.maxHeight = Math.max(0, v.height - gap * 2) + 'px';
+  if (!m.classList.contains('lee-modal-moved')) return;
+  const r = box.getBoundingClientRect();
+  box.style.left = Math.max(v.left, Math.min(r.left, v.left + v.width - Math.min(r.width, v.width) - gap)) + 'px';
+  box.style.top = Math.max(v.top, Math.min(r.top, v.top + v.height - Math.min(r.height, v.height) - gap)) + 'px';
+}
 function modal(inner, onKey, onClose, options = {}) {
   const previousFocus = document.activeElement;
   const m = document.createElement('div');
@@ -3071,15 +3205,16 @@ function modal(inner, onKey, onClose, options = {}) {
   const heading = box.querySelector('.lee-mhead');
   if (heading) box.setAttribute('aria-label', heading.textContent.trim());
   const storageKey = options.storageKey ? `lee-modal-size:${options.storageKey}` : '';
+  const viewport = modalViewport();
   if (storageKey) {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
-      if (saved?.width) box.style.width = Math.min(saved.width, innerWidth - 16) + 'px';
-      if (saved?.height) box.style.height = Math.min(saved.height, innerHeight - 16) + 'px';
+      if (saved?.width) box.style.width = Math.min(saved.width, viewport.width - 16) + 'px';
+      if (saved?.height) box.style.height = Math.min(saved.height, viewport.height - 16) + 'px';
       if (Number.isFinite(saved?.left) && Number.isFinite(saved?.top)) {
         m.classList.add('lee-modal-moved');
-        box.style.left = Math.max(0, Math.min(saved.left, innerWidth - 80)) + 'px';
-        box.style.top = Math.max(0, Math.min(saved.top, innerHeight - 48)) + 'px';
+        box.style.left = Math.max(viewport.left, Math.min(saved.left, viewport.left + viewport.width - 80)) + 'px';
+        box.style.top = Math.max(viewport.top, Math.min(saved.top, viewport.top + viewport.height - 48)) + 'px';
       }
     } catch (_) {}
   }
@@ -3095,6 +3230,7 @@ function modal(inner, onKey, onClose, options = {}) {
   })));
   observer.observe(box, {childList: true, subtree: true});
   let closed = false;
+  const onViewport = () => fitModal(m);
   const nativeRemove = m.remove.bind(m);
   const focusables = () => $$('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])', box)
     .filter(el => !el.hidden && el.getClientRects().length);
@@ -3130,7 +3266,9 @@ function modal(inner, onKey, onClose, options = {}) {
   };
   m.remove = () => {
     if (closed) return;
-    closed = true; observer.disconnect(); document.removeEventListener('keydown', key, true); nativeRemove();
+    closed = true; observer.disconnect(); document.removeEventListener('keydown', key, true);
+    window.removeEventListener('resize', onViewport); window.visualViewport?.removeEventListener('resize', onViewport); nativeRemove();
+    if (!$$('.lee-modal').length) { document.body.style.overflow = document.body.dataset.leeModalOverflow || ''; delete document.body.dataset.leeModalOverflow; }
     if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({preventScroll: true});
     if (onClose) onClose();
   };
@@ -3146,17 +3284,18 @@ function modal(inner, onKey, onClose, options = {}) {
   });
   dragHandle.addEventListener('pointermove', e => {
     if (!drag) return;
-    const r = box.getBoundingClientRect(), width = r.width, height = r.height;
-    const maxX = Math.max(0, innerWidth - width) - drag.left;
-    const maxY = Math.max(0, innerHeight - height) - drag.top;
-    drag.dx = Math.max(-drag.left, Math.min(e.clientX - drag.x, maxX));
-    drag.dy = Math.max(-drag.top, Math.min(e.clientY - drag.y, maxY));
+    const r = box.getBoundingClientRect(), v = modalViewport(), width = r.width, height = r.height;
+    const maxX = v.left + Math.max(0, v.width - width) - drag.left;
+    const maxY = v.top + Math.max(0, v.height - height) - drag.top;
+    drag.dx = Math.max(v.left - drag.left, Math.min(e.clientX - drag.x, maxX));
+    drag.dy = Math.max(v.top - drag.top, Math.min(e.clientY - drag.y, maxY));
     box.style.transform = `translate3d(${drag.dx}px, ${drag.dy}px, 0)`;
     e.preventDefault();
   });
   const endDrag = e => {
     if (!drag) return;
-    box.style.left = Math.max(0, drag.left + drag.dx) + 'px'; box.style.top = Math.max(0, drag.top + drag.dy) + 'px';
+    const v = modalViewport();
+    box.style.left = Math.max(v.left, drag.left + drag.dx) + 'px'; box.style.top = Math.max(v.top, drag.top + drag.dy) + 'px';
     box.style.transform = ''; drag = null; m.classList.remove('lee-modal-dragging');
     try { dragHandle.releasePointerCapture(e.pointerId); } catch (_) {}
   };
@@ -3193,8 +3332,11 @@ function modal(inner, onKey, onClose, options = {}) {
   m.querySelector('.lee-modal-close').onclick = requestClose;
   m.addEventListener('mousedown', e => { if (e.target === m) requestClose(); });
   document.addEventListener('keydown', key, true);
+  window.addEventListener('resize', onViewport); window.visualViewport?.addEventListener('resize', onViewport);
+  if (!$$('.lee-modal').length) { document.body.dataset.leeModalOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'; }
   document.body.appendChild(m);
   requestAnimationFrame(() => {
+    fitModal(m);
     const target = box.querySelector('[autofocus]') || box.querySelector('.lee-mrow.sel:not([data-off])') ||
                    box.querySelector('.lee-mrow:not([data-off])') || box.querySelector('input, textarea, select') ||
                    box.querySelector('button:not(.lee-modal-close):not([disabled])') || box;
@@ -3239,15 +3381,19 @@ function textDialog(title, label, value = '') {
   });
 }
 
-function confirmDialog(title, detail, action = 'confirm') {
+/* `alt` offers a second way to say yes, for a choice with two shapes rather than one. It resolves
+   `'alt'`, and cancel stays falsy so every caller that only asked a yes/no question is unchanged. */
+function confirmDialog(title, detail, action = 'confirm', alt = '') {
   return new Promise(resolve => {
     let settled = false;
     const done = value => { if (settled) return; settled = true; m.remove(); resolve(value); };
+    const second = alt ? `<button class="lee-btn" id="dialogalt">${esc(alt)}</button>` : '';
     const m = modal(`<div class="lee-mhead">${esc(title)}</div><div class="lee-dialogcopy">${esc(detail)}</div>` +
-      `<div class="lee-mfoot"><button class="lee-btn warn" id="dialogyes">${esc(action)}</button>` +
+      `<div class="lee-mfoot"><button class="lee-btn warn" id="dialogyes">${esc(action)}</button>${second}` +
       `<button class="lee-btn" id="dialogno" autofocus>cancel</button></div>`, null,
       () => { if (!settled) { settled = true; resolve(false); } });
     m.querySelector('#dialogyes').onclick = () => done(true);
+    m.querySelector('#dialogalt')?.addEventListener('click', () => done('alt'));
     m.querySelector('#dialogno').onclick = () => done(false);
   });
 }
@@ -3748,6 +3894,143 @@ async function findUsages(name = cursorWord()) {
   const d = await api('/code/usages?name=' + encodeURIComponent(name));
   hitList(d.hits || [], `${d.backend} — ${d.note}`, `usages of ${name}`, openLocation);
 }
+/* Where the cursor is, in the coordinates a symbol lookup can use. A notebook cursor is a cell
+   and a line inside it: the file line is a line of JSON and matches no declaration. */
+function editorPlace(view = curEditor()) {
+  const path = lee.path || '';
+  if (!view) return {path, line: 0, cellIndex: -1};
+  const line = view.state.doc.lineAt(LeeCM.cursor(view)).number;
+  const cellIndex = lee.kind === 'notebook'
+    ? lee.cells.findIndex(c => lee.editors.get(c.id) === view) : -1;
+  return {path, line, cellIndex};
+}
+/* One key, both directions. On a usage it goes to the declaration; standing on the declaration it
+   lists who uses it, because that is the only question left to ask there. The server decides which,
+   since it is the side that knows where the declaration is. */
+async function gotoDeclaration(name = cursorWord(), place = editorPlace()) {
+  if (!name) return status('put the cursor on a symbol first', 'err');
+  status(`finding ${name}…`);
+  let d;
+  // a failed lookup has to say so: `finding…` is busy, and a busy toast never leaves by itself
+  try {
+    d = await api('/code/jump?name=' + encodeURIComponent(name) +
+      '&path=' + encodeURIComponent(place.path) + '&line=' + place.line + '&cell_index=' + place.cellIndex);
+  } catch (e) { return status(String(e.message || e), 'err'); }
+  const hits = d.hits || [];
+  if (!hits.length) return status(`nothing found for ${name}`, 'err');
+  if (d.kind === 'definition' && hits.length === 1) return openLocation(hits[0]);
+  const label = d.kind === 'usages' ? 'usages' : 'definitions';
+  hitList(hits, `${d.backend} — ${d.note}`, `${label} of ${name}`, openLocation);
+  // `finding…` is a busy toast, and a busy toast waits to be clicked. The list is the answer, so
+  // the toast has to stop saying it is still looking.
+  status(`${hits.length} ${label} of ${name}`, 'ok');
+}
+/* The mouse saying what mod+b says. CodeMirror owns the click, so this listens in the capture
+   phase and takes the event there: letting it through would move the caret and select a word.
+
+   Either modifier counts. Platform detection is not reliable enough to make it the gate: in a
+   webview that reported no platform, ctrl+click both looked up the symbol and, being a right-click
+   on macOS, opened the cell menu on top of the result. So the paired `contextmenu` is claimed too. */
+function bindModClick() {
+  document.addEventListener('contextmenu', e => {
+    if (e.shiftKey || !(e.metaKey || e.ctrlKey) || !e.target?.closest?.('.cm-content')) return;
+    e.preventDefault(); e.stopPropagation();
+  }, true);
+  document.addEventListener('mousedown', e => {
+    if (e.button !== 0 || e.altKey || e.shiftKey || !(e.metaKey || e.ctrlKey)) return;
+    if (!e.target?.closest?.('.cm-content')) return;
+    const view = [...lee.editors.values()].find(v => v?.contentDOM?.contains(e.target));
+    const pos = view ? view.posAtCoords({x: e.clientX, y: e.clientY}) : null;
+    if (pos == null) return;
+    e.preventDefault(); e.stopPropagation();
+    LeeCM.setCursor(view, pos);
+    const word = LeeCM.wordAtCursor(view);
+    if (!word) return status('nothing to look up there', 'err');
+    gotoDeclaration(word, editorPlace(view));
+  }, true);
+}
+/* Cmd+F in a notebook. CodeMirror's own panel searches the one cell it belongs to, which is never
+   the question being asked: a notebook is one document to the person reading it. This walks every
+   cell's live text, selects each match where it lives, and says which one of how many. */
+const nbCellText = i => {
+  const c = lee.cells[i]; if (!c) return '';
+  const v = lee.editors.get(c.id);
+  return v ? LeeCM.getDoc(v) : String(c.source || '');
+};
+function nbFindMatches(q) {
+  const out = [], needle = String(q || '').toLowerCase();
+  if (!needle) return out;
+  for (let i = 0; i < lee.cells.length; i++) {
+    const text = nbCellText(i).toLowerCase();
+    for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length))
+      out.push({cell: i, from: at, to: at + needle.length});
+  }
+  return out;
+}
+function nbFindPaint() {
+  const bar = $('#nbfind'); if (!bar) return;
+  const q = $('#nbfindq', bar).value, hits = nbFindMatches(q), at = lee.nbFind?.at ?? -1;
+  lee.nbFind = {q, hits, at: at < hits.length ? at : -1};
+  $('#nbfindcount', bar).textContent = !q ? '' : !hits.length ? 'no matches'
+    : `${(lee.nbFind.at < 0 ? 0 : lee.nbFind.at) + 1} of ${hits.length}`;
+  bar.classList.toggle('empty', !!q && !hits.length);
+}
+function nbFindStep(direction) {
+  const bar = $('#nbfind'), state = lee.nbFind;
+  if (!bar || !state?.hits.length) return;
+  const n = state.hits.length;
+  state.at = ((state.at + direction) % n + n) % n;
+  const hit = state.hits[state.at];
+  focusCell(hit.cell);
+  const view = ensureCellMounted(hit.cell);
+  if (view) LeeCM.setSelection(view, hit.from, hit.to);
+  $('#nbfindcount', bar).textContent = `${state.at + 1} of ${n}`;
+  // `focusCell` and `setSelection` both take the focus, and each does it a frame apart. The
+  // query is where the typing belongs, so it is claimed back after both have had their turn.
+  requestAnimationFrame(() => requestAnimationFrame(() => $('#nbfindq', bar)?.focus()));
+}
+function nbFindClose() {
+  const bar = $('#nbfind'); if (bar) bar.hidden = true;
+  lee.nbFind = null;
+  const v = curEditor(); if (v) LeeCM.focus(v);
+}
+function nbFind() {
+  if (lee.kind !== 'notebook') return status('open a notebook to search across its cells', 'err');
+  let bar = $('#nbfind');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'nbfind'; bar.className = 'lee-find-bar'; bar.setAttribute('role', 'search');
+    bar.innerHTML = '<input class="lee-input" id="nbfindq" spellcheck="false" ' +
+      'placeholder="find in every cell" aria-label="find in every cell">' +
+      '<span class="lee-find-count" id="nbfindcount" aria-live="polite"></span>' +
+      '<button type="button" data-find="prev" title="previous match (shift+enter)">↑</button>' +
+      '<button type="button" data-find="next" title="next match (enter)">↓</button>' +
+      '<button type="button" data-find="close" title="close (esc)">✕</button>';
+    document.body.appendChild(bar);
+    bar.addEventListener('click', e => {
+      const b = e.target.closest('[data-find]'); if (!b) return;
+      if (b.dataset.find === 'close') return nbFindClose();
+      nbFindStep(b.dataset.find === 'next' ? 1 : -1);
+    });
+    const input = $('#nbfindq', bar);
+    input.addEventListener('input', nbFindPaint);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); return nbFindClose(); }
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (!lee.nbFind?.hits.length) nbFindPaint();
+      nbFindStep(e.shiftKey ? -1 : 1);
+    });
+  }
+  bar.hidden = false;
+  const input = $('#nbfindq', bar), view = curEditor(), held = view ? LeeCM.selection(view) : null;
+  if (held && held.from !== held.to && !held.text.includes('\n')) input.value = held.text;
+  lee.nbFind = null;
+  nbFindPaint();
+  input.focus(); input.select();
+}
+window.gotoDeclaration = gotoDeclaration; window.nbFind = nbFind; window.bindModClick = bindModClick;
+
 async function renameSymbol() {
   const name=cursorWord(),view=curEditor();
   if(!name||!view||!lee.path||curLang()!=='python')return status('put the cursor on a Python symbol first','err');
@@ -4052,7 +4335,7 @@ function palette() {
     {name: 'Agent: run until next write', scope: 'agent', run: () => post('/agent/run-policy', {policy: 'until_write'})},
     {name: 'Agent: run read-only calls', scope: 'agent', run: () => post('/agent/run-policy', {policy: 'reads'})},
     {name: 'Agent: edit starting state', scope: 'agent', run: leeAgentState},
-    {name: 'Agent: steer after current call', scope: 'agent', run: () => $('#agentsteer')?.focus()},
+    {name: 'Agent: steer after current call', scope: 'agent', run: () => $('#agentprompt')?.focus()},
   ];
   const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: k.key})).concat(agentCommands);
   let hits = cmds, sel = 0;
@@ -4589,10 +4872,11 @@ function initSplits() {
     document.documentElement.style.setProperty('--lee-' + k, value + 'px');
     localStorage.setItem('lee-' + k, value + 'px');
   }
-  if (localStorage.getItem('lee-agent-expanded') === '1') {
-    $('#shell')?.classList.add('agent-focus');
-    if ($('#agentexpand')) $('#agentexpand').textContent = 'restore';
-  }
+  // The retired boolean is read once and rewritten as the slot and mode it meant.
+  if (localStorage.getItem('lee-agent-expanded') === '1' && !localStorage.getItem('lee-expand'))
+    localStorage.setItem('lee-expand', 'right:wide');
+  localStorage.removeItem('lee-agent-expanded');
+  leeSyncExpand();
 }
 
 async function refreshKernelPill() {
@@ -4704,7 +4988,9 @@ async function boot() {
   await Promise.all([loadKeys(), loadSettings()]);
   // Model discovery can probe CLIs and registries; it must not hold the editor's first paint.
   loadAgentModels().catch(e => status(String(e.message || e), 'err'));
+  refreshAgentThreads().catch(e => status(String(e.message || e), 'err'));
   initSplits();
+  bindModClick();
   mountExec();
   initAgentComposer();
   // The agent pane is client-owned, so a reload starts it blank; the turns are on disk.

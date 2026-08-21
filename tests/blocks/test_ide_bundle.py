@@ -64,7 +64,8 @@ def test_no_bundle_reads_a_later_bundles_declaration_at_load_time():
     bad = []
     for i, p in enumerate(mods):
         for ln, line in enumerate(p.read_text().split('\n'), 1):
-            m = re.match(r'^\s+[A-Za-z_$][\w$]*\s*:\s*([A-Za-z_$][\w$]*),?\s*$', line)
+            m = (re.match(r'^\s+[A-Za-z_$][\w$]*\s*:\s*([A-Za-z_$][\w$]*),?\s*$', line)
+                 or re.match(r'^ACTIONS(?:\.\w+|\[[^\]]+\])\s*=\s*([A-Za-z_$][\w$]*)\s*;?\s*$', line))
             if not m: continue
             j = at.get(m.group(1))
             if j is not None and bundle_of[str(mods[j])] > bundle_of[str(p)]:

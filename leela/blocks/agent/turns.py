@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import base64, json
 
 from fastcore.basics import first
 
@@ -133,13 +133,12 @@ def history_sessions(turns, execution=()):
                              'context_continues': True, 'code': row.get('code', 0)})
     return list(reversed(groups))
 
-def turn_media(a):
+def turn_media(ai):
     "Pictures the turn produced, as data URLs. A tool result is a path, which a browser cannot draw."
-    import base64
     out = []
-    for m in (getattr(a, 'turn_media', None) or []):
+    for m in (getattr(ai, 'turn_media', None) or []):
         data = m.get('data')
         if not data: continue
-        out.append({'mime': m.get('mime') or 'image/png',
-                    'url': f"data:{m.get('mime') or 'image/png'};base64,{base64.b64encode(data).decode()}"})
+        mime = m.get('mime') or 'image/png'
+        out.append({'mime': mime, 'url': f'data:{mime};base64,{base64.b64encode(data).decode()}'})
     return out

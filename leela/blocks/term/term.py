@@ -127,12 +127,18 @@ class Pty:
         "Pump the child's output into `on_data(bytes)` until it exits."
         loop = asyncio.get_running_loop()
         q = asyncio.Queue()
+        fd = self.fd
+        if fd is None:
+            self.exit_note = self.exit_note or '[exited]'
+            return
         def _pump():
-            try: data = os.read(self.fd, READ_CHUNK)
+            if self.fd is None: q.put_nowait(b''); return
+            try: data = os.read(fd, READ_CHUNK)
             except (BlockingIOError, InterruptedError): return
             except OSError: data = b''
             q.put_nowait(data)
-        loop.add_reader(self.fd, _pump)
+        loop.add_reader(fd, _pump)
+        self._reader = (loop, fd, q)
         try:
             while True:
                 data = await q.get()
@@ -141,7 +147,8 @@ class Pty:
                 r = on_data(data)
                 if asyncio.iscoroutine(r): await r
         finally:
-            try: loop.remove_reader(self.fd)
+            self._reader = None
+            try: loop.remove_reader(fd)
             except Exception: pass
         if self.proc is not None:
             try: self.proc.wait(timeout=2)
@@ -166,10 +173,26 @@ class Pty:
             except subprocess.TimeoutExpired:
                 try: os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
                 except Exception: pass
+        self._unwatch()
         if self.fd is not None:
             try: os.close(self.fd)
             except OSError: pass
             self.fd = None
+    def _unwatch(self):
+        "Unregister the reader before the fd closes, and tell the stream the output has ended."
+        if (reader := self._reader) is None: return
+        self._reader = None
+        loop, fd, q = reader
+        def stop():
+            try: loop.remove_reader(fd)
+            except Exception: pass
+            q.put_nowait(b'')
+        try: here = asyncio.get_running_loop() is loop
+        except RuntimeError: here = False
+        try:
+            if here: stop()
+            else: loop.call_soon_threadsafe(stop)
+        except Exception: pass
     def state(self):
         return dict(pid=self.pid, alive=self.alive, argv=self.argv, cwd=self.cwd, cols=self.cols,
             rows=self.rows, exit=self.exit_note)

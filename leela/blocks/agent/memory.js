@@ -74,7 +74,7 @@ async function leeAgentMemory(focusId = '', draft = {}) {
       }, null, {className: 'lee-agent-memory-modal', storageKey: 'agent-memory-v2'});
     const list = $('[data-note-list]', box), form = $('[data-note-form]', box), empty = $('[data-note-empty]', box);
     const title = $('[data-note-title]', box), textHost = $('[data-note-text]', box), targets = $('[data-memory-targets]', box);
-    const stateView = createEditor(textHost, {doc: '', lang: 'markdown', lineNums: true,
+    const stateView = createEditor(textHost, {doc: '', lang: 'markdown', lineNums: true, settings: {wordWrap: 'viewport'},
       placeholder: '# Context\n\nWrite only information that should influence a model…'});
     const noteText = {get value() { return LeeCM.getDoc(stateView); }, set value(value) { LeeCM.setDoc(stateView, String(value || '')); }};
     const labels = data.targets || {agent: 'Agent conversation', inline: 'Prompt cells', completion: 'Code completion'};

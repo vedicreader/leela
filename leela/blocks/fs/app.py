@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastcore.all import Path
+from fastcore.all import Path, first
 
 from fasthtml.common import Div
 
@@ -11,6 +11,8 @@ from ...core.web import fail, sse
 from ...core.text import fuzzy_rank
 from .fs import lang_for
 from .ui import files_panel, git_tree_state, tree_node
+from ..tabs.app import disk_version
+from ...core.web import diff_payload
 from ..settings.settings import start_folder
 
 __all__ = ['CAPS', 'connect', 'SERVED_TYPES']
@@ -21,7 +23,7 @@ SERVED_TYPES = {'.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/j
     '.ogg': 'audio/ogg', '.flac': 'audio/flac', '.aac': 'audio/aac', '.mp4': 'video/mp4',
     '.webm': 'video/webm', '.ogv': 'video/ogg', '.mov': 'video/quicktime'}
 
-CAPS = ('fs', 'fs_watch', 'journal')
+CAPS = ('fs', 'fs_watch', 'journal', 'docs')
 
 def connect(app, ctx):
     rt = app.route
@@ -169,3 +171,72 @@ def connect(app, ctx):
             found = fuzzy_rank(q, sorted(folders), key=str, limit=limit)
             rows = [dict(path=str(p), name=p.name + '/', lang='', kind='folder') for p in found] + rows
         return {'hits': rows[:limit], 'scope': str(root) if root else ''}
+    def _on_disk(path):
+        "What the file says now, or None when it is not there."
+        try: return Path(path).read_text(encoding='utf-8', errors='replace')
+        except OSError: return None
+    def _forget_operation_buffers(op):
+        for path in (r['path'] for r in op.get('resources', [])):
+            ctx.docs.forget(path)
+            if (tab := first(t for t in ctx.session.tabs if t.path == path)): tab.dirty = False
+    @rt('/history/operations')
+    def operation_history(limit: int = 50):
+        return {'operations': ctx.journal.rows(limit)}
+    @rt('/history/file')
+    def file_history(path: str = '', limit: int = 60):
+        "Every version Leela kept of one file, newest first. Undo is one step; this is all of them."
+        target = str(path or (ctx.session.tab.path if ctx.session.tab else ''))
+        if not target: return fail('name a file to read the history of')
+        try: target = str(ctx.fs._check(target))
+        except Exception as e: return fail(e, 400)
+        return {'ok': True, 'path': target, 'versions': ctx.session.history.rows(target, limit),
+                'disk_version': disk_version(target)}
+    @rt('/history/files')
+    def file_history_paths(limit: int = 200):
+        "Which files have kept versions, most recently touched first."
+        return {'ok': True, 'files': ctx.session.history.paths(limit)}
+    @rt('/history/version')
+    def file_history_version(id: str = ''):
+        "One kept version, and how it differs from what is on disk now."
+        row = ctx.session.history.row(str(id))
+        if row is None: return fail(f'no such version {id}', 404)
+        try: text = ctx.session.history.text(str(id))
+        except Exception as e: return fail(e, 404)
+        return {'ok': True, **row, 'text': text, **diff_payload(_on_disk(row['path']) or '', text)}
+    @rt('/history/restore')
+    async def file_history_restore(req):
+        """Put one kept version back. What it replaces is kept first, so restoring the wrong
+        version is itself undoable."""
+        d = await req.json()
+        row = ctx.session.history.row(str(d.get('id') or ''))
+        if row is None: return fail(f"no such version {d.get('id')}", 404)
+        try: text = ctx.session.history.text(row['id'])
+        except Exception as e: return fail(e, 404)
+        try:
+            path = ctx.fs._check(row['path'])
+            before = _on_disk(path)
+            if before == text: return fail('that version is what the file already says', 409)
+            ctx.fs.write(path, text)
+        except Exception as e: return fail(e)
+        ctx.docs.forget(str(path))
+        if (tab := first(t for t in ctx.session.tabs if t.path == str(path))): tab.dirty = False
+        name = Path(row['path']).name
+        operation = ctx.journal.record(f'Restore {name} from local history',
+                                      [(str(path), before, text)], kind='restore')
+        return {'ok': True, 'path': str(path), 'version': row['id'],
+                'operation_id': operation['id'] if operation else '',
+                'disk_version': disk_version(str(path)), **diff_payload(before or '', text)}
+    @rt('/history/undo')
+    async def operation_undo(req):
+        try:
+            d = await req.json(); op = ctx.journal.undo(d.get('id', ''))
+            _forget_operation_buffers(op)
+            return {'ok': True, 'operation': op}
+        except Exception as e: return fail(e, 409)
+    @rt('/history/redo')
+    async def operation_redo(req):
+        try:
+            d = await req.json(); op = ctx.journal.redo(d.get('id', ''))
+            _forget_operation_buffers(op)
+            return {'ok': True, 'operation': op}
+        except Exception as e: return fail(e, 409)

@@ -1,7 +1,7 @@
 "The web IDE."
 
 from __future__ import annotations
-import asyncio, ipaddress, json, os, re, sys, warnings
+import ast, asyncio, ipaddress, json, os, re, sys, warnings
 from itertools import accumulate
 from fasthtml.common import *
 from starlette.middleware import Middleware
@@ -29,13 +29,58 @@ from .core.web import off_loop as _off_loop
 from .core.web import Assets, IDE_BUNDLES, static_dirs
 from .core.text import did_you_mean
 from .core.text import md_block_diff, md_blocks, md_change_kinds
-from .blocks.debug.debug import notebook_state_ui, paused_kernel
 from .core.keys import by_scope, chord_display, toast_rows
+from .blocks.debug.debug import notebook_state_ui, paused_kernel
 from .blocks.nb.nb import Notebook
 from .blocks.term.term import TerminalGate, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
 from .workspace import STEP_RANGE, TOOL_RANGE, Workspace
 
 __all__ = ['ide_app', 'serve_ide']
+
+def _patch_fasttransport():
+    "Keep the response context as the sole owner of an SSE iterator's cleanup."
+    import fasttransport.core as ft
+    if getattr(ft.AsyncTransport.stream, '_leela_patched', False): return
+    from contextlib import asynccontextmanager
+    from inspect import isasyncgen
+    import httpcore2._utils as core_utils
+    import httpcore2._async.connection_pool as connection_pool
+    import httpcore2._async.http11 as http11
+    import httpcore2._async.http2 as http2
+    @asynccontextmanager
+    async def safe_async_iterate(iterable_or_iterator):
+        iterator = iterable_or_iterator if hasattr(iterable_or_iterator, '__anext__') else iterable_or_iterator.__aiter__()
+        try: yield iterator
+        except GeneratorExit: raise
+        finally:
+            if isasyncgen(iterator) and sys.exc_info()[0] is not GeneratorExit: await iterator.aclose()
+    core_utils.safe_async_iterate = safe_async_iterate
+    connection_pool.safe_async_iterate = safe_async_iterate
+    http11.safe_async_iterate = safe_async_iterate
+    http2.safe_async_iterate = safe_async_iterate
+    async def stream(self, method, url, *, headers=None, params=None, json=None, data=None, files=None):
+        async with self._client() as client:
+            async with client.sse(url, method=method, headers=self._request_headers(headers, files=files),
+                                  params=params, json=json, data=data, files=files, max_event_size=None) as source:
+                resp = source.response
+                try: resp.raise_for_status()
+                except ft.httpx2.HTTPStatusError as e:
+                    try: await resp.aread()
+                    except Exception: pass
+                    e.args = (f'{e}\n{resp.text}',)
+                    raise
+                if 'content-type' not in resp.headers: resp.headers['content-type'] = 'text/event-stream'
+                async for event in source:
+                    if not event.data: continue
+                    if event.data == '[DONE]': return
+                    try: raw = ft.jsonlib.loads(event.data)
+                    except ft.jsonlib.JSONDecodeError as e: raise ft.ProtocolError(f'Invalid SSE JSON: {e}') from e
+                    if isinstance(raw, dict): yield raw
+                    else: raise ft.ProtocolError(f'Expected SSE JSON object, got {type(raw).__name__}')
+    stream._leela_patched = True
+    ft.AsyncTransport.stream = stream
+
+_patch_fasttransport()
 
 
 def _term_python(ws, cwd=None):
@@ -84,6 +129,175 @@ def _python_diagnostics(source, filename='<cell>'):
                           'code': warning.category.__name__})
     return found
 
+def _project_state_context(ws, max_files=120, max_chars=12_000):
+    "Bounded, current-disk evidence used when a person asks the charter to follow the code."
+    files = [p for p in ws.fs.walk(limit=max_files) if p.is_file()]
+    names = '\n'.join(f'- {p}' for p in files)
+    preferred = ('README.md', 'pyproject.toml', 'package.json', 'Cargo.toml', 'go.mod',
+                 'requirements.txt', 'Makefile')
+    excerpts, used = [], 0
+    for path in sorted(files, key=lambda p: (p.name not in preferred, len(p.parts), str(p))):
+        if path.name not in preferred and len(excerpts) >= 4: continue
+        try: text = ws.fs.read(path)
+        except Exception: continue
+        room = max_chars - used
+        if room <= 0: break
+        excerpt = text[:min(3000, room)].strip()
+        if excerpt:
+            excerpts.append(f'### {path}\n{excerpt}')
+            used += len(excerpt)
+    return ('## Open roots\n' + ('\n'.join(f'- {root}' for root in ws.fs.roots) or '- none') +
+            '\n\n## Current file map\n' + (names or '- no files') +
+            '\n\n## Project-file excerpts\n' + ('\n\n'.join(excerpts) or '- none'))
+
+def _tool_preview(agent, tool, args):
+    "Dry-run preview for editable calls; never invokes the tool or mutates the workspace."
+    args = dict(args or {})
+    if tool == 'create_file':
+        path = args.get('path', '')
+        before = agent.host.text_at(path) or ''
+        return {'kind': 'diff', **_diff(before, str(args.get('text', '')))}
+    if tool == 'edit_file':
+        from .agent.tools import _cmds
+        from exhash import exhash
+        path = args.get('path', '')
+        before = agent.host.text_at(path)
+        if before is None: raise ValueError(f'no such file: {path}')
+        result = exhash(before, _cmds(args.get('commands', '[]')))
+        return {'kind': 'patch', 'text': str(result)}
+    if tool == 'replace_text':
+        from .agent.tools import _apply_edits, _edits
+        path = args.get('path', '')
+        before = agent.host.text_at(path)
+        if before is None: raise ValueError(f'no such file: {path}')
+        return {'kind': 'diff', **_diff(before, _apply_edits(before, _edits(args.get('edits', '[]'))))}
+    if tool in {'run_python', 'inspect_python'}:
+        return {'kind': 'code', 'text': str(args.get('code', '')), 'language': 'python'}
+    if tool == 'run_shell':
+        return {'kind': 'code', 'text': str(args.get('command', '')), 'language': 'bash'}
+    if tool in {'edit_cell', 'add_cell'}:
+        return {'kind': 'code', 'text': str(args.get('source') or args.get('commands') or ''), 'language': 'python'}
+    if tool in {'web_search', 'read_url', 'research'}:
+        return {'kind': 'network', 'text': str(args.get('url') or args.get('query') or '')}
+    return {'kind': 'json', 'text': json.dumps(args, indent=2, default=str)}
+
+TOOL_GROUPS = {
+    'Repository': {'search_code', 'similar_code', 'outline', 'list_files', 'grep', 'ls',
+                   'view_file', 'edit_file', 'replace_text', 'create_file'},
+    'Runtime': {'run_python', 'inspect_python', 'list_vars', 'read_terminal', 'run_shell'},
+    'Web': {'web_search', 'read_url', 'research'},
+}
+
+def _tool_group(name):
+    "Which browser-facing family a tool belongs to."
+    group = first(g for g, names in TOOL_GROUPS.items() if name in names)
+    if group: return group
+    return 'Notebook' if 'cell' in name or 'notebook' in name else 'Other'
+
+def _assigned_lines(source):
+    "Top-level bindings made by Python source, as ``[(line, name)]``."
+    try: tree = ast.parse(source or '')
+    except SyntaxError: return []
+    found = []
+    def target(node, line=None):
+        if isinstance(node, ast.Name): found.append((line or node.lineno, node.id))
+        elif isinstance(node, (ast.Tuple, ast.List)):
+            for child in node.elts: target(child, line)
+        elif isinstance(node, ast.Starred): target(node.value, line)
+    class Bindings(ast.NodeVisitor):
+        def visit_Assign(self, node):
+            for t in node.targets: target(t, node.lineno)
+            self.visit(node.value)
+        def visit_AnnAssign(self, node):
+            target(node.target, node.lineno)
+            if node.value: self.visit(node.value)
+        def visit_AugAssign(self, node): target(node.target, node.lineno); self.visit(node.value)
+        def visit_NamedExpr(self, node): target(node.target, node.lineno); self.visit(node.value)
+        def visit_For(self, node):
+            target(node.target, node.lineno)
+            for child in (*node.body, *node.orelse): self.visit(child)
+        visit_AsyncFor = visit_For
+        def visit_With(self, node):
+            for item in node.items:
+                if item.optional_vars: target(item.optional_vars, node.lineno)
+            for child in node.body: self.visit(child)
+        visit_AsyncWith = visit_With
+        def visit_Import(self, node):
+            for a in node.names: found.append((node.lineno, a.asname or a.name.split('.')[0]))
+        visit_ImportFrom = visit_Import
+        def visit_FunctionDef(self, node): found.append((node.lineno, node.name))
+        visit_AsyncFunctionDef = visit_FunctionDef
+        def visit_ClassDef(self, node): found.append((node.lineno, node.name))
+    Bindings().visit(tree)
+    return list(dict.fromkeys(found))
+
+def _inline_values(source, groups, outputs=(), result_info=None):
+    "Kernel values for bindings and a final expression, located on their source lines."
+    rows = {n.get('name'): n for g in groups or [] for n in g.get('nodes', [])}
+    out = []
+    for line, name in _assigned_lines(source):
+        if (row := rows.get(name)) is not None:
+            out.append({'line': line, 'name': name, 'value': row.get('value', ''),
+                        'type': row.get('type', ''), 'shape': row.get('shape'),
+                        'dtype': row.get('dtype'), 'is_grid': bool(row.get('is_grid')),
+                        'accessor': row.get('accessor') or [name]})
+    output_result = first(o for o in reversed(outputs or ()) if o.get('output_type') == 'execute_result')
+    if output_result:
+        try:
+            expr = ast.parse(source or '').body[-1]
+            if isinstance(expr, ast.Expr):
+                root = expr.value
+                while isinstance(root, (ast.Attribute, ast.Subscript, ast.Call)):
+                    root = root.value if not isinstance(root, ast.Call) else root.func
+                name = root.id if isinstance(root, ast.Name) else 'result'
+                value = (output_result.get('data') or {}).get('text/plain', '')
+                info = dict(result_info or {})
+                out.append({'line': expr.lineno, 'name': name, 'value': info.get('value', value),
+                            'type': info.get('type', 'result'), 'shape': info.get('shape'),
+                            'dtype': info.get('dtype'), 'is_grid': bool(info.get('is_grid')),
+                            'is_container': bool(info.get('is_container')),
+                            'accessor': info.get('accessor') or ['_']})
+        except (SyntaxError, IndexError): pass
+    return out
+
+async def _cell_extras(k, cell):
+    "Inspector rows and the rich last result for a finished cell, or `(None, None)`."
+    if not k or cell.has_error: return None, None
+    rows = await k.api('/api/rows', {'profile': 'full', 'sort': 'name'}, timeout=2)
+    has_result = any(o.get('output_type') == 'execute_result' for o in cell.outputs)
+    latest = await k.api('/api/result', timeout=2) if has_result else None
+    return rows, (latest or {}).get('result')
+
+def _activity_changes(a, versions):
+    "Activity rows that moved since the last poll: new calls and in-place transitions"
+    changed = []
+    for row in a.activity.rows(mark=a.activity._mark):
+        version = (row.get('done'), row.get('ok'), row.get('line'), row.get('detail'), row.get('secs'))
+        if versions.get(row['id']) != version:
+            versions[row['id']] = version
+            changed.append(row)
+    return changed
+
+def _history_sessions(turns, execution=()):
+    "Turns grouped by durable model-context id; old untagged history splits after 30m."
+    groups, by_id, legacy_n, legacy_last = [], {}, 0, None
+    for turn in turns or ():
+        sid, at = turn.get('session') or '', float(turn.get('at') or 0)
+        if not sid:
+            if legacy_last is None or at - legacy_last > 1800: legacy_n += 1
+            sid, legacy_last = f'legacy-{legacy_n}', at
+        if sid not in by_id:
+            by_id[sid] = {'id': sid, 'started': at, 'ended': at, 'turns': [], 'models': [],
+                          'context_continues': True, 'code': 0}
+            groups.append(by_id[sid])
+        g = by_id[sid]; g['turns'].append(turn); g['ended'] = max(g['ended'], at)
+        if (model := turn.get('model')) and model not in g['models']: g['models'].append(model)
+    for row in execution or ():
+        sid = row['id']
+        if sid in by_id: by_id[sid]['code'] = row.get('code', 0)
+        else: groups.append({'id': sid, 'started': 0, 'ended': 0, 'turns': [], 'models': [],
+                             'context_continues': True, 'code': row.get('code', 0)})
+    return list(reversed(groups))
 
 async def _explain(k, err, scope='live'):
     "A kernel error with a `did you mean` appended, when a near-miss name exists."
@@ -210,6 +424,10 @@ def _left_workspace(ws):
                    title='pinned open — unpin to close it when you click away',
                    aria_label='pin the file pane open', aria_pressed='true',
                    onclick='leePinPane("left")'),
+            Button('\u2922', cls='lee-pane-min', type='button', data_pane_expand='left',
+                   data_pane_expand_icon='1', title='expand the left pane',
+                   aria_label='expand the left pane', aria_pressed='false',
+                   onclick='leeExpandPane("left")'),
             Button('−', cls='lee-pane-min', type='button', title='minimise the file pane',
                    aria_label='minimise the file pane', onclick='leePane("left", false)'),
             cls='lee-activity', aria_label='Project tools'),
@@ -317,8 +535,8 @@ def _term_panel(gate):
             Button('+', cls='lee-icon', title='new terminal', aria_label='new terminal',
                    onclick='leeNewTerm()'),
             Span(cls='lee-spacer'),
-            Button('expand', id='termexpand', cls='lee-icon', title='expand or restore terminal',
-                   onclick='leeTermExpand()'),
+            Button('expand', id='termexpand', cls='lee-icon', data_pane_expand='bottom',
+                   title='expand the bottom pane', aria_pressed='false', onclick='leeTermExpand()'),
             Button('external', id='termexternal', cls='lee-icon', hidden=True,
                    title='open this project in your terminal application',
                    onclick='leeExternalTerm()'),
@@ -409,7 +627,12 @@ def _agent_panel(ws):
                 Span('state active' if has_state else 'no state', id='agentnames', cls='lee-agent-state-badge'),
                 cls='lee-agent-heading'),
             Span(cls='lee-spacer'),
-            Div(Button('new chat', id='agentnew', cls='lee-btn', title='start a new conversation',
+            Div(Button(Span('conversations', cls='lee-thread-toggle-label'),
+                       Span('1', id='agentthreadcount', cls='lee-thread-count'),
+                       id='agentthreads', cls='lee-btn lee-thread-toggle', aria_expanded='false',
+                       aria_controls='agentthreadlist', title='every live conversation',
+                       onclick='leeAgentThreadsToggle()'),
+                Button('+', id='agentnew', cls='lee-btn', title='new conversation', aria_label='new conversation',
                        onclick='leeAgentNew()'),
                 Button('history', id='agenthistory', cls='lee-btn', title='toggle conversation history',
                        onclick='leeAgentHistory()'),
@@ -417,7 +640,8 @@ def _agent_panel(ws):
                        onclick='leeMemoryNotes()'),
                 Button('state', id='agentstate', cls='lee-btn', title='review or refresh the active agent state',
                        onclick='leeAgentState()'),
-                Button('expand', id='agentexpand', cls='lee-btn', title='focus the agent workspace',
+                Button('expand', id='agentexpand', cls='lee-btn', data_pane_expand='right',
+                       title='expand the right pane', aria_pressed='false',
                        onclick='leeAgentExpand()'), cls='lee-agent-head-actions'),
             cls='lee-phead lee-agent-head'),
         Div(welcome, id='agentlog', cls='lee-agentlog'),
@@ -430,15 +654,10 @@ def _agent_panel(ws):
             'They act in this workspace without passing through Leela\u2019s approvals, held only by '
             'Cursor\u2019s sandbox. Another runtime if you want every write gated.',
             id='agentharnessbanner', cls='lee-agent-harness-banner', hidden=True, role='status'),
-        Div(Div(id='agentsteerqueue', cls='lee-agent-steerqueue', aria_live='polite'),
-            Div(Input(id='agentsteer', cls='lee-input', placeholder='Steer after the current call…'),
-                Button('Queue', cls='lee-btn', type='button', onclick='leeQueueSteer()',
-                       title='wait for the next tool call, then hand this to the model'),
-                Button('Stop and send next', id='agentforce', cls='lee-btn warn', type='button', hidden=True,
-                       onclick='leeForceSteer()',
-                       title='cancel the active run, then send this draft once cancellation is terminal'),
-                cls='lee-agent-steer'),
-            Div(id='agentattachments', cls='lee-agent-attachments', aria_live='polite'),
+        Div(id='agentthreadlist', cls='lee-thread-list', role='listbox',
+            aria_label='live conversations', hidden=True),
+        Div(id='agentattention', cls='lee-agent-attention', role='status', aria_live='polite', hidden=True),
+        Div(Div(id='agentattachments', cls='lee-agent-attachments', aria_live='polite'),
             Div(Button('attach image', id='agentattach', cls='lee-btn', type='button', title='attach a workspace image path or paste a screenshot', onclick='leeAgentAttach()'), cls='lee-agent-attachbar'),
             Textarea(id='agentprompt', cls='lee-input lee-prompt', rows='2',
                      placeholder=f'ask, / for commands, @ for files…  ({chord_display("agent_send")})',
@@ -513,7 +732,9 @@ def _agent_panel(ws):
                         Button('+ model',type='button',cls='lee-btn',onclick='leeAddModel()',
                                title='save a Hugging Face repo or hosted API model'),
                         cls='lee-routing-popover'), cls='lee-routing lee-agent-settings lee-dismissable'),
-                Button('Send', cls='lee-btn go lee-composer-send', onclick='leeAct("agent_send")'),
+                Button('Send', id='agentsend', cls='lee-btn go lee-composer-send',
+                       onclick='sendAgent(event.shiftKey)', aria_label='Send',
+                       title='send this as a turn'),
                 cls='lee-composer-footer'),
             cls='lee-promptbar lee-agent-composer'),
         cls='lee-panel lee-agent')
@@ -547,7 +768,6 @@ def _shell(ws, gate):
 
 def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     "Build the FastHTML IDE around an open workspace. `gate` decides who may open a terminal."
-    ws.approvals.listen()
     gate = gate or TerminalGate()
     _runstate = RunState()
     running_cells = _runstate.cells
@@ -638,6 +858,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         t = ws.tab
         return None if t is None else _docs.get(t.path or t.title)
     def _dbg(method=None): return paused_kernel(_debugstate, method)
+    def _open_path(path):
+        "The workspace file a debug frame refers to, or '' when it is outside the sandbox."
+        try: return str(ws.fs._check(path, must_exist=True))
+        except Exception: return ''
+    def _frame_path(frame): return (frame.get('source') or {}).get('path') or ''
     def _debug_ui(state): return notebook_state_ui(_debugstate, ws.fs, state)
     def _previous_runs():
         "A reset namespace makes every saved output historical, even though it remains useful."
@@ -726,27 +951,10 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         ws.save()
         if errors: return _fail('; '.join(errors))
         return {'ok': True, 'saved': saved}
-    @rt('/history/operations')
-    def operation_history(limit: int = 50):
-        return {'operations': ws.journal.rows(limit)}
-    def _forget_operation_buffers(op):
-        for path in (r['path'] for r in op.get('resources', [])):
-            _docstore.forget(path)
-            if (tab := first(t for t in ws.tabs if t.path == path)): tab.dirty = False
-    @rt('/history/undo')
-    async def operation_undo(req):
-        try:
-            d = await req.json(); op = ws.journal.undo(d.get('id', ''))
-            _forget_operation_buffers(op)
-            return {'ok': True, 'operation': op}
-        except Exception as e: return _fail(e, 409)
-    @rt('/history/redo')
-    async def operation_redo(req):
-        try:
-            d = await req.json(); op = ws.journal.redo(d.get('id', ''))
-            _forget_operation_buffers(op)
-            return {'ok': True, 'operation': op}
-        except Exception as e: return _fail(e, 409)
+    def _on_disk(path):
+        "What the file says now, or None when it is not there."
+        try: return Path(path).read_text(encoding='utf-8', errors='replace')
+        except OSError: return None
     @rt('/diff')
     async def diff_route(req):
         "What the editor holds, against what is on disk."
@@ -948,6 +1156,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         ws.put_screen(png=png, note='a screenshot from the browser')
         return {'ok': True, 'bytes': len(png)}
 
+
+    ws.start_backups()
 
     connect_all(app, ws, BLOCKS, docs=_docstore, debug=_debugstate, running=_runstate, gate=gate,
                 catalog=workspace_catalog)

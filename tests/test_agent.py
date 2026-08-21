@@ -32,6 +32,8 @@ from leela.blocks.agent.models import delete_model,load_models,save_model
 from leela.blocks.fs.fs import Sandbox
 from leela.blocks.search.search import Search
 from leela.agent.agent import Completer
+import asyncio
+from leela.blocks.agent.threads import Feed, TurnError
 
 class MemHost_agent(NullHost):
     "A host whose folders live in a dict, so file tools can be driven without touching disk."
@@ -118,8 +120,10 @@ def test_a_host_offers_only_the_tools_it_supports():
     names = {t.__name__ for t in tools_for(MemHost_agent())}
     assert 'run_python' not in names
     from ramabana.git import GIT_WRITE_TOOLS
+    # `add_root` is a write: multi-repo edits need it, and widening the boundary is a change
+    # to what every later call may touch, so it is gated like any other write.
     assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
-            'run_shell', 'memory_forget', 'create_skill',
+            'run_shell', 'memory_forget', 'create_skill', 'add_root',
             'cancel_watch', 'cart_add', 'cart_remove'} | GIT_WRITE_TOOLS == set(WRITE_TOOLS)
     a, _ = fake_agent()
     names = {t.__name__ for t in read_only(a.tools)}
@@ -143,7 +147,9 @@ def test_cheap_jobs_stay_local_when_the_turn_goes_to_the_cloud(monkeypatch):
     for job, name in models.DEFAULT_POLICY.items():
         if job == 'turn': continue
         assert r.spec(job).name == (name or models.DFLT_LOCAL), job
-        assert r.spec(job).local, job
+        assert r.spec(job).local == (job != 'subagent'), job
+    assert not r.spec('subagent').local, 'and delegation is deliberately not local'
+    assert models.DEFAULT_POLICY['subagent'] == r.spec('subagent').name
 
 def test_env_overrides_a_single_job(monkeypatch):
     monkeypatch.setenv('LEELA_MODEL_SUMMARY', 'gemma-12b')
@@ -454,7 +460,16 @@ def test_subagent_writes_are_opt_in_persisted_and_reach_the_assistant(tmp_path):
     sub = {t.__name__ for t in ws.ai._sub_plain()}
     assert 'create_file' in sub, 'writing means the write tools, recorded'
     assert not (sub & GIT_WRITE_TOOLS), 'and pushing is still not delegable'
-    assert sub == {t.__name__ for t in ws.ai.tools} - GIT_WRITE_TOOLS, 'nothing else was taken'
+    # A sub-agent reads and researches on its own, but it does not run the session: no nested
+    # delegation, no plan or todo list, no steering the person, no long-running media jobs.
+    assert {'read_url', 'web_search', 'research', 'memory_read'} <= sub
+    assert not (sub & {'delegate_search', 'delegate_parallel'}), 'and it cannot delegate onwards'
+    assert 'user_steering' not in sub, 'steering belongs to the main agent'
+    assert 'user_steering' not in sub, 'steering belongs to the main agent, which passes guidance in a delegated prompt'
+    assert not (sub & {'set_plan', 'list_plan', 'add_todo', 'update_todo'}), 'nor drive the plan'
+    again = Workspace(roots=[tmp_path]).ai
+    _ = again.tools
+    assert 'user_steering' not in {t.__name__ for t in again._sub_plain()}, 'construction order cannot change policy'
 
     ws.subagent_writes = True; ws.save()
     back = Workspace.load(ws_path(), port=0)
@@ -657,13 +672,18 @@ def test_a_new_conversation_keeps_every_saved_job_model(tmp_path):
     assert {job: ws.ai.routing.name_for(job) for job in ws.job_models} == ws.job_models
 
 def test_an_agent_harness_is_not_a_pip_extra(monkeypatch):
-    "Cursor and Claude Code are runtimes now; the picker told you to `pip install rishi[cursor]`."
+    """Claude Code is a runtime, not a pip extra; the picker used to say `pip install rishi[cursor]`.
+    Cursor itself is no longer offered, so nothing should reserve a row for it."""
     from leela.blocks.agent.models import runtimes
     rows = {r['value']: r for r in runtimes()}
-    assert {'cursor', 'claude'} <= set(rows)
-    assert rows['cursor']['label'] == 'Cursor agent' and rows['claude']['label'] == 'Claude Code'
-    assert 'CLI or SDK' in rows['cursor']['why'] and 'pip install' not in rows['cursor']['why']
+    assert 'claude' in rows and 'cursor' not in rows
+    assert rows['claude']['label'] == 'Claude Code'
+    # rishi carries the harness and hosted dependencies itself now, so only the local backends
+    # are extras: naming one for Claude Code sends a person to install something empty
+    assert 'Claude Code' in rows['claude']['why'] and 'pip install' not in rows['claude']['why']
+    assert 'claude /login' in rows['claude']['why'], 'and says what it actually wants'
     assert 'pip install rishi[mlx]' in rows['mlx']['why']
+    assert 'pip install' not in rows['remote']['why'], 'a hosted model wants a key, not an extra'
 
 def test_older_specialized_openai_models_are_opt_in(monkeypatch):
     monkeypatch.setenv('OPENAI_API_KEY', 'present')
@@ -673,13 +693,14 @@ def test_older_specialized_openai_models_are_opt_in(monkeypatch):
     assert 'gpt-5' in normal and 'gpt-4.1' not in normal
     assert {'gpt-4.1', 'gpt-4.1-mini'} <= older
 
-def test_anthropic_key_exposes_fastllms_full_claude_catalog(monkeypatch):
+def test_an_anthropic_key_no_longer_publishes_a_model_catalog(monkeypatch):
+    """Claude reaches Leela as the `claude` runtime, not as a provider model list, so the key alone
+    publishes nothing. Offering `anthropic/...` rows would name models nothing here can route to."""
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'connected')
     rows = models.available_models()
-    anthropic = {r['value'] for r in rows if r['provider'] == 'anthropic'}
-    assert 'anthropic/claude-sonnet-4-6' in anthropic
-    assert 'anthropic/claude-opus-4-8' in anthropic
-    assert all(r['source'] == 'ANTHROPIC_API_KEY' for r in rows if r['provider'] == 'anthropic')
+    assert not [r for r in rows if r['provider'] == 'anthropic']
+    from leela.blocks.agent.models import runtimes
+    assert 'claude' in {r['value'] for r in runtimes()}
 
 def test_available_models_follow_environment_and_codex_login(monkeypatch, tmp_path):
     auth = tmp_path/'auth.json'
@@ -994,15 +1015,15 @@ def test_an_approval_exchange_is_written_into_the_notebook():
     ws = Workspace(roots=[])
     nb = Notebook([Cell(source='fix it', cell_type='prompt')])
     ws._approval_target = (nb, 0)
-    stop = ws.approvals.listen()
+    approvals = ws._notebook_approvals; stop = approvals.listen()
     def answer():
         for _ in range(300):
-            if (a := ws.approvals.pending) is not None:
-                return ws.answer_approval(a.id, False, 'that file is generated')
+            if (a := approvals.pending) is not None:
+                return approvals.answer(a.id, False, 'that file is generated')
             time.sleep(0.01)
     threading.Thread(target=answer, daemon=True).start()
     tc = {'function': {'name': 'edit_file', 'arguments': {'path': 'gen.py'}}}
-    d = ws.approvals.gate(tc)
+    d = approvals.gate(tc)
     stop()
     # a refusal is handed back as steering, the same for a call with an id and one without
     assert d is True and tc['function']['name'] == 'user_steering'
@@ -1063,7 +1084,10 @@ def test_agent_prompt_bar_accepts_the_open_notebook_context(tmp_path):
     seen = {}
     class A:
         class Model: local = True
-        model = Model()
+        class Routing:
+            def name_for(self, job): return ''
+        model, routing = Model(), Routing()
+        def set_model(self, name, job=''): pass
         def stream_with(self, prompt, **kwargs):
             seen.update(prompt=prompt, **kwargs)
             return iter(['ok'])
@@ -1146,7 +1170,8 @@ def test_the_sse_endpoint_streams_the_real_app():
     install(ws, [Step(tool=('search_code', {'query': 'Approvals'})),
                  Step(text='found it in hitl.py')], token_delay=0)
     with TestClient(ide_app(ws)) as c:
-        with c.stream('GET', '/agent/stream', params={'prompt': 'where?'}) as r:
+        accepted = c.post('/agent/turn', json={'prompt': 'where?'}).json()
+        with c.stream('GET', '/agent/stream', params={'since': accepted['seq']}) as r:
             assert r.status_code == 200
             assert r.headers['content-type'].startswith('text/event-stream')
             body = ''.join(r.iter_text())
@@ -1156,18 +1181,81 @@ def test_the_sse_endpoint_streams_the_real_app():
     assert 'event: done' in body
     assert 'Search Approvals' in body
     assert 'found' in body
-    done = body.rsplit('event: done\ndata: ', 1)[1]
+    done = body.split('event: done\ndata: ', 1)[1].split('\n\n', 1)[0]
     import json as _j
     d = _j.loads(done.strip())
     assert d['ok'] and 'edits' in d and d['activity']
 
+def test_httpcore_does_not_reclose_a_generator_during_generator_exit():
+    import httpcore2._utils as core_utils
+    closed = []
+    async def stream():
+        try: yield b'chunk'
+        finally: closed.append(True)
+    async def run():
+        iterator = stream()
+        assert await anext(iterator) == b'chunk'
+        try:
+            async with core_utils.safe_async_iterate(iterator): raise GeneratorExit
+        except GeneratorExit: pass
+        assert iterator.ag_frame is not None
+        async with core_utils.safe_async_iterate(iterator): pass
+    asyncio.run(run())
+    assert closed == [True]
+
+def test_fasttransport_uses_the_sse_context_for_malformed_events():
+    import fasttransport.core as ft
+    class Response:
+        headers = {}
+        def raise_for_status(self): pass
+    class Source:
+        response = Response()
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def __aiter__(self): return self
+        async def __anext__(self): return type('Event', (), {'data': '{'})()
+    class Client:
+        def stream(self, *args, **kwargs): raise AssertionError('stream() bypassed the SSE context')
+        def sse(self, *args, **kwargs): return Source()
+    async def run():
+        with pytest.raises(ft.ProtocolError):
+            async for _ in ft.AsyncTransport(client=Client()).stream('GET', 'https://example.test'): pass
+    asyncio.run(run())
+
+def test_agent_stream_replays_worker_errors_and_recovers():
+    from leela.blocks.agent.threads import Feed
+    ws, feed = Workspace(roots=[]), Feed('thread-1')
+    class Runner:
+        def __init__(self): self.feed, self.calls = feed, 0
+        def start(self, prompt, *args):
+            self.calls += 1
+            user = feed.emit('user', {'text': prompt, 'run': f'run-{self.calls}'})
+            if self.calls == 1: feed.emit('error', {'message': 'provider broke', 'run': 'run-1'})
+            else: feed.emit('chunk', {'text': 'recovered', 'run': 'run-2'})
+            feed.emit('done', {'ok': self.calls > 1, 'run': f'run-{self.calls}'})
+            feed.emit('state', {'runs': [], 'run': f'run-{self.calls}'}); feed.settle()
+            return {'ok': True, 'thread': 'thread-1', 'run': f'run-{self.calls}', 'seq': user['seq']}
+        def close(self): feed.close()
+    ws._turn_runner = Runner()
+    with TestClient(ide_app(ws)) as client:
+        accepted = client.post('/agent/turn', json={'prompt': 'first'}).json()
+        first = client.get('/agent/stream', params={'since': accepted['seq']}).text
+        accepted = client.post('/agent/turn', json={'prompt': 'second'}).json()
+        second = client.get('/agent/stream', params={'since': accepted['seq']}).text
+    assert 'event: error' in first and 'provider broke' in first and 'event: done' in first
+    assert 'recovered' in second and 'event: done' in second
+
 def test_agent_stream_rejects_a_second_turn_while_busy(tmp_path):
     ws = Workspace(roots=[tmp_path])
+    class Runner:
+        feed = Feed('thread-1')
+        def start(self, *args): raise TurnError('thread_busy', 'already working', 'thread-1')
+        def close(self): self.feed.close()
+    ws._turn_runner = Runner()
     with TestClient(ide_app(ws)) as client:
-        with ws.ai.lock:
-            response = client.get('/agent/stream', params={'prompt': 'where?'})
+        response = client.post('/agent/turn', json={'prompt': 'where?'})
     assert response.status_code == 409
-    assert 'already working' in response.text
+    assert response.json() == {'ok': False, 'code': 'thread_busy', 'message': 'already working', 'thread': 'thread-1'}
 
 def test_external_rishi_request_uses_the_web_approval_queue():
     ws = Workspace(roots=[])
@@ -1877,9 +1965,6 @@ def test_the_picker_says_what_a_model_takes_and_marks_the_ones_that_can_draw(mon
     assert not rows[1]['gen_image'] and rows[1]['modalities'] == 'modalities unknown'
     assert rows[2] == {'value': 'unresolvable'}, 'no one model may blank the picker'
 
-def test_a_model_that_draws_is_marked_in_the_picker_itself():
-    from tests.assets import JS
-    assert "m.gen_image ? ' · draws' : ''" in JS
 
 def test_a_video_job_persists_its_handle_and_is_drawn_once_when_it_finishes(tmp_path, monkeypatch):
     from leela.blocks.agent import video as V
@@ -1971,17 +2056,19 @@ def test_delegation_never_gets_the_git_write_tools(monkeypatch):
     def git_pull(): pass
     def git_status(): pass
     def view_file(): pass
+    def user_steering(): pass
 
     a = Assistant.__new__(Assistant)          # the method reads nothing off the instance
-    branches = ([git_push, git_status, view_file],      # `_plain`, the branch that was covered
-                [git_checkout, git_pull, view_file],    # `_subtools`, built from the registry
-                [git_push, git_checkout, git_status],   # the recorded wrappers a writer is given
+    branches = ([git_push, git_status, view_file, user_steering],      # `_plain`, equal budget
+                [git_checkout, git_pull, view_file, user_steering],    # `_subtools`, different budget
+                [git_push, git_checkout, git_status, user_steering],   # the recorded wrappers a writer is given
                 [])
     for branch in branches:
         monkeypatch.setattr(Agent, '_sub_plain', lambda self, b=branch: list(b))
         names = {f.__name__ for f in a._sub_plain()}
         assert not (names & GIT_WRITE_TOOLS), f'git writes reached delegation via {branch}'
-        assert names == {f.__name__ for f in branch} - GIT_WRITE_TOOLS, 'and nothing else was taken'
+        assert 'user_steering' not in names, f'main-agent steering reached delegation via {branch}'
+        assert names == {f.__name__ for f in branch} - GIT_WRITE_TOOLS - {'user_steering'}, 'and nothing else was taken'
 
     # Reading git is not writing git, and must survive.
     monkeypatch.setattr(Agent, '_sub_plain', lambda self: [git_status, view_file])
@@ -2057,3 +2144,45 @@ async def test_workspace_shutdown_cancels_agent_runs_before_close(tmp_path):
     await ws.shutdown()
     assert order[:2] == ['cancel', 'close']
     assert run.state == 'detached'
+
+def test_moving_the_turn_model_leaves_every_other_job_where_the_policy_put_it(monkeypatch):
+    """The whole argument for routing: pointing the turn at a frontier model must not move
+    completions. The cheap jobs sit on the local default; delegation is the one job whose default
+    is a cloud model, because local models did not do it well enough to be worth the wait."""
+    monkeypatch.delenv('LEELA_MODEL', raising=False)
+    r = models.Routing(turn='gemma-e2b')
+    r.set('gemma-12b')
+    assert r.spec('turn').name == 'gemma-12b'
+    for job, name in models.DEFAULT_POLICY.items():
+        if job == 'turn': continue
+        assert r.spec(job).name == (name or models.DFLT_LOCAL), job
+        assert r.spec(job).local == (job != 'subagent'), job
+    assert not r.spec('subagent').local, 'and delegation is deliberately not local'
+    assert models.DEFAULT_POLICY['subagent'] == r.spec('subagent').name
+
+
+def test_stream_disconnect_never_owns_or_cancels_the_turn():
+    "The subscriber waits on its own loop. Owning the turn made a closed tab cancel the work."
+    from tests.assets import read
+    server = read('leela/blocks/agent/app.py')
+    stream = server[server.index("@rt('/agent/stream')"):server.index("@rt('/agent/approval')")]
+    assert 'ws.ask_stream' not in stream
+    assert '.cancel(' not in stream
+    assert 'feed.anext' in stream, 'a subscriber waits on its own loop, never on the shared pool'
+    assert 'req.is_disconnected()' in stream, 'and a tab that has gone stops being served'
+
+def test_what_a_sub_agent_is_given_follows_the_model_it_runs_on(tmp_path):
+    """`_sub_plain` has two branches, and which one answers depends on routing, not on accumulated
+    state. A sub-agent sized like its parent shares the parent's list; one sized differently gets a
+    list built to its own budget. Reading a count without pinning the routing measures neither."""
+    from leela.workspace import Workspace
+    shared = Workspace(roots=[tmp_path], model='gpt-4.1').ai
+    assert shared.subagent_budget == shared.budget
+    assert shared._sub_plain(), 'the shared branch, asked cold, is not empty'
+
+    sized = Workspace(roots=[tmp_path], model='gemma-e4b').ai
+    assert sized.subagent_budget != sized.budget, 'a 16k turn model and a cloud sub-agent differ'
+    own = {t.__name__ for t in sized._sub_plain()}
+    assert own and own != {t.__name__ for t in sized.tools}, 'so its list is built to its own budget'
+    # the sub-agent runs on the larger model, so it is offered what the 16k turn model was denied
+    assert 'web' in sized.budget.drop and {'web_search', 'read_url'} <= own

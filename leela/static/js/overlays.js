@@ -1,4 +1,17 @@
 /* ------------------------------------------------------------------ overlays */
+function modalViewport() {
+  const v = window.visualViewport;
+  return {left: v?.offsetLeft || 0, top: v?.offsetTop || 0, width: v?.width || innerWidth, height: v?.height || innerHeight};
+}
+function fitModal(m) {
+  const box = $('.lee-modalbox', m), v = modalViewport(), gap = 8; if (!box) return;
+  box.style.maxWidth = Math.max(0, v.width - gap * 2) + 'px';
+  box.style.maxHeight = Math.max(0, v.height - gap * 2) + 'px';
+  if (!m.classList.contains('lee-modal-moved')) return;
+  const r = box.getBoundingClientRect();
+  box.style.left = Math.max(v.left, Math.min(r.left, v.left + v.width - Math.min(r.width, v.width) - gap)) + 'px';
+  box.style.top = Math.max(v.top, Math.min(r.top, v.top + v.height - Math.min(r.height, v.height) - gap)) + 'px';
+}
 function modal(inner, onKey, onClose, options = {}) {
   const previousFocus = document.activeElement;
   const m = document.createElement('div');
@@ -11,15 +24,16 @@ function modal(inner, onKey, onClose, options = {}) {
   const heading = box.querySelector('.lee-mhead');
   if (heading) box.setAttribute('aria-label', heading.textContent.trim());
   const storageKey = options.storageKey ? `lee-modal-size:${options.storageKey}` : '';
+  const viewport = modalViewport();
   if (storageKey) {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
-      if (saved?.width) box.style.width = Math.min(saved.width, innerWidth - 16) + 'px';
-      if (saved?.height) box.style.height = Math.min(saved.height, innerHeight - 16) + 'px';
+      if (saved?.width) box.style.width = Math.min(saved.width, viewport.width - 16) + 'px';
+      if (saved?.height) box.style.height = Math.min(saved.height, viewport.height - 16) + 'px';
       if (Number.isFinite(saved?.left) && Number.isFinite(saved?.top)) {
         m.classList.add('lee-modal-moved');
-        box.style.left = Math.max(0, Math.min(saved.left, innerWidth - 80)) + 'px';
-        box.style.top = Math.max(0, Math.min(saved.top, innerHeight - 48)) + 'px';
+        box.style.left = Math.max(viewport.left, Math.min(saved.left, viewport.left + viewport.width - 80)) + 'px';
+        box.style.top = Math.max(viewport.top, Math.min(saved.top, viewport.top + viewport.height - 48)) + 'px';
       }
     } catch (_) {}
   }
@@ -35,6 +49,7 @@ function modal(inner, onKey, onClose, options = {}) {
   })));
   observer.observe(box, {childList: true, subtree: true});
   let closed = false;
+  const onViewport = () => fitModal(m);
   const nativeRemove = m.remove.bind(m);
   const focusables = () => $$('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])', box)
     .filter(el => !el.hidden && el.getClientRects().length);
@@ -70,7 +85,9 @@ function modal(inner, onKey, onClose, options = {}) {
   };
   m.remove = () => {
     if (closed) return;
-    closed = true; observer.disconnect(); document.removeEventListener('keydown', key, true); nativeRemove();
+    closed = true; observer.disconnect(); document.removeEventListener('keydown', key, true);
+    window.removeEventListener('resize', onViewport); window.visualViewport?.removeEventListener('resize', onViewport); nativeRemove();
+    if (!$$('.lee-modal').length) { document.body.style.overflow = document.body.dataset.leeModalOverflow || ''; delete document.body.dataset.leeModalOverflow; }
     if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({preventScroll: true});
     if (onClose) onClose();
   };
@@ -86,17 +103,18 @@ function modal(inner, onKey, onClose, options = {}) {
   });
   dragHandle.addEventListener('pointermove', e => {
     if (!drag) return;
-    const r = box.getBoundingClientRect(), width = r.width, height = r.height;
-    const maxX = Math.max(0, innerWidth - width) - drag.left;
-    const maxY = Math.max(0, innerHeight - height) - drag.top;
-    drag.dx = Math.max(-drag.left, Math.min(e.clientX - drag.x, maxX));
-    drag.dy = Math.max(-drag.top, Math.min(e.clientY - drag.y, maxY));
+    const r = box.getBoundingClientRect(), v = modalViewport(), width = r.width, height = r.height;
+    const maxX = v.left + Math.max(0, v.width - width) - drag.left;
+    const maxY = v.top + Math.max(0, v.height - height) - drag.top;
+    drag.dx = Math.max(v.left - drag.left, Math.min(e.clientX - drag.x, maxX));
+    drag.dy = Math.max(v.top - drag.top, Math.min(e.clientY - drag.y, maxY));
     box.style.transform = `translate3d(${drag.dx}px, ${drag.dy}px, 0)`;
     e.preventDefault();
   });
   const endDrag = e => {
     if (!drag) return;
-    box.style.left = Math.max(0, drag.left + drag.dx) + 'px'; box.style.top = Math.max(0, drag.top + drag.dy) + 'px';
+    const v = modalViewport();
+    box.style.left = Math.max(v.left, drag.left + drag.dx) + 'px'; box.style.top = Math.max(v.top, drag.top + drag.dy) + 'px';
     box.style.transform = ''; drag = null; m.classList.remove('lee-modal-dragging');
     try { dragHandle.releasePointerCapture(e.pointerId); } catch (_) {}
   };
@@ -133,8 +151,11 @@ function modal(inner, onKey, onClose, options = {}) {
   m.querySelector('.lee-modal-close').onclick = requestClose;
   m.addEventListener('mousedown', e => { if (e.target === m) requestClose(); });
   document.addEventListener('keydown', key, true);
+  window.addEventListener('resize', onViewport); window.visualViewport?.addEventListener('resize', onViewport);
+  if (!$$('.lee-modal').length) { document.body.dataset.leeModalOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'; }
   document.body.appendChild(m);
   requestAnimationFrame(() => {
+    fitModal(m);
     const target = box.querySelector('[autofocus]') || box.querySelector('.lee-mrow.sel:not([data-off])') ||
                    box.querySelector('.lee-mrow:not([data-off])') || box.querySelector('input, textarea, select') ||
                    box.querySelector('button:not(.lee-modal-close):not([disabled])') || box;
@@ -179,15 +200,19 @@ function textDialog(title, label, value = '') {
   });
 }
 
-function confirmDialog(title, detail, action = 'confirm') {
+/* `alt` offers a second way to say yes, for a choice with two shapes rather than one. It resolves
+   `'alt'`, and cancel stays falsy so every caller that only asked a yes/no question is unchanged. */
+function confirmDialog(title, detail, action = 'confirm', alt = '') {
   return new Promise(resolve => {
     let settled = false;
     const done = value => { if (settled) return; settled = true; m.remove(); resolve(value); };
+    const second = alt ? `<button class="lee-btn" id="dialogalt">${esc(alt)}</button>` : '';
     const m = modal(`<div class="lee-mhead">${esc(title)}</div><div class="lee-dialogcopy">${esc(detail)}</div>` +
-      `<div class="lee-mfoot"><button class="lee-btn warn" id="dialogyes">${esc(action)}</button>` +
+      `<div class="lee-mfoot"><button class="lee-btn warn" id="dialogyes">${esc(action)}</button>${second}` +
       `<button class="lee-btn" id="dialogno" autofocus>cancel</button></div>`, null,
       () => { if (!settled) { settled = true; resolve(false); } });
     m.querySelector('#dialogyes').onclick = () => done(true);
+    m.querySelector('#dialogalt')?.addEventListener('click', () => done('alt'));
     m.querySelector('#dialogno').onclick = () => done(false);
   });
 }

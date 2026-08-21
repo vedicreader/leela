@@ -7,7 +7,7 @@ function updateAgentRunstrip(state = {}) {
   if ('runs' in state) lee.agentRuns = state.runs || [];
   const runs = lee.agentRuns || [], active = runs.length > 0;
   strip.hidden = !active && !lee.agentBusy && !state.waiting;
-  const force = $('#agentforce'); if (force) force.hidden = !active;
+  updateAgentSendMode(active || lee.agentBusy ? 'steer' : 'send');
   const rootLabel = state.waiting ? `Waiting · ${state.waiting}`
     : lee.queuedSteer ? 'Steering queued · applies after the current tool call'
     : state.run_policy ? `Running automatically · ${runPolicyLabel(state.run_policy)}`
@@ -30,49 +30,52 @@ async function pauseAgentAfterCurrent() {
   const d = await post('/agent/run-policy', {policy: 'pause'}); updateAgentRunstrip(d);
   status('agent will pause before the next call', 'ok');
 }
-/* The chip and the run strip are one fact, so they are set in one place. A steer answered
-   straight into a waiting checkpoint comes back already consumed -- it went to the model rather
-   than into the queue -- and saying "queued" about it would be a lie the next tick erases. */
-function setQueuedSteer(text, shown = '') {
+function updateAgentSendMode(mode = 'send') {
+  const button = $('#agentsend'); if (!button) return;
+  const label = mode === 'force' ? 'Stop and send next' : mode === 'steer' ? 'Steer after this call' : 'Send';
+  button.textContent = label; button.setAttribute('aria-label', label);
+  button.title = mode === 'send' ? 'send this as a turn'
+    : 'hand this to the model after the current call — shift-click to stop the run and send it now';
+}
+function setQueuedSteer(text, shown = '', cancel = false) {
   lee.queuedSteer = text || '';
-  const queue = $('#agentsteerqueue'); if (!queue) return;
-  if (!lee.queuedSteer) return void (queue.innerHTML = '');
-  queue.innerHTML = `<span>Steering queued</span><strong>${esc(shown || lee.queuedSteer)}</strong>` +
-                    `<button type="button">Cancel</button>`;
-  $('button', queue).onclick = async () => {
+  const log = $('#agentlog'), old = $('#agentqueuedsteer'); if (!log) return;
+  if (!lee.queuedSteer) {
+    if (cancel) old?.remove();
+    else if (old) { old.classList.remove('queued'); $('[data-cancel-steer]', old)?.remove(); }
+    return;
+  }
+  const card = old || userMessage(shown || lee.queuedSteer);
+  card.id = 'agentqueuedsteer'; card.classList.add('queued');
+  if (!old) log.appendChild(card);
+  let button = $('[data-cancel-steer]', card);
+  if (!button) { button = document.createElement('button'); button.type = 'button'; button.dataset.cancelSteer = '1'; button.textContent = 'Cancel'; card.appendChild(button); }
+  button.onclick = async () => {
     try { await post('/agent/steer', {cancel: true}); } catch (e) { return status(e.message || String(e), 'err'); }
-    setQueuedSteer(''); updateAgentRunstrip();
+    setQueuedSteer('', '', true); updateAgentRunstrip();
   };
+  log.scrollTop = log.scrollHeight;
 }
 async function leeQueueSteer() {
-  const input = $('#agentsteer'), text = input?.value.trim(); if (!text) return status('write a steering instruction first', 'err');
+  const input = $('#agentprompt'), text = input?.value.trim();
+  if (!text) return status('write what to steer towards first', 'err');
   try {
     const d = await post('/agent/steer', {text}); input.value = '';
-    setQueuedSteer(d.queued_steer || '', text);
-    updateAgentRunstrip(d);
+    setQueuedSteer(d.queued_steer || '', text); updateAgentRunstrip(d);
     status(d.queued_steer ? 'steering queued after the current tool call' : 'steering sent to the agent', 'ok');
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { input.value = text; status(e.message || String(e), 'err'); }
 }
-window.leeQueueSteer = leeQueueSteer;
-
-/* Stop the target run before sending the draft as a new turn. */
 async function leeForceSteer() {
-  if (!lee.agentBusy) return status('nothing is running to force; ask in the prompt box instead', 'err');
-  const input = $('#agentsteer'), text = input?.value.trim(); if (!text) return status('write a steering instruction first', 'err');
+  const input = $('#agentprompt'), text = input?.value.trim();
+  if (!lee.agentBusy) return status('nothing is running to stop; send it as a turn instead', 'err');
+  if (!text) return status('write what to send next first', 'err');
+  updateAgentSendMode('force');
   try {
     const d = await post('/agent/steer', {text, force: true});
-    input.value = ''; setQueuedSteer(''); updateAgentRunstrip({runs: []});
-    const run = d.run || {};
-    if (!['cancelled', 'detached', 'terminated'].includes(run.state)) { input.value = text; return status(`run is ${run.state || 'cancelling'}; draft kept`, 'ok'); }
-    reseedSteer(text);
-    status(run.state === 'detached' ? 'provider detached; sending the saved draft' : 'run cancelled; sending the saved draft', 'ok');
-  } catch (e) { status(e.message || String(e), 'err'); }
-}
-window.leeForceSteer = leeForceSteer;
-
-function reseedSteer(text) {
-  const el = $('#agentprompt'); if (!el) return;
-  el.value = text; sendAgent();
+    lee.agentBusy = false; lee.agentRuns = []; input.value = text; setQueuedSteer('', '', true); updateAgentRunstrip({runs: []});
+    status(d.run?.state === 'detached' ? 'provider detached; sending the saved draft' : 'run cancelled; sending the saved draft', 'ok');
+    return sendAgent();
+  } catch (e) { input.value = text; updateAgentSendMode('steer'); status(e.message || String(e), 'err'); }
 }
 
 async function pollApproval() {
@@ -86,6 +89,8 @@ async function pollApproval() {
 // raises one, and a window nobody is looking at raises nothing.
 async function approvalLoop() {
   if (!document.hidden) await pollApproval();
+  // attention is about the conversations a person is *not* looking at, so it is polled even hidden
+  try { await refreshAgentThreads(); } catch (_) {}
   setTimeout(approvalLoop, document.hidden ? 5000 : lee.agentBusy ? 750 : 5000);
 }
 
@@ -343,10 +348,7 @@ function initAgentComposer() {
   /* A one-line box with a placeholder telling you to write in it takes Enter, or it is a box
      that eats what you typed. It is not in a form and has no default action, so nothing
      happened at all -- which read as steering being broken rather than never sent. */
-  $('#agentsteer')?.addEventListener('keydown', e => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault(); (e.shiftKey ? leeForceSteer : leeQueueSteer)();
-  });
+  const notify = $('#agentnotify'); if (notify) notify.checked = agentNotifyEnabled();
   const reasoning = $('#agentreasoning');
   if (reasoning) {
     reasoning.value = localStorage.getItem('lee-agent-reasoning') || 'auto';
@@ -387,7 +389,7 @@ function initAgentComposer() {
 async function sendAgentCommand(line) {
   const log = $('#agentlog'); log?.appendChild(userMessage(line));
   try {
-    const d = await post('/agent/command', {line});
+    const d = await post('/agent/command', {line, thread: lee.agentThread || ''});
     if (/^\/reload(?:\s|$)/.test(line)) lee.agentVocabulary = null;
     const out = document.createElement('div'); out.className = 'lee-reply lee-agent-reply'; log?.appendChild(out);
     renderMarkdown(out, d.text || ''); if (log) log.scrollTop = log.scrollHeight;

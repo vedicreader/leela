@@ -15,11 +15,14 @@ LABELS = {'litert': 'LiteRT', 'mlx': 'MLX', 'llama': 'llama.cpp', 'remote': 'hos
           'cursor': 'Cursor agent', 'claude': 'Claude Code', 'copilot': 'GitHub Copilot'}
 
 def _why(runtime, agents):
-    "What to do about a runtime that cannot be reached. An agent harness is not a pip extra."
-    if runtime in agents: return f'needs the {LABELS.get(runtime, runtime)} CLI or SDK, and a login'
-    # the extra alone reaches nothing: Copilot wants an editor sign-in or `copilot_login()` too
-    if runtime == 'copilot': return 'needs pip install rishi[copilot], and a Copilot sign-in'
-    return f'needs pip install rishi[{runtime}]'
+    """What to do about a runtime that cannot be reached.
+
+    The answer comes from ramabana, which is where the runtimes are declared. Only the local
+    backends are pip extras now; naming one for a harness or a hosted model sends a person to
+    install something empty and come back to the same error.
+    """
+    from ...agent.core import runtime_remedy
+    return runtime_remedy(runtime)
 
 def runtimes():
     "Every runtime, whether rishi can reach it here, and what it wants when it cannot."

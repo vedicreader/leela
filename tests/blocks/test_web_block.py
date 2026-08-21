@@ -46,8 +46,51 @@ def test_shell_still_exposes_workspace_and_git_switchers(tmp_path):
     assert 'id="gitpill"' in html and 'leeBranchMenu(this)' in html
     assert 'data-left="git"' in html
 
+
+def test_file_click_sets_the_same_selected_state_as_keyboard_navigation(tmp_path):
+    "Mouse opens used to stopPropagation without painting `.sel`; keys already did."
+    from leela.blocks.fs.ui import tree_node
+    (tmp_path/'alpha.py').write_text('x = 1\n')
+    ws = Workspace(roots=[tmp_path])
+    html = to_xml(tree_node(first(ws.fs.ls(str(tmp_path)))))
+    assert 'leeOpenFile(' in html
+
+
+def test_the_agent_can_be_pointed_at_ramabanas_own_config_dir(tmp_path, monkeypatch):
+    """Ramabana writes the log and its sidecars from the same code Leela drives, so one folder can
+    serve both surfaces. Empty keeps every existing install exactly where it was."""
+    from leela.blocks.settings.settings import Settings, agent_cfg
+    import leela
+    settings = Settings(user_path=tmp_path/'settings.json')
+    assert agent_cfg(settings) == Path(leela.leela_cfg), 'empty means Leela\'s own config dir'
+    shared = tmp_path/'shared'/'ramabana'
+    settings.save('user', 'agent', {'configFolder': str(shared)})
+    assert agent_cfg(settings) == shared and shared.is_dir(), 'and it is made, not just named'
+    settings.save('user', 'agent', {'configFolder': '~'})
+    assert agent_cfg(settings) == Path.home(), 'a home-relative folder is expanded'
+    try: settings.save('user', 'agent', {'nope': 1})
+    except ValueError as e: assert 'unknown setting' in str(e)
+    else: assert False, 'an unknown key is refused, not written'
+
+def test_a_workspace_assistant_and_its_backups_follow_that_folder(tmp_path, monkeypatch):
+    "Moving the log without moving the copies taken of it would protect an empty file."
+    from leela.blocks.settings import settings as S
+    from leela.core import backups as B
+    from leela.workspace import Workspace
+    shared, project = tmp_path/'shared', tmp_path/'project'
+    project.mkdir()
+    monkeypatch.setattr(S, 'leela_cfg', tmp_path/'leela')
+    S.Settings().save('user', 'agent', {'configFolder': str(shared)})
+    ws = Workspace(roots=[project])
+    try:
+        assert Path(ws.ai.history_path) == shared/'agent-history.jsonl'
+        assert B.agent_source(tmp_path/'leela') == shared
+        assert B.entry_source('agent-history.jsonl', tmp_path/'leela', B.agent_source()) == shared/'agent-history.jsonl'
+        assert B.entry_source('keys.json', tmp_path/'leela') == tmp_path/'leela'/'keys.json', 'only the agent moves'
+    finally: ws.threads.shutdown()
+
 def test_the_empty_state_is_written_only_in_python():
-    "`mountTab` clones `#leeempty`; a second copy in JS is the drift that put them out of step."
+    "`mountTab` clones `#leeempty`; a second copy in the client is the drift that split them."
     js = (ROOT/'leela/blocks/editor/tabs.js').read_text()
     assert 'lee-empty-features' not in js and '#leeempty' in js
     html = to_xml(_editor_pane(_NoTab()))

@@ -17,6 +17,13 @@ def _isolate_vault(monkeypatch, tmp_path_factory):
     monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path_factory.mktemp('vault') / 'vault.db'))
     monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
 
+@pytest.fixture(autouse=True)
+def _config_is_a_test_dir():
+    "Assert the per-test config dir, because the cost of it being wrong is a real conversation log."
+    import leela
+    real = Path.home()/'.config'/'leela'
+    assert Path(leela.leela_cfg) != real and real not in Path(leela.leela_cfg).parents
+
 class _FakeKernel:
     alive = True
     base = 'http://127.0.0.1:9'

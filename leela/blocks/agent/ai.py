@@ -688,8 +688,9 @@ class Assistant(Agent):
         load_models()
         self.engines = engine_broker() if engines is True else (engines or None)
         host = WorkspaceHost(ws, session)
-        kwargs.setdefault('cfg', leela_cfg)
-        kwargs.setdefault('approvals', getattr(ws, 'approvals', None))
+        from ..settings.settings import agent_cfg
+        kwargs.setdefault('cfg', agent_cfg())
+        if 'approvals' not in kwargs: kwargs['approvals'] = getattr(ws, 'approvals', None)
         kwargs.setdefault('compact', getattr(ws, 'compact_auto', True))
         kwargs.setdefault('compact_strategy', getattr(ws, 'compact_strategy', 'surgical'))
         kwargs.setdefault('max_tool_calls', getattr(ws, 'tool_budget', 'auto'))
@@ -772,7 +773,8 @@ class Assistant(Agent):
         the recorded wrappers -- neither passes through `_plain`, so both arrived holding
         `git_push`. The refusal belongs on what delegation is actually given.
         """
-        return [f for f in super()._sub_plain() if f.__name__ not in GIT_WRITE_TOOLS]
+        refused = {*GIT_WRITE_TOOLS, 'user_steering'}
+        return [f for f in super()._sub_plain() if f.__name__ not in refused]
     def model_local(self):
         "Whether this turn's model runs on this machine, and what it is called."
         spec = self.spec_or_none()

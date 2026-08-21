@@ -291,8 +291,12 @@ class Search:
                     out.append(Hit(path=str(p), line=i, text=line.strip()[:200], kind='scan'))
                     if len(out) >= limit: return out
         return out
-    def _rg(self, q, limit, regex=False, exts=(), roots=None):
-        "Fast, current-disk search. JSON output keeps colons and non-UTF8 paths unambiguous."
+    def _rg(self, q, limit, regex=False, exts=(), roots=None, no_ignore=False, cased=False):
+        """Fast, current-disk search. JSON output keeps colons and non-UTF8 paths unambiguous.
+
+        `no_ignore` is for the environment: `.venv` is in everyone's `.gitignore`, so ripgrep skips
+        every file in it unless told that this time the ignore rules are not the point.
+        """
         exe = shutil.which('rg')
         if not exe:
             self.backend, self.note = 'scan', 'ripgrep is not installed; Python fallback'
@@ -300,8 +304,12 @@ class Search:
         globs = [f'*{e}' for e in sorted(self.clean_exts(exts))]
         out = L()
         for root in (roots if roots is not None else self.fs.roots):
-            cmd = [exe, '--json', '--ignore-case', '--max-filesize', str(MAX_SCAN_BYTES),
-                '--glob', '!{.git,.hg,.svn,.venv,venv,node_modules,__pycache__,dist,build}/**']
+            cmd = [exe, '--json', '--max-filesize', str(MAX_SCAN_BYTES),
+                   '--case-sensitive' if cased else '--ignore-case']
+            # the skip list is matched from the working directory, so `!.venv/**` excludes the very
+            # tree an environment search is pointed at. An environment search skips the list instead.
+            if no_ignore: cmd += ['--no-ignore', '--glob', '!__pycache__/**']
+            else: cmd += ['--glob', '!{.git,.hg,.svn,.venv,venv,node_modules,__pycache__,dist,build}/**']
             for g in globs: cmd += ['--glob', g]
             if not regex: cmd.append('--fixed-strings')
             cmd += ['--', q, str(root)]
@@ -545,6 +553,119 @@ class Search:
         name = (name or '').strip()
         if not re.match(r'^[_A-Za-z]\w*$', name): return L()
         return self._place(self._rg(rf'\b{re.escape(name)}\b', limit, regex=True))
+    def env_roots(self):
+        """The project interpreter's `site-packages`, which the project walk deliberately skips.
+
+        A symbol imported from a package is defined in one of these and nowhere in the project, so
+        without them a lookup on `fastcore.tools` can only offer the import lines that mention it.
+        """
+        from ..runtime.kernels import project_python
+        py = project_python(self.fs.roots)
+        if not py: return L()
+        lib = Path(py).parent.parent/'lib'
+        if not lib.is_dir(): return L()
+        return L(p/'site-packages' for p in lib.iterdir() if (p/'site-packages').is_dir())
+    def import_package(self, name, path):
+        "The package a file says `name` comes from, so a lookup lands in the one that was imported."
+        if not path or not name: return ''
+        try: text = self.fs.read(path)
+        except Exception: return ''
+        if _is_nb(path):
+            try: text = '\n'.join(str(c.get('source') or '') for c in read_cells(text))
+            except Exception: return ''
+        word = re.escape(name)
+        if m := re.search(rf'^\s*from\s+([\w.]+)\s+import\s+[^#\n]*\b{word}\b', text, re.M):
+            return m.group(1).lstrip('.').split('.')[0]
+        if re.search(rf'^\s*import\s+[\w.]*\b{word}\b', text, re.M): return name.split('.')[0]
+        return ''
+    #: Bundled stubs and vendored copies. Real code answers the question; these repeat it.
+    VENDORED = ('/third_party/', 'typeshed', '/dist/dist/', '/site-packages/pip/_vendor/')
+    def env_definitions(self, name, limit=12, path=''):
+        """Where an installed package defines `name`: Kosha's environment index, else ripgrep.
+
+        The index is exact about which package a file belongs to and where the definition starts.
+        Ripgrep needs nothing to be fresh, so it answers when the index is missing, stale for a
+        package installed since the last sync, or simply has not heard of the name.
+
+        Case matters either way: a definition is an identifier, and an insensitive search answers
+        `store_attr` with `STORE_ATTR` from somebody's vendored stubs.
+        """
+        name = (name or '').strip()
+        if not re.match(r'^[_A-Za-z]\w*$', name): return L()
+        if indexed := self.env_symbols(name, limit): return self._env_ranked(indexed, name, path)
+        roots = self.env_roots()
+        if not roots: return L()
+        word = re.escape(name)
+        def hits(pattern):
+            return self._rg(pattern, limit, regex=True, exts=('.py', '.pyi'), roots=roots,
+                            no_ignore=True, cased=True)
+        # column zero first. `def patch(self, ...)` in twelve packages is a method called patch, not
+        # the thing that was clicked; an indented definition is only the answer when nothing else is.
+        out = (hits(rf'^(?:async\s+def|def|class)\s+{word}\b|^{word}\s*(?::[^=]+)?=')
+               or hits(rf'^\s+(?:async\s+def|def|class)\s+{word}\b'))
+        for hit in out:
+            hit.kind = 'env-definition'
+            root = next((r for r in roots if str(hit.path).startswith(str(r))), None)
+            rest = Path(hit.path).relative_to(root) if root else Path(hit.path)
+            hit.package, hit.symbol = rest.parts[0].removesuffix('.py'), name
+        return self._env_ranked(out, name, path)
+    def env_symbols(self, name, limit=12):
+        """Kosha's environment store, which knows the package and the line without guessing.
+
+        A path prefix is a guess about which package a file belongs to, and a namespace package, a
+        vendored copy or an editable install each break it. The index carries the package itself.
+        """
+        k = self._kosha()
+        if k is None: return L()
+        try:
+            rows = list(k.env_st.rows_where("json_extract(metadata, '$.name') = ?", [name],
+                select='content, metadata, package', limit=limit))
+        except Exception as e:
+            self.note = f'Kosha environment lookup failed ({errstr(e)}); scanning site-packages'
+            return L()
+        out = L()
+        for row in rows:
+            m = _meta(row)
+            place = str(m.get('path') or '')
+            if not place or not Path(place).exists(): continue
+            out.append(Hit(path=place, line=int(m.get('lineno') or 1),
+                text=(row.get('content') or '').strip().split('\n')[0][:200], kind='env-definition',
+                symbol=name, package=str(row.get('package') or m.get('package') or '')))
+        if out: self.backend, self.note = 'kosha', f'Kosha environment metadata · {len(out)} packages searched'
+        return out
+    def _env_ranked(self, hits, name, path):
+        "The package the file imported from, then real code, then the shallowest module."
+        wanted = self.import_package(name, path)
+        def rank(h):
+            return (bool(wanted) and h.package != wanted,
+                    any(x in str(h.path) for x in self.VENDORED),
+                    str(h.path).endswith('.pyi'), Path(h.path).name.startswith('_'), len(str(h.path)))
+        return hits.sorted(key=rank)
+    def at_definition(self, hits, path, line, cell_index=-1):
+        "Is the cursor already standing on one of these definitions?"
+        if not path or int(line or 0) <= 0: return False
+        here = str(Path(path).resolve())
+        for h in hits:
+            if str(Path(h.path).resolve()) != here: continue
+            if h.cell_index >= 0 or cell_index >= 0:
+                if h.cell_index == cell_index and int(h.cell_line or 0) == int(line): return True
+            elif int(h.line or 0) == int(line): return True
+        return False
+    def declaration_or_usages(self, name, path=None, line=0, cell_index=-1, limit=30):
+        """Where `name` is declared, or who uses it when the cursor is already there.
+
+        A notebook cursor is a cell and a line inside it, which is why `cell_index` is separate:
+        the file line a hit carries is a line of JSON and never matches what a person is looking at.
+        """
+        defs = self.definitions(name, path, limit)
+        if defs and not self.at_definition(defs, path, line, cell_index): return 'definition', defs
+        # nothing in the project defines it, so it is either a package's or nobody's. The usages
+        # of a name the project only imports are import lines, which is the noise this replaces.
+        if not defs and (env := self.env_definitions(name, path=path or '')):
+            # the backend is whichever answered, the index or the scan; only the note is ours
+            self.note = f'defined in {env[0].package}, not in this project'
+            return 'definition', env
+        return 'usages', self.usages(name)
     @athreaded
     def async_sync(self, notebooks=True, graph=True):
         "Awaitable index refresh, always executed by fastcore on a worker thread."

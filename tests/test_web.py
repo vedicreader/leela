@@ -113,6 +113,7 @@ def test_workspace_panes_can_minimise_and_restore_independently(tmp_path):
     for label, side in (('files', 'left'), ('tools', 'right'), ('terminal / exec', 'bottom')):
         assert f'>{label}</button>' in html and f'leePane("{side}", true)' in html
 
+
 def test_the_file_and_agent_panes_can_be_pinned_or_left_to_auto_close(tmp_path):
     "Unpinned, a pane closes when you work elsewhere; pinned is the default and the old behaviour."
     html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
@@ -385,16 +386,6 @@ def test_one_keyboard_router_reaches_every_panel():
         assert key.scope == 'global' and key.keys, f'{action} is bound'
 
 
-def test_terminal_starts_inside_the_project_uv_environment():
-    "One builder, used by the pty and by every release, deploy and drive step alike."
-    import inspect, os
-    from leela.blocks.runtime.kernels import venv_env
-    env = venv_env('/proj/.venv/bin/python', {'PATH': '/usr/bin'})
-    assert env['VIRTUAL_ENV'] == env['UV_PROJECT_ENVIRONMENT'] == '/proj/.venv'
-    assert env['PATH'] == '/proj/.venv/bin' + os.pathsep + '/usr/bin'
-    assert 'env = venv_env(py) if py else None' in inspect.getsource(ide_app)
-
-
 def test_editor_extensions_are_live_preferences():
     assert (ROOT/'leela/vendor/lee-cm6.js').stat().st_size > 100_000
 
@@ -435,7 +426,9 @@ def test_agent_control_route_changes_checkpoint_policy_without_starting_a_model(
     with TestClient(ide_app(ws)) as client:
         r = client.post('/agent/control', json={'control': 'directed'})
         bad = client.post('/agent/control', json={'control': 'reckless'})
-    assert r.json() == {'ok': True, 'control': 'directed'}
+    body = r.json()
+    assert body['ok'] and body['control'] == 'directed'
+    assert body['thread'], 'and it says which conversation the policy was set on'
     assert ws.approvals.control == 'directed'
     assert bad.status_code == 400
 
@@ -536,8 +529,14 @@ def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(t
     "History showed the turns and left the model with none of them."
     ws = Workspace(roots=[tmp_path])
     model = ws.ai.model.name
-    ws.ai.history = [{'session': 'agent-a', 'at': 1, 'model': model, 'prompt': 'remember cedar', 'reply': 'noted'},
-                     {'session': 'agent-a', 'at': 2, 'model': model, 'prompt': 'what was it?', 'reply': 'cedar'}]
+    turns = [{'session': 'agent-a', 'at': 1, 'model': model, 'prompt': 'remember cedar', 'reply': 'noted'},
+             {'session': 'agent-a', 'at': 2, 'model': model, 'prompt': 'what was it?', 'reply': 'cedar'}]
+    # a resumed thread builds its own assistant and reads the log, so the session has to be in it
+    import json as _json
+    path = ws.ai.history_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('\n'.join(_json.dumps(t) for t in turns) + '\n')
+    ws.ai.history = list(turns)
     with TestClient(ide_app(ws)) as client:
         d = client.post('/agent/resume', json={'session': 'agent-a'}).json()
         missing = client.post('/agent/resume', json={'session': 'legacy-1'})

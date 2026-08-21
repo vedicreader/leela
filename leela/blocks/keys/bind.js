@@ -2,37 +2,127 @@
 /* Editable here, because the alternative is telling someone whose terminal or browser
  * eats ctrl+enter to go and find a JSON file. Saving re-reads it server-side and reloads
  * the table this client dispatches on, so a new chord works on the next keystroke. */
+/* A chord as this app writes them: `[mod+][ctrl+][alt+][shift+]base`, in that order, with `mod`
+   standing for the platform's own command key. Built from a real keystroke so nobody has to know
+   the grammar to bind a key. */
+const CHORD_BASE = {' ': 'space', 'Escape': 'esc', 'ArrowUp': 'up', 'ArrowDown': 'down',
+                    'ArrowLeft': 'left', 'ArrowRight': 'right', 'Backspace': 'backspace',
+                    'Enter': 'enter', 'Tab': 'tab', 'Delete': 'delete'};
+const CHORD_SKIP = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Dead']);
+function chordFromEvent(e) {
+  if (CHORD_SKIP.has(e.key)) return '';
+  const mac = navigator.platform.toLowerCase().includes('mac');
+  const parts = [];
+  if (mac ? e.metaKey : e.ctrlKey) parts.push('mod');
+  if (mac && e.ctrlKey) parts.push('ctrl');
+  if (e.altKey) parts.push('alt');
+  if (e.shiftKey) parts.push('shift');
+  const base = CHORD_BASE[e.key] || (e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase());
+  parts.push(base);
+  return parts.join('+');
+}
+
+/* Editable here, because the alternative is telling someone whose terminal or browser eats
+ * ctrl+enter to go and find a JSON file. It was that JSON file for a while, which meant knowing
+ * the grammar and finding out about a clash only after saving. Now it is a row per action, a field
+ * that takes the keystroke itself, and the server's own conflict check on every change. */
 async function editKeys() {
   const d = await api('/keys/file');
+  const rows = () => (lee.keys || []).filter(k => k.label || k.scope !== 'global');
   const m = modal(
     `<div class="lee-mhead">keybindings<span class="sub">${esc(d.path)}</span></div>` +
-    `<div class="lee-dim">action → chord, or several separated by spaces; "" unbinds it. ` +
-    `A chord is [mod+][ctrl+][alt+][shift+]base; mod is ⌘ on this Mac and ctrl elsewhere.</div>` +
+    `<div class="lee-keyfilter"><input class="lee-input" id="keysearch" placeholder="filter by action, description or chord…" autofocus>` +
+    `<span class="lee-dim" id="keycount"></span></div>` +
     `<div id="keynotes"></div>` +
-    `<textarea class="lee-keyedit" id="keytext" spellcheck="false"></textarea>` +
-    `<div class="lee-mfoot"><button class="lee-btn go" id="keysave">save</button>` +
-    `<button class="lee-btn" id="keyreset">restore defaults</button></div>`);
-  const ta = m.querySelector('#keytext');
-  ta.value = d.text;
-  const notes = (ns) => {
-    m.querySelector('#keynotes').innerHTML = (ns || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('');
+    `<div class="lee-keytable" id="keyrows"></div>` +
+    `<div class="lee-mfoot"><button class="lee-btn" id="keyjson">edit as JSON…</button><span class="lee-spacer"></span>` +
+    `<button class="lee-btn" id="keyreset">restore defaults</button>` +
+    `<button class="lee-btn go" id="keysave">save</button></div>`,
+    null, null, {className: 'lee-keys-modal', storageKey: 'keybindings'});
+  const notes = ns => {
+    const host = m.querySelector('#keynotes');
+    host.innerHTML = (ns || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('');
+    host.hidden = !(ns || []).length;
   };
-  notes(d.notes);
-  const applied = (r) => {
+  const edited = new Map();                       // action -> chord, only what a person changed
+  const chordOf = k => edited.has(k.action) ? edited.get(k.action) : (k.key || '');
+  const paint = () => {
+    const q = (m.querySelector('#keysearch').value || '').toLowerCase();
+    const shown = rows().filter(k => !q ||
+      [k.action, k.label, k.scope, chordOf(k)].join(' ').toLowerCase().includes(q));
+    m.querySelector('#keycount').textContent = `${shown.length} of ${rows().length}`;
+    m.querySelector('#keyrows').innerHTML = shown.map(k =>
+      `<div class="lee-keyrow${edited.has(k.action) ? ' changed' : ''}" data-action="${esc(k.action)}">` +
+      `<span class="lee-keyrow-name"><strong>${esc(k.label || k.action)}</strong>` +
+      `<small>${esc(k.action)} · ${esc(k.scope)}</small></span>` +
+      `<input class="lee-input lee-keyrow-chord" data-chord value="${esc(chordOf(k))}" ` +
+      `placeholder="unbound" spellcheck="false" aria-label="chord for ${esc(k.action)}">` +
+      `<button type="button" data-record title="press the keys you want">record</button>` +
+      `<button type="button" data-clear title="unbind">clear</button></div>`).join('') ||
+      `<div class="lee-dim">nothing matches</div>`;
+  };
+  /* The server decides what conflicts, using the same check the save runs, so a warning here
+     cannot promise something the save then refuses. */
+  let checking = null;
+  const check = async () => {
+    if (!edited.size) return notes(d.notes);
+    clearTimeout(checking);
+    checking = setTimeout(async () => {
+      try {
+        const r = await post('/keys/check', {keys: Object.fromEntries(edited)});
+        notes(r.notes);
+        if (r.notes.length) status(r.notes[0], 'err');
+      } catch (e) { notes([String(e.message || e)]); }
+    }, 180);
+  };
+  const setChord = (action, chord) => {
+    const original = (lee.keys.find(k => k.action === action)?.key) || '';
+    if (chord === original) edited.delete(action); else edited.set(action, chord);
+    paint(); check();
+  };
+  m.querySelector('#keyrows').addEventListener('click', e => {
+    const row = e.target.closest('[data-action]'); if (!row) return;
+    const action = row.dataset.action, field = $('[data-chord]', row);
+    if (e.target.closest('[data-clear]')) return setChord(action, '');
+    if (!e.target.closest('[data-record]')) return;
+    field.value = ''; field.placeholder = 'press the keys…'; field.classList.add('recording'); field.focus();
+  });
+  m.querySelector('#keyrows').addEventListener('keydown', e => {
+    const field = e.target.closest('[data-chord]'); if (!field) return;
+    if (!field.classList.contains('recording')) return;   // typed, not recorded: let it through
+    e.preventDefault(); e.stopPropagation();
+    if (e.key === 'Escape') { field.classList.remove('recording'); field.placeholder = 'unbound'; return paint(); }
+    const chord = chordFromEvent(e); if (!chord) return;
+    field.classList.remove('recording'); field.placeholder = 'unbound';
+    setChord(field.closest('[data-action]').dataset.action, chord);
+  }, true);
+  m.querySelector('#keyrows').addEventListener('change', e => {
+    const field = e.target.closest('[data-chord]'); if (!field) return;
+    setChord(field.closest('[data-action]').dataset.action, field.value.trim());
+  });
+  m.querySelector('#keysearch').addEventListener('input', paint);
+  const applied = r => {
     lee.keys = r.keys; lee.help = r.help; lee.keyNotes = r.notes || [];
-    notes(r.notes);
+    edited.clear(); notes(r.notes); paint();
     status(r.notes.length ? 'saved, but some entries were skipped' : 'keys saved and live', 'ok');
     remountEditors();
   };
   m.querySelector('#keysave').onclick = async () => {
-    try { applied(await post('/keys/save', {text: ta.value})); }
+    const map = Object.fromEntries((lee.keys || []).map(k => [k.action, chordOf(k)]));
+    try { applied(await post('/keys/save', {text: JSON.stringify({keys: map}, null, 2)})); }
     catch (e) { status(String(e.message || e), 'err'); }
   };
   m.querySelector('#keyreset').onclick = async () => {
-    const r = await post('/keys/reset');
-    ta.value = JSON.stringify({keys: Object.fromEntries(r.keys.map(k => [k.action, k.key]))}, null, 2);
-    applied(r);
+    if (!await confirmDialog('Restore default keybindings', 'Every chord you have changed goes back to leela\u2019s own.', 'restore defaults')) return;
+    applied(await post('/keys/reset'));
   };
+  m.querySelector('#keyjson').onclick = async () => {
+    const text = await textDialog('Keybindings as JSON', d.path, d.text);
+    if (text == null) return;
+    try { applied(await post('/keys/save', {text})); }
+    catch (e) { status(String(e.message || e), 'err'); }
+  };
+  notes(d.notes); paint();
 }
 
 /* CodeMirror captures its own keymap at creation, so a rebound chord only reaches the

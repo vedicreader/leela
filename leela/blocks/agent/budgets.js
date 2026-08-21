@@ -104,14 +104,7 @@ async function leeSubagentWrites(enabled) {
 }
 window.leeSubagentWrites = leeSubagentWrites;
 
-function leeAgentExpand() {
-  const shell = $('#shell'); if (!shell) return;
-  leeRight('agent'); shell.classList.toggle('agent-focus');
-  const expanded = shell.classList.contains('agent-focus');
-  $('.lee-agent')?.classList.toggle('timeline-workspace', expanded);
-  if ($('#agentexpand')) $('#agentexpand').textContent = expanded ? 'restore' : 'expand';
-  localStorage.setItem('lee-agent-expanded', expanded ? '1' : '0');
-}
+function leeAgentExpand() { leeRight('agent'); leeExpandPane('right'); }
 window.leeAgentExpand = leeAgentExpand;
 
 function leeRight(which) {

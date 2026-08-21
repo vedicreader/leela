@@ -64,7 +64,7 @@ async function refreshProposalPreview(card) {
     const args = card._previewArgs || proposalArgs(card), tool = $('[data-tool]', card).value;
     card._previewArgs = null;
     host.innerHTML = '<div class="lee-proposal-loading"><i></i><i></i><i></i><span>Building dry-run preview</span></div>';
-    const d = await post('/agent/tool-preview', {tool, args});
+    const d = await post('/agent/tool-preview', {tool, args, thread: lee.agentThread || ''});
     host.innerHTML = previewContent(d.preview); error.textContent = '';
   } catch (e) { host.innerHTML = ''; error.textContent = e.message || String(e); }
 }
@@ -90,7 +90,7 @@ function checkpointResult(detail, ok, secs) {
   const pre = document.createElement('pre'); pre.textContent = readableDetail(detail);
   result.append(summary, pre); return result;
 }
-function showApproval(a) {
+function showApproval(a, destination = null) {
   if (!a?.id || approvalCards.has(a.id)) return;
   leePane('right', true); leeRight('agent');
   if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
@@ -172,7 +172,7 @@ function showApproval(a) {
           await post('/agent/run-policy', {policy, count: Number(count || 1)});
       }
       const session = ok && $('[data-run-policy]', card).value === 'approve_session';
-      await post('/agent/approve', {id: a.id, ok, note, session, tool, args});
+      await post('/agent/approve', {id: a.id, ok, note, session, tool, args, thread: lee.agentThread || ''});
       card.classList.remove('proposed'); card.classList.add(ok ? 'running' : 'refused'); if (changed) card.classList.add('edited');
       const checkpointState = $('.lee-checkpoint-title small', card);
       if (checkpointState) checkpointState.textContent = ok
@@ -201,7 +201,7 @@ function showApproval(a) {
     else if (e.key.toLowerCase() === 's') { e.preventDefault(); $('[data-note]', card).focus(); }
     else if (e.key === 'Escape') switchTab('preview');
   };
-  log.appendChild(card); approvalCards.set(a.id, card); card.focus(); log.scrollTop = log.scrollHeight;
+  (destination || log).appendChild(card); approvalCards.set(a.id, card); card.focus(); log.scrollTop = log.scrollHeight;
   refreshProposalPreview(card); updateAgentRunstrip({waiting: a.tool});
   status(`${a.tool} is waiting at a checkpoint`, 'err');
 }
@@ -241,32 +241,92 @@ function markTurnUndone(out, bar, files, revise) {
   return bar;
 }
 
+/* The pane is round-tripped through `innerHTML` by the history toggle, a rehydrate, a resume and
+   every thread switch, and a bound listener does not survive that -- the buttons went dead and
+   looked merely broken. So the turn these controls act on is written into the DOM and one
+   delegated listener on the log dispatches them, which outlives any number of round-trips. */
 function addResponseRevision(out, turnId, raw, capabilities = {}) {
   if (!turnId || !out || !raw.trim()) return;
   const bar = document.createElement('div'); bar.className = 'lee-response-revision';
+  const files = capabilities.files || [];
   const reviseWhy = capabilities.revisable ? 'Correct this answer and continue the next turn from your version'
     : 'Unavailable: this turn failed before an assistant response entered model history';
-  const undoWhy = capabilities.undoable ? `Restore ${capabilities.files.length} file${capabilities.files.length === 1 ? '' : 's'} changed by this turn`
+  const undoWhy = capabilities.undoable ? `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn`
     : 'Unavailable: this turn made no reversible file changes';
+  bar.dataset.turn = turnId;
+  bar.dataset.revisable = capabilities.revisable ? '1' : '';
+  bar.dataset.undoable = capabilities.undoable ? '1' : '';
+  bar.dataset.files = String(files.length);
   bar.innerHTML = `<span>turn ${esc(turnId.split(':').at(-1))}</span>` +
     `<button class="lee-btn" data-revise title="${esc(reviseWhy)}"${capabilities.revisable ? '' : ' disabled'}>Edit what agent remembers</button>` +
-    `<button class="lee-btn warn" data-undo title="${esc(undoWhy)}"${capabilities.undoable ? '' : ' disabled'}>Undo turn</button>`;
-  const undoButton = $('[data-undo]', bar), reviseButton = $('[data-revise]', bar);
-  undoButton.onclick = async () => {
+    `<button class="lee-btn" data-unsay title="Forget this turn: branch the conversation to just before it, keeping it in history">Undo from conversation</button>` +
+    `<button class="lee-btn warn" data-undo title="${esc(undoWhy)}"${capabilities.undoable ? '' : ' disabled'}>Restore files</button>`;
+  out.after(bar);
+  bindResponseRevisions(bar.closest('#agentlog') || $('#agentlog'));
+}
+
+/* What the reply said, recovered from the DOM rather than from a closure: `renderMarkdown` keeps
+   the markdown it rendered, which is the one copy that survives an `innerHTML` round-trip. */
+function turnReplyText(bar) {
+  const reply = bar.previousElementSibling;
+  return reply?.dataset?.markdown ?? reply?.textContent ?? '';
+}
+
+function responseTurn(bar) {
+  return {turnId: bar.dataset.turn || '', out: bar.previousElementSibling,
+          raw: turnReplyText(bar), files: Number(bar.dataset.files || 0),
+          revisable: !!bar.dataset.revisable, undoable: !!bar.dataset.undoable};
+}
+
+async function unsayTurn(bar) {
+  const {turnId, out, files, undoable, revisable} = responseTurn(bar);
+  const short = turnId.split(':').at(-1);
+  /* Undoing the conversation and restoring the files are separate promises. This one is only
+     about what the model remembers, so it must never claim to have changed anything on disk. */
+  const also = undoable && files
+    ? await confirmDialog('Undo from conversation',
+        `Branch this conversation to just before turn ${short}. Also restore ${files} file${files === 1 ? '' : 's'} it changed?`,
+        'undo and restore files', 'undo conversation only')
+    : await confirmDialog('Undo from conversation',
+        `Branch this conversation to just before turn ${short}. The turn stays in history.`,
+        'undo conversation');
+  if (!also) return;
+  try { await post('/agent/undo-turn', {thread: lee.agentThread, turn_id: turnId}); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  let restored = null;
+  if (also === true) {
+    try { restored = await post('/agent/rollback-turn', {turn_id: turnId, thread: lee.agentThread || ''}); }
+    catch (e) { status(`undone from the conversation; these files were not restored: ${e.message || e}`, 'err'); }
+  }
+  markTurnUndone(out, bar, (restored?.paths || []).length, revisable ? $('[data-revise]', bar) : null);
+  for (const path of restored?.paths || []) if (path === lee.path) await takeDiskVersion(path);
+  await refreshAgentThreads();
+  status(restored ? `undone from the conversation · ${(restored.paths || []).length} file(s) restored`
+                  : 'undone from the conversation; files left as they are', 'ok');
+}
+
+async function restoreTurnFiles(bar) {
+  const {turnId, out, revisable} = responseTurn(bar);
+  {
     try {
-      const tx = await api('/agent/turn-transaction?turn_id=' + encodeURIComponent(turnId));
+      const tx = await api('/agent/turn-transaction?turn_id=' + encodeURIComponent(turnId) +
+        (lee.agentThread ? '&thread=' + encodeURIComponent(lee.agentThread) : ''));
       const files = tx.transaction.files || [], warning = (tx.transaction.irreversible || []).length
         ? `\n\nCannot undo external effects: ${tx.transaction.irreversible.join(', ')}` : '';
-      if (!await confirmDialog('Undo agent turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
-      const d = await post('/agent/rollback-turn', {turn_id: turnId});
+      if (!await confirmDialog('Restore files changed by this turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
+      const d = await post('/agent/rollback-turn', {turn_id: turnId, thread: lee.agentThread || ''});
       // Marked before the files are reloaded: a reload that raises used to leave the reply
       // standing as though nothing had happened.
-      markTurnUndone(out, bar, (d.paths || []).length, capabilities.revisable ? reviseButton : null);
+      markTurnUndone(out, bar, (d.paths || []).length, revisable ? $('[data-revise]', bar) : null);
       for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
       status('turn changes rolled back', 'ok');
     } catch (e) { status(e.message || String(e), 'err'); }
-  };
-  reviseButton.onclick = () => {
+  }
+}
+
+function reviseTurn(bar) {
+  const {turnId, out, raw} = responseTurn(bar);
+  {
     const original = editableResponse(raw);
     const box = modal(`<div class="lee-mhead">Shape the next turn<span class="sub">edit what the agent remembers, not the files it touched</span></div>` +
       `<section class="lee-revision-explainer"><strong>You are correcting the conversation.</strong>` +
@@ -292,14 +352,28 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
       bar.innerHTML = `<span>Your edited answer now guides the next turn · ${esc(d.branch_id)}</span>`;
       box.remove(); status('edited answer is now the active conversation branch', 'ok');
     };
-  };
-  out.after(bar);
+  }
+}
+
+/* One listener, on the log element itself. Its contents are replaced constantly; it is not, so a
+   listener here outlives every repaint where a per-button binding did not. */
+function bindResponseRevisions(log) {
+  if (!log || log._leeRevisionsBound) return;
+  log._leeRevisionsBound = true;
+  log.addEventListener('click', e => {
+    const button = e.target.closest?.('.lee-response-revision button'); if (!button) return;
+    const bar = button.closest('.lee-response-revision');
+    if (!bar?.dataset.turn || button.disabled) return;
+    if (button.hasAttribute('data-unsay')) unsayTurn(bar);
+    else if (button.hasAttribute('data-undo')) restoreTurnFiles(bar);
+    else if (button.hasAttribute('data-revise')) reviseTurn(bar);
+  });
 }
 
 async function retryProposal(card, tool, args) {
   const copy = structuredClone(args), number = card.querySelectorAll('.lee-proposal-branch').length + 1;
   try {
-    const d = await post('/agent/retry-tool', {tool, args: copy});
+    const d = await post('/agent/retry-tool', {tool, args: copy, thread: lee.agentThread || ''});
     const row = document.createElement('section'); row.className = 'lee-proposal-branch';
     row.innerHTML = `<header><strong>Rerun ${number}</strong><span>${esc(tool)} completed with the inputs shown below</span>` +
       `<button class="lee-btn" data-edit-retry>Edit inputs and run</button></header>` +
@@ -322,7 +396,7 @@ async function retryProposal(card, tool, args) {
 }
 async function rollbackProposal(card, id) {
   try {
-    const d = await post('/agent/rollback-tool', {id});
+    const d = await post('/agent/rollback-tool', {id, thread: lee.agentThread || ''});
     card.classList.add('rolled-back'); $('[data-rollback]', card).disabled = true;
     status(`${d.path.split('/').pop()} rolled back`, 'ok');
     if (d.path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(d.path);

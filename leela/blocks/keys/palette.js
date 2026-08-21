@@ -7,7 +7,7 @@ function palette() {
     {name: 'Agent: run until next write', scope: 'agent', run: () => post('/agent/run-policy', {policy: 'until_write'})},
     {name: 'Agent: run read-only calls', scope: 'agent', run: () => post('/agent/run-policy', {policy: 'reads'})},
     {name: 'Agent: edit starting state', scope: 'agent', run: leeAgentState},
-    {name: 'Agent: steer after current call', scope: 'agent', run: () => $('#agentsteer')?.focus()},
+    {name: 'Agent: steer after current call', scope: 'agent', run: () => $('#agentprompt')?.focus()},
   ];
   const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: k.key})).concat(agentCommands);
   let hits = cmds, sel = 0;

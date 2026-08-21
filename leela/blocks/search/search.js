@@ -313,6 +313,143 @@ async function findUsages(name = cursorWord()) {
   const d = await api('/code/usages?name=' + encodeURIComponent(name));
   hitList(d.hits || [], `${d.backend} — ${d.note}`, `usages of ${name}`, openLocation);
 }
+/* Where the cursor is, in the coordinates a symbol lookup can use. A notebook cursor is a cell
+   and a line inside it: the file line is a line of JSON and matches no declaration. */
+function editorPlace(view = curEditor()) {
+  const path = lee.path || '';
+  if (!view) return {path, line: 0, cellIndex: -1};
+  const line = view.state.doc.lineAt(LeeCM.cursor(view)).number;
+  const cellIndex = lee.kind === 'notebook'
+    ? lee.cells.findIndex(c => lee.editors.get(c.id) === view) : -1;
+  return {path, line, cellIndex};
+}
+/* One key, both directions. On a usage it goes to the declaration; standing on the declaration it
+   lists who uses it, because that is the only question left to ask there. The server decides which,
+   since it is the side that knows where the declaration is. */
+async function gotoDeclaration(name = cursorWord(), place = editorPlace()) {
+  if (!name) return status('put the cursor on a symbol first', 'err');
+  status(`finding ${name}…`);
+  let d;
+  // a failed lookup has to say so: `finding…` is busy, and a busy toast never leaves by itself
+  try {
+    d = await api('/code/jump?name=' + encodeURIComponent(name) +
+      '&path=' + encodeURIComponent(place.path) + '&line=' + place.line + '&cell_index=' + place.cellIndex);
+  } catch (e) { return status(String(e.message || e), 'err'); }
+  const hits = d.hits || [];
+  if (!hits.length) return status(`nothing found for ${name}`, 'err');
+  if (d.kind === 'definition' && hits.length === 1) return openLocation(hits[0]);
+  const label = d.kind === 'usages' ? 'usages' : 'definitions';
+  hitList(hits, `${d.backend} — ${d.note}`, `${label} of ${name}`, openLocation);
+  // `finding…` is a busy toast, and a busy toast waits to be clicked. The list is the answer, so
+  // the toast has to stop saying it is still looking.
+  status(`${hits.length} ${label} of ${name}`, 'ok');
+}
+/* The mouse saying what mod+b says. CodeMirror owns the click, so this listens in the capture
+   phase and takes the event there: letting it through would move the caret and select a word.
+
+   Either modifier counts. Platform detection is not reliable enough to make it the gate: in a
+   webview that reported no platform, ctrl+click both looked up the symbol and, being a right-click
+   on macOS, opened the cell menu on top of the result. So the paired `contextmenu` is claimed too. */
+function bindModClick() {
+  document.addEventListener('contextmenu', e => {
+    if (e.shiftKey || !(e.metaKey || e.ctrlKey) || !e.target?.closest?.('.cm-content')) return;
+    e.preventDefault(); e.stopPropagation();
+  }, true);
+  document.addEventListener('mousedown', e => {
+    if (e.button !== 0 || e.altKey || e.shiftKey || !(e.metaKey || e.ctrlKey)) return;
+    if (!e.target?.closest?.('.cm-content')) return;
+    const view = [...lee.editors.values()].find(v => v?.contentDOM?.contains(e.target));
+    const pos = view ? view.posAtCoords({x: e.clientX, y: e.clientY}) : null;
+    if (pos == null) return;
+    e.preventDefault(); e.stopPropagation();
+    LeeCM.setCursor(view, pos);
+    const word = LeeCM.wordAtCursor(view);
+    if (!word) return status('nothing to look up there', 'err');
+    gotoDeclaration(word, editorPlace(view));
+  }, true);
+}
+/* Cmd+F in a notebook. CodeMirror's own panel searches the one cell it belongs to, which is never
+   the question being asked: a notebook is one document to the person reading it. This walks every
+   cell's live text, selects each match where it lives, and says which one of how many. */
+const nbCellText = i => {
+  const c = lee.cells[i]; if (!c) return '';
+  const v = lee.editors.get(c.id);
+  return v ? LeeCM.getDoc(v) : String(c.source || '');
+};
+function nbFindMatches(q) {
+  const out = [], needle = String(q || '').toLowerCase();
+  if (!needle) return out;
+  for (let i = 0; i < lee.cells.length; i++) {
+    const text = nbCellText(i).toLowerCase();
+    for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length))
+      out.push({cell: i, from: at, to: at + needle.length});
+  }
+  return out;
+}
+function nbFindPaint() {
+  const bar = $('#nbfind'); if (!bar) return;
+  const q = $('#nbfindq', bar).value, hits = nbFindMatches(q), at = lee.nbFind?.at ?? -1;
+  lee.nbFind = {q, hits, at: at < hits.length ? at : -1};
+  $('#nbfindcount', bar).textContent = !q ? '' : !hits.length ? 'no matches'
+    : `${(lee.nbFind.at < 0 ? 0 : lee.nbFind.at) + 1} of ${hits.length}`;
+  bar.classList.toggle('empty', !!q && !hits.length);
+}
+function nbFindStep(direction) {
+  const bar = $('#nbfind'), state = lee.nbFind;
+  if (!bar || !state?.hits.length) return;
+  const n = state.hits.length;
+  state.at = ((state.at + direction) % n + n) % n;
+  const hit = state.hits[state.at];
+  focusCell(hit.cell);
+  const view = ensureCellMounted(hit.cell);
+  if (view) LeeCM.setSelection(view, hit.from, hit.to);
+  $('#nbfindcount', bar).textContent = `${state.at + 1} of ${n}`;
+  // `focusCell` and `setSelection` both take the focus, and each does it a frame apart. The
+  // query is where the typing belongs, so it is claimed back after both have had their turn.
+  requestAnimationFrame(() => requestAnimationFrame(() => $('#nbfindq', bar)?.focus()));
+}
+function nbFindClose() {
+  const bar = $('#nbfind'); if (bar) bar.hidden = true;
+  lee.nbFind = null;
+  const v = curEditor(); if (v) LeeCM.focus(v);
+}
+function nbFind() {
+  if (lee.kind !== 'notebook') return status('open a notebook to search across its cells', 'err');
+  let bar = $('#nbfind');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'nbfind'; bar.className = 'lee-find-bar'; bar.setAttribute('role', 'search');
+    bar.innerHTML = '<input class="lee-input" id="nbfindq" spellcheck="false" ' +
+      'placeholder="find in every cell" aria-label="find in every cell">' +
+      '<span class="lee-find-count" id="nbfindcount" aria-live="polite"></span>' +
+      '<button type="button" data-find="prev" title="previous match (shift+enter)">↑</button>' +
+      '<button type="button" data-find="next" title="next match (enter)">↓</button>' +
+      '<button type="button" data-find="close" title="close (esc)">✕</button>';
+    document.body.appendChild(bar);
+    bar.addEventListener('click', e => {
+      const b = e.target.closest('[data-find]'); if (!b) return;
+      if (b.dataset.find === 'close') return nbFindClose();
+      nbFindStep(b.dataset.find === 'next' ? 1 : -1);
+    });
+    const input = $('#nbfindq', bar);
+    input.addEventListener('input', nbFindPaint);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); return nbFindClose(); }
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (!lee.nbFind?.hits.length) nbFindPaint();
+      nbFindStep(e.shiftKey ? -1 : 1);
+    });
+  }
+  bar.hidden = false;
+  const input = $('#nbfindq', bar), view = curEditor(), held = view ? LeeCM.selection(view) : null;
+  if (held && held.from !== held.to && !held.text.includes('\n')) input.value = held.text;
+  lee.nbFind = null;
+  nbFindPaint();
+  input.focus(); input.select();
+}
+window.gotoDeclaration = gotoDeclaration; window.nbFind = nbFind; window.bindModClick = bindModClick;
+
 async function renameSymbol() {
   const name=cursorWord(),view=curEditor();
   if(!name||!view||!lee.path||curLang()!=='python')return status('put the cursor on a Python symbol first','err');

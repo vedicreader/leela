@@ -28,7 +28,7 @@ SHARED = {
     'keys': 'keys', 'vars': 'vars', 'refactor': 'refactor', 'replace': 'refactor',
     'workspace': 'workspace', 'project': 'workspace', 'debug': 'debug', 'stack': 'stack',
     'packages': 'stack', 'history': 'refactor', 'jobs': 'vault', 'screen': 'keys',
-    'release': 'pipelines',
+    'release': 'pipelines', 'backups': 'settings',
     'leestatic': None, 'home': None, 'diff': None, 'lint': None,
 }
 
@@ -72,3 +72,24 @@ def test_a_blocks_client_module_talks_mostly_to_its_own_routes():
             top = ', '.join(f'{k}({v})' for k, v in got.most_common(3) if k != blk)
             wrong.append(f'{blk}/{p.name}: own={mine} but {top}')
     assert wrong == [], 'client modules filed under the wrong block:\n  ' + '\n  '.join(wrong)
+
+def test_every_keymap_action_has_a_dispatch_entry():
+    """A named command with no `ACTIONS` entry is a menu row and a chord that do nothing.
+    `leeAct` answers 'no handler for x' at the status line, which is easy to miss.
+    """
+    import ast as _ast
+    from leela.core.keys import KEYS
+    src = next(p for p in builder.modules() if p.name == 'actions.js').read_text()
+    lines = src.split('\n')
+    start = next(i for i, l in enumerate(lines) if l.startswith('const ACTIONS = {'))
+    end = next(i for i, l in enumerate(lines) if i > start and l.startswith('};'))
+    entries = set(re.findall(r'^\s+([A-Za-z_$][\w$]*)\s*:', '\n'.join(lines[start:end + 1]), re.M))
+    entries |= set(re.findall(r"ACTIONS\['([\w]+)'\s*\+", src))          # the tab_N family
+    for p2 in builder.modules():                                     # and the later assignments
+        t = p2.read_text()
+        entries |= set(re.findall(r'ACTIONS\.(\w+)\s*=', t))
+        entries |= set(re.findall(r"ACTIONS\['(\w+)'\]\s*=", t))
+    dynamic = {'tab'}
+    missing = sorted(a for a in {k.action for k in KEYS} if a not in entries
+                     and not any(a.startswith(d) for d in dynamic))
+    assert missing == [], f'named commands with no dispatch entry: {missing}'
