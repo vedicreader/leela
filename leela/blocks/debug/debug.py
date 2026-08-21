@@ -4,7 +4,7 @@ from __future__ import annotations
 import json, queue, subprocess, threading, time
 from pathlib import Path
 
-__all__ = ['DebugSession', 'debugpy_available']
+__all__ = ['DebugSession', 'debugpy_available', 'frame_path', 'open_path']
 
 DAP_COMMANDS = {'continue': 'continue', 'next': 'next', 'stepIn': 'stepIn',
                 'stepOut': 'stepOut', 'pause': 'pause'}
@@ -180,3 +180,10 @@ class DebugSession:
         if self.process and self.process.poll() is None:
             try: self.process.terminate()
             except Exception: pass
+
+def frame_path(frame): return (frame.get('source') or {}).get('path') or ''
+
+def open_path(fs, path):
+    "The workspace file a debug frame refers to, or '' when it is outside the sandbox."
+    try: return str(fs._check(path, must_exist=True))
+    except Exception: return ''

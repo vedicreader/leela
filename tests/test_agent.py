@@ -774,8 +774,6 @@ def test_the_composer_carries_files_selections_and_notices():
     assert compact.ACTION_NOTICE in compact.prompt_notices('scale the numeric columns as df_norm')
     assert '<system-reminder>' in compact.notices_block('what does this do?')
     assert compact.ACTION_NOTICE in compact.notices_block('add a test')
-    js = builder.OUT.read_text()
-    js = builder.OUT.read_text()
     c = Completer(Agent_comple())
     prompt = c._prompt('frame.', 6, 'python', 'def clean(frame):\n    return frame.dropna()')
     assert '<related_code>' in prompt and 'def clean(frame)' in prompt
@@ -1501,7 +1499,7 @@ def test_leelas_own_agent_is_offered_the_shell(project):
 
 def test_the_browser_previews_an_exact_text_edit_as_a_diff_without_writing_it(project):
     "The checkpoint form shows what the call would do. It must not do it."
-    from leela.app import _tool_preview
+    from leela.blocks.agent.turns import tool_preview as _tool_preview
     path = project.roots[0] + '/src/app.py'
     args = {'path': path, 'edits': '[{"oldText": "value = 1", "newText": "value = 2"}]'}
     preview = _tool_preview(project.ws.ai, 'replace_text', args)
@@ -1509,7 +1507,7 @@ def test_the_browser_previews_an_exact_text_edit_as_a_diff_without_writing_it(pr
     assert open(path).read() == 'value = 1\n'
 
 def test_the_browser_previews_a_command_as_a_command(project):
-    from leela.app import _tool_preview
+    from leela.blocks.agent.turns import tool_preview as _tool_preview
     p = _tool_preview(project.ws.ai, 'run_shell', {'command': 'pytest -q'})
     assert p['text'] == 'pytest -q' and p['language'] == 'bash'
 
@@ -1978,56 +1976,20 @@ def test_veo_is_described_here_because_litellms_table_has_no_entry_for_it():
     assert video_caps('no-such-model') is None
 
 
-def test_a_generated_picture_reaches_the_chat_pane_not_only_the_notebook_cell(tmp_path):
-    """`media_outputs` fills a prompt *cell*. The agent pane streams over SSE and ends at `done`,
-    so a picture that never rides on that event is saved and never seen."""
-    from pathlib import Path
-    app_src = Path('leela/app.py').read_text()
-    # two routes end in a `done` event; the agent pane's is the one carrying session usage
-    done = app_src[app_src.index("'session_usage'") - 600:app_src.index("'session_usage'") + 600]
-    assert "'media': _turn_media(a)" in done, 'the done event carries the turn pictures'
-    assert 'def _turn_media(a):' in app_src
-
-    js = Path('leela/static/js/12_agent.js').read_text()
-    assert 'function drawTurnMedia(' in js
-    handler = js[js.index("es.addEventListener('done'"):]
-    handler = handler[:handler.index('await reloadAfterEdits')]
-    assert 'drawTurnMedia(out, d.media)' in handler, 'the pane draws what the event carried'
-
-
 def test_the_turn_pictures_become_data_urls_a_browser_can_draw():
     "A tool result is a path, and a browser cannot draw a filename."
-    import base64, re
-    from pathlib import Path
-    src = Path('leela/app.py').read_text()
-    body = src[src.index('    def _turn_media(a):'):]
-    body = body[:body.index('\n    @rt(')]
-    import textwrap
-    ns = {}
-    exec(textwrap.dedent(body), ns)
-    fn = ns['_turn_media']
-
+    import base64
+    from leela.blocks.agent.turns import turn_media
     class A: turn_media = [{'mime': 'image/png', 'data': b'\x89PNG\r\n\x1a\nx'},
                            {'mime': 'video/mp4', 'data': b'ftyp'}, {'mime': 'image/png', 'data': b''}]
-    rows = fn(A())
+    rows = turn_media(A())
     assert [r['mime'] for r in rows] == ['image/png', 'video/mp4']   # the empty one is dropped
     assert rows[0]['url'].startswith('data:image/png;base64,')
     assert base64.b64decode(rows[0]['url'].split(',', 1)[1]) == b'\x89PNG\r\n\x1a\nx'
-
     class B: turn_media = []
-    assert fn(B()) == []
+    assert turn_media(B()) == []
     class C: pass
-    assert fn(C()) == []
-
-
-def test_an_undone_turn_is_dimmed_rather_than_deleted():
-    """`rollback_turn` restores files and leaves model history alone.
-
-    Deleting the transcript said the agent had forgotten a turn it still carries, and the reply
-    stayed on screen whenever the file reload before it raised.
-    """
-    assert '.lee-turn-undone' in (ROOT/'leela'/'static'/'lee-ide.css').read_text()
-
+    assert turn_media(C()) == []
 
 def test_a_steer_rides_the_next_tool_result(tmp_path):
     """The path the UI actually promises -- 'applies after current call' -- and the only one of

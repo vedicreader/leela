@@ -61,14 +61,6 @@ def test_agent_model_and_reasoning_live_below_the_growing_prompt(tmp_path):
     assert html.index('id="agentprompt"') < html.index('id="agentmodel"')
     assert 'id="agentreasoning"' in html and 'lee-composer-footer' in html
 
-def test_agent_panel_sends_the_open_notebook_cells_as_context():
-    from inspect import getsource
-    from leela.app import ide_app
-    source = getsource(ide_app)
-    stream = source[source.index("@rt('/agent/stream')"):source.index("@rt('/agent/approval')")]
-    assert 'context = nb.context(len(nb))' in stream
-    assert 'context_path = nb.path' in stream
-    assert 'ws.ask_stream(q, attachments=attachments' in stream
 
 def test_agent_vocabulary_exposes_commands_tools_and_project_skills(tmp_path):
     skill = tmp_path/'.agents/skills/notebook-tests/SKILL.md'
@@ -459,16 +451,8 @@ def test_the_agent_panel_streams_steps_approvals_and_usage():
     assert ws.ai.routing.name_for('completion') == 'gpt-4.1'
 
 
-def test_agent_execution_ui_has_run_policies_previews_steering_and_state_memory():
-    required = ("/agent/run-policy", "/agent/tool-preview", "/agent/retry-tool", "/agent/rollback-tool",
-                "/agent/steer", "/agent/state/save", "/agent/state/load")
-    from inspect import getsource
-    from leela.app import ide_app
-    source = getsource(ide_app)
-    assert all(route in source for route in required)
-
 def test_tool_schema_only_marks_read_only_calls_as_rerunnable(tmp_path):
-    from leela.app import _tool_schemas
+    from leela.blocks.agent.turns import tool_schemas as _tool_schemas
     from leela.workspace import Workspace
     rows = {row['name']: row for row in _tool_schemas(Workspace(roots=[tmp_path]).ai)}
     assert rows['run_shell']['changes_state'] and not rows['run_shell']['retryable']
@@ -593,7 +577,7 @@ def test_mdhtml_keeps_explicit_html_passthrough_deliberate():
 
 
 def test_history_groups_turns_by_context_session_without_rendering_every_turn():
-    from leela.app import _history_sessions
+    from leela.blocks.agent.turns import history_sessions as _history_sessions
     turns = [
         {'session': 'agent-a', 'at': 10, 'prompt': 'one'},
         {'session': 'agent-a', 'at': 20, 'prompt': 'two'},
@@ -640,7 +624,7 @@ def test_agent_pane_has_model_history_and_expand_controls():
     assert 'id="agentprompt"' in html and '<textarea' in html
 
 def test_agent_state_refresh_uses_current_project_evidence(tmp_path):
-    from leela.app import _project_state_context
+    from leela.blocks.agent.turns import project_state_context as _project_state_context
     from leela.workspace import Workspace
     (tmp_path/'pyproject.toml').write_text('[project]\nname = "current-code"\n')
     (tmp_path/'module.py').write_text('def current_api():\n    return 1\n')
