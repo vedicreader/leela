@@ -1,5 +1,5 @@
 /* ------------------------------------------------------------------- move */
-/* F6: lift whole functions and classes into another file. Unlike extract and inline this
+/* Lift whole functions and classes into another file. Unlike extract and inline this
    changes several files at once, so it previews before it writes and every file it would
    touch is its own row. */
 
@@ -73,7 +73,7 @@ async function moveSymbol() {
     `<div class="lee-modallist lee-movepick">${found.symbols.map(s =>
       `<label class="lee-mrow"><input type="checkbox" data-move-name="${esc(s.name)}"${chosen.has(s.name) ? ' checked' : ''}>` +
       `<strong>${esc(s.name)}</strong><span class="sub">${s.kind} · line ${s.line}</span></label>`).join('')}</div>` +
-    `<label>Into<input class="lee-input" data-move-dest list="lee-move-files" placeholder="path/to/module.py" autofocus></label>` +
+    `<label>Into<input class="lee-input lee-movedest" data-move-dest list="lee-move-files" placeholder="path/to/module.py" autofocus></label>` +
     `<datalist id="lee-move-files">${files.slice(0, 500).map(h => `<option value="${esc(h.path)}">`).join('')}</datalist>` +
     `<label><input type="checkbox" data-move-shim checked> keep a re-export in ${esc(compactPath(lee.path))}</label>` +
     `<div class="lee-mfoot"><button class="lee-btn go" data-move-go>Preview</button>` +

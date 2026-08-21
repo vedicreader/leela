@@ -115,8 +115,8 @@ function findMake() {
   const bar = document.createElement('div');
   bar.id = 'leefind'; bar.className = 'lee-find-bar'; bar.setAttribute('role', 'search');
   bar.innerHTML =
-    `<div class="lee-find-row">` +
-      `<input class="lee-input" id="leefindq" spellcheck="false" placeholder="find" aria-label="find">` +
+    `<input class="lee-input" id="leefindq" spellcheck="false" placeholder="find" aria-label="find">` +
+    `<div class="lee-find-tools">` +
       `<button type="button" data-find-flag="regex" title="regular expression" aria-label="regular expression">.*</button>` +
       `<button type="button" data-find-flag="case" title="match case" aria-label="match case">Aa</button>` +
       `<button type="button" data-find-flag="word" title="whole word" aria-label="whole word">|ab|</button>` +
@@ -124,10 +124,11 @@ function findMake() {
       `<button type="button" data-find="prev" title="previous match (shift+enter)">&#8593;</button>` +
       `<button type="button" data-find="next" title="next match (enter)">&#8595;</button>` +
       `<button type="button" data-find="close" title="close (esc)">&#10005;</button>` +
-    `</div><div class="lee-find-row">` +
-      `<input class="lee-input" id="leefindr" spellcheck="false" placeholder="replace" aria-label="replace">` +
-      `<button type="button" data-find="one" title="replace this match">replace</button>` +
-      `<button type="button" data-find="all" title="replace every match">all</button>` +
+    `</div>` +
+    `<input class="lee-input" id="leefindr" spellcheck="false" placeholder="replace" aria-label="replace">` +
+    `<div class="lee-find-tools">` +
+      `<button type="button" class="lee-btn" data-find="one" title="replace this match">replace</button>` +
+      `<button type="button" class="lee-btn" data-find="all" title="replace every match">all</button>` +
     `</div>`;
   document.body.appendChild(bar);
   bar.addEventListener('click', e => {

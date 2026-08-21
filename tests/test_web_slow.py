@@ -1167,3 +1167,37 @@ def test_a_jump_hit_says_which_module_or_which_folder_it_is_in():
     assert got['pkg'] == ['chonkie.types.document', 'prompt_toolkit.document'], got['pkg']
     assert got['proj'] == ['git/app.py', 'fs/app.py', 'turns.py'], got['proj']
     assert len(set(got['pkg'])) == 2 and len(set(got['proj'])) == 3, 'every row is distinguishable'
+
+def test_one_find_pane_matches_over_a_document_and_over_every_cell():
+    """`findMatches` is the whole of the merged pane: escaping, whole word, regex, and the guard
+    against an empty match spinning forever. Driven over cells because an unmounted cell needs no
+    editor, and the document path is the same walk over one entry.
+    """
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const out = {};
+          lee.kind = 'notebook';
+          lee.editors = new Map();
+          lee.cells = [{id: 'a', source: 'def area(r):\\n'}, {id: 'b', source: '    return r * r\\n'}];
+          const at = flags => { lee.findFlags = flags; };
+          at({}); out.plain = findMatches('r').length;
+          at({word: true}); out.word = findMatches('r').length;
+          at({case: true}); out.cased = findMatches('R').length;
+          at({regex: true}); out.regex = findMatches('r \\\\* r').length;
+          at({regex: true}); out.empty = findMatches('x*').length;
+          at({regex: true}); out.broken = findMatches('([');
+          at({}); out.cells = findMatches('r').map(h => h.doc);
+          // A text tab with nothing open has no document to walk, and must not throw looking.
+          lee.kind = 'text'; lee.cells = [];
+          out.closed = findMatches('r').length;
+          return out;
+        }""")
+    got = _run(go)
+    assert got['plain'] == 6, 'area, the parameter, both r of return, and the two in the body'
+    assert got['word'] == 3, 'only the standalone r, so not the ones inside area and return'
+    assert got['cased'] == 0, 'match case means no hit for R'
+    assert got['regex'] == 1
+    assert got['broken'] is None, 'a pattern that will not compile is not the same as no matches'
+    assert 0 < got['empty'] < 5000, 'an empty match must advance rather than spin'
+    assert got['cells'] == [0, 0, 1, 1, 1, 1], 'two hits in the first cell, four in the second'
+    assert got['closed'] == 0

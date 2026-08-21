@@ -27,7 +27,7 @@ const lee = {
   agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
   agentStream: null, agentStreamGen: 0, agentTitle: '', agentThread: '',
   agentThreadDrafts: new Map(),
-  nbFind: null,                // the notebook find bar's query, its matches and where it is
+  find: null,                  // the find pane's query, its matches and where it is
   // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
   // path->name map: two selections in one file are two contexts, not one key overwriting itself.
   agentSelections: [],
@@ -632,6 +632,14 @@ function findBinding(e, scope) {
     }
     if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down'].includes(k.action)
         && lee.kind !== 'notebook') continue;
+    // The find pane searches the open document. A CodeMirror that is not one of the page's own
+    // editors -- a merge view in a diff, a preview -- keeps its own panel, which searches the
+    // text that is actually on screen there.
+    if (k.action === 'find_in_file') {
+      const cm = (e.composedPath ? e.composedPath() : [e.target])
+        .find(n => n instanceof Element && n.matches('.cm-editor'));
+      if (cm && !cm.closest('#editor, #filecm, .lee-cell')) continue;
+    }
     return {binding: k, chord};
   }
   return null;

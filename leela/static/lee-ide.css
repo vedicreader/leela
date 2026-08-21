@@ -3305,24 +3305,26 @@ kbd {
 /* A generated picture in the agent pane: fits the pane, never the browser's intrinsic size. */
 .lee-agent-media { margin: .5rem 0; }
 .lee-agent-media img, .lee-agent-media video { max-width: 100%; height: auto; border-radius: 6px; display: block; }
-/* The notebook find bar. Fixed, because it belongs to the document rather than to the cell
-   the caret happens to be in, and it has to stay put while the cells scroll under it. */
-.lee-find-bar { position: fixed; top: 56px; right: 26px; z-index: 60; display: flex; gap: 4px;
-                flex-direction: column; padding: 6px 8px; border: 1px solid var(--lee-border);
-                border-radius: 8px; background: var(--lee-bg2); box-shadow: 0 8px 24px #0007; }
+/* The find pane. Fixed, because it belongs to the document rather than to the cell the caret
+   happens to be in, and it has to stay put while the text scrolls under it. Query and replace
+   share a grid column, so the two rows line up whatever the controls beside them are. */
+.lee-find-bar { position: fixed; top: 56px; right: 26px; z-index: 60; display: grid; width: 430px;
+                grid-template-columns: minmax(0, 1fr) auto; gap: 5px 8px; align-items: center;
+                padding: 7px 9px; border: 1px solid var(--lee-border); border-radius: 8px;
+                background: var(--lee-bg2); box-shadow: 0 8px 24px #0007; }
 .lee-find-bar[hidden] { display: none; }
-.lee-find-row { display: flex; gap: 6px; align-items: center; }
-.lee-find-bar .lee-input { width: 220px; }
+.lee-find-tools { display: flex; gap: 3px; align-items: center; }
+.lee-find-bar .lee-input { width: 100%; }
 .lee-find-bar.empty #leefindq { border-color: var(--lee-err, #c66); }
-.lee-find-count { min-width: 68px; color: var(--lee-fg3); font-size: 11px; text-align: right; }
-.lee-find-bar button { border: 0; background: none; color: var(--lee-fg2); font: inherit;
-                       cursor: pointer; padding: 2px 5px; border-radius: 5px; }
-.lee-find-bar [data-find-flag] { font-size: 10px; min-width: 24px; border: 1px solid transparent;
-                                 color: var(--lee-fg4); }
+.lee-find-count { min-width: 58px; padding: 0 3px; color: var(--lee-fg3); font-size: 11px; text-align: right; }
+.lee-find-tools button:not(.lee-btn) { border: 1px solid transparent; background: none; font: inherit;
+                                       color: var(--lee-fg2); cursor: pointer; padding: 2px 5px;
+                                       border-radius: 5px; }
+.lee-find-tools button:not(.lee-btn):hover { background: var(--lee-bg3); color: var(--lee-fg); }
+.lee-find-bar [data-find-flag] { font-size: 10px; min-width: 26px; color: var(--lee-fg4); }
 .lee-find-bar [data-find-flag].on { border-color: var(--lee-accent); color: var(--lee-accent);
-                                    background: color-mix(in srgb, var(--lee-accent) 12%, transparent); }
-.lee-find-bar [data-find='one'], .lee-find-bar [data-find='all'] {
-  font-size: 11px; border: 1px solid var(--lee-border); }
+                                    background: color-mix(in srgb, var(--lee-accent) 14%, transparent); }
+.lee-movedest { width: 100%; }
 
 /* Local history: the versions down one side, the chosen one against disk on the other. */
 .lee-lh { display: grid; grid-template-columns: 260px 1fr; gap: 12px; min-height: 320px; }

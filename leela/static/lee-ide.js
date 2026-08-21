@@ -4125,8 +4125,8 @@ function findMake() {
   const bar = document.createElement('div');
   bar.id = 'leefind'; bar.className = 'lee-find-bar'; bar.setAttribute('role', 'search');
   bar.innerHTML =
-    `<div class="lee-find-row">` +
-      `<input class="lee-input" id="leefindq" spellcheck="false" placeholder="find" aria-label="find">` +
+    `<input class="lee-input" id="leefindq" spellcheck="false" placeholder="find" aria-label="find">` +
+    `<div class="lee-find-tools">` +
       `<button type="button" data-find-flag="regex" title="regular expression" aria-label="regular expression">.*</button>` +
       `<button type="button" data-find-flag="case" title="match case" aria-label="match case">Aa</button>` +
       `<button type="button" data-find-flag="word" title="whole word" aria-label="whole word">|ab|</button>` +
@@ -4134,10 +4134,11 @@ function findMake() {
       `<button type="button" data-find="prev" title="previous match (shift+enter)">&#8593;</button>` +
       `<button type="button" data-find="next" title="next match (enter)">&#8595;</button>` +
       `<button type="button" data-find="close" title="close (esc)">&#10005;</button>` +
-    `</div><div class="lee-find-row">` +
-      `<input class="lee-input" id="leefindr" spellcheck="false" placeholder="replace" aria-label="replace">` +
-      `<button type="button" data-find="one" title="replace this match">replace</button>` +
-      `<button type="button" data-find="all" title="replace every match">all</button>` +
+    `</div>` +
+    `<input class="lee-input" id="leefindr" spellcheck="false" placeholder="replace" aria-label="replace">` +
+    `<div class="lee-find-tools">` +
+      `<button type="button" class="lee-btn" data-find="one" title="replace this match">replace</button>` +
+      `<button type="button" class="lee-btn" data-find="all" title="replace every match">all</button>` +
     `</div>`;
   document.body.appendChild(bar);
   bar.addEventListener('click', e => {
@@ -5308,7 +5309,7 @@ ACTIONS.inline_variable = inlineVariable;
 ACTIONS.move_line_up = () => moveLines(-1);
 ACTIONS.move_line_down = () => moveLines(1);
 /* ------------------------------------------------------------------- move */
-/* F6: lift whole functions and classes into another file. Unlike extract and inline this
+/* Lift whole functions and classes into another file. Unlike extract and inline this
    changes several files at once, so it previews before it writes and every file it would
    touch is its own row. */
 
@@ -5382,7 +5383,7 @@ async function moveSymbol() {
     `<div class="lee-modallist lee-movepick">${found.symbols.map(s =>
       `<label class="lee-mrow"><input type="checkbox" data-move-name="${esc(s.name)}"${chosen.has(s.name) ? ' checked' : ''}>` +
       `<strong>${esc(s.name)}</strong><span class="sub">${s.kind} · line ${s.line}</span></label>`).join('')}</div>` +
-    `<label>Into<input class="lee-input" data-move-dest list="lee-move-files" placeholder="path/to/module.py" autofocus></label>` +
+    `<label>Into<input class="lee-input lee-movedest" data-move-dest list="lee-move-files" placeholder="path/to/module.py" autofocus></label>` +
     `<datalist id="lee-move-files">${files.slice(0, 500).map(h => `<option value="${esc(h.path)}">`).join('')}</datalist>` +
     `<label><input type="checkbox" data-move-shim checked> keep a re-export in ${esc(compactPath(lee.path))}</label>` +
     `<div class="lee-mfoot"><button class="lee-btn go" data-move-go>Preview</button>` +

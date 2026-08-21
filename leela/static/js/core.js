@@ -27,7 +27,7 @@ const lee = {
   agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
   agentStream: null, agentStreamGen: 0, agentTitle: '', agentThread: '',
   agentThreadDrafts: new Map(),
-  nbFind: null,                // the notebook find bar's query, its matches and where it is
+  find: null,                  // the find pane's query, its matches and where it is
   // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
   // path->name map: two selections in one file are two contexts, not one key overwriting itself.
   agentSelections: [],
