@@ -20,7 +20,8 @@ from leela.hub import LoopbackHostGuard, WorkspaceHub, WorkspaceSite, workspace_
 def test_the_shell_paints_status_theme_and_layout():
     from leela.app import _asset
     assert _asset('lee-ide.css').startswith('/leestatic/lee-ide.css?v=')
-    assert _asset('lee-ide.js').startswith('/leestatic/lee-ide.js?v=')
+    from leela.core.web import IDE_BUNDLES
+    for name in IDE_BUNDLES: assert _asset(name).startswith(f'/leestatic/{name}?v=')
 
 
 def test_header_leads_with_workspace_branch_and_named_menus_without_starting_a_kernel(tmp_path):
@@ -162,11 +163,9 @@ def test_a_window_is_pointed_at_the_host_the_server_will_answer_to(tmp_path):
 
 def test_every_git_failure_reaches_the_log_not_only_the_status_line():
     "The detail of a refusal is the point of it, and a toast cannot hold it."
-    for name in ('16_git_cwd', '17_gutter', '26_git_conflicts', '28_branchbar'):
-        assert "status(e.message || String(e), 'err')" not in read(f'leela/static/js/{name}.js'), \
+    for name in ('git/cwd', 'editor/gutter', 'git/conflictfiles', 'git/branchbar', 'git/panel'):
+        assert "status(e.message || String(e), 'err')" not in read(f'leela/blocks/{name}.js'), \
             f'{name} reports a failure without logging its detail'
-    panel = read('leela/static/js/18_pipelines.js')
-    panel = panel[panel.index('async function loadGitReview('):panel.index('function leeGit()')]
 
 
 def test_a_pdf_opens_in_the_browsers_own_viewer(tmp_path):

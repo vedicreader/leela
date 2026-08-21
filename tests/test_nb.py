@@ -295,7 +295,7 @@ def test_image_tabs_are_served_but_never_written_over():
     for ext in sorted(VIDEO_EXTS):
         assert Tab(path=f'/tmp/a{ext}').kind == 'video' and ext in SERVED_TYPES
     assert Tab(path='/tmp/a.py').kind == 'text' and Tab(path='/tmp/a.pdf').kind == 'pdf'
-    js = builder.OUT.read_text()
+    js = (builder.OUTDIR/'lee-ide.js').read_text()
 
 
 def test_the_tab_payload_carries_no_bytes_and_the_raw_route_serves_them(tmp_path):

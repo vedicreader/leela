@@ -72,7 +72,7 @@ leela = "leela.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["leela"]
-exclude = ["leela/static/js"]
+exclude = ["leela/static/js", "leela/blocks/*/*.js"]   # the modules the committed bundle is built from
 
 [tool.hatch.build.targets.sdist]
 include = ["/leela", "/README.md", "/pyproject.toml"]

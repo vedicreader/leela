@@ -35,12 +35,12 @@ Static assets, uncompressed, as served today:
 
 | asset | raw | gzip -9 |
 |---|---|---|
-| `lee-cm6.js` | 1,019,922 | 353,118 |
-| `lee-ide.js` | 658,844 | 187,203 |
+| `lee-cm6.js` | 1,020,130 | 353,140 |
+| `lee-ide.js` | 694,927 | 197,972 |
 | `lee-term.js` | 292,704 | 72,179 |
-| `lee-ide.css` | 261,919 | 46,427 |
+| `lee-ide.css` | 274,267 | 47,959 |
 | `htmx.min.js` | 51,076 | 16,462 |
-| **total** | **2,284,465** | **675,389** |
+| **total** | **2,333,104** | **687,712** |
 
 ## The file tree
 
@@ -49,14 +49,14 @@ Static assets, uncompressed, as served today:
    hides it until the refresh outlives the timer, which it does.
 2. **`GitRepo.at` forks `git rev-parse` every time.** 2.1ms × 26 in one refresh is 55ms of pure
    `fork`/`exec` to answer a question whose answer only changes when a root is added or removed.
-3. **`refreshFileTree` is a serial waterfall.** `static/js/22_files.js:74-81` awaits one `/tree`
+3. **`refreshFileTree` is a serial waterfall.** `blocks/fs/files.js`, `refreshFileTree` awaits one `/tree`
    per open directory in a `for` loop. `Promise.all`, or one `/files/panel?open=…` that returns
    the whole expanded tree, removes 25 round trips.
-4. **`paintGitTree` is O(changes × nodes).** `static/js/16_git_cwd.js:8-9` re-runs
+4. **`paintGitTree` is O(changes × nodes).** `blocks/git/cwd.js`, `paintGitTree` re-runs
    `$$('.lee-file')` inside the loop and linearly scans it per change. 300 changes over a
    2,000-node tree is 300 full `querySelectorAll` passes and 600k node visits. Build one
    `Map<path, row>`.
-5. **`visibleTreeNodes` forces layout per node.** `static/js/22_files.js:3` calls
+5. **`visibleTreeNodes` forces layout per node.** `blocks/fs/files.js`, `visibleTreeNodes` calls
    `getClientRects()` on every node, on every arrow key, twice per `treeExpand`.
 6. **The tree is not virtualised.** Every expanded row is real DOM, and `refreshFileTree`
    re-parses the panel through `DOMParser` and replaces the subtree wholesale.
@@ -76,11 +76,11 @@ would also make the tree correct for changes leela did not make.
 ## Quick-open
 
 `/fs/find` (`blocks/fs/app.py:144`) walks the entire tree and fuzzy-ranks every path, per
-request. `static/js/20_overlays.js:389-392` fires it on every `input` event with no debounce
+request. `blocks/search/search.js`, `codeSearch` fires it on every `input` event with no debounce
 and no sequence guard. Typing `workspace` is nine full walks and nine 668ms ranking passes,
 and the responses can arrive out of order and paint stale hits.
 
-The folder picker two files away (`static/js/22_files.js:207-234`) already debounces at 200ms
+The folder picker two files away (`blocks/fs/files.js`, `openFolder`) already debounces at 200ms
 and guards with a `seq` counter. Copy it.
 
 ## Compression and the critical path
@@ -89,14 +89,14 @@ No compression middleware exists. 2.28MB of assets go out raw, along with every 
 htmx fragment and JSON response. `GZipMiddleware` is one line for a 70% cut.
 
 `app.py:765-767` loads `lee-cm6.js` (1MB) and `lee-term.js` (293KB) as plain `<script>` in the
-head. Only `lee-ide.js` is deferred. `lee-ide.js` is a straight concatenation of the 31
+head. Only `lee-ide.js` is deferred. It is a straight concatenation of the 51
 modules with comments intact, 658KB for 10,387 lines, never minified.
 
 ## Things that grow and are never freed
 
-- `static/js/12_agent.js:740`. `approvalCards` is a `Map` of DOM nodes, `set` at :940, never
+- `blocks/agent/approvals.js`, `approvalCards`. `approvalCards` is a `Map` of DOM nodes, `set` there, never
   deleted. `resolvedProposalCards` is pushed at :919 and never read.
-- `static/js/12_agent.js:496`. `lee.agentLive = $('#agentlog').innerHTML` serialises the whole
+- `blocks/agent/live.js`, `agentLive`. `lee.agentLive = $('#agentlog').innerHTML` serialises the whole
   log to a string on every view switch, and holds it.
 - `#agentlog` itself is never trimmed.
 - `core/session.py:45`. `DocStore.forget` drops `docs`, `buffers` and `bases` but not
@@ -113,13 +113,13 @@ continue/skip/abort, safepoints and `undo` through the gateway, and `RepoSet.ove
 the workspace. What is missing is paths through them.
 
 1. **Divergence has no route at all.** `pull()` is hard-wired `--ff-only` (`git.py:538`), and
-   "Update Project" calls `gitDo('pull')` (`static/js/28_branchbar.js:119`). A branch 3 ahead
+   "Update Project" calls `gitDo('pull')` (`blocks/git/branchbar.js`, `gitDo`). A branch 3 ahead
    and 5 behind gets git's raw `fatal: Not possible to fast-forward, aborting`. There is no
    pull-with-rebase, no merge/rebase/reset choice, and nothing computes "you vs your upstream":
    both previews take an explicit branch and nobody passes `@{upstream}`.
 2. **Two branch menus, two behaviours.** The git panel's menu goes through the previews
-   (`static/js/18_pipelines.js:1024-1025`). The top branch bar's identically labelled entries
-   call `gitDo('rebase'|'merge')` directly (`static/js/28_branchbar.js:96-97`). Which control
+   (`blocks/git/branchmenu.js`, `branchActions`). The top branch bar's identically labelled entries
+   call `gitDo('rebase'|'merge')` directly (`blocks/git/branchbar.js`, `gitDo`). Which control
    you click decides whether you get a rehearsal or a bare mutation.
 3. **Rebase conflict prediction is structurally wrong.** `_rehearse` (`git.py:674`) does one
    `merge-tree` of the whole branch onto the target, but a rebase replays commit by commit. It
@@ -397,3 +397,37 @@ anything:
 4. `pygit2` for the read path, if measurement justifies it.
 5. A native fuzzy matcher, if `fuzzy_rank` is still hot after the debounce and the walk cache.
 6. The shared-state lock in `docs/parallel-threads.md`, before threads ship.
+
+
+## Why the client is one script tag
+
+The 51 modules now live with the blocks they serve, so a second or third bundle would be a
+data change in `tools/build_ide_js.py`. Measured, it is not available yet.
+
+`ACTIONS` in `static/js/actions.js` is the keymap's dispatch table, and 30 of its entries are
+bare references to functions declared in twelve later modules: `help: showHelp`,
+`quick_open: quickOpen`, `code_search: codeSearch`, and so on down to `browseUrl` in
+`blocks/browser/browser.js`. The table is a top-level `const`, so those names are read the
+moment the module runs.
+
+A function declaration hoists to the top of its own script and no further. One script tag is
+therefore fine: every declaration exists before `ACTIONS` is evaluated. Split across tags it is
+not, and the failure is not graceful. Serving `lee-core.js`, `lee-agent.js` and `lee-ide.js`
+produced, in order:
+
+```
+ReferenceError: showHelp is not defined              at lee-core.js:644
+ReferenceError: ACTIONS is not defined               at lee-ide.js:4904
+ReferenceError: Cannot access 'mountTabVersion' before initialization
+```
+
+The first throw aborts the rest of `lee-core.js`, so every `let` after it stays in its temporal
+dead zone and the second and third errors follow from the first. The IDE painted its shell and
+then refused to open a file.
+
+Making the 30 entries thunks (`help: () => showHelp()`) removes the coupling: `leeAct` calls
+them as `f()` with no arguments and no receiver, so the wrapper is equivalent. That is the
+change to make first, and `tests/blocks/test_ide_bundle.py` asserts the coupling still exists so
+this note cannot go stale silently.
+
+Splitting buys cache granularity rather than bytes, and `lee-cm6.js` at 1MB is the larger prize.

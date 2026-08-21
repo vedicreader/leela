@@ -1,0 +1,121 @@
+// -- the release pipeline ------------------------------------------------------------
+const REL_MARK = {passed: '✓', failed: '✗', running: '•', skipped: '⤼', pending: '·'};
+// A failed step's traceback belongs to *someone*, and in a stack you own that is the whole
+// question. The server rewrote the path to the checkout in this workspace, so "open" lands
+// in the repository rather than in a copy under .venv that the next sync overwrites.
+function blameRow(b) {
+  if (!b || !b.package) return '';
+  const where = b.file ? `${b.package}/${b.file.split('/').slice(-1)[0]}:${b.line}` : b.package;
+  return `<div class="lee-blame"><strong>${esc(b.package)}</strong>` +
+    `<span>${esc(b.error || 'raised here')}</span>` +
+    `<code>${esc(where)}${b.fn ? ' in ' + esc(b.fn) : ''}</code>` +
+    `${b.checkout ? '<i>your checkout</i>' : '<i class="warn">installed copy</i>'}` +
+    `${b.open ? `<button data-blame-open="${esc(b.open)}" data-blame-line="${b.line}">open</button>` : ''}</div>`;
+}
+function wireBlame(host) {
+  host.querySelectorAll('[data-blame-open]').forEach(b => b.onclick = async () => {
+    try { await leeOpenFile(b.dataset.blameOpen); } catch (e) { return status(e.message || String(e), 'err'); }
+    // The line the traceback named, once the editor has actually mounted the file.
+    const line = Number(b.dataset.blameLine) || 0;
+    if (!line) return;
+    setTimeout(() => {
+      const view = lee.editors.get('file'); if (!view) return;
+      const doc = view.state.doc, at = doc.line(Math.max(1, Math.min(line, doc.lines)));
+      // `setCursor` deliberately does not scroll, so the move is dispatched with the
+      // scroll asked for -- landing on a line you cannot see is not landing on it.
+      view.dispatch({selection: {anchor: at.from}, scrollIntoView: true});
+      LeeCM.focus?.(view);
+    }, 350);
+  });
+}
+function openProjectEnv() {
+  leeLeft('workflows'); wfUI.view = 'env'; wfUI.env = null; return leeWorkflows();
+}
+// A finished pipeline refuses to start again server-side, because its end publishes or ships.
+async function confirmRerun(d, what) {
+  return !d.done || confirmDialog(`run ${what} again`,
+    `Every step already ran. Forget that and run the whole ${what} again from the top?`, 'run again');
+}
+function relStepRow(s, d) {
+  const busy = d.running && s.status !== 'running';
+  return `<article class="lee-rel-step state-${s.status}" data-step="${esc(s.id)}">` +
+    `<b>${REL_MARK[s.status] || '·'}</b>` +
+    `<div><strong>${esc(s.label)}</strong><code>${esc(s.cmd)}</code>` +
+    `<small>${esc(s.doc || '')}${s.code !== null && s.code !== undefined ? ` · exit ${s.code}` : ''}</small>` +
+    `${s.missing.length ? `<i class="warn">needs ${s.missing.map(esc).join(', ')}</i>` : ''}</div>` +
+    `<span class="lee-rel-actions">` +
+    `${s.status === 'running' ? '<button data-rel="stop">stop</button>' :
+      `<button data-rel="step" ${busy ? 'disabled' : ''} title="run only this step">run</button>` +
+      `${s.status === 'failed' ? `<button data-rel="start" ${busy ? 'disabled' : ''} title="retry, then continue">retry</button><button data-rel="skip" title="mark done without running">skip</button>` : ''}`}` +
+    `</span></article>`;
+}
+function renderReleasesPanel() {
+  const host = $('#releasespanel'); if (!host) return;
+  const d = relUI.data;
+  if (!d) { host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the pipeline</small></div>'; return; }
+  const done = d.steps.filter(s => s.status === 'passed').length;
+  host.innerHTML =
+    `<header class="lee-sc-branch"><div><strong>${esc(d.root.split('/').pop())}</strong>` +
+    `<span>${d.nbdev ? 'nbdev project' : 'plain project'} · ${done}/${d.steps.length} done${d.configured ? ' · .leela/release.json' : ' · default pipeline'}</span></div></header>` +
+    `<div class="lee-sc-actions">` +
+    `${d.running ? '<button data-rel-top="stop" class="warn">stop</button>' : `<button data-rel-top="start">${d.failed ? 'continue' : 'run release'}</button>`}` +
+    `<button data-rel-top="terminal">terminal</button><button data-rel-top="env">environment</button><button data-rel-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
+    `<button data-rel-top="edit">edit steps</button>${d.configured ? '<button data-rel-top="defaults">defaults</button>' : ''}</div>` +
+    `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the release terminal. Fix and retry, or skip it deliberately.</span></div>` : ''}` +
+    blameRow(d.blame) +
+    `<div class="lee-rel-steps">${d.steps.map(s => relStepRow(s, d)).join('')}</div>` +
+    `${d.needs.length ? `<div class="lee-rel-needs"><strong>needs</strong>${d.needs.map(k => `<i>${esc(k)}</i>`).join('')}<button data-rel-top="env">environment…</button></div>` : ''}`;
+  wireReleasesPanel(host, d);
+  wireBlame(host);
+  relPoll(d);
+}
+function wireReleasesPanel(host, d) {
+  host.querySelectorAll('[data-rel-top]').forEach(b => b.onclick = () => releaseTop(b.dataset.relTop, d));
+  host.querySelectorAll('.lee-rel-step').forEach(row => {
+    const step = row.dataset.step;
+    row.querySelectorAll('[data-rel]').forEach(b => b.onclick = () => releaseOp(b.dataset.rel, {step}));
+  });
+}
+function relPoll(d) {
+  clearTimeout(relUI.poll);
+  // Steps finish on their own and start the next one, so the panel has to keep asking.
+  // Only while something is running: an idle pipeline costs nothing.
+  if (d.running) relUI.poll = setTimeout(() => leeReleases(), 1200);
+}
+async function leeReleases() {
+  try { relUI.data = await api('/releases' + projectQuery()); }
+  catch (e) { const host = $('#releasespanel'); if (host) host.innerHTML = `<div class="lee-git-empty-state"><strong>No project</strong><span>${esc(e.message || e)}</span></div>`; return; }
+  renderReleasesPanel();
+}
+window.leeReleases = leeReleases;
+async function releaseOp(op, extra = {}) {
+  try {
+    relUI.data = await post('/releases/action', {op, repo: projectRepo(), ...extra});
+    if (op === 'start' || op === 'step') await openReleaseTerm(relUI.data.root, 'release');
+    renderReleasesPanel();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+async function releaseTop(op, d) {
+  if (op === 'terminal') return openReleaseTerm(d.root, 'release');
+  if (op === 'env') return openProjectEnv();
+  if (op === 'defaults') return releaseOp('reset_plan');
+  if (op === 'start') {
+    const missing = d.steps.flatMap(s => s.missing);
+    if (missing.length && !await confirmDialog('run release',
+        `These steps are missing ${[...new Set(missing)].join(', ')}. Run anyway?`, 'run')) return;
+    if (!await confirmRerun(d, 'release')) return;
+    if (d.done) await releaseOp('reset');
+    return releaseOp('start');
+  }
+  if (op === 'stop') { if (await confirmDialog('stop release', 'Stop the running step?', 'stop')) releaseOp('stop'); return; }
+  if (op === 'reset') { if (await confirmDialog('reset', 'Forget what ran? The commands are unchanged.', 'reset')) releaseOp('reset'); return; }
+  if (op === 'edit') {
+    const text = await textDialog('release steps', 'One step per line: id | label | command',
+                                  d.steps.map(s => `${s.id} | ${s.label} | ${s.cmd}`).join('\n'));
+    if (text === null) return;
+    const steps = text.split('\n').map(line => line.split('|').map(x => x.trim())).filter(p => p.length >= 3 && p[2])
+      .map(([id, label, cmd]) => ({id, label, cmd}));
+    releaseOp('save', {steps});
+  }
+}
+

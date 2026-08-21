@@ -358,8 +358,12 @@ pytest tests -q          # `-m ""` adds the slow ones: browsers, real kernels, a
 Kernels are faked in `tests/conftest.py`, and the harness tests drive a `FakeBackend` over
 scripted replies. The suite needs no ipykernel and no gigabytes of weights.
 
-The IDE client is authored in `leela/static/js/` and concatenated into the committed
-`leela/static/lee-ide.js`. The npm bundles in `leela/vendor/` are committed too, so an
+The IDE client is authored beside the feature it serves, as `leela/blocks/<block>/*.js`, with
+the shared vocabulary in `leela/static/js/`. `tools/build_ide_js.py` concatenates them, in the
+order its `LAYERS` fixes, into the committed `leela/static/lee-ide.js` that `leela/core/web.py`
+names in `IDE_BUNDLES`. Run it after editing a module, or `--check` to see whether the bundle
+has gone stale; it also refuses to build a module it cannot find, or one it finds but the order
+never names. The npm bundles in `leela/vendor/` are committed too, so an
 install needs no node:
 
 ```sh

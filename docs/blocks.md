@@ -6,14 +6,22 @@ leela/blocks/git/
     git.py
     ui.py
     app.py
-    git.css
-    git.js
+    cwd.js
+    panel.js
+    branchbar.js
 ```
 
 - domain modules avoid web imports
 - `ui.py` supplies FastHTML fragments
 - `app.py` registers routes
 - `__init__.py` lazy-loads route code
+- `*.js` is that block's client code, concatenated into a served bundle
+
+A block's `.js` files are the browser half of the same feature. They share one lexical scope
+with every other module, so `tools/build_ide_js.py` owns the load order in `LAYERS` and refuses
+to build when a file is named but absent, or present but unnamed. `leela/static/js/` holds only
+the shared vocabulary: `lee`, `$`, `esc`, dispatch, focus, overlays and boot. `core.web`'s
+`IDE_BUNDLES` is what the page actually loads, in order.
 
 ```python
 from .._lazy import lazy_app

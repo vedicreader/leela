@@ -48,7 +48,7 @@ def test_shell_still_exposes_workspace_and_git_switchers(tmp_path):
 
 def test_the_empty_state_is_written_only_in_python():
     "`mountTab` clones `#leeempty`; a second copy in JS is the drift that put them out of step."
-    js = (ROOT/'leela/static/lee-ide.js').read_text()
+    js = (ROOT/'leela/blocks/editor/tabs.js').read_text()
     assert 'lee-empty-features' not in js and '#leeempty' in js
     html = to_xml(_editor_pane(_NoTab()))
     assert '<template id="leeempty">' in html and 'lee-empty-features' in html

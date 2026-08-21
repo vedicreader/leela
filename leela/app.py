@@ -26,7 +26,7 @@ from .core.web import asset as _asset
 from .core.web import diff_payload as _diff
 from .core.web import fail as _fail
 from .core.web import off_loop as _off_loop
-from .core.web import Assets, static_dirs
+from .core.web import Assets, IDE_BUNDLES, static_dirs
 from .core.text import did_you_mean
 from .core.text import md_block_diff, md_blocks, md_change_kinds
 from .blocks.debug.debug import notebook_state_ui, paused_kernel
@@ -564,7 +564,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             Script(src=_asset('lee-cm6.js'), defer=True),
             Link(rel='stylesheet', href=_asset('lee-term.css')),
             Link(rel='stylesheet', href=_asset('lee-ide.css')),
-            Script(src=_asset('lee-ide.js'), defer=True))
+            *[Script(src=_asset(b), defer=True) for b in IDE_BUNDLES])
     def _term_cwd(ref=None): return term_cwd(ws, ref)
     def _term_settings(session):
         "The `terminal` settings block, layered user-then-workspace as everything else is."

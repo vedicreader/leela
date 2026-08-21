@@ -45,9 +45,11 @@ def test_the_asset_walk_reaches_subdirectories(which, request):
 
 @pytest.mark.parametrize('which', ['mac', 'win'])
 def test_the_javascript_sources_are_not_shipped_beside_the_bundle_built_from_them(which, request):
-    "The same exclusion the wheel makes: `static/js/` is the input to `static/lee-ide.js`."
+    "The same exclusion the wheel makes: the modules are the input to `static/lee-ide.js`."
     mod = request.getfixturevalue(which)
-    assert not [f for f in files(mod) if f.startswith('leela/static/js/')]
+    shipped = files(mod)
+    assert not [f for f in shipped if f.startswith('leela/static/js/')]
+    assert not [f for f in shipped if f.startswith('leela/blocks/') and f.endswith('.js')]
 
 @pytest.mark.parametrize('which', ['mac', 'win'])
 def test_assets_land_where_a_frozen_leela_looks_for_them(which, request):

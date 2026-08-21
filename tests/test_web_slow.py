@@ -16,7 +16,8 @@ pytest.importorskip('playwright.async_api')
 from playwright.async_api import async_playwright   # noqa: E402
 
 from leela.blocks.runtime.kernels import KernelPool                # noqa: E402
-from leela.app import ide_app                   # noqa: E402
+from leela.app import ide_app
+from leela.core.web import IDE_BUNDLES                   # noqa: E402
 from leela.workspace import Workspace               # noqa: E402
 from conftest import FakeKernel                     # noqa: E402
 
@@ -702,8 +703,10 @@ def test_a_pre_family_preference_is_migrated_not_reset(proj_web_th):
             assert page.evaluate('document.documentElement.dataset.density') == 'relaxed'
             page.wait_for_function("localStorage.getItem('lee-theme') === 'leela:dark:relaxed'")
 
-def test_the_bundle_parses(proj_web_th):
-    "`node` is blocked here, so the browser is the syntax check."
+def test_the_bundles_parse_and_share_one_scope(proj_web_th):
+    """`node` is blocked here, so the browser is the syntax check. Loading them in order also
+    proves the later ones can see what the first declared.
+    """
     ws = Workspace(roots=[proj_web_th])
     with serve(ws) as url:
         from playwright.sync_api import sync_playwright
@@ -712,7 +715,7 @@ def test_the_bundle_parses(proj_web_th):
             errors = []
             page.on('pageerror', lambda e: errors.append(str(e)))
             page.goto(f'{url}/leestatic/nothing-here')
-            page.add_script_tag(url=f'{url}/leestatic/lee-ide.js')
+            for name in IDE_BUNDLES: page.add_script_tag(url=f'{url}/leestatic/{name}')
             page.wait_for_timeout(200)
             assert not errors, errors
 

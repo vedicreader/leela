@@ -1,0 +1,137 @@
+/* ------------------------------------------------------------------ agent */
+function closeDismissableDisclosures(except = null) {
+  $$('details.lee-dismissable[open]').forEach(details => { if (details !== except) details.open = false; });
+}
+document.addEventListener('pointerdown', e => {
+  const inside = e.target.closest?.('details.lee-dismissable');
+  closeDismissableDisclosures(inside);
+}, true);
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || $$('.lee-modal').length) return;
+  const open = $$('details.lee-dismissable[open]').at(-1);
+  if (!open) return;
+  e.preventDefault(); e.stopPropagation(); open.open = false;
+  open.querySelector(':scope > summary')?.focus();
+}, true);
+window.addEventListener('blur', () => closeDismissableDisclosures());
+
+// A model that draws or films says so in the picker itself; the rest of what it takes is the tooltip.
+const modelMark = (m) => (m.gen_image ? ' · draws' : '') + (m.gen_video ? ' · films' : '');
+
+// Cursor is the one runtime whose own tools act outside Leela's approvals, so the pane says so
+// while such a model is chosen. The wording lives in the markup; this only decides when it shows.
+let MODEL_RUNTIMES = {};
+function markHarness(model) {
+  const banner = $('#agentharnessbanner');
+  if (banner) banner.hidden = MODEL_RUNTIMES[model] !== 'cursor';
+}
+
+async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
+  const selects = {agent: $('#agentmodel'), inline: $('#inlinemodel'), completion: $('#completionmodel')};
+  if (!selects.agent || !selects.inline || !selects.completion) return;
+  const previous = Object.fromEntries(Object.entries(selects).map(([k, s]) => [k, s.value]));
+  const d = await api('/agent/models?legacy=' + (legacy ? 'true' : 'false'));
+  for (const [target, select] of Object.entries(selects)) {
+    select.innerHTML = '';
+    for (const m of (d.models || [])) {
+      const option = document.createElement('option');
+      option.value = m.value; option.textContent = `${m.label} · ${m.provider}${modelMark(m)}`;
+      option.title = [m.source, m.modalities].filter(Boolean).join(' · ');
+      select.appendChild(option);
+    }
+    const wanted = d.selected?.[target] || previous[target];
+    if ([...select.options].some(o => o.value === wanted)) select.value = wanted;
+  }
+  MODEL_RUNTIMES = Object.fromEntries((d.models || []).map(m => [m.value, m.runtime || '']));
+  markHarness(selects.agent.value);
+  paintJobModels(d);
+  const notes = Object.values(d.auth || {}).map(x => x.note).filter(Boolean);
+  if (notes.length) selects.agent.title = notes.join(' · ');
+}
+
+// The routed jobs with no control of their own, drawn from what the server reports rather than
+// listed here, so a job ramabana adds arrives with the release that adds it.
+const JOB_TITLES = {subagent: 'delegated searches run on this model',
+                    summary: 'compaction summaries and notebook digests',
+                    classify: 'short classification calls',
+                    oneshot: 'every cheap one-shot job that has no model of its own',
+                    inline: 'the harness inline job, not the prompt-cell assistant'};
+function paintJobModels(d) {
+  const host = $('#jobmodels'); if (!host) return;
+  const jobs = Object.entries(d.jobs || {});
+  host.hidden = !jobs.length;
+  if (!jobs.length) return;
+  const options = (d.models || []).map(m =>
+    `<option value="${esc(m.value)}">${esc(m.label)} · ${esc(m.provider)}${esc(modelMark(m))}</option>`).join('');
+  host.innerHTML = jobs.map(([job, current]) =>
+    `<label title="${esc(JOB_TITLES[job] || '')}">${esc(job)}<select class="lee-select" data-job="${esc(job)}">` +
+    options + `</select></label>`).join('');
+  for (const [job, current] of jobs) {
+    const sel = host.querySelector(`[data-job="${job}"]`);
+    if ([...sel.options].some(o => o.value === current)) sel.value = current;
+    sel.onchange = () => leeAgentModel(job, sel.value);
+  }
+}
+window.leeLoadModels = loadAgentModels;
+
+async function leeAddModel() {
+  const d = await api('/agent/models');
+  const saved = (d.saved || []).map(x => `<div class="lee-krow"><span><strong>${esc(x.name)}</strong> · ${esc(x.runtime)}<br><small>${esc(x.model_id)}</small></span><button class="lee-btn warn" data-remove="${esc(x.name)}">remove</button></div>`).join('');
+  const m = modal(`<div class="lee-mhead">Add model<span class="sub">saved in Leela · API keys stay in environment variables</span></div>
+    <label>name<input class="lee-input" id="modelalias" placeholder="ornith-test"></label>
+    <label>model ID or Hugging Face URL<input class="lee-input" id="modelid" placeholder="https://huggingface.co/litert-community/… or openai/model-id"></label>
+    <label>runtime<select class="lee-select" id="modelruntime"></select></label>
+    <label>context tokens<input class="lee-input" id="modelctx" type="number" value="128000" min="1024"></label>
+    <details><summary>hosted API settings</summary><label>base URL<input class="lee-input" id="modelbase" placeholder="https://api.example.com/v1"></label><label>API key environment variable<input class="lee-input" id="modelkeyenv" placeholder="OPENAI_API_KEY"></label><label>FastLLM vendor<input class="lee-input" id="modelvendor" placeholder="openai"></label><label>FastLLM API transport<input class="lee-input" id="modelapi" placeholder="openai"></label></details>
+    <button class="lee-btn go" id="modelsave">save model</button>
+    <h4>saved models</h4><div class="lee-modallist">${saved || '<div class="lee-dim">none yet</div>'}</div>`);
+  /* The runtimes ramabana will accept, and which of them rishi can load here. The list, the
+     label and the remedy all come from `d.runtimes`: kept here they drifted twice, offering MLX
+     after it was dropped and telling you to pip install Cursor. Unavailable stays visible. */
+  const rtsel = m.querySelector('#modelruntime');
+  rtsel.innerHTML = (d.runtimes || [{value: 'remote', label: 'hosted API / FastLLM', available: true}]).map(r =>
+    `<option value="${esc(r.value)}"${r.available ? '' : ' disabled'}>${esc(r.label || r.value)}` +
+    `${r.available ? '' : ' — ' + esc(r.why || 'unavailable here')}</option>`).join('');
+  const firstrt = rtsel.querySelector('option:not([disabled])');
+  if (firstrt) rtsel.value = firstrt.value;
+
+  $('#modelsave', m).onclick = async () => {
+    status('validating and saving model…');
+    const r = await post('/agent/models/add', {name: $('#modelalias',m).value.trim(), model_id: $('#modelid',m).value.trim(), runtime: $('#modelruntime',m).value, ctx: Number($('#modelctx',m).value), base_url: $('#modelbase',m).value.trim(), api_key_env: $('#modelkeyenv',m).value.trim(), vendor_name: $('#modelvendor',m).value.trim(), api_name: $('#modelapi',m).value.trim()});
+    if (!r.ok) return status(r.error || 'could not save model','err');
+    m.remove(); await loadAgentModels(); status(`saved ${r.model.name} · ${r.model.runtime} · ${r.model.model_id}`,'ok');
+  };
+  $$('[data-remove]',m).forEach(b => b.onclick = async () => {
+    const name=b.dataset.remove; const r=await post('/agent/models/remove',{name});
+    if (!r.ok) return status(r.error || 'could not remove model','err');
+    m.remove(); await loadAgentModels(); status(`removed ${name}`,'ok');
+  });
+  $('#modelalias',m)?.focus();
+}
+window.leeAddModel = leeAddModel;
+
+const MODEL_SELECTS = {agent: '#agentmodel', inline: '#inlinemodel', completion: '#completionmodel'};
+async function leeAgentModel(target, model) {
+  // A harness job has no select of its own; it has the row `paintJobModels` drew for it.
+  const select = $(MODEL_SELECTS[target] || `#jobmodels [data-job="${target}"]`);
+  if (select) select.disabled = true;
+  try {
+    const d = await post('/agent/model', {target, model});
+    if (d.ok && target === 'agent') markHarness(model);
+    status(d.ok ? `${target} model saved: ${d.model}` : (d.error || 'model switch failed'), d.ok ? 'ok' : 'err');
+    if (d.ok && target === 'completion') api('/complete/warm').catch(() => {});
+    if (!d.ok) await loadAgentModels();
+  } catch (e) { await loadAgentModels(); status(e.message || String(e), 'err'); }
+  finally { if (select) select.disabled = false; }
+}
+window.leeAgentModel = leeAgentModel;
+
+async function leeAgentCompaction() {
+  try {
+    const d = await post('/agent/compaction', {auto: !!$('#autocompact')?.checked,
+                                               strategy: $('#compactstrategy')?.value || 'surgical'});
+    status(d.note, 'ok');
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+window.leeAgentCompaction = leeAgentCompaction;
+

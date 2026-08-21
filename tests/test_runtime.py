@@ -978,8 +978,7 @@ def test_the_header_says_what_is_running_beside_the_kernel(tmp_path):
 
 def test_the_runs_pill_reads_the_poll_that_already_runs():
     "One /dev/list poll feeds the pill, the Logs pane and the menu; a second poller would drift."
-    # `JS` is every static .js, so the generated bundle repeats each module: count the module.
-    assert read('leela/static/js/14_logs.js').count("api('/dev/list')") == 1, \
+    assert read('leela/blocks/runs/logs.js').count("api('/dev/list')") == 1, \
         'the pill did not add a poller of its own'
 
 

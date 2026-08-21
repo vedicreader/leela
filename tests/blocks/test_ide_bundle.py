@@ -1,7 +1,8 @@
-"""What the concatenated client bundle must hold true, whatever the modules say.
+"""What the client's bundles must hold true, whatever the modules say.
 
-The modules share one scope, so a name declared twice is the last one winning silently.
-These are structural checks over the built asset, not assertions about anyone's source text.
+They are concatenations into one shared lexical scope, so order is a contract and a name
+declared twice is the last one winning silently. These are structural checks over the built
+assets, not assertions about anyone's source text.
 """
 
 from __future__ import annotations
@@ -15,11 +16,44 @@ sys.path.insert(0, str(ROOT/'tools'))
 import build_ide_js as builder                                              # noqa: E402
 
 CSS = (ROOT/'leela/static/lee-ide.css').read_text()
-JS = builder.OUT.read_text()
+JS = ''.join((builder.OUTDIR/n).read_text() for n in builder.LAYERS)
 DECL = re.compile(r'^(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_$][\w$]*)', re.M)
 
-def test_the_bundle_is_its_modules_concatenated():
-    assert JS == builder.bundle(), 'stale; run python tools/build_ide_js.py'
+def test_every_bundle_is_its_modules_concatenated():
+    for name in builder.LAYERS:
+        assert (builder.OUTDIR/name).read_text() == builder.bundle(name), \
+            f'{name} is stale; run python tools/build_ide_js.py'
+
+def test_the_order_is_complete_and_names_nothing_that_is_not_there():
+    "A module added to a block but left out of `LAYERS` would silently never load."
+    assert builder.missing() == []
+    assert builder.orphans() == []
+
+def test_the_bundles_are_what_the_application_serves():
+    "`core.web.IDE_BUNDLES` is the serving order; the build must produce exactly those."
+    from leela.core.web import IDE_BUNDLES
+    assert tuple(builder.LAYERS) == IDE_BUNDLES
+    for name in IDE_BUNDLES: assert (builder.OUTDIR/name).is_file(), name
+
+def test_the_dispatch_table_is_why_there_is_one_script_tag():
+    """`ACTIONS` holds bare references to functions from across the client, read the moment it
+    is evaluated. A function declaration hoists to the top of its own script and no further, so
+    a second script tag would evaluate the table before those names existed. This is the
+    measurement behind `LAYERS` having one entry; it changes when the entries become thunks.
+    """
+    import re
+    mods = builder.modules()
+    where = {}
+    for i, p in enumerate(mods):
+        for m in re.finditer(r'^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)', p.read_text(), re.M):
+            where.setdefault(m.group(1), i)
+    actions = next(i for i, p in enumerate(mods) if p.name == 'actions.js')
+    bare = re.findall(r'^\s+[A-Za-z_$][\w$]*:\s*([A-Za-z_$][\w$]*),?$',
+                      mods[actions].read_text(), re.M)
+    forward = sorted({n for n in bare if where.get(n, -1) > actions})
+    assert forward, 'the eager forward references are gone; LAYERS can be split now'
+    assert len(builder.LAYERS) == 1, 'more than one bundle while the table still reads ahead'
+    assert 'showHelp' in forward and 'quickOpen' in forward
 
 def test_every_module_ends_with_a_newline():
     "Without one a module's last line fuses into the next module's first."

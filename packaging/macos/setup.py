@@ -16,7 +16,8 @@ def tree(src, dest, skip=()):
     dirs = groupby(fs, lambda f: str(Path(dest)/Path(f).parent.relative_to(src)))
     return sorted((d, sorted(v)) for d, v in dirs.items())
 
-# `static/js/` builds `static/lee-ide.js`; shipping both doubles ~570KB, as the wheel notes.
+# The modules under `blocks/*/*.js` and `static/js/` build the `static/lee-*.js` bundles;
+# shipping both doubles ~680KB, as the wheel notes.
 DATA_FILES = tree(ROOT/'leela'/'static', 'leela/static', skip={'js'}) + tree(ROOT/'leela'/'vendor', 'leela/vendor')
 
 # Packages copied whole: anything imported inside a function -- most of Leela's heavy

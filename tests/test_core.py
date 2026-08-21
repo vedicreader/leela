@@ -1064,3 +1064,15 @@ def test_the_wiring_order_lives_with_the_blocks_not_with_the_application():
     imported = {a.asname for n in ast.walk(ast.parse((ROOT/'leela/app.py').read_text()))
                 if isinstance(n, ast.ImportFrom) for a in n.names if (a.asname or '').endswith('_block')}
     assert imported == set(), f'app.py still aliases blocks one by one: {sorted(imported)}'
+
+def test_every_block_with_client_code_is_named_in_the_load_order():
+    """A `.js` file in a block is only reachable if `LAYERS` names it. Dropping one in and
+    forgetting that is a feature that silently never loads, with no import error to say so.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT/'tools'))
+    import build_ide_js as builder
+    assert builder.missing() == [], 'named in the order but not on disk'
+    assert builder.orphans() == [], 'on disk but never loaded'
+    owners = {p.parent.name for p in builder.modules() if 'blocks' in str(p)}
+    assert owners <= set(__import__('leela.blocks', fromlist=['NAMES']).NAMES), owners

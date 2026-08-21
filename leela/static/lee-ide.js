@@ -1,8 +1,12 @@
 /* leela IDE client.
  *
- * Sources live in `leela/static/js/` and concatenate via `tools/build_ide_js.py`.
- * One bundle, one script tag: the modules share a scope, so `$`, `esc` and `lee`
- * are defined here once and used by every later module.
+ * Sources live with the feature they serve: `leela/blocks/<block>/*.js`, and this shared
+ * vocabulary in `leela/static/js/`. `tools/build_ide_js.py` concatenates them, in the order
+ * its `LAYERS` fixes, into the bundle `core.web.IDE_BUNDLES` names.
+ *
+ * One bundle, one script tag: the modules share a scope, so `$`, `esc` and `lee` are declared
+ * here once and read by every later module. `ACTIONS` is why it is still one tag -- see the
+ * note above `LAYERS`.
  *
  * The keymap is fetched from /keys.json (leela.core.keys). Dispatch is scope-aware:
  * `lee.scope` must match or be 'global', else the browser/CodeMirror keep the chord.
