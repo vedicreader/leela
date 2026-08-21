@@ -224,7 +224,9 @@ def test_the_model_dialog_is_told_which_runtimes_exist(tmp_path):
     # get the Cursor agent, and the browser had no way to know that.
     why = {r['value']: r['why'] for r in d['runtimes']}
     assert 'rishi[mlx]' in why['mlx'], 'saying what to install for the ones that are missing'
-    assert 'CLI or SDK' in why['cursor'] and 'CLI or SDK' in why['claude']
+    assert 'Claude Code' in why['claude'] and 'pip install' not in why['claude'], \
+        'a harness runtime is not a pip extra, and rishi ships the SDK itself'
+    assert 'cursor' not in why, 'and Cursor is no longer offered at all'
 
 def test_choosing_the_litert_accelerator_is_remembered_and_exported(tmp_path, monkeypatch):
     "ramabana reads $LEELA_LITERT_BACKEND when it builds an engine."

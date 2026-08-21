@@ -327,11 +327,7 @@ try {
 } catch (e) {}
 
 function leeTermExpand() {
-  const centre = $('.lee-centre'); if (!centre) return;
-  leeDock('term');
-  centre.classList.toggle('term-expanded');
-  const expanded = centre.classList.contains('term-expanded');
-  $('#termexpand').textContent = expanded ? 'restore' : 'expand';
+  leeDock('term'); leeExpandPane('bottom');
   requestAnimationFrame(() => { lee.term?.refit(); lee.term?.focus(); });
 }
 window.leeTermExpand = leeTermExpand;
@@ -344,7 +340,7 @@ function closeTerm(id = lee.activeTerm) {
   if (next) switchTerm(next);
   else {
     paintTermTabs(); $('#shell').classList.remove('show-term'); leeDock('exec');
-    $('.lee-centre')?.classList.remove('term-expanded'); setScope('editor');
+    leeExpand(''); setScope('editor');
   }
   // A shell or lazygit may have changed the working tree under us.
   refreshFileTree(undefined, false).catch(e => status(String(e.message || e), 'err'));

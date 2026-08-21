@@ -8,6 +8,7 @@ function updateToolbarForKind(kind) {
   for (const [action, shown] of Object.entries(visibility)) {
     const button = $(`#toolbar [data-action="${action}"]`); if (button) button.hidden = !shown;
   }
+  refreshMarkdownCellActions();   // whether a reply can become a cell depends on this tab
 }
 
 let mountTabVersion=0;

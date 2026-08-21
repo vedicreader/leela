@@ -13,7 +13,10 @@ const ACTIONS = {
   settings:     editorSettings,
   quick_open:   quickOpen,
   code_search:  codeSearch,
-  find_definition: () => findDefinition(),
+  find_definition: () => gotoDeclaration(),
+  find_definition_only: () => findDefinition(),
+  find_in_file: () => nbFind(),
+  local_history: () => leeLocalHistory(),
   find_usages: () => findUsages(),
   rename_symbol: () => renameSymbol(),
   agent_selection: () => leeAgentSelection(),
@@ -114,6 +117,10 @@ const ACTIONS = {
   git_discard:  () => treeGitAction('discard'),
   git_ignore:   () => treeGitAction('ignore'),
   clip_to_vault: leeClipToVault,
+  memory_notes: leeMemoryNotes,
+  new_memory_note: leeNewMemoryNote,
+  open_vault: leeVaultWorkbench,
+  format_doc:   leeFormatDoc,
   find_similar: findSimilar,
   code_map:     codeMap,
 
@@ -153,7 +160,10 @@ const ACTIONS = {
   profile_standard: () => setProfile('standard'),
   profile_full:     () => setProfile('full'),
 
+  agent_new:    leeAgentNew,
+  agent_threads: () => $('#agentthreads')?.focus(),
   agent_send:   sendAgent,
+  agent_steer_force: () => sendAgent(true),
   agent_stop:   stopAgent,
   agent_tools:  agentTools,
 

@@ -22,6 +22,9 @@ const lee = {
   breakpoints: new Map(), debugThread: null, debugCell: null, debugState: null, directDebug: false, debugWatches: [],
   shownProblems: new Set(),   // agent failures already written into the pane, so they show once
   agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
+  agentStream: null, agentStreamGen: 0, agentTitle: '', agentThread: '',
+  agentThreadDrafts: new Map(),
+  nbFind: null,                // the notebook find bar's query, its matches and where it is
   // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
   // path->name map: two selections in one file are two contexts, not one key overwriting itself.
   agentSelections: [],
@@ -31,7 +34,7 @@ const lee = {
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
-  editorPrefs: null, settingsMeta: null, filePrefs: {}, workbenchPrefs: {}, debugPrefs: {},
+  editorPrefs: null, settingsMeta: null, filePrefs: {}, workbenchPrefs: {}, debugPrefs: {}, backupPrefs: {},
   theme: null,               // {family, mode, density}; mode may be 'system', resolved at paint time
   gitDiffTabs: new Map(), activeGitTab: '', gitMergeView: null,
 };
@@ -91,6 +94,7 @@ async function loadSettings(language = '') {
     const d = await api('/settings?language=' + encodeURIComponent(language));
     lee.settingsMeta = d; lee.filePrefs = d.effective.files || {};
     lee.workbenchPrefs = d.effective.workbench || {}; lee.debugPrefs = d.effective.debug || {};
+    lee.backupPrefs = d.effective.backups || {}; lee.agentPrefs = d.effective.agent || {};
     applyEditorPrefs(d.effective.editor || EDITOR_DEFAULTS);
   } catch (_) { applyEditorPrefs(lee.editorPrefs); }
 }
@@ -358,6 +362,17 @@ function enhanceCodeBlocks(el) {
                                            python && el.classList.contains('lee-reply')));
   });
 }
+/* This copies an answer into the open notebook, so it needs one. Offering it while a `.py` tab is
+   focused meant a control that was always there and usually inert, and only said so after a click.
+   It is hidden rather than disabled, and comes back the moment a notebook tab is focused. */
+function markdownCellActionState(button) {
+  const ready = lee.kind === 'notebook';
+  const bar = button.closest('.lee-reply-actions') || button;
+  bar.hidden = !ready;
+  button.disabled = !ready;
+  button.title = 'insert this as a markdown cell in the open notebook';
+}
+function refreshMarkdownCellActions() { $$('.lee-reply-actions button').forEach(markdownCellActionState); }
 function addMarkdownCellAction(el) {
   if (!el.dataset.markdown.trim() ||
       (!el.classList.contains('lee-reply') && !el.classList.contains('lee-md-output'))) return;
@@ -366,6 +381,7 @@ function addMarkdownCellAction(el) {
   button.textContent = el.classList.contains('lee-reply')
     ? 'edit response as markdown cell' : 'edit as markdown cell';
   button.onclick = () => promoteCodeToNotebook(el.dataset.markdown, 'markdown');
+  markdownCellActionState(button);
   bar.appendChild(button); el.appendChild(bar);
 }
 
@@ -446,7 +462,9 @@ async function api(url, opts, retried) {
   if (r.ok) return body;
   /* The kernel ceiling is the one failure a person can answer. Offer the room, then try once more. */
   if (!retried && body && body.kernel_limit && await offerKernelRoom(body)) return api(url, opts, true);
-  throw new Error((body && body.error) || r.statusText);
+  /* Thread-aware routes answer with `code` and `message`; the rest with `error`. Either is the
+     one sentence a person can act on, and `statusText` ("Conflict") never is. */
+  throw new Error((body && (body.error || body.message)) || r.statusText);
 }
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify(data || {})});
@@ -609,7 +627,10 @@ function findBinding(e, scope) {
       const selection = curEditor() ? LeeCM.selection(curEditor()) : null;
       if (inEditor && selection?.from !== selection?.to) continue;
     }
-    if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down'].includes(k.action) && lee.kind !== 'notebook') continue;
+    // Cmd+F only belongs to Leela when the document is a notebook, where one CodeMirror panel
+    // would search one cell. Anywhere else the event is left alone and the editor's own panel opens.
+    if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down', 'find_in_file'].includes(k.action)
+        && lee.kind !== 'notebook') continue;
     return {binding: k, chord};
   }
   return null;
@@ -642,7 +663,10 @@ const ACTIONS = {
   settings:     editorSettings,
   quick_open:   quickOpen,
   code_search:  codeSearch,
-  find_definition: () => findDefinition(),
+  find_definition: () => gotoDeclaration(),
+  find_definition_only: () => findDefinition(),
+  find_in_file: () => nbFind(),
+  local_history: () => leeLocalHistory(),
   find_usages: () => findUsages(),
   rename_symbol: () => renameSymbol(),
   agent_selection: () => leeAgentSelection(),
@@ -743,6 +767,10 @@ const ACTIONS = {
   git_discard:  () => treeGitAction('discard'),
   git_ignore:   () => treeGitAction('ignore'),
   clip_to_vault: leeClipToVault,
+  memory_notes: leeMemoryNotes,
+  new_memory_note: leeNewMemoryNote,
+  open_vault: leeVaultWorkbench,
+  format_doc:   leeFormatDoc,
   find_similar: findSimilar,
   code_map:     codeMap,
 
@@ -782,7 +810,10 @@ const ACTIONS = {
   profile_standard: () => setProfile('standard'),
   profile_full:     () => setProfile('full'),
 
+  agent_new:    leeAgentNew,
+  agent_threads: () => $('#agentthreads')?.focus(),
   agent_send:   sendAgent,
+  agent_steer_force: () => sendAgent(true),
   agent_stop:   stopAgent,
   agent_tools:  agentTools,
 
@@ -1249,6 +1280,7 @@ function updateToolbarForKind(kind) {
   for (const [action, shown] of Object.entries(visibility)) {
     const button = $(`#toolbar [data-action="${action}"]`); if (button) button.hidden = !shown;
   }
+  refreshMarkdownCellActions();   // whether a reply can become a cell depends on this tab
 }
 
 let mountTabVersion=0;
@@ -2727,37 +2759,127 @@ async function setKernelAutoManage(enabled) {
 /* Editable here, because the alternative is telling someone whose terminal or browser
  * eats ctrl+enter to go and find a JSON file. Saving re-reads it server-side and reloads
  * the table this client dispatches on, so a new chord works on the next keystroke. */
+/* A chord as this app writes them: `[mod+][ctrl+][alt+][shift+]base`, in that order, with `mod`
+   standing for the platform's own command key. Built from a real keystroke so nobody has to know
+   the grammar to bind a key. */
+const CHORD_BASE = {' ': 'space', 'Escape': 'esc', 'ArrowUp': 'up', 'ArrowDown': 'down',
+                    'ArrowLeft': 'left', 'ArrowRight': 'right', 'Backspace': 'backspace',
+                    'Enter': 'enter', 'Tab': 'tab', 'Delete': 'delete'};
+const CHORD_SKIP = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Dead']);
+function chordFromEvent(e) {
+  if (CHORD_SKIP.has(e.key)) return '';
+  const mac = navigator.platform.toLowerCase().includes('mac');
+  const parts = [];
+  if (mac ? e.metaKey : e.ctrlKey) parts.push('mod');
+  if (mac && e.ctrlKey) parts.push('ctrl');
+  if (e.altKey) parts.push('alt');
+  if (e.shiftKey) parts.push('shift');
+  const base = CHORD_BASE[e.key] || (e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase());
+  parts.push(base);
+  return parts.join('+');
+}
+
+/* Editable here, because the alternative is telling someone whose terminal or browser eats
+ * ctrl+enter to go and find a JSON file. It was that JSON file for a while, which meant knowing
+ * the grammar and finding out about a clash only after saving. Now it is a row per action, a field
+ * that takes the keystroke itself, and the server's own conflict check on every change. */
 async function editKeys() {
   const d = await api('/keys/file');
+  const rows = () => (lee.keys || []).filter(k => k.label || k.scope !== 'global');
   const m = modal(
     `<div class="lee-mhead">keybindings<span class="sub">${esc(d.path)}</span></div>` +
-    `<div class="lee-dim">action → chord, or several separated by spaces; "" unbinds it. ` +
-    `A chord is [mod+][ctrl+][alt+][shift+]base; mod is ⌘ on this Mac and ctrl elsewhere.</div>` +
+    `<div class="lee-keyfilter"><input class="lee-input" id="keysearch" placeholder="filter by action, description or chord…" autofocus>` +
+    `<span class="lee-dim" id="keycount"></span></div>` +
     `<div id="keynotes"></div>` +
-    `<textarea class="lee-keyedit" id="keytext" spellcheck="false"></textarea>` +
-    `<div class="lee-mfoot"><button class="lee-btn go" id="keysave">save</button>` +
-    `<button class="lee-btn" id="keyreset">restore defaults</button></div>`);
-  const ta = m.querySelector('#keytext');
-  ta.value = d.text;
-  const notes = (ns) => {
-    m.querySelector('#keynotes').innerHTML = (ns || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('');
+    `<div class="lee-keytable" id="keyrows"></div>` +
+    `<div class="lee-mfoot"><button class="lee-btn" id="keyjson">edit as JSON…</button><span class="lee-spacer"></span>` +
+    `<button class="lee-btn" id="keyreset">restore defaults</button>` +
+    `<button class="lee-btn go" id="keysave">save</button></div>`,
+    null, null, {className: 'lee-keys-modal', storageKey: 'keybindings'});
+  const notes = ns => {
+    const host = m.querySelector('#keynotes');
+    host.innerHTML = (ns || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('');
+    host.hidden = !(ns || []).length;
   };
-  notes(d.notes);
-  const applied = (r) => {
+  const edited = new Map();                       // action -> chord, only what a person changed
+  const chordOf = k => edited.has(k.action) ? edited.get(k.action) : (k.key || '');
+  const paint = () => {
+    const q = (m.querySelector('#keysearch').value || '').toLowerCase();
+    const shown = rows().filter(k => !q ||
+      [k.action, k.label, k.scope, chordOf(k)].join(' ').toLowerCase().includes(q));
+    m.querySelector('#keycount').textContent = `${shown.length} of ${rows().length}`;
+    m.querySelector('#keyrows').innerHTML = shown.map(k =>
+      `<div class="lee-keyrow${edited.has(k.action) ? ' changed' : ''}" data-action="${esc(k.action)}">` +
+      `<span class="lee-keyrow-name"><strong>${esc(k.label || k.action)}</strong>` +
+      `<small>${esc(k.action)} · ${esc(k.scope)}</small></span>` +
+      `<input class="lee-input lee-keyrow-chord" data-chord value="${esc(chordOf(k))}" ` +
+      `placeholder="unbound" spellcheck="false" aria-label="chord for ${esc(k.action)}">` +
+      `<button type="button" data-record title="press the keys you want">record</button>` +
+      `<button type="button" data-clear title="unbind">clear</button></div>`).join('') ||
+      `<div class="lee-dim">nothing matches</div>`;
+  };
+  /* The server decides what conflicts, using the same check the save runs, so a warning here
+     cannot promise something the save then refuses. */
+  let checking = null;
+  const check = async () => {
+    if (!edited.size) return notes(d.notes);
+    clearTimeout(checking);
+    checking = setTimeout(async () => {
+      try {
+        const r = await post('/keys/check', {keys: Object.fromEntries(edited)});
+        notes(r.notes);
+        if (r.notes.length) status(r.notes[0], 'err');
+      } catch (e) { notes([String(e.message || e)]); }
+    }, 180);
+  };
+  const setChord = (action, chord) => {
+    const original = (lee.keys.find(k => k.action === action)?.key) || '';
+    if (chord === original) edited.delete(action); else edited.set(action, chord);
+    paint(); check();
+  };
+  m.querySelector('#keyrows').addEventListener('click', e => {
+    const row = e.target.closest('[data-action]'); if (!row) return;
+    const action = row.dataset.action, field = $('[data-chord]', row);
+    if (e.target.closest('[data-clear]')) return setChord(action, '');
+    if (!e.target.closest('[data-record]')) return;
+    field.value = ''; field.placeholder = 'press the keys…'; field.classList.add('recording'); field.focus();
+  });
+  m.querySelector('#keyrows').addEventListener('keydown', e => {
+    const field = e.target.closest('[data-chord]'); if (!field) return;
+    if (!field.classList.contains('recording')) return;   // typed, not recorded: let it through
+    e.preventDefault(); e.stopPropagation();
+    if (e.key === 'Escape') { field.classList.remove('recording'); field.placeholder = 'unbound'; return paint(); }
+    const chord = chordFromEvent(e); if (!chord) return;
+    field.classList.remove('recording'); field.placeholder = 'unbound';
+    setChord(field.closest('[data-action]').dataset.action, chord);
+  }, true);
+  m.querySelector('#keyrows').addEventListener('change', e => {
+    const field = e.target.closest('[data-chord]'); if (!field) return;
+    setChord(field.closest('[data-action]').dataset.action, field.value.trim());
+  });
+  m.querySelector('#keysearch').addEventListener('input', paint);
+  const applied = r => {
     lee.keys = r.keys; lee.help = r.help; lee.keyNotes = r.notes || [];
-    notes(r.notes);
+    edited.clear(); notes(r.notes); paint();
     status(r.notes.length ? 'saved, but some entries were skipped' : 'keys saved and live', 'ok');
     remountEditors();
   };
   m.querySelector('#keysave').onclick = async () => {
-    try { applied(await post('/keys/save', {text: ta.value})); }
+    const map = Object.fromEntries((lee.keys || []).map(k => [k.action, chordOf(k)]));
+    try { applied(await post('/keys/save', {text: JSON.stringify({keys: map}, null, 2)})); }
     catch (e) { status(String(e.message || e), 'err'); }
   };
   m.querySelector('#keyreset').onclick = async () => {
-    const r = await post('/keys/reset');
-    ta.value = JSON.stringify({keys: Object.fromEntries(r.keys.map(k => [k.action, k.key]))}, null, 2);
-    applied(r);
+    if (!await confirmDialog('Restore default keybindings', 'Every chord you have changed goes back to leela\u2019s own.', 'restore defaults')) return;
+    applied(await post('/keys/reset'));
   };
+  m.querySelector('#keyjson').onclick = async () => {
+    const text = await textDialog('Keybindings as JSON', d.path, d.text);
+    if (text == null) return;
+    try { applied(await post('/keys/save', {text})); }
+    catch (e) { status(String(e.message || e), 'err'); }
+  };
+  notes(d.notes); paint();
 }
 
 /* CodeMirror captures its own keymap at creation, so a rebound chord only reaches the
@@ -2965,6 +3087,59 @@ function diffModal(title, label, rows) {
                 <div class="lee-diff">${diffHtml(rows)}</div>`);
 }
 
+/* Local history. Undo is one step back, and after an agent, a tool or another editor has been
+   through the tree the question is what the file said an hour ago. Every version Leela saw is
+   kept, and this is where one gets picked. */
+async function leeLocalHistory(path = lee.path) {
+  if (!path) return status('open a file to see its history', 'err');
+  let d;
+  try { d = await api('/history/file?path=' + encodeURIComponent(path)); }
+  catch (e) { return status(String(e.message || e), 'err'); }
+  const versions = d.versions || [], name = path.split('/').pop();
+  const m = modal(`<div class="lee-mhead">local history<span class="sub">${esc(name)}</span></div>` +
+    `<div class="lee-lh"><nav class="lee-lh-list" id="lhrows" aria-label="kept versions"></nav>` +
+    `<div class="lee-lh-view" id="lhview"></div></div>`, null, null, {storageKey: 'localhistory'});
+  const rows = $('#lhrows', m), view = $('#lhview', m);
+  if (!versions.length) {
+    view.innerHTML = '<div class="lee-dim">Nothing kept for this file yet. A save, an agent edit, ' +
+      'or a write from outside Leela starts its history.</div>';
+    return;
+  }
+  const when = at => new Date((at || 0) * 1000).toLocaleString();
+  rows.innerHTML = versions.map((v, i) =>
+    `<button type="button" class="lee-lh-row${i ? '' : ' active'}" data-version="${esc(v.id)}">` +
+    `<strong>${esc(v.label)}</strong><span>${esc(when(v.at))} · ${Number(v.bytes || 0).toLocaleString()} bytes` +
+    `</span></button>`).join('');
+  const show = async id => {
+    $$('[data-version]', m).forEach(b => b.classList.toggle('active', b.dataset.version === id));
+    view.innerHTML = '<div class="lee-dim">reading…</div>';
+    let held;
+    try { held = await api('/history/version?id=' + encodeURIComponent(id)); }
+    catch (e) { view.innerHTML = `<div class="lee-err">${esc(String(e.message || e))}</div>`; return; }
+    view.innerHTML = `<header class="lee-lh-head"><span>${esc(held.label)} · ${esc(when(held.at))}</span>` +
+      `<span class="lee-spacer"></span>` +
+      `<button type="button" class="lee-btn go" data-restore="${esc(id)}">restore this version</button></header>` +
+      ((held.rows || []).length ? `<div class="lee-diff">${diffHtml(held.rows)}</div>`
+        : '<div class="lee-dim">identical to what is on disk now</div>');
+  };
+  m.addEventListener('click', async e => {
+    const pick = e.target.closest('[data-version]');
+    if (pick) return show(pick.dataset.version);
+    const back = e.target.closest('[data-restore]');
+    if (!back) return;
+    back.disabled = true;
+    try {
+      const out = await post('/history/restore', {id: back.dataset.restore});
+      m.remove();
+      await post('/tab/reload', {path: out.path});
+      await mountTab();
+      status(`${out.path.split('/').pop()} restored · ${out.label || 'from local history'}`, 'ok');
+    } catch (err) { back.disabled = false; status(String(err.message || err), 'err'); }
+  });
+  show(versions[0].id);
+}
+window.leeLocalHistory = leeLocalHistory;
+
 // The dirty dot says *that* a tab changed. This says what changed -- the question
 // actually worth answering before a save, or after something moved the file underneath.
 function bufferBody() {
@@ -3119,6 +3294,22 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     return false;
   }
 }
+
+/* Every JSON config in this app is written by a program and read by a person, so most of them
+   arrive as one long line. The formatter already exists for format-on-save; this is the same call
+   asked for on purpose, and it edits the buffer rather than the file so it stays undoable. */
+async function leeFormatDoc() {
+  const view = lee.editors.get(lee.scope === 'exec' ? 'exec' : 'file');
+  if (!view) return status('open a file to format', 'err');
+  const text = LeeCM.getDoc(view), lang = curLang();
+  try {
+    const d = await post('/editor/format', {path: lee.path, lang, text});
+    if (d.text === text) return status(`${lang} already formatted`, 'ok');
+    LeeCM.setDoc(view, d.text);
+    status(`formatted ${lang}${lee.path ? ' · ' + lee.path.split('/').pop() : ''} · save to keep it`, 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+window.leeFormatDoc = leeFormatDoc;
 
 async function saveAllTabs() {
   // The active editor is saved through the same version-checked path as ordinary autosave.
@@ -3652,14 +3843,7 @@ async function leeSubagentWrites(enabled) {
 }
 window.leeSubagentWrites = leeSubagentWrites;
 
-function leeAgentExpand() {
-  const shell = $('#shell'); if (!shell) return;
-  leeRight('agent'); shell.classList.toggle('agent-focus');
-  const expanded = shell.classList.contains('agent-focus');
-  $('.lee-agent')?.classList.toggle('timeline-workspace', expanded);
-  if ($('#agentexpand')) $('#agentexpand').textContent = expanded ? 'restore' : 'expand';
-  localStorage.setItem('lee-agent-expanded', expanded ? '1' : '0');
-}
+function leeAgentExpand() { leeRight('agent'); leeExpandPane('right'); }
 window.leeAgentExpand = leeAgentExpand;
 
 function leeRight(which) {
@@ -3756,7 +3940,7 @@ async function leeAgentMemory(focusId = '', draft = {}) {
       }, null, {className: 'lee-agent-memory-modal', storageKey: 'agent-memory-v2'});
     const list = $('[data-note-list]', box), form = $('[data-note-form]', box), empty = $('[data-note-empty]', box);
     const title = $('[data-note-title]', box), textHost = $('[data-note-text]', box), targets = $('[data-memory-targets]', box);
-    const stateView = createEditor(textHost, {doc: '', lang: 'markdown', lineNums: true,
+    const stateView = createEditor(textHost, {doc: '', lang: 'markdown', lineNums: true, settings: {wordWrap: 'viewport'},
       placeholder: '# Context\n\nWrite only information that should influence a model…'});
     const noteText = {get value() { return LeeCM.getDoc(stateView); }, set value(value) { LeeCM.setDoc(stateView, String(value || '')); }};
     const labels = data.targets || {agent: 'Agent conversation', inline: 'Prompt cells', completion: 'Code completion'};
@@ -4002,29 +4186,57 @@ function renderTurns(log, turns, heading) {
     item.innerHTML = `<div class="lee-history-meta"><span>${esc(turn.model)}</span>` +
       `<span>${esc(turn.plan?.route || 'direct')}</span></div>`;
     item.appendChild(userMessage(turn.prompt));
-    if ((turn.activity || []).length) {
-      const steps = document.createElement('div'); steps.className = 'lee-agent-steps';
-      for (const activity of turn.activity) {
-        const row = document.createElement('details'); renderAgentStep(row, activity); steps.appendChild(row);
+    if ((turn.timeline || []).length) {
+      const root = document.createElement('div'); root.className = 'lee-agent-timeline'; item.appendChild(root);
+      const paint = agentTimeline(root);
+      const paintActivity = part => {
+        paint.activity(part.data);
+        for (const child of part.children || []) paintActivity(child);
+      };
+      for (const part of reduceAgentTimeline(turn.timeline)) {
+        if (part.kind === 'prose') paint.chunk(part.text);
+        else if (part.kind === 'activity') paintActivity(part);
       }
-      item.appendChild(steps);
+    } else {
+      if ((turn.activity || []).length) {
+        const steps = document.createElement('div'); steps.className = 'lee-agent-steps';
+        for (const activity of turn.activity) {
+          const row = document.createElement('details'); renderAgentStep(row, activity); steps.appendChild(row);
+        }
+        item.appendChild(steps);
+      }
+      const reply = document.createElement('div'); reply.className = 'lee-reply'; item.appendChild(reply);
+      renderMarkdown(reply, turn.reply || '');
     }
-    const reply = document.createElement('div'); reply.className = 'lee-reply'; item.appendChild(reply);
-    renderMarkdown(reply, turn.reply || '');
     const usage = usageMeta(turn.usage, turn.usage_label, turn.model); if (usage) item.appendChild(usage);
     log.appendChild(item);
   }
 }
+/* A summarised title has arrived as `Title: Ramabana CLI ASCII`, quotes and all, and the stored
+   ones keep the prefix after the storage point is fixed, so every display cleans it. */
+const titleText = t => String(t || '').replace(/\s+/g, ' ').trim()
+  .replace(/^title\s*:\s*/i, '').replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim();
 const sessionTime = s => s.started ? new Date(s.started * 1000).toLocaleString() : s.id.replace(/^agent_/, '');
+/* `/agent/history` lists conversations without their turns: all of them together was 60MB of JSON
+   and forty seconds once Leela and the CLI shared one log. The turns of the one being opened come
+   from here, and `count` is what the list knows about the rest. */
+const sessionTurns = async id => {
+  if (!id) return [];
+  try { return (await api('/agent/history/session?id=' + encodeURIComponent(id))).turns || []; }
+  catch (e) { status(String(e.message || e), 'err'); return []; }
+};
+const sessionCount = s => Number(s?.count ?? (s?.turns || []).length);
 async function showHistorySession(group, groups) {
   const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
   const index = document.createElement('nav'); index.className = 'lee-history-index';
-  const options = (groups || []).map(s => {
-    const models = (s.models || []).map(m => m.split('/').pop()).join(' + ') || 'execution';
-    const label = `${sessionTime(s)} · ${models} · ${s.turns.length} turn${s.turns.length === 1 ? '' : 's'}`;
-    return `<option value="${esc(s.id)}"${s.id === group?.id ? ' selected' : ''}>${esc(label)}</option>`;
-  }).join('');
-  const resumable = !!group && !group.id.startsWith('legacy-') && (group.turns || []).length > 0;
+  /* A conversation is known by what it was about, so its name is the whole option: the models and
+     the turn count crowded out the one part a person reads. The time still identifies one that has
+     no name yet, which is every conversation before its first turn finished. */
+  const options = (groups || []).map(s =>
+    `<option value="${esc(s.id)}"${s.id === group?.id ? ' selected' : ''}>` +
+    `${esc(titleText(s.title) || sessionTime(s))}</option>`).join('');
+  const turns = group ? await sessionTurns(group.id) : [];
+  const resumable = !!group && !group.id.startsWith('legacy-') && turns.length > 0;
   index.innerHTML = `<div class="lee-history-heading"><strong>History</strong>` +
     `<span>one continuous model context per session</span></div>` +
     `<select class="lee-select lee-history-select" aria-label="agent history session">${options}</select>` +
@@ -4035,9 +4247,11 @@ async function showHistorySession(group, groups) {
   index.querySelector('.lee-history-resume')?.addEventListener('click', () => leeAgentResume(group));
   log.appendChild(index);
   if (!group) { log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>'); return; }
-  log.insertAdjacentHTML('beforeend', `<div class="lee-history-session-head"><strong>${esc(sessionTime(group))}</strong>` +
-    `<span>${group.context_continues ? 'context continued across these turns' : 'separate context'}</span></div>`);
-  renderTurns(log, group.turns || [], 'conversation');
+  log.insertAdjacentHTML('beforeend', `<div class="lee-history-session-head">` +
+    `<strong>${esc(titleText(group.title) || sessionTime(group))}</strong>` +
+    `<span>${titleText(group.title) ? `${esc(sessionTime(group))} · ` : ''}` +
+    `${group.context_continues ? 'context continued across these turns' : 'separate context'}</span></div>`);
+  renderTurns(log, turns, 'conversation');
   if (group.code || group.id.startsWith('agent_')) {
     const transcript = await api('/agent/transcript?session=' + encodeURIComponent(group.id));
     if ((transcript.cells || []).length) {
@@ -4047,29 +4261,48 @@ async function showHistorySession(group, groups) {
   }
   log.scrollTop = 0;
 }
-/* The live pane is DOM only: a reload, or an htmx swap of the shell, leaves it blank while the
-   turns are still on disk. Repaint them from `/agent/history` on mount. The current session is
-   the honest case -- those turns really are in the model's context. On a fresh process the
-   session id is new and empty, so the newest prior session is shown instead, marked as out of
-   context with its own Resume: rendering it silently would claim a context the model lacks. */
+/* The live pane is DOM only: a reload, an htmx swap of the shell, or a switch to a conversation
+   this tab has never shown leaves it blank while the turns are still on disk. They come from the
+   server for the named conversation, and replace what is on screen rather than being added to it:
+   painting into what is already there is what duplicated a transcript on the way back to it. */
+async function paintAgentThread(id) {
+  const log = $('#agentlog'); if (!log) return null;
+  const d = await api('/agent/thread/turns' + (id ? '?thread=' + encodeURIComponent(id) : ''));
+  const welcome = $('.lee-agent-welcome', log);
+  approvalCards.clear();
+  if ((d.turns || []).length) { log.innerHTML = ''; renderTurns(log, d.turns, titleText(d.title) || 'conversation'); }
+  else log.innerHTML = welcome ? welcome.outerHTML : '';
+  lee.agentView = 'live'; $('#agenthistory')?.classList.remove('active');
+  lee.agentLive = log.innerHTML; log.scrollTop = log.scrollHeight;
+  return d;
+}
+/* On a fresh process the active conversation is empty while turns from before the restart are
+   still on disk. Those are shown marked as out of context, with their own Resume: painting them
+   as this conversation would claim a context the model does not have. */
+async function carryAgentPrevious(log) {
+  const d = await api('/agent/history'), groups = d.sessions || [];
+  const group = groups.find(s => sessionCount(s));
+  if (!group) return;
+  const turns = await sessionTurns(group.id);
+  if (!turns.length) return;
+  const held = document.createElement('div');
+  renderTurns(held, turns, `previous conversation · ${sessionTime(group)}`);
+  held.insertAdjacentHTML('beforeend',
+    `<div class="lee-history-carry"><span>Not in the model's context yet.</span>` +
+    `<button class="lee-btn go" onclick="leeAgentResumeId('${esc(group.id)}')">Resume</button></div>`);
+  $('.lee-agent-welcome', log)?.remove();
+  log.prepend(...held.children);
+  lee.agentLive = log.innerHTML;
+  log.scrollTop = log.scrollHeight;
+}
 async function rehydrateAgentLive() {
   const log = $('#agentlog');
   if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentHydrating) return;
   lee.agentHydrating = true;
   try {
-    const d = await api('/agent/history'), groups = d.sessions || [];
-    const live = groups.find(s => s.id === d.current), carried = !(live?.turns || []).length;
-    const group = carried ? groups.find(s => (s.turns || []).length) : live;
-    if (!group) return;
-    const held = document.createElement('div');
-    renderTurns(held, group.turns, carried ? `previous conversation · ${sessionTime(group)}` : 'earlier in this conversation');
-    if (carried) held.insertAdjacentHTML('beforeend',
-      `<div class="lee-history-carry"><span>Not in the model's context yet.</span>` +
-      `<button class="lee-btn go" onclick="leeAgentResumeId('${esc(group.id)}')">Resume</button></div>`);
-    $('.lee-agent-welcome', log)?.remove();
-    log.prepend(...held.children);
-    lee.agentLive = log.innerHTML;
-    log.scrollTop = log.scrollHeight;
+    const d = await paintAgentThread(lee.agentThread || '');
+    if (!d || (d.turns || []).length) return;
+    await carryAgentPrevious(log);
   } catch (e) { /* an empty pane beats a boot that dies on a cold agent */ }
   finally { lee.agentHydrating = false; }
 }
@@ -4090,15 +4323,249 @@ async function leeAgentResume(group) {
     status(d.note || `resumed ${d.session}`, 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
 }
-async function leeAgentNew() { if (lee.agentBusy) return status('the model is already working', 'err'); try { await post('/agent/new', {}); lee.agentView = 'live'; lee.agentLive = ''; approvalCards.clear(); const log = $('#agentlog'); if (log) log.innerHTML = ''; $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus(); status('new conversation started', 'ok'); } catch (e) { status(String(e.message || e), 'err'); } }
+function rememberAgentThread() {
+  if (!lee.agentThread) return;
+  lee.agentThreadDrafts.set(lee.agentThread, $('#agentprompt')?.value || '');
+}
+/* A conversation with nothing said in it has no name to show, and its id is a bare timestamp that
+   reads as noise. Say what it is and when it started instead. */
+function threadName(t) {
+  const named = titleText(t.title); if (named) return named;
+  const at = /(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/.exec(t.id || '');
+  return at ? `new conversation · ${at[4]}:${at[5]}` : 'new conversation';
+}
+function threadLabel(t) {
+  return `${threadName(t)} · ${t.state}${t.unread ? ` · ${t.unread} new` : ''}${t.muted ? ' · muted' : ''}`;
+}
+/* One card per conversation, with its own controls, rather than a select plus four buttons in the
+   head that all acted on whichever one happened to be showing. */
+function paintAgentThreads(d) {
+  const rows = d.threads || [];
+  lee.agentThreadRows = rows; lee.agentThread = d.active || lee.agentThread;
+  const count = $('#agentthreadcount'); if (count) count.textContent = String(rows.length);
+  const waiting = (d.attention?.waiting || []).length, unread = d.attention?.unread || 0;
+  const toggle = $('#agentthreads');
+  if (toggle) {
+    toggle.classList.toggle('wants', !!waiting);
+    toggle.classList.toggle('unread', !waiting && !!unread);
+    toggle.title = waiting ? `${waiting} conversation(s) waiting for you`
+      : unread ? `${unread} unread turn(s) elsewhere` : 'every live conversation';
+  }
+  const list = $('#agentthreadlist');
+  if (list) {
+    list.innerHTML = rows.map(t => {
+      const live = t.id === d.active;
+      return `<article class="lee-thread-card${live ? ' active' : ''}${t.state === 'waiting' ? ' wants' : ''}"` +
+        ` role="option" aria-selected="${live}" tabindex="0" data-thread="${esc(t.id)}">` +
+        `<header><strong>${esc(threadName(t))}</strong>` +
+        `<span class="lee-thread-state ${esc(t.state)}">${esc(t.state)}</span></header>` +
+        `<footer><span>${t.unread ? `${t.unread} new` : (live ? 'on screen' : 'idle')}` +
+        `${t.muted ? ' · muted' : ''}</span><span class="lee-spacer"></span>` +
+        `<button type="button" data-thread-rename title="rename">rename</button>` +
+        `<button type="button" data-thread-mute title="${t.muted ? 'unmute' : 'silence notifications'}">${t.muted ? 'unmute' : 'mute'}</button>` +
+        `<button type="button" data-thread-reshape title="edit this conversation as a notebook">edit</button>` +
+        `<button type="button" data-thread-close class="warn" title="close">close</button></footer></article>`;
+    }).join('') || '<div class="lee-dim">no live conversations</div>';
+    list.insertAdjacentHTML('beforeend',
+      `<footer class="lee-thread-list-foot"><label title="browser notification when a background ` +
+      `conversation wants you"><input type="checkbox" id="agentnotify"${agentNotifyEnabled() ? ' checked' : ''}>` +
+      `<span>notify me about background conversations</span></label></footer>`);
+    $('#agentnotify', list).onchange = e => leeAgentNotifyToggle(e.target.checked);
+    bindAgentThreadCards(list);
+  }
+  paintAgentAttention(d.attention || {}, rows);
+}
+function bindAgentThreadCards(list) {
+  if (list._leeThreadsBound) return;
+  list._leeThreadsBound = true;
+  const cardId = e => e.target.closest('[data-thread]')?.dataset.thread || '';
+  list.addEventListener('click', e => {
+    const id = cardId(e); if (!id) return;
+    const button = e.target.closest('button');
+    if (!button) return leeAgentThreadOpen(id);
+    if (button.hasAttribute('data-thread-rename')) return leeAgentThreadRename(id);
+    if (button.hasAttribute('data-thread-mute')) return leeAgentThreadMute(id);
+    if (button.hasAttribute('data-thread-reshape')) return leeAgentReshape(id);
+    if (button.hasAttribute('data-thread-close')) return leeAgentThreadClose(id);
+  });
+  list.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const id = cardId(e); if (!id || e.target.closest('button')) return;
+    e.preventDefault(); leeAgentThreadOpen(id);
+  });
+}
+function leeAgentThreadsToggle(show) {
+  const list = $('#agentthreadlist'), toggle = $('#agentthreads'); if (!list) return;
+  const open = show === undefined ? list.hidden : !!show;
+  list.hidden = !open; toggle?.setAttribute('aria-expanded', String(open));
+  if (open) refreshAgentThreads().catch(() => {});
+}
+/* The conversation as a notebook, edited with the editor a person already knows, then read back.
+   Nothing is applied until they ask: saving the notebook changes no conversation by itself. */
+async function leeAgentReshape(id = lee.agentThread) {
+  if (!id) return status('open a conversation first', 'err');
+  let made;
+  try { made = await post('/agent/conversation/notebook', {thread: id, session: id}); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  lee.agentReshape = {thread: id, session: made.session, path: made.path, revision: made.revision};
+  await leeOpenFile(made.path);
+  status(`${made.parts} parts opened as a notebook · edit, save, then apply from the agent pane`, 'ok');
+  paintAgentReshapeBar();
+}
+function paintAgentReshapeBar() {
+  const bar = $('#agentattention'); const held = lee.agentReshape; if (!bar || !held) return;
+  bar.hidden = false;
+  bar.innerHTML = `<span>editing ${esc(held.session.replace(/^agent_/, 'conversation '))} as a notebook</span>` +
+    `<button type="button" data-reshape-apply>apply edits</button>` +
+    `<button type="button" data-reshape-cancel>discard edits</button>`;
+  $('[data-reshape-apply]', bar).onclick = leeAgentReshapeApply;
+  $('[data-reshape-cancel]', bar).onclick = () => { lee.agentReshape = null; bar.hidden = true; refreshAgentThreads(); };
+}
+async function leeAgentReshapeApply() {
+  const held = lee.agentReshape; if (!held) return;
+  // read the edits from disk, so an unsaved buffer cannot look like a deleted part
+  try { await post('/tabs/save-all'); } catch (_) {}
+  let out;
+  try { out = await post('/agent/conversation/reshape', held); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  lee.agentReshape = null; $('#agentattention').hidden = true;
+  await refreshAgentThreads();
+  status(`reshaped · ${out.discarded.length} dropped, ${out.rewritten.length} rewritten · ${out.branch_id}`, 'ok');
+}
+async function leeAgentThreadOpen(id) {
+  await leeAgentThreadSwitch(id);
+  leeAgentThreadsToggle(false);
+  $('#agentprompt')?.focus();
+}
+/* `status()` is footer-only and addressed to nothing, so it cannot carry this: a checkpoint in
+   another conversation is the one thing that costs a person time, and it needs naming and a way in. */
+function paintAgentAttention(attention, rows) {
+  const bar = $('#agentattention'); if (!bar) return;
+  const waiting = (attention.waiting || []).filter(id => id !== attention.active);
+  const working = Math.max(0, (attention.working || 0) - (rows.some(t => t.id === attention.active && t.state === 'working') ? 1 : 0));
+  document.title = agentDocumentTitle(attention);
+  if (!waiting.length) { bar.hidden = true; bar.innerHTML = ''; return; }
+  const named = waiting.map(id => {
+    const row = rows.find(t => t.id === id);
+    return `<button type="button" data-attention="${esc(id)}">${esc(row ? threadName(row) : id)}</button>`;
+  }).join('');
+  bar.hidden = false;
+  bar.innerHTML = `<span>${waiting.length === 1 ? 'A conversation is' : `${waiting.length} conversations are`} waiting for you</span>${named}`;
+  for (const button of $$('[data-attention]', bar)) button.onclick = () => leeAgentAttend(button.dataset.attention);
+  return working;
+}
+function agentDocumentTitle(attention) {
+  const base = lee.agentDocumentTitle ||= document.title.replace(/^[^·]*· /, '');
+  const bits = [];
+  if (attention.working) bits.push(`${attention.working}⚙`);
+  if ((attention.waiting || []).length) bits.push('(!)');
+  return bits.length ? `${bits.join(' ')} · ${base}` : base;
+}
+/* Switching to the conversation that asked, and then to the question it asked -- landing a person
+   in the right pane with no idea what wanted them is half an answer. */
+async function leeAgentAttend(id) {
+  await leeAgentThreadSwitch(id);
+  const card = $('.lee-approval-card') || $('[data-approval]');
+  if (card) { card.scrollIntoView({block: 'center'}); (card.querySelector('button') || card).focus(); }
+  else await pollApproval();
+}
+async function leeAgentThreadMute(id = lee.agentThread) {
+  if (!id) return;
+  const row = (lee.agentThreadRows || []).find(t => t.id === id);
+  try {
+    const d = await post('/agent/thread/mute', {thread: id, muted: !row?.muted});
+    if (d.thread?.problem) status(`mute was not saved: ${d.thread.problem}`, 'err');
+    await refreshAgentThreads();
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+async function refreshAgentThreads() {
+  const d = await api('/agent/threads'); paintAgentThreads(d); notifyAgentAttention(d); return d;
+}
+/* Off by default, and permission is asked for only when a person turns it on -- a prompt nobody
+   invited is the reason browsers stopped honouring them. Every state is terminal: unsupported and
+   denied disable delivery and say so once, rather than asking again on the next event. */
+function agentNotifyEnabled() { return localStorage.getItem('lee-agent-notify') === 'on'; }
+async function leeAgentNotifyToggle(on) {
+  if (!on) { localStorage.setItem('lee-agent-notify', 'off'); return status('notifications off', 'ok'); }
+  if (!('Notification' in window)) { localStorage.setItem('lee-agent-notify', 'off'); return status('this browser has no notifications', 'err'); }
+  let state = Notification.permission;
+  if (state === 'default') { try { state = await Notification.requestPermission(); } catch (_) { state = 'denied'; } }
+  if (state !== 'granted') { localStorage.setItem('lee-agent-notify', 'off'); return status('notifications are blocked for this site', 'err'); }
+  localStorage.setItem('lee-agent-notify', 'on'); status('notifications on', 'ok');
+}
+/* One notification per thing that happened, keyed by what happened -- replay, a reconnect and a
+   second tab all deliver the same terminal event, and a person should hear about it once. */
+function notifyAgentAttention(d) {
+  const seen = lee.agentNotified ||= new Set();
+  if (!agentNotifyEnabled() || !('Notification' in window) || Notification.permission !== 'granted') return;
+  for (const row of (d.threads || [])) {
+    if (row.id === d.active || row.muted) continue;
+    const key = `${row.id}:${row.state}:${row.unread}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!document.hidden) continue;
+    const name = threadName(row);
+    if (row.state === 'waiting') new Notification('Waiting for you', {body: name, tag: row.id});
+    else if (row.unread) new Notification('Turn finished', {body: name, tag: row.id});
+  }
+}
+window.leeAgentNotifyToggle = leeAgentNotifyToggle; window.agentNotifyEnabled = agentNotifyEnabled;
+async function leeAgentNew() {
+  rememberAgentThread();
+  try {
+    const d = await post('/agent/thread/new', {}); lee.agentThread = d.active; lee.agentBusy = false; lee.agentTitle = '';
+    approvalCards.clear(); const log = $('#agentlog'), input = $('#agentprompt');
+    if (log) { log.innerHTML = ''; lee.agentLive = ''; lee.agentView = 'live'; } if (input) input.value = '';
+    await refreshAgentThreads(); $('#agenthistory')?.classList.remove('active'); input?.focus(); status('new conversation started', 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+/* A conversation with a turn in flight keeps producing while it is off screen. Switching to it
+   paints its finished turns from the server first, then attaches to its feed from the last point
+   it settled, so the running turn arrives once and nothing already drawn is drawn twice. */
+async function leeAgentThreadSwitch(id) {
+  if (!id || id === lee.agentThread) return; rememberAgentThread();
+  try {
+    const d = await post('/agent/thread/switch', {thread:id});
+    if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); lee.agentStream = null; ++lee.agentStreamGen; }
+    const running = d.thread.state === 'working' || d.thread.state === 'waiting';
+    lee.agentThread = d.active; lee.agentBusy = running; lee.agentTitle = titleText(d.thread.title);
+    const input = $('#agentprompt'); if (input) input.value = lee.agentThreadDrafts.get(id) || '';
+    const live = await paintAgentThread(d.active);
+    await refreshAgentThreads(); updateAgentRunstrip();
+    if (running) { setAgentStatus('working'); agentListen(d.active, live?.seq || 0); }
+    else { setAgentStatus('ready'); await rehydrateAgentLive(); }
+    input?.focus();
+  } catch (e) { status(String(e.message || e), 'err'); await refreshAgentThreads(); }
+}
+async function leeAgentThreadRename(id = lee.agentThread) {
+  if (!id) return;
+  const row = (lee.agentThreadRows || []).find(t => t.id === id);
+  const title = await textDialog('Rename conversation', 'Conversation title', row ? titleText(row.title) : '');
+  if (title == null) return;
+  try { const d = await post('/agent/thread/title', {thread: id, title});
+        if (id === lee.agentThread) lee.agentTitle = titleText(d.thread.title);
+        await refreshAgentThreads(); }
+  catch (e) { status(String(e.message || e), 'err'); }
+}
+async function leeAgentThreadClose(id = lee.agentThread) {
+  if (!id) return; const closing = id;
+  try {
+    const d = await post('/agent/thread/close', {thread:closing}); lee.agentThreadDrafts.delete(closing);
+    paintAgentThreads(d); const log = $('#agentlog'); if (log) log.innerHTML = ''; if (d.active) { const active = d.active; lee.agentThread = ''; await leeAgentThreadSwitch(active); }
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
 // The rehydrated banner survives `restoreAgentLive`, which round-trips the pane through
 // innerHTML: an id in an onclick attribute outlives that, a bound listener does not.
 const leeAgentResumeId = id => leeAgentResume({id});
-window.leeAgentNew = leeAgentNew;
+window.leeAgentNew = leeAgentNew; window.leeAgentThreadsToggle = leeAgentThreadsToggle;
+window.leeAgentThreadOpen = leeAgentThreadOpen; window.leeAgentReshape = leeAgentReshape; window.leeAgentAttend = leeAgentAttend;
+window.leeAgentThreadMute = leeAgentThreadMute; window.leeAgentThreadSwitch = leeAgentThreadSwitch;
+window.leeAgentThreadRename = leeAgentThreadRename; window.leeAgentThreadClose = leeAgentThreadClose;
+window.refreshAgentThreads = refreshAgentThreads;
 window.leeAgentResume = leeAgentResume;
 window.leeAgentResumeId = leeAgentResumeId;
 window.leeAgentHistory = leeAgentHistory;
-window.rehydrateAgentLive = rehydrateAgentLive;
+window.rehydrateAgentLive = rehydrateAgentLive; window.paintAgentThread = paintAgentThread;
 
 async function leeAgentState() {
   try {
@@ -4304,7 +4771,7 @@ async function refreshProposalPreview(card) {
     const args = card._previewArgs || proposalArgs(card), tool = $('[data-tool]', card).value;
     card._previewArgs = null;
     host.innerHTML = '<div class="lee-proposal-loading"><i></i><i></i><i></i><span>Building dry-run preview</span></div>';
-    const d = await post('/agent/tool-preview', {tool, args});
+    const d = await post('/agent/tool-preview', {tool, args, thread: lee.agentThread || ''});
     host.innerHTML = previewContent(d.preview); error.textContent = '';
   } catch (e) { host.innerHTML = ''; error.textContent = e.message || String(e); }
 }
@@ -4330,7 +4797,7 @@ function checkpointResult(detail, ok, secs) {
   const pre = document.createElement('pre'); pre.textContent = readableDetail(detail);
   result.append(summary, pre); return result;
 }
-function showApproval(a) {
+function showApproval(a, destination = null) {
   if (!a?.id || approvalCards.has(a.id)) return;
   leePane('right', true); leeRight('agent');
   if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
@@ -4412,7 +4879,7 @@ function showApproval(a) {
           await post('/agent/run-policy', {policy, count: Number(count || 1)});
       }
       const session = ok && $('[data-run-policy]', card).value === 'approve_session';
-      await post('/agent/approve', {id: a.id, ok, note, session, tool, args});
+      await post('/agent/approve', {id: a.id, ok, note, session, tool, args, thread: lee.agentThread || ''});
       card.classList.remove('proposed'); card.classList.add(ok ? 'running' : 'refused'); if (changed) card.classList.add('edited');
       const checkpointState = $('.lee-checkpoint-title small', card);
       if (checkpointState) checkpointState.textContent = ok
@@ -4441,7 +4908,7 @@ function showApproval(a) {
     else if (e.key.toLowerCase() === 's') { e.preventDefault(); $('[data-note]', card).focus(); }
     else if (e.key === 'Escape') switchTab('preview');
   };
-  log.appendChild(card); approvalCards.set(a.id, card); card.focus(); log.scrollTop = log.scrollHeight;
+  (destination || log).appendChild(card); approvalCards.set(a.id, card); card.focus(); log.scrollTop = log.scrollHeight;
   refreshProposalPreview(card); updateAgentRunstrip({waiting: a.tool});
   status(`${a.tool} is waiting at a checkpoint`, 'err');
 }
@@ -4481,32 +4948,92 @@ function markTurnUndone(out, bar, files, revise) {
   return bar;
 }
 
+/* The pane is round-tripped through `innerHTML` by the history toggle, a rehydrate, a resume and
+   every thread switch, and a bound listener does not survive that -- the buttons went dead and
+   looked merely broken. So the turn these controls act on is written into the DOM and one
+   delegated listener on the log dispatches them, which outlives any number of round-trips. */
 function addResponseRevision(out, turnId, raw, capabilities = {}) {
   if (!turnId || !out || !raw.trim()) return;
   const bar = document.createElement('div'); bar.className = 'lee-response-revision';
+  const files = capabilities.files || [];
   const reviseWhy = capabilities.revisable ? 'Correct this answer and continue the next turn from your version'
     : 'Unavailable: this turn failed before an assistant response entered model history';
-  const undoWhy = capabilities.undoable ? `Restore ${capabilities.files.length} file${capabilities.files.length === 1 ? '' : 's'} changed by this turn`
+  const undoWhy = capabilities.undoable ? `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn`
     : 'Unavailable: this turn made no reversible file changes';
+  bar.dataset.turn = turnId;
+  bar.dataset.revisable = capabilities.revisable ? '1' : '';
+  bar.dataset.undoable = capabilities.undoable ? '1' : '';
+  bar.dataset.files = String(files.length);
   bar.innerHTML = `<span>turn ${esc(turnId.split(':').at(-1))}</span>` +
     `<button class="lee-btn" data-revise title="${esc(reviseWhy)}"${capabilities.revisable ? '' : ' disabled'}>Edit what agent remembers</button>` +
-    `<button class="lee-btn warn" data-undo title="${esc(undoWhy)}"${capabilities.undoable ? '' : ' disabled'}>Undo turn</button>`;
-  const undoButton = $('[data-undo]', bar), reviseButton = $('[data-revise]', bar);
-  undoButton.onclick = async () => {
+    `<button class="lee-btn" data-unsay title="Forget this turn: branch the conversation to just before it, keeping it in history">Undo from conversation</button>` +
+    `<button class="lee-btn warn" data-undo title="${esc(undoWhy)}"${capabilities.undoable ? '' : ' disabled'}>Restore files</button>`;
+  out.after(bar);
+  bindResponseRevisions(bar.closest('#agentlog') || $('#agentlog'));
+}
+
+/* What the reply said, recovered from the DOM rather than from a closure: `renderMarkdown` keeps
+   the markdown it rendered, which is the one copy that survives an `innerHTML` round-trip. */
+function turnReplyText(bar) {
+  const reply = bar.previousElementSibling;
+  return reply?.dataset?.markdown ?? reply?.textContent ?? '';
+}
+
+function responseTurn(bar) {
+  return {turnId: bar.dataset.turn || '', out: bar.previousElementSibling,
+          raw: turnReplyText(bar), files: Number(bar.dataset.files || 0),
+          revisable: !!bar.dataset.revisable, undoable: !!bar.dataset.undoable};
+}
+
+async function unsayTurn(bar) {
+  const {turnId, out, files, undoable, revisable} = responseTurn(bar);
+  const short = turnId.split(':').at(-1);
+  /* Undoing the conversation and restoring the files are separate promises. This one is only
+     about what the model remembers, so it must never claim to have changed anything on disk. */
+  const also = undoable && files
+    ? await confirmDialog('Undo from conversation',
+        `Branch this conversation to just before turn ${short}. Also restore ${files} file${files === 1 ? '' : 's'} it changed?`,
+        'undo and restore files', 'undo conversation only')
+    : await confirmDialog('Undo from conversation',
+        `Branch this conversation to just before turn ${short}. The turn stays in history.`,
+        'undo conversation');
+  if (!also) return;
+  try { await post('/agent/undo-turn', {thread: lee.agentThread, turn_id: turnId}); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  let restored = null;
+  if (also === true) {
+    try { restored = await post('/agent/rollback-turn', {turn_id: turnId, thread: lee.agentThread || ''}); }
+    catch (e) { status(`undone from the conversation; these files were not restored: ${e.message || e}`, 'err'); }
+  }
+  markTurnUndone(out, bar, (restored?.paths || []).length, revisable ? $('[data-revise]', bar) : null);
+  for (const path of restored?.paths || []) if (path === lee.path) await takeDiskVersion(path);
+  await refreshAgentThreads();
+  status(restored ? `undone from the conversation · ${(restored.paths || []).length} file(s) restored`
+                  : 'undone from the conversation; files left as they are', 'ok');
+}
+
+async function restoreTurnFiles(bar) {
+  const {turnId, out, revisable} = responseTurn(bar);
+  {
     try {
-      const tx = await api('/agent/turn-transaction?turn_id=' + encodeURIComponent(turnId));
+      const tx = await api('/agent/turn-transaction?turn_id=' + encodeURIComponent(turnId) +
+        (lee.agentThread ? '&thread=' + encodeURIComponent(lee.agentThread) : ''));
       const files = tx.transaction.files || [], warning = (tx.transaction.irreversible || []).length
         ? `\n\nCannot undo external effects: ${tx.transaction.irreversible.join(', ')}` : '';
-      if (!await confirmDialog('Undo agent turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
-      const d = await post('/agent/rollback-turn', {turn_id: turnId});
+      if (!await confirmDialog('Restore files changed by this turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
+      const d = await post('/agent/rollback-turn', {turn_id: turnId, thread: lee.agentThread || ''});
       // Marked before the files are reloaded: a reload that raises used to leave the reply
       // standing as though nothing had happened.
-      markTurnUndone(out, bar, (d.paths || []).length, capabilities.revisable ? reviseButton : null);
+      markTurnUndone(out, bar, (d.paths || []).length, revisable ? $('[data-revise]', bar) : null);
       for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
       status('turn changes rolled back', 'ok');
     } catch (e) { status(e.message || String(e), 'err'); }
-  };
-  reviseButton.onclick = () => {
+  }
+}
+
+function reviseTurn(bar) {
+  const {turnId, out, raw} = responseTurn(bar);
+  {
     const original = editableResponse(raw);
     const box = modal(`<div class="lee-mhead">Shape the next turn<span class="sub">edit what the agent remembers, not the files it touched</span></div>` +
       `<section class="lee-revision-explainer"><strong>You are correcting the conversation.</strong>` +
@@ -4532,14 +5059,28 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
       bar.innerHTML = `<span>Your edited answer now guides the next turn · ${esc(d.branch_id)}</span>`;
       box.remove(); status('edited answer is now the active conversation branch', 'ok');
     };
-  };
-  out.after(bar);
+  }
+}
+
+/* One listener, on the log element itself. Its contents are replaced constantly; it is not, so a
+   listener here outlives every repaint where a per-button binding did not. */
+function bindResponseRevisions(log) {
+  if (!log || log._leeRevisionsBound) return;
+  log._leeRevisionsBound = true;
+  log.addEventListener('click', e => {
+    const button = e.target.closest?.('.lee-response-revision button'); if (!button) return;
+    const bar = button.closest('.lee-response-revision');
+    if (!bar?.dataset.turn || button.disabled) return;
+    if (button.hasAttribute('data-unsay')) unsayTurn(bar);
+    else if (button.hasAttribute('data-undo')) restoreTurnFiles(bar);
+    else if (button.hasAttribute('data-revise')) reviseTurn(bar);
+  });
 }
 
 async function retryProposal(card, tool, args) {
   const copy = structuredClone(args), number = card.querySelectorAll('.lee-proposal-branch').length + 1;
   try {
-    const d = await post('/agent/retry-tool', {tool, args: copy});
+    const d = await post('/agent/retry-tool', {tool, args: copy, thread: lee.agentThread || ''});
     const row = document.createElement('section'); row.className = 'lee-proposal-branch';
     row.innerHTML = `<header><strong>Rerun ${number}</strong><span>${esc(tool)} completed with the inputs shown below</span>` +
       `<button class="lee-btn" data-edit-retry>Edit inputs and run</button></header>` +
@@ -4562,7 +5103,7 @@ async function retryProposal(card, tool, args) {
 }
 async function rollbackProposal(card, id) {
   try {
-    const d = await post('/agent/rollback-tool', {id});
+    const d = await post('/agent/rollback-tool', {id, thread: lee.agentThread || ''});
     card.classList.add('rolled-back'); $('[data-rollback]', card).disabled = true;
     status(`${d.path.split('/').pop()} rolled back`, 'ok');
     if (d.path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(d.path);
@@ -4583,7 +5124,7 @@ function updateAgentRunstrip(state = {}) {
   if ('runs' in state) lee.agentRuns = state.runs || [];
   const runs = lee.agentRuns || [], active = runs.length > 0;
   strip.hidden = !active && !lee.agentBusy && !state.waiting;
-  const force = $('#agentforce'); if (force) force.hidden = !active;
+  updateAgentSendMode(active || lee.agentBusy ? 'steer' : 'send');
   const rootLabel = state.waiting ? `Waiting · ${state.waiting}`
     : lee.queuedSteer ? 'Steering queued · applies after the current tool call'
     : state.run_policy ? `Running automatically · ${runPolicyLabel(state.run_policy)}`
@@ -4606,49 +5147,52 @@ async function pauseAgentAfterCurrent() {
   const d = await post('/agent/run-policy', {policy: 'pause'}); updateAgentRunstrip(d);
   status('agent will pause before the next call', 'ok');
 }
-/* The chip and the run strip are one fact, so they are set in one place. A steer answered
-   straight into a waiting checkpoint comes back already consumed -- it went to the model rather
-   than into the queue -- and saying "queued" about it would be a lie the next tick erases. */
-function setQueuedSteer(text, shown = '') {
+function updateAgentSendMode(mode = 'send') {
+  const button = $('#agentsend'); if (!button) return;
+  const label = mode === 'force' ? 'Stop and send next' : mode === 'steer' ? 'Steer after this call' : 'Send';
+  button.textContent = label; button.setAttribute('aria-label', label);
+  button.title = mode === 'send' ? 'send this as a turn'
+    : 'hand this to the model after the current call — shift-click to stop the run and send it now';
+}
+function setQueuedSteer(text, shown = '', cancel = false) {
   lee.queuedSteer = text || '';
-  const queue = $('#agentsteerqueue'); if (!queue) return;
-  if (!lee.queuedSteer) return void (queue.innerHTML = '');
-  queue.innerHTML = `<span>Steering queued</span><strong>${esc(shown || lee.queuedSteer)}</strong>` +
-                    `<button type="button">Cancel</button>`;
-  $('button', queue).onclick = async () => {
+  const log = $('#agentlog'), old = $('#agentqueuedsteer'); if (!log) return;
+  if (!lee.queuedSteer) {
+    if (cancel) old?.remove();
+    else if (old) { old.classList.remove('queued'); $('[data-cancel-steer]', old)?.remove(); }
+    return;
+  }
+  const card = old || userMessage(shown || lee.queuedSteer);
+  card.id = 'agentqueuedsteer'; card.classList.add('queued');
+  if (!old) log.appendChild(card);
+  let button = $('[data-cancel-steer]', card);
+  if (!button) { button = document.createElement('button'); button.type = 'button'; button.dataset.cancelSteer = '1'; button.textContent = 'Cancel'; card.appendChild(button); }
+  button.onclick = async () => {
     try { await post('/agent/steer', {cancel: true}); } catch (e) { return status(e.message || String(e), 'err'); }
-    setQueuedSteer(''); updateAgentRunstrip();
+    setQueuedSteer('', '', true); updateAgentRunstrip();
   };
+  log.scrollTop = log.scrollHeight;
 }
 async function leeQueueSteer() {
-  const input = $('#agentsteer'), text = input?.value.trim(); if (!text) return status('write a steering instruction first', 'err');
+  const input = $('#agentprompt'), text = input?.value.trim();
+  if (!text) return status('write what to steer towards first', 'err');
   try {
     const d = await post('/agent/steer', {text}); input.value = '';
-    setQueuedSteer(d.queued_steer || '', text);
-    updateAgentRunstrip(d);
+    setQueuedSteer(d.queued_steer || '', text); updateAgentRunstrip(d);
     status(d.queued_steer ? 'steering queued after the current tool call' : 'steering sent to the agent', 'ok');
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) { input.value = text; status(e.message || String(e), 'err'); }
 }
-window.leeQueueSteer = leeQueueSteer;
-
-/* Stop the target run before sending the draft as a new turn. */
 async function leeForceSteer() {
-  if (!lee.agentBusy) return status('nothing is running to force; ask in the prompt box instead', 'err');
-  const input = $('#agentsteer'), text = input?.value.trim(); if (!text) return status('write a steering instruction first', 'err');
+  const input = $('#agentprompt'), text = input?.value.trim();
+  if (!lee.agentBusy) return status('nothing is running to stop; send it as a turn instead', 'err');
+  if (!text) return status('write what to send next first', 'err');
+  updateAgentSendMode('force');
   try {
     const d = await post('/agent/steer', {text, force: true});
-    input.value = ''; setQueuedSteer(''); updateAgentRunstrip({runs: []});
-    const run = d.run || {};
-    if (!['cancelled', 'detached', 'terminated'].includes(run.state)) { input.value = text; return status(`run is ${run.state || 'cancelling'}; draft kept`, 'ok'); }
-    reseedSteer(text);
-    status(run.state === 'detached' ? 'provider detached; sending the saved draft' : 'run cancelled; sending the saved draft', 'ok');
-  } catch (e) { status(e.message || String(e), 'err'); }
-}
-window.leeForceSteer = leeForceSteer;
-
-function reseedSteer(text) {
-  const el = $('#agentprompt'); if (!el) return;
-  el.value = text; sendAgent();
+    lee.agentBusy = false; lee.agentRuns = []; input.value = text; setQueuedSteer('', '', true); updateAgentRunstrip({runs: []});
+    status(d.run?.state === 'detached' ? 'provider detached; sending the saved draft' : 'run cancelled; sending the saved draft', 'ok');
+    return sendAgent();
+  } catch (e) { input.value = text; updateAgentSendMode('steer'); status(e.message || String(e), 'err'); }
 }
 
 async function pollApproval() {
@@ -4662,6 +5206,8 @@ async function pollApproval() {
 // raises one, and a window nobody is looking at raises nothing.
 async function approvalLoop() {
   if (!document.hidden) await pollApproval();
+  // attention is about the conversations a person is *not* looking at, so it is polled even hidden
+  try { await refreshAgentThreads(); } catch (_) {}
   setTimeout(approvalLoop, document.hidden ? 5000 : lee.agentBusy ? 750 : 5000);
 }
 
@@ -4919,10 +5465,7 @@ function initAgentComposer() {
   /* A one-line box with a placeholder telling you to write in it takes Enter, or it is a box
      that eats what you typed. It is not in a form and has no default action, so nothing
      happened at all -- which read as steering being broken rather than never sent. */
-  $('#agentsteer')?.addEventListener('keydown', e => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault(); (e.shiftKey ? leeForceSteer : leeQueueSteer)();
-  });
+  const notify = $('#agentnotify'); if (notify) notify.checked = agentNotifyEnabled();
   const reasoning = $('#agentreasoning');
   if (reasoning) {
     reasoning.value = localStorage.getItem('lee-agent-reasoning') || 'auto';
@@ -4963,7 +5506,7 @@ function initAgentComposer() {
 async function sendAgentCommand(line) {
   const log = $('#agentlog'); log?.appendChild(userMessage(line));
   try {
-    const d = await post('/agent/command', {line});
+    const d = await post('/agent/command', {line, thread: lee.agentThread || ''});
     if (/^\/reload(?:\s|$)/.test(line)) lee.agentVocabulary = null;
     const out = document.createElement('div'); out.className = 'lee-reply lee-agent-reply'; log?.appendChild(out);
     renderMarkdown(out, d.text || ''); if (log) log.scrollTop = log.scrollHeight;
@@ -4984,6 +5527,72 @@ function drawTurnMedia(out, media) {
   }
 }
 
+function reduceAgentTimeline(events) {
+  const parts = [], actions = new Map(); let prose = null;
+  const seal = () => { prose = null; };
+  for (const event of events || []) {
+    const type = event.event || event.type, data = event.data || event;
+    if (type === 'chunk') {
+      if (!prose) { prose = {kind: 'prose', text: ''}; parts.push(prose); }
+      prose.text += data.text || ''; continue;
+    }
+    if (type !== 'activity') { seal(); parts.push({kind: type, data}); continue; }
+    const id = data.action_id || data.id;
+    /* An update to a call already on screen is not a new position in the timeline, so only a
+       call seen for the first time closes the open prose. A row with no id has no identity to
+       update, so it can only ever be new -- and it is still work a person did. */
+    let part = id ? actions.get(id) : null;
+    if (!part) {
+      seal();
+      part = {kind: 'activity', id: id || '', parent: data.parent_action_id || '', data, children: []};
+      if (id) actions.set(id, part);
+      parts.push(part);
+    }
+    else part.data = data;
+    if (!id) continue;
+    if (part.parent && actions.has(part.parent)) {
+      const parent = actions.get(part.parent), at = parts.indexOf(part);
+      if (at >= 0) parts.splice(at, 1);
+      if (!parent.children.includes(part)) parent.children.push(part);
+    }
+    for (const child of [...parts]) if (child.kind === 'activity' && child.parent === id) {
+      parts.splice(parts.indexOf(child), 1); if (!part.children.includes(child)) part.children.push(child);
+    }
+  }
+  return parts;
+}
+
+function agentTimeline(root) {
+  const actions = new Map(); let prose = null;
+  const seal = () => { prose = null; };
+  const activity = a => {
+    const id = a.action_id || a.id; if (!id) return null;
+    let held = actions.get(id), row = held?.row;
+    if (!row) {
+      seal();
+      row = document.createElement('details'); held = {row, parent: a.parent_action_id || '', children: null};
+      actions.set(id, held); root.appendChild(row);
+    }
+    held.parent = a.parent_action_id || held.parent;
+    const children = held.children; if (children) children.remove();
+    renderAgentStep(row, a); if (children) { row.appendChild(children); held.children = children; }
+    if (held.parent && actions.has(held.parent)) {
+      const parent = actions.get(held.parent);
+      parent.children ||= (() => { const box = document.createElement('div'); box.className = 'lee-agent-children'; parent.row.appendChild(box); return box; })();
+      parent.children.appendChild(row);
+    }
+    for (const child of actions.values()) if (child.parent === id && child.row.parentElement === root) {
+      held.children ||= (() => { const box = document.createElement('div'); box.className = 'lee-agent-children'; row.appendChild(box); return box; })();
+      held.children.appendChild(child.row);
+    }
+    return row;
+  };
+  return {root, actions, seal, activity, chunk(text) {
+    if (!prose) { prose = document.createElement('div'); prose.className = 'lee-reply lee-agent-reply lee-timeline-prose'; prose._text = ''; root.appendChild(prose); }
+    prose._text += text || ''; renderMarkdown(prose, prose._text); return prose;
+  }, append(node) { seal(); if (node) root.appendChild(node); return node; }};
+}
+
 function setAgentStatus(state, title) {
   const el = $('#agentstatus'); if (!el) return;
   el.classList.remove('working', 'ready', 'idle'); el.classList.add(state);
@@ -4996,11 +5605,11 @@ function setAgentStatus(state, title) {
 // The assistant's tools edit files on disk, so a turn can change what is on screen.
 // Activity, answer chunks, and final diffs stream independently; each tool row is updated
 // in place so pending work never remains on screen after that step has finished.
-async function sendAgent() {
-  if (lee.agentBusy) return status('the model is already working', 'err');
+async function sendAgent(force = false) {
+  if (lee.agentBusy) return force ? leeForceSteer() : leeQueueSteer();
   if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
   const el = $('#agentprompt'); if (!el || !el.value.trim()) return;
-  const q = el.value.trim(); el.value = ''; el.style.height = '64px'; closeAgentSuggest();
+  const q = el.value.trim(); closeAgentSuggest();
   if (q.startsWith('/')) {
     try { lee.agentVocabulary ||= await api('/agent/commands'); } catch (_) {}
     const head = q.slice(1).split(/\s/, 1)[0];
@@ -5008,34 +5617,50 @@ async function sendAgent() {
   }
   const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref),
                        ...lee.vaultRefs.values()];
+  const reasoning = $('#agentreasoning')?.value || 'auto';
+  let accepted;
+  try { accepted = await post('/agent/turn', {prompt: q, attachments, reasoning, thread: lee.agentThread || ''}); }
+  catch (e) { el.value = q; return status(e.message || String(e), 'err'); }
+  el.value = ''; el.style.height = '64px';
   lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
   lee.agentBusy = true; setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   log.appendChild(userMessage(q)); log.scrollTop = log.scrollHeight;
   status('model is working…');
+  agentListen(accepted.thread || lee.agentThread, accepted.seq);
+}
 
+/* One conversation's feed, painted into the live pane. `sendAgent` calls this for the turn it
+   just started; a thread switch calls it for a turn already running, replaying from the feed's
+   last settled point so only the turn in flight is drawn again. */
+function agentListen(thread, since) {
+  const log = $('#agentlog'); if (!log) return;
+  $('.lee-agent-welcome', log)?.remove();
   const progress = agentProgress(log);
-  const acts = document.createElement('div');
-  acts.className = 'lee-agent-steps';
-  const out = document.createElement('div');
-  out.className = 'lee-reply lee-agent-reply';
-  log.appendChild(acts); log.appendChild(out); log.scrollTop = log.scrollHeight;
-  const body = out, seen = new Map(); let raw = '', finished = false;
+  const timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
+  log.appendChild(timelineRoot); log.scrollTop = log.scrollHeight;
+  const timeline = agentTimeline(timelineRoot), seen = timeline.actions;
+  let raw = '', runDone = false, lastSeq = since, body = null;
+  if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); }
+  const generation = ++lee.agentStreamGen; let es, reconnecting = false;
+  const reconnect = ms => { if (reconnecting || generation !== lee.agentStreamGen) return; reconnecting = true; setTimeout(() => { reconnecting = false; if (generation === lee.agentStreamGen) connect(); }, ms); };
+  const connect = () => {
+    es = new EventSource('/agent/stream?since=' + lastSeq + '&follow=1' +
+      (thread ? '&thread=' + encodeURIComponent(thread) : '')); lee.agentStream = es;
+    /* EventSource fires `error` for a dropped socket as well as for a frame the server named
+       `error`, and the dropped one carries no data. Parsing it would throw before the handler. */
+    const dedupe = fn => ev => {
+      if (typeof ev.data !== 'string') return;
+      let d; try { d = JSON.parse(ev.data); } catch (_) { return; }
+      if (d.seq <= lastSeq) return;
+      lastSeq = d.seq; fn(d, ev);
+    };
 
-  const reasoning = $('#agentreasoning')?.value || 'auto';
-  const es = new EventSource('/agent/stream?prompt=' + encodeURIComponent(q) +
-    '&attachments=' + encodeURIComponent(JSON.stringify(attachments)) +
-    '&reasoning=' + encodeURIComponent(reasoning));
-
-  es.addEventListener('activity', ev => {
-    const a = JSON.parse(ev.data);
-    let row = seen.get(a.id);
-    if (!row) {
-      row = document.createElement('details'); acts.appendChild(row); seen.set(a.id, row);
-      row.animate([{opacity: 0, transform: 'translateY(4px)'}, {opacity: 1, transform: 'translateY(0)'}],
-                  {duration: 220, easing: 'cubic-bezier(.16,1,.3,1)'});
-    }
-    renderAgentStep(row, a); refreshAgentBudget();
+  es.addEventListener('activity', dedupe(a => {
+    const fresh = !seen.has(a.action_id || a.id), row = timeline.activity(a);
+    if (fresh && row) row.animate([{opacity: 0, transform: 'translateY(4px)'}, {opacity: 1, transform: 'translateY(0)'}],
+      {duration: 220, easing: 'cubic-bezier(.16,1,.3,1)'});
+    refreshAgentBudget();
     const lifecycle = approvalCards.get(a.action_id || a.id);
     if (lifecycle && a.done) {
       lifecycle.classList.remove('running', 'proposed'); lifecycle.classList.add(a.ok ? 'complete' : 'failed');
@@ -5055,38 +5680,68 @@ async function sendAgent() {
     if (a.done && a.ok && a.kind === 'edit' && a.args?.path) scheduleAgentFileReload(a.args.path);
     progress.phase(a.done ? 'Reviewing tool results' : (a.summary || `Running ${a.tool}`));
     log.scrollTop = log.scrollHeight;
-  });
+  }));
 
-  es.addEventListener('chunk', ev => {
-    raw += JSON.parse(ev.data).text || '';
+  /* A turn already in flight when this pane attached: its prompt is in the feed, not on screen.
+     `sendAgent` replays from its own user event, so it never arrives twice. */
+  es.addEventListener('user', dedupe(d => {
+    log.insertBefore(userMessage(d.text || ''), timelineRoot); log.scrollTop = log.scrollHeight;
+  }));
+
+  es.addEventListener('chunk', dedupe(d => {
+    raw += d.text || ''; body = timeline.chunk(d.text || '');
     progress.phase('Writing response');
-    renderMarkdown(body, raw);
     log.scrollTop = log.scrollHeight;
-  });
+  }));
 
-  es.addEventListener('approval', ev => { progress.phase('Waiting for your approval'); showApproval(JSON.parse(ev.data)); });
-  es.addEventListener('execution', ev => updateAgentRunstrip(JSON.parse(ev.data)));
-  es.addEventListener('run', ev => {
-    const run = JSON.parse(ev.data); lee.agentRuns = (lee.agentRuns || []).filter(r => r.id !== run.id);
-    lee.agentBusy = false; setAgentStatus('ready'); progress.finish(run.state !== 'detached'); updateAgentRunstrip({runs: lee.agentRuns});
-    status(run.state === 'detached' ? 'provider detached; no further output will be used' : run.state, 'ok'); es.close();
-  });
-  es.addEventListener('compaction', ev => {
-    const d = JSON.parse(ev.data), note = document.createElement('details'); note.className = 'lee-compaction-event';
+  es.addEventListener('approval', dedupe(d => { timeline.seal(); progress.phase('Waiting for your approval'); showApproval(d, timelineRoot); }));
+  es.addEventListener('execution', dedupe(d => updateAgentRunstrip(d)));
+  es.addEventListener('state', dedupe(d => updateAgentRunstrip(d)));
+  es.addEventListener('steer', dedupe(d => {
+    timeline.seal(); if ('queued_steer' in d) setQueuedSteer(d.queued_steer || '', d.text || '');
+  }));
+  es.addEventListener('title', dedupe(d => { if (d.title) lee.agentTitle = titleText(d.title); }));
+  /* Only a stopped run is announced here. `done` still follows and owns the end of the turn, so
+     this says what happened to the run and touches nothing `done` will set. */
+  es.addEventListener('run', dedupe(run => {
+    timeline.seal(); lee.agentRuns = (lee.agentRuns || []).filter(r => r.id !== run.id);
+    updateAgentRunstrip({runs: lee.agentRuns});
+    status(run.state === 'detached' ? 'provider detached; no further output will be used' : run.state, 'ok');
+  }));
+  es.addEventListener('compaction', dedupe(d => {
+    timeline.seal(); const note = document.createElement('details'); note.className = 'lee-compaction-event';
     note.innerHTML = `<summary>Context compacted automatically · ${esc(d.strategy)} · ${esc(d.note)}</summary><pre>${esc(d.text || '')}</pre>`;
-    acts.appendChild(note); progress.phase('Context compacted; continuing from checkpoint');
-  });
+    timelineRoot.appendChild(note); progress.phase('Context compacted; continuing from checkpoint');
+  }));
 
-  es.addEventListener('error', ev => {
-    try { raw += JSON.parse(ev.data).error || ''; renderMarkdown(body, raw); } catch (_) {}
-  });
+  es.addEventListener('error', dedupe((d, ev) => {
+    ev.stopImmediatePropagation(); raw += d.message || ''; body = timeline.chunk(d.message || '');
+  }));
+  /* The feed no longer holds what this tab missed, so the turns come from history instead --
+     `/agent/transcript` carries executed cells, never the conversation. Nothing on screen is
+     cleared until the replacement is in hand. */
+  es.addEventListener('resync', dedupe(async d => {
+    es.close();
+    try {
+      const history = await api('/agent/history' + (thread ? '?thread=' + encodeURIComponent(thread) : '')),
+            sessions = history.sessions || [];
+      const group = sessions.find(s => s.id === thread) || sessions.find(s => s.id === history.current);
+      const turns = await sessionTurns(group?.id);
+      if (!turns.length) throw new Error('no recorded turns for this conversation');
+      log.innerHTML = ''; renderTurns(log, turns, 'Recovered conversation');
+      log.scrollTop = log.scrollHeight; lastSeq = d.latest; reconnect(0);
+    } catch (e) {
+      status('conversation replay failed; retrying without clearing the transcript', 'err');
+      reconnect(1000);
+    }
+  }));
 
-  es.addEventListener('done', async ev => {
-    finished = true; lee.agentBusy = false; lee.agentRuns = []; setAgentStatus('ready'); es.close(); progress.finish(true); updateAgentRunstrip({runs: []}); refreshAgentBudget();
-    const d = JSON.parse(ev.data);
-    addResponseRevision(out, d.turn_id, raw, d.capabilities || {});
-    drawTurnMedia(out, d.media);
-    const usage = usageMeta(d.usage, d.usage_label, d.model); if (usage) out.after(usage);
+  es.addEventListener('done', dedupe(async d => {
+    timeline.seal(); runDone = true; lee.agentBusy = false; lee.agentRuns = []; setAgentStatus('ready'); progress.finish(true); updateAgentRunstrip({runs: []}); refreshAgentBudget();
+    // a turn that ended on a call has no prose block, and its pictures are still its own
+    const closing = body || timelineRoot;
+    addResponseRevision(closing, d.turn_id, raw, d.capabilities || {}); drawTurnMedia(closing, d.media);
+    const usage = usageMeta(d.usage, d.usage_label, d.model); if (usage) timelineRoot.appendChild(usage);
     for (const e of (d.edits || []))
       agentLog(`<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
                `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
@@ -5095,14 +5750,14 @@ async function sendAgent() {
     if ((d.problems || []).length) status(d.problems[d.problems.length - 1], 'err');
     else status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
     await reloadAfterEdits(d.edits || []);
-  });
+  }));
 
-  // A dropped connection must clear both the functional busy lock and its visual state.
   es.onerror = () => {
-    if (finished) return;
-    lee.agentBusy = false; lee.agentRuns = []; setAgentStatus('ready'); progress.finish(false); updateAgentRunstrip({runs: []});
-    status('the model stream ended before it returned a result', 'err'); es.close();
+    if (es._leeStopped || generation !== lee.agentStreamGen) return;
+    es.close(); status(runDone ? 'connection lost; restoring conversation updates…' : 'connection lost; replaying the running turn…', 'busy'); reconnect(500);
   };
+  };
+  connect();
 }
 
 /* Reloading the open tab is what makes an AI edit visible without a refresh -- but only
@@ -5272,11 +5927,66 @@ function leeLeft(which = 'files') {
   else { setScope('files'); requestAnimationFrame(() => $('#filetree')?.focus()); }
 }
 window.leeLeft = leeLeft;
+/* ---- expand: one slot, one mode, one writer ----
+
+   `wide` gives the pane the dominant share of the grid it already sits in; `full` lifts it over
+   the whole shell. Only one slot is expanded at a time. Everything expansion touches -- the
+   `#shell` classes, the agent panel's timeline layout, every button label -- is written by
+   `leeSyncExpand` from the stored value and from nothing else, so the four cannot disagree.
+   Closing the pane clears it: a wide grid track behind a hidden pane is the dead space that a
+   boolean nobody else knew about used to leave. */
+const PANE_HIDDEN = {left: 'no-left', right: 'no-right', bottom: 'no-bottom'};
+const EXPAND_MODES = ['wide', 'full'];
+
+function leeExpandState() {
+  const [which, mode] = (localStorage.getItem('lee-expand') || '').split(':');
+  return PANE_HIDDEN[which] && EXPAND_MODES.includes(mode) ? {which, mode} : {which: '', mode: ''};
+}
+function leeSyncExpand() {
+  const shell = $('#shell'); if (!shell) return;
+  let {which, mode} = leeExpandState();
+  // A pane hidden by a reload, or by anything that forgot to say so, cannot stay expanded.
+  if (which && shell.classList.contains(PANE_HIDDEN[which])) { which = mode = ''; localStorage.setItem('lee-expand', ''); }
+  for (const slot in PANE_HIDDEN) shell.classList.toggle('expand-' + slot, slot === which);
+  for (const m of EXPAND_MODES) shell.classList.toggle('expand-' + m, m === mode);
+  $('.lee-agent')?.classList.toggle('timeline-workspace', which === 'right' && !!mode);
+  $$('[data-pane-expand]').forEach(b => {
+    const slot = b.dataset.paneExpand, own = slot === which ? mode : '';
+    const label = own === 'wide' ? 'full screen' : own === 'full' ? 'restore' : 'expand';
+    b.textContent = b.dataset.paneExpandIcon ? (own === 'full' ? '\u2921' : '\u2922') : label;
+    b.title = `${label} the ${slot} pane`;
+    b.setAttribute('aria-label', `${label} the ${slot} pane`);
+    b.setAttribute('aria-pressed', String(!!own));
+  });
+}
+function leeExpand(which = '', mode = '') {
+  const wanted = PANE_HIDDEN[which] && EXPAND_MODES.includes(mode) ? which + ':' + mode : '';
+  if (wanted) leePane(which, true);
+  localStorage.setItem('lee-expand', wanted);
+  leeSyncExpand();
+  requestAnimationFrame(() => lee.term?.refit());
+}
+function leeExpandPane(which) {
+  const cur = leeExpandState(), mode = cur.which !== which ? 'wide' : cur.mode === 'wide' ? 'full' : '';
+  leeExpand(which, mode);
+  status(`${which} pane ${mode === 'wide' ? 'expanded' : mode === 'full' ? 'full screen' : 'restored'}`);
+}
+window.leeExpand = leeExpand; window.leeExpandPane = leeExpandPane;
+
+// Full screen hides the layout you would otherwise click back from, so Escape is the way out.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || $$('.lee-modal').length || leeExpandState().mode !== 'full') return;
+  e.preventDefault(); e.stopPropagation(); leeExpand('');
+}, true);
+
 function leePane(which, show = null, persist = true) {
   const shell = $('#shell'); if (!shell) return;
-  const cls = which === 'left' ? 'no-left' : which === 'right' ? 'no-right' : 'no-bottom';
+  const cls = PANE_HIDDEN[which] || 'no-bottom';
   const hidden = show === null ? !shell.classList.contains(cls) : !show;
   shell.classList.toggle(cls, hidden);
+  // Closing the pane that is expanded: without this its grid track stays wide and the
+  // hidden pane keeps the room, which is the dead space this used to leave behind.
+  if (hidden && leeExpandState().which === which) leeExpand('');
   if (matchMedia('(max-width: 1100px)').matches && which !== 'bottom') {
     shell.classList.toggle('mobile-' + which, !hidden);
     if (!hidden) {
@@ -5288,6 +5998,7 @@ function leePane(which, show = null, persist = true) {
   // An auto-close is not a preference: the pane was got out of the way for one keystroke, and
   // recording it as hidden would mean it never came back after a reload.
   if (persist) localStorage.setItem('lee-pane-' + which, hidden ? 'hidden' : 'shown');
+  leeSyncExpand();
   if (!hidden && which === 'bottom') requestAnimationFrame(() => lee.term?.refit());
 }
 window.leePane = leePane;
@@ -5682,11 +6393,7 @@ try {
 } catch (e) {}
 
 function leeTermExpand() {
-  const centre = $('.lee-centre'); if (!centre) return;
-  leeDock('term');
-  centre.classList.toggle('term-expanded');
-  const expanded = centre.classList.contains('term-expanded');
-  $('#termexpand').textContent = expanded ? 'restore' : 'expand';
+  leeDock('term'); leeExpandPane('bottom');
   requestAnimationFrame(() => { lee.term?.refit(); lee.term?.focus(); });
 }
 window.leeTermExpand = leeTermExpand;
@@ -5699,7 +6406,7 @@ function closeTerm(id = lee.activeTerm) {
   if (next) switchTerm(next);
   else {
     paintTermTabs(); $('#shell').classList.remove('show-term'); leeDock('exec');
-    $('.lee-centre')?.classList.remove('term-expanded'); setScope('editor');
+    leeExpand(''); setScope('editor');
   }
   // A shell or lazygit may have changed the working tree under us.
   refreshFileTree(undefined, false).catch(e => status(String(e.message || e), 'err'));
@@ -5777,14 +6484,16 @@ async function editorSettings(languageScope = null) {
         originalTheme = readTheme();
   let saved = false, previewView = null;
   const selected = (value, current) => value === current ? ' selected' : '';
-  const checked = (section, key) => (section === 'editor' ? lee.editorPrefs : section === 'files' ? lee.filePrefs :
-    section === 'workbench' ? lee.workbenchPrefs : lee.debugPrefs)[key] ? ' checked' : '';
+  const prefsOf = section => section === 'editor' ? lee.editorPrefs : section === 'files' ? lee.filePrefs :
+    section === 'workbench' ? lee.workbenchPrefs : section === 'backups' ? (lee.backupPrefs || {}) :
+    section === 'agent' ? (lee.agentPrefs || {}) : lee.debugPrefs;
+  const checked = (section, key) => prefsOf(section)[key] ? ' checked' : '';
   const fontSelect = CODE_FONTS.map(([name, detail]) =>
     `<option value="${esc(name)}"${selected(name, lee.editorPrefs.fontFamily)}>${esc(name)} — ${esc(detail)}</option>`).join('');
   const field = (section, key, label, input, help='') => `<label>${label}${input.replace('data-setting', `data-pref-section="${section}" data-pref="${key}"`)}${help ? `<small>${help}</small>` : ''}</label>`;
   const check = (section, key, label, help='') => `<label class="lee-settings-toggle"><input type="checkbox" data-pref-section="${section}" data-pref="${key}"${checked(section,key)}><span>${label}${help ? `<small>${help}</small>` : ''}</span></label>`;
   const select = (section, key, label, values, help='') => field(section,key,label,
-    `<select class="lee-select" data-setting>${values.map(([value,text]) => `<option value="${value}"${selected(value,(section==='editor'?lee.editorPrefs:section==='files'?lee.filePrefs:section==='workbench'?lee.workbenchPrefs:lee.debugPrefs)[key])}>${text}</option>`).join('')}</select>`,help);
+    `<select class="lee-select" data-setting>${values.map(([value,text]) => `<option value="${value}"${selected(value,prefsOf(section)[key])}>${text}</option>`).join('')}</select>`,help);
   const swatch = (family, mode) => {
     const [bg, bg1, accent] = THEMES[family][themeMode(mode)];
     return `background: linear-gradient(135deg, ${bg} 0 42%, ${bg1} 42% 62%, ${accent} 62%)`;
@@ -5803,6 +6512,8 @@ async function editorSettings(languageScope = null) {
     `<div class="lee-settings-layout"><nav class="lee-settings-nav" aria-label="Settings sections">` +
     `<button class="active" data-settings-page="editor">Text editor</button><button data-settings-page="appearance">Appearance</button>` +
     `<button data-settings-page="files">Files & save</button><button data-settings-page="debug">Run & debug</button>` +
+    `<button data-settings-page="agent">Agent</button>` +
+    `<button data-settings-page="backups">Backups</button>` +
     `<button data-settings-page="keys">Keybindings</button></nav><div class="lee-settings-content">` +
     `<section data-settings-section="editor"><div class="lee-settings-title"><span>Text editor</span><kbd>${esc(displayChord(lee.keys.find(k=>k.action==='settings')?.key||'mod+,'))}</kbd></div>` +
     `<p>Editing behavior updates live. Portable values are saved as JSON, not trapped in this browser.</p>` +
@@ -5846,6 +6557,33 @@ async function editorSettings(languageScope = null) {
     `<section data-settings-section="debug" hidden><h3>Run & debug</h3><p>Defaults for notebook DAP and direct debugpy sessions.</p><div class="lee-settings-checks">` +
     `${check('debug','justMyCode','Just my code')}${check('debug','stopOnEntry','Stop on entry')}${check('debug','subProcess','Debug subprocesses')}${check('debug','showInlineValues','Inline paused values')}${check('debug','breakOnRaised','Break on raised exceptions')}${check('debug','breakOnUncaught','Break on uncaught exceptions')}</div>` +
     `<div class="lee-setting-row"><span><strong>debugpy</strong><small>Python files, modules, tests, applications, and attach sessions use the selected project interpreter.</small></span><button class="lee-btn" data-open-runs>Run configurations…</button></div></section>` +
+    `<section data-settings-section="agent" hidden><h3>Agent</h3>` +
+    `<p>Where this agent's durable conversations live. Ramabana writes the log, the session names, ` +
+    `the branches and the plans from the same code Leela drives, so one folder can serve both: ` +
+    `point this at Ramabana's config dir and the conversations you had in the CLI are the ` +
+    `conversations you see here.</p>` +
+    `<div class="lee-settings-grid"><label class="wide">Conversation folder` +
+    `<input class="lee-input" data-pref-section="agent" data-pref="configFolder" spellcheck="false" ` +
+    `placeholder="${esc(lee.settingsMeta?.paths?.user?.replace(/settings\.json$/, '') || '')}" ` +
+    `value="${esc(lee.agentPrefs?.configFolder || '')}">` +
+    `<small>Empty means Leela's own config dir, which is where it has always been. ` +
+    `Backups and the pre-write copy follow this folder. Conversations already open keep the folder ` +
+    `they started in, so restart Leela after changing it.</small></label></div></section>` +
+    `<section data-settings-section="backups" hidden><h3>Backups</h3>` +
+    `<p>Dated copies of what cannot be rebuilt: conversations and their titles, branches, notes, ` +
+    `workspaces, keymaps and settings. A copy is also taken before anything overwrites the ` +
+    `conversation log, whatever the cadence says.</p>` +
+    `<div class="lee-settings-group"><div class="lee-settings-grid">` +
+    select('backups','cadence','Cadence',[['off','Off (pre-write copies only)'],['hourly','Hourly'],['sixhourly','Every six hours'],['daily','Daily'],['weekly','Weekly']],'How often a dated copy is taken while Leela is running.') +
+    field('backups','keepNewest','Keep newest',`<input class="lee-input" data-setting type="number" min="1" max="50" value="${lee.backupPrefs?.keepNewest??5}">`) +
+    `<label class="wide">Age bands (days)<input class="lee-input" data-pref-section="backups" data-pref="ageBands" value="${esc(lee.backupPrefs?.ageBands||'2,14,60')}"><small>One copy is kept inside each band, so a mistake noticed weeks later still has something to go back to.</small></label>` +
+    `</div></div>` +
+    `<div class="lee-settings-group"><h4>What a copy holds</h4>` +
+    `<div class="lee-settings-checks" data-backup-entries>reading…</div>` +
+    `<small>Anything unticked is not copied. Journals alone are tens of megabytes; the vault is a live database outside the config dir.</small></div>` +
+    `<div class="lee-setting-row"><span><strong>Take one now</strong><small data-backup-dir></small></span>` +
+    `<button class="lee-btn" data-backup-now>Back up now</button></div>` +
+    `<div class="lee-settings-group"><h4>Restore</h4><div data-backup-list class="lee-backup-list">reading…</div></div></section>` +
     `<section data-settings-section="keys" hidden><h3>Keybindings</h3><p>Every command can be rebound from the same single-source keymap.</p><button class="lee-btn" data-open-keys>Edit keybindings…</button></section>` +
     `</div></div><div class="lee-mfoot"><button class="lee-btn" data-reset>Reset this section</button><span class="lee-spacer"></span><button class="lee-btn" data-cancel>Cancel</button><button class="lee-btn go" data-save>Save settings</button></div>`,
     null,()=>{if(previewView)LeeCM.destroy(previewView);if(!saved){applyEditorPrefs(original);lee.filePrefs=originalFiles;lee.workbenchPrefs=originalWorkbench;lee.debugPrefs=originalDebug;applyTheme(originalTheme);}},
@@ -5853,9 +6591,11 @@ async function editorSettings(languageScope = null) {
   api('/lsp/status').then(d=>{const el=$('[data-lsp-state]',m);if(el){el.textContent=d.available?(d.alive?'connected':'available'):'optional';el.title=d.note||'';}}).catch(()=>{});
   await document.fonts.ready;
   previewView=createEditor($('#settingspreview',m),{doc:'# Programming ligatures and line guides\nfrom pathlib import Path\n\ndef compare(left: int, right: int) -> bool:\n    return left != right and left <= 100  # => result\n',lang:'python',lineNums:true});
-  const sections={editor:lee.editorPrefs,files:lee.filePrefs,workbench:lee.workbenchPrefs,debug:lee.debugPrefs};
+  const sections={editor:lee.editorPrefs,files:lee.filePrefs,workbench:lee.workbenchPrefs,debug:lee.debugPrefs,backups:lee.backupPrefs||{},agent:lee.agentPrefs||{}};
   const initialSections=Object.fromEntries(Object.entries(sections).map(([name,values])=>[name,{...values}]));
-  const update=()=>{$$('[data-pref]',m).forEach(input=>{const target=sections[input.dataset.prefSection];target[input.dataset.pref]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;});applyEditorPrefs(sections.editor);LeeCM.configure(previewView,sections.editor);};
+  const update=()=>{$$('[data-pref]',m).forEach(input=>{const target=sections[input.dataset.prefSection];target[input.dataset.pref]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;});
+    const entries=$$('[data-backup-entry]',m); if(entries.length)sections.backups.include=entries.filter(b=>b.checked).map(b=>b.dataset.backupEntry);
+    applyEditorPrefs(sections.editor);LeeCM.configure(previewView,sections.editor);};
   $$('[data-pref]',m).forEach(input=>input.addEventListener('input',update));
   let page='editor';
   $$('[data-settings-page]',m).forEach(button=>button.onclick=()=>{page=button.dataset.settingsPage;$$('[data-settings-page]',m).forEach(x=>x.classList.toggle('active',x===button));$$('[data-settings-section]',m).forEach(x=>x.hidden=x.dataset.settingsSection!==page);});
@@ -5874,7 +6614,43 @@ async function editorSettings(languageScope = null) {
   $$('[data-theme-density]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,density:b.dataset.themeDensity});paintPicker();});
   $('[data-reset]',m).onclick=async()=>{const section=page==='appearance'?'editor':page; if(!sections[section])return;await post('/settings/reset',{scope:scope.value,section,language:language.value});saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
   $('[data-cancel]',m).onclick=()=>m.remove();
-  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>value!==initialSections[section][key]));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})`,'ok');};
+  const same=(a,b)=>Array.isArray(a)||Array.isArray(b)?JSON.stringify(a)===JSON.stringify(b):a===b;
+  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})`,'ok');};
+  /* Restoring is a write over live state, so the list says what each copy holds and asks first. */
+  const paintBackups=async()=>{
+    const list=$('[data-backup-list]',m); if(!list) return;
+    let d; try{ d=await api('/backups'); }catch(e){ list.textContent=String(e.message||e); return; }
+    $('[data-backup-dir]',m).textContent=d.dir;
+    /* Painted once: a repaint after a run would drop ticks the person has not saved yet. */
+    const chooser=$('[data-backup-entries]',m);
+    if(chooser&&!$('[data-backup-entry]',chooser)){
+      chooser.innerHTML=(d.entries||[]).map(e=>`<label class="lee-settings-toggle">`+
+        `<input type="checkbox" data-backup-entry="${esc(e.name)}"${e.chosen?' checked':''}>`+
+        `<span>${esc(e.label)}<small>${esc(e.name)}</small></span></label>`).join('');
+      chooser.addEventListener('change',update);
+    }
+    if(!d.backups.length){ list.innerHTML='<div class="lee-dim">no copies yet</div>'; return; }
+    list.innerHTML=d.backups.map(b=>`<div class="lee-backup-row"><span><strong>${esc(b.name)}</strong>`+
+      `<small>${b.files} file${b.files===1?'':'s'} · ${Math.max(1,Math.round(b.bytes/1024))} KB`+
+      `${b.archived?'':' · uncompressed'}${b.reason?` · ${esc(b.reason)}`:''}`+
+      `${b.entries&&b.entries.length?`<br>${esc(b.entries.join(', '))}`:''}</small></span>`+
+      `<button class="lee-btn" data-restore="${esc(b.name)}">restore</button></div>`).join('');
+    $$('[data-restore]',list).forEach(button=>button.onclick=async()=>{
+      const name=button.dataset.restore;
+      if(!await confirmDialog('Restore this backup',
+        `Put the copy from ${name} back over the current conversations, notes and settings? `+
+        `A copy of what it replaces is kept first.`,'restore')) return;
+      try{ const out=await post('/backups/restore',{name});
+           status(`restored ${out.restored.length} item(s) from ${name} · ${out.note}`,'ok'); }
+      catch(e){ status(String(e.message||e),'err'); }
+    });
+  };
+  $('[data-backup-now]',m).onclick=async()=>{
+    try{ const out=await post('/backups/run',{reason:'asked for'});
+         status(out.name?`backed up as ${out.name}`:'nothing to back up yet','ok'); await paintBackups(); }
+    catch(e){ status(String(e.message||e),'err'); }
+  };
+  paintBackups();
   $('[data-open-keys]',m).onclick=()=>{saved=true;m.remove();editKeys();};
   $('[data-open-runs]',m).onclick=()=>{saved=true;m.remove();editRuns();};
 }
@@ -8266,6 +9042,19 @@ async function leeClipToVault() {
 }
 window.leeClipToVault = leeClipToVault;
 /* ------------------------------------------------------------------ overlays */
+function modalViewport() {
+  const v = window.visualViewport;
+  return {left: v?.offsetLeft || 0, top: v?.offsetTop || 0, width: v?.width || innerWidth, height: v?.height || innerHeight};
+}
+function fitModal(m) {
+  const box = $('.lee-modalbox', m), v = modalViewport(), gap = 8; if (!box) return;
+  box.style.maxWidth = Math.max(0, v.width - gap * 2) + 'px';
+  box.style.maxHeight = Math.max(0, v.height - gap * 2) + 'px';
+  if (!m.classList.contains('lee-modal-moved')) return;
+  const r = box.getBoundingClientRect();
+  box.style.left = Math.max(v.left, Math.min(r.left, v.left + v.width - Math.min(r.width, v.width) - gap)) + 'px';
+  box.style.top = Math.max(v.top, Math.min(r.top, v.top + v.height - Math.min(r.height, v.height) - gap)) + 'px';
+}
 function modal(inner, onKey, onClose, options = {}) {
   const previousFocus = document.activeElement;
   const m = document.createElement('div');
@@ -8278,15 +9067,16 @@ function modal(inner, onKey, onClose, options = {}) {
   const heading = box.querySelector('.lee-mhead');
   if (heading) box.setAttribute('aria-label', heading.textContent.trim());
   const storageKey = options.storageKey ? `lee-modal-size:${options.storageKey}` : '';
+  const viewport = modalViewport();
   if (storageKey) {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
-      if (saved?.width) box.style.width = Math.min(saved.width, innerWidth - 16) + 'px';
-      if (saved?.height) box.style.height = Math.min(saved.height, innerHeight - 16) + 'px';
+      if (saved?.width) box.style.width = Math.min(saved.width, viewport.width - 16) + 'px';
+      if (saved?.height) box.style.height = Math.min(saved.height, viewport.height - 16) + 'px';
       if (Number.isFinite(saved?.left) && Number.isFinite(saved?.top)) {
         m.classList.add('lee-modal-moved');
-        box.style.left = Math.max(0, Math.min(saved.left, innerWidth - 80)) + 'px';
-        box.style.top = Math.max(0, Math.min(saved.top, innerHeight - 48)) + 'px';
+        box.style.left = Math.max(viewport.left, Math.min(saved.left, viewport.left + viewport.width - 80)) + 'px';
+        box.style.top = Math.max(viewport.top, Math.min(saved.top, viewport.top + viewport.height - 48)) + 'px';
       }
     } catch (_) {}
   }
@@ -8302,6 +9092,7 @@ function modal(inner, onKey, onClose, options = {}) {
   })));
   observer.observe(box, {childList: true, subtree: true});
   let closed = false;
+  const onViewport = () => fitModal(m);
   const nativeRemove = m.remove.bind(m);
   const focusables = () => $$('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])', box)
     .filter(el => !el.hidden && el.getClientRects().length);
@@ -8337,7 +9128,9 @@ function modal(inner, onKey, onClose, options = {}) {
   };
   m.remove = () => {
     if (closed) return;
-    closed = true; observer.disconnect(); document.removeEventListener('keydown', key, true); nativeRemove();
+    closed = true; observer.disconnect(); document.removeEventListener('keydown', key, true);
+    window.removeEventListener('resize', onViewport); window.visualViewport?.removeEventListener('resize', onViewport); nativeRemove();
+    if (!$$('.lee-modal').length) { document.body.style.overflow = document.body.dataset.leeModalOverflow || ''; delete document.body.dataset.leeModalOverflow; }
     if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({preventScroll: true});
     if (onClose) onClose();
   };
@@ -8353,17 +9146,18 @@ function modal(inner, onKey, onClose, options = {}) {
   });
   dragHandle.addEventListener('pointermove', e => {
     if (!drag) return;
-    const r = box.getBoundingClientRect(), width = r.width, height = r.height;
-    const maxX = Math.max(0, innerWidth - width) - drag.left;
-    const maxY = Math.max(0, innerHeight - height) - drag.top;
-    drag.dx = Math.max(-drag.left, Math.min(e.clientX - drag.x, maxX));
-    drag.dy = Math.max(-drag.top, Math.min(e.clientY - drag.y, maxY));
+    const r = box.getBoundingClientRect(), v = modalViewport(), width = r.width, height = r.height;
+    const maxX = v.left + Math.max(0, v.width - width) - drag.left;
+    const maxY = v.top + Math.max(0, v.height - height) - drag.top;
+    drag.dx = Math.max(v.left - drag.left, Math.min(e.clientX - drag.x, maxX));
+    drag.dy = Math.max(v.top - drag.top, Math.min(e.clientY - drag.y, maxY));
     box.style.transform = `translate3d(${drag.dx}px, ${drag.dy}px, 0)`;
     e.preventDefault();
   });
   const endDrag = e => {
     if (!drag) return;
-    box.style.left = Math.max(0, drag.left + drag.dx) + 'px'; box.style.top = Math.max(0, drag.top + drag.dy) + 'px';
+    const v = modalViewport();
+    box.style.left = Math.max(v.left, drag.left + drag.dx) + 'px'; box.style.top = Math.max(v.top, drag.top + drag.dy) + 'px';
     box.style.transform = ''; drag = null; m.classList.remove('lee-modal-dragging');
     try { dragHandle.releasePointerCapture(e.pointerId); } catch (_) {}
   };
@@ -8400,8 +9194,11 @@ function modal(inner, onKey, onClose, options = {}) {
   m.querySelector('.lee-modal-close').onclick = requestClose;
   m.addEventListener('mousedown', e => { if (e.target === m) requestClose(); });
   document.addEventListener('keydown', key, true);
+  window.addEventListener('resize', onViewport); window.visualViewport?.addEventListener('resize', onViewport);
+  if (!$$('.lee-modal').length) { document.body.dataset.leeModalOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'; }
   document.body.appendChild(m);
   requestAnimationFrame(() => {
+    fitModal(m);
     const target = box.querySelector('[autofocus]') || box.querySelector('.lee-mrow.sel:not([data-off])') ||
                    box.querySelector('.lee-mrow:not([data-off])') || box.querySelector('input, textarea, select') ||
                    box.querySelector('button:not(.lee-modal-close):not([disabled])') || box;
@@ -8446,15 +9243,19 @@ function textDialog(title, label, value = '') {
   });
 }
 
-function confirmDialog(title, detail, action = 'confirm') {
+/* `alt` offers a second way to say yes, for a choice with two shapes rather than one. It resolves
+   `'alt'`, and cancel stays falsy so every caller that only asked a yes/no question is unchanged. */
+function confirmDialog(title, detail, action = 'confirm', alt = '') {
   return new Promise(resolve => {
     let settled = false;
     const done = value => { if (settled) return; settled = true; m.remove(); resolve(value); };
+    const second = alt ? `<button class="lee-btn" id="dialogalt">${esc(alt)}</button>` : '';
     const m = modal(`<div class="lee-mhead">${esc(title)}</div><div class="lee-dialogcopy">${esc(detail)}</div>` +
-      `<div class="lee-mfoot"><button class="lee-btn warn" id="dialogyes">${esc(action)}</button>` +
+      `<div class="lee-mfoot"><button class="lee-btn warn" id="dialogyes">${esc(action)}</button>${second}` +
       `<button class="lee-btn" id="dialogno" autofocus>cancel</button></div>`, null,
       () => { if (!settled) { settled = true; resolve(false); } });
     m.querySelector('#dialogyes').onclick = () => done(true);
+    m.querySelector('#dialogalt')?.addEventListener('click', () => done('alt'));
     m.querySelector('#dialogno').onclick = () => done(false);
   });
 }
@@ -8955,6 +9756,143 @@ async function findUsages(name = cursorWord()) {
   const d = await api('/code/usages?name=' + encodeURIComponent(name));
   hitList(d.hits || [], `${d.backend} — ${d.note}`, `usages of ${name}`, openLocation);
 }
+/* Where the cursor is, in the coordinates a symbol lookup can use. A notebook cursor is a cell
+   and a line inside it: the file line is a line of JSON and matches no declaration. */
+function editorPlace(view = curEditor()) {
+  const path = lee.path || '';
+  if (!view) return {path, line: 0, cellIndex: -1};
+  const line = view.state.doc.lineAt(LeeCM.cursor(view)).number;
+  const cellIndex = lee.kind === 'notebook'
+    ? lee.cells.findIndex(c => lee.editors.get(c.id) === view) : -1;
+  return {path, line, cellIndex};
+}
+/* One key, both directions. On a usage it goes to the declaration; standing on the declaration it
+   lists who uses it, because that is the only question left to ask there. The server decides which,
+   since it is the side that knows where the declaration is. */
+async function gotoDeclaration(name = cursorWord(), place = editorPlace()) {
+  if (!name) return status('put the cursor on a symbol first', 'err');
+  status(`finding ${name}…`);
+  let d;
+  // a failed lookup has to say so: `finding…` is busy, and a busy toast never leaves by itself
+  try {
+    d = await api('/code/jump?name=' + encodeURIComponent(name) +
+      '&path=' + encodeURIComponent(place.path) + '&line=' + place.line + '&cell_index=' + place.cellIndex);
+  } catch (e) { return status(String(e.message || e), 'err'); }
+  const hits = d.hits || [];
+  if (!hits.length) return status(`nothing found for ${name}`, 'err');
+  if (d.kind === 'definition' && hits.length === 1) return openLocation(hits[0]);
+  const label = d.kind === 'usages' ? 'usages' : 'definitions';
+  hitList(hits, `${d.backend} — ${d.note}`, `${label} of ${name}`, openLocation);
+  // `finding…` is a busy toast, and a busy toast waits to be clicked. The list is the answer, so
+  // the toast has to stop saying it is still looking.
+  status(`${hits.length} ${label} of ${name}`, 'ok');
+}
+/* The mouse saying what mod+b says. CodeMirror owns the click, so this listens in the capture
+   phase and takes the event there: letting it through would move the caret and select a word.
+
+   Either modifier counts. Platform detection is not reliable enough to make it the gate: in a
+   webview that reported no platform, ctrl+click both looked up the symbol and, being a right-click
+   on macOS, opened the cell menu on top of the result. So the paired `contextmenu` is claimed too. */
+function bindModClick() {
+  document.addEventListener('contextmenu', e => {
+    if (e.shiftKey || !(e.metaKey || e.ctrlKey) || !e.target?.closest?.('.cm-content')) return;
+    e.preventDefault(); e.stopPropagation();
+  }, true);
+  document.addEventListener('mousedown', e => {
+    if (e.button !== 0 || e.altKey || e.shiftKey || !(e.metaKey || e.ctrlKey)) return;
+    if (!e.target?.closest?.('.cm-content')) return;
+    const view = [...lee.editors.values()].find(v => v?.contentDOM?.contains(e.target));
+    const pos = view ? view.posAtCoords({x: e.clientX, y: e.clientY}) : null;
+    if (pos == null) return;
+    e.preventDefault(); e.stopPropagation();
+    LeeCM.setCursor(view, pos);
+    const word = LeeCM.wordAtCursor(view);
+    if (!word) return status('nothing to look up there', 'err');
+    gotoDeclaration(word, editorPlace(view));
+  }, true);
+}
+/* Cmd+F in a notebook. CodeMirror's own panel searches the one cell it belongs to, which is never
+   the question being asked: a notebook is one document to the person reading it. This walks every
+   cell's live text, selects each match where it lives, and says which one of how many. */
+const nbCellText = i => {
+  const c = lee.cells[i]; if (!c) return '';
+  const v = lee.editors.get(c.id);
+  return v ? LeeCM.getDoc(v) : String(c.source || '');
+};
+function nbFindMatches(q) {
+  const out = [], needle = String(q || '').toLowerCase();
+  if (!needle) return out;
+  for (let i = 0; i < lee.cells.length; i++) {
+    const text = nbCellText(i).toLowerCase();
+    for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length))
+      out.push({cell: i, from: at, to: at + needle.length});
+  }
+  return out;
+}
+function nbFindPaint() {
+  const bar = $('#nbfind'); if (!bar) return;
+  const q = $('#nbfindq', bar).value, hits = nbFindMatches(q), at = lee.nbFind?.at ?? -1;
+  lee.nbFind = {q, hits, at: at < hits.length ? at : -1};
+  $('#nbfindcount', bar).textContent = !q ? '' : !hits.length ? 'no matches'
+    : `${(lee.nbFind.at < 0 ? 0 : lee.nbFind.at) + 1} of ${hits.length}`;
+  bar.classList.toggle('empty', !!q && !hits.length);
+}
+function nbFindStep(direction) {
+  const bar = $('#nbfind'), state = lee.nbFind;
+  if (!bar || !state?.hits.length) return;
+  const n = state.hits.length;
+  state.at = ((state.at + direction) % n + n) % n;
+  const hit = state.hits[state.at];
+  focusCell(hit.cell);
+  const view = ensureCellMounted(hit.cell);
+  if (view) LeeCM.setSelection(view, hit.from, hit.to);
+  $('#nbfindcount', bar).textContent = `${state.at + 1} of ${n}`;
+  // `focusCell` and `setSelection` both take the focus, and each does it a frame apart. The
+  // query is where the typing belongs, so it is claimed back after both have had their turn.
+  requestAnimationFrame(() => requestAnimationFrame(() => $('#nbfindq', bar)?.focus()));
+}
+function nbFindClose() {
+  const bar = $('#nbfind'); if (bar) bar.hidden = true;
+  lee.nbFind = null;
+  const v = curEditor(); if (v) LeeCM.focus(v);
+}
+function nbFind() {
+  if (lee.kind !== 'notebook') return status('open a notebook to search across its cells', 'err');
+  let bar = $('#nbfind');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'nbfind'; bar.className = 'lee-find-bar'; bar.setAttribute('role', 'search');
+    bar.innerHTML = '<input class="lee-input" id="nbfindq" spellcheck="false" ' +
+      'placeholder="find in every cell" aria-label="find in every cell">' +
+      '<span class="lee-find-count" id="nbfindcount" aria-live="polite"></span>' +
+      '<button type="button" data-find="prev" title="previous match (shift+enter)">↑</button>' +
+      '<button type="button" data-find="next" title="next match (enter)">↓</button>' +
+      '<button type="button" data-find="close" title="close (esc)">✕</button>';
+    document.body.appendChild(bar);
+    bar.addEventListener('click', e => {
+      const b = e.target.closest('[data-find]'); if (!b) return;
+      if (b.dataset.find === 'close') return nbFindClose();
+      nbFindStep(b.dataset.find === 'next' ? 1 : -1);
+    });
+    const input = $('#nbfindq', bar);
+    input.addEventListener('input', nbFindPaint);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); return nbFindClose(); }
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (!lee.nbFind?.hits.length) nbFindPaint();
+      nbFindStep(e.shiftKey ? -1 : 1);
+    });
+  }
+  bar.hidden = false;
+  const input = $('#nbfindq', bar), view = curEditor(), held = view ? LeeCM.selection(view) : null;
+  if (held && held.from !== held.to && !held.text.includes('\n')) input.value = held.text;
+  lee.nbFind = null;
+  nbFindPaint();
+  input.focus(); input.select();
+}
+window.gotoDeclaration = gotoDeclaration; window.nbFind = nbFind; window.bindModClick = bindModClick;
+
 async function renameSymbol() {
   const name=cursorWord(),view=curEditor();
   if(!name||!view||!lee.path||curLang()!=='python')return status('put the cursor on a Python symbol first','err');
@@ -9259,7 +10197,7 @@ function palette() {
     {name: 'Agent: run until next write', scope: 'agent', run: () => post('/agent/run-policy', {policy: 'until_write'})},
     {name: 'Agent: run read-only calls', scope: 'agent', run: () => post('/agent/run-policy', {policy: 'reads'})},
     {name: 'Agent: edit starting state', scope: 'agent', run: leeAgentState},
-    {name: 'Agent: steer after current call', scope: 'agent', run: () => $('#agentsteer')?.focus()},
+    {name: 'Agent: steer after current call', scope: 'agent', run: () => $('#agentprompt')?.focus()},
   ];
   const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: k.key})).concat(agentCommands);
   let hits = cmds, sel = 0;
@@ -9796,10 +10734,11 @@ function initSplits() {
     document.documentElement.style.setProperty('--lee-' + k, value + 'px');
     localStorage.setItem('lee-' + k, value + 'px');
   }
-  if (localStorage.getItem('lee-agent-expanded') === '1') {
-    $('#shell')?.classList.add('agent-focus');
-    if ($('#agentexpand')) $('#agentexpand').textContent = 'restore';
-  }
+  // The retired boolean is read once and rewritten as the slot and mode it meant.
+  if (localStorage.getItem('lee-agent-expanded') === '1' && !localStorage.getItem('lee-expand'))
+    localStorage.setItem('lee-expand', 'right:wide');
+  localStorage.removeItem('lee-agent-expanded');
+  leeSyncExpand();
 }
 
 async function refreshKernelPill() {
@@ -9911,7 +10850,9 @@ async function boot() {
   await Promise.all([loadKeys(), loadSettings()]);
   // Model discovery can probe CLIs and registries; it must not hold the editor's first paint.
   loadAgentModels().catch(e => status(String(e.message || e), 'err'));
+  refreshAgentThreads().catch(e => status(String(e.message || e), 'err'));
   initSplits();
+  bindModClick();
   mountExec();
   initAgentComposer();
   // The agent pane is client-owned, so a reload starts it blank; the turns are on disk.

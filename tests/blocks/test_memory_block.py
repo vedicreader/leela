@@ -1,6 +1,7 @@
 "The memory block end to end: vault surface and cached replies."
 
 from __future__ import annotations
+from pathlib import Path
 import pytest
 from leela.blocks.memory.memory import GLOBAL, Memory, safe_shelf
 from leela.blocks.research.research import Doc
@@ -9,7 +10,20 @@ from fasthtml.common import to_xml
 from leela.blocks.vault.ui import PII_COVERS, _tidy_row, job_card, pii_badge, tidy_list, vault_panel
 from leela.blocks.keys.menus import MENUS
 from leela.blocks.memory.memory import Memory
-from leela.core.keys import lookup
+from leela.core.keys import KEYS, _dupes, lookup
+
+def test_note_and_vault_controls_are_named_commands_without_reserved_shortcuts():
+    actions = {'memory_notes': 'manage memory notes', 'new_memory_note': 'create a memory note',
+               'open_vault': 'open the vault'}
+    assert not _dupes(KEYS)
+    for action, label in actions.items():
+        key = lookup(action)
+        assert key.label == label and not key.bound
+    js = (Path(__file__).resolve().parents[2] / 'leela/static/js/02_actions.js').read_text()
+    assert 'memory_notes: leeMemoryNotes' in js
+    assert 'new_memory_note: leeNewMemoryNote' in js
+    assert 'open_vault: leeVaultWorkbench' in js
+
 
 def test_a_clip_is_reachable_everywhere_and_wears_what_was_found_in_it():
     assert safe_shelf('my-repo') == safe_shelf('My.Repo') == 'my_repo'

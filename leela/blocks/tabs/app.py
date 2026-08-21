@@ -13,7 +13,7 @@ from .ui import tab_bar
 
 __all__ = ['CAPS', 'connect', 'disk_version']
 
-CAPS = ('fs', 'pool', 'tab', 'docs')
+CAPS = ('fs', 'history', 'pool', 'tab', 'docs')
 
 def disk_version(path):
     "A cheap browser-watch token; changes whenever the active file is replaced or written."
@@ -119,11 +119,26 @@ def connect(app, ctx):
             return {'path': str(p), 'kind': 'text', 'text': ctx.fs.read(p),
                     'disk_version': disk_version(p)}
         except Exception as e: return fail(e)
+    outside = {}
+    def keep_outside_write(path, version):
+        """A write Leela did not make, kept before the editor takes it.
+
+        This poll is the only moment anything notices another process editing an open file, and the
+        editor's next move is to load it. Whatever it is replacing has to be copied first.
+        """
+        if outside.get(path) == version: return
+        outside[path] = version
+        try: ctx.history.keep(path, None, ctx.fs.read(path), 'changed outside Leela')
+        except Exception: pass
     @rt('/tab/watch')
     def tab_watch():
         "Pollable disk identity for the open document; no file contents cross the wire."
         t = ctx.tab
-        return {'path': t.path if t else '', 'disk_version': disk_version(t.path) if t else ''}
+        held = disk_version(t.path) if t else ''
+        if t is not None and t.path and held not in ('', 'missing'):
+            known = docs.versions.get(docs.key(t))
+            if known and known != held: keep_outside_write(t.path, held)
+        return {'path': t.path if t else '', 'disk_version': held}
     @rt('/tab/reload')
     async def tab_reload(req):
         "Drop server-side editor caches so the next state read comes straight from disk."

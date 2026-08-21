@@ -28,7 +28,9 @@ async function boot() {
   await Promise.all([loadKeys(), loadSettings()]);
   // Model discovery can probe CLIs and registries; it must not hold the editor's first paint.
   loadAgentModels().catch(e => status(String(e.message || e), 'err'));
+  refreshAgentThreads().catch(e => status(String(e.message || e), 'err'));
   initSplits();
+  bindModClick();
   mountExec();
   initAgentComposer();
   // The agent pane is client-owned, so a reload starts it blank; the turns are on disk.

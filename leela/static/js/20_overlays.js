@@ -1,4 +1,17 @@
 /* ------------------------------------------------------------------ overlays */
+function modalViewport() {
+  const v = window.visualViewport;
+  return {left: v?.offsetLeft || 0, top: v?.offsetTop || 0, width: v?.width || innerWidth, height: v?.height || innerHeight};
+}
+function fitModal(m) {
+  const box = $('.lee-modalbox', m), v = modalViewport(), gap = 8; if (!box) return;
+  box.style.maxWidth = Math.max(0, v.width - gap * 2) + 'px';
+  box.style.maxHeight = Math.max(0, v.height - gap * 2) + 'px';
+  if (!m.classList.contains('lee-modal-moved')) return;
+  const r = box.getBoundingClientRect();
+  box.style.left = Math.max(v.left, Math.min(r.left, v.left + v.width - Math.min(r.width, v.width) - gap)) + 'px';
+  box.style.top = Math.max(v.top, Math.min(r.top, v.top + v.height - Math.min(r.height, v.height) - gap)) + 'px';
+}
 function modal(inner, onKey, onClose, options = {}) {
   const previousFocus = document.activeElement;
   const m = document.createElement('div');
@@ -11,15 +24,16 @@ function modal(inner, onKey, onClose, options = {}) {
   const heading = box.querySelector('.lee-mhead');
   if (heading) box.setAttribute('aria-label', heading.textContent.trim());
   const storageKey = options.storageKey ? `lee-modal-size:${options.storageKey}` : '';
+  const viewport = modalViewport();
   if (storageKey) {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
-      if (saved?.width) box.style.width = Math.min(saved.width, innerWidth - 16) + 'px';
-      if (saved?.height) box.style.height = Math.min(saved.height, innerHeight - 16) + 'px';
+      if (saved?.width) box.style.width = Math.min(saved.width, viewport.width - 16) + 'px';
+      if (saved?.height) box.style.height = Math.min(saved.height, viewport.height - 16) + 'px';
       if (Number.isFinite(saved?.left) && Number.isFinite(saved?.top)) {
         m.classList.add('lee-modal-moved');
-        box.style.left = Math.max(0, Math.min(saved.left, innerWidth - 80)) + 'px';
-        box.style.top = Math.max(0, Math.min(saved.top, innerHeight - 48)) + 'px';
+        box.style.left = Math.max(viewport.left, Math.min(saved.left, viewport.left + viewport.width - 80)) + 'px';
+        box.style.top = Math.max(viewport.top, Math.min(saved.top, viewport.top + viewport.height - 48)) + 'px';
       }
     } catch (_) {}
   }
@@ -35,6 +49,7 @@ function modal(inner, onKey, onClose, options = {}) {
   })));
   observer.observe(box, {childList: true, subtree: true});
   let closed = false;
+  const onViewport = () => fitModal(m);
   const nativeRemove = m.remove.bind(m);
   const focusables = () => $$('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])', box)
     .filter(el => !el.hidden && el.getClientRects().length);
@@ -70,7 +85,9 @@ function modal(inner, onKey, onClose, options = {}) {
   };
   m.remove = () => {
     if (closed) return;
-    closed = true; observer.disconnect(); document.removeEventListener('keydown', key, true); nativeRemove();
+    closed = true; observer.disconnect(); document.removeEventListener('keydown', key, true);
+    window.removeEventListener('resize', onViewport); window.visualViewport?.removeEventListener('resize', onViewport); nativeRemove();
+    if (!$$('.lee-modal').length) { document.body.style.overflow = document.body.dataset.leeModalOverflow || ''; delete document.body.dataset.leeModalOverflow; }
     if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({preventScroll: true});
     if (onClose) onClose();
   };
@@ -86,17 +103,18 @@ function modal(inner, onKey, onClose, options = {}) {
   });
   dragHandle.addEventListener('pointermove', e => {
     if (!drag) return;
-    const r = box.getBoundingClientRect(), width = r.width, height = r.height;
-    const maxX = Math.max(0, innerWidth - width) - drag.left;
-    const maxY = Math.max(0, innerHeight - height) - drag.top;
-    drag.dx = Math.max(-drag.left, Math.min(e.clientX - drag.x, maxX));
-    drag.dy = Math.max(-drag.top, Math.min(e.clientY - drag.y, maxY));
+    const r = box.getBoundingClientRect(), v = modalViewport(), width = r.width, height = r.height;
+    const maxX = v.left + Math.max(0, v.width - width) - drag.left;
+    const maxY = v.top + Math.max(0, v.height - height) - drag.top;
+    drag.dx = Math.max(v.left - drag.left, Math.min(e.clientX - drag.x, maxX));
+    drag.dy = Math.max(v.top - drag.top, Math.min(e.clientY - drag.y, maxY));
     box.style.transform = `translate3d(${drag.dx}px, ${drag.dy}px, 0)`;
     e.preventDefault();
   });
   const endDrag = e => {
     if (!drag) return;
-    box.style.left = Math.max(0, drag.left + drag.dx) + 'px'; box.style.top = Math.max(0, drag.top + drag.dy) + 'px';
+    const v = modalViewport();
+    box.style.left = Math.max(v.left, drag.left + drag.dx) + 'px'; box.style.top = Math.max(v.top, drag.top + drag.dy) + 'px';
     box.style.transform = ''; drag = null; m.classList.remove('lee-modal-dragging');
     try { dragHandle.releasePointerCapture(e.pointerId); } catch (_) {}
   };
@@ -133,8 +151,11 @@ function modal(inner, onKey, onClose, options = {}) {
   m.querySelector('.lee-modal-close').onclick = requestClose;
   m.addEventListener('mousedown', e => { if (e.target === m) requestClose(); });
   document.addEventListener('keydown', key, true);
+  window.addEventListener('resize', onViewport); window.visualViewport?.addEventListener('resize', onViewport);
+  if (!$$('.lee-modal').length) { document.body.dataset.leeModalOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'; }
   document.body.appendChild(m);
   requestAnimationFrame(() => {
+    fitModal(m);
     const target = box.querySelector('[autofocus]') || box.querySelector('.lee-mrow.sel:not([data-off])') ||
                    box.querySelector('.lee-mrow:not([data-off])') || box.querySelector('input, textarea, select') ||
                    box.querySelector('button:not(.lee-modal-close):not([disabled])') || box;
@@ -179,15 +200,19 @@ function textDialog(title, label, value = '') {
   });
 }
 
-function confirmDialog(title, detail, action = 'confirm') {
+/* `alt` offers a second way to say yes, for a choice with two shapes rather than one. It resolves
+   `'alt'`, and cancel stays falsy so every caller that only asked a yes/no question is unchanged. */
+function confirmDialog(title, detail, action = 'confirm', alt = '') {
   return new Promise(resolve => {
     let settled = false;
     const done = value => { if (settled) return; settled = true; m.remove(); resolve(value); };
+    const second = alt ? `<button class="lee-btn" id="dialogalt">${esc(alt)}</button>` : '';
     const m = modal(`<div class="lee-mhead">${esc(title)}</div><div class="lee-dialogcopy">${esc(detail)}</div>` +
-      `<div class="lee-mfoot"><button class="lee-btn warn" id="dialogyes">${esc(action)}</button>` +
+      `<div class="lee-mfoot"><button class="lee-btn warn" id="dialogyes">${esc(action)}</button>${second}` +
       `<button class="lee-btn" id="dialogno" autofocus>cancel</button></div>`, null,
       () => { if (!settled) { settled = true; resolve(false); } });
     m.querySelector('#dialogyes').onclick = () => done(true);
+    m.querySelector('#dialogalt')?.addEventListener('click', () => done('alt'));
     m.querySelector('#dialogno').onclick = () => done(false);
   });
 }
@@ -688,6 +713,143 @@ async function findUsages(name = cursorWord()) {
   const d = await api('/code/usages?name=' + encodeURIComponent(name));
   hitList(d.hits || [], `${d.backend} — ${d.note}`, `usages of ${name}`, openLocation);
 }
+/* Where the cursor is, in the coordinates a symbol lookup can use. A notebook cursor is a cell
+   and a line inside it: the file line is a line of JSON and matches no declaration. */
+function editorPlace(view = curEditor()) {
+  const path = lee.path || '';
+  if (!view) return {path, line: 0, cellIndex: -1};
+  const line = view.state.doc.lineAt(LeeCM.cursor(view)).number;
+  const cellIndex = lee.kind === 'notebook'
+    ? lee.cells.findIndex(c => lee.editors.get(c.id) === view) : -1;
+  return {path, line, cellIndex};
+}
+/* One key, both directions. On a usage it goes to the declaration; standing on the declaration it
+   lists who uses it, because that is the only question left to ask there. The server decides which,
+   since it is the side that knows where the declaration is. */
+async function gotoDeclaration(name = cursorWord(), place = editorPlace()) {
+  if (!name) return status('put the cursor on a symbol first', 'err');
+  status(`finding ${name}…`);
+  let d;
+  // a failed lookup has to say so: `finding…` is busy, and a busy toast never leaves by itself
+  try {
+    d = await api('/code/jump?name=' + encodeURIComponent(name) +
+      '&path=' + encodeURIComponent(place.path) + '&line=' + place.line + '&cell_index=' + place.cellIndex);
+  } catch (e) { return status(String(e.message || e), 'err'); }
+  const hits = d.hits || [];
+  if (!hits.length) return status(`nothing found for ${name}`, 'err');
+  if (d.kind === 'definition' && hits.length === 1) return openLocation(hits[0]);
+  const label = d.kind === 'usages' ? 'usages' : 'definitions';
+  hitList(hits, `${d.backend} — ${d.note}`, `${label} of ${name}`, openLocation);
+  // `finding…` is a busy toast, and a busy toast waits to be clicked. The list is the answer, so
+  // the toast has to stop saying it is still looking.
+  status(`${hits.length} ${label} of ${name}`, 'ok');
+}
+/* The mouse saying what mod+b says. CodeMirror owns the click, so this listens in the capture
+   phase and takes the event there: letting it through would move the caret and select a word.
+
+   Either modifier counts. Platform detection is not reliable enough to make it the gate: in a
+   webview that reported no platform, ctrl+click both looked up the symbol and, being a right-click
+   on macOS, opened the cell menu on top of the result. So the paired `contextmenu` is claimed too. */
+function bindModClick() {
+  document.addEventListener('contextmenu', e => {
+    if (e.shiftKey || !(e.metaKey || e.ctrlKey) || !e.target?.closest?.('.cm-content')) return;
+    e.preventDefault(); e.stopPropagation();
+  }, true);
+  document.addEventListener('mousedown', e => {
+    if (e.button !== 0 || e.altKey || e.shiftKey || !(e.metaKey || e.ctrlKey)) return;
+    if (!e.target?.closest?.('.cm-content')) return;
+    const view = [...lee.editors.values()].find(v => v?.contentDOM?.contains(e.target));
+    const pos = view ? view.posAtCoords({x: e.clientX, y: e.clientY}) : null;
+    if (pos == null) return;
+    e.preventDefault(); e.stopPropagation();
+    LeeCM.setCursor(view, pos);
+    const word = LeeCM.wordAtCursor(view);
+    if (!word) return status('nothing to look up there', 'err');
+    gotoDeclaration(word, editorPlace(view));
+  }, true);
+}
+/* Cmd+F in a notebook. CodeMirror's own panel searches the one cell it belongs to, which is never
+   the question being asked: a notebook is one document to the person reading it. This walks every
+   cell's live text, selects each match where it lives, and says which one of how many. */
+const nbCellText = i => {
+  const c = lee.cells[i]; if (!c) return '';
+  const v = lee.editors.get(c.id);
+  return v ? LeeCM.getDoc(v) : String(c.source || '');
+};
+function nbFindMatches(q) {
+  const out = [], needle = String(q || '').toLowerCase();
+  if (!needle) return out;
+  for (let i = 0; i < lee.cells.length; i++) {
+    const text = nbCellText(i).toLowerCase();
+    for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length))
+      out.push({cell: i, from: at, to: at + needle.length});
+  }
+  return out;
+}
+function nbFindPaint() {
+  const bar = $('#nbfind'); if (!bar) return;
+  const q = $('#nbfindq', bar).value, hits = nbFindMatches(q), at = lee.nbFind?.at ?? -1;
+  lee.nbFind = {q, hits, at: at < hits.length ? at : -1};
+  $('#nbfindcount', bar).textContent = !q ? '' : !hits.length ? 'no matches'
+    : `${(lee.nbFind.at < 0 ? 0 : lee.nbFind.at) + 1} of ${hits.length}`;
+  bar.classList.toggle('empty', !!q && !hits.length);
+}
+function nbFindStep(direction) {
+  const bar = $('#nbfind'), state = lee.nbFind;
+  if (!bar || !state?.hits.length) return;
+  const n = state.hits.length;
+  state.at = ((state.at + direction) % n + n) % n;
+  const hit = state.hits[state.at];
+  focusCell(hit.cell);
+  const view = ensureCellMounted(hit.cell);
+  if (view) LeeCM.setSelection(view, hit.from, hit.to);
+  $('#nbfindcount', bar).textContent = `${state.at + 1} of ${n}`;
+  // `focusCell` and `setSelection` both take the focus, and each does it a frame apart. The
+  // query is where the typing belongs, so it is claimed back after both have had their turn.
+  requestAnimationFrame(() => requestAnimationFrame(() => $('#nbfindq', bar)?.focus()));
+}
+function nbFindClose() {
+  const bar = $('#nbfind'); if (bar) bar.hidden = true;
+  lee.nbFind = null;
+  const v = curEditor(); if (v) LeeCM.focus(v);
+}
+function nbFind() {
+  if (lee.kind !== 'notebook') return status('open a notebook to search across its cells', 'err');
+  let bar = $('#nbfind');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'nbfind'; bar.className = 'lee-find-bar'; bar.setAttribute('role', 'search');
+    bar.innerHTML = '<input class="lee-input" id="nbfindq" spellcheck="false" ' +
+      'placeholder="find in every cell" aria-label="find in every cell">' +
+      '<span class="lee-find-count" id="nbfindcount" aria-live="polite"></span>' +
+      '<button type="button" data-find="prev" title="previous match (shift+enter)">↑</button>' +
+      '<button type="button" data-find="next" title="next match (enter)">↓</button>' +
+      '<button type="button" data-find="close" title="close (esc)">✕</button>';
+    document.body.appendChild(bar);
+    bar.addEventListener('click', e => {
+      const b = e.target.closest('[data-find]'); if (!b) return;
+      if (b.dataset.find === 'close') return nbFindClose();
+      nbFindStep(b.dataset.find === 'next' ? 1 : -1);
+    });
+    const input = $('#nbfindq', bar);
+    input.addEventListener('input', nbFindPaint);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); return nbFindClose(); }
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (!lee.nbFind?.hits.length) nbFindPaint();
+      nbFindStep(e.shiftKey ? -1 : 1);
+    });
+  }
+  bar.hidden = false;
+  const input = $('#nbfindq', bar), view = curEditor(), held = view ? LeeCM.selection(view) : null;
+  if (held && held.from !== held.to && !held.text.includes('\n')) input.value = held.text;
+  lee.nbFind = null;
+  nbFindPaint();
+  input.focus(); input.select();
+}
+window.gotoDeclaration = gotoDeclaration; window.nbFind = nbFind; window.bindModClick = bindModClick;
+
 async function renameSymbol() {
   const name=cursorWord(),view=curEditor();
   if(!name||!view||!lee.path||curLang()!=='python')return status('put the cursor on a Python symbol first','err');

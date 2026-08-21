@@ -52,6 +52,7 @@ from .core.web import sse as _sse
 from .core.web import Assets, static_dirs
 from .core.text import did_you_mean, fuzzy_rank
 from .core.text import md_block_diff, md_blocks, md_change_kinds
+from .blocks.agent.threads import edit_diffs as _edit_diffs, tool_schemas as _tool_schemas, TurnError
 from .blocks.fs.fs import lang_for
 from .blocks.git.git import GitRepo, GitError
 from .core.keys import by_scope, chord_display, toast_rows
@@ -224,28 +225,6 @@ def _tool_group(name):
     if group: return group
     return 'Notebook' if 'cell' in name or 'notebook' in name else 'Other'
 
-def _tool_schemas(agent):
-    "Browser-sized schemas for editable checkpoint forms; callable validation remains authoritative."
-    import inspect
-    from .blocks.agent.ai import WRITE_TOOLS
-    out = []
-    for tool in agent.tools:
-        sig = inspect.signature(tool)
-        fields = []
-        for name, p in sig.parameters.items():
-            ann = p.annotation
-            kind = ('boolean' if ann is bool else 'integer' if ann is int else
-                    'number' if ann is float else 'string')
-            fields.append({'name': name, 'kind': kind, 'required': p.default is inspect.Parameter.empty,
-                           'default': None if p.default is inspect.Parameter.empty else p.default,
-                           'multiline': name in {'code', 'text', 'commands', 'edits', 'source',
-                                                 'questions', 'command'}})
-        out.append({'name': tool.__name__, 'description': (inspect.getdoc(tool) or '').split('\n')[0],
-                    'changes_state': tool.__name__ in WRITE_TOOLS,
-                    'retryable': tool.__name__ not in WRITE_TOOLS,
-                    'group': _tool_group(tool.__name__), 'fields': fields})
-    return out
-
 def _assigned_lines(source):
     "Top-level bindings made by Python source, as ``[(line, name)]``."
     try: tree = ast.parse(source or '')
@@ -319,10 +298,6 @@ async def _cell_extras(k, cell):
     has_result = any(o.get('output_type') == 'execute_result' for o in cell.outputs)
     latest = await k.api('/api/result', timeout=2) if has_result else None
     return rows, (latest or {}).get('result')
-
-def _edit_diffs(a):
-    "Per-file diffs for what an assistant turn actually wrote."
-    return [{'path': p, **_diff(was, now)} for p, (was, now) in a.changes().items()]
 
 def _activity_changes(a, versions):
     "Activity rows that moved since the last poll: new calls and in-place transitions"
@@ -480,6 +455,10 @@ def _left_workspace(ws):
                    title='pinned open — unpin to close it when you click away',
                    aria_label='pin the file pane open', aria_pressed='true',
                    onclick='leePinPane("left")'),
+            Button('\u2922', cls='lee-pane-min', type='button', data_pane_expand='left',
+                   data_pane_expand_icon='1', title='expand the left pane',
+                   aria_label='expand the left pane', aria_pressed='false',
+                   onclick='leeExpandPane("left")'),
             Button('−', cls='lee-pane-min', type='button', title='minimise the file pane',
                    aria_label='minimise the file pane', onclick='leePane("left", false)'),
             cls='lee-activity', aria_label='Project tools'),
@@ -587,8 +566,8 @@ def _term_panel(gate):
             Button('+', cls='lee-icon', title='new terminal', aria_label='new terminal',
                    onclick='leeNewTerm()'),
             Span(cls='lee-spacer'),
-            Button('expand', id='termexpand', cls='lee-icon', title='expand or restore terminal',
-                   onclick='leeTermExpand()'),
+            Button('expand', id='termexpand', cls='lee-icon', data_pane_expand='bottom',
+                   title='expand the bottom pane', aria_pressed='false', onclick='leeTermExpand()'),
             Button('external', id='termexternal', cls='lee-icon', hidden=True,
                    title='open this project in your terminal application',
                    onclick='leeExternalTerm()'),
@@ -679,7 +658,12 @@ def _agent_panel(ws):
                 Span('state active' if has_state else 'no state', id='agentnames', cls='lee-agent-state-badge'),
                 cls='lee-agent-heading'),
             Span(cls='lee-spacer'),
-            Div(Button('new chat', id='agentnew', cls='lee-btn', title='start a new conversation',
+            Div(Button(Span('conversations', cls='lee-thread-toggle-label'),
+                       Span('1', id='agentthreadcount', cls='lee-thread-count'),
+                       id='agentthreads', cls='lee-btn lee-thread-toggle', aria_expanded='false',
+                       aria_controls='agentthreadlist', title='every live conversation',
+                       onclick='leeAgentThreadsToggle()'),
+                Button('+', id='agentnew', cls='lee-btn', title='new conversation', aria_label='new conversation',
                        onclick='leeAgentNew()'),
                 Button('history', id='agenthistory', cls='lee-btn', title='toggle conversation history',
                        onclick='leeAgentHistory()'),
@@ -687,7 +671,8 @@ def _agent_panel(ws):
                        onclick='leeMemoryNotes()'),
                 Button('state', id='agentstate', cls='lee-btn', title='review or refresh the active agent state',
                        onclick='leeAgentState()'),
-                Button('expand', id='agentexpand', cls='lee-btn', title='focus the agent workspace',
+                Button('expand', id='agentexpand', cls='lee-btn', data_pane_expand='right',
+                       title='expand the right pane', aria_pressed='false',
                        onclick='leeAgentExpand()'), cls='lee-agent-head-actions'),
             cls='lee-phead lee-agent-head'),
         Div(welcome, id='agentlog', cls='lee-agentlog'),
@@ -700,15 +685,10 @@ def _agent_panel(ws):
             'They act in this workspace without passing through Leela\u2019s approvals, held only by '
             'Cursor\u2019s sandbox. Another runtime if you want every write gated.',
             id='agentharnessbanner', cls='lee-agent-harness-banner', hidden=True, role='status'),
-        Div(Div(id='agentsteerqueue', cls='lee-agent-steerqueue', aria_live='polite'),
-            Div(Input(id='agentsteer', cls='lee-input', placeholder='Steer after the current call…'),
-                Button('Queue', cls='lee-btn', type='button', onclick='leeQueueSteer()',
-                       title='wait for the next tool call, then hand this to the model'),
-                Button('Stop and send next', id='agentforce', cls='lee-btn warn', type='button', hidden=True,
-                       onclick='leeForceSteer()',
-                       title='cancel the active run, then send this draft once cancellation is terminal'),
-                cls='lee-agent-steer'),
-            Div(id='agentattachments', cls='lee-agent-attachments', aria_live='polite'),
+        Div(id='agentthreadlist', cls='lee-thread-list', role='listbox',
+            aria_label='live conversations', hidden=True),
+        Div(id='agentattention', cls='lee-agent-attention', role='status', aria_live='polite', hidden=True),
+        Div(Div(id='agentattachments', cls='lee-agent-attachments', aria_live='polite'),
             Div(Button('attach image', id='agentattach', cls='lee-btn', type='button', title='attach a workspace image path or paste a screenshot', onclick='leeAgentAttach()'), cls='lee-agent-attachbar'),
             Textarea(id='agentprompt', cls='lee-input lee-prompt', rows='2',
                      placeholder=f'ask, / for commands, @ for files…  ({chord_display("agent_send")})',
@@ -783,7 +763,9 @@ def _agent_panel(ws):
                         Button('+ model',type='button',cls='lee-btn',onclick='leeAddModel()',
                                title='save a Hugging Face repo or hosted API model'),
                         cls='lee-routing-popover'), cls='lee-routing lee-agent-settings lee-dismissable'),
-                Button('Send', cls='lee-btn go lee-composer-send', onclick='leeAct("agent_send")'),
+                Button('Send', id='agentsend', cls='lee-btn go lee-composer-send',
+                       onclick='sendAgent(event.shiftKey)', aria_label='Send',
+                       title='send this as a turn'),
                 cls='lee-composer-footer'),
             cls='lee-promptbar lee-agent-composer'),
         cls='lee-panel lee-agent')
@@ -817,7 +799,6 @@ def _shell(ws, gate):
 
 def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     "Build the FastHTML IDE around an open workspace. `gate` decides who may open a terminal."
-    ws.approvals.listen()
     gate = gate or TerminalGate()
     _runstate = RunState()
     running_cells = _runstate.cells
@@ -910,9 +891,15 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         return None if t is None else _docs.get(t.path or t.title)
     def _live_assistants():
         "Only the assistants already built -- reaching for `ws.ai` here would construct one."
-        return L(ws._ai, ws._inline_ai).filter(lambda a: a is not None)
+        rows = ws.threads.rows() if ws._threads is not None else []
+        return L(*[t.ai for t in rows], ws._ai, ws._inline_ai).filter(lambda a: a is not None).unique()
     def _refresh_assistants():
         for a in _live_assistants(): a.refresh()
+    def _set_agent_state(text, layer='task', enabled=True, source='user'):
+        "State is the workspace's: every live conversation is re-briefed, not only the one on screen."
+        out = ws.ai.set_state(text, layer=layer, enabled=enabled, source=source)
+        _refresh_assistants()
+        return out
     def _dbg(method=None):
         "The kernel holding the paused notebook debugger, when it can serve `method`."
         k = _debug.get('kernel')
@@ -1362,6 +1349,54 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     @rt('/history/operations')
     def operation_history(limit: int = 50):
         return {'operations': ws.journal.rows(limit)}
+    def _on_disk(path):
+        "What the file says now, or None when it is not there."
+        try: return Path(path).read_text(encoding='utf-8', errors='replace')
+        except OSError: return None
+    @rt('/history/file')
+    def file_history(path: str = '', limit: int = 60):
+        "Every version Leela kept of one file, newest first. Undo is one step; this is all of them."
+        target = str(path or (ws.tab.path if ws.tab else ''))
+        if not target: return _fail('name a file to read the history of')
+        try: target = str(ws.fs._check(target))
+        except Exception as e: return _fail(e, 400)
+        return {'ok': True, 'path': target, 'versions': ws.history.rows(target, limit),
+                'disk_version': _disk_version(target)}
+    @rt('/history/files')
+    def file_history_paths(limit: int = 200):
+        "Which files have kept versions, most recently touched first."
+        return {'ok': True, 'files': ws.history.paths(limit)}
+    @rt('/history/version')
+    def file_history_version(id: str = ''):
+        "One kept version, and how it differs from what is on disk now."
+        row = ws.history.row(str(id))
+        if row is None: return _fail(f'no such version {id}', 404)
+        try: text = ws.history.text(str(id))
+        except Exception as e: return _fail(e, 404)
+        return {'ok': True, **row, 'text': text, **_diff(_on_disk(row['path']) or '', text)}
+    @rt('/history/restore')
+    async def file_history_restore(req):
+        """Put one kept version back. What it replaces is kept first, so restoring the wrong
+        version is itself undoable."""
+        d = await req.json()
+        row = ws.history.row(str(d.get('id') or ''))
+        if row is None: return _fail(f"no such version {d.get('id')}", 404)
+        try: text = ws.history.text(row['id'])
+        except Exception as e: return _fail(e, 404)
+        try:
+            path = ws.fs._check(row['path'])
+            before = _on_disk(path)
+            if before == text: return _fail('that version is what the file already says', 409)
+            ws.fs.write(path, text)
+        except Exception as e: return _fail(e)
+        _docstore.forget(str(path))
+        if (tab := first(t for t in ws.tabs if t.path == str(path))): tab.dirty = False
+        name = Path(row['path']).name
+        operation = ws.journal.record(f'Restore {name} from local history',
+                                      [(str(path), before, text)], kind='restore')
+        return {'ok': True, 'path': str(path), 'version': row['id'],
+                'operation_id': operation['id'] if operation else '',
+                'disk_version': _disk_version(str(path)), **_diff(before or '', text)}
     def _forget_operation_buffers(op):
         for path in (r['path'] for r in op.get('resources', [])):
             _docstore.forget(path)
@@ -1725,33 +1760,121 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 'inline': list(ws.inline_ai.history) if not session else []}
     @rt('/agent/resume')
     async def agent_resume(req):
-        "Put a saved conversation back into the model's context, and return its turns."
+        "Resume a saved conversation as an isolated live thread."
         d = await req.json()
-        if ws.ai.busy: return _fail('cannot resume while the agent is working', 409)
-        try: s = await _off_loop(ws.ai.resume_session, str(d.get('session') or 'latest'))
-        except Exception as e: return _fail(e)
-        return {'ok': True, 'session': s['id'], 'note': ws.ai.note,
-                'turns': [t for t in ws.ai.history if t.get('session') == s['id']]}
+        try: thread = await _off_loop(ws.threads.resume, str(d.get('session') or 'latest'))
+        except Exception as e:
+            from .blocks.agent.threads import TurnError
+            return _thread_error(e) if isinstance(e, TurnError) else _fail(e)
+        turns = [t for t in thread.ai.history if t.get('session') == thread.id]
+        return {'ok': True, 'session': thread.id, 'note': thread.ai.note, 'turns': ws.with_timelines(turns)}
 
+    def _run_missing(t, run_id):
+        return JSONResponse({'ok': False, 'code': 'run_not_found', 'thread': t.id, 'run': run_id,
+                             'message': 'that run is not in this conversation'}, status_code=404)
+
+    def _thread(target=''):
+        "The conversation a request names, resolved once. Omitted means the one on screen now."
+        target = str(target or '').strip()
+        return ws.threads.require(target) if target else ws.threads.active
+
+    def _thread_error(e):
+        "Only a refusal is a conflict. Anything else is a bad request, or a bug wearing its own name."
+        from .blocks.agent.threads import TurnError
+        if isinstance(e, TurnError): return JSONResponse(e.dict(), status_code=409)
+        return _fail(e, 400 if isinstance(e, (KeyError, ValueError)) else 500)
+    @rt('/agent/threads')
+    def agent_threads():
+        active = ws.threads.active
+        return {'active': active.id, 'threads': ws.threads.dicts(),
+                'attention': ws.threads.attention()}
+    @rt('/agent/thread/new')
+    async def agent_thread_new():
+        try: thread = await _off_loop(ws.threads.new)
+        except Exception as e: return _thread_error(e)
+        return {'ok': True, 'active': thread.id, 'thread': thread.dict()}
+    @rt('/agent/thread/switch')
+    async def agent_thread_switch(req):
+        d = await req.json()
+        try: thread = ws.threads.switch(str(d.get('thread') or ''))
+        except Exception as e: return _thread_error(e)
+        return {'ok': True, 'active': thread.id, 'thread': thread.dict()}
+    @rt('/agent/thread/close')
+    async def agent_thread_close(req):
+        d = await req.json()
+        try: closed = await _off_loop(ws.threads.close, str(d.get('thread') or ''))
+        except Exception as e: return _thread_error(e)
+        return {'ok': True, 'closed': closed, 'active': ws.threads.active_id, 'threads': ws.threads.dicts()}
+    @rt('/agent/thread/mute')
+    async def agent_thread_mute(req):
+        "Silence one conversation's notifications without hiding that it is waiting."
+        d = await req.json()
+        try: thread = ws.threads.mute(str(d.get('thread') or ''), bool(d.get('muted', True)))
+        except Exception as e: return _thread_error(e)
+        return {'ok': True, 'thread': thread.dict(), 'attention': ws.threads.attention()}
+    @rt('/agent/thread/turns')
+    async def agent_thread_turns(thread: str = ''):
+        "One conversation's durable turns, and the point in its feed a live turn replays from."
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        await _off_loop(ws.fresh_history, t.ai)
+        turns = [r for r in t.ai.history if r.get('session') == t.id]
+        # `dict` is where a summarised name lives; `title` alone is only what a person typed
+        row = t.dict()
+        return {'ok': True, 'thread': t.id, 'state': row['state'], 'seq': t.feed.settled_seq,
+                'title': row['title'], 'turns': ws.with_timelines(turns)}
+    @rt('/agent/thread/title')
+    async def agent_thread_title(req):
+        d = await req.json()
+        try: thread = await _off_loop(ws.threads.title, str(d.get('thread') or ''), d.get('title') or '')
+        except Exception as e: return _thread_error(e)
+        return {'ok': True, 'thread': thread.dict()}
     @rt('/agent/new')
     async def agent_new():
-        if ws.ai.busy: return _fail('cannot start a new conversation while the agent is working', 409)
-        from .blocks.agent.ai import Assistant
-        old = ws._ai
-        ws._ai = Assistant(ws, model=old.model.name, surface='agent', local_multimodal=ws.local_multimodal,
-                           on_compact=ws._compacted, history_name='agent')
-        ws.sync_agent_routing(ws._ai)
-        ws.approvals.host = ws._ai.host
-        old.close()
-        return {'ok': True, 'session': ws.ai.session_id}
+        try: thread = await _off_loop(ws.threads.new)
+        except Exception as e: return _thread_error(e)
+        return {'ok': True, 'session': thread.id}
 
+    _history_cache = {}
+    def _grouped_history(ai, execution):
+        "Sessions with their turns, computed once per state of the log."
+        key = (ws.history_stamp(ai), repr(sorted(r.get('id', '') for r in execution)))
+        if _history_cache.get('key') != key:
+            turns = ws.with_timelines([r for r in ai.history if r.get('model') != 'scripted'])
+            # the sidecar is where a conversation's name lives, and grouping cannot see it
+            named = {row['id']: row for row in ai.sessions()}
+            _history_cache.update(key=key, groups=[
+                {**g, **{k: v for k, v in (named.get(g['id']) or {}).items() if k in ('title', 'muted')}}
+                for g in _history_sessions(turns, execution)])
+        return _history_cache['groups']
     @rt('/agent/history')
-    async def agent_history():
-        "All durable turns grouped by model-context session, newest session first."
+    async def agent_history(thread: str = ''):
+        """Every durable conversation, newest first, without their turns.
+
+        The turns are what makes this expensive: shipping all of them was 60MB of JSON and forty
+        seconds once Leela and the CLI shared one log. `count` says how many there are, and
+        `/agent/history/session` fetches the ones a person actually opens.
+        """
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        ai = t.ai
         execution = await _api('/agent/api/sessions') or {'sessions': []}
-        turns = [t for t in ws.ai.history if t.get('model') != 'scripted']
-        return {'sessions': _history_sessions(turns, execution.get('sessions', [])),
-                'model': ws.ai.model.name, 'current': ws.ai.session_id}
+        await _off_loop(ws.fresh_history, ai)
+        groups = _grouped_history(ai, execution.get('sessions', []))
+        sessions = [{**g, 'turns': [], 'count': len(g['turns'])} for g in groups]
+        return {'sessions': sessions, 'model': ai.model.name, 'current': ai.session_id,
+                'thread': t.id}
+    @rt('/agent/history/session')
+    async def agent_history_session(id: str = '', thread: str = ''):
+        "One stored conversation's turns, fetched when it is opened rather than with the list."
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        await _off_loop(ws.fresh_history, t.ai)
+        execution = await _api('/agent/api/sessions') or {'sessions': []}
+        group = first(g for g in _grouped_history(t.ai, execution.get('sessions', []))
+                      if g['id'] == str(id))
+        if group is None: return _fail(f'no such conversation {id}', 404)
+        return {'ok': True, 'id': group['id'], 'count': len(group['turns']), **group}
     @rt('/agent/models')
     def agent_models(legacy: bool = True):
         from .agent.core import DFLT_LOCAL, available_models, auth_status, resolve
@@ -2033,7 +2156,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                                   'roots': [str(root) for root in ws.fs.roots]})
         if not saved: return _fail(ws.memory.note)
         layer = (d.get('layer') or 'task').strip()
-        if d.get('activate', True): ws.ai.set_state(text, layer=layer, source='memory')
+        if d.get('activate', True): _set_agent_state(text, layer=layer, source='memory')
         return {'ok': True, 'saved': saved, 'active': ws.agent_state}
     @rt('/agent/state/suggest')
     def agent_state_suggest(q: str = ''):
@@ -2074,7 +2197,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     async def agent_state_activate(req):
         "Activate an edited state without adding it to durable memory."
         d = await req.json(); text = (d.get('text') or '').strip(); layer = d.get('layer') or 'task'
-        try: ws.ai.set_state(text, layer=layer, enabled=d.get('enabled', True), source='user')
+        try: _set_agent_state(text, layer=layer, enabled=d.get('enabled', True), source='user')
         except ValueError as e: return _fail(e)
         return {'ok': True, 'state': text, 'layer': layer}
     @rt('/agent/state/compare')
@@ -2090,7 +2213,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         d = await req.json(); doc_id = str(d.get('id') or ''); layer = d.get('layer') or 'task'
         text = await _off_loop(ws.memory.agent_state_text, doc_id)
         if not text: return _fail(ws.memory.note or 'saved state is empty')
-        try: ws.ai.set_state(text, layer=layer, source='memory')
+        try: _set_agent_state(text, layer=layer, source='memory')
         except ValueError as e: return _fail(e)
         return {'ok': True, 'state': text, 'layer': layer}
     @rt('/agent/commands')
@@ -2111,152 +2234,129 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             'skills': [{'name': s.name, 'help': s.description} for s in ws.ai.skills],
         }
     @rt('/agent/status')
-    def agent_status():
+    def agent_status(thread: str = ''):
         "Whether the assistant is loaded, what model it is on, and what it is doing right now."
-        return ws.ai.status()
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        return {**t.ai.status(), 'thread': t.id}
     @rt('/agent/stop')
     async def agent_stop(req):
-        "Cancel the foreground root run."
+        "Cancel the foreground root run of one conversation."
         try:
             d = await req.json()
         except Exception: d = {}
-        try: return {'ok': True, **ws.ai.cancel((d.get('run_id') or '').strip())}
-        except Exception as e: return {'ok': False, 'error': errstr(e)}
+        try: t = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
+        try: return {'ok': True, 'thread': t.id, **t.ai.cancel((d.get('run_id') or '').strip())}
+        except Exception as e: return {'ok': False, 'error': errstr(e), 'thread': t.id}
     @rt('/agent/runs')
-    def agent_runs(): return {'runs': ws.ai.runs(active=True)}
+    def agent_runs(thread: str = ''):
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        return {'thread': t.id, 'runs': t.ai.runs(active=True)}
     @rt('/agent/runs/{run_id}/cancel')
-    def agent_run_cancel(run_id: str):
-        try: return {'ok': True, **ws.ai.cancel(run_id)}
-        except Exception as e: return {'ok': False, 'error': errstr(e)}
+    def agent_run_cancel(run_id: str, thread: str = ''):
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        if t.ai.run(run_id) is None: return _run_missing(t, run_id)
+        try: return {'ok': True, 'thread': t.id, **t.ai.cancel(run_id)}
+        except Exception as e: return {'ok': False, 'error': errstr(e), 'thread': t.id}
     @rt('/agent/runs/{run_id}/terminate')
-    def agent_run_terminate(run_id: str):
-        try: return {'ok': True, **ws.ai.terminate(run_id)}
-        except Exception as e: return {'ok': False, 'error': errstr(e)}
-    @rt('/agent/stream')
-    async def agent_stream(req):
-        "One turn as server-sent events, so the browser fills in as the model writes."
-        q = (req.query_params.get('prompt') or '').strip()
+    def agent_run_terminate(run_id: str, thread: str = ''):
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        if t.ai.run(run_id) is None: return _run_missing(t, run_id)
+        try: return {'ok': True, 'thread': t.id, **t.ai.terminate(run_id)}
+        except Exception as e: return {'ok': False, 'error': errstr(e), 'thread': t.id}
+    @rt('/agent/turn')
+    async def agent_turn(req):
+        try: d = await req.json()
+        except Exception: return _fail('turn body must be JSON')
+        if not isinstance(d, dict): return _fail('turn body must be a JSON object')
+        if not isinstance(d.get('prompt', ''), str): return _fail('prompt must be text')
+        q = (d.get('prompt') or '').strip()
         if not q: return _fail('nothing to ask')
-        try: attachments = json.loads(req.query_params.get('attachments') or '[]')
-        except Exception: return _fail('attachments must be a JSON array')
+        attachments = d.get('attachments') or []
         if not isinstance(attachments, list): return _fail('attachments must be a JSON array')
-        reasoning = (req.query_params.get('reasoning') or '').lower()
+        if not all(isinstance(ref, str) for ref in attachments): return _fail('attachments must contain text paths')
+        if not isinstance(d.get('reasoning', ''), str): return _fail('reasoning must be text')
+        reasoning = (d.get('reasoning') or '').lower()
         if reasoning not in ('', 'auto', 'low', 'medium', 'high'):
             return _fail('reasoning must be auto, low, medium or high')
         reasoning = None if reasoning in ('', 'auto') else reasoning
-        a = ws.ai
-        if a.busy: return _fail('the assistant is already working; use steering or stop it first', 409)
+        nb = _doc()
+        context = nb.context(len(nb)) if nb is not None else ''
+        context_path = nb.path if nb is not None else ''
+        # the browser names the conversation it is looking at; the active one is only a default,
+        # and a switch in another tab must not move this turn
+        try: runner = _thread(d.get('thread')).runner
+        except Exception as e: return _thread_error(e)
+        try: grounding = await _off_loop(ws.prepare_turn, attachments, context)
+        except Exception as e: return _fail(e)
+        try: return await _off_loop(runner.start, q, attachments, reasoning,
+                                    context, context_path, grounding)
+        except Exception as e:
+            from .blocks.agent.threads import TurnError
+            if isinstance(e, TurnError): return JSONResponse(e.dict(), status_code=409)
+            return _fail(e, 409)
+    @rt('/agent/stream')
+    async def agent_stream(req):
+        try: since = max(0, int(req.query_params.get('since') or 0))
+        except ValueError: return _fail('since must be an integer')
+        try: th = _thread(req.query_params.get('thread'))
+        except Exception as e: return _thread_error(e)
+        feed = th.feed
+        follow = req.query_params.get('follow') in ('1', 'true', 'yes')
         async def events():
-            import queue as _q
-            out, done = _q.Queue(), object()
-            def pump():
-                try:
-                    nb = _doc()
-                    context = nb.context(len(nb)) if nb is not None else ''
-                    context_path = nb.path if nb is not None else ''
-                    for c in ws.ask_stream(q, attachments=attachments, reasoning=reasoning,
-                                           context=context, context_path=context_path): out.put(('chunk', c))
-                except Exception as e: out.put(('chunk', errstr(e)))
-                finally: out.put((done, None))
-            loop = asyncio.get_running_loop()
-            task = loop.run_in_executor(None, pump)
-            run_id = ''
-            finished, approval_id, activity_versions, execution_version = False, None, {}, None
-            compact_count = a.compactor.count
-            def changed_activity(): return _activity_changes(a, activity_versions)
-            try:
-                while True:
-                    try:
-                        kind, val = await _off_loop(out.get, True, 0.25)
-                    except _q.Empty:
-                        kind = val = None
-                    if a.compactor.count != compact_count:
-                        compact_count = a.compactor.count
-                        yield _sse('compaction', {'count': compact_count, 'strategy': a.compactor.strategy,
-                                                  'note': a.compactor.note, 'text': a.compactor.last})
-                    runs = a.runs(active=True)
-                    if not run_id and runs: run_id = runs[-1]['id']
-                    state = {**ws.approvals.state(), 'runs': runs}
-                    version = json.dumps(state, sort_keys=True)
-                    if version != execution_version:
-                        execution_version = version
-                        yield _sse('execution', state)
-                    pending = ws.pending_approval
-                    if pending is not None and pending.id != approval_id:
-                        approval_id = pending.id
-                        proposal = {**pending.dict(), 'schemas': _tool_schemas(a)}
-                        yield _sse('approval', proposal)
-                    for row in changed_activity(): yield _sse('activity', row)
-                    if await req.is_disconnected(): break
-                    run = a.run(run_id) if run_id else None
-                    if run is not None and run.cancelled and run.terminal:
-                        finished = True
-                        yield _sse('run', run.dict())
-                        break
-                    if kind is None: continue
-                    if kind is done:
-                        finished = True
-                        for row in changed_activity(): yield _sse('activity', row)
-                        break
-                    yield _sse(kind, {'text': val} if kind == 'chunk' else {'error': val})
-            finally:
-                if not finished:
-                    if not run_id:
-                        end = loop.time() + a.cancel_grace
-                        while not run_id and not task.done() and loop.time() < end:
-                            runs = a.runs(active=True)
-                            if runs: run_id = runs[-1]['id']
-                            else: await asyncio.sleep(0.01)
-                    try: a.cancel(run_id)
-                    except Exception: pass
-            if not finished: return
-            if not task.done(): return
-            await task
-            capabilities = a.turn_capabilities(a.current_turn_id)
-            yield _sse('done', {'ok': a.ready, 'note': a.note, 'media': _turn_media(a),
-                                'usage': a.turn_use.dict(), 'usage_label': repr(a.turn_use),
-                                'session_usage': a.use.dict(), 'session_usage_label': repr(a.use),
-                                'model': a.model.name, 'turn_id': a.current_turn_id,
-                                'branch_id': a.current_branch_id, 'capabilities': capabilities,
-                                'problems': a.problems,
-                                'activity': a.activity.rows(mark=a.activity._mark),
-                                'edits': _edit_diffs(a)})
+            seq, ended = since, False
+            while not feed.closed and (follow or not feed.finished(seq)):
+                # the feed wakes this loop directly: a subscriber must not hold a shared worker
+                rows = await feed.anext(seq, 1 if ended else 15)
+                if await req.is_disconnected(): break
+                if not rows:
+                    # A finite replay ends at settlement. Neither a producer that never settles nor
+                    # a conversation with no turn in flight leaves one waiting for something else.
+                    if not follow and (ended or th.state != 'working'): break
+                    yield ': keepalive\n\n'
+                    continue
+                for row in rows:
+                    seq = max(seq, row['seq'])
+                    ended = ended or row['event'] == 'done'
+                    yield _sse(row['event'], {'seq': row['seq'], **row['data']})
+                if rows[-1]['event'] == 'resync': break
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-    def _turn_media(a):
-        "Pictures the turn produced, as data URLs. A tool result is a path, which a browser cannot draw."
-        import base64
-        out = []
-        for m in (getattr(a, 'turn_media', None) or []):
-            data = m.get('data')
-            if not data: continue
-            out.append({'mime': m.get('mime') or 'image/png',
-                        'url': f"data:{m.get('mime') or 'image/png'};base64,{base64.b64encode(data).decode()}"})
-        return out
 
     @rt('/agent/approval')
-    def agent_approval():
+    def agent_approval(thread: str = ''):
         "The call waiting for a person, or None. It stays inline so the rest of the IDE remains usable."
-        a = ws.pending_approval
-        pending = ({**a.dict(), 'schemas': _tool_schemas(ws.ai)} if a is not None else None)
-        return {'pending': pending, 'control': getattr(ws.approvals, 'control', 'guided')}
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        a = t.approvals.pending
+        pending = ({**a.dict(), 'schemas': _tool_schemas(t.ai)} if a is not None else None)
+        return {'thread': t.id, 'pending': pending, 'waiting': ws.threads.waiting(),
+                'control': getattr(t.approvals, 'control', 'guided')}
     @rt('/agent/control')
     async def agent_control(req):
         "Choose how often tool proposals become editable checkpoints."
         d = await req.json()
-        try: control = ws.approvals.set_control((d.get('control') or '').strip())
+        try: th = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
+        try: control = th.approvals.set_control((d.get('control') or '').strip())
         except ValueError as e: return _fail(e)
-        return {'ok': True, 'control': control}
+        return {'ok': True, 'thread': th.id, 'control': control}
     @rt('/agent/run-policy')
     async def agent_run_policy(req):
         "Run through bounded future calls, or pause immediately after the current one."
         d = await req.json()
+        try: th = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
         if d.get('policy') == 'pause':
-            ws.approvals.set_pause_next()
-            return {'ok': True, **ws.approvals.state()}
-        try: policy = ws.approvals.set_run_policy(d.get('policy') or 'once', d.get('count') or 1)
+            th.approvals.set_pause_next()
+            return {'ok': True, 'thread': th.id, **th.approvals.state()}
+        try: policy = th.approvals.set_run_policy(d.get('policy') or 'once', d.get('count') or 1)
         except (ValueError, TypeError) as e: return _fail(e)
-        return {'ok': True, 'policy': policy, **ws.approvals.state()}
+        return {'ok': True, 'thread': th.id, 'policy': policy, **th.approvals.state()}
     @rt('/agent/steer')
     async def agent_steer(req):
         """Queue guidance after the current tool; the next proposed call is skipped and replaced by it.
@@ -2266,48 +2366,284 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         """
         d = await req.json()
         text = (d.get('text') or '').strip()
+        try: th = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
         if d.get('cancel'):
-            ws.approvals.queue_steer('')
-            return {'ok': True, **ws.approvals.state()}
+            th.approvals.queue_steer('')
+            state = th.approvals.state(); th.feed.emit('steer', {'text': '', 'cancelled': True, **state})
+            return {'ok': True, 'thread': th.id, **state}
         if not text: return _fail('steering instruction is empty')
         if d.get('force'):
-            try: run = ws.ai.cancel()
+            from .blocks.agent.threads import TERMINAL_CANCEL
+            busy = bool(th.ai.runs(active=True))
+            try: run = th.ai.cancel()
             except Exception as e: return _fail(errstr(e))
-            return {'ok': True, 'forced': True, 'run': run, 'text': text, **ws.approvals.state()}
-        ws.approvals.queue_steer(text)
-        return {'ok': True, **ws.approvals.state()}
+            # nothing was running: the draft is an ordinary turn, not a cancellation that failed
+            if busy and run.get('state') not in TERMINAL_CANCEL:
+                return JSONResponse({'ok': False, 'code': 'cancellation_incomplete',
+                                     'message': f"run is {run.get('state', 'cancelling')}",
+                                     'thread': th.id, 'run': run}, status_code=409)
+            state = th.approvals.state()
+            th.feed.emit('steer', {'text': text, 'forced': True, 'run': run, **state})
+            return {'ok': True, 'thread': th.id, 'forced': True, 'run': run, 'text': text, **state}
+        th.approvals.queue_steer(text)
+        state = th.approvals.state(); th.feed.emit('steer', {'text': text, **state})
+        return {'ok': True, 'thread': th.id, **state}
     @rt('/agent/tool-preview')
     async def agent_tool_preview(req):
         "Preview the resolved call without executing it."
         d = await req.json()
         tool, args = (d.get('tool') or '').strip(), d.get('args')
-        if tool not in {t.__name__ for t in ws.ai.tools}: return _fail(f'unknown tool {tool}')
+        try: ai = _thread(d.get('thread')).ai
+        except Exception as e: return _thread_error(e)
+        if tool not in {t.__name__ for t in ai.tools}: return _fail(f'unknown tool {tool}')
         if not isinstance(args, dict): return _fail('tool arguments must be an object')
-        try: return {'ok': True, 'preview': _tool_preview(ws.ai, tool, args)}
+        try: return {'ok': True, 'preview': _tool_preview(ai, tool, args)}
         except Exception as e: return _fail(e)
+    def _settled_thread(target=''):
+        """The conversation a branch operation may act on. Reshaping context under a live run or an
+        unanswered checkpoint would change the question the model is already answering."""
+        t = _thread(target)
+        if t.state == 'working': raise TurnError('thread_busy', 'stop this conversation before reshaping it', t.id)
+        if t.state == 'waiting': raise TurnError('thread_busy', 'answer the waiting checkpoint first', t.id)
+        return t
+
+    def _history_changed(t, held):
+        return JSONResponse({'ok': False, 'code': 'history_changed', 'thread': t.id,
+                             'message': f'this conversation moved to revision {held["revision"]}',
+                             'revision': held['revision']}, status_code=409)
+
+    def _branch_reply(t, branch, **extra):
+        return {'ok': True, 'thread': t.id, 'active': t.ai.current_branch_id, **branch, **extra}
+
+    def _branch_error(e, t=None):
+        if isinstance(e, TurnError): return JSONResponse(e.dict(), status_code=409)
+        code = 'branch_point_invalid' if isinstance(e, (KeyError, ValueError)) else 'branch_failed'
+        if type(e).__name__ == 'BranchChanged': code = 'history_changed'
+        return JSONResponse({'ok': False, 'code': code, 'message': errstr(e),
+                             'thread': getattr(t, 'id', '')}, status_code=409 if t is not None else 400)
+
     @rt('/agent/branches')
-    def agent_branches():
-        "Turn boundaries available for a true model-context fork in this running session."
-        a = ws.ai
-        return {'active': a.current_branch_id,
+    def agent_branches(thread: str = ''):
+        "Where a conversation can be branched, and every branch it already has."
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        a = t.ai
+        return {'thread': t.id, 'active': a.current_branch_id, 'branches': a.branches(),
                 'turns': [{'turn_id': tid, 'branch_id': cp.get('branch_id', 'main'),
                            'before': 'before' in cp, 'after': 'after' in cp}
                           for tid, cp in a.checkpoints.items()]}
+    @rt('/agent/branch/parts')
+    def agent_branch_parts(turn_id: str = '', stage: str = 'after', thread: str = ''):
+        "One conversation as the ordered parts a person can branch from or shape."
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        try: return {'ok': True, 'thread': t.id, 'turn_id': turn_id, 'stage': stage,
+                     'parts': t.ai.context_parts(turn_id, stage)}
+        except Exception as e: return _branch_error(e, t)
     @rt('/agent/fork')
     async def agent_fork(req):
-        "Restore a model-history checkpoint as a new active conversation branch."
+        "Restore a checkpoint, or a part inside one, as a new active conversation branch."
         d = await req.json()
-        try: branch = ws.ai.fork(d.get('turn_id') or '', d.get('stage') or 'after', d.get('branch_id') or '')
+        try: t = _settled_thread(d.get('thread'))
+        except Exception as e: return _branch_error(e)
+        try: branch = t.ai.fork(d.get('turn_id') or '', d.get('stage') or 'after',
+                                d.get('branch_id') or '', str(d.get('part_id') or ''),
+                                d.get('manifest') or None)
+        except Exception as e: return _branch_error(e, t)
+        return _branch_reply(t, branch)
+    @rt('/agent/branch/switch')
+    async def agent_branch_switch(req):
+        "Make another branch active by rebuilding its context, not by copying a conversation."
+        d = await req.json()
+        try: t = _settled_thread(d.get('thread'))
+        except Exception as e: return _branch_error(e)
+        try: branch = t.ai.switch_branch(str(d.get('branch_id') or ''))
+        except Exception as e: return _branch_error(e, t)
+        return _branch_reply(t, branch)
+    @rt('/agent/undo-turn')
+    async def agent_undo_turn(req):
+        """Undo a turn from the conversation: a branch that stops before it. The turn stays in
+        canonical history, and files are a separate, explicit choice."""
+        d = await req.json()
+        try: t = _settled_thread(d.get('thread'))
+        except Exception as e: return _branch_error(e)
+        turns = [str(x) for x in (d.get('turn_ids') or []) if str(x)] or [str(d.get('turn_id') or '')]
+        order = list(t.ai.checkpoints)
+        unknown = [tid for tid in turns if tid not in order]
+        if unknown:
+            return JSONResponse({'ok': False, 'code': 'branch_point_invalid', 'thread': t.id,
+                                 'message': f'no captured turn boundary for {unknown[0]}'}, status_code=409)
+        earliest = min(turns, key=order.index) if turns else ''
+        try: branch = t.ai.undo_turn(earliest, d.get('branch_id') or '')
+        except Exception as e: return _branch_error(e, t)
+        return _branch_reply(t, branch, undone=turns, files_restored=None)
+    ws.start_backups()
+
+    @rt('/backups')
+    def backups_list():
+        "Every dated copy, what it holds, and the cadence taking them."
+        from .core.backups import backup_settings, backups, backup_dir, CADENCES, ENTRIES
+        held = backup_settings()
+        return {'ok': True, 'cadence': held['cadence'], 'cadences': sorted(CADENCES),
+                'keep': held['keep'], 'ages': list(held['ages']), 'include': list(held['include']),
+                'entries': [{'name': n, 'label': l, 'chosen': n in held['include']}
+                            for n, l in ENTRIES.items()],
+                'dir': str(backup_dir()), 'backups': list(reversed(backups()))}
+    @rt('/backups/run')
+    async def backups_run(req):
+        "Take one now, whatever the cadence says."
+        try: d = await req.json()
+        except Exception: d = {}
+        from .core.backups import backup_settings, run_backup
+        held = backup_settings()
+        out = await _off_loop(run_backup, None, str(d.get('reason') or 'asked for'),
+                              held['ages'], held['keep'], False, held['include'])
+        if not out['ok'] and out['problem']: return _fail(out['problem'])
+        return {**out, 'cadence': held['cadence']}
+    @rt('/backups/restore')
+    async def backups_restore(req):
+        """Put one back. A restore is itself a write over live state, so the module keeps a copy of
+        what it replaces before replacing it."""
+        d = await req.json()
+        name = str(d.get('name') or '')
+        if not name: return _fail('name the backup to restore')
+        from .core.backups import restore
+        try: out = await _off_loop(restore, name, None, d.get('only') or None, bool(d.get('dry_run')))
+        except FileNotFoundError as e: return _fail(e, 404)
         except Exception as e: return _fail(e)
-        return {'ok': True, **branch}
+        return {'ok': True, **out, 'note': 'reload the window to read the restored state'}
+    @rt('/agent/conversation/parts')
+    def agent_conversation_parts(thread: str = '', session: str = ''):
+        """One stored conversation as the ordered parts a person can keep, drop or rewrite. Read
+        from the turn log, so a conversation that was just resumed can be reshaped like any other."""
+        try: th = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        try: parts = th.ai.conversation_parts(session or None)
+        except Exception as e: return _branch_error(e, th)
+        return {'ok': True, 'thread': th.id, 'session': session or th.id, 'parts': parts,
+                'branch_id': th.ai.current_branch_id,
+                'revision': th.ai.branch_meta(th.ai.current_branch_id)['revision']}
+    @rt('/agent/conversation/notebook')
+    async def agent_conversation_notebook(req):
+        """Write one conversation out as a notebook a person can edit like any other.
+
+        A cell per part, in order, with the part id and its kind in the cell metadata so the edits
+        can be read back. Prose is editable; a call and its result are there to be read or deleted,
+        never reworded, so they are written as raw cells a person can remove but not fake.
+        """
+        d = await req.json() if req.method == 'POST' else {}
+        try: th = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
+        session = str(d.get('session') or th.id)
+        try: parts = th.ai.conversation_parts(session)
+        except Exception as e: return _branch_error(e, th)
+        if not parts: return _fail('this conversation has no recorded turns to edit', 404)
+        from .blocks.nb.nb import Cell, Notebook
+        held = th.ai.branch_meta(th.ai.current_branch_id)
+        head = (f'# Reshape this conversation\n\n'
+                f'Conversation `{session}` as {len(parts)} parts. Edit the **you** and **agent** '
+                f'cells to change what the model remembers. Delete any cell to drop that part; a '
+                f'call and its result go together. Save, then apply from the agent pane.\n\n'
+                f'_Nothing here changes the recorded conversation._')
+        cells = [Cell(source=head, cell_type='markdown')]
+        for part in parts:
+            label = {'user': 'you', 'assistant': 'agent', 'call': 'call', 'result': 'result'}[part['kind']]
+            body = f'<!-- {label} · {part["part_id"]} -->\n{part["text"]}'
+            cell = Cell(source=body, cell_type='markdown')
+            cell.approval = {'kind': 'reshape', 'part_id': part['part_id'], 'part_kind': part['kind'],
+                             'editable': part['editable'], 'group': part['group']}
+            cells.append(cell)
+        nb = Notebook(cells)
+        name = f'reshape-{session.replace(":", "-")}.ipynb'
+        path = str(Path(ws.cwd_for())/name)
+        try: nb.save(path)
+        except Exception as e: return _fail(e)
+        return {'ok': True, 'thread': th.id, 'session': session, 'path': path,
+                'parts': len(parts), 'branch_id': held['branch_id'], 'revision': held['revision']}
+    @rt('/agent/conversation/reshape')
+    async def agent_conversation_reshape(req):
+        """Read an edited notebook back as one reshaped branch.
+
+        A part whose cell is gone is discarded; a prose part whose text changed is rewritten. The
+        notebook is a view of the conversation, so anything it cannot say is simply not said.
+        """
+        d = await req.json()
+        try: th = _settled_thread(d.get('thread'))
+        except Exception as e: return _branch_error(e)
+        session, path = str(d.get('session') or th.id), str(d.get('path') or '')
+        if not path: return _fail('name the notebook to read the edits from')
+        from .blocks.nb.nb import Notebook
+        try: nb = _docs.get(path) or Notebook.load(path)
+        except Exception as e: return _fail(e)
+        try: parts = th.ai.conversation_parts(session)
+        except Exception as e: return _branch_error(e, th)
+        seen = {}
+        for cell in nb:
+            # the notebook format renames `kind` on save, so the part id is what identifies a cell
+            meta = getattr(cell, 'approval', None) or {}
+            part_id = str(meta.get('part_id') or '')
+            if not part_id: continue
+            body = str(cell.source or '')
+            seen[part_id] = body.split('\n', 1)[1] if body.startswith('<!--') and '\n' in body else body
+        # a notebook with no part cells is one we failed to read, not a conversation to erase
+        if not seen:
+            return JSONResponse({'ok': False, 'code': 'branch_point_invalid', 'thread': th.id,
+                                 'message': 'no conversation parts found in that notebook; nothing was changed'},
+                                status_code=409)
+        manifest = {p['part_id']: 'discard' for p in parts if p['part_id'] not in seen}
+        rewrites = {p['part_id']: seen[p['part_id']] for p in parts
+                    if p['editable'] and p['part_id'] in seen and seen[p['part_id']] != p['text']}
+        held = th.ai.branch_meta(str(d.get('branch_id') or th.ai.current_branch_id))
+        if d.get('revision') is not None and int(d['revision']) != int(held['revision']):
+            return _history_changed(th, held)
+        try: branch = th.ai.reshape(session, manifest, rewrites)
+        except Exception as e: return _branch_error(e, th)
+        return _branch_reply(th, branch, discarded=sorted(manifest), rewritten=sorted(rewrites))
+    @rt('/agent/history/preview')
+    async def agent_history_preview(req):
+        "What reshaping this conversation would send, before anything is written."
+        d = await req.json()
+        try: th = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
+        base = str(d.get('branch_id') or th.ai.current_branch_id)
+        held = th.ai.branch_meta(base)
+        if d.get('revision') is not None and int(d['revision']) != int(held['revision']):
+            return _history_changed(th, held)
+        try: compiled = th.ai.compile_conversation(d.get('session') or None,
+                                                  d.get('manifest') or None, d.get('rewrites') or None)
+        except Exception as e: return _branch_error(e, th)
+        text = '\n'.join(str(m.get('content') or '') for m in compiled['messages'])
+        return {'ok': True, 'thread': th.id, 'branch_id': base, 'revision': held['revision'],
+                'next_revision': held['revision'] + 1, 'parts': compiled['parts'],
+                'groups': compiled['groups'], 'adjusted': compiled['adjusted'],
+                'rewritten': compiled['rewritten'], 'kept': compiled['kept'],
+                'omitted': compiled['omitted'], 'messages': len(compiled['messages']),
+                'tokens': max(1, len(text) // 4) if text else 0}
+    @rt('/agent/history/apply')
+    async def agent_history_apply(req):
+        "Commit a reshaped conversation as a new branch, revalidated at the revision it was shown."
+        d = await req.json()
+        try: th = _settled_thread(d.get('thread'))
+        except Exception as e: return _branch_error(e)
+        base = str(d.get('branch_id') or th.ai.current_branch_id)
+        if d.get('revision') is None: return _fail('a reshaped branch needs the revision it was previewed at')
+        held = th.ai.branch_meta(base)
+        if int(d['revision']) != int(held['revision']): return _history_changed(th, held)
+        try: branch = th.ai.reshape(d.get('session') or None, d.get('manifest') or None,
+                                   d.get('rewrites') or None, d.get('branch_id_new') or '')
+        except Exception as e: return _branch_error(e, th)
+        return _branch_reply(th, branch, base_branch_id=base)
     @rt('/agent/revise')
     async def agent_revise(req):
         "Create a branch whose last assistant prose is the user's edited response."
         d = await req.json(); text = (d.get('text') or '').strip()
         if not text: return _fail('revised response is empty')
-        try: branch = ws.ai.revise(d.get('turn_id') or '', text, d.get('branch_id') or '')
-        except Exception as e: return _fail(e)
-        return {'ok': True, **branch}
+        try: t = _settled_thread(d.get('thread'))
+        except Exception as e: return _branch_error(e)
+        try: branch = t.ai.revise(d.get('turn_id') or '', text, d.get('branch_id') or '')
+        except Exception as e: return _branch_error(e, t)
+        return _branch_reply(t, branch)
     @rt('/agent/retry-tool')
     async def agent_retry_tool(req):
         "Rerun a completed read-only call; return its result without changing model history."
@@ -2315,32 +2651,39 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         d = await req.json()
         tool, args = (d.get('tool') or '').strip(), d.get('args')
         if tool in WRITE_TOOLS: return _fail('only read-only calls can be retried from a checkpoint')
-        choices = {t.__name__: t for t in ws.ai.tools}
+        try: choices = {c.__name__: c for c in _thread(d.get('thread')).ai.tools}
+        except Exception as e: return _thread_error(e)
         if tool not in choices: return _fail(f'unknown tool {tool}')
         if not isinstance(args, dict): return _fail('tool arguments must be an object')
         try: result = await _off_loop(choices[tool], **args)
         except Exception as e: return _fail(e)
         return {'ok': True, 'tool': tool, 'args': args, 'result': str(result)}
     @rt('/agent/turn-transaction')
-    def agent_turn_transaction(turn_id: str = ''):
-        tx = ws.ai.turn_transactions.get(turn_id)
+    def agent_turn_transaction(turn_id: str = '', thread: str = ''):
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        tx = t.ai.turn_transactions.get(turn_id)
         if tx is None: return _fail(f'no transaction for {turn_id}', 404)
         return {'transaction': {**tx, 'files': [{'path': p, **_diff(s['before'], s['after'])}
                                                 for p, s in tx['files'].items()]}}
     @rt('/agent/rollback-turn')
     async def agent_rollback_turn(req):
         d = await req.json()
-        try: tx = ws.ai.rollback_turn(d.get('turn_id') or '')
+        try: t = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
+        try: tx = t.ai.rollback_turn(d.get('turn_id') or '')
         except Exception as e: return _fail(e)
-        return {'ok': True, 'turn_id': tx['turn_id'], 'paths': list(tx['files']),
+        return {'ok': True, 'thread': t.id, 'turn_id': tx['turn_id'], 'paths': list(tx['files']),
                 'irreversible': tx['irreversible']}
     @rt('/agent/rollback-tool')
     async def agent_rollback_tool(req):
         "Rollback one snapshotted file call when its output is still the current file."
         d = await req.json()
-        try: path = ws.approvals.rollback((d.get('id') or '').strip())
+        try: t = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
+        try: path = t.approvals.rollback((d.get('id') or '').strip())
         except Exception as e: return _fail(e)
-        return {'ok': True, 'path': path}
+        return {'ok': True, 'thread': t.id, 'path': path}
     @rt('/agent/approval/request')
     async def agent_approval_request(req):
         "Ask for a decision in this browser on behalf of an external Rishi session."
@@ -2355,10 +2698,12 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             try: args = json.loads(args)
             except json.JSONDecodeError as e: return _fail(f'tool_call.function.arguments is not valid JSON at position {e.pos}')
         if not isinstance(args, dict): return _fail('tool_call.function.arguments must be an object')
-        try: timeout = min(3600, max(1, float(d.get('timeout', ws.approvals.timeout))))
+        try: t = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
+        try: timeout = min(3600, max(1, float(d.get('timeout', t.approvals.timeout))))
         except (TypeError, ValueError): return _fail('timeout must be a number of seconds')
-        a = await _off_loop(ws.approvals.request, name, args, True, timeout)
-        return {'ok': True, 'answer': a.dict()}
+        a = await _off_loop(t.approvals.request, name, args, True, timeout)
+        return {'ok': True, 'thread': t.id, 'answer': a.dict()}
     @rt('/agent/approve')
     async def agent_approve(req):
         "Answer a pending approval. `note` is the reason, and the reason goes back to the model."
@@ -2366,26 +2711,30 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         args = d.get('args')
         if args is not None and not isinstance(args, dict): return _fail('tool arguments must be an object')
         tool = (d.get('tool') or '').strip() or None
-        choices = {t.__name__: t for t in ws.ai.tools}
+        try: t = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
+        choices = {c.__name__: c for c in t.ai.tools}
         if tool and tool not in choices: return _fail(f'unknown tool {tool}')
         if bool(d.get('ok')) and tool and args is not None:
             import inspect
             try: inspect.signature(choices[tool]).bind(**args)
             except TypeError as e: return _fail(f'invalid {tool} arguments: {e}')
-        a = ws.answer_approval(d.get('id') or '', bool(d.get('ok')), (d.get('note') or '').strip(),
+        a = t.approvals.answer(d.get('id') or '', bool(d.get('ok')), (d.get('note') or '').strip(),
                                session=bool(d.get('session')), tool=tool, args=args)
         if a is None: return _fail('nothing is waiting for an answer')
-        return {'ok': True, 'answer': a.dict()}
+        return {'ok': True, 'thread': t.id, 'answer': a.dict()}
     @rt('/agent/command')
     async def agent_command(req):
         "Run a slash command (`/model`, `/cost`, `/compact`, `/skills`, `/tools`, `/reload`)."
         d = await req.json()
         line = (d.get('line') or '').strip()
-        if not line: return {'ok': True, 'text': 'commands: ' + ', '.join('/' + c for c in ws.ai.commands())}
-        out = await _off_loop(ws.ai.command, line)
+        try: ai = _thread(d.get('thread')).ai
+        except Exception as e: return _thread_error(e)
+        if not line: return {'ok': True, 'text': 'commands: ' + ', '.join('/' + c for c in ai.commands())}
+        out = await _off_loop(ai.command, line)
         if out is None: return _fail(f'unknown command {line.split()[0]}')
         if line.lstrip('/').split(' ')[0] in ('tool-budget', 'steps'):
-            ws.tool_budget, ws.step_budget = ws.ai.tool_budget, ws.ai.step_budget
+            ws.tool_budget, ws.step_budget = ai.tool_budget, ai.step_budget
             for agent in _live_assistants(): agent.tool_budget, agent.step_budget = ws.tool_budget, ws.step_budget
             ws.save()
         return {'ok': True, 'text': out}
