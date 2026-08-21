@@ -59,6 +59,7 @@ class Hit(Dictable):
     score: float = 0.0
     callers: list = None
     package: str = ''
+    module: str = ''
     sources: list = field(default_factory=list)
     cell: str = ''
     cell_index: int = -1
@@ -608,7 +609,22 @@ class Search:
             root = next((r for r in roots if str(hit.path).startswith(str(r))), None)
             rest = Path(hit.path).relative_to(root) if root else Path(hit.path)
             hit.package, hit.symbol = rest.parts[0].removesuffix('.py'), name
+            hit.module = self.env_module(hit.path, roots)
         return self._env_ranked(out, name, path)
+    def env_module(self, path, roots=None):
+        """The dotted module a `site-packages` file is, so a hit reads `fastcore.basics`.
+
+        The basename alone cannot answer "which one": two packages both offer a `document.py`, and
+        every package offers an `__init__.py`. `__init__` is dropped because the module is its folder.
+        """
+        p = Path(path)
+        for r in (self.env_roots() if roots is None else roots):
+            if not str(p).startswith(str(r)): continue
+            try: parts = p.relative_to(r).with_suffix('').parts
+            except ValueError: continue
+            if parts and parts[-1] == '__init__': parts = parts[:-1]
+            return '.'.join(parts)
+        return ''
     def env_symbols(self, name, limit=12):
         """Kosha's environment store, which knows the package and the line without guessing.
 
@@ -623,14 +639,15 @@ class Search:
         except Exception as e:
             self.note = f'Kosha environment lookup failed ({errstr(e)}); scanning site-packages'
             return L()
-        out = L()
+        out, roots = L(), self.env_roots()
         for row in rows:
             m = _meta(row)
             place = str(m.get('path') or '')
             if not place or not Path(place).exists(): continue
             out.append(Hit(path=place, line=int(m.get('lineno') or 1),
                 text=(row.get('content') or '').strip().split('\n')[0][:200], kind='env-definition',
-                symbol=name, package=str(row.get('package') or m.get('package') or '')))
+                symbol=name, package=str(row.get('package') or m.get('package') or ''),
+                module=self.env_module(place, roots)))
         if out: self.backend, self.note = 'kosha', f'Kosha environment metadata · {len(out)} packages searched'
         return out
     def _env_ranked(self, hits, name, path):

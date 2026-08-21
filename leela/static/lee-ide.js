@@ -4098,6 +4098,24 @@ function cursorLine() {
   return v ? LeeCM.lineOf(v) : 1;
 }
 
+/* Where a hit is, said well enough to choose between two of them. A package hit is its dotted
+   module, because `document.py` is offered by chonkie and by prompt_toolkit, and every package
+   offers an `__init__.py`. A project hit is its basename until two hits share one, and then as
+   many parent folders as it takes to tell them apart -- this repository has 25 files called
+   `app.py`. */
+function hitWhere(h, hits) {
+  if (h.module) return h.module;
+  const parts = String(h.path || '').split('/').filter(Boolean);
+  const clash = hits.filter(o => o !== h && !o.module && String(o.path || '').split('/').pop() === parts.at(-1));
+  if (!clash.length) return parts.at(-1) || h.path;
+  const others = clash.map(o => String(o.path || '').split('/').filter(Boolean));
+  for (let take = 2; take <= parts.length; take++) {
+    const mine = parts.slice(-take).join('/');
+    if (others.every(o => o.slice(-take).join('/') !== mine)) return mine;
+  }
+  return parts.join('/');
+}
+
 function hitList(hits, note, title, onPick) {
   let sel = 0;
   const m = modal(
@@ -4113,7 +4131,7 @@ function hitList(hits, note, title, onPick) {
     list.innerHTML = hits.length ? hits.map((h, i) =>
       `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">` +
       `<span>${esc(h.symbol || h.text.slice(0, 60))}</span>` +
-      `<span class="sub">${esc(h.path.split('/').pop())}:${h.line}` +
+      `<span class="sub">${esc(hitWhere(h, hits))}:${h.line}` +
       `${h.score ? ' · d=' + h.score.toFixed(3) : ''}</span></div>`).join('')
       : '<div class="lee-dim">nothing found</div>';
     list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});

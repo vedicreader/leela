@@ -1148,3 +1148,22 @@ def test_the_bundles_are_all_served_and_tagged_in_execution_order():
     finally: srv.should_exit = True
     assert bad == [], bad
     assert tags == list(IDE_BUNDLES), f'tag order {tags}, expected {list(IDE_BUNDLES)}'
+
+def test_a_jump_hit_says_which_module_or_which_folder_it_is_in():
+    """A package hit is its dotted module; two project files with one name grow their label until
+    they differ. Rendered as the basename, `document.py` from chonkie and from prompt_toolkit were
+    the same row twice, and this repository has 25 files called `app.py`.
+    """
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const pkg = [{path: '/v/site-packages/chonkie/types/document.py', line: 23, module: 'chonkie.types.document'},
+                       {path: '/v/site-packages/prompt_toolkit/document.py', line: 79, module: 'prompt_toolkit.document'}];
+          const proj = [{path: '/w/leela/blocks/git/app.py', line: 4},
+                        {path: '/w/leela/blocks/fs/app.py', line: 9},
+                        {path: '/w/leela/blocks/agent/turns.py', line: 1}];
+          return {pkg: pkg.map(h => hitWhere(h, pkg)), proj: proj.map(h => hitWhere(h, proj))};
+        }""")
+    got = _run(go)
+    assert got['pkg'] == ['chonkie.types.document', 'prompt_toolkit.document'], got['pkg']
+    assert got['proj'] == ['git/app.py', 'fs/app.py', 'turns.py'], got['proj']
+    assert len(set(got['pkg'])) == 2 and len(set(got['proj'])) == 3, 'every row is distinguishable'
