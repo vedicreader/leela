@@ -65,11 +65,66 @@ function leeLeft(which = 'files') {
   else { setScope('files'); requestAnimationFrame(() => $('#filetree')?.focus()); }
 }
 window.leeLeft = leeLeft;
+/* ---- expand: one slot, one mode, one writer ----
+
+   `wide` gives the pane the dominant share of the grid it already sits in; `full` lifts it over
+   the whole shell. Only one slot is expanded at a time. Everything expansion touches -- the
+   `#shell` classes, the agent panel's timeline layout, every button label -- is written by
+   `leeSyncExpand` from the stored value and from nothing else, so the four cannot disagree.
+   Closing the pane clears it: a wide grid track behind a hidden pane is the dead space that a
+   boolean nobody else knew about used to leave. */
+const PANE_HIDDEN = {left: 'no-left', right: 'no-right', bottom: 'no-bottom'};
+const EXPAND_MODES = ['wide', 'full'];
+
+function leeExpandState() {
+  const [which, mode] = (localStorage.getItem('lee-expand') || '').split(':');
+  return PANE_HIDDEN[which] && EXPAND_MODES.includes(mode) ? {which, mode} : {which: '', mode: ''};
+}
+function leeSyncExpand() {
+  const shell = $('#shell'); if (!shell) return;
+  let {which, mode} = leeExpandState();
+  // A pane hidden by a reload, or by anything that forgot to say so, cannot stay expanded.
+  if (which && shell.classList.contains(PANE_HIDDEN[which])) { which = mode = ''; localStorage.setItem('lee-expand', ''); }
+  for (const slot in PANE_HIDDEN) shell.classList.toggle('expand-' + slot, slot === which);
+  for (const m of EXPAND_MODES) shell.classList.toggle('expand-' + m, m === mode);
+  $('.lee-agent')?.classList.toggle('timeline-workspace', which === 'right' && !!mode);
+  $$('[data-pane-expand]').forEach(b => {
+    const slot = b.dataset.paneExpand, own = slot === which ? mode : '';
+    const label = own === 'wide' ? 'full screen' : own === 'full' ? 'restore' : 'expand';
+    b.textContent = b.dataset.paneExpandIcon ? (own === 'full' ? '\u2921' : '\u2922') : label;
+    b.title = `${label} the ${slot} pane`;
+    b.setAttribute('aria-label', `${label} the ${slot} pane`);
+    b.setAttribute('aria-pressed', String(!!own));
+  });
+}
+function leeExpand(which = '', mode = '') {
+  const wanted = PANE_HIDDEN[which] && EXPAND_MODES.includes(mode) ? which + ':' + mode : '';
+  if (wanted) leePane(which, true);
+  localStorage.setItem('lee-expand', wanted);
+  leeSyncExpand();
+  requestAnimationFrame(() => lee.term?.refit());
+}
+function leeExpandPane(which) {
+  const cur = leeExpandState(), mode = cur.which !== which ? 'wide' : cur.mode === 'wide' ? 'full' : '';
+  leeExpand(which, mode);
+  status(`${which} pane ${mode === 'wide' ? 'expanded' : mode === 'full' ? 'full screen' : 'restored'}`);
+}
+window.leeExpand = leeExpand; window.leeExpandPane = leeExpandPane;
+
+// Full screen hides the layout you would otherwise click back from, so Escape is the way out.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || $$('.lee-modal').length || leeExpandState().mode !== 'full') return;
+  e.preventDefault(); e.stopPropagation(); leeExpand('');
+}, true);
+
 function leePane(which, show = null, persist = true) {
   const shell = $('#shell'); if (!shell) return;
-  const cls = which === 'left' ? 'no-left' : which === 'right' ? 'no-right' : 'no-bottom';
+  const cls = PANE_HIDDEN[which] || 'no-bottom';
   const hidden = show === null ? !shell.classList.contains(cls) : !show;
   shell.classList.toggle(cls, hidden);
+  // Closing the pane that is expanded: without this its grid track stays wide and the
+  // hidden pane keeps the room, which is the dead space this used to leave behind.
+  if (hidden && leeExpandState().which === which) leeExpand('');
   if (matchMedia('(max-width: 1100px)').matches && which !== 'bottom') {
     shell.classList.toggle('mobile-' + which, !hidden);
     if (!hidden) {
@@ -81,6 +136,7 @@ function leePane(which, show = null, persist = true) {
   // An auto-close is not a preference: the pane was got out of the way for one keystroke, and
   // recording it as hidden would mean it never came back after a reload.
   if (persist) localStorage.setItem('lee-pane-' + which, hidden ? 'hidden' : 'shown');
+  leeSyncExpand();
   if (!hidden && which === 'bottom') requestAnimationFrame(() => lee.term?.refit());
 }
 window.leePane = leePane;

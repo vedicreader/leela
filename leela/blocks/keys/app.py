@@ -7,6 +7,8 @@ import json
 from fasthtml.common import JSONResponse
 
 from ... import errstr
+from fastcore.all import L
+
 from ...core import keys as keymap
 from ...core.ui import bar as btn_bar
 from ...core.web import fail
@@ -46,6 +48,21 @@ def connect(app, ctx):
         keymap.reload()
         return {'ok': True, 'path': str(p), 'notes': list(keymap.NOTES),
                 'keys': web_keymap(), 'help': help_rows()}
+    @rt('/keys/check')
+    async def keys_check(req):
+        """What a proposed map would be refused for, without writing it.
+
+        The same `apply_overrides` the save runs, on a throwaway note list, so what the editor warns
+        about while a person types cannot drift from what saving would actually reject.
+        """
+        d = await req.json()
+        over = d.get('keys') or {}
+        if not isinstance(over, dict): return fail('keys must be an object of action to chord')
+        notes = L()
+        applied = keymap.apply_overrides(keymap.DEFAULTS, {str(k): str(v) for k, v in over.items()}, notes)
+        return {'ok': not notes, 'notes': list(notes),
+                'keys': [{'action': k.action, 'key': k.key, 'keys': list(k.keys),
+                          'scope': k.scope, 'label': k.label} for k in applied]}
     @rt('/keys/reset')
     def keys_reset():
         "Put leela's own defaults back, so a keymap you cannot use is one click from gone."

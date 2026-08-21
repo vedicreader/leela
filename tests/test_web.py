@@ -194,16 +194,19 @@ def test_agent_model_and_reasoning_live_below_the_growing_prompt(tmp_path):
     assert 'id="agentreasoning"' in html and 'lee-composer-footer' in html
     composer = JS[JS.index('function initAgentComposer'):JS.index('async function sendAgentCommand')]
     assert "input.style.height = 'auto'" in composer and "localStorage.getItem('lee-agent-reasoning')" in composer
-    assert "&reasoning=" in JS
+    assert "reasoning = $('#agentreasoning')?.value" in JS
 
 def test_agent_panel_sends_the_open_notebook_cells_as_context():
     from inspect import getsource
     from leela.app import ide_app
     source = getsource(ide_app)
-    stream = source[source.index("@rt('/agent/stream')"):source.index("@rt('/agent/approval')")]
-    assert 'context = nb.context(len(nb))' in stream
-    assert 'context_path = nb.path' in stream
-    assert 'ws.ask_stream(q, attachments=attachments' in stream
+    turn = source[source.index("@rt('/agent/turn')"):source.index("@rt('/agent/stream')")]
+    assert 'context = nb.context(len(nb))' in turn
+    assert 'context_path = nb.path' in turn
+    assert '_off_loop(runner.start, q, attachments, reasoning,' in turn
+    assert "_thread(d.get('thread')).runner" in turn, 'the named conversation, not whichever is active'
+    assert '_off_loop(ws.prepare_turn, attachments, context)' in turn, \
+        'a screenshot and a model start must not run on the event loop'
 
 def test_agent_vocabulary_exposes_commands_tools_and_project_skills(tmp_path):
     skill = tmp_path/'.agents/skills/notebook-tests/SKILL.md'
@@ -222,7 +225,7 @@ def test_agent_composer_can_mention_tools_and_skills_inline():
     assert "item.kind === 'tool' || item.kind === 'skill'" in composer
     assert "vocab.tools || []" in composer and "vocab.skills || []" in composer
     assert "detail: `${x.kind} · ${x.help || ''}`" in composer
-    send = JS[JS.index('async function sendAgent()'):JS.index("es.addEventListener('activity'")]
+    send = JS[JS.index('async function sendAgent(force'):JS.index("es.addEventListener('activity'")]
     assert "agentVocabulary?.commands" in send
     assert "if (q.startsWith('/'))" in send
 
@@ -348,6 +351,44 @@ def test_workspace_panes_can_minimise_and_restore_independently(tmp_path):
     assert 'border: 1px solid var(--lee-accent)' in CSS
     assert '.lee-pane-restore:hover, .lee-pane-restore:focus-visible' in CSS
     assert '.lee-pane-restore:active' in CSS
+
+def test_pane_expand_is_one_slot_in_one_mode_written_from_one_place(tmp_path):
+    "Expanded is `<slot>:<mode>` in one key; the classes, the timeline layout and every label follow it."
+    block = JS[JS.index('const PANE_HIDDEN'):JS.index('function leePane(')]
+    assert "PANE_HIDDEN = {left: 'no-left', right: 'no-right', bottom: 'no-bottom'}" in block
+    assert "EXPAND_MODES = ['wide', 'full']" in block
+    assert "localStorage.setItem('lee-expand', wanted)" in block, 'one writer of the stored value'
+    assert "shell.classList.toggle('expand-' + slot, slot === which)" in block
+    assert "shell.classList.toggle('expand-' + m, m === mode)" in block
+    assert "classList.toggle('timeline-workspace', which === 'right' && !!mode)" in block
+    assert "$$('[data-pane-expand]')" in block, 'the button labels are painted from the same read'
+    assert "cur.which !== which ? 'wide' : cur.mode === 'wide' ? 'full' : ''" in block, 'off, wide, full'
+    assert 'agent-focus' not in JS and 'agent-focus' not in CSS, 'the second writer is gone'
+    assert "$('#agentexpand').textContent" not in JS, 'nor the third'
+    assert "function leeAgentExpand() { leeRight('agent'); leeExpandPane('right'); }" in JS
+    assert "leeDock('term'); leeExpandPane('bottom');" in JS
+    html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
+    for slot in ('left', 'right', 'bottom'): assert f'data-pane-expand="{slot}"' in html, slot
+
+def test_closing_a_pane_restores_it_and_a_hidden_pane_never_boots_expanded():
+    pane = JS[JS.index('function leePane('):JS.index('/* ---- docking')]
+    assert "if (hidden && leeExpandState().which === which) leeExpand('')" in pane
+    assert 'leeSyncExpand();' in pane, 'every close leaves the expand classes matching the store'
+    sync = JS[JS.index('function leeSyncExpand'):JS.index('function leeExpand(')]
+    assert "shell.classList.contains(PANE_HIDDEN[which])" in sync and "which = mode = ''" in sync
+    boot = JS[JS.index("localStorage.getItem('lee-agent-expanded')"):JS.index('async function refreshKernelPill')]
+    assert "localStorage.setItem('lee-expand', 'right:wide')" in boot, 'the old boolean migrates'
+    assert "localStorage.removeItem('lee-agent-expanded')" in boot and 'leeSyncExpand();' in boot
+    assert "leeExpandState().mode !== 'full'" in JS, 'escape leaves full screen'
+
+def test_each_expand_mode_has_a_layout_and_full_screen_covers_the_shell():
+    assert '.lee-app.expand-right.expand-wide .lee-body' in CSS
+    assert '.lee-app.expand-left.expand-wide .lee-body' in CSS
+    assert '.lee-app.expand-bottom.expand-wide .lee-bottomdock' in CSS
+    assert '.lee-app.expand-bottom.expand-wide .lee-editor' in CSS
+    assert '.lee-app.expand-full.expand-right #right' in CSS
+    assert 'position: fixed; inset: 34px 0 24px' in CSS, 'full screen keeps the header and footer'
+    assert '.lee-agent.timeline-workspace .lee-agentlog' in CSS
 
 def test_the_file_and_agent_panes_can_be_pinned_or_left_to_auto_close(tmp_path):
     "Unpinned, a pane closes when you work elsewhere; pinned is the default and the old behaviour."
@@ -1264,9 +1305,9 @@ def test_agent_teleprompter_exposes_control_modes_and_editable_tool_calls():
     assert "post('/agent/control', {control})" in JS
     assert 'async function leeAgentQuickBudget()' in JS and "api('/agent/status')" in JS
     assert 'data-tool' in JS and 'data-args' in JS
-    assert "post('/agent/approve', {id: a.id, ok, note, session, tool, args})" in JS
+    assert "post('/agent/approve', {id: a.id, ok, note, session, tool, args, thread: lee.agentThread || ''})" in JS
     assert "post('/agent/run-policy', {policy, count:" in JS
-    assert "post('/agent/tool-preview', {tool, args})" in JS
+    assert "post('/agent/tool-preview', {tool, args, thread: lee.agentThread || ''})" in JS
     assert "post('/agent/steer', {text})" in JS
     assert '.lee-proposal-editor' in CSS and '.lee-proposal-error' in CSS
 
@@ -1309,7 +1350,7 @@ def test_the_agent_panel_streams_steps_approvals_and_usage():
     card = JS[JS.index('function showApproval'):JS.index('function readableDetail')]
     assert 'Pause again' in card and 'Trust changes for this session' in card
     assert "const session = ok && $('[data-run-policy]', card).value === 'approve_session'" in card
-    assert "post('/agent/approve', {id: a.id, ok, note, session, tool, args})" in card
+    assert "post('/agent/approve', {id: a.id, ok, note, session, tool, args, thread: lee.agentThread || ''})" in card
     assert "api('/agent/approval')" in JS
     assert 'if (r.pending) showApproval(r.pending)' in JS
     assert 'approvalLoop()' in JS and 'lee.agentBusy ? 750 : 5000' in JS, \
@@ -1400,7 +1441,9 @@ def test_agent_control_route_changes_checkpoint_policy_without_starting_a_model(
     with TestClient(ide_app(ws)) as client:
         r = client.post('/agent/control', json={'control': 'directed'})
         bad = client.post('/agent/control', json={'control': 'reckless'})
-    assert r.json() == {'ok': True, 'control': 'directed'}
+    body = r.json()
+    assert body['ok'] and body['control'] == 'directed'
+    assert body['thread'], 'and it says which conversation the policy was set on'
     assert ws.approvals.control == 'directed'
     assert bad.status_code == 400
 
@@ -1602,9 +1645,10 @@ def test_history_groups_turns_by_context_session_without_rendering_every_turn():
     assert [x['prompt'] for x in groups[1]['turns']] == ['one', 'two']
     assert groups[1]['context_continues'] and groups[1]['code'] == 4
     history = JS[JS.index('async function showHistorySession'):JS.index('function renderSessionCells')]
-    assert "renderTurns(log, group.turns || [], 'conversation')" in history
+    # the list carries no turn bodies now, so the pane fetches the one conversation it is showing
+    assert 'await sessionTurns(group.id)' in history and "renderTurns(log, turns, 'conversation')" in history
     assert 'groups.find' in history
-    assert "(s.models || []).map" in history
+    assert "(s.models || []).map" not in history, 'the option is the name alone'
 
 def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(tmp_path):
     "History showed the turns and left the model with none of them."
@@ -1613,8 +1657,14 @@ def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(t
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     model = ws.ai.model.name
-    ws.ai.history = [{'session': 'agent-a', 'at': 1, 'model': model, 'prompt': 'remember cedar', 'reply': 'noted'},
-                     {'session': 'agent-a', 'at': 2, 'model': model, 'prompt': 'what was it?', 'reply': 'cedar'}]
+    turns = [{'session': 'agent-a', 'at': 1, 'model': model, 'prompt': 'remember cedar', 'reply': 'noted'},
+             {'session': 'agent-a', 'at': 2, 'model': model, 'prompt': 'what was it?', 'reply': 'cedar'}]
+    # a resumed thread builds its own assistant and reads the log, so the session has to be in it
+    import json as _json
+    path = ws.ai.history_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('\n'.join(_json.dumps(t) for t in turns) + '\n')
+    ws.ai.history = list(turns)
     with TestClient(ide_app(ws)) as client:
         d = client.post('/agent/resume', json={'session': 'agent-a'}).json()
         missing = client.post('/agent/resume', json={'session': 'legacy-1'})
@@ -2337,3 +2387,43 @@ def test_saving_makes_the_cached_copy_current_again(tmp_path):
         assert r['ok']
         again = client.get('/tab/state', params={'path': tab.path}).json()
         assert again['cells'][0]['source'] == 'X = 2' and not again['stale']
+
+
+def test_mod_click_looks_a_symbol_up_without_the_menu_or_a_stuck_toast():
+    """Ctrl+click is a right-click on macOS: it opened the cell menu on top of the answer. And
+    `finding…` is a busy toast, which waits to be clicked, so the list has to replace it."""
+    from tests.assets import JS
+    click = JS[JS.index('function bindModClick'):JS.index('const nbCellText')]
+    assert '(e.metaKey || e.ctrlKey)' in click and 'MAC ?' not in click, 'either modifier, no platform guess'
+    menu = click[click.index("addEventListener('contextmenu'"):click.index("addEventListener('mousedown'")]
+    assert 'e.preventDefault(); e.stopPropagation();' in menu, 'claimed in the capture phase, before the tree menu'
+    assert "closest?.('.cm-content')" in menu, 'only inside an editor; a right-click elsewhere is untouched'
+    jump = JS[JS.index('async function gotoDeclaration'):JS.index('function bindModClick')]
+    assert jump.count('status(') >= 4 and "status(`finding ${name}…`)" in jump
+    assert "status(`${hits.length} ${label} of ${name}`, 'ok')" in jump, 'the list ends the busy toast'
+    assert 'catch (e) { return status(String(e.message || e), ' in jump, 'and so does a failed lookup'
+
+
+def test_the_settings_page_offers_the_shared_conversation_folder():
+    "A setting nobody can find is not a setting. It sits on its own page, next to Backups."
+    from tests.assets import JS
+    assert 'data-settings-page="agent"' in JS and 'data-settings-section="agent"' in JS
+    page = JS[JS.index('data-settings-section="agent"'):JS.index('data-settings-section="backups"')]
+    assert 'data-pref-section="agent"' in page and 'data-pref="configFolder"' in page
+    assert 'restart Leela after changing it' in page, 'a live conversation keeps the folder it started in'
+    assert "agent:lee.agentPrefs||{}" in JS, 'and the save collector knows the section'
+    assert "lee.agentPrefs = d.effective.agent || {}" in JS, 'and it is loaded with the rest'
+
+
+def test_local_history_is_reachable_and_restores_through_the_tab():
+    "A version list nobody can open is a store, not a feature."
+    from tests.assets import JS
+    from leela.core.keys import DEFAULTS
+    row = next(k for k in DEFAULTS if k.action == 'local_history')
+    assert row.key and row.label == 'local file history', 'bound and named in the keymap'
+    assert 'local_history: () => leeLocalHistory()' in JS, 'and dispatched like every other action'
+    fn = JS[JS.index('async function leeLocalHistory'):JS.index('// The dirty dot says')]
+    assert "api('/history/file?path='" in fn and "api('/history/version?id='" in fn
+    assert "post('/history/restore'" in fn and "post('/tab/reload'" in fn and 'await mountTab()' in fn
+    assert 'Nothing kept for this file yet' in fn, 'an empty history says so rather than looking broken'
+    assert 'diffHtml(held.rows)' in fn, 'the version is shown against what is on disk'

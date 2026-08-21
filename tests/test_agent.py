@@ -122,8 +122,10 @@ def test_a_host_offers_only_the_tools_it_supports():
     names = {t.__name__ for t in tools_for(MemHost_agent())}
     assert 'run_python' not in names
     from ramabana.git import GIT_WRITE_TOOLS
+    # `add_root` is a write: multi-repo edits need it, and widening the boundary is a change
+    # to what every later call may touch, so it is gated like any other write.
     assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
-            'run_shell', 'memory_forget', 'create_skill',
+            'run_shell', 'memory_forget', 'create_skill', 'add_root',
             'cancel_watch', 'cart_add', 'cart_remove'} | GIT_WRITE_TOOLS == set(WRITE_TOOLS)
     a, _ = fake_agent()
     names = {t.__name__ for t in read_only(a.tools)}
@@ -139,8 +141,10 @@ def test_a_host_offers_only_the_tools_it_supports():
 
 
 
-def test_cheap_jobs_stay_local_when_the_turn_goes_to_the_cloud(monkeypatch):
-    "The whole argument for routing: pointing the turn at a frontier model must not move completions."
+def test_moving_the_turn_model_leaves_every_other_job_where_the_policy_put_it(monkeypatch):
+    """The whole argument for routing: pointing the turn at a frontier model must not move
+    completions. The cheap jobs sit on the local default; delegation is the one job whose default
+    is a cloud model, because local models did not do it well enough to be worth the wait."""
     monkeypatch.delenv('LEELA_MODEL', raising=False)
     r = models.Routing(turn='gemma-e2b')
     r.set('gemma-12b')
@@ -148,7 +152,9 @@ def test_cheap_jobs_stay_local_when_the_turn_goes_to_the_cloud(monkeypatch):
     for job, name in models.DEFAULT_POLICY.items():
         if job == 'turn': continue
         assert r.spec(job).name == (name or models.DFLT_LOCAL), job
-        assert r.spec(job).local, job
+        assert r.spec(job).local == (job != 'subagent'), job
+    assert not r.spec('subagent').local, 'and delegation is deliberately not local'
+    assert models.DEFAULT_POLICY['subagent'] == r.spec('subagent').name
 
 def test_env_overrides_a_single_job(monkeypatch):
     monkeypatch.setenv('LEELA_MODEL_SUMMARY', 'gemma-12b')
@@ -467,7 +473,16 @@ def test_subagent_writes_are_opt_in_persisted_and_reach_the_assistant(tmp_path):
     sub = {t.__name__ for t in ws.ai._sub_plain()}
     assert 'create_file' in sub, 'writing means the write tools, recorded'
     assert not (sub & GIT_WRITE_TOOLS), 'and pushing is still not delegable'
-    assert sub == {t.__name__ for t in ws.ai.tools} - GIT_WRITE_TOOLS, 'nothing else was taken'
+    # A sub-agent reads and researches on its own, but it does not run the session: no nested
+    # delegation, no plan or todo list, no steering the person, no long-running media jobs.
+    assert {'read_url', 'web_search', 'research', 'memory_read'} <= sub
+    assert not (sub & {'delegate_search', 'delegate_parallel'}), 'and it cannot delegate onwards'
+    assert 'user_steering' not in sub, 'steering belongs to the main agent'
+    assert 'user_steering' not in sub, 'steering belongs to the main agent, which passes guidance in a delegated prompt'
+    assert not (sub & {'set_plan', 'list_plan', 'add_todo', 'update_todo'}), 'nor drive the plan'
+    again = Workspace(roots=[tmp_path]).ai
+    _ = again.tools
+    assert 'user_steering' not in {t.__name__ for t in again._sub_plain()}, 'construction order cannot change policy'
 
     ws.subagent_writes = True; ws.save()
     back = Workspace.load(ws_path(), port=0)
@@ -675,13 +690,18 @@ def test_a_new_conversation_keeps_every_saved_job_model(tmp_path):
     assert {job: ws.ai.routing.name_for(job) for job in ws.job_models} == ws.job_models
 
 def test_an_agent_harness_is_not_a_pip_extra(monkeypatch):
-    "Cursor and Claude Code are runtimes now; the picker told you to `pip install rishi[cursor]`."
+    """Claude Code is a runtime, not a pip extra; the picker used to say `pip install rishi[cursor]`.
+    Cursor itself is no longer offered, so nothing should reserve a row for it."""
     from leela.blocks.agent.models import runtimes
     rows = {r['value']: r for r in runtimes()}
-    assert {'cursor', 'claude'} <= set(rows)
-    assert rows['cursor']['label'] == 'Cursor agent' and rows['claude']['label'] == 'Claude Code'
-    assert 'CLI or SDK' in rows['cursor']['why'] and 'pip install' not in rows['cursor']['why']
+    assert 'claude' in rows and 'cursor' not in rows
+    assert rows['claude']['label'] == 'Claude Code'
+    # rishi carries the harness and hosted dependencies itself now, so only the local backends
+    # are extras: naming one for Claude Code sends a person to install something empty
+    assert 'Claude Code' in rows['claude']['why'] and 'pip install' not in rows['claude']['why']
+    assert 'claude /login' in rows['claude']['why'], 'and says what it actually wants'
     assert 'pip install rishi[mlx]' in rows['mlx']['why']
+    assert 'pip install' not in rows['remote']['why'], 'a hosted model wants a key, not an extra'
 
 def test_older_specialized_openai_models_are_opt_in(monkeypatch):
     monkeypatch.setenv('OPENAI_API_KEY', 'present')
@@ -691,13 +711,14 @@ def test_older_specialized_openai_models_are_opt_in(monkeypatch):
     assert 'gpt-5' in normal and 'gpt-4.1' not in normal
     assert {'gpt-4.1', 'gpt-4.1-mini'} <= older
 
-def test_anthropic_key_exposes_fastllms_full_claude_catalog(monkeypatch):
+def test_an_anthropic_key_no_longer_publishes_a_model_catalog(monkeypatch):
+    """Claude reaches Leela as the `claude` runtime, not as a provider model list, so the key alone
+    publishes nothing. Offering `anthropic/...` rows would name models nothing here can route to."""
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'connected')
     rows = models.available_models()
-    anthropic = {r['value'] for r in rows if r['provider'] == 'anthropic'}
-    assert 'anthropic/claude-sonnet-4-6' in anthropic
-    assert 'anthropic/claude-opus-4-8' in anthropic
-    assert all(r['source'] == 'ANTHROPIC_API_KEY' for r in rows if r['provider'] == 'anthropic')
+    assert not [r for r in rows if r['provider'] == 'anthropic']
+    from leela.blocks.agent.models import runtimes
+    assert 'claude' in {r['value'] for r in runtimes()}
 
 def test_available_models_follow_environment_and_codex_login(monkeypatch, tmp_path):
     auth = tmp_path/'auth.json'
@@ -1039,15 +1060,15 @@ def test_an_approval_exchange_is_written_into_the_notebook():
     ws = Workspace(roots=[])
     nb = Notebook([Cell(source='fix it', cell_type='prompt')])
     ws._approval_target = (nb, 0)
-    stop = ws.approvals.listen()
+    approvals = ws._notebook_approvals; stop = approvals.listen()
     def answer():
         for _ in range(300):
-            if (a := ws.approvals.pending) is not None:
-                return ws.answer_approval(a.id, False, 'that file is generated')
+            if (a := approvals.pending) is not None:
+                return approvals.answer(a.id, False, 'that file is generated')
             time.sleep(0.01)
     threading.Thread(target=answer, daemon=True).start()
     tc = {'function': {'name': 'edit_file', 'arguments': {'path': 'gen.py'}}}
-    d = ws.approvals.gate(tc)
+    d = approvals.gate(tc)
     stop()
     # a refusal is handed back as steering, the same for a call with an id and one without
     assert d is True and tc['function']['name'] == 'user_steering'
@@ -1111,7 +1132,10 @@ def test_agent_prompt_bar_accepts_the_open_notebook_context(tmp_path):
     seen = {}
     class A:
         class Model: local = True
-        model = Model()
+        class Routing:
+            def name_for(self, job): return ''
+        model, routing = Model(), Routing()
+        def set_model(self, name, job=''): pass
         def stream_with(self, prompt, **kwargs):
             seen.update(prompt=prompt, **kwargs)
             return iter(['ok'])
@@ -1201,7 +1225,8 @@ def test_the_sse_endpoint_streams_the_real_app():
     install(ws, [Step(tool=('search_code', {'query': 'Approvals'})),
                  Step(text='found it in hitl.py')], token_delay=0)
     with TestClient(ide_app(ws)) as c:
-        with c.stream('GET', '/agent/stream', params={'prompt': 'where?'}) as r:
+        accepted = c.post('/agent/turn', json={'prompt': 'where?'}).json()
+        with c.stream('GET', '/agent/stream', params={'since': accepted['seq']}) as r:
             assert r.status_code == 200
             assert r.headers['content-type'].startswith('text/event-stream')
             body = ''.join(r.iter_text())
@@ -1211,21 +1236,85 @@ def test_the_sse_endpoint_streams_the_real_app():
     assert 'event: done' in body
     assert 'Search Approvals' in body
     assert 'found' in body
-    done = body.rsplit('event: done\ndata: ', 1)[1]
+    done = body.split('event: done\ndata: ', 1)[1].split('\n\n', 1)[0]
     import json as _j
     d = _j.loads(done.strip())
     assert d['ok'] and 'edits' in d and d['activity']
+
+def test_httpcore_does_not_reclose_a_generator_during_generator_exit():
+    import httpcore2._utils as core_utils
+    closed = []
+    async def stream():
+        try: yield b'chunk'
+        finally: closed.append(True)
+    async def run():
+        iterator = stream()
+        assert await anext(iterator) == b'chunk'
+        try:
+            async with core_utils.safe_async_iterate(iterator): raise GeneratorExit
+        except GeneratorExit: pass
+        assert iterator.ag_frame is not None
+        async with core_utils.safe_async_iterate(iterator): pass
+    asyncio.run(run())
+    assert closed == [True]
+
+def test_fasttransport_uses_the_sse_context_for_malformed_events():
+    import fasttransport.core as ft
+    class Response:
+        headers = {}
+        def raise_for_status(self): pass
+    class Source:
+        response = Response()
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def __aiter__(self): return self
+        async def __anext__(self): return type('Event', (), {'data': '{'})()
+    class Client:
+        def stream(self, *args, **kwargs): raise AssertionError('stream() bypassed the SSE context')
+        def sse(self, *args, **kwargs): return Source()
+    async def run():
+        with pytest.raises(ft.ProtocolError):
+            async for _ in ft.AsyncTransport(client=Client()).stream('GET', 'https://example.test'): pass
+    asyncio.run(run())
+
+def test_agent_stream_replays_worker_errors_and_recovers():
+    from leela.blocks.agent.threads import Feed
+    ws, feed = Workspace(roots=[]), Feed('thread-1')
+    class Runner:
+        def __init__(self): self.feed, self.calls = feed, 0
+        def start(self, prompt, *args):
+            self.calls += 1
+            user = feed.emit('user', {'text': prompt, 'run': f'run-{self.calls}'})
+            if self.calls == 1: feed.emit('error', {'message': 'provider broke', 'run': 'run-1'})
+            else: feed.emit('chunk', {'text': 'recovered', 'run': 'run-2'})
+            feed.emit('done', {'ok': self.calls > 1, 'run': f'run-{self.calls}'})
+            feed.emit('state', {'runs': [], 'run': f'run-{self.calls}'}); feed.settle()
+            return {'ok': True, 'thread': 'thread-1', 'run': f'run-{self.calls}', 'seq': user['seq']}
+        def close(self): feed.close()
+    ws._turn_runner = Runner()
+    with TestClient(ide_app(ws)) as client:
+        accepted = client.post('/agent/turn', json={'prompt': 'first'}).json()
+        first = client.get('/agent/stream', params={'since': accepted['seq']}).text
+        accepted = client.post('/agent/turn', json={'prompt': 'second'}).json()
+        second = client.get('/agent/stream', params={'since': accepted['seq']}).text
+    assert 'event: error' in first and 'provider broke' in first and 'event: done' in first
+    assert 'recovered' in second and 'event: done' in second
 
 def test_agent_stream_rejects_a_second_turn_while_busy(tmp_path):
     from starlette.testclient import TestClient
     from leela.app import ide_app
     from leela.workspace import Workspace
+    from leela.blocks.agent.threads import Feed, TurnError
     ws = Workspace(roots=[tmp_path])
+    class Runner:
+        feed = Feed('thread-1')
+        def start(self, *args): raise TurnError('thread_busy', 'already working', 'thread-1')
+        def close(self): self.feed.close()
+    ws._turn_runner = Runner()
     with TestClient(ide_app(ws)) as client:
-        with ws.ai.lock:
-            response = client.get('/agent/stream', params={'prompt': 'where?'})
+        response = client.post('/agent/turn', json={'prompt': 'where?'})
     assert response.status_code == 409
-    assert 'already working' in response.text
+    assert response.json() == {'ok': False, 'code': 'thread_busy', 'message': 'already working', 'thread': 'thread-1'}
 
 def test_external_rishi_request_uses_the_web_approval_queue():
     from starlette.testclient import TestClient
@@ -2049,30 +2138,25 @@ def test_a_generated_picture_reaches_the_chat_pane_not_only_the_notebook_cell(tm
     """`media_outputs` fills a prompt *cell*. The agent pane streams over SSE and ends at `done`,
     so a picture that never rides on that event is saved and never seen."""
     from pathlib import Path
-    app_src = Path('leela/app.py').read_text()
-    # two routes end in a `done` event; the agent pane's is the one carrying session usage
-    done = app_src[app_src.index("'session_usage'") - 600:app_src.index("'session_usage'") + 600]
-    assert "'media': _turn_media(a)" in done, 'the done event carries the turn pictures'
-    assert 'def _turn_media(a):' in app_src
+    runner = Path('leela/blocks/agent/threads.py').read_text()
+    done = runner[runner.index('def _done('):runner.index('def _work(')]
+    assert "('media', lambda: turn_media(ai))" in done, 'the done event carries the turn pictures'
+    assert 'def turn_media(ai):' in runner
 
     js = Path('leela/static/js/12_agent.js').read_text()
     assert 'function drawTurnMedia(' in js
     handler = js[js.index("es.addEventListener('done'"):]
     handler = handler[:handler.index('await reloadAfterEdits')]
-    assert 'drawTurnMedia(out, d.media)' in handler, 'the pane draws what the event carried'
+    assert 'drawTurnMedia(closing, d.media)' in handler, 'the timeline draws what the event carried'
+    assert 'const closing = body || timelineRoot' in handler, \
+        'and a turn that ended on a call still has somewhere to draw them'
 
 
 def test_the_turn_pictures_become_data_urls_a_browser_can_draw():
     "A tool result is a path, and a browser cannot draw a filename."
     import base64, re
     from pathlib import Path
-    src = Path('leela/app.py').read_text()
-    body = src[src.index('    def _turn_media(a):'):]
-    body = body[:body.index('\n    @rt(')]
-    import textwrap
-    ns = {}
-    exec(textwrap.dedent(body), ns)
-    fn = ns['_turn_media']
+    from leela.blocks.agent.threads import turn_media as fn
 
     class A: turn_media = [{'mime': 'image/png', 'data': b'\x89PNG\r\n\x1a\nx'},
                            {'mime': 'video/mp4', 'data': b'ftyp'}, {'mime': 'image/png', 'data': b''}]
@@ -2101,16 +2185,14 @@ def test_an_undone_turn_is_dimmed_rather_than_deleted():
     assert '.lee-turn-undone' in (ROOT/'leela'/'static'/'lee-ide.css').read_text()
 
 
-def test_the_steer_box_takes_the_key_you_press_in_it():
-    """Two fixes landed on delivering a steer while none of them was ever queued: the box is a
-    bare <input> in a <div>, so Enter had no default action and no handler, and the text sat
-    there. Only the Queue button worked, and nothing said so."""
+def test_the_composer_owns_send_queue_and_force():
     from tests.assets import read
-    js = read('leela/static/js/12_agent.js')
-    block = js[js.index('function initAgentComposer'):js.index('async function sendAgentCommand')]
-    assert "$('#agentsteer')?.addEventListener('keydown'" in block
-    assert 'leeQueueSteer' in block and 'e.preventDefault()' in block
-    assert 'leeForceSteer' in block, 'and shift+enter forces rather than queueing'
+    html, js = read('leela/app.py'), read('leela/static/js/12_agent.js')
+    assert "id='agentsteer'" not in html and "id='agentsteerqueue'" not in html
+    assert "const input = $('#agentprompt')" in js
+    assert "if (lee.agentBusy) return force ? leeForceSteer() : leeQueueSteer()" in js
+    assert "mode === 'force' ? 'Stop and send next'" in js
+    assert "mode === 'steer' ? 'Steer after this call'" in js
 
 def test_a_queued_steer_is_still_acknowledged_a_second_later():
     """`updateAgentRunstrip()` is called with no state on every turn start, stream tick and turn
@@ -2128,18 +2210,19 @@ def test_the_chip_and_the_strip_cannot_disagree():
     from tests.assets import read
     js = read('leela/static/js/12_agent.js')
     assert 'function setQueuedSteer(' in js
-    q = js[js.index('async function leeQueueSteer'):js.index('window.leeQueueSteer')]
+    q = js[js.index('async function leeQueueSteer'):js.index('async function leeForceSteer')]
     assert 'setQueuedSteer(d.queued_steer' in q, 'the server says whether it queued or was taken'
-    assert 'queue.innerHTML =' not in q, 'the chip is not written a second way here'
+    assert "card.id = 'agentqueuedsteer'" in js and "card.classList.add('queued')" in js
+    assert "button.dataset.cancelSteer = '1'" in js
 
 def test_the_stream_clears_a_steer_the_agent_has_taken():
     "The execution event carries approvals.state(), so the chip goes when the steer is consumed."
     from tests.assets import read
-    server = read('leela/app.py')
-    assert "state = {**ws.approvals.state(), 'runs': runs}" in server
-    assert "_sse('execution', state)" in server
+    runner = read('leela/blocks/agent/threads.py')
+    assert "state = {**self.approvals.state(), 'runs': ai.runs(active=True), 'run': run_id}" in runner
+    assert "self.feed.emit('execution', state)" in runner
     js = read('leela/static/js/12_agent.js')
-    assert "es.addEventListener('execution', ev => updateAgentRunstrip(JSON.parse(ev.data)))" in js
+    assert "es.addEventListener('execution', dedupe(d => updateAgentRunstrip(d)))" in js
     assert "updateAgentRunstrip({runs: []})" in js
 
 def test_a_steer_rides_the_next_tool_result(tmp_path):
@@ -2169,17 +2252,19 @@ def test_delegation_never_gets_the_git_write_tools(monkeypatch):
     def git_pull(): pass
     def git_status(): pass
     def view_file(): pass
+    def user_steering(): pass
 
     a = Assistant.__new__(Assistant)          # the method reads nothing off the instance
-    branches = ([git_push, git_status, view_file],      # `_plain`, the branch that was covered
-                [git_checkout, git_pull, view_file],    # `_subtools`, built from the registry
-                [git_push, git_checkout, git_status],   # the recorded wrappers a writer is given
+    branches = ([git_push, git_status, view_file, user_steering],      # `_plain`, equal budget
+                [git_checkout, git_pull, view_file, user_steering],    # `_subtools`, different budget
+                [git_push, git_checkout, git_status, user_steering],   # the recorded wrappers a writer is given
                 [])
     for branch in branches:
         monkeypatch.setattr(Agent, '_sub_plain', lambda self, b=branch: list(b))
         names = {f.__name__ for f in a._sub_plain()}
         assert not (names & GIT_WRITE_TOOLS), f'git writes reached delegation via {branch}'
-        assert names == {f.__name__ for f in branch} - GIT_WRITE_TOOLS, 'and nothing else was taken'
+        assert 'user_steering' not in names, f'main-agent steering reached delegation via {branch}'
+        assert names == {f.__name__ for f in branch} - GIT_WRITE_TOOLS - {'user_steering'}, 'and nothing else was taken'
 
     # Reading git is not writing git, and must survive.
     monkeypatch.setattr(Agent, '_sub_plain', lambda self: [git_status, view_file])
@@ -2241,28 +2326,23 @@ def test_stop_and_send_next_returns_the_exact_terminal_run(tmp_path):
 
 def test_stop_and_send_next_waits_for_the_exact_terminal_result():
     from tests.assets import read
-    js = read('leela/static/js/12_agent.js')
-    assert "(e.shiftKey ? leeForceSteer : leeQueueSteer)()" in js
-    assert 'reseedForcedSteer' not in js
-    assert "['cancelled', 'detached', 'terminated'].includes(run.state)" in js
+    js, keys, server = read('leela/static/js/12_agent.js'), read('leela/core/keys.py'), read('leela/app.py')
+    assert "Key('agent_steer_force','mod+shift+enter'" in keys
     assert "post('/agent/steer', {text, force: true})" in js
+    assert "'code': 'cancellation_incomplete'" in server
+    assert "if busy and run.get('state') not in TERMINAL_CANCEL" in server, \
+        'a run that had already finished is not a cancellation that failed'
+    assert 'input.value = text' in js, 'the draft survives force handoff and failure'
 
 
-def test_force_is_offered_only_while_there_is_a_turn_to_force():
-    """Three controls in a two-column grid put Force on a row of its own under the input, and it
-    was offered while nothing was running, where it means nothing but a red button."""
+def test_force_is_a_mode_of_the_composer_rather_than_a_control_of_its_own():
     from tests.assets import read
-    css = read('leela/static/lee-ide.css')
-    assert '.lee-agent-steer { display: grid; grid-template-columns: minmax(0, 1fr) auto auto;' in css, \
-        'the input and both buttons share one row'
-    app = read('leela/app.py')
-    assert "Button('Stop and send next', id='agentforce'" in app and 'hidden=True' in app
-    js = read('leela/static/js/12_agent.js')
-    assert "force.hidden = !active" in js, 'it appears only for an active registered run'
-    assert 'data-stop-run' in js and 'Subagent' in js
-    assert '...flattenRuns(r.children || [])' in js, 'nested descendants get the same lifecycle controls'
-    assert "if (!lee.agentBusy) return status('nothing is running to force" in js, \
-        'and shift+enter says so rather than silently sending'
+    app, actions, js = read('leela/app.py'), read('leela/static/js/02_actions.js'), read('leela/static/js/12_agent.js')
+    assert "id='agentforce'" not in app
+    assert 'agent_steer_force: () => sendAgent(true)' in actions
+    assert "if (lee.agentBusy) return force ? leeForceSteer() : leeQueueSteer()" in js
+    assert "updateAgentSendMode(active || lee.agentBusy ? 'steer' : 'send')" in js
+    assert 'data-stop-run' in js and '...flattenRuns(r.children || [])' in js
 
 def test_agent_run_routes_return_structured_states(tmp_path):
     from leela.workspace import Workspace
@@ -2299,9 +2379,28 @@ async def test_workspace_shutdown_cancels_agent_runs_before_close(tmp_path):
     assert order[:2] == ['cancel', 'close']
     assert run.state == 'detached'
 
-def test_stream_disconnect_waits_only_for_the_exact_run_registration():
+def test_stream_disconnect_never_owns_or_cancels_the_turn():
     from tests.assets import read
     server = read('leela/app.py')
-    assert 'end = loop.time() + a.cancel_grace' in server
-    assert "if runs: run_id = runs[-1]['id']" in server
-    assert 'a.cancel(run_id)' in server
+    stream = server[server.index("@rt('/agent/stream')"):server.index("@rt('/agent/approval')")]
+    assert 'ws.ask_stream' not in stream
+    assert '.cancel(' not in stream
+    assert 'feed.anext' in stream, 'a subscriber waits on its own loop, never on the shared pool'
+    assert 'req.is_disconnected()' in stream, 'and a tab that has gone stops being served'
+
+def test_what_a_sub_agent_is_given_follows_the_model_it_runs_on(tmp_path):
+    """`_sub_plain` has two branches, and which one answers depends on routing, not on accumulated
+    state. A sub-agent sized like its parent shares the parent's list; one sized differently gets a
+    list built to its own budget. Reading a count without pinning the routing measures neither."""
+    from leela.workspace import Workspace
+    shared = Workspace(roots=[tmp_path], model='gpt-4.1').ai
+    assert shared.subagent_budget == shared.budget
+    assert shared._sub_plain(), 'the shared branch, asked cold, is not empty'
+
+    sized = Workspace(roots=[tmp_path], model='gemma-e4b').ai
+    assert sized.subagent_budget != sized.budget, 'a 16k turn model and a cloud sub-agent differ'
+    own = {t.__name__ for t in sized._sub_plain()}
+    assert own and own != {t.__name__ for t in sized.tools}, 'so its list is built to its own budget'
+    # the sub-agent runs on the larger model, so it is offered what the 16k turn model was denied
+    assert 'web' in sized.budget.drop and {'web_search', 'read_url'} <= own
+

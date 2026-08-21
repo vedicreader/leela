@@ -1,0 +1,1304 @@
+import asyncio, re, threading, time
+from pathlib import Path
+
+from starlette.testclient import TestClient
+from leela.app import ide_app
+from leela.blocks.agent.threads import Feed, Thread, Threads, TurnError, TurnRunner
+from leela.workspace import Workspace
+
+
+def test_threads_are_lazy_isolated_and_keep_workspace_compatibility(tmp_path):
+    ws = Workspace(roots=[tmp_path])
+    assert ws._threads is None and ws._ai is None
+    first = ws.threads.active
+    second = ws.threads.new()
+    assert first.id != second.id and first.ai is not second.ai
+    assert first.feed is not second.feed and first.approvals is not second.approvals
+    assert ws.ai is second.ai and ws.approvals is second.approvals and ws.turn_runner is second.runner
+    ws.threads.switch(first.id)
+    assert ws.ai is first.ai and ws.pending_approval is first.approvals.pending
+
+
+def test_six_thread_lru_protects_working_and_waiting_threads(tmp_path):
+    ws = Workspace(roots=[tmp_path]); threads = ws.threads
+    rows = [threads.active, *[threads.new() for _ in range(5)]]
+    live = rows[0].ai._new_run('working')
+    rows[1].approvals.current = type('Pending', (), {'pending': True})()
+    victim = rows[2].id
+    seventh = threads.new()
+    assert len(threads.rows()) == 6 and threads.get(victim) is None and threads.active is seventh
+    assert threads.get(rows[0].id) is rows[0] and threads.get(rows[1].id) is rows[1]
+    live.finish()
+    from unittest.mock import patch
+    with patch.object(Thread, 'state', new_callable=lambda: property(lambda self: 'working')):
+        try: threads.new()
+        except TurnError as e: assert e.code == 'no_evictable_thread'
+        else: assert False
+
+
+def test_feed_sequences_replays_and_resyncs():
+    feed = Feed('thread-1', maxlen=2)
+    assert feed.emit('user', {'text': 'one'})['seq'] == 1
+    feed.emit('chunk', {'text': 'two'}); feed.emit('done', {'ok': True})
+    assert [row['seq'] for row in feed.since(1)] == [2, 3]
+    assert feed.since(0) == [{'seq': 3, 'event': 'resync', 'data': {
+        'thread': 'thread-1', 'oldest': 2, 'latest': 3}}]
+    feed.emit('activity', {'done': True}); feed.settle()
+    assert feed.finished(4), 'a late watcher event does not erase the settlement cursor'
+    feed.emit('user', {'text': 'next'})
+    assert not feed.finished(5), 'a new turn resets the terminal cursor'
+
+
+def test_feed_wait_wakes_for_events_and_close():
+    feed, seen = Feed('thread-1'), []
+    waiter = threading.Thread(target=lambda: seen.extend(feed.wait(0, 2)))
+    waiter.start(); feed.emit('state', {'state': 'working'}); waiter.join()
+    assert seen[0]['event'] == 'state'
+    seen.clear(); waiter = threading.Thread(target=lambda: seen.extend(feed.wait(feed.seq, 2)))
+    waiter.start(); time.sleep(.01); feed.close(); waiter.join()
+    assert seen == [] and feed.closed
+
+
+class _Run:
+    id, terminal, state = 'run-1', False, 'completed'
+    def dict(self): return {'id': self.id, 'state': 'completed', 'children': []}
+
+
+class _AI:
+    session_id, busy, ready, note, current_turn_id, current_branch_id = 'thread-1', False, True, '', 'turn-1', 'main'
+    problems = []
+    compactor = type('Compactor', (), {'count': 0, 'strategy': 'summary', 'note': '', 'last': ''})()
+    activity = type('Activity', (), {'_mark': 0, 'rows': lambda self, mark=0: []})()
+    turn_use = use = type('Usage', (), {'dict': lambda self: {}})()
+    model = type('Model', (), {'name': 'fake'})()
+    turn_media = []
+    def __init__(self): self._run = _Run()
+    def run(self, run_id=''): return self._run
+    def runs(self, active=False): return []
+    def cancel(self, run_id=''): self._run.terminal = True
+    def changes(self): return {}
+    def turn_capabilities(self, turn_id): return {}
+    def summarize_session(self): return {'title': 'A useful title', 'title_turns': 1, 'muted': False}
+
+
+class _Approvals:
+    pending = None
+    def state(self): return {'queued_steer': ''}
+
+
+class _Workspace:
+    def __init__(self):
+        self.ai = self._ai = _AI()
+        self.approvals, self.pending_approval, self.seen, self.timeline = _Approvals(), None, None, []
+    def save_timeline(self, thread_id, turn_id, parts): self.timeline = list(parts); return self.timeline
+    def ask_stream(self, prompt, attachments=(), on_registered=None, **kwargs):
+        self.seen = tuple(attachments); on_registered(self.ai._run)
+        yield 'answer'
+        self.ai._run.terminal = True
+
+
+def test_runner_captures_acceptance_values_and_outlives_subscribers():
+    ws, feed = _Workspace(), Feed()
+    runner = TurnRunner(ws, feed)
+    attachments = ['a.png']
+    accepted = runner.start('question', attachments)
+    attachments.append('later.png')
+    end = time.time() + 2
+    while not any(row['event'] == 'done' for row in feed.since(0)) and time.time() < end: time.sleep(.01)
+    assert ws.seen == ('a.png',)
+    assert accepted == {'ok': True, 'thread': 'thread-1', 'run': 'run-1', 'seq': 1}
+    assert [row['event'] for row in feed.since(0)][0] == 'user'
+    events = [row['event'] for row in feed.since(0)]
+    assert events[0] == 'user' and events[-3:] == ['done', 'title', 'state']
+    assert [row['event'] for row in ws.timeline] == ['chunk']
+
+
+def test_accepted_worker_failure_emits_error_then_done():
+    class Broken(_Workspace):
+        def ask_stream(self, *args, on_registered=None, **kwargs):
+            on_registered(self.ai._run); yield 'started'
+            raise RuntimeError('provider broke')
+    ws, feed = Broken(), Feed()
+    accepted = TurnRunner(ws, feed).start('question')
+    end = time.time() + 2
+    while not any(row['event'] == 'done' for row in feed.since(accepted['seq'])) and time.time() < end: time.sleep(.01)
+    rows = feed.since(accepted['seq']); events = [row['event'] for row in rows]
+    error, done = events.index('error'), events.index('done')
+    assert error < done < len(events) - 1 and events[-1] == 'state'
+    assert rows[error]['data']['message'] == 'RuntimeError: provider broke', 'the class of the failure is part of it'
+    assert {'note', 'media', 'usage', 'model', 'turn_id', 'branch_id', 'capabilities',
+        'problems', 'activity', 'edits'} <= rows[done]['data'].keys()
+
+
+def test_registration_accepts_before_the_first_chunk():
+    release, registered, result = threading.Event(), threading.Event(), {}
+    class Delayed(_Workspace):
+        def ask_stream(self, prompt, attachments=(), on_registered=None, **kwargs):
+            def stream():
+                on_registered(self.ai._run); registered.set(); release.wait(); yield 'late'
+            return stream()
+    ws, feed = Delayed(), Feed(); runner = TurnRunner(ws, feed)
+    worker = threading.Thread(target=lambda: result.setdefault('accepted', runner.start('question')))
+    worker.start(); assert registered.wait(.2); worker.join(.2)
+    assert not worker.is_alive() and result['accepted']['run'] == 'run-1'
+    events = [row['event'] for row in feed.since(0)]
+    assert events[0] == 'user' and 'chunk' not in events
+    release.set()
+
+
+def test_start_timeout_cancels_a_run_that_registers_late():
+    release = threading.Event()
+    class Delayed(_Workspace):
+        def ask_stream(self, *args, on_registered=None, **kwargs):
+            release.wait(); on_registered(self.ai._run); yield 'late'
+    ws, feed = Delayed(), Feed()
+    runner = TurnRunner(ws, feed); runner.start_timeout = .02
+    try: runner.start('question')
+    except TurnError as e: assert e.code == 'turn_conflict'
+    else: assert False
+    release.set()
+    end = time.time() + 2
+    while not ws.ai._run.terminal and time.time() < end: time.sleep(.01)
+    assert ws.ai._run.terminal and feed.since(0) == []
+
+
+def test_a_second_turn_is_rejected_while_the_first_is_pending_registration():
+    release, result = threading.Event(), {}
+    class Delayed(_Workspace):
+        def ask_stream(self, *args, on_registered=None, **kwargs):
+            release.wait(); on_registered(self.ai._run); yield 'late'
+    ws = Delayed(); runner = TurnRunner(ws)
+    worker = threading.Thread(target=lambda: result.setdefault('accepted', runner.start('first')))
+    worker.start()
+    end = time.time() + 1
+    while not runner._pending and time.time() < end: time.sleep(.005)
+    try: runner.start('second')
+    except TurnError as e: assert e.code == 'thread_busy'
+    else: assert False
+    release.set(); worker.join(1)
+    assert not worker.is_alive() and result['accepted']['run'] == 'run-1'
+
+
+def test_close_wakes_a_turn_waiting_for_registration():
+    release, result = threading.Event(), {}
+    class Delayed(_Workspace):
+        def ask_stream(self, *args, on_registered=None, **kwargs):
+            release.wait(); on_registered(self.ai._run); yield 'late'
+    ws = Delayed(); runner = TurnRunner(ws)
+    worker = threading.Thread(target=lambda: result.setdefault('error', _start_error(runner)))
+    worker.start(); time.sleep(.01); runner.close(); worker.join(1); release.set()
+    assert not worker.is_alive() and result['error'].code == 'thread_closed'
+
+
+def _start_error(runner):
+    try: runner.start('question')
+    except TurnError as e: return e
+
+
+def test_closed_feed_rejects_registration_and_cancels_the_run():
+    ws, feed = _Workspace(), Feed(); feed.close()
+    try: TurnRunner(ws, feed).start('question')
+    except TurnError as e: assert e.code == 'thread_closed' and e.run == 'run-1'
+    else: assert False
+    end = time.time() + 2
+    while not ws.ai._run.terminal and time.time() < end: time.sleep(.01)
+    assert ws.ai._run.terminal and feed.since(0) == []
+
+
+def test_completion_metadata_failure_still_emits_one_done():
+    class Broken(_Workspace):
+        def ask_stream(self, prompt, attachments=(), on_registered=None, **kwargs):
+            def stream():
+                on_registered(self.ai._run); yield 'answer'
+                self.ai._run.terminal = True
+            return stream()
+    ws, feed = Broken(), Feed()
+    ws.ai.turn_use = type('BrokenUsage', (), {'dict': lambda self: 1/0})()
+    accepted = TurnRunner(ws, feed).start('question')
+    end = time.time() + 2
+    while not feed.finished(feed.seq) and time.time() < end: time.sleep(.01)
+    done = [row for row in feed.since(accepted['seq']) if row['event'] == 'done']
+    assert len(done) == 1 and done[0]['data']['problems']
+
+
+def test_thread_routes_create_switch_title_close_and_isolate(tmp_path):
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        first = client.get('/agent/threads').json(); first_id = first['active']
+        second = client.post('/agent/thread/new', json={}).json(); second_id = second['active']
+        assert first_id != second_id and len(client.get('/agent/threads').json()['threads']) == 2
+        titled = client.post('/agent/thread/title', json={'thread': first_id, 'title': 'First work'}).json()
+        assert titled['thread']['title'] == 'First work' and ws.threads.active_id == second_id
+        switched = client.post('/agent/thread/switch', json={'thread': first_id}).json()
+        assert switched['active'] == first_id and ws.ai.session_id == first_id
+        closed = client.post('/agent/thread/close', json={'thread': second_id}).json()
+        assert closed['closed'] == second_id and ws.threads.get(second_id) is None
+        assert ws._ai is ws.ai and ws._turn_runner is ws.turn_runner
+        stale = client.post('/agent/thread/switch', json={'thread': second_id})
+        assert stale.status_code == 409 and stale.json()['code'] == 'thread_not_found' and ws.threads.active_id == first_id
+
+
+def test_resuming_an_already_live_session_activates_its_existing_thread(tmp_path):
+    ws = Workspace(roots=[tmp_path]); first = ws.threads.active; ws.threads.new()
+    assert ws.threads.resume(first.id) is first and ws.threads.active_id == first.id
+
+
+def test_turn_routes_validate_accept_and_replay(tmp_path):
+    (tmp_path/'a').write_text('attached')
+    ws = Workspace(roots=[tmp_path])
+    feed = Feed('thread-1')
+    class Runner:
+        def __init__(self): self.feed = feed; self.call = None
+        def start(self, prompt, attachments, reasoning, context, context_path, grounding):
+            self.call = (prompt, tuple(attachments), reasoning)
+            feed.emit('user', {'text': prompt, 'run': 'run-1'})
+            feed.emit('chunk', {'text': 'answer', 'run': 'run-1'})
+            feed.emit('done', {'ok': True, 'run': 'run-1'})
+            feed.emit('title', {'title': 'Question'}); feed.emit('state', {'runs': []}); feed.settle()
+            return {'ok': True, 'thread': 'thread-1', 'run': 'run-1', 'seq': 1}
+        def close(self): feed.close()
+    ws._turn_runner = Runner()
+    with TestClient(ide_app(ws)) as client:
+        bad = client.post('/agent/turn', json={'prompt': '', 'attachments': []})
+        assert bad.status_code == 400
+        missing = client.post('/agent/turn', json={'prompt': 'question', 'attachments': ['missing.txt']})
+        assert missing.status_code == 400 and ws._turn_runner.call is None
+        for body in ([], {'prompt': 1}, {'prompt': 'question', 'reasoning': 1},
+                     {'prompt': 'question', 'attachments': [1]}):
+            assert client.post('/agent/turn', json=body).status_code == 400
+        accepted = client.post('/agent/turn', json={'prompt': 'question', 'attachments': ['a'], 'reasoning': 'low'})
+        assert accepted.json()['run'] == 'run-1' and ws._turn_runner.call == ('question', ('a',), 'low')
+        replay = client.get('/agent/stream?since=0').text
+        assert all(f'event: {event}' in replay for event in ('user', 'chunk', 'done', 'title', 'state'))
+        assert replay.index('event: done') < replay.index('event: title') < replay.index('event: state')
+        assert '"seq": 2' in replay
+        assert client.get('/agent/stream?since=nope').status_code == 400
+        latest = feed.seq
+        assert client.get(f'/agent/stream?since={latest}').text == ''
+
+
+def test_browser_accepts_then_replays_without_cancelling_on_disconnect():
+    from pathlib import Path
+    js = (Path(__file__).resolve().parents[2]/'leela/static/js/12_agent.js').read_text()
+    assert "await post('/agent/turn', {prompt: q, attachments, reasoning, thread: lee.agentThread || ''})" in js, \
+        'the turn names the conversation the pane is showing, not whichever one is active'
+    assert "new EventSource('/agent/stream?since=' + lastSeq + '&follow=1' +" in js
+    assert "'&thread=' + encodeURIComponent(thread)" in js, \
+        'and it names the conversation, so a background one can be watched at all'
+    assert 'if (d.seq <= lastSeq) return' in js
+    assert 'connection lost; replaying the running turn' in js
+    assert 'ev.stopImmediatePropagation()' in js
+    done = js[js.index("es.addEventListener('done'"):js.index('es.onerror =')]
+    assert 'es.close()' not in done and "addEventListener('title'" in js and "addEventListener('steer'" in js
+    resync = js[js.index("es.addEventListener('resync'"):js.index("es.addEventListener('done'")]
+    # the conversation comes from history; `/agent/transcript` carries executed cells, not turns
+    assert "api('/agent/history'" in resync and "'/agent/transcript" not in resync
+    assert "if (!turns.length) throw new Error" in resync, 'an empty recovery is a failure, not a wipe'
+    ok, failed = resync[:resync.index('catch (e)')], resync[resync.index('catch (e)'):]
+    assert ok.index("renderTurns(log, turns") > ok.index("log.innerHTML = ''") - 40
+    assert "log.innerHTML = ''" not in failed and 'reconnect(1000)' in failed
+
+
+def test_busy_runner_rejects_before_user_event():
+    ws, feed = _Workspace(), Feed()
+    ws.ai.busy = True
+    try: TurnRunner(ws, feed).start('question')
+    except TurnError as e: assert e.code == 'thread_busy'
+    else: assert False
+    assert feed.since(0) == []
+
+def test_a_terminal_foreground_run_is_not_adopted_as_this_turn():
+    """`Agent.run()` answers with the foreground root, which stays the last turn's until this one
+    registers. Adopting it would watch a run that is already over and emit nothing for the turn."""
+    stale, live = _Run(), _Run()
+    stale.id, stale.terminal, live.id = 'run-old', True, 'run-new'
+    ws, feed = _Workspace(), Feed()
+    ws.ai._run = stale
+    def ask_stream(prompt, attachments=(), on_registered=None, **kwargs):
+        ws.ai._run = live; on_registered(live)
+        yield 'answer'
+        live.terminal = True
+    ws.ask_stream = ask_stream
+    accepted = TurnRunner(ws, feed).start('question')
+    assert accepted['run'] == 'run-new'
+    assert {row['data'].get('run') for row in feed.since(0)} == {'run-new'}
+
+
+def test_no_chunk_reaches_the_feed_before_the_turn_is_accepted():
+    "A chunk ahead of `user` is a reply to a question the transcript has not shown yet."
+    ws, feed = _Workspace(), Feed()
+    ws.ai._run = _Run(); ws.ai._run.id = 'run-1'
+    holder = {'run': None}
+    def ask_stream(prompt, attachments=(), on_registered=None, **kwargs):
+        holder['run'], ws.ai._run = ws.ai._run, None
+        ws.ai._run = holder['run']; on_registered(ws.ai._run)
+        yield 'answer'
+        ws.ai._run.terminal = True
+    ws.ask_stream = ask_stream
+    accepted = TurnRunner(ws, feed).start('question')
+    end = time.time() + 2
+    while not any(r['event'] == 'done' for r in feed.since(0)) and time.time() < end: time.sleep(.01)
+    events = [row['event'] for row in feed.since(0)]
+    assert events[0] == 'user' and 'chunk' in events
+    assert [row['data']['text'] for row in feed.since(0) if row['event'] == 'chunk'] == ['answer']
+    assert accepted['seq'] == 1
+
+
+def test_a_run_that_finished_is_announced_only_by_done():
+    "`run` and `done` both ending the turn made one turn report itself twice."
+    ws, feed = _Workspace(), Feed()
+    TurnRunner(ws, feed).start('question')
+    end = time.time() + 2
+    while not any(r['event'] == 'done' for r in feed.since(0)) and time.time() < end: time.sleep(.01)
+    assert [r['event'] for r in feed.since(0)].count('run') == 0
+
+    ws2, feed2 = _Workspace(), Feed()
+    ws2.ai._run.dict = lambda: {'id': 'run-1', 'state': 'cancelled', 'children': []}
+    ws2.ai._run.state = 'cancelled'
+    TurnRunner(ws2, feed2).start('question')
+    end = time.time() + 2
+    while not any(r['event'] == 'done' for r in feed2.since(0)) and time.time() < end: time.sleep(.01)
+    assert [r['event'] for r in feed2.since(0)].count('run') == 1
+
+
+def test_closing_a_workspace_that_never_built_an_assistant_builds_none():
+    "`close()` reaching through `ws.ai` would start a model in order to shut one down."
+    class Cold:
+        _ai = None
+        def __getattr__(self, name):
+            if name == 'ai': raise AssertionError('the assistant was built during shutdown')
+            raise AttributeError(name)
+    feed = Feed('thread-1'); feed.emit('user', {'text': 'q'})
+    TurnRunner(Cold(), feed).close()
+    assert feed.closed
+
+
+def test_an_approval_event_carries_the_tool_schemas_the_dialog_edits():
+    "The dialog's tool picker is built from `schemas`; without them a call cannot be retargeted."
+    from leela.blocks.agent.threads import tool_schemas
+    from leela.workspace import Workspace
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        rows = tool_schemas(Workspace(roots=[d]).ai)
+    assert rows and {'name', 'fields', 'group', 'changes_state'} <= rows[0].keys()
+    runner = (Path(__file__).resolve().parents[2]/'leela/blocks/agent/threads.py').read_text()
+    watch = runner[runner.index('def _watch('):runner.index('def _done(')]
+    assert "'schemas': tool_schemas(ai)" in watch
+
+
+def test_the_feed_wakes_an_awaiting_loop_without_a_worker_thread():
+    "A subscriber blocking a shared pool thread for its whole wait is the starvation to avoid."
+    feed = Feed('thread-1')
+    async def read():
+        rows = feed.anext(0, 2)
+        threading.Timer(.02, lambda: feed.emit('chunk', {'text': 'hi'})).start()
+        return await rows
+    rows = asyncio.run(read())
+    assert [row['event'] for row in rows] == ['chunk']
+    assert asyncio.run(feed.anext(feed.seq, .05)) == []
+
+def test_a_producer_that_never_settles_does_not_hold_a_finite_subscriber():
+    """`settle()` ends a finite replay, and it is written by one caller. A producer that emits
+    `done` without it must still end the turn, or every subscriber waits on it forever."""
+    from leela.workspace import Workspace
+    import tempfile
+    feed = Feed('thread-1')
+    class Runner:
+        def __init__(self): self.feed = feed
+        def start(self, prompt, *args):
+            user = feed.emit('user', {'text': prompt, 'run': 'run-1'})
+            feed.emit('chunk', {'text': 'answer', 'run': 'run-1'})
+            feed.emit('done', {'ok': True, 'run': 'run-1'})      # and never settles
+            return {'ok': True, 'thread': 'thread-1', 'run': 'run-1', 'seq': user['seq']}
+        def close(self): feed.close()
+    with tempfile.TemporaryDirectory() as d:
+        ws = Workspace(roots=[d]); ws._turn_runner = Runner()
+        with TestClient(ide_app(ws)) as client:
+            accepted = client.post('/agent/turn', json={'prompt': 'question'}).json()
+            body = client.get('/agent/stream', params={'since': accepted['seq']}).text
+    assert 'event: done' in body and not feed.finished(accepted['seq'])
+
+def _scripted_workspace(tmp, steps, delay=0):
+    "A real Workspace on a scripted model, so the runner is exercised against a real Assistant."
+    from leela.workspace import Workspace
+    from tests.fakemodel import Step, install
+    ws = Workspace(roots=[tmp]); ws.add_root('.')
+    install(ws, steps, token_delay=delay)
+    return ws
+
+
+def test_ordered_timeline_parts_survive_a_workspace_restart(tmp_path):
+    first = Workspace(roots=[tmp_path]); first._timeline_path = tmp_path/'timeline.json'
+    parts = [{'seq': 1, 'event': 'chunk', 'data': {'text': 'before'}},
+             {'seq': 2, 'event': 'activity', 'data': {'id': 'call-1'}},
+             {'seq': 3, 'event': 'chunk', 'data': {'text': 'after'}}]
+    first.save_timeline('thread-1', 'turn-1', parts)
+    second = Workspace(roots=[tmp_path]); second._timeline_path = tmp_path/'timeline.json'
+    assert second.timeline_parts('thread-1', 'turn-1') == parts
+    assert second.with_timelines([{'session': 'thread-1', 'turn_id': 'turn-1'}, {'session': 'thread-2', 'turn_id': 'turn-1'}]) == [
+        {'session': 'thread-1', 'turn_id': 'turn-1', 'timeline': parts},
+        {'session': 'thread-2', 'turn_id': 'turn-1'}]
+
+
+def test_a_turn_finishes_after_its_only_subscriber_has_gone(tmp_path):
+    """Closing the EventSource used to be how a turn ended. It is now how a subscriber ends, and
+    the difference is only visible if the turn is still running when the subscriber leaves."""
+    from tests.fakemodel import Step
+    ws = _scripted_workspace(tmp_path, [Step(tool=('search_code', {'query': 'Approvals'})),
+                                        Step(text='found it')], delay=.01)
+    with TestClient(ide_app(ws)) as client:
+        accepted = client.post('/agent/turn', json={'prompt': 'where?'}).json()
+        with client.stream('GET', '/agent/stream', params={'since': accepted['seq']}) as r:
+            next(r.iter_text())                      # one frame, then leave mid-turn
+        feed = ws.turn_runner.feed
+        end = time.time() + 20
+        while not feed.settled_seq and time.time() < end: time.sleep(.05)
+        assert feed.settled_seq, 'the turn ran on without anyone listening'
+        rows = feed.since(accepted['seq'])
+        assert [row['event'] for row in rows].count('done') == 1
+        assert any(row['event'] == 'chunk' for row in rows)
+        assert ws.ai.runs(active=True) == []
+        replay = client.get('/agent/stream', params={'since': accepted['seq']}).text
+        assert 'event: done' in replay, 'and the whole turn is still replayable afterwards'
+
+
+def test_stop_ends_a_server_owned_turn(tmp_path):
+    "Nothing cancels on disconnect any more, so the explicit routes are the only way a turn ends."
+    from tests.fakemodel import Step
+    ws = _scripted_workspace(tmp_path, [Step(text='thinking' * 40)], delay=.05)
+    with TestClient(ide_app(ws)) as client:
+        accepted = client.post('/agent/turn', json={'prompt': 'where?'}).json()
+        assert client.post('/agent/stop', json={}).status_code == 200
+        feed = ws.turn_runner.feed
+        end = time.time() + 20
+        while not feed.settled_seq and time.time() < end: time.sleep(.05)
+        assert feed.settled_seq and feed.finished(feed.seq)
+        assert ws.ai.runs(active=True) == []
+
+
+def test_a_per_run_cancel_ends_a_server_owned_turn(tmp_path):
+    from tests.fakemodel import Step
+    ws = _scripted_workspace(tmp_path, [Step(text='thinking' * 40)], delay=.05)
+    with TestClient(ide_app(ws)) as client:
+        accepted = client.post('/agent/turn', json={'prompt': 'where?'}).json()
+        cancelled = client.post(f"/agent/runs/{accepted['run']}/cancel", json={}).json()
+        assert cancelled['ok'] and cancelled.get('state') in ('cancelled', 'detached', 'terminated', 'cancelling')
+        feed = ws.turn_runner.feed
+        end = time.time() + 20
+        while not feed.settled_seq and time.time() < end: time.sleep(.05)
+        assert feed.settled_seq and feed.finished(feed.seq)
+        assert ws.ai.runs(active=True) == []
+
+
+def test_shutdown_cancels_the_run_and_wakes_a_waiting_subscriber(tmp_path):
+    "A subscriber parked on the feed must not outlive the process that was filling it."
+    from tests.fakemodel import Step
+    ws = _scripted_workspace(tmp_path, [Step(text='thinking' * 40)], delay=.05)
+    client = TestClient(ide_app(ws))
+    with client:
+        accepted = client.post('/agent/turn', json={'prompt': 'where?'}).json()
+        seen = {}
+        async def read():
+            seen['rows'] = await ws.turn_runner.feed.anext(accepted['seq'] + 200, 20)
+        waiter = threading.Thread(target=lambda: asyncio.run(read()))
+        waiter.start(); time.sleep(.05)
+        ws.turn_runner.close()
+        waiter.join(5)
+    assert not waiter.is_alive(), 'the waiter was woken rather than left on its timeout'
+    assert seen['rows'] == [] and ws.turn_runner.feed.closed
+    assert ws.ai.runs(active=True) == []
+
+def _threaded_workspace(tmp):
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp]); ws.add_root('.')
+    return ws
+
+
+def test_eviction_takes_the_least_recently_used_idle_thread(tmp_path):
+    """Six slots, and the one that goes is the one nobody has looked at longest -- not the oldest,
+    which is why recency is touched on every access rather than only on creation."""
+    ws = _threaded_workspace(tmp_path)
+    threads = ws.threads
+    ids = [threads.new().id for _ in range(6)]
+    assert len(threads.rows()) == 6
+    for wanted in (ids[0], ids[2], ids[1]): threads.switch(wanted)   # ids[3] is now the stalest idle
+    stalest = min((r for r in threads.rows() if r.id != threads.active_id), key=lambda r: r.touched)
+    threads.new()
+    assert stalest.id not in {r.id for r in threads.rows()}
+    assert len(threads.rows()) == 6
+
+
+def test_a_working_thread_is_never_evicted_and_a_full_board_says_so(tmp_path):
+    ws = _threaded_workspace(tmp_path)
+    threads = ws.threads
+    rows = [threads.new() for _ in range(6)]
+    runs = [row.ai._new_run('holding') for row in rows]
+    assert {row.state for row in rows} == {'working'}
+    try: threads.new()
+    except TurnError as e: assert e.code == 'no_evictable_thread'
+    else: assert False, 'a working conversation cannot be thrown away to make room'
+    for run in runs: run.finish()
+    threads.new()
+    assert len(threads.rows()) == 6
+
+
+def test_a_run_stopped_in_one_thread_leaves_the_other_running(tmp_path):
+    "Each thread owns its own run registry, so a run id is only meaningful inside its own thread."
+    ws = _threaded_workspace(tmp_path)
+    first, second = ws.threads.new(), ws.threads.new()
+    a, b = first.ai._new_run('first'), second.ai._new_run('second')
+    first.ai.cancel(a.id)
+    assert a.terminal and not b.terminal
+    assert second.ai.run(a.id) is None, 'and the other registry never heard of it'
+    b.finish()
+
+
+def test_an_approval_is_answered_only_in_the_thread_that_asked(tmp_path):
+    "An id that collides across threads must not let one conversation answer another's checkpoint."
+    ws = _threaded_workspace(tmp_path)
+    first, second = ws.threads.new(), ws.threads.new()
+    assert first.approvals is not second.approvals
+    ws.threads.switch(first.id)
+    assert ws.approvals is first.approvals and ws.pending_approval is None
+    ws.threads.switch(second.id)
+    assert ws.approvals is second.approvals
+
+
+def test_a_switch_does_not_retarget_a_thread_already_resolved(tmp_path):
+    """A request resolves its thread once, at the start. Switching underneath it would move the
+    answer to a conversation the person was not looking at when they asked."""
+    ws = _threaded_workspace(tmp_path)
+    first, second = ws.threads.new(), ws.threads.new()
+    ws.threads.switch(first.id)
+    held = ws.threads.require(first.id)          # what a route resolves before it awaits
+    ws.threads.switch(second.id)
+    assert ws.threads.active_id == second.id
+    assert held is first and held.ai is first.ai, 'the resolved thread is still the one asked for'
+
+def test_every_conversation_route_names_the_thread_it_acted_on(tmp_path):
+    """A run id is unique only inside its own registry, and an approval belongs to whoever asked.
+    Omitting `thread` means the one on screen; naming a dead one is refused, never guessed at."""
+    ws = _threaded_workspace(tmp_path)
+    first, second = ws.threads.new(), ws.threads.new()
+    ws.threads.switch(first.id)
+    with TestClient(ide_app(ws)) as client:
+        for url in ('/agent/status', '/agent/runs', '/agent/approval'):
+            assert client.get(url).json()['thread'] == first.id, url
+            assert client.get(f'{url}?thread={second.id}').json()['thread'] == second.id, url
+            stale = client.get(f'{url}?thread=thread_gone')
+            assert stale.status_code == 409 and stale.json()['code'] == 'thread_not_found', url
+        assert client.post('/agent/stop', json={}).json()['thread'] == first.id
+        assert client.post('/agent/stop', json={'thread': second.id}).json()['thread'] == second.id
+
+        run = second.ai._new_run('held')
+        missing = client.post(f'/agent/runs/{run.id}/cancel', json={})
+        assert missing.status_code == 404 and missing.json()['code'] == 'run_not_found'
+        assert not run.terminal, 'and the run in the other conversation was left alone'
+        ok = client.post(f'/agent/runs/{run.id}/cancel?thread={second.id}').json()
+        assert ok['ok'] and ok['thread'] == second.id and run.terminal
+
+
+def test_a_waiting_conversation_is_named_for_the_attention_surfaces(tmp_path):
+    "The bar and the badge need to know which conversation wants a person, not just that one does."
+    ws = _threaded_workspace(tmp_path)
+    first, second = ws.threads.new(), ws.threads.new()
+    assert ws.threads.waiting() == []
+    with TestClient(ide_app(ws)) as client:
+        assert client.get('/agent/approval').json()['waiting'] == []
+
+
+def test_the_agent_scope_has_a_chord_for_a_new_conversation_and_for_switching():
+    from leela.core.keys import KEYS, _dupes, lookup
+    assert not _dupes(KEYS)
+    assert lookup('agent_new').keys == ['mod+shift+n'] and lookup('agent_new').scope == 'agent'
+    assert lookup('agent_threads').keys == ['mod+shift+t']
+    actions = (Path(__file__).resolve().parents[2] / 'leela/static/js/02_actions.js').read_text()
+    assert 'agent_new:    leeAgentNew,' in actions
+    assert "agent_threads: () => $('#agentthreads')?.focus()" in actions
+
+def test_a_finished_turn_is_unread_only_for_a_conversation_nobody_was_watching(tmp_path):
+    ws = _threaded_workspace(tmp_path)
+    watched, background = ws.threads.new(), ws.threads.new()
+    ws.threads.switch(watched.id)
+    watched.finished_turn(); background.finished_turn(); background.finished_turn()
+    assert watched.unread == 0 and background.unread == 2
+    ws.threads.switch(background.id)
+    assert background.unread == 0, 'looking at it is what makes it read'
+
+
+def test_muting_survives_in_the_session_sidecar_and_does_not_hide_waiting(tmp_path):
+    "A mute is about notifications. It must not make a conversation that wants a person look idle."
+    ws = _threaded_workspace(tmp_path)
+    thread = ws.threads.new()
+    assert thread.dict()['muted'] is False
+    ws.threads.mute(thread.id, True)
+    assert thread.dict()['muted'] is True and thread.state == 'idle'
+    assert ws.ai.session_meta(thread.id)['muted'] is True, 'and it is remembered where titles are'
+    ws.threads.mute(thread.id, False)
+    assert thread.dict()['muted'] is False
+
+
+def test_the_attention_aggregate_names_what_wants_a_person(tmp_path):
+    ws = _threaded_workspace(tmp_path)
+    first, second = ws.threads.new(), ws.threads.new()
+    ws.threads.switch(first.id)
+    run = second.ai._new_run('working')
+    a = ws.threads.attention()
+    assert a['working'] == 1 and a['waiting'] == [] and a['threads'] == 2 and a['active'] == first.id
+    run.finish()
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/agent/threads').json()
+    assert d['attention']['threads'] == 2 and d['attention']['active'] == first.id
+    assert {row['id'] for row in d['threads']} == {first.id, second.id}
+    assert all({'unread', 'muted', 'state', 'title'} <= row.keys() for row in d['threads'])
+
+
+def test_the_mute_route_refuses_a_conversation_that_is_gone(tmp_path):
+    ws = _threaded_workspace(tmp_path)
+    ws.threads.new()
+    with TestClient(ide_app(ws)) as client:
+        stale = client.post('/agent/thread/mute', json={'thread': 'thread_gone', 'muted': True})
+    assert stale.status_code == 409 and stale.json()['code'] == 'thread_not_found'
+
+
+def test_notifications_are_off_until_asked_for_and_never_fire_twice():
+    """Permission is requested only when a person turns it on, every permission state is terminal,
+    and one terminal event is one notification however many times it is replayed."""
+    js = (Path(__file__).resolve().parents[2] / 'leela/static/js/12_agent.js').read_text()
+    toggle = js[js.index('async function leeAgentNotifyToggle('):js.index('function notifyAgentAttention(')]
+    assert "localStorage.getItem('lee-agent-notify') === 'on'" in js, 'off unless stored on'
+    assert "if (!('Notification' in window))" in toggle and 'Notification.requestPermission' in toggle
+    assert "if (state === 'default')" in toggle, 'asked once, not on every event'
+    assert "state !== 'granted'" in toggle and "'lee-agent-notify', 'off'" in toggle
+    notify = js[js.index('function notifyAgentAttention('):js.index('window.leeAgentNotifyToggle')]
+    assert 'if (seen.has(key)) continue' in notify, 'one terminal event, one notification'
+    assert 'row.id === d.active || row.muted' in notify, 'not for what is on screen, nor for a mute'
+    assert 'if (!document.hidden) continue' in notify, 'and not while a person is looking'
+
+
+def test_the_attention_bar_names_the_conversation_and_lands_on_its_question():
+    js = (Path(__file__).resolve().parents[2] / 'leela/static/js/12_agent.js').read_text()
+    bar = js[js.index('function paintAgentAttention('):js.index('function agentDocumentTitle(')]
+    assert "waiting.filter" not in bar and "(attention.waiting || []).filter(id => id !== attention.active)" in bar
+    assert 'data-attention=' in bar and 'leeAgentAttend(button.dataset.attention)' in bar
+    attend = js[js.index('async function leeAgentAttend('):js.index('async function leeAgentThreadMute(')]
+    assert 'leeAgentThreadSwitch(id)' in attend and 'focus()' in attend
+    title = js[js.index('function agentDocumentTitle('):js.index('async function leeAgentAttend(')]
+    assert "bits.push('(!)')" in title and 'attention.working' in title
+    app = (Path(__file__).resolve().parents[2] / 'leela/app.py').read_text()
+    assert "id='agentattention'" in app and "aria_live='polite'" in app
+
+def _answered_thread(tmp, text='answered'):
+    "A real workspace with one finished turn, so its checkpoints and parts exist."
+    import time
+    from leela.workspace import Workspace
+    from tests.fakemodel import Step, install
+    ws = Workspace(roots=[tmp]); ws.add_root('.')
+    install(ws, [Step(text=text)], token_delay=0)
+    client = TestClient(ide_app(ws))
+    with client:
+        client.post('/agent/turn', json={'prompt': 'q1'})
+        feed, end = ws.turn_runner.feed, time.time() + 20
+        while not feed.settled_seq and time.time() < end: time.sleep(.05)
+        assert feed.settled_seq, 'the turn has to finish before it can be branched'
+        yield ws, client
+
+
+def test_branching_shaping_and_undo_all_name_their_thread_and_their_branch(tmp_path):
+    """One conversation, three ways to move its context: fork a point, shape what it keeps, and
+    undo a turn out of it. Each answers with the thread and the branch that is now live."""
+    for ws, client in _answered_thread(tmp_path):
+        listing = client.get('/agent/branches').json()
+        assert listing['thread'] == ws.threads.active_id and listing['active'] == 'main'
+        turn = listing['turns'][-1]['turn_id']
+        parts = client.get(f'/agent/branch/parts?turn_id={turn}').json()['parts']
+        assert [p['kind'] for p in parts] == ['user', 'assistant']
+        assert all(p['part_id'].startswith(turn) for p in parts), 'a part id names its turn'
+
+        forked = client.post('/agent/fork', json={'turn_id': turn, 'part_id': parts[0]['part_id']}).json()
+        assert forked['ok'] and forked['active'] == forked['branch_id'] != 'main'
+        assert forked['parent_part_id'] == parts[0]['part_id'] and forked['parent_branch_id'] == 'main'
+
+        undone = client.post('/agent/undo-turn', json={'turn_id': turn}).json()
+        assert undone['stage'] == 'before' and undone['undone'] == [turn]
+        assert undone['files_restored'] is None, 'undo is about the conversation, never about disk'
+
+        back = client.post('/agent/branch/switch', json={'branch_id': 'main'}).json()
+        assert back['active'] == 'main', 'and switching rebuilds rather than copying'
+        assert len(ws.ai.history) >= 1, 'the undone turn is still in canonical history'
+
+
+def test_shaping_previews_before_it_writes_and_refuses_a_stale_revision(tmp_path):
+    "Preview changes nothing. Apply commits one branch, and only at the revision it was shown."
+    for ws, client in _answered_thread(tmp_path):
+        turn = client.get('/agent/branches').json()['turns'][-1]['turn_id']
+        parts = client.get(f'/agent/branch/parts?turn_id={turn}').json()['parts']
+        drop = {parts[0]['part_id']: 'discard'}
+        before = {b['branch_id'] for b in client.get('/agent/branches').json()['branches']}
+
+        pv = client.post('/agent/history/preview', json={'turn_id': turn, 'manifest': drop}).json()
+        assert pv['omitted'] == 1 and pv['kept'] == 1 and pv['tokens'] > 0
+        assert pv['next_revision'] == pv['revision'] + 1 and pv['groups']
+        assert {b['branch_id'] for b in client.get('/agent/branches').json()['branches']} == before, \
+            'a preview is a question, not a change'
+
+        applied = client.post('/agent/history/apply',
+                              json={'turn_id': turn, 'revision': pv['revision'], 'manifest': drop}).json()
+        assert applied['shaped'] is True and applied['omitted'] == 1 and applied['base_branch_id'] == 'main'
+        assert applied['manifest'] == drop, 'and the manifest is what was persisted'
+
+        stale = client.post('/agent/history/apply',
+                            json={'turn_id': turn, 'revision': 99, 'manifest': drop})
+        assert stale.status_code == 409 and stale.json()['code'] == 'history_changed'
+        assert client.post('/agent/history/apply', json={'turn_id': turn, 'manifest': drop}).status_code == 400
+
+
+def test_a_branch_point_inside_a_tool_exchange_is_refused_or_taken_whole(tmp_path):
+    "A call without its result is not a conversation any provider will accept."
+    for ws, client in _answered_thread(tmp_path):
+        turn = client.get('/agent/branches').json()['turns'][-1]['turn_id']
+        ws.ai.checkpoints[turn]['after'][:] = [
+            {'role': 'user', 'content': 'q'},
+            {'role': 'assistant', 'tool_calls': [{'id': 'c1'}]},
+            {'role': 'tool', 'tool_call_id': 'c1', 'content': 'r'},
+            {'role': 'assistant', 'content': 'done'}]
+        parts = client.get(f'/agent/branch/parts?turn_id={turn}').json()['parts']
+        assert parts[1]['group'] == parts[2]['group'], 'the call and its result are one group'
+        bad = client.post('/agent/fork', json={'turn_id': turn, 'part_id': f'{turn}:99'})
+        assert bad.status_code == 409 and bad.json()['code'] == 'branch_point_invalid'
+        assert client.get('/agent/branches').json()['active'] == 'main', 'and nothing was created'
+
+
+def test_reshaping_is_refused_while_the_conversation_is_still_working(tmp_path):
+    "Changing the context under a live run would move the question the model is answering."
+    for ws, client in _answered_thread(tmp_path):
+        turn = client.get('/agent/branches').json()['turns'][-1]['turn_id']
+        run = ws.ai._new_run('holding')
+        try:
+            for url, body in (('/agent/fork', {'turn_id': turn}),
+                              ('/agent/undo-turn', {'turn_id': turn}),
+                              ('/agent/branch/switch', {'branch_id': 'main'}),
+                              ('/agent/history/apply', {'turn_id': turn, 'revision': 0, 'manifest': {}})):
+                r = client.post(url, json=body)
+                assert r.status_code == 409 and r.json()['code'] == 'thread_busy', url
+        finally: run.finish()
+        assert client.post('/agent/undo-turn', json={'turn_id': turn}).json()['ok'], 'and allowed once idle'
+
+
+def test_restoring_files_is_a_separate_promise_from_undoing_the_conversation():
+    """`Undo turn` restored files and never touched what the model remembers, which is two different
+    undos under one label. They are now named apart, and the conversation one never claims a disk
+    change it did not make."""
+    js = (Path(__file__).resolve().parents[2] / 'leela/static/js/12_agent.js').read_text()
+    start = js.index('function addResponseRevision(')
+    bar = js[start:js.index('\nfunction ', start + 10)]
+    assert '>Restore files<' in bar and '>Undo from conversation<' in bar
+    assert 'Undo turn' not in bar
+    unsay = js[js.index('async function unsayTurn('):js.index('async function restoreTurnFiles(')]
+    assert "post('/agent/undo-turn'" in unsay and "'undo conversation only'" in unsay
+    assert 'files were not restored' in unsay, 'a failed restore is reported, not swallowed'
+    assert "status(restored ? " in unsay and 'files left as they are' in unsay
+    overlays = (Path(__file__).resolve().parents[2] / 'leela/static/js/20_overlays.js').read_text()
+    assert "alt = ''" in overlays and "done('alt')" in overlays, 'three answers, and cancel stays falsy'
+
+def test_the_response_controls_survive_the_pane_being_repainted():
+    """The log's innerHTML is replaced by the history toggle, a rehydrate, a resume and every
+    thread switch. A listener bound to a button does not survive that, so the buttons went dead and
+    looked merely broken. One delegated listener on the log element does survive it."""
+    js = (Path(__file__).resolve().parents[2] / 'leela/static/js/12_agent.js').read_text()
+    start = js.index('function addResponseRevision(')
+    bar = js[start:js.index('\nfunction ', start + 10)]
+    assert 'onclick' not in bar, 'the bar binds nothing to its own buttons'
+    assert 'bar.dataset.turn = turnId' in bar, 'the turn it acts on lives in the DOM instead'
+    start = js.index('function bindResponseRevisions(')
+    bind = js[start:js.index('\n}', start)]
+    assert "log.addEventListener('click'" in bind and '_leeRevisionsBound' in bind, 'attached once'
+    assert "closest?.('.lee-response-revision button')" in bind
+    assert 'button.disabled' in bind, 'and a disabled control stays inert'
+    recover = js[js.index('function turnReplyText('):js.index('function responseTurn(')]
+    assert 'dataset?.markdown' in recover, 'the reply text is read back from what was rendered'
+
+def test_one_conversation_that_cannot_close_does_not_strand_the_others(tmp_path):
+    """Shutting down is the one path that has to finish. A thread whose assistant raises used to
+    abort the loop and propagate out of `Workspace.close`, leaving every later conversation open."""
+    ws = _threaded_workspace(tmp_path)
+    first, second, third = ws.threads.new(), ws.threads.new(), ws.threads.new()
+    closed = []
+    for thread in (first, second, third):
+        thread.ai.close = lambda t=thread: closed.append(t.id)
+    def boom(): raise RuntimeError('this root went away')
+    second.ai.close = boom
+    problems = ws.threads.shutdown()
+    assert closed == [first.id, third.id], 'the ones that could close, did'
+    assert any(second.id in p and 'this root went away' in p for p in problems), 'the one that could not is named'
+    assert ws.threads._rows == {} and ws.threads.active_id == ''
+
+
+def test_a_mute_that_could_not_be_written_says_so(tmp_path):
+    """A mute is a promise about the next restart, so what is reported is what was written rather
+    than what was asked for, and the reason it was not written travels with it. Swallowing the
+    failure told the browser it had worked."""
+    ws = _threaded_workspace(tmp_path)
+    thread = ws.threads.new()
+    def refuse(*a, **k): raise OSError('read-only config')
+    thread.ai.set_muted = refuse
+    row = thread.mute(True).dict()
+    assert row['muted'] is False, 'it did not stick, so it does not claim to be muted'
+    assert 'read-only config' in row['problem']
+    assert thread.muted is True, 'though the intent is held for this process'
+    # the success path is pinned by test_muting_survives_in_the_session_sidecar_and_does_not_hide_waiting
+
+
+def test_an_unknown_turn_cannot_become_the_one_that_is_undone(tmp_path):
+    """The earliest turn was picked by position, and a turn nobody recognised scored -1 -- ahead of
+    every real one -- so a bad id in the list quietly became the turn that was undone."""
+    for ws, client in _answered_thread(tmp_path):
+        turn = client.get('/agent/branches').json()['turns'][-1]['turn_id']
+        bad = client.post('/agent/undo-turn', json={'turn_ids': ['no-such-turn', turn]})
+        assert bad.status_code == 409 and bad.json()['code'] == 'branch_point_invalid'
+        assert 'no-such-turn' in bad.json()['message']
+        assert client.get('/agent/branches').json()['active'] == 'main', 'and nothing was branched'
+        assert client.post('/agent/undo-turn', json={'turn_ids': [turn]}).json()['ok']
+
+
+def test_a_conversation_that_is_not_on_screen_can_still_be_reached(tmp_path):
+    """Every conversation owns its own feed, approvals and run policy. Without naming one, these
+    routes all acted on whatever was on screen, so a background conversation was unreachable."""
+    ws = _threaded_workspace(tmp_path)
+    first, second = ws.threads.new(), ws.threads.new()
+    ws.threads.switch(first.id)
+    second.feed.emit('user', {'text': 'in the background'})
+    with TestClient(ide_app(ws)) as client:
+        body = client.get(f'/agent/stream?since=0&thread={second.id}').text
+        assert 'in the background' in body, 'the background feed is subscribable by name'
+        assert 'in the background' not in client.get('/agent/stream?since=0').text, 'and is not the active one'
+        for url, payload in (('/agent/control', {'control': 'directed'}),
+                             ('/agent/run-policy', {'policy': 'once'}),
+                             ('/agent/steer', {'text': 'go left'})):
+            named = client.post(url, json={**payload, 'thread': second.id}).json()
+            assert named['thread'] == second.id, url
+            stale = client.post(url, json={**payload, 'thread': 'thread_gone'})
+            assert stale.status_code == 409 and stale.json()['code'] == 'thread_not_found', url
+        assert not first.approvals.state().get('queued_steer'), 'the active one was left alone'
+        assert second.approvals.state().get('queued_steer') == 'go left'
+
+
+def test_a_finite_subscriber_is_not_held_by_a_conversation_with_no_turn_running(tmp_path):
+    "There is nothing left to settle, so waiting for a settlement would wait forever."
+    ws = _threaded_workspace(tmp_path)
+    thread = ws.threads.new()
+    thread.feed.emit('chunk', {'text': 'partial'})
+    with TestClient(ide_app(ws)) as client:
+        body = client.get(f'/agent/stream?since=0&thread={thread.id}').text
+    assert 'partial' in body and not thread.feed.settled_seq
+
+def test_a_resumed_conversation_can_be_reshaped_and_its_prose_rewritten(tmp_path):
+    """The conversation a person wants to edit is usually one they just resumed, and a resumed
+    assistant has no snapshots -- so the parts are rebuilt from the turn log. Prose is theirs to
+    rewrite; a call and its result are theirs to keep or drop, never to reword."""
+    import json
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path]); ws.add_root('.')
+    log = ws.ai.history_path; log.parent.mkdir(parents=True, exist_ok=True)
+    turns = [{'session': 'conv-x', 'at': 1, 'model': ws.ai.model.name, 'turn_id': 'conv-x:turn_000001',
+              'prompt': 'q1', 'reply': 'r1',
+              'activity': [{'tool': 'view_file', 'line': 'view_file a.py', 'detail': 'contents',
+                            'action_id': 'act1', 'ok': True}]},
+             {'session': 'conv-x', 'at': 2, 'model': ws.ai.model.name, 'turn_id': 'conv-x:turn_000002',
+              'prompt': 'q2', 'reply': 'r2'}]
+    log.write_text('\n'.join(json.dumps(t) for t in turns) + '\n')
+    with TestClient(ide_app(ws)) as client:
+        resumed = client.post('/agent/resume', json={'session': 'conv-x'}).json()
+        assert resumed['ok'] and not ws.threads.active.ai.checkpoints, 'no snapshots to compile from'
+
+        listing = client.get('/agent/conversation/parts').json()
+        parts = listing['parts']
+        assert [p['kind'] for p in parts] == ['user', 'call', 'result', 'assistant', 'user', 'assistant']
+        assert [p['editable'] for p in parts] == [True, False, False, True, True, True]
+        assert parts[1]['group'] == parts[2]['group'], 'a call and its result move together'
+
+        drop, reword = {parts[1]['part_id']: 'discard'}, {parts[0]['part_id']: 'my better question'}
+        pv = client.post('/agent/history/preview',
+                         json={'manifest': drop, 'rewrites': reword, 'revision': listing['revision']}).json()
+        assert pv['omitted'] == 2 and parts[2]['part_id'] in [*pv['adjusted'], *drop], \
+            'dropping the call takes its result with it'
+        assert pv['rewritten'] == [parts[0]['part_id']] and pv['tokens'] > 0
+
+        refused = client.post('/agent/history/preview',
+                              json={'rewrites': {parts[1]['part_id']: 'faked'}, 'revision': listing['revision']})
+        assert refused.status_code == 409 and refused.json()['code'] == 'branch_point_invalid'
+        assert 'not prose' in refused.json()['message']
+
+        applied = client.post('/agent/history/apply',
+                              json={'manifest': drop, 'rewrites': reword, 'revision': listing['revision']}).json()
+        assert applied['shaped'] is True and applied['rewrites'] == reword and applied['stage'] == 'reshaped'
+        stale = client.post('/agent/history/apply', json={'manifest': drop, 'revision': 99})
+        assert stale.status_code == 409 and stale.json()['code'] == 'history_changed'
+        assert len(ws.threads.active.ai.history) >= 2, 'and the recorded turns are untouched'
+
+def _logged_conversation(ws, sid='conv-n'):
+    import json
+    a = ws.ai
+    log = a.history_path; log.parent.mkdir(parents=True, exist_ok=True)
+    turns = [{'session': sid, 'at': 1, 'model': a.model.name, 'turn_id': f'{sid}:turn_000001',
+              'prompt': 'q1', 'reply': 'r1',
+              'activity': [{'tool': 'view_file', 'line': 'view_file a.py', 'detail': 'contents',
+                            'action_id': 'act1', 'ok': True}]},
+             {'session': sid, 'at': 2, 'model': a.model.name, 'turn_id': f'{sid}:turn_000002',
+              'prompt': 'q2', 'reply': 'r2'}]
+    log.write_text('\n'.join(json.dumps(x) for x in turns) + '\n')
+    return sid
+
+
+def test_a_conversation_opens_as_a_notebook_and_its_edits_come_back_as_one_branch(tmp_path):
+    """Editing a conversation in the editor a person already knows, rather than in a dialog of its
+    own. A deleted cell drops that part, a reworded prose cell rewrites it, and a call goes with
+    its result. Saving the notebook changes no conversation until the edits are applied."""
+    import json
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path]); ws.add_root(str(tmp_path))
+    sid = _logged_conversation(ws)
+    with TestClient(ide_app(ws)) as client:
+        client.post('/agent/resume', json={'session': sid})
+        made = client.post('/agent/conversation/notebook', json={'session': sid}).json()
+        assert made['parts'] == 6 and made['path'].endswith('.ipynb')
+
+        raw = json.loads(Path(made['path']).read_text())
+        tagged = [c for c in raw['cells'] if c.get('metadata', {}).get('leela', {}).get('part_id')]
+        assert len(tagged) == 6, 'a cell per part, each carrying the part it stands for'
+        assert raw['cells'][0]['metadata'].get('leela', {}).get('part_id') is None, 'plus a heading'
+
+        # delete the call and its result; reword the first question
+        keep = [c for c in raw['cells']
+                if c.get('metadata', {}).get('leela', {}).get('part_kind') not in ('call', 'result')]
+        for cell in keep:
+            leela = cell.get('metadata', {}).get('leela', {})
+            if leela.get('part_kind') == 'user' and 'q1' in ''.join(cell['source']):
+                cell['source'] = [cell['source'][0], 'my much better q1']
+        raw['cells'] = keep
+        Path(made['path']).write_text(json.dumps(raw))
+
+        out = client.post('/agent/conversation/reshape',
+                          json={'session': sid, 'path': made['path'], 'revision': made['revision']}).json()
+        assert out['discarded'] == [f'{sid}:turn_000001:1', f'{sid}:turn_000001:2'], 'the pair went together'
+        assert out['rewritten'] == [f'{sid}:turn_000001:0'] and out['shaped'] is True
+        assert len(ws.threads.active.ai.history) >= 2, 'and the recorded turns are untouched'
+
+
+def test_a_notebook_we_cannot_read_does_not_erase_the_conversation(tmp_path):
+    """Every part missing from the notebook is a part discarded, so a notebook whose parts we
+    failed to find would drop the entire conversation. That is a read failure, not an instruction."""
+    from leela.blocks.nb.nb import Notebook
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path]); ws.add_root(str(tmp_path))
+    sid = _logged_conversation(ws, 'conv-blank')
+    empty = tmp_path/'nothing.ipynb'; Notebook.blank().save(str(empty))
+    with TestClient(ide_app(ws)) as client:
+        client.post('/agent/resume', json={'session': sid})
+        before = client.get('/agent/branches').json()['active']
+        r = client.post('/agent/conversation/reshape', json={'session': sid, 'path': str(empty)})
+        assert r.status_code == 409 and r.json()['code'] == 'branch_point_invalid'
+        assert 'nothing was changed' in r.json()['message']
+        assert client.get('/agent/branches').json()['active'] == before
+
+
+def test_reshaping_a_conversation_is_reachable_from_its_card():
+    js = (Path(__file__).resolve().parents[2] / 'leela/static/js/12_agent.js').read_text()
+    assert 'data-thread-reshape' in js and 'leeAgentReshape(id)' in js
+    flow = js[js.index('async function leeAgentReshape('):js.index('function paintAgentReshapeBar(')]
+    assert "post('/agent/conversation/notebook'" in flow and 'leeOpenFile(made.path)' in flow
+    apply = js[js.index('async function leeAgentReshapeApply('):js.index('async function leeAgentThreadOpen(')]
+    assert "post('/tabs/save-all')" in apply, 'the edits are read from disk, not from a buffer'
+    assert "post('/agent/conversation/reshape'" in apply
+    bar = js[js.index('function paintAgentReshapeBar('):js.index('async function leeAgentReshapeApply(')]
+    assert 'data-reshape-apply' in bar and 'data-reshape-cancel' in bar, 'applying is asked for'
+
+def test_the_history_picker_names_a_conversation_rather_than_dating_it(tmp_path):
+    """The summary model names each conversation and the sidecar keeps it, but the picker grouped
+    raw turns and so never saw one -- every option read as a timestamp."""
+    import json
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path]); ws.add_root(str(tmp_path))
+    log = ws.ai.history_path; log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(json.dumps({'session': 'conv-t', 'at': 1, 'model': 'gpt-4.1',
+                               'turn_id': 'conv-t:turn_000001', 'prompt': 'q', 'reply': 'r'}) + '\n')
+    ws.ai.refresh_history()
+    ws.ai.set_title('Keybindings for the notes section', 'conv-t')
+    ws.ai.set_muted(True, 'conv-t')
+    with TestClient(ide_app(ws)) as client:
+        rows = {s['id']: s for s in client.get('/agent/history').json()['sessions']}
+    assert rows['conv-t']['title'] == 'Keybindings for the notes section'
+    assert rows['conv-t']['muted'] is True
+    assert rows['conv-t']['count'] == 1 and rows['conv-t']['turns'] == [], \
+        'the list counts the turns; fetching them is what opening a conversation does'
+
+    js = (Path(__file__).resolve().parents[2]/'leela/static/js/12_agent.js').read_text()
+    picker = js[js.index('async function showHistorySession('):js.index('async function rehydrateAgentLive(')]
+    assert 'esc(titleText(s.title) || sessionTime(s))}</option>' in picker, 'the name is the whole option'
+    assert 'models' not in picker.split('const options')[1].split('.join')[0], 'nothing crowds the name'
+    assert 'titleText(group.title) || sessionTime(group)' in picker, 'and the heading agrees with the option'
+
+
+
+def test_a_summarised_title_is_shown_without_its_label():
+    """The summariser answered with `Title: Ramabana CLI ASCII` and the label was stored with the
+    name, so the picker read it back verbatim. Stored titles keep the prefix, so display strips it."""
+    js = (Path(__file__).resolve().parents[2]/'leela/static/js/12_agent.js').read_text()
+    clean = js[js.index('const titleText ='):js.index('const sessionTime =')]
+    assert "replace(/^title\\s*:\\s*/i, '')" in clean, 'a leading label goes, whatever its case'
+    assert 'replace(/^["\'“”‘’]+|["\'“”‘’]+$/g' in clean, 'and the quotes around the name'
+    assert "replace(/\\s+/g, ' ')" in clean and clean.count('.trim()') >= 1, 'whitespace collapses'
+    # the cards, the attention bar and the rename dialog all name a conversation through
+    # `threadName`, which is the one place that cleans a title and falls back when there is none
+    for site in ('esc(titleText(s.title) || sessionTime(s))', 'titleText(group.title) || sessionTime(group)',
+                 "renderTurns(log, d.turns, titleText(d.title) || 'conversation')",
+                 'const named = titleText(t.title); if (named) return named;',
+                 'esc(row ? threadName(row) : id)', 'const name = threadName(row);'):
+        assert site in js, f'every display of a name is cleaned: {site}'
+    assert not re.search(r"\bt\.title \|\|", js) and not re.search(r"\bd\.title \|\|", js), \
+        'nothing shows a raw title beside its fallback'
+    bundle = (Path(__file__).resolve().parents[2]/'leela/static/lee-ide.js').read_text()
+    assert 'const titleText =' in bundle, 'the built bundle carries the helper'
+
+
+def test_a_turn_goes_to_the_conversation_the_browser_names(tmp_path):
+    "The prompt used to follow whichever thread was activated last, so a second tab stole it."
+    ws = Workspace(roots=[tmp_path])
+    class Runner:
+        def __init__(self, thread): self.thread, self.call, self.feed = thread, None, Feed(thread)
+        def start(self, prompt, attachments, reasoning, context, context_path, grounding):
+            self.call = prompt; return {'ok': True, 'thread': self.thread, 'run': 'run-1', 'seq': 1}
+        def close(self): self.feed.close()
+    first, second = ws.threads.active, ws.threads.new()
+    first.runner, second.runner = Runner(first.id), Runner(second.id)
+    with TestClient(ide_app(ws)) as client:
+        sent = client.post('/agent/turn', json={'prompt': 'to the first', 'thread': first.id})
+        assert sent.json()['thread'] == first.id
+        assert first.runner.call == 'to the first' and second.runner.call is None
+        assert ws.threads.active_id == second.id, 'naming a conversation is not switching to it'
+        client.post('/agent/turn', json={'prompt': 'to whichever is on screen'})
+        assert second.runner.call == 'to whichever is on screen'
+        gone = client.post('/agent/turn', json={'prompt': 'nowhere', 'thread': 'thread_missing'})
+        assert gone.status_code == 409 and gone.json()['code'] == 'thread_not_found'
+
+
+def test_thread_turns_serve_one_conversation_and_where_its_feed_settled(tmp_path):
+    "A pane that has never shown a conversation has no DOM to restore it from."
+    ws = Workspace(roots=[tmp_path])
+    first, second = ws.threads.active, ws.threads.new()
+    first.ai.refresh_history = lambda: None
+    first.ai.history = [{'session': first.id, 'prompt': 'mine', 'reply': 'hi', 'model': 'fake'},
+                        {'session': second.id, 'prompt': 'not mine', 'reply': 'no', 'model': 'fake'}]
+    first.feed.emit('user', {'text': 'mine'}); first.feed.emit('done', {'ok': True}); first.feed.settle()
+    first.feed.emit('chunk', {'text': 'a turn that is still running'})
+    with TestClient(ide_app(ws)) as client:
+        d = client.get(f'/agent/thread/turns?thread={first.id}').json()
+        assert [t['prompt'] for t in d['turns']] == ['mine'] and d['thread'] == first.id
+        assert d['seq'] == 2, 'the running turn replays from settlement, so it is drawn once'
+        assert ws.threads.active_id == second.id, 'reading a conversation does not switch to it'
+        assert client.get('/agent/thread/turns').json()['thread'] == second.id
+        assert client.get('/agent/thread/turns?thread=thread_missing').status_code == 409
+
+
+def test_switching_conversations_paints_from_the_server_and_reattaches():
+    "A DOM cache is not a transcript: an unseen conversation restored blank, a working one dead."
+    js = (Path(__file__).resolve().parents[2]/'leela/static/js/12_agent.js').read_text()
+    core = (Path(__file__).resolve().parents[2]/'leela/static/js/00_core.js').read_text()
+    assert 'agentThreadViews' not in js + core, 'the innerHTML cache was what went stale'
+    switch = js[js.index('async function leeAgentThreadSwitch'):js.index('async function leeAgentThreadRename')]
+    assert 'await paintAgentThread(d.active)' in switch
+    assert 'agentListen(d.active, live?.seq || 0)' in switch, 'a running turn is watched again after the switch'
+    paint = js[js.index('async function paintAgentThread'):js.index('async function carryAgentPrevious')]
+    assert "renderTurns(log, d.turns, titleText(d.title) || 'conversation')" in paint, \
+        'an opened conversation is headed by its name, not by the word'
+    assert "api('/agent/thread/turns'" in paint and "log.innerHTML = ''" in paint
+    assert 'log.prepend' not in paint, 'painting into what is on screen is what duplicated a transcript'
+    assert 'lee.agentLive = log.innerHTML' in paint, 'the history toggle comes back to this conversation'
+    live = js[js.index('async function rehydrateAgentLive'):js.index('async function leeAgentHistory')]
+    assert 'paintAgentThread(lee.agentThread' in live and 'carryAgentPrevious(log)' in live
+
+
+def test_pane_routes_act_on_the_named_conversation_not_the_active_one(tmp_path):
+    "Each of these read the active binding, so a switch anywhere moved what they acted on."
+    ws = Workspace(roots=[tmp_path])
+    first, second = ws.threads.active, ws.threads.new()
+    calls = []
+    first.ai.rollback_turn = lambda turn_id: {'turn_id': turn_id, 'files': {}, 'irreversible': []}
+    first.ai.turn_transactions = {'turn-1': {'turn_id': 'turn-1', 'files': {}}}
+    first.ai.command = lambda line: 'the first conversation answered'
+    first.approvals.rollback = lambda id: 'edited.py'
+    first.approvals.answer = lambda id, ok, note, session=False, tool=None, args=None: \
+        calls.append(('answer', id)) or type('A', (), {'dict': lambda self: {'id': id, 'ok': ok}})()
+    for ai in (second.ai,):
+        ai.rollback_turn = ai.command = lambda *a, **k: (_ for _ in ()).throw(AssertionError('wrong thread'))
+    with TestClient(ide_app(ws)) as client:
+        rolled = client.post('/agent/rollback-turn', json={'turn_id': 'turn-1', 'thread': first.id})
+        assert rolled.json() == {'ok': True, 'thread': first.id, 'turn_id': 'turn-1',
+                                'paths': [], 'irreversible': []}
+        tx = client.get(f'/agent/turn-transaction?turn_id=turn-1&thread={first.id}')
+        assert tx.json()['transaction']['turn_id'] == 'turn-1'
+        assert client.get('/agent/turn-transaction?turn_id=turn-1').status_code == 404, \
+            'the active conversation has no such turn, and is no longer asked about one'
+        tool = client.post('/agent/rollback-tool', json={'id': 'call-1', 'thread': first.id})
+        assert tool.json() == {'ok': True, 'thread': first.id, 'path': 'edited.py'}
+        said = client.post('/agent/command', json={'line': '/cost', 'thread': first.id})
+        assert said.json()['text'] == 'the first conversation answered'
+        answered = client.post('/agent/approve', json={'id': 'call-1', 'ok': True, 'thread': first.id})
+        assert answered.json()['thread'] == first.id and calls == [('answer', 'call-1')]
+        assert ws.threads.active_id == second.id, 'none of them switched the conversation'
+        for path, body in (('/agent/rollback-turn', {'turn_id': 'turn-1'}), ('/agent/rollback-tool', {'id': 'x'}),
+                           ('/agent/command', {'line': '/cost'}), ('/agent/approve', {'id': 'x'}),
+                           ('/agent/tool-preview', {'tool': 'read_file', 'args': {}}),
+                           ('/agent/retry-tool', {'tool': 'read_file', 'args': {}})):
+            stale = client.post(path, json={**body, 'thread': 'thread_missing'})
+            assert stale.status_code == 409 and stale.json()['code'] == 'thread_not_found', path
+
+
+def test_agent_state_and_history_reach_every_live_conversation(tmp_path):
+    "State is the workspace's. Re-briefing only the thread on screen left the others stale."
+    ws = Workspace(roots=[tmp_path])
+    first, second = ws.threads.active, ws.threads.new()
+    seen = []
+    first.ai.refresh = lambda: seen.append(first.id)
+    second.ai.refresh = lambda: seen.append(second.id)
+    with TestClient(ide_app(ws)) as client:
+        done = client.post('/agent/state/activate', json={'text': 'Goal: ship it', 'layer': 'task'})
+        assert done.json()['ok'] and set(seen) == {first.id, second.id}
+        named = client.get(f'/agent/history?thread={first.id}').json()
+        assert named['current'] == first.id and named['thread'] == first.id
+        assert client.get('/agent/history').json()['current'] == second.id
+        assert client.get('/agent/history?thread=thread_missing').status_code == 409
+
+
+def test_a_thread_card_carries_the_name_the_history_picker_shows(tmp_path):
+    """`Thread.dict` read the session sidecar alone, so a conversation the summariser had not named
+    yet read as `conversation <id>` on its card while the picker showed the derived name."""
+    import json
+    ws = Workspace(roots=[tmp_path]); ws.add_root(str(tmp_path))
+    thread = ws.threads.active
+    log = ws.ai.history_path; log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(json.dumps({'session': thread.id, 'at': 1, 'model': 'gpt-4.1',
+                               'turn_id': f'{thread.id}:turn_000001',
+                               'prompt': 'ascii art for the ramabana CLI', 'reply': 'r'}) + '\n')
+    ws.ai.refresh_history()
+    assert not ws.ai.session_meta(thread.id)['title'], 'nothing has been summarised'
+    named = {row['id']: row for row in ws.ai.sessions()}
+    assert thread.dict()['title'] == named[thread.id]['title'] == 'ascii art for the ramabana CLI'
+    with TestClient(ide_app(ws)) as client:
+        rows = {row['id']: row for row in client.get('/agent/threads').json()['threads']}
+    assert rows[thread.id]['title'] == named[thread.id]['title'], 'the card and the picker agree'
+    ws.threads.title(thread.id, 'A name a person chose')
+    assert thread.dict()['title'] == 'A name a person chose', 'a chosen name outranks the derived one'
+
+
+def test_a_card_is_named_by_the_first_thing_said_in_it(tmp_path):
+    "The summariser, the sidecar and the log all arrive late or not at all. The prompt is there now."
+    ws = Workspace(roots=[tmp_path])
+    thread = ws.threads.active
+    assert thread.dict()['title'] == '', 'nothing has been said in it yet'
+    feed = thread.feed
+    class Runner:
+        def __init__(self): self.feed = feed
+        def close(self): feed.close()
+    thread.runner = Runner()
+    runner = TurnRunner(ws, feed, thread=thread)
+    thread.opener = ''
+    runner.thread = thread
+    thread.opener = 'why does the regression cell have a duplicate heading line'
+    assert thread.dict()['title'] == 'why does the regression cell have a duplicate heading line'
+    thread.opener = '  padded\n\nand wrapped  ' + 'x' * 200
+    assert thread.dict()['title'] == 'padded and wrapped ' + 'x' * 41, 'one line, and short enough to read'
+    ws.threads.title(thread.id, 'A name I chose')
+    assert thread.dict()['title'] == 'A name I chose', 'a chosen name still wins'
+
+
+def test_the_turn_that_starts_a_conversation_names_it(tmp_path):
+    ws = Workspace(roots=[tmp_path])
+    thread = ws.threads.active
+    feed = Feed(thread.id)
+    started = {}
+    def ask_stream(prompt, attachments=(), on_registered=None, **kw):
+        run = thread.ai._new_run('working'); started['run'] = run
+        on_registered(run)
+        yield 'answer'
+        run.finish()
+    ws.ask_stream = ask_stream
+    runner = TurnRunner(ws, feed, ai=thread.ai, approvals=thread.approvals, thread=thread)
+    accepted = runner.start('name this conversation for me')
+    assert accepted['ok'] and thread.opener == 'name this conversation for me'
+    assert thread.dict()['title'] == 'name this conversation for me'
+    runner.close()
+
+
+def test_an_unnamed_conversation_reads_as_new_rather_than_as_a_timestamp():
+    "`conversation 20260821-190502-340765` is noise. Say what it is and when it started."
+    js = (Path(__file__).resolve().parents[2]/'leela/static/js/12_agent.js').read_text()
+    name = js[js.index('function threadName'):js.index('function threadLabel')]
+    assert "'new conversation'" in name and 'at[4]}:${at[5]}' in name
+    assert 'conversation ' + "'" not in name.replace("'new conversation'", ''), 'no raw id in the label'
+    assert "id.replace(/^agent_/, 'conversation ')" not in js, 'and nowhere else either'
+    assert js[js.index('function threadLabel'):].startswith('function threadLabel(t) {\n  return `${threadName(t)}')
+
+
+def _log(ws, rows):
+    "Write the conversation log the way the agent writes it, and forget what was parsed before."
+    import json
+    p = Path(ws.ai.history_path); p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+    ws._history_stamps.clear()
+    return p
+
+
+def test_the_history_list_carries_no_turns_and_is_computed_once_per_log(tmp_path):
+    """All the turns of every conversation was 60MB of JSON and forty seconds once Leela and the
+    CLI shared one log. The list says how many; the turns come when one is opened."""
+    ws = Workspace(roots=[tmp_path])
+    rows = [{'session': 'agent_a', 'turn_id': 'agent_a:1', 'at': 10, 'model': 'm', 'prompt': 'p1', 'reply': 'r1'},
+            {'session': 'agent_a', 'turn_id': 'agent_a:2', 'at': 20, 'model': 'm', 'prompt': 'p2', 'reply': 'r2'},
+            {'session': 'agent_b', 'turn_id': 'agent_b:1', 'at': 30, 'model': 'm', 'prompt': 'p3', 'reply': 'r3'}]
+    _log(ws, rows)
+    try:
+        with TestClient(ide_app(ws)) as client:
+            listed = client.get('/agent/history').json()['sessions']
+            found = {s['id']: s for s in listed}
+            assert found['agent_a']['count'] == 2 and found['agent_b']['count'] == 1
+            assert all(s['turns'] == [] for s in listed), 'no turn bodies in the list'
+            one = client.get('/agent/history/session?id=agent_a').json()
+            assert [t['turn_id'] for t in one['turns']] == ['agent_a:1', 'agent_a:2'] and one['count'] == 2
+            assert client.get('/agent/history/session?id=nope').status_code == 404
+            calls = []
+            ws.ai.refresh_history = lambda: calls.append(1)
+            client.get('/agent/history'); client.get('/agent/history')
+            assert calls == [], 'an unchanged log is not parsed again'
+            _log(ws, rows + [{'session': 'agent_b', 'turn_id': 'agent_b:2', 'at': 40, 'model': 'm',
+                              'prompt': 'p4', 'reply': 'r4'}])
+            client.get('/agent/history')
+            assert calls == [1], 'and a changed one is'
+    finally: ws.threads.shutdown()
+
+
+def test_a_reread_of_the_log_waits_for_the_log_to_change(tmp_path):
+    "Parsing it is linear in its size, and every history read was paying for it again."
+    ws = Workspace(roots=[tmp_path])
+    try:
+        calls = []
+        ws.ai.refresh_history = lambda: calls.append(1)
+        _log(ws, [{'session': 'agent_a', 'turn_id': 'agent_a:1', 'at': 1, 'model': 'm'}])
+        assert ws.fresh_history() is True and len(calls) == 1
+        assert ws.fresh_history() is False and len(calls) == 1, 'the stamp is unchanged'
+        assert ws.history_stamp().startswith(str(ws.ai.history_path))
+        _log(ws, [{'session': 'agent_a', 'turn_id': 'agent_a:1', 'at': 1, 'model': 'm'},
+                  {'session': 'agent_a', 'turn_id': 'agent_a:2', 'at': 2, 'model': 'm'}])
+        assert ws.fresh_history() is True and len(calls) == 2
+    finally: ws.threads.shutdown()
+
+
+def test_the_history_pane_asks_for_one_conversations_turns(tmp_path):
+    js = (Path(__file__).resolve().parents[2]/'leela/static/js/12_agent.js').read_text()
+    assert "api('/agent/history/session?id='" in js, 'one place fetches a stored conversation'
+    picker = js[js.index('async function showHistorySession('):js.index('async function paintAgentThread(')]
+    assert 'await sessionTurns(group.id)' in picker and 'renderTurns(log, turns' in picker
+    assert 'group.turns' not in picker, 'the list no longer carries them'
+    carry = js[js.index('async function carryAgentPrevious('):js.index('async function rehydrateAgentLive(')]
+    assert 'groups.find(s => sessionCount(s))' in carry and 'await sessionTurns(group.id)' in carry
+    assert 'group.turns' not in js.split('const sessionCount')[1], 'nowhere reads turns off the list'
