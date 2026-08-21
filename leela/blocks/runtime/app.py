@@ -9,7 +9,7 @@ from ...core.web import fail, off_loop, pipeline_socket
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('fs', 'pool', 'dev', 'terms', 'tab', 'docs', 'runs', 'gate')
+CAPS = ('fs', 'pool', 'terms', 'dev', 'tab', 'runs', 'docs', 'gate')
 
 def connect(app, ctx):
     rt = app.route

@@ -17,8 +17,7 @@ from .turns import (activity_changes, edit_diffs, history_sessions, project_stat
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('fs', 'ai', 'inline_ai', 'memory', 'search', 'research', 'docs', 'tab', 'jobs',
-        'pending_approval', 'approvals', 'vaults', 'journal', 'pool', 'runs', 'terms', 'dev', 'browser')
+CAPS = ('fs', 'memory', 'approvals', 'ai', 'inline_ai', 'pending_approval', 'docs')
 
 def connect(app, ctx):
     rt = app.route
@@ -29,7 +28,7 @@ def connect(app, ctx):
         return await client.api(path, params, timeout) if client else None
 
     def live_assistants():
-        "Only the assistants already built -- reaching for `ws.ai` here would construct one."
+        "Only the assistants already built -- reaching for `ctx.ai` here would construct one."
         return L(ws._ai, ws._inline_ai).filter(lambda a: a is not None)
     def refresh_assistants():
         for a in live_assistants(): a.refresh()
@@ -40,7 +39,7 @@ def connect(app, ctx):
         path = str(d.get('path') or '').strip()
         if path:
             image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
-            p = ws.fs._check(path, must_exist=True)
+            p = ctx.fs._check(path, must_exist=True)
             if not p.is_file() or p.suffix.lower() not in image_exts:
                 return fail('attachment is not a workspace image')
             return {'ok': True, 'path': str(p), 'name': p.name}
@@ -68,35 +67,35 @@ def connect(app, ctx):
     async def agent_transcript(session: str = ''):
         live = await api('/agent/api/transcript', {'session': session}) or {'cells': []}
         return {'id': live.get('id'), 'path': live.get('path'), 'cells': live.get('cells', []),
-                'agent': list(ws.ai.history) if not session else [],
-                'inline': list(ws.inline_ai.history) if not session else []}
+                'agent': list(ctx.ai.history) if not session else [],
+                'inline': list(ctx.inline_ai.history) if not session else []}
     @rt('/agent/resume')
     async def agent_resume(req):
         "Put a saved conversation back into the model's context, and return its turns."
         d = await req.json()
-        if ws.ai.busy: return fail('cannot resume while the agent is working', 409)
-        try: s = await off_loop(ws.ai.resume_session, str(d.get('session') or 'latest'))
+        if ctx.ai.busy: return fail('cannot resume while the agent is working', 409)
+        try: s = await off_loop(ctx.ai.resume_session, str(d.get('session') or 'latest'))
         except Exception as e: return fail(e)
-        return {'ok': True, 'session': s['id'], 'note': ws.ai.note,
-                'turns': [t for t in ws.ai.history if t.get('session') == s['id']]}
+        return {'ok': True, 'session': s['id'], 'note': ctx.ai.note,
+                'turns': [t for t in ctx.ai.history if t.get('session') == s['id']]}
     @rt('/agent/new')
     async def agent_new():
-        if ws.ai.busy: return fail('cannot start a new conversation while the agent is working', 409)
+        if ctx.ai.busy: return fail('cannot start a new conversation while the agent is working', 409)
         from .ai import Assistant
         old = ws._ai
         ws._ai = Assistant(ws, model=old.model.name, surface='agent', local_multimodal=ws.local_multimodal,
                            on_compact=ws._compacted, history_name='agent')
         ws.sync_agent_routing(ws._ai)
-        ws.approvals.host = ws._ai.host
+        ctx.approvals.host = ws._ai.host
         old.close()
-        return {'ok': True, 'session': ws.ai.session_id}
+        return {'ok': True, 'session': ctx.ai.session_id}
     @rt('/agent/history')
     async def agent_history():
         "All durable turns grouped by model-context session, newest session first."
         execution = await api('/agent/api/sessions') or {'sessions': []}
-        turns = [t for t in ws.ai.history if t.get('model') != 'scripted']
+        turns = [t for t in ctx.ai.history if t.get('model') != 'scripted']
         return {'sessions': history_sessions(turns, execution.get('sessions', [])),
-                'model': ws.ai.model.name, 'current': ws.ai.session_id}
+                'model': ctx.ai.model.name, 'current': ctx.ai.session_id}
     @rt('/agent/models')
     def agent_models(legacy: bool = True):
         from ...agent.core import DFLT_LOCAL, available_models, auth_status, resolve
@@ -113,12 +112,12 @@ def connect(app, ctx):
         rows += [{'value':x['name'],'label':x['name'],'provider':x['runtime'],
                   'source':f"saved · {x['model_id']}",'custom':True} for x in saved]
         agent_dflt = ws.model or os.environ.get('LEELA_MODEL') or DFLT_LOCAL
-        agent = _name('agent model', lambda: ws.ai.model.name, agent_dflt) if ws._ai is not None else agent_dflt
+        agent = _name('agent model', lambda: ctx.ai.model.name, agent_dflt) if ws._ai is not None else agent_dflt
         inline_dflt = ws.inline_model or os.environ.get('LEELA_MODEL_INLINE') or 'gpt-mini'
-        inline = (_name('inline model', lambda: ws.inline_ai.model.name, inline_dflt)
+        inline = (_name('inline model', lambda: ctx.inline_ai.model.name, inline_dflt)
                   if ws._inline_ai is not None else inline_dflt)
         completion_dflt = ws.completion_model or os.environ.get('LEELA_MODEL_COMPLETION') or 'gpt-4.1'
-        completion = (_name('completion model', lambda: ws.ai.routing.name_for('completion'), completion_dflt)
+        completion = (_name('completion model', lambda: ctx.ai.routing.name_for('completion'), completion_dflt)
                       if ws._ai is not None else completion_dflt)
         for current in (agent, inline, completion):
             spec = _spec(current)
@@ -139,7 +138,7 @@ def connect(app, ctx):
                                 if (s := _spec(r['value'])) and s.model_id == spec.model_id), current)
         # The routed jobs with no field of their own, reported chosen or not.
         from ...agent.core import JOBS, Routing
-        routing = ws.ai.routing if ws._ai is not None else Routing(turn=agent)
+        routing = ctx.ai.routing if ws._ai is not None else Routing(turn=agent)
         if ws._ai is None: routing.policy.update(ws.job_models)
         jobs = {j: _name(f'{j} model', lambda j=j: routing.name_for(j), '')
                 for j in JOBS if j not in ('turn', 'completion')}
@@ -262,7 +261,7 @@ def connect(app, ctx):
             target = d.get('target', 'agent')
             if target not in ('agent', 'inline') and target not in JOBS:
                 return fail(f'unknown model target {target!r}')
-            assistant = ws.inline_ai if target == 'inline' else ws.ai
+            assistant = ctx.inline_ai if target == 'inline' else ctx.ai
             job = 'turn' if target in ('agent', 'inline') else target
             spec = assistant.set_model((d.get('model') or '').strip(), job=job)
             if target == 'inline': ws.inline_model = spec.name
@@ -275,8 +274,8 @@ def connect(app, ctx):
     @rt('/agent/memory')
     async def agent_memory():
         "Editable notes and their explicit per-model session routing."
-        notes = await off_loop(ws.memory.agent_notes)
-        rows = [{**note, 'text': await off_loop(ws.memory.exact_text, str(note['id']))} for note in notes]
+        notes = await off_loop(ctx.memory.agent_notes)
+        rows = [{**note, 'text': await off_loop(ctx.memory.exact_text, str(note['id']))} for note in notes]
         return {'notes': rows, 'selected': ws.agent_memory_selection,
                 'targets': {'agent': 'Agent conversation', 'inline': 'Prompt cells',
                             'completion': 'Code completion'}}
@@ -285,8 +284,8 @@ def connect(app, ctx):
         d = await req.json(); title = (d.get('title') or '').strip(); text = (d.get('text') or '').strip()
         if not text: return fail('memory note is empty')
         previous = str(d.get('id') or '')
-        saved = await off_loop(ws.memory.remember_agent_note, title, text, previous)
-        if not saved: return fail(ws.memory.note)
+        saved = await off_loop(ctx.memory.remember_agent_note, title, text, previous)
+        if not saved: return fail(ctx.memory.note)
         new_id = str(saved.get('doc_id') or '')
         if previous and new_id:
             for target, ids in ws.agent_memory_selection.items():
@@ -298,42 +297,42 @@ def connect(app, ctx):
             if new_id and new_id not in ws.agent_memory_selection[target]: ws.agent_memory_selection[target].append(new_id)
         ws.save()
         refresh_assistants()
-        return {'ok': True, 'id': new_id, 'note': ws.memory.note}
+        return {'ok': True, 'id': new_id, 'note': ctx.memory.note}
     @rt('/agent/memory/select')
     async def agent_memory_select(req):
         d = await req.json(); target = str(d.get('target') or '')
         if target not in ws.agent_memory_selection: return fail('target must be agent, inline, or completion')
         ids = d.get('ids')
         if not isinstance(ids, list): return fail('ids must be a list')
-        known = {str(note['id']) for note in await off_loop(ws.memory.agent_notes)}
+        known = {str(note['id']) for note in await off_loop(ctx.memory.agent_notes)}
         selected = list(dict.fromkeys(str(value) for value in ids if str(value) in known))
         ws.agent_memory_selection[target] = selected; ws.save()
         assistant = ws._ai if target in {'agent', 'completion'} else ws._inline_ai
         if assistant is not None: assistant.refresh()
-        tokens = sum([estimate_tokens(await off_loop(ws.memory.exact_text, v)) for v in selected])
+        tokens = sum([estimate_tokens(await off_loop(ctx.memory.exact_text, v)) for v in selected])
         return {'ok': True, 'target': target, 'ids': selected, 'tokens': tokens}
     @rt('/agent/memory/delete')
     async def agent_memory_delete(req):
         doc_id = str((await req.json()).get('id') or '')
-        known = {str(note['id']) for note in await off_loop(ws.memory.agent_notes)}
+        known = {str(note['id']) for note in await off_loop(ctx.memory.agent_notes)}
         if doc_id not in known: return fail('unknown agent memory note')
         for target, ids in ws.agent_memory_selection.items():
             ws.agent_memory_selection[target] = [value for value in ids if value != doc_id]
-        ok = await off_loop(ws.memory.forget, doc_id); ws.save()
+        ok = await off_loop(ctx.memory.forget, doc_id); ws.save()
         refresh_assistants()
-        return {'ok': ok, 'note': ws.memory.note}
+        return {'ok': ok, 'note': ctx.memory.note}
     @rt('/agent/states')
     def agent_states():
         "Saved conversation states and the state currently injected into the briefing."
         active = any(str(layer.get('text') or '').strip() and layer.get('enabled', True)
                      for layer in ws.agent_state_layers.values())
         return {'active': active, 'active_text': ws.agent_state,
-                'layers': ws.agent_state_layers, 'states': ws.memory.agent_states()}
+                'layers': ws.agent_state_layers, 'states': ctx.memory.agent_states()}
     @rt('/agent/state/template')
     def agent_state_template():
         "A complete, usable rules template with this workspace's actual tool catalog."
         from .ai import STATE_TEMPLATE
-        tools = tool_schemas(ws.ai)
+        tools = tool_schemas(ctx.ai)
         catalog = '\n'.join(f"- `{t['name']}` ({t['group']}): {t['description']}" for t in tools)
         return {'template': STATE_TEMPLATE, 'tools': tools,
                 'catalog': '## Available tools\n' + (catalog or '- No tools are currently available.')}
@@ -342,23 +341,23 @@ def connect(app, ctx):
         "Ask the summary model to fill a transparent charter from the template and real tools."
         from .ai import STATE_TEMPLATE
         d = await req.json(); intent = (d.get('intent') or '').strip()
-        tools = tool_schemas(ws.ai)
+        tools = tool_schemas(ctx.ai)
         catalog = '\n'.join(f"- {t['name']} [{t['group']}]: {t['description']}" for t in tools)
-        project = '\n'.join(f'- {root}' for root in ws.ai.host.roots) or '- no folder open'
+        project = '\n'.join(f'- {root}' for root in ctx.ai.host.roots) or '- no folder open'
         prompt = (f'<workspace>\n{project}\n</workspace>\n\n<available-tools>\n{catalog}\n</available-tools>\n\n'
                   f'<user-intent>\n{intent or "Help me configure a safe, effective coding agent for this workspace."}\n</user-intent>\n\n'
                   f'<template>\n{STATE_TEMPLATE}\n</template>\n\nFill every bracketed field with concrete, concise guidance. '
                   'Keep the headings exactly. Mention tools only when they actually appear in available-tools. '
                   'Do not invent project facts; mark unknown facts as needing confirmation.')
-        text = await off_loop(ws.ai.oneshot, prompt,
+        text = await off_loop(ctx.ai.oneshot, prompt,
                                'Design a user-owned coding-agent charter. Return complete Markdown only.', 'summary', 1800)
         if not text: text = STATE_TEMPLATE + '\n\n## Available tools\n' + catalog
         return {'ok': True, 'text': text, 'tools': tools,
-                'model': ws.ai.routing.name_for('summary'), 'generated': text != STATE_TEMPLATE}
+                'model': ctx.ai.routing.name_for('summary'), 'generated': text != STATE_TEMPLATE}
     @rt('/agent/state/draft')
     def agent_state_draft():
         "A structured, editable state distilled deterministically from the visible conversation."
-        turns = list(ws.ai.history[-12:]) if ws._ai is not None else []
+        turns = list(ctx.ai.history[-12:]) if ws._ai is not None else []
         conversation = '\n\n'.join(f"### User\n{t.get('prompt','')}\n\n### Agent\n{t.get('reply','')}"
                                    for t in turns)
         from .ai import STATE_TEMPLATE
@@ -371,34 +370,34 @@ def connect(app, ctx):
         d = await req.json(); text = (d.get('text') or '').strip()
         if not text: return fail('agent state is empty')
         title = (d.get('title') or '').strip() or 'Agent state'
-        saved = await off_loop(ws.memory.remember_agent_state, title, text,
-                                 {'session': ws.ai.session_id if ws._ai is not None else '',
-                                  'turns': len(ws.ai.history) if ws._ai is not None else 0,
-                                  'roots': [str(root) for root in ws.fs.roots]})
-        if not saved: return fail(ws.memory.note)
+        saved = await off_loop(ctx.memory.remember_agent_state, title, text,
+                                 {'session': ctx.ai.session_id if ws._ai is not None else '',
+                                  'turns': len(ctx.ai.history) if ws._ai is not None else 0,
+                                  'roots': [str(root) for root in ctx.fs.roots]})
+        if not saved: return fail(ctx.memory.note)
         layer = (d.get('layer') or 'task').strip()
-        if d.get('activate', True): ws.ai.set_state(text, layer=layer, source='memory')
+        if d.get('activate', True): ctx.ai.set_state(text, layer=layer, source='memory')
         return {'ok': True, 'saved': saved, 'active': ws.agent_state}
     @rt('/agent/state/suggest')
     def agent_state_suggest(q: str = ''):
         "Relevant saved states remain advisory; the browser decides whether to attach one."
-        states = {str(s['id']): s for s in ws.memory.agent_states()}
-        hits = ws.memory.search(q, limit=12) if q.strip() else []
+        states = {str(s['id']): s for s in ctx.memory.agent_states()}
+        hits = ctx.memory.search(q, limit=12) if q.strip() else []
         ids = [i for i in dict.fromkeys(str(h.get('doc_id') or '') for h in hits) if i in states]
         return {'query': q, 'states': [states[i] for i in ids[:5]]}
     @rt('/agent/state/diagnostics')
     async def agent_state_diagnostics(req):
         "Token budget, stale paths, and duplicate/conflicting headings for edited state."
         d = await req.json(); text = str(d.get('text') or '')
-        tokens = estimate_tokens(text, ws.ai.backend.count_tokens if ws._ai is not None else None)
+        tokens = estimate_tokens(text, ctx.ai.backend.count_tokens if ws._ai is not None else None)
         paths = set(re.findall(r'(?<![\w.-])(?:[\w.-]+/)+[\w.-]+', text))
         def absent(path):
-            try: return not ws.fs._check(path).exists()
+            try: return not ctx.fs._check(path).exists()
             except Exception: return True
         missing = [p for p in paths if absent(p)]
         headings = [h.strip().lower() for h in re.findall(r'^#{1,3}\s+(.+)$', text, re.M)]
         duplicate = sorted({h for h in headings if headings.count(h) > 1})
-        return {'tokens': tokens, 'context': ws.ai.model.ctx if ws._ai is not None else None,
+        return {'tokens': tokens, 'context': ctx.ai.model.ctx if ws._ai is not None else None,
                 'missing_paths': sorted(missing), 'duplicate_headings': duplicate}
     @rt('/agent/state/update')
     async def agent_state_update(req):
@@ -410,37 +409,37 @@ def connect(app, ctx):
                   'Return the complete updated state using Goal, Constraints, Progress (Done/In progress/Blocked), '
                   'Key decisions, Next steps, and Critical context. Reconcile stale assumptions with current-project evidence. '
                   'Preserve still-valid user preferences, remove completed next steps, and never invent project facts.')
-        text = await off_loop(ws.ai.oneshot, prompt,
+        text = await off_loop(ctx.ai.oneshot, prompt,
                                'Update explicit agent state. Return Markdown only, without a fence.', 'summary', 1600)
-        if not text: return fail(ws.ai.note or 'state update model returned nothing')
+        if not text: return fail(ctx.ai.note or 'state update model returned nothing')
         return {'ok': True, 'text': text, 'diff': diff_payload(current, text)}
     @rt('/agent/state/activate')
     async def agent_state_activate(req):
         "Activate an edited state without adding it to durable memory."
         d = await req.json(); text = (d.get('text') or '').strip(); layer = d.get('layer') or 'task'
-        try: ws.ai.set_state(text, layer=layer, enabled=d.get('enabled', True), source='user')
+        try: ctx.ai.set_state(text, layer=layer, enabled=d.get('enabled', True), source='user')
         except ValueError as e: return fail(e)
         return {'ok': True, 'state': text, 'layer': layer}
     @rt('/agent/state/compare')
     async def agent_state_compare(req):
         "Compare one remembered revision with edited text before replacing or merging it."
-        d = await req.json(); text = await off_loop(ws.memory.agent_state_text, str(d.get('id') or ''))
-        if not text: return fail(ws.memory.note or 'saved state is empty')
+        d = await req.json(); text = await off_loop(ctx.memory.agent_state_text, str(d.get('id') or ''))
+        if not text: return fail(ctx.memory.note or 'saved state is empty')
         current = str(d.get('current') or '')
         return {'ok': True, 'state': text, 'diff': diff_payload(current, text)}
     @rt('/agent/state/load')
     async def agent_state_load(req):
         "Load a remembered state into the live agent briefing, preserving its conversation history."
         d = await req.json(); doc_id = str(d.get('id') or ''); layer = d.get('layer') or 'task'
-        text = await off_loop(ws.memory.agent_state_text, doc_id)
-        if not text: return fail(ws.memory.note or 'saved state is empty')
-        try: ws.ai.set_state(text, layer=layer, source='memory')
+        text = await off_loop(ctx.memory.agent_state_text, doc_id)
+        if not text: return fail(ctx.memory.note or 'saved state is empty')
+        try: ctx.ai.set_state(text, layer=layer, source='memory')
         except ValueError as e: return fail(e)
         return {'ok': True, 'state': text, 'layer': layer}
     @rt('/agent/commands')
     def agent_commands():
         "Slash-command metadata for the prompt's inline command picker."
-        help_by_name = {name: help for name, (_, help) in ws.ai.registry.commands.items()}
+        help_by_name = {name: help for name, (_, help) in ctx.ai.registry.commands.items()}
         builtins = {
             'model': 'show or change the model', 'cost': 'show token and cost totals',
             'compact': 'compact the current context', 'skills': 'list available skills',
@@ -450,31 +449,31 @@ def connect(app, ctx):
         describe = lambda item: (getattr(item, '__doc__', '') or '').strip().split('\n')[0]
         return {
             'commands': [{'name': n, 'help': help_by_name.get(n) or builtins.get(n, '')}
-                         for n in ws.ai.commands()],
-            'tools': [{'name': t.__name__, 'help': describe(t)} for t in ws.ai.tools],
-            'skills': [{'name': s.name, 'help': s.description} for s in ws.ai.skills],
+                         for n in ctx.ai.commands()],
+            'tools': [{'name': t.__name__, 'help': describe(t)} for t in ctx.ai.tools],
+            'skills': [{'name': s.name, 'help': s.description} for s in ctx.ai.skills],
         }
     @rt('/agent/status')
     def agent_status():
         "Whether the assistant is loaded, what model it is on, and what it is doing right now."
-        return ws.ai.status()
+        return ctx.ai.status()
     @rt('/agent/stop')
     async def agent_stop(req):
         "Cancel the foreground root run."
         try:
             d = await req.json()
         except Exception: d = {}
-        try: return {'ok': True, **ws.ai.cancel((d.get('run_id') or '').strip())}
+        try: return {'ok': True, **ctx.ai.cancel((d.get('run_id') or '').strip())}
         except Exception as e: return {'ok': False, 'error': errstr(e)}
     @rt('/agent/runs')
-    def agent_runs(): return {'runs': ws.ai.runs(active=True)}
+    def agent_runs(): return {'runs': ctx.ai.runs(active=True)}
     @rt('/agent/runs/{run_id}/cancel')
     def agent_run_cancel(run_id: str):
-        try: return {'ok': True, **ws.ai.cancel(run_id)}
+        try: return {'ok': True, **ctx.ai.cancel(run_id)}
         except Exception as e: return {'ok': False, 'error': errstr(e)}
     @rt('/agent/runs/{run_id}/terminate')
     def agent_run_terminate(run_id: str):
-        try: return {'ok': True, **ws.ai.terminate(run_id)}
+        try: return {'ok': True, **ctx.ai.terminate(run_id)}
         except Exception as e: return {'ok': False, 'error': errstr(e)}
     @rt('/agent/stream')
     async def agent_stream(req):
@@ -488,7 +487,7 @@ def connect(app, ctx):
         if reasoning not in ('', 'auto', 'low', 'medium', 'high'):
             return fail('reasoning must be auto, low, medium or high')
         reasoning = None if reasoning in ('', 'auto') else reasoning
-        a = ws.ai
+        a = ctx.ai
         if a.busy: return fail('the assistant is already working; use steering or stop it first', 409)
         async def events():
             import queue as _q
@@ -520,12 +519,12 @@ def connect(app, ctx):
                                                   'note': a.compactor.note, 'text': a.compactor.last})
                     runs = a.runs(active=True)
                     if not run_id and runs: run_id = runs[-1]['id']
-                    state = {**ws.approvals.state(), 'runs': runs}
+                    state = {**ctx.approvals.state(), 'runs': runs}
                     version = json.dumps(state, sort_keys=True)
                     if version != execution_version:
                         execution_version = version
                         yield sse('execution', state)
-                    pending = ws.pending_approval
+                    pending = ctx.pending_approval
                     if pending is not None and pending.id != approval_id:
                         approval_id = pending.id
                         proposal = {**pending.dict(), 'schemas': tool_schemas(a)}
@@ -570,14 +569,14 @@ def connect(app, ctx):
     @rt('/agent/approval')
     def agent_approval():
         "The call waiting for a person, or None. It stays inline so the rest of the IDE remains usable."
-        a = ws.pending_approval
-        pending = ({**a.dict(), 'schemas': tool_schemas(ws.ai)} if a is not None else None)
-        return {'pending': pending, 'control': getattr(ws.approvals, 'control', 'guided')}
+        a = ctx.pending_approval
+        pending = ({**a.dict(), 'schemas': tool_schemas(ctx.ai)} if a is not None else None)
+        return {'pending': pending, 'control': getattr(ctx.approvals, 'control', 'guided')}
     @rt('/agent/control')
     async def agent_control(req):
         "Choose how often tool proposals become editable checkpoints."
         d = await req.json()
-        try: control = ws.approvals.set_control((d.get('control') or '').strip())
+        try: control = ctx.approvals.set_control((d.get('control') or '').strip())
         except ValueError as e: return fail(e)
         return {'ok': True, 'control': control}
     @rt('/agent/run-policy')
@@ -585,11 +584,11 @@ def connect(app, ctx):
         "Run through bounded future calls, or pause immediately after the current one."
         d = await req.json()
         if d.get('policy') == 'pause':
-            ws.approvals.set_pause_next()
-            return {'ok': True, **ws.approvals.state()}
-        try: policy = ws.approvals.set_run_policy(d.get('policy') or 'once', d.get('count') or 1)
+            ctx.approvals.set_pause_next()
+            return {'ok': True, **ctx.approvals.state()}
+        try: policy = ctx.approvals.set_run_policy(d.get('policy') or 'once', d.get('count') or 1)
         except (ValueError, TypeError) as e: return fail(e)
-        return {'ok': True, 'policy': policy, **ws.approvals.state()}
+        return {'ok': True, 'policy': policy, **ctx.approvals.state()}
     @rt('/agent/steer')
     async def agent_steer(req):
         """Queue guidance after the current tool; the next proposed call is skipped and replaced by it.
@@ -600,28 +599,28 @@ def connect(app, ctx):
         d = await req.json()
         text = (d.get('text') or '').strip()
         if d.get('cancel'):
-            ws.approvals.queue_steer('')
-            return {'ok': True, **ws.approvals.state()}
+            ctx.approvals.queue_steer('')
+            return {'ok': True, **ctx.approvals.state()}
         if not text: return fail('steering instruction is empty')
         if d.get('force'):
-            try: run = ws.ai.cancel()
+            try: run = ctx.ai.cancel()
             except Exception as e: return fail(errstr(e))
-            return {'ok': True, 'forced': True, 'run': run, 'text': text, **ws.approvals.state()}
-        ws.approvals.queue_steer(text)
-        return {'ok': True, **ws.approvals.state()}
+            return {'ok': True, 'forced': True, 'run': run, 'text': text, **ctx.approvals.state()}
+        ctx.approvals.queue_steer(text)
+        return {'ok': True, **ctx.approvals.state()}
     @rt('/agent/tool-preview')
     async def agent_tool_preview(req):
         "Preview the resolved call without executing it."
         d = await req.json()
         tool, args = (d.get('tool') or '').strip(), d.get('args')
-        if tool not in {t.__name__ for t in ws.ai.tools}: return fail(f'unknown tool {tool}')
+        if tool not in {t.__name__ for t in ctx.ai.tools}: return fail(f'unknown tool {tool}')
         if not isinstance(args, dict): return fail('tool arguments must be an object')
-        try: return {'ok': True, 'preview': tool_preview(ws.ai, tool, args)}
+        try: return {'ok': True, 'preview': tool_preview(ctx.ai, tool, args)}
         except Exception as e: return fail(e)
     @rt('/agent/branches')
     def agent_branches():
         "Turn boundaries available for a true model-context fork in this running session."
-        a = ws.ai
+        a = ctx.ai
         return {'active': a.current_branch_id,
                 'turns': [{'turn_id': tid, 'branch_id': cp.get('branch_id', 'main'),
                            'before': 'before' in cp, 'after': 'after' in cp}
@@ -630,7 +629,7 @@ def connect(app, ctx):
     async def agent_fork(req):
         "Restore a model-history checkpoint as a new active conversation branch."
         d = await req.json()
-        try: branch = ws.ai.fork(d.get('turn_id') or '', d.get('stage') or 'after', d.get('branch_id') or '')
+        try: branch = ctx.ai.fork(d.get('turn_id') or '', d.get('stage') or 'after', d.get('branch_id') or '')
         except Exception as e: return fail(e)
         return {'ok': True, **branch}
     @rt('/agent/revise')
@@ -638,7 +637,7 @@ def connect(app, ctx):
         "Create a branch whose last assistant prose is the user's edited response."
         d = await req.json(); text = (d.get('text') or '').strip()
         if not text: return fail('revised response is empty')
-        try: branch = ws.ai.revise(d.get('turn_id') or '', text, d.get('branch_id') or '')
+        try: branch = ctx.ai.revise(d.get('turn_id') or '', text, d.get('branch_id') or '')
         except Exception as e: return fail(e)
         return {'ok': True, **branch}
     @rt('/agent/retry-tool')
@@ -648,7 +647,7 @@ def connect(app, ctx):
         d = await req.json()
         tool, args = (d.get('tool') or '').strip(), d.get('args')
         if tool in WRITE_TOOLS: return fail('only read-only calls can be retried from a checkpoint')
-        choices = {t.__name__: t for t in ws.ai.tools}
+        choices = {t.__name__: t for t in ctx.ai.tools}
         if tool not in choices: return fail(f'unknown tool {tool}')
         if not isinstance(args, dict): return fail('tool arguments must be an object')
         try: result = await off_loop(choices[tool], **args)
@@ -656,14 +655,14 @@ def connect(app, ctx):
         return {'ok': True, 'tool': tool, 'args': args, 'result': str(result)}
     @rt('/agent/turn-transaction')
     def agent_turn_transaction(turn_id: str = ''):
-        tx = ws.ai.turn_transactions.get(turn_id)
+        tx = ctx.ai.turn_transactions.get(turn_id)
         if tx is None: return fail(f'no transaction for {turn_id}', 404)
         return {'transaction': {**tx, 'files': [{'path': p, **diff_payload(s['before'], s['after'])}
                                                 for p, s in tx['files'].items()]}}
     @rt('/agent/rollback-turn')
     async def agent_rollback_turn(req):
         d = await req.json()
-        try: tx = ws.ai.rollback_turn(d.get('turn_id') or '')
+        try: tx = ctx.ai.rollback_turn(d.get('turn_id') or '')
         except Exception as e: return fail(e)
         return {'ok': True, 'turn_id': tx['turn_id'], 'paths': list(tx['files']),
                 'irreversible': tx['irreversible']}
@@ -671,7 +670,7 @@ def connect(app, ctx):
     async def agent_rollback_tool(req):
         "Rollback one snapshotted file call when its output is still the current file."
         d = await req.json()
-        try: path = ws.approvals.rollback((d.get('id') or '').strip())
+        try: path = ctx.approvals.rollback((d.get('id') or '').strip())
         except Exception as e: return fail(e)
         return {'ok': True, 'path': path}
     @rt('/agent/approval/request')
@@ -688,9 +687,9 @@ def connect(app, ctx):
             try: args = json.loads(args)
             except json.JSONDecodeError as e: return fail(f'tool_call.function.arguments is not valid JSON at position {e.pos}')
         if not isinstance(args, dict): return fail('tool_call.function.arguments must be an object')
-        try: timeout = min(3600, max(1, float(d.get('timeout', ws.approvals.timeout))))
+        try: timeout = min(3600, max(1, float(d.get('timeout', ctx.approvals.timeout))))
         except (TypeError, ValueError): return fail('timeout must be a number of seconds')
-        a = await off_loop(ws.approvals.request, name, args, True, timeout)
+        a = await off_loop(ctx.approvals.request, name, args, True, timeout)
         return {'ok': True, 'answer': a.dict()}
     @rt('/agent/approve')
     async def agent_approve(req):
@@ -699,7 +698,7 @@ def connect(app, ctx):
         args = d.get('args')
         if args is not None and not isinstance(args, dict): return fail('tool arguments must be an object')
         tool = (d.get('tool') or '').strip() or None
-        choices = {t.__name__: t for t in ws.ai.tools}
+        choices = {t.__name__: t for t in ctx.ai.tools}
         if tool and tool not in choices: return fail(f'unknown tool {tool}')
         if bool(d.get('ok')) and tool and args is not None:
             import inspect
@@ -714,11 +713,11 @@ def connect(app, ctx):
         "Run a slash command (`/model`, `/cost`, `/compact`, `/skills`, `/tools`, `/reload`)."
         d = await req.json()
         line = (d.get('line') or '').strip()
-        if not line: return {'ok': True, 'text': 'commands: ' + ', '.join('/' + c for c in ws.ai.commands())}
-        out = await off_loop(ws.ai.command, line)
+        if not line: return {'ok': True, 'text': 'commands: ' + ', '.join('/' + c for c in ctx.ai.commands())}
+        out = await off_loop(ctx.ai.command, line)
         if out is None: return fail(f'unknown command {line.split()[0]}')
         if line.lstrip('/').split(' ')[0] in ('tool-budget', 'steps'):
-            ws.tool_budget, ws.step_budget = ws.ai.tool_budget, ws.ai.step_budget
+            ws.tool_budget, ws.step_budget = ctx.ai.tool_budget, ctx.ai.step_budget
             for agent in live_assistants(): agent.tool_budget, agent.step_budget = ws.tool_budget, ws.step_budget
             ws.save()
         return {'ok': True, 'text': out}
@@ -728,7 +727,7 @@ def connect(app, ctx):
         d = await req.json()
         q = (d.get('prompt') or '').strip()
         if not q: return fail('nothing to ask')
-        a = ws.ai
+        a = ctx.ai
         text = await off_loop(ws.ask, q)
         return {'ok': a.ready, 'text': text, 'note': a.note,
                 'activity': a.activity.rows(mark=a.activity._mark),

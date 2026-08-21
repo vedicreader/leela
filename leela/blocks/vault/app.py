@@ -14,7 +14,7 @@ from .ui import PII_COVERS, job_card, pii_badge, vault_browse, vault_panel, vaul
 
 __all__ = ['CAPS', 'connect', 'job_card', 'pii_badge', 'vault_panel', 'PII_COVERS']
 
-CAPS = ('fs', 'memory', 'search', 'jobs', 'tab', 'vaults', 'feeds')
+CAPS = ('fs', 'memory', 'jobs', 'vaults', 'feeds', 'tab')
 
 def connect(app, ctx):
     rt = app.route

@@ -19,7 +19,7 @@ from .nb import Cell, Notebook, cell_extras, inline_values
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('fs', 'pool', 'docs', 'debug', 'running', 'tab', 'ai', 'journal', 'search', 'runs')
+CAPS = ('fs', 'journal', 'inline_ai', 'tab', 'pending_approval', 'docs', 'debug', 'running')
 
 def connect(app, ctx):
     rt = app.route
@@ -30,7 +30,7 @@ def connect(app, ctx):
     def doc(): return store.current()
     def run_owner(d): return store.owner(d.get('path'))
     def dbg(method=None): return paused_kernel(dbgstate, method)
-    def debug_ui(state): return notebook_state_ui(dbgstate, ws.fs, state)
+    def debug_ui(state): return notebook_state_ui(dbgstate, ctx.fs, state)
     def previous_runs(): store.mark_all_stale()
     async def runtime_for(tab=None): return await ws.runtime(tab)
     async def explain(k, err, scope='live'):
@@ -225,8 +225,8 @@ def connect(app, ctx):
         nb[i].source = d.get('source', nb[i].source)
         try: c = await off_loop(ws.ask_cell, nb, i)
         except Exception as e: return fail(e)
-        if ws.tab: ws.tab.dirty = True
-        a = ws.inline_ai
+        if ctx.tab: ctx.tab.dirty = True
+        a = ctx.inline_ai
         return {'ok': a.ready, 'i': i, 'cell': c.dict(), 'note': a.note,
                 'problems': a.problems,
                 'cells': [x.dict() for x in nb.cells],
@@ -241,9 +241,9 @@ def connect(app, ctx):
         if not (0 <= i < len(nb)): return fail(f'no cell {i}')
         nb[i].source = d.get('source', nb[i].source)
         nb[i].running = True
-        owner_tab = ws.tab
+        owner_tab = ctx.tab
         if owner_tab: owner_tab.running += 1
-        a = ws.inline_ai
+        a = ctx.inline_ai
         async def events():
             import queue as _q
             out, done = _q.Queue(), object()
@@ -259,7 +259,7 @@ def connect(app, ctx):
                 while True:
                     try: kind, value = await off_loop(out.get, True, 0.25)
                     except _q.Empty: kind = value = None
-                    pending = ws.pending_approval
+                    pending = ctx.pending_approval
                     if pending is not None and pending.id != approval_id:
                         approval_id = pending.id
                         proposal = {**pending.dict(), 'schemas': tool_schemas(a)}
@@ -334,13 +334,13 @@ def connect(app, ctx):
             nb.dirty = True
         elif op == 'clear': nb.clear_all()
         else: return fail(f'unknown op {op!r}')
-        if ws.tab: ws.tab.dirty = nb.dirty
+        if ctx.tab: ctx.tab.dirty = nb.dirty
         return {'ok': True, 'cells': [c.dict() for c in nb.cells],
                 'index': at if op in ('undo', 'redo') else i}
     @rt('/nb/save')
     async def nb_save(req):
         d=await req.json();path=str(d.get('path') or '')
-        t=(first(x for x in ws.tabs if x.path==path) if path else ws.tab)
+        t=(first(x for x in ws.tabs if x.path==path) if path else ctx.tab)
         if t is None:return fail('nothing open')
         current_version = _disk_version(t.path)
         base_version = str(d.get('base_disk_version') or '')
@@ -357,16 +357,16 @@ def connect(app, ctx):
                     docs[t.path or t.title]=nb
                 for c in d.get('cells', []):
                     if 0 <= c['i'] < len(nb): nb[c['i']].source = c['source']
-                nb.save(t.path or d.get('path'), sandbox=ws.fs)
+                nb.save(t.path or d.get('path'), sandbox=ctx.fs)
             else:
-                ws.fs.write(t.path, d.get('text', ''))
+                ctx.fs.write(t.path, d.get('text', ''))
                 buffers.pop(t.path or t.title, None)
             t.dirty = False
             buffer_bases.pop(t.path or t.title, None)
             # what is cached now matches the file again, so this is the version it was read at
             doc_versions[t.path or t.title] = _disk_version(t.path)
             after = Path(target).read_text(encoding='utf-8', errors='replace') if target and Path(target).exists() else None
-            operation = ws.journal.record(f'Save {t.title}', [(target, before, after)], kind='save')
+            operation = ctx.journal.record(f'Save {t.title}', [(target, before, after)], kind='save')
             return {'ok': True, 'path': t.path, 'disk_version': _disk_version(t.path),
                     'operation_id': operation['id'] if operation else ''}
         except Exception as e:

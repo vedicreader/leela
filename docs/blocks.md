@@ -35,7 +35,15 @@ def connect(app, ctx):
     def git_info(): return ui.info(ctx.fs)
 ```
 
-`CAPS` limits services exposed through `Ctx`. Session state is available through `ctx.session`.
+`CAPS` limits services exposed through `Ctx`, and must name exactly what `app.py` and `ui.py`
+read as `ctx.<name>`: over-declaring grants reach nobody asked for, under-declaring is an
+`AttributeError` on a route nobody exercised, and both are silent until then. `test_core.py`
+compares the two. Session state that is not a capability, like `project_root`, comes through
+`ctx.session`; reaching a capability that way bypasses the check, so don't.
+
+A block's `.js` should call its own block's routes more than any other block's.
+`tests/blocks/test_block_affinity.py` measures it, with an allowlist for DOM-only modules and
+for a panel one block deliberately owns over another's data.
 
 Common capabilities: `fs`, `pool`, `search`, `memory`, `research`, `runs`, `journal`, `jobs`, `vaults`, `ai`, `lsp`, `tab`, and `pending_approval`. A block without `CAPS` is unrestricted.
 

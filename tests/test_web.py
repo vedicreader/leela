@@ -163,7 +163,8 @@ def test_a_window_is_pointed_at_the_host_the_server_will_answer_to(tmp_path):
 
 def test_every_git_failure_reaches_the_log_not_only_the_status_line():
     "The detail of a refusal is the point of it, and a toast cannot hold it."
-    for name in ('git/cwd', 'editor/gutter', 'git/conflictfiles', 'git/branchbar', 'git/panel'):
+    for name in ('git/cwd', 'git/state', 'git/views', 'git/conflictfiles', 'git/branchbar',
+                 'git/panel', 'editor/gutter'):
         assert "status(e.message || String(e), 'err')" not in read(f'leela/blocks/{name}.js'), \
             f'{name} reports a failure without logging its detail'
 

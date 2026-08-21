@@ -360,10 +360,11 @@ scripted replies. The suite needs no ipykernel and no gigabytes of weights.
 
 The IDE client is authored beside the feature it serves, as `leela/blocks/<block>/*.js`, with
 the shared vocabulary in `leela/static/js/`. `tools/build_ide_js.py` concatenates them, in the
-order its `LAYERS` fixes, into the committed `leela/static/lee-ide.js` that `leela/core/web.py`
-names in `IDE_BUNDLES`. Run it after editing a module, or `--check` to see whether the bundle
-has gone stale; it also refuses to build a module it cannot find, or one it finds but the order
-never names. The npm bundles in `leela/vendor/` are committed too, so an
+order its `LAYERS` fixes, into the committed bundles `leela/core/web.py` names in
+`IDE_BUNDLES`: `lee-core.js`, `lee-agent.js` and `lee-ide.js`, served as three deferred tags in
+one lexical scope. Run it after editing a module, or `--check` to see whether a bundle has gone
+stale; it also refuses to build a module it cannot find, or one it finds but the order never
+names. The npm bundles in `leela/vendor/` are committed too, so an
 install needs no node:
 
 ```sh

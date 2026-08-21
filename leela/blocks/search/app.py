@@ -8,7 +8,7 @@ from ...core.web import fail, found, off_loop
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('search', 'fs')
+CAPS = ('fs', 'search')
 
 MODES = ('context', 'repo', 'env', 'all', 'rg', 'symbols', 'fts', 'ann')
 

@@ -35,25 +35,41 @@ def test_the_bundles_are_what_the_application_serves():
     assert tuple(builder.LAYERS) == IDE_BUNDLES
     for name in IDE_BUNDLES: assert (builder.OUTDIR/name).is_file(), name
 
-def test_the_dispatch_table_is_why_there_is_one_script_tag():
-    """`ACTIONS` holds bare references to functions from across the client, read the moment it
-    is evaluated. A function declaration hoists to the top of its own script and no further, so
-    a second script tag would evaluate the table before those names existed. This is the
-    measurement behind `LAYERS` having one entry; it changes when the entries become thunks.
+def test_the_dispatch_table_holds_thunks_and_not_bare_references():
+    """`ACTIONS` used to hold `help: showHelp`, read the moment the module ran. A function
+    declaration hoists to the top of its own script and no further, so that pinned the whole
+    client to one script tag. Every entry is a thunk now; a bare name would pin it again.
     """
-    import re
+    src = next(p for p in builder.modules() if p.name == 'actions.js').read_text()
+    lines = src.split('\n')
+    start = next(i for i, l in enumerate(lines) if l.startswith('const ACTIONS = {'))
+    end = next(i for i, l in enumerate(lines) if i > start and l.startswith('};'))
+    bare = [l.strip() for l in lines[start:end + 1]
+            if re.match(r'^\s+[A-Za-z_$][\w$]*\s*:\s*[A-Za-z_$][\w$]*,?\s*$', l)]
+    assert bare == [], f'bare references would pin the client to one script tag: {bare}'
+
+def test_no_bundle_reads_a_later_bundles_declaration_at_load_time():
+    """The failure this prevents is not graceful: the throw aborts the rest of that bundle, so
+    every `let` after it stays in its temporal dead zone and the shell paints but does nothing.
+    A bare name used as a value in a top-level literal is read when the module runs, so it must
+    not name a function some later bundle declares.
+    """
     mods = builder.modules()
-    where = {}
+    at, bundle_of = {}, {}
+    for i, (name, names) in enumerate(builder.LAYERS.items()):
+        for n in names: bundle_of[str(builder.PKG/n)] = i
     for i, p in enumerate(mods):
         for m in re.finditer(r'^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)', p.read_text(), re.M):
-            where.setdefault(m.group(1), i)
-    actions = next(i for i, p in enumerate(mods) if p.name == 'actions.js')
-    bare = re.findall(r'^\s+[A-Za-z_$][\w$]*:\s*([A-Za-z_$][\w$]*),?$',
-                      mods[actions].read_text(), re.M)
-    forward = sorted({n for n in bare if where.get(n, -1) > actions})
-    assert forward, 'the eager forward references are gone; LAYERS can be split now'
-    assert len(builder.LAYERS) == 1, 'more than one bundle while the table still reads ahead'
-    assert 'showHelp' in forward and 'quickOpen' in forward
+            at.setdefault(m.group(1), i)
+    bad = []
+    for i, p in enumerate(mods):
+        for ln, line in enumerate(p.read_text().split('\n'), 1):
+            m = re.match(r'^\s+[A-Za-z_$][\w$]*\s*:\s*([A-Za-z_$][\w$]*),?\s*$', line)
+            if not m: continue
+            j = at.get(m.group(1))
+            if j is not None and bundle_of[str(mods[j])] > bundle_of[str(p)]:
+                bad.append(f'{p.name}:{ln} reads {m.group(1)!r} from a later bundle')
+    assert bad == [], bad
 
 def test_every_module_ends_with_a_newline():
     "Without one a module's last line fuses into the next module's first."

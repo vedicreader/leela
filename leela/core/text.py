@@ -7,7 +7,6 @@ from difflib import SequenceMatcher, get_close_matches
 from fastcore.all import L
 from fastcore.xtras import str_diff
 from .. import Dictable
-from difflib import SequenceMatcher
 from fastcore.basics import first
 
 __all__ = ['DiffRow', 'udiff', 'diff_rows', 'diff_stat', 'diff_label', 'closest',

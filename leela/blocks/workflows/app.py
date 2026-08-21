@@ -10,7 +10,7 @@ from .workflows import WorkflowError, Workflows
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('fs',)
+CAPS = ()
 
 def connect(app, ctx):
     rt = app.route

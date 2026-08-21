@@ -13,7 +13,7 @@ from .debug import frame_path, open_path
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('fs', 'runs', 'debug')
+CAPS = ('fs', 'tab', 'runs', 'debug')
 
 def state_ui(session_fs, state):
     "Mark each frame with the workspace file it can be opened from, or nothing."
@@ -23,7 +23,7 @@ def state_ui(session_fs, state):
 def connect(app, ctx):
     rt = app.route
     ws, state = ctx.session, ctx.debug
-    def ui(s): return state_ui(ws.fs, s)
+    def ui(s): return state_ui(ctx.fs, s)
     def active(): return state.direct_session
     @rt('/debug/capabilities')
     def debug_capabilities():
@@ -51,14 +51,14 @@ def connect(app, ctx):
         from .debug import DebugSession
         from ..runtime.kernels import python_for
         d = await req.json(); name = d.get('name') or ''
-        run = ws.runs.get(name) if name else None
+        run = ctx.runs.get(name) if name else None
         config = run.dict() if run else dict(d)
         root = ws.project_root or Path.cwd()
         cwd = config.get('cwd') or str(root)
         if cwd and not Path(cwd).is_absolute(): cwd = str((root/str(cwd)).resolve())
         # Resolved after `cwd`, so the debugger lands in the venv of whatever is being debugged.
         python = d.get('python') or python_for(cwd, ws) or sys.executable
-        program = config.get('program') or (ws.tab.path if ws.tab and (ws.tab.path or '').endswith('.py') else '')
+        program = config.get('program') or (ctx.tab.path if ctx.tab and (ctx.tab.path or '').endswith('.py') else '')
         if program and not Path(program).is_absolute(): program = str((root/program).resolve())
         config.update(program=program, cwd=cwd, justMyCode=config.get('justMyCode', True),
                       stopOnEntry=config.get('stopOnEntry', False), subProcess=config.get('subProcess', True),

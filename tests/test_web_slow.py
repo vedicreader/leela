@@ -1097,3 +1097,54 @@ def test_the_shell_boots_and_paints_its_panels_without_a_page_error():
     try: asyncio.run(go())
     finally: srv.should_exit = True
     assert errors == [], f'the client reported {len(errors)} javascript problems: {errors[:5]}'
+
+def test_every_dispatch_entry_is_callable_across_the_bundles():
+    """`ACTIONS` became thunks so the client could be served as three script tags. A thunk hides
+    a missing function until someone presses the key, so resolve every entry in the live page:
+    each must be callable, and each name it wraps must exist in the shared scope.
+    """
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const out = {notFn: [], missing: []};
+          for (const [name, f] of Object.entries(ACTIONS)) {
+            if (typeof f !== 'function') { out.notFn.push(name); continue; }
+            const m = /^\\s*\\(\\s*\\)\\s*=>\\s*([A-Za-z_$][\\w$]*)\\s*\\(\\s*\\)\\s*$/.exec(f.toString());
+            if (m && typeof window[m[1]] !== 'function' && typeof eval(`typeof ${m[1]}`) !== 'function')
+              out.missing.push(`${name} -> ${m[1]}`);
+          }
+          out.count = Object.keys(ACTIONS).length;
+          return out;
+        }""")
+    got = _run(go)
+    assert got['count'] > 60, got['count']
+    assert got['notFn'] == [], got['notFn']
+    assert got['missing'] == [], got['missing']
+
+def test_the_bundles_are_all_served_and_tagged_in_execution_order():
+    """Three tags, one scope. `defer` executes them in document order, not response order, so
+    the tag order is the contract; a 404 on any of them leaves the shell painted and inert.
+    """
+    fake_kernels()
+    ws = Workspace(roots=[], approvals='auto')
+    port = _free_port()
+    srv = _serve(ws, port)
+    bad, tags = [], []
+    async def go():
+        await asyncio.sleep(1.2)
+        async with async_playwright() as pw:
+            b = await _launch(pw)
+            pg = await b.new_page()
+            def note(r):
+                name = r.url.split('?')[0].rsplit('/', 1)[-1]
+                if name in IDE_BUNDLES and r.status != 200: bad.append((name, r.status))
+            pg.on('response', note)
+            await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
+            await pg.wait_for_function('window.lee && lee.keys.length')
+            tags.extend(await pg.evaluate("""(names) => [...document.scripts]
+                .map(s => s.src.split('?')[0].split('/').pop())
+                .filter(n => names.includes(n))""", list(IDE_BUNDLES)))
+            await b.close()
+    try: asyncio.run(go())
+    finally: srv.should_exit = True
+    assert bad == [], bad
+    assert tags == list(IDE_BUNDLES), f'tag order {tags}, expected {list(IDE_BUNDLES)}'

@@ -9,7 +9,7 @@ from .python import extract, inline
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('fs', 'journal', 'tab', 'docs')
+CAPS = ('fs', 'journal', 'docs')
 
 def _dirty(ctx, paths):
     "Open unsaved buffers the server would otherwise overwrite."

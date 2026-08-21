@@ -9,7 +9,7 @@ from ...core.web import fail, off_loop
 
 __all__ = ['CAPS', 'connect', 'project_package_rows']
 
-CAPS = ('fs', 'pool')
+CAPS = ('fs', 'pool')   # `pool` is read by `python_for(session=ctx)`, not here
 
 _VERSIONS_SCRIPT = ('import importlib.metadata as m,json,sys\n'
                     'out={}\n'

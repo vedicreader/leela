@@ -37,7 +37,7 @@ def test_stop_is_idempotent_and_start_says_what_it_needs(tmp_path):
 
 def test_the_block_declares_the_capabilities_it_uses():
     from leela.blocks import debug as block
-    assert set(block.CAPS) == {'fs', 'runs', 'debug'}
+    assert set(block.CAPS) == {'fs', 'tab', 'runs', 'debug'}
 
 def test_a_frame_outside_the_sandbox_is_not_offered_as_openable(tmp_path):
     "`open_path` is the guard that kept a traceback from handing out paths the workspace refuses."

@@ -8,7 +8,7 @@ from ...core.web import fail
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('runs', 'dev', 'tab')
+CAPS = ('dev', 'tab', 'runs')
 
 def connect(app, ctx):
     rt = app.route

@@ -7,7 +7,7 @@ from .term import LazygitMissing, external_terminal_argv, lazygit_argv
 
 __all__ = ['CAPS', 'connect', 'term_cwd']
 
-CAPS = ('terms', 'fs', 'gate')
+CAPS = ('terms', 'gate')
 
 def term_cwd(session, ref=None):
     "Where a new terminal starts. Ergonomics, not confinement: a shell can `cd` anywhere."

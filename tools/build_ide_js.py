@@ -21,28 +21,33 @@ ROOT = Path(__file__).resolve().parent.parent
 PKG = ROOT/'leela'
 OUTDIR = PKG/'static'
 
-#: bundle -> its modules, in load order. One bundle today: `ACTIONS` in `static/js/actions.js`
-#: holds bare references to functions declared in twelve later modules, and a function
-#: declaration hoists only to the top of its own script, so a second script tag would evaluate
-#: that table before those names existed. Splitting this dict is safe once those entries are
-#: thunks; `docs/performance.md` records the measurement.
+#: bundle -> its modules, in load order. Three script tags, one lexical scope, executed in
+#: document order: `lee-core.js` declares `lee`, `$` and `esc` and every later module reads
+#: them. Splitting further is a data change here, safe as long as nothing a bundle evaluates at
+#: load time names a function a later bundle declares -- see `test_ide_bundle.py`.
 LAYERS = {
-    'lee-ide.js': [
+    'lee-core.js': [
         'static/js/core.js', 'blocks/keys/keymap.js', 'static/js/actions.js',
         'blocks/editor/markdown.js', 'blocks/editor/tabs.js', 'blocks/editor/mount.js',
-        'blocks/editor/cells.js', 'blocks/editor/motion.js', 'blocks/editor/prompt.js',
+        'blocks/nb/cells.js', 'blocks/nb/motion.js', 'blocks/nb/prompt.js',
         'blocks/runs/runfile.js', 'blocks/runtime/kernel.js', 'blocks/keys/bind.js',
-        'static/js/focus.js', 'blocks/editor/diffs.js', 'blocks/runtime/exec.js',
-        'blocks/vars/vars.js', 'blocks/agent/panel.js', 'blocks/agent/budgets.js',
-        'blocks/agent/memory.js', 'blocks/agent/live.js', 'blocks/agent/approvals.js',
-        'blocks/agent/steer.js', 'blocks/agent/media.js', 'blocks/agent/reload.js',
-        'blocks/term/terminal.js', 'blocks/runs/logs.js', 'blocks/settings/prefs.js',
-        'blocks/git/cwd.js', 'blocks/editor/gutter.js', 'blocks/workflows/workflows.js',
-        'blocks/workflows/builder.js', 'blocks/pipelines/releases.js',
-        'blocks/pipelines/deploys.js', 'blocks/drive/drive.js', 'blocks/git/panel.js',
-        'blocks/git/branchmenu.js', 'blocks/git/conflictpanes.js', 'blocks/git/blame.js',
-        'blocks/research/research.js', 'static/js/overlays.js', 'blocks/search/search.js',
-        'blocks/search/similar.js', 'blocks/fs/files.js', 'blocks/editor/split.js',
+        'static/js/focus.js', 'blocks/nb/diffs.js', 'blocks/runtime/exec.js',
+        'blocks/vars/vars.js'
+    ],
+    'lee-agent.js': [
+        'blocks/agent/panel.js', 'blocks/agent/budgets.js', 'blocks/agent/memory.js',
+        'blocks/agent/live.js', 'blocks/agent/approvals.js', 'blocks/agent/steer.js',
+        'blocks/agent/media.js', 'blocks/agent/reload.js'
+    ],
+    'lee-ide.js': [
+        'blocks/term/terminal.js', 'blocks/runs/logs.js', 'blocks/term/dock.js', 'blocks/settings/prefs.js',
+        'blocks/git/cwd.js', 'blocks/editor/gutter.js', 'blocks/git/state.js',
+        'blocks/git/views.js', 'blocks/workflows/workflows.js', 'blocks/workflows/builder.js',
+        'blocks/pipelines/releases.js', 'blocks/pipelines/deploys.js', 'blocks/drive/drive.js',
+        'blocks/git/panel.js', 'blocks/git/branchmenu.js', 'blocks/git/conflictpanes.js',
+        'blocks/git/blame.js', 'blocks/research/research.js', 'static/js/overlays.js',
+        'blocks/search/search.js', 'blocks/search/similar.js', 'blocks/runs/config.js',
+        'blocks/keys/palette.js', 'blocks/fs/files.js', 'blocks/editor/split.js',
         'static/js/boot.js', 'blocks/refactor/refactor.js', 'blocks/git/conflictfiles.js',
         'blocks/vault/reader.js', 'blocks/git/branchbar.js', 'blocks/browser/browser.js',
         'blocks/workspace/projects.js'

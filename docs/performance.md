@@ -36,11 +36,13 @@ Static assets, uncompressed, as served today:
 | asset | raw | gzip -9 |
 |---|---|---|
 | `lee-cm6.js` | 1,020,130 | 353,140 |
-| `lee-ide.js` | 694,927 | 197,972 |
+| `lee-ide.js` | 378,029 | 107,010 |
 | `lee-term.js` | 292,704 | 72,179 |
 | `lee-ide.css` | 274,267 | 47,959 |
+| `lee-core.js` | 200,564 | 60,284 |
+| `lee-agent.js` | 116,734 | 32,620 |
 | `htmx.min.js` | 51,076 | 16,462 |
-| **total** | **2,333,104** | **687,712** |
+| **total** | **2,333,504** | **689,654** |
 
 ## The file tree
 
@@ -89,7 +91,7 @@ No compression middleware exists. 2.28MB of assets go out raw, along with every 
 htmx fragment and JSON response. `GZipMiddleware` is one line for a 70% cut.
 
 `app.py:765-767` loads `lee-cm6.js` (1MB) and `lee-term.js` (293KB) as plain `<script>` in the
-head. Only `lee-ide.js` is deferred. It is a straight concatenation of the 51
+head. Only the `lee-*.js` bundles are deferred. They are a straight concatenation of the 56
 modules with comments intact, 658KB for 10,387 lines, never minified.
 
 ## Things that grow and are never freed
@@ -399,21 +401,14 @@ anything:
 6. The shared-state lock in `docs/parallel-threads.md`, before threads ship.
 
 
-## Why the client is one script tag
+## Why the client is three script tags
 
-The 51 modules now live with the blocks they serve, so a second or third bundle would be a
-data change in `tools/build_ide_js.py`. Measured, it is not available yet.
-
-`ACTIONS` in `static/js/actions.js` is the keymap's dispatch table, and 30 of its entries are
-bare references to functions declared in twelve later modules: `help: showHelp`,
-`quick_open: quickOpen`, `code_search: codeSearch`, and so on down to `browseUrl` in
-`blocks/browser/browser.js`. The table is a top-level `const`, so those names are read the
-moment the module runs.
-
-A function declaration hoists to the top of its own script and no further. One script tag is
-therefore fine: every declaration exists before `ACTIONS` is evaluated. Split across tags it is
-not, and the failure is not graceful. Serving `lee-core.js`, `lee-agent.js` and `lee-ide.js`
-produced, in order:
+`ACTIONS` in `static/js/actions.js` is the keymap's dispatch table. Fifty of its entries used to
+be bare references to functions declared in later modules: `help: showHelp`,
+`quick_open: quickOpen`, down to `browseUrl` in `blocks/browser/browser.js`. The table is a
+top-level `const`, so those names were read the moment the module ran, and a function
+declaration hoists to the top of its own script and no further. One tag was fine. Three were
+not, and the failure was not graceful:
 
 ```
 ReferenceError: showHelp is not defined              at lee-core.js:644
@@ -421,13 +416,19 @@ ReferenceError: ACTIONS is not defined               at lee-ide.js:4904
 ReferenceError: Cannot access 'mountTabVersion' before initialization
 ```
 
-The first throw aborts the rest of `lee-core.js`, so every `let` after it stays in its temporal
-dead zone and the second and third errors follow from the first. The IDE painted its shell and
-then refused to open a file.
+The first throw aborted the rest of `lee-core.js`, so every `let` after it stayed in its
+temporal dead zone and the shell painted and then refused to open a file.
 
-Making the 30 entries thunks (`help: () => showHelp()`) removes the coupling: `leeAct` calls
-them as `f()` with no arguments and no receiver, so the wrapper is equivalent. That is the
-change to make first, and `tests/blocks/test_ide_bundle.py` asserts the coupling still exists so
-this note cannot go stale silently.
+Every entry is a thunk now (`help: () => showHelp()`). `leeAct` calls them as `f()` with no
+arguments and no receiver, and the arrow's implicit return still hands back the promise the
+async ones produce, so the wrapper is equivalent. The client is served as three deferred tags in
+one lexical scope: `lee-core.js` (the vocabulary, dispatch, editor, kernel, vars),
+`lee-agent.js`, and `lee-ide.js` (everything else).
+
+Three tests hold this. `test_the_dispatch_table_holds_thunks_and_not_bare_references` fails on a
+bare entry. `test_no_bundle_reads_a_later_bundles_declaration_at_load_time` fails on the general
+pattern, whatever the table. `test_every_dispatch_entry_is_callable_across_the_bundles` resolves
+every entry in a live page, because a thunk hides a missing function until someone presses the
+key.
 
 Splitting buys cache granularity rather than bytes, and `lee-cm6.js` at 1MB is the larger prize.

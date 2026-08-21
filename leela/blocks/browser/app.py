@@ -14,7 +14,7 @@ from .browser import BrowserUnavailable
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('browser', 'memory')
+CAPS = ('memory', 'browser')
 
 def connect(app, ctx):
     rt = app.route

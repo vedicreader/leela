@@ -1,5 +1,6 @@
 "Core: the block contract, ports, diffs, settings, routes and the journal."
 
+import re
 import ast
 import json
 import subprocess
@@ -38,7 +39,7 @@ def test_every_block_declares_and_serves_what_it_wires():
         assert callable(getattr(m, 'connect', None)), f'{m!r} has no connect()'
         assert isinstance(getattr(m, 'CAPS', ()), tuple), f'{m!r} CAPS must be a tuple'
     assert keys_block.CAPS == (), 'the keymap is served from files; it needs no workspace'
-    assert settings_block.CAPS == ('fs',)
+    assert settings_block.CAPS == (), 'settings reads a project root, which is not a capability'
     by_module = {}
     for path, m in owners().items(): by_module.setdefault(m, []).append(path)
     for mod in BLOCKS:
@@ -1076,3 +1077,30 @@ def test_every_block_with_client_code_is_named_in_the_load_order():
     assert builder.orphans() == [], 'on disk but never loaded'
     owners = {p.parent.name for p in builder.modules() if 'blocks' in str(p)}
     assert owners <= set(__import__('leela.blocks', fromlist=['NAMES']).NAMES), owners
+
+#: capabilities a block declares because it hands `ctx` to a helper that reads them
+HANDED_OFF = {'editor': ('pool',)}   # `python_for(session=ctx)` reads `session.fs` and `session.pool`
+
+def test_caps_declares_exactly_what_the_route_layer_reads():
+    """`Ctx` refuses an undeclared capability, so an over-broad `CAPS` grants reach nobody asked
+    for and an under-broad one is an AttributeError on a route nobody exercised. Both are silent
+    until then, so compare the declaration against what `app.py` and `ui.py` actually read.
+    """
+    import ast
+    from leela.core import CAPABILITIES
+    caps_all = set(CAPABILITIES)
+    wrong = {}
+    for d in sorted(p for p in BLOCKS_DIR.iterdir() if (p/'app.py').is_file()):
+        src = (d/'app.py').read_text()
+        declared = set(re.findall(r"'(\w+)'", m.group(1))) if (m := re.search(r"^CAPS = \(([^)]*)\)", src, re.M)) else None
+        if declared is None: continue
+        reads = set()
+        for f in [d/'app.py'] + ([d/'ui.py'] if (d/'ui.py').is_file() else []):
+            for n in ast.walk(ast.parse(f.read_text())):
+                if (isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+                        and n.value.id == 'ctx' and n.attr in caps_all): reads.add(n.attr)
+        extra = sorted(declared - reads - set(HANDED_OFF.get(d.name, ())))
+        missing = sorted(reads - declared)
+        if extra or missing:
+            wrong[d.name] = {'declared but never read': extra, 'read but not declared': missing}
+    assert wrong == {}, wrong

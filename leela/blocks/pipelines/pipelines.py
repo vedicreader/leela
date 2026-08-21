@@ -8,7 +8,6 @@ from fastcore.all import L, Path, first
 from fastcore.xtras import strip_ansi
 from ...core.envs import EnvStore
 from ..term.term import SCROLLBACK, Pty
-from fastcore.all import Path
 
 __all__ = ['Pipeline', 'PipelineError', 'Step', 'env_value', 'resolve_script', 'Release',
            'ReleaseError', 'RELEASE_FILE', 'nbdev_project', 'default_steps', 'NBDEV_STEPS',

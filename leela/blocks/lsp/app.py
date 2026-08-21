@@ -8,7 +8,7 @@ from ...core.web import fail, off_loop
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('lsp', 'fs', 'journal')
+CAPS = ('fs', 'journal', 'lsp')
 
 def _offsets(source):
     "Character offset of the start of each line, for converting LSP positions to offsets."
