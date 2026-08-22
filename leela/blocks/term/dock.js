@@ -1,5 +1,6 @@
 function leeDock(which) {
   const dock = $('#bottomdock'); if (!dock) return;
+  try { localStorage.setItem('lee-dock-view', which); } catch (_) {}
   leePane('bottom', true);
   const centre = $('.lee-centre');
   dock.classList.toggle('dock-exec', which === 'exec');

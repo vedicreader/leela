@@ -246,6 +246,7 @@ window.leeAgentExpand = leeAgentExpand;
 
 function leeRight(which) {
   const right = $('#right'); if (!right) return;
+  try { localStorage.setItem('lee-right-view', which); } catch (_) {}
   right.classList.toggle('right-agent', which === 'agent');
   right.classList.toggle('right-vars', which === 'vars');
   right.classList.toggle('right-memory', which === 'memory');
@@ -594,6 +595,8 @@ function renderTurns(log, turns, heading) {
       for (const part of reduceAgentTimeline(turn.timeline)) {
         if (part.kind === 'prose') paint.chunk(part.text);
         else if (part.kind === 'activity') paintActivity(part);
+        // what the person said mid-turn, in the place they said it
+        else if (part.kind === 'steer' && part.data?.text) paint.append(userMessage(part.data.text));
       }
     } else {
       if ((turn.activity || []).length) {
@@ -1529,11 +1532,17 @@ function updateAgentRunstrip(state = {}) {
     : `${($('#agentcontrol')?.value || 'guided').toUpperCase()} · agent working`;
   const flattenRuns = rows => rows.flatMap(r => [r, ...flattenRuns(r.children || [])]);
   const flat = flattenRuns(runs);
+  // A fan-out's rows tell each other apart only by what each subagent was asked, and the buttons'
+  // row leaves that a dozen characters. The rows take the width; the buttons go under them.
+  strip.classList.toggle('fanned', flat.length > 1);
   $('.lee-agent-run-state', strip).innerHTML = flat.length ? flat.map(r => {
     const elapsed = r.started ? Math.max(0, Date.now() / 1000 - r.started) : 0;
-    const who = r.kind === 'child' ? `${r.model || 'Subagent'} subagent` : (r.model || 'Agent');
-    const action = r.question || rootLabel;
-    return `<span class="lee-agent-run"><span>${esc(r.state === 'cancelling' ? `Cancelling ${who}…` : `${who} · ${action} · ${Math.floor(elapsed / 60)}:${String(Math.floor(elapsed % 60)).padStart(2, '0')}`)}</span><button type="button" data-stop-run="${esc(r.id)}">Stop</button></span>`;
+    const clock = `${Math.floor(elapsed / 60)}:${String(Math.floor(elapsed % 60)).padStart(2, '0')}`;
+    // the model repeats on every row of a fan-out; the question does not
+    const who = r.kind === 'child' ? `subagent ${(r.model || '').split('/').pop()}`.trim() : (r.model || 'Agent');
+    const label = r.state === 'cancelling' ? `Cancelling ${who}…` : `${r.question || rootLabel} · ${who}`;
+    return `<span class="lee-agent-run"><span>${esc(label)}</span>` +
+      `<time>${esc(clock)}</time><button type="button" data-stop-run="${esc(r.id)}">Stop</button></span>`;
   }).join('') : esc(rootLabel);
   $$('[data-stop-run]', strip).forEach(btn => btn.onclick = async e => {
     e.stopPropagation();
@@ -1552,17 +1561,36 @@ function updateAgentSendMode(mode = 'send') {
   button.title = mode === 'send' ? 'send this as a turn'
     : 'hand this to the model after the current call — shift-click to stop the run and send it now';
 }
+/* A steer is something the person said in the middle of a turn, so it belongs inside that turn's
+   timeline rather than after it. Appended to the log instead, it stayed below every chunk and tool
+   row that followed and read as a note stuck to the bottom of the pane. */
+const steerHost = log => lee.agentTimeline?.root?.isConnected ? lee.agentTimeline.root : log;
+/* The local reply and the feed event carry the same steer, so the same text twice with nothing
+   between it is one. Two identical steers a person really sent have a turn's work in between. */
+const steerDrawn = (log, text) => steerHost(log).lastElementChild?.dataset?.steer === text;
+function placeSteer(log, card, text) {
+  card.dataset.steer = text;
+  const live = lee.agentTimeline;
+  if (live?.root?.isConnected) live.append(card); else log.appendChild(card);
+  log.scrollTop = log.scrollHeight;
+  return card;
+}
 function setQueuedSteer(text, shown = '', cancel = false) {
   lee.queuedSteer = text || '';
   const log = $('#agentlog'), old = $('#agentqueuedsteer'); if (!log) return;
   if (!lee.queuedSteer) {
-    if (cancel) old?.remove();
-    else if (old) { old.classList.remove('queued'); $('[data-cancel-steer]', old)?.remove(); }
+    if (cancel) { old?.remove(); return; }
+    if (old) { old.classList.remove('queued'); $('[data-cancel-steer]', old)?.remove(); return; }
+    /* Steering against a waiting approval answers it there and then, so it is never queued and
+       there is no card to un-queue. Nothing recorded what was said. It is a message from the
+       person; the local reply and the feed event both arrive, and the same text twice with
+       nothing between it is one steer. */
+    if (shown && !steerDrawn(log, shown)) placeSteer(log, userMessage(shown), shown);
     return;
   }
   const card = old || userMessage(shown || lee.queuedSteer);
   card.id = 'agentqueuedsteer'; card.classList.add('queued');
-  if (!old) log.appendChild(card);
+  if (!old) placeSteer(log, card, shown || lee.queuedSteer);
   let button = $('[data-cancel-steer]', card);
   if (!button) { button = document.createElement('button'); button.type = 'button'; button.dataset.cancelSteer = '1'; button.textContent = 'Cancel'; card.appendChild(button); }
   button.onclick = async () => {
@@ -2038,6 +2066,9 @@ function agentListen(thread, since) {
   const timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
   log.appendChild(timelineRoot); log.scrollTop = log.scrollHeight;
   const timeline = agentTimeline(timelineRoot), seen = timeline.actions;
+  // A steer is drawn by the steer block, which is not in this scope. It belongs *in* the turn,
+  // between the prose before it and the call after, so it needs the same painter.
+  lee.agentTimeline = timeline;
   let raw = '', runDone = false, lastSeq = since, body = null;
   if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); }
   const generation = ++lee.agentStreamGen; let es, reconnecting = false;

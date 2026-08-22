@@ -4,13 +4,16 @@ requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "(python_full_version >= '3.14' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version < '3.13' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
     "python_full_version < '3.13' and sys_platform == 'emscripten'",
-    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "(python_full_version == '3.13.*' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')",
+    "python_full_version < '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "(python_full_version < '3.13' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')",
 ]
 
 [[package]]
@@ -2160,7 +2163,7 @@ dependencies = [
     { name = "nbformat" },
     { name = "packaging" },
     { name = "prometheus-client" },
-    { name = "pywinpty", marker = "os_name == 'nt'" },
+    { name = "pywinpty", marker = "(os_name == 'nt' and platform_machine != 'arm64') or (os_name == 'nt' and sys_platform != 'darwin')" },
     { name = "pyzmq" },
     { name = "send2trash" },
     { name = "terminado" },
@@ -2178,7 +2181,7 @@ name = "jupyter-server-terminals"
 version = "0.5.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pywinpty", marker = "os_name == 'nt'" },
+    { name = "pywinpty", marker = "(os_name == 'nt' and platform_machine != 'arm64') or (os_name == 'nt' and sys_platform != 'darwin')" },
     { name = "terminado" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f4/a7/bcd0a9b0cbba88986fe944aaaf91bfda603e5a50bda8ed15123f381a3b2f/jupyter_server_terminals-0.5.4.tar.gz", hash = "sha256:bbda128ed41d0be9020349f9f1f2a4ab9952a73ed5f5ac9f1419794761fb87f5", size = 31770, upload-time = "2026-01-14T16:53:20.213Z" }
@@ -2549,7 +2552,7 @@ requires-dist = [
     { name = "pywebview", marker = "extra == 'macapp'", specifier = ">=5.3" },
     { name = "pywebview", marker = "extra == 'windows'", specifier = ">=5.3" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ramabana", extras = ["all"], specifier = ">=0.1.22" },
+    { name = "ramabana", extras = ["all"], specifier = ">=0.1.23" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
     { name = "vishalakshi", specifier = ">=0.1.8" },
@@ -2570,8 +2573,8 @@ dev = [
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pywebview", specifier = ">=5.3" },
-    { name = "rishi", specifier = ">=0.1.7" },
-    { name = "rishi", extras = ["all"], specifier = ">=0.1.18" },
+    { name = "rishi", specifier = ">=0.1.26" },
+    { name = "rishi", extras = ["all"], specifier = ">=0.1.26" },
     { name = "setuptools", specifier = ">=68.0" },
 ]
 test = [
@@ -2582,7 +2585,7 @@ test = [
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pywebview", specifier = ">=5.3" },
-    { name = "rishi", specifier = ">=0.1.7" },
+    { name = "rishi", specifier = ">=0.1.26" },
     { name = "setuptools", specifier = ">=68.0" },
 ]
 
@@ -4702,7 +4705,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.1.22"
+version = "0.1.23"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
@@ -4719,9 +4722,9 @@ dependencies = [
     { name = "toolslm" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1a/98/fe87b57ad1a94836246f3f1c44e93da9e3c2fe7ef536c900aafb0340938d/ramabana-0.1.22.tar.gz", hash = "sha256:ad45d8dfea9afd2487ecf252a37dc1b3c5fcd9eac5f04a57e3bb57b73136a838", size = 213510, upload-time = "2026-08-21T10:50:15.064Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/3e/1fa59c74bd7ae12b5e7251d321c07c19f496af46b70e9a986c65969c6320/ramabana-0.1.23.tar.gz", hash = "sha256:598587cc4f3f9362d4496ad27a0d984eafacdf16ee0165cc5da1e495bd224bd7", size = 217291, upload-time = "2026-08-22T09:36:02.339Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/7c/d1dadebc6361be0d4504d52945e5e4c2f594fd496ab95a607b7cf4b74b77/ramabana-0.1.22-py3-none-any.whl", hash = "sha256:57c846aeb83c0199af9900f91ee29aff6b30efb941917a7d295814fce5766755", size = 224865, upload-time = "2026-08-21T10:50:13.441Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/de/a12018ba183a6a28dee62ac160c4ca323e656d57f38d4e8c464a7836ac97/ramabana-0.1.23-py3-none-any.whl", hash = "sha256:8eeddaa6c32d3e778e25726fddb3914e61f763804f9ec118dee9f70af48c918a", size = 228669, upload-time = "2026-08-22T09:36:00.72Z" },
 ]
 
 [package.optional-dependencies]
@@ -4941,7 +4944,7 @@ wheels = [
 
 [[package]]
 name = "rishi"
-version = "0.1.25"
+version = "0.1.26"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aidialog" },
@@ -4955,9 +4958,9 @@ dependencies = [
     { name = "safepyrun" },
     { name = "truststore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/34/a80b1faf3bcb16dbaa36e1b1bf9420951be27106fe0d451b4dbc889b851c/rishi-0.1.25.tar.gz", hash = "sha256:5c57eba372b0c76ee8fd6edfb37bf77cd96709175d86b64a30f1831d0fad250f", size = 104540, upload-time = "2026-08-21T01:51:11.492Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/3d/81c293cd3efa797bcbd91b985bde7fef62b84630157fb8ede27dda85d40a/rishi-0.1.26.tar.gz", hash = "sha256:c110a39277e8ac1c7a8d50454d547435543ccaea277c9c23c9b592fc9c26db7b", size = 104541, upload-time = "2026-08-22T06:26:37.704Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4a/3f/30be4220c155dbe959940e9caf583cc3b0ee915c2dee57bdb4cf2a8f602a/rishi-0.1.25-py3-none-any.whl", hash = "sha256:b3b03f34949df1f2ec53c51675128e3907804f06e9c8ad763285f4e19151b82f", size = 114888, upload-time = "2026-08-21T01:51:10.014Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/ab/4101677f24d081f346ccf77d1318e10d13a92c871a136b168382f002e460/rishi-0.1.26-py3-none-any.whl", hash = "sha256:5ac1ea41ea673d26fdc014e887aea1e59a96166461154bb409b42c70db4b98a5", size = 114894, upload-time = "2026-08-22T06:26:36.402Z" },
 ]
 
 [package.optional-dependencies]
@@ -5385,7 +5388,7 @@ version = "0.18.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ptyprocess", marker = "os_name != 'nt'" },
-    { name = "pywinpty", marker = "os_name == 'nt'" },
+    { name = "pywinpty", marker = "(os_name == 'nt' and platform_machine != 'arm64') or (os_name == 'nt' and sys_platform != 'darwin')" },
     { name = "tornado" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8a/11/965c6fd8e5cc254f1fe142d547387da17a8ebfd75a3455f637c663fb38a0/terminado-0.18.1.tar.gz", hash = "sha256:de09f2c4b85de4765f7714688fff57d3e75bad1f909b589fde880460c753fd2e", size = 32701, upload-time = "2024-03-12T14:34:39.026Z" }
@@ -5419,9 +5422,12 @@ name = "tokenizers"
 version = "0.22.2"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "(python_full_version >= '3.14' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')",
+    "python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "(python_full_version == '3.13.*' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')",
+    "python_full_version < '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "(python_full_version < '3.13' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')",
 ]
 dependencies = [
     { name = "huggingface-hub" },

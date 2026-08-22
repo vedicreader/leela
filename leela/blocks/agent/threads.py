@@ -177,7 +177,12 @@ class Threads:
         return self.new()
     def rows(self):
         with self._lock:return list(self._rows.values())
-    def dicts(self): return [row.dict() for row in sorted(self.rows(), key=lambda row: row.touched, reverse=True)]
+    def dicts(self):
+        "The conversations something has been said in: the empty one a person was handed is not one."
+        # `title` is chosen, summarised, or derived from the log's first prompt, so any past counts.
+        rows = sorted(self.rows(), key=lambda row: row.touched, reverse=True)
+        return [d for d in (row.dict() for row in rows)
+                if d['title'] or d['unread'] or d['state'] != 'idle']
     def attention(self):
         "What the badge and the switcher need: how many are working, how many want a person."
         rows = self.rows()

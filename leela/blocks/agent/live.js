@@ -60,6 +60,8 @@ function renderTurns(log, turns, heading) {
       for (const part of reduceAgentTimeline(turn.timeline)) {
         if (part.kind === 'prose') paint.chunk(part.text);
         else if (part.kind === 'activity') paintActivity(part);
+        // what the person said mid-turn, in the place they said it
+        else if (part.kind === 'steer' && part.data?.text) paint.append(userMessage(part.data.text));
       }
     } else {
       if ((turn.activity || []).length) {

@@ -124,6 +124,9 @@ function agentListen(thread, since) {
   const timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
   log.appendChild(timelineRoot); log.scrollTop = log.scrollHeight;
   const timeline = agentTimeline(timelineRoot), seen = timeline.actions;
+  // A steer is drawn by the steer block, which is not in this scope. It belongs *in* the turn,
+  // between the prose before it and the call after, so it needs the same painter.
+  lee.agentTimeline = timeline;
   let raw = '', runDone = false, lastSeq = since, body = null;
   if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); }
   const generation = ++lee.agentStreamGen; let es, reconnecting = false;

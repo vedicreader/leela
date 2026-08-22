@@ -193,12 +193,17 @@ def test_repo_and_environment_modes_target_their_kosha_stores(monkeypatch, tmp_p
     assert called == ['repo', 'env']
 
 def test_package_public_api_is_exposed_through_kosha(tmp_path):
+    "Every row carries the file and line it is defined at, so the listing is a way into the package."
+    real = tmp_path/'basics.py'; real.write_text('def store_attr(): pass\n')
     class FakeKosha:
-        def public_api(self, package):
-            assert package == 'fastcore'
-            return [{'mod_name': 'fastcore.basics.store_attr', 'docstring': 'Store arguments as attributes'}]
+        def public_api(self, package, meta_cols='', limit=200):
+            assert package == 'fastcore' and 'path' in meta_cols and 'lineno' in meta_cols
+            return [{'mod_name': 'fastcore.basics.store_attr', 'docstring': 'Store arguments as attributes',
+                     'path': str(real), 'lineno': 1}]
     s = Search(Sandbox([tmp_path])); s._k = FakeKosha(); s._k_tried = True
-    assert s.package_api('fastcore')[0]['mod_name'] == 'fastcore.basics.store_attr'
+    row = s.package_api('fastcore')[0]
+    assert row['mod_name'] == 'fastcore.basics.store_attr'
+    assert row['path'] == str(real) and row['line'] == 1
 
 def test_all_mode_merges_every_backend_and_ranks_exact_symbols_first(monkeypatch, tmp_path):
     path = str(tmp_path/'engine.py')

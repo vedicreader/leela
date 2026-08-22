@@ -41,19 +41,27 @@ def _patch_fasttransport():
     "Keep the response context as the sole owner of an SSE iterator's cleanup."
     import fasttransport.core as ft
     if getattr(ft.AsyncTransport.stream, '_leela_patched', False): return
-    from contextlib import asynccontextmanager
     from inspect import isasyncgen
     import httpcore2._utils as core_utils
     import httpcore2._async.connection_pool as connection_pool
     import httpcore2._async.http11 as http11
     import httpcore2._async.http2 as http2
-    @asynccontextmanager
-    async def safe_async_iterate(iterable_or_iterator):
-        iterator = iterable_or_iterator if hasattr(iterable_or_iterator, '__anext__') else iterable_or_iterator.__aiter__()
-        try: yield iterator
-        except GeneratorExit: raise
-        finally:
-            if isasyncgen(iterator) and sys.exc_info()[0] is not GeneratorExit: await iterator.aclose()
+    class safe_async_iterate:
+        """`httpcore2`'s helper as a class, because a generator-based one cannot always stop.
+
+        Both byte streams `yield` inside `async with safe_async_iterate(...)`. A stream still open
+        when the process ends is finalised by the loop's asyncgen shutdown, and `contextlib` reports
+        an `@asynccontextmanager` that misses its `GeneratorExit` there as `generator didn't stop
+        after athrow()`, once per stream. Closing is also the one case that must not await, since
+        the response context owns the iterator then; `__aexit__` is told, rather than guessing from
+        `sys.exc_info()`, which is not reliably ours during that finalisation.
+        """
+        def __init__(self, source):
+            self.it = source if hasattr(source, '__anext__') else source.__aiter__()
+        async def __aenter__(self): return self.it
+        async def __aexit__(self, typ, exc, tb):
+            if isasyncgen(self.it) and typ is not GeneratorExit: await self.it.aclose()
+            return False
     core_utils.safe_async_iterate = safe_async_iterate
     connection_pool.safe_async_iterate = safe_async_iterate
     http11.safe_async_iterate = safe_async_iterate
@@ -645,7 +653,7 @@ def _agent_panel(ws):
                        onclick='leeAgentExpand()'), cls='lee-agent-head-actions'),
             cls='lee-phead lee-agent-head'),
         Div(welcome, id='agentlog', cls='lee-agentlog'),
-        Div(Span(cls='lee-agent-run-state'), Span(cls='lee-spacer'),
+        Div(Span(cls='lee-agent-run-state'),
             Button('Pause after current', cls='lee-btn', type='button', data_agent_pause='1'),
             Button('Stop', cls='lee-btn warn', type='button', data_agent_stop='1'),
             cls='lee-agent-runstrip', id='agentrunstrip', hidden=True, aria_live='polite'),
@@ -843,6 +851,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     # Starlette's exclusion list spares `text/event-stream`. The streams stay unbuffered.
     app = FastHTML(default_hdrs=False, hdrs=hdrs,
                    middleware=(Middleware(GZipMiddleware, minimum_size=512),),
+                   on_startup=[ws.opened], on_shutdown=[ws.shutdown],
                    routes=(Mount('/leestatic', Assets(*static_dirs())),
                            WebSocketRoute('/term/ws', term_ws)))
     app.static_route_exts()
@@ -1201,7 +1210,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             kw = dict(port=kernel_port + i * 100, agent=agent, kernel=kernel, model=model,
                       approvals=approvals, agent_scope=agent_scope, python=python,
                       transport=transport, gateway=gateway, cdp_port=cdp_port)
-            ws = Workspace.load(path=state, **kw) if open_ws else Workspace(**kw)
+            ws = (Workspace.load(path=state, **kw) if open_ws else Workspace(**kw)).at_exit()
             state.parent.mkdir(parents=True, exist_ok=True)
             ws._state_path = state
             broker.register(ws.pool)
@@ -1241,12 +1250,15 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             kw['inline_model'] = remembered.get('inline_model') or 'gpt-mini'
             kw['completion_model'] = remembered.get('completion_model') or 'gpt-4.1'
             ws = Workspace(**kw)
+        ws.at_exit()
         broker.register(ws.pool)
         # one ceiling for the process, so any workspace asking leela to manage it turns it on
         if ws.kernels_auto_manage: broker.auto_manage = True
         for r in roots: ws.add_root(r)
         # A shell launch means "here"; a frozen one has no such answer, so: welcome screen.
         if not ws.fs.roots and not getattr(sys, 'frozen', False): ws.add_root(os.getcwd())
+        # Naming folders skipped the saved session entirely, so `leela .` always opened empty.
+        if open_ws and not ws.tabs: ws.reopen_saved_tabs()
         if ws.restore_remembered_agent_state(): ws.save()
         app = ide_app(ws, gate)
         if (secs := ws.jobs.tick()): print(f'  vault watches polled every {secs}s')
@@ -1264,4 +1276,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             threading.Thread(target=open_window, daemon=True, name='leela-cdp-open').start()
     if not gate.enabled: print(f'  {gate.why}')
     from .hub import LoopbackHostGuard
-    uvicorn.run(LoopbackHostGuard(app), host=host, port=port, log_level='warning')
+    from .core.projects import now_serving, served
+    now_serving(host, port, [str(r) for r in (roots or ws.fs.roots)])
+    try: uvicorn.run(LoopbackHostGuard(app), host=host, port=port, log_level='warning')
+    finally: served()

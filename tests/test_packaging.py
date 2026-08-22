@@ -130,11 +130,23 @@ def test_a_linux_build_is_refused_with_advice_rather_than_a_traceback(monkeypatc
     with pytest.raises(SystemExit) as e: setup_app.platform_setup()
     assert 'their own OS' in str(e.value)
 
-def test_the_icons_the_build_needs_are_in_the_tree():
-    "Committed rather than generated, so a build machine does not need Pillow."
-    for name in ('Leela.png', 'Leela.ico'):
-        p = ROOT/'packaging'/'assets'/name
-        assert p.is_file() and p.stat().st_size > 1000, f'{name} is missing or empty'
+def test_the_artwork_is_committed_and_everything_drawn_from_it_is_not():
+    """One source in the tree, and every icon `tools/build_icons.py` draws from it generated. They
+    were committed so a build machine needed no Pillow, which the build extras now carry anyway --
+    and a committed copy is one that can disagree with the artwork it came from."""
+    import subprocess
+    mark = ROOT/'packaging'/'assets'/'leela-mark.png'
+    assert mark.is_file() and mark.stat().st_size > 1000, 'the artwork itself is the source'
+    tracked = subprocess.run(['git', 'ls-files', 'packaging/assets'], cwd=ROOT,
+                             capture_output=True, text=True).stdout.split()
+    drawn = {'Leela.png', 'Leela.ico', 'Leela.svg', 'Leela.icns'}
+    assert not {Path(t).name for t in tracked} & drawn, 'generated icons are not committed'
+    assert not any('Leela.iconset' in t for t in tracked)
+
+def test_both_platform_builds_say_to_draw_the_icons_first():
+    "Nothing generated is in a fresh checkout, so a build that needs one has to name the command."
+    for rel in ('packaging/macos/setup.py', 'packaging/windows/setup.py'):
+        assert 'tools/build_icons.py' in (ROOT/rel).read_text(), rel
 
 def test_the_build_extras_carry_what_the_build_imports():
     "`Leela.icns` is built, not committed, and the workflow installs the extras and nothing else."
@@ -196,3 +208,25 @@ def _port_from(proc, tries=400):
         if not line: return None
         if (m := re.search(r'127\.0\.0\.1:(\d+)', line)): return int(m.group(1))
     return None
+
+def test_the_macmage_cantrip_only_posts_to_routes_that_exist():
+    """The shortcuts reach Leela over HTTP from outside it, so a renamed route breaks them silently
+    -- there is no import to fail and no page to 404 in front of anybody."""
+    import ast, re
+    src = (ROOT/'packaging'/'macmage'/'leela.py').read_text()
+    tree = ast.parse(src)
+    posted = {n.args[0].value for n in ast.walk(tree)
+              if isinstance(n, ast.Call) and getattr(n.func, 'id', '') == 'call'
+              and n.args and isinstance(n.args[0], ast.Constant)}
+    assert posted, 'the cantrip calls something'
+    known = {line.split(' ', 1)[1].strip() for line in (ROOT/'tests'/'routes.txt').read_text().splitlines() if ' ' in line}
+    assert posted <= known, f'{posted - known} is not a route Leela serves'
+    assert '/fs/add-root' in posted, 'the JSON one; `/fs/add_root` answers with a whole page'
+
+def test_the_macmage_cantrip_reads_the_address_leela_publishes():
+    "Both sides name the same file, and neither imports the other to find out."
+    from leela.core.projects import SERVING
+    src = (ROOT/'packaging'/'macmage'/'leela.py').read_text()
+    assert "'leela'/'serving.json'" in src or "'serving.json'" in src
+    assert SERVING.name == 'serving.json' and SERVING.parent.name == 'leela'
+    assert 'import leela' not in src, 'a macmage virtualenv has no leela in it'

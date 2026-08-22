@@ -4,8 +4,14 @@ function initSplits() {
   // Every panel is saved on switch, so every panel is restorable. Restoring only two of them
   // meant a reload silently moved you back to the file tree from the one you were working in.
   leeLeft(['git', 'symbols', 'workflows', 'releases', 'deploys', 'drive'].includes(savedLeft) ? savedLeft : 'files');
-  for (const pane of ['left', 'right', 'bottom'])
-    if (localStorage.getItem('lee-pane-' + pane) === 'hidden') leePane(pane, false);
+  // Read before the views: `leeDock` opens the bottom pane to show its tab and persists that,
+  // which would erase a pane the last session had minimised.
+  const closed = ['left', 'right', 'bottom'].filter(p => localStorage.getItem('lee-pane-' + p) === 'hidden');
+  const savedRight = localStorage.getItem('lee-right-view');
+  if (['agent', 'vars', 'memory'].includes(savedRight)) leeRight(savedRight);
+  const savedDock = localStorage.getItem('lee-dock-view');
+  if (['exec', 'term', 'logs'].includes(savedDock)) leeDock(savedDock);
+  for (const pane of closed) leePane(pane, false);
   // The pin buttons are rendered pinned; a saved unpin has to reach them before the first click.
   for (const pane of ['left', 'right']) leeSyncPin(pane);
   if (matchMedia('(max-width: 1100px)').matches) {

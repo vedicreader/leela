@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import re
+import asyncio, re
 from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,8 +87,29 @@ class WorkspaceHub:
         if not host or host in LOOPBACK: return self.sites.get(self.default)
         return None
     async def __call__(self, scope, receive, send):
+        # Lifespan carries no Host header, so it belongs to every workspace rather than to
+        # whichever answers for bare loopback: one that never hears it never stops its kernels.
+        if scope.get('type') == 'lifespan': return await self._lifespan(scope, receive, send)
         site = self.site_for(scope)
         if site is None: return await _refuse(scope, send, 'unknown workspace host')
         scope = dict(scope)
         scope['leela.workspace_id'] = site.slug
         await site.app(scope, receive, send)
+    async def _lifespan(self, scope, receive, send):
+        "One startup and one shutdown, fanned out to every site and answered once."
+        async def spent(message): pass
+        queues = [asyncio.Queue() for _ in self.sites]
+        async def leg(app, q): await app(dict(scope), q.get, spent)
+        legs = [asyncio.create_task(leg(s.app, q)) for s, q in zip(self.sites.values(), queues)]
+        try:
+            while True:
+                message = await receive()
+                for q in queues: q.put_nowait(message)
+                if message['type'] == 'lifespan.startup':
+                    await send({'type': 'lifespan.startup.complete'})
+                elif message['type'] == 'lifespan.shutdown':
+                    await asyncio.gather(*legs, return_exceptions=True)
+                    return await send({'type': 'lifespan.shutdown.complete'})
+        finally:
+            for t in legs:
+                if not t.done(): t.cancel()

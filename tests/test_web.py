@@ -426,10 +426,11 @@ def test_agent_control_route_changes_checkpoint_policy_without_starting_a_model(
     with TestClient(ide_app(ws)) as client:
         r = client.post('/agent/control', json={'control': 'directed'})
         bad = client.post('/agent/control', json={'control': 'reckless'})
+        # read inside: leaving the client ends the server's lifespan, which ends the session
+        assert ws.approvals.control == 'directed'
     body = r.json()
     assert body['ok'] and body['control'] == 'directed'
     assert body['thread'], 'and it says which conversation the policy was set on'
-    assert ws.approvals.control == 'directed'
     assert bad.status_code == 400
 
 def test_agent_and_variables_share_the_right_tabs_while_exec_and_terminal_share_the_bottom():
@@ -540,9 +541,10 @@ def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(t
     with TestClient(ide_app(ws)) as client:
         d = client.post('/agent/resume', json={'session': 'agent-a'}).json()
         missing = client.post('/agent/resume', json={'session': 'legacy-1'})
+        # read inside: leaving the client ends the server's lifespan, which ends the session
+        assert ws.ai.session_id == 'agent-a'
+        assert ws.ai.backend._resume_hist[-1] == {'role': 'assistant', 'content': 'cedar'}
     assert d['session'] == 'agent-a' and [t['prompt'] for t in d['turns']] == ['remember cedar', 'what was it?']
-    assert ws.ai.session_id == 'agent-a'
-    assert ws.ai.backend._resume_hist[-1] == {'role': 'assistant', 'content': 'cedar'}
     assert missing.status_code == 400
 
 def test_routing_popover_closes_on_outside_click_and_escape():
@@ -838,6 +840,113 @@ def test_workspace_hub_dispatches_by_localhost_subdomain():
     asyncio.run(hub(scope, Mock(), Mock()))
     assert seen == [('b', 'beta')]
     assert hub.catalog()[0]['url'] == 'http://alpha.localhost:5001/'
+
+def test_the_hub_gives_the_lifespan_to_every_workspace_not_just_the_default():
+    """Lifespan carries no Host header. Dispatched by host it reached one workspace, so the others
+    never heard the shutdown and never stopped their kernels, terminals or dev servers."""
+    down = []
+    def site(slug):
+        async def app(scope, receive, send):
+            assert scope['type'] == 'lifespan'
+            while True:
+                m = await receive()
+                if m['type'] == 'lifespan.shutdown': down.append(slug); return
+        return WorkspaceSite(slug, slug, '/' + slug, app)
+    hub = WorkspaceHub([site('alpha'), site('beta')], 5001)
+    sent, inbox = [], asyncio.Queue()
+    for m in ({'type': 'lifespan.startup'}, {'type': 'lifespan.shutdown'}): inbox.put_nowait(m)
+    asyncio.run(hub({'type': 'lifespan'}, inbox.get, lambda m: sent.append(m) or asyncio.sleep(0)))
+    assert sorted(down) == ['alpha', 'beta']
+    assert [m['type'] for m in sent] == ['lifespan.startup.complete', 'lifespan.shutdown.complete'], \
+        'and the server is answered once, not once per workspace'
+
+def test_the_app_tears_its_workspace_down_when_the_server_stops(tmp_path):
+    "Nothing called `shutdown`, so a closed window left kernels, terminals and pyright running."
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client: client.get('/health')
+    assert ws._down, 'leaving the lifespan is what ends the session'
+
+def test_shutdown_runs_once_and_no_failed_step_skips_a_later_one(tmp_path):
+    "A step that raises must not strand a subprocess: the window it belonged to has already gone."
+    ws = Workspace(roots=[tmp_path])
+    ran = []
+    def boom(): ran.append('terms'); raise RuntimeError('pty is wedged')
+    ws.terms.close_all = boom
+    ws.fs_watch.close = lambda: ran.append('watch')
+    ws._stop_backups = lambda: ran.append('backups')
+    asyncio.run(ws.shutdown())
+    assert ran == ['terms', 'watch', 'backups']
+    asyncio.run(ws.shutdown())
+    assert ran == ['terms', 'watch', 'backups'], 'and it does not run a second time'
+
+def test_naming_a_folder_reopens_that_folder_s_tabs_and_no_other_project_s(tmp_path):
+    """`leela .` skipped the saved session entirely and always opened empty. The folder named is
+    still that folder's session; another project's tabs are not part of it."""
+    mine, other = tmp_path/'mine', tmp_path/'other'
+    mine.mkdir(); other.mkdir()
+    (a := mine/'a.py').write_text('a = 1\n')
+    (b := mine/'b.py').write_text('b = 2\n')
+    (c := other/'c.py').write_text('c = 3\n')
+    state = tmp_path/'state.json'
+    first_run = Workspace(roots=[mine, other]); first_run._state_path = state
+    for f in (a, c, b): first_run.open(f)
+    first_run.activate(first_run.find(b))
+    first_run.save()
+    fresh = Workspace(roots=[mine])
+    assert fresh.reopen_saved_tabs(state) == 2, 'a.py and b.py, not the other project'
+    assert [Path(t.path).name for t in fresh.tabs] == ['a.py', 'b.py']
+    assert fresh.tabs[fresh.active].path == str(b), 'and the tab that was in front is again'
+    assert Workspace(roots=[other]).reopen_saved_tabs(tmp_path/'never-written.json') == 0, 'no state, no tabs'
+
+def test_a_reopened_tab_whose_file_has_gone_is_skipped_not_an_error(tmp_path):
+    state = tmp_path/'state.json'
+    (kept := tmp_path/'kept.py').write_text('k = 1\n')
+    (lost := tmp_path/'lost.py').write_text('l = 1\n')
+    ws = Workspace(roots=[tmp_path]); ws._state_path = state
+    ws.open(lost); ws.open(kept); ws.save()
+    lost.unlink()
+    fresh = Workspace(roots=[tmp_path])
+    assert fresh.reopen_saved_tabs(state) == 1
+    assert [Path(t.path).name for t in fresh.tabs] == ['kept.py']
+
+def test_shutdown_saves_the_session_so_the_next_window_opens_where_this_one_left_off(tmp_path):
+    state = tmp_path/'state.json'
+    (f := tmp_path/'notes.py').write_text('x = 1\n')
+    ws = Workspace(roots=[tmp_path]); ws._state_path = state
+    ws.open(f)
+    state.unlink(missing_ok=True)
+    asyncio.run(ws.shutdown())
+    assert [t['path'] for t in json.loads(state.read_text())['tabs']] == [str(f)]
+
+def test_a_workspace_can_be_torn_down_from_outside_the_event_loop(tmp_path):
+    """The desktop shell runs the server on a daemon thread and the window on the main one, so
+    closing the window ends the process without uvicorn reaching its shutdown lifespan."""
+    import atexit
+    ws = Workspace(roots=[tmp_path])
+    assert ws.at_exit() is ws
+    atexit.unregister(ws.shutdown_now)
+    ws.terms.close_all = lambda: (_ for _ in ()).throw(RuntimeError('no loop here'))
+    ws.shutdown_now()
+    assert ws._down, 'and it never raises on the way out'
+
+def test_the_exit_teardown_goes_back_to_the_loop_that_owns_the_kernels(tmp_path):
+    "A kernel's client belongs to the loop it was opened on and cannot be closed from a fresh one."
+    ws, ran = Workspace(roots=[tmp_path]), []
+    async def _same_loop():
+        ran.append(asyncio.get_running_loop() is ws._loop)
+    async def serve():
+        await ws.opened()
+        ws.pool.close_all = _same_loop
+        await asyncio.get_running_loop().run_in_executor(None, ws.shutdown_now)
+    asyncio.run(serve())
+    assert ran == [True], 'the teardown ran on the server loop, not on the exiting thread'
+    assert ws._down
+
+def test_the_exit_teardown_falls_back_to_its_own_loop_when_the_server_has_gone(tmp_path):
+    ws = Workspace(roots=[tmp_path])
+    asyncio.run(ws.opened())            # that loop is closed the moment `run` returns
+    ws.shutdown_now()
+    assert ws._down
 
 def test_workspace_hub_rejects_unknown_hosts_instead_of_opening_default_workspace():
     called, messages = [], []

@@ -700,9 +700,13 @@ def connect(app, ctx):
         text = (d.get('text') or '').strip()
         try: th = _thread(d.get('thread'))
         except Exception as e: return _thread_error(e)
+        # The run this steer belongs to. Without it `Feed.for_run` cannot keep the event, and a
+        # steer is missing from the turn the moment the pane is rebuilt from the server.
+        here = getattr(th.ai.run(), 'id', '') or ''
         if d.get('cancel'):
             th.approvals.queue_steer('')
-            state = th.approvals.state(); th.feed.emit('steer', {'text': '', 'cancelled': True, **state})
+            state = th.approvals.state()
+            th.feed.emit('steer', {'text': '', 'cancelled': True, **state, 'run': here})
             return {'ok': True, 'thread': th.id, **state}
         if not text: return fail('steering instruction is empty')
         if d.get('force'):
@@ -716,10 +720,10 @@ def connect(app, ctx):
                                      'message': f"run is {run.get('state', 'cancelling')}",
                                      'thread': th.id, 'run': run}, status_code=409)
             state = th.approvals.state()
-            th.feed.emit('steer', {'text': text, 'forced': True, 'run': run, **state})
+            th.feed.emit('steer', {'text': text, 'forced': True, 'cancelled': run, **state, 'run': here})
             return {'ok': True, 'thread': th.id, 'forced': True, 'run': run, 'text': text, **state}
         th.approvals.queue_steer(text)
-        state = th.approvals.state(); th.feed.emit('steer', {'text': text, **state})
+        state = th.approvals.state(); th.feed.emit('steer', {'text': text, **state, 'run': here})
         return {'ok': True, 'thread': th.id, **state}
     @rt('/agent/tool-preview')
     async def agent_tool_preview(req):

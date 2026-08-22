@@ -8,10 +8,13 @@ from fastcore.xtras import Path, atomic_save
 
 from .. import leela_cfg
 
-__all__ = ['SESSION', 'MAX_RECENT', 'session', 'remember', 'note_folder', 'drop_folder',
-           'last_folders', 'recent_folders', 'forget_recent']
+__all__ = ['SESSION', 'SERVING', 'MAX_RECENT', 'session', 'remember', 'note_folder', 'drop_folder',
+           'last_folders', 'recent_folders', 'forget_recent', 'serving', 'now_serving', 'served']
 
 SESSION = leela_cfg/'desktop.json'
+#: A running Leela's address. The desktop shell takes whatever port is free, so nothing outside
+#: it could otherwise guess where to post.
+SERVING = leela_cfg/'serving.json'
 MAX_RECENT = 12
 
 def _dir(p):
@@ -70,3 +73,29 @@ def forget_recent(path):
         d = session()
         gone = _clean([path]) or [str(Path(path).expanduser())]
         return _write(d['folders'], [f for f in _clean(d['recent']) if f not in gone])
+
+def now_serving(host, port, folders=()):
+    "Write down where this workspace is answering, and return the record."
+    import os, time
+    d = {'host': str(host), 'port': int(port), 'pid': os.getpid(), 'at': time.time(),
+         'url': f'http://{host}:{int(port)}/', 'folders': _clean(folders)}
+    try:
+        with atomic_save(SERVING, mode='w') as f: json.dump(d, f, indent=1)
+    except OSError: pass
+    return d
+
+def served():
+    "Forget the address. A stale one sends the next caller to a port somebody else now holds."
+    try: SERVING.unlink()
+    except OSError: pass
+
+def serving():
+    "Where a running Leela is answering, or None."
+    # The pid is checked, not trusted: a killed workspace leaves a file naming somebody else's port.
+    import os
+    try: d = SERVING.read_json()
+    except (OSError, ValueError): return None
+    if not isinstance(d, dict) or not d.get('port'): return None
+    try: os.kill(int(d.get('pid') or 0), 0)
+    except (OSError, ValueError, TypeError): return None
+    return d

@@ -1203,6 +1203,52 @@ def test_httpcore_does_not_reclose_a_generator_during_generator_exit():
     asyncio.run(run())
     assert closed == [True]
 
+def test_a_stream_still_open_at_shutdown_does_not_shout_on_the_way_out(tmp_path):
+    """Both httpcore2 byte streams `yield` inside `async with safe_async_iterate(...)`. A response
+    still streaming when the process ends is finalised by the loop's asyncgen shutdown, and the
+    generator-based context manager could not always stop when `GeneratorExit` was thrown into it
+    there -- printing `generator didn't stop after athrow()` once per open stream at exit."""
+    import subprocess, sys as _sys
+    script = tmp_path/'dangling.py'
+    script.write_text(
+        'import asyncio\n'
+        'import leela.app                                    # installs the patch\n'
+        'import httpcore2._utils as core_utils\n'
+        'async def inner():\n'
+        '    try: yield b"a"; yield b"b"\n'
+        '    finally: await asyncio.sleep(0)\n'
+        'async def stream():                                 # httpcore2\'s own shape\n'
+        '    async with core_utils.safe_async_iterate(inner()) as it:\n'
+        '        async for chunk in it: yield chunk\n'
+        'async def main():\n'
+        '    g = stream(); await g.__anext__()\n'
+        '    globals()["keep"] = g                           # nobody closes it: the loop must\n'
+        'asyncio.run(main())\n')
+    r = subprocess.run([_sys.executable, str(script)], capture_output=True, text=True,
+                       cwd=str(ROOT), timeout=180)
+    assert r.returncode == 0, r.stderr
+    assert 'athrow' not in r.stderr and 'asynchronous generator' not in r.stderr, r.stderr
+
+def test_the_iterate_helper_leaves_a_closing_stream_to_its_response_context():
+    "Closing is the one case that must not await: awaiting there is what half-closes the iterator."
+    import httpcore2._utils as core_utils
+    closed = []
+    async def stream():
+        try: yield b'chunk'
+        finally: closed.append(True)
+    async def run():
+        it = stream()
+        assert await anext(it) == b'chunk'
+        async with core_utils.safe_async_iterate(it) as got:
+            assert got is it, 'an iterator is passed through rather than re-wrapped'
+        assert closed == [True], 'an ordinary exit closes it'
+        again = stream(); await anext(again)
+        try:
+            async with core_utils.safe_async_iterate(again): raise GeneratorExit
+        except GeneratorExit: pass
+        assert again.ag_frame is not None, 'but a closing one is left to whoever owns it'
+    asyncio.run(run())
+
 def test_fasttransport_uses_the_sse_context_for_malformed_events():
     import fasttransport.core as ft
     class Response:

@@ -1,7 +1,7 @@
 "Open folders, open tabs, and which kernel each tab talks to."
 
 from __future__ import annotations
-import hashlib, json, os, threading, time
+import asyncio, atexit, hashlib, json, os, threading, time
 from dataclasses import dataclass
 from fastcore.all import Path, L, first, ifnone
 
@@ -158,6 +158,8 @@ class Workspace:
                                         history=self.history)
         self._timeline_path = leela_cfg/'timelines'/f'{journal_key}.json'
         self._stop_backups = None
+        self._down = False
+        self._loop = None
         self._history_stamps = {}
         self._timeline_lock = threading.RLock()
         from .blocks.vault.clip import register_all
@@ -863,16 +865,39 @@ class Workspace:
             self._lsp = PyrightService(first(self.fs.roots))
         return self._lsp
     async def shutdown(self):
-        "Stop every kernel, dev server, terminal and model this workspace started."
-        self.terms.close_all()
-        self.fs_watch.close()
-        if self._stop_backups is not None: self._stop_backups()
-        if self._threads is not None: self._threads.shutdown()
-        elif self._ai is not None: self._ai.close()
-        if self._inline_ai is not None: self._inline_ai.close()
-        if self._lsp is not None: self._lsp.close()
-        await self.dev.stop_all()
-        await self.pool.close_all()
+        "Save the session, then stop every kernel, dev server, terminal and model it started."
+        # Once, and each step guarded: what a skipped one leaves behind is a live subprocess.
+        if self._down: return
+        self._down = True
+        def step(fn):
+            try: fn()
+            except Exception: pass
+        step(self.save)
+        step(self.terms.close_all)
+        step(self.fs_watch.close)
+        if self._stop_backups is not None: step(self._stop_backups)
+        if self._threads is not None: step(self._threads.shutdown)
+        elif self._ai is not None: step(self._ai.close)
+        if self._inline_ai is not None: step(self._inline_ai.close)
+        if self._lsp is not None: step(self._lsp.close)
+        for coro in (self.dev.stop_all(), self.pool.close_all()):
+            try: await coro
+            except Exception: pass
+    async def opened(self):
+        "Remember the loop the kernels, terminals and sockets belong to."
+        self._loop = asyncio.get_running_loop()
+    def shutdown_now(self, timeout=10):
+        "The same teardown from outside the loop, for process exit."
+        # Back on the server's loop where there is one: a kernel's client cannot close from another.
+        if self._down: return
+        if (loop := self._loop) is not None and loop.is_running():
+            try: return asyncio.run_coroutine_threadsafe(self.shutdown(), loop).result(timeout)
+            except Exception: pass
+        try: asyncio.run(self.shutdown())
+        except Exception: pass
+    def at_exit(self):
+        "Tear this workspace down when the interpreter does, however it got there."
+        atexit.register(self.shutdown_now); return self
     def agent_memory_context(self, target='agent', max_chars=24_000):
         "Selected user notes for one model surface, bounded and visibly titled."
         ids = self.agent_memory_selection.get(target, [])
@@ -926,6 +951,28 @@ class Workspace:
                 'job_models': self.job_models,
                 'active_root': str(self.active_root or ''),
                 'saved': time.time()}
+    def reopen_saved_tabs(self, path=None):
+        "Reopen the saved tabs under the folders open now, and count them."
+        # Naming a folder is not a request for last session's other projects, but it is still
+        # that folder's session.
+        try: d = Path(path or getattr(self, '_state_path', None) or ws_path()).read_json()
+        except Exception: return 0
+        saved, opened = d.get('tabs') or [], 0
+        for t in saved:
+            place = str(t.get('path') or '')
+            try:
+                if not place or not self.fs.covers(Path(place).resolve()): continue
+                tab = self.open(place)
+                if int(d.get('version', 0)) >= 2 and 'private_kernel' in t:
+                    tab.private_kernel = bool(t['private_kernel'])
+                tab.cwd = str(t.get('cwd') or '')
+                opened += 1
+            except Exception: continue
+        if opened:
+            was = saved[min(max(int(d.get('active', 0)), 0), len(saved) - 1)] or {}
+            self.active = ifnone(first(i for i, t in enumerate(self.tabs)
+                                       if t.path == str(was.get('path') or '')), 0)
+        return opened
     def save(self, path=None):
         "Persist folders and tabs (never kernels -- their namespaces do not survive the process)."
         p = Path(path or getattr(self, '_state_path', None) or ws_path())

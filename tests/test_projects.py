@@ -26,6 +26,12 @@ def session_file(tmp_path, monkeypatch):
     monkeypatch.setattr(projects, 'SESSION', tmp_path/'desktop.json')
     return tmp_path/'desktop.json'
 
+@pytest.fixture(autouse=True)
+def serving_file(tmp_path, monkeypatch):
+    "And the address a running workspace publishes, for the same reason."
+    monkeypatch.setattr(projects, 'SERVING', tmp_path/'serving.json')
+    return tmp_path/'serving.json'
+
 @pytest.fixture
 def dirs(tmp_path):
     made = []
@@ -233,3 +239,30 @@ def test_the_open_folder_handler_is_a_no_op_where_there_is_nothing_to_register()
     "Windows and Linux get their folders through argv; asking for a handler must not raise."
     from leela.desktop import watch_open_events
     assert watch_open_events(lambda p: None) is None
+
+def test_a_running_workspace_publishes_where_it_is_answering(serving_file, dirs):
+    """A hotkey, a script, anything outside the window has to find it, and the desktop shell takes
+    whatever port is free -- so there is nothing to guess at."""
+    d = projects.now_serving('127.0.0.1', 5173, dirs)
+    assert d['url'] == 'http://127.0.0.1:5173/' and d['pid'] == os.getpid()
+    assert d['folders'] == dirs
+    live = projects.serving()
+    assert live['port'] == 5173 and live['url'] == d['url']
+    projects.served()
+    assert projects.serving() is None, 'and it stops claiming to be up once it is not'
+
+def test_an_address_left_behind_by_a_dead_workspace_is_not_offered(serving_file):
+    """A workspace killed outright never reaches its own cleanup. By the time anything reads the
+    file the port may belong to something else, which is the one way this could misdirect a post."""
+    projects.now_serving('127.0.0.1', 5173, [])
+    d = json.loads(serving_file.read_text()); d['pid'] = 2 ** 31 - 1
+    serving_file.write_text(json.dumps(d))
+    assert projects.serving() is None
+
+def test_a_missing_or_unreadable_address_reads_as_nothing_rather_than_failing(serving_file):
+    assert projects.serving() is None
+    serving_file.write_text('{not json')
+    assert projects.serving() is None
+    serving_file.write_text('{"pid": 1}')
+    assert projects.serving() is None, 'an entry with no port names nowhere'
+    projects.served(), projects.served()          # removing one that is already gone is not an error

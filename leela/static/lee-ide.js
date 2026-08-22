@@ -378,6 +378,7 @@ async function runLogLoop() {
 
 function leeDock(which) {
   const dock = $('#bottomdock'); if (!dock) return;
+  try { localStorage.setItem('lee-dock-view', which); } catch (_) {}
   leePane('bottom', true);
   const centre = $('.lee-centre');
   dock.classList.toggle('dock-exec', which === 'exec');
@@ -3651,7 +3652,9 @@ async function codeSearch() {
          <span class="lee-dim lee-searchrail-hint">tab / shift+tab</span></nav>
        <div class="lee-modallist" id="cslist"><div class="lee-dim">type to search repository + environment context</div></div>
        <aside class="lee-search-preview"><header><div><strong id="cspreviewtitle">Code preview</strong>` +
-       `<span id="cspreviewmeta">Select a result</span></div><button class="lee-btn go" id="csopen" disabled>Open file</button></header>` +
+       `<span id="cspreviewmeta">Select a result</span></div>` +
+       `<div class="lee-search-actions"><button class="lee-btn" id="cspkg" hidden>Package API</button>` +
+       `<button class="lee-btn go" id="csopen" disabled>Open file</button></div></header>` +
        `<div id="cspreview"><div class="lee-search-preview-empty">Matches open here with syntax highlighting.</div></div>` +
        `<div class="lee-search-relations" id="csrelations"></div></aside></div>`,
     (e) => {
@@ -3670,6 +3673,7 @@ async function codeSearch() {
     });
   m.classList.add('lee-code-search-modal');
   const list = $('#cslist', m), input = $('#cs', m), preview = $('#cspreview', m), open = $('#csopen', m);
+  const pkgBtn = $('#cspkg', m);
   const scopeEl = $('#csscope', m), extsEl = $('#csexts', m);
   // Remembered, because a person who works in Python does not want to retype `py` every time
   // they open this box -- and the scope they chose is a statement about how they work.
@@ -3703,14 +3707,17 @@ async function codeSearch() {
     const h = hits[sel];
     if (!h) {
       preview.innerHTML = '<div class="lee-search-preview-empty">No result selected.</div>';
-      open.disabled = true; return;
+      open.disabled = true; pkgBtn.hidden = true; return;
     }
     const filename = h.path.split('/').pop() || h.package || 'indexed source';
     $('#cspreviewtitle', m).textContent = h.symbol || filename;
     $('#cspreviewmeta', m).textContent = `${h.package ? h.package + ' · ' : ''}${filename}:${h.line} · ${(h.sources || [h.kind]).join(' + ')}`;
+    // A package is a file like any other once the path is one this project can open; its API
+    // listing is the second question, so it gets its own button.
     const environment = h.kind.startsWith('env-');
-    open.disabled = environment && !h.package;
-    open.textContent = environment ? (h.package ? 'Package API' : 'Indexed package') : 'Open file';
+    open.disabled = !h.path && !(environment && h.package);
+    open.textContent = h.path ? 'Open file' : environment && h.package ? 'Package API' : 'Indexed package';
+    pkgBtn.hidden = !(environment && h.package && h.path);
     preview.innerHTML = '<div class="lee-search-preview-editor"></div>';
     previewView = mountCodeSurface($('.lee-search-preview-editor', preview), h.text || '(no indexed preview)',
                                    codeLang('', h.path), false);
@@ -3739,21 +3746,27 @@ async function codeSearch() {
     }).join('');
     $('.lee-search-result.sel', list)?.scrollIntoView({block: 'nearest'}); showPreview();
   };
+  /* A name Kosha knows the file for opens it; one it does not still answers the other question. */
+  const packageApi = async h => {
+    const d = await api('/code/package-api?package=' + encodeURIComponent(h.package));
+    const box = modal(`<div class="lee-mhead">${esc(h.package)}<span class="sub">public API from Kosha</span></div>` +
+      `<div class="lee-package-api"></div>`);
+    const body = $('.lee-package-api', box), symbols = d.symbols || [];
+    body.innerHTML = symbols.length ? symbols.map((row, i) => `<button data-api="${i}">` +
+      `<strong>${esc(row.mod_name || '')}</strong><span>${esc(row.docstring || '')}</span>` +
+      `<small>${esc(row.path ? compactPath(row.path) + ':' + row.line : 'no indexed file')}</small></button>`).join('') :
+      '<div class="lee-dim">No exported API metadata found.</div>';
+    $$('[data-api]', body).forEach(el => el.onclick = () => {
+      const row = symbols[+el.dataset.api]; box.remove();
+      if (row.path) { m.remove(); return openLocation({path: row.path, line: row.line || 1}); }
+      input.value = row.mod_name || ''; search();
+    });
+  };
   const go = async () => {
     const h = hits[sel]; if (!h) return;
-    if (h.kind.startsWith('env-')) {
-      if (!h.package) return status('package source is indexed read-only', 'info');
-      const d = await api('/code/package-api?package=' + encodeURIComponent(h.package));
-      const box = modal(`<div class="lee-mhead">${esc(h.package)}<span class="sub">public API from Kosha</span></div>` +
-        `<div class="lee-package-api"></div>`);
-      const body = $('.lee-package-api', box), symbols = d.symbols || [];
-      body.innerHTML = symbols.length ? symbols.map(row => `<button data-name="${esc(row.mod_name || '')}">` +
-        `<strong>${esc(row.mod_name || '')}</strong><span>${esc(row.docstring || '')}</span></button>`).join('') :
-        '<div class="lee-dim">No exported API metadata found.</div>';
-      $$('[data-name]', body).forEach(row => row.onclick = () => { box.remove(); input.value = row.dataset.name; search(); });
-      return;
-    }
-    m.remove(); openLocation(h);
+    if (h.path) { m.remove(); return openLocation(h); }
+    if (!h.package) return status('package source is indexed read-only', 'info');
+    await packageApi(h);
   };
   // One click opens at the line, because that is what the box is *for*. It used to select on the
   // first click and need a second one on the same row to go anywhere, so the obvious gesture
@@ -3764,6 +3777,7 @@ async function codeSearch() {
     sel = +row.dataset.i; paint(); go();
   };
   open.onclick = go;
+  pkgBtn.onclick = () => { const h = hits[sel]; if (h?.package) packageApi(h); };
   // `all` streamed: one section per backend, in the server's best-first leg order, each filling
   // in as that backend reports. Slots are stable on purpose -- rg answers in tens of milliseconds
   // and the embedding leg in seconds, and a list that re-ranked on every arrival would reshuffle
@@ -3894,15 +3908,29 @@ async function findUsages(name = cursorWord()) {
   const d = await api('/code/usages?name=' + encodeURIComponent(name));
   hitList(d.hits || [], `${d.backend} — ${d.note}`, `usages of ${name}`, openLocation);
 }
+/* The dotted chain the cursor ends, so `fastcore.test` reaches the server whole: nothing declares
+   a module, and the last name alone found whichever package had a `def test`. Leftwards only --
+   on `fastcore` the answer is the package. */
+function dottedAtCursor(view) {
+  const word = LeeCM.wordAtCursor(view); if (!word) return '';
+  const line = view.state.doc.lineAt(LeeCM.cursor(view)), text = line.text;
+  let i = LeeCM.cursor(view) - line.from;
+  while (i > 0 && /\w/.test(text[i - 1])) i--;
+  let j = i;
+  while (j > 1 && text[j - 1] === '.' && /\w/.test(text[j - 2])) {
+    j--; while (j > 0 && /\w/.test(text[j - 1])) j--;
+  }
+  return text.slice(j, i) + word;
+}
 /* Where the cursor is, in the coordinates a symbol lookup can use. A notebook cursor is a cell
    and a line inside it: the file line is a line of JSON and matches no declaration. */
 function editorPlace(view = curEditor()) {
   const path = lee.path || '';
-  if (!view) return {path, line: 0, cellIndex: -1};
+  if (!view) return {path, line: 0, cellIndex: -1, dotted: ''};
   const line = view.state.doc.lineAt(LeeCM.cursor(view)).number;
   const cellIndex = lee.kind === 'notebook'
     ? lee.cells.findIndex(c => lee.editors.get(c.id) === view) : -1;
-  return {path, line, cellIndex};
+  return {path, line, cellIndex, dotted: dottedAtCursor(view)};
 }
 /* One key, both directions. On a usage it goes to the declaration; standing on the declaration it
    lists who uses it, because that is the only question left to ask there. The server decides which,
@@ -3914,7 +3942,8 @@ async function gotoDeclaration(name = cursorWord(), place = editorPlace()) {
   // a failed lookup has to say so: `finding…` is busy, and a busy toast never leaves by itself
   try {
     d = await api('/code/jump?name=' + encodeURIComponent(name) +
-      '&path=' + encodeURIComponent(place.path) + '&line=' + place.line + '&cell_index=' + place.cellIndex);
+      '&path=' + encodeURIComponent(place.path) + '&line=' + place.line + '&cell_index=' + place.cellIndex +
+      '&dotted=' + encodeURIComponent(place.dotted || ''));
   } catch (e) { return status(String(e.message || e), 'err'); }
   const hits = d.hits || [];
   if (!hits.length) return status(`nothing found for ${name}`, 'err');
@@ -3950,6 +3979,7 @@ function bindModClick() {
   }, true);
 }
 window.gotoDeclaration = gotoDeclaration; window.bindModClick = bindModClick;
+window.dottedAtCursor = dottedAtCursor;
 
 async function renameSymbol() {
   const name=cursorWord(),view=curEditor();
@@ -4931,8 +4961,14 @@ function initSplits() {
   // Every panel is saved on switch, so every panel is restorable. Restoring only two of them
   // meant a reload silently moved you back to the file tree from the one you were working in.
   leeLeft(['git', 'symbols', 'workflows', 'releases', 'deploys', 'drive'].includes(savedLeft) ? savedLeft : 'files');
-  for (const pane of ['left', 'right', 'bottom'])
-    if (localStorage.getItem('lee-pane-' + pane) === 'hidden') leePane(pane, false);
+  // Read before the views: `leeDock` opens the bottom pane to show its tab and persists that,
+  // which would erase a pane the last session had minimised.
+  const closed = ['left', 'right', 'bottom'].filter(p => localStorage.getItem('lee-pane-' + p) === 'hidden');
+  const savedRight = localStorage.getItem('lee-right-view');
+  if (['agent', 'vars', 'memory'].includes(savedRight)) leeRight(savedRight);
+  const savedDock = localStorage.getItem('lee-dock-view');
+  if (['exec', 'term', 'logs'].includes(savedDock)) leeDock(savedDock);
+  for (const pane of closed) leePane(pane, false);
   // The pin buttons are rendered pinned; a saved unpin has to reach them before the first click.
   for (const pane of ['left', 'right']) leeSyncPin(pane);
   if (matchMedia('(max-width: 1100px)').matches) {

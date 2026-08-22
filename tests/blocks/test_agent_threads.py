@@ -226,9 +226,13 @@ def test_thread_routes_create_switch_title_close_and_isolate(tmp_path):
     with TestClient(ide_app(ws)) as client:
         first = client.get('/agent/threads').json(); first_id = first['active']
         second = client.post('/agent/thread/new', json={}).json(); second_id = second['active']
-        assert first_id != second_id and len(client.get('/agent/threads').json()['threads']) == 2
+        assert first_id != second_id
+        assert client.get('/agent/threads').json()['threads'] == [], \
+            'two conversations nobody has spoken in are not two of a person\'s conversations'
         titled = client.post('/agent/thread/title', json={'thread': first_id, 'title': 'First work'}).json()
         assert titled['thread']['title'] == 'First work' and ws.threads.active_id == second_id
+        listed = client.get('/agent/threads').json()['threads']
+        assert [row['id'] for row in listed] == [first_id], 'naming one is saying something in it'
         switched = client.post('/agent/thread/switch', json={'thread': first_id}).json()
         assert switched['active'] == first_id and ws.ai.session_id == first_id
         closed = client.post('/agent/thread/close', json={'thread': second_id}).json()
@@ -237,6 +241,70 @@ def test_thread_routes_create_switch_title_close_and_isolate(tmp_path):
         stale = client.post('/agent/thread/switch', json={'thread': second_id})
         assert stale.status_code == 409 and stale.json()['code'] == 'thread_not_found' and ws.threads.active_id == first_id
 
+
+def test_a_steer_is_kept_with_the_turn_it_interrupted(tmp_path):
+    """`Feed.for_run` already named `steer` among the events a turn is rebuilt from, but the route
+    emitted it with no run on it, so the filter never matched and the steer was dropped from the
+    saved timeline. A message the person sent mid-turn vanished the moment the pane was rebuilt."""
+    feed = Feed('thread-1')
+    feed.emit('chunk', {'text': 'thinking', 'run': 'run-1'})
+    feed.emit('steer', {'text': 'use the other file', 'queued_steer': 'use the other file', 'run': 'run-1'})
+    feed.emit('steer', {'text': 'somebody else', 'run': 'run-2'})
+    feed.emit('state', {'run': 'run-1'})
+    kept = feed.for_run('run-1')
+    assert [r['event'] for r in kept] == ['chunk', 'steer'], 'state is live-only; the other run is not ours'
+    assert kept[1]['data']['text'] == 'use the other file'
+
+def test_the_steer_route_stamps_the_run_the_steer_belongs_to(tmp_path):
+    "Queued, forced or cancelled: each is part of a turn, and the timeline is filtered by run."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    ws = _threaded_workspace(tmp_path)
+    thread = ws.threads.active
+    run = thread.ai._new_run('working')
+    with TestClient(ide_app(ws)) as client:
+        client.post('/agent/steer', json={'text': 'try the other branch'})
+        client.post('/agent/steer', json={'cancel': True})
+        stamped = [dict(r['data']) for r in thread.feed.rows if r['event'] == 'steer']
+    assert stamped and all(d.get('run') == run.id for d in stamped), stamped
+    assert [d['text'] for d in stamped] == ['try the other branch', '']
+    run.finish()
+
+def test_an_untouched_conversation_holds_no_card_until_something_is_said_in_it(tmp_path):
+    """Empty `new conversation` rows piled up in the switcher. A conversation nobody has spoken in
+    is the empty one they were handed, and the past belongs in history rather than beside it."""
+    ws = _threaded_workspace(tmp_path)
+    fresh = ws.threads.active
+    assert ws.threads.dicts() == [], 'nothing has been said in it'
+    assert ws.threads.attention()['threads'] == 1, 'but it is live, and the eviction board counts it'
+    fresh.opener = 'rename the widget'
+    assert [d['id'] for d in ws.threads.dicts()] == [fresh.id], 'the first prompt is a conversation'
+
+def test_a_conversation_is_shown_once_it_is_named_unread_or_working(tmp_path):
+    "Each of these is something having happened in it, and any one of them earns the card."
+    ws = _threaded_workspace(tmp_path)
+    thread = ws.threads.active
+    assert ws.threads.dicts() == []
+    thread.title = 'A name a person chose'
+    assert len(ws.threads.dicts()) == 1
+    thread.title = ''; thread.unread = 2
+    assert len(ws.threads.dicts()) == 1, 'a turn finished in it while nobody was watching'
+    thread.unread = 0
+    run = thread.ai._new_run('working')
+    assert len(ws.threads.dicts()) == 1, 'and one that is working is never hidden'
+    run.finish()
+
+def test_a_resumed_conversation_is_named_by_its_log_so_it_keeps_its_card(tmp_path):
+    "Resuming builds a thread with no opener of its own; the log it was resumed from is its name."
+    import json
+    ws = Workspace(roots=[tmp_path]); ws.add_root(str(tmp_path))
+    thread = ws.threads.active
+    log = ws.ai.history_path; log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(json.dumps({'session': thread.id, 'at': 1, 'model': 'gpt-4.1',
+                               'turn_id': f'{thread.id}:turn_000001',
+                               'prompt': 'plot the release cadence', 'reply': 'done'}) + '\n')
+    ws.ai.refresh_history()
+    assert [d['title'] for d in ws.threads.dicts()] == ['plot the release cadence']
 
 def test_resuming_an_already_live_session_activates_its_existing_thread(tmp_path):
     ws = Workspace(roots=[tmp_path]); first = ws.threads.active; ws.threads.new()
@@ -482,9 +550,11 @@ def test_shutdown_cancels_the_run_and_wakes_a_waiting_subscriber(tmp_path):
         waiter.start(); time.sleep(.05)
         ws.turn_runner.close()
         waiter.join(5)
+        # read inside: leaving the client ends the lifespan, and the next `turn_runner` is a
+        # fresh thread's, whose feed was never the one this waiter was parked on
+        assert seen['rows'] == [] and ws.turn_runner.feed.closed
+        assert ws.ai.runs(active=True) == []
     assert not waiter.is_alive(), 'the waiter was woken rather than left on its timeout'
-    assert seen['rows'] == [] and ws.turn_runner.feed.closed
-    assert ws.ai.runs(active=True) == []
 
 def _threaded_workspace(tmp):
     from leela.workspace import Workspace
@@ -610,6 +680,8 @@ def test_muting_survives_in_the_session_sidecar_and_does_not_hide_waiting(tmp_pa
 def test_the_attention_aggregate_names_what_wants_a_person(tmp_path):
     ws = _threaded_workspace(tmp_path)
     first, second = ws.threads.new(), ws.threads.new()
+    # `TurnRunner` sets this the moment a turn starts; without it neither is a conversation yet
+    first.opener, second.opener = 'the first thing', 'the second thing'
     ws.threads.switch(first.id)
     run = second.ai._new_run('working')
     a = ws.threads.attention()
@@ -1018,8 +1090,9 @@ def test_a_thread_card_carries_the_name_the_history_picker_shows(tmp_path):
     assert thread.dict()['title'] == named[thread.id]['title'] == 'ascii art for the ramabana CLI'
     with TestClient(ide_app(ws)) as client:
         rows = {row['id']: row for row in client.get('/agent/threads').json()['threads']}
-    assert rows[thread.id]['title'] == named[thread.id]['title'], 'the card and the picker agree'
-    ws.threads.title(thread.id, 'A name a person chose')
+        assert rows[thread.id]['title'] == named[thread.id]['title'], 'the card and the picker agree'
+        # inside: leaving the client ends the lifespan, and this conversation stops being live
+        ws.threads.title(thread.id, 'A name a person chose')
     assert thread.dict()['title'] == 'A name a person chose', 'a chosen name outranks the derived one'
 
 

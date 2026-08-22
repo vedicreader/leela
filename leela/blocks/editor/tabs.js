@@ -23,7 +23,7 @@ function saveTabLocation() {
   // Nothing else prunes this: a closed, renamed or deleted file leaves its entry behind, so
   // the cap is what keeps a long session (and sessionStorage) bounded.
   for (const stale of [...lee.locations.keys()].slice(0, lee.locations.size - 80)) lee.locations.delete(stale);
-  try { sessionStorage.setItem('lee-tab-locations', JSON.stringify([...lee.locations])); } catch (_) {}
+  try { localStorage.setItem('lee-tab-locations', JSON.stringify([...lee.locations])); } catch (_) {}
 }
 function restoreTabLocation(st, skip = false) {
   const key = st.path || st.title, loc = lee.locations.get(key);

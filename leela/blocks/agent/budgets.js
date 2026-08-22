@@ -109,6 +109,7 @@ window.leeAgentExpand = leeAgentExpand;
 
 function leeRight(which) {
   const right = $('#right'); if (!right) return;
+  try { localStorage.setItem('lee-right-view', which); } catch (_) {}
   right.classList.toggle('right-agent', which === 'agent');
   right.classList.toggle('right-vars', which === 'vars');
   right.classList.toggle('right-memory', which === 'memory');

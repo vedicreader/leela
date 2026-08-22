@@ -1127,7 +1127,10 @@ kbd {
 .lee-proposal-branch > footer { border-top: 1px solid var(--lee-border); color: var(--lee-fg4); font: 9px/1.4 var(--lee-mono); }
 .lee-proposal-branch > footer button { margin-left: auto; }
 .lee-approval.rolled-back { opacity: .72; border-left-color: var(--lee-red); }
-.lee-agent-runstrip { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 5px 8px; border-top: 1px solid var(--lee-border);
+/* One row per run, and a fan-out has one per subagent. `flex: none` or the log squashes the strip
+   back to one row and the rest spills over the conversation; `max-height` or twenty take the pane. */
+.lee-agent-runstrip { display: flex; align-items: center; gap: 6px; min-height: 34px; flex: none;
+  max-height: 40%; overflow-y: auto; padding: 5px 8px; border-top: 1px solid var(--lee-border);
   background: color-mix(in srgb, var(--lee-bg1) 92%, transparent); box-shadow: inset 0 1px color-mix(in srgb, var(--lee-fg) 3%, transparent); }
 .lee-agent-runstrip[hidden] { display: none; }
 .lee-agent-harness-banner { padding: 6px 9px; border-top: 1px solid var(--lee-warning);
@@ -1135,10 +1138,14 @@ kbd {
   font-size: 11px; line-height: 1.45; }
 .lee-agent-harness-banner[hidden] { display: none; }
 .lee-agent-harness-banner strong { color: var(--lee-warning); }
-.lee-agent-run-state { display: grid; flex: 1; gap: 4px; overflow: hidden; color: var(--lee-fg2); font: 600 9.5px/1.3 var(--lee-mono); }
+.lee-agent-run-state { display: grid; flex: 1 1 auto; min-width: 0; gap: 4px; overflow: hidden; color: var(--lee-fg2); font: 600 9.5px/1.3 var(--lee-mono); }
 .lee-agent-run { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.lee-agent-run > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lee-agent-run button { margin-left: auto; border: 1px solid var(--lee-border); background: transparent; color: var(--lee-red); font: inherit; cursor: pointer; }
+.lee-agent-run > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-agent-run time { flex: none; color: var(--lee-fg4); font-variant-numeric: tabular-nums; }
+.lee-agent-run button { flex: none; border: 1px solid var(--lee-border); background: transparent; color: var(--lee-red); font: inherit; cursor: pointer; }
+/* Several runs: the rows take the whole width and the two wide buttons wrap under them. */
+.lee-agent-runstrip.fanned { flex-wrap: wrap; align-items: flex-start; }
+.lee-agent-runstrip.fanned .lee-agent-run-state { flex: 1 1 100%; }
 .lee-agent-steer { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 5px; padding-bottom: 5px; }
 .lee-agent-steer .lee-input { margin: 0; }
 .lee-agent-steerqueue { display: flex; align-items: center; gap: 6px; overflow: hidden; color: var(--lee-fg4); font: 9px/1.3 var(--lee-mono); }
@@ -2322,6 +2329,10 @@ kbd {
 .lee-search-preview > header strong { color: var(--lee-fg); font-size: 11.5px; }
 .lee-search-preview > header span { color: var(--lee-fg4); font: 9.5px/1.3 var(--lee-mono); }
 .lee-search-preview > header .lee-btn { margin-left: auto; }
+/* A package hit has two actions: the file it is in, and the package's API listing. */
+.lee-search-preview > header .lee-search-actions { flex-direction: row; gap: 6px; margin-left: auto; align-items: center; }
+.lee-search-preview > header .lee-search-actions .lee-btn { margin-left: 0; }
+.lee-search-preview > header .lee-search-actions [hidden] { display: none; }
 #cspreview { min-height: 0; flex: 1 1 auto; overflow: hidden; }
 .lee-search-relations { display: flex; align-items: center; gap: 4px; min-height: 0; padding: 5px 8px;
   overflow-x: auto; border-top: 1px solid var(--lee-border); background: var(--lee-bg1); }
@@ -2337,12 +2348,15 @@ kbd {
 .lee-search-progress span { width: 8px; height: 8px; border: 1px solid var(--lee-accent); border-top-color: transparent;
   border-radius: 50%; animation: lee-spin .72s linear infinite; }
 .lee-package-api { min-height: 180px; max-height: 68vh; overflow: auto; padding: 4px; }
-.lee-package-api button { width: 100%; display: grid; grid-template-columns: minmax(150px, .8fr) minmax(0,1.2fr);
+.lee-package-api button { width: 100%; display: grid;
+                          grid-template-columns: minmax(140px, .8fr) minmax(0,1.1fr) minmax(0,.7fr);
   gap: 12px; padding: 7px 8px; border: 0; border-bottom: 1px solid var(--lee-border); border-radius: 3px;
   background: transparent; color: var(--lee-fg2); cursor: pointer; text-align: left; }
 .lee-package-api button:hover { background: var(--lee-sel); }
 .lee-package-api strong { overflow: hidden; color: var(--lee-aqua); font: 10.5px/1.4 var(--lee-mono); text-overflow: ellipsis; }
 .lee-package-api span { color: var(--lee-fg4); font-size: 10.5px; line-height: 1.4; }
+.lee-package-api small { overflow: hidden; color: var(--lee-fg4); font: 9.5px/1.4 var(--lee-mono);
+                         text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 760px) {
   .lee-code-search-modal { padding: 0; }
   .lee-code-search-modal .lee-modalbox { width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; }

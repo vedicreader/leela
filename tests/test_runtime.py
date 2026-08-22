@@ -1240,5 +1240,6 @@ def test_a_busy_runtime_is_refused_even_when_named(tmp_path):
     ws.pool.kernels['hot'] = k
     with TestClient(ide_app(ws)) as client:
         out = client.post('/runtime/close', json={'key': 'hot'}).json()
+        # read inside: leaving the client ends the lifespan, which closes every kernel
+        assert k.shutdown_calls == 0
     assert out['ok'] is False and 'running' in out['error']
-    assert k.shutdown_calls == 0

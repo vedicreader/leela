@@ -145,8 +145,8 @@ def _carry(froms, plains, node, name, here):
         alias = first(a for a in node.names if (a.asname or a.name).split('.')[0] == name)
         plains.add(f'import {_spec(alias)}')
 
-def _repoint(path, text, src_mod, dest_mod, names, drop=False):
-    "One file's imports of `names`, pointed at `dest_mod`. `drop` deletes them, for the destination."
+def _repoint(path, text, src_mod, dest_mod, names):
+    "One file's imports of `names`, pointed at `dest_mod`."
     here, moved = module_of(path), set(names)
     tree, starts = _parse(path, text), _starts(text)
     bound, edits, hit, notes = _bound(tree), [], False, []
@@ -158,7 +158,7 @@ def _repoint(path, text, src_mod, dest_mod, names, drop=False):
         keep = [a for a in node.names if a.name not in moved]
         a, b = _at(text, starts, node)
         indent = text[starts[node.lineno - 1]:a]
-        lines = ([_from(node, keep)] if keep else []) + ([] if drop else [_stmt(dest_mod, here, [_spec(x) for x in taken])])
+        lines = ([_from(node, keep)] if keep else []) + [_stmt(dest_mod, here, [_spec(x) for x in taken])]
         if lines: edits.append((a, b, ('\n' + indent).join(lines)))
         else: edits.append((starts[node.lineno - 1], starts[node.end_lineno], ''))
     prefixes = {}
@@ -182,8 +182,7 @@ def _repoint(path, text, src_mod, dest_mod, names, drop=False):
             if len(node.names) == 1: edits.append((starts[node.lineno - 1], starts[node.end_lineno], ''))
             else: edits.append((*_at(text, starts, node),
                                 'import ' + ', '.join(_spec(x) for x in node.names if x is not alias)))
-        if not drop:
-            edits += _add_imports(text, tree, starts, here, {dest_mod: {n.attr for n in reached}}, set())
+        edits += _add_imports(text, tree, starts, here, {dest_mod: {n.attr for n in reached}}, set())
     if not hit: return None, notes
     return _apply(text, edits), notes
 

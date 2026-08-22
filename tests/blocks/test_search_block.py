@@ -114,6 +114,95 @@ def test_a_method_is_not_offered_as_the_definition_of_a_bare_name(ws, tmp_path, 
     indented = s.env_definitions('render')
     assert [h.package for h in indented] == ['one'], 'an indented one answers when nothing else does'
 
+def test_the_jump_route_carries_the_dotted_chain(ws, tmp_path, no_index):
+    "The chain is what says `fastcore.test` is a module, so the route has to pass it through."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    site = _venv(tmp_path, {'fastcore/test.py': 'def test_eq(a, b): pass\n',
+                            'rich/style.py': 'def test():\n    pass\n'})
+    use = tmp_path/'use.py'; use.write_text('from fastcore.test import test_eq\n')
+    with TestClient(ide_app(ws)) as client:
+        d = client.get(f'/code/jump?name=test&path={use}&line=1&dotted=fastcore.test').json()
+        assert d['kind'] == 'definition' and d['hits'][0]['path'] == str(site/'fastcore'/'test.py')
+        assert d['hits'][0]['module'] == 'fastcore.test'
+        bare = client.get(f'/code/jump?name=test&path={use}&line=1').json()
+        assert bare['hits'][0]['path'].endswith('rich/style.py'), 'no chain, no module'
+
+def test_a_package_api_row_says_which_file_the_name_is_in(ws, tmp_path, monkeypatch):
+    "The listing is a way into the package's files, so every row it can place carries one."
+    from leela.blocks.search.search import Search
+    site = _venv(tmp_path, {'fastcore/aio.py': 'def run_sync(): pass\n'})
+    rows = [{'mod_name': 'fastcore.aio.run_sync', 'docstring': 'run it',
+             'path': '/elsewhere/.venv/lib/python3.12/site-packages/fastcore/aio.py', 'lineno': 42},
+            {'mod_name': 'fastcore.gone', 'docstring': '', 'path': '/nowhere/at/all.py', 'lineno': 3},
+            {'mod_name': 'fastcore.blank', 'docstring': '', 'path': None, 'lineno': None}]
+    class K:
+        def public_api(self, pkg, meta_cols='', limit=200):
+            assert 'path' in meta_cols and 'lineno' in meta_cols, meta_cols
+            return rows
+    monkeypatch.setattr(Search, '_kosha', lambda self: K())
+    got = ws.search.package_api('fastcore')
+    assert got[0]['path'] == str(site/'fastcore'/'aio.py') and got[0]['line'] == 42
+    assert got[1]['path'] == '' and got[2]['path'] == '' and got[2]['line'] == 0
+    assert ws.search.package_api('') == []
+
+def test_a_dotted_module_name_opens_the_module_it_names(ws, tmp_path, no_index):
+    """`fastcore.test` is a module, and nothing declares a module. The name alone found whichever
+    package happened to have a `def test`, which is never the file that was clicked."""
+    site = _venv(tmp_path, {'fastcore/__init__.py': '__version__ = "1"\n',
+                            'fastcore/test.py': 'def test_eq(a, b):\n    pass\n',
+                            'rich/style.py': 'def test():\n    pass\n'})
+    (tmp_path/'use.py').write_text('from fastcore.test import test_eq\ntest_eq(1, 1)\n')
+    s, here = ws.search, str(tmp_path/'use.py')
+    assert str(s.module_file('fastcore.test', here)) == str(site/'fastcore'/'test.py')
+    assert str(s.module_file('fastcore', here)) == str(site/'fastcore'/'__init__.py'), 'a package is its `__init__`'
+    assert s.module_file('fastcore.nope', here) is None
+    kind, hits = s.declaration_or_usages('test', here, 1, dotted='fastcore.test')
+    assert kind == 'definition' and hits[0].path == str(site/'fastcore'/'test.py')
+    assert hits[0].line == 1 and hits[0].module == 'fastcore.test' and hits[0].package == 'fastcore'
+    assert 'is a module' in s.note
+    kind, hits = s.declaration_or_usages('test', here, 1)
+    assert hits[0].path.endswith('rich/style.py'), 'without the chain there is nothing saying it is a module'
+    assert str(s.module_file('.'.join(['fastcore', 'test']), here)).endswith('test.py')
+    assert s.module_file('fastcore..test', here) is None and s.module_file('', here) is None
+
+def test_a_name_the_file_imports_as_a_module_is_that_module(ws, tmp_path, no_index):
+    "`from fastcore import test` makes `test` a module here, whatever `def test` a package has."
+    site = _venv(tmp_path, {'fastcore/__init__.py': '', 'fastcore/test.py': 'def test_eq(a, b): pass\n',
+                            'rich/style.py': 'def test():\n    pass\n'})
+    mine = tmp_path/'mine.py'
+    mine.write_text('from fastcore import test\nimport fastcore.test as t2\nfrom fastcore.test import test_eq\n')
+    s = ws.search
+    assert s.imported_module('test', str(mine)) == 'fastcore.test'
+    assert s.imported_module('t2', str(mine)) == 'fastcore.test', 'an alias names the module it was given'
+    assert s.imported_module('test_eq', str(mine)) == 'fastcore.test.test_eq', 'which is no file, so it is no module'
+    assert s.module_file('fastcore.test.test_eq', str(mine)) is None
+    assert s.imported_module('nothing', str(mine)) == ''
+    kind, hits = s.declaration_or_usages('test', str(mine), 1)
+    assert kind == 'definition' and hits[0].path == str(site/'fastcore'/'test.py')
+    kind, hits = s.declaration_or_usages('test_eq', str(mine), 1)
+    assert hits[0].path == str(site/'fastcore'/'test.py') and hits[0].line == 1, 'a symbol is still a symbol'
+
+def test_a_sibling_module_answers_a_relative_import(ws, tmp_path, no_index):
+    "`from .workspace import W` puts the module beside the file, which is where it is looked for first."
+    pkg = tmp_path/'leela'; pkg.mkdir(); (pkg/'__init__.py').write_text('')
+    (pkg/'workspace.py').write_text('class W: pass\n')
+    app = pkg/'app.py'; app.write_text('from .workspace import W\n')
+    s = ws.search
+    assert s.imported_module('workspace', str(app)) == '', 'a relative import binds the name, not the module'
+    assert str(s.module_file('workspace', str(app))) == str(pkg/'workspace.py')
+    assert str(s.module_file('leela.workspace', str(tmp_path/'x.py'))) == str(pkg/'workspace.py')
+
+def test_an_indexed_package_path_is_remapped_to_this_project_copy(ws, tmp_path, no_index):
+    """One Kosha index serves every checkout, so a row can name another project's virtualenv. Same
+    package, possibly a different version, and the sandbox cannot open it at all."""
+    site = _venv(tmp_path, {'fastcore/aio.py': 'def run_sync(): pass\n'})
+    s, elsewhere = ws.search, '/somewhere/else/.venv/lib/python3.12/site-packages/fastcore/aio.py'
+    assert s._here(elsewhere) == str(site/'fastcore'/'aio.py')
+    assert s._here('/somewhere/else/site-packages/nothing/here.py') == '', 'and one nobody has is no path'
+    assert s._here(str(tmp_path/'readme.md')) == str(tmp_path/'readme.md'), 'a project file is already here'
+    assert s._here('') == ''
+
 def test_a_project_without_a_venv_has_no_environment_to_search(ws, tmp_path, no_index):
     assert ws.search.env_roots() == []
     assert ws.search.env_definitions('anything') == []

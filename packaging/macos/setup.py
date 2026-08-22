@@ -86,8 +86,30 @@ OPTIONS = {
     'strip': True,
 }
 
+def install_modern_icon(app, identity=None):
+    """Compile `Leela.icon` into a built bundle, after py2app and before anything signs it.
+
+    `iconfile` above is the ICNS fallback, all py2app installs and all macOS before 26 reads. The
+    Icon Composer document is what 26 draws, and its plist entries must reach `Info.plist` before
+    a signature covers them. None when the document or the tooling is absent: a machine without
+    Xcode 26 still builds a working app, with the older icon.
+    """
+    icon = ASSETS/'Leela.icon'
+    if not icon.is_dir(): return None
+    try: from iconmage import install_icon
+    except ImportError:
+        print('  iconmage not installed; keeping the ICNS icon alone '
+              '(uv tool install git+https://github.com/AnswerDotAI/iconmage.git)')
+        return None
+    try: return install_icon(icon, app, deployment_target='14.0', identity=identity)
+    except Exception as e:
+        print(f'  Icon Composer icon not installed ({type(e).__name__}: {e}); keeping the ICNS one')
+        return None
+
 if __name__ == '__main__':
     if not (ASSETS/'Leela.icns').is_file():
         raise SystemExit('missing packaging/assets/Leela.icns — run tools/build_icons.py first')
     setup(name='Leela', version=__version__, app=[str(ROOT/'leela_app.py')],
           data_files=DATA_FILES, options={'py2app': OPTIONS}, setup_requires=['py2app'])
+    if (built := Path(sys.argv[0]).resolve().parent/'dist'/'Leela.app').is_dir():
+        if install_modern_icon(built): print(f'  Icon Composer icon installed in {built}')

@@ -4,8 +4,6 @@ import pytest
 
 pytestmark = pytest.mark.slow
 
-pytestmark = pytest.mark.slow
-
 import asyncio
 import os as _os
 import socket
@@ -513,6 +511,211 @@ def test_modifier_click_invokes_definition_navigation_in_code_editors():
           return window._definition;
         }""")
     assert _run(go) == 'target_name'
+
+def test_a_turn_that_fans_out_shows_one_readable_row_per_subagent():
+    """The runstrip was a single 34px line whatever it held, so a root and its subagents spilled out
+    of it over the conversation, and a `.lee-spacer` beside them left each row 118px of a 420px pane
+    -- every row reading `openai/gpt-5.6-luna suba…` and none of them saying what it was asked."""
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const now = Date.now() / 1000 - 75;
+          leeRight('agent'); leePane('right', true);
+          const measure = () => {
+            const strip = $('#agentrunstrip'), pane = $('#right').getBoundingClientRect();
+            const box = strip.getBoundingClientRect();
+            return {height: Math.round(box.height),
+                    contained: strip.scrollHeight <= strip.clientHeight + 1,
+                    inside: box.left >= pane.left - 1 && box.right <= pane.right + 1,
+                    fanned: strip.classList.contains('fanned'),
+                    rows: [...$$('.lee-agent-run', strip)].map(r => ({
+                      width: Math.round(r.getBoundingClientRect().width),
+                      text: r.textContent.trim()}))};
+          };
+          const root = {id: 'r0', kind: 'root', model: 'openai/gpt-5.6-luna', started: now,
+                        state: 'working', children: []};
+          lee.agentRuns = [root];
+          updateAgentRunstrip({runs: lee.agentRuns});
+          const one = measure();
+          root.children = [
+            {id: 'c1', kind: 'child', model: 'openai/gpt-5.6-luna', started: now, state: 'working',
+             question: 'review the refactor for missing cases', children: []},
+            {id: 'c2', kind: 'child', model: 'openai/gpt-5.6-luna', started: now, state: 'working',
+             question: 'check the recovery path', children: []}];
+          updateAgentRunstrip({runs: lee.agentRuns});
+          const many = measure();
+          lee.agentRuns = []; updateAgentRunstrip({runs: []});
+          return {one, many};
+        }""")
+    got = _run(go)
+    one, many = got['one'], got['many']
+    assert one['height'] == 34 and not one['fanned'], 'one run is still one line'
+    assert len(many['rows']) == 3 and many['fanned']
+    assert many['height'] > one['height'], 'the strip grows to hold its rows'
+    assert many['contained'], 'rather than spilling them over the conversation above it'
+    assert many['inside'], 'and it stays inside the pane'
+    assert all(r['width'] > one['rows'][0]['width'] for r in many['rows']), \
+        'the rows take the width the two buttons used to sit in'
+    asked = [r['text'] for r in many['rows'][1:]]
+    assert any('review the refactor' in t for t in asked) and any('check the recovery' in t for t in asked), \
+        'and each row leads with what its subagent was asked, which is all that tells them apart'
+
+def test_a_steer_is_drawn_inside_the_turn_it_interrupted():
+    """Appended to the log instead, the card sat below every chunk and tool row that followed --
+    a note stuck to the bottom of the pane rather than a message in the conversation."""
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const log = $('#agentlog'); log.innerHTML = ''; lee.agentTimeline = null;
+          const root = document.createElement('div'); root.className = 'lee-agent-timeline';
+          log.appendChild(root);
+          const timeline = agentTimeline(root); lee.agentTimeline = timeline;
+          timeline.chunk('reading the file');
+          setQueuedSteer('', 'use the other file');      // taken straight to a waiting approval
+          timeline.chunk('using the other one');
+          const inTurn = [...root.children].map(c => c.dataset?.steer || c.className.split(' ').pop());
+          // once the turn is over the timeline is gone, and a steer has nowhere but the log
+          lee.agentTimeline = null;
+          setQueuedSteer('', 'and afterwards');
+          const out = {inTurn, afterwards: log.lastElementChild?.dataset?.steer || '',
+                       stranded: root.nextElementSibling?.dataset?.steer === 'use the other file'};
+          log.innerHTML = ''; lee.agentTimeline = null;
+          return out;
+        }""")
+    got = _run(go)
+    assert got['inTurn'][1] == 'use the other file', 'the steer sits between the prose either side of it'
+    assert len(got['inTurn']) == 3 and got['inTurn'][2].startswith('lee-'), 'and the work after it follows'
+    assert not got['stranded'], 'rather than after the whole turn'
+    assert got['afterwards'] == 'and afterwards', 'with the log as the fallback when no turn is open'
+
+def test_a_saved_turn_replays_the_steer_that_interrupted_it():
+    "A steer reaches the pane twice: live on the feed, and again whenever the turn is rebuilt."
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const host = document.createElement('div'); document.body.appendChild(host);
+          renderTurns(host, [{prompt: 'rename the widget', reply: '', timeline: [
+            {event: 'chunk', data: {text: 'reading '}},
+            {event: 'steer', data: {text: 'use the other file', queued_steer: ''}},
+            {event: 'chunk', data: {text: 'using it'}}]}], 'Recovered conversation');
+          const root = $('.lee-agent-timeline', host);
+          const out = {kinds: [...root.children].map(c => c.className.split(' ')[0]),
+                       text: [...root.children].map(c => c.textContent.trim())};
+          host.remove();
+          return out;
+        }""")
+    got = _run(go)
+    assert 'lee-user-message' in got['kinds'], 'the steer is a message from the person, drawn as one'
+    at = got['kinds'].index('lee-user-message')
+    assert 0 < at < len(got['kinds']) - 1, 'in the place it happened, not before or after the turn'
+    assert 'use the other file' in got['text'][at]
+
+def test_steering_taken_straight_to_a_waiting_approval_is_still_shown_as_a_message():
+    """A steer typed against a pending approval answers it there and then, so it is never queued.
+    There was no card to un-queue, and the transcript showed the agent obeying an instruction it
+    never recorded anyone giving."""
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const log = $('#agentlog'); log.innerHTML = '';
+          // never queued: the server took it and returned an empty `queued_steer`
+          setQueuedSteer('', 'use the other file');
+          const after = log.children.length;
+          // the local reply and the feed event both arrive with the same text
+          setQueuedSteer('', 'use the other file');
+          const out = {drawn: after, deduped: log.children.length,
+                       text: log.lastElementChild?.textContent || ''};
+          // a steer that is queued keeps its cancellable card instead
+          setQueuedSteer('and then stop', 'and then stop');
+          out.queued = Boolean($('#agentqueuedsteer'));
+          out.cancellable = Boolean($('#agentqueuedsteer [data-cancel-steer]'));
+          // taken by the agent: the card stays as the message it is, without the cancel
+          setQueuedSteer('');
+          out.kept = Boolean($('#agentqueuedsteer'));
+          out.stillCancellable = Boolean($('#agentqueuedsteer [data-cancel-steer]'));
+          log.innerHTML = '';
+          return out;
+        }""")
+    got = _run(go)
+    assert got['drawn'] == 1, 'what the person said is in the log'
+    assert got['deduped'] == 1, 'and the same steer arriving twice is one message, not two'
+    assert 'use the other file' in got['text']
+    assert got['queued'] and got['cancellable'], 'a queued steer is still cancellable'
+    assert got['kept'] and not got['stillCancellable'], 'once taken it is a message, not a pending one'
+
+def test_the_caret_and_the_open_panels_are_remembered_past_the_window_closing():
+    """`sessionStorage` dies with the window, so every reopened tab came back at line 1 and the
+    right panel and dock always reset to agent and exec. All three belong to `localStorage`."""
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const out = {};
+          lee.path = '/w/notes.py'; lee.kind = 'text'; lee.tabKey = lee.path;
+          const host = document.createElement('div'); host.style.height = '80px';
+          document.body.appendChild(host);
+          const v = LeeCM.create(host, {doc: 'one\\ntwo\\nthree\\n', lang: 'python'});
+          lee.editors.set('file', v);
+          LeeCM.setCursor(v, v.state.doc.line(3).from);
+          localStorage.removeItem('lee-tab-locations');
+          saveTabLocation();
+          out.stored = JSON.parse(localStorage.getItem('lee-tab-locations') || '[]');
+          out.session = sessionStorage.getItem('lee-tab-locations');
+          leeRight('vars'); leeDock('term');
+          out.right = localStorage.getItem('lee-right-view');
+          out.dock = localStorage.getItem('lee-dock-view');
+          leeRight('agent'); leeDock('exec');
+          return out;
+        }""")
+    got = _run(go)
+    assert got['stored'][0][0] == '/w/notes.py', 'keyed by the file, so every tab has its own'
+    assert got['stored'][0][1]['pos'] > 0 and 'scroll' in got['stored'][0][1]
+    assert got['session'] is None, 'and it no longer goes somewhere that dies with the window'
+    assert got['right'] == 'vars' and got['dock'] == 'term'
+
+def test_a_minimised_pane_stays_minimised_even_though_its_tab_was_restored():
+    "`leeDock` opens the bottom pane to show its tab, so the restore has to run before the hiding."
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          localStorage.setItem('lee-dock-view', 'term');
+          localStorage.setItem('lee-pane-bottom', 'hidden');
+          localStorage.setItem('lee-right-view', 'vars');
+          initSplits();
+          const out = {dock: $('#bottomdock').classList.contains('dock-term'),
+                       hidden: $('#shell').classList.contains('no-bottom'),
+                       right: $('#right').classList.contains('right-vars')};
+          localStorage.removeItem('lee-pane-bottom'); localStorage.removeItem('lee-dock-view');
+          localStorage.removeItem('lee-right-view');
+          leePane('bottom', true); leeDock('exec'); leeRight('agent');
+          return out;
+        }""")
+    got = _run(go)
+    assert got['dock'] and got['right'], 'the tabs the last session had open are the ones showing'
+    assert got['hidden'], 'and a pane it had minimised is still minimised'
+
+def test_the_cursor_carries_the_whole_dotted_chain_to_a_lookup():
+    """`fastcore.test` is a module and nothing declares one, so the last name alone found whichever
+    package happened to have a `def test`. Only leftwards: on `fastcore` the answer is the package.
+    """
+    async def go(pg):
+        await pg.evaluate("""() => {
+          const host = document.createElement('div'); host.id = 'dotted-test';
+          host.style.height = '100px'; document.body.appendChild(host);
+          window._dottedView = LeeCM.create(host, {doc: 'from nbdev.showdoc import show_doc\\nfastcore.test.test_eq(a.b().c)\\n', lang: 'python'});
+        }""")
+        return await pg.evaluate("""() => {
+          const v = window._dottedView, at = n => { LeeCM.setCursor(v, n); return dottedAtCursor(v); };
+          const line2 = v.state.doc.line(2).from, text = v.state.doc.line(2).text;
+          return {
+            showdoc: at(v.state.doc.line(1).text.indexOf('showdoc') + 2),
+            nbdev: at(v.state.doc.line(1).text.indexOf('nbdev') + 2),
+            imported: at(v.state.doc.line(1).text.indexOf('show_doc') + 2),
+            sub: at(line2 + text.indexOf('test.') + 1),
+            leaf: at(line2 + text.indexOf('test_eq') + 1),
+            root: at(line2 + 1),
+            call: at(line2 + text.indexOf('c)') + 1)
+          };
+        }""")
+    got = _run(go)
+    assert got['showdoc'] == 'nbdev.showdoc' and got['nbdev'] == 'nbdev', 'leftwards only'
+    assert got['imported'] == 'show_doc', 'the name being imported has no chain of its own'
+    assert got['sub'] == 'fastcore.test' and got['leaf'] == 'fastcore.test.test_eq'
+    assert got['root'] == 'fastcore'
+    assert got['call'] == 'c', 'a call is not a module, so the chain stops at the bracket'
 
 def test_recent_files_is_an_mru_switcher_with_a_reliable_browser_chord():
     async def go(pg):

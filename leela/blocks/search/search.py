@@ -3,7 +3,7 @@
 from __future__ import annotations
 import ast, json, re, shutil, subprocess
 from dataclasses import dataclass, field
-from fastcore.all import L, Path, ifnone, store_attr
+from fastcore.all import L, Path, first, ifnone, store_attr
 from fastcore.aio import athreaded
 from fastcore.parallel import threaded
 
@@ -126,7 +126,8 @@ class Search:
         out = L()
         for row in rows:
             m = _meta(row)
-            path = str(m.get('path') or row.get('path') or '')
+            raw = str(m.get('path') or row.get('path') or '')
+            path = self._here(raw) or raw
             local = self._covers(path)
             package = str(row.get('package') or m.get('package') or '')
             out.append(Hit(path=path, line=int(m.get('lineno') or 1),
@@ -167,10 +168,24 @@ class Search:
         self.backend, self.note = 'environment', f'Kosha environment store · {len(out)} results'
         return out
     def package_api(self, package):
+        "A package's public API, each name carrying the file and line that define it."
         k = self._kosha()
         if k is None or not package: return []
-        try: return [dict(r) for r in k.public_api(package)]
+        try: rows = [dict(r) for r in k.public_api(package, meta_cols='mod_name,docstring,path,lineno')]
         except Exception as e: self.note = f'package API failed ({errstr(e)})'; return []
+        for r in rows:
+            r['path'], r['line'] = self._here(str(r.pop('path', '') or '')), int(r.pop('lineno', 0) or 0)
+        return rows
+    def _here(self, place):
+        "The project's own copy of an indexed package file."
+        # One Kosha index serves every checkout, so a row can name another virtualenv's copy:
+        # same package, possibly another version, and the sandbox cannot open it at all.
+        parts = Path(place).parts if place else ()
+        if 'site-packages' in parts:
+            rest = parts[len(parts) - list(reversed(parts)).index('site-packages'):]
+            for r in self.env_roots():
+                if (mine := Path(r).joinpath(*rest)).is_file(): return str(mine)
+        return place if place and Path(place).is_file() else ''
     def completion_patches(self, code, pos, limit=50):
         "Methods dynamically patched onto the receiver type, from Kosha's code stores."
         typ,frag,start=_receiver(code,pos)
@@ -339,6 +354,7 @@ class Search:
     def _indexed_hits(self, rows, kind, score_key=''):
         "Only indexed rows the workspace can actually open; Kosha may index a wider checkout."
         hits = L(self._hit(r, kind, (r.get(score_key) or 0.0) if score_key else 0.0) for r in rows)
+        for h in hits: h.path = self._here(h.path) or h.path
         return hits.filter(lambda h: self._covers(h.path))
     def _fts(self, q, limit):
         "Kosha's lexical FTS5 leg only: no embedding and no vector search hidden behind it."
@@ -566,6 +582,65 @@ class Search:
         lib = Path(py).parent.parent/'lib'
         if not lib.is_dir(): return L()
         return L(p/'site-packages' for p in lib.iterdir() if (p/'site-packages').is_dir())
+    def stdlib_root(self):
+        "The project interpreter's own library, which a venv's `lib` does not hold. Asked once."
+        if (got := getattr(self, '_stdlib', None)) is not None: return got
+        from ..runtime.kernels import project_python
+        self._stdlib = L()
+        if py := project_python(self.fs.roots):
+            try:
+                r = subprocess.run([py, '-c', 'import sysconfig;print(sysconfig.get_paths()["stdlib"])'],
+                                   capture_output=True, text=True, timeout=10)
+                if (d := Path(r.stdout.strip() or '.')).is_dir(): self._stdlib = L(d)
+            except Exception: pass
+        return self._stdlib
+    def module_roots(self, path=''):
+        "Where a dotted module is looked up: the file's own folder, the environment, the stdlib, the project."
+        env = self.env_roots()
+        return L(*([Path(path).parent] if path else []), *env, *[r.parent for r in env],
+                 *self.stdlib_root(), *self.fs.roots)
+    def module_file(self, dotted, path=''):
+        "The file a dotted module name names, as a module or as a package's `__init__`."
+        parts = (dotted or '').split('.')
+        if not parts or not all(re.match(r'^[_A-Za-z]\w*$', p) for p in parts): return None
+        for root in self.module_roots(path):
+            base = Path(root).joinpath(*parts)
+            for cand in (base.with_suffix('.py'), base/'__init__.py'):
+                if cand.is_file(): return cand
+        return None
+    def module_hit(self, dotted, path=''):
+        "A dotted module name as a jump target: its file, opened at the top."
+        # Nothing declares a module, so a symbol lookup on `test` finds somebody else's `def test`.
+        f = self.module_file(dotted, path)
+        if f is None: return None
+        env = first(r for r in self.env_roots() if str(f).startswith(str(r)))
+        try: head = first(l for l in f.read_text(errors='ignore').split('\n') if l.strip()) or ''
+        except Exception: head = ''
+        return Hit(str(f), 1, head.strip()[:200], 'env-definition' if env else 'definition',
+                   symbol=dotted, package=dotted.split('.')[0] if env else '',
+                   module=self.env_module(f) or (dotted if env else ''))
+    def imported_module(self, name, path):
+        "The dotted module a file's own imports bind `name` to, when that names a file."
+        # `import json` makes `json` a module here whatever `def json` a package has, and the
+        # file's imports are the only thing that can say so: a bare cursor carries no dot.
+        if not path or not name: return ''
+        try: text = self.fs.read(path)
+        except Exception: return ''
+        if _is_nb(path):
+            try: text = '\n'.join(str(c.get('source') or '') for c in read_cells(text))
+            except Exception: return ''
+        try: tree = ast.parse(text)
+        except SyntaxError: return ''
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import):
+                for a in n.names:
+                    if a.asname == name: return a.name
+                    if not a.asname and a.name.split('.')[0] == name: return name
+            elif isinstance(n, ast.ImportFrom) and n.level < 2:
+                for a in n.names:
+                    if (a.asname or a.name) == name:
+                        return a.name if n.level else f'{n.module or ""}.{a.name}'
+        return ''
     def import_package(self, name, path):
         "The package a file says `name` comes from, so a lookup lands in the one that was imported."
         if not path or not name: return ''
@@ -642,8 +717,8 @@ class Search:
         out, roots = L(), self.env_roots()
         for row in rows:
             m = _meta(row)
-            place = str(m.get('path') or '')
-            if not place or not Path(place).exists(): continue
+            place = self._here(str(m.get('path') or ''))
+            if not place: continue
             out.append(Hit(path=place, line=int(m.get('lineno') or 1),
                 text=(row.get('content') or '').strip().split('\n')[0][:200], kind='env-definition',
                 symbol=name, package=str(row.get('package') or m.get('package') or ''),
@@ -668,20 +743,30 @@ class Search:
                 if h.cell_index == cell_index and int(h.cell_line or 0) == int(line): return True
             elif int(h.line or 0) == int(line): return True
         return False
-    def declaration_or_usages(self, name, path=None, line=0, cell_index=-1, limit=30):
+    def declaration_or_usages(self, name, path=None, line=0, cell_index=-1, limit=30, dotted=''):
         """Where `name` is declared, or who uses it when the cursor is already there.
 
         A notebook cursor is a cell and a line inside it, which is why `cell_index` is separate:
         the file line a hit carries is a line of JSON and never matches what a person is looking at.
+        `dotted` is the chain the cursor ends: `fastcore.test` is a module, and only the chain says so.
         """
+        if '.' in (dotted or '') and (m := self.module_hit(dotted, path or '')):
+            self.backend, self.note = 'module', f'{dotted} is a module'
+            return 'definition', L(m)
         defs = self.definitions(name, path, limit)
         if defs and not self.at_definition(defs, path, line, cell_index): return 'definition', defs
+        if not defs and (m := self.module_hit(self.imported_module(name, path or ''), path or '')):
+            self.backend, self.note = 'module', f'{m.module or name} is a module'
+            return 'definition', L(m)
         # nothing in the project defines it, so it is either a package's or nobody's. The usages
         # of a name the project only imports are import lines, which is the noise this replaces.
         if not defs and (env := self.env_definitions(name, path=path or '')):
             # the backend is whichever answered, the index or the scan; only the note is ours
             self.note = f'defined in {env[0].package}, not in this project'
             return 'definition', env
+        if not defs and (m := self.module_hit(name, path or '')):
+            self.backend, self.note = 'module', f'{name} is a module'
+            return 'definition', L(m)
         return 'usages', self.usages(name)
     @athreaded
     def async_sync(self, notebooks=True, graph=True):
