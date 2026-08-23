@@ -53,7 +53,7 @@ def _bound(tree):
     return out
 
 def _free(nodes):
-    "Names the nodes read without binding, which is what has to reach them wherever they land."
+    "Names the nodes read without binding, which is what has to reach them wherever they go."
     load, store = set(), set()
     for node in nodes:
         for n in ast.walk(node):
@@ -193,9 +193,8 @@ def _gained(path, before, after):
 def move_plan(read, src, names, dest, others=(), shim=True):
     """Move `names` from `src` into `dest` and repoint every file in `others` that imported them.
 
-    `read` returns a file's text, or None when it does not exist. A destination that does not
-    exist comes back with `before` None, which is what makes undo delete it again.
-    """
+    `read` returns a file's text, or None when it does not exist. A destination that did not exist
+    comes back with `before` None, which is what makes undo delete it again."""
     src, dest, names, notes = str(src), str(dest), list(names), []
     if not names: raise ValueError('choose a function or class to move')
     if Path(src).resolve() == Path(dest).resolve(): raise ValueError('choose a different file to move into')
@@ -233,7 +232,7 @@ def move_plan(read, src, names, dest, others=(), shim=True):
     used = sorted(n for n in names if n in _free([rtree]))
     want = names if shim else used
     # A re-export the source does not otherwise need is dropped rather than refused: keeping it
-    # would point the two modules at each other for nothing.
+    # would import the two modules into each other for nothing.
     if want and back:
         if used: raise ValueError(f'{src_mod} and {dest_mod} would import each other over '
                                   f'{", ".join(back)}; move those as well')

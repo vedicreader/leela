@@ -1,4 +1,3 @@
-/* -------------------------------------------------------------- refactor */
 function refactorRows(files, selected) {
   return files.map((file, i) => `<label class="lee-mrow"><input type="checkbox" data-refactor-path="${esc(file.path)}"${selected.has(file.path) ? ' checked' : ''}>` +
     `<strong>${esc(compactPath(file.path))}</strong><span class="sub">${file.edits} replacement${file.edits === 1 ? '' : 's'}</span></label>`).join('');
@@ -41,11 +40,9 @@ async function replaceWorkspace() {
   };
 }
 
-/* Which lines differ, as one span from the first difference to the last.
-
-   Not a real diff: the point is to put the change on screen and under a selection, and a span
-   does that for every edit an undo can produce. A minimal diff would draw prettier ranges and
-   would not answer the question -- "where did it change" -- any better. */
+/* Which lines differ, as one span from the first difference to the last. Not a real diff: the point
+   is to put the change on screen and under a selection, and a span does that for every edit an undo
+   can produce. */
 function changedSpan(now, other) {
   const A = String(now || '').split('\n'), B = String(other || '').split('\n');
   let s = 0;
@@ -55,8 +52,8 @@ function changedSpan(now, other) {
   return {from: s + 1, to: Math.max(s + 1, a + 1)};
 }
 
-/* An undo that changes a file you cannot see has happened to you rather than been done by you.
-   Select what moved and centre it, so the operation is legible instead of merely reported. */
+/* An undo that changes a file you cannot see has happened to you rather than been done by you, so
+   select what moved and centre it. */
 function showChangedSpan(now, other, note) {
   const v = curEditor();
   if (!v) return status(note, 'ok');
@@ -86,7 +83,7 @@ async function workspaceHistoryRedo() {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 
-/* Extraction and inlining run against the file *on disk*: the endpoints read it themselves and
+/* Extraction and inlining run against the file on disk: the endpoints read it themselves and
    address it by character offset, so an unsaved buffer would be rewritten from text the server
    never saw. Both refuse rather than save on the user's behalf. */
 function refactorTarget() {
@@ -135,10 +132,9 @@ async function inlineVariable() {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 
-/* Whole lines within one buffer, where `cell_move_up`/`cell_move_down` move whole cells.
-   Written against the CodeMirror state directly rather than through a new `LeeCM` export: the
-   vendored bundle is committed and rebuilding it needs node, so the page must not grow a
-   dependency on a wrapper that is not in the shipped build. */
+/* Whole lines within one buffer, where `cell_move_up` and `cell_move_down` move whole cells.
+   Written against the CodeMirror state directly rather than through a new `LeeCM` export, because
+   the vendored bundle is committed and rebuilding it needs node. */
 function moveLines(dir) {
   const view = curEditor(); if (!view) return;
   const doc = view.state.doc, sel = view.state.selection.main;

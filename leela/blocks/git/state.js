@@ -23,8 +23,8 @@ try { savedGitLists = JSON.parse(localStorage.getItem('lee-git-changelists') || 
 try { savedGitReviews = JSON.parse(localStorage.getItem('lee-git-reviews') || '{}'); } catch (_) {}
 try { savedGitNotes = JSON.parse(localStorage.getItem('lee-git-review-notes') || '{}'); } catch (_) {}
 const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResults: [], expect: '', history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
-// Which repository a panel request is about. Empty means the one the active tab lives in,
-// which is what the branch pill, the file tree and the editor's change marks always mean.
+// Which repository a panel request is about. Empty means the one the active tab lives in, which is
+// what the branch pill, the file tree and the editor's change marks always mean.
 function gitUrl(path, params = {}) {
   const q = new URLSearchParams(params);
   if (gitUI.repo) q.set('repo', gitUI.repo);
@@ -35,9 +35,9 @@ function gitRepoName(root) { return String(root || '').split('/').filter(Boolean
 function saveGitWorkflowState() { localStorage.setItem('lee-git-changelists', JSON.stringify(gitUI.changeLists)); localStorage.setItem('lee-git-reviews', JSON.stringify(gitUI.reviewed)); localStorage.setItem('lee-git-review-notes', JSON.stringify(gitUI.reviewNotes)); }
 function gitReviewKey(d, path) { return `${d.root || gitUI.snapshot?.root || ''}\0${d.base}\0${d.head}\0${d.mode}\0${path}`; }
 function paintGitPill(d) {
-  // The pill and the tree badges belong to the repository the active tab is in. A panel
-  // pinned to another repository in the workspace must not repaint them from a snapshot
-  // that is not theirs -- a clean pill over a dirty file tree is worse than no pill.
+  // The pill and the tree badges belong to the repository the active tab is in. A panel pinned to
+  // another repository must not repaint them from a snapshot that is not theirs, because a clean
+  // pill over a dirty file tree is worse than no pill.
   if (gitUI.repo) return;
   const git = $('#gitpill'); if (!git || !d) return;
   const n = (d.changes || []).length;
@@ -52,14 +52,12 @@ async function gitDo(op, extra = {}) {
   try {
     const d = await post('/git/action', {op, repo: gitUI.repo, ...extra});
     gitUI.snapshot = d; paintGitPill(d);
-    // Immediately, rather than up to one poll later -- and the signature is cleared so the
-    // poll that follows does not treat our own mutation as news and do it all again.
+    // Immediately rather than up to one poll later. The signature is cleared so the next poll
+    // does not treat our own mutation as news and do it all again.
     lee.gitSignature = ''; gitChanged();
-    // What the operation *left behind* beats how long it took. A squash that staged twelve
-    // files and a merge that stopped at a conflict both "complete", and saying only that is
-    // how an index full of someone else's changes came to look like a bug in Leela.
-    // One call, not two: a second `status` replaces the first, and the note is the half that
-    // must not be the one dropped.
+    // What the operation left behind beats how long it took. A squash that staged twelve files and
+    // a merge that stopped at a conflict both "complete". One call, not two, because a second
+    // `status` replaces the first.
     const said = d.outcome?.summary || `complete · ${Math.round(performance.now() - started)} ms`;
     status(`git ${name} · ${said}${d.outcome?.note ? ' — ' + d.outcome.note : ''}`,
            d.outcome?.note ? 'err' : 'ok');
@@ -67,9 +65,8 @@ async function gitDo(op, extra = {}) {
            [extra.branch, extra.ref, extra.message].filter(Boolean).join(' ') || '', 'ok');
     return d;
   } catch (e) {
-    /* Without this the status line kept saying "git checkout…" for ever. Git refusing a
-       switch because local changes would be overwritten is a normal, fast answer, and it
-       looked identical to a hang -- the one thing a progress message must never do. */
+    /* Reporting the failure here is what clears the running status line. Git refusing a switch
+       because local changes would be overwritten is a normal, fast answer. */
     leeFail('git', name, e);
     throw e;
   } finally { gitUI.busy = ''; }
@@ -90,8 +87,8 @@ function gitFilterBanner(d) {
     `<strong>files here may not stay staged</strong><span>${esc(f.explain)}</span></div></section>`;
 }
 
-// The way back from the last thing that moved this branch. Offered whenever there is one,
-// rather than only after a failure: "that merge was not what I wanted" arrives a minute later.
+// The way back from the last thing that moved this branch. Offered whenever there is one, because
+// "that merge was not what I wanted" arrives a minute later.
 function gitUndoBanner(d) {
   const point = (d.safepoints || [])[0];
   if (!point) return '';

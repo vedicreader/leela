@@ -12,7 +12,7 @@ __all__ = ['DocStore', 'DebugState', 'FileHistory', 'RunState', 'kernel_api']
 #: at this morning, not at last month, and every version holds the whole file.
 KEEP_PER_PATH = 60
 #: Bodies past this are noted but not copied. A 70MB notebook saved through a day is gigabytes of
-#: history for a file git already tracks, and making the copy is what made saving slow.
+#: history for a file git already tracks, and copying it makes saving slow.
 MAX_BODY = 2_000_000
 
 async def kernel_api(session, path, params=None, timeout=15, tab=None):
@@ -23,9 +23,8 @@ async def kernel_api(session, path, params=None, timeout=15, tab=None):
 class FileHistory:
     """Every version of a project file Leela saw, so a write it did not make is still recoverable.
 
-    Git is the wrong tool for this: the loss being guarded against happens before a commit, often
-    from another process editing the same tree. Bodies are stored once per distinct content, so a
-    file saved twenty times without changing costs one copy.
+    The loss happens before a commit, often from another process editing the same tree, so git
+    cannot cover it. Bodies are stored once per distinct content.
     """
     def __init__(self, root, pinned=None):
         self.root = Path(root); self.path = self.root/'index.json'
@@ -67,8 +66,7 @@ class FileHistory:
         digest = hashlib.sha256(str(text).encode('utf-8', 'replace')).hexdigest()[:16]
         held = self.latest(path)
         if held is not None and held['blob'] == digest: return None
-        # A version of an enormous file is still worth listing. It says the file changed, and when.
-        # Copying it is not. `kept` is what `text` reads to say so rather than lie.
+        # An enormous file is listed but not copied, and `kept` is what `text` reads to say so.
         big = len(str(text)) > MAX_BODY
         row = {'id': 'ver_' + uuid.uuid4().hex[:12], 'path': path, 'at': time.time(),
                'label': str(label), 'blob': digest if big else self._blob(str(text)),
@@ -101,7 +99,7 @@ class FileHistory:
         return gzip.decompress(p.read_bytes()).decode('utf-8', 'replace')
     def keep(self, path, before, after, label='change'):
         """Both sides of one change. The first `before` for a path is the only copy of what was
-        there before Leela ever looked, which is exactly the state a person wants back."""
+        there before Leela ever looked."""
         if before is not None and self.latest(path) is None:
             self.record(path, before, 'before the first change seen')
         return self.record(path, after, label)
@@ -191,9 +189,8 @@ class OperationJournal:
     "The last `MAX_OPERATIONS` workspace operations, on disk, newest last."
     def __init__(self, path, sandbox, history=None):
         self.path, self.sandbox = Path(path), sandbox
-        #: Every write that reaches here is also kept version by version, because undo is one step
-        #: back and what a person needs after an agent, a tool or another editor has been through
-        #: the tree is the file as it was this morning.
+        #: Every write that reaches here is also kept version by version. Undo is one step back;
+        #: after an agent or another editor has been through the tree a person wants this morning.
         self.history = history
         self.operations = []
         self._load()
@@ -214,14 +211,13 @@ class OperationJournal:
             for row in rows:
                 try: self.history.keep(row['path'], row['before'], row['after'], label)
                 except Exception: pass       # a lost version must never fail the write itself
-                # The bodies are in the history's blob store now, gzipped and shared between
-                # versions. Kept inline as well, one 70MB notebook saved through a day grew this
-                # file to gigabytes, and every operation after that reloaded and rewrote all it held.
+                # Bodies live in the history's blob store, not inline. This file is reloaded and
+                # rewritten every operation.
                 try:
                     before, after = self.history.stash(row['before']), self.history.stash(row['after'])
                     row['before_blob'], row['after_blob'] = before, after
-                    # `kept` is false when a side existed and was too large to copy. Undo reads it
-                    # rather than discovering a missing body with the file already half rewritten.
+                    # `kept` is false when a side existed and was too large to copy, so undo fails
+                    # before it starts rather than halfway through.
                     row['kept'] = not any(body is not None and blob is None for body, blob in
                                           ((row['before'], before), (row['after'], after)))
                     del row['before'], row['after']

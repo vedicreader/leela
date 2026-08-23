@@ -1,14 +1,12 @@
 // Three-pane conflict resolution: ours, an editable result, and theirs.
 //
-// The conflicts are read from the markers Git already wrote into the working-tree file, not
-// diffed back out of the three versions. Git's own account of what it could not decide is
-// better than anything reconstructed from the sides afterwards -- it knows which lines it
-// tried to merge and gave up on, and a re-diff only guesses at it.
+// The conflicts are read from the markers Git already wrote into the working-tree file rather than
+// diffed back out of the three versions. Git knows which lines it tried to merge and gave up on,
+// and a re-diff only guesses at it.
 //
-// The result pane is that file, markers and all, and it is re-scanned after every change.
-// That is what lets the buttons and hand-editing coexist without either being a mode:
-// "which conflicts are left" is answered by looking at the text rather than by remembering
-// what was clicked, so an edit that removes a marker block counts as resolving it.
+// The result pane is that file, markers and all, re-scanned after every change. That is what lets
+// the buttons and hand-editing coexist without either being a mode, and an edit that removes a
+// marker block counts as resolving it.
 
 const CONFLICT_OPEN = /^<{7}(?:\s|$)/, CONFLICT_MID = /^={7}(?:\s|$)/,
       CONFLICT_BASE = /^\|{7}(?:\s|$)/, CONFLICT_CLOSE = /^>{7}(?:\s|$)/;
@@ -25,8 +23,8 @@ function scanConflicts(text) {
       if (CONFLICT_CLOSE.test(lines[j])) { block.end = j; break; }
       side.push(lines[j]);
     }
-    // An opening marker with no close is a line of text that happens to look like one --
-    // in a file *about* merge conflicts, say. Not a conflict, and not ours to rewrite.
+    // An opening marker with no close is a line of text that looks like one, in a file about
+    // merge conflicts. Not a conflict, and not ours to rewrite.
     if (block.end < 0) continue;
     blocks.push(block); i = block.end;
   }
@@ -63,8 +61,8 @@ async function showGitConflict(path) {
     const d = await api(gitUrl('/git/conflict', {path}));
     const original = scanConflicts(d.worktree || '');
     if (!original.blocks.length && (d.ours || d.theirs)) {
-      // Add/add or delete/modify: there are no marked lines to work through, so the choice
-      // is which whole side to keep, and pretending otherwise would be a worse dialog.
+      // Add/add or delete/modify: there are no marked lines to work through, so the choice is
+      // which whole side to keep.
       return showWholeSideConflict(path, d);
     }
     const lang = codeLang('', path);
@@ -107,9 +105,9 @@ async function showGitConflict(path) {
       views[key]._ranges = ranges;
       LeeCM.setChangedLines(views[key], marks(ranges, 0));
     }
-    // `onChange` runs inside CodeMirror's own update, where dispatching again is not allowed,
-    // and `refresh` dispatches marks -- hence the deferral. `programmatic` is why a button's own
-    // `setDoc` does not come back round here and refresh a second time from stale text.
+    // `onChange` runs inside CodeMirror's own update, where dispatching again is not allowed, and
+    // `refresh` dispatches marks. `programmatic` is why a button's own `setDoc` does not come back
+    // round here and refresh a second time from stale text.
     let programmatic = false;
     views.result = LeeCM.create(editorFor('result'), {
       doc: d.worktree || '', lang, lineNums: true, settings: lee.editorPrefs,
@@ -117,13 +115,13 @@ async function showGitConflict(path) {
 
     // Which of the original blocks a remaining one is, matched on its contested text. Indices
     // cannot be used: resolving the second of three leaves two, and the sides still show three.
-    // Two identical conflicts in one file align to the first of them, which is harmless.
+    // Two identical conflicts in one file align to the first, which is harmless.
     const originalIndex = block => original.blocks.findIndex(b =>
       b.ours.join('\n') === block.ours.join('\n') && b.theirs.join('\n') === block.theirs.join('\n'));
 
-    // The side panes are read-only and CodeMirror only builds the lines it is showing, so
-    // there is no element to scroll to for a conflict that is off screen. Proportional
-    // scrolling gets there regardless, and lands close enough to read.
+    // The side panes are read-only and CodeMirror only builds the lines it is showing, so there
+    // is no element to scroll to for an off-screen conflict. Proportional scrolling gets close
+    // enough to read.
     const align = () => {
       const block = live.blocks[active];
       const index = block ? originalIndex(block) : -1;
@@ -201,8 +199,8 @@ async function showGitConflict(path) {
   } catch (e) { leeFail('git', 'resolve conflict', e); }
 }
 
-// Add/add and delete/modify conflicts have no contested lines to work through -- one side has
-// no file at all -- so the only question is which side to keep.
+// Add/add and delete/modify conflicts have no contested lines, because one side has no file at
+// all, so the only question is which side to keep.
 async function showWholeSideConflict(path, d) {
   const side = (label, text, choice) =>
     `<section><header><strong>${label}</strong>` +

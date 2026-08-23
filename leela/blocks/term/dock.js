@@ -40,9 +40,9 @@ async function openTerm(kind = 'shell', forceNew = false) {
   if (!forceNew) {
     const existing = [...lee.terms.entries()].find(([, t]) => t.kind === kind);
     if (existing) return switchTerm(existing[0]);
-    // A session this page has never seen, still running from before a reload. Reattaching is
-    // the point of letting a pty outlive its socket -- and it has to be *visible* to be
-    // closable, or its process is orphaned where nobody can see it to stop it.
+    // A session this page has never seen, still running from before a reload. Reattaching is the
+    // point of letting a pty outlive its socket, and it has to be visible to be closable, or its
+    // process is orphaned where nobody can stop it.
     const orphan = live.find(id => !lee.terms.has(id) && (kind === 'git' ? id === 'git'
                                                                         : id.startsWith('term-')));
     if (orphan) return adoptTerm(orphan, kind, d);
@@ -61,10 +61,9 @@ async function openTerm(kind = 'shell', forceNew = false) {
   });
   lee.terms.set(id, record); switchTerm(id);
 }
-// The pipeline's pty is opened by the pipeline, not by whoever attaches, so this
-// terminal talks to `/release/ws` instead of `/term/ws`. Everything else -- the theme, the
-// keyboard, the dock tab -- is the same component the shell uses. `cwd` carries the project
-// root, which is the only thing that socket needs to know which pipeline is being watched.
+// The pipeline's pty is opened by the pipeline, not by whoever attaches, so this terminal talks to
+// `/release/ws` instead of `/term/ws`. Everything else is the same component the shell uses. `cwd`
+// carries the project root, the only thing that socket needs to know which pipeline is watched.
 async function openReleaseTerm(root = '', kind = 'release') {
   await loadTermBundle();
   const d = await api('/term/info');
@@ -85,10 +84,10 @@ async function openReleaseTerm(root = '', kind = 'release') {
   });
   lee.terms.set(id, record); switchTerm(id);
 }
-/* A run's own terminal. The Logs pane answers "what happened"; this answers "what is it doing",
-   which for a dev server is the whole of the job -- colour, progress, a traceback as it lands, and
-   a keyboard, so ctrl-c reaches the app. Same component as the shell, pointed at `/run/ws`, which
-   hands back the pty the run is already on rather than starting anything. */
+/* A run's own terminal. The Logs pane answers what happened, this answers what it is doing, which
+   for a dev server is colour, progress, a traceback as it arrives, and a keyboard so ctrl-c reaches
+   the app. Same component as the shell, pointed at `/run/ws`, which hands back the pty the run is
+   already on rather than starting anything. */
 async function leeRunTerm(path, label = '') {
   if (!path) return;
   await loadTermBundle();
@@ -112,9 +111,9 @@ async function leeRunTerm(path, label = '') {
 }
 window.leeRunTerm = leeRunTerm;
 
-// Reconnect to a pty that is already running, rather than starting one. Same component and the
-// same id, so the server hands back the session it still has -- which is what makes the process
-// inside it visible in a tab, and therefore closable.
+// Reconnect to a pty that is already running rather than starting one. Same component and the same
+// id, so the server hands back the session it still has, which makes the process inside it visible
+// in a tab and therefore closable.
 function adoptTerm(id, kind, d) {
   $('#shell').classList.add('show-term');
   const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
@@ -130,10 +129,9 @@ function adoptTerm(id, kind, d) {
   status(`${record.label} was still running — reattached`);
 }
 
-// xterm.js cannot be attached to a terminal application that is already running: that program is
-// itself an emulator with its own pty, and a browser pane has no way to adopt its window. What it
-// can do is hand the project over, which is what this is -- and the button stays hidden unless
-// the server found a terminal to hand it to, so it is never one that fails when pressed.
+// xterm.js cannot attach to a terminal application that is already running, because that program
+// is itself an emulator with its own pty. What it can do is hand the project over. The button stays
+// hidden unless the server found a terminal to hand it to.
 async function leeExternalTerm() {
   try {
     const d = await post('/term/external');
@@ -145,8 +143,8 @@ window.leeExternalTerm = leeExternalTerm;
 function leeNewTerm() { return openTerm('shell', true); }
 window.leeNewTerm = leeNewTerm;
 
-// The IDE follows the system's light/dark setting through a media query; the terminal
-// reads its colours from CSS once, when it is created, so it has to be told.
+// The IDE follows the system's light and dark setting through a media query. The terminal reads its
+// colours from CSS once, when it is created, so it has to be told.
 try {
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     for (const t of lee.terms.values()) t.view.retheme();

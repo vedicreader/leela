@@ -96,7 +96,7 @@ def connect(app, ctx):
     rt = app.route
     live = {}
     def pipeline(kind, target=''):
-        "The pipeline for one project and kind, made once and then kept -- it has a process in it."
+        "The pipeline for one project and kind, made once and then kept: it has a process in it."
         root = repo_for(ctx.session, target)
         key = (kind, str(root))
         if key not in live: live[key] = KINDS[kind](root, env=EnvStore())

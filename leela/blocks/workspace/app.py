@@ -12,7 +12,7 @@ def connect(app, ctx):
     rt = app.route
     @rt('/workspace/activate')
     async def workspace_activate(req):
-        "Point the project surfaces -- source control, releases, deploys -- at one folder."
+        "Point the project surfaces (source control, releases, deploys) at one folder."
         d = await req.json()
         try:
             root = ctx.session.activate_root(d.get('path') or '')

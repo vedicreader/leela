@@ -31,10 +31,8 @@ async function quickOpen(searchMode) {
   paint(); setTimeout(() => input.focus(), 0);
 }
 
-// The modes, in the order Tab walks them. `all` leads and is the default: it ranks every backend
-// together, so it is the one that answers without you having to know which store the thing you
-// half-remember is in. A rail rather than a row because each one carries a count, and a count is
-// the thing that tells you where to look next when the mode you picked came back empty.
+// The modes, in the order Tab walks them. `all` leads and ranks every backend together. A rail
+// rather than a row, because each mode carries a count.
 const SEARCH_MODES = [
   ['all', 'all', 'rank ripgrep, symbols, FTS and semantic results together'],
   ['rg', 'rg', 'ripgrep: literal search over current files, fastest'],
@@ -53,8 +51,8 @@ async function codeSearch() {
   const m = modal(
     `<div class="lee-searchbar"><input class="lee-input" id="cs" placeholder="search code, symbols and meaning…" autofocus>
      <button class="lee-btn" id="kosharefresh" type="button">sync</button></div>` +
-    // Where and what, beside which backend. A workspace holds several checkouts, so "this
-    // project" is the useful default and "everything open" is the deliberate widening.
+    // A workspace holds several checkouts, so "this project" is the default and "everything
+    // open" is the deliberate widening.
     `<div class="lee-searchfilters">
        <label>in<select id="csscope">
          <option value="project">this project</option>
@@ -79,29 +77,25 @@ async function codeSearch() {
       if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, hits.length - 1); paint(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); paint(); }
       else if (e.key === 'Enter') { e.preventDefault(); go(); }
-      // Tab walks the modes rather than the focus. The dialog traps Tab anyway, so the only
-      // thing given up is a focus order over four controls, and what is bought is trying the
-      // same query against another backend without leaving the keyboard.
+      // Tab walks the modes rather than the focus. The dialog traps Tab anyway.
       else if (e.key === 'Tab') { e.preventDefault(); cycleMode(e.shiftKey ? -1 : 1); }
     }, () => {
       if (previewView) LeeCM.destroy(previewView);
-      // Closing the dialog must stop the search too, or four backends go on working for a
-      // question whose answer has nowhere left to be drawn.
+      // Closing the dialog must stop the search, or four backends work on for nothing.
       if (liveStream) { try { liveStream.close(); } catch {} liveStream = null; }
     });
   m.classList.add('lee-code-search-modal');
   const list = $('#cslist', m), input = $('#cs', m), preview = $('#cspreview', m), open = $('#csopen', m);
   const pkgBtn = $('#cspkg', m);
   const scopeEl = $('#csscope', m), extsEl = $('#csexts', m);
-  // Remembered, because a person who works in Python does not want to retype `py` every time
-  // they open this box -- and the scope they chose is a statement about how they work.
+  // Remembered, so somebody who works in Python does not retype `py` every time.
   scopeEl.value = localStorage.getItem('lee-search-scope') || 'project';
   extsEl.value = localStorage.getItem('lee-search-exts') || '';
   const paintRail = () => {
     $$('.lee-searchrail-mode', m).forEach(b =>
       b.classList.toggle('active', b.dataset.mode === mode));
-    // A count only means something once that mode has actually run. Blank is "not asked yet",
-    // which is a different thing from nought and must not look like it.
+    // A count means something only once that mode has run. Blank is "not asked yet", which must
+    // not look like nought.
     SEARCH_MODES.forEach(([id]) => {
       const el = $(`[data-count-for="${id}"]`, m); if (!el) return;
       el.textContent = counts[id] == null ? '' : counts[id];
@@ -130,7 +124,7 @@ async function codeSearch() {
     const filename = h.path.split('/').pop() || h.package || 'indexed source';
     $('#cspreviewtitle', m).textContent = h.symbol || filename;
     $('#cspreviewmeta', m).textContent = `${h.package ? h.package + ' · ' : ''}${filename}:${h.line} · ${(h.sources || [h.kind]).join(' + ')}`;
-    // A package is a file like any other once the path is one this project can open; its API
+    // A package is a file like any other once the path is one this project can open. Its API
     // listing is the second question, so it gets its own button.
     const environment = h.kind.startsWith('env-');
     open.disabled = !h.path && !(environment && h.package);
@@ -186,31 +180,25 @@ async function codeSearch() {
     if (!h.package) return status('package source is indexed read-only', 'info');
     await packageApi(h);
   };
-  // One click opens at the line, because that is what the box is *for*. It used to select on the
-  // first click and need a second one on the same row to go anywhere, so the obvious gesture
-  // landed in a preview pane and looked like the result was not clickable. The preview is still
-  // reachable without committing: arrow keys move the selection and paint it.
+  // One click opens at the line. Arrow keys preview without committing.
   list.onclick = e => {
     const row = e.target.closest('[data-i]'); if (!row) return;
     sel = +row.dataset.i; paint(); go();
   };
   open.onclick = go;
   pkgBtn.onclick = () => { const h = hits[sel]; if (h?.package) packageApi(h); };
-  // `all` streamed: one section per backend, in the server's best-first leg order, each filling
-  // in as that backend reports. Slots are stable on purpose -- rg answers in tens of milliseconds
-  // and the embedding leg in seconds, and a list that re-ranked on every arrival would reshuffle
-  // under the cursor precisely while someone was reading it. A hit a later leg finds again is not
-  // shown twice; it adds its name to the row the first leg already produced, which is the same
-  // merge the batch answer does.
+  // `all` streamed: one section per backend, in the server's best-first leg order. Slots are
+  // stable because rg answers in tens of milliseconds and the embedding leg in seconds, and a
+  // list that re-ranked on every arrival would reshuffle under the cursor while it was read. A
+  // hit a later leg finds again adds its name to the existing row rather than a second one.
   const streamAll = (q, seq) => new Promise(resolve => {
     const slots = new Map(), seen = new Map();
     let notes = [];
     const es = new EventSource('/search/stream?q=' + encodeURIComponent(q) +
                                '&scope=' + encodeURIComponent(scopeEl.value) +
                                '&exts=' + encodeURIComponent(extsEl.value.trim()));
-    // Held so the next keystroke can close it. A stream left open keeps four backends working on
-    // a question nobody is asking any more, and the server only notices when it next tries to
-    // write -- which for the slow legs is seconds away.
+    // Held so the next keystroke can close it. A stream left open keeps four backends working,
+    // and the server only notices when it next tries to write, seconds away for the slow legs.
     liveStream = es;
     const stop = () => { try { es.close(); } catch {} if (liveStream === es) liveStream = null; resolve(); };
     const recount = () => {
@@ -238,8 +226,7 @@ async function codeSearch() {
       slots.set(d.leg, kept);
       recount();
       backend = `all · ${[...slots.keys()].filter(k => slots.get(k).length).join(' + ') || 'searching'}`;
-      // The selection is an index into a list that just grew at the end, so it still points at
-      // the row it pointed at. Only an empty list needs resetting.
+      // The list grew at the end, so the selection still points at its row.
       if (sel >= hits.length) sel = Math.max(0, hits.length - 1);
       paint();
     });
@@ -269,8 +256,8 @@ async function codeSearch() {
                             '&exts=' + encodeURIComponent(extsEl.value.trim()));
         if (seq !== searchSeq) return;
         hits = d.hits || []; backend = d.backend + (d.note ? ' · ' + d.note : ''); sel = 0;
-        // Which folders were actually walked, because "no matches" and "no matches *here*" are
-        // different answers and only one of them means the thing is not in your code.
+        // Which folders were walked, because "no matches" and "no matches here" are different
+        // answers.
         const where = (d.searched || []).map(p => p.split('/').pop()).join(', ');
         $('#csscopenote', m).textContent = where ? `searched ${where}` : '';
         counts[mode] = hits.length; paintRail();
@@ -326,9 +313,9 @@ async function findUsages(name = cursorWord()) {
   const d = await api('/code/usages?name=' + encodeURIComponent(name));
   hitList(d.hits || [], `${d.backend} — ${d.note}`, `usages of ${name}`, openLocation);
 }
-/* The dotted chain the cursor ends, so `fastcore.test` reaches the server whole: nothing declares
-   a module, and the last name alone found whichever package had a `def test`. Leftwards only --
-   on `fastcore` the answer is the package. */
+/* The dotted chain the cursor ends, so `fastcore.test` reaches the server whole: the last name
+   alone found whichever package had a `def test`. Leftwards only, so on `fastcore` the answer is
+   the package. */
 function dottedAtCursor(view) {
   const word = LeeCM.wordAtCursor(view); if (!word) return '';
   const line = view.state.doc.lineAt(LeeCM.cursor(view)), text = line.text;
@@ -350,14 +337,12 @@ function editorPlace(view = curEditor()) {
     ? lee.cells.findIndex(c => lee.editors.get(c.id) === view) : -1;
   return {path, line, cellIndex, dotted: dottedAtCursor(view)};
 }
-/* One key, both directions. On a usage it goes to the declaration; standing on the declaration it
-   lists who uses it, because that is the only question left to ask there. The server decides which,
-   since it is the side that knows where the declaration is. */
+/* One key, both directions. On a usage it goes to the declaration, on the declaration it lists
+   who uses it. The server decides which, since it knows where the declaration is. */
 async function gotoDeclaration(name = cursorWord(), place = editorPlace()) {
   if (!name) return status('put the cursor on a symbol first', 'err');
   status(`finding ${name}…`);
   let d;
-  // a failed lookup has to say so: `finding…` is busy, and a busy toast never leaves by itself
   try {
     d = await api('/code/jump?name=' + encodeURIComponent(name) +
       '&path=' + encodeURIComponent(place.path) + '&line=' + place.line + '&cell_index=' + place.cellIndex +
@@ -368,16 +353,15 @@ async function gotoDeclaration(name = cursorWord(), place = editorPlace()) {
   if (d.kind === 'definition' && hits.length === 1) return openLocation(hits[0]);
   const label = d.kind === 'usages' ? 'usages' : 'definitions';
   hitList(hits, `${d.backend} — ${d.note}`, `${label} of ${name}`, openLocation);
-  // `finding…` is a busy toast, and a busy toast waits to be clicked. The list is the answer, so
-  // the toast has to stop saying it is still looking.
+  // `finding…` is a busy toast and waits to be clicked, so the answer has to replace it.
   status(`${hits.length} ${label} of ${name}`, 'ok');
 }
-/* The mouse saying what mod+b says. CodeMirror owns the click, so this listens in the capture
-   phase and takes the event there: letting it through would move the caret and select a word.
+/* The mouse saying what mod+b says. CodeMirror owns the click, so this takes the event in the
+   capture phase: letting it through would move the caret and select a word.
 
-   Either modifier counts. Platform detection is not reliable enough to make it the gate: in a
-   webview that reported no platform, ctrl+click both looked up the symbol and, being a right-click
-   on macOS, opened the cell menu on top of the result. So the paired `contextmenu` is claimed too. */
+   Either modifier counts, because platform detection is not reliable enough to gate it. In a
+   webview that reported no platform, ctrl+click looked up the symbol and, being a right-click on
+   macOS, opened the cell menu on top of the result. The paired `contextmenu` is claimed too. */
 function bindModClick() {
   document.addEventListener('contextmenu', e => {
     if (e.shiftKey || !(e.metaKey || e.ctrlKey) || !e.target?.closest?.('.cm-content')) return;
@@ -423,9 +407,8 @@ async function syncCodeIndex() {
 async function leeSymbols() {
   const host = $('#symbols'), label = $('#symbolfile'); if (!host) return;
   const path = lee.path, name = compactPath(path || ''); if (label) label.textContent = name ? '· ' + name : '';
-  // Notebooks are included: their defs and classes are real structure, and the server reads
-  // them out of the cells rather than out of the JSON. The outline is of the file on disk, so
-  // a def typed and not yet saved appears once autosave has run.
+  // Notebooks are included, read out of the cells rather than the JSON. The outline is of the
+  // file on disk, so a def typed and not yet saved appears once autosave has run.
   if (!lee.path || (lee.kind !== 'text' && lee.kind !== 'notebook')) {
     host.innerHTML = '<div class="lee-dim">Open a source file or notebook to see its symbols.</div>'; return;
   }
@@ -437,8 +420,8 @@ async function leeSymbols() {
     host.innerHTML = rows.length ? rows.map((s, i) => {
       const depth = Math.max(0, Math.floor(Number(s.score || 0) / 4));
       const kind = /^class\s/.test(s.text || '') ? 'class' : 'function';
-      // A notebook symbol is addressed by cell, and the JSON line it also carries would be a
-      // meaningless number to show: the row says which cell and where in it instead.
+      // A notebook symbol is addressed by cell. The JSON line it also carries would be a
+      // meaningless number to show.
       const cellLine = Number(s.cell_line || 0), cellIndex = Number(s.cell_index ?? -1);
       const where = cellLine > 0 ? `${cellIndex + 1}:${cellLine}` : String(Number(s.line || 1));
       return `<button class="lee-symbol-row" role="treeitem" style="--depth:${depth}" ` +

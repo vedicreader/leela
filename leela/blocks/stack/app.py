@@ -1,4 +1,4 @@
-"The stack under a deploy: the servers and tunnels it lands on, and the packages that run it."
+"The stack under a deploy: the servers and tunnels it runs on, and the packages that run it."
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def connect(app, ctx):
     rt = app.route
     def infra(): return Infra(EnvStore())
     def checkouts():
-        "Every repository this workspace has open -- where a fix would actually be made."
+        "Every repository this workspace has open: where a fix would actually be made."
         return [str(p) for p in RepoSet(ctx.fs.roots).paths()]
     @rt('/stack')
     def stack_info(repo: str = ''):

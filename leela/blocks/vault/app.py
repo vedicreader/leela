@@ -330,8 +330,8 @@ def connect(app, ctx):
     async def apis_call(operation: str, name: str = '', params: str = ''):
         """Call one operation and show what came back.
 
-        `api_fetch`, not `api_call`: the reach gate is about a model reading the answer, and the
-        person looking at this page is the person whose data it is.
+        `api_fetch`, not `api_call`: the reach gate is about a model reading the answer, and this
+        is the person whose data it is.
         """
         try:
             kw = json.loads(params) if str(params or '').strip() else {}

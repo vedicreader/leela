@@ -1,4 +1,4 @@
-/* ---- whichever editor has the cursor: a cell, a whole file, or the exec box ---- */
+// Whichever editor has the cursor: a cell, a whole file, or the exec box.
 function curEditor() {
   if (lee.scope === 'exec') return lee.editors.get('exec');
   if (lee.activeEditor === 'secondary') return lee.editors.get('secondary');
@@ -17,10 +17,9 @@ function kernelComplete() {
   LeeCM.startCompletion(v);
 }
 
-/* Two completions, two different questions. alt+/ asks the kernel what names
- * exist -- instant, and right by construction because it is the real namespace.
- * This asks the model what should come next, which costs a forward pass, so it is
- * never fired by typing and the suggestion stays ghost text until tab accepts it. */
+/* Two completions, two different questions. alt+/ asks the kernel what names exist, which is
+ * instant and right by construction. This asks the model what should come next, which costs a
+ * forward pass, so it is never fired by typing and stays ghost text until tab accepts it. */
 function closeSelectionHelp() { $('.lee-selection-tools')?.remove(); }
 function selectionEditor() {
   if (!['editor', 'exec'].includes(lee.scope)) return null;

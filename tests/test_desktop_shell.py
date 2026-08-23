@@ -137,3 +137,18 @@ def test_the_shell_opens_a_window_and_loads_the_workspace_into_it(tmp_path):
     assert got['title'] == 'leela — test'
     assert got['heading'] == 'workspace'          # the server's page really rendered
     assert got['url'].startswith('http://127.0.0.1:')
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='Apple Events are macOS only')
+def test_the_open_folder_handler_can_be_constructed():
+    """It is an Objective-C subclass, so `super().init()` finds nothing and registration raised
+    `'super' object has no attribute 'init'` on every launch. Nothing opened a folder dropped on
+    the Dock or chosen through Open With, and the failure was one printed line."""
+    pytest.importorskip('objc')
+    from leela.desktop import _OpenHandler
+    assert _OpenHandler is not None, 'the class itself failed to define'
+    seen = []
+    h = _OpenHandler.alloc().init_with(lambda e, r: seen.append((e, r)))
+    assert h is not None, 'init_with returned None, so alloc/init did not chain'
+    h.handleEvent_reply_('event', 'reply')
+    assert seen == [('event', 'reply')], 'the selector must reach the python callback'

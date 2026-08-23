@@ -1,5 +1,4 @@
-// -- deploy ---------------------------------------------------------------------------
-// The same pipeline as a release, with a target above it: a deploy that cannot say where it
+// The same pipeline as a release, with a target above it, because a deploy that cannot say where it
 // is going is the one nobody presses.
 const depUI = {data: null, poll: 0, view: 'stages', infra: null, stack: null, zone: '', records: null};
 function depTargetCard(t) {

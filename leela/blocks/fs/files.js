@@ -1,4 +1,3 @@
-/* ------------------------------------------------------------------ file ops */
 const treeSel = () => $('.lee-node.sel');
 const visibleTreeNodes = () => $$('.lee-node').filter(n => n.getClientRects().length);
 function selectTreeNode(n) {
@@ -14,9 +13,9 @@ function moveTreeSelection(d) {
   const at = Math.max(0, nodes.indexOf(treeSel()));
   selectTreeNode(nodes[Math.max(0, Math.min(nodes.length - 1, at + d))]);
 }
-/* Dotfiles are off by default because most of them are machinery, and on by choice because
-   `.gitignore`, `.github` and `.env` are files you edit. `.venv` and `node_modules` are on
-   neither side of this: the server's skip list drops them whatever the toggle says. */
+/* Dotfiles are off by default and on by choice, because `.gitignore`, `.github` and `.env` are
+   files you edit. The server's skip list drops `.venv` and `node_modules` whatever the toggle
+   says. */
 function treeHidden() { return localStorage.getItem('lee-tree-hidden') === '1'; }
 function treeQuery(sep = '?') { return treeHidden() ? sep + 'hidden=1' : ''; }
 function paintHiddenBtn() {
@@ -81,9 +80,8 @@ async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = tru
   status('files refreshed', 'ok');
 }
 
-/* Pushed, not polled: an agent edit, a terminal command or another editor used to stay
-   invisible until someone refreshed. A push never rebuilds the panel -- it reconciles the
-   folders that changed and leaves every other row, its expansion and the scroll alone. */
+/* Pushed, not polled. A push reconciles the folders that changed and leaves every other row, its
+   expansion and the scroll alone. */
 const selfWrites = new Map();
 const SELF_WRITE_MS = 4000;
 function noteSelfWrite(...paths) { for (const p of paths) if (p) selfWrites.set(p, performance.now()); }
@@ -245,12 +243,9 @@ async function findRepo() { return addRoot(true); }
 
 /* One box, the way a shell has one.
 
-   The picker used to be a path bar, a separate filter box, a list and an up button -- four
-   controls for "which folder", and the path bar was the only one that took a path. Typing
-   into it now completes folders under what is already typed, Tab takes the completion,
-   and Enter opens. Repositories deeper down still answer to a bare name, because a
-   directory of checkouts is more than one level deep and that was the other thing the
-   second box was for. */
+   Typing completes folders under what is already typed, Tab takes the completion, and Enter
+   opens. Repositories deeper down answer to a bare name, because a directory of checkouts is more
+   than one level deep. */
 async function addRoot(find = false) {
   const m = modal(`<div class="lee-mhead">open folder<span class="sub">type a path · Tab completes · Enter opens</span></div>
     <input class="lee-input lee-pathinput" id="folderpath" autocomplete="off" spellcheck="false"
@@ -262,9 +257,9 @@ async function addRoot(find = false) {
     <span class="lee-dim" id="folderhint"></span></div>`);
   const input = m.querySelector('#folderpath'), list = m.querySelector('#folderlist');
   const hint = m.querySelector('#folderhint'), openBtn = m.querySelector('#folderopen');
-  // In the packaged app the platform's own chooser is the obvious way to find a folder, and
-  // the only one that does not require knowing the path. In a browser tab there is none.
-  // Wired now and shown when the bridge arrives, which is not always by the time this opens.
+  // In the packaged app the platform's own chooser is the only way to find a folder without
+  // knowing its path. In a browser tab there is none. Wired now and shown when the bridge
+  // arrives, which is not always by the time this opens.
   const browse = m.querySelector('#folderbrowse');
   browse.onclick = async () => {
     const picked = await nativeFolder();
@@ -314,8 +309,7 @@ async function addRoot(find = false) {
     rows = rank(frag); sel = 0;
     clearTimeout(timer);
     if (frag.length < 2) return paint();
-    // The search below walks a tree, so it is debounced: a five-letter name is one search,
-    // not five queued behind one worker.
+    // The search below walks a tree, so it is debounced: a five-letter name is one search.
     paint(`<div class="lee-searching"><span class="lee-spin"></span>searching ${esc(base)} for repositories…</div>`);
     timer = setTimeout(() => repos(frag), 200);
   };
@@ -328,9 +322,8 @@ async function addRoot(find = false) {
     m.remove();
     try {
       await post('/fs/add-root', {path: target});
-      // The tree is redrawn *before* the folder is activated: activating selects the new
-      // root's node, and a tree that has not been rebuilt does not have one yet -- which
-      // left a folder that was open on the server and absent from the panel until reload.
+      // The tree is redrawn before the folder is activated, because activating selects the new
+      // root's node and a tree that has not been rebuilt does not have one yet.
       await refreshFileTree(target);
       await activateRoot(target);           // the folder you just opened is the one you mean
     } catch (e) { status(String(e.message || e), 'err'); }
@@ -345,7 +338,7 @@ async function addRoot(find = false) {
       e.preventDefault();
       const v = input.value.trim(), frag = fragOf(v);
       // A path that names a folder is a folder to open. Anything else is half-typed, so the
-      // first Enter completes it and the second opens it -- Tab, for people who press Enter.
+      // first Enter completes it and the second opens it.
       if (v && (!frag || dirs.some(x => x.path === v.replace(/\/$/, '')))) return open(v);
       if (!complete()) if (v) open(v);
     } else if (e.key === 'Escape') { e.preventDefault(); m.remove(); }
@@ -379,8 +372,8 @@ document.addEventListener('toggle', e => {
   if (e.target.matches?.('.lee-dir')) e.target.setAttribute('aria-expanded', e.target.open ? 'true' : 'false');
 }, true);
 
-// Middle-click closes a tab, as it does in every browser. Delegated because both strips are
-// re-rendered whole -- the document strip by htmx, the terminal strip by `paintTermTabs`.
+// Middle-click closes a tab. Delegated because both strips are re-rendered whole, the document
+// strip by htmx and the terminal strip by `paintTermTabs`.
 document.addEventListener('auxclick', e => {
   if (e.button !== 1) return;
   const term = e.target.closest?.('.lee-termtab');
@@ -392,8 +385,8 @@ document.addEventListener('auxclick', e => {
   closeTab(+tab.dataset.i);
 });
 
-// Drag to reorder. The order is the user's arrangement of their own work, so the drop is
-// posted rather than kept in the browser: it has to survive a reload like the tabs do.
+// Drag to reorder. The drop is posted rather than kept in the browser, so it survives a reload
+// like the tabs do.
 document.addEventListener('dragstart', e => {
   const tab = e.target.closest?.('.lee-tab');
   if (!tab || tab.dataset.gitDiff) return;
@@ -420,8 +413,8 @@ document.addEventListener('dragend', () => {
 });
 
 /* Naming a file for somebody else. Relative is against the open folder holding it, so it is what
-   a colleague can paste into the same repository; absolute is what a shell here needs. Only the
-   server knows which folder a path is under, so it is asked. */
+   a colleague pastes into the same repository. Absolute is what a shell here needs. Only the
+   server knows which folder a path is under. */
 async function copyFilePath(which) {
   const target = clipTarget();
   if (!target) return status('select a file, a folder or a tab first', 'err');
@@ -433,7 +426,7 @@ async function copyFilePath(which) {
   try { await navigator.clipboard.writeText(text); }
   catch (_) { return status('clipboard access failed', 'err'); }
   // A path under no open folder has no relative form, and silently copying the absolute one
-  // instead would read as the button being wrong rather than the file being outside.
+  // would read as the button being wrong rather than the file being outside.
   status(which === 'relative' && !d.relative ? `outside the open folders · copied ${text}`
                                              : `copied ${text}`, 'ok');
 }

@@ -1,8 +1,6 @@
-/* ------------------------------------------------------------------ splitters */
 function initSplits() {
   const savedLeft = localStorage.getItem('lee-left-view');
-  // Every panel is saved on switch, so every panel is restorable. Restoring only two of them
-  // meant a reload silently moved you back to the file tree from the one you were working in.
+  // Every panel is saved on switch, so every panel is restorable.
   leeLeft(['git', 'symbols', 'workflows', 'releases', 'deploys', 'drive'].includes(savedLeft) ? savedLeft : 'files');
   // Read before the views: `leeDock` opens the bottom pane to show its tab and persists that,
   // which would erase a pane the last session had minimised.
@@ -32,8 +30,7 @@ function initSplits() {
     };
   });
   const centreHeight = () => $('.lee-centre')?.clientHeight || window.innerHeight;
-  // The dock may occupy most of the workspace; 360px made Agent and Terminal feel like
-  // preview strips on large displays. The editor keeps its own 140px safety floor.
+  // The dock can occupy most of the workspace. The editor keeps its own 140px floor.
   const limit = () => Math.min(900, Math.max(110, centreHeight() - 240));
   const dockSplit = $('.lee-dock-split');
   if (dockSplit) dockSplit.onpointerdown = (e) => {
@@ -97,12 +94,10 @@ async function checkProjectRuntime() {
   try { d = await api('/runtime/info'); } catch (_) { return; }
   if ((!d.needs_create && !d.needs_support) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
   sessionStorage.setItem('lee-runtime-asked:' + d.root, '1');
-  /* A folder with no environment at all gets one, without being asked. Opening a project and
-     landing on whatever `python3` happens to be on PATH is never what anyone wanted, and with uv
-     the fix is one command that a deleted directory undoes. Only for a *missing* environment:
-     installing packages into an environment you built yourself is your decision, so needs_support
-     below still asks. Without uv it also still asks, because a half-built venv is worse than
-     none. */
+  /* A folder with no environment at all gets one, without being asked, because with uv the fix is
+     one command that a deleted directory undoes. Only for a missing environment: installing
+     packages into an environment you built yourself is your decision, so `needs_support` below
+     still asks. Without uv it also still asks, because a half-built venv is worse than none. */
   if (d.needs_create && d.uv) {
     status('no project environment — creating .venv with uv…');
     try {

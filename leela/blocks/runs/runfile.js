@@ -1,6 +1,5 @@
-/* ---------------------------------------------------------- running files */
-/* The exec log is where anything run outside a notebook cell lands -- the exec box, a
- * selection, a whole file. One place to look for "what have I asked this kernel to do". */
+/* The exec log holds anything run outside a notebook cell: the exec box, a selection, a whole
+ * file. One place to look for what this kernel has been asked to do. */
 function execLine(code, text, ok) {
   const log = $('#execlog'); if (!log) return;
   const line = document.createElement('div');
@@ -10,18 +9,12 @@ function execLine(code, text, ok) {
   log.appendChild(line); log.scrollTop = log.scrollHeight;
 }
 
-/* Run the open .py. One door, and it is the managed one: its own process, the project's
- * interpreter, a terminal to watch it in, and a pill that says it is running.
+/* Run the open .py in its own process, on the project's interpreter, with a terminal to watch it
+ * in and a pill that says it is running. The tab's kernel is not used, so a server that never
+ * returns holds nothing and its output goes to a terminal on screen.
  *
- * It used to execute the file inside the tab's kernel. That is lovely for a script that ends --
- * `__main__`, an argv, and everything it defines left in the namespace the variable panel is
- * watching -- and quietly awful for one that does not. A server never returned, so the kernel
- * was held, nothing appeared until you killed it, and what the app printed went to whatever
- * terminal leela itself was started from. Two ways to run a file, one of which swallowed the
- * tool without saying so, is the confusion. There is one now.
- *
- * A saved configuration for this file still wins, so `python -m x` or an argv is honoured
- * rather than second-guessed. Scratch code is `run selection`, which is still the kernel. */
+ * A saved configuration for this file still wins, so `python -m x` or an argv is honoured. Scratch
+ * code is `run selection`, which is still the kernel. */
 async function runFile() {
   if (lee.kind !== 'text') return status('this is a notebook — run its cells, or “▶ all”', 'err');
   const path = lee.path || '';
@@ -37,9 +30,9 @@ async function runFile() {
   return startRun(cfg || {name: '', cmd: path});
 }
 
-/* Just the selected code. Read straight off the CodeMirror state rather than through
- * `LeeCM`: the bundle in static/ is committed and rebuilding it needs node, so the client
- * does not grow a dependency on a wrapper function that is not in the shipped build. */
+/* Just the selected code, read straight off the CodeMirror state rather than through `LeeCM`. The
+ * bundle in static/ is committed and rebuilding it needs node, so the client cannot depend on a
+ * wrapper that is not in the shipped build. */
 async function runSelection() {
   const v = curEditor();
   if (!v) return status('put the cursor in some code first', 'err');
@@ -53,8 +46,8 @@ async function runSelection() {
   leeVars();
 }
 
-/* Execute a bounded notebook range in order. Range commands deliberately run code cells
- * only: “run above” must not unexpectedly send every prompt cell above it to a model. */
+/* Execute a bounded notebook range in order, code cells only: "run above" must not send every
+ * prompt cell above it to a model. */
 async function runRange(start, end, label) {
   if (lee.kind !== 'notebook') return runFile();
   start = Math.max(0, start); end = Math.min(end, lee.cells.length);

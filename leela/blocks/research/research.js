@@ -1,4 +1,3 @@
-/* ------------------------------------------------------------------ research */
 function researchDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch (_) { return 'source'; }
 }
@@ -44,12 +43,11 @@ function researchWorkspace(mode = 'search', value = '') {
   m.classList.add('lee-research-modal');
   const input = $('#researchquery', m), list = $('#researchsources', m), reader = $('#researchreader', m);
   const title = $('#researchtitle', m), meta = $('#researchmeta', m);
-  /* Vault mode puts what you have already kept in the same column as what you are about to
-     find. The sources list becomes the vault tree, and the reader stays the reader: a clipped
-     document and a fetched page are the same kind of thing once they are on screen. */
+  /* Vault mode puts what you have already kept in the same column as what you are about to find.
+     The sources list becomes the vault tree, and the reader stays the reader. */
   const showVault = async () => {
     list.innerHTML = '<div class="lee-research-empty">Reading the vault…</div>';
-    // `elid`, because the vault panel may be open behind this modal with a fragment of its own,
+    // `elid`, because the vault panel can be open behind this modal with a fragment of its own,
     // and two elements sharing an id would send every folder toggle to whichever came first.
     try { await htmx.ajax('GET', '/vault/browse?elid=researchvault', {target: '#researchsources', swap: 'innerHTML'}); }
     catch (e) { list.innerHTML = `<div class="lee-research-error">${esc(e.message || e)}</div>`; }
@@ -117,8 +115,8 @@ function researchWorkspace(mode = 'search', value = '') {
   };
   const run = async () => {
     query = input.value.trim();
-    // The vault is searched where it is shown, and an empty box is a real answer here: it puts
-    // the tree back, which is the same two-views-of-one-panel rule the vault panel follows.
+    // The vault is searched where it is shown, and an empty box puts the tree back, the same
+    // two-views-of-one-panel rule the vault panel follows.
     if (activeMode === 'vault')
       return htmx.ajax('GET', '/vault/browse?' + new URLSearchParams({q: query, elid: 'researchvault'}),
                        {target: '#researchsources', swap: 'innerHTML'});
@@ -193,10 +191,10 @@ function readUrl(url = '') { return researchWorkspace('read', url); }
 function researchQ() { return researchWorkspace('research'); }
 
 
-/* ---- clip: a file, a folder or the open tab into the workspace vault shelf ---- */
+// Clip a file, a folder or the open tab into the workspace vault shelf.
 function clipTarget() {
   // Which menu opened decides the target. A tab names its path in `title`, so an inactive tab
-  // read straight after right-clicking it does not have to wait for the select to land.
+  // read straight after right-clicking it does not have to wait for the select.
   const s = lee.menuSurface;
   if (s === 'file' || s === 'folder') return treeSel()?.dataset.path || '';
   if (s === 'tab') return $(`.lee-tab[data-i="${lee.menuTab}"]`)?.title || '';

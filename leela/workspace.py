@@ -227,8 +227,7 @@ class Workspace:
     def start_backups(self):
         """Begin the chosen cadence, and take one now if it is already due.
 
-        Called once the workspace is up rather than in `__init__`, so a test that builds a hundred
-        workspaces does not start a hundred threads.
+        Not in `__init__`: a test that builds a hundred workspaces would start a hundred threads.
         """
         from .core.backups import backup_cadence, schedule_backups
         if self._stop_backups is not None: return self._stop_backups
@@ -274,8 +273,8 @@ class Workspace:
     def fresh_history(self, ai=None):
         """Reread the conversation log, but only when it has actually changed.
 
-        Parsing it is linear in its size, which is 60MB once Leela and the CLI share one, and every
-        history read was paying for it again. A stat is what tells the two apart.
+        Parsing is linear in its size, which reaches 60MB once Leela and the CLI share one. A stat
+        tells an unchanged log from a written one.
         """
         ai = ai or self.ai
         stamp = self.history_stamp(ai)
@@ -312,7 +311,7 @@ class Workspace:
         nb.dirty = True
     @property
     def completer(self):
-        "Inline completion, on the assistant's engine -- so it loads with it and is missing for the same."
+        "Inline completion, on the assistant's engine. It loads and is missing with the assistant."
         if self._completer is None: self._completer = Completer(self.ai)
         return self._completer
     def _rebrief_agents(self):
@@ -326,12 +325,7 @@ class Workspace:
         roots = [str(r) for r in self.fs.roots]
         return hashlib.sha256('\0'.join(roots).encode()).hexdigest()[:16] if roots else 'no-folder'
     def rebind_journal(self):
-        """Point the journal and the history at the folders open now.
-
-        Built once in `__init__`, a workspace that started with no folders kept the key for *no*
-        folders after one was opened, so every project a desktop launch touched wrote into one
-        shared file. That is how a single journal reached gigabytes.
-        """
+        """Point the journal and the history at the folders open now."""
         key = self.journal_key()
         if key == self._journal_key: return self.journal
         from .core.session import FileHistory, OperationJournal
@@ -380,7 +374,7 @@ class Workspace:
         return first(self.fs.roots)
     @property
     def runs(self):
-        "The saved runs of the folder the project surfaces are about, which is not always the first opened."
+        "The saved runs of the folder the project surfaces are about. That is not always the first opened."
         root = self.project_root
         if self._runs is None or self._runs.root != root: self._runs = Runs(root)
         return self._runs
@@ -436,7 +430,7 @@ class Workspace:
         return self._add_tab(Tab(path='', kind='web', ref=target, scratch=True,
                                  title=title or 'page', private_kernel=False))
     def new_scratch(self, kind='notebook'):
-        "An unsaved buffer -- what the IDE opens when there is nothing to open yet."
+        "An unsaved buffer, opened when there is nothing to open yet."
         self._untitled += 1
         return self._add_tab(Tab(path='', kind=kind, title=f'untitled-{self._untitled}', scratch=True))
     def create_document(self, path):
@@ -563,7 +557,7 @@ class Workspace:
         doc, shelf, vault = str(ref.get('doc') or ''), str(ref.get('shelf') or ''), str(ref.get('vault') or '')
         m = self.vaults.memory(vault or None)
         # A section id carries its document's id before the `#`. `shelf_text` reads only the part
-        # that was pointed at, which is the whole reason attaching a citation beats attaching a book.
+        # that was pointed at.
         row = m.document(doc.split('#')[0], shelf or None)
         title = ref.get('title') or row.get('title') or doc
         body = m.shelf_text(doc, shelf or None, max_text)
@@ -630,9 +624,10 @@ class Workspace:
         return self._grounding(attachments, context)
     def ask_stream(self, prompt, attachments=(), reasoning=None, context='', context_path='',
                    grounding=None, on_registered=None, ai=None):
-        """The same turn, yielding markdown as it arrives. `ai` names the conversation the turn
-        belongs to: a caller that already holds one must not have its turn moved by a thread
-        switch, and defaulting to the active one keeps every existing caller unchanged."""
+        """The same turn, yielding markdown as it arrives.
+
+        `ai` pins the conversation the turn belongs to, against a thread switch mid-turn. It
+        defaults to the active one."""
         ai = ai or self.ai
         self.sync_agent_routing(ai)
         context, screen, media = grounding or self._grounding(attachments, context)
@@ -688,7 +683,7 @@ class Workspace:
         s, self.screen = self.screen, (None, '', '')
         return s
     def save_screen(self, svg, name=None):
-        "Write a captured screen where a person can open it -- leela's own config dir, not the project."
+        "Write a captured screen into leela's own config dir, not the project."
         d = leela_cfg/'screens'
         d.mkdir(parents=True, exist_ok=True)
         p = d/(name or f"screen-{time.strftime('%Y%m%d-%H%M%S')}.svg")
@@ -725,7 +720,7 @@ class Workspace:
         t.cwd = str(p)
         return p
     def kernel_key(self, tab=None):
-        "Which kernel a tab uses. Notebooks are private by default; source files share"
+        "Which kernel a tab uses. Notebooks are private by default. Source files share one per folder."
         t = tab or self.tab
         fallback = str(self.project_root) if self.project_root is not None else 'default'
         if t is None: return fallback
@@ -805,7 +800,7 @@ class Workspace:
             if save: self.runs.add(r)
         root = self.project_root
         cwd = r.resolved_cwd(root) if root else None
-        # An app belongs in its own project's environment, the way a release step already does.
+        # An app belongs in its own project's environment.
         from .blocks.runtime.kernels import python_for
         return await self.dev.start(r.cmd, cwd=cwd, name=r.name, watch=r.watch,
                                     env=r.resolved_env(root), python=python_for(cwd or root, self))
@@ -814,10 +809,9 @@ class Workspace:
         from .blocks.runtime.kernels import KERNELS, find_pythons, ipymini_available, python_for
         t = tab or self.tab
         k = self.kernel_peek(t)
-        # What this tab's kernel is actually started under -- `Workspace.kernel` resolves the same
-        # way. `default_python` is one interpreter for the whole workspace, adopted from whichever
-        # folder was opened first, so a notebook in the second repo was told it belonged to the
-        # first and had to be pointed at its own venv by hand.
+        # What this tab's kernel is actually started under. `Workspace.kernel` resolves it the
+        # same way. `default_python` is one interpreter for the whole workspace, taken from the
+        # folder opened first.
         cur_py = python_for(self.cwd_for(t), self)
         return {
             'key': self.kernel_key(t),
@@ -975,12 +969,7 @@ class Workspace:
                 'active_root': str(self.active_root or ''),
                 'saved': time.time()}
     def restore_settings(self, d):
-        """Everything a saved session holds that is not its folders or its tabs.
-
-        Naming a folder on the command line built a workspace that carried over three model names
-        and dropped the rest, so a per-job model chosen yesterday was gone today and read as though
-        shutting down had reverted it.
-        """
+        """Everything a saved session holds that is not its folders or its tabs."""
         d = d if isinstance(d, dict) else {}
         self.compact_auto = bool(d.get('compact_auto', True))
         self.compact_strategy = str(d.get('compact_strategy') or 'surgical')
@@ -1030,7 +1019,7 @@ class Workspace:
                                        if t.path == str(was.get('path') or '')), 0)
         return opened
     def save(self, path=None):
-        "Persist folders and tabs (never kernels -- their namespaces do not survive the process)."
+        "Persist folders and tabs. A kernel namespace does not survive the process."
         p = Path(path or getattr(self, '_state_path', None) or ws_path())
         try: p.write_json(self.state())
         except OSError: pass

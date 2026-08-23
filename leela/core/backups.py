@@ -1,13 +1,9 @@
 """Dated copies of the state Leela cannot regenerate, and the retention that keeps them useful.
 
-The conversation log, its session and branch sidecars, saved workspaces, keymaps and notes are all
-small files that are only ever appended to or replaced in place. One bad write loses them, and
-nothing else in the system holds a second copy -- so this does, on a cadence and before anything
-overwrites the log.
-
-Each dated copy is one gzipped tar with a JSON manifest beside it, and what goes into it is a
-person's choice: journals alone are tens of megabytes, and five uncompressed copies of everything
-was a third of a gigabyte.
+The conversation log, its sidecars, saved workspaces, keymaps and notes are appended to or replaced
+in place, and nothing else holds a second copy. Copies are taken on a cadence and before anything
+overwrites the log. Each is one gzipped tar with a JSON manifest beside it. What goes in is a
+person's choice.
 """
 
 import io, json, os, shutil, tarfile, threading, time
@@ -28,8 +24,8 @@ STAMP = '%Y%m%d_%H%M%S'
 ARCHIVE = '.tar.gz'
 
 #: What a person cannot get back by rebuilding, and what to call it on the settings page. Caches,
-#: logs and indexes are deliberately absent -- they regenerate, and copying them makes a backup too
-#: big to keep many of. Everything here is a path under the config dir except `vault`.
+#: logs and indexes are absent: they regenerate, and copying them makes a backup too big to keep
+#: many of. Everything here is a path under the config dir except `vault`.
 ENTRIES = {
     'agent-history.jsonl': 'conversations',
     'agent-sessions.json': 'conversation titles',
@@ -49,15 +45,13 @@ ENTRIES = {
     'vault': 'vault memory (outside the config dir)',
 }
 
-#: Chosen until a person chooses otherwise. The vault is left out: it is a live database in its own
-#: directory, and a restore of it writes outside the config dir.
-#: `journals` is deliberately out: it is undo state for files that are still on disk, and a day of
-#: saving one large notebook made it the biggest thing in every archive. `ENTRIES` still offers it,
-#: so a person who wants their undo history copied can say so.
+#: Chosen until a person chooses otherwise. The vault is out because a restore of it writes outside
+#: the config dir. `journals` is out because it is undo state for files still on disk, and a day of
+#: saving one large notebook makes it the biggest thing in an archive. `ENTRIES` still offers both.
 PRECIOUS = tuple(k for k in ENTRIES if k not in ('vault', 'journals'))
 
-#: How often, in hours. `off` keeps the pre-write guard and nothing else, because losing the log to
-#: a bad write is the failure this exists for and it does not wait for a schedule.
+#: How often, in hours. `off` keeps the pre-write guard and nothing else, because a bad write to the
+#: log does not wait for a schedule.
 CADENCES = {'off': 0, 'hourly': 1, 'sixhourly': 6, 'daily': 24, 'weekly': 168}
 
 def stamp(when=None): return (when or datetime.now()).strftime(STAMP)
@@ -74,14 +68,13 @@ def _top(name): return str(name).split('/')[0]
 def backup_dir(cfg=None): return Path(cfg or leela_cfg)/BACKUP_DIR
 
 #: The entries Ramabana writes, which `agent.configFolder` can move out of Leela's config dir.
-#: A backup that kept copying the old location would protect an empty log.
+#: A backup that copies the old location protects an empty log.
 AGENT_ENTRIES = ('agent-history.jsonl', 'agent-sessions.json', 'agent-branches.json', 'agent-plans')
 
 def agent_source(cfg=None):
     """Where the agent's own files are, which is not Leela's config dir once a folder is shared.
 
-    Only a folder that was actually chosen moves anything: with the setting empty this is the
-    config dir it has always been, so nothing about an existing install changes.
+    With `agent.configFolder` empty this is the config dir, so an existing install is unchanged.
     """
     try:
         from ..blocks.settings.settings import Settings
@@ -186,13 +179,13 @@ def _add_entry(tar, name, path):
     """Add one entry, taking any live database through SQLite rather than copying its files.
 
     A `.db` in WAL mode is three files that change independently, so copying them one after another
-    can capture a set that never existed together. `-shm` is worse than useless in a copy: SQLite
-    rebuilds it, and a stale one confuses recovery. The backup API hands over one consistent file.
+    can capture a set that never existed together. A copied `-shm` confuses recovery; SQLite rebuilds
+    it anyway.
     """
     if path.is_file():
         if path.suffix == '.db': return _add_sqlite(tar, name, path)
         tar.add(path, arcname=name); return 1
-    tar.add(path, arcname=name, recursive=False)   # the entry itself, so the layout is unchanged
+    tar.add(path, arcname=name, recursive=False)   # the directory member itself, keeping the layout
     files = 0
     for f in sorted(path.rglob('*')):
         if not f.is_file() or f.name.endswith(SQLITE_SIDECARS): continue
@@ -221,8 +214,7 @@ def _add_text(tar, name, text):
 def clean_dates(dates, now=None, max_ages=(2, 14, 60), k=5):
     """Which dated names to keep: the oldest still inside each age band, plus the newest `k`.
 
-    Tiered rather than "last n", so a mistake noticed a month later still has something to go back
-    to, without keeping every copy ever made.
+    Tiered rather than "last n", so a mistake noticed a month later still has something to go back to.
     """
     now, keep = now or datetime.now(), []
     dated = sorted([d for d in dates if _when(d) is not None])
@@ -282,8 +274,7 @@ def due(cadence='daily', cfg=None, now=None):
 def guard(path, cfg=None, reason='before an overwrite'):
     """A copy taken because something is about to replace `path`, kept apart from the cadence.
 
-    The failure this exists for is one write to the conversation log, so the copy has to happen
-    on that write rather than on a timer that may be hours away.
+    The copy happens on the write itself rather than on a timer hours away.
     """
     path = Path(path)
     if not path.exists() or not path.stat().st_size: return None
@@ -301,9 +292,8 @@ def guard(path, cfg=None, reason='before an overwrite'):
 def restore(name, cfg=None, only=None, dry_run=False):
     """Put a dated backup back, keeping a guard copy of whatever it replaces.
 
-    Restoring is itself a write over live state, so it takes its own copy first: a restore of the
-    wrong backup must not be the second thing that loses a conversation. `only` names the entries
-    to put back, and only those come out of the archive.
+    Restoring is itself a write over live state, so a restore of the wrong backup does not lose a
+    conversation. `only` names the entries to put back, and only those come out of the archive.
     """
     cfg, name = Path(cfg or leela_cfg), _stem(name)
     arc, folder = backup_dir(cfg)/f'{name}{ARCHIVE}', backup_dir(cfg)/name
@@ -357,8 +347,7 @@ def _place(src, names, cfg, why):
 def schedule_backups(cadence='daily', cfg=None, interval=900):
     """A daemon thread that takes a copy whenever the cadence is due. Returns a stop function.
 
-    Checked often and taken rarely, so a long-running window still gets its daily copy without the
-    app having to know when it started.
+    Checked every `interval` so a long-running window gets its daily copy whenever it started.
     """
     stop = threading.Event()
     if not CADENCES.get(str(cadence), 0): return stop.set

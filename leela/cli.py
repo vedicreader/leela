@@ -1,4 +1,4 @@
-"`leela` — the browser IDE entry point."
+"`leela`, the browser IDE entry point."
 
 import argparse, ipaddress, os
 

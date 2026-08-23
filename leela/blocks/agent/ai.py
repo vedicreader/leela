@@ -256,10 +256,7 @@ class WorkspaceHost(Host):
     def capabilities(self):
         """What a workspace has by construction. See `docs/integration.md`.
 
-        `session` is declared rather than probed. Probed, it asked a workspace with no kernel yet,
-        got `NotImplementedError`, and dropped `run_python` for the life of that assistant -- so a
-        notebook opened straight onto a prompt cell could describe the code it wanted to run and
-        never run it, while the same request after one code cell worked. `_kernel` starts one.
+        `session` is declared rather than probed, because `_kernel` starts one on demand.
         """
         return {**super().capabilities, 'notebook': True, 'web': True, 'memory': True,
                 'watch': True, 'api': True, 'shell': True, 'session': True}
@@ -280,8 +277,7 @@ class WorkspaceHost(Host):
         try: return self.ws.fs._check(path, must_exist=must_exist)
         except Unsafe as e:
             if reading and (outside := self._readable_outside(path)) is not None: return outside
-            # The gate is the open roots, not the open tabs; naming the tabs sent people looking
-            # for a quoting or path bug in a file they could already see listed.
+            # The gate is the open roots, not the open tabs.
             hint = f'; open folders: {", ".join(self.roots)}' if self.roots else ''
             if reading and not getattr(self.ws, 'agent_read_outside', False):
                 hint += '; open the folder, or turn on reading outside the open folders in agent settings'
@@ -427,9 +423,8 @@ class WorkspaceHost(Host):
     def _start_kernel(self):
         """Start the tab's kernel for a tool that needs one. `None` when it cannot be waited for.
 
-        A person asking to run something means start what it takes. Tools run on the turn's own
-        thread, so this hands the work to the loop that owns the kernels and waits; called *on*
-        that loop there is nothing to wait for, and the peek stands.
+        Tools run on the turn's own thread, so this hands the work to the loop that owns the
+        kernels and waits. Called on that loop there is nothing to wait for, and the peek stands.
         """
         loop = getattr(self.ws, '_loop', None)
         if loop is None or not loop.is_running(): return None
@@ -457,10 +452,8 @@ class WorkspaceHost(Host):
     def run_python(self, code):
         """Run in the agent's own layer over the user's namespace, never in the namespace itself.
 
-        `scope: 'global'` executed straight into the user's globals, where the refusal the tool
-        promises does not exist: `del mine` and `mine = ...` both went through and the variable was
-        gone. The overlay reads the user's variables, keeps what the agent binds across calls, and
-        blocks a mutation of anything the user owns. `isolated` is the narrower setting's answer.
+        The overlay reads the user's variables, keeps what the agent binds across calls, and blocks
+        a mutation of anything the user owns.
         """
         scope = 'overlay' if 'overlay' in self.scopes else 'isolated'
         if self.session is not None: return self._session_text(self.session.run(code, scope=scope))
@@ -549,7 +542,7 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         """Which sources this vault follows, how often each is read, and what it last said.
 
         Feed items are filed on the `news` shelf, not the main one, so `memory_search` reaches them
-        only in passing. Use `news_latest` to read them and `news_story` to open one.
+        only in passing. Read them with `news_latest` and open one with `news_story`.
         """
         try: rows = [dict(url=f.url, title=f.title, every=f.every, enabled=f.enabled,
                           last_status=f.last_status or 'not read yet', new_since_last_read=f.items)
@@ -560,7 +553,7 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         """Recent feed items, newest first: headline, source, date, standfirst and `doc_id`.
 
         `match` narrows by headline or standfirst, `feed` by the source's name. This reads what is
-        already filed; call `news_refresh` first when the question is about today.
+        already filed. Call `news_refresh` first when the question is about today.
         """
         try: found = news_rows(host._vault(), match=match, feed=feed, limit=max(1, int(limit)))
         except Exception as e: return f'news_latest failed: {errstr(e)}'
@@ -575,10 +568,10 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         if not text: return f'no such item on the news shelf: {doc!r}. Call news_latest for what is there.'
         return clip(text, mx * 2)
     def news_follow(url: str, title: str = '', every: str = '1h') -> str:
-        """Follow a source and read it now. `url` may be the site itself — its feed is found for you.
+        """Follow a source and read it now. `url` may be the site itself, whose feed is found for you.
 
-        A source refused here carries no feed at all, which is worth reporting rather than retrying
-        with a guessed `/rss.xml`. `every` says when to read it *again*.
+        A source refused here carries no feed at all. Report that rather than retrying with a
+        guessed `/rss.xml`. `every` is how often to read it after this.
         """
         try: f = feeds().add(url, title, every)
         except Exception as e: return f'could not follow that: {errstr(e)}'
@@ -602,9 +595,9 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
     def api_access() -> str:
         """What each loaded spec sends, what backs it, and which models may call it.
 
-        Header names and environment variable names; never a value. A spec with no credentials goes
-        out unauthenticated, which most APIs answer with 401 — say so rather than retrying. One
-        marked local-only refuses on a hosted model, and the refusal names what to change.
+        Header names and environment variable names, never a value. A spec with no credentials goes
+        out unauthenticated and most APIs answer 401. One marked local-only refuses on a hosted
+        model, and the refusal names what to change.
         """
         from ..vault.spec import EXAMPLES
         keyed, loaded = host.api_keyed(), sorted(host.specs)
@@ -621,7 +614,7 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
 def api_context(host):
     """The specs already loaded in this session, as something the model is told rather than finds.
 
-    Without it the agent re-loads a spec the page loaded a minute ago, guesses at group names, and
+    Without it the agent re-loads a spec the page already loaded, guesses at group names, and
     discovers a local-only api by being refused. Header names only: a value never reaches a briefing.
     """
     names = sorted(getattr(host, 'specs', {}) or {})
@@ -695,7 +688,7 @@ class Assistant(Agent):
         if self.busy: raise RuntimeError('cannot change the LiteRT backend while the assistant is working')
         os.environ['LEELA_LITERT_BACKEND'] = which
         for key in [k for k in self._backends if k[0] == 'litert']: self._backends.pop(key).close()
-        # engines outlive backends now, so the old accelerator's have to go too, or the next chat is
+        # engines outlive backends, so the old accelerator's have to go too, or the next chat is
         # handed the build this call was meant to replace
         if self.engines is not None: self.engines.drop('litert')
         self.note = f'LiteRT backend {which}'
@@ -748,9 +741,8 @@ class Assistant(Agent):
     def _steered(self, prompt):
         """Fold in a steer that no tool result consumed.
 
-        A queued steer is delivered by appending it to the next tool result, so one queued while the
-        model was writing its answer waited for a tool call that never came. Text prompts only: a
-        multimodal turn leaves it queued rather than dropping it.
+        Only a text prompt takes the fold, so a multimodal turn leaves the steer queued rather than
+        dropping it.
         """
         if self.approvals is None or not isinstance(prompt, str): return prompt
         steer = self.approvals.consume_steer()
@@ -791,9 +783,9 @@ class Assistant(Agent):
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             built = super().tools
-            # `_plain` is what the briefing is written from. The turn model keeps the Git writes --
-            # `built` is untouched -- but is not invited to reach for them; asking is what a Git
-            # write is for. Delegation is refused them outright, in `_sub_plain`.
+            # `_plain` is what the briefing is written from. The turn model keeps the Git writes,
+            # since `built` is untouched, but is not invited to reach for them. Delegation is
+            # refused them outright, in `_sub_plain`.
             self._plain = [f for f in self._plain if f.__name__ not in GIT_WRITE_TOOLS]
             return built
         return super().tools
@@ -801,10 +793,8 @@ class Assistant(Agent):
     def _sub_plain(self):
         """No delegated agent gets leela's Git writes, whichever list upstream hands back.
 
-        Filtering `_plain` alone only covered the branch that returns it. A sub-agent sized to a
-        different model is built from `registry.tools` instead, and one allowed to write is given
-        the recorded wrappers -- neither passes through `_plain`, so both arrived holding
-        `git_push`. The refusal belongs on what delegation is actually given.
+        A sub-agent sized to a different model is built from `registry.tools`, and one allowed to
+        write is given the recorded wrappers, so both lists are filtered here.
         """
         refused = {*GIT_WRITE_TOOLS, 'user_steering'}
         return [f for f in super()._sub_plain() if f.__name__ not in refused]

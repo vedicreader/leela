@@ -1,7 +1,6 @@
-// -- driving the packages one call at a time --------------------------------------------
-// The alternative to the deploy script, kept as its own panel so the two can be compared:
-// same runner, same terminal, same blame on a failure -- six library calls instead of three
-// subcommands. The snippet is on screen because a button you cannot read is not a diagnostic.
+// The alternative to the deploy script, kept as its own panel so the two can be compared: same
+// runner, same terminal, same blame on a failure, six library calls instead of three subcommands.
+// The snippet is on screen because a button you cannot read is not a diagnostic.
 const drvUI = {data: null, open: '', poll: 0};
 function drvPart(s, d) {
   const m = s.meta || {}, busy = d.running && s.status !== 'running';

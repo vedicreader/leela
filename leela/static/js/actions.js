@@ -1,4 +1,3 @@
-/* ------------------------------------------------------------------ actions */
 const ACTIONS = {
   focus_files:  () => { leePane('left', true); leeLeft('files'); setScope('files'); $('#filetree')?.focus(); highlightTree(); },
   focus_editor: () => { setScope('editor'); if (lee.cells.length) focusCell(lee.sel); else $('#editor')?.focus(); },
@@ -218,17 +217,17 @@ async function closeTab(index = null) {
 }
 window.leeCloseTab = closeTab;
 async function closeTabs(which) {
-  // `others`, `right` and `saved`, the three a browser offers after a morning of opening
-  // files. The reference point is the tab the menu was opened on, not the active one -- a
-  // right-click on a background tab selects it first, but the menu is still about that tab.
+  // `others`, `right` and `saved`. The reference point is the tab the menu was opened on, not the
+  // active one: a right-click on a background tab selects it first, and the menu is still about
+  // that tab.
   const at = lee.menuTab == null ? activeTabIndex() : lee.menuTab;
   lee.menuTab = null;
   if (at < 0) return;
   const tabs = $$('.lee-tab');
   const keep = i => which === 'others' ? i === at : which === 'right' ? i <= at
                   : tabs[i].classList.contains('dirty');
-  // Git diff tabs live only in the browser and are appended after the real ones, so they
-  // are left alone and cannot shift an index. Highest first, for the same reason.
+  // Git diff tabs live only in the browser and are appended after the real ones, so they are left
+  // alone and cannot shift an index. Highest first, for the same reason.
   const doomed = tabs.map((_, i) => i).filter(i => !keep(i) && !tabs[i].dataset.gitDiff).reverse();
   if (!doomed.length) return status('nothing to close');
   const unsaved = doomed.filter(i => tabs[i].classList.contains('dirty')).length;
@@ -296,8 +295,8 @@ function shiftTab(d) {
 function layoutTabs() {
   const bar = $('#tabbar'), more = $('#taboverflow'); if (!bar || !more) return;
   const tabs = $$('.lee-tab', bar), active = Math.max(0, activeTabIndex());
-  // Keep a calm, finite strip. The active file and its neighbours remain spatially
-  // meaningful; every other open document is one click away in the overflow menu.
+  // The active file and its neighbours stay spatially meaningful, and every other open document
+  // is one click away in the overflow menu.
   const breakpointCap = innerWidth >= 1700 ? 7 : innerWidth >= 1300 ? 5 : innerWidth >= 960 ? 4 : 2;
   const cap = Math.max(1, Math.min(breakpointCap, Math.floor(bar.clientWidth / 138) || 1));
   const keep = new Set();

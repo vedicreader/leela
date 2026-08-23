@@ -1,10 +1,9 @@
 /* How much work one turn may do. `auto` lets ramabana size it from the prompt; a number pins it.
    The fields are written back from the answer, so a refusal leaves the box showing what is
    actually in force rather than the rejected text. */
-/* The highlighted range, queued as context for the next turn.
-
-   Sent as text rather than as `path:from-to` for the agent to go and read: the buffer may be
-   unsaved, and what you highlighted is what you meant, not what happens to be on disk. */
+/* The highlighted range, queued as context for the next turn. Sent as text rather than as
+   `path:from-to` for the agent to read, because the buffer may be unsaved and what you highlighted
+   is what you meant. */
 function leeAgentSelection() {
   const v = curEditor();
   if (!v) return status('put the cursor in some code first', 'err');
@@ -123,6 +122,6 @@ function leeRight(which) {
 window.leeRight = leeRight;
 
 // Every memory view is fetched asynchronously into one `#memorybody`, so a slow answer must not
-// paint over the view you switched to while it was in flight. Each switch takes the next token;
-// a fetch that finds the token moved drops its result.
+// paint over the view you switched to. Each switch takes the next token, and a fetch that finds the
+// token moved drops its result.
 let memoryViewSeq = 0;

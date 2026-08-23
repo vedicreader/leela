@@ -2424,3 +2424,22 @@ def test_the_pane_is_for_a_packaged_app_and_remembers_being_answered(monkeypatch
     assert m.setup_dismissed() and m.setup_plan()['dismissed'] is True
     m.dismiss_setup(False)
     assert m.setup_plan()['dismissed'] is False
+
+
+def test_an_update_is_only_offered_when_the_pin_allows_it():
+    "rishi pins some backends exactly, so a newer release existing is not one anyone here can take."
+    from leela.blocks.agent.models import updates
+    u = updates(check=False)
+    assert u['outdated'] == [], 'no lookup was made, so nothing may be claimed outdated'
+    for r in u['backends']:
+        assert r['installed'] and r['pin'], r
+    assert u['leela']['current'] and u['leela']['url']
+
+def test_a_version_check_that_fails_does_not_break_the_pane(monkeypatch):
+    "No network is the common case on a fresh machine; it means no offer, not no modal."
+    import leela.blocks.agent.models as m
+    monkeypatch.setattr(m, '_fetch_json', lambda *a, **kw: (_ for _ in ()).throw(OSError('offline')))
+    m._latest_at = 0.0
+    u = m.updates()
+    assert u['checked'] is False and u['outdated'] == []
+    assert u['leela']['latest'] is None and u['leela']['outdated'] is False

@@ -1,4 +1,3 @@
-/* ------------------------------------------------------------------ overlays */
 function modalViewport() {
   const v = window.visualViewport;
   return {left: v?.offsetLeft || 0, top: v?.offsetTop || 0, width: v?.width || innerWidth, height: v?.height || innerHeight};
@@ -59,8 +58,8 @@ function modal(inner, onKey, onClose, options = {}) {
   };
   m.requestClose = requestClose;
   const key = (e) => {
-    // Nested dialogs (for example “change cwd” from the kernel picker) form a stack.
-    // Only the top one owns keys; otherwise one Escape closes every layer at once.
+    // Nested dialogs form a stack, and only the top one owns keys, or one Escape closes every
+    // layer at once.
     if ($$('.lee-modal').at(-1) !== m) return;
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); requestClose(); return; }
     if (e.key === 'Tab') {
@@ -200,8 +199,8 @@ function textDialog(title, label, value = '') {
   });
 }
 
-/* `alt` offers a second way to say yes, for a choice with two shapes rather than one. It resolves
-   `'alt'`, and cancel stays falsy so every caller that only asked a yes/no question is unchanged. */
+/* `alt` offers a second way to say yes. It resolves `'alt'`, and cancel stays falsy so every
+   caller that asked a yes/no question is unchanged. */
 function confirmDialog(title, detail, action = 'confirm', alt = '') {
   return new Promise(resolve => {
     let settled = false;
@@ -217,8 +216,8 @@ function confirmDialog(title, detail, action = 'confirm', alt = '') {
   });
 }
 
-/* One menu renderer for every contextual surface. Labels and effective chords came from
- * leela.blocks.keys.menus + leela.core.keys; the browser only positions rows and dispatches their action. */
+/* One menu renderer for every contextual surface. Labels and effective chords come from
+ * `leela.blocks.keys.menus` and `leela.core.keys`. The browser positions rows and dispatches. */
 function closeMenu() { $('.lee-ctxmenu')?.remove(); }
 function openMenu(surface, x, y) {
   closeMenu();
@@ -264,9 +263,8 @@ function openChromeMenu(anchor, rows) {
   menu.tabIndex = -1; menu.focus();
 }
 
-// Choosing a folder is choosing a project: source control, releases, deploys and the branch
-// pill all follow it. Selecting the folder in the tree without saying so left every one of
-// them describing whichever folder had been opened first.
+// Choosing a folder is choosing a project: source control, releases, deploys and the branch pill
+// all follow it. Selecting the folder in the tree is not choosing it; this route is.
 async function activateRoot(path) {
   try { await post('/workspace/activate', {path}); }
   catch (e) { return status(e.message || String(e), 'err'); }
@@ -295,14 +293,14 @@ async function leeWorkspaceMenu(anchor) {
 }
 window.leeWorkspaceMenu = leeWorkspaceMenu;
 
-/* The branch pill's own popup is `28_branchbar.js`: it is a searchable list of branches and
-   actions rather than a menu, so it does not fit `openChromeMenu`. */
+/* The branch pill's own popup is `branchbar.js`. It is a searchable list rather than a menu, so it
+   does not fit `openChromeMenu`. */
 
 async function operationHistory() {
   const d = await api('/history/operations');
   const m = modal(`<div class="lee-mhead">workspace history<span class="sub">saved file checkpoints · newest first</span></div>` +
-    // An empty `data-history` still matches `[data-history]`, so the attribute is omitted
-    // rather than blanked: a spent operation must not be clickable at all.
+    // An empty `data-history` still matches `[data-history]`, so the attribute is omitted rather
+    // than blanked. A spent operation must not be clickable at all.
     `<div class="lee-modallist">${(d.operations || []).map(op => `<button class="lee-mrow" data-op="${esc(op.id)}"${op.reversible ? ' data-history="undo"' : op.redoable ? ' data-history="redo"' : ' data-off="1"'}>` +
       `<strong>${esc(op.label)}</strong><span class="sub">${op.redoable ? 'undone · redo available · ' : ''}${new Date(op.at * 1000).toLocaleString()} · ${esc((op.paths || []).join(', '))}</span></button>`).join('') || '<div class="lee-dim">No saved operations yet.</div>'}</div>` +
     `<div class="lee-mfoot"><span class="lee-dim">Undo and redo refuse files changed after the checkpoint.</span></div>`);

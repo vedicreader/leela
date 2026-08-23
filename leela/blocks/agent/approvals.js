@@ -1,6 +1,6 @@
-/* A write pauses Rishi's tool loop until it is answered. Keep the question in the agent
- * pane rather than a modal, so the rest of the IDE remains usable while the model waits.
- * The same event is used by agent-chat and notebook prompt-cell streams. */
+/* A write pauses Rishi's tool loop until it is answered. The question stays in the agent pane
+ * rather than a modal, so the rest of the IDE is usable while the model waits. The same event
+ * serves agent-chat and notebook prompt-cell streams. */
 // These are the log's own nodes. A detached one is held forever.
 const approvalCards = new Map();
 function proposalArgs(card) {
@@ -152,9 +152,9 @@ function showApproval(a, destination = null) {
   };
   const answer = async ok => {
     const buttons = $$('button', card), error = $('.lee-proposal-error', card);
-    // These are two different HITL decisions, not one form with a boolean switch.
-    // Approval executes the displayed call and therefore must parse and validate edits.
-    // Rejection executes no call, so malformed/missing arguments must never trap the user.
+    // Two different HITL decisions, not one form with a boolean. Approval executes the displayed
+    // call, so it must parse and validate edits. Rejection executes no call, so malformed or
+    // missing arguments must never trap the user.
     let args = null, tool = null, changed = false;
     if (ok) {
       try {
@@ -225,8 +225,8 @@ function editableResponse(raw) {
 }
 
 function markTurnUndone(out, bar, files, revise) {
-  // `rollback_turn` restores files; it does not touch model history. Deleting the transcript
-  // said the agent had forgotten a turn it still carries.
+  // `rollback_turn` restores files and does not touch model history, so the turn is marked rather
+  // than deleted. The agent still carries it.
   let first = out, last = bar;
   while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
   while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
@@ -242,9 +242,8 @@ function markTurnUndone(out, bar, files, revise) {
 }
 
 /* The pane is round-tripped through `innerHTML` by the history toggle, a rehydrate, a resume and
-   every thread switch, and a bound listener does not survive that -- the buttons went dead and
-   looked merely broken. So the turn these controls act on is written into the DOM and one
-   delegated listener on the log dispatches them, which outlives any number of round-trips. */
+   every thread switch, and a bound listener does not survive that. The turn these controls act on
+   is written into the DOM, and one delegated listener on the log dispatches them. */
 function addResponseRevision(out, turnId, raw, capabilities = {}) {
   if (!turnId || !out || !raw.trim()) return;
   const bar = document.createElement('div'); bar.className = 'lee-response-revision';
@@ -315,8 +314,7 @@ async function restoreTurnFiles(bar) {
         ? `\n\nCannot undo external effects: ${tx.transaction.irreversible.join(', ')}` : '';
       if (!await confirmDialog('Restore files changed by this turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
       const d = await post('/agent/rollback-turn', {turn_id: turnId, thread: lee.agentThread || ''});
-      // Marked before the files are reloaded: a reload that raises used to leave the reply
-      // standing as though nothing had happened.
+      // Marked before the files are reloaded, so a reload that raises still shows the turn undone.
       markTurnUndone(out, bar, (d.paths || []).length, revisable ? $('[data-revise]', bar) : null);
       for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
       status('turn changes rolled back', 'ok');
@@ -355,8 +353,8 @@ function reviseTurn(bar) {
   }
 }
 
-/* One listener, on the log element itself. Its contents are replaced constantly; it is not, so a
-   listener here outlives every repaint where a per-button binding did not. */
+/* One listener, on the log element itself. Its contents are replaced constantly and it is not, so
+   a listener here outlives every repaint where a per-button binding does not. */
 function bindResponseRevisions(log) {
   if (!log || log._leeRevisionsBound) return;
   log._leeRevisionsBound = true;

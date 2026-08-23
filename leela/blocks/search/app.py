@@ -97,6 +97,6 @@ def connect(app, ctx):
         return found(ctx.search, await off_loop(fn, path, line, limit=limit))
     @rt('/clusters')
     async def clusters_route(limit: int = 40):
-        "An ANN clustering of the whole indexed corpus -- a map of the codebase by shape."
+        "An ANN clustering of the whole indexed corpus: a map of the codebase by embedding distance."
         cs = await off_loop(ctx.search.clusters)
         return {'note': ctx.search.note, 'clusters': [c.dict() for c in cs[:limit]]}

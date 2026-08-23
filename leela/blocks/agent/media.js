@@ -24,7 +24,7 @@ function reduceAgentTimeline(events) {
     const id = data.action_id || data.id;
     /* An update to a call already on screen is not a new position in the timeline, so only a
        call seen for the first time closes the open prose. A row with no id has no identity to
-       update, so it can only ever be new -- and it is still work a person did. */
+       update, so it can only ever be new, and it is still work a person did. */
     let part = id ? actions.get(id) : null;
     if (!part) {
       seal();
@@ -86,9 +86,9 @@ function setAgentStatus(state, title) {
   [...el.childNodes].find(n => n.nodeType === Node.TEXT_NODE)?.replaceWith(document.createTextNode(text));
 }
 
-// The assistant's tools edit files on disk, so a turn can change what is on screen.
-// Activity, answer chunks, and final diffs stream independently; each tool row is updated
-// in place so pending work never remains on screen after that step has finished.
+// The assistant's tools edit files on disk, so a turn can change what is on screen. Activity,
+// answer chunks and final diffs stream independently, and each tool row is updated in place so
+// pending work never stays on screen after that step has finished.
 async function sendAgent(force = false) {
   if (lee.agentBusy) return force ? leeForceSteer() : leeQueueSteer();
   if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
@@ -124,7 +124,7 @@ function agentListen(thread, since) {
   const timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
   log.appendChild(timelineRoot); log.scrollTop = log.scrollHeight;
   const timeline = agentTimeline(timelineRoot), seen = timeline.actions;
-  // A steer is drawn by the steer block, which is not in this scope. It belongs *in* the turn,
+  // A steer is drawn by the steer block, which is not in this scope. It belongs in the turn,
   // between the prose before it and the call after, so it needs the same painter.
   lee.agentTimeline = timeline;
   let raw = '', runDone = false, lastSeq = since, body = null;
@@ -135,7 +135,7 @@ function agentListen(thread, since) {
     es = new EventSource('/agent/stream?since=' + lastSeq + '&follow=1' +
       (thread ? '&thread=' + encodeURIComponent(thread) : '')); lee.agentStream = es;
     /* EventSource fires `error` for a dropped socket as well as for a frame the server named
-       `error`, and the dropped one carries no data. Parsing it would throw before the handler. */
+       `error`, and the dropped one carries no data. Parsing it would throw. */
     const dedupe = fn => ev => {
       if (typeof ev.data !== 'string') return;
       let d; try { d = JSON.parse(ev.data); } catch (_) { return; }
@@ -204,7 +204,7 @@ function agentListen(thread, since) {
   es.addEventListener('error', dedupe((d, ev) => {
     ev.stopImmediatePropagation(); raw += d.message || ''; body = timeline.chunk(d.message || '');
   }));
-  /* The feed no longer holds what this tab missed, so the turns come from history instead --
+  /* The feed no longer holds what this tab missed, so the turns come from history:
      `/agent/transcript` carries executed cells, never the conversation. Nothing on screen is
      cleared until the replacement is in hand. */
   es.addEventListener('resync', dedupe(async d => {

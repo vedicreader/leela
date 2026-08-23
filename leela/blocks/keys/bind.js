@@ -1,9 +1,5 @@
-/* ---------------------------------------------------------- the keymap */
-/* Editable here, because the alternative is telling someone whose terminal or browser
- * eats ctrl+enter to go and find a JSON file. Saving re-reads it server-side and reloads
- * the table this client dispatches on, so a new chord works on the next keystroke. */
 /* A chord as this app writes them: `[mod+][ctrl+][alt+][shift+]base`, in that order, with `mod`
-   standing for the platform's own command key. Built from a real keystroke so nobody has to know
+   standing for the platform's own command key. Built from a real keystroke, so nobody has to know
    the grammar to bind a key. */
 const CHORD_BASE = {' ': 'space', 'Escape': 'esc', 'ArrowUp': 'up', 'ArrowDown': 'down',
                     'ArrowLeft': 'left', 'ArrowRight': 'right', 'Backspace': 'backspace',
@@ -22,10 +18,10 @@ function chordFromEvent(e) {
   return parts.join('+');
 }
 
-/* Editable here, because the alternative is telling someone whose terminal or browser eats
- * ctrl+enter to go and find a JSON file. It was that JSON file for a while, which meant knowing
- * the grammar and finding out about a clash only after saving. Now it is a row per action, a field
- * that takes the keystroke itself, and the server's own conflict check on every change. */
+/* Editable here, because the alternative is telling someone whose terminal eats ctrl+enter to go
+ * and find a JSON file. A row per action, a field that takes the keystroke itself, and the
+ * server's conflict check on every change. Saving reloads the table this client dispatches on, so
+ * a new chord works on the next keystroke. */
 async function editKeys() {
   const d = await api('/keys/file');
   const rows = () => (lee.keys || []).filter(k => k.label || k.scope !== 'global');
@@ -125,8 +121,8 @@ async function editKeys() {
   notes(d.notes); paint();
 }
 
-/* CodeMirror captures its own keymap at creation, so a rebound chord only reaches the
- * editors after they are rebuilt. Cheap, and it happens once, when the map changes. */
+/* CodeMirror captures its own keymap at creation, so a rebound chord only reaches the editors
+ * after they are rebuilt. */
 function remountEditors() {
   const v = lee.editors.get('exec');
   if (v) { LeeCM.destroy(v); lee.editors.delete('exec'); }
@@ -134,9 +130,9 @@ function remountEditors() {
   mountTab();
 }
 
-/* Screen capture. The grab happens here, not on the server: getDisplayMedia needs a user
- * gesture and a real display, and a server process has neither. The track is kept across
- * captures so only the first press asks permission. */
+/* Screen capture. The grab happens here because `getDisplayMedia` needs a user gesture and a real
+ * display, and a server process has neither. The track is kept across captures, so only the first
+ * press asks permission. */
 async function captureScreen() {
   try {
     if (!lee.vtrack || lee.vtrack.readyState === 'ended') {
@@ -155,8 +151,7 @@ async function captureScreen() {
 }
 
 async function nbEdit(d) {
-  // A file is one document, not a column of cells; a structural edit here would split the
-  // buffer the editor is showing.
+  // A file is one document, not a column of cells, and a structural edit would split the buffer.
   if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return {}; }
   const host = $('#editor'), scrollTop = host?.scrollTop || 0;
   const before = lee.cells.slice();
@@ -180,7 +175,7 @@ async function nbEdit(d) {
   const restored = same >= 0 && lee.editors.get(selectedId);
   if (restored) LeeCM.setCursor?.(restored, Math.min(cursor, restored.state.doc.length));
   // An undo that scrolls nothing leaves you looking for what moved. The cell the operation
-  // landed on is already `lee.sel`; put it in the middle so it is the thing you are looking at.
+  // reached is already `lee.sel`, so put it in the middle.
   if (d.op === 'undo' || d.op === 'redo') {
     const cell = $(`.lee-cell[data-i="${lee.sel}"]`);
     cell?.scrollIntoView({block: 'center', inline: 'nearest'});

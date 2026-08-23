@@ -174,7 +174,7 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/nb/debug/source')
     async def nb_debug_source(frame_id: int):
-        "Source for a stack frame outside the workspace, addressed by trusted frame id—not a client path."
+        "Source for a stack frame outside the workspace, addressed by trusted frame id, never a client path."
         if (k := dbg()) is None: return fail('no ipykernel debugger is active')
         try:
             state = await k.debug_state(frame_id=frame_id)
@@ -345,9 +345,8 @@ def connect(app, ctx):
         current_version = _disk_version(t.path)
         base_version = str(d.get('base_disk_version') or '')
         if base_version and current_version != base_version and not d.get('force'):
-            # Which of the two it is decides everything: another process wrote the file, or Leela
-            # wrote it and the browser's draft is holding a base from before that write. The
-            # dialog could not tell them apart, so a save conflict read the same either way.
+            # Either another process wrote the file, or Leela wrote it and this draft's base
+            # predates that write. The message says which, since the dialog cannot tell them apart.
             mine = doc_versions.get(t.path or t.title) == current_version
             whose = ('Leela wrote that version itself, so this draft began before its own last save'
                      if mine else 'another process wrote it')
@@ -372,8 +371,8 @@ def connect(app, ctx):
             buffer_bases.pop(t.path or t.title, None)
             # what is cached now matches the file again, so this is the version it was read at
             doc_versions[t.path or t.title] = _disk_version(t.path)
-            # A text save already knows what it wrote. Reading it back cost a second pass over the
-            # file, which on a large notebook is the difference between a save and a pause.
+            # A text save already knows what it wrote. Reading it back would cost a second pass
+            # over the file, which on a large notebook is long enough to feel.
             after = (text if t.kind != 'notebook' else
                      Path(target).read_text(encoding='utf-8', errors='replace')
                      if target and Path(target).exists() else None)

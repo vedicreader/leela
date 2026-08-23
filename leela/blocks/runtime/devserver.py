@@ -1,4 +1,4 @@
-"Run any command from the IDE under a live inspector in the same process, so its namespace is."
+"Run any command from the IDE under a live inspector in the same process, so its namespace is visible."
 
 from __future__ import annotations
 import asyncio, os, re, signal, sys, time, traceback
@@ -24,8 +24,8 @@ def leela_path():
 def _boot_src(paths=None):
     """Source that runs `_child` under an interpreter that has never heard of leela.
 
-    `-m` cannot: the module is not on that interpreter's path yet. Nor can PYTHONPATH, which
-    *prepends* -- leela's copy of fasthtml would then shadow the project's own.
+    `-m` fails because the module is not on that interpreter's path yet. PYTHONPATH *prepends*, so
+    leela's copy of fasthtml would shadow the project's own.
     """
     paths = leela_path() if paths is None else list(paths)
     return ('import sys\n'
@@ -99,8 +99,7 @@ class DevServer:
         if not self.python or str(self.python) == sys.executable:
             return [sys.executable, '-u', '-m', 'leela.blocks.runtime.devserver', *args]
         # The app belongs in its own project's environment, so that interpreter runs it. Leela's
-        # own path is *appended*, never prepended: it is here to supply the harness and the
-        # inspector, and a project's copy of anything it also ships must still win.
+        # own path is *appended*, so a project's copy of anything leela also ships still wins.
         return [str(self.python), '-u', '-c', _boot_src(), *args]
     def _cwd(self):
         if self.cwd: return str(self.cwd)
@@ -113,8 +112,8 @@ class DevServer:
         self.log.clear(); self.screen.clear()
         self.base = self.app_url = self.ended = None
         self.command_code = None
-        # A pty rather than a pipe: an app writes colour and progress to a terminal, and a great
-        # many of them say nothing at all into a pipe because they see they are not on one.
+        # A pty rather than a pipe: many apps write colour and progress only on a terminal, and
+        # some say nothing at all into a pipe.
         from .kernels import venv_env
         env = venv_env(self.python, {**os.environ, **(self.env or {})})
         self.pty = Pty(self._cmd(), cwd=self._cwd(), env=env)
@@ -156,7 +155,7 @@ class DevServer:
             try: q.put_nowait(data)
             except Exception: self._subs.discard(q)
     def write(self, data):
-        "Keystrokes into the running app -- a debugger prompt, or ctrl-c."
+        "Keystrokes into the running app, such as a debugger prompt or ctrl-c."
         if self.pty is not None: self.pty.write(data)
     def resize(self, cols, rows):
         if self.pty is not None: self.pty.resize(cols, rows)
@@ -202,7 +201,7 @@ class DevServers:
     def __init__(self, port=9000): self.port, self.servers = port, {}
     @staticmethod
     def key(script):
-        "Resolved path for a script, so the same app opened two ways is one server; a command line is."
+        "Resolved path for a script, so the same app opened two ways is one server. A command line keys as itself."
         s = str(script)
         return str(Path(s).resolve()) if s.endswith('.py') and ' ' not in s else s
     async def start(self, script, **kw):
@@ -230,7 +229,7 @@ def _script_module(script, name=None):
     return mod, script
 
 def _watch_module(name):
-    "Import the module the panel should watch, before the command that uses it runs; None if it will."
+    "Import the module the panel should watch, before the command that uses it runs. None if the import fails."
     from dhrishti.serving import watch
     p = Path(f'{name}.py')
     try:

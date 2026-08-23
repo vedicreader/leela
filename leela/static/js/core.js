@@ -1,14 +1,13 @@
 /* leela IDE client.
  *
  * Sources live with the feature they serve: `leela/blocks/<block>/*.js`, and this shared
- * vocabulary in `leela/static/js/`. `tools/build_ide_js.py` concatenates them, in the order
- * its `LAYERS` fixes, into the bundles `core.web.IDE_BUNDLES` names.
+ * vocabulary in `leela/static/js/`. `tools/build_ide_js.py` concatenates them, in the order its
+ * `LAYERS` fixes, into the bundles `core.web.IDE_BUNDLES` names. Three script tags share one
+ * lexical scope and run in order, so `lee`, `$` and `esc` are declared here and read by every
+ * later module.
  *
- * Three script tags, one lexical scope, executed in order, so `lee`, `$` and `esc` are declared
- * here once and read by every later module.
- *
- * The keymap is fetched from /keys.json (leela.core.keys). Dispatch is scope-aware:
- * `lee.scope` must match or be 'global', else the browser/CodeMirror keep the chord.
+ * The keymap is fetched from `/keys.json`. Dispatch is scope-aware: `lee.scope` must match or be
+ * 'global', else the browser or CodeMirror keeps the chord.
  */
 "use strict";
 
@@ -28,11 +27,11 @@ const lee = {
   agentStream: null, agentStreamGen: 0, agentTitle: '', agentThread: '',
   agentThreadDrafts: new Map(),
   find: null,                  // the find pane's query, its matches and where it is
-  // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
-  // path->name map: two selections in one file are two contexts, not one key overwriting itself.
+  // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, a path->name
+  // map, because two selections in one file are two contexts rather than one key overwritten.
   agentSelections: [],
-  // Vault documents and sections queued for the next turn. A vault ref is not a path, so it
-  // cannot live in `agentAttachments`; `ref` -> {vault, shelf, doc, title} keyed the same way.
+  // Vault documents and sections queued for the next turn. A vault ref is not a path, so `ref` ->
+  // {vault, shelf, doc, title} is keyed separately.
   vaultRefs: new Map(),
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
@@ -105,8 +104,8 @@ applyEditorPrefs(lee.editorPrefs);
 function createEditor(el, opts = {}) { return LeeCM.create(el, {...opts, settings: {...lee.editorPrefs, ...(opts.settings||{})}}); }
 try { lee.recentTabs = JSON.parse(sessionStorage.getItem('lee-recent-tabs') || '[]'); }
 catch (_) { lee.recentTabs = []; }
-// The caret in each file, across restarts: `sessionStorage` died with the window, so every
-// reopened tab came back at line 1. Capped where it is written.
+// The caret in each file, across restarts, so `localStorage` rather than `sessionStorage`, which
+// dies with the window. Capped where it is written.
 try { lee.locations = new Map(JSON.parse(localStorage.getItem('lee-tab-locations')
                                          || sessionStorage.getItem('lee-tab-locations') || '[]')); }
 catch (_) { lee.locations = new Map(); }
@@ -368,9 +367,8 @@ function enhanceCodeBlocks(el) {
                                            python && el.classList.contains('lee-reply')));
   });
 }
-/* This copies an answer into the open notebook, so it needs one. Offering it while a `.py` tab is
-   focused meant a control that was always there and usually inert, and only said so after a click.
-   It is hidden rather than disabled, and comes back the moment a notebook tab is focused. */
+/* This copies an answer into the open notebook, so it needs one. Hidden rather than disabled, and
+   back the moment a notebook tab is focused. */
 function markdownCellActionState(button) {
   const ready = lee.kind === 'notebook';
   const bar = button.closest('.lee-reply-actions') || button;
@@ -468,8 +466,8 @@ async function api(url, opts, retried) {
   if (r.ok) return body;
   /* The kernel ceiling is the one failure a person can answer. Offer the room, then try once more. */
   if (!retried && body && body.kernel_limit && await offerKernelRoom(body)) return api(url, opts, true);
-  /* Thread-aware routes answer with `code` and `message`; the rest with `error`. Either is the
-     one sentence a person can act on, and `statusText` ("Conflict") never is. */
+  /* Thread-aware routes answer with `code` and `message`, the rest with `error`. Either is the one
+     sentence a person can act on, and `statusText` ("Conflict") never is. */
   throw new Error((body && (body.error || body.message)) || r.statusText);
 }
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},

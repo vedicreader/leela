@@ -1,6 +1,6 @@
-/* An image, in the same chrome as a PDF. Fit is the default because an image opened from a
-   vault or a file tree is being *identified*, not inspected; actual size is one click away and
-   the dimensions are shown either way, since "is this the 2x asset" is the usual question. */
+/* An image, in the same chrome as a PDF. Fit is the default because an image opened from a vault
+   or a file tree is being identified rather than inspected. The dimensions are shown either way,
+   since "is this the 2x asset" is the usual question. */
 function mountImage(host, st) {
   const name = (st.path || '').split('/').pop() || 'image';
   const raw = '/file/raw/' + encodeURIComponent(name) + '?path=' + encodeURIComponent(st.path);
@@ -37,10 +37,9 @@ function mountMedia(host, st) {
 async function mountFile(host, st) {
   const isProject = st.path?.endsWith('/pyproject.toml') || st.title === 'pyproject.toml';
   const crumbMode=lee.workbenchPrefs.breadcrumbs||'pathAndSymbols',crumb=crumbMode==='off'?'':`<nav class="lee-breadcrumbs" id="editorcrumbs" aria-label="File and symbol path"><span>${esc(compactPath(st.path||st.title||''))}</span></nav>`;
-  // Markdown gets a rendered pane beside the editor. The editor stays mounted in every view and
-  // is merely hidden by CSS when only the rendering is showing -- everything that reaches for
-  // `lee.editors.get('file')` (saving, autosave, blame, the change gutter, jump-to-line) keeps
-  // working, and "rendered" is a way of *looking* at the file rather than a different kind of tab.
+  // Markdown gets a rendered pane beside the editor. The editor stays mounted in every view and is
+  // only hidden by CSS, so saving, autosave, blame, the change gutter and jump-to-line all keep
+  // reaching `lee.editors.get('file')`.
   const isMd = (st.lang || '') === 'markdown';
   const view = isMd ? (localStorage.getItem('lee-md-view') || 'split') : '';
   host.innerHTML = crumb + (isProject ? '<div class="lee-package-summary" id="packagebar" hidden></div>' : '') +
@@ -64,8 +63,8 @@ async function mountFile(host, st) {
   lee.fileGit = git;
   const key = st.path || st.title;
   const v = createEditor($('#filecm'), {
-    // A cached value is authoritative only after an actual user edit. This guard prevents
-    // stale/programmatic empty entries from blanking a freshly loaded file or run result.
+    // A cached value is authoritative only after a real user edit, or a stale empty entry blanks
+    // a freshly loaded file.
     doc: lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : (st.text || ''),
     lang: st.lang || 'python', lineNums: true, lintPath: st.path || '',
     completeUrl: '/complete', changedLines: git.ranges || [], breakpoints: lee.breakpoints.get(st.path)||[],
@@ -76,15 +75,15 @@ async function mountFile(host, st) {
     },
     onChange: txt => {
       rememberBuffer(key, {path: key, kind: 'text', text: txt}); markDirty();
-      // The preview follows the buffer, not the file: `renderMarkdown` is already debounced and
-      // drops superseded renders, so this is safe to call on every keystroke.
+      // The preview follows the buffer, not the file. `renderMarkdown` is debounced and drops
+      // superseded renders, so this is safe on every keystroke.
       if (isMd) renderMarkdown($('#mdpreview'), txt);
     },
   });
   lee.editors.set('file', v);
   if (isMd) {
-    // The rendered pane carries the same change marks as the gutter beside it, placed by block
-    // rather than by line. Only this first render is annotated; see `paintMarkdownFileChanges`.
+    // The rendered pane carries the same change marks as the gutter, placed by block rather than
+    // by line. Only this first render is annotated. See `paintMarkdownFileChanges`.
     renderMarkdown($('#mdpreview'), LeeCM.getDoc(v), false,
                    el => paintMarkdownFileChanges(el, git.ranges || []));
     $('#mdview').onclick = e => {
@@ -93,8 +92,8 @@ async function mountFile(host, st) {
       localStorage.setItem('lee-md-view', next);
       $('.lee-md-stage').dataset.view = next;
       $$('#mdview .lee-seg').forEach(x => x.classList.toggle('active', x === b));
-      // The editor was display:none a moment ago, so CodeMirror has stale measurements and will
-      // draw the cursor in the wrong place until it re-measures.
+      // The editor was display:none a moment ago, so CodeMirror has stale measurements and draws
+      // the cursor in the wrong place until it re-measures.
       if (next !== 'rendered') requestAnimationFrame(() => LeeCM.focus(v));
     };
   }
@@ -196,9 +195,9 @@ function notebookToc(cells) {
   return toc;
 }
 function observeNotebookCells(host, cells) {
-  // Cell shells preserve the notebook's geometry; CodeMirror is only created near the
-  // viewport. A 150-cell notebook therefore paints immediately instead of constructing
-  // 150 editors in one uninterruptible task.
+  // Cell shells preserve the notebook's geometry, and CodeMirror is only created near the
+  // viewport, so a 150-cell notebook paints immediately instead of constructing 150 editors in
+  // one uninterruptible task.
   lee.cellObserver?.disconnect();
   lee.cellObserver = new IntersectionObserver(entries => {
     for (const e of entries) if (e.isIntersecting) {
@@ -228,8 +227,8 @@ function mountNotebook(host, st) {
 }
 
 function patchNotebook(host, before, cells, op = '') {
-  // Keep unchanged cell DOM and CodeMirror views alive. Moving those nodes is effectively
-  // free and, unlike rebuilding the notebook, cannot flash blank or reset the viewport.
+  // Keep unchanged cell DOM and CodeMirror views alive. Moving those nodes is free and, unlike
+  // rebuilding the notebook, cannot flash blank or reset the viewport.
   lee.cellObserver?.disconnect();
   const oldCells = new Map(before.map(c => [c.id, c]));
   const oldEls = new Map($$('.lee-cell', host).map(el => [el.dataset.id, el]));
@@ -268,8 +267,8 @@ function patchNotebook(host, before, cells, op = '') {
   });
   paintSel();
   observeNotebookCells(host, cells);
-  // `className` is rewritten above for every reused cell, so the marks are reapplied from
-  // what was last read rather than refetched -- the disk has not moved, only the DOM.
+  // `className` is rewritten above for every reused cell, so the marks are reapplied from what
+  // was last read rather than refetched. Only the DOM moved.
   repaintNotebookGitMarks();
   queueNotebookOverview();
 }
@@ -281,8 +280,7 @@ function ensureCellMounted(i) {
   return lee.editors.get(c.id);
 }
 
-// A prompt cell's gutter is its own mark, so the three kinds are told apart at a glance
-// without reading any of them.
+// A prompt cell's gutter is its own mark, so the three kinds are told apart without reading them.
 const gutterFor = (c) => c.cell_type === 'code' ? '[' + (c.execution_count ?? ' ') + ']'
                        : c.cell_type === 'prompt' ? '✦' : 'md';
 const cellState = (c) => c.running ? 'running' : c.cell_type === 'code' && c.execution_count != null

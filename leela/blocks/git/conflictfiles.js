@@ -1,4 +1,3 @@
-/* --------------------------------------------------------- git conflicts */
 async function showConflictCenter() {
   try {
     const d = await api(gitUrl('/git/conflicts')), files = d.files || [], s = d.summary || {};

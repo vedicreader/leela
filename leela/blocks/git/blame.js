@@ -1,7 +1,7 @@
-// Blame, reachable from wherever you are rather than only from a changed-file row. A text
-// file blames the lines you have selected -- "who wrote these six" is the question, and the
-// whole-file answer is one button away. A notebook blames its cells, because blaming its
-// JSON tells you about `"source": [` and nothing about your code.
+// Blame, reachable from wherever you are rather than only from a changed-file row. A text file
+// blames the lines you have selected, and the whole-file answer is one button away. A notebook
+// blames its cells, because blaming its JSON tells you about `"source": [` and nothing about the
+// code.
 function blameRelative(root, path) {
   const p = String(path || '');
   if (!root) return p;
@@ -22,8 +22,8 @@ async function leeBlame() {
 }
 window.leeBlame = leeBlame;
 function blameHue(oid, commits) {
-  // Colour by commit so a cell made of three commits reads as three bands. Position in the
-  // recency-sorted legend, not a hash: the newest change is the one being looked for.
+  // Colour by commit, so a cell made of three commits reads as three bands. Position in the
+  // recency-sorted legend rather than a hash, because the newest change is what is looked for.
   const i = commits.findIndex(c => c.oid === oid);
   return i < 0 ? 'var(--lee-fg4)' : `hsl(${(i * 47) % 360} 55% 55%)`;
 }

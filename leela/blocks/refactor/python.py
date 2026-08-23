@@ -59,7 +59,6 @@ def extract(path, source, start, end, kind, name):
         raise ValueError('a selection that returns or yields cannot be lifted into its own function')
     params, stores = _reads_before_writes(selected), _writes(selected)
     params = [p for p in params if p not in set(dir(builtins))]
-    # what the caller still needs afterwards is what the function has to hand back
     returns = sorted(n for n in stores if n in _reads(source[end:]))
     body = ''.join(indent + '    ' + line if line.strip() else line for line in block.splitlines(True))
     if not body.endswith('\n'): body += '\n'   # a selection can end mid-line; a body cannot
@@ -71,7 +70,7 @@ def extract(path, source, start, end, kind, name):
         definition = f'{indent}def {name}({head}):\n{body}'
         return FileEdit(path, source, source[:start] + definition + '\n' + indent + call + '\n' + source[end:], 1)
     # a method has to be a sibling of the one it came out of: nested inside it, `self.name` is
-    # not an attribute of anything, and the call this writes would fail at runtime
+    # not an attribute of anything
     args = [p for p in args if p != 'self']
     call = f'self.{name}({", ".join(args)})'
     if returns: call = f'{", ".join(returns)} = {call}'
@@ -109,10 +108,8 @@ def _writes(nodes):
 def _reads(text):
     """Every name the text loads, so a name still wanted afterwards can be told from a dead one.
 
-    The tail of a file rarely parses on its own -- it is the middle of a block. Falling back to
-    every identifier in it errs towards handing a value back, which is worse style than necessary
-    but never broken code, where missing one would be.
-    """
+    The tail of a file is the middle of a block and rarely parses. The identifier fallback errs
+    towards handing a value back, which is untidy rather than broken."""
     for candidate in (text, textwrap.dedent(text)):
         try: tree = ast.parse(candidate)
         except SyntaxError: continue
@@ -129,9 +126,8 @@ _EVAL_ORDER = {ast.Assign: ('value', 'targets'), ast.AugAssign: ('value', 'targe
 def _reads_before_writes(nodes):
     """Names the selection reads before it binds them: those have to arrive as parameters.
 
-    A name both read and bound -- `total = total + n` -- is a parameter as well as a result, which
-    subtracting the bound names from the read ones would miss.
-    """
+    A name both read and bound, as in `total = total + n`, is a parameter as well as a result.
+    Subtracting the bound names from the read ones would miss it."""
     bound, params = set(), []
     def visit(node):
         if isinstance(node, ast.Name):

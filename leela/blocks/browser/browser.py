@@ -50,7 +50,7 @@ class Browser:
             return self._cdp
 
     def running(self):
-        "Whether a debug Chrome is already answering on the port -- asked without starting one."
+        "Whether a debug Chrome is already answering on the port, asked without starting one."
         try:
             from fossick.cdp import _debug_ready
             return bool(_debug_ready(self.port))

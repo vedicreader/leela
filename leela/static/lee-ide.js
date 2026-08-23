@@ -1,4 +1,3 @@
-/* ------------------------------------------------------------------ terminal */
 let termBundle = null;
 function loadTermBundle() {
   if (window.LeeTerm) return Promise.resolve();
@@ -11,13 +10,11 @@ function loadTermBundle() {
   });
   return termBundle;
 }
-// Multiple xterm instances keep their websocket/pty alive while hidden. The 285kb bundle
-// still loads only on the first terminal action, never during ordinary notebook startup.
-// `taken` is the set of ids the *server* is holding. A pty deliberately outlives its websocket
-// so that reloading the page can reattach to it -- but this counter restarts at zero on reload,
-// so it handed out `term-1` again, `terms.open` found a live pty under that key and returned it,
-// and a brand new terminal came up showing an old session's scrollback with its process still
-// running in it. Both halves of that are the same bug.
+// Multiple xterm instances keep their websocket and pty alive while hidden, and the 285kb bundle
+// loads only on the first terminal action.
+// `taken` is the set of ids the server is holding. A pty deliberately outlives its websocket so a
+// reload can reattach, and this counter restarts at zero on reload, so an id in `taken` must be
+// skipped rather than reused.
 function nextTermId(kind, taken = []) {
   if (kind === 'git') return 'git';
   const used = new Set([...lee.terms.keys(), ...taken]);
@@ -27,9 +24,8 @@ function nextTermId(kind, taken = []) {
 function termLabel(kind, id) { return kind === 'git' ? 'lazygit' : kind === 'release' ? 'release pipeline' : kind === 'deploy' ? 'deploy' : kind === 'drive' ? 'drive' : kind === 'gh-auth' ? 'gh auth' : `terminal ${id.split('-').pop()}`; }
 function paintTermTabs() {
   const bar = $('#termtabs'); if (!bar) return;
-  /* The close control belongs to the tab, not to the header. One × over there always shut
-     the *active* terminal, so closing a background one meant selecting it first, and which
-     tab it would close was never visible from the tab itself. */
+  /* The close control belongs to the tab, not the header, so a background terminal is closed
+     without selecting it first. */
   bar.innerHTML = [...lee.terms.entries()].map(([id, t]) =>
     `<span role="tab" aria-selected="${id === lee.activeTerm}" class="lee-termtab${id === lee.activeTerm ? ' active' : ''}" ` +
     `data-term="${esc(id)}" title="${esc(t.cwd || '')}"><button class="lee-termtab-name" data-term-pick="${esc(id)}">${esc(t.label)}</button>` +
@@ -65,14 +61,13 @@ function leeLeft(which = 'files') {
   else { setScope('files'); requestAnimationFrame(() => $('#filetree')?.focus()); }
 }
 window.leeLeft = leeLeft;
-/* ---- expand: one slot, one mode, one writer ----
+/* Expansion: one slot, one mode, one writer.
 
-   `wide` gives the pane the dominant share of the grid it already sits in; `full` lifts it over
-   the whole shell. Only one slot is expanded at a time. Everything expansion touches -- the
-   `#shell` classes, the agent panel's timeline layout, every button label -- is written by
-   `leeSyncExpand` from the stored value and from nothing else, so the four cannot disagree.
-   Closing the pane clears it: a wide grid track behind a hidden pane is the dead space that a
-   boolean nobody else knew about used to leave. */
+   `wide` gives the pane the dominant share of the grid it sits in, and `full` lifts it over the
+   whole shell. Only one slot is expanded at a time. Everything expansion touches is written by
+   `leeSyncExpand` from the stored value alone, so the `#shell` classes, the agent panel's timeline
+   layout and every button label cannot disagree. Closing the pane clears it, because a wide grid
+   track behind a hidden pane is dead space. */
 const PANE_HIDDEN = {left: 'no-left', right: 'no-right', bottom: 'no-bottom'};
 const EXPAND_MODES = ['wide', 'full'];
 
@@ -122,8 +117,8 @@ function leePane(which, show = null, persist = true) {
   const cls = PANE_HIDDEN[which] || 'no-bottom';
   const hidden = show === null ? !shell.classList.contains(cls) : !show;
   shell.classList.toggle(cls, hidden);
-  // Closing the pane that is expanded: without this its grid track stays wide and the
-  // hidden pane keeps the room, which is the dead space this used to leave behind.
+  // Closing the pane that is expanded: without this its grid track stays wide and the hidden pane
+  // keeps the room.
   if (hidden && leeExpandState().which === which) leeExpand('');
   if (matchMedia('(max-width: 1100px)').matches && which !== 'bottom') {
     shell.classList.toggle('mobile-' + which, !hidden);
@@ -141,11 +136,10 @@ function leePane(which, show = null, persist = true) {
 }
 window.leePane = leePane;
 
-/* ---- docking: a pane is either pinned open, or closes when you work somewhere else ----
+/* Docking: a pane is either pinned open, or closes when you work somewhere else.
 
-   The file and agent panes are furniture on a wide screen and an obstruction on a narrow one,
-   so each carries its own answer rather than the layout deciding for everybody. Pinned is the
-   default and is exactly the old behaviour: nothing moves until you unpin it. */
+   The file and agent panes are furniture on a wide screen and an obstruction on a narrow one, so
+   each carries its own answer. Pinned is the default, and nothing moves until you unpin it. */
 const DOCKABLE = {left: '#left', right: '#right'};
 
 function leePinned(which) { return localStorage.getItem('lee-pin-' + which) !== '0'; }
@@ -169,9 +163,9 @@ function leePinPane(which) {
 }
 window.leePinPane = leePinPane;
 
-/* Modals, context menus, the restore tabs and the splitters are not "somewhere else": each is
+/* Modals, context menus, the restore tabs and the splitters are not "somewhere else". Each is
    opened from a pane or acts on one, and closing the pane underneath would pull the ground out
-   from whatever the dialog was about to do. */
+   from under the dialog. */
 function leeAutoClosePanes(target) {
   const shell = $('#shell');
   if (!shell || !(target instanceof Element)) return;
@@ -180,10 +174,9 @@ function leeAutoClosePanes(target) {
     const pane = $(sel);
     if (leePinned(which) || !pane || pane.contains(target)) continue;
     if (shell.classList.contains(which === 'left' ? 'no-left' : 'no-right')) continue;
-    // Two more ways a pane is still in use without holding the keyboard. A model mid-answer
-    // must not be closed out of sight -- the run is the reason the pane is open. And a pane
-    // must not shut under the pointer that is travelling towards it, which is what focus
-    // landing elsewhere looks like from here.
+    // Two more ways a pane is in use without holding the keyboard. A model mid-answer must not be
+    // closed out of sight, and a pane must not shut under a pointer travelling towards it, which
+    // is what focus moving elsewhere looks like from here.
     if (which === 'right' && lee.agentBusy) continue;
     if (pane.matches(':hover')) continue;
     leePane(which, false, false);
@@ -192,8 +185,8 @@ function leeAutoClosePanes(target) {
 document.addEventListener('focusin', e => leeAutoClosePanes(e.target), true);
 document.addEventListener('mousedown', e => leeAutoClosePanes(e.target), true);
 
-// Escape from inside an unpinned pane puts you back in the editor, which is the only way out
-// that does not need the mouse.
+// Escape from inside an unpinned pane puts you back in the editor, the only way out that does not
+// need the mouse.
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   for (const [which, sel] of Object.entries(DOCKABLE)) {
@@ -202,15 +195,11 @@ document.addEventListener('keydown', e => {
     setScope('editor'); curEditor()?.focus();
   }
 }, true);
-/* ------------------------------------------------------------------ logs
+/* The detail a status line cannot hold. Git's refusal names the files it would overwrite, and a
+   toast shows one clipped sentence of it. `/dev/log` keeps what a dev server prints.
 
-   The detail a status line cannot hold. Git's refusals are the motivating case: the useful
-   part of "cannot switch branch" is the list of files it would overwrite, and a toast shows
-   one clipped sentence of it. Runs are the other: `/dev/log` has always kept what a dev
-   server prints, and nothing in the browser read it.
-
-   Kept in memory for this session on purpose. This answers "what just happened", and a store
-   that outlives the question would need retention rules to go with it. */
+   Kept in memory for this session, because a store that outlives the question would need
+   retention rules. */
 const LOG_MAX = 500;
 lee.logs = [];
 
@@ -247,12 +236,9 @@ function renderLogs() {
   el.scrollTop = el.scrollHeight;
 }
 
-/* "See logs" has to end with you seeing the log.
-
-   The reason a failure writes a detail line at all is that the toast cannot hold it -- so
-   sending the reader off to find it, through a dock that is showing something else and a
-   filter they set an hour ago for something unrelated, loses the very thing that was worth
-   keeping. A failure now opens the log it just wrote, on a filter that can show it. */
+/* "See logs" has to end with you seeing the log. Sending the reader off to find it, through a dock
+   showing something else and a filter they set an hour ago, loses the thing worth keeping. A
+   failure opens the log it just wrote, on a filter that can show it. */
 function showLog(source = '') {
   if (lee.logFilter && lee.logFilter !== source) leeLogFilter('');
   leeDock('logs');
@@ -264,9 +250,9 @@ function firstLine(text, max = 96) {
   return line.length > max ? line.slice(0, max - 1) + '…' : line;
 }
 
-/* Said only in the status line, the detail is gone: the toast clips to a sentence and times out.
-   The whole message goes to the log, which opens on a filter that can show it. The error carries
-   that it has been reported, so an outer catch around `gitDo` may call this and not say it twice. */
+/* Said only in the status line, the detail is gone, because the toast clips to a sentence and times
+   out. The whole message goes to the log. The error carries that it has been reported, so an outer
+   catch around `gitDo` can call this without saying it twice. */
 function leeFail(source, what, e) {
   if (e && e.reported) return;
   if (e) e.reported = true;
@@ -297,13 +283,13 @@ async function leeLogCopy() {
 window.leeLogFilter = leeLogFilter; window.leeLogClear = leeLogClear; window.leeLogCopy = leeLogCopy;
 
 /* Managed runs keep their output after exit. Polling creates the activity record whether or not
-   Logs is visible; a failed run is a notification that opens the useful filter automatically. */
+   Logs is visible, and a failed run opens the useful filter automatically. */
 lee.runSeen = new Map(); lee.runFinished = new Set();
 lee.runs = [];
 
-/* What is running, next to the kernel it is not. A dev server has no window of its own -- it is a
-   process leela started and can end, and until this there was nowhere that said so: the only
-   evidence a run existed was output arriving, which is exactly what a broken one does not do. */
+/* What is running, next to the kernel it is not. A dev server is a process leela started and can
+   end, and the only evidence one existed was output arriving, which is what a broken one does not
+   do. */
 function paintRunsPill() {
   const pill = $('#runspill'); if (!pill) return;
   const runs = lee.runs || [];
@@ -357,8 +343,8 @@ async function pollRunLogs() {
     const fresh = lines.slice(lee.runSeen.get(path) || 0);
     lee.runSeen.set(path, lines.length);
     if (fresh.length) leeLog('runs', srv.label || path.split('/').pop(), fresh.join('\n'));
-    // `running`, not `alive`: the child keeps the inspector up after the command returns, so a run
-    // that died on its first line reported itself healthy for as long as leela stayed open.
+    // `running`, not `alive`: the child keeps the inspector up after the command returns, so
+    // liveness of the inspector says nothing about whether the command is still going.
     const code = srv.code !== undefined && srv.code !== null ? srv.code : srv.returncode;
     if (!srv.running && code !== null && code !== undefined && !lee.runFinished.has(path)) {
       lee.runFinished.add(path);
@@ -418,9 +404,9 @@ async function openTerm(kind = 'shell', forceNew = false) {
   if (!forceNew) {
     const existing = [...lee.terms.entries()].find(([, t]) => t.kind === kind);
     if (existing) return switchTerm(existing[0]);
-    // A session this page has never seen, still running from before a reload. Reattaching is
-    // the point of letting a pty outlive its socket -- and it has to be *visible* to be
-    // closable, or its process is orphaned where nobody can see it to stop it.
+    // A session this page has never seen, still running from before a reload. Reattaching is the
+    // point of letting a pty outlive its socket, and it has to be visible to be closable, or its
+    // process is orphaned where nobody can stop it.
     const orphan = live.find(id => !lee.terms.has(id) && (kind === 'git' ? id === 'git'
                                                                         : id.startsWith('term-')));
     if (orphan) return adoptTerm(orphan, kind, d);
@@ -439,10 +425,9 @@ async function openTerm(kind = 'shell', forceNew = false) {
   });
   lee.terms.set(id, record); switchTerm(id);
 }
-// The pipeline's pty is opened by the pipeline, not by whoever attaches, so this
-// terminal talks to `/release/ws` instead of `/term/ws`. Everything else -- the theme, the
-// keyboard, the dock tab -- is the same component the shell uses. `cwd` carries the project
-// root, which is the only thing that socket needs to know which pipeline is being watched.
+// The pipeline's pty is opened by the pipeline, not by whoever attaches, so this terminal talks to
+// `/release/ws` instead of `/term/ws`. Everything else is the same component the shell uses. `cwd`
+// carries the project root, the only thing that socket needs to know which pipeline is watched.
 async function openReleaseTerm(root = '', kind = 'release') {
   await loadTermBundle();
   const d = await api('/term/info');
@@ -463,10 +448,10 @@ async function openReleaseTerm(root = '', kind = 'release') {
   });
   lee.terms.set(id, record); switchTerm(id);
 }
-/* A run's own terminal. The Logs pane answers "what happened"; this answers "what is it doing",
-   which for a dev server is the whole of the job -- colour, progress, a traceback as it lands, and
-   a keyboard, so ctrl-c reaches the app. Same component as the shell, pointed at `/run/ws`, which
-   hands back the pty the run is already on rather than starting anything. */
+/* A run's own terminal. The Logs pane answers what happened, this answers what it is doing, which
+   for a dev server is colour, progress, a traceback as it arrives, and a keyboard so ctrl-c reaches
+   the app. Same component as the shell, pointed at `/run/ws`, which hands back the pty the run is
+   already on rather than starting anything. */
 async function leeRunTerm(path, label = '') {
   if (!path) return;
   await loadTermBundle();
@@ -490,9 +475,9 @@ async function leeRunTerm(path, label = '') {
 }
 window.leeRunTerm = leeRunTerm;
 
-// Reconnect to a pty that is already running, rather than starting one. Same component and the
-// same id, so the server hands back the session it still has -- which is what makes the process
-// inside it visible in a tab, and therefore closable.
+// Reconnect to a pty that is already running rather than starting one. Same component and the same
+// id, so the server hands back the session it still has, which makes the process inside it visible
+// in a tab and therefore closable.
 function adoptTerm(id, kind, d) {
   $('#shell').classList.add('show-term');
   const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
@@ -508,10 +493,9 @@ function adoptTerm(id, kind, d) {
   status(`${record.label} was still running — reattached`);
 }
 
-// xterm.js cannot be attached to a terminal application that is already running: that program is
-// itself an emulator with its own pty, and a browser pane has no way to adopt its window. What it
-// can do is hand the project over, which is what this is -- and the button stays hidden unless
-// the server found a terminal to hand it to, so it is never one that fails when pressed.
+// xterm.js cannot attach to a terminal application that is already running, because that program
+// is itself an emulator with its own pty. What it can do is hand the project over. The button stays
+// hidden unless the server found a terminal to hand it to.
 async function leeExternalTerm() {
   try {
     const d = await post('/term/external');
@@ -523,8 +507,8 @@ window.leeExternalTerm = leeExternalTerm;
 function leeNewTerm() { return openTerm('shell', true); }
 window.leeNewTerm = leeNewTerm;
 
-// The IDE follows the system's light/dark setting through a media query; the terminal
-// reads its colours from CSS once, when it is created, so it has to be told.
+// The IDE follows the system's light and dark setting through a media query. The terminal reads its
+// colours from CSS once, when it is created, so it has to be told.
 try {
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     for (const t of lee.terms.values()) t.view.retheme();
@@ -551,7 +535,6 @@ function closeTerm(id = lee.activeTerm) {
   refreshFileTree(undefined, false).catch(e => status(String(e.message || e), 'err'));
 }
 
-/* ---------------------------------------------------------- web preferences */
 /* Themes are families with a dark and a light variant: `data-theme` is the family,
    `data-mode` the resolved variant. Each entry's swatch colours are [bg, bg1, accent],
    read from the same palette its CSS block declares, so the picker cannot drift from it. */
@@ -566,8 +549,7 @@ const THEMES = {
   dracula: {blurb: 'the famous fangs', dark: ['#282a36', '#21222c', '#bd93f9'], light: ['#faf9f2', '#f2f1e8', '#7b48c8']},
 };
 const THEME_MODES = ['system', 'dark', 'light'];
-// Density is its own axis: the tight chrome started as cursor's look, but wanting it with
-// another family's colours is reasonable, so it is stored and chosen separately.
+// Density is its own axis, so the tight chrome can be had with another family's colours.
 const THEME_DENSITIES = ['tight', 'relaxed'];
 const THEME_DEFAULT = 'cursor:light:tight';
 // What `lee-theme` held before families existed. Dropping these would silently reset everyone.
@@ -607,12 +589,9 @@ function applyTheme(theme) {
 darkQuery().addEventListener('change', () => { if (lee.theme?.mode === 'system') paintTheme(); });
 async function editorSettings(languageScope = null) {
   if(typeof languageScope!=='string'){
-    // Default to All languages, never to the focused tab's language. Deriving it from
-    // curLang() silently scoped every save into `languages.<lang>`, and since saving also
-    // remembers the choice, one visit with a .py file focused sent all later edits there
-    // too. The values were written correctly and then read back through a scope the editor
-    // only uses for matching tabs, so global preferences looked like they reverted on
-    // every restart. A language scope is now only ever chosen explicitly.
+    // Default to All languages, never to the focused tab's language. Saving remembers the scope,
+    // so one derived from `curLang()` would send every later edit into `languages.<lang>`. A
+    // language scope is only ever chosen explicitly.
     const remembered=localStorage.getItem('lee-settings-language-scope');
     languageScope=remembered!==null?remembered:'';
   }
@@ -796,7 +775,6 @@ async function editorSettings(languageScope = null) {
 function leeTheme() { editorSettings(); }
 window.leeTheme = leeTheme; window.leeEditorSettings = editorSettings;
 
-/* ---------------------------------------------------------- cwd and source control */
 function paintGitTree(d) {
   const rows = new Map();   // indexed once rather than rescanned per change
 
@@ -821,9 +799,9 @@ async function refreshOpenGitMarks() {
     const view = lee.editors.get('file'); if (view) LeeCM.setChangedLines(view, lee.fileGit.ranges || []);
   } catch (_) {}
 }
-// The same mark a file gets, at the unit a notebook has. Line numbers cannot say anything
-// useful about an .ipynb -- it is JSON, and editing one cell moves every line below it -- so
-// the server answers per cell id and the whole cell carries the bar.
+// The same mark a file gets, at the unit a notebook has. Line numbers say nothing useful about an
+// .ipynb, since it is JSON and editing one cell moves every line below it, so the server answers
+// per cell id and the whole cell carries the bar.
 async function paintNotebookGitMarks() {
   if (lee.kind !== 'notebook' || !lee.path) return;
   try { lee.notebookGit = await api('/git/notebook?path=' + encodeURIComponent(lee.path)); }
@@ -836,8 +814,8 @@ function repaintNotebookGitMarks() {
     const kind = cells[el.dataset.id] || '';
     el.classList.toggle('changed', !!kind);
     el.classList.toggle('changed-added', kind === 'added');
-    // The bar on the cell says *that* it differs; the lines inside say where. A mounted
-    // editor is told directly -- `mountCell` only reads these once, when it is created.
+    // The bar on the cell says that it differs, the lines inside say where. A mounted editor is
+    // told directly, because `mountCell` reads these only when it is created.
     const view = lee.editors.get(el.dataset.id);
     if (view) LeeCM.setChangedLines(view, lines[el.dataset.id] || []);
   });
@@ -846,14 +824,12 @@ function repaintNotebookGitMarks() {
 
 /* The notebook's overview stripe.
 
-   A file gets one from CodeMirror, because a file *is* the editor and the editor owns the
-   scrollbar. A notebook scrolls as a page of cells, so its scrollbar belongs to `#editor`
-   and nothing inside any one cell can mark it -- which left the per-cell change marks
-   invisible until you had already scrolled to them, and knowing where the changes are
-   without scrolling is the entire point of an overview.
+   A file gets one from CodeMirror, because the editor owns the scrollbar. A notebook scrolls as a
+   page of cells, so its scrollbar belongs to `#editor` and nothing inside a cell can mark it,
+   which left the per-cell change marks invisible until you had scrolled to them.
 
-   Same rules as the editor's: it stands where the scrollbar was, it maps the whole document
-   onto its height, and it is never a second thing to scroll. */
+   Same rules as the editor's: it stands where the scrollbar was, it maps the whole document onto
+   its height, and it is never a second thing to scroll. */
 const NB_OVERVIEW_W = 14;
 function nbOverview() {
   const stage = $('#editorstage'); if (!stage) return null;
@@ -876,14 +852,14 @@ function nbOverview() {
 function paintNotebookOverview() {
   const host = $('#editor'), stage = $('#editorstage'), c = nbOverview();
   if (!c || !host || !stage) return;
-  // Nothing to overview when the whole notebook already fits: the stripe would be a bar
-  // saying "you can see all of this", and it would take the scrollbar away to say it.
+  // Nothing to overview when the whole notebook fits, and the stripe would take the scrollbar
+  // away to say so.
   const on = lee.kind === 'notebook' && host.scrollHeight > host.clientHeight + 4;
   c.hidden = !on; host.classList.toggle('has-overview', on);
   if (!on) return;
   const stageBox = stage.getBoundingClientRect(), box = host.getBoundingClientRect();
-  // Measured rather than pinned to the stage, so a split editor puts it on the notebook's
-  // own right edge instead of the pane beside it.
+  // Measured rather than pinned to the stage, so a split editor puts it on the notebook's own
+  // right edge.
   c.style.left = (box.right - stageBox.left - NB_OVERVIEW_W) + 'px';
   c.style.top = (box.top - stageBox.top) + 'px';
   const dpr = devicePixelRatio || 1, w = NB_OVERVIEW_W, h = Math.max(40, host.clientHeight);
@@ -922,23 +898,17 @@ document.addEventListener('scroll', e => {
 addEventListener('resize', queueNotebookOverview);
 /* Everything downstream of a branch, without a page refresh.
 
-   The pill and the tree badges were repainted by this poll; nothing else was. So a checkout
-   -- from the panel, from lazygit in the terminal, or from the agent -- left the editor's
-   change marks describing the branch you came from, the History and Branches lists showing
-   what they showed before, and the release panel counting against the old tag.
+   The pill and the tree badges were repainted by this poll and nothing else was. A checkout from
+   the panel, from lazygit or from the agent left the editor's change marks describing the branch
+   you came from, the History and Branches lists unchanged, and the release panel counting against
+   the old tag.
 
-   `head` is in the signature because a commit is the case the others miss: branch, counts
-   and file list all read the same afterwards, and the only thing that moved is the sha. */
+   `head` is in the signature because a commit is the case the others miss: branch, counts and file
+   list all read the same afterwards, and only the sha moved. */
 function gitSignature(d) {
-  /* Each changed file's own state, not merely how many there are. The count is the same before
-     and after almost every edit a person actually makes -- typing in a file that was already
-     modified moves no count, so the signature did not move and the panel went on showing the
-     stats it drew when the file first changed. That is the "source control does not refresh until
-     I refresh it" report: the poll was running the whole time and finding nothing to say.
-
-     The staged/worktree status codes and the line counts are what actually differ, so they are
-     what goes in. Cheap: `/git/info` already returns all of it on every poll, so this reads a
-     payload that was being fetched and thrown away. */
+  /* Each changed file's own state, not how many there are. Typing in a file that was already
+     modified moves no count, so a signature built from counts alone never moves. The status codes
+     and line counts are what differ, and `/git/info` already returns all of it on every poll. */
   const changes = (d.changes || []).map(c =>
     [c.path, c.index, c.worktree,
      (c.staged_stat || {}).additions, (c.staged_stat || {}).deletions,
@@ -959,23 +929,19 @@ function gitChanged() {
     gitUI.snapshot = null; gitUI.history = [];
     renderGitPanel();
   }
-  // A release is measured from the last tag on this branch, and a deploy from what is
-  // committed, so both are answers about the branch rather than about the panel.
+  // A release is measured from the last tag on this branch and a deploy from what is committed,
+  // so both are answers about the branch rather than about the panel.
   if (left?.classList.contains('left-releases')) leeReleases();
   if (left?.classList.contains('left-deploys')) leeDeploys();
 }
 window.leeGitChanged = gitChanged;
 
-// Choosing another folder is a bigger change than a commit, and needs its own refresh.
-// `gitChanged` reloads what depends on the *branch*; this reloads what depends on which
-// project it is at all -- so drive and workflows are here and not there, because a commit does
-// not change where a project deploys to or which workflows it has, and a different project
-// certainly does. Without this, the open panel kept describing the folder left behind, which
-// looked exactly like the backend still being pinned to the first repository.
+// Choosing another folder is a bigger change than a commit. `gitChanged` reloads what depends on
+// the branch, this reloads what depends on which project it is, so drive and workflows are here:
+// a commit does not change where a project deploys to, and a different project does.
 function projectChanged() {
-  // Every cached answer describes the folder we just left, whether or not its panel is on
-  // screen. They all go: otherwise opening one of these panels a minute later shows the old
-  // project's state, which is the same bug arriving later and harder to explain.
+  // Every cached answer describes the folder we just left, on screen or not. They all go, or
+  // opening one of these panels a minute later shows the old project's state.
   gitUI.snapshot = null; gitUI.history = [];
   relUI.data = drvUI.data = null;
   Object.assign(wfUI, {data: null, runs: null, env: null, catalogue: null, docker: null});
@@ -987,7 +953,7 @@ function projectChanged() {
 }
 
 // Which repository a panel request is about lives in `gitUI.repo`, and `gitUrl` puts it on the
-// query. These two only ask whether Source Control is on screen, and repaint it if it is.
+// query. These two only ask whether Source Control is on screen.
 function scmPanelOpen() { return !!$('#left')?.classList.contains('left-git'); }
 function refreshScmIfOpen(snapshot = null) {
   if (!scmPanelOpen()) return;
@@ -1009,8 +975,8 @@ async function refreshProjectPills() {
                cwd.title = d.cwd || 'choose a working directory'; }
   } catch (_) {}
   try {
-    // Bare, not `gitUrl`: the pill and the tree badges describe the repository the active tab
-    // is in, so a panel pinned elsewhere must not repaint them.
+    // Bare, not `gitUrl`: the pill and the tree badges describe the repository the active tab is
+    // in, so a panel pinned elsewhere must not repaint them.
     const d = await gitInfo();
     const git = $('#gitpill'); if (!git) return;
     const n = (d.changes || []).length;
@@ -1024,8 +990,8 @@ async function refreshProjectPills() {
   }
 }
 
-// `/git/info` answers 200 with `repo: false` outside a checkout. A surface that only works
-// inside one wants the throw it always had; chrome wants to go quiet.
+// `/git/info` answers 200 with `repo: false` outside a checkout. A surface that only works inside
+// one wants the throw it always had, and chrome wants to go quiet.
 async function gitInfo(url = '/git/info') {
   const d = await api(url);
   if (d && d.repo === false) throw new Error(d.note || 'not inside a Git repository');
@@ -1105,15 +1071,12 @@ function showGitFileDiff(path, patch = '', line = 0, rawPatch = '', notebook = f
   };
 }
 
-/* ---------------------------------------------------------------- change gutter popup
- * PyCharm's gutter, which is the one people mean: the mark thickens under the pointer, and
- * clicking it shows what the line used to say next to the four things you want at that moment --
- * step to the next change, put this one back, copy the old text, or commit only this.
+/* The change gutter popup: the mark thickens under the pointer, and clicking it shows what the
+ * line used to say beside step, revert, copy and commit-only-this.
  *
- * The hunks come from /git/file, where they are cut out of a three-context diff so that each one
- * is a patch Git can place by its own context. The browser never assembles a patch of its own:
- * a hand-built hunk with the wrong line numbers is applied silently in the wrong place, and this
- * surface's whole job is to change one change and nothing else.
+ * The hunks come from `/git/file`, cut out of a three-context diff so each one is a patch Git can
+ * place by its own context. The browser never assembles a patch of its own, because a hand-built
+ * hunk with the wrong line numbers is applied silently in the wrong place.
  */
 const fileHunks = () => lee.fileGit?.hunks || [];
 
@@ -1123,7 +1086,7 @@ function hunkAtLine(line) {
   if (inside >= 0) return inside;
   // Three context lines can merge two changes into one hunk, so a mark drawn from the exact
   // zero-context ranges can sit just outside the span of the hunk that carries it. The nearest
-  // change is then the right answer, and is certainly better than the click doing nothing.
+  // change is the right answer there.
   let best = -1, gap = Infinity;
   hunks.forEach((h, i) => {
     const d = Math.min(Math.abs(line - h.from), Math.abs(line - h.to));
@@ -1132,9 +1095,8 @@ function hunkAtLine(line) {
   return best;
 }
 
-/* Which words of the old line the new one no longer has. PyCharm boxes them, and it is the
- * difference between reading "the line changed" and seeing what changed in it. A plain LCS over
- * words is enough at one line's length, and costs nothing at it. */
+/* Which words of the old line the new one no longer has. A plain LCS over words is enough at one
+ * line's length. */
 function tokenDiffHtml(before, after) {
   const a = String(before ?? '').match(/\w+|\s+|[^\w\s]/g) || [];
   const b = String(after ?? '').match(/\w+|\s+|[^\w\s]/g) || [];
@@ -1161,9 +1123,8 @@ function closeChangePopup() {
   pop._leeOff?.(); pop.remove();
 }
 
-/* The mark widens only while the pointer is actually on it. 12px is the editor bundle's own
- * click target for a change mark; if this number and that one disagreed, the gutter would
- * advertise an affordance it does not answer. */
+/* The mark widens only while the pointer is on it. 12px is the editor bundle's own click target
+ * for a change mark, and the two numbers must agree. */
 function armChangeGutter(host) {
   if (!host || host._leeGutterArmed) return;
   host._leeGutterArmed = true;
@@ -1187,8 +1148,7 @@ function changePopupBody(h) {
 function showChangePopup(path, line) {
   closeChangePopup();
   const hunks = fileHunks(), at = hunkAtLine(line);
-  // An untracked file has no committed version of anything, so there is nothing for this popup
-  // to show; the whole-file diff is the honest answer there.
+  // An untracked file has no committed version, so the whole-file diff is the honest answer.
   if (at < 0) return showGitFileDiff(path, lee.fileGit?.diff || '', line);
   const h = hunks[at], name = String(path || '').split('/').pop();
   const pop = document.createElement('div');
@@ -1244,10 +1204,9 @@ async function copyChangeHunk(h) {
   catch (_) { status('clipboard access failed', 'err'); }
 }
 
-/* Git reads and writes the file on disk, and this editor may be holding a newer version of it.
- * Both directions of that are silent data loss -- the revert overwrites the unsaved edit, or the
- * next autosave writes the reverted lines back -- so the file is saved first and the buffer is
- * reloaded after, rather than either being guessed at. */
+/* Git reads and writes the file on disk, and this editor may hold a newer version of it. Both
+ * directions are silent data loss: the revert overwrites the unsaved edit, or the next autosave
+ * writes the reverted lines back. So the file is saved first and the buffer reloaded after. */
 async function refreshFileChanges(path, fromDisk = false) {
   const v = lee.editors.get('file');
   if (!v) return;
@@ -1271,8 +1230,7 @@ async function revertChangeHunk(path, h) {
     `version. Every other change in the file is left alone.`, 'revert');
   if (!ok) return;
   closeChangePopup();
-  // reverse against the working tree, not the index: this is an edit to the file, and the
-  // index is not involved in it at all.
+  // Reverse against the working tree, not the index. This is an edit to the file.
   try { await gitDo('apply_patch', {patch: h.patch, staged: false, reverse: true}); }
   catch (_) { return; }
   await refreshFileChanges(path, true);
@@ -1282,10 +1240,9 @@ async function commitChangeHunk(path, h, message) {
   const text = String(message || '').trim();
   if (!text) return status('write a message to commit this change', 'err');
   if ($('.lee-tab.active.dirty') && !await saveTab(true)) return;
-  /* PyCharm commits the one change and nothing else. Git can only commit what is in the index, so
-   * this stages the hunk and commits -- which means anything already staged rides along. Rather
-   * than quietly widening a one-hunk commit, or quietly unstaging work someone deliberately
-   * staged, the choice is put to whoever is looking at it. */
+  /* Git can only commit what is in the index, so this stages the hunk and commits, and anything
+   * already staged rides along. The choice is put to whoever is looking at it rather than
+   * quietly widening the commit or quietly unstaging deliberate work. */
   const snapshot = gitUI.snapshot || await gitInfoOrNull();
   const staged = (snapshot?.changes || []).filter(c => c.staged && c.path !== path).map(c => c.path);
   if (staged.length) {
@@ -1328,8 +1285,8 @@ try { savedGitLists = JSON.parse(localStorage.getItem('lee-git-changelists') || 
 try { savedGitReviews = JSON.parse(localStorage.getItem('lee-git-reviews') || '{}'); } catch (_) {}
 try { savedGitNotes = JSON.parse(localStorage.getItem('lee-git-review-notes') || '{}'); } catch (_) {}
 const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResults: [], expect: '', history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
-// Which repository a panel request is about. Empty means the one the active tab lives in,
-// which is what the branch pill, the file tree and the editor's change marks always mean.
+// Which repository a panel request is about. Empty means the one the active tab lives in, which is
+// what the branch pill, the file tree and the editor's change marks always mean.
 function gitUrl(path, params = {}) {
   const q = new URLSearchParams(params);
   if (gitUI.repo) q.set('repo', gitUI.repo);
@@ -1340,9 +1297,9 @@ function gitRepoName(root) { return String(root || '').split('/').filter(Boolean
 function saveGitWorkflowState() { localStorage.setItem('lee-git-changelists', JSON.stringify(gitUI.changeLists)); localStorage.setItem('lee-git-reviews', JSON.stringify(gitUI.reviewed)); localStorage.setItem('lee-git-review-notes', JSON.stringify(gitUI.reviewNotes)); }
 function gitReviewKey(d, path) { return `${d.root || gitUI.snapshot?.root || ''}\0${d.base}\0${d.head}\0${d.mode}\0${path}`; }
 function paintGitPill(d) {
-  // The pill and the tree badges belong to the repository the active tab is in. A panel
-  // pinned to another repository in the workspace must not repaint them from a snapshot
-  // that is not theirs -- a clean pill over a dirty file tree is worse than no pill.
+  // The pill and the tree badges belong to the repository the active tab is in. A panel pinned to
+  // another repository must not repaint them from a snapshot that is not theirs, because a clean
+  // pill over a dirty file tree is worse than no pill.
   if (gitUI.repo) return;
   const git = $('#gitpill'); if (!git || !d) return;
   const n = (d.changes || []).length;
@@ -1357,14 +1314,12 @@ async function gitDo(op, extra = {}) {
   try {
     const d = await post('/git/action', {op, repo: gitUI.repo, ...extra});
     gitUI.snapshot = d; paintGitPill(d);
-    // Immediately, rather than up to one poll later -- and the signature is cleared so the
-    // poll that follows does not treat our own mutation as news and do it all again.
+    // Immediately rather than up to one poll later. The signature is cleared so the next poll
+    // does not treat our own mutation as news and do it all again.
     lee.gitSignature = ''; gitChanged();
-    // What the operation *left behind* beats how long it took. A squash that staged twelve
-    // files and a merge that stopped at a conflict both "complete", and saying only that is
-    // how an index full of someone else's changes came to look like a bug in Leela.
-    // One call, not two: a second `status` replaces the first, and the note is the half that
-    // must not be the one dropped.
+    // What the operation left behind beats how long it took. A squash that staged twelve files and
+    // a merge that stopped at a conflict both "complete". One call, not two, because a second
+    // `status` replaces the first.
     const said = d.outcome?.summary || `complete · ${Math.round(performance.now() - started)} ms`;
     status(`git ${name} · ${said}${d.outcome?.note ? ' — ' + d.outcome.note : ''}`,
            d.outcome?.note ? 'err' : 'ok');
@@ -1372,9 +1327,8 @@ async function gitDo(op, extra = {}) {
            [extra.branch, extra.ref, extra.message].filter(Boolean).join(' ') || '', 'ok');
     return d;
   } catch (e) {
-    /* Without this the status line kept saying "git checkout…" for ever. Git refusing a
-       switch because local changes would be overwritten is a normal, fast answer, and it
-       looked identical to a hang -- the one thing a progress message must never do. */
+    /* Reporting the failure here is what clears the running status line. Git refusing a switch
+       because local changes would be overwritten is a normal, fast answer. */
     leeFail('git', name, e);
     throw e;
   } finally { gitUI.busy = ''; }
@@ -1395,8 +1349,8 @@ function gitFilterBanner(d) {
     `<strong>files here may not stay staged</strong><span>${esc(f.explain)}</span></div></section>`;
 }
 
-// The way back from the last thing that moved this branch. Offered whenever there is one,
-// rather than only after a failure: "that merge was not what I wanted" arrives a minute later.
+// The way back from the last thing that moved this branch. Offered whenever there is one, because
+// "that merge was not what I wanted" arrives a minute later.
 function gitUndoBanner(d) {
   const point = (d.safepoints || [])[0];
   if (!point) return '';
@@ -1539,9 +1493,8 @@ async function gitReposDo(op, extra = {}) {
   const started = performance.now();
   const targets = (extra.paths && extra.paths.length ? extra.paths
                    : ((gitUI.repos && gitUI.repos.repos) || []).map(r => r.root));
-  /* The fan-out answers all at once, so there is no per-repository progress to stream. What
-     there is: which repositories are in flight. Naming them beats "workspace fetch…" when one
-     of them is slow, because the question you have is always *which one*. */
+  /* The fan-out answers all at once, so there is no per-repository progress to stream. Naming the
+     repositories in flight beats "workspace fetch…" when one of them is slow. */
   gitUI.reposBusy = new Set(targets);
   gitUI.reposResults = [];
   if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);
@@ -1570,9 +1523,8 @@ async function gitReposDo(op, extra = {}) {
     if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);
   }
 }
-// Pinning is a scope change, not a filter: every ref, commit and review already loaded
-// belongs to the repository being left, so all of it goes rather than being shown against
-// the wrong one.
+// Pinning is a scope change, not a filter: every ref, commit and review already loaded belongs to
+// the repository being left, so all of it goes rather than being shown against the wrong one.
 async function gitPinRepo(root, tab = 'changes') {
   gitUI.repo = String(root || '');
   gitUI.snapshot = null; gitUI.history = []; gitUI.review = null; gitUI.reviewFile = ''; gitUI.reviewPatch = '';
@@ -1583,10 +1535,8 @@ async function gitPinRepo(root, tab = 'changes') {
   if (!gitUI.repo) refreshProjectPills();
 }
 
-/* ------------------------------------------------- workflows and the release pipeline */
-// Both panels are about a project rather than a file, so they ask the same question the
-// source-control panel does -- which repository -- and answer it the same way: empty means
-// the one the active tab is in.
+// Both panels are about a project rather than a file, so they ask which repository, as the
+// source-control panel does. Empty means the one the active tab is in.
 const wfUI = {data: null, runs: null, env: null, catalogue: null, docker: null, open: '', view: 'graph', preview: '', busy: ''};
 const relUI = {data: null, busy: '', poll: 0};
 function projectRepo() { return gitUI.repo || ''; }
@@ -1641,8 +1591,8 @@ function wfPickRows(cat) {
     `${d.build ? `<code>${esc(d.build)}</code>` : d.build_why ? `<small>${esc(d.build_why)}</small>` : ''}</div>` +
     `<div class="lee-wf-picks">${rows}</div>`;
 }
-// `refresh` fetches what GitHub has; without this the answer was thrown away. Values of secrets
-// are not readable by GitHub's design, so remote presence is all there is to show for one.
+// Where `refresh`'s answer about what GitHub has is shown. Secret values are not readable by
+// GitHub's design, so remote presence is all there is to show for one.
 function wfRemoteMark(remote, key) {
   if (!remote) return '';
   const hit = (remote.secrets || []).find(s => s.name === key) || (remote.variables || []).find(v => v.name === key);
@@ -1743,8 +1693,8 @@ function wireWorkflowsPanel(host, d, wf) {
   host.querySelectorAll('[data-wf-env]').forEach(b => b.onclick = async () => {
     const op = b.dataset.wfEnv;
     if (op === 'refresh') return loadWorkflowEnv(true);
-    // Authenticating is a conversation with a browser and a one-time code in it, so the
-    // button opens the real `gh auth login` rather than a form pretending to be one.
+    // Authenticating is a conversation with a browser and a one-time code, so the button opens
+    // the real `gh auth login`.
     if (op === 'auth') { await openTerm('gh-auth'); return status('finish the login in the terminal, then refresh', 'ok'); }
     if (op === 'push') {
       if (await confirmDialog('push to GitHub', 'Send every declared value to this repository as a secret or a variable?', 'push')) envOp('push', {});
@@ -1831,10 +1781,8 @@ async function workflowOp(op, wf) {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 
-// -- the workflow builder ---------------------------------------------------------------
-// A form over gheasy's DSL. The vocabulary comes from the server as data, so a preset added
-// in leela/wfbuild.py appears here without a line of frontend -- and the form is the list of
-// decisions a workflow actually has, which is the part that is hard to learn from YAML.
+// A form over gheasy's DSL. The vocabulary comes from the server as data, so a preset added in
+// leela/wfbuild.py appears here without a line of frontend.
 const bldUI = {vocab: null, spec: null, yaml: '', file: '', stale: false, timer: 0};
 function blankSpec() {
   return {name: 'ci', file: 'ci.yml', on: {push: 'main', pull_request: 'main', workflow_dispatch: true},
@@ -1954,11 +1902,9 @@ async function loadBuilder(file = '') {
   renderWorkflowsPanel();
 }
 
-// -- the release pipeline ------------------------------------------------------------
 const REL_MARK = {passed: '✓', failed: '✗', running: '•', skipped: '⤼', pending: '·'};
-// A failed step's traceback belongs to *someone*, and in a stack you own that is the whole
-// question. The server rewrote the path to the checkout in this workspace, so "open" lands
-// in the repository rather than in a copy under .venv that the next sync overwrites.
+// The server rewrote the path to the checkout in this workspace, so "open" arrives in the
+// repository rather than in a copy under .venv that the next sync overwrites.
 function blameRow(b) {
   if (!b || !b.package) return '';
   const where = b.file ? `${b.package}/${b.file.split('/').slice(-1)[0]}:${b.line}` : b.package;
@@ -1977,8 +1923,8 @@ function wireBlame(host) {
     setTimeout(() => {
       const view = lee.editors.get('file'); if (!view) return;
       const doc = view.state.doc, at = doc.line(Math.max(1, Math.min(line, doc.lines)));
-      // `setCursor` deliberately does not scroll, so the move is dispatched with the
-      // scroll asked for -- landing on a line you cannot see is not landing on it.
+      // `setCursor` deliberately does not scroll, so the move is dispatched with the scroll asked
+      // for.
       view.dispatch({selection: {anchor: at.from}, scrollIntoView: true});
       LeeCM.focus?.(view);
     }, 350);
@@ -2034,8 +1980,8 @@ function wireReleasesPanel(host, d) {
 }
 function relPoll(d) {
   clearTimeout(relUI.poll);
-  // Steps finish on their own and start the next one, so the panel has to keep asking.
-  // Only while something is running: an idle pipeline costs nothing.
+  // Steps finish on their own and start the next one, so the panel keeps asking while something
+  // is running.
   if (d.running) relUI.poll = setTimeout(() => leeReleases(), 1200);
 }
 async function leeReleases() {
@@ -2116,8 +2062,7 @@ async function leeFastship() {
   };
 }
 window.leeFastship = leeFastship;
-// -- deploy ---------------------------------------------------------------------------
-// The same pipeline as a release, with a target above it: a deploy that cannot say where it
+// The same pipeline as a release, with a target above it, because a deploy that cannot say where it
 // is going is the one nobody presses.
 const depUI = {data: null, poll: 0, view: 'stages', infra: null, stack: null, zone: '', records: null};
 function depTargetCard(t) {
@@ -2290,10 +2235,9 @@ async function deployTop(op, d) {
   }
 }
 
-// -- driving the packages one call at a time --------------------------------------------
-// The alternative to the deploy script, kept as its own panel so the two can be compared:
-// same runner, same terminal, same blame on a failure -- six library calls instead of three
-// subcommands. The snippet is on screen because a button you cannot read is not a diagnostic.
+// The alternative to the deploy script, kept as its own panel so the two can be compared: same
+// runner, same terminal, same blame on a failure, six library calls instead of three subcommands.
+// The snippet is on screen because a button you cannot read is not a diagnostic.
 const drvUI = {data: null, open: '', poll: 0};
 function drvPart(s, d) {
   const m = s.meta || {}, busy = d.running && s.status !== 'running';
@@ -2384,12 +2328,12 @@ async function renderGitPanel(snapshot = null) {
   let d = snapshot || gitUI.snapshot;
   try { if (!d) d = await gitInfo(gitUrl('/git/info')); }
   catch (e) {
-    // Still draw the nav: a workspace whose active folder is not a checkout can have five
-    // other repositories in it, and Repos is how you reach them.
+    // Still draw the nav: a workspace whose active folder is not a checkout can hold five other
+    // repositories, and Repos is how you reach them.
     host.innerHTML = gitScope() + gitNav() +
       `<main class="lee-git-view"><div class="lee-git-empty-state"><strong>No Git repository</strong><span>${esc(e.message || e)}</span></div></main>`;
-    // `null`, not `{}`: switching to another view from here must re-read the repository
-    // rather than render a snapshot-shaped object with no fields in it.
+    // `null`, not `{}`: switching to another view from here must re-read the repository rather
+    // than render a snapshot-shaped object with no fields in it.
     wireGitPanel(host, null);
     return;
   }
@@ -2590,16 +2534,15 @@ async function showMergePreview(branch, d, act) {
     const p = await api(gitUrl('/git/merge-preview', {incoming: branch}));
     const r = p.review, relation = {'fast-forward': 'Fast-forward available', 'already-merged': 'Already contained in current', 'identical': 'Branches are identical', 'diverged': 'Branches have diverged'}[p.relation] || p.relation;
     const conflict = p.conflict_likely ? `<div class="lee-git-merge-warning"><strong>Conflicts expected</strong><span>${p.conflicts.length ? p.conflicts.map(esc).join(' · ') : 'Git reports overlapping changes.'}</span></div>` : '<div class="lee-git-merge-ok"><strong>No conflicts found in merge rehearsal</strong><span>The working tree can still change before merge.</span></div>';
-    // Untracked files are not dirt: git merges beside them and refuses only when the merge
-    // would overwrite one, at which point it says so itself. Only tracked work blocks.
+    // Untracked files are not dirt: git merges beside them and refuses only when the merge would
+    // overwrite one, and then says so itself. Only tracked work blocks.
     const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
     const blocked = !p.clean ? `commit or stash ${p.dirty.length} changed file${p.dirty.length === 1 ? '' : 's'} first`
                   : p.relation === 'already-merged' ? `${p.current} already contains ${branch}`
                   : p.relation === 'identical' ? 'the two branches are identical' : '';
     const m = modal(`<div class="lee-mhead">Merge ${esc(branch)}<span class="sub">into ${esc(p.current)}</span></div><div class="lee-git-merge-preview"><header><strong>${esc(relation)}</strong><span>${r.head_only} commits · ${r.summary.files} files · +${r.summary.additions} −${r.summary.deletions}</span></header>${dirty}${conflict}<label>Strategy<select data-strategy><option value="merge">merge commit when needed</option><option value="squash">squash into working tree</option><option value="ff-only" ${p.relation === 'fast-forward' ? '' : 'disabled'}>fast-forward only</option></select></label><button class="lee-btn" data-review>review incoming files</button></div><div class="lee-mfoot"><button class="lee-btn go" data-merge>merge ${esc(branch)}</button><span class="lee-dim">${blocked ? esc(blocked) : 'Merge starts only after this preview.'}</span></div>`);
     m.querySelector('[data-review]').onclick = () => { m.remove(); gitUI.reviewBase = d.branch; gitUI.reviewHead = branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); };
-    // Never a disabled button: one that cannot be pressed cannot say why, and "I clicked
-    // merge and nothing happened" is the report that came back from exactly that.
+    // Never a disabled button: one that cannot be pressed cannot say why.
     m.querySelector('[data-merge]').onclick = async () => {
       if (blocked) return status(`cannot merge — ${blocked}`, 'err');
       const strategy = m.querySelector('[data-strategy]').value;
@@ -2625,10 +2568,10 @@ async function showRebasePreview(branch, d, act) {
     };
   } catch (e) { leeFail('git', 'rebase preview', e); }
 }
-/* The branch row's `•••`, as a menu anchored to the button rather than a modal: picking a
-   branch to compare against is a glance, not a dialogue. Named for this panel because the
-   branch pill in `28_branchbar.js` has its own, differently-shaped menu, and the modules are
-   concatenated into one scope -- two `function branchActions` and the later file silently won. */
+/* The branch row's `•••`, as a menu anchored to the button rather than a modal. Named for this
+   panel because the branch pill in `branchbar.js` has its own, differently shaped menu, and the
+   modules are concatenated into one scope, where two `function branchActions` meant the later file
+   silently won. */
 function gitBranchMenu(anchor, branch, d, act) {
   const current = branch === d.branch;
   const review = mode => {
@@ -2698,15 +2641,13 @@ async function showGitReflog() {
 }
 // Three-pane conflict resolution: ours, an editable result, and theirs.
 //
-// The conflicts are read from the markers Git already wrote into the working-tree file, not
-// diffed back out of the three versions. Git's own account of what it could not decide is
-// better than anything reconstructed from the sides afterwards -- it knows which lines it
-// tried to merge and gave up on, and a re-diff only guesses at it.
+// The conflicts are read from the markers Git already wrote into the working-tree file rather than
+// diffed back out of the three versions. Git knows which lines it tried to merge and gave up on,
+// and a re-diff only guesses at it.
 //
-// The result pane is that file, markers and all, and it is re-scanned after every change.
-// That is what lets the buttons and hand-editing coexist without either being a mode:
-// "which conflicts are left" is answered by looking at the text rather than by remembering
-// what was clicked, so an edit that removes a marker block counts as resolving it.
+// The result pane is that file, markers and all, re-scanned after every change. That is what lets
+// the buttons and hand-editing coexist without either being a mode, and an edit that removes a
+// marker block counts as resolving it.
 
 const CONFLICT_OPEN = /^<{7}(?:\s|$)/, CONFLICT_MID = /^={7}(?:\s|$)/,
       CONFLICT_BASE = /^\|{7}(?:\s|$)/, CONFLICT_CLOSE = /^>{7}(?:\s|$)/;
@@ -2723,8 +2664,8 @@ function scanConflicts(text) {
       if (CONFLICT_CLOSE.test(lines[j])) { block.end = j; break; }
       side.push(lines[j]);
     }
-    // An opening marker with no close is a line of text that happens to look like one --
-    // in a file *about* merge conflicts, say. Not a conflict, and not ours to rewrite.
+    // An opening marker with no close is a line of text that looks like one, in a file about
+    // merge conflicts. Not a conflict, and not ours to rewrite.
     if (block.end < 0) continue;
     blocks.push(block); i = block.end;
   }
@@ -2761,8 +2702,8 @@ async function showGitConflict(path) {
     const d = await api(gitUrl('/git/conflict', {path}));
     const original = scanConflicts(d.worktree || '');
     if (!original.blocks.length && (d.ours || d.theirs)) {
-      // Add/add or delete/modify: there are no marked lines to work through, so the choice
-      // is which whole side to keep, and pretending otherwise would be a worse dialog.
+      // Add/add or delete/modify: there are no marked lines to work through, so the choice is
+      // which whole side to keep.
       return showWholeSideConflict(path, d);
     }
     const lang = codeLang('', path);
@@ -2805,9 +2746,9 @@ async function showGitConflict(path) {
       views[key]._ranges = ranges;
       LeeCM.setChangedLines(views[key], marks(ranges, 0));
     }
-    // `onChange` runs inside CodeMirror's own update, where dispatching again is not allowed,
-    // and `refresh` dispatches marks -- hence the deferral. `programmatic` is why a button's own
-    // `setDoc` does not come back round here and refresh a second time from stale text.
+    // `onChange` runs inside CodeMirror's own update, where dispatching again is not allowed, and
+    // `refresh` dispatches marks. `programmatic` is why a button's own `setDoc` does not come back
+    // round here and refresh a second time from stale text.
     let programmatic = false;
     views.result = LeeCM.create(editorFor('result'), {
       doc: d.worktree || '', lang, lineNums: true, settings: lee.editorPrefs,
@@ -2815,13 +2756,13 @@ async function showGitConflict(path) {
 
     // Which of the original blocks a remaining one is, matched on its contested text. Indices
     // cannot be used: resolving the second of three leaves two, and the sides still show three.
-    // Two identical conflicts in one file align to the first of them, which is harmless.
+    // Two identical conflicts in one file align to the first, which is harmless.
     const originalIndex = block => original.blocks.findIndex(b =>
       b.ours.join('\n') === block.ours.join('\n') && b.theirs.join('\n') === block.theirs.join('\n'));
 
-    // The side panes are read-only and CodeMirror only builds the lines it is showing, so
-    // there is no element to scroll to for a conflict that is off screen. Proportional
-    // scrolling gets there regardless, and lands close enough to read.
+    // The side panes are read-only and CodeMirror only builds the lines it is showing, so there
+    // is no element to scroll to for an off-screen conflict. Proportional scrolling gets close
+    // enough to read.
     const align = () => {
       const block = live.blocks[active];
       const index = block ? originalIndex(block) : -1;
@@ -2899,8 +2840,8 @@ async function showGitConflict(path) {
   } catch (e) { leeFail('git', 'resolve conflict', e); }
 }
 
-// Add/add and delete/modify conflicts have no contested lines to work through -- one side has
-// no file at all -- so the only question is which side to keep.
+// Add/add and delete/modify conflicts have no contested lines, because one side has no file at
+// all, so the only question is which side to keep.
 async function showWholeSideConflict(path, d) {
   const side = (label, text, choice) =>
     `<section><header><strong>${label}</strong>` +
@@ -2919,10 +2860,10 @@ async function showWholeSideConflict(path, d) {
   });
 }
 
-// Blame, reachable from wherever you are rather than only from a changed-file row. A text
-// file blames the lines you have selected -- "who wrote these six" is the question, and the
-// whole-file answer is one button away. A notebook blames its cells, because blaming its
-// JSON tells you about `"source": [` and nothing about your code.
+// Blame, reachable from wherever you are rather than only from a changed-file row. A text file
+// blames the lines you have selected, and the whole-file answer is one button away. A notebook
+// blames its cells, because blaming its JSON tells you about `"source": [` and nothing about the
+// code.
 function blameRelative(root, path) {
   const p = String(path || '');
   if (!root) return p;
@@ -2943,8 +2884,8 @@ async function leeBlame() {
 }
 window.leeBlame = leeBlame;
 function blameHue(oid, commits) {
-  // Colour by commit so a cell made of three commits reads as three bands. Position in the
-  // recency-sorted legend, not a hash: the newest change is the one being looked for.
+  // Colour by commit, so a cell made of three commits reads as three bands. Position in the
+  // recency-sorted legend rather than a hash, because the newest change is what is looked for.
   const i = commits.findIndex(c => c.oid === oid);
   return i < 0 ? 'var(--lee-fg4)' : `hsl(${(i * 47) % 360} 55% 55%)`;
 }
@@ -3006,7 +2947,6 @@ async function leeNbdevPrepare() {
 function PathName(path) { return String(path || '').split('/').pop() || path || ''; }
 window.leeNbdevPrepare = leeNbdevPrepare;
 
-/* ------------------------------------------------------------------ research */
 function researchDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch (_) { return 'source'; }
 }
@@ -3052,12 +2992,11 @@ function researchWorkspace(mode = 'search', value = '') {
   m.classList.add('lee-research-modal');
   const input = $('#researchquery', m), list = $('#researchsources', m), reader = $('#researchreader', m);
   const title = $('#researchtitle', m), meta = $('#researchmeta', m);
-  /* Vault mode puts what you have already kept in the same column as what you are about to
-     find. The sources list becomes the vault tree, and the reader stays the reader: a clipped
-     document and a fetched page are the same kind of thing once they are on screen. */
+  /* Vault mode puts what you have already kept in the same column as what you are about to find.
+     The sources list becomes the vault tree, and the reader stays the reader. */
   const showVault = async () => {
     list.innerHTML = '<div class="lee-research-empty">Reading the vault…</div>';
-    // `elid`, because the vault panel may be open behind this modal with a fragment of its own,
+    // `elid`, because the vault panel can be open behind this modal with a fragment of its own,
     // and two elements sharing an id would send every folder toggle to whichever came first.
     try { await htmx.ajax('GET', '/vault/browse?elid=researchvault', {target: '#researchsources', swap: 'innerHTML'}); }
     catch (e) { list.innerHTML = `<div class="lee-research-error">${esc(e.message || e)}</div>`; }
@@ -3125,8 +3064,8 @@ function researchWorkspace(mode = 'search', value = '') {
   };
   const run = async () => {
     query = input.value.trim();
-    // The vault is searched where it is shown, and an empty box is a real answer here: it puts
-    // the tree back, which is the same two-views-of-one-panel rule the vault panel follows.
+    // The vault is searched where it is shown, and an empty box puts the tree back, the same
+    // two-views-of-one-panel rule the vault panel follows.
     if (activeMode === 'vault')
       return htmx.ajax('GET', '/vault/browse?' + new URLSearchParams({q: query, elid: 'researchvault'}),
                        {target: '#researchsources', swap: 'innerHTML'});
@@ -3201,10 +3140,10 @@ function readUrl(url = '') { return researchWorkspace('read', url); }
 function researchQ() { return researchWorkspace('research'); }
 
 
-/* ---- clip: a file, a folder or the open tab into the workspace vault shelf ---- */
+// Clip a file, a folder or the open tab into the workspace vault shelf.
 function clipTarget() {
   // Which menu opened decides the target. A tab names its path in `title`, so an inactive tab
-  // read straight after right-clicking it does not have to wait for the select to land.
+  // read straight after right-clicking it does not have to wait for the select.
   const s = lee.menuSurface;
   if (s === 'file' || s === 'folder') return treeSel()?.dataset.path || '';
   if (s === 'tab') return $(`.lee-tab[data-i="${lee.menuTab}"]`)?.title || '';
@@ -3222,7 +3161,6 @@ async function leeClipToVault() {
 }
 window.leeClipToVault = leeClipToVault;
 window.clipTarget = clipTarget;
-/* ------------------------------------------------------------------ overlays */
 function modalViewport() {
   const v = window.visualViewport;
   return {left: v?.offsetLeft || 0, top: v?.offsetTop || 0, width: v?.width || innerWidth, height: v?.height || innerHeight};
@@ -3283,8 +3221,8 @@ function modal(inner, onKey, onClose, options = {}) {
   };
   m.requestClose = requestClose;
   const key = (e) => {
-    // Nested dialogs (for example “change cwd” from the kernel picker) form a stack.
-    // Only the top one owns keys; otherwise one Escape closes every layer at once.
+    // Nested dialogs form a stack, and only the top one owns keys, or one Escape closes every
+    // layer at once.
     if ($$('.lee-modal').at(-1) !== m) return;
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); requestClose(); return; }
     if (e.key === 'Tab') {
@@ -3424,8 +3362,8 @@ function textDialog(title, label, value = '') {
   });
 }
 
-/* `alt` offers a second way to say yes, for a choice with two shapes rather than one. It resolves
-   `'alt'`, and cancel stays falsy so every caller that only asked a yes/no question is unchanged. */
+/* `alt` offers a second way to say yes. It resolves `'alt'`, and cancel stays falsy so every
+   caller that asked a yes/no question is unchanged. */
 function confirmDialog(title, detail, action = 'confirm', alt = '') {
   return new Promise(resolve => {
     let settled = false;
@@ -3441,8 +3379,8 @@ function confirmDialog(title, detail, action = 'confirm', alt = '') {
   });
 }
 
-/* One menu renderer for every contextual surface. Labels and effective chords came from
- * leela.blocks.keys.menus + leela.core.keys; the browser only positions rows and dispatches their action. */
+/* One menu renderer for every contextual surface. Labels and effective chords come from
+ * `leela.blocks.keys.menus` and `leela.core.keys`. The browser positions rows and dispatches. */
 function closeMenu() { $('.lee-ctxmenu')?.remove(); }
 function openMenu(surface, x, y) {
   closeMenu();
@@ -3488,9 +3426,8 @@ function openChromeMenu(anchor, rows) {
   menu.tabIndex = -1; menu.focus();
 }
 
-// Choosing a folder is choosing a project: source control, releases, deploys and the branch
-// pill all follow it. Selecting the folder in the tree without saying so left every one of
-// them describing whichever folder had been opened first.
+// Choosing a folder is choosing a project: source control, releases, deploys and the branch pill
+// all follow it. Selecting the folder in the tree is not choosing it; this route is.
 async function activateRoot(path) {
   try { await post('/workspace/activate', {path}); }
   catch (e) { return status(e.message || String(e), 'err'); }
@@ -3519,14 +3456,14 @@ async function leeWorkspaceMenu(anchor) {
 }
 window.leeWorkspaceMenu = leeWorkspaceMenu;
 
-/* The branch pill's own popup is `28_branchbar.js`: it is a searchable list of branches and
-   actions rather than a menu, so it does not fit `openChromeMenu`. */
+/* The branch pill's own popup is `branchbar.js`. It is a searchable list rather than a menu, so it
+   does not fit `openChromeMenu`. */
 
 async function operationHistory() {
   const d = await api('/history/operations');
   const m = modal(`<div class="lee-mhead">workspace history<span class="sub">saved file checkpoints · newest first</span></div>` +
-    // An empty `data-history` still matches `[data-history]`, so the attribute is omitted
-    // rather than blanked: a spent operation must not be clickable at all.
+    // An empty `data-history` still matches `[data-history]`, so the attribute is omitted rather
+    // than blanked. A spent operation must not be clickable at all.
     `<div class="lee-modallist">${(d.operations || []).map(op => `<button class="lee-mrow" data-op="${esc(op.id)}"${op.reversible ? ' data-history="undo"' : op.redoable ? ' data-history="redo"' : ' data-off="1"'}>` +
       `<strong>${esc(op.label)}</strong><span class="sub">${op.redoable ? 'undone · redo available · ' : ''}${new Date(op.at * 1000).toLocaleString()} · ${esc((op.paths || []).join(', '))}</span></button>`).join('') || '<div class="lee-dim">No saved operations yet.</div>'}</div>` +
     `<div class="lee-mfoot"><span class="lee-dim">Undo and redo refuse files changed after the checkpoint.</span></div>`);
@@ -3656,10 +3593,8 @@ async function quickOpen(searchMode) {
   paint(); setTimeout(() => input.focus(), 0);
 }
 
-// The modes, in the order Tab walks them. `all` leads and is the default: it ranks every backend
-// together, so it is the one that answers without you having to know which store the thing you
-// half-remember is in. A rail rather than a row because each one carries a count, and a count is
-// the thing that tells you where to look next when the mode you picked came back empty.
+// The modes, in the order Tab walks them. `all` leads and ranks every backend together. A rail
+// rather than a row, because each mode carries a count.
 const SEARCH_MODES = [
   ['all', 'all', 'rank ripgrep, symbols, FTS and semantic results together'],
   ['rg', 'rg', 'ripgrep: literal search over current files, fastest'],
@@ -3678,8 +3613,8 @@ async function codeSearch() {
   const m = modal(
     `<div class="lee-searchbar"><input class="lee-input" id="cs" placeholder="search code, symbols and meaning…" autofocus>
      <button class="lee-btn" id="kosharefresh" type="button">sync</button></div>` +
-    // Where and what, beside which backend. A workspace holds several checkouts, so "this
-    // project" is the useful default and "everything open" is the deliberate widening.
+    // A workspace holds several checkouts, so "this project" is the default and "everything
+    // open" is the deliberate widening.
     `<div class="lee-searchfilters">
        <label>in<select id="csscope">
          <option value="project">this project</option>
@@ -3704,29 +3639,25 @@ async function codeSearch() {
       if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, hits.length - 1); paint(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); paint(); }
       else if (e.key === 'Enter') { e.preventDefault(); go(); }
-      // Tab walks the modes rather than the focus. The dialog traps Tab anyway, so the only
-      // thing given up is a focus order over four controls, and what is bought is trying the
-      // same query against another backend without leaving the keyboard.
+      // Tab walks the modes rather than the focus. The dialog traps Tab anyway.
       else if (e.key === 'Tab') { e.preventDefault(); cycleMode(e.shiftKey ? -1 : 1); }
     }, () => {
       if (previewView) LeeCM.destroy(previewView);
-      // Closing the dialog must stop the search too, or four backends go on working for a
-      // question whose answer has nowhere left to be drawn.
+      // Closing the dialog must stop the search, or four backends work on for nothing.
       if (liveStream) { try { liveStream.close(); } catch {} liveStream = null; }
     });
   m.classList.add('lee-code-search-modal');
   const list = $('#cslist', m), input = $('#cs', m), preview = $('#cspreview', m), open = $('#csopen', m);
   const pkgBtn = $('#cspkg', m);
   const scopeEl = $('#csscope', m), extsEl = $('#csexts', m);
-  // Remembered, because a person who works in Python does not want to retype `py` every time
-  // they open this box -- and the scope they chose is a statement about how they work.
+  // Remembered, so somebody who works in Python does not retype `py` every time.
   scopeEl.value = localStorage.getItem('lee-search-scope') || 'project';
   extsEl.value = localStorage.getItem('lee-search-exts') || '';
   const paintRail = () => {
     $$('.lee-searchrail-mode', m).forEach(b =>
       b.classList.toggle('active', b.dataset.mode === mode));
-    // A count only means something once that mode has actually run. Blank is "not asked yet",
-    // which is a different thing from nought and must not look like it.
+    // A count means something only once that mode has run. Blank is "not asked yet", which must
+    // not look like nought.
     SEARCH_MODES.forEach(([id]) => {
       const el = $(`[data-count-for="${id}"]`, m); if (!el) return;
       el.textContent = counts[id] == null ? '' : counts[id];
@@ -3755,7 +3686,7 @@ async function codeSearch() {
     const filename = h.path.split('/').pop() || h.package || 'indexed source';
     $('#cspreviewtitle', m).textContent = h.symbol || filename;
     $('#cspreviewmeta', m).textContent = `${h.package ? h.package + ' · ' : ''}${filename}:${h.line} · ${(h.sources || [h.kind]).join(' + ')}`;
-    // A package is a file like any other once the path is one this project can open; its API
+    // A package is a file like any other once the path is one this project can open. Its API
     // listing is the second question, so it gets its own button.
     const environment = h.kind.startsWith('env-');
     open.disabled = !h.path && !(environment && h.package);
@@ -3811,31 +3742,25 @@ async function codeSearch() {
     if (!h.package) return status('package source is indexed read-only', 'info');
     await packageApi(h);
   };
-  // One click opens at the line, because that is what the box is *for*. It used to select on the
-  // first click and need a second one on the same row to go anywhere, so the obvious gesture
-  // landed in a preview pane and looked like the result was not clickable. The preview is still
-  // reachable without committing: arrow keys move the selection and paint it.
+  // One click opens at the line. Arrow keys preview without committing.
   list.onclick = e => {
     const row = e.target.closest('[data-i]'); if (!row) return;
     sel = +row.dataset.i; paint(); go();
   };
   open.onclick = go;
   pkgBtn.onclick = () => { const h = hits[sel]; if (h?.package) packageApi(h); };
-  // `all` streamed: one section per backend, in the server's best-first leg order, each filling
-  // in as that backend reports. Slots are stable on purpose -- rg answers in tens of milliseconds
-  // and the embedding leg in seconds, and a list that re-ranked on every arrival would reshuffle
-  // under the cursor precisely while someone was reading it. A hit a later leg finds again is not
-  // shown twice; it adds its name to the row the first leg already produced, which is the same
-  // merge the batch answer does.
+  // `all` streamed: one section per backend, in the server's best-first leg order. Slots are
+  // stable because rg answers in tens of milliseconds and the embedding leg in seconds, and a
+  // list that re-ranked on every arrival would reshuffle under the cursor while it was read. A
+  // hit a later leg finds again adds its name to the existing row rather than a second one.
   const streamAll = (q, seq) => new Promise(resolve => {
     const slots = new Map(), seen = new Map();
     let notes = [];
     const es = new EventSource('/search/stream?q=' + encodeURIComponent(q) +
                                '&scope=' + encodeURIComponent(scopeEl.value) +
                                '&exts=' + encodeURIComponent(extsEl.value.trim()));
-    // Held so the next keystroke can close it. A stream left open keeps four backends working on
-    // a question nobody is asking any more, and the server only notices when it next tries to
-    // write -- which for the slow legs is seconds away.
+    // Held so the next keystroke can close it. A stream left open keeps four backends working,
+    // and the server only notices when it next tries to write, seconds away for the slow legs.
     liveStream = es;
     const stop = () => { try { es.close(); } catch {} if (liveStream === es) liveStream = null; resolve(); };
     const recount = () => {
@@ -3863,8 +3788,7 @@ async function codeSearch() {
       slots.set(d.leg, kept);
       recount();
       backend = `all · ${[...slots.keys()].filter(k => slots.get(k).length).join(' + ') || 'searching'}`;
-      // The selection is an index into a list that just grew at the end, so it still points at
-      // the row it pointed at. Only an empty list needs resetting.
+      // The list grew at the end, so the selection still points at its row.
       if (sel >= hits.length) sel = Math.max(0, hits.length - 1);
       paint();
     });
@@ -3894,8 +3818,8 @@ async function codeSearch() {
                             '&exts=' + encodeURIComponent(extsEl.value.trim()));
         if (seq !== searchSeq) return;
         hits = d.hits || []; backend = d.backend + (d.note ? ' · ' + d.note : ''); sel = 0;
-        // Which folders were actually walked, because "no matches" and "no matches *here*" are
-        // different answers and only one of them means the thing is not in your code.
+        // Which folders were walked, because "no matches" and "no matches here" are different
+        // answers.
         const where = (d.searched || []).map(p => p.split('/').pop()).join(', ');
         $('#csscopenote', m).textContent = where ? `searched ${where}` : '';
         counts[mode] = hits.length; paintRail();
@@ -3951,9 +3875,9 @@ async function findUsages(name = cursorWord()) {
   const d = await api('/code/usages?name=' + encodeURIComponent(name));
   hitList(d.hits || [], `${d.backend} — ${d.note}`, `usages of ${name}`, openLocation);
 }
-/* The dotted chain the cursor ends, so `fastcore.test` reaches the server whole: nothing declares
-   a module, and the last name alone found whichever package had a `def test`. Leftwards only --
-   on `fastcore` the answer is the package. */
+/* The dotted chain the cursor ends, so `fastcore.test` reaches the server whole: the last name
+   alone found whichever package had a `def test`. Leftwards only, so on `fastcore` the answer is
+   the package. */
 function dottedAtCursor(view) {
   const word = LeeCM.wordAtCursor(view); if (!word) return '';
   const line = view.state.doc.lineAt(LeeCM.cursor(view)), text = line.text;
@@ -3975,14 +3899,12 @@ function editorPlace(view = curEditor()) {
     ? lee.cells.findIndex(c => lee.editors.get(c.id) === view) : -1;
   return {path, line, cellIndex, dotted: dottedAtCursor(view)};
 }
-/* One key, both directions. On a usage it goes to the declaration; standing on the declaration it
-   lists who uses it, because that is the only question left to ask there. The server decides which,
-   since it is the side that knows where the declaration is. */
+/* One key, both directions. On a usage it goes to the declaration, on the declaration it lists
+   who uses it. The server decides which, since it knows where the declaration is. */
 async function gotoDeclaration(name = cursorWord(), place = editorPlace()) {
   if (!name) return status('put the cursor on a symbol first', 'err');
   status(`finding ${name}…`);
   let d;
-  // a failed lookup has to say so: `finding…` is busy, and a busy toast never leaves by itself
   try {
     d = await api('/code/jump?name=' + encodeURIComponent(name) +
       '&path=' + encodeURIComponent(place.path) + '&line=' + place.line + '&cell_index=' + place.cellIndex +
@@ -3993,16 +3915,15 @@ async function gotoDeclaration(name = cursorWord(), place = editorPlace()) {
   if (d.kind === 'definition' && hits.length === 1) return openLocation(hits[0]);
   const label = d.kind === 'usages' ? 'usages' : 'definitions';
   hitList(hits, `${d.backend} — ${d.note}`, `${label} of ${name}`, openLocation);
-  // `finding…` is a busy toast, and a busy toast waits to be clicked. The list is the answer, so
-  // the toast has to stop saying it is still looking.
+  // `finding…` is a busy toast and waits to be clicked, so the answer has to replace it.
   status(`${hits.length} ${label} of ${name}`, 'ok');
 }
-/* The mouse saying what mod+b says. CodeMirror owns the click, so this listens in the capture
-   phase and takes the event there: letting it through would move the caret and select a word.
+/* The mouse saying what mod+b says. CodeMirror owns the click, so this takes the event in the
+   capture phase: letting it through would move the caret and select a word.
 
-   Either modifier counts. Platform detection is not reliable enough to make it the gate: in a
-   webview that reported no platform, ctrl+click both looked up the symbol and, being a right-click
-   on macOS, opened the cell menu on top of the result. So the paired `contextmenu` is claimed too. */
+   Either modifier counts, because platform detection is not reliable enough to gate it. In a
+   webview that reported no platform, ctrl+click looked up the symbol and, being a right-click on
+   macOS, opened the cell menu on top of the result. The paired `contextmenu` is claimed too. */
 function bindModClick() {
   document.addEventListener('contextmenu', e => {
     if (e.shiftKey || !(e.metaKey || e.ctrlKey) || !e.target?.closest?.('.cm-content')) return;
@@ -4048,9 +3969,8 @@ async function syncCodeIndex() {
 async function leeSymbols() {
   const host = $('#symbols'), label = $('#symbolfile'); if (!host) return;
   const path = lee.path, name = compactPath(path || ''); if (label) label.textContent = name ? '· ' + name : '';
-  // Notebooks are included: their defs and classes are real structure, and the server reads
-  // them out of the cells rather than out of the JSON. The outline is of the file on disk, so
-  // a def typed and not yet saved appears once autosave has run.
+  // Notebooks are included, read out of the cells rather than the JSON. The outline is of the
+  // file on disk, so a def typed and not yet saved appears once autosave has run.
   if (!lee.path || (lee.kind !== 'text' && lee.kind !== 'notebook')) {
     host.innerHTML = '<div class="lee-dim">Open a source file or notebook to see its symbols.</div>'; return;
   }
@@ -4062,8 +3982,8 @@ async function leeSymbols() {
     host.innerHTML = rows.length ? rows.map((s, i) => {
       const depth = Math.max(0, Math.floor(Number(s.score || 0) / 4));
       const kind = /^class\s/.test(s.text || '') ? 'class' : 'function';
-      // A notebook symbol is addressed by cell, and the JSON line it also carries would be a
-      // meaningless number to show: the row says which cell and where in it instead.
+      // A notebook symbol is addressed by cell. The JSON line it also carries would be a
+      // meaningless number to show.
       const cellLine = Number(s.cell_line || 0), cellIndex = Number(s.cell_index ?? -1);
       const where = cellLine > 0 ? `${cellIndex + 1}:${cellLine}` : String(Number(s.line || 1));
       return `<button class="lee-symbol-row" role="treeitem" style="--depth:${depth}" ` +
@@ -4081,11 +4001,10 @@ async function leeSymbols() {
 }
 window.leeSymbols = leeSymbols;
 
-/* --------------------------------------------------------------------- find */
 /* One find pane for both shapes of document. CodeMirror's own panel searches the one cell it
-   belongs to, which is never what is being asked of a notebook, and it offered no regex or
-   replace where the cell bar did. This is the single mod+f: regex, case, whole word and
-   replace, over a file or over every cell. */
+   belongs to, which is never what is asked of a notebook, and it offered no regex or replace where
+   the cell bar did. This is the single mod+f: regex, case, whole word and replace, over a file or
+   over every cell. */
 
 const FIND_FLAGS = 'lee-find-flags';
 const MAX_FIND_HITS = 5000;
@@ -4155,8 +4074,8 @@ function findStep(direction) {
   const view = findView(hit.doc);
   if (view) LeeCM.setSelection(view, hit.from, hit.to);
   $('#leefindcount', bar).textContent = `${state.at + 1} of ${n}`;
-  // `focusCell` and `setSelection` both take the focus, a frame apart. The query is where the
-  // typing belongs, so it is claimed back after both have had their turn.
+  // `focusCell` and `setSelection` both take the focus, a frame apart, so the query claims it
+  // back after both have had their turn.
   requestAnimationFrame(() => requestAnimationFrame(() => $('#leefindq', bar)?.focus()));
 }
 
@@ -4255,7 +4174,6 @@ function leeFind() {
   findPaint();
   input.focus(); input.select();
 }
-/* ---- similarity: what else in this codebase looks like the thing under the cursor ---- */
 function cursorLine() {
   if (lee.kind === 'notebook') {
     const c = lee.cells[lee.sel], v = c && lee.editors.get(c.id);
@@ -4268,8 +4186,7 @@ function cursorLine() {
 /* Where a hit is, said well enough to choose between two of them. A package hit is its dotted
    module, because `document.py` is offered by chonkie and by prompt_toolkit, and every package
    offers an `__init__.py`. A project hit is its basename until two hits share one, and then as
-   many parent folders as it takes to tell them apart -- this repository has 25 files called
-   `app.py`. */
+   many parent folders as it takes to tell them apart. */
 function hitWhere(h, hits) {
   if (h.module) return h.module;
   const parts = String(h.path || '').split('/').filter(Boolean);
@@ -4335,14 +4252,13 @@ async function codeMap() {
   });
 }
 
-/* Start a run configuration -- a command line, kept in the project -- in a process leela
- * puts an inspector into. That is the difference between this and the same command in a
- * terminal: the inspector is *inside* it, so the variable panel can watch the app's own
- * module while it serves. A process started anywhere else has to opt in with
- * `dhrishti.serving.serve()`; the picker says so, because everyone asks. */
-/* Starting one, wherever the request came from: the picker, or Run on an open file. Both have
-   to land in the same place or there are two kinds of running script again, which is the thing
-   that made this confusing. */
+/* Start a run configuration in a process leela puts an inspector into. That is the difference
+ * between this and the same command in a terminal: the inspector is inside it, so the variable
+ * panel can watch the app's own module while it serves. A process started anywhere else has to opt
+ * in with `dhrishti.serving.serve()`, and the picker says so.
+ *
+ * The picker and Run on an open file both come here, or there are two kinds of running script
+ * again. */
 async function startRun(r) {
   if (r.debug) return startDirectDebug(r);
   status(`starting ${r.name || (r.cmd || '').split('/').pop()}…`);
@@ -4355,8 +4271,8 @@ async function startRun(r) {
   // leaving it to be found under a dock tab and a filter.
   leeRunTerm(s.script || r.cmd, s.label).catch(e => status(String(e.message || e), 'err'));
   if (s.base) {
-    // Running is an explicit choice of runtime. Connect the variable panel immediately instead
-    // of making the user repeat that choice in “env…”.
+    // Running is an explicit choice of runtime, so connect the variable panel rather than making
+    // the user repeat that choice in "env…".
     await post('/envs/watch', {base: s.base});
     paintEnv(s.label);
   }
@@ -4409,10 +4325,9 @@ async function startDirectDebug(run={}) {
 }
 window.leeStartDebug=startDirectDebug;
 
-/* Which live namespace the variable panel shows. Every process that registered an
- * inspector is here -- a notebook kernel, an app leela started, or something you launched
- * yourself that called `dhrishti.serving.serve()`. Nothing else can be, because nothing else
- * has anything to read. */
+/* Which live namespace the variable panel shows. Every process that registered an inspector is
+ * here: a notebook kernel, an app leela started, or something you launched yourself that called
+ * `dhrishti.serving.serve()`. Nothing else has anything to read. */
 function paintEnv(name) {
   lee.env = name || '';
   const t = $('#envtag'); if (!t) return;
@@ -4443,8 +4358,7 @@ async function pickEnv() {
   });
 }
 
-/* The configurations themselves, editable in place for the same reason the keymap is:
- * telling someone to go and find a JSON file is not a feature. */
+/* The configurations themselves, editable in place for the same reason the keymap is. */
 async function editRuns() {
   const d = await api('/runs/file');
   let data;
@@ -4546,7 +4460,6 @@ function palette() {
   paint(); setTimeout(() => input.focus(), 0);
 }
 
-/* ------------------------------------------------------------------ file ops */
 const treeSel = () => $('.lee-node.sel');
 const visibleTreeNodes = () => $$('.lee-node').filter(n => n.getClientRects().length);
 function selectTreeNode(n) {
@@ -4562,9 +4475,9 @@ function moveTreeSelection(d) {
   const at = Math.max(0, nodes.indexOf(treeSel()));
   selectTreeNode(nodes[Math.max(0, Math.min(nodes.length - 1, at + d))]);
 }
-/* Dotfiles are off by default because most of them are machinery, and on by choice because
-   `.gitignore`, `.github` and `.env` are files you edit. `.venv` and `node_modules` are on
-   neither side of this: the server's skip list drops them whatever the toggle says. */
+/* Dotfiles are off by default and on by choice, because `.gitignore`, `.github` and `.env` are
+   files you edit. The server's skip list drops `.venv` and `node_modules` whatever the toggle
+   says. */
 function treeHidden() { return localStorage.getItem('lee-tree-hidden') === '1'; }
 function treeQuery(sep = '?') { return treeHidden() ? sep + 'hidden=1' : ''; }
 function paintHiddenBtn() {
@@ -4629,9 +4542,8 @@ async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = tru
   status('files refreshed', 'ok');
 }
 
-/* Pushed, not polled: an agent edit, a terminal command or another editor used to stay
-   invisible until someone refreshed. A push never rebuilds the panel -- it reconciles the
-   folders that changed and leaves every other row, its expansion and the scroll alone. */
+/* Pushed, not polled. A push reconciles the folders that changed and leaves every other row, its
+   expansion and the scroll alone. */
 const selfWrites = new Map();
 const SELF_WRITE_MS = 4000;
 function noteSelfWrite(...paths) { for (const p of paths) if (p) selfWrites.set(p, performance.now()); }
@@ -4793,12 +4705,9 @@ async function findRepo() { return addRoot(true); }
 
 /* One box, the way a shell has one.
 
-   The picker used to be a path bar, a separate filter box, a list and an up button -- four
-   controls for "which folder", and the path bar was the only one that took a path. Typing
-   into it now completes folders under what is already typed, Tab takes the completion,
-   and Enter opens. Repositories deeper down still answer to a bare name, because a
-   directory of checkouts is more than one level deep and that was the other thing the
-   second box was for. */
+   Typing completes folders under what is already typed, Tab takes the completion, and Enter
+   opens. Repositories deeper down answer to a bare name, because a directory of checkouts is more
+   than one level deep. */
 async function addRoot(find = false) {
   const m = modal(`<div class="lee-mhead">open folder<span class="sub">type a path · Tab completes · Enter opens</span></div>
     <input class="lee-input lee-pathinput" id="folderpath" autocomplete="off" spellcheck="false"
@@ -4810,9 +4719,9 @@ async function addRoot(find = false) {
     <span class="lee-dim" id="folderhint"></span></div>`);
   const input = m.querySelector('#folderpath'), list = m.querySelector('#folderlist');
   const hint = m.querySelector('#folderhint'), openBtn = m.querySelector('#folderopen');
-  // In the packaged app the platform's own chooser is the obvious way to find a folder, and
-  // the only one that does not require knowing the path. In a browser tab there is none.
-  // Wired now and shown when the bridge arrives, which is not always by the time this opens.
+  // In the packaged app the platform's own chooser is the only way to find a folder without
+  // knowing its path. In a browser tab there is none. Wired now and shown when the bridge
+  // arrives, which is not always by the time this opens.
   const browse = m.querySelector('#folderbrowse');
   browse.onclick = async () => {
     const picked = await nativeFolder();
@@ -4862,8 +4771,7 @@ async function addRoot(find = false) {
     rows = rank(frag); sel = 0;
     clearTimeout(timer);
     if (frag.length < 2) return paint();
-    // The search below walks a tree, so it is debounced: a five-letter name is one search,
-    // not five queued behind one worker.
+    // The search below walks a tree, so it is debounced: a five-letter name is one search.
     paint(`<div class="lee-searching"><span class="lee-spin"></span>searching ${esc(base)} for repositories…</div>`);
     timer = setTimeout(() => repos(frag), 200);
   };
@@ -4876,9 +4784,8 @@ async function addRoot(find = false) {
     m.remove();
     try {
       await post('/fs/add-root', {path: target});
-      // The tree is redrawn *before* the folder is activated: activating selects the new
-      // root's node, and a tree that has not been rebuilt does not have one yet -- which
-      // left a folder that was open on the server and absent from the panel until reload.
+      // The tree is redrawn before the folder is activated, because activating selects the new
+      // root's node and a tree that has not been rebuilt does not have one yet.
       await refreshFileTree(target);
       await activateRoot(target);           // the folder you just opened is the one you mean
     } catch (e) { status(String(e.message || e), 'err'); }
@@ -4893,7 +4800,7 @@ async function addRoot(find = false) {
       e.preventDefault();
       const v = input.value.trim(), frag = fragOf(v);
       // A path that names a folder is a folder to open. Anything else is half-typed, so the
-      // first Enter completes it and the second opens it -- Tab, for people who press Enter.
+      // first Enter completes it and the second opens it.
       if (v && (!frag || dirs.some(x => x.path === v.replace(/\/$/, '')))) return open(v);
       if (!complete()) if (v) open(v);
     } else if (e.key === 'Escape') { e.preventDefault(); m.remove(); }
@@ -4927,8 +4834,8 @@ document.addEventListener('toggle', e => {
   if (e.target.matches?.('.lee-dir')) e.target.setAttribute('aria-expanded', e.target.open ? 'true' : 'false');
 }, true);
 
-// Middle-click closes a tab, as it does in every browser. Delegated because both strips are
-// re-rendered whole -- the document strip by htmx, the terminal strip by `paintTermTabs`.
+// Middle-click closes a tab. Delegated because both strips are re-rendered whole, the document
+// strip by htmx and the terminal strip by `paintTermTabs`.
 document.addEventListener('auxclick', e => {
   if (e.button !== 1) return;
   const term = e.target.closest?.('.lee-termtab');
@@ -4940,8 +4847,8 @@ document.addEventListener('auxclick', e => {
   closeTab(+tab.dataset.i);
 });
 
-// Drag to reorder. The order is the user's arrangement of their own work, so the drop is
-// posted rather than kept in the browser: it has to survive a reload like the tabs do.
+// Drag to reorder. The drop is posted rather than kept in the browser, so it survives a reload
+// like the tabs do.
 document.addEventListener('dragstart', e => {
   const tab = e.target.closest?.('.lee-tab');
   if (!tab || tab.dataset.gitDiff) return;
@@ -4968,8 +4875,8 @@ document.addEventListener('dragend', () => {
 });
 
 /* Naming a file for somebody else. Relative is against the open folder holding it, so it is what
-   a colleague can paste into the same repository; absolute is what a shell here needs. Only the
-   server knows which folder a path is under, so it is asked. */
+   a colleague pastes into the same repository. Absolute is what a shell here needs. Only the
+   server knows which folder a path is under. */
 async function copyFilePath(which) {
   const target = clipTarget();
   if (!target) return status('select a file, a folder or a tab first', 'err');
@@ -4981,7 +4888,7 @@ async function copyFilePath(which) {
   try { await navigator.clipboard.writeText(text); }
   catch (_) { return status('clipboard access failed', 'err'); }
   // A path under no open folder has no relative form, and silently copying the absolute one
-  // instead would read as the button being wrong rather than the file being outside.
+  // would read as the button being wrong rather than the file being outside.
   status(which === 'relative' && !d.relative ? `outside the open folders · copied ${text}`
                                              : `copied ${text}`, 'ok');
 }
@@ -5018,11 +4925,9 @@ document.addEventListener('contextmenu', e => {
   if (e.target.closest('#editor')) { e.preventDefault(); setScope('editor'); openMenu('editor', e.clientX, e.clientY); }
 });
 
-/* ------------------------------------------------------------------ splitters */
 function initSplits() {
   const savedLeft = localStorage.getItem('lee-left-view');
-  // Every panel is saved on switch, so every panel is restorable. Restoring only two of them
-  // meant a reload silently moved you back to the file tree from the one you were working in.
+  // Every panel is saved on switch, so every panel is restorable.
   leeLeft(['git', 'symbols', 'workflows', 'releases', 'deploys', 'drive'].includes(savedLeft) ? savedLeft : 'files');
   // Read before the views: `leeDock` opens the bottom pane to show its tab and persists that,
   // which would erase a pane the last session had minimised.
@@ -5052,8 +4957,7 @@ function initSplits() {
     };
   });
   const centreHeight = () => $('.lee-centre')?.clientHeight || window.innerHeight;
-  // The dock may occupy most of the workspace; 360px made Agent and Terminal feel like
-  // preview strips on large displays. The editor keeps its own 140px safety floor.
+  // The dock can occupy most of the workspace. The editor keeps its own 140px floor.
   const limit = () => Math.min(900, Math.max(110, centreHeight() - 240));
   const dockSplit = $('.lee-dock-split');
   if (dockSplit) dockSplit.onpointerdown = (e) => {
@@ -5117,12 +5021,10 @@ async function checkProjectRuntime() {
   try { d = await api('/runtime/info'); } catch (_) { return; }
   if ((!d.needs_create && !d.needs_support) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
   sessionStorage.setItem('lee-runtime-asked:' + d.root, '1');
-  /* A folder with no environment at all gets one, without being asked. Opening a project and
-     landing on whatever `python3` happens to be on PATH is never what anyone wanted, and with uv
-     the fix is one command that a deleted directory undoes. Only for a *missing* environment:
-     installing packages into an environment you built yourself is your decision, so needs_support
-     below still asks. Without uv it also still asks, because a half-built venv is worse than
-     none. */
+  /* A folder with no environment at all gets one, without being asked, because with uv the fix is
+     one command that a deleted directory undoes. Only for a missing environment: installing
+     packages into an environment you built yourself is your decision, so `needs_support` below
+     still asks. Without uv it also still asks, because a half-built venv is worse than none. */
   if (d.needs_create && d.uv) {
     status('no project environment — creating .venv with uv…');
     try {
@@ -5244,7 +5146,6 @@ document.addEventListener('htmx:afterSwap', (e) => {
   // Adding a folder rebuilds the whole shell, so everything the client owns is remounted.
   else if (id === 'shell') { lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); requestAnimationFrame(layoutTabs); }
 });
-/* -------------------------------------------------------------- refactor */
 function refactorRows(files, selected) {
   return files.map((file, i) => `<label class="lee-mrow"><input type="checkbox" data-refactor-path="${esc(file.path)}"${selected.has(file.path) ? ' checked' : ''}>` +
     `<strong>${esc(compactPath(file.path))}</strong><span class="sub">${file.edits} replacement${file.edits === 1 ? '' : 's'}</span></label>`).join('');
@@ -5287,11 +5188,9 @@ async function replaceWorkspace() {
   };
 }
 
-/* Which lines differ, as one span from the first difference to the last.
-
-   Not a real diff: the point is to put the change on screen and under a selection, and a span
-   does that for every edit an undo can produce. A minimal diff would draw prettier ranges and
-   would not answer the question -- "where did it change" -- any better. */
+/* Which lines differ, as one span from the first difference to the last. Not a real diff: the point
+   is to put the change on screen and under a selection, and a span does that for every edit an undo
+   can produce. */
 function changedSpan(now, other) {
   const A = String(now || '').split('\n'), B = String(other || '').split('\n');
   let s = 0;
@@ -5301,8 +5200,8 @@ function changedSpan(now, other) {
   return {from: s + 1, to: Math.max(s + 1, a + 1)};
 }
 
-/* An undo that changes a file you cannot see has happened to you rather than been done by you.
-   Select what moved and centre it, so the operation is legible instead of merely reported. */
+/* An undo that changes a file you cannot see has happened to you rather than been done by you, so
+   select what moved and centre it. */
 function showChangedSpan(now, other, note) {
   const v = curEditor();
   if (!v) return status(note, 'ok');
@@ -5332,7 +5231,7 @@ async function workspaceHistoryRedo() {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 
-/* Extraction and inlining run against the file *on disk*: the endpoints read it themselves and
+/* Extraction and inlining run against the file on disk: the endpoints read it themselves and
    address it by character offset, so an unsaved buffer would be rewritten from text the server
    never saw. Both refuse rather than save on the user's behalf. */
 function refactorTarget() {
@@ -5381,10 +5280,9 @@ async function inlineVariable() {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 
-/* Whole lines within one buffer, where `cell_move_up`/`cell_move_down` move whole cells.
-   Written against the CodeMirror state directly rather than through a new `LeeCM` export: the
-   vendored bundle is committed and rebuilding it needs node, so the page must not grow a
-   dependency on a wrapper that is not in the shipped build. */
+/* Whole lines within one buffer, where `cell_move_up` and `cell_move_down` move whole cells.
+   Written against the CodeMirror state directly rather than through a new `LeeCM` export, because
+   the vendored bundle is committed and rebuilding it needs node. */
 function moveLines(dir) {
   const view = curEditor(); if (!view) return;
   const doc = view.state.doc, sel = view.state.selection.main;
@@ -5409,10 +5307,9 @@ ACTIONS.extract_method = () => extractRefactor('method');
 ACTIONS.inline_variable = inlineVariable;
 ACTIONS.move_line_up = () => moveLines(-1);
 ACTIONS.move_line_down = () => moveLines(1);
-/* ------------------------------------------------------------------- move */
-/* Lift whole functions and classes into another file. Unlike extract and inline this
-   changes several files at once, so it previews before it writes and every file it would
-   touch is its own row. */
+/* Lift whole functions and classes into another file. Unlike extract and inline this changes
+   several files at once, so it previews before it writes and every file it would touch is its own
+   row. */
 
 function moveSymbolAt(symbols, pos) {
   const here = symbols.find(s => pos >= s.start && pos <= s.end);
@@ -5431,8 +5328,8 @@ function moveRows(files, keep, selected) {
   }).join('');
 }
 
-/* The diff is built when its row is opened, not when the list is drawn. A move across a dozen
-   call sites would otherwise mount a dozen merge views nobody asked to see. */
+/* The diff is built when its row is opened, not when the list is drawn, or a move across a dozen
+   call sites would mount a dozen merge views nobody asked to see. */
 function moveDiffs(m, files) {
   const built = [];
   $$('[data-move-file]', m).forEach(row => row.addEventListener('toggle', () => {
@@ -5502,7 +5399,6 @@ async function moveSymbol() {
 }
 
 ACTIONS.move_symbol = moveSymbol;
-/* --------------------------------------------------------- git conflicts */
 async function showConflictCenter() {
   try {
     const d = await api(gitUrl('/git/conflicts')), files = d.files || [], s = d.summary || {};
@@ -5696,13 +5592,12 @@ async function leeOpenVaultDoc(doc, shelf = '', vault = '', title = '') {
 window.leeOpenVaultDoc = leeOpenVaultDoc;
 /* The branch pill as a real Git control, and the three remote gestures beside it.
  *
- * One popup over branches *and* actions, in the order JetBrains settled on: what to do with
- * the branch you are on, then how to get a different one, then the branches themselves. Names
- * containing a `/` fold into a folder by their first segment -- a checkout with forty
- * `cursor/…` branches is otherwise a wall of near-identical rows.
+ * One popup over branches and actions, in the order JetBrains settled on: what to do with the
+ * branch you are on, then how to get a different one, then the branches themselves. Names
+ * containing a `/` fold into a folder by their first segment, because forty `cursor/…` branches
+ * are otherwise a wall of near-identical rows.
  *
- * Everything here posts to `/git/action`, which already knows checkout, fetch, pull, push,
- * create, merge, rebase and delete. The one new route is `/git/clone`, because a clone is
+ * Everything here posts to `/git/action`. The one new route is `/git/clone`, because a clone is
  * minutes of network and cannot be a request.
  */
 
@@ -5749,7 +5644,7 @@ function branchGroup(title, rows, fold = false) {
       folders.get(name).push(b);
     }
     // A collapsed folder's branches are absent from the DOM rather than hidden, so the modal's
-    // arrow-key walk over `.lee-mrow` never lands on a row nobody can see.
+    // arrow-key walk over `.lee-mrow` never selects a row nobody can see.
     body = loose.map(b => branchRow(b)).join('') + [...folders].map(([name, kids]) => {
       const open = gitBranchFolders.has(name) || kids.some(k => k.current);
       return `<button class="lee-mrow lee-branch-folder" data-folder="${esc(name)}">` +
@@ -5765,13 +5660,12 @@ async function switchBranch(d, name) {
   const b = (d.branches || []).find(x => x.name === name);
   if (!b || b.current) return leeLeft('git');
   rememberBranch(d.root, name);
-  // A remote-only branch is checked out by its leaf name; Git creates the tracking branch.
-  // The whole snapshot goes back, not just the outcome: `/git/action` answers with the same
-  // `info()` that `/git/info` does, so a caller showing branches can repaint from the reply.
+  // A remote-only branch is checked out by its leaf name, and Git creates the tracking branch.
+  // `/git/action` answers with the same `info()` that `/git/info` does, so a caller showing
+  // branches can repaint from the reply.
   const fresh = await gitDo('checkout', {branch: b.remote ? branchLeaf(b) : name});
   const out = fresh.outcome || {};
-  // A switch moves HEAD, so `summary` always says so -- and that buries the one sentence that
-  // matters, which is what became of work the switch had to set aside. Say it instead.
+  // A switch always reports that HEAD moved, which buries what became of the work it set aside.
   if (out.message) { leeLog('git', 'checkout', out.message, 'ok'); status(`git checkout · ${firstLine(out.message)}`, 'ok'); }
   return fresh;
 }
@@ -5859,8 +5753,7 @@ async function leeBranchMenu(anchor) {
     ` placeholder="Search branches and actions…" aria-label="search branches and actions">` +
     `<div class="lee-modallist lee-branchlist" id="branchlist"></div>` +
     `<div class="lee-mfoot"><span class="lee-dim">Enter checks out · ••• compares, rebases and merges</span></div>`,
-    // The arrow keys walk the rows, which takes the caret out of the box; a printable key puts
-    // it back, so searching never needs the mouse to come back first.
+    // The arrow keys take the caret out of the box, so a printable key puts it back.
     e => { if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && document.activeElement !== search) search.focus(); },
     null, {className: 'lee-branchmodal', storageKey: 'branches'});
   search = m.querySelector('#branchsearch');
@@ -5868,16 +5761,10 @@ async function leeBranchMenu(anchor) {
   const sub = m.querySelector('.lee-mhead .sub');
 
   let prRow = null;
-  /* `keep` is why expanding a folder no longer throws you back to the top. This repaints by
-     replacing the list's children, and replacing the children of a scrolled element puts it at
-     scrollTop 0 -- so opening `remote/` half way down scrolled the whole modal away from the
-     thing that was just clicked. Nothing was navigating, so there was no default to prevent:
-     the rows are buttons in a div, and the jump is the rebuild.
-
-     Restoring the old offset is exact for a fold, which only ever adds or removes rows *below*
-     the folder clicked, leaving everything above it the same height. A shorter list after a
-     collapse just clamps. Typing is the one repaint that should go back to the top: those are
-     different results, not the same list rearranged. */
+  /* Replacing the children of a scrolled element puts it at scrollTop 0, so `keep` restores the
+     old offset. That is exact for a fold, which only adds or removes rows below the folder
+     clicked. Typing is the one repaint that goes back to the top, because those are different
+     results rather than the same list rearranged. */
   const paint = (keep = true) => {
     const at = keep ? list.scrollTop : 0;
     const q = search.value.trim().toLowerCase();
@@ -5897,14 +5784,13 @@ async function leeBranchMenu(anchor) {
     list.scrollTop = at;
   };
 
-  /* A modal that goes on describing the branch you just left is worse than no modal: the tick is
-     against the wrong row and every action below it is offered against the old HEAD. Each
-     mutation answers with a whole `info()`, so take it and repaint rather than closing.
+  /* A modal that goes on describing the branch you just left puts the tick against the wrong row
+     and offers every action against the old HEAD. Each mutation answers with a whole `info()`, so
+     take it and repaint rather than closing.
 
-     `recent` is re-read because checking out writes to it, and `prRow` is dropped because the
-     pull request belongs to the branch that was current when it was fetched. */
-  // The pull request is the branch's, and it arrives late. Two switches in quick succession would
-  // otherwise let the first answer land under the second branch's heading.
+     `recent` is re-read because checking out writes to it. `prRow` is dropped because the pull
+     request belongs to the branch that was current when it was fetched, and two switches in quick
+     succession would otherwise show the first answer under the second branch's heading. */
   const showPr = () => {
     const asked = d.branch;
     branchPr(d).then(r => { if (m.isConnected && d.branch === asked) { prRow = r; paint(); } });
@@ -5934,14 +5820,13 @@ async function leeBranchMenu(anchor) {
       const b = (d.branches || []).find(x => x.name === row.dataset.branch);
       // Picking the branch already checked out is not a switch, it is "show me this repository".
       if (b && b.current) { m.remove(); return leeLeft('git'); }
-      // `gitDo` re-throws what it has already reported -- a refused checkout is a normal answer,
+      // `gitDo` re-throws what it has already reported. A refused checkout is a normal answer,
       // and the modal is still describing the branch that refused to be left.
       return switchBranch(d, row.dataset.branch).then(reload).catch(() => {});
     }
     const act = e.target.closest('[data-act]');
     if (act) {
-      // Fetching is what you do *before* picking a branch, so it repaints the list it just
-      // refreshed rather than closing over it like every other action here.
+      // Fetching comes before picking a branch, so it repaints the list rather than closing it.
       if (act.dataset.act === 'fetch') return branchAct('fetch').then(reload).catch(() => {});
       m.remove();
       return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d);
@@ -5954,7 +5839,6 @@ async function leeBranchMenu(anchor) {
 }
 window.leeBranchMenu = leeBranchMenu;
 
-/* ------------------------------------------------------------------ diverged */
 // `pull` is --ff-only, so a diverged branch had nowhere to go. Every way out, rehearsed.
 async function showSyncPlan(d) {
   try {
@@ -5992,13 +5876,12 @@ async function showSyncPlan(d) {
 }
 window.showSyncPlan = showSyncPlan;
 
-/* ------------------------------------------------------------ fetch/pull/push */
 async function leeGitQuick(op) {
   const button = $(`#git${op}`);
   if (button) button.disabled = true;
   try {
-    // Push is the one that needs to know where it stands: an unpublished branch has nowhere
-    // to push to, and saying "nothing to push" would be the wrong half of the truth.
+    // An unpublished branch has nowhere to push to, and saying "nothing to push" would be the
+    // wrong half of the truth.
     const publish = op === 'push' && !(gitUI.snapshot || await gitInfo(gitUrl('/git/info'))).upstream;
     await gitDo(op, op === 'push' ? {publish} : {});
     refreshScmIfOpen();
@@ -6007,9 +5890,8 @@ async function leeGitQuick(op) {
 }
 window.leeGitQuick = leeGitQuick;
 
-/* ------------------------------------------------------------------- cloning */
-// Poll a clone job until it stops. The cap is there so a wedged job ends as a sentence rather
-// than a spinner nothing will ever stop.
+// Poll a clone job until it stops. The cap ends a wedged job as a sentence rather than a spinner
+// nothing will ever stop.
 async function cloneProgress(id, say) {
   for (let i = 0; i < 900; i++) {
     await new Promise(r => setTimeout(r, 900));
@@ -6023,8 +5905,8 @@ async function cloneProgress(id, say) {
 
 async function leeCloneRepo() {
   const info = await api('/workspace/info').catch(() => ({}));
-  // Beside the folders that are already open, not inside one: a clone that lands *under* an
-  // open folder is covered by it and can never become a chosen project of its own.
+  // Beside the folders that are already open, not inside one: a clone under an open folder is
+  // covered by it and can never become a chosen project of its own.
   const beside = ((info.roots || [])[0]?.path || '').split('/').slice(0, -1).join('/');
   const m = modal(
     `<div class="lee-mhead">clone repository<span class="sub">the clone becomes an open folder</span></div>` +
@@ -6044,8 +5926,7 @@ async function leeCloneRepo() {
       say.textContent = `cloning into ${r.root}…`;
       const done = await cloneProgress(r.job.id, say);
       m.remove();
-      // The same three steps the folder picker takes, so a clone lands where an opened folder
-      // lands: added, drawn in the tree, and chosen as the project.
+      // The same three steps the folder picker takes, so a clone arrives like an opened folder.
       await post('/fs/add-root', {path: done.root});
       await refreshFileTree(done.root);
       await activateRoot(done.root);
@@ -6062,12 +5943,11 @@ async function leeCloneRepo() {
 window.leeCloneRepo = leeCloneRepo;
 /* The inline browser: one page from the persistent CDP Chrome, drawn in a Leela tab.
  *
- * Chrome renders offscreen and streams JPEG frames over `/browser/ws`; this paints them on a
- * canvas and sends input back. The page runs in a separate process with fossick's profile, so
- * it cannot reach Leela's DOM and a site fossick is signed in to is one Leela can read.
+ * Chrome renders offscreen and streams JPEG frames over `/browser/ws`. The page runs in a separate
+ * process with fossick's profile, so it cannot reach Leela's DOM, and a site fossick is signed in
+ * to is one Leela can read.
  *
- * Coordinates are 1:1 -- the server pins Chrome's viewport to the canvas's CSS size -- so
- * nothing has to be mapped through frame metadata that moves when the page scrolls.
+ * Coordinates are 1:1, because the server pins Chrome's viewport to the canvas's CSS size.
  */
 
 const wsURL = p => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${p}`;
@@ -6138,8 +6018,8 @@ function mountWeb(host, st) {
     else if (m.t === 'nav') paintNav(host, m);
   };
 
-  // Chrome only emits a frame when something changes, so a resize has to re-ask for one; the
-  // server restarts the cast, which always sends a fresh first frame.
+  // Chrome only emits a frame when something changes, so a resize re-asks for one. The server
+  // restarts the cast, which always sends a fresh first frame.
   view.resizer = new ResizeObserver(() => {
     const [w, h] = measure();
     if (w === view.size[0] && h === view.size[1]) return;
@@ -6153,9 +6033,8 @@ function mountWeb(host, st) {
   canvas.focus();
 }
 
-/* A hidden window still has a live screencast behind it, so Chrome goes on encoding for a
-   canvas nobody can see -- the difference between a background Leela costing nothing and
-   costing a core. The page stays open; resuming asks for a frame immediately. */
+/* A hidden window still has a live screencast behind it, so Chrome goes on encoding for a canvas
+   nobody can see. The page stays open, and resuming asks for a frame immediately. */
 function wireVisibility(view) {
   const onChange = () => {
     if (webView !== view || view.sock.readyState !== 1) return;
@@ -6172,9 +6051,8 @@ function sizeCanvas(canvas, w, h) {
   canvas.style.width = `${w}px`; canvas.style.height = `${h}px`;
 }
 
-/* `createImageBitmap` decodes off the main thread, where an `<img>` with a data: URL would
-   parse and decode on it. A frame arriving mid-decode is dropped, not queued: a backlog only
-   adds latency to pictures nobody sees. */
+/* `createImageBitmap` decodes off the main thread, where an `<img>` with a data: URL would decode
+   on it. A frame arriving mid-decode is dropped rather than queued. */
 function drawFrame(ctx, canvas, view, buf) {
   if (!buf || view.drawing) return;
   view.drawing = true;
@@ -6213,9 +6091,9 @@ function wireToolbar(host, view, urlBox, say) {
   on('remember', () => readWeb(view, true, say));
 }
 
-/* The live page as Markdown -- the DOM after the scripts ran and after the login, which is
-   what a fetch cannot reach. Comes back as research's own `Doc`, so saving it is a path that
-   already exists. */
+/* The live page as Markdown: the DOM after the scripts ran and after the login, which a fetch
+   cannot reach. Comes back as research's own `Doc`, so saving it is a path that already
+   exists. */
 async function readWeb(view, remember, say) {
   say(remember ? 'reading and remembering…' : 'reading…');
   let d;
@@ -6240,9 +6118,9 @@ function showWebMarkdown(doc) {
   $('[data-md="notebook"]', m).onclick = () => saveDoc(doc, 'notebook');
 }
 
-/* Everything is `preventDefault`ed: the canvas stands in for a viewport, so a Space that
-   scrolls the page must not also scroll Leela and a Tab must move focus inside it. The keymap
-   router treats this panel like the terminal, so the chords that get you out still work. */
+/* Everything is `preventDefault`ed, because the canvas stands in for a viewport: a Space that
+   scrolls the page must not also scroll Leela. The keymap router treats this panel like the
+   terminal, so the chords that get you out still work. */
 function wireInput(canvas, view) {
   const at = e => { const r = canvas.getBoundingClientRect();
                     return {x: e.clientX - r.left, y: e.clientY - r.top}; };
@@ -6313,8 +6191,8 @@ function keyFields(e) {
 // Asked of the router itself, so the list cannot drift from the one in `findBinding`.
 const isEscapeChord = e => Boolean(findBinding(e, 'web'));
 
-// Open a URL as a tab -- the entry point for research and the palette. `/browser/open` answers
-// with the tab strip, like every other route that opens a tab.
+// Open a URL as a tab, the entry point for research and the palette. `/browser/open` answers with
+// the tab strip, like every other route that opens a tab.
 
 async function openWebTab(url, title = '') {
   if (!url) return status('no URL to open', 'err');
@@ -6353,18 +6231,17 @@ async function pickWebTab(anchor) {
 window.leePickWeb = pickWebTab;
 /* Opening a project when there is no command line to type one on.
  *
- * A packaged Leela is double-clicked. The ways in are the folders it had open last time (the
- * server restores those before the page loads), the recent list, and the picker -- which in the
- * native shell is the platform's own, because a web page cannot produce a directory path: a
- * file input hands over contents, never a location.
+ * A packaged Leela is double-clicked. The ways in are the folders it had open last time, which the
+ * server restores before the page loads, the recent list, and the picker. In the native shell the
+ * picker is the platform's own, because a file input hands over contents, never a location.
  */
 
 // `window.pywebview.api` is `leela.desktop.ShellApi`, injected by the native window.
 const inShell = () => Boolean(window.pywebview?.api?.pick_folder);
 const shortHome = p => lee.home && p.startsWith(lee.home) ? '~' + p.slice(lee.home.length) : p;
 
-// pywebview injects its bridge asynchronously, so "is there a native chooser" is answered a
-// moment later -- never by one synchronous look at load.
+// pywebview injects its bridge asynchronously, so "is there a native chooser" cannot be answered
+// by one synchronous look at load.
 async function shellReady(waitMs = 1500) {
   for (const end = Date.now() + waitMs; !inShell() && Date.now() < end;)
     await new Promise(r => setTimeout(r, 50));
@@ -6380,7 +6257,7 @@ async function nativeFolder() {
 }
 
 // A recent folder can have been renamed or deleted. htmx does not swap a 4xx and `htmx.ajax`
-// resolves anyway, so the refusal is on the event or nowhere -- and the screen said "opening…".
+// resolves anyway, so the refusal has to be read off the event.
 async function openFolder(path) {
   if (!path) return;
   const name = path.split('/').pop();

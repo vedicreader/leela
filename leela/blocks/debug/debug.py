@@ -56,7 +56,7 @@ class DebugSession:
         self._write({'seq': seq, 'type': 'request', 'command': command, 'arguments': arguments or {}})
         return seq, answer
     def _await_answer(self, seq, answer, timeout, on_timeout, on_failure):
-        "The reply to one sent request, raising `on_timeout`/`on_failure` if it never lands or failed."
+        "The reply to one sent request, raising `on_timeout`/`on_failure` if it never arrives or failed."
         try: message = answer.get(timeout=timeout)
         except queue.Empty:
             self.pending.pop(seq, None)

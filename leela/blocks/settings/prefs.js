@@ -1,4 +1,3 @@
-/* ---------------------------------------------------------- web preferences */
 /* Themes are families with a dark and a light variant: `data-theme` is the family,
    `data-mode` the resolved variant. Each entry's swatch colours are [bg, bg1, accent],
    read from the same palette its CSS block declares, so the picker cannot drift from it. */
@@ -13,8 +12,7 @@ const THEMES = {
   dracula: {blurb: 'the famous fangs', dark: ['#282a36', '#21222c', '#bd93f9'], light: ['#faf9f2', '#f2f1e8', '#7b48c8']},
 };
 const THEME_MODES = ['system', 'dark', 'light'];
-// Density is its own axis: the tight chrome started as cursor's look, but wanting it with
-// another family's colours is reasonable, so it is stored and chosen separately.
+// Density is its own axis, so the tight chrome can be had with another family's colours.
 const THEME_DENSITIES = ['tight', 'relaxed'];
 const THEME_DEFAULT = 'cursor:light:tight';
 // What `lee-theme` held before families existed. Dropping these would silently reset everyone.
@@ -54,12 +52,9 @@ function applyTheme(theme) {
 darkQuery().addEventListener('change', () => { if (lee.theme?.mode === 'system') paintTheme(); });
 async function editorSettings(languageScope = null) {
   if(typeof languageScope!=='string'){
-    // Default to All languages, never to the focused tab's language. Deriving it from
-    // curLang() silently scoped every save into `languages.<lang>`, and since saving also
-    // remembers the choice, one visit with a .py file focused sent all later edits there
-    // too. The values were written correctly and then read back through a scope the editor
-    // only uses for matching tabs, so global preferences looked like they reverted on
-    // every restart. A language scope is now only ever chosen explicitly.
+    // Default to All languages, never to the focused tab's language. Saving remembers the scope,
+    // so one derived from `curLang()` would send every later edit into `languages.<lang>`. A
+    // language scope is only ever chosen explicitly.
     const remembered=localStorage.getItem('lee-settings-language-scope');
     languageScope=remembered!==null?remembered:'';
   }

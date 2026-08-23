@@ -133,9 +133,8 @@ async function gitReposDo(op, extra = {}) {
   const started = performance.now();
   const targets = (extra.paths && extra.paths.length ? extra.paths
                    : ((gitUI.repos && gitUI.repos.repos) || []).map(r => r.root));
-  /* The fan-out answers all at once, so there is no per-repository progress to stream. What
-     there is: which repositories are in flight. Naming them beats "workspace fetch…" when one
-     of them is slow, because the question you have is always *which one*. */
+  /* The fan-out answers all at once, so there is no per-repository progress to stream. Naming the
+     repositories in flight beats "workspace fetch…" when one of them is slow. */
   gitUI.reposBusy = new Set(targets);
   gitUI.reposResults = [];
   if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);
@@ -164,9 +163,8 @@ async function gitReposDo(op, extra = {}) {
     if (gitUI.tab === 'repos') renderGitPanel(gitUI.snapshot);
   }
 }
-// Pinning is a scope change, not a filter: every ref, commit and review already loaded
-// belongs to the repository being left, so all of it goes rather than being shown against
-// the wrong one.
+// Pinning is a scope change, not a filter: every ref, commit and review already loaded belongs to
+// the repository being left, so all of it goes rather than being shown against the wrong one.
 async function gitPinRepo(root, tab = 'changes') {
   gitUI.repo = String(root || '');
   gitUI.snapshot = null; gitUI.history = []; gitUI.review = null; gitUI.reviewFile = ''; gitUI.reviewPatch = '';

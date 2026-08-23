@@ -91,7 +91,7 @@ def bar(name):
     return BUTTONS.filter(lambda b: b.bar == name)
 
 def tip(action):
-    "The tooltip for an action, whether or not it has a button -- the label plus its chord."
+    "The tooltip for an action, whether or not it has a button: the label plus its chord."
     k = lookup(action)
     return _with_chord(k.label if (k and k.label) else action, action)
 

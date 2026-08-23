@@ -1,12 +1,8 @@
-/* ------------------------------------------------------------------ logs
+/* The detail a status line cannot hold. Git's refusal names the files it would overwrite, and a
+   toast shows one clipped sentence of it. `/dev/log` keeps what a dev server prints.
 
-   The detail a status line cannot hold. Git's refusals are the motivating case: the useful
-   part of "cannot switch branch" is the list of files it would overwrite, and a toast shows
-   one clipped sentence of it. Runs are the other: `/dev/log` has always kept what a dev
-   server prints, and nothing in the browser read it.
-
-   Kept in memory for this session on purpose. This answers "what just happened", and a store
-   that outlives the question would need retention rules to go with it. */
+   Kept in memory for this session, because a store that outlives the question would need
+   retention rules. */
 const LOG_MAX = 500;
 lee.logs = [];
 
@@ -43,12 +39,9 @@ function renderLogs() {
   el.scrollTop = el.scrollHeight;
 }
 
-/* "See logs" has to end with you seeing the log.
-
-   The reason a failure writes a detail line at all is that the toast cannot hold it -- so
-   sending the reader off to find it, through a dock that is showing something else and a
-   filter they set an hour ago for something unrelated, loses the very thing that was worth
-   keeping. A failure now opens the log it just wrote, on a filter that can show it. */
+/* "See logs" has to end with you seeing the log. Sending the reader off to find it, through a dock
+   showing something else and a filter they set an hour ago, loses the thing worth keeping. A
+   failure opens the log it just wrote, on a filter that can show it. */
 function showLog(source = '') {
   if (lee.logFilter && lee.logFilter !== source) leeLogFilter('');
   leeDock('logs');
@@ -60,9 +53,9 @@ function firstLine(text, max = 96) {
   return line.length > max ? line.slice(0, max - 1) + '…' : line;
 }
 
-/* Said only in the status line, the detail is gone: the toast clips to a sentence and times out.
-   The whole message goes to the log, which opens on a filter that can show it. The error carries
-   that it has been reported, so an outer catch around `gitDo` may call this and not say it twice. */
+/* Said only in the status line, the detail is gone, because the toast clips to a sentence and times
+   out. The whole message goes to the log. The error carries that it has been reported, so an outer
+   catch around `gitDo` can call this without saying it twice. */
 function leeFail(source, what, e) {
   if (e && e.reported) return;
   if (e) e.reported = true;
@@ -93,13 +86,13 @@ async function leeLogCopy() {
 window.leeLogFilter = leeLogFilter; window.leeLogClear = leeLogClear; window.leeLogCopy = leeLogCopy;
 
 /* Managed runs keep their output after exit. Polling creates the activity record whether or not
-   Logs is visible; a failed run is a notification that opens the useful filter automatically. */
+   Logs is visible, and a failed run opens the useful filter automatically. */
 lee.runSeen = new Map(); lee.runFinished = new Set();
 lee.runs = [];
 
-/* What is running, next to the kernel it is not. A dev server has no window of its own -- it is a
-   process leela started and can end, and until this there was nowhere that said so: the only
-   evidence a run existed was output arriving, which is exactly what a broken one does not do. */
+/* What is running, next to the kernel it is not. A dev server is a process leela started and can
+   end, and the only evidence one existed was output arriving, which is what a broken one does not
+   do. */
 function paintRunsPill() {
   const pill = $('#runspill'); if (!pill) return;
   const runs = lee.runs || [];
@@ -153,8 +146,8 @@ async function pollRunLogs() {
     const fresh = lines.slice(lee.runSeen.get(path) || 0);
     lee.runSeen.set(path, lines.length);
     if (fresh.length) leeLog('runs', srv.label || path.split('/').pop(), fresh.join('\n'));
-    // `running`, not `alive`: the child keeps the inspector up after the command returns, so a run
-    // that died on its first line reported itself healthy for as long as leela stayed open.
+    // `running`, not `alive`: the child keeps the inspector up after the command returns, so
+    // liveness of the inspector says nothing about whether the command is still going.
     const code = srv.code !== undefined && srv.code !== null ? srv.code : srv.returncode;
     if (!srv.running && code !== null && code !== undefined && !lee.runFinished.has(path)) {
       lee.runFinished.add(path);

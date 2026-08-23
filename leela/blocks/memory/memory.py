@@ -83,7 +83,7 @@ class Memory:
         self.offline = _offline() if offline is None else bool(offline)
         self._stores, self.note = {}, 'vault not opened yet'
     def _store(self, name):
-        "Open one shelf directly — never via the root vault, which would load another encoder."
+        "Open one shelf directly, never via the root vault, which would load another encoder."
         if name not in self._stores:
             from vishalakshi import Vault
             store = 'store' if name in (None, '', 'main') else safe_shelf(name)
@@ -278,7 +278,7 @@ class Memory:
         mine = safe_shelf(self.shelf_name)
         return sorted(rows, key=lambda r: (str(r.get('store')) != mine, str(r.get('store'))))
     def ref(self, doc_id, shelf=None):
-        "`store|doc_id` — a doc id is content-addressed per shelf, so it is not unique alone."
+        "`store|doc_id`: a doc id is content-addressed per shelf, so it is not unique alone."
         return f'{safe_shelf(shelf or self.shelf_name)}|{doc_id}'
     def _shelf_name(self, store):
         "One name per shelf: `shelves()` calls the unprefixed store `store`, a shelf argument calls it."
@@ -287,7 +287,7 @@ class Memory:
         "Every shelf worth reading: this workspace's, plus any other that actually holds documents."
         return L(self.shelf_name, *[s['store'] for s in self.shelves() if s.get('docs')]).map(self._shelf_name).unique()
     def _across(self, shelves, f, note):
-        "`f(name, store)` over each shelf, stamped with its shelf. One unreadable shelf is counted, not."
+        "`f(name, store)` over each shelf, stamped with its shelf. One unreadable shelf is counted, not raised."
         out, failed = [], L()
         for name in L(shelves if shelves is not None else self._populated()).map(self._shelf_name).unique():
             try: out += [dict(r, shelf=name) for r in f(name, self._store(name))]
@@ -351,7 +351,7 @@ class Memory:
         walk(self.shelf_toc(doc_id, shelf, depth))
         return out
     def shelf_text(self, ref, shelf=None, max_chars=60_000):
-        "The readable text behind a reference, in whichever shelf holds it — a whole document, or one section."
+        "The readable text behind a reference, in whichever shelf holds it: a whole document, or one section."
         ref = str(ref)
         if '#' in ref: return str(self.shelf_read(ref, shelf, max_chars).get('text') or '').strip()
         try: return str(self._shelf(shelf).document(ref).text or '').strip()[:max_chars]
@@ -438,7 +438,7 @@ class Memory:
             enc = enc or str(st.get('encoder') or '')
         return dict(out, encoder=enc or ('offline' if self.offline else 'unknown'), path=str(self.path))
     def note_pointer(self, title, text, shelf=None, meta=None):
-        "One document standing for something not stored as prose — a code index, an API spec."
+        "One document standing for something not stored as prose: a code index, an API spec."
         v = self._shelf(shelf)
         if meta is None: return dict(v.note(text, title=title))
         return dict(v.add(text, title, source=f'pointer:{uuid.uuid4().hex[:12]}', meta=dict(meta)))

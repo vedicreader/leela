@@ -1,17 +1,16 @@
 /* Opening a project when there is no command line to type one on.
  *
- * A packaged Leela is double-clicked. The ways in are the folders it had open last time (the
- * server restores those before the page loads), the recent list, and the picker -- which in the
- * native shell is the platform's own, because a web page cannot produce a directory path: a
- * file input hands over contents, never a location.
+ * A packaged Leela is double-clicked. The ways in are the folders it had open last time, which the
+ * server restores before the page loads, the recent list, and the picker. In the native shell the
+ * picker is the platform's own, because a file input hands over contents, never a location.
  */
 
 // `window.pywebview.api` is `leela.desktop.ShellApi`, injected by the native window.
 const inShell = () => Boolean(window.pywebview?.api?.pick_folder);
 const shortHome = p => lee.home && p.startsWith(lee.home) ? '~' + p.slice(lee.home.length) : p;
 
-// pywebview injects its bridge asynchronously, so "is there a native chooser" is answered a
-// moment later -- never by one synchronous look at load.
+// pywebview injects its bridge asynchronously, so "is there a native chooser" cannot be answered
+// by one synchronous look at load.
 async function shellReady(waitMs = 1500) {
   for (const end = Date.now() + waitMs; !inShell() && Date.now() < end;)
     await new Promise(r => setTimeout(r, 50));
@@ -27,7 +26,7 @@ async function nativeFolder() {
 }
 
 // A recent folder can have been renamed or deleted. htmx does not swap a 4xx and `htmx.ajax`
-// resolves anyway, so the refusal is on the event or nowhere -- and the screen said "opening…".
+// resolves anyway, so the refusal has to be read off the event.
 async function openFolder(path) {
   if (!path) return;
   const name = path.split('/').pop();

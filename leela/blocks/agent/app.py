@@ -287,6 +287,12 @@ def connect(app, ctx):
         from .models import dismiss_setup
         try: return {'ok': True, 'dismissed': dismiss_setup(bool((await req.json()).get('dismissed', True)))}
         except Exception as e: return fail(e)
+    @rt('/agent/updates')
+    def agent_updates():
+        "What is installed here with a newer release, and whether this Leela has one."
+        from .models import updates
+        try: return {'ok': True, **updates()}
+        except Exception as e: return fail(e)
     @rt('/agent/runtimes')
     def agent_runtimes():
         "The backends and what each is doing, for the pane to poll while one installs."

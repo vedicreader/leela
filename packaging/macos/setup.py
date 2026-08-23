@@ -75,6 +75,26 @@ EXCLUDES = [
     *HEAVY,
 ]
 
+#: Better opened somewhere else, whatever Leela can edit: a browser renders these and Leela would
+#: only show their source. Everything else it knows a language for, it asks to own.
+VIEW_ELSEWHERE = {'.svg', '.html', '.htm', '.pdf'}
+
+def doc_types():
+    "One document type per language Leela edits, taken from the map the file tree already uses."
+    sys.path.insert(0, str(ROOT))
+    from leela.blocks.fs.fs import LANGS
+    exts = sorted({e.lstrip('.') for e, lang in LANGS.items() if lang and e not in VIEW_ELSEWHERE})
+    return [
+        # A folder stays `Alternate`: Finder is the right default for one, and this is what puts
+        # "Open With" on it and makes a Dock drop mean something.
+        {'CFBundleTypeName': 'Folder', 'CFBundleTypeRole': 'Viewer',
+         'LSItemContentTypes': ['public.folder'], 'LSHandlerRank': 'Alternate'},
+        {'CFBundleTypeName': 'Source file', 'CFBundleTypeRole': 'Editor',
+         'CFBundleTypeExtensions': exts, 'LSHandlerRank': 'Owner'},
+    ]
+
+DOC_TYPES = doc_types()
+
 PLIST = {
     'CFBundleName': 'Leela',
     'CFBundleDisplayName': 'Leela',
@@ -92,14 +112,7 @@ PLIST = {
     # App Transport Security blocks cleartext HTTP, loopback included, so WKWebView refuses
     # `http://127.0.0.1:<port>`. The narrow exemption, not `NSAllowsArbitraryLoads`.
     'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
-    # A folder is the document Leela opens: this is what puts "Open With → Leela" on one and
-    # what makes a Dock drop mean something. `Alternate` keeps Finder the default handler.
-    'CFBundleDocumentTypes': [{
-        'CFBundleTypeName': 'Folder',
-        'CFBundleTypeRole': 'Viewer',
-        'LSItemContentTypes': ['public.folder'],
-        'LSHandlerRank': 'Alternate',
-    }],
+    'CFBundleDocumentTypes': DOC_TYPES,
 }
 
 OPTIONS = {

@@ -409,7 +409,7 @@ def _highlight(text, query):
     return [Mark(part) if pat.fullmatch(part) else Span(part) for part in pat.split(text or '') if part]
 
 def find_view(memory, vault='', q='', shelf='', limit=30, **_):
-    "Search across every shelf and land on sections, which is where the evidence actually is."
+    "Search across every shelf and return sections, which is where the evidence actually is."
     form = Form(Input(name='q', value=q, cls='lee-input', autocomplete='off', autofocus=True,
                       placeholder='a phrase, a requirement, a concept…'),
         Hidden(name='vault', value=vault), Hidden(name='shelf', value=shelf),

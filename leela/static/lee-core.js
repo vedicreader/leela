@@ -1,14 +1,13 @@
 /* leela IDE client.
  *
  * Sources live with the feature they serve: `leela/blocks/<block>/*.js`, and this shared
- * vocabulary in `leela/static/js/`. `tools/build_ide_js.py` concatenates them, in the order
- * its `LAYERS` fixes, into the bundles `core.web.IDE_BUNDLES` names.
+ * vocabulary in `leela/static/js/`. `tools/build_ide_js.py` concatenates them, in the order its
+ * `LAYERS` fixes, into the bundles `core.web.IDE_BUNDLES` names. Three script tags share one
+ * lexical scope and run in order, so `lee`, `$` and `esc` are declared here and read by every
+ * later module.
  *
- * Three script tags, one lexical scope, executed in order, so `lee`, `$` and `esc` are declared
- * here once and read by every later module.
- *
- * The keymap is fetched from /keys.json (leela.core.keys). Dispatch is scope-aware:
- * `lee.scope` must match or be 'global', else the browser/CodeMirror keep the chord.
+ * The keymap is fetched from `/keys.json`. Dispatch is scope-aware: `lee.scope` must match or be
+ * 'global', else the browser or CodeMirror keeps the chord.
  */
 "use strict";
 
@@ -28,11 +27,11 @@ const lee = {
   agentStream: null, agentStreamGen: 0, agentTitle: '', agentThread: '',
   agentThreadDrafts: new Map(),
   find: null,                  // the find pane's query, its matches and where it is
-  // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
-  // path->name map: two selections in one file are two contexts, not one key overwriting itself.
+  // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, a path->name
+  // map, because two selections in one file are two contexts rather than one key overwritten.
   agentSelections: [],
-  // Vault documents and sections queued for the next turn. A vault ref is not a path, so it
-  // cannot live in `agentAttachments`; `ref` -> {vault, shelf, doc, title} keyed the same way.
+  // Vault documents and sections queued for the next turn. A vault ref is not a path, so `ref` ->
+  // {vault, shelf, doc, title} is keyed separately.
   vaultRefs: new Map(),
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
@@ -105,8 +104,8 @@ applyEditorPrefs(lee.editorPrefs);
 function createEditor(el, opts = {}) { return LeeCM.create(el, {...opts, settings: {...lee.editorPrefs, ...(opts.settings||{})}}); }
 try { lee.recentTabs = JSON.parse(sessionStorage.getItem('lee-recent-tabs') || '[]'); }
 catch (_) { lee.recentTabs = []; }
-// The caret in each file, across restarts: `sessionStorage` died with the window, so every
-// reopened tab came back at line 1. Capped where it is written.
+// The caret in each file, across restarts, so `localStorage` rather than `sessionStorage`, which
+// dies with the window. Capped where it is written.
 try { lee.locations = new Map(JSON.parse(localStorage.getItem('lee-tab-locations')
                                          || sessionStorage.getItem('lee-tab-locations') || '[]')); }
 catch (_) { lee.locations = new Map(); }
@@ -368,9 +367,8 @@ function enhanceCodeBlocks(el) {
                                            python && el.classList.contains('lee-reply')));
   });
 }
-/* This copies an answer into the open notebook, so it needs one. Offering it while a `.py` tab is
-   focused meant a control that was always there and usually inert, and only said so after a click.
-   It is hidden rather than disabled, and comes back the moment a notebook tab is focused. */
+/* This copies an answer into the open notebook, so it needs one. Hidden rather than disabled, and
+   back the moment a notebook tab is focused. */
 function markdownCellActionState(button) {
   const ready = lee.kind === 'notebook';
   const bar = button.closest('.lee-reply-actions') || button;
@@ -468,8 +466,8 @@ async function api(url, opts, retried) {
   if (r.ok) return body;
   /* The kernel ceiling is the one failure a person can answer. Offer the room, then try once more. */
   if (!retried && body && body.kernel_limit && await offerKernelRoom(body)) return api(url, opts, true);
-  /* Thread-aware routes answer with `code` and `message`; the rest with `error`. Either is the
-     one sentence a person can act on, and `statusText` ("Conflict") never is. */
+  /* Thread-aware routes answer with `code` and `message`, the rest with `error`. Either is the one
+     sentence a person can act on, and `statusText` ("Conflict") never is. */
   throw new Error((body && (body.error || body.message)) || r.statusText);
 }
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -521,7 +519,6 @@ function status(msg, kind) {
   }, ttl);
 }
 
-/* ------------------------------------------------------------------ keymap */
 const MAC = /Mac|iPhone|iPad|iPod/.test(navigator.userAgentData?.platform || navigator.platform || '');
 const displayChord = s => String(s || '').replace(/\bmod\+/g, MAC ? '⌘' : 'ctrl+');
 function paintKeyLabels(root = document) {
@@ -541,9 +538,8 @@ async function loadKeys() {
 function renderContextKeys(scope = lee.scope) {
   const host = $('#keytoast'), tag = $('#keyscope');
   if (!host || !lee.keys.length) return;
-  // This panel is a glanceable contextual cheat sheet, not the full keymap. Commands
-  // marked help-only stay in the searchable help/settings surfaces instead of pushing the
-  // file tree and editor off screen when the editor scope has dozens of actions.
+  // A glanceable contextual cheat sheet, not the full keymap. Help-only commands stay in the
+  // searchable help and settings surfaces rather than pushing the file tree off screen.
   const local = lee.keys.filter(k => k.scope === scope && k.label && k.key && ['footer','toast'].includes(k.show)).slice(0, 8);
   const global = lee.keys.filter(k => k.scope === 'global' && k.show === 'toast' && k.label && k.key).slice(0, 4);
   const rows = local.concat(global);
@@ -553,23 +549,21 @@ function renderContextKeys(scope = lee.scope) {
     `<span>${esc(k.label)}</span></div>`).join('') : '<div class="lee-dim">no keys in this context</div>';
 }
 
-/* One application-level keyboard router owns every app command. CodeMirror owns editing
- * commands and xterm owns pty input, but neither gets a duplicate copy of this map. A
- * capturing listener is intentional: an accepted app command is resolved before an editor
- * can consume it; an unaccepted event is untouched and continues normally. */
+/* One application-level keyboard router owns every app command. CodeMirror owns editing commands
+ * and xterm owns pty input, and neither gets a duplicate copy of this map. The capturing listener
+ * resolves an accepted app command before an editor can consume it. An unaccepted event continues
+ * untouched. */
 const TERM_ESCAPES = new Set(['help', 'quit', 'palette', 'settings', 'toggle_left', 'toggle_right']);
 const EDITING_SCOPES = new Set(['editor', 'exec', 'agent', 'term']);
 
 function eventContext(e) {
   const path = e.composedPath ? e.composedPath() : [e.target];
   const inPath = selector => path.some(n => n instanceof Element && n.matches(selector));
-  // Overlays own their keyboard while open. Their local handler receives the event after
-  // this router leaves it alone; commands behind a dialog must never fire accidentally.
+  // Overlays own their keyboard while open, so commands behind a dialog never fire.
   if (inPath('.lee-modal, .lee-ctxmenu')) return 'overlay';
   if (inPath('#termwrap, .xterm')) return 'term';
-  // A live page wants its own keyboard as much as a shell does -- Gmail's `j`, a site's `/`
-  // search -- so the inline browser is routed exactly like the terminal, and for the same
-  // reason. It has to come before `#editor`, which contains it.
+  // A live page wants its own keyboard as much as a shell does, so the inline browser is routed
+  // like the terminal. It has to come before `#editor`, which contains it.
   if (inPath('.lee-webview')) return 'web';
   if (inPath('#agentprompt, .lee-agent')) return 'agent';
   if (inPath('#execbox, .lee-exec')) return 'exec';
@@ -589,15 +583,12 @@ function isTextEntry(el) {
 
 function chordMatches(c, e) {
   if (e.isComposing || e.key === 'Process' || e.repeat) return false;
-  // macOS reports Caps Lock remapped to Hyper as all four modifiers. Other platforms and
-  // some Karabiner/browser combinations expose only Ctrl+Alt+Shift—the Command/Meta bit
-  // is not portable there. Hyper explicitly accepts either shape; ordinary `mod` remains
-  // strict, so regular shortcuts do not become ambiguous.
+  // macOS reports Caps Lock remapped to Hyper as all four modifiers. Other platforms and some
+  // Karabiner or browser combinations expose only Ctrl+Alt+Shift, where the Meta bit is not
+  // portable. Hyper accepts either shape. Ordinary `mod` stays strict.
   if (c.hyper) {
-    // Hyper remappers agree on Ctrl+Alt but Safari/Chrome occasionally omit either the
-    // synthetic Shift or Meta bit for named keys. Require the stable pair plus one of the
-    // two high modifiers; this accepts both browser shapes without colliding with normal
-    // two-modifier shortcuts.
+    // Safari and Chrome occasionally omit either the synthetic Shift or the Meta bit for named
+    // keys, so require the stable Ctrl+Alt pair plus one of the two high modifiers.
     if (!e.ctrlKey || !e.altKey || !(e.shiftKey || e.metaKey)) return false;
   } else {
     const wantCtrl = !!c.ctrl || (!!c.mod && !MAC);
@@ -605,9 +596,8 @@ function chordMatches(c, e) {
     if (wantCtrl !== e.ctrlKey || wantMeta !== e.metaKey || !!c.alt !== e.altKey || !!c.shift !== e.shiftKey)
       return false;
   }
-  // Every modified shortcut is matched by physical code when available. Karabiner/Hyper
-  // can transform `event.key` (not just Option-printable characters), while `event.code`
-  // remains Enter, KeyR, ArrowDown, and so on.
+  // Matched by physical code where there is one: Karabiner and Hyper can transform `event.key`,
+  // while `event.code` stays Enter, KeyR, ArrowDown.
   if (c.code && (c.mod || c.ctrl || c.alt || c.hyper)) return c.code === e.code;
   return c.key.toLowerCase() === (e.key || '').toLowerCase();
 }
@@ -615,8 +605,8 @@ function chordMatches(c, e) {
 const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.test(c.key);
 function findBinding(e, scope) {
   if (scope === 'overlay') return null;
-  // `term` and `web` both hand the keyboard to something that is not Leela, keeping only the
-  // chords that get you back out again.
+  // `term` and `web` hand the keyboard to something that is not Leela, keeping only the chords
+  // that get you back out.
   const allowed = (scope === 'term' || scope === 'web')
     ? k => k.scope === scope || k.action.startsWith('focus_') || TERM_ESCAPES.has(k.action)
     : k => k.scope === scope || k.scope === 'global';
@@ -625,8 +615,7 @@ function findBinding(e, scope) {
     if (!allowed(k)) continue;
     const chord = k.chords.find(c => chordMatches(c, e));
     if (!chord || (guard && !firesInTextEntry(chord))) continue;
-    // Standard Copy/Cut become whole-cell operations only when a notebook cell has no
-    // text selection. Selected source keeps the browser/CodeMirror clipboard semantics.
+    // Copy and Cut become whole-cell operations only when a notebook cell has no text selection.
     if (['cell_copy', 'cell_cut'].includes(k.action)) {
       if (lee.kind !== 'notebook') continue;
       const inEditor = e.composedPath?.().some(n => n instanceof Element && n.matches('.cm-editor'));
@@ -636,8 +625,7 @@ function findBinding(e, scope) {
     if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down'].includes(k.action)
         && lee.kind !== 'notebook') continue;
     // The find pane searches the open document. A CodeMirror that is not one of the page's own
-    // editors -- a merge view in a diff, a preview -- keeps its own panel, which searches the
-    // text that is actually on screen there.
+    // editors keeps its own panel, which searches the text on screen there.
     if (k.action === 'find_in_file') {
       const cm = (e.composedPath ? e.composedPath() : [e.target])
         .find(n => n instanceof Element && n.matches('.cm-editor'));
@@ -650,8 +638,8 @@ function findBinding(e, scope) {
 
 window.addEventListener('keydown', e => {
   const scope = eventContext(e), match = findBinding(e, scope);
-  // Kept on `lee` deliberately: the key editor and DevTools can distinguish "Chrome did
-  // not deliver it" from "the router rejected it" using the last real event.
+  // Kept on `lee` so the key editor and DevTools can tell "Chrome did not deliver it" from "the
+  // router rejected it".
   lee.lastKeyEvent = {key: e.key, code: e.code, ctrl: e.ctrlKey, alt: e.altKey,
                       shift: e.shiftKey, meta: e.metaKey, scope,
                       action: match?.binding.action || '', trusted: e.isTrusted};
@@ -660,7 +648,6 @@ window.addEventListener('keydown', e => {
   leeAct(match.binding.action);
 }, true);
 
-/* ------------------------------------------------------------------ actions */
 const ACTIONS = {
   focus_files:  () => { leePane('left', true); leeLeft('files'); setScope('files'); $('#filetree')?.focus(); highlightTree(); },
   focus_editor: () => { setScope('editor'); if (lee.cells.length) focusCell(lee.sel); else $('#editor')?.focus(); },
@@ -880,17 +867,17 @@ async function closeTab(index = null) {
 }
 window.leeCloseTab = closeTab;
 async function closeTabs(which) {
-  // `others`, `right` and `saved`, the three a browser offers after a morning of opening
-  // files. The reference point is the tab the menu was opened on, not the active one -- a
-  // right-click on a background tab selects it first, but the menu is still about that tab.
+  // `others`, `right` and `saved`. The reference point is the tab the menu was opened on, not the
+  // active one: a right-click on a background tab selects it first, and the menu is still about
+  // that tab.
   const at = lee.menuTab == null ? activeTabIndex() : lee.menuTab;
   lee.menuTab = null;
   if (at < 0) return;
   const tabs = $$('.lee-tab');
   const keep = i => which === 'others' ? i === at : which === 'right' ? i <= at
                   : tabs[i].classList.contains('dirty');
-  // Git diff tabs live only in the browser and are appended after the real ones, so they
-  // are left alone and cannot shift an index. Highest first, for the same reason.
+  // Git diff tabs live only in the browser and are appended after the real ones, so they are left
+  // alone and cannot shift an index. Highest first, for the same reason.
   const doomed = tabs.map((_, i) => i).filter(i => !keep(i) && !tabs[i].dataset.gitDiff).reverse();
   if (!doomed.length) return status('nothing to close');
   const unsaved = doomed.filter(i => tabs[i].classList.contains('dirty')).length;
@@ -958,8 +945,8 @@ function shiftTab(d) {
 function layoutTabs() {
   const bar = $('#tabbar'), more = $('#taboverflow'); if (!bar || !more) return;
   const tabs = $$('.lee-tab', bar), active = Math.max(0, activeTabIndex());
-  // Keep a calm, finite strip. The active file and its neighbours remain spatially
-  // meaningful; every other open document is one click away in the overflow menu.
+  // The active file and its neighbours stay spatially meaningful, and every other open document
+  // is one click away in the overflow menu.
   const breakpointCap = innerWidth >= 1700 ? 7 : innerWidth >= 1300 ? 5 : innerWidth >= 960 ? 4 : 2;
   const cap = Math.max(1, Math.min(breakpointCap, Math.floor(bar.clientWidth / 138) || 1));
   const keep = new Set();
@@ -1057,42 +1044,34 @@ function gitDiffNotebookHtml(patch, data) {
 }
 window.openGitDiffTab = openGitDiffTab;
 
-/* ----------------------------------------------------- a Markdown diff, read as Markdown
- * A third way of reading the same diff, beside unified and side by side, and the only one in
- * which a README reads like a README: the new document rendered, with a bar in the margin
- * beside every block that changed and the line-level change shown *inside* a fenced block.
+/* A Markdown diff read as Markdown: the new document rendered, a bar in the margin beside every
+ * changed block, and the line-level change inside a fenced block.
  *
- * The rendering is `/markdown/render`, unchanged and still `allow_raw: false` -- Markdown out
- * of a repository is untrusted input and this surface widens nothing. What makes the marks
- * placeable is `/markdown/diff`, which pairs the two versions block against block and reports
- * each block's source lines and the tag it should render as. Lines could not do this on their
- * own: a rendered paragraph has no line numbers, and an edit at the top of a file moves every
- * line below it while moving no blocks at all.
+ * `/markdown/render` stays `allow_raw: false`, because Markdown out of a repository is untrusted
+ * input. `/markdown/diff` pairs the two versions block against block. Lines cannot do this: a
+ * rendered paragraph has no line numbers, and an edit at the top of a file moves every line
+ * below it while moving no blocks.
  */
 const MARKDOWN_PATH = /\.(?:md|markdown|mdown|mkdn?)$/i;
 const isMarkdownPath = path => MARKDOWN_PATH.test(String(path || ''));
 
 // mdhtml's own top-level nodes, in document order. The footnotes section is generated from the
-// definitions rather than from a block of its own, so it never carries a mark; a comment is a
-// node a raw-HTML block legitimately produces, so it counts as a carrier even though there is
-// nothing to draw beside it -- dropping it would silently shift every block after it.
+// definitions rather than from a block of its own, so it never carries a mark. A comment counts
+// as a carrier with nothing to draw beside it, because dropping it would shift every block after
+// it.
 function markdownCarriers(el) {
   return [...el.childNodes].filter(n => n.nodeType === 8 ||
     (n.nodeType === 1 && !(n.tagName === 'SECTION' && n.classList.contains('footnotes'))));
 }
 const markdownTagOf = n => n.nodeType === 1 ? n.tagName.toLowerCase() : '#comment';
 
-/* Which element each block became. This is the crux of the whole view, and the part that has
- * to be allowed to fail: the server names the blocks in source order with the tag each is
- * expected to render as, and this walks the rendered nodes in that same order checking every
- * expectation it can. One mismatch, or one node no block claimed, and the answer is `null` --
- * a raw HTML block that produced two elements shifts everything after it, and a change bar
- * beside the wrong paragraph is a false statement about the diff. Nothing is drawn then, and
- * the surface says why rather than quietly looking correct.
+/* Which element each block became, as positions rather than nodes: the code-block upgrade later
+ * swaps each `<pre>` for an editor surface in the same place, so a caller that has to wait for a
+ * request reads the tags now and the nodes again afterwards.
  *
- * The answer is *positions*, not nodes, because the code-block upgrade later swaps each `<pre>`
- * for an editor surface in the same place. A caller that has to wait for a request before it can
- * draw reads the tags now and the nodes again afterwards, and the positions still hold.
+ * One mismatch, or one node no block claimed, answers `null`, and the surface says why. A raw
+ * HTML block that produced two elements shifts everything after it, and a change bar beside the
+ * wrong paragraph is a false statement about the diff.
  */
 function alignMarkdownBlocks(tags, rows) {
   const pairs = [];
@@ -1108,11 +1087,9 @@ function alignMarkdownBlocks(tags, rows) {
   return at === tags.length ? pairs : null;
 }
 
-/* The line-level change inside one fenced block: the lines as they read now, additions on
- * green and removals struck through on pink, with `tokenDiffHtml` marking the words that
- * actually moved in a line that was edited. An LCS over lines is the same shape as the token
- * diff one level down and is affordable at a code fence's length; a pathologically long fence
- * falls back to "all of the old, then all of the new" rather than allocating a large matrix.
+/* The line-level change inside one fenced block, with `tokenDiffHtml` marking the words that
+ * moved in an edited line. A pathologically long fence falls back to "all of the old, then all of
+ * the new" rather than allocating a large LCS matrix.
  */
 function markdownCodeDiffHtml(before, after) {
   const a = String(before ?? '').replace(/\n$/, '').split('\n');
@@ -1131,8 +1108,8 @@ function markdownCodeDiffHtml(before, after) {
     else if (j < m && (i >= n || dp[i][j + 1] >= dp[i + 1][j])) rows.push({kind: 'add', now: b[j++]});
     else rows.push({kind: 'del', old: a[i++]});
   }
-  // A removal immediately followed by an addition is one line somebody edited, and the words
-  // that changed in it are the thing worth pointing at on both halves.
+  // A removal immediately followed by an addition is one line somebody edited, so both halves
+  // point at the words that changed in it.
   return rows.map((r, k) => {
     if (r.kind === 'ctx') return line('ctx', esc(r.now));
     if (r.kind === 'del') {
@@ -1144,8 +1121,7 @@ function markdownCodeDiffHtml(before, after) {
   }).join('');
 }
 
-// Pink for text that changed, green for text that is new, amber for a code fence -- the three
-// the reader has to tell apart at a glance, and the same three the gutter already uses.
+// Pink for changed text, green for new, amber for a code fence, the same three the gutter uses.
 const markdownChangeKind = row => row.status === 'added' ? 'added'
   : row.status !== 'modified' ? '' : row.type === 'code_block' ? 'code' : 'modified';
 
@@ -1154,18 +1130,15 @@ function paintMarkdownDiff(doc, rows) {
   const note = doc.parentElement?.querySelector('[data-md-diff-note]');
   if (!pairs) { if (note) note.hidden = false; return false; }
   // A removed block has nothing left to render, so it is reported on the block that now stands
-  // where it stood: a second, thinner mark and the old text in the tooltip. Removals with
-  // nothing after them belong to the last block in the document.
+  // where it stood. Removals with nothing after them belong to the last block in the document.
   let removed = [], last = null;
   for (const {row, at} of pairs) {
     if (row.status === 'removed') { removed.push(row); continue; }
     const node = nodes[at];
     let host = node;
-    // A fenced block is the one place a rendering can carry a line diff itself, and it is also
-    // the one place the mark cannot simply be put on the element: `enhanceCodeBlocks` replaces
-    // every `pre > code` with an editor surface a moment after this runs. An edited fence
-    // becomes the interleaved diff, which has no `<code>` for the upgrade to find; a fence that
-    // is new keeps its highlighted rendering and gets a wrapper to hold the mark instead.
+    // `enhanceCodeBlocks` replaces every `pre > code` with an editor surface a moment after this
+    // runs. An edited fence becomes the interleaved diff, which has no `<code>` for the upgrade
+    // to find, and a new fence keeps its rendering and gets a wrapper to hold the mark.
     if (row.type === 'code_block' && node?.nodeType === 1 && node.tagName === 'PRE'
         && (row.status !== 'equal' || removed.length)) {
       host = document.createElement('div');
@@ -1222,21 +1195,18 @@ async function mountMarkdownDiff(body, data) {
       `<span>This comparison removes the whole file; its ${d.removed || 0} removed lines are in the unified view.</span></div>`;
     return;
   }
-  // The document is rendered by the same route as every other Markdown surface in the app, and
-  // annotated on the fragment it produced -- there is no second renderer here.
   renderMarkdown(doc, data.right || '', false, () => paintMarkdownDiff(doc, rows));
 }
 
-/* The same marks on the file's own rendered pane, from the ranges the gutter beside it is
- * already drawing. This is the line-range route rather than the block-pairing one: `/git/file`
- * reports changed lines in the working tree's own numbering, and a block owns a range when the
- * two overlap -- Git points a pure deletion at the line that closed over it, so a removal lands
- * on the block that now stands there.
+/* The same marks on the file's own rendered pane, from the ranges the gutter is already drawing.
+ * `/git/file` reports changed lines in the working tree's own numbering, and a block owns a range
+ * when the two overlap. Git points a pure deletion at the line that closed over it, so a removal
+ * is reported on the block that now stands there.
  *
  * Only the first render asks. While the file is being typed the ranges describe the version on
- * disk, and the honest number of marks for a paragraph that has moved under them is none. The
- * tags are read before the request goes out, because by the time it answers the code-block
- * upgrade has already replaced every `<pre>` with an editor surface.
+ * disk, and no marks is the honest answer for a paragraph that has moved under them. The tags are
+ * read before the request goes out, because by the time it answers the code-block upgrade has
+ * replaced every `<pre>` with an editor surface.
  */
 async function paintMarkdownFileChanges(el, ranges) {
   if (!ranges?.length) return;
@@ -1270,12 +1240,9 @@ async function leeOpenFile(path) {
   if(version!==openFileVersion)return;
   const doc=new DOMParser().parseFromString(html,'text/html'),fresh=doc.querySelector('#tabbar');
   // `/tab/open` answers a refusal with an error div and a 200, so the reason is in the body.
-  // Reporting "no tab bar" instead threw away the only sentence that said what was wrong.
   if(!fresh)throw new Error(doc.querySelector('.lee-err')?.textContent?.trim()||'tab open returned no tab bar');
-  // `#tabbar` is an htmx swap target for tab selection and for opening a vault document, so a
-  // failed swap can replace the element with an error string and take it out of the page. Every
-  // open after that failed on the missing element rather than on anything to do with the file,
-  // which looks exactly like the UI having seized. Put it back instead.
+  // `#tabbar` is an htmx swap target, so a failed swap can replace it with an error string and
+  // take it out of the page. Every open after that fails on the missing element, so put it back.
   const old=$('#tabbar');
   if(old)old.replaceWith(fresh);
   else $('#header')?.insertBefore(fresh,$('.lee-tab-overflow')||null);
@@ -1286,11 +1253,9 @@ async function leeOpenFile(path) {
 }
 window.leeOpenFile = leeOpenFile;
 
-/* ------------------------------------------------------------------ editor */
 function updateToolbarForKind(kind) {
   const notebook = kind === 'notebook', text = kind === 'text';
-  // `stop` interrupts the tab's kernel, and a document tab -- a PDF, an image, a vault entry,
-  // a live web page -- does not have one, so it was offering to interrupt nothing.
+  // `stop` interrupts the tab's kernel, and a document tab does not have one.
   const visibility = {run_cell: notebook, run_advance: notebook, run_file: text,
                       run_selection: text, interrupt: notebook || text};
   for (const [action, shown] of Object.entries(visibility)) {
@@ -1303,13 +1268,13 @@ let mountTabVersion=0;
 function saveTabLocation() {
   const view = curEditor(), key = lee.path || lee.tabKey;
   if (!view || !key) return;
-  // A Map keeps a re-set key at its *first* insertion point, so without the delete the tail
-  // slice below persisted the eighty oldest files ever opened and dropped the recent ones.
+  // A Map keeps a re-set key at its first insertion point, so the delete is what moves the key to
+  // the end for the tail slice below.
   lee.locations.delete(key);
   lee.locations.set(key, {pos: LeeCM.cursor(view), scroll: view.scrollDOM.scrollTop,
     cell: lee.kind === 'notebook' ? lee.sel : -1});
-  // Nothing else prunes this: a closed, renamed or deleted file leaves its entry behind, so
-  // the cap is what keeps a long session (and sessionStorage) bounded.
+  // Nothing else prunes this: a closed, renamed or deleted file leaves its entry behind, so the
+  // cap is what keeps a long session and sessionStorage bounded.
   for (const stale of [...lee.locations.keys()].slice(0, lee.locations.size - 80)) lee.locations.delete(stale);
   try { localStorage.setItem('lee-tab-locations', JSON.stringify([...lee.locations])); } catch (_) {}
 }
@@ -1337,12 +1302,12 @@ async function mountTab(expectedPath = '') {
   const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
   if(mountVersion!==mountTabVersion)return;
   const recoveredDraft = await restoreDrafts(st);
-  // Only the tab's own editors are torn down. The exec strip belongs to the app, not
-  // to the tab, and destroying it here would silently leave the box unmounted.
+  // Only the tab's own editors are torn down. The exec strip belongs to the app, and destroying
+  // it here would silently leave the box unmounted.
   lee.cellObserver?.disconnect(); lee.cellObserver = null;
   lee.editors.forEach((v, k) => { if (k !== 'exec') { LeeCM.destroy(v); lee.editors.delete(k); } });
-  // A screencast is a live encode in Chrome for as long as it is running, so leaving the tab
-  // has to stop it. The page itself stays open; the tab reattaches to it on the way back.
+  // A screencast is a live encode in Chrome while it runs, so leaving the tab stops it. The page
+  // stays open and the tab reattaches on the way back.
   closeWebView();
   const host = $('#editor'); if (!host) return;
   lee.kind = st.kind; lee.path = st.path || ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
@@ -1375,10 +1340,10 @@ async function mountTab(expectedPath = '') {
   if (lee.pendingLocation && (!lee.pendingLocation.path || lee.pendingLocation.path === st.path)) {
     const loc = lee.pendingLocation; lee.pendingLocation = null;
     requestAnimationFrame(() => {
-      // A notebook is a column of editors, each with its own line 1, so a location in one has
-      // to name the cell. `cellIndex` is the fallback for a notebook whose cells carry no ids
-      // of their own (anything written before nbformat 4.5), and the debug decorations are only
-      // for the debugger: a search result is somewhere to go, not the line being executed.
+      // A notebook is a column of editors, each with its own line 1, so a location has to name
+      // the cell. `cellIndex` is the fallback for cells with no ids of their own, written before
+      // nbformat 4.5. The debug decorations are only for the debugger, since a search result is
+      // somewhere to go rather than the line being executed.
       if ((loc.cellId || loc.cellIndex >= 0) && lee.kind === 'notebook') {
         let i = loc.cellId ? lee.cells.findIndex(c => c.id === loc.cellId) : -1;
         if (i < 0 && loc.cellIndex >= 0 && loc.cellIndex < lee.cells.length) i = loc.cellIndex;
@@ -1428,15 +1393,14 @@ function rememberBuffer(key, payload) {
   }, 120));
 }
 
-// A PDF, in the viewer the browser already ships. Reimplementing one on a canvas would be a
-// worse viewer and a large amount of code, and we are in a browser after all -- so the whole
-// feature is an `<iframe>` pointed at the bytes, plus the two things an iframe cannot do for
-// itself: open the file outside Leela, and say something useful if the viewer is disabled.
+// A PDF, in the viewer the browser already ships: an `<iframe>` pointed at the bytes, plus the two
+// things an iframe cannot do for itself, which are opening the file outside Leela and saying
+// something useful if the viewer is disabled.
 function mountPdf(host, st) {
-  // The filename goes in the *path* as well as the query, because the browser's own viewer titles
-  // itself from the last path segment -- so `/file/raw?path=…` opened every document called
-  // "raw". The segment is decoration: the server still resolves the file from `path` alone, and
-  // must, or a name in a URL would become a way to ask for a different file.
+  // The filename goes in the path as well as the query, because the browser's own viewer titles
+  // itself from the last path segment.
+  // The segment is decoration: the server still resolves the file from `path` alone, and must, or
+  // a name in a URL would become a way to ask for a different file.
   const name = (st.path || '').split('/').pop() || 'document.pdf';
   const raw = '/file/raw/' + encodeURIComponent(name) + '?path=' + encodeURIComponent(st.path);
   host.innerHTML =
@@ -1448,9 +1412,9 @@ function mountPdf(host, st) {
     `<noscript class="lee-dim">This view needs the browser's PDF viewer.</noscript></div></div>`;
 }
 
-/* An image, in the same chrome as a PDF. Fit is the default because an image opened from a
-   vault or a file tree is being *identified*, not inspected; actual size is one click away and
-   the dimensions are shown either way, since "is this the 2x asset" is the usual question. */
+/* An image, in the same chrome as a PDF. Fit is the default because an image opened from a vault
+   or a file tree is being identified rather than inspected. The dimensions are shown either way,
+   since "is this the 2x asset" is the usual question. */
 function mountImage(host, st) {
   const name = (st.path || '').split('/').pop() || 'image';
   const raw = '/file/raw/' + encodeURIComponent(name) + '?path=' + encodeURIComponent(st.path);
@@ -1487,10 +1451,9 @@ function mountMedia(host, st) {
 async function mountFile(host, st) {
   const isProject = st.path?.endsWith('/pyproject.toml') || st.title === 'pyproject.toml';
   const crumbMode=lee.workbenchPrefs.breadcrumbs||'pathAndSymbols',crumb=crumbMode==='off'?'':`<nav class="lee-breadcrumbs" id="editorcrumbs" aria-label="File and symbol path"><span>${esc(compactPath(st.path||st.title||''))}</span></nav>`;
-  // Markdown gets a rendered pane beside the editor. The editor stays mounted in every view and
-  // is merely hidden by CSS when only the rendering is showing -- everything that reaches for
-  // `lee.editors.get('file')` (saving, autosave, blame, the change gutter, jump-to-line) keeps
-  // working, and "rendered" is a way of *looking* at the file rather than a different kind of tab.
+  // Markdown gets a rendered pane beside the editor. The editor stays mounted in every view and is
+  // only hidden by CSS, so saving, autosave, blame, the change gutter and jump-to-line all keep
+  // reaching `lee.editors.get('file')`.
   const isMd = (st.lang || '') === 'markdown';
   const view = isMd ? (localStorage.getItem('lee-md-view') || 'split') : '';
   host.innerHTML = crumb + (isProject ? '<div class="lee-package-summary" id="packagebar" hidden></div>' : '') +
@@ -1514,8 +1477,8 @@ async function mountFile(host, st) {
   lee.fileGit = git;
   const key = st.path || st.title;
   const v = createEditor($('#filecm'), {
-    // A cached value is authoritative only after an actual user edit. This guard prevents
-    // stale/programmatic empty entries from blanking a freshly loaded file or run result.
+    // A cached value is authoritative only after a real user edit, or a stale empty entry blanks
+    // a freshly loaded file.
     doc: lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : (st.text || ''),
     lang: st.lang || 'python', lineNums: true, lintPath: st.path || '',
     completeUrl: '/complete', changedLines: git.ranges || [], breakpoints: lee.breakpoints.get(st.path)||[],
@@ -1526,15 +1489,15 @@ async function mountFile(host, st) {
     },
     onChange: txt => {
       rememberBuffer(key, {path: key, kind: 'text', text: txt}); markDirty();
-      // The preview follows the buffer, not the file: `renderMarkdown` is already debounced and
-      // drops superseded renders, so this is safe to call on every keystroke.
+      // The preview follows the buffer, not the file. `renderMarkdown` is debounced and drops
+      // superseded renders, so this is safe on every keystroke.
       if (isMd) renderMarkdown($('#mdpreview'), txt);
     },
   });
   lee.editors.set('file', v);
   if (isMd) {
-    // The rendered pane carries the same change marks as the gutter beside it, placed by block
-    // rather than by line. Only this first render is annotated; see `paintMarkdownFileChanges`.
+    // The rendered pane carries the same change marks as the gutter, placed by block rather than
+    // by line. Only this first render is annotated. See `paintMarkdownFileChanges`.
     renderMarkdown($('#mdpreview'), LeeCM.getDoc(v), false,
                    el => paintMarkdownFileChanges(el, git.ranges || []));
     $('#mdview').onclick = e => {
@@ -1543,8 +1506,8 @@ async function mountFile(host, st) {
       localStorage.setItem('lee-md-view', next);
       $('.lee-md-stage').dataset.view = next;
       $$('#mdview .lee-seg').forEach(x => x.classList.toggle('active', x === b));
-      // The editor was display:none a moment ago, so CodeMirror has stale measurements and will
-      // draw the cursor in the wrong place until it re-measures.
+      // The editor was display:none a moment ago, so CodeMirror has stale measurements and draws
+      // the cursor in the wrong place until it re-measures.
       if (next !== 'rendered') requestAnimationFrame(() => LeeCM.focus(v));
     };
   }
@@ -1646,9 +1609,9 @@ function notebookToc(cells) {
   return toc;
 }
 function observeNotebookCells(host, cells) {
-  // Cell shells preserve the notebook's geometry; CodeMirror is only created near the
-  // viewport. A 150-cell notebook therefore paints immediately instead of constructing
-  // 150 editors in one uninterruptible task.
+  // Cell shells preserve the notebook's geometry, and CodeMirror is only created near the
+  // viewport, so a 150-cell notebook paints immediately instead of constructing 150 editors in
+  // one uninterruptible task.
   lee.cellObserver?.disconnect();
   lee.cellObserver = new IntersectionObserver(entries => {
     for (const e of entries) if (e.isIntersecting) {
@@ -1678,8 +1641,8 @@ function mountNotebook(host, st) {
 }
 
 function patchNotebook(host, before, cells, op = '') {
-  // Keep unchanged cell DOM and CodeMirror views alive. Moving those nodes is effectively
-  // free and, unlike rebuilding the notebook, cannot flash blank or reset the viewport.
+  // Keep unchanged cell DOM and CodeMirror views alive. Moving those nodes is free and, unlike
+  // rebuilding the notebook, cannot flash blank or reset the viewport.
   lee.cellObserver?.disconnect();
   const oldCells = new Map(before.map(c => [c.id, c]));
   const oldEls = new Map($$('.lee-cell', host).map(el => [el.dataset.id, el]));
@@ -1718,8 +1681,8 @@ function patchNotebook(host, before, cells, op = '') {
   });
   paintSel();
   observeNotebookCells(host, cells);
-  // `className` is rewritten above for every reused cell, so the marks are reapplied from
-  // what was last read rather than refetched -- the disk has not moved, only the DOM.
+  // `className` is rewritten above for every reused cell, so the marks are reapplied from what
+  // was last read rather than refetched. Only the DOM moved.
   repaintNotebookGitMarks();
   queueNotebookOverview();
 }
@@ -1731,8 +1694,7 @@ function ensureCellMounted(i) {
   return lee.editors.get(c.id);
 }
 
-// A prompt cell's gutter is its own mark, so the three kinds are told apart at a glance
-// without reading any of them.
+// A prompt cell's gutter is its own mark, so the three kinds are told apart without reading them.
 const gutterFor = (c) => c.cell_type === 'code' ? '[' + (c.execution_count ?? ' ') + ']'
                        : c.cell_type === 'prompt' ? '✦' : 'md';
 const cellState = (c) => c.running ? 'running' : c.cell_type === 'code' && c.execution_count != null
@@ -1778,10 +1740,8 @@ function setCellTime(c, ms, running = false) {
   el.title = running ? 'current execution time' : previous ? 'duration of the saved run; its variables are not in this kernel' : 'last execution time';
 }
 
-/* The banner says where a cell sits and how big it is. The gutter carries the execution
- * count, which is neither: it is blank until the cell runs, and it renumbers on every rerun.
- * The tooltip carries what a developer needs to reference the cell -- its id -- and what the
- * last run left behind. */
+/* The banner says where a cell sits and how big it is. The gutter carries the execution count,
+ * which is blank until the cell runs and renumbers on every rerun. */
 const cellKind = (c) => ({code: 'py', markdown: 'md', prompt: 'prompt'}[c.cell_type] || c.cell_type);
 const cellLines = (c) => String(c.source || '').split('\n').length;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -1810,9 +1770,8 @@ function refreshCellMeta(c) {
 }
 window.leeCopyCellId = copyCellId;
 
-/* The per-cell controls, from the same table the toolbar comes from. They act on the cell
- * they are drawn in rather than on the selected one -- clicking ▶ on the third cell has
- * to run the third cell, whatever the cursor was doing. */
+/* The per-cell controls, from the same table the toolbar comes from. They act on the cell they are
+ * drawn in rather than on the selected one, so ▶ on the third cell runs the third cell. */
 const contextLabel = mode => ({keep: 'keep context', discard: 'discard first', auto: 'context auto'}[mode] || 'context auto');
 function paintCellContext(button, c) {
   const mode = c.context_mode || 'auto';
@@ -1964,8 +1923,8 @@ async function moveCellTo(from, to) {
 function mountCell(c, i) {
   if (lee.editors.has(c.id)) return;
   const key = `${lee.path || 'scratch'}:${c.id}`;
-  // Only a docChanged transaction marks a buffer authoritative. A stale empty cache must
-  // never replace the non-empty source returned by /tab/state after running a cell.
+  // Only a docChanged transaction marks a buffer authoritative. A stale empty cache must never
+  // replace the non-empty source `/tab/state` returned after running a cell.
   const source = lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : c.source;
   c.source = source;
   const v = createEditor($('#cm-' + c.id), {
@@ -1974,8 +1933,8 @@ function mountCell(c, i) {
     completeUrl: c.cell_type === 'code' ? '/complete' : null,
     onDefinition: c.cell_type === 'code' ? name => findDefinition(name) : null,
     breakpoints: lee.breakpoints.get(c.id) || [],
-    // Line numbers relative to this cell, which is the only place they are drawn. A cell
-    // mounted after the marks arrived would otherwise stay unmarked until the next save.
+    // Line numbers relative to this cell. A cell mounted after the marks arrived would otherwise
+    // stay unmarked until the next save.
     changedLines: (lee.notebookGit?.lines || {})[c.id] || [],
     onBreakpoint: c.cell_type === 'code' ? lines => rememberBreakpoints(c.id, lines) : null,
     settings: {overviewMode:'off'},
@@ -2012,8 +1971,8 @@ function renderOutputs(c) {
     for (const v of (el._leeCodeViews || [])) try { LeeCM.destroy(v); } catch {}
   });
   box.innerHTML = '';
-  // A prompt cell's "output" is the answer, and it is stored in the cell rather than in
-  // an nbformat output -- so it renders from its own fields.
+  // A prompt cell's "output" is the answer, stored in the cell rather than in an nbformat output,
+  // so it renders from its own fields.
   if (c.cell_type === 'prompt') {
     if ((c.calls || []).length) {
       const steps = document.createElement('div'); steps.className = 'lee-agent-steps lee-cell-agent-steps';
@@ -2139,10 +2098,10 @@ function outputEl(o) {
     d.classList.add('lee-md-output'); renderMarkdown(d, data['text/markdown']); return d;
   }
   if (data['text/html'] || data['image/svg+xml']) {
-    // Rich reprs get their own shadow root. pandas ships a <style> block with every
-    // DataFrame and `scoped` has been dead for years, so without this an output could
-    // restyle the IDE around it. Very large HTML stays unparsed until requested: parsing
-    // a multi-megabyte table on the main thread is enough to trigger Chrome's hang dialog.
+    // Rich reprs get their own shadow root: pandas ships a <style> block with every DataFrame and
+    // `scoped` has been dead for years, so an output could restyle the IDE around it. Very large
+    // HTML stays unparsed until requested, because parsing a multi-megabyte table on the main
+    // thread triggers Chrome's hang dialog.
     const rich = data['text/html'] || data['image/svg+xml'];
     const show = () => { d.textContent = ''; d.attachShadow({mode: 'open'}).innerHTML = rich; };
     if (rich.length > MAX_OUTPUT_CHARS) {
@@ -2175,8 +2134,8 @@ function focusCell(i) {
   selectCell(i);
   const c = lee.cells[lee.sel]; if (!c) return;
   const cell = $(`.lee-cell[data-i="${lee.sel}"]`);
-  // CodeMirror focuses its own scroller but cannot reveal itself inside the notebook's
-  // outer scroller. Run-and-advance therefore used to move the caret below the viewport.
+  // CodeMirror focuses its own scroller but cannot reveal itself inside the notebook's outer
+  // scroller, so the cell is scrolled into view here.
   cell?.scrollIntoView({block: 'nearest', inline: 'nearest'});
   const v = ensureCellMounted(lee.sel);
   if (v) requestAnimationFrame(() => LeeCM.focus(v));
@@ -2235,13 +2194,12 @@ function markDirty() {
 }
 /* Put a position in the middle of the view rather than merely inside it.
 
-   `scrollIntoView` moves the *minimum* distance, so a match below the fold arrives on the last
-   visible line with nothing under it -- and a search result is something you are about to read
-   around, not just look at. Written against `scrollDOM` rather than CodeMirror's own centring
-   effect: the vendored bundle is committed and rebuilding it needs node.
+   `scrollIntoView` moves the minimum distance, so a match below the fold arrives on the last
+   visible line with nothing under it. Written against `scrollDOM` rather than CodeMirror's own
+   centring effect, because the vendored bundle is committed and rebuilding it needs node.
 
-   A notebook scrolls its column of cells, not the cell's own editor, so the element that can
-   actually move is the one that gets scrolled. */
+   A notebook scrolls its column of cells, not the cell's own editor, so the element that can move
+   is the one that gets scrolled. */
 function centreOnPos(v, pos) {
   const coords = v.coordsAtPos(pos); if (!coords) return;
   const own = v.scrollDOM, host = own.scrollHeight - own.clientHeight > 4 ? own : $('#editor');
@@ -2260,15 +2218,15 @@ function jumpToLine(line) {
   requestAnimationFrame(() => centreOnPos(v, pos));
 }
 function openLocation(hit) {
-  // A hit in a notebook reports two coordinates: `line` in the .ipynb JSON, which is what
-  // ripgrep and blame speak, and the cell plus the line inside it, which is the only pair an
-  // editor can open. Prefer the second when the server placed the hit; a notebook hit it could
-  // not place keeps the file line, and lands nowhere, rather than opening a cell chosen at random.
+  // A hit in a notebook reports two coordinates: `line` in the .ipynb JSON, which is what ripgrep
+  // and blame speak, and the cell plus the line inside it, which is the only pair an editor can
+  // open. Prefer the second when the server placed the hit. A hit it could not place keeps the
+  // file line rather than opening a cell chosen at random.
   const name = hit.path.split('/').pop();
   const inCell = Number(hit.cell_line) > 0;
   if (!inCell && /\.ipynb$/i.test(hit.path)) {
-    // Nowhere to scroll to: the JSON line is not a line of any cell's editor, and jumping to
-    // it inside whichever cell happens to be selected would look like an answer.
+    // Nowhere to scroll to: the JSON line is not a line of any cell's editor, and jumping to it
+    // inside whichever cell is selected would look like an answer.
     leeOpenFile(hit.path);
     return status(`${name} — line ${hit.line} of the notebook file is in no cell`, 'info');
   }
@@ -2297,8 +2255,8 @@ async function runCell(i, advance) {
   const src = v ? LeeCM.getDoc(v) : c.source;
   const el = $(`.lee-cell[data-i="${i}"]`);
   if (c.cell_type === 'markdown') {
-    // Rendering must not make the source editor disappear permanently. Keep both visible:
-    // the preview is evidence of Run, and the source remains one click away to edit.
+    // Rendering must not make the source editor disappear permanently. The preview is evidence of
+    // Run, and the source stays one click away.
     const out = $('#out-' + c.id);
     if (out) {
       out.innerHTML = '<div class="lee-md"></div>';
@@ -2309,10 +2267,9 @@ async function runCell(i, advance) {
     try { await askCell(i, src, el); }
     finally { c.running = false; }
   } else {
-    // PyCharm/Jupyter users expect code run from a file-backed notebook to be visible to
-    // code that reads that notebook during the cell (indexers, nbdev, papermill). Flush
-    // the complete browser document before execution; otherwise a newly created .ipynb
-    // can still be zero-byte on disk while its in-memory cell is already running.
+    // Code run from a file-backed notebook has to be visible to code that reads that notebook
+    // during the cell, such as indexers, nbdev and papermill. Flush the whole browser document
+    // first, or a newly created .ipynb is still zero-byte on disk while its cell runs.
     if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) {
       return status('save the notebook before running this cell', 'err');
     }
@@ -2338,8 +2295,7 @@ async function runCell(i, advance) {
       if (!r) throw new Error('cell execution ended without a result');
       const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
       if (!stillHere) { leeVars(); return; }
-      // Preserve the mounted cell object and its source/editor relationship. Replacing it
-      // wholesale made stale buffer state able to win on a later remount and show blanks.
+      // Preserve the mounted cell object and its editor relationship.
       Object.assign(c, r.cell);
       renderOutputs(r.cell);
       LeeCM.setInlineValues(v, r.inline || []);
@@ -2379,8 +2335,8 @@ function paintDebugInlineValues(view, lineNo, variables) {
 async function revealDebugFrame(state) {
   const frame = (state.frames || []).find(f => f.id === state.frame_id) || state.frames?.[0];
   if (!frame) return;
-  // Exactly one source line is current. Clear the old marker before moving, including
-  // when step-in changes files.
+  // Exactly one source line is current. Clear the old marker before moving, including when
+  // step-in changes files.
   for (const [key, view] of lee.editors) if (key !== 'exec') { LeeCM.setDebugLine(view, 0); LeeCM.setInlineValues(view, []); }
   if (frame.open_path) {
     $('#debugsource')?.remove();
@@ -2402,8 +2358,8 @@ async function revealDebugFrame(state) {
     }
     return;
   }
-  // Library frames are outside the workspace sandbox. Ask by frame id (never by an
-  // arbitrary browser path) and show a read-only source view so step-in remains useful.
+  // Library frames are outside the workspace sandbox. Ask by frame id, never by a browser path,
+  // and show a read-only source view so step-in stays useful.
   if(lee.directDebug)return;
   const src = await api(`/nb/debug/source?frame_id=${frame.id}`);
   let pane = $('#debugsource');
@@ -2524,12 +2480,12 @@ async function debugCell(i) {
 }
 window.leeDebugCell = debugCell;
 
-/* Running a prompt cell. The answer lands in the cell rather than in the pane below,
- * which is the point of the cell type: it saves with the notebook and reads in order.
+/* Running a prompt cell. The answer arrives in the cell rather than the pane below, so it saves
+ * with the notebook and reads in order.
  *
- * The tab is deliberately *not* re-mounted afterwards even though the assistant's tools
- * may have edited files -- /tab/state reloads the notebook from disk, which would throw
- * away the answer that has not been saved yet. Files it changed are reported instead. */
+ * The tab is deliberately not re-mounted afterwards, even though the assistant's tools may have
+ * edited files: `/tab/state` reloads the notebook from disk, which would throw away the answer
+ * that has not been saved yet. Files it changed are reported instead. */
 async function askCell(i, src, el) {
   const c = lee.cells[i], runPath = lee.path, cellId = c.id;
   const notice = $('#model-' + c.id);
@@ -2594,9 +2550,8 @@ async function askCell(i, src, el) {
   el?.classList.remove('running');
 }
 
-/* ---------------------------------------------------------- running files */
-/* The exec log is where anything run outside a notebook cell lands -- the exec box, a
- * selection, a whole file. One place to look for "what have I asked this kernel to do". */
+/* The exec log holds anything run outside a notebook cell: the exec box, a selection, a whole
+ * file. One place to look for what this kernel has been asked to do. */
 function execLine(code, text, ok) {
   const log = $('#execlog'); if (!log) return;
   const line = document.createElement('div');
@@ -2606,18 +2561,12 @@ function execLine(code, text, ok) {
   log.appendChild(line); log.scrollTop = log.scrollHeight;
 }
 
-/* Run the open .py. One door, and it is the managed one: its own process, the project's
- * interpreter, a terminal to watch it in, and a pill that says it is running.
+/* Run the open .py in its own process, on the project's interpreter, with a terminal to watch it
+ * in and a pill that says it is running. The tab's kernel is not used, so a server that never
+ * returns holds nothing and its output goes to a terminal on screen.
  *
- * It used to execute the file inside the tab's kernel. That is lovely for a script that ends --
- * `__main__`, an argv, and everything it defines left in the namespace the variable panel is
- * watching -- and quietly awful for one that does not. A server never returned, so the kernel
- * was held, nothing appeared until you killed it, and what the app printed went to whatever
- * terminal leela itself was started from. Two ways to run a file, one of which swallowed the
- * tool without saying so, is the confusion. There is one now.
- *
- * A saved configuration for this file still wins, so `python -m x` or an argv is honoured
- * rather than second-guessed. Scratch code is `run selection`, which is still the kernel. */
+ * A saved configuration for this file still wins, so `python -m x` or an argv is honoured. Scratch
+ * code is `run selection`, which is still the kernel. */
 async function runFile() {
   if (lee.kind !== 'text') return status('this is a notebook — run its cells, or “▶ all”', 'err');
   const path = lee.path || '';
@@ -2633,9 +2582,9 @@ async function runFile() {
   return startRun(cfg || {name: '', cmd: path});
 }
 
-/* Just the selected code. Read straight off the CodeMirror state rather than through
- * `LeeCM`: the bundle in static/ is committed and rebuilding it needs node, so the client
- * does not grow a dependency on a wrapper function that is not in the shipped build. */
+/* Just the selected code, read straight off the CodeMirror state rather than through `LeeCM`. The
+ * bundle in static/ is committed and rebuilding it needs node, so the client cannot depend on a
+ * wrapper that is not in the shipped build. */
 async function runSelection() {
   const v = curEditor();
   if (!v) return status('put the cursor in some code first', 'err');
@@ -2649,8 +2598,8 @@ async function runSelection() {
   leeVars();
 }
 
-/* Execute a bounded notebook range in order. Range commands deliberately run code cells
- * only: “run above” must not unexpectedly send every prompt cell above it to a model. */
+/* Execute a bounded notebook range in order, code cells only: "run above" must not send every
+ * prompt cell above it to a model. */
 async function runRange(start, end, label) {
   if (lee.kind !== 'notebook') return runFile();
   start = Math.max(0, start); end = Math.min(end, lee.cells.length);
@@ -2677,10 +2626,8 @@ async function restartRunAll() {
   await runAll();
 }
 
-/* ---------------------------------------------------------- kernel picker */
-/* Two questions, two lists: which interpreter's packages this tab can import, and which
- * launcher runs it. Both restart the kernel, so what that costs is on the screen while
- * the choice is being made rather than in a toast afterwards. */
+/* Two questions, two lists: which interpreter's packages this tab can import, and which launcher
+ * runs it. Both restart the kernel, so what that costs is on screen while the choice is made. */
 async function pickKernel() {
   const o = await api('/kernel/options');
   const row = (cur, main, sub, attrs) =>
@@ -2744,8 +2691,8 @@ async function pickKernel() {
     const d = await post('/kernel/select',
                          r.dataset.kind ? {kind: r.dataset.kind} : {python: r.dataset.py});
     markPreviousRuns();
-    // Picking a runtime also makes its namespace the live variable source. Do not leave
-    // the panel visually (or server-side) pinned to the process watched before the switch.
+    // Picking a runtime also makes its namespace the live variable source, so the panel must not
+    // stay pinned, on screen or server-side, to the process watched before the switch.
     paintEnv('');
     status(`kernel: ${d.running_kind} · ${(d.python || 'leela’s own python').split('/').pop()} · variables connected`, 'ok');
     refreshKernelPill(); leeVars();
@@ -2771,12 +2718,8 @@ async function setKernelAutoManage(enabled) {
   const r = await post('/runtime/auto-manage', {enabled: !!enabled});
   return r.enabled;
 }
-/* ---------------------------------------------------------- the keymap */
-/* Editable here, because the alternative is telling someone whose terminal or browser
- * eats ctrl+enter to go and find a JSON file. Saving re-reads it server-side and reloads
- * the table this client dispatches on, so a new chord works on the next keystroke. */
 /* A chord as this app writes them: `[mod+][ctrl+][alt+][shift+]base`, in that order, with `mod`
-   standing for the platform's own command key. Built from a real keystroke so nobody has to know
+   standing for the platform's own command key. Built from a real keystroke, so nobody has to know
    the grammar to bind a key. */
 const CHORD_BASE = {' ': 'space', 'Escape': 'esc', 'ArrowUp': 'up', 'ArrowDown': 'down',
                     'ArrowLeft': 'left', 'ArrowRight': 'right', 'Backspace': 'backspace',
@@ -2795,10 +2738,10 @@ function chordFromEvent(e) {
   return parts.join('+');
 }
 
-/* Editable here, because the alternative is telling someone whose terminal or browser eats
- * ctrl+enter to go and find a JSON file. It was that JSON file for a while, which meant knowing
- * the grammar and finding out about a clash only after saving. Now it is a row per action, a field
- * that takes the keystroke itself, and the server's own conflict check on every change. */
+/* Editable here, because the alternative is telling someone whose terminal eats ctrl+enter to go
+ * and find a JSON file. A row per action, a field that takes the keystroke itself, and the
+ * server's conflict check on every change. Saving reloads the table this client dispatches on, so
+ * a new chord works on the next keystroke. */
 async function editKeys() {
   const d = await api('/keys/file');
   const rows = () => (lee.keys || []).filter(k => k.label || k.scope !== 'global');
@@ -2898,8 +2841,8 @@ async function editKeys() {
   notes(d.notes); paint();
 }
 
-/* CodeMirror captures its own keymap at creation, so a rebound chord only reaches the
- * editors after they are rebuilt. Cheap, and it happens once, when the map changes. */
+/* CodeMirror captures its own keymap at creation, so a rebound chord only reaches the editors
+ * after they are rebuilt. */
 function remountEditors() {
   const v = lee.editors.get('exec');
   if (v) { LeeCM.destroy(v); lee.editors.delete('exec'); }
@@ -2907,9 +2850,9 @@ function remountEditors() {
   mountTab();
 }
 
-/* Screen capture. The grab happens here, not on the server: getDisplayMedia needs a user
- * gesture and a real display, and a server process has neither. The track is kept across
- * captures so only the first press asks permission. */
+/* Screen capture. The grab happens here because `getDisplayMedia` needs a user gesture and a real
+ * display, and a server process has neither. The track is kept across captures, so only the first
+ * press asks permission. */
 async function captureScreen() {
   try {
     if (!lee.vtrack || lee.vtrack.readyState === 'ended') {
@@ -2928,8 +2871,7 @@ async function captureScreen() {
 }
 
 async function nbEdit(d) {
-  // A file is one document, not a column of cells; a structural edit here would split the
-  // buffer the editor is showing.
+  // A file is one document, not a column of cells, and a structural edit would split the buffer.
   if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return {}; }
   const host = $('#editor'), scrollTop = host?.scrollTop || 0;
   const before = lee.cells.slice();
@@ -2953,7 +2895,7 @@ async function nbEdit(d) {
   const restored = same >= 0 && lee.editors.get(selectedId);
   if (restored) LeeCM.setCursor?.(restored, Math.min(cursor, restored.state.doc.length));
   // An undo that scrolls nothing leaves you looking for what moved. The cell the operation
-  // landed on is already `lee.sel`; put it in the middle so it is the thing you are looking at.
+  // reached is already `lee.sel`, so put it in the middle.
   if (d.op === 'undo' || d.op === 'redo') {
     const cell = $(`.lee-cell[data-i="${lee.sel}"]`);
     cell?.scrollIntoView({block: 'center', inline: 'nearest'});
@@ -2973,7 +2915,7 @@ async function toggleComment() {
   LeeCM.setDoc(v, lines.map(l => allC ? l.replace(/^(\s*)#\s?/, '$1') : (l.trim() ? l.replace(/^(\s*)/, '$1# ') : l)).join('\n'));
 }
 
-/* ---- whichever editor has the cursor: a cell, a whole file, or the exec box ---- */
+// Whichever editor has the cursor: a cell, a whole file, or the exec box.
 function curEditor() {
   if (lee.scope === 'exec') return lee.editors.get('exec');
   if (lee.activeEditor === 'secondary') return lee.editors.get('secondary');
@@ -2992,10 +2934,9 @@ function kernelComplete() {
   LeeCM.startCompletion(v);
 }
 
-/* Two completions, two different questions. alt+/ asks the kernel what names
- * exist -- instant, and right by construction because it is the real namespace.
- * This asks the model what should come next, which costs a forward pass, so it is
- * never fired by typing and the suggestion stays ghost text until tab accepts it. */
+/* Two completions, two different questions. alt+/ asks the kernel what names exist, which is
+ * instant and right by construction. This asks the model what should come next, which costs a
+ * forward pass, so it is never fired by typing and stays ghost text until tab accepts it. */
 function closeSelectionHelp() { $('.lee-selection-tools')?.remove(); }
 function selectionEditor() {
   if (!['editor', 'exec'].includes(lee.scope)) return null;
@@ -3093,7 +3034,6 @@ async function showDocs() {
          <pre class="lee-docs">${esc(d.text)}</pre>`);
 }
 
-/* ------------------------------------------------------------------ diffs */
 const diffHtml = (rows) => rows.map(r =>
   `<div class="lee-drow ${r.kind}"><span class="lee-dnum">${r.line || ''}</span>` +
   `<span class="lee-dtext">${esc(r.text)}</span></div>`).join('');
@@ -3156,8 +3096,8 @@ async function leeLocalHistory(path = lee.path) {
 }
 window.leeLocalHistory = leeLocalHistory;
 
-// The dirty dot says *that* a tab changed. This says what changed -- the question
-// actually worth answering before a save, or after something moved the file underneath.
+// The dirty dot says that a tab changed. This says what changed, before a save or after something
+// moved the file underneath.
 function bufferBody() {
   return lee.kind === 'notebook'
     ? {cells: lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}))}
@@ -3237,9 +3177,8 @@ function showSaveConflict(message) {
   $('[data-disk]', box).onclick = async () => { lee.heldSaveConflicts.delete(lee.path); box.remove(); await takeDiskVersion(lee.path); status('loaded disk version; browser draft discarded', 'ok'); };
 }
 async function saveTab(quiet = false, expectedVersion = null, force = false) {
-  // A document the browser renders has no editor behind it, so there is nothing to write and
-  // `getDoc` would be called on nothing. Reporting success is honest here: the file on disk is
-  // exactly what is being shown.
+  // A document the browser renders has no editor behind it, so `getDoc` would be called on
+  // nothing. Reporting success is honest: the file on disk is what is being shown.
   if (lee.kind === 'pdf' || lee.kind === 'image') {
     if (!quiet) status(`${lee.kind === 'pdf' ? 'a PDF' : 'an image'} is read-only here`);
     return true;
@@ -3271,12 +3210,12 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
       if(lee.filePrefs.formatOnSave){try{const formatted=await post('/editor/format',{path:lee.path,lang:curLang(),text});text=formatted.text;if(text!==LeeCM.getDoc(lee.editors.get('file')))LeeCM.setDoc(lee.editors.get('file'),text);}catch(e){status(`format skipped: ${e.message||e}`,'err');}}
       d = await post('/nb/save', {text, base_disk_version, force});
     }
-    // An autosave request may finish after another keystroke. The disk has its snapshot,
-    // but the newer browser buffer must remain authoritative and schedule the next save.
+    // An autosave request can finish after another keystroke. The disk has its snapshot, but the
+    // newer browser buffer stays authoritative and schedules the next save.
     if (expectedVersion !== null && expectedVersion !== lee.editVersion) {
-      // This request wrote an older snapshot, but newer typing is still in the editor and
-      // IndexedDB. Rebase that draft on our own disk write so the follow-up autosave is not
-      // mistaken for an external conflict.
+      // This request wrote an older snapshot, and newer typing is still in the editor and
+      // IndexedDB. Rebase that draft on our own disk write, or the follow-up autosave is mistaken
+      // for an external conflict.
       lee.diskVersion = d.disk_version || lee.diskVersion; lee.seenDiskVersion = lee.diskVersion;
       await rebaseDrafts(documentKey, lee.diskVersion);
       setTabSaveState(saveTabEl, 'pending', 'Newer changes are queued for autosave');
@@ -3311,9 +3250,9 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
   }
 }
 
-/* Every JSON config in this app is written by a program and read by a person, so most of them
-   arrive as one long line. The formatter already exists for format-on-save; this is the same call
-   asked for on purpose, and it edits the buffer rather than the file so it stays undoable. */
+/* Every JSON config here is written by a program and read by a person, so most arrive as one long
+   line. The same formatter as format-on-save, asked for on purpose, editing the buffer rather than
+   the file so it stays undoable. */
 async function leeFormatDoc() {
   const view = lee.editors.get(lee.scope === 'exec' ? 'exec' : 'file');
   if (!view) return status('open a file to format', 'err');
@@ -3329,8 +3268,8 @@ window.leeFormatDoc = leeFormatDoc;
 
 async function saveAllTabs() {
   // The active editor is saved through the same version-checked path as ordinary autosave.
-  // Inactive editors are mirrored to the server within 120ms; let pending mirrors land
-  // rather than cancelling their timers and accidentally saving the previous snapshot.
+  // Inactive editors are mirrored to the server within 120ms, and pending mirrors are left to
+  // arrive rather than cancelled, which would save the previous snapshot.
   if (!lee.kind) return status('nothing to save', 'err');
   if (!lee.path) return status('save the unnamed tab individually first', 'err');
   const activeDirty = !!$('.lee-tab.active.dirty');
@@ -3346,7 +3285,6 @@ async function saveAllTabs() {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 
-/* ------------------------------------------------------------------ exec */
 function mountExec() {
   const host = $('#execbox'); if (!host || lee.editors.has('exec')) return;
   const v = createEditor(host, {
@@ -3408,12 +3346,10 @@ function recall(d) {
 function leeExecClear() { const l = $('#execlog'); if (l) l.innerHTML = ''; }
 window.leeExecClear = leeExecClear;
 
-/* ------------------------------------------------------------------ variables */
 async function leeVars() {
   const box = $('#vars'); if (!box || document.hidden) return;
-  // Polling is a refresh, not a queue. A slow inspector used to let the 2.5s interval
-  // stack an unbounded number of fetches and full-tree DOM rebuilds until Chrome declared
-  // the page unresponsive. Coalesce every request that arrives while one is in flight.
+  // Polling is a refresh, not a queue: coalesce every request that arrives while one is in
+  // flight, or a slow inspector stacks fetches and full-tree DOM rebuilds without bound.
   if (lee.varsBusy) { lee.varsPending = true; return; }
   lee.varsBusy = true;
   try { await refreshVars(box); }
@@ -3450,8 +3386,8 @@ async function refreshVars(box) {
     if (envTag && d.inspector) envTag.title = `${d.inspector} inspector · ${d.python || d.runtime}${d.cwd ? ' · cwd ' + d.cwd : ''}`;
   }
 
-  // Every runtime gets its own little view memory. Switching notebooks should feel like
-  // switching debugger sessions, not like one global tree whose open rows and filter leak.
+  // Every runtime gets its own view memory, so switching notebooks does not leak open rows and
+  // the filter between them.
   const runtime = d.runtime || 'default';
   if (lee.varRuntime !== runtime) {
     if (lee.varRuntime) lee.varStates.set(lee.varRuntime, {
@@ -3465,13 +3401,13 @@ async function refreshVars(box) {
     lee.varRestore = {scroll: saved.scroll || 0, selected: saved.selected || ''};
   }
 
-  // Most polls are identical. Avoid rebuilding the entire variable DOM every 2.5 seconds;
-  // that work competes directly with CodeMirror selection and streamed Markdown painting.
+  // Most polls are identical, and rebuilding the whole variable DOM every 2.5 seconds competes
+  // with CodeMirror selection and streamed Markdown painting.
   const fingerprint = JSON.stringify(d.groups || []);
   if (!lee.varRestore && lee.varFingerprints.get(runtime) === fingerprint) return;
   lee.varFingerprints.set(runtime, fingerprint);
 
-  // A changed poll must not cost the user their place: remember what is open, selected,
+  // A changed poll must not cost the user their place: remember what is open, what is selected
   // and where the panel is scrolled, re-render, then put all three back.
   const scroll = lee.varRestore ? lee.varRestore.scroll : box.scrollTop;
   const selName = lee.varRestore ? lee.varRestore.selected : selVar()?.dataset.name;
@@ -3496,9 +3432,8 @@ function debugVar(v) {
 }
 
 function varRow(n, depth = 0) {
-  // new/edited is a statement about the namespace, so it only makes sense for top-level
-  // names -- tagging a DataFrame's own `shape` as "(new)" is noise, not news. Nor does
-  // the very first render, where by definition everything is new.
+  // new/edited is a statement about the namespace, so it is for top-level names only. Tagging a
+  // DataFrame's own `shape` as "(new)" is noise, as is the first render, where everything is new.
   const tag = (depth || !lee.varSeen) ? ''
             : (!(n.name in lee.varPrev)) ? '<span class="lee-vnew"> (new)</span>'
             : (lee.varPrev[n.name] !== n.value ? '<span class="lee-vedit"> (edited)</span>' : '');

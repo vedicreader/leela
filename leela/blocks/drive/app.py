@@ -16,7 +16,7 @@ def connect(app, ctx):
     rt = app.route
     live = {}
     def drive(target=''):
-        "The driver for one project, made once and kept -- a running step is a process."
+        "The driver for one project, made once and kept: a running step is a process."
         root = repo_for(ctx.session, target)
         key = str(root)
         if key not in live: live[key] = Drive(root, env=EnvStore())

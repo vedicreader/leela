@@ -1,9 +1,7 @@
-/* ------------------------------------------------------------------ variables */
 async function leeVars() {
   const box = $('#vars'); if (!box || document.hidden) return;
-  // Polling is a refresh, not a queue. A slow inspector used to let the 2.5s interval
-  // stack an unbounded number of fetches and full-tree DOM rebuilds until Chrome declared
-  // the page unresponsive. Coalesce every request that arrives while one is in flight.
+  // Polling is a refresh, not a queue: coalesce every request that arrives while one is in
+  // flight, or a slow inspector stacks fetches and full-tree DOM rebuilds without bound.
   if (lee.varsBusy) { lee.varsPending = true; return; }
   lee.varsBusy = true;
   try { await refreshVars(box); }
@@ -40,8 +38,8 @@ async function refreshVars(box) {
     if (envTag && d.inspector) envTag.title = `${d.inspector} inspector · ${d.python || d.runtime}${d.cwd ? ' · cwd ' + d.cwd : ''}`;
   }
 
-  // Every runtime gets its own little view memory. Switching notebooks should feel like
-  // switching debugger sessions, not like one global tree whose open rows and filter leak.
+  // Every runtime gets its own view memory, so switching notebooks does not leak open rows and
+  // the filter between them.
   const runtime = d.runtime || 'default';
   if (lee.varRuntime !== runtime) {
     if (lee.varRuntime) lee.varStates.set(lee.varRuntime, {
@@ -55,13 +53,13 @@ async function refreshVars(box) {
     lee.varRestore = {scroll: saved.scroll || 0, selected: saved.selected || ''};
   }
 
-  // Most polls are identical. Avoid rebuilding the entire variable DOM every 2.5 seconds;
-  // that work competes directly with CodeMirror selection and streamed Markdown painting.
+  // Most polls are identical, and rebuilding the whole variable DOM every 2.5 seconds competes
+  // with CodeMirror selection and streamed Markdown painting.
   const fingerprint = JSON.stringify(d.groups || []);
   if (!lee.varRestore && lee.varFingerprints.get(runtime) === fingerprint) return;
   lee.varFingerprints.set(runtime, fingerprint);
 
-  // A changed poll must not cost the user their place: remember what is open, selected,
+  // A changed poll must not cost the user their place: remember what is open, what is selected
   // and where the panel is scrolled, re-render, then put all three back.
   const scroll = lee.varRestore ? lee.varRestore.scroll : box.scrollTop;
   const selName = lee.varRestore ? lee.varRestore.selected : selVar()?.dataset.name;
@@ -86,9 +84,8 @@ function debugVar(v) {
 }
 
 function varRow(n, depth = 0) {
-  // new/edited is a statement about the namespace, so it only makes sense for top-level
-  // names -- tagging a DataFrame's own `shape` as "(new)" is noise, not news. Nor does
-  // the very first render, where by definition everything is new.
+  // new/edited is a statement about the namespace, so it is for top-level names only. Tagging a
+  // DataFrame's own `shape` as "(new)" is noise, as is the first render, where everything is new.
   const tag = (depth || !lee.varSeen) ? ''
             : (!(n.name in lee.varPrev)) ? '<span class="lee-vnew"> (new)</span>'
             : (lee.varPrev[n.name] !== n.value ? '<span class="lee-vedit"> (edited)</span>' : '');

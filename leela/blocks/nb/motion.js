@@ -1,12 +1,11 @@
 /* Put a position in the middle of the view rather than merely inside it.
 
-   `scrollIntoView` moves the *minimum* distance, so a match below the fold arrives on the last
-   visible line with nothing under it -- and a search result is something you are about to read
-   around, not just look at. Written against `scrollDOM` rather than CodeMirror's own centring
-   effect: the vendored bundle is committed and rebuilding it needs node.
+   `scrollIntoView` moves the minimum distance, so a match below the fold arrives on the last
+   visible line with nothing under it. Written against `scrollDOM` rather than CodeMirror's own
+   centring effect, because the vendored bundle is committed and rebuilding it needs node.
 
-   A notebook scrolls its column of cells, not the cell's own editor, so the element that can
-   actually move is the one that gets scrolled. */
+   A notebook scrolls its column of cells, not the cell's own editor, so the element that can move
+   is the one that gets scrolled. */
 function centreOnPos(v, pos) {
   const coords = v.coordsAtPos(pos); if (!coords) return;
   const own = v.scrollDOM, host = own.scrollHeight - own.clientHeight > 4 ? own : $('#editor');
@@ -25,15 +24,15 @@ function jumpToLine(line) {
   requestAnimationFrame(() => centreOnPos(v, pos));
 }
 function openLocation(hit) {
-  // A hit in a notebook reports two coordinates: `line` in the .ipynb JSON, which is what
-  // ripgrep and blame speak, and the cell plus the line inside it, which is the only pair an
-  // editor can open. Prefer the second when the server placed the hit; a notebook hit it could
-  // not place keeps the file line, and lands nowhere, rather than opening a cell chosen at random.
+  // A hit in a notebook reports two coordinates: `line` in the .ipynb JSON, which is what ripgrep
+  // and blame speak, and the cell plus the line inside it, which is the only pair an editor can
+  // open. Prefer the second when the server placed the hit. A hit it could not place keeps the
+  // file line rather than opening a cell chosen at random.
   const name = hit.path.split('/').pop();
   const inCell = Number(hit.cell_line) > 0;
   if (!inCell && /\.ipynb$/i.test(hit.path)) {
-    // Nowhere to scroll to: the JSON line is not a line of any cell's editor, and jumping to
-    // it inside whichever cell happens to be selected would look like an answer.
+    // Nowhere to scroll to: the JSON line is not a line of any cell's editor, and jumping to it
+    // inside whichever cell is selected would look like an answer.
     leeOpenFile(hit.path);
     return status(`${name} — line ${hit.line} of the notebook file is in no cell`, 'info');
   }
@@ -62,8 +61,8 @@ async function runCell(i, advance) {
   const src = v ? LeeCM.getDoc(v) : c.source;
   const el = $(`.lee-cell[data-i="${i}"]`);
   if (c.cell_type === 'markdown') {
-    // Rendering must not make the source editor disappear permanently. Keep both visible:
-    // the preview is evidence of Run, and the source remains one click away to edit.
+    // Rendering must not make the source editor disappear permanently. The preview is evidence of
+    // Run, and the source stays one click away.
     const out = $('#out-' + c.id);
     if (out) {
       out.innerHTML = '<div class="lee-md"></div>';
@@ -74,10 +73,9 @@ async function runCell(i, advance) {
     try { await askCell(i, src, el); }
     finally { c.running = false; }
   } else {
-    // PyCharm/Jupyter users expect code run from a file-backed notebook to be visible to
-    // code that reads that notebook during the cell (indexers, nbdev, papermill). Flush
-    // the complete browser document before execution; otherwise a newly created .ipynb
-    // can still be zero-byte on disk while its in-memory cell is already running.
+    // Code run from a file-backed notebook has to be visible to code that reads that notebook
+    // during the cell, such as indexers, nbdev and papermill. Flush the whole browser document
+    // first, or a newly created .ipynb is still zero-byte on disk while its cell runs.
     if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) {
       return status('save the notebook before running this cell', 'err');
     }
@@ -103,8 +101,7 @@ async function runCell(i, advance) {
       if (!r) throw new Error('cell execution ended without a result');
       const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
       if (!stillHere) { leeVars(); return; }
-      // Preserve the mounted cell object and its source/editor relationship. Replacing it
-      // wholesale made stale buffer state able to win on a later remount and show blanks.
+      // Preserve the mounted cell object and its editor relationship.
       Object.assign(c, r.cell);
       renderOutputs(r.cell);
       LeeCM.setInlineValues(v, r.inline || []);
@@ -144,8 +141,8 @@ function paintDebugInlineValues(view, lineNo, variables) {
 async function revealDebugFrame(state) {
   const frame = (state.frames || []).find(f => f.id === state.frame_id) || state.frames?.[0];
   if (!frame) return;
-  // Exactly one source line is current. Clear the old marker before moving, including
-  // when step-in changes files.
+  // Exactly one source line is current. Clear the old marker before moving, including when
+  // step-in changes files.
   for (const [key, view] of lee.editors) if (key !== 'exec') { LeeCM.setDebugLine(view, 0); LeeCM.setInlineValues(view, []); }
   if (frame.open_path) {
     $('#debugsource')?.remove();
@@ -167,8 +164,8 @@ async function revealDebugFrame(state) {
     }
     return;
   }
-  // Library frames are outside the workspace sandbox. Ask by frame id (never by an
-  // arbitrary browser path) and show a read-only source view so step-in remains useful.
+  // Library frames are outside the workspace sandbox. Ask by frame id, never by a browser path,
+  // and show a read-only source view so step-in stays useful.
   if(lee.directDebug)return;
   const src = await api(`/nb/debug/source?frame_id=${frame.id}`);
   let pane = $('#debugsource');

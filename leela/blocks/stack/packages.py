@@ -14,7 +14,7 @@ FAMILY = ['gheasy', 'dockeasy', 'vpseasy', 'cfeasy', 'leela', 'dhrishti', 'nbdev
 _FRAME = re.compile(r'File "([^"]+)", line (\d+), in (\S+)')
 
 def installed(name):
-    "Is `name` importable, without importing it?"
+    "Whether `name` is importable, without importing it."
     from importlib.util import find_spec
     try: return find_spec(name) is not None
     except (ImportError, ValueError): return False
@@ -34,7 +34,7 @@ def _version(name):
     except Exception: return ''
 
 def _vendored(path):
-    "Is this path inside an installed environment rather than someone's working tree?"
+    "Whether the path is inside an installed environment rather than a working tree."
     parts = set(Path(path).parts)
     return bool(parts & {'site-packages', 'dist-packages', '.venv', 'venv'})
 
@@ -48,7 +48,7 @@ def checkout_for(name, checkouts):
     return ''
 
 def _row(name, roots):
-    "One package: where an import lands, and whether that copy is the open checkout."
+    "One package: where an import resolves to, and whether that copy is the open checkout."
     path = _origin(name)
     local = checkout_for(name, roots)
     from_source = bool(path) and not _vendored(path)
@@ -58,7 +58,7 @@ def _row(name, roots):
             'shadowed': bool(local) and bool(path) and not from_source}
 
 def survey(names=(), checkouts=()):
-    "One row each: installed, version, the copy an import resolves to, and whether a checkout is."
+    "One row each: installed, version, the resolved copy, and whether a checkout is shadowed."
     roots = _roots(checkouts)
     return [_row(name, roots) for name in (list(names) or FAMILY)]
 

@@ -1,7 +1,7 @@
-/* The branch row's `•••`, as a menu anchored to the button rather than a modal: picking a
-   branch to compare against is a glance, not a dialogue. Named for this panel because the
-   branch pill in `28_branchbar.js` has its own, differently-shaped menu, and the modules are
-   concatenated into one scope -- two `function branchActions` and the later file silently won. */
+/* The branch row's `•••`, as a menu anchored to the button rather than a modal. Named for this
+   panel because the branch pill in `branchbar.js` has its own, differently shaped menu, and the
+   modules are concatenated into one scope, where two `function branchActions` meant the later file
+   silently won. */
 function gitBranchMenu(anchor, branch, d, act) {
   const current = branch === d.branch;
   const review = mode => {

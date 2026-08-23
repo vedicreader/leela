@@ -1,4 +1,3 @@
-/* ---- similarity: what else in this codebase looks like the thing under the cursor ---- */
 function cursorLine() {
   if (lee.kind === 'notebook') {
     const c = lee.cells[lee.sel], v = c && lee.editors.get(c.id);
@@ -11,8 +10,7 @@ function cursorLine() {
 /* Where a hit is, said well enough to choose between two of them. A package hit is its dotted
    module, because `document.py` is offered by chonkie and by prompt_toolkit, and every package
    offers an `__init__.py`. A project hit is its basename until two hits share one, and then as
-   many parent folders as it takes to tell them apart -- this repository has 25 files called
-   `app.py`. */
+   many parent folders as it takes to tell them apart. */
 function hitWhere(h, hits) {
   if (h.module) return h.module;
   const parts = String(h.path || '').split('/').filter(Boolean);
@@ -78,11 +76,10 @@ async function codeMap() {
   });
 }
 
-/* Start a run configuration -- a command line, kept in the project -- in a process leela
- * puts an inspector into. That is the difference between this and the same command in a
- * terminal: the inspector is *inside* it, so the variable panel can watch the app's own
- * module while it serves. A process started anywhere else has to opt in with
- * `dhrishti.serving.serve()`; the picker says so, because everyone asks. */
-/* Starting one, wherever the request came from: the picker, or Run on an open file. Both have
-   to land in the same place or there are two kinds of running script again, which is the thing
-   that made this confusing. */
+/* Start a run configuration in a process leela puts an inspector into. That is the difference
+ * between this and the same command in a terminal: the inspector is inside it, so the variable
+ * panel can watch the app's own module while it serves. A process started anywhere else has to opt
+ * in with `dhrishti.serving.serve()`, and the picker says so.
+ *
+ * The picker and Run on an open file both come here, or there are two kinds of running script
+ * again. */

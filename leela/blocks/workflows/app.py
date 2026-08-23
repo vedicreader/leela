@@ -43,7 +43,7 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/workflows/docker')
     async def workflows_docker(repo: str = ''):
-        "What dockeasy would build here -- the thing a docker job in the workflow builds."
+        "What dockeasy would build here, which is what a docker job in the workflow builds."
         try: return await off_loop(flows(repo).docker)
         except Exception as e: return fail(e)
     @rt('/workflows/runs')
@@ -81,7 +81,7 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/workflows/env')
     async def workflows_env(repo: str = '', remote: bool = False):
-        "What each declared key is, and whether it is set -- never what a secret is set to."
+        "What each declared key is, and whether it is set. Never what a secret is set to."
         try:
             wf = flows(repo)
             schema = wf.schema()

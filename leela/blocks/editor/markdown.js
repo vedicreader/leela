@@ -1,39 +1,31 @@
-/* ----------------------------------------------------- a Markdown diff, read as Markdown
- * A third way of reading the same diff, beside unified and side by side, and the only one in
- * which a README reads like a README: the new document rendered, with a bar in the margin
- * beside every block that changed and the line-level change shown *inside* a fenced block.
+/* A Markdown diff read as Markdown: the new document rendered, a bar in the margin beside every
+ * changed block, and the line-level change inside a fenced block.
  *
- * The rendering is `/markdown/render`, unchanged and still `allow_raw: false` -- Markdown out
- * of a repository is untrusted input and this surface widens nothing. What makes the marks
- * placeable is `/markdown/diff`, which pairs the two versions block against block and reports
- * each block's source lines and the tag it should render as. Lines could not do this on their
- * own: a rendered paragraph has no line numbers, and an edit at the top of a file moves every
- * line below it while moving no blocks at all.
+ * `/markdown/render` stays `allow_raw: false`, because Markdown out of a repository is untrusted
+ * input. `/markdown/diff` pairs the two versions block against block. Lines cannot do this: a
+ * rendered paragraph has no line numbers, and an edit at the top of a file moves every line
+ * below it while moving no blocks.
  */
 const MARKDOWN_PATH = /\.(?:md|markdown|mdown|mkdn?)$/i;
 const isMarkdownPath = path => MARKDOWN_PATH.test(String(path || ''));
 
 // mdhtml's own top-level nodes, in document order. The footnotes section is generated from the
-// definitions rather than from a block of its own, so it never carries a mark; a comment is a
-// node a raw-HTML block legitimately produces, so it counts as a carrier even though there is
-// nothing to draw beside it -- dropping it would silently shift every block after it.
+// definitions rather than from a block of its own, so it never carries a mark. A comment counts
+// as a carrier with nothing to draw beside it, because dropping it would shift every block after
+// it.
 function markdownCarriers(el) {
   return [...el.childNodes].filter(n => n.nodeType === 8 ||
     (n.nodeType === 1 && !(n.tagName === 'SECTION' && n.classList.contains('footnotes'))));
 }
 const markdownTagOf = n => n.nodeType === 1 ? n.tagName.toLowerCase() : '#comment';
 
-/* Which element each block became. This is the crux of the whole view, and the part that has
- * to be allowed to fail: the server names the blocks in source order with the tag each is
- * expected to render as, and this walks the rendered nodes in that same order checking every
- * expectation it can. One mismatch, or one node no block claimed, and the answer is `null` --
- * a raw HTML block that produced two elements shifts everything after it, and a change bar
- * beside the wrong paragraph is a false statement about the diff. Nothing is drawn then, and
- * the surface says why rather than quietly looking correct.
+/* Which element each block became, as positions rather than nodes: the code-block upgrade later
+ * swaps each `<pre>` for an editor surface in the same place, so a caller that has to wait for a
+ * request reads the tags now and the nodes again afterwards.
  *
- * The answer is *positions*, not nodes, because the code-block upgrade later swaps each `<pre>`
- * for an editor surface in the same place. A caller that has to wait for a request before it can
- * draw reads the tags now and the nodes again afterwards, and the positions still hold.
+ * One mismatch, or one node no block claimed, answers `null`, and the surface says why. A raw
+ * HTML block that produced two elements shifts everything after it, and a change bar beside the
+ * wrong paragraph is a false statement about the diff.
  */
 function alignMarkdownBlocks(tags, rows) {
   const pairs = [];
@@ -49,11 +41,9 @@ function alignMarkdownBlocks(tags, rows) {
   return at === tags.length ? pairs : null;
 }
 
-/* The line-level change inside one fenced block: the lines as they read now, additions on
- * green and removals struck through on pink, with `tokenDiffHtml` marking the words that
- * actually moved in a line that was edited. An LCS over lines is the same shape as the token
- * diff one level down and is affordable at a code fence's length; a pathologically long fence
- * falls back to "all of the old, then all of the new" rather than allocating a large matrix.
+/* The line-level change inside one fenced block, with `tokenDiffHtml` marking the words that
+ * moved in an edited line. A pathologically long fence falls back to "all of the old, then all of
+ * the new" rather than allocating a large LCS matrix.
  */
 function markdownCodeDiffHtml(before, after) {
   const a = String(before ?? '').replace(/\n$/, '').split('\n');
@@ -72,8 +62,8 @@ function markdownCodeDiffHtml(before, after) {
     else if (j < m && (i >= n || dp[i][j + 1] >= dp[i + 1][j])) rows.push({kind: 'add', now: b[j++]});
     else rows.push({kind: 'del', old: a[i++]});
   }
-  // A removal immediately followed by an addition is one line somebody edited, and the words
-  // that changed in it are the thing worth pointing at on both halves.
+  // A removal immediately followed by an addition is one line somebody edited, so both halves
+  // point at the words that changed in it.
   return rows.map((r, k) => {
     if (r.kind === 'ctx') return line('ctx', esc(r.now));
     if (r.kind === 'del') {
@@ -85,8 +75,7 @@ function markdownCodeDiffHtml(before, after) {
   }).join('');
 }
 
-// Pink for text that changed, green for text that is new, amber for a code fence -- the three
-// the reader has to tell apart at a glance, and the same three the gutter already uses.
+// Pink for changed text, green for new, amber for a code fence, the same three the gutter uses.
 const markdownChangeKind = row => row.status === 'added' ? 'added'
   : row.status !== 'modified' ? '' : row.type === 'code_block' ? 'code' : 'modified';
 
@@ -95,18 +84,15 @@ function paintMarkdownDiff(doc, rows) {
   const note = doc.parentElement?.querySelector('[data-md-diff-note]');
   if (!pairs) { if (note) note.hidden = false; return false; }
   // A removed block has nothing left to render, so it is reported on the block that now stands
-  // where it stood: a second, thinner mark and the old text in the tooltip. Removals with
-  // nothing after them belong to the last block in the document.
+  // where it stood. Removals with nothing after them belong to the last block in the document.
   let removed = [], last = null;
   for (const {row, at} of pairs) {
     if (row.status === 'removed') { removed.push(row); continue; }
     const node = nodes[at];
     let host = node;
-    // A fenced block is the one place a rendering can carry a line diff itself, and it is also
-    // the one place the mark cannot simply be put on the element: `enhanceCodeBlocks` replaces
-    // every `pre > code` with an editor surface a moment after this runs. An edited fence
-    // becomes the interleaved diff, which has no `<code>` for the upgrade to find; a fence that
-    // is new keeps its highlighted rendering and gets a wrapper to hold the mark instead.
+    // `enhanceCodeBlocks` replaces every `pre > code` with an editor surface a moment after this
+    // runs. An edited fence becomes the interleaved diff, which has no `<code>` for the upgrade
+    // to find, and a new fence keeps its rendering and gets a wrapper to hold the mark.
     if (row.type === 'code_block' && node?.nodeType === 1 && node.tagName === 'PRE'
         && (row.status !== 'equal' || removed.length)) {
       host = document.createElement('div');
@@ -163,21 +149,18 @@ async function mountMarkdownDiff(body, data) {
       `<span>This comparison removes the whole file; its ${d.removed || 0} removed lines are in the unified view.</span></div>`;
     return;
   }
-  // The document is rendered by the same route as every other Markdown surface in the app, and
-  // annotated on the fragment it produced -- there is no second renderer here.
   renderMarkdown(doc, data.right || '', false, () => paintMarkdownDiff(doc, rows));
 }
 
-/* The same marks on the file's own rendered pane, from the ranges the gutter beside it is
- * already drawing. This is the line-range route rather than the block-pairing one: `/git/file`
- * reports changed lines in the working tree's own numbering, and a block owns a range when the
- * two overlap -- Git points a pure deletion at the line that closed over it, so a removal lands
- * on the block that now stands there.
+/* The same marks on the file's own rendered pane, from the ranges the gutter is already drawing.
+ * `/git/file` reports changed lines in the working tree's own numbering, and a block owns a range
+ * when the two overlap. Git points a pure deletion at the line that closed over it, so a removal
+ * is reported on the block that now stands there.
  *
  * Only the first render asks. While the file is being typed the ranges describe the version on
- * disk, and the honest number of marks for a paragraph that has moved under them is none. The
- * tags are read before the request goes out, because by the time it answers the code-block
- * upgrade has already replaced every `<pre>` with an editor surface.
+ * disk, and no marks is the honest answer for a paragraph that has moved under them. The tags are
+ * read before the request goes out, because by the time it answers the code-block upgrade has
+ * replaced every `<pre>` with an editor surface.
  */
 async function paintMarkdownFileChanges(el, ranges) {
   if (!ranges?.length) return;
@@ -211,12 +194,9 @@ async function leeOpenFile(path) {
   if(version!==openFileVersion)return;
   const doc=new DOMParser().parseFromString(html,'text/html'),fresh=doc.querySelector('#tabbar');
   // `/tab/open` answers a refusal with an error div and a 200, so the reason is in the body.
-  // Reporting "no tab bar" instead threw away the only sentence that said what was wrong.
   if(!fresh)throw new Error(doc.querySelector('.lee-err')?.textContent?.trim()||'tab open returned no tab bar');
-  // `#tabbar` is an htmx swap target for tab selection and for opening a vault document, so a
-  // failed swap can replace the element with an error string and take it out of the page. Every
-  // open after that failed on the missing element rather than on anything to do with the file,
-  // which looks exactly like the UI having seized. Put it back instead.
+  // `#tabbar` is an htmx swap target, so a failed swap can replace it with an error string and
+  // take it out of the page. Every open after that fails on the missing element, so put it back.
   const old=$('#tabbar');
   if(old)old.replaceWith(fresh);
   else $('#header')?.insertBefore(fresh,$('.lee-tab-overflow')||null);

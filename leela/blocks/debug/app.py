@@ -56,7 +56,7 @@ def connect(app, ctx):
         root = ws.project_root or Path.cwd()
         cwd = config.get('cwd') or str(root)
         if cwd and not Path(cwd).is_absolute(): cwd = str((root/str(cwd)).resolve())
-        # Resolved after `cwd`, so the debugger lands in the venv of whatever is being debugged.
+        # Resolved after `cwd`, so the debugger uses the venv of whatever is being debugged.
         python = d.get('python') or python_for(cwd, ws) or sys.executable
         program = config.get('program') or (ctx.tab.path if ctx.tab and (ctx.tab.path or '').endswith('.py') else '')
         if program and not Path(program).is_absolute(): program = str((root/program).resolve())

@@ -78,29 +78,29 @@ function renderTurns(log, turns, heading) {
     log.appendChild(item);
   }
 }
-/* A summarised title has arrived as `Title: Ramabana CLI ASCII`, quotes and all, and the stored
-   ones keep the prefix after the storage point is fixed, so every display cleans it. */
+/* A summarised title arrives as `Title: Ramabana CLI ASCII`, quotes and all, and stored ones keep
+   the prefix after the storage point is fixed, so every display cleans it. */
 const titleText = t => String(t || '').replace(/\s+/g, ' ').trim()
   .replace(/^title\s*:\s*/i, '').replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim();
 const sessionTime = s => s.started ? new Date(s.started * 1000).toLocaleString() : s.id.replace(/^agent_/, '');
-/* `/agent/history` lists conversations without their turns: all of them together was 60MB of JSON
-   and forty seconds once Leela and the CLI shared one log. The turns of the one being opened come
-   from here, and `count` is what the list knows about the rest. */
+/* `/agent/history` lists conversations without their turns, since Leela and the CLI share one log.
+   The turns of the one being opened come from here, and `count` is what the list knows about the
+   rest. */
 const sessionTurns = async id => {
   if (!id) return [];
   try { return (await api('/agent/history/session?id=' + encodeURIComponent(id))).turns || []; }
   catch (e) { status(String(e.message || e), 'err'); return []; }
 };
 /* Leela and the ramabana CLI append to one log, and only Leela marks the sessions it started, so
-   anything unmarked reads as the CLI's -- including Leela's own history from before the mark. */
+   anything unmarked reads as the CLI's, including Leela's history from before the mark. */
 const leelaOnly = () => localStorage.getItem('leeHistoryLeelaOnly') === '1';
 const shownSessions = groups => leelaOnly() ? groups.filter(s => s.app === 'leela') : groups;
 async function showHistorySession(group, groups) {
   const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
   const index = document.createElement('nav'); index.className = 'lee-history-index';
-  /* A conversation is known by what it was about, so its name is the whole option: the models and
-     the turn count crowded out the one part a person reads. The time still identifies one that has
-     no name yet, which is every conversation before its first turn finished. */
+  /* A conversation is known by what it was about, so its name is the whole option. The time
+     identifies one that has no name yet, which is every conversation before its first turn
+     finished. */
   const all = groups || [], shown = shownSessions(all), hidden = all.length - shown.length;
   const options = shown.map(s =>
     `<option value="${esc(s.id)}"${s.id === group?.id ? ' selected' : ''}>` +
@@ -139,10 +139,10 @@ async function showHistorySession(group, groups) {
   }
   log.scrollTop = 0;
 }
-/* The live pane is DOM only: a reload, an htmx swap of the shell, or a switch to a conversation
+/* The live pane is DOM only, so a reload, an htmx swap of the shell, or a switch to a conversation
    this tab has never shown leaves it blank while the turns are still on disk. They come from the
-   server for the named conversation, and replace what is on screen rather than being added to it:
-   painting into what is already there is what duplicated a transcript on the way back to it. */
+   server and replace what is on screen, because painting into what is already there duplicated a
+   transcript on the way back to it. */
 async function paintAgentThread(id) {
   const log = $('#agentlog'); if (!log) return null;
   const d = await api('/agent/thread/turns' + (id ? '?thread=' + encodeURIComponent(id) : ''));
@@ -154,9 +154,8 @@ async function paintAgentThread(id) {
   lee.agentLive = log.innerHTML; log.scrollTop = log.scrollHeight;
   return d;
 }
-/* A fresh process starts on an empty conversation and stays there. Carrying the last one in was
-   the pane opening on work a person had moved on from, and its turns were not in the model's
-   context either way. History is where a past conversation is picked up from. */
+/* A fresh process starts on an empty conversation and stays there. History is where a past
+   conversation is picked up from. */
 async function rehydrateAgentLive() {
   const log = $('#agentlog');
   if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentHydrating) return;
@@ -186,8 +185,8 @@ function rememberAgentThread() {
   if (!lee.agentThread) return;
   lee.agentThreadDrafts.set(lee.agentThread, $('#agentprompt')?.value || '');
 }
-/* A conversation with nothing said in it has no name to show, and its id is a bare timestamp that
-   reads as noise. Say what it is and when it started instead. */
+/* A conversation with nothing said in it has no name, and its id is a bare timestamp. Say what it
+   is and when it started instead. */
 function threadName(t) {
   const named = titleText(t.title); if (named) return named;
   const at = /(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/.exec(t.id || '');
@@ -196,8 +195,8 @@ function threadName(t) {
 function threadLabel(t) {
   return `${threadName(t)} · ${t.state}${t.unread ? ` · ${t.unread} new` : ''}${t.muted ? ' · muted' : ''}`;
 }
-/* One card per conversation, with its own controls, rather than a select plus four buttons in the
-   head that all acted on whichever one happened to be showing. */
+/* One card per conversation, with its own controls, rather than a select plus four buttons that
+   all acted on whichever one happened to be showing. */
 function paintAgentThreads(d) {
   const rows = d.threads || [];
   lee.agentThreadRows = rows; lee.agentThread = d.active || lee.agentThread;
@@ -296,8 +295,8 @@ async function leeAgentThreadOpen(id) {
   leeAgentThreadsToggle(false);
   $('#agentprompt')?.focus();
 }
-/* `status()` is footer-only and addressed to nothing, so it cannot carry this: a checkpoint in
-   another conversation is the one thing that costs a person time, and it needs naming and a way in. */
+/* `status()` is footer-only and addressed to nothing. A checkpoint in another conversation needs
+   naming and a way in. */
 function paintAgentAttention(attention, rows) {
   const bar = $('#agentattention'); if (!bar) return;
   const waiting = (attention.waiting || []).filter(id => id !== attention.active);
@@ -320,8 +319,8 @@ function agentDocumentTitle(attention) {
   if ((attention.waiting || []).length) bits.push('(!)');
   return bits.length ? `${bits.join(' ')} · ${base}` : base;
 }
-/* Switching to the conversation that asked, and then to the question it asked -- landing a person
-   in the right pane with no idea what wanted them is half an answer. */
+/* Switching to the conversation that asked, and then to the question it asked. The right pane with
+   no idea what wanted you is half an answer. */
 async function leeAgentAttend(id) {
   await leeAgentThreadSwitch(id);
   const card = $('.lee-approval-card') || $('[data-approval]');
@@ -340,9 +339,9 @@ async function leeAgentThreadMute(id = lee.agentThread) {
 async function refreshAgentThreads() {
   const d = await api('/agent/threads'); paintAgentThreads(d); notifyAgentAttention(d); return d;
 }
-/* Off by default, and permission is asked for only when a person turns it on -- a prompt nobody
-   invited is the reason browsers stopped honouring them. Every state is terminal: unsupported and
-   denied disable delivery and say so once, rather than asking again on the next event. */
+/* Off by default, and permission is asked for only when a person turns it on, because a prompt
+   nobody invited is why browsers stopped honouring them. Every state is terminal: unsupported and
+   denied disable delivery and say so once. */
 function agentNotifyEnabled() { return localStorage.getItem('lee-agent-notify') === 'on'; }
 async function leeAgentNotifyToggle(on) {
   if (!on) { localStorage.setItem('lee-agent-notify', 'off'); return status('notifications off', 'ok'); }
@@ -352,8 +351,8 @@ async function leeAgentNotifyToggle(on) {
   if (state !== 'granted') { localStorage.setItem('lee-agent-notify', 'off'); return status('notifications are blocked for this site', 'err'); }
   localStorage.setItem('lee-agent-notify', 'on'); status('notifications on', 'ok');
 }
-/* One notification per thing that happened, keyed by what happened -- replay, a reconnect and a
-   second tab all deliver the same terminal event, and a person should hear about it once. */
+/* One notification per thing that happened, keyed by what happened: replay, a reconnect and a
+   second tab all deliver the same terminal event. */
 function notifyAgentAttention(d) {
   const seen = lee.agentNotified ||= new Set();
   if (!agentNotifyEnabled() || !('Notification' in window) || Notification.permission !== 'granted') return;
@@ -380,7 +379,7 @@ async function leeAgentNew() {
 }
 /* A conversation with a turn in flight keeps producing while it is off screen. Switching to it
    paints its finished turns from the server first, then attaches to its feed from the last point
-   it settled, so the running turn arrives once and nothing already drawn is drawn twice. */
+   it settled, so the running turn arrives once and nothing drawn is drawn twice. */
 async function leeAgentThreadSwitch(id) {
   if (!id || id === lee.agentThread) return; rememberAgentThread();
   try {
@@ -413,8 +412,8 @@ async function leeAgentThreadClose(id = lee.agentThread) {
     paintAgentThreads(d); const log = $('#agentlog'); if (log) log.innerHTML = ''; if (d.active) { const active = d.active; lee.agentThread = ''; await leeAgentThreadSwitch(active); }
   } catch (e) { status(String(e.message || e), 'err'); }
 }
-// The rehydrated banner survives `restoreAgentLive`, which round-trips the pane through
-// innerHTML: an id in an onclick attribute outlives that, a bound listener does not.
+// The rehydrated banner survives `restoreAgentLive`, which round-trips the pane through innerHTML:
+// an id in an onclick attribute outlives that, a bound listener does not.
 window.leeAgentNew = leeAgentNew; window.leeAgentThreadsToggle = leeAgentThreadsToggle;
 window.leeAgentThreadOpen = leeAgentThreadOpen; window.leeAgentReshape = leeAgentReshape; window.leeAgentAttend = leeAgentAttend;
 window.leeAgentThreadMute = leeAgentThreadMute; window.leeAgentThreadSwitch = leeAgentThreadSwitch;
@@ -556,8 +555,8 @@ function renderSessionCells(log, d) {
 
 function agentLog(html) {
   const log = $('#agentlog');
-  // Never use `innerHTML +=`: it reparses every existing child and silently detaches all
-  // checkpoint, fork, rollback, CodeMirror, and disclosure handlers already in the log.
+  // Never use `innerHTML +=`: it reparses every existing child and silently detaches every
+  // checkpoint, fork, rollback, CodeMirror and disclosure handler already in the log.
   log.insertAdjacentHTML('beforeend', html);
   log.scrollTop = log.scrollHeight;
 }

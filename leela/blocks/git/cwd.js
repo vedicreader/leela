@@ -1,4 +1,3 @@
-/* ---------------------------------------------------------- cwd and source control */
 function paintGitTree(d) {
   const rows = new Map();   // indexed once rather than rescanned per change
 
@@ -23,9 +22,9 @@ async function refreshOpenGitMarks() {
     const view = lee.editors.get('file'); if (view) LeeCM.setChangedLines(view, lee.fileGit.ranges || []);
   } catch (_) {}
 }
-// The same mark a file gets, at the unit a notebook has. Line numbers cannot say anything
-// useful about an .ipynb -- it is JSON, and editing one cell moves every line below it -- so
-// the server answers per cell id and the whole cell carries the bar.
+// The same mark a file gets, at the unit a notebook has. Line numbers say nothing useful about an
+// .ipynb, since it is JSON and editing one cell moves every line below it, so the server answers
+// per cell id and the whole cell carries the bar.
 async function paintNotebookGitMarks() {
   if (lee.kind !== 'notebook' || !lee.path) return;
   try { lee.notebookGit = await api('/git/notebook?path=' + encodeURIComponent(lee.path)); }
@@ -38,8 +37,8 @@ function repaintNotebookGitMarks() {
     const kind = cells[el.dataset.id] || '';
     el.classList.toggle('changed', !!kind);
     el.classList.toggle('changed-added', kind === 'added');
-    // The bar on the cell says *that* it differs; the lines inside say where. A mounted
-    // editor is told directly -- `mountCell` only reads these once, when it is created.
+    // The bar on the cell says that it differs, the lines inside say where. A mounted editor is
+    // told directly, because `mountCell` reads these only when it is created.
     const view = lee.editors.get(el.dataset.id);
     if (view) LeeCM.setChangedLines(view, lines[el.dataset.id] || []);
   });
@@ -48,14 +47,12 @@ function repaintNotebookGitMarks() {
 
 /* The notebook's overview stripe.
 
-   A file gets one from CodeMirror, because a file *is* the editor and the editor owns the
-   scrollbar. A notebook scrolls as a page of cells, so its scrollbar belongs to `#editor`
-   and nothing inside any one cell can mark it -- which left the per-cell change marks
-   invisible until you had already scrolled to them, and knowing where the changes are
-   without scrolling is the entire point of an overview.
+   A file gets one from CodeMirror, because the editor owns the scrollbar. A notebook scrolls as a
+   page of cells, so its scrollbar belongs to `#editor` and nothing inside a cell can mark it,
+   which left the per-cell change marks invisible until you had scrolled to them.
 
-   Same rules as the editor's: it stands where the scrollbar was, it maps the whole document
-   onto its height, and it is never a second thing to scroll. */
+   Same rules as the editor's: it stands where the scrollbar was, it maps the whole document onto
+   its height, and it is never a second thing to scroll. */
 const NB_OVERVIEW_W = 14;
 function nbOverview() {
   const stage = $('#editorstage'); if (!stage) return null;
@@ -78,14 +75,14 @@ function nbOverview() {
 function paintNotebookOverview() {
   const host = $('#editor'), stage = $('#editorstage'), c = nbOverview();
   if (!c || !host || !stage) return;
-  // Nothing to overview when the whole notebook already fits: the stripe would be a bar
-  // saying "you can see all of this", and it would take the scrollbar away to say it.
+  // Nothing to overview when the whole notebook fits, and the stripe would take the scrollbar
+  // away to say so.
   const on = lee.kind === 'notebook' && host.scrollHeight > host.clientHeight + 4;
   c.hidden = !on; host.classList.toggle('has-overview', on);
   if (!on) return;
   const stageBox = stage.getBoundingClientRect(), box = host.getBoundingClientRect();
-  // Measured rather than pinned to the stage, so a split editor puts it on the notebook's
-  // own right edge instead of the pane beside it.
+  // Measured rather than pinned to the stage, so a split editor puts it on the notebook's own
+  // right edge.
   c.style.left = (box.right - stageBox.left - NB_OVERVIEW_W) + 'px';
   c.style.top = (box.top - stageBox.top) + 'px';
   const dpr = devicePixelRatio || 1, w = NB_OVERVIEW_W, h = Math.max(40, host.clientHeight);
@@ -124,23 +121,17 @@ document.addEventListener('scroll', e => {
 addEventListener('resize', queueNotebookOverview);
 /* Everything downstream of a branch, without a page refresh.
 
-   The pill and the tree badges were repainted by this poll; nothing else was. So a checkout
-   -- from the panel, from lazygit in the terminal, or from the agent -- left the editor's
-   change marks describing the branch you came from, the History and Branches lists showing
-   what they showed before, and the release panel counting against the old tag.
+   The pill and the tree badges were repainted by this poll and nothing else was. A checkout from
+   the panel, from lazygit or from the agent left the editor's change marks describing the branch
+   you came from, the History and Branches lists unchanged, and the release panel counting against
+   the old tag.
 
-   `head` is in the signature because a commit is the case the others miss: branch, counts
-   and file list all read the same afterwards, and the only thing that moved is the sha. */
+   `head` is in the signature because a commit is the case the others miss: branch, counts and file
+   list all read the same afterwards, and only the sha moved. */
 function gitSignature(d) {
-  /* Each changed file's own state, not merely how many there are. The count is the same before
-     and after almost every edit a person actually makes -- typing in a file that was already
-     modified moves no count, so the signature did not move and the panel went on showing the
-     stats it drew when the file first changed. That is the "source control does not refresh until
-     I refresh it" report: the poll was running the whole time and finding nothing to say.
-
-     The staged/worktree status codes and the line counts are what actually differ, so they are
-     what goes in. Cheap: `/git/info` already returns all of it on every poll, so this reads a
-     payload that was being fetched and thrown away. */
+  /* Each changed file's own state, not how many there are. Typing in a file that was already
+     modified moves no count, so a signature built from counts alone never moves. The status codes
+     and line counts are what differ, and `/git/info` already returns all of it on every poll. */
   const changes = (d.changes || []).map(c =>
     [c.path, c.index, c.worktree,
      (c.staged_stat || {}).additions, (c.staged_stat || {}).deletions,
@@ -161,23 +152,19 @@ function gitChanged() {
     gitUI.snapshot = null; gitUI.history = [];
     renderGitPanel();
   }
-  // A release is measured from the last tag on this branch, and a deploy from what is
-  // committed, so both are answers about the branch rather than about the panel.
+  // A release is measured from the last tag on this branch and a deploy from what is committed,
+  // so both are answers about the branch rather than about the panel.
   if (left?.classList.contains('left-releases')) leeReleases();
   if (left?.classList.contains('left-deploys')) leeDeploys();
 }
 window.leeGitChanged = gitChanged;
 
-// Choosing another folder is a bigger change than a commit, and needs its own refresh.
-// `gitChanged` reloads what depends on the *branch*; this reloads what depends on which
-// project it is at all -- so drive and workflows are here and not there, because a commit does
-// not change where a project deploys to or which workflows it has, and a different project
-// certainly does. Without this, the open panel kept describing the folder left behind, which
-// looked exactly like the backend still being pinned to the first repository.
+// Choosing another folder is a bigger change than a commit. `gitChanged` reloads what depends on
+// the branch, this reloads what depends on which project it is, so drive and workflows are here:
+// a commit does not change where a project deploys to, and a different project does.
 function projectChanged() {
-  // Every cached answer describes the folder we just left, whether or not its panel is on
-  // screen. They all go: otherwise opening one of these panels a minute later shows the old
-  // project's state, which is the same bug arriving later and harder to explain.
+  // Every cached answer describes the folder we just left, on screen or not. They all go, or
+  // opening one of these panels a minute later shows the old project's state.
   gitUI.snapshot = null; gitUI.history = [];
   relUI.data = drvUI.data = null;
   Object.assign(wfUI, {data: null, runs: null, env: null, catalogue: null, docker: null});
@@ -189,7 +176,7 @@ function projectChanged() {
 }
 
 // Which repository a panel request is about lives in `gitUI.repo`, and `gitUrl` puts it on the
-// query. These two only ask whether Source Control is on screen, and repaint it if it is.
+// query. These two only ask whether Source Control is on screen.
 function scmPanelOpen() { return !!$('#left')?.classList.contains('left-git'); }
 function refreshScmIfOpen(snapshot = null) {
   if (!scmPanelOpen()) return;
@@ -211,8 +198,8 @@ async function refreshProjectPills() {
                cwd.title = d.cwd || 'choose a working directory'; }
   } catch (_) {}
   try {
-    // Bare, not `gitUrl`: the pill and the tree badges describe the repository the active tab
-    // is in, so a panel pinned elsewhere must not repaint them.
+    // Bare, not `gitUrl`: the pill and the tree badges describe the repository the active tab is
+    // in, so a panel pinned elsewhere must not repaint them.
     const d = await gitInfo();
     const git = $('#gitpill'); if (!git) return;
     const n = (d.changes || []).length;
@@ -226,8 +213,8 @@ async function refreshProjectPills() {
   }
 }
 
-// `/git/info` answers 200 with `repo: false` outside a checkout. A surface that only works
-// inside one wants the throw it always had; chrome wants to go quiet.
+// `/git/info` answers 200 with `repo: false` outside a checkout. A surface that only works inside
+// one wants the throw it always had, and chrome wants to go quiet.
 async function gitInfo(url = '/git/info') {
   const d = await api(url);
   if (d && d.repo === false) throw new Error(d.note || 'not inside a Git repository');

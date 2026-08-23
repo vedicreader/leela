@@ -136,9 +136,9 @@ class Thread:
         row = next((r for r in ai.sessions() if r.get('id') == self.id), {})
         return {**meta, 'title': row.get('title', '')}
     def name(self, meta=None):
-        """What to call this conversation. A name a person chose, else a summarised or derived one,
-        else the first thing they said: a card is named the moment a turn starts, and does not wait
-        for the summariser, the sidecar, or the turn to reach the log."""
+        """What to call this conversation: a name a person chose, else a summarised or derived one,
+        else the first thing they said. A card is named the moment a turn starts, rather than
+        waiting for the summariser, the sidecar, or the turn to reach the log."""
         meta = self.meta() if meta is None else meta
         chosen = self.title.strip() if self.title else ''
         return chosen or str(meta.get('title', '')).strip() or ' '.join(self.opener.split())[:60]
@@ -253,7 +253,7 @@ class Threads:
             rows = list(self._rows.values()); self._rows.clear(); self.active_id = ''
             self.workspace._ai = self.workspace._turn_runner = None
         # shutting down is the one path that has to finish: one conversation that cannot close is
-        # not a reason to leave the rest open, and the caller is told rather than raised at
+        # not a reason to leave the rest open, so problems are returned rather than raised
         problems = []
         for thread in rows:
             try: problems += [f'{thread.id}: {p}' for p in (thread.close() or [])]

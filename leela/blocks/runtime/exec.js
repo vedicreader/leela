@@ -1,4 +1,3 @@
-/* ------------------------------------------------------------------ exec */
 function mountExec() {
   const host = $('#execbox'); if (!host || lee.editors.has('exec')) return;
   const v = createEditor(host, {

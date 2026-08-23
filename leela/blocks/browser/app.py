@@ -22,16 +22,14 @@ def connect(app, ctx):
 
     @rt('/browser/ready')
     def browser_ready():
-        "Could a page be opened here? `ok` is a Chrome to drive, `running` is one already up."
+        "Whether a page could be opened here: `ok` is a Chrome to drive, `running` is one already up."
         return {'ok': browser.available(), 'running': browser.running(), 'port': browser.port}
 
     @rt('/browser/external')
     def browser_external(url: str = ''):
-        """Open `url` in the machine's own browser, which is where your sessions are.
+        """Open `url` in the machine's own browser, which is where the logged-in sessions are.
 
-        The CDP Chrome is a fresh automation profile: Medium and its like answer it with a bot
-        wall, and it is there for ramabana and fossick to drive. Reading is not driving.
-        """
+        The CDP Chrome is a fresh automation profile that sites like Medium answer with a bot wall."""
         try:
             if urlparse(url).scheme not in ('http', 'https'):
                 raise ValueError(f'{url[:80]!r} is not an http address')
@@ -41,7 +39,7 @@ def connect(app, ctx):
 
     @rt('/browser/tabs')
     async def browser_tabs():
-        "Every page the CDP Chrome holds -- Leela's own workspace windows included."
+        "Every page the CDP Chrome holds, Leela's own workspace windows included."
         try: return {'ok': True, 'tabs': [p.dict() for p in await browser.pages()]}
         except BrowserUnavailable as e: return {'ok': False, 'error': errstr(e), 'tabs': []}
 
@@ -57,7 +55,7 @@ def connect(app, ctx):
 
     @rt('/browser/attach')
     async def browser_attach(id: str = '', title: str = ''):
-        "Adopt a page Chrome already has -- one fossick opened, or one a link spawned."
+        "Adopt a page Chrome already has: one fossick opened, or one a link spawned."
         try:
             state = await browser.state(id)
             ctx.session.open_web(id, title or state.get('title') or state.get('url') or 'page')
@@ -79,7 +77,7 @@ def connect(app, ctx):
 
     @rt('/browser/markdown')
     async def browser_markdown(id: str = '', remember: bool = False):
-        "The live page as Markdown -- what research would have fetched, after the JS ran."
+        "The live page as Markdown, what research would have fetched after the JS ran."
         try:
             md = await browser.markdown(id)
             state = await browser.state(id)
@@ -117,7 +115,7 @@ def _socket(app, ctx, browser):
                                                scale=hello.get('scale') or 1, owner=mine)
             cast = True
             await say(t='ready', w=w, h=h, **await browser.state(tid))
-            # Guarded: Chrome dying here left a cast nobody stops and a socket nobody closes.
+            # Guarded: Chrome dying here must leave neither a cast running nor a socket open.
             cdp, page = await browser.cdp(), await browser.page(tid)
         except Exception as e:
             await say(t='error', error=errstr(e))

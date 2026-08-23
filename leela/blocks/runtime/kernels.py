@@ -196,7 +196,7 @@ def _kernel_env(python=None):
     return env
 
 def _spec(python=None, name='python3', kernel='ipykernel'):
-    "A kernelspec pinned to a specific interpreter, so the kernel lands in *this* venv."
+    "A kernelspec pinned to a specific interpreter, so the kernel runs in *this* venv."
     runtime = _runtime_python(python)
     if kernel == 'ipymini': argv = [runtime, '-Xfrozen_modules=off', '-m', 'ipymini', '-f', '{connection_file}']
     else: argv = [runtime, '-m', 'ipykernel_launcher', '-f', '{connection_file}']
@@ -384,7 +384,7 @@ class Kernel(_Inspector):
             self._ipc_dir = None
     async def execute(self, code, silent=False, store_history=True, on_output=None, timeout=None,
         on_debug=None):
-        "Run `code` on the shell channel and collect nbformat-shaped outputs, streaming each to."
+        "Run `code` on the shell channel and collect nbformat-shaped outputs, streaming each to `on_output`."
         if not self.alive: return ExecOutcome(ok=False, error='kernel is not running')
         async with self._exec_lock, self._shell_lock:
             if not self.alive: return ExecOutcome(ok=False, error='kernel is not running')
@@ -521,7 +521,7 @@ class Kernel(_Inspector):
             'frames': frames, 'scopes': scopes, 'variables': variables,
             'source': self._debug_source}
     async def debug_evaluate(self, expression, frame_id=None):
-        "Evaluate an expression in the selected paused frame—the debugger's exec console."
+        "Evaluate an expression in the selected paused frame, the debugger's exec console."
         if not self._debug_thread: raise RuntimeError('the debugger is not paused')
         if frame_id is None:
             state = await self.debug_state()
@@ -592,7 +592,7 @@ class GatewayService:
         if self.server is not None: self.server.should_exit = True
 
 class GatewayKernel(_Inspector):
-    "The `Kernel` interface over jupygate + jupyasyncclient, so client reconnects do not own the."
+    "The `Kernel` interface over jupygate + jupyasyncclient, so a kernel outlives a client reconnect."
     def __init__(self, gateway, cwd=None, name=None, python=None, inspect=True,
         agent='restricted', port=8000, kernel='ipykernel'):
         store_attr()
@@ -678,14 +678,13 @@ IDLE_SECONDS = 30*60
 SWEEP_SECONDS = 60
 
 class KernelLimit(RuntimeError):
-    """The ceiling is reached. `candidate` is the kernel a person can be offered, or None when every
-    one of them is running something and there is nothing safe to take."""
+    "The ceiling is reached. `candidate` is a kernel that can be offered to close, or None while all are busy."
     def __init__(self, msg, candidate=None, limit=0):
         super().__init__(msg)
         self.candidate, self.limit = candidate, limit
 
 class RuntimeBroker:
-    "Process ceiling across the kernel pools of every web workspace; never evicts a live namespace."
+    "Process ceiling across the kernel pools of every web workspace. Never evicts a live namespace."
     def __init__(self, max_kernels=None, auto_manage=None):
         self.max_kernels = int(max_kernels or os.environ.get('LEELA_MAX_KERNELS', 12))
         self.auto_manage = bool(ifnone(auto_manage,

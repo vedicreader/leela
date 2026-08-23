@@ -1,4 +1,4 @@
-"The tab strip. A duplicated title widens to `root/relative/path`; a unique one stays short."
+"The tab strip, and the kernel pill beside it."
 
 from __future__ import annotations
 

@@ -1,9 +1,9 @@
-/* Running a prompt cell. The answer lands in the cell rather than in the pane below,
- * which is the point of the cell type: it saves with the notebook and reads in order.
+/* Running a prompt cell. The answer arrives in the cell rather than the pane below, so it saves
+ * with the notebook and reads in order.
  *
- * The tab is deliberately *not* re-mounted afterwards even though the assistant's tools
- * may have edited files -- /tab/state reloads the notebook from disk, which would throw
- * away the answer that has not been saved yet. Files it changed are reported instead. */
+ * The tab is deliberately not re-mounted afterwards, even though the assistant's tools may have
+ * edited files: `/tab/state` reloads the notebook from disk, which would throw away the answer
+ * that has not been saved yet. Files it changed are reported instead. */
 async function askCell(i, src, el) {
   const c = lee.cells[i], runPath = lee.path, cellId = c.id;
   const notice = $('#model-' + c.id);

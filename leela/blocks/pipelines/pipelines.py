@@ -140,7 +140,7 @@ class Pipeline:
             try: q.put_nowait(data)
             except Exception: self._subs.discard(q)
     def write(self, data):
-        "Keystrokes into the running step -- twine asks for a password."
+        "Keystrokes into the running step: twine asks for a password."
         if self.pty is not None and self.pty.alive: self.pty.write(data)
     def resize(self, cols, rows):
         if self.pty is not None: self.pty.resize(cols, rows)
@@ -235,7 +235,7 @@ RELEASE_FILE = '.leela/release.json'
 ReleaseError = PipelineError
 
 def nbdev_project(root):
-    "Is this an nbdev project? `settings.ini` for nbdev 2, `[tool.nbdev]` in `pyproject.toml` for."
+    "An nbdev project: `settings.ini` for nbdev 2, or `[tool.nbdev]` in `pyproject.toml`."
     root = Path(root)
     try:
         text = (root/'settings.ini').read_text(encoding='utf-8', errors='replace')
@@ -290,11 +290,11 @@ APP_STEPS = [
 ]
 
 def fastship_project(root):
-    "Is this a Python package fastship releases? A `pyproject.toml`, and not an nbdev project."
+    "A Python package fastship releases: a `pyproject.toml`, and not an nbdev project."
     return (Path(root)/'pyproject.toml').exists() and not nbdev_project(root)
 
 def app_project(root):
-    "Does this project package itself into a desktop app? `tools/build_release.py` is what builds one."
+    "Whether the project packages itself into a desktop app, which `tools/build_release.py` builds."
     root = Path(root)
     return (root/'tools'/'build_release.py').exists() and (root/'setup_app.py').exists()
 

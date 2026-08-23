@@ -266,3 +266,38 @@ def test_a_missing_or_unreadable_address_reads_as_nothing_rather_than_failing(se
     serving_file.write_text('{"pid": 1}')
     assert projects.serving() is None, 'an entry with no port names nowhere'
     projects.served(), projects.served()          # removing one that is already gone is not an error
+
+
+def test_a_windowed_launch_gets_the_path_a_terminal_has(monkeypatch):
+    """Finder and the Dock start an app with almost nothing on PATH, so `git` and `claude` went
+    missing and the app reported no repository and no Claude Code while both worked in its own
+    terminal. Asking the login shell is what closes that gap."""
+    import os, shutil
+    from leela import use_login_path
+    monkeypatch.setenv('PATH', '/usr/bin:/bin')
+    got = use_login_path()
+    assert len(got.split(os.pathsep)) > 2, 'a stripped PATH must be widened'
+    assert shutil.which('git'), 'git is what the git panel needs to find'
+
+def test_the_tool_directories_are_added_when_the_shell_cannot_be_asked(monkeypatch, tmp_path):
+    "No SHELL, or one that fails, still has to leave the usual places on PATH."
+    import os
+    import leela
+    monkeypatch.delenv('SHELL', raising=False)
+    monkeypatch.setenv('PATH', '/usr/bin')
+    real = tmp_path/'bin'; real.mkdir()
+    monkeypatch.setattr(leela, 'TOOL_DIRS', (str(real), '/definitely/not/here'))
+    got = leela.use_login_path().split(os.pathsep)
+    assert leela.login_path() is None, 'with no SHELL there is nothing to ask'
+    assert str(real) in got and '/definitely/not/here' not in got, 'only directories that exist'
+
+def test_asking_the_shell_never_hangs_the_launch(monkeypatch):
+    "A profile that blocks would otherwise stall every windowed start before the window appears."
+    import subprocess
+    import leela
+    def slow(*a, **kw): raise subprocess.TimeoutExpired(cmd='sh', timeout=3)
+    monkeypatch.setattr(leela.__dict__['subprocess'] if 'subprocess' in leela.__dict__ else subprocess,
+                        'run', slow, raising=False)
+    monkeypatch.setattr(subprocess, 'run', slow)
+    monkeypatch.setenv('SHELL', '/bin/zsh')
+    assert leela.login_path() is None

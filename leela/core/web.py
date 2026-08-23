@@ -109,5 +109,5 @@ def diff_payload(was, now):
     return {'label': diff_label(was, now), 'rows': [r.dict() for r in diff_rows(udiff(was, now))]}
 
 def found(search, hits):
-    "A hit list plus the backend that produced it -- an empty result is never a mystery."
+    "A hit list plus the backend that produced it, so an empty result is never a mystery."
     return {'backend': search.backend, 'note': search.note, 'hits': [h.dict() for h in hits]}

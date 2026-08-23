@@ -71,7 +71,7 @@ class Cell(Dictable):
         self.reply, self.calls, self.usage = '', [], {}
         return self
     def nbcell(self):
-        "This cell in nbformat v4 shape; nbformat has no prompt cell, so one is written as markdown with."
+        "This cell in nbformat v4 shape. nbformat has no prompt cell, so one is written as markdown with `leela` metadata."
         c = dict(cell_type=self.cell_type, source=self.source, metadata={}, id=self.id)
         meta = {} if self.context_mode == 'auto' else {'context': self.context_mode}
         if self.cell_type == 'code':
@@ -337,7 +337,7 @@ def read_cells(text):
     return cells if isinstance(cells, list) else None
 
 def source_spans(text, cells):
-    "The 1-based file line numbers holding each cell's source strings, or `None` where they cannot."
+    "The 1-based file line numbers holding each cell's source strings, or `None` for a cell that cannot be located."
     lines, spans, idx = (text or '').splitlines(), [], 0
     for cell in cells:
         source = cell.get('source')
@@ -360,7 +360,7 @@ def cell_lines(cell):
     return list(source) if isinstance(source, list) else str(source).splitlines(True)
 
 def _at(cells, spans, i, line_in_cell):
-    "The address of a line inside cell `i`. `id` is `''` before nbformat 4.5, so the index is always."
+    "The address of a line inside cell `i`. `id` is `''` before nbformat 4.5, so the index is carried too."
     span = spans[i]
     return dict(index=i, id=str(cells[i].get('id') or ''), line=line_in_cell,
         file_line=(span[0] + line_in_cell - 1) if span else 0, kind=str(cells[i].get('cell_type') or 'code'))

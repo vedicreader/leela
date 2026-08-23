@@ -1,7 +1,5 @@
-/* The banner says where a cell sits and how big it is. The gutter carries the execution
- * count, which is neither: it is blank until the cell runs, and it renumbers on every rerun.
- * The tooltip carries what a developer needs to reference the cell -- its id -- and what the
- * last run left behind. */
+/* The banner says where a cell sits and how big it is. The gutter carries the execution count,
+ * which is blank until the cell runs and renumbers on every rerun. */
 const cellKind = (c) => ({code: 'py', markdown: 'md', prompt: 'prompt'}[c.cell_type] || c.cell_type);
 const cellLines = (c) => String(c.source || '').split('\n').length;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -30,9 +28,8 @@ function refreshCellMeta(c) {
 }
 window.leeCopyCellId = copyCellId;
 
-/* The per-cell controls, from the same table the toolbar comes from. They act on the cell
- * they are drawn in rather than on the selected one -- clicking ▶ on the third cell has
- * to run the third cell, whatever the cursor was doing. */
+/* The per-cell controls, from the same table the toolbar comes from. They act on the cell they are
+ * drawn in rather than on the selected one, so ▶ on the third cell runs the third cell. */
 const contextLabel = mode => ({keep: 'keep context', discard: 'discard first', auto: 'context auto'}[mode] || 'context auto');
 function paintCellContext(button, c) {
   const mode = c.context_mode || 'auto';
@@ -184,8 +181,8 @@ async function moveCellTo(from, to) {
 function mountCell(c, i) {
   if (lee.editors.has(c.id)) return;
   const key = `${lee.path || 'scratch'}:${c.id}`;
-  // Only a docChanged transaction marks a buffer authoritative. A stale empty cache must
-  // never replace the non-empty source returned by /tab/state after running a cell.
+  // Only a docChanged transaction marks a buffer authoritative. A stale empty cache must never
+  // replace the non-empty source `/tab/state` returned after running a cell.
   const source = lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : c.source;
   c.source = source;
   const v = createEditor($('#cm-' + c.id), {
@@ -194,8 +191,8 @@ function mountCell(c, i) {
     completeUrl: c.cell_type === 'code' ? '/complete' : null,
     onDefinition: c.cell_type === 'code' ? name => findDefinition(name) : null,
     breakpoints: lee.breakpoints.get(c.id) || [],
-    // Line numbers relative to this cell, which is the only place they are drawn. A cell
-    // mounted after the marks arrived would otherwise stay unmarked until the next save.
+    // Line numbers relative to this cell. A cell mounted after the marks arrived would otherwise
+    // stay unmarked until the next save.
     changedLines: (lee.notebookGit?.lines || {})[c.id] || [],
     onBreakpoint: c.cell_type === 'code' ? lines => rememberBreakpoints(c.id, lines) : null,
     settings: {overviewMode:'off'},
@@ -232,8 +229,8 @@ function renderOutputs(c) {
     for (const v of (el._leeCodeViews || [])) try { LeeCM.destroy(v); } catch {}
   });
   box.innerHTML = '';
-  // A prompt cell's "output" is the answer, and it is stored in the cell rather than in
-  // an nbformat output -- so it renders from its own fields.
+  // A prompt cell's "output" is the answer, stored in the cell rather than in an nbformat output,
+  // so it renders from its own fields.
   if (c.cell_type === 'prompt') {
     if ((c.calls || []).length) {
       const steps = document.createElement('div'); steps.className = 'lee-agent-steps lee-cell-agent-steps';
@@ -359,10 +356,10 @@ function outputEl(o) {
     d.classList.add('lee-md-output'); renderMarkdown(d, data['text/markdown']); return d;
   }
   if (data['text/html'] || data['image/svg+xml']) {
-    // Rich reprs get their own shadow root. pandas ships a <style> block with every
-    // DataFrame and `scoped` has been dead for years, so without this an output could
-    // restyle the IDE around it. Very large HTML stays unparsed until requested: parsing
-    // a multi-megabyte table on the main thread is enough to trigger Chrome's hang dialog.
+    // Rich reprs get their own shadow root: pandas ships a <style> block with every DataFrame and
+    // `scoped` has been dead for years, so an output could restyle the IDE around it. Very large
+    // HTML stays unparsed until requested, because parsing a multi-megabyte table on the main
+    // thread triggers Chrome's hang dialog.
     const rich = data['text/html'] || data['image/svg+xml'];
     const show = () => { d.textContent = ''; d.attachShadow({mode: 'open'}).innerHTML = rich; };
     if (rich.length > MAX_OUTPUT_CHARS) {
@@ -395,8 +392,8 @@ function focusCell(i) {
   selectCell(i);
   const c = lee.cells[lee.sel]; if (!c) return;
   const cell = $(`.lee-cell[data-i="${lee.sel}"]`);
-  // CodeMirror focuses its own scroller but cannot reveal itself inside the notebook's
-  // outer scroller. Run-and-advance therefore used to move the caret below the viewport.
+  // CodeMirror focuses its own scroller but cannot reveal itself inside the notebook's outer
+  // scroller, so the cell is scrolled into view here.
   cell?.scrollIntoView({block: 'nearest', inline: 'nearest'});
   const v = ensureCellMounted(lee.sel);
   if (v) requestAnimationFrame(() => LeeCM.focus(v));

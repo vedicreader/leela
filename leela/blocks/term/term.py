@@ -62,7 +62,7 @@ def path_prelude(py, shell=None):
     return f' export PATH="{bindir}:$PATH"'
 
 def lazygit_argv(cwd=None):
-    "The argv to run lazygit against `cwd`, or raise `LazygitMissing`. Resolved at call time, not."
+    "The argv to run lazygit against `cwd`, or raise `LazygitMissing`. Resolved at call time, not import."
     exe = shutil.which('lazygit')
     if not exe: raise LazygitMissing(
         'lazygit is not installed or not on PATH — see https://github.com/jesseduffield/lazygit#installation')
@@ -163,7 +163,7 @@ class Pty:
         s = clean_cli_output(bytes(self.scrollback).decode('utf-8', 'replace'))
         return '\n'.join(s.rstrip('\n').split('\n')[-max(1, n):])
     def kill(self, grace=2.0):
-        "Terminate the whole process group -- a shell usually has children of its own."
+        "Terminate the whole process group: a shell usually has children of its own."
         if self.proc is not None and self.proc.poll() is None:
             try: os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
@@ -209,7 +209,7 @@ class Terminals:
     def get(self, key): return self.terms.get(key)
     def all(self): return L(self.terms.values())
     def states(self):
-        "Every terminal this process is holding, with its key -- which `Pty.state` cannot know."
+        "Every terminal this process is holding, with its key, which `Pty.state` cannot know."
         return [{'id': k, **t.state()} for k, t in self.terms.items()]
     def close(self, key):
         if (t := self.terms.pop(key, None)) is not None: t.kill()

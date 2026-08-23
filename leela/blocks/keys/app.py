@@ -23,7 +23,7 @@ def connect(app, ctx):
     rt = app.route
     @rt('/keys.json')
     def keys_json():
-        "The keymap, and the buttons that run the same actions -- one fetch, one source."
+        "The keymap, and the buttons that run the same actions, from one source in one fetch."
         from ...core.ui import BARS
         return JSONResponse({'keys': web_keymap(), 'help': help_rows(), 'menus': web_menus(),
                              'path': str(keymap_path()), 'notes': list(keymap.NOTES),
@@ -37,7 +37,7 @@ def connect(app, ctx):
         return {'path': str(p), 'exists': p.exists(), 'text': text, 'notes': list(keymap.NOTES)}
     @rt('/keys/save')
     async def keys_save(req):
-        "Write the keymap, re-read it, and hand back what it now says -- including what it refused."
+        "Write the keymap, re-read it, and hand back what it now says, including what it refused."
         d = await req.json()
         text = d.get('text') or ''
         try: json.loads(text)
@@ -52,9 +52,8 @@ def connect(app, ctx):
     async def keys_check(req):
         """What a proposed map would be refused for, without writing it.
 
-        The same `apply_overrides` the save runs, on a throwaway note list, so what the editor warns
-        about while a person types cannot drift from what saving would actually reject.
-        """
+        Runs the save's own `apply_overrides` on a throwaway note list, so the warnings cannot drift
+        from what saving rejects."""
         d = await req.json()
         over = d.get('keys') or {}
         if not isinstance(over, dict): return fail('keys must be an object of action to chord')

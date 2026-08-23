@@ -10,8 +10,8 @@ async function startRun(r) {
   // leaving it to be found under a dock tab and a filter.
   leeRunTerm(s.script || r.cmd, s.label).catch(e => status(String(e.message || e), 'err'));
   if (s.base) {
-    // Running is an explicit choice of runtime. Connect the variable panel immediately instead
-    // of making the user repeat that choice in “env…”.
+    // Running is an explicit choice of runtime, so connect the variable panel rather than making
+    // the user repeat that choice in "env…".
     await post('/envs/watch', {base: s.base});
     paintEnv(s.label);
   }
@@ -64,10 +64,9 @@ async function startDirectDebug(run={}) {
 }
 window.leeStartDebug=startDirectDebug;
 
-/* Which live namespace the variable panel shows. Every process that registered an
- * inspector is here -- a notebook kernel, an app leela started, or something you launched
- * yourself that called `dhrishti.serving.serve()`. Nothing else can be, because nothing else
- * has anything to read. */
+/* Which live namespace the variable panel shows. Every process that registered an inspector is
+ * here: a notebook kernel, an app leela started, or something you launched yourself that called
+ * `dhrishti.serving.serve()`. Nothing else has anything to read. */
 function paintEnv(name) {
   lee.env = name || '';
   const t = $('#envtag'); if (!t) return;
@@ -98,8 +97,7 @@ async function pickEnv() {
   });
 }
 
-/* The configurations themselves, editable in place for the same reason the keymap is:
- * telling someone to go and find a JSON file is not a feature. */
+/* The configurations themselves, editable in place for the same reason the keymap is. */
 async function editRuns() {
   const d = await api('/runs/file');
   let data;

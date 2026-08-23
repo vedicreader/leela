@@ -57,13 +57,7 @@ def connect(app, ctx):
         session.watch_env(None)
         return tab_bar(session)
     def _held(t):
-        """The version the cached copy of `t` was read at, and whether the file has moved since.
-
-        A branch switch, a rebase or another editor replaces the file while a tab still holds the old
-        one. The copy stays authoritative, because it carries outputs and cell state the file does not.
-        Stamping it with the version now on disk is what did the damage: the browser sent that back as
-        its base, `/nb/save` compared base against disk, found them equal, and wrote the old content
-        over the new. Reported against the version it was actually read at, the guard catches it."""
+        "The version the cached copy of `t` was read at, and whether the file has moved since."
         key, now = t.path or t.title, disk_version(t.path) if t.path else ''
         was = docs.versions.get(key)
         return (now, False) if was is None or was == now else (was, True)
@@ -123,9 +117,8 @@ def connect(app, ctx):
     def keep_outside_write(path, version):
         """A write Leela did not make, kept before the editor takes it.
 
-        This poll is the only moment anything notices another process editing an open file, and the
-        editor's next move is to load it. Whatever it is replacing has to be copied first.
-        """
+        This poll is the only place another process's edit to an open file is noticed, and the
+        editor's next move is to load it over what is there."""
         if outside.get(path) == version: return
         outside[path] = version
         try: ctx.history.keep(path, None, ctx.fs.read(path), 'changed outside Leela')

@@ -21,7 +21,7 @@ class DiffRow(Dictable):
     line: int = 0
 
 def udiff(a, b, names=None, n=3):
-    "Unified diff of `a` and `b`, `''` when they match. `names` is an optional `(old, new)` pair of."
+    "Unified diff of `a` and `b`, `''` when they match. `names` is an optional `(old, new)` pair."
     return str_diff(a or '', b or '', n=n, names=names)
 
 _HUNK = re.compile(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@')

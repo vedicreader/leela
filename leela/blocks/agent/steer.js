@@ -1,6 +1,6 @@
-/* Most callers pass no state -- a turn starting, a stream tick, a turn ending -- and a steer is
-   not theirs to forget. Only a payload that actually carries `queued_steer` may change it, so
-   the acknowledgement survives until the server says the steer was taken. */
+/* Most callers pass no state, and a steer is not theirs to forget. Only a payload carrying
+   `queued_steer` may change it, so the acknowledgement survives until the server says the steer
+   was taken. */
 function updateAgentRunstrip(state = {}) {
   const strip = $('#agentrunstrip'); if (!strip) return;
   if ('queued_steer' in state) setQueuedSteer(state.queued_steer || '');
@@ -15,7 +15,7 @@ function updateAgentRunstrip(state = {}) {
   const flattenRuns = rows => rows.flatMap(r => [r, ...flattenRuns(r.children || [])]);
   const flat = flattenRuns(runs);
   // A fan-out's rows tell each other apart only by what each subagent was asked, and the buttons'
-  // row leaves that a dozen characters. The rows take the width; the buttons go under them.
+  // row leaves that a dozen characters. The rows take the width and the buttons go under them.
   strip.classList.toggle('fanned', flat.length > 1);
   $('.lee-agent-run-state', strip).innerHTML = flat.length ? flat.map(r => {
     const elapsed = r.started ? Math.max(0, Date.now() / 1000 - r.started) : 0;
@@ -43,9 +43,8 @@ function updateAgentSendMode(mode = 'send') {
   button.title = mode === 'send' ? 'send this as a turn'
     : 'hand this to the model after the current call — shift-click to stop the run and send it now';
 }
-/* A steer is something the person said in the middle of a turn, so it belongs inside that turn's
-   timeline rather than after it. Appended to the log instead, it stayed below every chunk and tool
-   row that followed and read as a note stuck to the bottom of the pane. */
+/* A steer belongs inside the turn's timeline rather than after it, among the chunks and tool rows
+   it came between. */
 const steerHost = log => lee.agentTimeline?.root?.isConnected ? lee.agentTimeline.root : log;
 /* The local reply and the feed event carry the same steer, so the same text twice with nothing
    between it is one. Two identical steers a person really sent have a turn's work in between. */
@@ -64,9 +63,8 @@ function setQueuedSteer(text, shown = '', cancel = false) {
     if (cancel) { old?.remove(); return; }
     if (old) { old.classList.remove('queued'); $('[data-cancel-steer]', old)?.remove(); return; }
     /* Steering against a waiting approval answers it there and then, so it is never queued and
-       there is no card to un-queue. Nothing recorded what was said. It is a message from the
-       person; the local reply and the feed event both arrive, and the same text twice with
-       nothing between it is one steer. */
+       nothing recorded what was said. The local reply and the feed event both arrive, and the
+       same text twice with nothing between it is one steer. */
     if (shown && !steerDrawn(log, shown)) placeSteer(log, userMessage(shown), shown);
     return;
   }
@@ -110,8 +108,7 @@ async function pollApproval() {
   } catch (_) {}
 }
 
-// An approval must not sit unseen while the model works. Idle, only a background job
-// raises one, and a window nobody is looking at raises nothing.
+// An approval must not sit unseen while the model works. Idle, only a background job raises one.
 async function approvalLoop() {
   if (!document.hidden) await pollApproval();
   // attention is about the conversations a person is *not* looking at, so it is polled even hidden
@@ -123,10 +120,9 @@ function readableDetail(value) {
   const text = String(value || '');
   try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
 }
-/* `user_steering` is not a tool the agent chose: it is what the person said when they refused a
-   call. Drawn as an ordinary step it read `user_steering(instruction='The user rejected this tool
-   c…')` -- the harness describing itself, with the direction that was actually given hidden behind
-   a chevron. The full instruction stays in the panel; the face of it is the person. */
+/* `user_steering` is what the person said when they refused a call. Drawn as an ordinary step it
+   read `user_steering(instruction='The user rejected this tool c…')`, the harness describing
+   itself with the direction hidden behind a chevron. The full instruction stays in the panel. */
 const STEER_TOOL = 'user_steering';
 function steerSaid(args) {
   const raw = String((args || {}).instruction || '');
@@ -194,9 +190,8 @@ function renderAgentStep(row, a) {
   } else { summary.classList.add('empty'); row.ontoggle = null; }
 }
 
-// A turn gets an immediate, persistent status surface. It is deliberately in the agent
-// log rather than only in the footer: long local inference must still look alive when the
-// footer is out of sight, and the current phase should sit beside the work it describes.
+// A turn gets an immediate, persistent status surface, in the agent log rather than only in the
+// footer: long local inference must still look alive when the footer is out of sight.
 function agentProgress(log) {
   const el = document.createElement('section');
   el.className = 'lee-agent-progress'; el.setAttribute('role', 'status'); el.setAttribute('aria-live', 'polite');
@@ -223,8 +218,8 @@ function agentProgress(log) {
   };
 }
 
-// Slash commands and @ files are resolved inline, without sending a half-written token
-// to the model. Selected files remain visible as removable chips until the turn starts.
+// Slash commands and @ files are resolved inline, without sending a half-written token to the
+// model. Selected files stay visible as removable chips until the turn starts.
 function paintAgentAttachments() {
   const host = $('#agentattachments'); if (!host) return;
   const active = lee.path ? `<span class="lee-agent-context" title="The assistant can see the active workspace and open files">` +
@@ -287,9 +282,7 @@ function chooseAgentSuggest(i = lee.agentSuggestAt) {
     input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
     paintAgentAttachments();
   } else {
-    // The token *stays*. Removing it left the sentence reading "look at and tell me why",
-    // with the thing being talked about visible only as a chip somewhere else. What you typed
-    // is the reference; the chip is that reference resolved, not a replacement for it.
+    // The token stays. What you typed is the reference, and the chip is that reference resolved.
     lee.agentAttachments.set(item.path, item.name);
     const at = input.selectionStart, before = input.value.slice(0, at);
     const left = before.replace(/(^|\s)@[^\s@]*$/, `$1@${item.name} `);
@@ -322,13 +315,10 @@ async function updateAgentSuggest() {
       .filter(x => x.name.toLowerCase().startsWith(query)).slice(0, 14)
       .map(x => ({...x, label: '/' + x.name, detail: `${x.kind} · ${x.help || ''}`}));
   } else if (mention) {
-    // `@` means "in this project", not "anywhere the workspace can reach": with several
-    // checkouts open, the unscoped list is mostly files from a project you are not in.
-    // `dirs`: a folder is somewhere to look, and attaching one is how you say "read around here".
-    // The vault answers the same `@`, because "this document" is the same gesture whether the
-    // document is a file you have open or a paper you filed a month ago.
-    // Both are capped, and capped short: a list where one source fills the visible rows is a list
-    // that only has one source, whatever the other one returned.
+    // `@` means "in this project": with several checkouts open, the unscoped list is mostly files
+    // from a project you are not in. `dirs` because attaching a folder says "read around here".
+    // The vault answers the same `@`, because "this document" is one gesture whether the document
+    // is open or filed a month ago. Both are capped short, or one source fills every visible row.
     const [f, v] = await Promise.all([
       api('/fs/find?dirs=1&scope=project&q=' + encodeURIComponent(mention[1]) + '&limit=7').catch(() => ({})),
       api('/vault/mentions?limit=5&q=' + encodeURIComponent(mention[1])).catch(() => ({}))]);
@@ -385,9 +375,9 @@ function initAgentComposer() {
   input.dataset.composerReady = '1';
   $('[data-agent-pause]')?.addEventListener('click', pauseAgentAfterCurrent);
   $('[data-agent-stop]')?.addEventListener('click', stopAgent);
-  /* A one-line box with a placeholder telling you to write in it takes Enter, or it is a box
-     that eats what you typed. It is not in a form and has no default action, so nothing
-     happened at all -- which read as steering being broken rather than never sent. */
+  /* A one-line box with a placeholder telling you to write in it takes Enter, or it eats what you
+     typed. It is not in a form and has no default action, so Enter does nothing unless it is bound
+     here. */
   const notify = $('#agentnotify'); if (notify) notify.checked = agentNotifyEnabled();
   const reasoning = $('#agentreasoning');
   if (reasoning) {
@@ -408,8 +398,8 @@ function initAgentComposer() {
   });
   input.addEventListener('input', () => {
     grow();
-    // Coalesced, because each call walks the project tree. `agentSuggestSeq` already drops a
-    // stale answer, but that discards the work after it has been done rather than before.
+    // Coalesced, because each call walks the project tree. `agentSuggestSeq` drops a stale answer
+    // only after the work has been done.
     clearTimeout(agentSuggestTimer);
     agentSuggestTimer = setTimeout(
       () => updateAgentSuggest().catch(e => status(String(e.message || e), 'err')), 90);

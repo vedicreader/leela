@@ -53,8 +53,7 @@ def connect(app, ctx):
         return {**out, 'cadence': held['cadence']}
     @rt('/backups/restore')
     async def backups_restore(req):
-        """Put one back. A restore is itself a write over live state, so the module keeps a copy of
-        what it replaces before replacing it."""
+        "Put one back. A restore writes over live state, so a copy of what it replaces is taken first."
         d = await req.json()
         name = str(d.get('name') or '')
         if not name: return fail('name the backup to restore')

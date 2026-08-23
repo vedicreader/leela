@@ -247,7 +247,7 @@ def _signature(chord):
     return tuple(sorted(mods)), base
 
 def _dupes(keys):
-    "(scope, chord) pairs bound twice, and actions declared twice -- both are real conflicts."
+    "(scope, chord) pairs bound twice, and actions declared twice. Both are real conflicts."
     seen, bad = {}, []
     keys = L(keys)
     for k in keys:
@@ -358,7 +358,7 @@ def _migrated(d, table):
     return {a: table[a][1] if a in table and c == table[a][0] else c for a, c in d.items()}
 
 def read_overrides(path=None, notes=None):
-    "`{action: chord}` from the user's keymap file. Never raises -- a broken file is a note."
+    "`{action: chord}` from the user's keymap file. Never raises: a broken file is a note."
     p = Path(path or keymap_path())
     notes = ifnone(notes, NOTES)
     try: d = json.loads(p.read_text())

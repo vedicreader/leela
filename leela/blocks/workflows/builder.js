@@ -1,7 +1,5 @@
-// -- the workflow builder ---------------------------------------------------------------
-// A form over gheasy's DSL. The vocabulary comes from the server as data, so a preset added
-// in leela/wfbuild.py appears here without a line of frontend -- and the form is the list of
-// decisions a workflow actually has, which is the part that is hard to learn from YAML.
+// A form over gheasy's DSL. The vocabulary comes from the server as data, so a preset added in
+// leela/wfbuild.py appears here without a line of frontend.
 const bldUI = {vocab: null, spec: null, yaml: '', file: '', stale: false, timer: 0};
 function blankSpec() {
   return {name: 'ci', file: 'ci.yml', on: {push: 'main', pull_request: 'main', workflow_dispatch: true},

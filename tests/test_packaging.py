@@ -89,7 +89,7 @@ def test_a_folder_is_a_document_the_app_opens(mac):
     Without a declared document type the packaged app can only ever be opened on its own, and
     the only way into a project is to type its path.
     """
-    doc, = mac.PLIST['CFBundleDocumentTypes']
+    doc = first(mac.PLIST['CFBundleDocumentTypes'], lambda d: d['CFBundleTypeName'] == 'Folder')
     assert doc['LSItemContentTypes'] == ['public.folder']
     # Not `Owner`: Finder stays the default handler for folders and Leela is merely offered.
     assert doc['LSHandlerRank'] == 'Alternate'
@@ -369,3 +369,18 @@ def test_pygments_is_copied_whole_or_the_bundled_kernel_cannot_start(which, requ
     mod = request.getfixturevalue(which)
     assert 'pygments' in mod.PACKAGES, 'naming it in INCLUDES would carry the two that are imported'
     assert 'pygments' not in mod.EXCLUDES
+
+
+def test_leela_asks_to_own_the_languages_it_edits(mac):
+    """One list: the document types come from the same `LANGS` the file tree uses, so a language
+    added there is a file type the app opens without anyone remembering this file."""
+    from leela.blocks.fs.fs import LANGS
+    types = {d['CFBundleTypeName']: d for d in mac.PLIST['CFBundleDocumentTypes']}
+    src = types['Source file']
+    assert src['LSHandlerRank'] == 'Owner' and src['CFBundleTypeRole'] == 'Editor'
+    exts = set(src['CFBundleTypeExtensions'])
+    assert 'py' in exts and 'ipynb' in exts and 'md' in exts
+    assert not exts & {e.lstrip('.') for e in mac.VIEW_ELSEWHERE}, 'a browser renders these better'
+    assert exts <= {e.lstrip('.') for e, l in LANGS.items() if l}, 'nothing claimed that Leela cannot edit'
+    # A folder is still Finder's, or every directory in the Finder would open Leela.
+    assert types['Folder']['LSHandlerRank'] == 'Alternate'

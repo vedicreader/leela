@@ -1,12 +1,11 @@
 /* The branch pill as a real Git control, and the three remote gestures beside it.
  *
- * One popup over branches *and* actions, in the order JetBrains settled on: what to do with
- * the branch you are on, then how to get a different one, then the branches themselves. Names
- * containing a `/` fold into a folder by their first segment -- a checkout with forty
- * `cursor/…` branches is otherwise a wall of near-identical rows.
+ * One popup over branches and actions, in the order JetBrains settled on: what to do with the
+ * branch you are on, then how to get a different one, then the branches themselves. Names
+ * containing a `/` fold into a folder by their first segment, because forty `cursor/…` branches
+ * are otherwise a wall of near-identical rows.
  *
- * Everything here posts to `/git/action`, which already knows checkout, fetch, pull, push,
- * create, merge, rebase and delete. The one new route is `/git/clone`, because a clone is
+ * Everything here posts to `/git/action`. The one new route is `/git/clone`, because a clone is
  * minutes of network and cannot be a request.
  */
 
@@ -53,7 +52,7 @@ function branchGroup(title, rows, fold = false) {
       folders.get(name).push(b);
     }
     // A collapsed folder's branches are absent from the DOM rather than hidden, so the modal's
-    // arrow-key walk over `.lee-mrow` never lands on a row nobody can see.
+    // arrow-key walk over `.lee-mrow` never selects a row nobody can see.
     body = loose.map(b => branchRow(b)).join('') + [...folders].map(([name, kids]) => {
       const open = gitBranchFolders.has(name) || kids.some(k => k.current);
       return `<button class="lee-mrow lee-branch-folder" data-folder="${esc(name)}">` +
@@ -69,13 +68,12 @@ async function switchBranch(d, name) {
   const b = (d.branches || []).find(x => x.name === name);
   if (!b || b.current) return leeLeft('git');
   rememberBranch(d.root, name);
-  // A remote-only branch is checked out by its leaf name; Git creates the tracking branch.
-  // The whole snapshot goes back, not just the outcome: `/git/action` answers with the same
-  // `info()` that `/git/info` does, so a caller showing branches can repaint from the reply.
+  // A remote-only branch is checked out by its leaf name, and Git creates the tracking branch.
+  // `/git/action` answers with the same `info()` that `/git/info` does, so a caller showing
+  // branches can repaint from the reply.
   const fresh = await gitDo('checkout', {branch: b.remote ? branchLeaf(b) : name});
   const out = fresh.outcome || {};
-  // A switch moves HEAD, so `summary` always says so -- and that buries the one sentence that
-  // matters, which is what became of work the switch had to set aside. Say it instead.
+  // A switch always reports that HEAD moved, which buries what became of the work it set aside.
   if (out.message) { leeLog('git', 'checkout', out.message, 'ok'); status(`git checkout · ${firstLine(out.message)}`, 'ok'); }
   return fresh;
 }
@@ -163,8 +161,7 @@ async function leeBranchMenu(anchor) {
     ` placeholder="Search branches and actions…" aria-label="search branches and actions">` +
     `<div class="lee-modallist lee-branchlist" id="branchlist"></div>` +
     `<div class="lee-mfoot"><span class="lee-dim">Enter checks out · ••• compares, rebases and merges</span></div>`,
-    // The arrow keys walk the rows, which takes the caret out of the box; a printable key puts
-    // it back, so searching never needs the mouse to come back first.
+    // The arrow keys take the caret out of the box, so a printable key puts it back.
     e => { if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && document.activeElement !== search) search.focus(); },
     null, {className: 'lee-branchmodal', storageKey: 'branches'});
   search = m.querySelector('#branchsearch');
@@ -172,16 +169,10 @@ async function leeBranchMenu(anchor) {
   const sub = m.querySelector('.lee-mhead .sub');
 
   let prRow = null;
-  /* `keep` is why expanding a folder no longer throws you back to the top. This repaints by
-     replacing the list's children, and replacing the children of a scrolled element puts it at
-     scrollTop 0 -- so opening `remote/` half way down scrolled the whole modal away from the
-     thing that was just clicked. Nothing was navigating, so there was no default to prevent:
-     the rows are buttons in a div, and the jump is the rebuild.
-
-     Restoring the old offset is exact for a fold, which only ever adds or removes rows *below*
-     the folder clicked, leaving everything above it the same height. A shorter list after a
-     collapse just clamps. Typing is the one repaint that should go back to the top: those are
-     different results, not the same list rearranged. */
+  /* Replacing the children of a scrolled element puts it at scrollTop 0, so `keep` restores the
+     old offset. That is exact for a fold, which only adds or removes rows below the folder
+     clicked. Typing is the one repaint that goes back to the top, because those are different
+     results rather than the same list rearranged. */
   const paint = (keep = true) => {
     const at = keep ? list.scrollTop : 0;
     const q = search.value.trim().toLowerCase();
@@ -201,14 +192,13 @@ async function leeBranchMenu(anchor) {
     list.scrollTop = at;
   };
 
-  /* A modal that goes on describing the branch you just left is worse than no modal: the tick is
-     against the wrong row and every action below it is offered against the old HEAD. Each
-     mutation answers with a whole `info()`, so take it and repaint rather than closing.
+  /* A modal that goes on describing the branch you just left puts the tick against the wrong row
+     and offers every action against the old HEAD. Each mutation answers with a whole `info()`, so
+     take it and repaint rather than closing.
 
-     `recent` is re-read because checking out writes to it, and `prRow` is dropped because the
-     pull request belongs to the branch that was current when it was fetched. */
-  // The pull request is the branch's, and it arrives late. Two switches in quick succession would
-  // otherwise let the first answer land under the second branch's heading.
+     `recent` is re-read because checking out writes to it. `prRow` is dropped because the pull
+     request belongs to the branch that was current when it was fetched, and two switches in quick
+     succession would otherwise show the first answer under the second branch's heading. */
   const showPr = () => {
     const asked = d.branch;
     branchPr(d).then(r => { if (m.isConnected && d.branch === asked) { prRow = r; paint(); } });
@@ -238,14 +228,13 @@ async function leeBranchMenu(anchor) {
       const b = (d.branches || []).find(x => x.name === row.dataset.branch);
       // Picking the branch already checked out is not a switch, it is "show me this repository".
       if (b && b.current) { m.remove(); return leeLeft('git'); }
-      // `gitDo` re-throws what it has already reported -- a refused checkout is a normal answer,
+      // `gitDo` re-throws what it has already reported. A refused checkout is a normal answer,
       // and the modal is still describing the branch that refused to be left.
       return switchBranch(d, row.dataset.branch).then(reload).catch(() => {});
     }
     const act = e.target.closest('[data-act]');
     if (act) {
-      // Fetching is what you do *before* picking a branch, so it repaints the list it just
-      // refreshed rather than closing over it like every other action here.
+      // Fetching comes before picking a branch, so it repaints the list rather than closing it.
       if (act.dataset.act === 'fetch') return branchAct('fetch').then(reload).catch(() => {});
       m.remove();
       return act.dataset.act === 'pr' ? prRow.run() : runBranchAction(act.dataset.act, d);
@@ -258,7 +247,6 @@ async function leeBranchMenu(anchor) {
 }
 window.leeBranchMenu = leeBranchMenu;
 
-/* ------------------------------------------------------------------ diverged */
 // `pull` is --ff-only, so a diverged branch had nowhere to go. Every way out, rehearsed.
 async function showSyncPlan(d) {
   try {
@@ -296,13 +284,12 @@ async function showSyncPlan(d) {
 }
 window.showSyncPlan = showSyncPlan;
 
-/* ------------------------------------------------------------ fetch/pull/push */
 async function leeGitQuick(op) {
   const button = $(`#git${op}`);
   if (button) button.disabled = true;
   try {
-    // Push is the one that needs to know where it stands: an unpublished branch has nowhere
-    // to push to, and saying "nothing to push" would be the wrong half of the truth.
+    // An unpublished branch has nowhere to push to, and saying "nothing to push" would be the
+    // wrong half of the truth.
     const publish = op === 'push' && !(gitUI.snapshot || await gitInfo(gitUrl('/git/info'))).upstream;
     await gitDo(op, op === 'push' ? {publish} : {});
     refreshScmIfOpen();
@@ -311,9 +298,8 @@ async function leeGitQuick(op) {
 }
 window.leeGitQuick = leeGitQuick;
 
-/* ------------------------------------------------------------------- cloning */
-// Poll a clone job until it stops. The cap is there so a wedged job ends as a sentence rather
-// than a spinner nothing will ever stop.
+// Poll a clone job until it stops. The cap ends a wedged job as a sentence rather than a spinner
+// nothing will ever stop.
 async function cloneProgress(id, say) {
   for (let i = 0; i < 900; i++) {
     await new Promise(r => setTimeout(r, 900));
@@ -327,8 +313,8 @@ async function cloneProgress(id, say) {
 
 async function leeCloneRepo() {
   const info = await api('/workspace/info').catch(() => ({}));
-  // Beside the folders that are already open, not inside one: a clone that lands *under* an
-  // open folder is covered by it and can never become a chosen project of its own.
+  // Beside the folders that are already open, not inside one: a clone under an open folder is
+  // covered by it and can never become a chosen project of its own.
   const beside = ((info.roots || [])[0]?.path || '').split('/').slice(0, -1).join('/');
   const m = modal(
     `<div class="lee-mhead">clone repository<span class="sub">the clone becomes an open folder</span></div>` +
@@ -348,8 +334,7 @@ async function leeCloneRepo() {
       say.textContent = `cloning into ${r.root}…`;
       const done = await cloneProgress(r.job.id, say);
       m.remove();
-      // The same three steps the folder picker takes, so a clone lands where an opened folder
-      // lands: added, drawn in the tree, and chosen as the project.
+      // The same three steps the folder picker takes, so a clone arrives like an opened folder.
       await post('/fs/add-root', {path: done.root});
       await refreshFileTree(done.root);
       await activateRoot(done.root);

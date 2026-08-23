@@ -1,7 +1,5 @@
-/* ---------------------------------------------------------- kernel picker */
-/* Two questions, two lists: which interpreter's packages this tab can import, and which
- * launcher runs it. Both restart the kernel, so what that costs is on the screen while
- * the choice is being made rather than in a toast afterwards. */
+/* Two questions, two lists: which interpreter's packages this tab can import, and which launcher
+ * runs it. Both restart the kernel, so what that costs is on screen while the choice is made. */
 async function pickKernel() {
   const o = await api('/kernel/options');
   const row = (cur, main, sub, attrs) =>
@@ -65,8 +63,8 @@ async function pickKernel() {
     const d = await post('/kernel/select',
                          r.dataset.kind ? {kind: r.dataset.kind} : {python: r.dataset.py});
     markPreviousRuns();
-    // Picking a runtime also makes its namespace the live variable source. Do not leave
-    // the panel visually (or server-side) pinned to the process watched before the switch.
+    // Picking a runtime also makes its namespace the live variable source, so the panel must not
+    // stay pinned, on screen or server-side, to the process watched before the switch.
     paintEnv('');
     status(`kernel: ${d.running_kind} · ${(d.python || 'leela’s own python').split('/').pop()} · variables connected`, 'ok');
     refreshKernelPill(); leeVars();

@@ -5,7 +5,8 @@ from ... import extras_site, leela_cfg, use_extras
 
 __all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks',
            'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements', 'install_runtime',
-           'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed', 'SETUP_SIZES']
+           'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed', 'SETUP_SIZES',
+           'updates']
 
 #: What each routed job spends its model on. One copy: the settings pane renders three of these
 #: server-side and the rest from `/agent/models`, and two copies drifted apart the first time.
@@ -37,9 +38,7 @@ def _why(runtime, agents):
     from ...agent.core import runtime_remedy
     return runtime_remedy(runtime)
 
-#: Runtimes a package can supply, which is the on-device ones, named as rishi's own extras. The
-#: rest are not a download: `claude` wants its CLI, `ollama` its daemon, `remote` an API key, and
-#: `runtime_remedy` already says so for each. What every backend *needs* is rishi's to declare.
+#: Runtimes a package can supply, named as rishi's own extras. The rest want a CLI, a daemon or a key.
 INSTALLABLE = ('litert', 'mlx', 'llama')
 
 def runtime_requirements(runtime):
@@ -63,14 +62,9 @@ def install_state(runtime=None):
     with _lock: return dict(_installs.get(runtime) or {}) if runtime else {k: dict(v) for k, v in _installs.items()}
 
 def _installer(target):
-    """What to install with, which is a different question frozen and not.
-
-    uv resolves better and far faster, and a uv-made venv often has no pip at all, so it wins in a
-    normal environment. It cannot drive a frozen app: `--python` makes uv *run* the interpreter to
-    interrogate it, and a py2app binary answers that by starting Leela, so the install hangs
-    instead of failing. There the shipped pip runs as a module inside the interpreter that already
-    is the app, which needs no introspection.
-    """
+    "pip or uv, whichever can install here."
+    # `--python` makes uv run the interpreter to interrogate it, and a py2app binary answers that
+    # by starting Leela, so a frozen app uses the pip it ships.
     import importlib.util, shutil
     into = ['--target', str(target)] if target else []
     if not getattr(sys, 'frozen', False) and (uv := shutil.which('uv')):
@@ -98,12 +92,7 @@ def _run_install(runtime, cmd):
                                   available=bool(runtime_available(runtime)))
 
 def install_runtime(runtime):
-    """Fetch one on-device backend and put it where a frozen app can import it.
-
-    Pinned to what the rishi *here* asks for, never the newest: the bundle freezes one rishi, and a
-    backend resolved against a later one is a version skew that shows up as an import error much
-    later. A frozen app installs beside itself because its own library is signed and read-only.
-    """
+    "Fetch one on-device backend, pinned to the rishi here, into somewhere a frozen app can import."
     if runtime not in INSTALLABLE:
         raise ValueError(f'{runtime} is not something a package provides; see its remedy')
     if not (reqs := runtime_requirements(runtime)):
@@ -120,13 +109,10 @@ def install_runtime(runtime):
                      name=f'leela-install-{runtime}').start()
     return dict(row)
 
-#: Roughly what each backend weighs once installed, measured on this bundle. Approximate on
-#: purpose: the number is there so nobody starts a 400MB download without being told, and a figure
-#: that is close is worth more than one that is exact and stale.
+#: Approximate installed size, so nobody starts a 400MB download without being told.
 SETUP_SIZES = {'mlx': 400, 'llama': 120, 'litert': 70}
 
-#: What an account-based runtime is called on the wizard, and what to do about it. `runtime_remedy`
-#: says the same thing for the picker; this is the first-run wording, which has room for a sentence.
+#: The first-run wording for an account runtime. `runtime_remedy` is the terser picker version.
 ACCOUNTS = (
  ('claude', 'Claude Code', 'Sign in once with `claude /login` and Leela drives it. No key to manage.'),
  ('remote', 'An API key', 'Set ANTHROPIC_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY and its models appear.'),
@@ -140,28 +126,98 @@ def setup_dismissed():
     except Exception: return False
 
 def dismiss_setup(dismissed=True):
-    "Remember that the first-run pane was answered, so it stops offering itself."
+    "Remember the pane was answered, so it stops offering itself."
     p = _setup_marker(); p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({'dismissed': bool(dismissed)}) + '\n')
     return bool(dismissed)
 
-def setup_plan():
-    """The first-run choice: what already works here, and what a download would add.
+#: The tag the desktop workflow builds from is the version.
+RELEASES = 'https://api.github.com/repos/vedicreader/leela/releases/latest'
+_latest, _latest_at = {}, 0.0
+LATEST_TTL = 3600          #: a courtesy check, not a heartbeat
 
-    Accounts come first and cost nothing to add, which is the honest order -- a hosted model is
-    better than a 400MB local one for most work. The offline half is whatever rishi declares a
-    backend for *on this machine*, so Windows is never offered mlx and nobody is told to install
-    something that has no wheel for them.
-    """
+def _fetch_json(url, timeout=4):
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=timeout) as r: return json.loads(r.read().decode())
+
+def _latest_versions(dists):
+    "Newest published version of each distribution and of Leela. No network means no offer."
+    import time
+    global _latest_at
+    if time.time() - _latest_at < LATEST_TTL and _latest: return dict(_latest)
+    out = {}
+    for d in dists:
+        try: out[d] = _fetch_json(f'https://pypi.org/pypi/{d}/json')['info']['version']
+        except Exception: pass
+    try:
+        rel = _fetch_json(RELEASES)
+        out['leela'] = str(rel.get('tag_name') or '').lstrip('v')
+        out['leela_url'] = rel.get('html_url') or ''
+    except Exception: pass
+    _latest, _latest_at = out, time.time()
+    return dict(out)
+
+def _installed_version(dist):
+    import importlib.metadata as md
+    try: return md.version(dist)
+    except Exception: return None
+
+def _newer(installed, latest):
+    "Whether `latest` is a later release than `installed`, by the packaging rules and not by string."
+    if not (installed and latest): return False
+    try:
+        from packaging.version import Version
+        return Version(latest) > Version(installed)
+    except Exception: return False
+
+def updates(check=True):
+    "What is installed here with a newer release. The app names its own release rather than self-updating."
+    from packaging.requirements import Requirement
+    dists = {}
+    for r in INSTALLABLE:
+        for req in runtime_requirements(r):
+            spec = Requirement(req)
+            if (v := _installed_version(spec.name)): dists.setdefault(spec.name, (r, v, spec.specifier))
+    latest = _latest_versions(list(dists)) if check else {}
+    from ... import __version__
+
+    def movable(cur, new, spec):
+        # rishi pins some of these exactly, and a release we cannot take is not an update.
+        return _newer(cur, new) and bool(new and spec.contains(new, prereleases=True))
+
+    rows = [{'runtime': rt, 'dist': name, 'installed': cur, 'latest': latest.get(name),
+             'pin': str(spec) or 'any', 'outdated': movable(cur, latest.get(name), spec)}
+            for name, (rt, cur, spec) in sorted(dists.items())]
+    return {'backends': rows, 'outdated': [r for r in rows if r['outdated']],
+            'leela': {'current': __version__, 'latest': latest.get('leela'),
+                      'url': latest.get('leela_url') or RELEASES.replace('api.github.com/repos', 'github.com'),
+                      'outdated': _newer(__version__, latest.get('leela'))},
+            'checked': bool(latest)}
+
+def setup_plan():
+    "The first-run choice. Accounts cost nothing, so they lead; the offline half is rishi's markers."
+    from ...agent.core import auth_status
     rows = {r['value']: r for r in runtimes()}
-    accounts = [{'value': v, 'label': label, 'blurb': blurb,
-                 'ready': bool(rows.get(v, {}).get('available')),
+    auth = {}
+    try: auth = auth_status()
+    except Exception: pass
+    def ready(v):
+        # `runtime_available` says the CLI is installed; being signed in is what `auth_status` knows.
+        if v == 'claude': return bool(auth.get('claude', {}).get('available'))
+        if v == 'copilot': return bool(auth.get('copilot', {}).get('available'))
+        if v == 'remote': return any(auth.get(k, {}).get('available') for k in ('anthropic', 'openai', 'gemini', 'codex'))
+        return bool(rows.get(v, {}).get('available'))
+    accounts = [{'value': v, 'label': label, 'blurb': blurb, 'ready': ready(v),
                  'why': rows.get(v, {}).get('why', '')} for v, label, blurb in ACCOUNTS]
     offline = [{**rows[v], 'mb': SETUP_SIZES.get(v)} for v in INSTALLABLE
                if v in rows and rows[v]['requirements']]
+    ready_now = [a['value'] for a in accounts if a['ready']]
+    installed = [o['value'] for o in offline if o['available']]
     return {'frozen': bool(getattr(sys, 'frozen', False)), 'dismissed': setup_dismissed(),
-            'accounts': accounts, 'offline': offline,
-            'ready': [a['value'] for a in accounts if a['ready']]}
+            'accounts': accounts, 'offline': offline, 'ready': ready_now,
+            # Set up means: something can answer a prompt. Until then the modal leads with setup;
+            # after it, the same modal is where an update shows up.
+            'done': bool(ready_now or installed)}
 
 def runtimes():
     "Every runtime, whether rishi can reach it here, and what it wants when it cannot."

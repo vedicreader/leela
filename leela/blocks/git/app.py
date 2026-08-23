@@ -71,7 +71,7 @@ def _apply(repo, op, d):
     raise GitError(f'unknown Git action: {op}')
 
 def _clone_into(fs, url, parent, name=''):
-    "Where a clone may land, and the one rule that confines it."
+    "The directory a clone is written into, defaulting to the first open root."
     parent = str(parent or '').strip() or (str(fs.roots[0]) if fs.roots else '')
     if not parent: raise GitError('choose a folder to clone into')
     return clone_target(url, parent, name)
@@ -89,7 +89,7 @@ def connect(app, ctx):
         return GitRepo.at(repo_for(ctx.session, target))
     @rt('/git/info')
     async def git_info(repo: str = ''):
-        "`repo: False` rather than a 400: absence is one of the two answers this question has."
+        "Answers `repo: False` rather than a 400, since being outside a repository is a normal answer."
         try:
             target = repo_for(ctx.session, repo)
             if repo_root(target) is None:
@@ -218,7 +218,7 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/git/sync-plan')
     async def git_sync_plan(repo: str = '', upstream: str = '', fetch: bool = False):
-        "You against your upstream, and every way back rehearsed. What the Sync dialog reads."
+        "Where the branch stands against its upstream, and each way to reconcile. What the Sync dialog reads."
         try: return await off_loop(repo_at(repo).divergence, upstream, fetch)
         except Exception as e: return fail(e)
     @rt('/git/rebase-preview')
@@ -229,7 +229,7 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/git/blame')
     async def git_blame(path: str = '', start: int = 1, end: int = 0, repo: str = '', cells: bool = True):
-        "Who wrote these lines -- grouped into cells when the file is a notebook."
+        "Who wrote these lines, grouped into cells when the file is a notebook."
         try:
             clean = git_paths([path])[0]
             repository = repo_at(repo)

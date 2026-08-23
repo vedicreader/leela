@@ -1,7 +1,5 @@
-/* Reloading the open tab is what makes an AI edit visible without a refresh -- but only
- * when there is nothing of the user's to lose. Typing while the model thinks is normal,
- * and a buffer with unsaved edits is not something to overwrite silently just because
- * the model happened to reach the same file. So that case is offered, with the diff, and
+/* Reloading the open tab is what makes an AI edit visible without a refresh, but only when there is
+ * nothing of the user's to lose. A buffer with unsaved edits is offered with the diff instead, and
  * the choice is the user's. */
 function scheduleAgentFileReload(path) {
   if (path !== lee.path || $('.lee-tab.active')?.classList.contains('dirty')) return;
@@ -19,11 +17,10 @@ async function watchOpenFile() {
     const d = await api('/tab/watch');
     if (!d || d.path !== lee.path || !lee.diskVersion) return;
     if (d.disk_version === lee.diskVersion) return;
-    // Never advance the editor's base token while it is dirty. Doing so makes a missing
-    // IndexedDB base fall back to the *new* disk version and silently turns an external
-    // write into our own. The old token is exactly what makes the save endpoint detect it.
-    // Never destroy typing that has not reached disk. The diff command remains available,
-    // while a clean editor follows agent, terminal, git, and other external writes live.
+    // Never advance the editor's base token while it is dirty. Doing so makes a missing IndexedDB
+    // base fall back to the new disk version and turns an external write into our own. The old
+    // token is what makes the save endpoint detect it. The diff command stays available, and a
+    // clean editor follows agent, terminal and git writes live.
     if ($('.lee-tab.active')?.classList.contains('dirty')) {
       if (d.disk_version !== lee.seenDiskVersion)
         status(`${lee.path.split('/').pop()} changed on disk — keeping your unsaved buffer`, 'err');
@@ -39,11 +36,11 @@ async function watchOpenFile() {
 
 async function takeDiskVersion(path) {
   lee.heldSaveConflicts.delete(path);
-  // Accepting disk is explicit. Remove any durable browser draft first so mountTab cannot
-  // faithfully restore the very buffer the user chose to discard.
+  // Accepting disk is explicit. Remove any durable browser draft first, or `mountTab` restores
+  // the very buffer the user chose to discard.
   await clearDrafts(path);
-  // Clear both client and server document caches. The following mount therefore reads the
-  // bytes the tool just wrote rather than replaying the notebook object from before the turn.
+  // Clear both client and server document caches, so the mount reads the bytes the tool just
+  // wrote rather than replaying the notebook object from before the turn.
   for (const key of [...lee.buffers.keys()])
     if (key === path || key.startsWith(path + ':')) {
       lee.buffers.delete(key); lee.dirtyBuffers.delete(key);
@@ -77,9 +74,9 @@ async function stopAgent() {
   status(d.ok ? d.state : d.error, d.ok ? 'ok' : 'err');
 }
 
-/* Failures with nowhere else to go: a compaction the engine refused, a completion that
- * came back empty, anything the native model layer printed instead of raising. They land
- * in the agent pane because that is where the turn they belong to is. */
+/* Failures with nowhere else to go: a compaction the engine refused, a completion that came back
+ * empty, anything the native model layer printed instead of raising. They appear in the agent pane
+ * because that is where the turn they belong to is. */
 function showProblems(ps) {
   for (const p of (ps || [])) {
     if (lee.shownProblems.has(p)) continue;

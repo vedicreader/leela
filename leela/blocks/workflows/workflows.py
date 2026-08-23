@@ -60,7 +60,7 @@ class Workflows:
         except OSError: return []
     @staticmethod
     def _triggers(on):
-        "`on:` in any of its three shapes -- a string, a list, or a mapping with filters."
+        "`on:` in any of its three shapes: a string, a list, or a mapping with filters."
         if isinstance(on, str): return [{'event': on, 'detail': ''}]
         if isinstance(on, list): return [{'event': str(x), 'detail': ''} for x in on]
         rows = []
@@ -84,7 +84,7 @@ class Workflows:
         return rows
     @classmethod
     def _job(cls, job_id, job):
-        "One entry of `jobs:`, with `needs` in either of its shapes and `environment` in either of its."
+        "One entry of `jobs:`, with `needs` and `environment` in either of the shapes each takes."
         job = job if isinstance(job, dict) else {}
         needs = job.get('needs') or []
         env = job.get('environment')
@@ -211,7 +211,7 @@ class Workflows:
         except Exception as e: row['build_why'] = f'{type(e).__name__}: {e}'
         return row
     def catalogue(self):
-        "The workflows on offer, every one of them gheasy's, each marked with whether this project wants."
+        "The workflows on offer, every one of them gheasy's, each marked with whether this project wants it."
         d = self.detect()
         present = {p.name for p in self.files()}
         rows = [
@@ -281,7 +281,7 @@ class Workflows:
         cfg = self.config() or {}
         return compose(spec, schema=self.schema(), app=str(cfg.get('app') or self.root.name))
     def write_spec(self, spec, file=''):
-        "Write a built workflow, and keep the spec beside it — reading YAML back into one is lossy."
+        "Write a built workflow, and keep the spec beside it. Reading YAML back into one is lossy."
         _gheasy()
         from .wfbuild import save_spec
         name = _wf_name(str(file or spec.get('file') or f"{spec.get('name') or 'ci'}.yml"))
@@ -390,7 +390,7 @@ def _sync_api(core, owner, name, token, api):
     return GhApi(owner=owner, repo=name, token=token, sync=True)
 
 def _gh_authed():
-    "Is the GitHub CLI logged in? `gh auth status` is the only thing that knows."
+    "Whether the GitHub CLI is logged in, which only `gh auth status` knows."
     if not which('gh'): return False
     import subprocess
     try:
@@ -409,7 +409,7 @@ def _run_row(run):
         'title': str(run.get('display_title') or (head.get('message') or '')).split('\n')[0]}
 
 def _read(path):
-    "A file's text, or `''` when it is not there -- what a detector wants of a missing file."
+    "A file's text, or `''` when it is not there, which is what a detector wants of a missing file."
     try: return Path(path).read_text(encoding='utf-8', errors='replace')
     except OSError: return ''
 
@@ -422,7 +422,7 @@ def _from_line(text):
     return first(str(text).splitlines(), lambda l: l.startswith('FROM ')) or ''
 
 def _wf_name(name):
-    "A workflow file name, or the error that says why it is not one -- no directories, no other."
+    "A workflow file name, or the error that says why it is not one: no directories, no other suffix."
     if '/' in name or not name.endswith(('.yml', '.yaml')):
         raise WorkflowError(f'not a workflow file name: {name}')
     return name

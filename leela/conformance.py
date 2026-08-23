@@ -1,4 +1,4 @@
-"Does this implementation actually satisfy the port?"
+"Check an implementation against the port it claims."
 
 from __future__ import annotations
 

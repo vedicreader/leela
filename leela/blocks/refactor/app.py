@@ -86,9 +86,8 @@ def connect(app, ctx):
         try:
             d = await req.json(); plan = plans.pop(str(d.get('token') or ''), None)
             if plan is None: return fail('preview expired; preview again', 409)
-            # A move is only correct as a whole, so the files it names in `keep` stay in whatever
-            # the browser selected. Deselecting the source would leave the destination importing
-            # a definition that is still in both places.
+            # A move is only correct as a whole, so the files it names in `keep` stay selected.
+            # Deselecting the source would leave the definition in both places.
             chosen = set(d.get('paths') or [x.path for x in plan['rows']]) | set(plan.get('keep') or ())
             rows = [r for r in plan['rows'] if r.path in chosen]
             if not rows: return fail('no files selected')

@@ -35,14 +35,14 @@ def connect(app, ctx):
         ctx.terms.close(id)
         return {'ok': True}
     def _external():
-        "The configured external terminal, or the first installed one -- `None` if neither."
+        "The configured external terminal, or the first installed one. `None` if neither."
         from ..settings.settings import Settings
         try: configured = Settings(ctx.session.project_root).effective().get('terminal', {}).get('external', '')
         except Exception: configured = ''
         return external_terminal_argv(term_cwd(ctx.session), configured)
     @rt('/term/external')
     def term_external():
-        "Launch a real terminal application at the project directory, detached so it outlives the."
+        "Launch a real terminal application at the project directory, detached so it outlives the request."
         argv = _external()
         if not argv: return fail('no external terminal found — set terminal.external in settings')
         import subprocess

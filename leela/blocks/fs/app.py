@@ -72,8 +72,8 @@ def connect(app, ctx):
     def fs_paths(path: str = ''):
         """Both ways of naming one file. Only the server knows which folder it is under.
 
-        `relative` is against the open folder holding it, so it is what a colleague can paste into
-        the same repository. A path under no open folder has no relative form and says so.
+        `relative` is against the open folder holding it. A path under no open folder has no
+        relative form.
         """
         p = str(path or '').strip()
         if not p: return fail('no path')
@@ -219,8 +219,7 @@ def connect(app, ctx):
         return {'ok': True, **row, 'text': text, **diff_payload(_on_disk(row['path']) or '', text)}
     @rt('/history/restore')
     async def file_history_restore(req):
-        """Put one kept version back. What it replaces is kept first, so restoring the wrong
-        version is itself undoable."""
+        "Put one kept version back. What it replaces is kept first, so a wrong restore is undoable."
         d = await req.json()
         row = ctx.session.history.row(str(d.get('id') or ''))
         if row is None: return fail(f"no such version {d.get('id')}", 404)

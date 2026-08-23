@@ -1,7 +1,6 @@
-/* ------------------------------------------------------------------- move */
-/* Lift whole functions and classes into another file. Unlike extract and inline this
-   changes several files at once, so it previews before it writes and every file it would
-   touch is its own row. */
+/* Lift whole functions and classes into another file. Unlike extract and inline this changes
+   several files at once, so it previews before it writes and every file it would touch is its own
+   row. */
 
 function moveSymbolAt(symbols, pos) {
   const here = symbols.find(s => pos >= s.start && pos <= s.end);
@@ -20,8 +19,8 @@ function moveRows(files, keep, selected) {
   }).join('');
 }
 
-/* The diff is built when its row is opened, not when the list is drawn. A move across a dozen
-   call sites would otherwise mount a dozen merge views nobody asked to see. */
+/* The diff is built when its row is opened, not when the list is drawn, or a move across a dozen
+   call sites would mount a dozen merge views nobody asked to see. */
 function moveDiffs(m, files) {
   const built = [];
   $$('[data-move-file]', m).forEach(row => row.addEventListener('toggle', () => {

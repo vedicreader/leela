@@ -11,12 +11,12 @@ async function renderGitPanel(snapshot = null) {
   let d = snapshot || gitUI.snapshot;
   try { if (!d) d = await gitInfo(gitUrl('/git/info')); }
   catch (e) {
-    // Still draw the nav: a workspace whose active folder is not a checkout can have five
-    // other repositories in it, and Repos is how you reach them.
+    // Still draw the nav: a workspace whose active folder is not a checkout can hold five other
+    // repositories, and Repos is how you reach them.
     host.innerHTML = gitScope() + gitNav() +
       `<main class="lee-git-view"><div class="lee-git-empty-state"><strong>No Git repository</strong><span>${esc(e.message || e)}</span></div></main>`;
-    // `null`, not `{}`: switching to another view from here must re-read the repository
-    // rather than render a snapshot-shaped object with no fields in it.
+    // `null`, not `{}`: switching to another view from here must re-read the repository rather
+    // than render a snapshot-shaped object with no fields in it.
     wireGitPanel(host, null);
     return;
   }
@@ -217,16 +217,15 @@ async function showMergePreview(branch, d, act) {
     const p = await api(gitUrl('/git/merge-preview', {incoming: branch}));
     const r = p.review, relation = {'fast-forward': 'Fast-forward available', 'already-merged': 'Already contained in current', 'identical': 'Branches are identical', 'diverged': 'Branches have diverged'}[p.relation] || p.relation;
     const conflict = p.conflict_likely ? `<div class="lee-git-merge-warning"><strong>Conflicts expected</strong><span>${p.conflicts.length ? p.conflicts.map(esc).join(' · ') : 'Git reports overlapping changes.'}</span></div>` : '<div class="lee-git-merge-ok"><strong>No conflicts found in merge rehearsal</strong><span>The working tree can still change before merge.</span></div>';
-    // Untracked files are not dirt: git merges beside them and refuses only when the merge
-    // would overwrite one, at which point it says so itself. Only tracked work blocks.
+    // Untracked files are not dirt: git merges beside them and refuses only when the merge would
+    // overwrite one, and then says so itself. Only tracked work blocks.
     const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
     const blocked = !p.clean ? `commit or stash ${p.dirty.length} changed file${p.dirty.length === 1 ? '' : 's'} first`
                   : p.relation === 'already-merged' ? `${p.current} already contains ${branch}`
                   : p.relation === 'identical' ? 'the two branches are identical' : '';
     const m = modal(`<div class="lee-mhead">Merge ${esc(branch)}<span class="sub">into ${esc(p.current)}</span></div><div class="lee-git-merge-preview"><header><strong>${esc(relation)}</strong><span>${r.head_only} commits · ${r.summary.files} files · +${r.summary.additions} −${r.summary.deletions}</span></header>${dirty}${conflict}<label>Strategy<select data-strategy><option value="merge">merge commit when needed</option><option value="squash">squash into working tree</option><option value="ff-only" ${p.relation === 'fast-forward' ? '' : 'disabled'}>fast-forward only</option></select></label><button class="lee-btn" data-review>review incoming files</button></div><div class="lee-mfoot"><button class="lee-btn go" data-merge>merge ${esc(branch)}</button><span class="lee-dim">${blocked ? esc(blocked) : 'Merge starts only after this preview.'}</span></div>`);
     m.querySelector('[data-review]').onclick = () => { m.remove(); gitUI.reviewBase = d.branch; gitUI.reviewHead = branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); };
-    // Never a disabled button: one that cannot be pressed cannot say why, and "I clicked
-    // merge and nothing happened" is the report that came back from exactly that.
+    // Never a disabled button: one that cannot be pressed cannot say why.
     m.querySelector('[data-merge]').onclick = async () => {
       if (blocked) return status(`cannot merge — ${blocked}`, 'err');
       const strategy = m.querySelector('[data-strategy]').value;

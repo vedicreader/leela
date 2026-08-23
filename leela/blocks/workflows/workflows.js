@@ -1,7 +1,5 @@
-/* ------------------------------------------------- workflows and the release pipeline */
-// Both panels are about a project rather than a file, so they ask the same question the
-// source-control panel does -- which repository -- and answer it the same way: empty means
-// the one the active tab is in.
+// Both panels are about a project rather than a file, so they ask which repository, as the
+// source-control panel does. Empty means the one the active tab is in.
 const wfUI = {data: null, runs: null, env: null, catalogue: null, docker: null, open: '', view: 'graph', preview: '', busy: ''};
 const relUI = {data: null, busy: '', poll: 0};
 function projectRepo() { return gitUI.repo || ''; }
@@ -56,8 +54,8 @@ function wfPickRows(cat) {
     `${d.build ? `<code>${esc(d.build)}</code>` : d.build_why ? `<small>${esc(d.build_why)}</small>` : ''}</div>` +
     `<div class="lee-wf-picks">${rows}</div>`;
 }
-// `refresh` fetches what GitHub has; without this the answer was thrown away. Values of secrets
-// are not readable by GitHub's design, so remote presence is all there is to show for one.
+// Where `refresh`'s answer about what GitHub has is shown. Secret values are not readable by
+// GitHub's design, so remote presence is all there is to show for one.
 function wfRemoteMark(remote, key) {
   if (!remote) return '';
   const hit = (remote.secrets || []).find(s => s.name === key) || (remote.variables || []).find(v => v.name === key);
@@ -158,8 +156,8 @@ function wireWorkflowsPanel(host, d, wf) {
   host.querySelectorAll('[data-wf-env]').forEach(b => b.onclick = async () => {
     const op = b.dataset.wfEnv;
     if (op === 'refresh') return loadWorkflowEnv(true);
-    // Authenticating is a conversation with a browser and a one-time code in it, so the
-    // button opens the real `gh auth login` rather than a form pretending to be one.
+    // Authenticating is a conversation with a browser and a one-time code, so the button opens
+    // the real `gh auth login`.
     if (op === 'auth') { await openTerm('gh-auth'); return status('finish the login in the terminal, then refresh', 'ok'); }
     if (op === 'push') {
       if (await confirmDialog('push to GitHub', 'Send every declared value to this repository as a secret or a variable?', 'push')) envOp('push', {});

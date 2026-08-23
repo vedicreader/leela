@@ -1,4 +1,3 @@
-/* ------------------------------------------------------------------ terminal */
 let termBundle = null;
 function loadTermBundle() {
   if (window.LeeTerm) return Promise.resolve();
@@ -11,13 +10,11 @@ function loadTermBundle() {
   });
   return termBundle;
 }
-// Multiple xterm instances keep their websocket/pty alive while hidden. The 285kb bundle
-// still loads only on the first terminal action, never during ordinary notebook startup.
-// `taken` is the set of ids the *server* is holding. A pty deliberately outlives its websocket
-// so that reloading the page can reattach to it -- but this counter restarts at zero on reload,
-// so it handed out `term-1` again, `terms.open` found a live pty under that key and returned it,
-// and a brand new terminal came up showing an old session's scrollback with its process still
-// running in it. Both halves of that are the same bug.
+// Multiple xterm instances keep their websocket and pty alive while hidden, and the 285kb bundle
+// loads only on the first terminal action.
+// `taken` is the set of ids the server is holding. A pty deliberately outlives its websocket so a
+// reload can reattach, and this counter restarts at zero on reload, so an id in `taken` must be
+// skipped rather than reused.
 function nextTermId(kind, taken = []) {
   if (kind === 'git') return 'git';
   const used = new Set([...lee.terms.keys(), ...taken]);
@@ -27,9 +24,8 @@ function nextTermId(kind, taken = []) {
 function termLabel(kind, id) { return kind === 'git' ? 'lazygit' : kind === 'release' ? 'release pipeline' : kind === 'deploy' ? 'deploy' : kind === 'drive' ? 'drive' : kind === 'gh-auth' ? 'gh auth' : `terminal ${id.split('-').pop()}`; }
 function paintTermTabs() {
   const bar = $('#termtabs'); if (!bar) return;
-  /* The close control belongs to the tab, not to the header. One × over there always shut
-     the *active* terminal, so closing a background one meant selecting it first, and which
-     tab it would close was never visible from the tab itself. */
+  /* The close control belongs to the tab, not the header, so a background terminal is closed
+     without selecting it first. */
   bar.innerHTML = [...lee.terms.entries()].map(([id, t]) =>
     `<span role="tab" aria-selected="${id === lee.activeTerm}" class="lee-termtab${id === lee.activeTerm ? ' active' : ''}" ` +
     `data-term="${esc(id)}" title="${esc(t.cwd || '')}"><button class="lee-termtab-name" data-term-pick="${esc(id)}">${esc(t.label)}</button>` +
@@ -65,14 +61,13 @@ function leeLeft(which = 'files') {
   else { setScope('files'); requestAnimationFrame(() => $('#filetree')?.focus()); }
 }
 window.leeLeft = leeLeft;
-/* ---- expand: one slot, one mode, one writer ----
+/* Expansion: one slot, one mode, one writer.
 
-   `wide` gives the pane the dominant share of the grid it already sits in; `full` lifts it over
-   the whole shell. Only one slot is expanded at a time. Everything expansion touches -- the
-   `#shell` classes, the agent panel's timeline layout, every button label -- is written by
-   `leeSyncExpand` from the stored value and from nothing else, so the four cannot disagree.
-   Closing the pane clears it: a wide grid track behind a hidden pane is the dead space that a
-   boolean nobody else knew about used to leave. */
+   `wide` gives the pane the dominant share of the grid it sits in, and `full` lifts it over the
+   whole shell. Only one slot is expanded at a time. Everything expansion touches is written by
+   `leeSyncExpand` from the stored value alone, so the `#shell` classes, the agent panel's timeline
+   layout and every button label cannot disagree. Closing the pane clears it, because a wide grid
+   track behind a hidden pane is dead space. */
 const PANE_HIDDEN = {left: 'no-left', right: 'no-right', bottom: 'no-bottom'};
 const EXPAND_MODES = ['wide', 'full'];
 
@@ -122,8 +117,8 @@ function leePane(which, show = null, persist = true) {
   const cls = PANE_HIDDEN[which] || 'no-bottom';
   const hidden = show === null ? !shell.classList.contains(cls) : !show;
   shell.classList.toggle(cls, hidden);
-  // Closing the pane that is expanded: without this its grid track stays wide and the
-  // hidden pane keeps the room, which is the dead space this used to leave behind.
+  // Closing the pane that is expanded: without this its grid track stays wide and the hidden pane
+  // keeps the room.
   if (hidden && leeExpandState().which === which) leeExpand('');
   if (matchMedia('(max-width: 1100px)').matches && which !== 'bottom') {
     shell.classList.toggle('mobile-' + which, !hidden);
@@ -141,11 +136,10 @@ function leePane(which, show = null, persist = true) {
 }
 window.leePane = leePane;
 
-/* ---- docking: a pane is either pinned open, or closes when you work somewhere else ----
+/* Docking: a pane is either pinned open, or closes when you work somewhere else.
 
-   The file and agent panes are furniture on a wide screen and an obstruction on a narrow one,
-   so each carries its own answer rather than the layout deciding for everybody. Pinned is the
-   default and is exactly the old behaviour: nothing moves until you unpin it. */
+   The file and agent panes are furniture on a wide screen and an obstruction on a narrow one, so
+   each carries its own answer. Pinned is the default, and nothing moves until you unpin it. */
 const DOCKABLE = {left: '#left', right: '#right'};
 
 function leePinned(which) { return localStorage.getItem('lee-pin-' + which) !== '0'; }
@@ -169,9 +163,9 @@ function leePinPane(which) {
 }
 window.leePinPane = leePinPane;
 
-/* Modals, context menus, the restore tabs and the splitters are not "somewhere else": each is
+/* Modals, context menus, the restore tabs and the splitters are not "somewhere else". Each is
    opened from a pane or acts on one, and closing the pane underneath would pull the ground out
-   from whatever the dialog was about to do. */
+   from under the dialog. */
 function leeAutoClosePanes(target) {
   const shell = $('#shell');
   if (!shell || !(target instanceof Element)) return;
@@ -180,10 +174,9 @@ function leeAutoClosePanes(target) {
     const pane = $(sel);
     if (leePinned(which) || !pane || pane.contains(target)) continue;
     if (shell.classList.contains(which === 'left' ? 'no-left' : 'no-right')) continue;
-    // Two more ways a pane is still in use without holding the keyboard. A model mid-answer
-    // must not be closed out of sight -- the run is the reason the pane is open. And a pane
-    // must not shut under the pointer that is travelling towards it, which is what focus
-    // landing elsewhere looks like from here.
+    // Two more ways a pane is in use without holding the keyboard. A model mid-answer must not be
+    // closed out of sight, and a pane must not shut under a pointer travelling towards it, which
+    // is what focus moving elsewhere looks like from here.
     if (which === 'right' && lee.agentBusy) continue;
     if (pane.matches(':hover')) continue;
     leePane(which, false, false);
@@ -192,8 +185,8 @@ function leeAutoClosePanes(target) {
 document.addEventListener('focusin', e => leeAutoClosePanes(e.target), true);
 document.addEventListener('mousedown', e => leeAutoClosePanes(e.target), true);
 
-// Escape from inside an unpinned pane puts you back in the editor, which is the only way out
-// that does not need the mouse.
+// Escape from inside an unpinned pane puts you back in the editor, the only way out that does not
+// need the mouse.
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   for (const [which, sel] of Object.entries(DOCKABLE)) {

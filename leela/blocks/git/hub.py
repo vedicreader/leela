@@ -19,7 +19,7 @@ def hub_available():
     except ImportError: return False
 
 def _api(root):
-    "gheasy owns the token and the client; `GhApi` binds owner and repo, so calls do not repeat them."
+    "gheasy owns the token and the client. `GhApi` binds owner and repo, so calls do not repeat them."
     from gheasy.core import _gh_api, _resolve_gh_token
     try: owner, name, api = _gh_api(token=_resolve_gh_token(), path=root)
     except ValueError as e: raise GitError(f'this repository has no GitHub remote ({e})') from e

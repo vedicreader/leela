@@ -55,7 +55,7 @@ def lang_for(p):
     return NAME_LANGS.get(p.name, LANGS.get(p.suffix.lower()))
 
 def is_texty(p):
-    "Can this be opened in a text editor at all?"
+    "Whether this can be opened in a text editor at all."
     return Path(p).suffix.lower() not in _BINARY
 
 @dataclass
@@ -75,7 +75,7 @@ class Sandbox:
         self.roots = L()
         for r in roots: self.add_root(r)
     def covers(self, p):
-        "Is `p` inside an open root, or one of them itself?"
+        "Whether `p` is inside an open root, or is one of them."
         return any(p.is_relative_to(r) for r in self.roots)
     def add_root(self, p):
         "Open a folder. Returns its resolved path; adding a folder already covered is a no-op."
@@ -89,7 +89,7 @@ class Sandbox:
         self.roots = self.roots.filter(lambda r: r != p)
         return p
     def _check(self, ref, must_exist=False):
-        "Resolve `ref` and refuse it unless it lands inside an open root."
+        "Resolve `ref` and refuse it unless it resolves inside an open root."
         if not self.roots: raise Unsafe('no folder is open')
         p = Path(ref).expanduser()
         if not p.is_absolute(): p = self.roots[0]/p

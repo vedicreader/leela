@@ -77,7 +77,7 @@ class Research:
             out.append({'title': title or _title(text, ''), 'text': text[:MAX_DOC_CHARS]})
         return out if len(out) > 1 else []
     def _page_text(self, f, page, sel=None):
-        "Best whole-page Markdown candidate. `multi=True` throughout: without it a selector returns only."
+        "The best Markdown candidate. Without `multi=True` a selector returns its first match only."
         candidates = []
         sections = self._article_sections(f, page) if not sel else []
         def take(label, **kw):
@@ -111,7 +111,7 @@ class Research:
             if len(fallback) > len(text): text, strategy = fallback[:MAX_DOC_CHARS], 'independent extraction'
         return text, strategy, sections
     def search(self, q, n=10, category='text'):
-        "Search hits for `q` — titles and urls, no page bodies."
+        "Search hits for `q`: titles and urls, no page bodies."
         q = (q or '').strip()
         if not q:
             self.note = 'empty query'
@@ -154,7 +154,7 @@ class Research:
         if remember: self._remember(doc)
         return doc
     def dig(self, q, n=5, chars=MAX_DOC_CHARS, remember=True):
-        "Cited corpus via `fossick.research`. `n` page fetches — never on a keystroke."
+        "Cited corpus via `fossick.research`. `n` page fetches, so never on a keystroke."
         q = (q or '').strip()
         if not q:
             self.note = 'empty query'
@@ -186,7 +186,7 @@ class Research:
         self.note = f'saved {e.path}'
         return e
     def save_notebook(self, url, ref=None):
-        "A url as a runnable notebook via fossick's `url2nb`. It writes the file itself, so the path is."
+        "A url as a runnable notebook via fossick's `url2nb`. It writes the file, so the path is checked first."
         f = self._fossick()
         p = self.fs._check(ref or f'{_url_slug(url)}.ipynb')
         if p.suffix != '.ipynb': p = p.with_suffix('.ipynb')

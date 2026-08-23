@@ -11,8 +11,7 @@ from ...core.backups import ENTRIES as BACKUP_ENTRIES, PRECIOUS
 __all__ = ['DEFAULT_SETTINGS', 'Settings', 'USER_SETTINGS_FILE', 'WORKSPACE_SETTINGS_FILE',
            'CODE_FOLDER', 'agent_cfg', 'start_folder']
 
-#: Where a folder picker with nothing to go on starts, when it is there. Home is a long list of
-#: things that are not projects, and the first keystroke of every open was `c`, `o`, `d`, `e`.
+#: Where the folder picker starts when nothing else names a folder. Home is mostly not projects.
 CODE_FOLDER = '~/code'
 
 USER_SETTINGS_FILE = Path(leela_cfg)/'settings.json'
@@ -49,15 +48,13 @@ DEFAULT_SETTINGS = {
         'breakOnRaised': False, 'breakOnUncaught': True,
     },
     'backups': {
-        # `off` still keeps the copy taken before anything overwrites the conversation log: losing
-        # it to one bad write is the failure this exists for, and it does not wait for a schedule.
+        # `off` still keeps the copy taken before anything overwrites the conversation log.
         'cadence': 'daily', 'keepNewest': 5, 'ageBands': '2,14,60',
         'include': list(PRECIOUS),      # what a dated copy holds; the vault is opt-in
     },
     'agent': {
-        # Ramabana writes the conversation log, the session sidecar, the branches and the plans
-        # from the same code Leela drives, so one directory can serve both surfaces. Empty means
-        # Leela's own config dir, which is what every install has been using.
+        # Empty means Leela's own config dir. Pointing it at Ramabana's makes one history
+        # serve both surfaces.
         'configFolder': '',
     },
     'terminal': {
@@ -166,8 +163,8 @@ class Settings:
     "Read and write user/workspace settings without allowing arbitrary paths or keys."
     def __init__(self, root=None, user_path=None):
         self.root = Path(root).resolve() if root else None
-        # resolved now, not at import: `leela_cfg` is what a test moves, and settings written to
-        # a path fixed at import are settings written into somebody else's run
+        # resolved now, not at import: a test moves `leela_cfg`, and a path fixed at import
+        # writes into somebody else's run
         self.user_path = Path(user_path or Path(leela_cfg)/'settings.json')
     @property
     def workspace_path(self): return self.root/WORKSPACE_SETTINGS_FILE if self.root else None
@@ -216,10 +213,8 @@ class Settings:
 def agent_cfg(settings=None):
     """Where the agent's durable conversations live: `agent.configFolder`, else Leela's own config.
 
-    The files are `<history_name>-history.jsonl` and its sidecars, written by Ramabana whichever
-    surface is driving it, so pointing this at Ramabana's config dir makes one history serve both.
-    A folder that cannot be made is reported rather than silently becoming a second empty log.
-    """
+    Ramabana writes `<history_name>-history.jsonl` and its sidecars here. A folder that cannot be
+    made raises rather than becoming a second empty log."""
     folder = str(((settings or Settings()).effective().get('agent') or {}).get('configFolder') or '').strip()
     if not folder: return Path(leela_cfg)
     out = Path(folder).expanduser()

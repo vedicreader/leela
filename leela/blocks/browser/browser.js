@@ -1,11 +1,10 @@
 /* The inline browser: one page from the persistent CDP Chrome, drawn in a Leela tab.
  *
- * Chrome renders offscreen and streams JPEG frames over `/browser/ws`; this paints them on a
- * canvas and sends input back. The page runs in a separate process with fossick's profile, so
- * it cannot reach Leela's DOM and a site fossick is signed in to is one Leela can read.
+ * Chrome renders offscreen and streams JPEG frames over `/browser/ws`. The page runs in a separate
+ * process with fossick's profile, so it cannot reach Leela's DOM, and a site fossick is signed in
+ * to is one Leela can read.
  *
- * Coordinates are 1:1 -- the server pins Chrome's viewport to the canvas's CSS size -- so
- * nothing has to be mapped through frame metadata that moves when the page scrolls.
+ * Coordinates are 1:1, because the server pins Chrome's viewport to the canvas's CSS size.
  */
 
 const wsURL = p => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${p}`;
@@ -76,8 +75,8 @@ function mountWeb(host, st) {
     else if (m.t === 'nav') paintNav(host, m);
   };
 
-  // Chrome only emits a frame when something changes, so a resize has to re-ask for one; the
-  // server restarts the cast, which always sends a fresh first frame.
+  // Chrome only emits a frame when something changes, so a resize re-asks for one. The server
+  // restarts the cast, which always sends a fresh first frame.
   view.resizer = new ResizeObserver(() => {
     const [w, h] = measure();
     if (w === view.size[0] && h === view.size[1]) return;
@@ -91,9 +90,8 @@ function mountWeb(host, st) {
   canvas.focus();
 }
 
-/* A hidden window still has a live screencast behind it, so Chrome goes on encoding for a
-   canvas nobody can see -- the difference between a background Leela costing nothing and
-   costing a core. The page stays open; resuming asks for a frame immediately. */
+/* A hidden window still has a live screencast behind it, so Chrome goes on encoding for a canvas
+   nobody can see. The page stays open, and resuming asks for a frame immediately. */
 function wireVisibility(view) {
   const onChange = () => {
     if (webView !== view || view.sock.readyState !== 1) return;
@@ -110,9 +108,8 @@ function sizeCanvas(canvas, w, h) {
   canvas.style.width = `${w}px`; canvas.style.height = `${h}px`;
 }
 
-/* `createImageBitmap` decodes off the main thread, where an `<img>` with a data: URL would
-   parse and decode on it. A frame arriving mid-decode is dropped, not queued: a backlog only
-   adds latency to pictures nobody sees. */
+/* `createImageBitmap` decodes off the main thread, where an `<img>` with a data: URL would decode
+   on it. A frame arriving mid-decode is dropped rather than queued. */
 function drawFrame(ctx, canvas, view, buf) {
   if (!buf || view.drawing) return;
   view.drawing = true;
@@ -151,9 +148,9 @@ function wireToolbar(host, view, urlBox, say) {
   on('remember', () => readWeb(view, true, say));
 }
 
-/* The live page as Markdown -- the DOM after the scripts ran and after the login, which is
-   what a fetch cannot reach. Comes back as research's own `Doc`, so saving it is a path that
-   already exists. */
+/* The live page as Markdown: the DOM after the scripts ran and after the login, which a fetch
+   cannot reach. Comes back as research's own `Doc`, so saving it is a path that already
+   exists. */
 async function readWeb(view, remember, say) {
   say(remember ? 'reading and remembering…' : 'reading…');
   let d;
@@ -178,9 +175,9 @@ function showWebMarkdown(doc) {
   $('[data-md="notebook"]', m).onclick = () => saveDoc(doc, 'notebook');
 }
 
-/* Everything is `preventDefault`ed: the canvas stands in for a viewport, so a Space that
-   scrolls the page must not also scroll Leela and a Tab must move focus inside it. The keymap
-   router treats this panel like the terminal, so the chords that get you out still work. */
+/* Everything is `preventDefault`ed, because the canvas stands in for a viewport: a Space that
+   scrolls the page must not also scroll Leela. The keymap router treats this panel like the
+   terminal, so the chords that get you out still work. */
 function wireInput(canvas, view) {
   const at = e => { const r = canvas.getBoundingClientRect();
                     return {x: e.clientX - r.left, y: e.clientY - r.top}; };
@@ -251,8 +248,8 @@ function keyFields(e) {
 // Asked of the router itself, so the list cannot drift from the one in `findBinding`.
 const isEscapeChord = e => Boolean(findBinding(e, 'web'));
 
-// Open a URL as a tab -- the entry point for research and the palette. `/browser/open` answers
-// with the tab strip, like every other route that opens a tab.
+// Open a URL as a tab, the entry point for research and the palette. `/browser/open` answers with
+// the tab strip, like every other route that opens a tab.
 
 async function openWebTab(url, title = '') {
   if (!url) return status('no URL to open', 'err');

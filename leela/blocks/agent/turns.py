@@ -1,4 +1,4 @@
-"How one assistant turn is shaped for the browser: tool schemas, previews, diffs, media."
+"How one assistant turn is formatted for the browser: tool schemas, previews, diffs, media."
 
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ def edit_diffs(a):
     return [{'path': p, **diff_payload(was, now)} for p, (was, now) in a.changes().items()]
 
 def activity_changes(a, versions):
-    "Activity rows that moved since the last poll: new calls and in-place transitions"
+    "Activity rows that moved since the last poll: new calls and in-place transitions."
     changed = []
     for row in a.activity.rows(mark=a.activity._mark):
         version = (row.get('done'), row.get('ok'), row.get('line'), row.get('detail'), row.get('secs'))
@@ -147,9 +147,8 @@ def activity_changes(a, versions):
 def history_sessions(turns, execution=(), started_here=None):
     """Turns grouped by durable model-context id; old untagged history splits after 30m.
 
-    `app` is `leela` for a session `started_here` records, `ramabana` for the rest. Leela and the
-    CLI append to one log, and only Leela leaves the mark, so history written before that mark
-    existed reads as the CLI's.
+    `app` is `leela` for a session `started_here` records, `ramabana` for the rest. Only Leela
+    marks the shared log, so history written before the mark existed reads as the CLI's.
     """
     here = started_here or {}
     groups, by_id, legacy_n, legacy_last = [], {}, 0, None

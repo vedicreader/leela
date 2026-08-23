@@ -36,7 +36,7 @@ def _receiver(code, pos):
     return typ,frag,m.start(2)
 
 def _get(row, key, default=None):
-    "Dict or attribute row — kosha returns AttrDict/SimpleNamespace, store rows are dicts."
+    "Dict or attribute row: kosha returns AttrDict/SimpleNamespace, store rows are dicts."
     if isinstance(row, dict): return row.get(key, default)
     return getattr(row, key, default)
 
@@ -79,7 +79,7 @@ class Cluster:
             self.label = min(syms, key=len) if syms else f'cluster {self.centroid}'
     @property
     def files(self):
-        "Distinct files the cluster spans — a cluster crossing many files is the interesting kind."
+        "Distinct files the cluster spans. A cluster crossing many files is the interesting kind."
         return sorted({m.path for m in self.members})
     def dict(self):
         return {'centroid': self.centroid, 'size': self.size, 'label': self.label,
@@ -178,8 +178,8 @@ class Search:
         return rows
     def _here(self, place):
         "The project's own copy of an indexed package file."
-        # One Kosha index serves every checkout, so a row can name another virtualenv's copy:
-        # same package, possibly another version, and the sandbox cannot open it at all.
+        # One Kosha index serves every checkout, so a row can name another virtualenv's copy of
+        # the same package, which the sandbox cannot open at all.
         parts = Path(place).parts if place else ()
         if 'site-packages' in parts:
             rest = parts[len(parts) - list(reversed(parts)).index('site-packages'):]
@@ -311,7 +311,7 @@ class Search:
         """Fast, current-disk search. JSON output keeps colons and non-UTF8 paths unambiguous.
 
         `no_ignore` is for the environment: `.venv` is in everyone's `.gitignore`, so ripgrep skips
-        every file in it unless told that this time the ignore rules are not the point.
+        every file in it otherwise.
         """
         exe = shutil.which('rg')
         if not exe:
@@ -453,7 +453,7 @@ class Search:
         return best, st
     def _hits_from(self, rows, kind='ann'): return L(self._hit(r, getattr(r, 'kind', None) or kind) for r in (rows or ()))
     def similar(self, path, line=1, limit=15):
-        "Code nearest the chunk at `path:line` — reuses the stored vector, never re-embeds."
+        "Code nearest the chunk at `path:line`, reusing the stored vector rather than re-embedding."
         k = self._kosha()
         if k is None: return L()
         if hasattr(k, 'similar'):
@@ -472,7 +472,7 @@ class Search:
         self.backend, self.note = 'ann', f'{len(rows)} neighbours by embedding distance'
         return self._hits_from(rows, 'ann')
     def clusters(self, min_count=None, max_count=None, limit=None):
-        "Indexed repo grouped by embedding shape; labels come from litesearch c-TF-IDF."
+        "Indexed repo grouped by embedding distance; labels come from litesearch c-TF-IDF."
         k = self._kosha()
         if k is None: return L()
         if hasattr(k, 'code_clusters'):
@@ -573,8 +573,7 @@ class Search:
     def env_roots(self):
         """The project interpreter's `site-packages`, which the project walk deliberately skips.
 
-        A symbol imported from a package is defined in one of these and nowhere in the project, so
-        without them a lookup on `fastcore.tools` can only offer the import lines that mention it.
+        Without them a lookup on an imported symbol can only offer the import lines that mention it.
         """
         from ..runtime.kernels import project_python
         py = project_python(self.fs.roots)
@@ -642,7 +641,7 @@ class Search:
                         return a.name if n.level else f'{n.module or ""}.{a.name}'
         return ''
     def import_package(self, name, path):
-        "The package a file says `name` comes from, so a lookup lands in the one that was imported."
+        "The package a file says `name` comes from, so a lookup goes to the one that was imported."
         if not path or not name: return ''
         try: text = self.fs.read(path)
         except Exception: return ''
@@ -659,12 +658,9 @@ class Search:
     def env_definitions(self, name, limit=12, path=''):
         """Where an installed package defines `name`: Kosha's environment index, else ripgrep.
 
-        The index is exact about which package a file belongs to and where the definition starts.
-        Ripgrep needs nothing to be fresh, so it answers when the index is missing, stale for a
-        package installed since the last sync, or simply has not heard of the name.
-
-        Case matters either way: a definition is an identifier, and an insensitive search answers
-        `store_attr` with `STORE_ATTR` from somebody's vendored stubs.
+        Ripgrep needs nothing to be fresh, so it answers when the index is missing or stale for a
+        package installed since the last sync. The search is cased either way: insensitive, a
+        lookup on `store_attr` answers with `STORE_ATTR` from vendored stubs.
         """
         name = (name or '').strip()
         if not re.match(r'^[_A-Za-z]\w*$', name): return L()
@@ -676,7 +672,7 @@ class Search:
             return self._rg(pattern, limit, regex=True, exts=('.py', '.pyi'), roots=roots,
                             no_ignore=True, cased=True)
         # column zero first. `def patch(self, ...)` in twelve packages is a method called patch, not
-        # the thing that was clicked; an indented definition is only the answer when nothing else is.
+        # the thing that was clicked. An indented definition answers only when nothing else does.
         out = (hits(rf'^(?:async\s+def|def|class)\s+{word}\b|^{word}\s*(?::[^=]+)?=')
                or hits(rf'^\s+(?:async\s+def|def|class)\s+{word}\b'))
         for hit in out:
@@ -689,8 +685,8 @@ class Search:
     def env_module(self, path, roots=None):
         """The dotted module a `site-packages` file is, so a hit reads `fastcore.basics`.
 
-        The basename alone cannot answer "which one": two packages both offer a `document.py`, and
-        every package offers an `__init__.py`. `__init__` is dropped because the module is its folder.
+        The basename cannot say which one: two packages both offer a `document.py`. `__init__` is
+        dropped because the module is its folder.
         """
         p = Path(path)
         for r in (self.env_roots() if roots is None else roots):
@@ -703,8 +699,8 @@ class Search:
     def env_symbols(self, name, limit=12):
         """Kosha's environment store, which knows the package and the line without guessing.
 
-        A path prefix is a guess about which package a file belongs to, and a namespace package, a
-        vendored copy or an editable install each break it. The index carries the package itself.
+        A path prefix guesses which package a file belongs to, and a namespace package, a vendored
+        copy or an editable install each break that guess.
         """
         k = self._kosha()
         if k is None: return L()
@@ -746,9 +742,8 @@ class Search:
     def declaration_or_usages(self, name, path=None, line=0, cell_index=-1, limit=30, dotted=''):
         """Where `name` is declared, or who uses it when the cursor is already there.
 
-        A notebook cursor is a cell and a line inside it, which is why `cell_index` is separate:
-        the file line a hit carries is a line of JSON and never matches what a person is looking at.
-        `dotted` is the chain the cursor ends: `fastcore.test` is a module, and only the chain says so.
+        `cell_index` is separate because the file line a notebook hit carries is a line of JSON.
+        `dotted` is the chain the cursor ends, the only thing that says `fastcore.test` is a module.
         """
         if '.' in (dotted or '') and (m := self.module_hit(dotted, path or '')):
             self.backend, self.note = 'module', f'{dotted} is a module'
@@ -857,7 +852,7 @@ class Search:
             h.sources = [name]
         return L(sorted(hits, key=lambda h: (-h.score, h.path, h.line))), ''
     def _all(self, q, limit, regex=False, legs=None):
-        "Search every available leg -- `legs` narrows the fan-out -- and rank one deduplicated result."
+        "Search every available leg, narrowed by `legs`, and rank one deduplicated result."
         per = max(12, min(limit, 40))
         runners = self._runners(q, per, regex)
         wanted = L(ifnone(legs, self.ALL_LEGS)).filter(lambda n: n in runners)
@@ -902,7 +897,7 @@ class Search:
             return self._place(self._keep(hits, exts, roots))
         return self._place(self._rg(q, limit, regex, exts, roots))
     def symbols(self, path):
-        "Defs and classes in one file, methods included; `score` carries the indent depth so the UI can."
+        "Defs and classes in one file, methods included. `score` carries the indent depth for the UI."
         if _is_nb(path): return self._nb_symbols(path)
         try: text = self.fs.read(path)
         except Exception: return L()

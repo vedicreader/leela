@@ -152,8 +152,8 @@ def deploy_template(app, domain, subdomain='', port=5001, second_host=''):
 
 # The second hostname: same server, same container, same tunnel. Caddy tells them apart by
 # the Host header, and `or` rather than a getenv default because the workflow passes every
-# key as `${{ vars.KEY }}` -- an unset repository variable arrives as the empty string, not
-# as absent, and a getenv default would not fire.
+# key as `${{ vars.KEY }}`. An unset repository variable arrives as the empty string, not as
+# absent, so a getenv default would not fire.
 second_host = os.getenv('SECOND_HOST') or {second_host!r}''' if second_host else (
     '\n\nsecond_host = os.getenv("SECOND_HOST") or ""')
     return f'''"""Deploy {app} to a VPS: dockeasy image, vpseasy stack and server, cfeasy tunnel.

@@ -1,4 +1,3 @@
-/* ------------------------------------------------------------------ diffs */
 const diffHtml = (rows) => rows.map(r =>
   `<div class="lee-drow ${r.kind}"><span class="lee-dnum">${r.line || ''}</span>` +
   `<span class="lee-dtext">${esc(r.text)}</span></div>`).join('');
@@ -61,8 +60,8 @@ async function leeLocalHistory(path = lee.path) {
 }
 window.leeLocalHistory = leeLocalHistory;
 
-// The dirty dot says *that* a tab changed. This says what changed -- the question
-// actually worth answering before a save, or after something moved the file underneath.
+// The dirty dot says that a tab changed. This says what changed, before a save or after something
+// moved the file underneath.
 function bufferBody() {
   return lee.kind === 'notebook'
     ? {cells: lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}))}
@@ -142,9 +141,8 @@ function showSaveConflict(message) {
   $('[data-disk]', box).onclick = async () => { lee.heldSaveConflicts.delete(lee.path); box.remove(); await takeDiskVersion(lee.path); status('loaded disk version; browser draft discarded', 'ok'); };
 }
 async function saveTab(quiet = false, expectedVersion = null, force = false) {
-  // A document the browser renders has no editor behind it, so there is nothing to write and
-  // `getDoc` would be called on nothing. Reporting success is honest here: the file on disk is
-  // exactly what is being shown.
+  // A document the browser renders has no editor behind it, so `getDoc` would be called on
+  // nothing. Reporting success is honest: the file on disk is what is being shown.
   if (lee.kind === 'pdf' || lee.kind === 'image') {
     if (!quiet) status(`${lee.kind === 'pdf' ? 'a PDF' : 'an image'} is read-only here`);
     return true;
@@ -176,12 +174,12 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
       if(lee.filePrefs.formatOnSave){try{const formatted=await post('/editor/format',{path:lee.path,lang:curLang(),text});text=formatted.text;if(text!==LeeCM.getDoc(lee.editors.get('file')))LeeCM.setDoc(lee.editors.get('file'),text);}catch(e){status(`format skipped: ${e.message||e}`,'err');}}
       d = await post('/nb/save', {text, base_disk_version, force});
     }
-    // An autosave request may finish after another keystroke. The disk has its snapshot,
-    // but the newer browser buffer must remain authoritative and schedule the next save.
+    // An autosave request can finish after another keystroke. The disk has its snapshot, but the
+    // newer browser buffer stays authoritative and schedules the next save.
     if (expectedVersion !== null && expectedVersion !== lee.editVersion) {
-      // This request wrote an older snapshot, but newer typing is still in the editor and
-      // IndexedDB. Rebase that draft on our own disk write so the follow-up autosave is not
-      // mistaken for an external conflict.
+      // This request wrote an older snapshot, and newer typing is still in the editor and
+      // IndexedDB. Rebase that draft on our own disk write, or the follow-up autosave is mistaken
+      // for an external conflict.
       lee.diskVersion = d.disk_version || lee.diskVersion; lee.seenDiskVersion = lee.diskVersion;
       await rebaseDrafts(documentKey, lee.diskVersion);
       setTabSaveState(saveTabEl, 'pending', 'Newer changes are queued for autosave');
@@ -216,9 +214,9 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
   }
 }
 
-/* Every JSON config in this app is written by a program and read by a person, so most of them
-   arrive as one long line. The formatter already exists for format-on-save; this is the same call
-   asked for on purpose, and it edits the buffer rather than the file so it stays undoable. */
+/* Every JSON config here is written by a program and read by a person, so most arrive as one long
+   line. The same formatter as format-on-save, asked for on purpose, editing the buffer rather than
+   the file so it stays undoable. */
 async function leeFormatDoc() {
   const view = lee.editors.get(lee.scope === 'exec' ? 'exec' : 'file');
   if (!view) return status('open a file to format', 'err');
@@ -234,8 +232,8 @@ window.leeFormatDoc = leeFormatDoc;
 
 async function saveAllTabs() {
   // The active editor is saved through the same version-checked path as ordinary autosave.
-  // Inactive editors are mirrored to the server within 120ms; let pending mirrors land
-  // rather than cancelling their timers and accidentally saving the previous snapshot.
+  // Inactive editors are mirrored to the server within 120ms, and pending mirrors are left to
+  // arrive rather than cancelled, which would save the previous snapshot.
   if (!lee.kind) return status('nothing to save', 'err');
   if (!lee.path) return status('save the unnamed tab individually first', 'err');
   const activeDirty = !!$('.lee-tab.active.dirty');

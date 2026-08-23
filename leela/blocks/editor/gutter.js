@@ -1,12 +1,9 @@
-/* ---------------------------------------------------------------- change gutter popup
- * PyCharm's gutter, which is the one people mean: the mark thickens under the pointer, and
- * clicking it shows what the line used to say next to the four things you want at that moment --
- * step to the next change, put this one back, copy the old text, or commit only this.
+/* The change gutter popup: the mark thickens under the pointer, and clicking it shows what the
+ * line used to say beside step, revert, copy and commit-only-this.
  *
- * The hunks come from /git/file, where they are cut out of a three-context diff so that each one
- * is a patch Git can place by its own context. The browser never assembles a patch of its own:
- * a hand-built hunk with the wrong line numbers is applied silently in the wrong place, and this
- * surface's whole job is to change one change and nothing else.
+ * The hunks come from `/git/file`, cut out of a three-context diff so each one is a patch Git can
+ * place by its own context. The browser never assembles a patch of its own, because a hand-built
+ * hunk with the wrong line numbers is applied silently in the wrong place.
  */
 const fileHunks = () => lee.fileGit?.hunks || [];
 
@@ -16,7 +13,7 @@ function hunkAtLine(line) {
   if (inside >= 0) return inside;
   // Three context lines can merge two changes into one hunk, so a mark drawn from the exact
   // zero-context ranges can sit just outside the span of the hunk that carries it. The nearest
-  // change is then the right answer, and is certainly better than the click doing nothing.
+  // change is the right answer there.
   let best = -1, gap = Infinity;
   hunks.forEach((h, i) => {
     const d = Math.min(Math.abs(line - h.from), Math.abs(line - h.to));
@@ -25,9 +22,8 @@ function hunkAtLine(line) {
   return best;
 }
 
-/* Which words of the old line the new one no longer has. PyCharm boxes them, and it is the
- * difference between reading "the line changed" and seeing what changed in it. A plain LCS over
- * words is enough at one line's length, and costs nothing at it. */
+/* Which words of the old line the new one no longer has. A plain LCS over words is enough at one
+ * line's length. */
 function tokenDiffHtml(before, after) {
   const a = String(before ?? '').match(/\w+|\s+|[^\w\s]/g) || [];
   const b = String(after ?? '').match(/\w+|\s+|[^\w\s]/g) || [];
@@ -54,9 +50,8 @@ function closeChangePopup() {
   pop._leeOff?.(); pop.remove();
 }
 
-/* The mark widens only while the pointer is actually on it. 12px is the editor bundle's own
- * click target for a change mark; if this number and that one disagreed, the gutter would
- * advertise an affordance it does not answer. */
+/* The mark widens only while the pointer is on it. 12px is the editor bundle's own click target
+ * for a change mark, and the two numbers must agree. */
 function armChangeGutter(host) {
   if (!host || host._leeGutterArmed) return;
   host._leeGutterArmed = true;
@@ -80,8 +75,7 @@ function changePopupBody(h) {
 function showChangePopup(path, line) {
   closeChangePopup();
   const hunks = fileHunks(), at = hunkAtLine(line);
-  // An untracked file has no committed version of anything, so there is nothing for this popup
-  // to show; the whole-file diff is the honest answer there.
+  // An untracked file has no committed version, so the whole-file diff is the honest answer.
   if (at < 0) return showGitFileDiff(path, lee.fileGit?.diff || '', line);
   const h = hunks[at], name = String(path || '').split('/').pop();
   const pop = document.createElement('div');
@@ -137,10 +131,9 @@ async function copyChangeHunk(h) {
   catch (_) { status('clipboard access failed', 'err'); }
 }
 
-/* Git reads and writes the file on disk, and this editor may be holding a newer version of it.
- * Both directions of that are silent data loss -- the revert overwrites the unsaved edit, or the
- * next autosave writes the reverted lines back -- so the file is saved first and the buffer is
- * reloaded after, rather than either being guessed at. */
+/* Git reads and writes the file on disk, and this editor may hold a newer version of it. Both
+ * directions are silent data loss: the revert overwrites the unsaved edit, or the next autosave
+ * writes the reverted lines back. So the file is saved first and the buffer reloaded after. */
 async function refreshFileChanges(path, fromDisk = false) {
   const v = lee.editors.get('file');
   if (!v) return;
@@ -164,8 +157,7 @@ async function revertChangeHunk(path, h) {
     `version. Every other change in the file is left alone.`, 'revert');
   if (!ok) return;
   closeChangePopup();
-  // reverse against the working tree, not the index: this is an edit to the file, and the
-  // index is not involved in it at all.
+  // Reverse against the working tree, not the index. This is an edit to the file.
   try { await gitDo('apply_patch', {patch: h.patch, staged: false, reverse: true}); }
   catch (_) { return; }
   await refreshFileChanges(path, true);
@@ -175,10 +167,9 @@ async function commitChangeHunk(path, h, message) {
   const text = String(message || '').trim();
   if (!text) return status('write a message to commit this change', 'err');
   if ($('.lee-tab.active.dirty') && !await saveTab(true)) return;
-  /* PyCharm commits the one change and nothing else. Git can only commit what is in the index, so
-   * this stages the hunk and commits -- which means anything already staged rides along. Rather
-   * than quietly widening a one-hunk commit, or quietly unstaging work someone deliberately
-   * staged, the choice is put to whoever is looking at it. */
+  /* Git can only commit what is in the index, so this stages the hunk and commits, and anything
+   * already staged rides along. The choice is put to whoever is looking at it rather than
+   * quietly widening the commit or quietly unstaging deliberate work. */
   const snapshot = gitUI.snapshot || await gitInfoOrNull();
   const staged = (snapshot?.changes || []).filter(c => c.staged && c.path !== path).map(c => c.path);
   if (staged.length) {

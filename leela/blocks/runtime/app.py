@@ -29,7 +29,7 @@ def connect(app, ctx):
         d = await req.json()
         if not (key := str(d.get('key') or '')): return fail('key is required')
         broker = getattr(ctx.pool, 'broker', None)
-        for p in (broker.pools if broker else [ctx.pool]):   # the offer may name another workspace's
+        for p in (broker.pools if broker else [ctx.pool]):   # the offer can name another workspace's kernel
             if key not in p.kernels: continue
             if p.kernels[key].busy: return fail('that runtime is running a cell')
             await p.close(key)
@@ -152,7 +152,7 @@ def connect(app, ctx):
         return {'ok': True, **o}
     @rt('/envs')
     def envs_route():
-        "Everything the variable panel could point at: a process appears only if it has an inspector in."
+        "Everything the variable panel could point at. A process appears once it has an inspector in it."
         return {'envs': session.envs(), 'watching': session.env_base,
             'hint': 'import dhrishti.serving as ds; ds.serve(name="api")'}
     @rt('/envs/watch')
@@ -164,9 +164,8 @@ def connect(app, ctx):
     @rt('/dev/start')
     async def dev_start(path: str = '', name: str = ''):
         "Start a run configuration (`name`) or a file (`path`) under a live inspector."
-        # The picker offers an unsaved configuration for the open file, so it is never empty. That
-        # one's name matches no saved configuration, and `run` reads a name it cannot find as a
-        # path -- of a file called `main`, not `main.py`. On that one only the path resolves.
+        # The picker's unsaved configuration for the open file carries a name no saved configuration
+        # matches, and `run` would read that name as the path of `main` rather than `main.py`.
         try:
             s = await session.run(name if ctx.runs.get(name) else (path or name))
             return {'ok': s.alive, **s.state(), 'log': s.tail(20)}
@@ -180,7 +179,7 @@ def connect(app, ctx):
         s = ctx.dev.get(path)
         return {'log': s.tail(n) if s else [], **(s.state() if s else {})}
     def _run_pty(hello):
-        "Which run a terminal is attaching to. `cwd` carries it: that is the field the client sends."
+        "Which run a terminal is attaching to. The client sends it in the `cwd` field."
         s = ctx.dev.get(hello.get('path') or hello.get('cwd') or '')
         if s is None: raise LookupError('that run is not running')
         return s

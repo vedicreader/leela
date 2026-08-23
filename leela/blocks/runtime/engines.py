@@ -1,12 +1,7 @@
 """One loaded model engine per (runtime, model, engine options), shared by every workspace.
 
-Rishi's `ChatBroker` shares an engine between processes over a socket, and gives each client a
-text-only conversation. Leela's workspaces are threads of one daemon and want tools and streaming, so
-this takes the contract and not the transport: one engine, many chats, the engine outliving all of
-them. `RishiBackend` already accepts `engine=`; this picks which one.
-
-`RuntimeBroker` never evicts, because a kernel holds a namespace and losing it loses work. An engine
-holds weights, so an idle one is a cache entry and closing it costs a reload. A live one is kept.
+One engine, many chats, outliving all of them. `RishiBackend` takes it as `engine=`. Unlike a kernel
+namespace an idle engine is only a cache entry, so it is evicted and reloaded. A live one is kept.
 """
 import inspect, os, threading, time, weakref
 
@@ -21,16 +16,19 @@ def _model_id(spec):
     return split_runtime(spec.model_id)[1]
 
 def engine_kw(runtime, kw):
-    """The part of a backend's runtime kwargs the engine is built from: rishi takes engine and
-    conversation options through one signature, so ask `create_engine` which are its own."""
+    """The part of a backend's runtime kwargs the engine is built from.
+
+    Rishi takes engine and conversation options through one signature, so `create_engine` says
+    which are its own."""
     params = set(inspect.signature(_chat_cls(runtime).create_engine).parameters)
     out = {k: v for k, v in kw.items() if k in params or k == 'backend'}   # litert takes `backend` via **kw
     out.update(kw.get('eng_kw') or {})
     return out
 
 def engine_key(spec, kw):
-    """What splits an engine. Two workspaces on one model but different context limits or
-    accelerators are two engines; sharing one hands the second a build it never asked for."""
+    """What splits an engine.
+
+    Two workspaces on one model with different context limits or accelerators need two engines."""
     eng = engine_kw(spec.runtime, kw)
     return (spec.runtime, _model_id(spec), tuple(sorted((k, repr(v)) for k, v in eng.items())))
 
@@ -41,7 +39,7 @@ class _Loaded:
         self.users = weakref.WeakSet()
 
 class EngineBroker:
-    "Process ceiling across the model engines of every workspace; evicts idle engines, never a live one."
+    "Process ceiling across the model engines of every workspace. Evicts idle engines, never a live one."
     def __init__(self, max_engines=None):
         self.max_engines = int(max_engines or os.environ.get('LEELA_MAX_ENGINES', 3))
         self.engines, self._lock = {}, threading.RLock()
@@ -89,7 +87,7 @@ class EngineBroker:
         if (c := getattr(loaded.engine, 'close', None)): c()
 
     def drop(self, runtime=None):
-        "Close the idle engines of `runtime` (or all of them); what a changed accelerator needs."
+        "Close the idle engines of `runtime`, or of every runtime. Needed when the accelerator changes."
         with self._lock:
             for l in [l for l in self.engines.values()
                       if (runtime is None or l.key[0] == runtime) and not self._live(l)]: self._close(l)

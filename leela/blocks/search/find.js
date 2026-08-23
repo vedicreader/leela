@@ -1,8 +1,7 @@
-/* --------------------------------------------------------------------- find */
 /* One find pane for both shapes of document. CodeMirror's own panel searches the one cell it
-   belongs to, which is never what is being asked of a notebook, and it offered no regex or
-   replace where the cell bar did. This is the single mod+f: regex, case, whole word and
-   replace, over a file or over every cell. */
+   belongs to, which is never what is asked of a notebook, and it offered no regex or replace where
+   the cell bar did. This is the single mod+f: regex, case, whole word and replace, over a file or
+   over every cell. */
 
 const FIND_FLAGS = 'lee-find-flags';
 const MAX_FIND_HITS = 5000;
@@ -72,8 +71,8 @@ function findStep(direction) {
   const view = findView(hit.doc);
   if (view) LeeCM.setSelection(view, hit.from, hit.to);
   $('#leefindcount', bar).textContent = `${state.at + 1} of ${n}`;
-  // `focusCell` and `setSelection` both take the focus, a frame apart. The query is where the
-  // typing belongs, so it is claimed back after both have had their turn.
+  // `focusCell` and `setSelection` both take the focus, a frame apart, so the query claims it
+  // back after both have had their turn.
   requestAnimationFrame(() => requestAnimationFrame(() => $('#leefindq', bar)?.focus()));
 }
 

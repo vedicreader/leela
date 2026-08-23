@@ -179,16 +179,18 @@ async function leeAgentCompaction() {
 window.leeAgentCompaction = leeAgentCompaction;
 
 
-/* The first-run pane on the welcome screen. Accounts first and on purpose: a hosted model costs
-   nothing to add and is better than a 400MB local one for most work, so the offline half is the
-   second question and never the default. `/agent/setup` answers with `frozen: false` outside a
-   packaged app, where a virtualenv already chose its own dependencies, and the pane stays hidden. */
+/* Setting a model up, and afterwards where a new release shows up. A modal both times: the two
+   panes do not fit the welcome screen's column and were cut off on the right. */
 async function leeSetupPane() {
   const host = $('#leesetup'); if (!host) return;
   let d;
   try { d = await api('/agent/setup'); } catch (_) { return; }
-  if (!d.ok || !d.frozen || d.dismissed) { host.hidden = true; return; }
-  renderSetup(host, d);
+  if (!d.ok || !d.frozen) { host.hidden = true; return; }
+  host.hidden = false;
+  host.innerHTML = `<button class="lee-btn${d.done ? '' : ' go'}" id="setupopen">` +
+    `${d.done ? 'Models and updates' : 'Set up a model'}</button>`;
+  $('#setupopen', host).onclick = () => leeSetupModal();
+  if (!d.done && !d.dismissed) leeSetupModal(d);      // nothing can answer a prompt yet
 }
 function setupRow(a) {
   return `<div class="lee-krow"><span><strong>${esc(a.label)}</strong><br>` +
@@ -198,41 +200,63 @@ function setupRow(a) {
 function offlineRow(o) {
   const st = o.install || {}, running = st.state === 'running';
   return `<div class="lee-krow" data-setup-get="${esc(o.value)}"><span><strong>${esc(o.label || o.value)}</strong>` +
-    ` <small>about ${o.mb} MB</small><br><code>${esc((o.requirements || []).join(' '))}</code>` +
+    ` <small>about ${o.mb} MB</small>` +
     `${st.state === 'error' ? `<br><small class="warn">${esc(String(st.log).split('\n').slice(-2).join(' '))}</small>` : ''}</span>` +
     `${o.available ? '<span class="lee-dim">installed</span>'
-      : `<button class="lee-btn" ${running ? 'disabled' : ''}>${running ? `${esc(st.via || 'installing')}…` : 'install'}</button>`}</div>`;
+      : `<button class="lee-btn" ${running ? 'disabled' : ''}>${running ? `${esc(st.via || 'installing')}\u2026` : 'install'}</button>`}</div>`;
 }
-function renderSetup(host, d) {
-  const ready = d.ready.length;
-  host.hidden = false;
-  host.innerHTML = `<h3>Set up a model</h3>` +
-    `<div class="lee-setup-panes"><section class="lee-setup-pane recommended"><h4>Recommended` +
+function updateRows(u) {
+  if (!u) return '<div class="lee-dim">checking\u2026</div>';
+  const app = u.leela || {};
+  const head = app.outdated
+    ? `<div class="lee-krow"><span><strong>Leela ${esc(app.latest)}</strong><br><small>you have ${esc(app.current)}</small></span>` +
+      `<a class="lee-btn go" href="${esc(app.url)}" target="_blank" rel="noreferrer">get it</a></div>`
+    : `<div class="lee-krow"><span><strong>Leela ${esc(app.current)}</strong><br><small>${app.latest ? 'up to date' : 'could not check'}</small></span></div>`;
+  const rows = (u.outdated || []).map(r =>
+    `<div class="lee-krow" data-setup-get="${esc(r.runtime)}"><span><strong>${esc(r.dist)}</strong><br>` +
+    `<small>${esc(r.installed)} \u2192 ${esc(r.latest)}</small></span><button class="lee-btn">update</button></div>`).join('');
+  return head + rows + (rows ? '' : (u.backends || []).length
+    ? '<div class="lee-dim">backends are current</div>' : '');
+}
+function renderSetup(host, d, u) {
+  host.innerHTML = `<div class="lee-mhead">${d.done ? 'Models and updates' : 'Set up a model'}` +
+    `<span class="sub">${d.done ? 'what is installed here, and what is newer' : 'the agent has nothing to answer with yet'}</span></div>` +
+    `<div class="lee-setup-panes"><section class="lee-setup-pane${d.done ? '' : ' recommended'}"><h4>Accounts` +
     `<small>nothing to download</small></h4>${d.accounts.map(setupRow).join('')}</section>` +
-    `<section class="lee-setup-pane"><h4>Work offline too<small>on-device, and large</small></h4>` +
+    `<section class="lee-setup-pane"><h4>On device<small>large</small></h4>` +
     `${d.offline.length ? d.offline.map(offlineRow).join('') : '<div class="lee-dim">nothing for this machine</div>'}` +
     `</section></div>` +
-    `<div class="lee-setup-foot">${ready ? `<span class="lee-dim">${ready} already set up here</span>`
-      : '<span class="warn">Nothing is set up yet, so the agent has no model.</span>'}` +
-    `<button class="lee-btn" id="setupdone">done</button></div>`;
+    `<h4>Updates</h4><div class="lee-setup-updates">${updateRows(u)}</div>` +
+    `<div class="lee-mfoot"><button class="lee-btn go" id="setupdone">done</button></div>`;
   host.querySelectorAll('[data-setup-get]').forEach(row => row.querySelector('button')?.addEventListener('click', async () => {
     const runtime = row.dataset.setupGet;
     const r = await post('/agent/runtimes/install', {runtime});
     if (!r.ok) return status(r.error || `could not install ${runtime}`, 'err');
-    status(`installing ${runtime}… it keeps going if you leave this screen`, 'busy');
+    status(`installing ${runtime}\u2026 it keeps going if you close this`, 'busy');
     pollSetup(host);
   }));
   $('#setupdone', host).onclick = async () => {
     await post('/agent/setup/dismiss', {dismissed: true});
-    host.hidden = true;
-    status('you can set a model up later from settings · models', 'ok');
+    host.remove();
+    leeSetupPane();
   };
   clearTimeout(bkPoll);
   if (d.offline.some(o => (o.install || {}).state === 'running')) bkPoll = setTimeout(() => pollSetup(host), 2000);
 }
+async function leeSetupModal(known) {
+  let d = known;
+  if (!d) { try { d = await api('/agent/setup'); } catch (e) { return status(String(e.message || e), 'err'); } }
+  const m = modal('');
+  renderSetup(m, d, null);
+  // The version check is a network call, so the modal opens first and fills this in.
+  try { renderSetup(m, d, await api('/agent/updates')); } catch (_) { renderSetup(m, d, {leela: {}}); }
+}
 async function pollSetup(host) {
-  if (!host.isConnected || host.hidden) return clearTimeout(bkPoll);
-  try { const d = await api('/agent/setup'); if (d.ok) renderSetup(host, d); }
-  catch (e) { status(String(e.message || e), 'err'); }
+  if (!host.isConnected) return clearTimeout(bkPoll);
+  try {
+    const d = await api('/agent/setup');
+    if (d.ok) renderSetup(host, d, await api('/agent/updates').catch(() => null));
+  } catch (e) { status(String(e.message || e), 'err'); }
 }
 window.leeSetupPane = leeSetupPane;
+window.leeSetupModal = leeSetupModal;

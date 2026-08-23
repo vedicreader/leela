@@ -37,7 +37,7 @@ def backend(platform=None):
     return BACKENDS.get(platform or sys.platform)
 
 def shell_ready(platform=None):
-    "`(ok, why)` -- whether a native window can be opened here, and what is missing if not."
+    "`(ok, why)`: whether a native window can be opened here, and what is missing if not."
     gui = backend(platform)
     if gui is None: return False, f'no native webview backend for {platform or sys.platform}'
     try: import webview  # noqa: F401
@@ -152,11 +152,15 @@ def watch_open_events(on_folder):
         return None
 
 try:                                     # pragma: no cover - macOS only
+    import objc
     from Foundation import NSObject
     class _OpenHandler(NSObject):
         "An Apple Event handler must be a selector on an Objective-C object."
         def init_with(self, fn):
-            self = super().init()
+            # `objc.super`, not `super()`: the builtin has no `init` to find on an ObjC class, so
+            # registration raised and nothing opened a folder dropped on the Dock or picked in Finder.
+            self = objc.super(_OpenHandler, self).init()
+            if self is None: return None
             self._fn = fn
             return self
         def handleEvent_reply_(self, event, reply): self._fn(event, reply)

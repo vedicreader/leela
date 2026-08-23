@@ -1,8 +1,6 @@
-// -- the release pipeline ------------------------------------------------------------
 const REL_MARK = {passed: '✓', failed: '✗', running: '•', skipped: '⤼', pending: '·'};
-// A failed step's traceback belongs to *someone*, and in a stack you own that is the whole
-// question. The server rewrote the path to the checkout in this workspace, so "open" lands
-// in the repository rather than in a copy under .venv that the next sync overwrites.
+// The server rewrote the path to the checkout in this workspace, so "open" arrives in the
+// repository rather than in a copy under .venv that the next sync overwrites.
 function blameRow(b) {
   if (!b || !b.package) return '';
   const where = b.file ? `${b.package}/${b.file.split('/').slice(-1)[0]}:${b.line}` : b.package;
@@ -21,8 +19,8 @@ function wireBlame(host) {
     setTimeout(() => {
       const view = lee.editors.get('file'); if (!view) return;
       const doc = view.state.doc, at = doc.line(Math.max(1, Math.min(line, doc.lines)));
-      // `setCursor` deliberately does not scroll, so the move is dispatched with the
-      // scroll asked for -- landing on a line you cannot see is not landing on it.
+      // `setCursor` deliberately does not scroll, so the move is dispatched with the scroll asked
+      // for.
       view.dispatch({selection: {anchor: at.from}, scrollIntoView: true});
       LeeCM.focus?.(view);
     }, 350);
@@ -78,8 +76,8 @@ function wireReleasesPanel(host, d) {
 }
 function relPoll(d) {
   clearTimeout(relUI.poll);
-  // Steps finish on their own and start the next one, so the panel has to keep asking.
-  // Only while something is running: an idle pipeline costs nothing.
+  // Steps finish on their own and start the next one, so the panel keeps asking while something
+  // is running.
   if (d.running) relUI.poll = setTimeout(() => leeReleases(), 1200);
 }
 async function leeReleases() {

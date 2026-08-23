@@ -43,7 +43,7 @@ def _write(folders, recent):
     return folders
 
 def remember(folders):
-    "Replace the open set -- what the application launched with, or restored to."
+    "Replace the open set: what the application launched with, or restored to."
     folders = _clean(folders)
     with _LOCK: return _write(folders, _clean(folders + session()['recent']))
 

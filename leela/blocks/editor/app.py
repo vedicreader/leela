@@ -48,12 +48,12 @@ def _locate(lines, raw, used):
     return None
 
 def _applies(req):
-    "Is this requirement's environment marker satisfied here? An unreadable marker is not a no."
+    "Whether this requirement's environment marker is satisfied here. An unreadable marker is not a no."
     try: return not (req.marker and not req.marker.evaluate())
     except Exception: return True
 
 def _compatible(req, installed):
-    "Does the installed version satisfy the declared specifier? `None` when there is no opinion."
+    "Whether the installed version satisfies the declared specifier. `None` when nothing is declared."
     if installed is None or not str(req.specifier): return None
     try: return req.specifier.contains(installed, prereleases=True)
     except Exception: return None
@@ -105,11 +105,10 @@ def connect(app, ctx):
                 from ..runtime.kernels import python_for
                 # ruff finds `pyproject.toml` from `cwd`, so it must be the folder the *file* is in.
                 cwd = _format_cwd(ctx, d.get('path'))
-                # and the formatter has to come from that folder's own environment: the first open
-                # root's venv was being used to format files belonging to any of the others
+                # The formatter comes from that folder's own environment.
                 python = python_for(cwd, session=ctx) or sys.executable
                 def format_python():
-                    "ruff first, then black; whichever the project has, with the first one's output winning."
+                    "ruff first, then black, whichever the project has."
                     failures = []
                     for cmd in ([str(python), '-m', 'ruff', 'format', '-'], [str(python), '-m', 'black', '-q', '-']):
                         result = subprocess.run(cmd, input=text, text=True, capture_output=True, cwd=cwd, timeout=30)
@@ -128,9 +127,7 @@ def connect(app, ctx):
         try:
             p = ctx.fs._check(path, must_exist=True)
             if p.name != 'pyproject.toml': return {'packages': [], 'summary': {}}
-            # the versions a pyproject is annotated with are the ones installed beside it. One
-            # interpreter for the whole workspace answered for every open project at once, so a
-            # second checkout holding a newer release was reported at the first one's version.
+            # A pyproject is annotated with the versions installed beside it.
             python = python_for(p.parent, session=ctx) or sys.executable
             rows = project_package_rows(p, python)
             return {'packages': rows, 'summary': {

@@ -55,12 +55,9 @@ def _patch_fasttransport():
     class safe_async_iterate:
         """`httpcore2`'s helper as a class, because a generator-based one cannot always stop.
 
-        Both byte streams `yield` inside `async with safe_async_iterate(...)`. A stream still open
-        when the process ends is finalised by the loop's asyncgen shutdown, and `contextlib` reports
-        an `@asynccontextmanager` that misses its `GeneratorExit` there as `generator didn't stop
-        after athrow()`, once per stream. Closing is also the one case that must not await, since
-        the response context owns the iterator then; `__aexit__` is told, rather than guessing from
-        `sys.exc_info()`, which is not reliably ours during that finalisation.
+        An `@asynccontextmanager` misses its `GeneratorExit` under the loop's asyncgen shutdown.
+        `__aexit__` is told which case it is, because `sys.exc_info()` is not reliably ours during
+        that finalisation. Closing must not await, because the response context owns the iterator.
         """
         def __init__(self, source):
             self.it = source if hasattr(source, '__anext__') else source.__aiter__()
@@ -857,8 +854,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 if not task.done(): task.cancel()
             try: await sock.close()
             except Exception: pass
-    # `fast_app` imports `fasthtml.pico` whatever `pico=` says. That costs 212ms and IPython
-    # for a stylesheet link this app never uses.
+    # `fast_app` imports `fasthtml.pico` whatever `pico=` says: 212ms and IPython, for a
+    # stylesheet link this app never uses.
     # Starlette's exclusion list spares `text/event-stream`. The streams stay unbuffered.
     app = FastHTML(default_hdrs=False, hdrs=hdrs,
                    middleware=(Middleware(GZipMiddleware, minimum_size=512),),
@@ -1032,7 +1029,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 'text': await _explain(k, res.error) or res.text or 'ok'}
     @rt('/run/code')
     async def run_code(req):
-        "Run an arbitrary block -- what the `run selection` button sends -- in the tab's kernel."
+        "Run an arbitrary block, as the `run selection` button sends, in the tab's kernel."
         d = await req.json()
         code = (d.get('code') or '').strip()
         if not code: return _fail('nothing to run')
@@ -1042,7 +1039,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 'text': await _explain(k, res.error) or res.text or 'ok'}
     @rt('/exec/history')
     async def exec_history(n: int = 200):
-        "The rolling history notebook, oldest first -- what ctrl+up/down cycles through."
+        "The rolling history notebook, oldest first, as ctrl+up/down cycles through it."
         r = await _api('/api/history', {'n': n})
         return {'cells': (r or {}).get('cells', [])}
     @rt('/lint')
@@ -1213,7 +1210,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             transport = 'direct'
             print(f'  gateway unavailable; using direct kernel transport: {errstr(e)}')
     from .blocks.runtime.kernels import RuntimeBroker
-    broker = RuntimeBroker()   # every shape gets the ceiling; only `--app` used to
+    broker = RuntimeBroker()   # every shape gets the ceiling
     if app_window and roots:
         sites, hub = [], None
         for i, (root, slug) in enumerate(zip(roots, workspace_slugs(r.name for r in roots))):
@@ -1266,9 +1263,8 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
         # one ceiling for the process, so any workspace asking leela to manage it turns it on
         if ws.kernels_auto_manage: broker.auto_manage = True
         for r in roots: ws.add_root(r)
-        # A shell launch means "here"; a frozen one has no such answer, so: welcome screen.
+        # A shell launch means "here". A frozen one has no such answer.
         if not ws.fs.roots and not getattr(sys, 'frozen', False): ws.add_root(os.getcwd())
-        # Naming folders skipped the saved session entirely, so `leela .` always opened empty.
         if open_ws and not ws.tabs: ws.reopen_saved_tabs()
         if ws.restore_remembered_agent_state(): ws.save()
         app = ide_app(ws, gate)

@@ -142,9 +142,9 @@ def redact(value, keep=4):
     return f'…{s[-keep:]}' if len(s) > keep else '…'
 
 def _policy(entry, reach=None):
-    """One spec's row, whether the file holds a policy or the flat list of header names it used to.
+    """One spec's row, whether the file holds a policy or a flat list of header names.
 
-    `refs` are the environment variables the values name, which the page needs and a value is not.
+    `refs` are the environment variables the values name, which is what the page can show.
     """
     refs = []
     if isinstance(entry, dict):
