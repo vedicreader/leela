@@ -194,7 +194,8 @@ async function leeSetupPane() {
 }
 function setupRow(a) {
   return `<div class="lee-krow"><span><strong>${esc(a.label)}</strong><br>` +
-    `<small>${esc(a.blurb)}</small></span>` +
+    `<small>${esc(a.blurb)}</small>` +
+    `${a.detail ? `<br><small class="warn">${esc(a.detail)}</small>` : ''}</span>` +
     `<span class="${a.ready ? 'lee-dim' : 'warn'}">${a.ready ? 'ready' : 'not set up'}</span></div>`;
 }
 function offlineRow(o) {

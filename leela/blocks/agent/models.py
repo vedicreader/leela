@@ -6,6 +6,7 @@ from ... import extras_site, leela_cfg, use_extras
 __all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks',
            'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements', 'install_runtime',
            'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed', 'SETUP_SIZES',
+           'unavailable_detail', 'HARNESS',
            'updates']
 
 #: What each routed job spends its model on. One copy: the settings pane renders three of these
@@ -37,6 +38,20 @@ def _why(runtime, agents):
     """
     from ...agent.core import runtime_remedy
     return runtime_remedy(runtime)
+
+#: The harness runtimes and what reaching one needs, so an unavailable one can say more than "no".
+HARNESS = {'claude': ('rishi.claude', 'claude_bin'), 'copilot': ('rishi.copilot', 'copilot_oauth')}
+
+def unavailable_detail(runtime):
+    "The error behind an unavailable harness. `runtime_available` only ever answers yes or no."
+    import importlib
+    from ... import errstr
+    mod, fn = HARNESS.get(runtime) or (None, None)
+    if not mod: return ''
+    try: m = importlib.import_module(mod)
+    except Exception as e: return f'import {mod}: {errstr(e)}'
+    try: return '' if getattr(m, fn)() else f'{fn}() found nothing'
+    except Exception as e: return f'{fn}(): {errstr(e)}'
 
 #: Runtimes a package can supply, named as rishi's own extras. The rest want a CLI, a daemon or a key.
 INSTALLABLE = ('litert', 'mlx', 'llama')
@@ -208,7 +223,9 @@ def setup_plan():
         if v == 'remote': return any(auth.get(k, {}).get('available') for k in ('anthropic', 'openai', 'gemini', 'codex'))
         return bool(rows.get(v, {}).get('available'))
     accounts = [{'value': v, 'label': label, 'blurb': blurb, 'ready': ready(v),
-                 'why': rows.get(v, {}).get('why', '')} for v, label, blurb in ACCOUNTS]
+                 'why': rows.get(v, {}).get('why', ''),
+                 'detail': '' if ready(v) else rows.get(v, {}).get('detail', '')}
+                for v, label, blurb in ACCOUNTS]
     offline = [{**rows[v], 'mb': SETUP_SIZES.get(v)} for v in INSTALLABLE
                if v in rows and rows[v]['requirements']]
     ready_now = [a['value'] for a in accounts if a['ready']]
@@ -224,7 +241,8 @@ def runtimes():
     from ...agent.core import AGENTS, runtime_available
     return [{'value': r, 'label': LABELS.get(r, r), 'available': bool(runtime_available(r)),
              'why': _why(r, AGENTS), 'installable': r in INSTALLABLE,
-             'requirements': runtime_requirements(r), 'install': install_state(r)}
+             'requirements': runtime_requirements(r), 'install': install_state(r),
+             'detail': '' if runtime_available(r) else unavailable_detail(r)}
             for r in _runtimes()]
 
 def model_marks(name):

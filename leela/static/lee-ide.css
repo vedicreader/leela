@@ -284,7 +284,9 @@ body {
 @keyframes lee-tab-pulse { 0%,100% { opacity: .35; transform: scale(.8); }
                             50% { opacity: 1; transform: scale(1); } }
 
-.lee-pill { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--lee-bg2); color: var(--lee-fg4); }
+.lee-pill { display: inline-flex; align-items: center; appearance: none; -webkit-appearance: none;
+  border: 0; font-family: inherit; font-size: 11px; line-height: 1.5;
+  padding: 2px 8px; border-radius: 10px; background: var(--lee-bg2); color: var(--lee-fg4); }
 .lee-pill-on  { color: var(--lee-green); }
 .lee-pill-warn { color: var(--lee-orange); }
 .lee-pill-err { color: var(--lee-red); }
@@ -3014,7 +3016,6 @@ kbd {
 :root[data-density="tight"] .lee-activity { width: 34px; }
 :root[data-density="tight"] .lee-activity-btn { height: 34px; padding: 7px; border-left-width: 1.5px; }
 :root[data-density="tight"] .lee-activity-btn.active { background: transparent; }
-:root[data-density="tight"] .lee-activity-btn[data-left="files"] { background: var(--lee-accent); }
 :root[data-density="tight"] .lee-btn {
   background: transparent; border: 1px solid transparent; border-radius: 3px;
   padding: 1px 7px; font-size: 11px; color: var(--lee-fg2);

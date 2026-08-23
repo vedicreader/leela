@@ -2443,3 +2443,25 @@ def test_a_version_check_that_fails_does_not_break_the_pane(monkeypatch):
     u = m.updates()
     assert u['checked'] is False and u['outdated'] == []
     assert u['leela']['latest'] is None and u['leela']['outdated'] is False
+
+
+def test_an_unreachable_harness_says_what_went_wrong(monkeypatch):
+    """`runtime_available` answers yes or no and swallows the reason, which is how Claude Code read
+    as "not installed" in the packaged app with nothing anywhere naming the cause."""
+    import leela.blocks.agent.models as m
+    assert m.unavailable_detail('remote') == '', 'only a harness has a module to fail'
+    monkeypatch.setitem(m.HARNESS, 'claude', ('leela_no_such_module', 'claude_bin'))
+    got = m.unavailable_detail('claude')
+    assert 'import leela_no_such_module' in got and 'ModuleNotFoundError' in got, got
+
+def test_a_harness_whose_probe_returns_nothing_says_so(monkeypatch):
+    "A binary that is simply not on PATH is a different answer from an import that blew up."
+    import types
+    import leela.blocks.agent.models as m
+    mod = types.ModuleType('fake_harness')
+    mod.probe = lambda: None
+    monkeypatch.setitem(__import__('sys').modules, 'fake_harness', mod)
+    monkeypatch.setitem(m.HARNESS, 'claude', ('fake_harness', 'probe'))
+    assert m.unavailable_detail('claude') == 'probe() found nothing'
+    mod.probe = lambda: (_ for _ in ()).throw(FileNotFoundError('claude is not on $PATH'))
+    assert 'probe():' in m.unavailable_detail('claude')
