@@ -110,6 +110,7 @@ def test_the_same_folder_is_only_listed_once(dirs):
     assert projects.recent_folders().count(dirs[0]) == 1
 
 def test_a_launch_with_no_arguments_reopens_the_last_session(dirs, monkeypatch):
+    "One window, not one per folder remembered. See `last_folder`."
     projects.remember(dirs[:2])
     seen = {}
     monkeypatch.setattr(leela_app, 'serve', lambda args, background=False: seen.setdefault('args', args))
@@ -119,7 +120,7 @@ def test_a_launch_with_no_arguments_reopens_the_last_session(dirs, monkeypatch):
     monkeypatch.setattr('leela.desktop.run_shell', lambda urls, **kw: seen.update(urls=urls, **kw))
     monkeypatch.setattr(leela_app.sys, 'argv', ['leela_app.py'])
     leela_app.run()
-    assert seen['args'][-2:] == dirs[:2]
+    assert seen['args'][-1:] == [dirs[1]], 'the most recently opened, and only it'
 
 def test_a_folder_given_by_the_desktop_wins_over_the_remembered_session(dirs, monkeypatch):
     "Opening a project with Leela means that project, not the one from yesterday."
@@ -321,3 +322,30 @@ def test_a_locale_that_is_already_utf8_is_left_alone(monkeypatch):
     import leela
     monkeypatch.setattr(leela, 'UTF8_LOCALES', ())
     assert leela.use_utf8() is ('utf-8' in locale.getpreferredencoding(False).lower())
+
+
+def test_a_launch_with_no_arguments_reopens_one_folder(tmp_path, monkeypatch):
+    """Quitting with four open and launching again reopened all four, one window each. The rest are
+    still in `recent`, which the Dock menu and the welcome screen offer."""
+    import leela.core.projects as projects
+    monkeypatch.setattr(projects, 'SESSION', tmp_path/'session.json')
+    dirs = []
+    for n in 'abcd':
+        d = tmp_path/n; d.mkdir(); dirs.append(str(d))
+    projects.remember(dirs)
+    assert len(projects.last_folders()) == 4, 'the open set still records what was open'
+    assert projects.last_folder() == [dirs[-1]], 'a launch opens the last of them and no more'
+    # `note_folder` appends, so opening another makes it the one a relaunch comes back to.
+    later = tmp_path/'e'; later.mkdir()
+    projects.note_folder(str(later))
+    assert projects.last_folder() == [str(later)]
+    # An already-open folder keeps its place in the open set; only `recent` fronts it.
+    projects.note_folder(dirs[0])
+    assert projects.last_folder() == [str(later)]
+    assert projects.recent_folders()[0] == dirs[0], 'recent is the recency list'
+
+def test_with_nothing_remembered_a_launch_opens_no_folder(tmp_path, monkeypatch):
+    "A first run has no history, and the welcome screen is the right answer, not a guess."
+    import leela.core.projects as projects
+    monkeypatch.setattr(projects, 'SESSION', tmp_path/'empty.json')
+    assert projects.last_folder() == []

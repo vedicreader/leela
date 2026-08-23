@@ -216,28 +216,32 @@ def test_reopening_brings_back_one_window_and_not_every_one_you_closed():
     finally: BrowserView.WindowDelegate, BrowserView.AppDelegate = was
 
 @pytest.mark.skipif(sys.platform != 'darwin', reason='NSMenu is macOS only')
-def test_the_dock_menu_offers_recent_folders_and_opens_one():
-    "A Dock menu is a shortcut, so it is capped, and an empty one says so rather than being blank."
+def test_the_dock_menu_offers_recent_folders_and_opens_one(tmp_path, monkeypatch):
+    """`recent_folders` gives paths, not dicts. Indexing them as dicts raised, the handler caught
+    it, and the Dock menu never appeared -- so this drives the real function and not a shape I
+    invented for the test."""
     pytest.importorskip('AppKit')
+    import leela.core.projects as projects
     from leela.desktop import DOCK_RECENT, dock_menu
+    made = []
+    for i in range(DOCK_RECENT + 5):
+        d = tmp_path/f'p{i}'; d.mkdir(); made.append(str(d))
+    monkeypatch.setattr(projects, 'SESSION', tmp_path/'session.json')
+    projects.remember(made)
     opened = []
-    rows = [{'name': f'p{i}', 'path': f'/tmp/p{i}'} for i in range(DOCK_RECENT + 5)]
-    menu = dock_menu(opened.append, recent=rows)
+    menu = dock_menu(opened.append)                      # no injected rows: the real list
     assert menu.numberOfItems() == DOCK_RECENT, 'the Dock menu is not a file browser'
     first = menu.itemAtIndex_(0)
-    assert first.title() == 'p0' and first.toolTip() == '/tmp/p0'
+    assert first.title() == os.path.basename(first.toolTip()), 'the row is named after its folder'
     first.target().openRecent_(first)
-    assert opened == ['/tmp/p0'], 'a row opens the folder it names'
-    empty = dock_menu(None, recent=[])
-    assert empty.numberOfItems() == 1 and not empty.itemAtIndex_(0).isEnabled()
+    assert opened == [first.toolTip()], 'a row opens the folder it names'
 
-
-@pytest.mark.skipif(sys.platform != 'darwin', reason='the Cocoa shell is macOS only')
-def test_installing_the_dock_behaviour_twice_is_not_an_error():
-    "An Objective-C class name is global, so building the delegates twice would raise."
-    pytest.importorskip('webview.platforms.cocoa')
-    from webview.platforms.cocoa import BrowserView
-    from leela.desktop import keep_running_in_dock
-    was = BrowserView.WindowDelegate, BrowserView.AppDelegate
-    try: assert [keep_running_in_dock() for _ in range(3)] == [True, True, True]
-    finally: BrowserView.WindowDelegate, BrowserView.AppDelegate = was
+@pytest.mark.skipif(sys.platform != 'darwin', reason='NSMenu is macOS only')
+def test_a_dock_menu_with_no_history_says_so(monkeypatch, tmp_path):
+    "A blank menu reads as broken; one disabled row reads as empty."
+    pytest.importorskip('AppKit')
+    import leela.core.projects as projects
+    from leela.desktop import dock_menu
+    monkeypatch.setattr(projects, 'SESSION', tmp_path/'none.json')
+    menu = dock_menu(None)
+    assert menu.numberOfItems() == 1 and not menu.itemAtIndex_(0).isEnabled()

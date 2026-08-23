@@ -9,7 +9,7 @@ from fastcore.xtras import Path, atomic_save
 from .. import leela_cfg
 
 __all__ = ['SESSION', 'SERVING', 'MAX_RECENT', 'session', 'remember', 'note_folder', 'drop_folder',
-           'last_folders', 'recent_folders', 'forget_recent', 'serving', 'now_serving', 'served']
+           'last_folders', 'last_folder', 'recent_folders', 'forget_recent', 'serving', 'now_serving', 'served']
 
 SESSION = leela_cfg/'desktop.json'
 #: A running Leela's address. The desktop shell takes whatever port is free, so nothing outside
@@ -62,6 +62,10 @@ def drop_folder(path):
 def last_folders():
     "What to reopen when the application is launched with no arguments."
     return _clean(session()['folders'])
+
+def last_folder():
+    "The one folder a launch with no arguments reopens: the last of the open set, which `note_folder` appends to."
+    return _clean(session()['folders'])[-1:]
 
 def recent_folders(limit=MAX_RECENT):
     "What the welcome screen offers, most recently opened first."

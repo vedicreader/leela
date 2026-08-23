@@ -5,12 +5,12 @@ from __future__ import annotations
 import os, sys, threading, time
 
 from . import errstr, leela_cfg
-from .core.projects import last_folders, recent_folders, remember, session  # noqa: F401
+from .core.projects import last_folder, last_folders, recent_folders, remember, session  # noqa: F401
 
 __all__ = ['BACKENDS', 'backend', 'shell_ready', 'wait_for_http', 'start_cdp', 'warm_cdp',
            'window_size', 'run_shell', 'keep_running_in_dock', 'dock_menu', 'DOCK_RECENT',
            'watch_open_events', 'ShellApi',
-           'session', 'remember', 'last_folders', 'recent_folders']
+           'session', 'remember', 'last_folders', 'last_folder', 'recent_folders']
 
 BACKENDS = {'darwin': 'cocoa', 'win32': 'edgechromium', 'linux': 'gtk'}
 DEFAULT_SIZE = (1440, 900)
@@ -109,19 +109,20 @@ def _recent_target(on_folder):
     return _dock_target
 
 def dock_menu(on_folder, recent=None):
-    "The Dock's own menu: the folders you last had open, newest first."
+    "The Dock's own menu: the folders you last had open, newest first. `recent_folders` gives paths."
     from AppKit import NSMenu, NSMenuItem
-    rows = (recent if recent is not None else recent_folders())[:DOCK_RECENT]
+    rows = list(recent_folders() if recent is None else recent)[:DOCK_RECENT]
     menu = NSMenu.alloc().init()
     if not rows:
         menu.addItem_(_disabled('No recent folders'))
         return menu
     target = _recent_target(on_folder)
-    for row in rows:
+    for path in rows:
+        path = str(path)
         item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            row['name'], b'openRecent:', '')
-        item.setToolTip_(row['path'])
-        item.setRepresentedObject_(row['path'])
+            os.path.basename(path.rstrip('/')) or path, b'openRecent:', '')
+        item.setToolTip_(path)
+        item.setRepresentedObject_(path)
         item.setTarget_(target)
         menu.addItem_(item)
     return menu
