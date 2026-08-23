@@ -328,6 +328,7 @@ function leeToolsMenu(anchor) {
     {label: 'Kernel and interpreter…', run: () => leeAct('pick_kernel')},
     {label: 'Working directory…', run: leeCwd},
     {label: 'nbdev prepare…', detail: 'uv + settings.ini', run: leeNbdevPrepare},
+    {label: 'fastship…', detail: 'releases for a package that is not nbdev', run: leeFastship},
     {separator: true},
     {label: 'Settings…', detail: displayChord(lee.keys.find(k => k.action === 'settings')?.key || 'mod+,'), run: editorSettings},
     {label: 'Workspace history…', detail: 'conflict-safe undo', run: operationHistory},

@@ -9,7 +9,7 @@ from fastcore.basics import first, ifnone
 
 __all__ = ['FAMILY', 'survey', 'blame', 'frames', 'checkout_for', 'installed']
 
-FAMILY = ['gheasy', 'dockeasy', 'vpseasy', 'cfeasy', 'leela', 'dhrishti', 'nbdev']
+FAMILY = ['gheasy', 'dockeasy', 'vpseasy', 'cfeasy', 'leela', 'dhrishti', 'nbdev', 'fastship']
 
 _FRAME = re.compile(r'File "([^"]+)", line (\d+), in (\S+)')
 

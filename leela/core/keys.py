@@ -101,6 +101,8 @@ DEFAULTS = L(
     Key('extract_constant', 'mod+alt+c',      'global', 'extract constant'),
     Key('inline_variable',  'mod+alt+n',      'global', 'inline variable'),
     Key('sync_index',       'hyper+i',        'global', 'sync Kosha index'),
+    Key('nbdev_prepare',    '',               'global', 'nbdev prepare'),
+    Key('fastship',         '',               'global', 'fastship release tools'),
     Key('save',             'mod+s',         'global', 'save',                'toast'),
     Key('save_all',         'alt+shift+s',   'global', 'save all'),
     Key('show_diff',        'alt+shift+d',   'global', 'what changed',        'toast'),

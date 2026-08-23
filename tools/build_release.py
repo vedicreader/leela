@@ -1,9 +1,10 @@
 """Build the distributable: a signed-local macOS app + DMG, or a zipped Windows folder."""
 from __future__ import annotations
-import os, shutil, subprocess, sys
+import os, re, shutil, subprocess, sys
 from fastcore.all import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+ARTIFACTS = ('Leela-macOS.dmg', 'Leela-Windows.zip')
 
 
 def run(*args, **kw): return subprocess.run([str(x) for x in args], check=True, **kw)
@@ -51,7 +52,25 @@ def windows_release():
     print(f'Created {out}.zip')
 
 
+def version():
+    "The version the release step just tagged, read the way hatchling reads it."
+    text = (ROOT/'leela'/'__init__.py').read_text(encoding='utf-8')
+    m = re.search(r"""__version__\s*=\s*['"]([^'"]+)""", text)
+    if not m: raise SystemExit('no __version__ in leela/__init__.py')
+    return m.group(1)
+
+
+def upload(tag=''):
+    "Attach what this platform built to a release. Defaults to the tag for the current version."
+    built = [p for name in ARTIFACTS if (p := ROOT/'dist'/name).exists()]
+    if not built: raise SystemExit(f'nothing to upload: build one of {", ".join(ARTIFACTS)} first')
+    run('gh', 'release', 'upload', tag or f'v{version()}', *built, '--clobber')
+    for p in built: print(f'Uploaded {p}')
+
+
 def main():
+    if sys.argv[1:2] == ['upload']: return upload(*sys.argv[2:3])
+    if sys.argv[1:]: raise SystemExit(f'usage: {Path(sys.argv[0]).name} [upload [tag]]')
     if sys.platform == 'darwin': mac_release()
     elif sys.platform == 'win32': windows_release()
     else: raise SystemExit('release artifacts build on their target OS')

@@ -112,8 +112,12 @@ run across every one at once. Lazygit is in the dock.
 
 Workflows draws `.github/workflows` as jobs and `needs` edges. Recent run results paint onto
 the same boxes, and a form builds new ones. Every file written is
-[gheasy](https://github.com/vedicreader/gheasy)'s. Release runs nbdev's four commands as four
-pty steps. Each keeps its own exit code. Deploy runs the project's `deploy.py` stage by
+[gheasy](https://github.com/vedicreader/gheasy)'s, and one of them is the
+[fastship](https://github.com/AnswerDotAI/fastship) release for a Python package that is not
+an nbdev template. Release runs the flow the project is: nbdev's four commands where
+`settings.ini` or `[tool.nbdev]` says so, fastship's five where a `pyproject.toml` does not,
+each as a pty step keeping its own exit code. A project that packages a desktop app gets two
+more, after the release the artefacts attach to. Deploy runs the project's `deploy.py` stage by
 stage, or scaffolds the first one from dockeasy, vpseasy and cfeasy. Drive is the same
 deploy taken apart, one library call per step. A failure names the deepest frame in your own
 packages, rewritten to the checkout you have open. Secrets stay in dockeasy's store and are
@@ -243,6 +247,11 @@ lives in `packaging/assets`: an ICNS for macOS, an ICO with executable metadata 
 `leela_app.py` is the script they freeze. It picks a free port, starts the ordinary
 `leela --app` server on a daemon thread, and gives the main thread to the window. Cocoa allows
 no other order.
+
+The release pipeline builds and attaches them: `python tools/build_release.py` makes the
+bundle, and `python tools/build_release.py upload` sends the DMG and the zip to the release
+for the current `leela/__init__.py` version. Both are steps in the Release panel whenever
+`setup_app.py` and `tools/build_release.py` are both present.
 
 `tests/test_packaging.py` checks what a green build would not. That the asset walk reaches
 `vendor/fonts/`. That the plist carries the `NSAllowsLocalNetworking` exemption WKWebView

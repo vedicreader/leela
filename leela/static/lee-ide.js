@@ -671,6 +671,8 @@ const ACTIONS = {
   rename_symbol: () => renameSymbol(),
   agent_selection: () => leeAgentSelection(),
   sync_index: syncCodeIndex,
+  nbdev_prepare: () => leeNbdevPrepare(),
+  fastship:     () => leeFastship(),
   run_app:      runApp,
   palette:      palette,
   recent_tabs:  recentTabs,
@@ -7873,7 +7875,7 @@ function renderReleasesPanel() {
   const done = d.steps.filter(s => s.status === 'passed').length;
   host.innerHTML =
     `<header class="lee-sc-branch"><div><strong>${esc(d.root.split('/').pop())}</strong>` +
-    `<span>${d.nbdev ? 'nbdev project' : 'plain project'} · ${done}/${d.steps.length} done${d.configured ? ' · .leela/release.json' : ' · default pipeline'}</span></div></header>` +
+    `<span>${d.flow || (d.nbdev ? 'nbdev' : 'plain')} project${d.app ? ' + desktop app' : ''} · ${done}/${d.steps.length} done${d.configured ? ' · .leela/release.json' : ' · default pipeline'}</span></div></header>` +
     `<div class="lee-sc-actions">` +
     `${d.running ? '<button data-rel-top="stop" class="warn">stop</button>' : `<button data-rel-top="start">${d.failed ? 'continue' : 'run release'}</button>`}` +
     `<button data-rel-top="terminal">terminal</button><button data-rel-top="env">environment</button><button data-rel-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
@@ -8826,6 +8828,47 @@ async function leeNbdevPrepare() {
 function PathName(path) { return String(path || '').split('/').pop() || path || ''; }
 window.leeNbdevPrepare = leeNbdevPrepare;
 
+// The non-nbdev half of the same front end: the fastship commands that are not release steps.
+async function fastshipOp(op, extra = {}) {
+  status(`fastship ${op}…`, 'busy');
+  try {
+    const r = await post('/project/fastship/action', {op, repo: projectRepo(), ...extra});
+    status(`fastship ${op} · ${PathName(r.root)}`, 'ok');
+    refreshFileTree(undefined, false).catch(() => {});
+    if (relUI.data) leeReleases();
+    return r;
+  } catch (e) { status(String(e.message || e), 'err'); return null; }
+}
+async function leeFastship() {
+  let d;
+  try { d = await api('/project/fastship' + projectQuery()); }
+  catch (e) { return status(String(e.message || e), 'err'); }
+  const flow = `${d.flow || 'plain'} project`;
+  const note = d.flow === 'nbdev'
+    ? '<div class="lee-wf-note"><strong>This is an nbdev project</strong><span>nbdev prepare is its front end, and the release pipeline runs nbdev\'s commands. fastship still scaffolds a new package.</span></div>'
+    : !d.installed ? `<div class="lee-wf-note"><strong>fastship is not installed here</strong><span>${esc(d.why)}</span><code>uv add --dev fastship</code></div>` : '';
+  const rows = (d.ops || []).map(o => `<article class="lee-rel-step" data-fs="${esc(o.op)}">` +
+    `<b>·</b><div><strong>${esc(o.op)}</strong><code>${esc(o.cmd)}</code><small>${esc(o.doc)}</small></div>` +
+    `<span class="lee-rel-actions"><button data-fs-run ${d.flow === 'nbdev' || !d.installed ? 'disabled' : ''}>run</button></span></article>`).join('');
+  const m = modal(`<div class="lee-mhead">fastship<span class="sub">${esc(PathName(d.root))} · ${esc(flow)}` +
+    `${d.changelog ? ' · CHANGELOG.md' : ' · no CHANGELOG.md yet'}${d.app ? ' · packages a desktop app' : ''}</span></div>` +
+    note + `<div class="lee-rel-steps">${rows}</div>` +
+    `<div class="lee-mfoot"><button class="lee-btn" id="fsrelease">release pipeline…</button>` +
+    `<button class="lee-btn go" id="fsnew">new package…</button></div>`);
+  m.querySelectorAll('[data-fs]').forEach(row => row.querySelector('[data-fs-run]')?.addEventListener('click', async () => {
+    m.remove();
+    await fastshipOp(row.dataset.fs);
+  }));
+  m.querySelector('#fsrelease').onclick = () => { m.remove(); leeLeft('releases'); leeReleases(); };
+  m.querySelector('#fsnew').onclick = async () => {
+    const name = await inputDialog('new fastship package', 'package name', '', 'my-package');
+    if (!name) return;
+    m.remove();
+    const r = await fastshipOp('new', {name});
+    if (r) status(`fastship new · ${PathName(r.root)} · release.yml written`, 'ok');
+  };
+}
+window.leeFastship = leeFastship;
 /* ------------------------------------------------------------------ research */
 function researchDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch (_) { return 'source'; }
@@ -9371,6 +9414,7 @@ function leeToolsMenu(anchor) {
     {label: 'Kernel and interpreter…', run: () => leeAct('pick_kernel')},
     {label: 'Working directory…', run: leeCwd},
     {label: 'nbdev prepare…', detail: 'uv + settings.ini', run: leeNbdevPrepare},
+    {label: 'fastship…', detail: 'releases for a package that is not nbdev', run: leeFastship},
     {separator: true},
     {label: 'Settings…', detail: displayChord(lee.keys.find(k => k.action === 'settings')?.key || 'mod+,'), run: editorSettings},
     {label: 'Workspace history…', detail: 'conflict-safe undo', run: operationHistory},

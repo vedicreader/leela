@@ -9,10 +9,10 @@ from ..runtime.kernels import python_for
 from .deploys import Deploy
 from ...core.envs import EnvStore
 from .pipelines import PipelineError, resolve_script
-from .pipelines import Release
+from .pipelines import Release, app_project, release_flow
 from ..git.repos import RepoSet, repo_for
 
-__all__ = ['CAPS', 'connect']
+__all__ = ['CAPS', 'connect', 'FASTSHIP_OPS', 'fastship_state', 'fastship_run', 'fastship_new']
 
 CAPS = ('fs', 'gate')
 
@@ -35,6 +35,62 @@ def nbdev_prepare(session, target=''):
     return dict(ok=True, root=str(root), nbs_path=defaults.get('nbs_path', 'nbs'),
         lib_path=defaults.get('lib_path', defaults.get('lib_name', '')),
         log=(r.stdout or '')[-2000:])
+
+FASTSHIP_OPS = {
+    'changelog': ('ship-changelog', 'Rewrite CHANGELOG.md from the issues closed since the last release.'),
+    'bump': ('ship-bump', 'Raise the version. fastship bumps after releasing, not before.'),
+    'pages': ('ship-pages', 'Enable GitHub Pages from main and use its URL as the homepage.'),
+}
+
+def _ship(root, session, argv, timeout=900):
+    "One `ship-*` command, in `root` and in `root`'s venv."
+    import subprocess
+    resolved = resolve_script(argv, python_for(root, session))
+    if resolved[0] == argv[0]:
+        raise PipelineError(f'fastship is not installed in {root.name} — add it to the dev dependencies')
+    r = subprocess.run(resolved, cwd=str(root), capture_output=True, text=True, timeout=timeout)
+    if r.returncode: raise PipelineError((r.stderr or r.stdout or f'{argv[0]} failed').strip()[-4000:])
+    return (r.stdout or '')[-2000:]
+
+def fastship_state(session, target=''):
+    "What fastship makes of this project: its flow, whether it is installed, and what it would need."
+    if not session.fs.roots: raise PipelineError('open a folder first')
+    root = repo_for(session, target)
+    flow = release_flow(root)
+    installed = resolve_script(['ship-bump'], python_for(root, session))[0] != 'ship-bump'
+    return dict(ok=True, root=str(root), flow=flow, nbdev=flow == 'nbdev', app=app_project(root),
+        installed=installed, changelog=(root/'CHANGELOG.md').exists(),
+        ops=[{'op': k, 'cmd': c, 'doc': doc} for k, (c, doc) in FASTSHIP_OPS.items()],
+        why='' if installed else f'fastship is not installed in {root.name} — add it to the dev dependencies')
+
+def fastship_run(session, op, target='', part=None):
+    "One fastship command, in the project the panel is about and in that project's venv."
+    if op not in FASTSHIP_OPS: raise PipelineError(f'unknown fastship action: {op}')
+    if not session.fs.roots: raise PipelineError('open a folder first')
+    root = repo_for(session, target)
+    cmd, doc = FASTSHIP_OPS[op]
+    argv = [cmd, *(['--part', str(int(part))] if op == 'bump' and part not in (None, '') else [])]
+    return dict(ok=True, root=str(root), op=op, doc=doc, log=_ship(root, session, argv))
+
+def fastship_new(session, name, target='', description='A Python package'):
+    "A new fastship package beside the project the panel is about, scaffolded by gheasy."
+    from ..workflows.workflows import _gheasy
+    core = _gheasy()
+    slug = str(name or '').strip()
+    if not slug or slug.startswith('.') or {'/', '\\'} & set(slug):
+        raise PipelineError(f'not a package name: {name}')
+    root = repo_for(session, target).parent/slug
+    if root.exists(): raise PipelineError(f'{root} already exists')
+    root.mkdir(parents=True)
+    try:
+        core.gh_fastship_new(str(root), description=description or 'A Python package')
+        core.gh_fastship_release(path=str(root))
+    except Exception:
+        # Retrying must not meet the folder this attempt made. A half-written tree is left to look at.
+        if not any(root.iterdir()): root.rmdir()
+        raise
+    session.fs.add_root(root)
+    return dict(ok=True, root=str(root), name=slug)
 
 def connect(app, ctx):
     rt = app.route
@@ -100,6 +156,22 @@ def connect(app, ctx):
     async def project_nbdev_prepare(repo: str = ''):
         "Run nbdev's prepare in the project that owns `settings.ini`, in that project's venv."
         try: return await off_loop(nbdev_prepare, ctx.session, repo)
+        except Exception as e: return fail(e)
+    @rt('/project/fastship')
+    async def project_fastship(repo: str = ''):
+        "What fastship makes of this project. The non-nbdev half of the same front end."
+        try: return await off_loop(fastship_state, ctx.session, repo)
+        except Exception as e: return fail(e)
+    @rt('/project/fastship/action')
+    async def project_fastship_action(req):
+        "One fastship command, or a new package. Every failure comes back the same shape."
+        try:
+            d = await req.json()
+            op, repo = str(d.get('op') or ''), d.get('repo') or ''
+            if op == 'new':
+                return await off_loop(fastship_new, ctx.session, d.get('name') or '', repo,
+                    d.get('description') or 'A Python package')
+            return await off_loop(fastship_run, ctx.session, op, repo, d.get('part'))
         except Exception as e: return fail(e)
     pipeline_socket(app, '/pipeline/ws', ctx.gate,
         lambda hello: pipeline(str(hello.get('kind') or 'release'),

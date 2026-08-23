@@ -119,6 +119,39 @@ def test_the_catalogue_recommends_from_what_the_project_is(tmp_path):
     assert not rows['pages']['recommended'], 'no node build here'
     assert all(not r['present'] for r in rows.values())
 
+def test_a_python_package_that_is_not_nbdev_is_offered_the_fastship_release(tmp_path):
+    "The gheasy catalogue in the panel: fastship's release for a package nbdev does not own."
+    pytest.importorskip('gheasy')
+    root = tmp_path/'p'
+    root.mkdir()
+    (root/'pyproject.toml').write_text('[project]\nname = "p"\nversion = "0"\n\n'
+                                       '[build-system]\nrequires = ["hatchling"]\n')
+    cat = Workflows(root).catalogue()
+    assert cat['detect']['fastship'] and not cat['detect']['nbdev']
+    rows = {r['id']: r for r in cat['workflows']}
+    assert rows['fastship']['recommended'] and rows['fastship']['file'] == 'release.yml'
+    assert not rows['pypi']['recommended'], 'the fastship release publishes; the release-event one would double up'
+    assert not rows['nbdev']['recommended']
+    nb = tmp_path/'nb'
+    nb.mkdir()
+    (nb/'pyproject.toml').write_text('[project]\nname = "n"\nversion = "0"\n\n[tool.nbdev]\n')
+    nbrows = {r['id']: r for r in Workflows(nb).catalogue()['workflows']}
+    assert not nbrows['fastship']['recommended'], 'nbdev releases with nbdev'
+
+def test_the_fastship_release_previews_and_writes_as_release_yml(tmp_path):
+    pytest.importorskip('gheasy')
+    root = tmp_path/'p'
+    root.mkdir()
+    (root/'pyproject.toml').write_text('[project]\nname = "p"\nversion = "0"\n')
+    wf = Workflows(root)
+    text = wf.preview('fastship')
+    assert 'v*' in text and 'gh release create' in text and 'gh-action-pypi-publish' in text
+    assert not wf.files(), 'previewing writes nothing'
+    assert wf.add('fastship')['path'].endswith('release.yml')
+    parsed = wf.parsed()[0]
+    assert [j['id'] for j in parsed['jobs']] == ['test', 'release']
+    assert any(t['event'] == 'push' and 'v*' in t['detail'] for t in parsed['triggers'])
+
 def test_a_catalogue_entry_previews_before_it_is_written(tmp_path):
     pytest.importorskip('gheasy')
     root = tmp_path/'p'
@@ -364,6 +397,14 @@ def test_a_built_spec_becomes_the_yaml_gheasy_would_have_written():
     text = yaml_of({'name': 'ci', 'on': {'push': 'main'},
                     'jobs': [{'preset': 'nonsense'}, {'preset': 'uv_test'}]})
     assert 'test:' in text and 'nonsense' not in text
+    # A tag trigger and a branch trigger share one `push:` block, and the tag default is what
+    # `ship-release` pushes.
+    text = yaml_of({'name': 'release', 'on': {'tags': 'v*'}, 'jobs': [{'preset': 'fastship'}]})
+    assert 'tags:\n      - v*' in text and 'branches:' not in text
+    assert 'gh release create' in text and 'gh-action-pypi-publish' in text
+    assert 'contents: write' in text and 'id-token: write' in text
+    text = yaml_of({'name': 'both', 'on': {'push': 'main', 'tags': True}, 'jobs': []})
+    assert 'branches:\n      - main' in text and 'tags:\n      - v*' in text
 
 
 

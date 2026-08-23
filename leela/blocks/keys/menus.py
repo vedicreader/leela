@@ -20,7 +20,8 @@ class MenuItem:
 S = MenuItem
 MENUS = {
     'files': L(S('quick_open'), S('add_root'), S(), S('new_file'), S('new_notebook'),
-               S('new_dir'), S(), S('code_search'), S('refresh_files')),
+               S('new_dir'), S(), S('nbdev_prepare'), S('fastship'),
+               S(), S('code_search'), S('refresh_files')),
     'file': L(S('open'), S('show_diff'), S('git_blame'), S(), S('git_stage'), S('git_unstage'),
               S('git_discard', 'warn'), S('git_ignore'), S(), S('clip_to_vault'), S(), S('new_file'),
               S('new_dir'), S(), S('rename'), S('delete', 'warn')),

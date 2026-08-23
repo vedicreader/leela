@@ -191,11 +191,12 @@ class Workflows:
         root = self.root
         has = lambda *names: any((root/n).exists() for n in names)
         text = ''.join(_read(root/n) for n in ('pyproject.toml', 'requirements.txt')).lower()
-        from ..pipelines.pipelines import nbdev_project
+        from ..pipelines.pipelines import app_project, fastship_project, nbdev_project
         row = {
             'python': has('pyproject.toml', 'requirements.txt', 'setup.py'),
             'node': has('package.json'), 'rust': has('Cargo.toml'), 'go': has('go.mod'),
-            'nbdev': nbdev_project(root), 'docker': has('Dockerfile'),
+            'nbdev': nbdev_project(root), 'fastship': fastship_project(root),
+            'app': app_project(root), 'docker': has('Dockerfile'),
             'compose': has('docker-compose.yml', 'compose.yml'),
             'deploy_script': has('deploy.py'), 'pages': has('_quarto.yml', 'nbs/_quarto.yml', 'docs'),
             'web': any(k in text for k in ('python-fasthtml', 'fastapi', 'django', 'flask')),
@@ -222,7 +223,11 @@ class Workflows:
                 'want': d['nbdev'], 'why': 'nbdev project'},
             {'id': 'pypi', 'name': 'PyPI on release', 'file': 'publish.yml',
                 'doc': 'Build and publish through PyPI trusted publishing when a release is created.',
-                'want': d['publish'], 'why': 'this project builds a distribution'},
+                'want': d['publish'] and not d['fastship'], 'why': 'this project builds a distribution'},
+            {'id': 'fastship', 'name': 'fastship release', 'file': 'release.yml',
+                'doc': 'What `ship-release` pushes a `v*` tag for: build it, write the notes from the '
+                'closed issues, publish it through trusted publishing.',
+                'want': d['fastship'] and d['publish'], 'why': 'a Python package that is not nbdev'},
             {'id': 'docker', 'name': 'Docker image', 'file': 'docker.yml',
                 'doc': 'Build and push to GHCR with semver and sha tags from docker/metadata-action.',
                 'want': d['docker'] or bool(d['build']), 'why': 'there is an image to build'},
@@ -246,6 +251,7 @@ class Workflows:
         cfg = self.config() or {}
         app = str(cfg.get('app') or self.root.name)
         if choice == 'ci': return uv_ci(f'{app} CI')
+        if choice == 'fastship': return _fastship(f'{app} release', test_cmd='pytest')
         if choice == 'nbdev':
             wfb = Workflow(f'{app} CI')
             wfb.on.push(branches=['main']).pull_request(branches=['main'])
@@ -368,6 +374,13 @@ class Workflows:
             except Exception as e:
                 rows.append({'key': key, 'ok': False, 'error': f'{type(e).__name__}: {e}', 'target': target})
         return rows
+
+def _fastship(name, **kw):
+    "gheasy's fastship release recipe, which gheasy releases before 0.0.8 do not carry."
+    try: from gheasy.workflow import fastship_release
+    except ImportError as e:
+        raise WorkflowError('this gheasy has no fastship release recipe: pip install -U gheasy') from e
+    return fastship_release(name, **kw)
 
 def _sync_api(core, owner, name, token, api):
     "gheasy's client rebuilt synchronous: ghapi 2 is async by default and nothing here awaits."
