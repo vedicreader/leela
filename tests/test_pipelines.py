@@ -3,7 +3,8 @@
 import asyncio
 import os
 import pytest
-from leela.blocks.pipelines.pipelines import Release, ReleaseError, default_steps, nbdev_project
+from leela.blocks.pipelines.pipelines import (APP_STEPS, Release, ReleaseError, app_project,
+    default_steps, fastship_project, nbdev_project, release_flow)
 import ast
 from leela.blocks.pipelines.deploys import DEPLOY_KEYS, Deploy, DeployError, deploy_template
 from leela.blocks.drive.drive import PARTS, Drive, context, parts
@@ -45,6 +46,46 @@ def test_an_nbdev_project_gets_the_nbdev_pipeline_as_its_default(tmp_path):
     assert steps[2].needs == ['GITHUB_TOKEN'], 'the panel can warn before the step fails'
     plain = default_steps(project_releas(tmp_path/'plain'))
     assert 'nbdev' not in ' '.join(s.cmd for s in plain)
+
+def test_a_python_package_that_is_not_nbdev_gets_the_fastship_pipeline(tmp_path):
+    "The flow the pipeline runs is the one the project is, and fastship bumps after releasing."
+    root = project_releas(tmp_path/'plain')
+    assert fastship_project(root) and release_flow(root) == 'fastship'
+    steps = default_steps(root)
+    assert [s.id for s in steps] == ['test', 'changelog', 'gh', 'pypi', 'bump']
+    assert [s.cmd for s in steps][1:] == ['ship-changelog', 'ship-gh --no_changelog --no_editor --yes',
+                                          'ship-pypi', 'ship-bump']
+    assert steps[2].needs == ['GITHUB_TOKEN'], 'the panel can warn before the step fails'
+    assert Release(root).state()['flow'] == 'fastship'
+
+def test_a_project_with_no_pyproject_stays_on_the_plain_pipeline(tmp_path):
+    "fastship reads pyproject.toml. Without one there is nothing for it to release."
+    root = tmp_path/'bare'
+    root.mkdir()
+    assert not fastship_project(root) and release_flow(root) == 'plain'
+    assert [s.id for s in default_steps(root)] == ['test', 'build', 'gh', 'pypi']
+
+def test_nbdev_still_wins_over_fastship(tmp_path):
+    root = project_releas(tmp_path/'nb', nbdev=True)
+    assert not fastship_project(root) and release_flow(root) == 'nbdev'
+
+def test_the_app_bundle_is_spliced_in_after_the_release_it_attaches_to(tmp_path):
+    "The release has to exist before assets upload, and the version has to be the released one."
+    root = project_releas(tmp_path/'app')
+    (root/'setup_app.py').write_text('')
+    (root/'tools').mkdir()
+    (root/'tools'/'build_release.py').write_text('')
+    assert app_project(root)
+    assert [s.id for s in default_steps(root)] == ['test', 'changelog', 'gh', 'pypi',
+                                                   'app', 'assets', 'bump']
+    nb = project_releas(tmp_path/'nbapp', nbdev=True)
+    (nb/'setup_app.py').write_text('')
+    (nb/'tools').mkdir()
+    (nb/'tools'/'build_release.py').write_text('')
+    # nbdev bumps before it releases, so the app still goes last, after `pypi`.
+    assert [s.id for s in default_steps(nb)] == ['prepare', 'bump', 'gh', 'pypi', 'app', 'assets']
+    assert Release(root).state()['app'] is True
+    assert [s.needs for s in APP_STEPS] == [[], ['GITHUB_TOKEN']]
 
 def test_a_saved_plan_replaces_the_default_and_survives_a_reload(tmp_path):
     root = project_releas(tmp_path/'p')

@@ -6,6 +6,7 @@ import importlib.util, subprocess, sys
 from pathlib import Path
 
 import pytest
+from fastcore.basics import first
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -223,6 +224,36 @@ def test_the_favicon_is_the_mark_it_is_generated_from():
     import tools.build_icons as icons
     assert icons.FAVICON.read_text() == icons.favicon(), \
         'leela/static/favicon.svg is stale; run python tools/build_icons.py'
+
+def test_the_app_artefacts_attach_to_the_release_the_tag_names(tmp_path, monkeypatch):
+    "The last two release steps: build the bundle, then put it on the release just made."
+    import tools.build_release as rel
+    monkeypatch.setattr(rel, 'ROOT', Path(tmp_path))
+    with pytest.raises(SystemExit) as e: rel.upload()
+    assert 'nothing to upload' in str(e.value)
+    (tmp_path/'leela').mkdir()
+    (tmp_path/'leela'/'__init__.py').write_text('"doc"\n__version__ = "9.9.9"\n')
+    (tmp_path/'dist').mkdir()
+    (tmp_path/'dist'/'Leela-macOS.dmg').write_text('x')
+    calls = []
+    monkeypatch.setattr(rel, 'run', lambda *a, **kw: calls.append([str(x) for x in a]))
+    rel.upload()
+    assert calls[-1][:4] == ['gh', 'release', 'upload', 'v9.9.9']
+    assert calls[-1][-1] == '--clobber'
+    rel.upload('v1.2.3')
+    assert calls[-1][3] == 'v1.2.3', 'CI passes the tag it was pushed for'
+
+def test_the_desktop_workflow_puts_the_artefacts_on_the_release():
+    "A tag push builds both bundles; without `contents: write` neither can attach."
+    import yaml
+    doc = yaml.safe_load((ROOT/'.github'/'workflows'/'desktop-artifacts.yml').read_text())
+    assert doc['permissions']['contents'] == 'write'
+    assert doc[True]['push']['tags'] == ['v*'], 'the tags `ship-release` pushes'
+    for job in doc['jobs'].values():
+        step = first(job['steps'], lambda s: s.get('name') == 'attach to the release')
+        assert step, 'both platforms attach what they built'
+        assert 'build_release.py upload' in step['run']
+        assert step['if'] == "startsWith(github.ref, 'refs/tags/')"
 
 def test_the_icon_generator_is_reproducible(tmp_path, monkeypatch):
     "The committed PNG must be the one the generator makes, or the two silently diverge."

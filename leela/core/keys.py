@@ -102,6 +102,8 @@ DEFAULTS = L(
     Key('inline_variable',  'mod+alt+n',      'global', 'inline variable'),
     Key('move_symbol',      'mod+alt+f',      'global', 'move function or class to a file', 'toast'),
     Key('sync_index',       'hyper+i',        'global', 'sync Kosha index'),
+    Key('nbdev_prepare',    '',               'global', 'nbdev prepare'),
+    Key('fastship',         '',               'global', 'fastship release tools'),
     Key('save',             'mod+s',         'global', 'save',                'toast'),
     Key('save_all',         'alt+shift+s',   'global', 'save all'),
     Key('show_diff',        'alt+shift+d',   'global', 'what changed',        'toast'),

@@ -6,14 +6,16 @@ import json
 
 from fastcore.all import Path
 
-__all__ = ['PRESETS', 'TRIGGERS', 'compose', 'deploy_job', 'nbdev_job', 'spec_path', 'load_spec',
-           'save_spec', 'preset_rows']
+__all__ = ['PRESETS', 'TRIGGERS', 'compose', 'deploy_job', 'nbdev_job', 'fastship_job', 'spec_path',
+           'load_spec', 'save_spec', 'preset_rows']
 
 SPEC_DIR = '.leela/workflows'
 
 TRIGGERS = [
     {'id': 'push', 'label': 'on push', 'kind': 'branches', 'default': 'main',
         'doc': 'Every push to these branches.'},
+    {'id': 'tags', 'label': 'on a tag', 'kind': 'branches', 'default': 'v*',
+        'doc': 'Every push of a matching tag. `v*` is what `ship-release` pushes.'},
     {'id': 'pull_request', 'label': 'on pull request', 'kind': 'branches', 'default': 'main',
         'doc': 'Every pull request targeting these branches.'},
     {'id': 'workflow_dispatch', 'label': 'run button', 'kind': 'flag', 'default': True,
@@ -42,6 +44,10 @@ PRESETS = [
     {'id': 'uv_pypi', 'job': 'publish', 'name': 'Publish to PyPI',
         'doc': 'Build and publish through trusted publishing. Only runs on a release event, so '
         'pair it with the release trigger.',
+        'options': []},
+    {'id': 'fastship', 'job': 'release', 'name': 'Release (fastship)',
+        'doc': 'What `ship-release` pushes a `v*` tag for: build it, write the notes, publish it '
+        'through trusted publishing. Pair it with a push trigger on `v*` tags.',
         'options': []},
     {'id': 'docker', 'job': 'docker', 'name': 'Docker image',
         'doc': 'Build and push to GHCR as :latest.',
@@ -89,9 +95,11 @@ def _branches(value):
 def _triggers(wfb, on):
     "Apply the trigger part of a spec, whose one shape gheasy renders into `on:`'s three."
     used = False
-    push = on.get('push')
-    if push not in (None, False):
-        wfb.on.push(branches=_branches(push))
+    push, tags = on.get('push'), on.get('tags')
+    # gheasy renders one `push:` block, so branches and tags go into the same call.
+    if push not in (None, False) or tags not in (None, False):
+        wfb.on.push(branches=_branches(push) if push not in (None, False) else None,
+            tags=_listy('v*' if tags is True else tags) or None)
         used = True
     pr = on.get('pull_request')
     if pr not in (None, False):
@@ -123,6 +131,12 @@ def deploy_job(wfb, job_id, opts, schema, app):
         .uv_install('uv sync --group dev').end_step()
         .step('Install SSH key').if_("env.DEPLOY_KEY != ''").run(ssh).end_step()
         .step('Deploy').run(str(opts.get('cmd') or 'python deploy.py deploy')).end_job())
+
+def fastship_job(wfb, job_id='release', needs=None):
+    "The release job a fastship tag push expects, from gheasy's own preset."
+    if not hasattr(wfb, 'fastship_release_job'):
+        raise AttributeError('this gheasy has no fastship release job: pip install -U gheasy')
+    wfb.fastship_release_job(needs=needs, job_id=job_id)
 
 def nbdev_job(wfb, job_id='test', needs=None):
     "nbdev's own CI job: export and test, then the clean check that is what breaks in an nbdev repo."
@@ -174,6 +188,7 @@ def compose(spec, schema=None, app=''):
         elif pid == 'rust': wfb.rust_job()
         elif pid == 'go': wfb.go_job()
         elif pid == 'nbdev_test': nbdev_job(wfb, job_id, opts['needs'])
+        elif pid == 'fastship': fastship_job(wfb, job_id, opts['needs'])
         elif pid == 'deploy': deploy_job(wfb, job_id, opts, schema, app)
         elif pid == 'run': _run_job(wfb, job_id, opts)
     return wfb.build().to_yaml()

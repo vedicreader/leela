@@ -26,7 +26,9 @@ SHARED = {
     'workflows': 'workflows', 'releases': 'pipelines', 'deploys': 'pipelines',
     'infra': 'pipelines', 'pipeline': 'pipelines', 'drive': 'drive', 'settings': 'settings',
     'keys': 'keys', 'vars': 'vars', 'refactor': 'refactor', 'replace': 'refactor',
-    'workspace': 'workspace', 'project': 'workspace', 'debug': 'debug', 'stack': 'stack',
+    # `/project/*` is the pipelines block: nbdev prepare and the fastship commands are what a
+    # project's release flow is driven by, and `pipelines/app.py` is where all three are registered.
+    'workspace': 'workspace', 'project': 'pipelines', 'debug': 'debug', 'stack': 'stack',
     'packages': 'stack', 'history': 'refactor', 'jobs': 'vault', 'screen': 'keys',
     'release': 'pipelines', 'backups': 'settings',
     'leestatic': None, 'home': None, 'diff': None, 'lint': None,

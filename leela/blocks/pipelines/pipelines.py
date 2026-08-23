@@ -10,8 +10,9 @@ from ...core.envs import EnvStore
 from ..term.term import SCROLLBACK, Pty
 
 __all__ = ['Pipeline', 'PipelineError', 'Step', 'env_value', 'resolve_script', 'Release',
-           'ReleaseError', 'RELEASE_FILE', 'nbdev_project', 'default_steps', 'NBDEV_STEPS',
-           'PLAIN_STEPS']
+           'ReleaseError', 'RELEASE_FILE', 'nbdev_project', 'fastship_project', 'app_project',
+           'release_flow', 'default_steps', 'NBDEV_STEPS', 'FASTSHIP_STEPS', 'PLAIN_STEPS',
+           'APP_STEPS']
 
 class PipelineError(RuntimeError):
     pass
@@ -258,6 +259,20 @@ NBDEV_STEPS = [
         'Build the wheel and upload it to PyPI.', ['TWINE_USERNAME', 'TWINE_PASSWORD']),
 ]
 
+FASTSHIP_STEPS = [
+    Step('test', 'test', 'python -m pytest -q', 'Run the test suite before anything is published.'),
+    Step('changelog', 'changelog', 'ship-changelog',
+        'Rewrite CHANGELOG.md from the issues closed since the last release.', ['GITHUB_TOKEN']),
+    Step('gh', 'GitHub release', 'ship-gh --no_changelog --no_editor --yes',
+        'Commit, push, tag, and create the GitHub release. The changelog step already wrote the notes.',
+        ['GITHUB_TOKEN']),
+    Step('pypi', 'PyPI release', 'ship-pypi',
+        'Build the sdist and wheel, twine check them, then upload.',
+        ['TWINE_USERNAME', 'TWINE_PASSWORD']),
+    Step('bump', 'bump version', 'ship-bump',
+        'Raise the version for the next cycle. fastship bumps after releasing, not before.'),
+]
+
 PLAIN_STEPS = [
     Step('test', 'test', 'python -m pytest -q', 'Run the test suite before anything is published.'),
     Step('build', 'build', 'python -m build', 'Build the sdist and wheel into dist/.'),
@@ -267,12 +282,46 @@ PLAIN_STEPS = [
         'Upload the built distributions to PyPI.', ['TWINE_USERNAME', 'TWINE_PASSWORD']),
 ]
 
-def default_steps(root): return list(NBDEV_STEPS if nbdev_project(root) else PLAIN_STEPS)
+APP_STEPS = [
+    Step('app', 'desktop app', 'python tools/build_release.py',
+        'Build the platform bundle: a .app and a DMG on macOS, a zipped folder on Windows.'),
+    Step('assets', 'attach the app', 'python tools/build_release.py upload',
+        'Upload what dist/ holds to the release this version just tagged.', ['GITHUB_TOKEN']),
+]
+
+def fastship_project(root):
+    "Is this a Python package fastship releases? A `pyproject.toml`, and not an nbdev project."
+    return (Path(root)/'pyproject.toml').exists() and not nbdev_project(root)
+
+def app_project(root):
+    "Does this project package itself into a desktop app? `tools/build_release.py` is what builds one."
+    root = Path(root)
+    return (root/'tools'/'build_release.py').exists() and (root/'setup_app.py').exists()
+
+def release_flow(root):
+    "Which of the three release flows this project uses."
+    if nbdev_project(root): return 'nbdev'
+    return 'fastship' if fastship_project(root) else 'plain'
+
+def _with_app(steps):
+    "The app bundle and its upload, after the last step that publishes and before any that bumps."
+    at = [i for i, s in enumerate(steps) if s.id in ('gh', 'pypi')]
+    i = max(at) + 1 if at else len(steps)
+    return [*steps[:i], *APP_STEPS, *steps[i:]]
+
+_FLOWS = {'nbdev': NBDEV_STEPS, 'fastship': FASTSHIP_STEPS, 'plain': PLAIN_STEPS}
+
+def default_steps(root):
+    steps = list(_FLOWS[release_flow(root)])
+    return _with_app(steps) if app_project(root) else steps
 
 class Release(Pipeline):
-    "The release pipeline: nbdev's four commands where it is an nbdev project, else the plain four."
+    "The release pipeline: nbdev's commands, fastship's for a package that is not one, else plain."
     FILE = RELEASE_FILE
     KIND = 'release'
     @staticmethod
     def defaults(root): return default_steps(root)
-    def state(self): return super().state() | {'nbdev': nbdev_project(self.root)}
+    def state(self):
+        flow = release_flow(self.root)
+        return super().state() | {'flow': flow, 'nbdev': flow == 'nbdev',
+            'fastship': flow == 'fastship', 'app': app_project(self.root)}

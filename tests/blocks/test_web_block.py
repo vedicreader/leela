@@ -10,6 +10,13 @@ from leela.workspace import Workspace
 
 ROOT = Path(__file__).resolve().parents[2]
 
+def _bundles():
+    "Every served bundle as one string. The client was one file and is now three of them."
+    from leela.core.web import IDE_BUNDLES
+    return '\n'.join((ROOT/'leela'/'static'/n).read_text() for n in IDE_BUNDLES)
+
+JS = _bundles()
+
 class _NoTab: tab = None
 
 def test_a_file_row_opens_through_the_one_versioned_opener(tmp_path):
@@ -39,6 +46,42 @@ def test_nbdev_prepare_uses_settings_ini_and_initialises_uv(tmp_path):
         assert r.status_code in (200, 400)
         if body.get('ok'): assert body['root'] == str(tmp_path) and body['nbs_path'] == 'nbs'
         else: assert any(w in body.get('error', '').lower() for w in ('nbdev', 'uv', 'settings.ini'))
+
+def test_fastship_is_the_non_nbdev_half_of_the_same_front_end(tmp_path):
+    "Every route the panel reaches answers in one shape, and both live on the files menu."
+    (tmp_path/'pyproject.toml').write_text('[project]\nname = "demo"\nversion = "0.1.0"\n')
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/project/fastship').json()
+        assert d['ok'] and d['flow'] == 'fastship' and d['nbdev'] is False
+        assert [o['op'] for o in d['ops']] == ['changelog', 'bump', 'pages']
+        # fastship is not in this project's venv, so every command says so rather than raising.
+        for op in ('changelog', 'bump', 'pages'):
+            r = client.post('/project/fastship/action', json={'op': op})
+            assert 'error' in r.json(), op
+        assert 'error' in client.post('/project/fastship/action', json={'op': 'nonsense'}).json()
+        for bad in ('', 'a/b', 'a\\b', '..', '.hidden'):
+            assert 'error' in client.post('/project/fastship/action',
+                json={'op': 'new', 'name': bad}).json(), bad
+        # A refused scaffold must leave nothing behind, or retrying meets its own leftovers.
+        before = sorted(p.name for p in Path(tmp_path).parent.iterdir())
+        client.post('/project/fastship/action', json={'op': 'new', 'name': 'a/b'})
+        assert sorted(p.name for p in Path(tmp_path).parent.iterdir()) == before
+        nb = client.get('/project/fastship').json()
+        assert nb['root'] == str(tmp_path)
+    assert 'leeFastship' in JS and '/project/fastship' in JS
+    assert "'fastship…'" in JS
+    from leela.blocks.keys.menus import web_menus
+    files = [r.get('action') for r in web_menus()['files']]
+    assert 'nbdev_prepare' in files and 'fastship' in files, 'both on the files panel'
+    assert 'fastship:' in JS and 'nbdev_prepare:' in JS, 'and both dispatch through leeAct'
+
+def test_an_nbdev_project_says_so_rather_than_offering_fastship_commands(tmp_path):
+    (tmp_path/'pyproject.toml').write_text('[project]\nname = "demo"\nversion = "0"\n\n[tool.nbdev]\n')
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        d = client.get('/project/fastship').json()
+        assert d['flow'] == 'nbdev' and d['nbdev'] is True
+    assert 'This is an nbdev project' in JS, 'the modal says which front end owns it'
 
 def test_shell_still_exposes_workspace_and_git_switchers(tmp_path):
     html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))

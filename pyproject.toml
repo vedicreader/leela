@@ -83,6 +83,7 @@ path = "leela/__init__.py"
 [dependency-groups]
 dev = [
     "fastaistyle>=0.0.17",
+    "fastship>=0.1.2",     # Leela's own release pipeline; a project's `ship-*` runs in its venv
     "leela[all]",
     "rishi[all]>=0.1.26",
     {include-group = "test"},
