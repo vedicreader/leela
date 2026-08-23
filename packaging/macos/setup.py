@@ -1,8 +1,9 @@
 "py2app definition for `dist/Leela.app`. Run it through `setup_app.py`."
 from __future__ import annotations
 import sys
-from fastcore.all import Path, globtastic, groupby
+from fastcore.all import Path, first, globtastic, groupby
 from setuptools import setup
+from setuptools.dist import Distribution
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT/'packaging'/'assets'
@@ -28,12 +29,23 @@ PACKAGES = [
     'fossick', 'fastcdp', 'scrapling', 'html2text', 'readability',
     'webview',                      # the shell itself
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
-    'koshas', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'numpy', 'yaml', 'packaging',
+    'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'numpy', 'yaml',
 ]
+
+#: Packages py2app cannot carry either way, put in place after it runs. `apsw` is one package whose
+#: `__init__` is the extension module: the scanner flattens it to a lone `apsw.so` and loses
+#: `apsw.ext`, which is how fastlite opens the vault, and naming it in `PACKAGES` instead only gets
+#: `ImportError: No module named 'apsw'`, because the lookup wants an `__init__.py` to find.
+GRAFTED = ('apsw',)
+# Never name a package here that a directory in the repository root also spells: py2app resolves
+# one of these by asking whether the bare name exists as a path first, and the build runs from the
+# root, so `packaging` copied this tree instead of the library. `INCLUDES` goes through the import
+# system, so that is where a name we happen to share belongs. See `test_no_frozen_package_is_shadowed`.
 
 # Entry points, lazy optionals, and pywebview's Cocoa half, reached as `webview.platforms.<gui>`.
 INCLUDES = [
     'leela.cli', 'leela.desktop', 'leela.app',
+    'packaging.requirements',       # `leela.blocks.editor.app` imports it inside a function
     'webview.platforms.cocoa',
     'objc', 'Foundation', 'AppKit', 'WebKit', 'Quartz',
 ]
@@ -86,6 +98,33 @@ OPTIONS = {
     'strip': True,
 }
 
+def graft(app, name):
+    "Put the real `name` package into a built bundle, over whatever the freezer left of it."
+    import importlib.util, shutil
+    spec = importlib.util.find_spec(name)
+    src = Path(first(spec.submodule_search_locations))
+    lib = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3.*')))
+    # The package carries compiled modules built for the interpreter running this, so a bundle on
+    # another version would take a wrong-ABI `.so` and fail at import with nothing to point at it.
+    want = 'python%d.%d' % sys.version_info[:2]
+    if lib.name != want: raise SystemExit(f'cannot graft {name}: bundle is {lib.name}, this is {want}')
+    dest = Path(lib)/name
+    for stray in lib.glob(f'{name}.*'): stray.unlink()     # the flattened extension module
+    shutil.rmtree(dest, ignore_errors=True)
+    shutil.copytree(src, dest, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    return dest.relative_to(app)
+
+class Frozen(Distribution):
+    """A distribution with no `install_requires`, which py2app 0.28.10 and up refuse outright.
+
+    The build runs from the repository root, so setuptools reads `pyproject.toml` and fills the
+    field in from `[project] dependencies`. Nothing here wants it: `PACKAGES` and `INCLUDES` say
+    what the bundle carries, because the scanner cannot see an import made inside a function.
+    """
+    def parse_config_files(self, *args, **kwargs):
+        super().parse_config_files(*args, **kwargs)
+        self.install_requires = []
+
 def install_modern_icon(app, identity=None):
     """Compile `Leela.icon` into a built bundle, after py2app and before anything signs it.
 
@@ -110,6 +149,11 @@ if __name__ == '__main__':
     if not (ASSETS/'Leela.icns').is_file():
         raise SystemExit('missing packaging/assets/Leela.icns — run tools/build_icons.py first')
     setup(name='Leela', version=__version__, app=[str(ROOT/'leela_app.py')],
-          data_files=DATA_FILES, options={'py2app': OPTIONS}, setup_requires=['py2app'])
-    if (built := Path(sys.argv[0]).resolve().parent/'dist'/'Leela.app').is_dir():
+          data_files=DATA_FILES, options={'py2app': OPTIONS}, setup_requires=['py2app'],
+          distclass=Frozen)
+    # `ROOT/dist`, because py2app writes it relative to the working directory and `setup_app.py`
+    # builds from the root. Taken from this file's own folder it named a path nothing writes, so
+    # the icon step never ran and a stale bundle sat there instead.
+    if (built := ROOT/'dist'/'Leela.app').is_dir():
+        for name in GRAFTED: print(f'  grafted {name} -> {graft(built, name)}')
         if install_modern_icon(built): print(f'  Icon Composer icon installed in {built}')

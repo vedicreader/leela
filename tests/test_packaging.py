@@ -143,6 +143,57 @@ def test_the_artwork_is_committed_and_everything_drawn_from_it_is_not():
     assert not {Path(t).name for t in tracked} & drawn, 'generated icons are not committed'
     assert not any('Leela.iconset' in t for t in tracked)
 
+@pytest.mark.parametrize('which', ['mac', 'win'])
+def test_a_package_whose_init_is_an_extension_is_grafted_in(which, request):
+    """A freezer flattens such a package to the single `.so` and every Python submodule beside it
+    goes missing, silently, until something imports one. `apsw` is the case that shipped: the vault
+    reaches `apsw.ext` through fastlite, so the app built, started, and died restoring a workspace.
+    `PACKAGES` is not the answer for one of these -- py2app looks for an `__init__.py` to find it --
+    so `GRAFTED` names it and the bundle gets the real directory after the freezer has run."""
+    import sysconfig
+    site = Path(sysconfig.get_paths()['purelib'])
+    mod = request.getfixturevalue(which)
+    named = set(mod.PACKAGES) | set(mod.GRAFTED)
+    for d in sorted(p for p in site.iterdir() if p.is_dir()):
+        if not list(d.glob('__init__.*.so')): continue
+        if not any(p.suffix == '.py' for p in d.iterdir()): continue
+        assert d.name in named, f'{d.name!r} would be flattened; name it in GRAFTED'
+
+@pytest.mark.parametrize('which', ['mac', 'win'])
+def test_no_frozen_package_is_shadowed_by_a_directory_in_the_repository_root(which, request):
+    """py2app resolves a `packages` name by testing it as a path before looking for the module, and
+    the build runs from the root, so `packaging` copied this repository's own `packaging/` -- a
+    stale `dist/` inside it and all -- in place of the library. Such a name goes in `includes`.
+
+    `leela` is the one name where that resolution is right, because the directory in the root is
+    what we mean by it."""
+    for name in request.getfixturevalue(which).PACKAGES:
+        if name == 'leela': continue
+        assert not (ROOT/name).exists(), \
+            f'{name!r} is also a path in the repository root; put it in INCLUDES instead'
+
+@pytest.mark.parametrize('which', ['mac', 'win'])
+def test_every_frozen_package_is_the_import_name_and_not_the_distribution_name(which, request):
+    """`PACKAGES` is copied whole because the scanner cannot see an import made inside a function.
+    py2app warns that it cannot find the name, then raises `ImportError` when it goes to copy it,
+    so one wrong name fails the build. The distribution is `koshas` and the package is `kosha`."""
+    for name in request.getfixturevalue(which).PACKAGES:
+        if name in ('clr_loader', 'pythonnet'): continue     # Windows-only, absent on the test host
+        assert importlib.util.find_spec(name) is not None, f'{name!r} is not an importable package'
+
+def test_the_mac_build_hands_py2app_no_install_requires(mac):
+    """py2app 0.28.10 raises `install_requires is no longer supported`, and the build runs from the
+    repository root, so setuptools fills that field in from `pyproject.toml` and every build died
+    before py2app copied a file. The distribution class is what empties it again."""
+    import os
+    cwd = os.getcwd()
+    try:
+        os.chdir(ROOT)                       # what `setup_app.py` builds from, and the whole cause
+        d = mac.Frozen({'name': 'Leela', 'version': '0'})
+        d.parse_config_files()
+    finally: os.chdir(cwd)
+    assert not d.install_requires, 'py2app refuses a distribution carrying install_requires'
+
 def test_both_platform_builds_say_to_draw_the_icons_first():
     "Nothing generated is in a fresh checkout, so a build that needs one has to name the command."
     for rel in ('packaging/macos/setup.py', 'packaging/windows/setup.py'):
@@ -165,6 +216,14 @@ def test_a_release_says_what_is_missing_rather_than_failing_inside_shutil(monkey
         with pytest.raises(SystemExit) as e: build()
         assert 'was not built' in str(e.value)
 
+def test_the_favicon_is_the_mark_it_is_generated_from():
+    """The favicon ships in the wheel, which has no build step, so it is committed like the JS
+    bundles rather than drawn at install. Committed and generated means it can drift."""
+    pytest.importorskip('PIL')
+    import tools.build_icons as icons
+    assert icons.FAVICON.read_text() == icons.favicon(), \
+        'leela/static/favicon.svg is stale; run python tools/build_icons.py'
+
 def test_the_icon_generator_is_reproducible(tmp_path, monkeypatch):
     "The committed PNG must be the one the generator makes, or the two silently diverge."
     pytest.importorskip('PIL')
@@ -182,32 +241,34 @@ def test_the_built_app_starts_and_serves_its_workspace(tmp_path):
 
     py2app and py2exe both produce a runnable artefact that dies on the first missing module,
     so the release workflow runs this after building.
-    """
-    import urllib.request
-    from leela.desktop import wait_for_http
 
-    env = {**__import__('os').environ, 'LEELA_HEADLESS_SMOKE': '1', 'LEELA_WINDOW_SIZE': '900x600'}
-    proc = subprocess.Popen([str(APP), str(tmp_path)], env=env,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    The address comes from the `serving.json` the workspace writes, not from its stdout: a frozen
+    app's stdout is a block-buffered pipe, and reading it for the port blocked here forever while
+    the bundle was in fact crashing. `XDG_CONFIG_HOME` moves that file, and the remembered folders
+    with it, into `tmp_path`, so this neither reads nor disturbs the config of whoever runs it.
+    """
+    import json, os, time, urllib.request
+
+    env = {**os.environ, 'XDG_CONFIG_HOME': str(tmp_path/'config'),
+           'LEELA_WINDOW_SIZE': '900x600', 'PYTHONUNBUFFERED': '1'}
+    log = tmp_path/'app.log'
+    with log.open('w') as out:
+        proc = subprocess.Popen([str(APP), str(tmp_path/'work')], env=env,
+                                stdout=out, stderr=subprocess.STDOUT, text=True)
+    serving, deadline = tmp_path/'config'/'leela'/'serving.json', time.time() + 120
     try:
-        port = _port_from(proc)
-        assert port, 'the app never reported a port'
-        assert wait_for_http(f'http://127.0.0.1:{port}/', timeout=90)
-        body = urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=20).read().decode()
-        assert 'lee-ide' in body
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                pytest.fail(f'the app exited with {proc.returncode}:\n{log.read_text()[-3000:]}')
+            try: port = json.loads(serving.read_text())['port']; break
+            except Exception: time.sleep(.5)
+        else: pytest.fail(f'the app never began serving:\n{log.read_text()[-3000:]}')
+        body = urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=30).read().decode()
+        assert 'lee-ide' in body, f'served a page without the IDE bundle:\n{body[:500]}'
     finally:
         proc.terminate()
         try: proc.wait(timeout=20)
         except subprocess.TimeoutExpired: proc.kill()
-
-def _port_from(proc, tries=400):
-    "Read the `leela  http://127.0.0.1:PORT` line the server prints on startup."
-    import re
-    for _ in range(tries):
-        line = proc.stdout.readline()
-        if not line: return None
-        if (m := re.search(r'127\.0\.0\.1:(\d+)', line)): return int(m.group(1))
-    return None
 
 def test_the_macmage_cantrip_only_posts_to_routes_that_exist():
     """The shortcuts reach Leela over HTTP from outside it, so a renamed route breaks them silently

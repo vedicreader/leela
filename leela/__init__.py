@@ -1,6 +1,6 @@
 "leela — notebooks, files and live variables in the terminal and the browser."
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
 __all__ = ['keys', 'errstr', 'Dictable', 'leela_cfg']
 

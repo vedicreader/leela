@@ -24,10 +24,17 @@ PACKAGES = [
     'fossick', 'fastcdp', 'scrapling', 'html2text', 'readability',
     'webview', 'clr_loader', 'pythonnet',
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
-    'koshas', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'numpy', 'yaml', 'packaging',
+    'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'numpy', 'yaml',
 ]
 
-INCLUDES = ['leela.cli', 'leela.desktop', 'leela.app',
+#: See the macOS definition: `apsw` has the extension module for its `__init__`, and a freezer that
+#: flattens it loses `apsw.ext` and with it the vault. py2exe is not py2app and this build has not
+#: been run against one, so the name is recorded here and the CI job on a tag is what proves it.
+GRAFTED = ('apsw',)
+
+# `packaging` is included and not copied whole: the repository root holds a directory of that name,
+# and a bare name is a path to py2app before it is a module. See the macOS definition.
+INCLUDES = ['leela.cli', 'leela.desktop', 'leela.app', 'packaging.requirements',
             'webview.platforms.winforms', 'webview.platforms.edgechromium']
 
 EXCLUDES = ['tkinter', 'test', 'py2app', 'webview.platforms.cocoa', 'webview.platforms.gtk',

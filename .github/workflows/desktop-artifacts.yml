@@ -61,3 +61,24 @@ jobs:
           name: Leela-Windows
           path: dist/Leela-Windows.zip
           if-no-files-found: error
+
+  # A workflow artifact expires and wants a GitHub login to fetch, so on a tag the two builds are
+  # attached to a release instead, which is the copy a person can actually download. `contents:
+  # write` is scoped to this job: nothing that builds needs it.
+  release:
+    needs: [macos, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {path: artifacts}
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true                 # published by hand, so the notes are read before anyone downloads
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/Leela-macOS/Leela-macOS.dmg
+            artifacts/Leela-Windows/Leela-Windows.zip

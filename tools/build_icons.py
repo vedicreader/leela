@@ -6,7 +6,7 @@ and cannot drift. The plate and its rounded corners are drawn rather than baked 
 which is what lets Icon Composer supply the material and tint the mark as a shape.
 """
 
-import base64
+import base64, io
 from pathlib import Path
 from PIL import Image, ImageDraw
 
@@ -14,6 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT/'packaging'/'assets'
 MARK = ASSETS/'leela-mark.png'
 GROUND = '#06203C'
+#: Committed, unlike the icons: it ships in the wheel, which has no build step to draw it. Kept
+#: honest by `test_the_favicon_is_the_mark_it_is_generated_from`, as the JS bundles are.
+FAVICON = ROOT/'leela'/'static'/'favicon.svg'
+FAVICON_PX = 64          # the plate stops carrying the mark's line work below this
 
 
 def image(size):
@@ -37,9 +41,21 @@ def svg():
             '</svg>\n')
 
 
+def favicon(size=FAVICON_PX):
+    "The plated mark as a tab icon: one committed SVG, so a page costs no extra request."
+    buf = io.BytesIO()
+    image(size).save(buf, 'PNG', optimize=True)
+    href = base64.b64encode(buf.getvalue()).decode()
+    return ('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+            f'viewBox="0 0 {size} {size}" width="{size}" height="{size}">\n'
+            f'  <image width="{size}" height="{size}" xlink:href="data:image/png;base64,{href}"/>\n'
+            '</svg>\n')
+
+
 def main():
     ASSETS.mkdir(parents=True, exist_ok=True)
     (ASSETS/'Leela.svg').write_text(svg())
+    FAVICON.write_text(favicon())
     iconset = ASSETS/'Leela.iconset'; iconset.mkdir(exist_ok=True)
     for points in (16, 32, 128, 256, 512):
         image(points).save(iconset/f'icon_{points}x{points}.png')
