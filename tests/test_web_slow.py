@@ -559,6 +559,46 @@ def test_a_turn_that_fans_out_shows_one_readable_row_per_subagent():
     assert any('review the refactor' in t for t in asked) and any('check the recovery' in t for t in asked), \
         'and each row leads with what its subagent was asked, which is all that tells them apart'
 
+def test_copying_a_path_reaches_the_clipboard_from_the_tree_and_the_tab():
+    """The action is dispatched from `lee-core.js` and defined in `lee-ide.js`, and it resolves its
+    target from whichever menu opened. Both halves have to meet at call time."""
+    async def go(pg):
+        await pg.evaluate("""() => {
+          window.__copied = [];
+          navigator.clipboard.writeText = t => { window.__copied.push(t); return Promise.resolve(); };
+          window.__paths = [];
+          window.api = url => { window.__paths.push(url); return Promise.resolve(
+            {ok: true, absolute: '/w/proj/pkg/mod.py', relative: 'pkg/mod.py'}); };
+        }""")
+        return await pg.evaluate("""async () => {
+          const out = {};
+          out.dispatch = ['copy_rel_path', 'copy_abs_path'].every(a => typeof ACTIONS[a] === 'function');
+          // a right-click on a tree row: the tree selection is the target
+          const row = document.createElement('div');
+          row.className = 'lee-node sel'; row.dataset.path = '/w/proj/pkg/mod.py';
+          document.body.appendChild(row);
+          lee.menuSurface = 'file';
+          await copyFilePath('relative');
+          await copyFilePath('absolute');
+          out.fromTree = [...window.__copied];
+          out.asked = window.__paths.every(u => u.includes('/fs/paths?path='));
+          row.remove(); window.__copied = [];
+          // and a right-click on a tab: its `title` is the path, read without waiting for a select
+          const tab = document.createElement('div');
+          tab.className = 'lee-tab'; tab.dataset.i = '7'; tab.title = '/w/proj/other.py';
+          document.body.appendChild(tab);
+          lee.menuSurface = 'tab'; lee.menuTab = 7;
+          await copyFilePath('relative');
+          out.fromTab = [...window.__copied];
+          tab.remove(); lee.menuSurface = null; lee.menuTab = null;
+          return out;
+        }""")
+    got = _run(go)
+    assert got['dispatch'], 'both actions are reachable from the shared dispatch table'
+    assert got['fromTree'] == ['pkg/mod.py', '/w/proj/pkg/mod.py'], got['fromTree']
+    assert got['asked'], 'the server is asked, since only it knows the open folders'
+    assert got['fromTab'] == ['pkg/mod.py'], got['fromTab']
+
 def test_a_refused_call_reads_as_the_person_on_every_surface():
     """Rejecting an approval makes ramabana a synthetic `user_steering` call, and every surface --
     the live timeline, a replayed turn, a notebook prompt cell -- drew it as an ordinary tool row:

@@ -68,6 +68,20 @@ def connect(app, ctx):
         return {'ok': True, 'home': str(Path.home()),
                 'recent': [{'path': p, 'name': Path(p).name, 'open': p in open_now}
                            for p in recent_folders()]}
+    @rt('/fs/paths')
+    def fs_paths(path: str = ''):
+        """Both ways of naming one file. Only the server knows which folder it is under.
+
+        `relative` is against the open folder holding it, so it is what a colleague can paste into
+        the same repository. A path under no open folder has no relative form and says so.
+        """
+        p = str(path or '').strip()
+        if not p: return fail('no path')
+        try: full = ctx.fs._check(p)
+        except Exception as e: return fail(e)
+        try: rel = str(Path(full).relative_to(ctx.fs.root_of(full)))
+        except Exception: rel = ''
+        return {'ok': True, 'absolute': str(full), 'relative': rel}
     @rt('/fs/forget-recent')
     async def fs_forget_recent(req):
         "Drop one folder from the welcome screen's list."

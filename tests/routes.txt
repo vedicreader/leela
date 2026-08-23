@@ -136,6 +136,7 @@ GET,POST /fs/events
 GET,POST /fs/find
 GET,POST /fs/forget-recent
 GET,POST /fs/new
+GET,POST /fs/paths
 GET,POST /fs/recent
 GET,POST /fs/remove-root
 GET,POST /fs/rename

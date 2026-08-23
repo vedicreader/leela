@@ -419,6 +419,26 @@ document.addEventListener('dragend', () => {
   lee.dragTab = null; $$('.lee-tab').forEach(t => t.classList.remove('drop'));
 });
 
+/* Naming a file for somebody else. Relative is against the open folder holding it, so it is what
+   a colleague can paste into the same repository; absolute is what a shell here needs. Only the
+   server knows which folder a path is under, so it is asked. */
+async function copyFilePath(which) {
+  const target = clipTarget();
+  if (!target) return status('select a file, a folder or a tab first', 'err');
+  let d;
+  try { d = await api('/fs/paths?path=' + encodeURIComponent(target)); }
+  catch (e) { return status(String(e.message || e), 'err'); }
+  const text = which === 'relative' ? (d.relative || d.absolute) : d.absolute;
+  if (!text) return status('that path has no name to copy', 'err');
+  try { await navigator.clipboard.writeText(text); }
+  catch (_) { return status('clipboard access failed', 'err'); }
+  // A path under no open folder has no relative form, and silently copying the absolute one
+  // instead would read as the button being wrong rather than the file being outside.
+  status(which === 'relative' && !d.relative ? `outside the open folders · copied ${text}`
+                                             : `copied ${text}`, 'ok');
+}
+window.copyFilePath = copyFilePath;
+
 document.addEventListener('contextmenu', e => {
   // Shift+right-click remains the browser's native copy/paste/spellcheck menu.
   if (e.shiftKey) return;

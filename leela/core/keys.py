@@ -121,6 +121,8 @@ DEFAULTS = L(
     Key('new_memory_note',  '',              'global', 'create a memory note'),
     Key('open_vault',       '',              'global', 'open the vault'),
     Key('close_tab',        'alt+w',         'global', 'close tab',           'toast'),
+    Key('copy_rel_path',    'alt+y',         'global', 'copy relative path',  'toast'),
+    Key('copy_abs_path',    'alt+shift+y',   'global', 'copy absolute path'),
     Key('close_others',     '',              'global', 'close other tabs'),
     Key('close_right',      '',              'global', 'close tabs to the right'),
     Key('close_saved',      '',              'global', 'close saved tabs'),

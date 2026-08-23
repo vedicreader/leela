@@ -213,3 +213,4 @@ async function leeClipToVault() {
   status(`clipping ${target.split('/').pop() || target} into the vault…`);
 }
 window.leeClipToVault = leeClipToVault;
+window.clipTarget = clipTarget;

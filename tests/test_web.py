@@ -888,6 +888,33 @@ def test_the_pane_sees_and_answers_a_prompt_cell_approval(tmp_path):
         t.join(5)
         assert held['a'].note == 'use the other file', 'answered where it was raised'
 
+def test_a_file_can_be_named_relatively_or_absolutely(tmp_path):
+    """Copying a path is for giving it to somebody: relative for a colleague in the same repository,
+    absolute for a shell here. Only the server knows which open folder a path is under."""
+    root = tmp_path/'proj'; (root/'pkg').mkdir(parents=True)
+    (root/'pkg'/'mod.py').write_text('x = 1\n')
+    ws = Workspace(roots=[root])
+    with TestClient(ide_app(ws)) as client:
+        d = client.get(f"/fs/paths?path={root/'pkg'/'mod.py'}").json()
+        assert d['ok'] and d['relative'] == 'pkg/mod.py'
+        assert d['absolute'] == str(root/'pkg'/'mod.py')
+        assert client.get('/fs/paths?path=').json()['ok'] is False, 'no path is not an empty answer'
+        folder = client.get(f"/fs/paths?path={root/'pkg'}").json()
+        assert folder['relative'] == 'pkg', 'a folder is named the same way'
+        at_root = client.get(f'/fs/paths?path={root}').json()
+        assert at_root['relative'] == '.', 'the open folder itself is its own root'
+
+def test_copying_a_path_is_offered_wherever_a_file_is_named():
+    "The tree, its folders and the tab strip all name a file, so all three offer it."
+    from leela.blocks.keys.menus import MENUS
+    from leela.core.keys import lookup
+    for surface in ('file', 'folder', 'tab'):
+        actions = [i.action for i in MENUS[surface]]
+        assert 'copy_rel_path' in actions and 'copy_abs_path' in actions, surface
+    assert 'copy_abs_path' in [i.action for i in MENUS['root']], 'a root has no relative form'
+    for action in ('copy_rel_path', 'copy_abs_path'):
+        assert lookup(action).keys, f'{action} has a chord of its own'
+
 def test_the_prompt_cell_model_is_the_saved_one_not_the_routing_default(tmp_path):
     """`inline` is in `JOBS` and `**jobs` is spread last, so the routing default for the job
     overwrote the saved prompt-cell model every time. The choice was saved correctly and always
