@@ -42,6 +42,8 @@ GET,POST /agent/run-policy
 GET,POST /agent/runs
 GET,POST /agent/runs/{run_id}/cancel
 GET,POST /agent/runs/{run_id}/terminate
+GET,POST /agent/runtimes
+GET,POST /agent/runtimes/install
 GET,POST /agent/sessions
 GET,POST /agent/settings
 GET,POST /agent/state/activate

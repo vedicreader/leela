@@ -73,6 +73,48 @@ function paintJobModels(d) {
 }
 window.leeLoadModels = loadAgentModels;
 
+/* The on-device backends are not in the download, because they are most of what a download would
+   weigh. This is the one place that says so and the one place that fetches them; the rows come
+   from `/agent/runtimes`, so what is installable and what it needs stay rishi's to declare. */
+let bkPoll = 0;
+function backendRow(r) {
+  const st = r.install || {}, running = st.state === 'running';
+  const note = running ? 'installing…'
+    : st.state === 'error' ? 'failed — see the log below'
+    : r.available ? 'ready' : esc(r.why || 'not installed');
+  return `<div class="lee-krow" data-bk="${esc(r.value)}">` +
+    `<span><strong>${esc(r.label || r.value)}</strong><br><small>${note}</small>` +
+    `${(r.requirements || []).length ? `<br><code>${esc(r.requirements.join(' '))}</code>` : ''}` +
+    `${st.state === 'error' && st.log ? `<br><small class="warn">${esc(String(st.log).split('\n').slice(-3).join(' '))}</small>` : ''}</span>` +
+    `${r.available ? '<span class="lee-dim">installed</span>'
+      : `<button class="lee-btn" data-bk-get ${running ? 'disabled' : ''}>${running ? '…' : 'install'}</button>`}` +
+    `</div>`;
+}
+function renderBackends(m, rows) {
+  const host = $('#backends', m); if (!host) return;
+  const mine = rows.filter(r => r.installable);
+  if (!mine.length) return void (host.innerHTML = '<div class="lee-dim">none on this platform</div>');
+  host.innerHTML = mine.map(backendRow).join('');
+  host.querySelectorAll('[data-bk]').forEach(row => row.querySelector('[data-bk-get]')?.addEventListener('click', async () => {
+    const runtime = row.dataset.bk;
+    const r = await post('/agent/runtimes/install', {runtime});
+    if (!r.ok) return status(r.error || `could not install ${runtime}`, 'err');
+    status(`installing ${runtime}… this downloads a lot and keeps going if you close this`, 'busy');
+    pollBackends(m);
+  }));
+  // Only while something is running: an install takes minutes and the pane must not look stuck.
+  clearTimeout(bkPoll);
+  if (mine.some(r => (r.install || {}).state === 'running')) bkPoll = setTimeout(() => pollBackends(m), 2000);
+}
+async function pollBackends(m) {
+  if (!m.isConnected) return clearTimeout(bkPoll);
+  let d;
+  try { d = await api('/agent/runtimes'); } catch (e) { return status(String(e.message || e), 'err'); }
+  renderBackends(m, d.runtimes || []);
+  const done = (d.runtimes || []).filter(r => r.installable && (r.install || {}).state === 'ok');
+  if (done.length) { status(`${done.map(r => r.value).join(', ')} installed`, 'ok'); loadAgentModels(); }
+}
+
 async function leeAddModel() {
   const d = await api('/agent/models');
   const saved = (d.saved || []).map(x => `<div class="lee-krow"><span><strong>${esc(x.name)}</strong> · ${esc(x.runtime)}<br><small>${esc(x.model_id)}</small></span><button class="lee-btn warn" data-remove="${esc(x.name)}">remove</button></div>`).join('');
@@ -83,6 +125,7 @@ async function leeAddModel() {
     <label>context tokens<input class="lee-input" id="modelctx" type="number" value="128000" min="1024"></label>
     <details><summary>hosted API settings</summary><label>base URL<input class="lee-input" id="modelbase" placeholder="https://api.example.com/v1"></label><label>API key environment variable<input class="lee-input" id="modelkeyenv" placeholder="OPENAI_API_KEY"></label><label>FastLLM vendor<input class="lee-input" id="modelvendor" placeholder="openai"></label><label>FastLLM API transport<input class="lee-input" id="modelapi" placeholder="openai"></label></details>
     <button class="lee-btn go" id="modelsave">save model</button>
+    <h4>on-device backends</h4><div class="lee-modallist" id="backends"></div>
     <h4>saved models</h4><div class="lee-modallist">${saved || '<div class="lee-dim">none yet</div>'}</div>`);
   /* The runtimes ramabana will accept, and which of them rishi can load here. The list, the
      label and the remedy all come from `d.runtimes`: kept here they drifted twice, offering MLX
@@ -93,6 +136,7 @@ async function leeAddModel() {
     `${r.available ? '' : ' — ' + esc(r.why || 'unavailable here')}</option>`).join('');
   const firstrt = rtsel.querySelector('option:not([disabled])');
   if (firstrt) rtsel.value = firstrt.value;
+  renderBackends(m, d.runtimes || []);
 
   $('#modelsave', m).onclick = async () => {
     status('validating and saving model…');

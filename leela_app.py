@@ -12,6 +12,12 @@ __all__ = ['free_port', 'folders', 'leela_args', 'serve', 'main', 'run']
 
 HOST = '127.0.0.1'
 
+# Only when frozen: a normal install has one environment and installs into it, and an extras
+# directory left over from running the app would then shadow it. See `leela.use_extras`.
+if getattr(sys, 'frozen', False):
+    from leela import use_extras
+    use_extras()
+
 def free_port(preferred=5001):
     "`preferred` if nothing holds it, else whatever the OS hands out."
     return preferred if is_port_free(preferred, HOST) else any_port(HOST)

@@ -2305,3 +2305,49 @@ def test_what_a_sub_agent_is_given_follows_the_model_it_runs_on(tmp_path):
     assert own and own != {t.__name__ for t in sized.tools}, 'so its list is built to its own budget'
     # the sub-agent runs on the larger model, so it is offered what the 16k turn model was denied
     assert 'web' in sized.budget.drop and {'web_search', 'read_url'} <= own
+
+
+def test_only_the_on_device_runtimes_are_offered_as_a_download():
+    "A key, a CLI or a daemon is not something installing a package fixes; `runtime_remedy` says so."
+    from leela.blocks.agent.models import INSTALLABLE, runtime_requirements, runtimes
+    rows = {r['value']: r for r in runtimes()}
+    assert set(INSTALLABLE) <= set(rows)
+    for name, r in rows.items():
+        assert r['installable'] is (name in INSTALLABLE), name
+        if not r['installable']: assert r['requirements'] == [], f'{name} needs no package'
+
+def test_a_backend_is_pinned_to_the_rishi_that_is_here():
+    """Never the newest. The bundle freezes one rishi, and a backend resolved against a later one
+    is a version skew that surfaces as an import error long after the install looked fine."""
+    import importlib.metadata as md
+    from leela.blocks.agent.models import runtime_requirements
+    declared = ' '.join(md.distribution('rishi').requires or [])
+    for name in ('mlx', 'llama', 'litert'):
+        got = runtime_requirements(name)
+        for req in got:
+            assert req.split('>')[0].split('=')[0].split('<')[0] in declared, req
+
+def test_a_runtime_no_package_provides_is_refused_before_any_subprocess(monkeypatch):
+    "The install shells out, so the name it is handed may never reach one unchecked."
+    import leela.blocks.agent.models as m
+    ran = []
+    monkeypatch.setattr(m.subprocess, 'run', lambda *a, **kw: ran.append(a))
+    for bad in ('', 'nonsense', 'remote', 'claude', 'litert; echo no'):
+        with pytest.raises(ValueError): m.install_runtime(bad)
+    assert ran == [], 'nothing was executed'
+
+def test_a_frozen_app_installs_beside_itself_and_a_normal_one_into_its_own_env(monkeypatch, tmp_path):
+    "Writing into a signed bundle would break its signature, so `extras_site` is the target there."
+    import sys
+    import leela.blocks.agent.models as m
+    monkeypatch.setattr(m, 'extras_site', lambda: tmp_path/'extras')
+    monkeypatch.setattr(m, '_run_install', lambda runtime, cmd: None)
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    m._installs.clear()
+    row = m.install_runtime('litert')
+    assert '--target' in row['cmd'] and str(tmp_path/'extras') in row['cmd']
+    assert (tmp_path/'extras').is_dir(), 'the target is made before pip is asked to write there'
+    monkeypatch.delattr(sys, 'frozen', raising=False)
+    m._installs.clear()
+    assert '--target' not in m.install_runtime('litert')['cmd']
+    m._installs.clear()

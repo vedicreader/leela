@@ -1,10 +1,11 @@
 "Persistent user-added local and hosted model aliases."
-import json, re
+import json, re, subprocess, sys, threading
 from fastcore.all import Path
-from ... import leela_cfg
+from ... import extras_site, leela_cfg, use_extras
 
 __all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks',
-           'mark_models', 'JOB_HELP']
+           'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements', 'install_runtime',
+           'install_state']
 
 #: What each routed job spends its model on. One copy: the settings pane renders three of these
 #: server-side and the rest from `/agent/models`, and two copies drifted apart the first time.
@@ -36,11 +37,87 @@ def _why(runtime, agents):
     from ...agent.core import runtime_remedy
     return runtime_remedy(runtime)
 
+#: Runtimes a package can supply, which is the on-device ones, named as rishi's own extras. The
+#: rest are not a download: `claude` wants its CLI, `ollama` its daemon, `remote` an API key, and
+#: `runtime_remedy` already says so for each. What every backend *needs* is rishi's to declare.
+INSTALLABLE = ('litert', 'mlx', 'llama')
+
+def runtime_requirements(runtime):
+    "What rishi asks for to serve `runtime` here, straight out of its metadata rather than copied."
+    import importlib.metadata as md
+    from packaging.requirements import Requirement
+    if runtime not in INSTALLABLE: return []
+    out = []
+    for line in md.distribution('rishi').requires or []:
+        if f"extra == '{runtime}'" not in line: continue
+        req = Requirement(line)
+        # The rest of the marker is this machine's business: mlx is darwin/arm64 only.
+        if req.marker and not req.marker.evaluate({'extra': runtime}): continue
+        out.append(f'{req.name}{req.specifier}')
+    return out
+
+_installs, _lock = {}, threading.Lock()
+
+def install_state(runtime=None):
+    "What the last install of each runtime did. One dict per runtime, or all of them."
+    with _lock: return dict(_installs.get(runtime) or {}) if runtime else {k: dict(v) for k, v in _installs.items()}
+
+def _installer(target):
+    "pip in this interpreter, else uv driving it: a uv-made venv often carries no pip of its own."
+    import importlib.util, shutil
+    into = ['--target', str(target)] if target else []
+    if importlib.util.find_spec('pip') is not None:
+        return [sys.executable, '-m', 'pip', 'install', '--upgrade', *into]
+    if (uv := shutil.which('uv')): return [uv, 'pip', 'install', '--python', sys.executable, *into]
+    raise RuntimeError('no pip and no uv here, so nothing can be installed for you')
+
+def _run_install(runtime, cmd):
+    "The subprocess, on its own thread. Output is kept whole: a resolver error is the useful part."
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        ok, log = p.returncode == 0, (p.stdout or '') + (p.stderr or '')
+    except Exception as e:
+        from ... import errstr
+        ok, log = False, errstr(e)
+    if ok: use_extras()                       # so the new backend is importable without a restart
+    import importlib
+    importlib.invalidate_caches()
+    from ...agent.core import runtime_available
+    try: runtime_available.cache_clear()      # only `ollama` memoises, and only it would go stale
+    except AttributeError: pass
+    with _lock:
+        _installs[runtime].update(state='ok' if ok else 'error', log=log[-4000:],
+                                  available=bool(runtime_available(runtime)))
+
+def install_runtime(runtime):
+    """Fetch one on-device backend and put it where a frozen app can import it.
+
+    Pinned to what the rishi *here* asks for, never the newest: the bundle freezes one rishi, and a
+    backend resolved against a later one is a version skew that shows up as an import error much
+    later. A frozen app installs beside itself because its own library is signed and read-only.
+    """
+    if runtime not in INSTALLABLE:
+        raise ValueError(f'{runtime} is not something a package provides; see its remedy')
+    if not (reqs := runtime_requirements(runtime)):
+        raise ValueError(f'rishi declares no {runtime} backend for this platform')
+    with _lock:
+        if (cur := _installs.get(runtime)) and cur.get('state') == 'running': return dict(cur)
+        target = extras_site() if getattr(sys, 'frozen', False) else None
+        if target: target.mkdir(parents=True, exist_ok=True)
+        cmd = [*_installer(target), *reqs]
+        _installs[runtime] = row = {'runtime': runtime, 'state': 'running', 'log': '',
+                                    'cmd': ' '.join(cmd), 'requirements': reqs}
+    threading.Thread(target=_run_install, args=(runtime, cmd), daemon=True,
+                     name=f'leela-install-{runtime}').start()
+    return dict(row)
+
 def runtimes():
     "Every runtime, whether rishi can reach it here, and what it wants when it cannot."
     from ...agent.core import AGENTS, runtime_available
     return [{'value': r, 'label': LABELS.get(r, r), 'available': bool(runtime_available(r)),
-             'why': _why(r, AGENTS)} for r in _runtimes()]
+             'why': _why(r, AGENTS), 'installable': r in INSTALLABLE,
+             'requirements': runtime_requirements(r), 'install': install_state(r)}
+            for r in _runtimes()]
 
 def model_marks(name):
     "The modality line the CLI banner shows for one model, its runtime, and whether it can draw."

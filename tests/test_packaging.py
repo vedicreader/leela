@@ -180,6 +180,9 @@ def test_every_frozen_package_is_the_import_name_and_not_the_distribution_name(w
     so one wrong name fails the build. The distribution is `koshas` and the package is `kosha`."""
     for name in request.getfixturevalue(which).PACKAGES:
         if name in ('clr_loader', 'pythonnet'): continue     # Windows-only, absent on the test host
+        # A uv-made venv carries no pip, which is why the installer falls back to uv. The build
+        # venv is made with `python -m venv` and upgrades pip first, so the bundle does get one.
+        if name == 'pip': continue
         assert importlib.util.find_spec(name) is not None, f'{name!r} is not an importable package'
 
 def test_the_mac_build_hands_py2app_no_install_requires(mac):
@@ -322,3 +325,28 @@ def test_the_macmage_cantrip_reads_the_address_leela_publishes():
     assert "'leela'/'serving.json'" in src or "'serving.json'" in src
     assert SERVING.name == 'serving.json' and SERVING.parent.name == 'leela'
     assert 'import leela' not in src, 'a macmage virtualenv has no leela in it'
+
+def test_both_platforms_leave_out_the_same_heavy_backends(mac, win):
+    """`leela[local]` is not in the download: mlx, cv2, transformers and scipy alone were about
+    400MB of a 1.4GB bundle, for a runtime most people never pick. Two lists that drift would
+    quietly put it back on one platform."""
+    assert mac.HEAVY == win.HEAVY
+    for m in (mac, win):
+        assert set(m.HEAVY) <= set(m.EXCLUDES), 'the heavy list is what EXCLUDES is built from'
+        assert not set(m.HEAVY) & set(m.PACKAGES), 'excluded and copied whole at once'
+
+def test_pip_is_shipped_so_the_app_can_fetch_a_backend(mac, win):
+    """A signed bundle cannot be written into and carries no other installer, so without pip the
+    on-demand backends are unreachable and leaning the build just removes features."""
+    for m in (mac, win):
+        assert 'pip' in m.PACKAGES, 'nothing imports pip, so only PACKAGES brings it'
+        assert 'pip' not in m.EXCLUDES
+
+def test_the_default_install_does_not_carry_the_local_backends():
+    "The whole point of the leaning: `leela` alone must not resolve to `rishi[all]`."
+    import tomllib
+    cfg = tomllib.load(open(ROOT/'pyproject.toml', 'rb'))['project']
+    assert not any('ramabana[all]' in d for d in cfg['dependencies']), 'ramabana[all] carries rishi[all]'
+    assert any(d.startswith('ramabana') for d in cfg['dependencies'])
+    local = cfg['optional-dependencies']['local']
+    assert any('rishi[' in d and 'mlx' in d for d in local), 'the backends live in leela[local]'

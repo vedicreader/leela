@@ -16,7 +16,12 @@ classifiers = [
 ]
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
-    "ramabana[all]>=0.1.23",
+    # Not `ramabana[all]`: that extra carries `rishi[all]`, whose three local-model backends bring
+    # mlx, cv2, transformers and scipy -- about 400MB into a bundle, for a runtime most people
+    # never select. They are `leela[local]` below, and the settings pane installs them on demand.
+    # The rest of `[all]` is ramabana's own CLI (pyghostty, teleprint) and mcp, none of which Leela
+    # imports; `dhrishti` and `jupyter-client` it depends on directly and are still here.
+    "ramabana>=0.1.23",
     "fastcore>=1.7.0",
     "exhash>=0.4.10",
     "fossick>=0.1.11",
@@ -54,7 +59,11 @@ gateway = [
     "jupyasyncclient>=0.2.1",
     "jupywire>=0.1.1",
 ]
-all = ["leela[github,gateway,lsp]"]
+# On-device inference. Kept out of the default install and out of the desktop bundle because it is
+# the heaviest thing Leela can depend on; `RUNTIME_EXTRAS` installs one of these from the settings
+# pane, pinned to the rishi the bundle was frozen with.
+local = ["rishi[litert,mlx,llama]>=0.1.26"]
+all = ["leela[github,gateway,lsp,local]"]
 desktop = [
     "pywebview>=5.3",
     "pyobjc-framework-Cocoa>=10.1; sys_platform == 'darwin'",

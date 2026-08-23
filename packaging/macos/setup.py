@@ -30,7 +30,17 @@ PACKAGES = [
     'webview',                      # the shell itself
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
     'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'numpy', 'yaml',
+    # Shipped so the app can install `leela[local]` into `leela.extras_site()`. Nothing imports it,
+    # so the scanner would never find it, and without it the on-demand backends cannot be fetched
+    # at all: a signed bundle has no other way to add a package. ~16MB against the ~400MB it saves.
+    'pip',
 ]
+
+#: What `leela[local]` drags in, by module name. Measured on the bundle it used to be in: mlx 204MB,
+#: cv2 125, transformers 99, scipy 97, spacy 24, llama_cpp 18, litert_lm and the mlx sidecars.
+#: `tests/test_packaging.py` holds the two platform definitions to the same list.
+HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'litert_lm', 'llama_cpp', 'cv2', 'transformers',
+         'scipy', 'spacy', 'torch', 'blis', 'thinc', 'srsly', 'llguidance')
 
 #: Packages py2app cannot carry either way, put in place after it runs. `apsw` is one package whose
 #: `__init__` is the extension module: the scanner flattens it to a lone `apsw.so` and loses
@@ -52,9 +62,13 @@ INCLUDES = [
 
 # Build tooling and other platforms' backends: ~100MB, and half a library a frozen app never wanted.
 EXCLUDES = [
-    'tkinter', 'test', 'setuptools', 'pip', 'wheel', 'py2app', 'py2exe',
+    'tkinter', 'test', 'setuptools', 'wheel', 'py2app', 'py2exe',
     'webview.platforms.gtk', 'webview.platforms.qt', 'webview.platforms.winforms',
     'gi', 'PyQt5', 'PyQt6', 'PySide2', 'PySide6', 'clr', 'matplotlib',
+    # The on-device stack, which `leela[local]` installs beside the bundle instead. A lean build
+    # has none of it to find; these keep a build made in a full development environment lean too,
+    # which is the one a person is most likely to run by hand.
+    *HEAVY,
 ]
 
 PLIST = {

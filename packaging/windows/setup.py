@@ -25,6 +25,7 @@ PACKAGES = [
     'webview', 'clr_loader', 'pythonnet',
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
     'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'numpy', 'yaml',
+    'pip',       # see the macOS definition: the on-demand backends have no other way in
 ]
 
 #: See the macOS definition: `apsw` has the extension module for its `__init__`, and a freezer that
@@ -37,8 +38,12 @@ GRAFTED = ('apsw',)
 INCLUDES = ['leela.cli', 'leela.desktop', 'leela.app', 'packaging.requirements',
             'webview.platforms.winforms', 'webview.platforms.edgechromium']
 
+#: See the macOS definition. Kept identical there and here, which `test_packaging.py` asserts.
+HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'litert_lm', 'llama_cpp', 'cv2', 'transformers',
+         'scipy', 'spacy', 'torch', 'blis', 'thinc', 'srsly', 'llguidance')
+
 EXCLUDES = ['tkinter', 'test', 'py2app', 'webview.platforms.cocoa', 'webview.platforms.gtk',
-            'webview.platforms.qt', 'gi', 'objc', 'PyQt5', 'PyQt6', 'matplotlib']
+            'webview.platforms.qt', 'gi', 'objc', 'PyQt5', 'PyQt6', 'matplotlib', *HEAVY]
 
 VERSION_INFO = {
     'version': __version__,

@@ -1009,9 +1009,9 @@ def test_the_browser_url_surface_is_unchanged():
     want = [l for l in INVENTORY.read_text().splitlines() if l.strip()]
     gone, new = sorted(set(want) - set(have)), sorted(set(have) - set(want))
     assert not gone, ('routes disappeared from the app:\n  ' + '\n  '.join(gone) +
-                      '\n\nIf this is deliberate, regenerate: python -m tests.test_route_inventory')
+                      '\n\nIf this is deliberate, regenerate: python -c "from tests.test_core import inventory, INVENTORY; INVENTORY.write_text(chr(10).join(inventory())+chr(10))"')
     assert not new, ('routes appeared that are not in the inventory:\n  ' + '\n  '.join(new) +
-                     '\n\nIf this is deliberate, regenerate: python -m tests.test_route_inventory')
+                     '\n\nIf this is deliberate, regenerate: python -c "from tests.test_core import inventory, INVENTORY; INVENTORY.write_text(chr(10).join(inventory())+chr(10))"')
 
 
 sys.path.insert(0, str(ROOT/'tools'))

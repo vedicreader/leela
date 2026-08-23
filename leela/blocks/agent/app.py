@@ -275,6 +275,18 @@ def connect(app, ctx):
         from .models import delete_model
         try:return {'ok':True,'name':delete_model((await req.json()).get('name',''))}
         except Exception as e:return fail(e)
+    @rt('/agent/runtimes')
+    def agent_runtimes():
+        "The backends and what each is doing, for the pane to poll while one installs."
+        from .models import runtimes
+        try: return {'ok': True, 'runtimes': runtimes()}
+        except Exception as e: return fail(e)
+    @rt('/agent/runtimes/install')
+    async def agent_runtimes_install(req):
+        "Start fetching one on-device backend. Returns at once; the row carries the state."
+        from .models import install_runtime
+        try: return {'ok': True, 'install': install_runtime(str((await req.json()).get('runtime') or ''))}
+        except Exception as e: return fail(e)
     @rt('/agent/settings')
     async def agent_settings(req):
         "Set engine-level agent options. LiteRT engines reload lazily after a change."
