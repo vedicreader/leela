@@ -21,8 +21,9 @@ def tree(src, dest, skip=()):
 # shipping both doubles ~680KB, as the wheel notes.
 DATA_FILES = tree(ROOT/'leela'/'static', 'leela/static', skip={'js'}) + tree(ROOT/'leela'/'vendor', 'leela/vendor')
 
-# Packages copied whole: anything imported inside a function -- most of Leela's heavy
-# machinery -- is invisible to py2app's dependency scanner.
+# Packages copied whole. py2app's scanner cannot see an import made inside a function, which is
+# most of Leela's heavy machinery. Never name one a directory in the repository root also spells:
+# py2app tries a bare name as a path first. `INCLUDES` takes those.
 PACKAGES = [
     'leela', 'ramabana', 'dhrishti', 'fastcore', 'fasthtml', 'starlette', 'uvicorn',
     'httpx', 'httpcore', 'anyio', 'certifi', 'websockets',
@@ -51,11 +52,6 @@ HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'litert_lm', 'llama_cpp', 'cv2
 #: `apsw.ext`, which is how fastlite opens the vault, and naming it in `PACKAGES` instead only gets
 #: `ImportError: No module named 'apsw'`, because the lookup wants an `__init__.py` to find.
 GRAFTED = ('apsw',)
-# Never name a package here that a directory in the repository root also spells: py2app resolves
-# one of these by asking whether the bare name exists as a path first, and the build runs from the
-# root, so `packaging` copied this tree instead of the library. `INCLUDES` goes through the import
-# system, so that is where a name we happen to share belongs. See `test_no_frozen_package_is_shadowed`.
-
 # Entry points, lazy optionals, and pywebview's Cocoa half, reached as `webview.platforms.<gui>`.
 INCLUDES = [
     'leela.cli', 'leela.desktop', 'leela.app',
@@ -113,9 +109,7 @@ PLIST = {
     # `http://127.0.0.1:<port>`. The narrow exemption, not `NSAllowsArbitraryLoads`.
     'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
     'CFBundleDocumentTypes': DOC_TYPES,
-    # launchd hands a windowed app no locale, so the C locale is POSIX, `open()` defaults to ASCII
-    # and importing anything that reads a UTF-8 file raises. Set before the interpreter starts,
-    # which `leela.use_utf8` cannot be when the binary is run directly. Both are wanted.
+    # Set before the interpreter starts, which `leela.use_utf8` cannot be. Both are wanted.
     'LSEnvironment': {'LANG': 'en_US.UTF-8', 'PYTHONUTF8': '1'},
 }
 

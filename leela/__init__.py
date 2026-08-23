@@ -41,12 +41,7 @@ def login_path(timeout=3):
     return out if p.returncode == 0 and (out := p.stdout.strip()) and os.pathsep in out else None
 
 def use_login_path():
-    """Give a windowed launch the PATH a terminal has, and return it.
-
-    Finder and the Dock start an app with almost nothing on PATH, so `git`, `claude`, `ollama` and
-    `uv` all go missing and Leela reports them as not installed. The login shell is asked first
-    because a developer's tools are wherever they put them; `TOOL_DIRS` is the fallback.
-    """
+    "The PATH a terminal has, for a launch that inherited almost none. `TOOL_DIRS` when asking fails."
     import os
     have = os.environ.get('PATH', '')
     parts = list(dict.fromkeys(filter(None, (login_path() or have).split(os.pathsep))))
@@ -60,12 +55,7 @@ def use_login_path():
 UTF8_LOCALES = ('en_US.UTF-8', 'C.UTF-8', 'UTF-8')
 
 def use_utf8():
-    """Make the default encoding UTF-8, and return whether it now is.
-
-    A windowed launch inherits no `LANG`, so the C locale is `POSIX`, `open()` defaults to ASCII and
-    any dependency reading a UTF-8 file raises `UnicodeDecodeError` on import. `LC_CTYPE` is what
-    `locale.getpreferredencoding` reads, so setting it fixes every later `open`.
-    """
+    "Make the default encoding UTF-8, and say whether it now is. `LC_CTYPE` is what `open` reads."
     import locale
     if 'utf-8' in (locale.getpreferredencoding(False) or '').lower(): return True
     for name in UTF8_LOCALES:

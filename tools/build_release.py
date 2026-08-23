@@ -52,11 +52,7 @@ def windows_release():
 
 
 def sign(app, identity):
-    """Sign for distribution: inner code first, the bundle last, timestamped and hardened.
-
-    `--deep` is what Apple tells you not to use and what notarisation rejects, because it signs
-    nested code with the outer bundle's own arguments and skips anything it does not recognise.
-    """
+    "Inner code first, the bundle last, timestamped and hardened. Never `--deep`: notarisation rejects it."
     inner = sorted((p for p in app.rglob('*')
                     if p.suffix in ('.so', '.dylib') or (p.is_dir() and p.suffix == '.framework')),
                    key=lambda p: len(p.parts), reverse=True)
@@ -67,11 +63,7 @@ def sign(app, identity):
 
 
 def notary_args():
-    """How to authenticate to the notary service, or `[]` when nothing here can.
-
-    A keychain profile is one secret instead of three, so it wins. An App Store Connect key is what
-    CI should use; an Apple ID with an app-specific password is the fallback. Never a real password.
-    """
+    "How to reach the notary service, or `[]`. A keychain profile first: one secret, not three."
     env = os.environ.get
     if (profile := (env('LEELA_NOTARY_PROFILE') or '').strip()):
         return ['--keychain-profile', profile]

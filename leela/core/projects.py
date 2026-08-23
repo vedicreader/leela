@@ -64,7 +64,7 @@ def last_folders():
     return _clean(session()['folders'])
 
 def last_folder():
-    "The one folder a launch with no arguments reopens: the last of the open set, which `note_folder` appends to."
+    "The one folder a launch with no arguments reopens. `note_folder` appends, so it is the last."
     return _clean(session()['folders'])[-1:]
 
 def recent_folders(limit=MAX_RECENT):

@@ -181,3 +181,31 @@ Opening a recent folder someone had renamed or deleted failed without a message.
 
 ## `leela/static/js/overlays.js` `activateRoot`
 Selecting a folder in the tree did not activate it as the project. Source control, releases, deploys and the branch pill went on describing whichever folder opened first. Fixed by a route that activates the folder and repoints all four.
+
+## `leela/__init__.py` `use_utf8`
+launchd hands a windowed app no `LANG`. The C locale was `POSIX`, `open()` defaulted to ASCII, and `import rishi.claude` raised `UnicodeDecodeError` on the first UTF-8 byte it read. The pane reported Claude Code as not installed, which sent everyone after the binary and the PATH. A second call reported `fastllm.acomplete has no attribute gem_spec`, because a failed import leaves its half-built module in `sys.modules`. Fixed by setting `LC_CTYPE`, and `LSEnvironment` in the plist for the case that starts before any Python runs.
+
+## `leela/__init__.py` `use_login_path`
+Finder and the Dock start an app with almost nothing on `PATH`. `git` was off it, so the git panel reported no repository, and `git-lfs` with it. `/git/info` was answering its own error through `fail`, which is a 400 with the message in the body, so the route looked broken instead. Fixed by asking the login shell for its PATH.
+
+## `leela/desktop.py` `_OpenHandler`
+An Objective-C subclass used `super().init()`, which has no `init` to find. Registration raised on every launch and nothing opened a folder dropped on the Dock or chosen through Open With. Fixed with `objc.super`.
+
+## `leela/desktop.py` `_dock_delegates`
+Building the delegate subclasses twice raised `overriding existing Objective-C class`, because a class name is global to the runtime. The caller caught it, printed a warning and reported success, so quit-on-close came back silently. Fixed by building them once and reading module state.
+
+## `leela/desktop.py` `dock_menu`
+`recent_folders` returns paths. They were indexed as dicts, which raised, and `applicationDockMenu_` caught it and returned no menu, so the Dock menu never appeared at all. The test covering it passed rows of an invented shape and confirmed the assumption. Fixed by taking paths, and by driving `recent_folders` from the test.
+
+## `leela_app.py` `run`
+A launch with no arguments reopened every folder the session remembered, and the app makes one window per folder, so quitting with four open and launching again gave all four back. Fixed by reopening the last of the open set. `note_folder` fronts an already-open folder in `recent` and leaves its place in the open set, which is why the open set answers this and `recent` does not.
+
+## `leela/core/keys.py` `notebook_undo`
+Undoing a cell deletion was bound to `mod+alt+z` and nobody found it, so the key everyone presses did nothing outside a cell's own text. Fixed by moving it to `mod+z`, with the router declining that chord while the caret is in a document, since CodeMirror's history is not reachable from there.
+
+## `packaging/macos/setup.py` `PACKAGES`
+pygments finds a style or a lexer by importing its name, and no scanner sees those, so the bundle got `pygments/styles/__init__` and none of the styles. `import IPython` then died inside the kernel process, the gateway waited for a kernel that was already gone, and every cell failed on a read timeout naming nothing. The launch test asked for the page and stopped, and a page only proves the server imports. Fixed by copying pygments whole and by running a cell in that test.
+
+## `tools/build_release.py` `sign`
+Signing used `--deep`, which signs nested code with the outer bundle's own arguments and skips what it does not recognise. The notary service rejects the result. Fixed by walking inner code deepest-first with a timestamp and the hardened runtime, then the bundle.
+

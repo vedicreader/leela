@@ -136,12 +136,7 @@ def _disabled(title):
 _hidden, _on_folder, _delegates = [], None, None
 
 def _dock_delegates():
-    """The two delegate subclasses, built once.
-
-    An Objective-C class name is global to the runtime, so defining these twice raises "overriding
-    existing Objective-C class" and the second call would silently fall back. They read module
-    state rather than closing over it, which is what lets them be built once.
-    """
+    "The two delegate subclasses. Built once: an Objective-C class name is global to the runtime."
     global _delegates
     if _delegates is not None: return _delegates
     from Foundation import NO, YES
@@ -163,12 +158,7 @@ def _dock_delegates():
     return _delegates
 
 def keep_running_in_dock(on_folder=None):
-    """Hide the last window instead of quitting, the way a Mac app behaves, and fill the Dock menu.
-
-    Reopening shows the window closed most recently and no others: four windows closed one by one
-    should not all come back at once. Cmd+Q still quits. False when pywebview has moved on, which
-    leaves the old behaviour rather than refusing to start.
-    """
+    "Hide the last window rather than quit, and fill the Dock menu. Reopen shows one window. Cmd+Q quits."
     global _on_folder
     try:
         from webview.platforms.cocoa import BrowserView

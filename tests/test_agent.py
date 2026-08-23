@@ -2438,7 +2438,7 @@ def test_an_update_is_only_offered_when_the_pin_allows_it():
 def test_a_version_check_that_fails_does_not_break_the_pane(monkeypatch):
     "No network is the common case on a fresh machine; it means no offer, not no modal."
     import leela.blocks.agent.models as m
-    monkeypatch.setattr(m, '_fetch_json', lambda *a, **kw: (_ for _ in ()).throw(OSError('offline')))
+    monkeypatch.setattr(m, 'urljson', lambda *a, **kw: (_ for _ in ()).throw(OSError('offline')))
     m._latest_at = 0.0
     u = m.updates()
     assert u['checked'] is False and u['outdated'] == []

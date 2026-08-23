@@ -55,8 +55,7 @@ def run():
     "The application: server on a thread, CDP Chrome beside it, native window on this one."
     from leela.desktop import last_folder, remember, run_shell, shell_ready, warm_cdp
     from leela.hub import workspace_urls
-    # One window, not one per folder remembered: quitting with four open and launching again
-    # reopened all four. The rest stay in `recent`, which the Dock menu and welcome screen offer.
+    # One window. The rest stay in `recent`, which the Dock menu and welcome screen offer.
     dirs = remember(folders() or last_folder())
     port = free_port()
     cdp_port = int(os.environ.get('LEELA_CDP_PORT', 9223))

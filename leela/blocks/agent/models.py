@@ -1,6 +1,7 @@
 "Persistent user-added local and hosted model aliases."
 import json, re, subprocess, sys, threading
 from fastcore.all import Path
+from fastcore.net import urljson
 from ... import extras_site, leela_cfg, use_extras
 
 __all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks',
@@ -30,12 +31,7 @@ LABELS = {'litert': 'LiteRT', 'mlx': 'MLX', 'llama': 'llama.cpp', 'remote': 'hos
           'cursor': 'Cursor agent', 'claude': 'Claude Code', 'copilot': 'GitHub Copilot'}
 
 def _why(runtime, agents):
-    """What to do about a runtime that cannot be reached.
-
-    The answer comes from ramabana, which is where the runtimes are declared. Only the local
-    backends are pip extras now; naming one for a harness or a hosted model sends a person to
-    install something empty and come back to the same error.
-    """
+    "What to do about an unreachable runtime, from ramabana, which declares them."
     from ...agent.core import runtime_remedy
     return runtime_remedy(runtime)
 
@@ -151,10 +147,6 @@ RELEASES = 'https://api.github.com/repos/vedicreader/leela/releases/latest'
 _latest, _latest_at = {}, 0.0
 LATEST_TTL = 3600          #: a courtesy check, not a heartbeat
 
-def _fetch_json(url, timeout=4):
-    import urllib.request
-    with urllib.request.urlopen(url, timeout=timeout) as r: return json.loads(r.read().decode())
-
 def _latest_versions(dists):
     "Newest published version of each distribution and of Leela. No network means no offer."
     import time
@@ -162,10 +154,10 @@ def _latest_versions(dists):
     if time.time() - _latest_at < LATEST_TTL and _latest: return dict(_latest)
     out = {}
     for d in dists:
-        try: out[d] = _fetch_json(f'https://pypi.org/pypi/{d}/json')['info']['version']
+        try: out[d] = urljson(f'https://pypi.org/pypi/{d}/json', timeout=4)['info']['version']
         except Exception: pass
     try:
-        rel = _fetch_json(RELEASES)
+        rel = urljson(RELEASES, timeout=4)
         out['leela'] = str(rel.get('tag_name') or '').lstrip('v')
         out['leela_url'] = rel.get('html_url') or ''
     except Exception: pass
