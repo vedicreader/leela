@@ -25,6 +25,7 @@ PACKAGES = [
     'webview', 'clr_loader', 'pythonnet',
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
     'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'numpy', 'yaml',
+    'pygments',  # see the macOS definition: styles and lexers are imported by name, so none are found
     'pip',       # see the macOS definition: the on-demand backends have no other way in
 ]
 

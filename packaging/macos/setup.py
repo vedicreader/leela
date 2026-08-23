@@ -30,6 +30,10 @@ PACKAGES = [
     'webview',                      # the shell itself
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
     'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'numpy', 'yaml',
+    # Copied whole because pygments finds a style or a lexer by importing its name: 49 and 263 of
+    # them that no scanner sees. Without them `import IPython` dies inside the kernel process, the
+    # gateway waits for a kernel that is already gone, and every cell fails on a read timeout.
+    'pygments',
     # Shipped so the app can install `leela[local]` into `leela.extras_site()`. Nothing imports it,
     # so the scanner would never find it, and without it the on-demand backends cannot be fetched
     # at all: a signed bundle has no other way to add a package. ~16MB against the ~400MB it saves.

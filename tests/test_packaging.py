@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util, subprocess, sys
+import importlib.util, json, subprocess, sys
 from pathlib import Path
 
 import pytest
@@ -299,6 +299,14 @@ def test_the_built_app_starts_and_serves_its_workspace(tmp_path):
         else: pytest.fail(f'the app never began serving:\n{log.read_text()[-3000:]}')
         body = urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=30).read().decode()
         assert 'lee-ide' in body, f'served a page without the IDE bundle:\n{body[:500]}'
+        # A page proves the server imports. It does not prove the *kernel* does, and it did not:
+        # pygments loads a style by importing its name, none were bundled, `import IPython` died in
+        # the kernel process, and every cell failed on a gateway read timeout instead.
+        req = urllib.request.Request(f'http://127.0.0.1:{port}/exec',
+                                     data=json.dumps({'code': 'import IPython; print(6*7)'}).encode(),
+                                     headers={'Content-Type': 'application/json'})
+        ran = urllib.request.urlopen(req, timeout=240).read().decode()
+        assert '42' in ran, f'the bundled kernel could not run a cell:\n{ran[:600]}\n{log.read_text()[-2000:]}'
     finally:
         proc.terminate()
         try: proc.wait(timeout=20)
@@ -350,3 +358,14 @@ def test_the_default_install_does_not_carry_the_local_backends():
     assert any(d.startswith('ramabana') for d in cfg['dependencies'])
     local = cfg['optional-dependencies']['local']
     assert any('rishi[' in d and 'mlx' in d for d in local), 'the backends live in leela[local]'
+
+
+@pytest.mark.parametrize('which', ['mac', 'win'])
+def test_pygments_is_copied_whole_or_the_bundled_kernel_cannot_start(which, request):
+    """It resolves a style or a lexer by importing its name -- 49 and 263 of them that no scanner
+    sees -- so a bundle got `pygments/styles/__init__` and none of the styles. `import IPython`
+    then died inside the kernel process, the gateway waited for a kernel that was already gone, and
+    every cell failed on a read timeout with nothing naming pygments."""
+    mod = request.getfixturevalue(which)
+    assert 'pygments' in mod.PACKAGES, 'naming it in INCLUDES would carry the two that are imported'
+    assert 'pygments' not in mod.EXCLUDES
