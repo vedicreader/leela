@@ -971,6 +971,39 @@ class Workspace:
                 'job_models': self.job_models,
                 'active_root': str(self.active_root or ''),
                 'saved': time.time()}
+    def restore_settings(self, d):
+        """Everything a saved session holds that is not its folders or its tabs.
+
+        Naming a folder on the command line built a workspace that carried over three model names
+        and dropped the rest, so a per-job model chosen yesterday was gone today and read as though
+        shutting down had reverted it.
+        """
+        d = d if isinstance(d, dict) else {}
+        self.compact_auto = bool(d.get('compact_auto', True))
+        self.compact_strategy = str(d.get('compact_strategy') or 'surgical')
+        self.tool_budget = budget_value(d.get('tool_budget'), *TOOL_RANGE)
+        self.step_budget = budget_value(d.get('step_budget'), *STEP_RANGE)
+        self.allow_workspace_repo_writes = bool(d.get('allow_workspace_repo_writes', False))
+        self.agent_read_outside = bool(d.get('agent_read_outside', False))
+        self.subagent_writes = bool(d.get('subagent_writes', False))
+        self.job_models = {str(k): str(v) for k, v in (d.get('job_models') or {}).items() if v}
+        self.agent_state = str(d.get('agent_state') or '')
+        saved_selection = d.get('agent_memory_selection')
+        if isinstance(saved_selection, dict):
+            for target in self.agent_memory_selection:
+                values = saved_selection.get(target, [])
+                if isinstance(values, list): self.agent_memory_selection[target] = list(dict.fromkeys(map(str, values)))
+        saved_layers = d.get('agent_state_layers')
+        if isinstance(saved_layers, dict):
+            for name, layer in saved_layers.items():
+                if name in self.agent_state_layers and isinstance(layer, dict):
+                    self.agent_state_layers[name].update(text=str(layer.get('text') or ''),
+                                                        enabled=bool(layer.get('enabled', True)),
+                                                        source=str(layer.get('source') or 'workspace'))
+        if self.agent_state and not any(str(layer.get('text') or '').strip()
+                                        for layer in self.agent_state_layers.values()):
+            self.agent_state_layers['task']['text'] = self.agent_state
+        return self
     def reopen_saved_tabs(self, path=None):
         "Reopen the saved tabs under the folders open now, and count them."
         # Naming a folder is not a request for last session's other projects, but it is still
@@ -1020,30 +1053,7 @@ class Workspace:
                  approvals=approvals, agent_scope=agent_scope, python=python,
                  transport=transport, gateway=gateway)
         ws._state_path = p
-        ws.compact_auto = bool(d.get('compact_auto', True))
-        ws.compact_strategy = str(d.get('compact_strategy') or 'surgical')
-        ws.tool_budget = budget_value(d.get('tool_budget'), *TOOL_RANGE)
-        ws.step_budget = budget_value(d.get('step_budget'), *STEP_RANGE)
-        ws.allow_workspace_repo_writes = bool(d.get('allow_workspace_repo_writes', False))
-        ws.agent_read_outside = bool(d.get('agent_read_outside', False))
-        ws.subagent_writes = bool(d.get('subagent_writes', False))
-        ws.job_models = {str(k): str(v) for k, v in (d.get('job_models') or {}).items() if v}
-        ws.agent_state = str(d.get('agent_state') or '')
-        saved_selection = d.get('agent_memory_selection')
-        if isinstance(saved_selection, dict):
-            for target in ws.agent_memory_selection:
-                values = saved_selection.get(target, [])
-                if isinstance(values, list): ws.agent_memory_selection[target] = list(dict.fromkeys(map(str, values)))
-        saved_layers = d.get('agent_state_layers')
-        if isinstance(saved_layers, dict):
-            for name, layer in saved_layers.items():
-                if name in ws.agent_state_layers and isinstance(layer, dict):
-                    ws.agent_state_layers[name].update(text=str(layer.get('text') or ''),
-                                                       enabled=bool(layer.get('enabled', True)),
-                                                       source=str(layer.get('source') or 'workspace'))
-        if ws.agent_state and not any(str(layer.get('text') or '').strip()
-                                      for layer in ws.agent_state_layers.values()):
-            ws.agent_state_layers['task']['text'] = ws.agent_state
+        ws.restore_settings(d)
         for r in d.get('roots', []):
             try: ws.add_root(r)
             except Exception: pass

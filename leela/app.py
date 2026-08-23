@@ -1249,7 +1249,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             if model is None: kw['model'] = remembered.get('model')
             kw['inline_model'] = remembered.get('inline_model') or 'gpt-mini'
             kw['completion_model'] = remembered.get('completion_model') or 'gpt-4.1'
-            ws = Workspace(**kw)
+            ws = Workspace(**kw).restore_settings(remembered)
         ws.at_exit()
         broker.register(ws.pool)
         # one ceiling for the process, so any workspace asking leela to manage it turns it on

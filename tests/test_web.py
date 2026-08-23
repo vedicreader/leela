@@ -842,6 +842,28 @@ def test_workspace_hub_dispatches_by_localhost_subdomain():
     assert seen == [('b', 'beta')]
     assert hub.catalog()[0]['url'] == 'http://alpha.localhost:5001/'
 
+def test_naming_a_folder_keeps_the_settings_the_last_session_saved(tmp_path):
+    """Naming a folder built a fresh workspace carrying three model names, so a per-job model, a
+    budget or a charter chosen yesterday was gone today -- which reads as shutting down having
+    reverted it."""
+    state = tmp_path/'state.json'
+    first = Workspace(roots=[tmp_path]); first._state_path = state
+    first.job_models = {'summary': 'gpt-4.1-mini', 'classify': 'gpt-4.1-nano'}
+    first.inline_model = 'gpt-mini'
+    first.tool_budget, first.step_budget = 120, 24
+    first.subagent_writes = first.agent_read_outside = True
+    first.compact_strategy = 'aggressive'
+    first.agent_state = 'ship the montage'
+    first.save()
+    remembered = json.loads(state.read_text())
+    again = Workspace(roots=[tmp_path], inline_model=remembered['inline_model']).restore_settings(remembered)
+    assert again.job_models == {'summary': 'gpt-4.1-mini', 'classify': 'gpt-4.1-nano'}
+    assert (again.tool_budget, again.step_budget) == (120, 24)
+    assert again.subagent_writes and again.agent_read_outside
+    assert again.compact_strategy == 'aggressive' and again.inline_model == 'gpt-mini'
+    assert again.agent_state_layers['task']['text'] == 'ship the montage'
+    assert Workspace(roots=[tmp_path]).restore_settings(None).job_models == {}, 'and nothing saved is no error'
+
 def test_the_journal_follows_the_folders_that_are_open(tmp_path):
     """Built once in `__init__`, a workspace that started with no folders kept the key for *no*
     folders after one was opened, so every project a desktop launch touched wrote into one shared
