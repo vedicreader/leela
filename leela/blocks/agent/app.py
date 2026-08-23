@@ -275,6 +275,18 @@ def connect(app, ctx):
         from .models import delete_model
         try:return {'ok':True,'name':delete_model((await req.json()).get('name',''))}
         except Exception as e:return fail(e)
+    @rt('/agent/setup')
+    def agent_setup():
+        "The first-run choice: what already works here, and what a download would add."
+        from .models import setup_plan
+        try: return {'ok': True, **setup_plan()}
+        except Exception as e: return fail(e)
+    @rt('/agent/setup/dismiss')
+    async def agent_setup_dismiss(req):
+        "Answered, so stop offering it. Reopening it is the runtimes control in settings."
+        from .models import dismiss_setup
+        try: return {'ok': True, 'dismissed': dismiss_setup(bool((await req.json()).get('dismissed', True)))}
+        except Exception as e: return fail(e)
     @rt('/agent/runtimes')
     def agent_runtimes():
         "The backends and what each is doing, for the pane to poll while one installs."

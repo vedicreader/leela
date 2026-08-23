@@ -178,6 +178,64 @@ async function leeAgentCompaction() {
 }
 window.leeAgentCompaction = leeAgentCompaction;
 
+
+/* The first-run pane on the welcome screen. Accounts first and on purpose: a hosted model costs
+   nothing to add and is better than a 400MB local one for most work, so the offline half is the
+   second question and never the default. `/agent/setup` answers with `frozen: false` outside a
+   packaged app, where a virtualenv already chose its own dependencies, and the pane stays hidden. */
+async function leeSetupPane() {
+  const host = $('#leesetup'); if (!host) return;
+  let d;
+  try { d = await api('/agent/setup'); } catch (_) { return; }
+  if (!d.ok || !d.frozen || d.dismissed) { host.hidden = true; return; }
+  renderSetup(host, d);
+}
+function setupRow(a) {
+  return `<div class="lee-krow"><span><strong>${esc(a.label)}</strong><br>` +
+    `<small>${esc(a.blurb)}</small></span>` +
+    `<span class="${a.ready ? 'lee-dim' : 'warn'}">${a.ready ? 'ready' : 'not set up'}</span></div>`;
+}
+function offlineRow(o) {
+  const st = o.install || {}, running = st.state === 'running';
+  return `<div class="lee-krow" data-setup-get="${esc(o.value)}"><span><strong>${esc(o.label || o.value)}</strong>` +
+    ` <small>about ${o.mb} MB</small><br><code>${esc((o.requirements || []).join(' '))}</code>` +
+    `${st.state === 'error' ? `<br><small class="warn">${esc(String(st.log).split('\n').slice(-2).join(' '))}</small>` : ''}</span>` +
+    `${o.available ? '<span class="lee-dim">installed</span>'
+      : `<button class="lee-btn" ${running ? 'disabled' : ''}>${running ? `${esc(st.via || 'installing')}…` : 'install'}</button>`}</div>`;
+}
+function renderSetup(host, d) {
+  const ready = d.ready.length;
+  host.hidden = false;
+  host.innerHTML = `<h3>Set up a model</h3>` +
+    `<div class="lee-setup-panes"><section class="lee-setup-pane recommended"><h4>Recommended` +
+    `<small>nothing to download</small></h4>${d.accounts.map(setupRow).join('')}</section>` +
+    `<section class="lee-setup-pane"><h4>Work offline too<small>on-device, and large</small></h4>` +
+    `${d.offline.length ? d.offline.map(offlineRow).join('') : '<div class="lee-dim">nothing for this machine</div>'}` +
+    `</section></div>` +
+    `<div class="lee-setup-foot">${ready ? `<span class="lee-dim">${ready} already set up here</span>`
+      : '<span class="warn">Nothing is set up yet, so the agent has no model.</span>'}` +
+    `<button class="lee-btn" id="setupdone">done</button></div>`;
+  host.querySelectorAll('[data-setup-get]').forEach(row => row.querySelector('button')?.addEventListener('click', async () => {
+    const runtime = row.dataset.setupGet;
+    const r = await post('/agent/runtimes/install', {runtime});
+    if (!r.ok) return status(r.error || `could not install ${runtime}`, 'err');
+    status(`installing ${runtime}… it keeps going if you leave this screen`, 'busy');
+    pollSetup(host);
+  }));
+  $('#setupdone', host).onclick = async () => {
+    await post('/agent/setup/dismiss', {dismissed: true});
+    host.hidden = true;
+    status('you can set a model up later from settings · models', 'ok');
+  };
+  clearTimeout(bkPoll);
+  if (d.offline.some(o => (o.install || {}).state === 'running')) bkPoll = setTimeout(() => pollSetup(host), 2000);
+}
+async function pollSetup(host) {
+  if (!host.isConnected || host.hidden) return clearTimeout(bkPoll);
+  try { const d = await api('/agent/setup'); if (d.ok) renderSetup(host, d); }
+  catch (e) { status(String(e.message || e), 'err'); }
+}
+window.leeSetupPane = leeSetupPane;
 /* How much work one turn may do. `auto` lets ramabana size it from the prompt; a number pins it.
    The fields are written back from the answer, so a refusal leaves the box showing what is
    actually in force rather than the rejected text. */

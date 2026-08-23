@@ -511,6 +511,9 @@ def _empty_editor():
             cls='lee-empty-actions'),
         # Filled by the client from `/fs/recent`: live, because a packaged shell is built once.
         Div(id='leerecent', cls='lee-empty-recent', hidden=True),
+        # And from `/agent/setup`, which answers with nothing outside a packaged app: a virtualenv
+        # install chose its own dependencies already.
+        Div(id='leesetup', cls='lee-empty-setup', hidden=True),
         Ul(*[Li(Strong(title), Span(blurb)) for title, blurb in features], cls='lee-empty-features'),
         Small('Keyboard: ', Kbd('ctrl+p'), ' open · ', Kbd('ctrl+shift+p'), ' commands · ',
               Kbd('mod+e'), ' recent files'),

@@ -2391,3 +2391,36 @@ def test_with_neither_uv_nor_pip_the_install_says_so(monkeypatch):
     m._installs.clear()
     with pytest.raises(RuntimeError, match='neither uv nor pip'): m.install_runtime('litert')
     m._installs.clear()
+
+
+def test_the_setup_pane_leads_with_what_costs_nothing():
+    """Accounts before downloads, on purpose: a hosted model is better than a 400MB local one for
+    most work, so the offline half is the second question and never the default."""
+    from leela.blocks.agent.models import ACCOUNTS, INSTALLABLE, setup_plan
+    d = setup_plan()
+    assert [a['value'] for a in d['accounts']] == [v for v, _, _ in ACCOUNTS]
+    assert all(a['blurb'] for a in d['accounts']), 'each says what to do about it'
+    assert {o['value'] for o in d['offline']} <= set(INSTALLABLE)
+    assert all(o['mb'] and o['requirements'] for o in d['offline']), 'a size and what it installs'
+
+def test_a_backend_with_no_wheel_for_this_machine_is_not_offered(monkeypatch):
+    "Windows is never offered mlx: the offer is rishi's platform markers, not a hand-kept list."
+    import leela.blocks.agent.models as m
+    monkeypatch.setattr(m, 'runtime_requirements', lambda r: [] if r == 'mlx' else ['x>=1'])
+    assert 'mlx' not in {o['value'] for o in m.setup_plan()['offline']}
+
+def test_the_pane_is_for_a_packaged_app_and_remembers_being_answered(monkeypatch, tmp_path):
+    "A virtualenv install chose its own dependencies, so `frozen` is what the client gates on."
+    import sys
+    import leela.blocks.agent.models as m
+    monkeypatch.setattr(m, 'leela_cfg', tmp_path)
+    monkeypatch.setattr(m, '_setup_marker', lambda: tmp_path/'setup.json')
+    monkeypatch.delattr(sys, 'frozen', raising=False)
+    assert m.setup_plan()['frozen'] is False
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    assert m.setup_plan()['frozen'] is True
+    assert m.setup_plan()['dismissed'] is False
+    m.dismiss_setup()
+    assert m.setup_dismissed() and m.setup_plan()['dismissed'] is True
+    m.dismiss_setup(False)
+    assert m.setup_plan()['dismissed'] is False

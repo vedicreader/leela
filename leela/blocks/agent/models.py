@@ -5,7 +5,7 @@ from ... import extras_site, leela_cfg, use_extras
 
 __all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks',
            'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements', 'install_runtime',
-           'install_state']
+           'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed', 'SETUP_SIZES']
 
 #: What each routed job spends its model on. One copy: the settings pane renders three of these
 #: server-side and the rest from `/agent/models`, and two copies drifted apart the first time.
@@ -119,6 +119,49 @@ def install_runtime(runtime):
     threading.Thread(target=_run_install, args=(runtime, cmd), daemon=True,
                      name=f'leela-install-{runtime}').start()
     return dict(row)
+
+#: Roughly what each backend weighs once installed, measured on this bundle. Approximate on
+#: purpose: the number is there so nobody starts a 400MB download without being told, and a figure
+#: that is close is worth more than one that is exact and stale.
+SETUP_SIZES = {'mlx': 400, 'llama': 120, 'litert': 70}
+
+#: What an account-based runtime is called on the wizard, and what to do about it. `runtime_remedy`
+#: says the same thing for the picker; this is the first-run wording, which has room for a sentence.
+ACCOUNTS = (
+ ('claude', 'Claude Code', 'Sign in once with `claude /login` and Leela drives it. No key to manage.'),
+ ('remote', 'An API key', 'Set ANTHROPIC_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY and its models appear.'),
+ ('ollama', 'Ollama', 'Runs its own daemon, so the weights are on your machine and Leela adds nothing.'),
+ ('copilot', 'GitHub Copilot', 'Sign in to Copilot in an editor and its models appear here.'))
+
+def _setup_marker(): return leela_cfg/'setup.json'
+
+def setup_dismissed():
+    try: return bool(json.loads(_setup_marker().read_text()).get('dismissed'))
+    except Exception: return False
+
+def dismiss_setup(dismissed=True):
+    "Remember that the first-run pane was answered, so it stops offering itself."
+    p = _setup_marker(); p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({'dismissed': bool(dismissed)}) + '\n')
+    return bool(dismissed)
+
+def setup_plan():
+    """The first-run choice: what already works here, and what a download would add.
+
+    Accounts come first and cost nothing to add, which is the honest order -- a hosted model is
+    better than a 400MB local one for most work. The offline half is whatever rishi declares a
+    backend for *on this machine*, so Windows is never offered mlx and nobody is told to install
+    something that has no wheel for them.
+    """
+    rows = {r['value']: r for r in runtimes()}
+    accounts = [{'value': v, 'label': label, 'blurb': blurb,
+                 'ready': bool(rows.get(v, {}).get('available')),
+                 'why': rows.get(v, {}).get('why', '')} for v, label, blurb in ACCOUNTS]
+    offline = [{**rows[v], 'mb': SETUP_SIZES.get(v)} for v in INSTALLABLE
+               if v in rows and rows[v]['requirements']]
+    return {'frozen': bool(getattr(sys, 'frozen', False)), 'dismissed': setup_dismissed(),
+            'accounts': accounts, 'offline': offline,
+            'ready': [a['value'] for a in accounts if a['ready']]}
 
 def runtimes():
     "Every runtime, whether rishi can reach it here, and what it wants when it cannot."

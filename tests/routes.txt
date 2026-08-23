@@ -46,6 +46,8 @@ GET,POST /agent/runtimes
 GET,POST /agent/runtimes/install
 GET,POST /agent/sessions
 GET,POST /agent/settings
+GET,POST /agent/setup
+GET,POST /agent/setup/dismiss
 GET,POST /agent/state/activate
 GET,POST /agent/state/bootstrap
 GET,POST /agent/state/compare
