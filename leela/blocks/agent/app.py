@@ -253,11 +253,14 @@ def connect(app, ctx):
         from ...agent.core import JOBS, Routing
         routing = ctx.ai.routing if ws._ai is not None else Routing(turn=agent)
         if ws._ai is None: routing.policy.update(ws.job_models)
+        # `inline` has a field of its own, and `**jobs` is spread last: left in here, the routing
+        # default for the job overwrote the saved prompt-cell model every time, so a choice that
+        # had been saved correctly always came back reading as the turn model.
         jobs = {j: _name(f'{j} model', lambda j=j: routing.name_for(j), '')
-                for j in JOBS if j not in ('turn', 'completion')}
+                for j in JOBS if j not in ('turn', 'completion', 'inline')}
         return {'models': mark_models(rows), 'saved':saved, 'notes': notes,
                 'auth': _try('auth', auth_status, {}) or {}, 'runtimes': _try('runtimes', runtimes, []) or [],
-                'jobs': jobs,
+                'jobs': jobs, 'job_help': JOB_HELP,
                 'selected': {'agent': selected(agent), 'inline': selected(inline),
                              'completion': selected(completion), **jobs}}
     @rt('/agent/models/add')

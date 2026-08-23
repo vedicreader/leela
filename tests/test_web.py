@@ -888,6 +888,17 @@ def test_the_pane_sees_and_answers_a_prompt_cell_approval(tmp_path):
         t.join(5)
         assert held['a'].note == 'use the other file', 'answered where it was raised'
 
+def test_the_prompt_cell_model_is_the_saved_one_not_the_routing_default(tmp_path):
+    """`inline` is in `JOBS` and `**jobs` is spread last, so the routing default for the job
+    overwrote the saved prompt-cell model every time. The choice was saved correctly and always
+    came back reading as the turn model, which is what looked like shutdown reverting it."""
+    ws = Workspace(roots=[tmp_path], inline_model='gpt-4.1-nano')
+    with TestClient(ide_app(ws)) as client:
+        picked = client.get('/agent/models').json()['selected']
+    assert picked['inline'].endswith('gpt-4.1-nano'), picked['inline']
+    assert picked['inline'] != picked['agent'], 'the prompt cell has a field of its own'
+    assert 'summary' in picked and 'classify' in picked, 'the routed jobs are still reported'
+
 def test_naming_a_folder_keeps_the_settings_the_last_session_saved(tmp_path):
     """Naming a folder built a fresh workspace carrying three model names, so a per-job model, a
     budget or a charter chosen yesterday was gone today -- which reads as shutting down having
