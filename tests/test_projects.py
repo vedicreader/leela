@@ -301,3 +301,23 @@ def test_asking_the_shell_never_hangs_the_launch(monkeypatch):
     monkeypatch.setattr(subprocess, 'run', slow)
     monkeypatch.setenv('SHELL', '/bin/zsh')
     assert leela.login_path() is None
+
+
+def test_an_ascii_locale_is_repaired_before_anything_imports(monkeypatch):
+    "The failure it prevents is `UnicodeDecodeError` out of an import, blamed on the import."
+    import locale
+    from leela import use_utf8
+    was = locale.setlocale(locale.LC_CTYPE)
+    try:
+        locale.setlocale(locale.LC_CTYPE, 'C')
+        assert 'utf-8' not in locale.getpreferredencoding(False).lower(), 'C should be ASCII'
+        assert use_utf8() is True
+        assert 'utf-8' in locale.getpreferredencoding(False).lower()
+    finally: locale.setlocale(locale.LC_CTYPE, was)
+
+def test_a_locale_that_is_already_utf8_is_left_alone(monkeypatch):
+    "Nothing to fix means no `setlocale` call, so a deliberate locale is not overwritten."
+    import locale
+    import leela
+    monkeypatch.setattr(leela, 'UTF8_LOCALES', ())
+    assert leela.use_utf8() is ('utf-8' in locale.getpreferredencoding(False).lower())

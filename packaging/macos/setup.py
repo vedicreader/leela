@@ -113,6 +113,10 @@ PLIST = {
     # `http://127.0.0.1:<port>`. The narrow exemption, not `NSAllowsArbitraryLoads`.
     'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
     'CFBundleDocumentTypes': DOC_TYPES,
+    # launchd hands a windowed app no locale, so the C locale is POSIX, `open()` defaults to ASCII
+    # and importing anything that reads a UTF-8 file raises. Set before the interpreter starts,
+    # which `leela.use_utf8` cannot be when the binary is run directly. Both are wanted.
+    'LSEnvironment': {'LANG': 'en_US.UTF-8', 'PYTHONUTF8': '1'},
 }
 
 OPTIONS = {

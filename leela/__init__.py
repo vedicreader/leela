@@ -3,7 +3,7 @@
 __version__ = "0.1.0"
 
 __all__ = ['keys', 'errstr', 'Dictable', 'leela_cfg', 'extras_site', 'use_extras',
-           'login_path', 'use_login_path', 'TOOL_DIRS']
+           'login_path', 'use_login_path', 'TOOL_DIRS', 'use_utf8', 'UTF8_LOCALES']
 
 import sys
 
@@ -55,6 +55,24 @@ def use_login_path():
         if os.path.isdir(d) and d not in parts: parts.append(d)
     os.environ['PATH'] = os.pathsep.join(parts)
     return os.environ['PATH']
+
+#: Tried in order for `LC_CTYPE`. macOS has the first; the rest are for anywhere else.
+UTF8_LOCALES = ('en_US.UTF-8', 'C.UTF-8', 'UTF-8')
+
+def use_utf8():
+    """Make the default encoding UTF-8, and return whether it now is.
+
+    A windowed launch inherits no `LANG`, so the C locale is `POSIX`, `open()` defaults to ASCII and
+    any dependency reading a UTF-8 file raises `UnicodeDecodeError` on import. `LC_CTYPE` is what
+    `locale.getpreferredencoding` reads, so setting it fixes every later `open`.
+    """
+    import locale
+    if 'utf-8' in (locale.getpreferredencoding(False) or '').lower(): return True
+    for name in UTF8_LOCALES:
+        try: locale.setlocale(locale.LC_CTYPE, name)
+        except locale.Error: continue
+        if 'utf-8' in (locale.getpreferredencoding(False) or '').lower(): return True
+    return False
 
 def errstr(e):
     "How every IDE surface reports a caught exception: `TypeName: message`."

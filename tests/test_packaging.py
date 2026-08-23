@@ -384,3 +384,11 @@ def test_leela_asks_to_own_the_languages_it_edits(mac):
     assert exts <= {e.lstrip('.') for e, l in LANGS.items() if l}, 'nothing claimed that Leela cannot edit'
     # A folder is still Finder's, or every directory in the Finder would open Leela.
     assert types['Folder']['LSHandlerRank'] == 'Alternate'
+
+
+def test_a_windowed_launch_is_given_a_utf8_locale(mac):
+    """launchd hands an app no LANG, the C locale is POSIX, `open()` defaults to ASCII, and
+    `import rishi.claude` died on a UTF-8 byte -- which surfaced as Claude Code being reported not
+    installed. The plist sets it before the interpreter starts; `leela.use_utf8` cannot."""
+    env = mac.PLIST['LSEnvironment']
+    assert env['LANG'].lower().endswith('utf-8') and env['PYTHONUTF8'] == '1'

@@ -15,8 +15,9 @@ HOST = '127.0.0.1'
 # Only when frozen: a normal install has one environment and installs into it, and an extras
 # directory left over from running the app would then shadow it. See `leela.use_extras`.
 if getattr(sys, 'frozen', False):
-    from leela import use_extras, use_login_path
+    from leela import use_extras, use_login_path, use_utf8
     use_extras()
+    use_utf8()            # no LANG means an ASCII default, and importing rishi.claude then raises
     use_login_path()      # Finder starts an app with almost no PATH, so git and claude go missing
 
 def free_port(preferred=5001):
