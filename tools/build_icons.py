@@ -1,9 +1,8 @@
-"""Generate every app-icon asset from Leela's mark.
+"""Generate every app-icon asset from `packaging/assets/leela-mark.png`.
 
-`leela-mark.png` is the one source: the mark lifted off its plate, on transparency. macOS 26 draws
-`Leela.icon` through Icon Composer and everything before it reads the ICNS, so both are built here
-and cannot drift. The plate and its rounded corners are drawn rather than baked into the artwork,
-which is what lets Icon Composer supply the material and tint the mark as a shape.
+Icon Composer (`Leela.icon`) and the ICNS are built here together so they cannot drift. The plate
+and its rounded corners are drawn rather than baked into the artwork, which is what lets Icon
+Composer supply the material and tint the mark as a shape.
 """
 
 import base64, io
@@ -15,7 +14,7 @@ ASSETS = ROOT/'packaging'/'assets'
 MARK = ASSETS/'leela-mark.png'
 GROUND = '#06203C'
 #: Committed, unlike the icons: it ships in the wheel, which has no build step to draw it. Kept
-#: honest by `test_the_favicon_is_the_mark_it_is_generated_from`, as the JS bundles are.
+#: honest by `test_the_favicon_is_the_mark_it_is_generated_from`.
 FAVICON = ROOT/'leela'/'static'/'favicon.svg'
 FAVICON_PX = 64          # the plate stops carrying the mark's line work below this
 

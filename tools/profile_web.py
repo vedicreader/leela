@@ -1,6 +1,6 @@
 """What the IDE page costs a browser: bytes, parse, layout, and one file-tree refresh.
 
-Drives a real Chromium over a generated project, so the numbers are the ones a user pays.
+Drives a real Chromium over a generated project.
 
     python tools/profile_web.py                 # everything
     python tools/profile_web.py --dirs 40       # a wider tree

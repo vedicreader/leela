@@ -1,8 +1,7 @@
 """What the desktop app costs to start and to hold open.
 
 Every measurement runs in a fresh subprocess, and is the best of a few runs: import cost is
-order-dependent and RSS is cumulative, so several things in one interpreter measure the order
-they were done in, and a cold page cache makes the first run a lie.
+order-dependent, RSS is cumulative, and a cold page cache makes the first run a lie.
 
     python tools/profile_app.py                # all three
     python tools/profile_app.py --imports      # what is on the startup path, and its cost
@@ -16,8 +15,8 @@ from fastcore.all import Path
 ROOT = Path(__file__).resolve().parent.parent
 PY = sys.executable
 
-# Heavy third-party roots worth naming. Leela's *server* has no use for any of them -- they
-# arrive through a dependency -- so seeing one is the finding.
+# Heavy third-party roots worth naming. Leela's server has no use for any of them, so seeing one
+# means a dependency dragged it in.
 WATCH = ('pandas', 'IPython', 'numpy', 'matplotlib', 'torch', 'scipy')
 
 PRELUDE = '''
@@ -49,7 +48,7 @@ def run(body):
     return json.loads(line)
 
 def best(body, n=3, key='ms'):
-    "The fastest of `n` runs -- a cold import measures the page cache, not the code."
+    "The fastest of `n` runs. A cold import measures the page cache, not the code."
     return min([run(body) for _ in range(n)], key=lambda r: r.get(key, 0))
 
 def table(rows, head):

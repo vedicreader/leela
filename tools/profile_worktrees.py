@@ -1,8 +1,7 @@
 """What N agent threads on N git worktrees would cost.
 
-Each thread wants its own checkout, its own branch and its own workspace. This measures the
-three things that decide whether that scales: making the worktrees, running git in all of
-them at once, and holding a Workspace open per thread.
+Measures making the worktrees, running git in all of them at once, and holding a Workspace open
+per thread.
 
     python tools/profile_worktrees.py            # all three
     python tools/profile_worktrees.py -n 8       # eight threads

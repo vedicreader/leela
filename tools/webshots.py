@@ -1,10 +1,8 @@
 """Capture the browser frontend mid-stream.
 
-Same bargain as `tools/shots.py`: a real server, the real client JS, the real SSE
-endpoint, and a scripted model that emits its words one at a time so the capture catches a
-turn actually in flight. Playwright drives it, which also means this doubles as an
-end-to-end test of the stream — if the events do not arrive, the page stays empty and the
-capture shows it.
+A real server, the real client JS, the real SSE endpoint, and a scripted model that emits one word
+at a time so the capture catches a turn in flight. If the events do not arrive, the page stays
+empty and the capture shows it.
 
     python tools/webshots.py         # writes docs/screenshots/web-stream-*.png
 """
@@ -82,7 +80,7 @@ async def shoot():
         await pg.evaluate("document.querySelectorAll('.lee-modal').forEach(m => m.remove())")
         await pg.screenshot(path=str(OUT/'web-stream-3-done.png'))
 
-        # Memory sources view — vault-backed research memory.
+        # Memory sources view, vault-backed research memory.
         await pg.evaluate("document.querySelectorAll('.lee-modal').forEach(m => m.remove())")
         await pg.click('[data-right="memory"]')
         await pg.click('[data-memory-view="sources"]')

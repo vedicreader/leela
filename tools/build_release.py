@@ -21,8 +21,8 @@ def mac_release():
     build_app()
     app, out = ROOT/'dist'/'Leela.app', ROOT/'dist'/'Leela-macOS.dmg'
     if not app.is_dir(): raise SystemExit(f'{app} was not built')
-    # A local py2app build is linker-signed and launchable as-is; distribution signing is
-    # opt-in because it needs the developer's identity and notarization credentials.
+    # Distribution signing is opt-in: it needs the developer's identity and notarization
+    # credentials, and a local py2app build is already linker-signed and launchable.
     if (identity := os.environ.get('LEELA_CODESIGN_IDENTITY', '').strip()):
         run('codesign', '--force', '--deep', '--options', 'runtime', '--sign', identity, app)
         run('codesign', '--verify', '--deep', '--strict', app)

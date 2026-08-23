@@ -1,10 +1,7 @@
 """Capture the desktop app: the native window, and a live page inside a Leela tab.
 
-`desktop-window.png` is `leela.desktop.run_shell` opening a real pywebview window over a real
-server, photographed off the X display with ffmpeg -- the only shot that can show Leela is an
-application rather than a browser tab. `desktop-inline-browser.png` is a Leela tab holding a
-page a separate headless Chrome renders, streamed over `/browser/ws` and taken at 2x by
-Playwright against the same server.
+`desktop-window.png` is photographed off the X display with ffmpeg, the only shot that can show
+Leela as an application. `desktop-inline-browser.png` is taken at 2x by Playwright.
 
     python tools/deskshots.py              # both, under Xvfb if there is no DISPLAY
     python tools/deskshots.py --window     # just the native window
@@ -21,8 +18,8 @@ OUT = ROOT/'docs'/'screenshots'
 PORT = 5178
 DEMO_URL = os.environ.get('LEELA_SHOT_URL', 'https://vedicreader.github.io/fossick/cdp.html')
 CDP_PORT = 9411
-# A profile of its own, not fossick's: Chrome allows one process per user-data-dir, so a
-# capture must not fight the developer's own browser or include their logged-in tabs.
+# Chrome allows one process per user-data-dir, so a capture must not fight the developer's own
+# browser or include their logged-in tabs.
 CDP_PROFILE = ROOT/'build'/'shot-chrome'
 
 def serve(ws, port=PORT):
@@ -56,9 +53,8 @@ serve(ws, {port})
 base = 'http://127.0.0.1:{port}/'
 wait_for_http(base, timeout=90)
 if url:
-    # Through the route, as clicking a research result does. Opening it in-process would make
-    # the CDP connection on this thread's throwaway loop, and a websocket belongs to the loop
-    # that created it -- the server would be left holding a dead one.
+    # Through the route. In-process, the CDP websocket would belong to this thread's throwaway
+    # loop, and the server would be left holding a dead one.
     start_cdp({cdp}, headless=True, wait=True, timeout=90, profile={profile!r})
     urllib.request.urlopen(base + 'browser/open?url=' + urllib.parse.quote(url, safe=''),
                            timeout=120).close()
@@ -67,7 +63,7 @@ run_shell([base], titles=['leela — leela'], gui={gui!r}, size=({w}, {h}))
 
 def window_shot(out=None, size=(1440, 900), seconds=14, url=None, roots=True, name=None):
     "Open the shell for real and photograph the window it draws."
-    # A subprocess because `webview.start` never returns, under `xvfb-run` when there is no
+    # A subprocess because `webview.start` never returns. Under `xvfb-run` when there is no
     # display, so a laptop and a container do the same thing.
     out = Path(out or OUT/(name or ('desktop-window-browser.png' if url else 'desktop-window.png')))
     if not shutil.which('ffmpeg'): raise SystemExit('capturing the window needs ffmpeg')
@@ -85,12 +81,10 @@ def window_shot(out=None, size=(1440, 900), seconds=14, url=None, roots=True, na
     app = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
                            env={**os.environ, 'DISPLAY': display})
     try:
-        # The window has to exist, load the workspace, and finish its first paint; the client
-        # mounts the editor only after `/tab/state`, so this is not instant even locally.
+        # The client mounts the editor only after `/tab/state`, so the first paint is not
+        # instant even locally.
         time.sleep(seconds)
         out.parent.mkdir(parents=True, exist_ok=True)
-        # Ask X where the window ended up rather than photographing the whole screen and
-        # guessing afterwards which pixels were wallpaper.
         x0, y0, x1, y1 = _window_box(display) or (0, 0, w + 160, h + 160)
         grab = subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'x11grab',
                                '-video_size', f'{x1 - x0}x{y1 - y0}', '-i', f'{display}+{x0},{y0}',
@@ -116,8 +110,8 @@ def _window_box(display, name='leela'):
         at = dict(l.strip().split(':', 1) for l in info.splitlines() if ':' in l)
         x, y = int(at['Absolute upper-left X']), int(at['Absolute upper-left Y'])
         w, h = int(at['Width']), int(at['Height'])
-        # Upwards from the client area to include the title bar: the frame is part of "this is
-        # an application", which is what the shot is for.
+        # Upwards from the client area to include the title bar, which is part of showing
+        # this is an application.
         return (max(0, x - 1), max(0, y - 30), x + w + 1, y + h + 1)
     except Exception: return None
 

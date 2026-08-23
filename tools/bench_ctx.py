@@ -1,18 +1,8 @@
 """What `Ctx` costs, measured rather than asserted.
 
-Run: `uv run python tools/bench_ctx.py`
-
-The question this answers is whether routing every block's access through a capability
-object is affordable, given that `ide_app` currently reaches `ws.fs` fifty times and
-`ws.ai` forty-six times across ~180 routes. Three things are worth knowing:
-
-1. eager access (`ctx.fs`)  -- should be indistinguishable from `ws.fs`
-2. lazy access  (`ctx.ai`)  -- pays one property call and one delegation
-3. construction (`Ctx(...)`) -- paid once per block per workspace, at connect time
-
-Attribute access is nanoseconds and a route handler is milliseconds, so the honest way to
-read the results is the last section: the same access counts a real request makes, priced
-against the work that request is actually doing.
+Run: `uv run python tools/bench_ctx.py`. Attribute access is nanoseconds. A route handler is
+milliseconds. Read the last section, which prices the access counts of a real request against
+the work that request does.
 """
 
 import statistics
@@ -61,11 +51,8 @@ def main():
     print(f'\neager overhead : {rows_["ctx.fs"] - rows_["ws.fs"]:+.2f} ns/access')
     print(f'lazy overhead  : {rows_["ctx.ai"] - rows_["ws.ai"]:+.2f} ns/access')
 
-    # -- what the error-message hook costs ------------------------------------
-    # `Ctx.__getattr__` turns an undeclared capability into a message naming the block and
-    # the fix. Defining it switches CPython to the hooked attribute path, so it is not free
-    # even when it never fires -- measured here rather than asserted, because it is the one
-    # place the capability object is slower than what it replaced.
+    # Defining `Ctx.__getattr__` switches CPython to the hooked attribute path, so the
+    # undeclared-capability message costs something even when it never fires.
     hook = Ctx.__getattr__
     del Ctx.__getattr__
     try:
@@ -76,22 +63,19 @@ def main():
     print(f'\nerror-hook cost: eager {rows_["ctx.fs"] - off[0][1]:+.2f}ns   '
           f'lazy {rows_["ctx.ai"] - off[1][1]:+.2f}ns')
 
-    # -- construction, paid once per block per workspace ----------------------
     c_full = bench('Ctx(ws)', 'Ctx(ws)', env, n=200_000)
     c_narrow = bench("Ctx(ws, caps=('fs',))", "Ctx(ws, caps=('fs','journal'))", env, n=200_000)
     print(f'\nconstruction   : full {c_full[1]:.0f}ns   narrowed {c_narrow[1]:.0f}ns')
     for nblocks in (12, 20):
         print(f'  {nblocks} blocks per workspace: {c_full[1]*nblocks/1000:.1f}µs at connect time')
 
-    # -- the number that decides it ------------------------------------------
-    # A route handler reaching ten capabilities is a busy one; the request it belongs to
-    # does file IO, JSON encoding and template rendering on top.
+    # Ten capability reads is a busy handler, and the request also does file IO, JSON
+    # encoding and template rendering.
     per_req = (rows_['ctx.fs'] - rows_['ws.fs']) * 10
     print(f'\nper request, 10 capability reads: {per_req:+.1f} ns '
           f'({per_req/1e6:+.6f} ms)')
     print('a trivial FastHTML fragment render is ~0.5-2 ms, so this is ~1e-5 of it.')
 
-    # -- startup: the cost that would have been real --------------------------
     fresh = Workspace(roots=[])
     t = timeit.timeit(lambda: Ctx(fresh, name='x'), number=1000)/1000*1e9
     print(f'\nCtx over a cold workspace: {t:.0f}ns, and _ai is '

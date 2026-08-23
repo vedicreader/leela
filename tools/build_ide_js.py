@@ -1,14 +1,10 @@
 #!/usr/bin/env python
 """Concatenate the client's modules into the bundles `leela/app.py` serves.
 
-The modules are the source and live with the feature they belong to: `leela/blocks/<block>/*.js`
-beside that block's Python, and the shared vocabulary in `leela/static/js/`. They share one
-scope, so the order below is the contract -- `core.js` declares `lee`, `$` and `esc`, and every
-later module reads them. `LAYERS` is that order, and the only place it is written down.
-
-The bundles are generated and committed, so the IDE stays a few deferred script tags with no
-build step at install time. `--check` fails when a bundle and its modules have drifted, which is
-what CI and `tests/blocks/test_ide_bundle.py` assert.
+The modules live with the feature they belong to: `leela/blocks/<block>/*.js` beside that block's
+Python, and the shared vocabulary in `leela/static/js/`. `LAYERS` is their load order, and the only
+place it is written down. The bundles are generated and committed, so install has no build step.
+`--check` fails when a bundle and its modules have drifted.
 """
 from __future__ import annotations
 import sys
@@ -21,10 +17,10 @@ ROOT = Path(__file__).resolve().parent.parent
 PKG = ROOT/'leela'
 OUTDIR = PKG/'static'
 
-#: bundle -> its modules, in load order. Three script tags, one lexical scope, executed in
-#: document order: `lee-core.js` declares `lee`, `$` and `esc` and every later module reads
-#: them. Splitting further is a data change here, safe as long as nothing a bundle evaluates at
-#: load time names a function a later bundle declares -- see `test_ide_bundle.py`.
+#: bundle -> its modules, in load order. Three script tags share one lexical scope and run in
+#: document order: `lee-core.js` declares `lee`, `$` and `esc` for every later module. Splitting
+#: further is safe as long as nothing a bundle evaluates at load time names a function a later
+#: bundle declares. See `test_ide_bundle.py`.
 LAYERS = {
     'lee-core.js': [
         'static/js/core.js', 'blocks/keys/keymap.js', 'static/js/actions.js',
