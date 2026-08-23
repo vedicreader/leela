@@ -30,9 +30,27 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[gateway,macapp]" pytest
+      # Signing and notarising are opt-in on the secrets being set: with none of them the build
+      # still produces a launchable, linker-signed app, which is what a fork gets.
+      - name: import the signing certificate
+        if: env.CERT != ''
+        env:
+          CERT: ${{ secrets.LEELA_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.LEELA_CERT_PASSWORD }}
+        run: |
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          printf %s "$CERT" | base64 --decode > /tmp/cert.p12
+          security import /tmp/cert.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+          rm -f /tmp/cert.p12
       - name: build
         env:
           LEELA_CODESIGN_IDENTITY: ${{ secrets.LEELA_CODESIGN_IDENTITY }}
+          LEELA_APPLE_ID: ${{ secrets.LEELA_APPLE_ID }}
+          LEELA_APPLE_PASSWORD: ${{ secrets.LEELA_APPLE_PASSWORD }}
+          LEELA_TEAM_ID: ${{ secrets.LEELA_TEAM_ID }}
         run: python tools/build_release.py
       # `-m ""`: the launch test is marked slow, and the default addopts would skip the one
       # check that a py2app bundle actually starts rather than merely building.

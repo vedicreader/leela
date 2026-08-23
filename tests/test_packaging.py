@@ -403,3 +403,47 @@ def test_no_junk_directory_rides_along_inside_the_package():
             if p.is_dir() and (p.name in ('.venv', 'venv', 'node_modules', '.tox', 'dist', 'build')
                                or (p/'pyvenv.cfg').is_file())]
     assert junk == [], f'{junk} would be copied into the app; delete it'
+
+
+def test_signing_and_notarising_are_opt_in(monkeypatch):
+    "With no credentials the build still makes a launchable app, which is what a fork gets."
+    import tools.build_release as rel
+    for k in ('LEELA_NOTARY_PROFILE', 'LEELA_ASC_KEY', 'LEELA_ASC_KEY_ID', 'LEELA_ASC_ISSUER',
+              'LEELA_APPLE_ID', 'LEELA_APPLE_PASSWORD', 'LEELA_TEAM_ID'):
+        monkeypatch.delenv(k, raising=False)
+    assert rel.notary_args() == []
+    with pytest.raises(SystemExit, match='nothing to notarize'): rel.notarize(Path('x.dmg'))
+
+@pytest.mark.parametrize('env,want', [
+    ({'LEELA_NOTARY_PROFILE': 'p'}, '--keychain-profile'),
+    ({'LEELA_ASC_KEY': 'k.p8', 'LEELA_ASC_KEY_ID': 'i', 'LEELA_ASC_ISSUER': 's'}, '--key'),
+    ({'LEELA_APPLE_ID': 'a@b.c', 'LEELA_APPLE_PASSWORD': 'x', 'LEELA_TEAM_ID': 'T'}, '--apple-id'),
+])
+def test_each_way_of_authenticating_to_the_notary_service(env, want, monkeypatch):
+    "A keychain profile is one secret instead of three, so it is preferred where it exists."
+    import tools.build_release as rel
+    for k in ('LEELA_NOTARY_PROFILE', 'LEELA_ASC_KEY', 'LEELA_ASC_KEY_ID', 'LEELA_ASC_ISSUER',
+              'LEELA_APPLE_ID', 'LEELA_APPLE_PASSWORD', 'LEELA_TEAM_ID'):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env.items(): monkeypatch.setenv(k, v)
+    assert want in rel.notary_args()
+
+def test_the_notarised_dmg_is_stapled(monkeypatch, tmp_path):
+    "Without stapling Gatekeeper asks Apple on first launch, and fails when there is no network."
+    import tools.build_release as rel
+    monkeypatch.setenv('LEELA_NOTARY_PROFILE', 'leela')
+    calls = []
+    monkeypatch.setattr(rel, 'run', lambda *a, **kw: calls.append([str(x) for x in a]))
+    rel.notarize(tmp_path/'Leela.dmg')
+    assert calls[0][:3] == ['xcrun', 'notarytool', 'submit'] and '--wait' in calls[0]
+    assert calls[1][:3] == ['xcrun', 'stapler', 'staple']
+    assert calls[2][:3] == ['xcrun', 'stapler', 'validate']
+
+def test_distribution_signing_does_not_use_deep(mac):
+    """`--deep` signs nested code with the outer bundle's arguments and skips what it does not
+    recognise, which is why Apple tells you not to and why the notary service rejects it."""
+    src = (ROOT/'tools'/'build_release.py').read_text()
+    body = src[src.index('def sign('):src.index('def notary_args(')]
+    assert "'--deep'" not in body.split('--verify')[0], 'signing must walk inner code itself'
+    assert "'--timestamp'" in body, 'notarisation requires a secure timestamp'
+    assert "'runtime'" in body, 'the hardened runtime is required too'

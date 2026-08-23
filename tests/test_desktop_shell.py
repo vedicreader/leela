@@ -152,3 +152,33 @@ def test_the_open_folder_handler_can_be_constructed():
     assert h is not None, 'init_with returned None, so alloc/init did not chain'
     h.handleEvent_reply_('event', 'reply')
     assert seen == [('event', 'reply')], 'the selector must reach the python callback'
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='the Cocoa shell is macOS only')
+def test_closing_the_last_window_hides_it_rather_than_quitting():
+    """pywebview stops the run loop when its last window closes, so Leela vanished from the Dock
+    while every other Mac app stays there. Both delegates are subclassed, because an Objective-C
+    method cannot be reassigned once its class is built."""
+    pytest.importorskip('webview.platforms.cocoa')
+    from webview.platforms.cocoa import BrowserView
+    from leela.desktop import keep_running_in_dock
+    was = BrowserView.WindowDelegate, BrowserView.AppDelegate
+    try:
+        assert keep_running_in_dock() is True
+        assert issubclass(BrowserView.WindowDelegate, was[0]) and BrowserView.WindowDelegate is not was[0]
+        assert issubclass(BrowserView.AppDelegate, was[1]) and BrowserView.AppDelegate is not was[1]
+        # A Dock click with nothing visible is the only way back to a hidden window.
+        assert hasattr(BrowserView.AppDelegate, 'applicationShouldHandleReopen_hasVisibleWindows_')
+    finally: BrowserView.WindowDelegate, BrowserView.AppDelegate = was
+
+def test_a_pywebview_that_moved_on_leaves_the_old_behaviour(monkeypatch, capsys):
+    "Patching a dependency's internals must never be what stops the app from starting."
+    import builtins
+    from leela.desktop import keep_running_in_dock
+    real = builtins.__import__
+    def blocked(name, *a, **kw):
+        if 'cocoa' in name: raise ImportError('pywebview moved on')
+        return real(name, *a, **kw)
+    monkeypatch.setattr(builtins, '__import__', blocked)
+    assert keep_running_in_dock() is False
+    assert 'quit Leela' in capsys.readouterr().out

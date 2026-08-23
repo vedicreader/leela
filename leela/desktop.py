@@ -8,7 +8,7 @@ from . import errstr, leela_cfg
 from .core.projects import last_folders, recent_folders, remember, session  # noqa: F401
 
 __all__ = ['BACKENDS', 'backend', 'shell_ready', 'wait_for_http', 'start_cdp', 'warm_cdp',
-           'window_size', 'run_shell', 'watch_open_events', 'ShellApi',
+           'window_size', 'run_shell', 'keep_running_in_dock', 'watch_open_events', 'ShellApi',
            'session', 'remember', 'last_folders', 'recent_folders']
 
 BACKENDS = {'darwin': 'cocoa', 'win32': 'edgechromium', 'linux': 'gtk'}
@@ -97,6 +97,32 @@ def _unreachable(url):
     return (LOADING.replace('starting the workspace…', f'the workspace at {url} did not answer')
                    .replace('<i>', '<i style="color:#e06c75">'))
 
+def keep_running_in_dock():
+    """Closing the last window hides it instead of quitting, which is how a Mac app behaves.
+
+    pywebview stops the run loop when its last window closes, so nothing here can outlive that.
+    Both delegates are subclassed rather than patched, because an Objective-C method cannot be
+    reassigned after its class is built. Cmd+Q still quits. False when pywebview has moved on:
+    the old behaviour is worse than this, and neither is worth refusing to start over.
+    """
+    try:
+        from Foundation import NO, YES
+        from webview.platforms.cocoa import BrowserView
+        class Windows(BrowserView.WindowDelegate):
+            def windowShouldClose_(self, window):
+                window.orderOut_(None)
+                return NO
+        class App(BrowserView.AppDelegate):
+            def applicationShouldHandleReopen_hasVisibleWindows_(self, app, visible):
+                if not visible:
+                    for i in BrowserView.instances.values(): i.window.makeKeyAndOrderFront_(None)
+                return YES
+        BrowserView.WindowDelegate, BrowserView.AppDelegate = Windows, App
+        return True
+    except Exception as e:
+        print(f'  the last window will quit Leela: {errstr(e)}')
+        return False
+
 def run_shell(urls, titles=(), url_wait=90, gui=None, icon=None, size=None, on_ready=None,
               on_open_folder=None):
     "One native window per workspace URL, until they all close. Blocks, on the main thread."
@@ -109,6 +135,7 @@ def run_shell(urls, titles=(), url_wait=90, gui=None, icon=None, size=None, on_r
     w, h = size or window_size()
     STORAGE.mkdir(parents=True, exist_ok=True)
     api = ShellApi()
+    if sys.platform == 'darwin': keep_running_in_dock()   # before any window takes a delegate
     windows = [webview.create_window(t or 'leela', html=LOADING, width=w, height=h,
                                      min_size=MIN_SIZE, background_color='#171b20',
                                      text_select=True, zoomable=True, easy_drag=False,
