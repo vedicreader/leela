@@ -130,8 +130,11 @@ def test_a_host_offers_only_the_tools_it_supports():
     assert not (names & WRITE_TOOLS)
     assert 'search_code' in names
     h = WorkspaceHost(Workspace(roots=[]))
-    with pytest.raises(NotImplementedError): h.run_python('1')
-    assert 'run_python' not in {t.__name__ for t in tools_for(h)}
+    # A workspace can always reach a live namespace, so it declares `session` rather than being
+    # probed for it. Probed with no kernel up, the whole group vanished for that assistant's life.
+    assert h.capabilities['session'] is True
+    assert 'run_python' in {t.__name__ for t in tools_for(h)}
+    with pytest.raises(NotImplementedError): h.run_python('1')   # no loop here to start one on
     assert 'run_shell' not in named(tools_for(NullHost(['/x'])))
     h = MemHost()
     assert 'run_shell' in named(tools_for(h))
@@ -1066,7 +1069,10 @@ def test_workspace_agent_reaches_the_live_kernel_inspector():
     assert 'df: DataFrame' in h.list_vars()
     assert h.run_python('df_norm = df.copy()') == 'done'
     assert h.inspect_python('df_norm.shape', scope='overlay') == 'done'
-    assert [p for p, _ in k.calls] == ['/api/rows', '/api/exec', '/agent/api/exec']
+    # `run_python` goes through the agent endpoint too: `/api/exec` is the user's own namespace,
+    # where nothing stops the agent rebinding or deleting what they made.
+    assert [p for p, _ in k.calls] == ['/api/rows', '/agent/api/exec', '/agent/api/exec']
+    assert [(a or {}).get('scope') for p, a in k.calls if p == '/agent/api/exec'] == ['overlay', 'overlay']
     names = {t.__name__ for t in tools_for(h)}
     assert {'run_python', 'inspect_python', 'list_vars'} <= names
 
@@ -1202,6 +1208,74 @@ def test_httpcore_does_not_reclose_a_generator_during_generator_exit():
         async with core_utils.safe_async_iterate(iterator): pass
     asyncio.run(run())
     assert closed == [True]
+
+def test_run_python_is_offered_before_any_kernel_exists(tmp_path):
+    """`session` was probed, and the probe asks a workspace with no kernel yet. It got
+    `NotImplementedError` and dropped `run_python` for the life of that assistant, so a notebook
+    opened straight onto a prompt cell could describe the code it wanted to run and never run it --
+    while the same request after one code cell worked."""
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    assert ws.inline_ai.host.capabilities['session'] is True, 'declared, not proved by a kernel'
+    for surface in (ws.inline_ai, ws.ai):
+        tools = {t.__name__ for t in surface.tools}
+        assert {'run_python', 'inspect_python', 'list_vars', 'read_terminal'} <= tools, sorted(tools)
+
+def test_running_python_starts_the_kernel_it_needs(tmp_path):
+    "A person asking to run something means start what it takes, not report that nothing is up."
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path], port=8299)
+    async def go():
+        await ws.opened()
+        host = ws.inline_ai.host
+        assert ws.runtime_peek() is None, 'nothing is running yet'
+        loop = asyncio.get_running_loop()
+        out = await loop.run_in_executor(None, lambda: host.run_python('leela_probe = 6 * 7'))
+        assert 'error' not in str(out).lower(), out
+        back = await loop.run_in_executor(None, lambda: host.run_python('print(leela_probe)'))
+        assert '42' in str(back), back
+        await ws.shutdown()
+    asyncio.run(go())
+
+def test_run_python_cannot_touch_what_the_user_made(tmp_path):
+    """It ran `scope: 'global'`, straight into the user's namespace, where the refusal the tool
+    promises does not exist: `mine.append(4)`, `mine = ...` and `del mine` all went through and the
+    variable was gone. The agent gets a layer over the namespace, not the namespace."""
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path], port=8288)
+    async def go():
+        await ws.opened()
+        k = await ws.runtime()
+        await k.execute('mine = [1, 2, 3]')
+        host, loop = ws.inline_ai.host, asyncio.get_running_loop()
+        async def run(code): return str(await loop.run_in_executor(None, lambda: host.run_python(code)))
+        assert '[1, 2, 3]' in await run('print(mine)'), 'it reads what the user made'
+        assert 'error' not in (await run('scene_ex = 6 * 7')).lower()
+        assert '42' in await run('print(scene_ex)'), 'and what it binds survives the next call'
+        assert 'blocked' in await run('mine.append(4)'), 'mutating the user is refused'
+        assert 'blocked' in await run('del mine'), 'so is deleting'
+        held = await k.execute('print(mine)')
+        assert '[1, 2, 3]' in str(held), 'the user\'s variable is exactly as they left it'
+        await ws.shutdown()
+    asyncio.run(go())
+
+def test_a_narrower_agent_scope_is_honoured(tmp_path):
+    "`--agent-scope isolated` means the agent cannot see the namespace at all, overlay included."
+    from leela.blocks.agent.ai import WorkspaceHost
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    assert 'overlay' in WorkspaceHost(ws).scopes
+    ws.agent_scope = 'isolated'
+    assert WorkspaceHost(ws).scopes == ('isolated',)
+
+def test_a_tool_on_the_loop_itself_does_not_wait_for_the_loop(tmp_path):
+    "Called from the loop that owns the kernels there is nothing to wait for, and blocking deadlocks."
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    async def go():
+        await ws.opened()
+        assert ws.inline_ai.host._start_kernel() is None
+    asyncio.run(go())
 
 def test_a_stream_still_open_at_shutdown_does_not_shout_on_the_way_out(tmp_path):
     """Both httpcore2 byte streams `yield` inside `async with safe_async_iterate(...)`. A response

@@ -1,7 +1,7 @@
 "Binding a `Workspace` to the agent harness."
 
 from __future__ import annotations
-import functools, inspect, json, os, re, threading
+import asyncio, functools, inspect, json, os, re, threading
 from fnmatch import fnmatch
 from fastcore.all import L, Path, delegates, first
 from ... import errstr, leela_cfg
@@ -254,9 +254,15 @@ class WorkspaceHost(Host):
     def __init__(self, ws, session=None): self.ws, self.session = ws, session
     @property
     def capabilities(self):
-        "What a workspace has by construction. `session` is left to the probe; see `docs/integration.md`."
+        """What a workspace has by construction. See `docs/integration.md`.
+
+        `session` is declared rather than probed. Probed, it asked a workspace with no kernel yet,
+        got `NotImplementedError`, and dropped `run_python` for the life of that assistant -- so a
+        notebook opened straight onto a prompt cell could describe the code it wanted to run and
+        never run it, while the same request after one code cell worked. `_kernel` starts one.
+        """
         return {**super().capabilities, 'notebook': True, 'web': True, 'memory': True,
-                'watch': True, 'api': True, 'shell': True}
+                'watch': True, 'api': True, 'shell': True, 'session': True}
     @property
     def roots(self): return [str(r) for r in self.ws.fs.roots]
     @property
@@ -414,10 +420,24 @@ class WorkspaceHost(Host):
         nb.save(p, sandbox=self.ws.fs)
         return c.id
     def _kernel(self):
-        k = self.ws.runtime_peek()
+        k = self.ws.runtime_peek() or self._start_kernel()
         if k is None or not getattr(k, 'base', None) or not hasattr(k, 'api_sync'):
             raise NotImplementedError('no live kernel inspector')
         return k
+    def _start_kernel(self):
+        """Start the tab's kernel for a tool that needs one. `None` when it cannot be waited for.
+
+        A person asking to run something means start what it takes. Tools run on the turn's own
+        thread, so this hands the work to the loop that owns the kernels and waits; called *on*
+        that loop there is nothing to wait for, and the peek stands.
+        """
+        loop = getattr(self.ws, '_loop', None)
+        if loop is None or not loop.is_running(): return None
+        try:
+            if asyncio.get_running_loop() is loop: return None
+        except RuntimeError: pass
+        try: return asyncio.run_coroutine_threadsafe(self.ws.runtime(), loop).result(120)
+        except Exception: return None
     @staticmethod
     def _exec_text(r):
         if not r: return 'kernel inspector did not answer'
@@ -435,8 +455,16 @@ class WorkspaceHost(Host):
         if r.result is not None: out += ('\n' if out else '') + r.result.value
         return out or '(ok)'
     def run_python(self, code):
-        if self.session is not None: return self._session_text(self.session.run(code))
-        return self._exec_text(self._kernel().api_sync('/api/exec', {'code': code, 'scope': 'global'}))
+        """Run in the agent's own layer over the user's namespace, never in the namespace itself.
+
+        `scope: 'global'` executed straight into the user's globals, where the refusal the tool
+        promises does not exist: `del mine` and `mine = ...` both went through and the variable was
+        gone. The overlay reads the user's variables, keeps what the agent binds across calls, and
+        blocks a mutation of anything the user owns. `isolated` is the narrower setting's answer.
+        """
+        scope = 'overlay' if 'overlay' in self.scopes else 'isolated'
+        if self.session is not None: return self._session_text(self.session.run(code, scope=scope))
+        return self._exec_text(self._kernel().api_sync('/agent/api/exec', {'code': code, 'scope': scope}))
     def inspect_python(self, code, scope='isolated'):
         "Read-only execution in one of `AgentSession`'s scopes; neither can change what the user made."
         if scope not in self.scopes:
