@@ -140,3 +140,13 @@ def test_density_is_its_own_axis_and_not_a_property_of_a_family():
     keyed = re.findall(r':root\[data-density="tight"\](\[data-mode="\w+"\])?\s+\.lee-', CSS)
     assert keyed and not all(keyed), 'density rules must exist and not all be mode-specific'
     assert re.findall(r':root\[data-theme="\w+"\]\s+\.lee-', CSS) == [], 'chrome keyed to a family'
+
+def test_no_rule_paints_one_activity_button_unlike_its_siblings():
+    "A `[data-left=...]` background made the files tab a different colour from the rest of the rail."
+    assert re.findall(r'\.lee-activity-btn\[data-left=[^\]]+\]', CSS) == []
+
+def test_the_pill_neutralises_the_button_defaults():
+    "`#runspill` is a button and `#kpill` a span, so the UA border and font must be overridden."
+    rule = re.search(r'\.lee-pill \{(.*?)\}', CSS, re.S).group(1)
+    for decl in ('appearance: none', '-webkit-appearance: none', 'border: 0', 'font-family: inherit',
+                 'line-height:', 'align-items: center'): assert decl in rule, decl
