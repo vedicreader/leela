@@ -198,6 +198,7 @@ class Workspace:
         self.on_note = None
         self._approval_target, self.approvals_mode = None, approvals
         self._notebook_approvals = notebook_approvals(lambda: self._approval_target, mode=approvals)
+        self._stop_notebook_approvals = self._notebook_approvals.listen()
     def sync_agent_routing(self, ai=None):
         "Apply saved agent-job choices to a live assistant."
         ai = ai or self.ai
@@ -898,6 +899,8 @@ class Workspace:
         if self._stop_backups is not None: step(self._stop_backups)
         if self._threads is not None: step(self._threads.shutdown)
         elif self._ai is not None: step(self._ai.close)
+        step(self._notebook_approvals.cancel_all)
+        step(self._stop_notebook_approvals)
         if self._inline_ai is not None: step(self._inline_ai.close)
         if self._lsp is not None: step(self._lsp.close)
         for coro in (self.dev.stop_all(), self.pool.close_all()):

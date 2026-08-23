@@ -123,16 +123,31 @@ function readableDetail(value) {
   const text = String(value || '');
   try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
 }
+/* `user_steering` is not a tool the agent chose: it is what the person said when they refused a
+   call. Drawn as an ordinary step it read `user_steering(instruction='The user rejected this tool
+   c…')` -- the harness describing itself, with the direction that was actually given hidden behind
+   a chevron. The full instruction stays in the panel; the face of it is the person. */
+const STEER_TOOL = 'user_steering';
+function steerSaid(args) {
+  const raw = String((args || {}).instruction || '');
+  const said = raw.split(/User direction:\s*/)[1];      // what was typed, when anything was
+  return (said || '').trim() ||
+    (/stopped this turn/i.test(raw) ? 'stopped the turn' : 'rejected that call');
+}
 function renderAgentStep(row, a) {
   const wasOpen = row.open;
   for (const v of (row._leeViews || [])) try { LeeCM.destroy(v); } catch {}
   row._leeViews = []; row.innerHTML = '';
   const deferredEditors = [];
-  row.className = `lee-agent-step kind-${a.kind || 'tool'} ${a.done ? (a.ok ? 'done' : 'failed') : 'pending'}`;
+  const steered = (a.tool || '') === STEER_TOOL;
+  row.className = `lee-agent-step kind-${a.kind || 'tool'} ${a.done ? (a.ok ? 'done' : 'failed') : 'pending'}`
+    + (steered ? ' lee-agent-steer-step' : '');
   const summary = document.createElement('summary');
   summary.innerHTML = `<span class="lee-agent-step-state" aria-hidden="true"></span>` +
-    `<span class="lee-agent-step-copy">${esc(a.summary || a.tool || 'Working')}</span>` +
-    `<span class="lee-agent-step-meta">${a.done && a.secs ? esc(Number(a.secs).toFixed(1) + 's') : esc(a.kind || '')}</span>` +
+    `<span class="lee-agent-step-copy">${steered ? `<strong>You</strong> ${esc(steerSaid(a.args))}`
+      : esc(a.summary || a.tool || 'Working')}</span>` +
+    `<span class="lee-agent-step-meta">${steered ? 'steered'
+      : a.done && a.secs ? esc(Number(a.secs).toFixed(1) + 's') : esc(a.kind || '')}</span>` +
     `<span class="lee-agent-step-chevron" aria-hidden="true"></span>`;
   row.appendChild(summary);
 

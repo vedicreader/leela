@@ -229,6 +229,7 @@ class Threads:
             try: self.workspace.guard_history(f'before resuming {session}')
             except Exception: pass
             ai.resume_session(session)
+            ai.mark_surface()   # continued here, so the history filter counts it as Leela's now
             thread = Thread(self.workspace, ai=ai, approvals=ai.approvals, feed=Feed(ai.session_id))
             self._rows[thread.id] = thread
             return self._activate(thread)

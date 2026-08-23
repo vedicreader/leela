@@ -559,6 +559,41 @@ def test_a_turn_that_fans_out_shows_one_readable_row_per_subagent():
     assert any('review the refactor' in t for t in asked) and any('check the recovery' in t for t in asked), \
         'and each row leads with what its subagent was asked, which is all that tells them apart'
 
+def test_a_refused_call_reads_as_the_person_on_every_surface():
+    """Rejecting an approval makes ramabana a synthetic `user_steering` call, and every surface --
+    the live timeline, a replayed turn, a notebook prompt cell -- drew it as an ordinary tool row:
+    `user_steering(instruction='The user rejected this tool c…')`, with the direction actually
+    given hidden behind a chevron."""
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const draw = a => {
+            const row = document.createElement('details'); renderAgentStep(row, a);
+            return {cls: row.className, copy: $('.lee-agent-step-copy', row).textContent.trim(),
+                    meta: $('.lee-agent-step-meta', row).textContent.trim(),
+                    detail: (row.textContent || '')};
+          };
+          const rejected = 'The user rejected this tool call. Do not retry this call or an equivalent action unless the user explicitly asks for it later.';
+          return {
+            bare: draw({tool: 'user_steering', kind: 'tool', done: true, ok: true,
+                        args: {instruction: rejected}}),
+            said: draw({tool: 'user_steering', kind: 'tool', done: true, ok: true,
+                        args: {instruction: rejected + ' User direction: use the other file instead'}}),
+            stopped: draw({tool: 'user_steering', kind: 'tool', done: true, ok: true,
+                           args: {instruction: 'The user stopped this turn. Do not run this call or any other one.'}}),
+            tool: draw({tool: 'run_shell', kind: 'shell', summary: 'run_shell(command)', done: true, ok: true, secs: 1.2,
+                        args: {command: 'ls'}})
+          };
+        }""")
+    got = _run(go)
+    assert got['said']['copy'] == 'You use the other file instead', 'what the person actually said'
+    assert got['bare']['copy'] == 'You rejected that call'
+    assert got['stopped']['copy'] == 'You stopped the turn'
+    assert all(got[k]['meta'] == 'steered' for k in ('bare', 'said', 'stopped'))
+    assert all('lee-agent-steer-step' in got[k]['cls'] for k in ('bare', 'said', 'stopped'))
+    assert 'Do not retry this call' in got['said']['detail'], 'the whole instruction is still there to open'
+    assert 'lee-agent-steer-step' not in got['tool']['cls'], 'an ordinary tool row is untouched'
+    assert got['tool']['copy'] == 'run_shell(command)' and got['tool']['meta'] == '1.2s'
+
 def test_a_steer_is_drawn_inside_the_turn_it_interrupted():
     """Appended to the log instead, the card sat below every chunk and tool row that followed --
     a note stuck to the bottom of the pane rather than a message in the conversation."""

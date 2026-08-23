@@ -842,6 +842,52 @@ def test_workspace_hub_dispatches_by_localhost_subdomain():
     assert seen == [('b', 'beta')]
     assert hub.catalog()[0]['url'] == 'http://alpha.localhost:5001/'
 
+def test_a_prompt_cell_owns_its_approval_listener(tmp_path):
+    "The prompt-cell frontend listens until its workspace shuts down."
+    ws = Workspace(roots=[tmp_path])
+    approvals = ws._notebook_approvals
+    assert approvals.listeners == 1
+    a = approvals.request('create_file', {'path': str(tmp_path/'x.py'), 'text': 'x = 1\n'}, timeout=0.05)
+    assert a.note != 'nothing is listening for interventions, so this could not be asked'
+    import threading
+    held = {}
+    t = threading.Thread(target=lambda: held.setdefault('a', approvals.request(
+        'create_file', {'path': str(tmp_path/'y.py'), 'text': 'y = 1\n'}, timeout=10)))
+    t.start()
+    for _ in range(200):
+        if approvals.pending: break
+        time.sleep(0.01)
+    assert approvals.pending is not None
+    asyncio.run(ws.shutdown())
+    t.join(1)
+    assert not t.is_alive() and held['a'].note == 'the turn was cancelled'
+    assert approvals.listeners == 0
+    asyncio.run(ws.shutdown())
+    assert approvals.listeners == 0
+
+def test_the_pane_sees_and_answers_a_prompt_cell_approval(tmp_path):
+    "A prompt cell runs on the inline assistant, which the pane could not otherwise see or answer."
+    import threading
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        assert client.get('/agent/approval').json()['pending'] is None
+        held = {}
+        def ask():
+            held['a'] = ws._notebook_approvals.request('create_file',
+                {'path': str(tmp_path/'x.py'), 'text': 'x = 1\n'}, timeout=10)
+        t = threading.Thread(target=ask); t.start()
+        for _ in range(200):
+            d = client.get('/agent/approval').json()
+            if d['pending']: break
+            time.sleep(0.02)
+        assert d['pending'], 'the pane is where a person is looking'
+        assert d['surface'] == 'notebook', 'and it says which surface raised it'
+        answered = client.post('/agent/approve', json={'id': d['pending']['id'], 'ok': False,
+                                                       'note': 'use the other file'}).json()
+        assert answered['ok'] is not False or 'note' in str(answered), answered
+        t.join(5)
+        assert held['a'].note == 'use the other file', 'answered where it was raised'
+
 def test_naming_a_folder_keeps_the_settings_the_last_session_saved(tmp_path):
     """Naming a folder built a fresh workspace carrying three model names, so a per-job model, a
     budget or a charter chosen yesterday was gone today -- which reads as shutting down having

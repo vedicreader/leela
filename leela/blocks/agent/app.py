@@ -664,10 +664,16 @@ def connect(app, ctx):
         "The call waiting for a person, or None. It stays inline so the rest of the IDE remains usable."
         try: t = _thread(thread)
         except Exception as e: return _thread_error(e)
-        a = t.approvals.pending
-        pending = ({**a.dict(), 'schemas': tool_schemas(t.ai)} if a is not None else None)
+        # A prompt cell runs on the inline assistant, which the pane cannot otherwise see. Its
+        # approval is still a person's to answer, and this is where a person is looking.
+        holder, a = t.approvals, t.approvals.pending
+        if a is None and (nb_pending := ws._notebook_approvals.pending) is not None:
+            holder, a = ws._notebook_approvals, nb_pending
+        source = t.ai if holder is t.approvals else ws.inline_ai
+        pending = ({**a.dict(), 'schemas': tool_schemas(source)} if a is not None else None)
         return {'thread': t.id, 'pending': pending, 'waiting': ws.threads.waiting(),
-                'control': getattr(t.approvals, 'control', 'guided')}
+                'surface': 'notebook' if holder is not t.approvals else 'agent',
+                'control': getattr(holder, 'control', 'guided')}
     @rt('/agent/control')
     async def agent_control(req):
         "Choose how often tool proposals become editable checkpoints."
@@ -991,14 +997,18 @@ def connect(app, ctx):
         tool = (d.get('tool') or '').strip() or None
         try: t = _thread(d.get('thread'))
         except Exception as e: return _thread_error(e)
-        choices = {c.__name__: c for c in t.ai.tools}
+        # answered wherever it was raised: a prompt cell's approval is held by the notebook's
+        holder = (ws._notebook_approvals
+                  if t.approvals.pending is None and ws._notebook_approvals.pending is not None
+                  else t.approvals)
+        choices = {c.__name__: c for c in (t.ai if holder is t.approvals else ws.inline_ai).tools}
         if tool and tool not in choices: return fail(f'unknown tool {tool}')
         if bool(d.get('ok')) and tool and args is not None:
             import inspect
             try: inspect.signature(choices[tool]).bind(**args)
             except TypeError as e: return fail(f'invalid {tool} arguments: {e}')
-        a = t.approvals.answer(d.get('id') or '', bool(d.get('ok')), (d.get('note') or '').strip(),
-                               session=bool(d.get('session')), tool=tool, args=args)
+        a = holder.answer(d.get('id') or '', bool(d.get('ok')), (d.get('note') or '').strip(),
+                          session=bool(d.get('session')), tool=tool, args=args)
         if a is None: return fail('nothing is waiting for an answer')
         return {'ok': True, 'thread': t.id, 'answer': a.dict()}
     @rt('/agent/command')

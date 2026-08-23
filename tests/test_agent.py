@@ -1018,7 +1018,7 @@ def test_an_approval_exchange_is_written_into_the_notebook():
     ws = Workspace(roots=[])
     nb = Notebook([Cell(source='fix it', cell_type='prompt')])
     ws._approval_target = (nb, 0)
-    approvals = ws._notebook_approvals; stop = approvals.listen()
+    approvals = ws._notebook_approvals
     def answer():
         for _ in range(300):
             if (a := approvals.pending) is not None:
@@ -1027,7 +1027,6 @@ def test_an_approval_exchange_is_written_into_the_notebook():
     threading.Thread(target=answer, daemon=True).start()
     tc = {'function': {'name': 'edit_file', 'arguments': {'path': 'gen.py'}}}
     d = approvals.gate(tc)
-    stop()
     # a refusal is handed back as steering, the same for a call with an id and one without
     assert d is True and tc['function']['name'] == 'user_steering'
     assert 'that file is generated' in tc['function']['arguments']['instruction']
