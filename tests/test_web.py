@@ -12,6 +12,7 @@ import json
 from starlette.testclient import TestClient
 from leela.app import ide_app
 import asyncio
+import time
 from unittest.mock import Mock
 import pytest
 from leela.blocks.runtime.kernels import RuntimeBroker, KernelPool
@@ -840,6 +841,24 @@ def test_workspace_hub_dispatches_by_localhost_subdomain():
     asyncio.run(hub(scope, Mock(), Mock()))
     assert seen == [('b', 'beta')]
     assert hub.catalog()[0]['url'] == 'http://alpha.localhost:5001/'
+
+def test_the_journal_follows_the_folders_that_are_open(tmp_path):
+    """Built once in `__init__`, a workspace that started with no folders kept the key for *no*
+    folders after one was opened, so every project a desktop launch touched wrote into one shared
+    file. That is how a single journal reached gigabytes."""
+    a, b = tmp_path/'a', tmp_path/'b'
+    a.mkdir(); b.mkdir()
+    ws = Workspace(roots=[])
+    empty = ws._journal_key
+    assert empty == 'no-folder', 'and the empty set is its own bucket, not the hash of nothing'
+    ws.add_root(a)
+    assert ws._journal_key != empty, 'opening a folder moves it off the scratch bucket'
+    with_a = ws._journal_key
+    ws.add_root(b)
+    assert ws._journal_key not in (empty, with_a), 'and a second folder is a different workspace'
+    ws.drop_root(b)
+    assert ws._journal_key == with_a, 'closing it goes back to the one it had'
+    assert ws.journal.history is ws.history and ws.history.pinned == ws.journal.blobs
 
 def test_the_hub_gives_the_lifespan_to_every_workspace_not_just_the_default():
     """Lifespan carries no Host header. Dispatched by host it reached one workspace, so the others

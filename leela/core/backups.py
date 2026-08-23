@@ -51,7 +51,10 @@ ENTRIES = {
 
 #: Chosen until a person chooses otherwise. The vault is left out: it is a live database in its own
 #: directory, and a restore of it writes outside the config dir.
-PRECIOUS = tuple(k for k in ENTRIES if k != 'vault')
+#: `journals` is deliberately out: it is undo state for files that are still on disk, and a day of
+#: saving one large notebook made it the biggest thing in every archive. `ENTRIES` still offers it,
+#: so a person who wants their undo history copied can say so.
+PRECIOUS = tuple(k for k in ENTRIES if k not in ('vault', 'journals'))
 
 #: How often, in hours. `off` keeps the pre-write guard and nothing else, because losing the log to
 #: a bad write is the failure this exists for and it does not wait for a schedule.

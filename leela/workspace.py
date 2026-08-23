@@ -151,12 +151,9 @@ class Workspace:
         from .blocks.browser.browser import Browser
         self.browser = Browser(port=cdp_port)
         self._runs = None
-        from .core.session import FileHistory, OperationJournal
-        journal_key = hashlib.sha256('\0'.join(map(str, self.fs.roots)).encode()).hexdigest()[:16]
-        self.history = FileHistory(leela_cfg/'history'/journal_key)
-        self.journal = OperationJournal(leela_cfg/'journals'/f'{journal_key}.json', self.fs,
-                                        history=self.history)
-        self._timeline_path = leela_cfg/'timelines'/f'{journal_key}.json'
+        self.history = self.journal = self._timeline_path = None
+        self._journal_key = ''
+        self.rebind_journal()
         self._stop_backups = None
         self._down = False
         self._loop = None
@@ -166,7 +163,7 @@ class Workspace:
         from .blocks.vault.jobs import Jobs
         from .blocks.vault.news import Feeds
         self.feeds = Feeds()
-        self.jobs = Jobs(leela_cfg/'jobs'/f'{journal_key}.db', memory=self.memory)
+        self.jobs = Jobs(leela_cfg/'jobs'/f'{self._journal_key}.db', memory=self.memory)
         register_all(self.jobs, self.memory, search=self.search, cwd=root, feeds=self.feeds)
         self._lsp = None
         self.env_base = None
@@ -323,8 +320,30 @@ class Workspace:
             if a is not None:
                 try: a.refresh()
                 except Exception: pass
+    def journal_key(self):
+        "Which undo history these folders own. The empty set is its own bucket, not everyone's."
+        roots = [str(r) for r in self.fs.roots]
+        return hashlib.sha256('\0'.join(roots).encode()).hexdigest()[:16] if roots else 'no-folder'
+    def rebind_journal(self):
+        """Point the journal and the history at the folders open now.
+
+        Built once in `__init__`, a workspace that started with no folders kept the key for *no*
+        folders after one was opened, so every project a desktop launch touched wrote into one
+        shared file. That is how a single journal reached gigabytes.
+        """
+        key = self.journal_key()
+        if key == self._journal_key: return self.journal
+        from .core.session import FileHistory, OperationJournal
+        self._journal_key = key
+        self.history = FileHistory(leela_cfg/'history'/key)
+        self.journal = OperationJournal(leela_cfg/'journals'/f'{key}.json', self.fs,
+                                        history=self.history)
+        self.history.pinned = self.journal.blobs   # an open operation's bodies survive pruning
+        self._timeline_path = leela_cfg/'timelines'/f'{key}.json'
+        return self.journal
     def add_root(self, p):
         r = self.fs.add_root(p)
+        self.rebind_journal()
         if not self.pool.kernels and self.pool.default_python is None:
             from .blocks.runtime.kernels import project_python
             if (py := project_python([r])): self.pool.choose(python=py)
@@ -334,6 +353,7 @@ class Workspace:
     def drop_root(self, p):
         "Close a folder, and every tab that lived inside it."
         r = self.fs.drop_root(p)
+        self.rebind_journal()
         self.tabs = self.tabs.filter(lambda t: not (t.path and Path(t.path).is_relative_to(r)))
         self.active = min(self.active, max(0, len(self.tabs)-1))
         self._rebrief_agents()

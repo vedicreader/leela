@@ -1198,3 +1198,51 @@ def test_local_history_keeps_every_write_leela_can_see_and_puts_one_back(tmp_pat
             assert client.post('/history/restore', json={'id': 'ver_nope'}).status_code == 404
             assert str(src) in [f['path'] for f in client.get('/history/files').json()['files']]
     finally: ws.threads.shutdown()
+
+def test_a_huge_file_is_noted_rather_than_copied(tmp_path):
+    """A 70MB notebook saved through a day put gigabytes of bodies in the journal, and every write
+    after that reloaded and rewrote all of them. The version still says the file changed and when;
+    the copy is what stops."""
+    from leela.core.session import MAX_BODY, FileHistory
+    h = FileHistory(tmp_path/'h')
+    big, small = 'x' * (MAX_BODY + 1), 'y' * 32
+    row = h.record('/w/huge.ipynb', big, 'save')
+    assert row['bytes'] == len(big) and row['kept'] is False
+    assert h.rows('/w/huge.ipynb')[0]['bytes'] == len(big), 'it is still listed'
+    with pytest.raises(ValueError, match='too large to copy'): h.text(row['id'])
+    kept = h.record('/w/small.py', small, 'save')
+    assert kept['kept'] is True and h.text(kept['id']) == small
+    assert not (tmp_path/'h'/'blobs'/f"{row['blob']}.gz").exists(), 'no body was written'
+    assert h.record('/w/huge.ipynb', big, 'save') is None, 'and an unchanged one is still one version'
+
+def test_an_operation_whose_bodies_were_too_large_refuses_to_undo(tmp_path):
+    "Undo would otherwise find a missing body with the file already half rewritten."
+    from leela.core.session import MAX_BODY, FileHistory, OperationJournal
+    from leela.blocks.fs.fs import Sandbox
+    f = tmp_path/'huge.ipynb'; f.write_text('after')
+    h = FileHistory(tmp_path/'h')
+    j = OperationJournal(tmp_path/'j.json', Sandbox([tmp_path]), history=h)
+    j.history.pinned = j.blobs
+    op = j.record('Save huge', [(str(f), 'x' * (MAX_BODY + 1), 'after')], kind='save')
+    assert op['resources'][0]['kept'] is False
+    with pytest.raises(ValueError, match='cannot be undone'): j.undo()
+    assert f.read_text() == 'after', 'and nothing was written on the way to refusing'
+
+def test_the_journal_keeps_bodies_by_reference_and_pins_them(tmp_path):
+    "Inline they made the journal itself gigabytes. The history already stores them once, gzipped."
+    import json
+    from leela.core.session import FileHistory, OperationJournal
+    from leela.blocks.fs.fs import Sandbox
+    f = tmp_path/'a.py'; f.write_text('two\n')
+    h = FileHistory(tmp_path/'h')
+    j = OperationJournal(tmp_path/'j.json', Sandbox([tmp_path]), history=h)
+    h.pinned = j.blobs
+    op = j.record('Save a.py', [(str(f), 'one\n', 'two\n')], kind='save')
+    row = op['resources'][0]
+    assert 'before' not in row and 'after' not in row, 'no bodies in the journal'
+    assert row['before_blob'] and row['after_blob'] and row['kept'] is True
+    assert 'one\n' not in (tmp_path/'j.json').read_text(), 'nor on disk'
+    for _ in range(200): h.record(str(f), f'filler {_}\n', 'save')   # past KEEP_PER_PATH, prunes
+    assert h.body(row['before_blob']) == 'one\n', 'the operation still has what it needs'
+    j.undo()
+    assert f.read_text() == 'one\n'

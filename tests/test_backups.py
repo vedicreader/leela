@@ -36,7 +36,7 @@ def test_a_backup_holds_what_cannot_be_rebuilt_and_nothing_that_can(tmp_path):
 def test_a_dated_copy_is_one_archive_and_survives_the_round_trip(tmp_path):
     """Five uncompressed copies were a third of a gigabyte, which is why one file per copy."""
     cfg = _cfg(tmp_path)
-    (cfg/'journals').mkdir(); (cfg/'journals'/'big.md').write_text('the same line\n' * 4000)
+    (cfg/'agent-plans').mkdir(); (cfg/'agent-plans'/'big.md').write_text('the same line\n' * 4000)
     made = B.create_backup(cfg, B.backup_dir(cfg), reason='asked for', include=B.PRECIOUS)
     assert made.name.endswith(B.ARCHIVE) and made.is_file()
     raw = sum(f.stat().st_size for f in cfg.rglob('*') if f.is_file() and 'backups' not in f.parts)
@@ -44,13 +44,14 @@ def test_a_dated_copy_is_one_archive_and_survives_the_round_trip(tmp_path):
     listed = B.backups(cfg)[-1]
     assert listed['name'] == made.name[:-len(B.ARCHIVE)] and listed['archived'] is True
     assert listed['bytes'] == made.stat().st_size and listed['files'] >= 4
-    assert 'journals' in listed['entries'] and listed['reason'] == 'asked for'
-    for f in (cfg/'journals').iterdir(): f.unlink()
+    assert 'agent-plans' in listed['entries'] and listed['reason'] == 'asked for'
+    assert 'journals' not in listed['entries'], 'undo state for files still on disk is not precious'
+    for f in (cfg/'agent-plans').iterdir(): f.unlink()
     (cfg/'agent-history.jsonl').write_text('WIPED')
     out = B.restore(listed['name'], cfg)
-    assert (cfg/'journals'/'big.md').read_text().startswith('the same line')
+    assert (cfg/'agent-plans'/'big.md').read_text().startswith('the same line')
     assert (cfg/'agent-history.jsonl').read_text().startswith('{"session":"a"')
-    assert 'journals' in out['restored']
+    assert 'agent-plans' in out['restored']
 
 
 def test_only_the_asked_for_entries_come_out_of_the_archive(tmp_path):

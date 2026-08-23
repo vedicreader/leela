@@ -11,6 +11,9 @@ __all__ = ['DocStore', 'DebugState', 'FileHistory', 'RunState', 'kernel_api']
 #: How many versions of one file are kept. A person looking for what a tool overwrote is looking
 #: at this morning, not at last month, and every version holds the whole file.
 KEEP_PER_PATH = 60
+#: Bodies past this are noted but not copied. A 70MB notebook saved through a day is gigabytes of
+#: history for a file git already tracks, and making the copy is what made saving slow.
+MAX_BODY = 2_000_000
 
 async def kernel_api(session, path, params=None, timeout=15, tab=None):
     "Proxy an inspector call through the exact runtime `Run` would use."
@@ -24,9 +27,12 @@ class FileHistory:
     from another process editing the same tree. Bodies are stored once per distinct content, so a
     file saved twenty times without changing costs one copy.
     """
-    def __init__(self, root):
+    def __init__(self, root, pinned=None):
         self.root = Path(root); self.path = self.root/'index.json'
         self.rows_ = []
+        #: Digests something else still needs. Pruning a version must not take a body the journal
+        #: is holding an operation open against.
+        self.pinned = pinned or (lambda: ())
         self._load()
     def _load(self):
         try: self.rows_ = json.loads(self.path.read_text()).get('versions', [])
@@ -43,6 +49,15 @@ class FileHistory:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(gzip.compress(text.encode('utf-8', 'replace')))
         return digest
+    def stash(self, text):
+        "Keep one body and return its digest. `None` for a file that was not there, or was too big."
+        return None if text is None or len(str(text)) > MAX_BODY else self._blob(str(text))
+    def body(self, digest):
+        "A stashed body. A missing one is an error, never silently an empty file."
+        if digest is None: return None
+        p = self.root/'blobs'/f'{digest}.gz'
+        if not p.exists(): raise ValueError('the stored body is gone')
+        return gzip.decompress(p.read_bytes()).decode('utf-8', 'replace')
     def latest(self, path):
         return first(r for r in reversed(self.rows_) if r['path'] == str(path))
     def record(self, path, text, label='save'):
@@ -52,8 +67,12 @@ class FileHistory:
         digest = hashlib.sha256(str(text).encode('utf-8', 'replace')).hexdigest()[:16]
         held = self.latest(path)
         if held is not None and held['blob'] == digest: return None
+        # A version of an enormous file is still worth listing. It says the file changed, and when.
+        # Copying it is not. `kept` is what `text` reads to say so rather than lie.
+        big = len(str(text)) > MAX_BODY
         row = {'id': 'ver_' + uuid.uuid4().hex[:12], 'path': path, 'at': time.time(),
-               'label': str(label), 'blob': self._blob(str(text)), 'bytes': len(str(text))}
+               'label': str(label), 'blob': digest if big else self._blob(str(text)),
+               'bytes': len(str(text)), 'kept': not big}
         self.rows_.append(row); self._prune(path); self._save()
         return row
     def _prune(self, path):
@@ -62,7 +81,7 @@ class FileHistory:
         if len(mine) <= KEEP_PER_PATH: return
         drop = {r['id'] for r in mine[:-KEEP_PER_PATH]}
         self.rows_ = [r for r in self.rows_ if r['id'] not in drop]
-        kept = {r['blob'] for r in self.rows_}
+        kept = {r['blob'] for r in self.rows_} | {d for d in self.pinned() if d}
         for p in (self.root/'blobs').glob('*.gz'):
             if p.stem not in kept:
                 try: p.unlink()
@@ -75,6 +94,8 @@ class FileHistory:
         "The body of one version. A missing body is an error, never silently an empty file."
         row = first(r for r in self.rows_ if r['id'] == str(version_id))
         if row is None: raise ValueError(f'no such version {version_id}')
+        if not row.get('kept', True):
+            raise ValueError(f"{row['path']} was {row['bytes']:,} bytes, too large to copy")
         p = self.root/'blobs'/f"{row['blob']}.gz"
         if not p.exists(): raise ValueError(f"the stored body for {row['path']} is gone")
         return gzip.decompress(p.read_bytes()).decode('utf-8', 'replace')
@@ -193,12 +214,32 @@ class OperationJournal:
             for row in rows:
                 try: self.history.keep(row['path'], row['before'], row['after'], label)
                 except Exception: pass       # a lost version must never fail the write itself
+                # The bodies are in the history's blob store now, gzipped and shared between
+                # versions. Kept inline as well, one 70MB notebook saved through a day grew this
+                # file to gigabytes, and every operation after that reloaded and rewrote all it held.
+                try:
+                    before, after = self.history.stash(row['before']), self.history.stash(row['after'])
+                    row['before_blob'], row['after_blob'] = before, after
+                    # `kept` is false when a side existed and was too large to copy. Undo reads it
+                    # rather than discovering a missing body with the file already half rewritten.
+                    row['kept'] = not any(body is not None and blob is None for body, blob in
+                                          ((row['before'], before), (row['after'], after)))
+                    del row['before'], row['after']
+                except Exception: pass       # no blob, so the bodies stay where they are
         for prior in self.operations:
             if prior.get('undone'): prior['redoable'] = False
         op = {'id': 'op_' + uuid.uuid4().hex[:12], 'at': time.time(), 'label': str(label),
               'kind': kind, 'resources': rows, 'irreversible': list(irreversible), 'undone': False}
         self.operations.append(op); self.operations = self.operations[-MAX_OPERATIONS:]; self._save()
         return op
+    def blobs(self):
+        "Every body digest the journal still needs, so `FileHistory` does not prune one away."
+        return {r[k] for op in self.operations for r in op.get('resources', [])
+                for k in ('before_blob', 'after_blob') if r.get(k)}
+    def _body(self, row, side):
+        "One side of a resource: inline on an older operation, else out of the blob store."
+        if side in row: return row[side]
+        return self.history.body(row.get(f'{side}_blob')) if self.history is not None else None
     def rows(self, limit=50):
         "The newest `limit` operations, without their `before`/`after` bodies."
         return [{k: v for k, v in op.items() if k != 'resources'} |
@@ -221,20 +262,24 @@ class OperationJournal:
         op = (first(x for x in back if x['id'] == operation_id) if operation_id else
               first(x for x in back if x.get('resources') and not x.get('undone')))
         if op is None: raise ValueError('no reversible workspace operation')
+        if (big := [r['path'] for r in op['resources'] if not r.get('kept', True)]):
+            raise ValueError('too large to have been copied, so it cannot be undone: ' + ', '.join(big))
         if op.get('undone'): raise ValueError('that operation was already undone')
         conflicts = [str(self.sandbox._check(row['path'])) for row in op['resources']
-                     if self._current(row['path']) != row['after']]
+                     if self._current(row['path']) != self._body(row, 'after')]
         if conflicts: raise ValueError('changed after the operation: ' + ', '.join(conflicts))
-        for row in op['resources']: self._write(row['path'], row['before'])
+        for row in op['resources']: self._write(row['path'], self._body(row, 'before'))
         op['undone'] = True; self._save(); return op
     def redo(self, operation_id=''):
         "Reapply one undone operation when every file still equals its restored text."
         op = (first(x for x in reversed(self.operations) if x['id'] == operation_id) if operation_id else
               first(x for x in self.operations if x.get('resources') and x.get('undone') and x.get('redoable', True)))
         if op is None: raise ValueError('no redoable workspace operation')
+        if (big := [r['path'] for r in op['resources'] if not r.get('kept', True)]):
+            raise ValueError('too large to have been copied, so it cannot be redone: ' + ', '.join(big))
         if not op.get('undone'): raise ValueError('that operation was not undone')
         conflicts = [str(self.sandbox._check(row['path'])) for row in op['resources']
-                     if self._current(row['path']) != row['before']]
+                     if self._current(row['path']) != self._body(row, 'before')]
         if conflicts: raise ValueError('changed after the undo: ' + ', '.join(conflicts))
-        for row in op['resources']: self._write(row['path'], row['after'])
+        for row in op['resources']: self._write(row['path'], self._body(row, 'after'))
         op['undone'] = False; self._save(); return op
