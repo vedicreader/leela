@@ -57,10 +57,11 @@ function initSplits() {
     document.documentElement.style.setProperty('--lee-' + k, value + 'px');
     localStorage.setItem('lee-' + k, value + 'px');
   }
-  if (localStorage.getItem('lee-agent-expanded') === '1') {
-    $('#shell')?.classList.add('agent-focus');
-    if ($('#agentexpand')) $('#agentexpand').textContent = 'restore';
-  }
+  // The retired boolean is read once and rewritten as the slot and mode it meant.
+  if (localStorage.getItem('lee-agent-expanded') === '1' && !localStorage.getItem('lee-expand'))
+    localStorage.setItem('lee-expand', 'right:wide');
+  localStorage.removeItem('lee-agent-expanded');
+  leeSyncExpand();
 }
 
 async function refreshKernelPill() {

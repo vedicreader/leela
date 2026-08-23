@@ -512,8 +512,25 @@ body {
 .lee-right.right-agent .lee-varspanel, .lee-right.right-agent .lee-memory,
 .lee-right.right-vars .lee-agent, .lee-right.right-vars .lee-memory,
 .lee-right.right-memory .lee-agent, .lee-right.right-memory .lee-varspanel { display: none; }
-.lee-app.agent-focus .lee-body { grid-template-columns: 0 0 minmax(320px, .72fr) 4px minmax(560px, 1.28fr); }
-.lee-app.agent-focus .lee-left { visibility: hidden; }
+/* Expanded is one slot in one mode, both classes written together. `wide` hands the pane the
+   dominant share of the grid it sits in; `full` lifts it over the shell, between header and
+   footer. Neither class outlives the pane: `leePane` drops both when it hides one, so no track
+   is left wide behind something invisible. */
+.lee-app.expand-right.expand-wide .lee-body { grid-template-columns: 0 0 minmax(320px, .72fr) 4px minmax(560px, 1.28fr); }
+.lee-app.expand-left.expand-wide .lee-body { grid-template-columns: minmax(560px, 1.28fr) 4px minmax(320px, .72fr) 0 0; }
+.lee-app.expand-right.expand-wide .lee-left,
+.lee-app.expand-left.expand-wide .lee-right { visibility: hidden; overflow: hidden; pointer-events: none; }
+.lee-app.expand-bottom.expand-wide .lee-editor,
+.lee-app.expand-bottom.expand-wide .lee-dock-split { display: none; }
+.lee-app.expand-bottom.expand-wide .lee-bottomdock { height: auto; max-height: none; min-height: 0; flex: 1 1 auto; }
+/* A fixed pane leaves the grid, so its old track would sit behind the overlay as blank width. */
+.lee-app.expand-full .lee-body { grid-template-columns: 0 0 1fr 0 0; }
+.lee-app.expand-full.expand-left #left,
+.lee-app.expand-full.expand-right #right,
+.lee-app.expand-full.expand-bottom #bottomdock {
+  position: fixed; inset: 34px 0 24px; z-index: 60; width: auto; height: auto; max-height: none;
+  visibility: visible; overflow: hidden; pointer-events: auto; background: var(--lee-bg);
+}
 .lee-right .lee-agent .lee-phead { align-content: center; }
 .lee-right .lee-agent .lee-agentlog { padding: 12px 12px 18px; }
 .lee-right .lee-agent .lee-model-select { width: 116px; }
@@ -680,8 +697,8 @@ kbd {
 .lee-bottomdock .lee-dockbody > .lee-termpanel { height: 100%; max-height: none; border-top: 0; }
 .lee-bottomdock.dock-exec .lee-termpanel, .lee-bottomdock.dock-term .lee-exec,
 .lee-bottomdock.dock-term .lee-agent { display: none; }
-/* `agent-expanded` is a retired centre state kept as a harmless compatibility selector;
-   agent focus now widens the right rail instead of replacing the editor. */
+/* `agent-expanded` and `term-expanded` are retired centre states, kept as harmless compatibility
+   selectors; expansion is now `.lee-app.expand-<slot>.expand-<mode>` on the shell. */
 .lee-centre.agent-expanded .lee-editor, .lee-centre.term-expanded .lee-editor,
 .lee-centre.term-expanded > .lee-dock-split { display: none; }
 .lee-centre.term-expanded .lee-bottomdock {
@@ -697,7 +714,8 @@ kbd {
 .lee-agent-head { min-height: 39px; padding: 5px 9px; background: var(--lee-bg); }
 .lee-agent-heading { display: grid; gap: 2px; min-width: 0; }
 .lee-agent-state-badge { color: var(--lee-fg4); font: 8.5px/1.15 var(--lee-mono); letter-spacing: .02em; }
-.lee-agent-head-actions { display: flex; align-items: center; gap: 2px; }
+.lee-agent-head-actions { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.lee-thread-select { width: min(190px, 24vw); min-width: 92px; color: var(--lee-fg2); text-overflow: ellipsis; }
 .lee-agent-head-actions .lee-btn { min-height: 25px; padding-inline: 7px; border-radius: 4px; color: var(--lee-fg4); }
 .lee-agent-head-actions .lee-btn:hover { color: var(--lee-fg); }
 .lee-history-turn { padding: 9px 0 12px; border-bottom: 1px solid var(--lee-border); }
@@ -754,6 +772,74 @@ kbd {
   border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 72%, transparent);
 }
 .lee-user-message > header strong { color: var(--lee-fg); font: 600 10.5px/1.3 var(--lee-mono); }
+.lee-agent-attention button[data-reshape-apply] { color: var(--lee-green); }
+.lee-agent-attention button[data-reshape-cancel] { color: var(--lee-fg4); }
+.lee-reply-actions[hidden] { display: none; }
+.lee-keys-modal .lee-modalbox { width: min(760px, 94dvw); }
+.lee-keyfilter { display: flex; align-items: center; gap: 8px; padding: 8px 12px 4px; }
+.lee-keyfilter .lee-input { flex: 1; }
+.lee-keytable { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow: auto;
+                padding: 4px 12px 10px; }
+.lee-keyrow { display: grid; grid-template-columns: minmax(0, 1fr) 15ch auto auto; align-items: center;
+              gap: 6px; padding: 4px 6px; border-radius: 6px; }
+.lee-keyrow:hover { background: var(--lee-bg2); }
+.lee-keyrow.changed { background: color-mix(in srgb, var(--lee-accent) 10%, transparent); }
+.lee-keyrow-name { display: flex; flex-direction: column; min-width: 0; }
+.lee-keyrow-name strong { color: var(--lee-fg); font: 600 11px/1.4 var(--lee-mono); overflow: hidden;
+                          text-overflow: ellipsis; white-space: nowrap; }
+.lee-keyrow-name small { color: var(--lee-fg4); font: 9px/1.3 var(--lee-mono); }
+.lee-keyrow-chord { font: 10.5px/1.4 var(--lee-mono); text-align: center; }
+.lee-keyrow-chord.recording { border-color: var(--lee-accent); color: var(--lee-accent); }
+.lee-keyrow button { border: 0; background: none; color: var(--lee-fg4); cursor: pointer;
+                     font: 9px/1.4 var(--lee-mono); text-decoration: underline; }
+.lee-keyrow button:hover { color: var(--lee-fg); }
+#keynotes[hidden] { display: none; }
+.lee-backup-list { display: flex; flex-direction: column; gap: 3px; }
+.lee-backup-row { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 6px;
+                  background: var(--lee-bg2); }
+.lee-backup-row span { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.lee-backup-row strong { color: var(--lee-fg); font: 600 10.5px/1.4 var(--lee-mono); }
+.lee-backup-row small { color: var(--lee-fg4); font: 9px/1.4 var(--lee-mono); }
+.lee-thread-toggle { display: inline-flex; align-items: center; gap: 5px; }
+.lee-thread-toggle.unread { color: var(--lee-accent); }
+.lee-thread-toggle.wants { color: var(--lee-red); }
+.lee-thread-count { padding: 0 4px; border-radius: 6px; background: var(--lee-bg2);
+                    color: var(--lee-fg4); font: 9px/1.5 var(--lee-mono); }
+.lee-thread-toggle.wants .lee-thread-count { background: color-mix(in srgb, var(--lee-red) 22%, transparent); color: var(--lee-fg); }
+.lee-thread-list { display: flex; flex-direction: column; gap: 4px; margin: 0 10px 6px; padding: 6px;
+                   border: 1px solid var(--lee-border); border-radius: 7px; background: var(--lee-bg1); }
+.lee-thread-list[hidden] { display: none; }
+.lee-thread-card { padding: 6px 8px; border: 1px solid transparent; border-radius: 6px;
+                   background: var(--lee-bg2); cursor: pointer; }
+.lee-thread-card:hover, .lee-thread-card:focus-visible { border-color: var(--lee-border); outline: none; }
+.lee-thread-card.active { border-color: var(--lee-accent); background: color-mix(in srgb, var(--lee-accent) 8%, var(--lee-bg2)); }
+.lee-thread-card.wants { border-color: var(--lee-red); }
+.lee-thread-card header { display: flex; align-items: baseline; gap: 6px; }
+.lee-thread-card header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                                 white-space: nowrap; color: var(--lee-fg); font: 600 11px/1.4 var(--lee-mono); }
+.lee-thread-state { color: var(--lee-fg4); font: 9px/1.4 var(--lee-mono); }
+.lee-thread-state.working { color: var(--lee-accent); }.lee-thread-state.waiting { color: var(--lee-red); }
+.lee-thread-card footer { display: flex; align-items: center; gap: 6px; margin-top: 3px;
+                          color: var(--lee-fg4); font: 9px/1.4 var(--lee-mono); }
+.lee-thread-card footer button { border: 0; background: none; color: var(--lee-fg4); cursor: pointer;
+                                 font: 9px/1.4 var(--lee-mono); text-decoration: underline; }
+.lee-thread-card footer button:hover { color: var(--lee-fg); }
+.lee-thread-card footer button.warn:hover { color: var(--lee-red); }
+.lee-thread-list-foot { display: flex; align-items: center; padding: 4px 2px 0; border-top: 1px solid var(--lee-border); }
+.lee-thread-list-foot label { display: inline-flex; align-items: center; gap: 5px; color: var(--lee-fg4);
+                              font: 9px/1.4 var(--lee-mono); cursor: pointer; }
+.lee-agent-attention { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 10px 6px;
+                       padding: 6px 9px; border-radius: 6px; border: 1px solid var(--lee-border);
+                       background: color-mix(in srgb, var(--lee-accent) 9%, transparent);
+                       color: var(--lee-fg2); font: 10px/1.4 var(--lee-mono); }
+.lee-agent-attention[hidden] { display: none; }
+.lee-agent-attention button { border: 0; background: none; color: var(--lee-accent); cursor: pointer;
+                              font: 600 10px/1.4 var(--lee-mono); text-decoration: underline; }
+.lee-agent-notify { display: inline-flex; align-items: center; gap: 4px; color: var(--lee-fg4);
+                    font: 9.5px/1 var(--lee-mono); }
+.lee-thread-select { max-width: 22ch; }
+.lee-user-message.queued { opacity: .58; }
+.lee-user-message.queued > button { margin: 0 10px 8px; border: 0; background: none; color: var(--lee-red); cursor: pointer; font: 9px/1 var(--lee-mono); text-transform: uppercase; }
 .lee-user-message > header span { color: var(--lee-fg4); font-size: 9.5px; }
 .lee-user-message-body {
   padding: 8px 10px 9px; color: var(--lee-fg2); white-space: pre-wrap; overflow-wrap: anywhere;
@@ -780,6 +866,10 @@ kbd {
 }
 .lee-agent-reply { margin-right: 4px; }
 .lee-agent-reply:empty { display: none; }
+.lee-agent-timeline { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.lee-agent-timeline > .lee-agent-reply { margin: 0 4px; }
+.lee-agent-children { display: flex; flex-direction: column; gap: 5px; margin: 6px 8px 4px 18px; padding-left: 8px; border-left: 1px solid var(--lee-border); }
+.lee-agent-children > .lee-agent-step { margin: 0; }
 .lee-agent-question {
   display: flex; align-items: flex-start; margin: 3px 2px 8px; color: var(--lee-fg);
   font: 500 12px/1.45 var(--lee-mono); letter-spacing: -.01em;
@@ -1076,7 +1166,7 @@ kbd {
 .lee-memory-note-editor .lee-fieldlabel { padding: 9px 12px; border-bottom: 1px solid var(--lee-border); }
 .lee-memory-editor-head { display: flex; align-items: center; min-height: 34px; padding: 7px 12px; border-bottom: 1px solid var(--lee-border); color: var(--lee-fg2); font: 600 9.5px/1.2 var(--lee-mono); }
 .lee-memory-editor-head small { margin-left: auto; color: var(--lee-fg4); font-weight: 400; }
-.lee-memory-note-cm { min-height: 0; overflow: hidden; }.lee-memory-note-cm .cm-editor { height: 100%; font-size: 11.5px; }.lee-memory-note-cm .cm-scroller { line-height: 1.65; }.lee-memory-note-cm .cm-content { max-width: 76ch; padding: 18px 20px 40px; }
+.lee-memory-note-cm { min-height: 0; overflow: hidden; }.lee-memory-note-cm .cm-editor { height: 100%; font-size: 11.5px; }.lee-memory-note-cm .cm-scroller { line-height: 1.65; }.lee-memory-note-cm .cm-content { max-width: 76ch; padding: 18px 20px 40px; overflow-wrap: anywhere; }
 .lee-memory-note-empty { height: 100%; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 8px; padding: 28px; }
 .lee-memory-note-empty[hidden] { display: none; }
 .lee-memory-note-empty strong { color: var(--lee-fg); font-size: 13px; }.lee-memory-note-empty span { max-width: 46ch; color: var(--lee-fg4); font-size: 10px; line-height: 1.55; }.lee-memory-note-empty .lee-btn { margin-top: 4px; }
@@ -1136,8 +1226,10 @@ kbd {
 .lee-agent-state-controls { display: flex; align-items: end; gap: 6px; padding: 9px 12px 0; }
 .lee-agent-state-controls label { display: grid; flex: 1; gap: 4px; color: var(--lee-fg4); font-size: 9px; text-transform: uppercase; }
 .lee-agent-state-suggestion { padding: 3px 7px; border: 1px solid var(--lee-aqua); border-radius: 3px; background: transparent; color: var(--lee-aqua); cursor: pointer; font: 9px/1.3 var(--lee-mono); }
-.lee-response-revision { display: flex; align-items: center; gap: 6px; margin: 3px 4px 12px; padding-top: 7px; border-top: 1px solid var(--lee-border); }
-.lee-response-revision span { margin-right: auto; color: var(--lee-fg4); font: 9px/1.3 var(--lee-mono); }.lee-response-revision.rolled-back { opacity: .65; }
+.lee-response-revision { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 3px 4px 12px; padding-top: 7px; border-top: 1px solid var(--lee-border); }
+/* three controls in a narrow column used to squeeze the label to one character per line */
+.lee-response-revision span { margin-right: auto; color: var(--lee-fg4); font: 9px/1.3 var(--lee-mono); white-space: nowrap; }
+.lee-response-revision.rolled-back { opacity: .65; }
 /* A rolled-back turn is dimmed, not deleted: the files are restored, the model still has the turn. */
 .lee-turn-undone { opacity: .42; filter: saturate(.5); }
 .lee-turn-undone-bar { border-top-style: dashed; }
@@ -1169,7 +1261,13 @@ kbd {
    retain the single chronological stream, which is the only ordering that fits. */
 .lee-agent.timeline-workspace .lee-agentlog { display: grid; grid-template-columns: minmax(240px,.78fr) minmax(300px,1fr) minmax(260px,.9fr); align-content: start; gap: 0 12px; }
 .lee-agent.timeline-workspace .lee-user-message, .lee-agent.timeline-workspace .lee-agent-reply,
+.lee-agent.timeline-workspace .lee-timeline-prose, .lee-agent.timeline-workspace .lee-history-turn,
+.lee-agent.timeline-workspace .lee-vgroup, .lee-agent.timeline-workspace .lee-history-session-head,
 .lee-agent.timeline-workspace .lee-response-revision, .lee-agent.timeline-workspace .lee-agent-progress { grid-column: 1; }
+/* grid items stretch to their row by default, which made a two-line question as tall as the answer */
+.lee-agent.timeline-workspace .lee-agentlog > * { align-self: start; }
+/* a history turn is one article with its own children: it is a column, not a grid of its own */
+.lee-agent.timeline-workspace .lee-history-turn { grid-column: 1 / -1; display: block; }
 .lee-agent.timeline-workspace .lee-agent-steps, .lee-agent.timeline-workspace .lee-approval { grid-column: 2; }
 .lee-agent.timeline-workspace .lee-runline, .lee-agent.timeline-workspace > .lee-diff { grid-column: 3; }
 .lee-agent-welcome { display: grid; gap: 9px; max-width: 34rem; margin: 22px auto; padding: 16px; border-left: 2px solid var(--lee-aqua); background: color-mix(in srgb, var(--lee-aqua) 4%, var(--lee-bg)); }
@@ -1865,8 +1963,8 @@ kbd {
 }
 .lee-modalbox {
   background: var(--lee-bg1); border: 1px solid var(--lee-border); border-radius: 8px;
-  width: min(680px, 92vw); max-width: calc(100vw - 16px); min-width: min(360px, calc(100vw - 16px));
-  height: auto; max-height: 90vh; min-height: 120px; display: flex; flex-direction: column;
+  width: min(680px, 92dvw); max-width: calc(100dvw - 16px); min-width: min(360px, calc(100dvw - 16px));
+  height: auto; max-height: calc(100dvh - 16px); min-height: min(120px, calc(100dvh - 16px)); display: flex; flex-direction: column;
   box-shadow: 0 16px 48px rgba(0,0,0,.5); overflow: hidden;
   transition: box-shadow .22s cubic-bezier(.16,1,.3,1), border-radius .22s cubic-bezier(.16,1,.3,1);
 }
@@ -2284,7 +2382,7 @@ kbd {
   .lee-left { left: 0; transform: translateX(-102%); }
   .lee-right { right: 0; transform: translateX(102%); box-shadow: -18px 0 36px rgba(0,0,0,.28); }
   .lee-app.mobile-left .lee-left, .lee-app.mobile-right .lee-right { transform: translateX(0); }
-  .lee-app.agent-focus .lee-left { visibility: visible; }
+  .lee-app.expand-wide .lee-left, .lee-app.expand-wide .lee-right { visibility: visible; }
   .lee-split { display: none; }
   .lee-footer .lee-fkey { display: none; }
   .lee-pane-restore.restore-left, .lee-pane-restore.restore-right { display: block; }
@@ -3013,7 +3111,7 @@ kbd {
 .lee-vault-section.active { background: var(--lee-bg2); color: var(--lee-accent); }
 .lee-vault-section small { color: var(--lee-fg4); }
 .lee-vault-body { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
-.lee-vault-text { padding: 10px 14px; }
+.lee-vault-text { min-width: 0; padding: 10px 14px; overflow-wrap: anywhere; }.lee-vault-text pre { max-width: 100%; overflow: auto; white-space: pre; }
 .lee-vault-privacy { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 10px;
                      border-bottom: 1px solid var(--lee-border); font: 10px/1.4 var(--lee-mono); }
 .lee-vault-privacy.sensitive { background: color-mix(in srgb, var(--lee-red) 7%, transparent); }
@@ -3100,7 +3198,7 @@ kbd {
 .lee-wb-card:has(.lee-wb-note) { grid-column: 1 / -1; }
 .lee-wb-form:has(.lee-wb-note) { flex-direction: column; align-items: flex-start; }
 .lee-wb-form:has(.lee-wb-note) .lee-input { flex: none; width: 100%; }
-.lee-wb-form .lee-wb-note { flex: none; width: 100%; font: 11px/1.6 var(--lee-mono); resize: vertical; }
+.lee-wb-form .lee-wb-note { flex: none; width: 100%; font: 11px/1.6 var(--lee-mono); white-space: pre-wrap; overflow-wrap: anywhere; resize: vertical; }
 .lee-wb-plan { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; padding: 10px 12px;
                border-radius: 6px; border: 1px solid var(--lee-border); background: var(--lee-bg2); }
 .lee-wb-plan-head { display: flex; align-items: baseline; gap: 6px; font: 11px/1.4 var(--lee-mono); }
@@ -3193,3 +3291,28 @@ kbd {
 /* A generated picture in the agent pane: fits the pane, never the browser's intrinsic size. */
 .lee-agent-media { margin: .5rem 0; }
 .lee-agent-media img, .lee-agent-media video { max-width: 100%; height: auto; border-radius: 6px; display: block; }
+/* The notebook find bar. Fixed, because it belongs to the document rather than to the cell
+   the caret happens to be in, and it has to stay put while the cells scroll under it. */
+.lee-find-bar { position: fixed; top: 56px; right: 26px; z-index: 60; display: flex; gap: 6px;
+                align-items: center; padding: 6px 8px; border: 1px solid var(--lee-border);
+                border-radius: 8px; background: var(--lee-bg2); box-shadow: 0 8px 24px #0007; }
+.lee-find-bar[hidden] { display: none; }
+.lee-find-bar .lee-input { width: 220px; }
+.lee-find-bar.empty .lee-input { border-color: var(--lee-err, #c66); }
+.lee-find-count { min-width: 68px; color: var(--lee-fg3); font-size: 11px; text-align: right; }
+.lee-find-bar button { border: 0; background: none; color: var(--lee-fg2); font: inherit;
+                       cursor: pointer; padding: 2px 5px; border-radius: 5px; }
+.lee-find-bar button:hover { background: var(--lee-bg3); color: var(--lee-fg); }
+
+/* Local history: the versions down one side, the chosen one against disk on the other. */
+.lee-lh { display: grid; grid-template-columns: 260px 1fr; gap: 12px; min-height: 320px; }
+.lee-lh-list { display: flex; flex-direction: column; gap: 2px; overflow: auto; max-height: 60vh;
+               border-right: 1px solid var(--lee-border); padding-right: 8px; }
+.lee-lh-row { display: flex; flex-direction: column; gap: 2px; width: 100%; border: 0; padding: 6px 8px;
+              background: none; color: var(--lee-fg2); font: inherit; text-align: left;
+              border-radius: 6px; cursor: pointer; }
+.lee-lh-row:hover { background: var(--lee-bg3); }
+.lee-lh-row.active { background: var(--lee-bg3); color: var(--lee-fg); }
+.lee-lh-row span { color: var(--lee-fg4); font-size: 11px; }
+.lee-lh-view { overflow: auto; max-height: 60vh; }
+.lee-lh-head { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; color: var(--lee-fg3); }

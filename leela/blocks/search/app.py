@@ -79,6 +79,12 @@ def connect(app, ctx):
         return found(ctx.search, await off_loop(ctx.search.definitions, name, path, limit))
     @rt('/code/usages')
     async def code_usages(name: str = '', limit: int = 200): return found(ctx.search, await off_loop(ctx.search.usages, name, limit))
+    @rt('/code/jump')
+    async def code_jump(name: str = '', path: str = '', line: int = 0, cell_index: int = -1,
+                        limit: int = 30):
+        "One key both ways: the declaration of a usage, the usages of a declaration."
+        kind, hits = await off_loop(ctx.search.declaration_or_usages, name, path, line, cell_index, limit)
+        return {'kind': kind, **found(ctx.search, hits)}
     @rt('/code/sync')
     async def code_sync():
         try: return await ctx.search.async_sync(True, True)

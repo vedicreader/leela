@@ -401,7 +401,7 @@ def test_the_keys_block_needs_no_workspace_at_all():
             def deco(fn): registered.append(path); return fn
             return deco
     keys_block.connect(FakeApp(), Ctx(None, name='keys', caps=()))
-    assert sorted(registered) == ['/keys.json', '/keys/file', '/keys/reset', '/keys/save']
+    assert sorted(registered) == ['/keys.json', '/keys/check', '/keys/file', '/keys/reset', '/keys/save']
 
 BLOCKS_DIR = ROOT/'leela/blocks'
 
@@ -963,24 +963,26 @@ def test_env_store_reads_async_ops_inside_an_event_loop(monkeypatch):
     async def read(): return EnvStore().get('TOKEN')
     assert asyncio.run(read()) == 'value'
 
-def test_the_config_dir_stays_inside_the_temp_dir():
+def test_the_config_dir_stays_inside_the_temp_dir(cfg_home):
     from leela import leela_cfg
     from leela.blocks.memory.memory import memory_path
     from leela.blocks.settings.settings import USER_SETTINGS_FILE
     from leela.workspace import ws_path
+    # one of the two temp dirs: the session's, or this test's own, which is what `leela_cfg` moved to
+    safe = (TEST_CONFIG_HOME, str(cfg_home))
     for p in (leela_cfg, memory_path(), USER_SETTINGS_FILE, ws_path()):
-        assert str(p).startswith(TEST_CONFIG_HOME), f'{p} escapes the test config dir'
+        assert str(p).startswith(safe), f'{p} escapes the test config dirs'
     real = Path.home()/'.config'/'leela'
-    assert not str(real).startswith(TEST_CONFIG_HOME)
-    assert Path(leela_cfg) != real
+    assert not str(real).startswith(safe)
+    assert Path(leela_cfg) != real and real not in Path(leela_cfg).parents
 
 
-def test_a_workspace_writes_its_memory_and_journal_under_the_temp_dir(tmp_path):
+def test_a_workspace_writes_its_memory_and_journal_under_the_temp_dir(tmp_path, cfg_home):
     "The two a `Workspace` opens on construction, which is how the real store got polluted."
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
-    assert str(ws.memory.path).startswith(TEST_CONFIG_HOME)
-    assert str(ws.journal.path).startswith(TEST_CONFIG_HOME)
+    assert str(ws.memory.path).startswith((TEST_CONFIG_HOME, str(cfg_home)))
+    assert str(ws.journal.path).startswith(str(cfg_home)), 'and its journal is this test\'s alone'
 
 
 CLOSURE = 'leela.app'
@@ -1123,3 +1125,100 @@ def test_boot_asks_for_a_pending_approval_once_rather_than_twice():
     block = js[js.index('async function boot()'):js.index('const whenVisible')]
     assert 'approvalLoop();' in block
     assert 'pollApproval();' not in block, 'approvalLoop already polls before its first timeout'
+
+
+def test_local_history_keeps_one_body_per_distinct_version(tmp_path):
+    "Twenty saves of an unchanged file are one version, and one stored body."
+    from leela.core.session import FileHistory
+    h = FileHistory(tmp_path/'history')
+    first_row = h.record('a.py', 'one\n')
+    assert first_row is not None and h.record('a.py', 'one\n') is None
+    second = h.record('a.py', 'two\n', 'changed outside leela')
+    assert h.record('b.py', 'one\n') is not None, 'another file with the same text is its own version'
+    assert len(list((tmp_path/'history'/'blobs').glob('*.gz'))) == 2, 'bodies are shared by content'
+    assert h.text(second['id']) == 'two\n'
+    assert [r['label'] for r in h.rows('a.py')] == ['changed outside leela', 'save']
+    assert 'blob' not in h.rows('a.py')[0], 'a listing is not a body'
+    assert [r['path'] for r in h.rows()][0] == 'b.py', 'newest first, across every file'
+    assert {r['path'] for r in h.paths()} == {'a.py', 'b.py'}
+    with pytest.raises(ValueError, match='no such version'): h.text('ver_missing')
+
+
+def test_local_history_forgets_the_oldest_and_the_bodies_nothing_names(tmp_path):
+    from leela.core import session
+    from leela.core.session import FileHistory
+    session.KEEP_PER_PATH = 3
+    try:
+        h = FileHistory(tmp_path/'history')
+        rows = [h.record('a.py', f'v{i}\n') for i in range(5)]
+        assert [r['label'] for r in h.rows('a.py')] == ['save'] * 3
+        assert [h.text(r['id']) for r in h.rows('a.py')] == ['v4\n', 'v3\n', 'v2\n']
+        assert len(list((tmp_path/'history'/'blobs').glob('*.gz'))) == 3, 'the evicted bodies went too'
+        assert FileHistory(tmp_path/'history').rows('a.py') == h.rows('a.py'), 'and it survives a restart'
+    finally: session.KEEP_PER_PATH = 60
+
+
+def test_no_test_can_reach_the_real_conversation_log(tmp_path, cfg_home):
+    """A test wrote `ai.history_path` with `write_text`, which truncates. One config dir shared by
+    the whole session meant the file it truncated was whichever one the suite had been pointed at.
+    """
+    from tests.conftest import REAL_CONFIG_HOME
+    import leela
+    fresh = Workspace(roots=[tmp_path])
+    for path in (Path(leela.leela_cfg), Path(fresh.ai.history_path), Path(fresh.journal.path)):
+        assert REAL_CONFIG_HOME not in path.parents and path != REAL_CONFIG_HOME
+        assert str(path).startswith(str(cfg_home)), path
+    assert Path(fresh.ai.history_path).name == 'agent-history.jsonl', 'the same file, in a safe place'
+    fresh.threads.shutdown()
+
+
+def test_local_history_keeps_every_write_leela_can_see_and_puts_one_back(tmp_path):
+    """Undo is one step back. What a person needs after an agent, a tool or another editor has been
+    through the tree is the file as it was earlier, and a way to choose which earlier."""
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    src = tmp_path/'mod.py'; src.write_text('one\n')
+    ws = Workspace(roots=[tmp_path])
+    try:
+        with TestClient(ide_app(ws)) as client:
+            ws.journal.record('Agent turn', [(str(src), 'one\n', 'two\n')], kind='file')
+            src.write_text('two\n')
+            listed = client.get(f'/history/file?path={src}').json()
+            assert [v['label'] for v in listed['versions']] == ['Agent turn', 'before the first change seen']
+            assert listed['path'] == str(src)
+            oldest = listed['versions'][-1]
+            held = client.get(f"/history/version?id={oldest['id']}").json()
+            assert held['text'] == 'one\n' and held['rows'], 'the body, and how it differs from disk'
+            assert client.get('/history/version?id=ver_nope').status_code == 404
+            back = client.post('/history/restore', json={'id': oldest['id']}).json()
+            assert back['ok'] and src.read_text() == 'one\n' and back['operation_id']
+            again = client.get(f'/history/file?path={src}').json()['versions']
+            assert again[0]['label'] == f'Restore {src.name} from local history', 'the restore is itself a version'
+            assert [v['label'] for v in again].count('before the first change seen') == 1
+            repeat = client.post('/history/restore', json={'id': oldest['id']})
+            assert repeat.status_code == 409, 'restoring what the file already says is not a change'
+            assert client.post('/history/restore', json={'id': 'ver_nope'}).status_code == 404
+            assert str(src) in [f['path'] for f in client.get('/history/files').json()['files']]
+    finally: ws.threads.shutdown()
+
+
+def test_a_write_from_outside_leela_is_kept_before_the_editor_takes_it(tmp_path):
+    "The disk poll is the only moment anything notices another process editing an open file."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    src = tmp_path/'mod.py'; src.write_text('mine\n')
+    ws = Workspace(roots=[tmp_path])
+    try:
+        with TestClient(ide_app(ws)) as client:
+            client.get(f'/tab/open?path={src}')
+            assert client.get('/tab/state').json()['text'] == 'mine\n'
+            assert client.get('/tab/watch').json()['disk_version']
+            assert ws.history.rows(str(src)) == [], 'nothing has happened to it yet'
+            src.write_text('another agent was here\n')
+            client.get('/tab/watch')
+            kept = ws.history.rows(str(src))
+            assert [v['label'] for v in kept] == ['changed outside Leela']
+            assert ws.history.text(kept[0]['id']) == 'another agent was here\n'
+            client.get('/tab/watch')
+            assert len(ws.history.rows(str(src))) == 1, 'the same version is not kept twice'
+    finally: ws.threads.shutdown()

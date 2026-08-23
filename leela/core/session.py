@@ -3,15 +3,98 @@
 from __future__ import annotations
 import asyncio
 from fastcore.basics import first
-import json, time, uuid
+import gzip, hashlib, json, time, uuid
 from pathlib import Path
 
-__all__ = ['DocStore', 'DebugState', 'RunState', 'kernel_api']
+__all__ = ['DocStore', 'DebugState', 'FileHistory', 'RunState', 'kernel_api']
+
+#: How many versions of one file are kept. A person looking for what a tool overwrote is looking
+#: at this morning, not at last month, and every version holds the whole file.
+KEEP_PER_PATH = 60
 
 async def kernel_api(session, path, params=None, timeout=15, tab=None):
     "Proxy an inspector call through the exact runtime `Run` would use."
     client = await session.runtime(tab)
     return await client.api(path, params, timeout) if client else None
+
+class FileHistory:
+    """Every version of a project file Leela saw, so a write it did not make is still recoverable.
+
+    Git is the wrong tool for this: the loss being guarded against happens before a commit, often
+    from another process editing the same tree. Bodies are stored once per distinct content, so a
+    file saved twenty times without changing costs one copy.
+    """
+    def __init__(self, root):
+        self.root = Path(root); self.path = self.root/'index.json'
+        self.rows_ = []
+        self._load()
+    def _load(self):
+        try: self.rows_ = json.loads(self.path.read_text()).get('versions', [])
+        except Exception: self.rows_ = []
+    def _save(self):
+        self.root.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix('.tmp')
+        tmp.write_text(json.dumps({'versions': self.rows_}, ensure_ascii=False))
+        tmp.replace(self.path)
+    def _blob(self, text):
+        digest = hashlib.sha256(text.encode('utf-8', 'replace')).hexdigest()[:16]
+        p = self.root/'blobs'/f'{digest}.gz'
+        if not p.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(gzip.compress(text.encode('utf-8', 'replace')))
+        return digest
+    def latest(self, path):
+        return first(r for r in reversed(self.rows_) if r['path'] == str(path))
+    def record(self, path, text, label='save'):
+        "One version, or None when the file already reads exactly like this."
+        if text is None: return None
+        path = str(path)
+        digest = hashlib.sha256(str(text).encode('utf-8', 'replace')).hexdigest()[:16]
+        held = self.latest(path)
+        if held is not None and held['blob'] == digest: return None
+        row = {'id': 'ver_' + uuid.uuid4().hex[:12], 'path': path, 'at': time.time(),
+               'label': str(label), 'blob': self._blob(str(text)), 'bytes': len(str(text))}
+        self.rows_.append(row); self._prune(path); self._save()
+        return row
+    def _prune(self, path):
+        "Drop this path's oldest versions, and any body no surviving version names."
+        mine = [r for r in self.rows_ if r['path'] == path]
+        if len(mine) <= KEEP_PER_PATH: return
+        drop = {r['id'] for r in mine[:-KEEP_PER_PATH]}
+        self.rows_ = [r for r in self.rows_ if r['id'] not in drop]
+        kept = {r['blob'] for r in self.rows_}
+        for p in (self.root/'blobs').glob('*.gz'):
+            if p.stem not in kept:
+                try: p.unlink()
+                except OSError: pass
+    def rows(self, path='', limit=60):
+        "Versions newest first, of one file or of everything Leela has seen."
+        rows = [r for r in self.rows_ if not path or r['path'] == str(path)]
+        return [{k: v for k, v in r.items() if k != 'blob'} for r in rows[::-1][:int(limit)]]
+    def text(self, version_id):
+        "The body of one version. A missing body is an error, never silently an empty file."
+        row = first(r for r in self.rows_ if r['id'] == str(version_id))
+        if row is None: raise ValueError(f'no such version {version_id}')
+        p = self.root/'blobs'/f"{row['blob']}.gz"
+        if not p.exists(): raise ValueError(f"the stored body for {row['path']} is gone")
+        return gzip.decompress(p.read_bytes()).decode('utf-8', 'replace')
+    def keep(self, path, before, after, label='change'):
+        """Both sides of one change. The first `before` for a path is the only copy of what was
+        there before Leela ever looked, which is exactly the state a person wants back."""
+        if before is not None and self.latest(path) is None:
+            self.record(path, before, 'before the first change seen')
+        return self.record(path, after, label)
+    def row(self, version_id):
+        "One version's listing, without its body."
+        held = first(r for r in self.rows_ if r['id'] == str(version_id))
+        return None if held is None else {k: v for k, v in held.items() if k != 'blob'}
+    def paths(self, limit=200):
+        "Which files have versions, most recently touched first."
+        out = {}
+        for r in reversed(self.rows_):
+            row = out.setdefault(r['path'], {'path': r['path'], 'at': r['at'], 'versions': 0})
+            row['versions'] += 1
+        return list(out.values())[:int(limit)]
 
 class DocStore:
     "Open notebooks and unsaved file text, keyed by tab."
@@ -85,8 +168,12 @@ MAX_OPERATIONS = 200
 
 class OperationJournal:
     "The last `MAX_OPERATIONS` workspace operations, on disk, newest last."
-    def __init__(self, path, sandbox):
+    def __init__(self, path, sandbox, history=None):
         self.path, self.sandbox = Path(path), sandbox
+        #: Every write that reaches here is also kept version by version, because undo is one step
+        #: back and what a person needs after an agent, a tool or another editor has been through
+        #: the tree is the file as it was this morning.
+        self.history = history
         self.operations = []
         self._load()
     def _load(self):
@@ -102,6 +189,10 @@ class OperationJournal:
         rows = [{'path': str(path), 'before': before, 'after': after}
                 for path, before, after in resources if before != after]
         if not rows and not irreversible: return None
+        if self.history is not None:
+            for row in rows:
+                try: self.history.keep(row['path'], row['before'], row['after'], label)
+                except Exception: pass       # a lost version must never fail the write itself
         for prior in self.operations:
             if prior.get('undone'): prior['redoable'] = False
         op = {'id': 'op_' + uuid.uuid4().hex[:12], 'at': time.time(), 'label': str(label),

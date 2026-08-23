@@ -8,6 +8,59 @@ function diffModal(title, label, rows) {
                 <div class="lee-diff">${diffHtml(rows)}</div>`);
 }
 
+/* Local history. Undo is one step back, and after an agent, a tool or another editor has been
+   through the tree the question is what the file said an hour ago. Every version Leela saw is
+   kept, and this is where one gets picked. */
+async function leeLocalHistory(path = lee.path) {
+  if (!path) return status('open a file to see its history', 'err');
+  let d;
+  try { d = await api('/history/file?path=' + encodeURIComponent(path)); }
+  catch (e) { return status(String(e.message || e), 'err'); }
+  const versions = d.versions || [], name = path.split('/').pop();
+  const m = modal(`<div class="lee-mhead">local history<span class="sub">${esc(name)}</span></div>` +
+    `<div class="lee-lh"><nav class="lee-lh-list" id="lhrows" aria-label="kept versions"></nav>` +
+    `<div class="lee-lh-view" id="lhview"></div></div>`, null, null, {storageKey: 'localhistory'});
+  const rows = $('#lhrows', m), view = $('#lhview', m);
+  if (!versions.length) {
+    view.innerHTML = '<div class="lee-dim">Nothing kept for this file yet. A save, an agent edit, ' +
+      'or a write from outside Leela starts its history.</div>';
+    return;
+  }
+  const when = at => new Date((at || 0) * 1000).toLocaleString();
+  rows.innerHTML = versions.map((v, i) =>
+    `<button type="button" class="lee-lh-row${i ? '' : ' active'}" data-version="${esc(v.id)}">` +
+    `<strong>${esc(v.label)}</strong><span>${esc(when(v.at))} · ${Number(v.bytes || 0).toLocaleString()} bytes` +
+    `</span></button>`).join('');
+  const show = async id => {
+    $$('[data-version]', m).forEach(b => b.classList.toggle('active', b.dataset.version === id));
+    view.innerHTML = '<div class="lee-dim">reading…</div>';
+    let held;
+    try { held = await api('/history/version?id=' + encodeURIComponent(id)); }
+    catch (e) { view.innerHTML = `<div class="lee-err">${esc(String(e.message || e))}</div>`; return; }
+    view.innerHTML = `<header class="lee-lh-head"><span>${esc(held.label)} · ${esc(when(held.at))}</span>` +
+      `<span class="lee-spacer"></span>` +
+      `<button type="button" class="lee-btn go" data-restore="${esc(id)}">restore this version</button></header>` +
+      ((held.rows || []).length ? `<div class="lee-diff">${diffHtml(held.rows)}</div>`
+        : '<div class="lee-dim">identical to what is on disk now</div>');
+  };
+  m.addEventListener('click', async e => {
+    const pick = e.target.closest('[data-version]');
+    if (pick) return show(pick.dataset.version);
+    const back = e.target.closest('[data-restore]');
+    if (!back) return;
+    back.disabled = true;
+    try {
+      const out = await post('/history/restore', {id: back.dataset.restore});
+      m.remove();
+      await post('/tab/reload', {path: out.path});
+      await mountTab();
+      status(`${out.path.split('/').pop()} restored · ${out.label || 'from local history'}`, 'ok');
+    } catch (err) { back.disabled = false; status(String(err.message || err), 'err'); }
+  });
+  show(versions[0].id);
+}
+window.leeLocalHistory = leeLocalHistory;
+
 // The dirty dot says *that* a tab changed. This says what changed -- the question
 // actually worth answering before a save, or after something moved the file underneath.
 function bufferBody() {
@@ -162,6 +215,22 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     return false;
   }
 }
+
+/* Every JSON config in this app is written by a program and read by a person, so most of them
+   arrive as one long line. The formatter already exists for format-on-save; this is the same call
+   asked for on purpose, and it edits the buffer rather than the file so it stays undoable. */
+async function leeFormatDoc() {
+  const view = lee.editors.get(lee.scope === 'exec' ? 'exec' : 'file');
+  if (!view) return status('open a file to format', 'err');
+  const text = LeeCM.getDoc(view), lang = curLang();
+  try {
+    const d = await post('/editor/format', {path: lee.path, lang, text});
+    if (d.text === text) return status(`${lang} already formatted`, 'ok');
+    LeeCM.setDoc(view, d.text);
+    status(`formatted ${lang}${lee.path ? ' · ' + lee.path.split('/').pop() : ''} · save to keep it`, 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+window.leeFormatDoc = leeFormatDoc;
 
 async function saveAllTabs() {
   // The active editor is saved through the same version-checked path as ordinary autosave.

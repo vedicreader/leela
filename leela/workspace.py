@@ -1,7 +1,7 @@
 "Open folders, open tabs, and which kernel each tab talks to."
 
 from __future__ import annotations
-import hashlib, json, os, time
+import hashlib, json, os, threading, time
 from dataclasses import dataclass
 from fastcore.all import Path, L, first, ifnone
 
@@ -151,9 +151,15 @@ class Workspace:
         from .blocks.browser.browser import Browser
         self.browser = Browser(port=cdp_port)
         self._runs = None
-        from .core.session import OperationJournal
+        from .core.session import FileHistory, OperationJournal
         journal_key = hashlib.sha256('\0'.join(map(str, self.fs.roots)).encode()).hexdigest()[:16]
-        self.journal = OperationJournal(leela_cfg/'journals'/f'{journal_key}.json', self.fs)
+        self.history = FileHistory(leela_cfg/'history'/journal_key)
+        self.journal = OperationJournal(leela_cfg/'journals'/f'{journal_key}.json', self.fs,
+                                        history=self.history)
+        self._timeline_path = leela_cfg/'timelines'/f'{journal_key}.json'
+        self._stop_backups = None
+        self._history_stamps = {}
+        self._timeline_lock = threading.RLock()
         from .blocks.vault.clip import register_all
         from .blocks.vault.jobs import Jobs
         from .blocks.vault.news import Feeds
@@ -169,7 +175,7 @@ class Workspace:
         self.tabs = L()
         self.active = 0
         self._untitled = 0
-        self._ai = self._inline_ai = self._completer = None
+        self._ai = self._inline_ai = self._completer = self._turn_runner = self._threads = None
         from .agent.core import env as model_env
         self.model = model
         self.inline_model = inline_model or model_env('MODEL_INLINE') or 'gpt-mini'
@@ -191,8 +197,8 @@ class Workspace:
         self.job_models = {}                # harness job -> model, for the jobs without a field
         self.screen = (None, '', '')
         self.on_note = None
-        self._approval_target = None
-        self.approvals = notebook_approvals(lambda: self._approval_target, mode=approvals)
+        self._approval_target, self.approvals_mode = None, approvals
+        self._notebook_approvals = notebook_approvals(lambda: self._approval_target, mode=approvals)
     def sync_agent_routing(self, ai=None):
         "Apply saved agent-job choices to a live assistant."
         ai = ai or self.ai
@@ -202,23 +208,97 @@ class Workspace:
         return ai
 
     @property
+    def threads(self):
+        if self._threads is None:
+            from .blocks.agent.threads import Threads
+            self._threads = Threads(self)
+        return self._threads
+    @property
     def ai(self):
-        "The agent-pane assistant: durable conversation and the model chosen for agentic work."
-        if self._ai is None:
-            self._ai = Assistant(self, model=self.model, surface='agent', local_multimodal=self.local_multimodal,
-                                 on_compact=self._compacted, history_name='agent')
-            self.sync_agent_routing(self._ai)
-            self.approvals.host = self._ai.host
-        return self._ai
+        "The active agent-pane assistant. Resolve on every access because the thread may change."
+        return self.threads.active.ai
+    @property
+    def approvals(self): return self.threads.active.approvals
+    @property
+    def turn_runner(self):
+        "The active thread's runner, or a stub assigned before any thread was built."
+        if self._threads is None and self._turn_runner is not None: return self._turn_runner
+        return self.threads.active.runner
+    def start_backups(self):
+        """Begin the chosen cadence, and take one now if it is already due.
+
+        Called once the workspace is up rather than in `__init__`, so a test that builds a hundred
+        workspaces does not start a hundred threads.
+        """
+        from .core.backups import backup_cadence, schedule_backups
+        if self._stop_backups is not None: return self._stop_backups
+        self._stop_backups = schedule_backups(backup_cadence())
+        return self._stop_backups
+
+    def guard_history(self, reason='before an overwrite'):
+        "A copy of the conversation log before something replaces it. Cheap, and never raises."
+        from .core.backups import guard
+        path = getattr(self._ai, 'history_path', None) if self._ai is not None else None
+        try: return guard(path, reason=reason) if path is not None else None
+        except Exception: return None
+
+    def _timelines(self):
+        with self._timeline_lock:
+            try: return self._timeline_path.read_json()
+            except Exception: return {}
+    def _timeline_key(self, thread_id, turn_id): return f'{thread_id}:{turn_id}'
+    def timeline_parts(self, thread_id, turn_id):
+        return list(self._timelines().get(self._timeline_key(thread_id, turn_id), ()))
+    TIMELINE_KEEP = 200          # turns retained for restart and resync, oldest written first out
+
+    def save_timeline(self, thread_id, turn_id, parts):
+        "Atomically retain one thread turn's ordered browser events for restart and resync."
+        key = self._timeline_key(thread_id, turn_id)
+        with self._timeline_lock:
+            rows = self._timelines(); rows.pop(key, None); rows[key] = list(parts)
+            for old in list(rows)[:-self.TIMELINE_KEEP]: rows.pop(old, None)
+            self._timeline_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._timeline_path.with_name(f'.{self._timeline_path.name}.{os.getpid()}.tmp')
+            try:
+                tmp.write_json(rows); os.replace(tmp, self._timeline_path)
+            finally:
+                if tmp.exists(): tmp.unlink()
+        return rows[key]
+    def history_stamp(self, ai=None):
+        "What identifies the conversation log as it is now: cheap, and enough to notice a write."
+        ai = ai or self.ai
+        try:
+            p = Path(ai.history_path); st = p.stat()
+            return f'{p}:{st.st_mtime_ns}:{st.st_size}'
+        except Exception: return ''
+    def fresh_history(self, ai=None):
+        """Reread the conversation log, but only when it has actually changed.
+
+        Parsing it is linear in its size, which is 60MB once Leela and the CLI share one, and every
+        history read was paying for it again. A stat is what tells the two apart.
+        """
+        ai = ai or self.ai
+        stamp = self.history_stamp(ai)
+        if stamp and self._history_stamps.get(id(ai)) == stamp: return False
+        ai.refresh_history()
+        self._history_stamps[id(ai)] = stamp
+        return True
+    def with_timelines(self, turns):
+        rows = self._timelines()
+        out = []
+        for turn in turns:
+            key = self._timeline_key(turn.get('session', ''), turn.get('turn_id', ''))
+            out.append({**turn, **({'timeline': rows[key]} if key in rows else {})})
+        return out
     @property
     def inline_ai(self):
         "Prompt cells use their own smaller model and conversation, never the agent pane's context."
         if self._inline_ai is None:
             from .agent.core import env
             self._inline_ai = Assistant(self, model=self.inline_model or env('MODEL_INLINE'), surface='inline',
-                                        local_multimodal=self.local_multimodal,
+                                        local_multimodal=self.local_multimodal, approvals=self._notebook_approvals,
                                         on_compact=self._compacted, history_name='inline')
-            self.approvals.host = self._inline_ai.host
+            self._notebook_approvals.host = self._inline_ai.host
         return self._inline_ai
     def _compacted(self, summary):
         "Write a compaction summary into the notebook the conversation is happening in."
@@ -521,13 +601,21 @@ class Workspace:
         context, screen, media = self._grounding(attachments, context)
         return self.ai.ask_with(prompt, context=context, screen=screen, image=media or None,
                                 context_path=context_path)
-    def ask_stream(self, prompt, attachments=(), reasoning=None, context='', context_path=''):
-        "The same turn, yielding markdown as it arrives."
+    def prepare_turn(self, attachments=(), context=''):
+        "Capture and validate one prompt-bar turn before the server accepts it."
         self.sync_agent_routing()
-        context, screen, media = self._grounding(attachments, context)
-        kw = {'reasoning_effort': reasoning} if reasoning and not self.ai.model.local else {}
-        return self.ai.stream_with(prompt, context=context, screen=screen, image=media or None,
-                                   context_path=context_path, **kw)
+        return self._grounding(attachments, context)
+    def ask_stream(self, prompt, attachments=(), reasoning=None, context='', context_path='',
+                   grounding=None, on_registered=None, ai=None):
+        """The same turn, yielding markdown as it arrives. `ai` names the conversation the turn
+        belongs to: a caller that already holds one must not have its turn moved by a thread
+        switch, and defaulting to the active one keeps every existing caller unchanged."""
+        ai = ai or self.ai
+        self.sync_agent_routing(ai)
+        context, screen, media = grounding or self._grounding(attachments, context)
+        kw = {'reasoning_effort': reasoning} if reasoning and not ai.model.local else {}
+        return ai.stream_with(prompt, context=context, screen=screen, image=media or None,
+                              context_path=context_path, on_registered=on_registered, **kw)
     def ask_cell_stream(self, nb, i):
         "Answer the prompt cell at `i`, filling the cell in as the answer arrives."
         c = nb[i]
@@ -778,7 +866,9 @@ class Workspace:
         "Stop every kernel, dev server, terminal and model this workspace started."
         self.terms.close_all()
         self.fs_watch.close()
-        if self._ai is not None: self._ai.close()
+        if self._stop_backups is not None: self._stop_backups()
+        if self._threads is not None: self._threads.shutdown()
+        elif self._ai is not None: self._ai.close()
         if self._inline_ai is not None: self._inline_ai.close()
         if self._lsp is not None: self._lsp.close()
         await self.dev.stop_all()

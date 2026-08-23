@@ -10,8 +10,15 @@ if not TEST_CONFIG_HOME:
     _os.environ['LEELA_TEST_CONFIG_HOME'] = TEST_CONFIG_HOME
 _os.environ['XDG_CONFIG_HOME'] = TEST_CONFIG_HOME
 
+#: Where a person's real conversations, keymap and settings live. No test may resolve to it. The
+#: env var above is not enough on its own: `leela_cfg` is bound at import, so a module that was
+#: imported before this file ran would still hold the real path, and one truncating write to
+#: `ai.history_path` is then a person's whole conversation log.
+REAL_CONFIG_HOME = _pathlib.Path.home()/'.config'/'leela'
+
 import asyncio
 import socket as _socket
+import sys as _sys
 import threading
 import time as _time
 from contextlib import contextmanager
@@ -36,6 +43,45 @@ CREDENTIAL_KEYS = ('HCLOUD_TOKEN CLOUDFLARE_API_TOKEN CF_API_TOKEN CF_TUNNEL_TOK
 def _isolate_credentials(monkeypatch):
     "Run as if none of the machine's real credentials were exported; a test that needs one sets it."
     for key in CREDENTIAL_KEYS: monkeypatch.delenv(key, raising=False)
+
+@pytest.fixture(autouse=True)
+def cfg_home(monkeypatch, tmp_path_factory):
+    """A config dir per test, and never the real one.
+
+    One dir for the whole session was not isolation: a test that wrote `agent-history.jsonl`
+    truncated the log every other test read, which is why one of them could pass alone and fail
+    in the suite. And `leela_cfg` is a module-level name in every module that imported it, so the
+    environment variable alone does not move it -- each binding is repointed here.
+
+    Beside `tmp_path`, never inside it: a test whose project root is `tmp_path` walks it, and a
+    config dir in there is a file that project does not have.
+    """
+    cfg = tmp_path_factory.mktemp('cfg')/'leela'
+    cfg.mkdir(parents=True, exist_ok=True)
+    # `XDG_CONFIG_HOME` stays where the top of this file put it: it is already a temp dir, and
+    # libraries Leela composes read it once at import, so moving it mid-session only makes Leela
+    # and dhrishti disagree about a path neither of them is at risk of writing to.
+    monkeypatch.setenv('LEELA_KEYMAP', str(cfg/'keys.json'))
+    for name, module in list(_sys.modules.items()):
+        if name.split('.')[0] != 'leela': continue
+        if getattr(module, 'leela_cfg', None) is None: continue
+        monkeypatch.setattr(module, 'leela_cfg', _pathlib.Path(cfg), raising=False)
+    import leela
+    assert REAL_CONFIG_HOME not in _pathlib.Path(leela.leela_cfg).parents
+    assert _pathlib.Path(leela.leela_cfg) != REAL_CONFIG_HOME
+    return cfg
+
+@pytest.fixture(autouse=True)
+def _no_backup_threads(monkeypatch):
+    """No test schedules real backups.
+
+    `ide_app` starts a daemon that takes a copy whenever one is due, and nothing stops it. Across a
+    suite that builds the app hundreds of times, those threads outlive the tests that made them and
+    fire into whichever config dir the current test is using, which is how a listing asserted to be
+    empty came back holding somebody else's copy.
+    """
+    from leela.core import backups
+    monkeypatch.setattr(backups, 'schedule_backups', lambda *a, **k: (lambda: None))
 
 @pytest.fixture(autouse=True)
 def _isolate_vault(monkeypatch, tmp_path_factory):

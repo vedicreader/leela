@@ -22,6 +22,9 @@ const lee = {
   breakpoints: new Map(), debugThread: null, debugCell: null, debugState: null, directDebug: false, debugWatches: [],
   shownProblems: new Set(),   // agent failures already written into the pane, so they show once
   agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
+  agentStream: null, agentStreamGen: 0, agentTitle: '', agentThread: '',
+  agentThreadDrafts: new Map(),
+  nbFind: null,                // the notebook find bar's query, its matches and where it is
   // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, which is a
   // path->name map: two selections in one file are two contexts, not one key overwriting itself.
   agentSelections: [],
@@ -31,7 +34,7 @@ const lee = {
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
-  editorPrefs: null, settingsMeta: null, filePrefs: {}, workbenchPrefs: {}, debugPrefs: {},
+  editorPrefs: null, settingsMeta: null, filePrefs: {}, workbenchPrefs: {}, debugPrefs: {}, backupPrefs: {},
   theme: null,               // {family, mode, density}; mode may be 'system', resolved at paint time
   gitDiffTabs: new Map(), activeGitTab: '', gitMergeView: null,
 };
@@ -91,6 +94,7 @@ async function loadSettings(language = '') {
     const d = await api('/settings?language=' + encodeURIComponent(language));
     lee.settingsMeta = d; lee.filePrefs = d.effective.files || {};
     lee.workbenchPrefs = d.effective.workbench || {}; lee.debugPrefs = d.effective.debug || {};
+    lee.backupPrefs = d.effective.backups || {}; lee.agentPrefs = d.effective.agent || {};
     applyEditorPrefs(d.effective.editor || EDITOR_DEFAULTS);
   } catch (_) { applyEditorPrefs(lee.editorPrefs); }
 }
@@ -358,6 +362,17 @@ function enhanceCodeBlocks(el) {
                                            python && el.classList.contains('lee-reply')));
   });
 }
+/* This copies an answer into the open notebook, so it needs one. Offering it while a `.py` tab is
+   focused meant a control that was always there and usually inert, and only said so after a click.
+   It is hidden rather than disabled, and comes back the moment a notebook tab is focused. */
+function markdownCellActionState(button) {
+  const ready = lee.kind === 'notebook';
+  const bar = button.closest('.lee-reply-actions') || button;
+  bar.hidden = !ready;
+  button.disabled = !ready;
+  button.title = 'insert this as a markdown cell in the open notebook';
+}
+function refreshMarkdownCellActions() { $$('.lee-reply-actions button').forEach(markdownCellActionState); }
 function addMarkdownCellAction(el) {
   if (!el.dataset.markdown.trim() ||
       (!el.classList.contains('lee-reply') && !el.classList.contains('lee-md-output'))) return;
@@ -366,6 +381,7 @@ function addMarkdownCellAction(el) {
   button.textContent = el.classList.contains('lee-reply')
     ? 'edit response as markdown cell' : 'edit as markdown cell';
   button.onclick = () => promoteCodeToNotebook(el.dataset.markdown, 'markdown');
+  markdownCellActionState(button);
   bar.appendChild(button); el.appendChild(bar);
 }
 
@@ -446,7 +462,9 @@ async function api(url, opts, retried) {
   if (r.ok) return body;
   /* The kernel ceiling is the one failure a person can answer. Offer the room, then try once more. */
   if (!retried && body && body.kernel_limit && await offerKernelRoom(body)) return api(url, opts, true);
-  throw new Error((body && body.error) || r.statusText);
+  /* Thread-aware routes answer with `code` and `message`; the rest with `error`. Either is the
+     one sentence a person can act on, and `statusText` ("Conflict") never is. */
+  throw new Error((body && (body.error || body.message)) || r.statusText);
 }
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify(data || {})});

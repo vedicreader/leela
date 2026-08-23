@@ -6,9 +6,10 @@ from copy import deepcopy
 from fastcore.all import Path, atomic_save
 
 from ... import leela_cfg
+from ...core.backups import ENTRIES as BACKUP_ENTRIES, PRECIOUS
 
 __all__ = ['DEFAULT_SETTINGS', 'Settings', 'USER_SETTINGS_FILE', 'WORKSPACE_SETTINGS_FILE',
-           'CODE_FOLDER', 'start_folder']
+           'CODE_FOLDER', 'agent_cfg', 'start_folder']
 
 #: Where a folder picker with nothing to go on starts, when it is there. Home is a long list of
 #: things that are not projects, and the first keystroke of every open was `c`, `o`, `d`, `e`.
@@ -47,6 +48,18 @@ DEFAULT_SETTINGS = {
         'showInlineValues': True, 'showBreakpointsInOverview': True,
         'breakOnRaised': False, 'breakOnUncaught': True,
     },
+    'backups': {
+        # `off` still keeps the copy taken before anything overwrites the conversation log: losing
+        # it to one bad write is the failure this exists for, and it does not wait for a schedule.
+        'cadence': 'daily', 'keepNewest': 5, 'ageBands': '2,14,60',
+        'include': list(PRECIOUS),      # what a dated copy holds; the vault is opt-in
+    },
+    'agent': {
+        # Ramabana writes the conversation log, the session sidecar, the branches and the plans
+        # from the same code Leela drives, so one directory can serve both surfaces. Empty means
+        # Leela's own config dir, which is what every install has been using.
+        'configFolder': '',
+    },
     'terminal': {
         'shell': '',
         'shellArgs': [],
@@ -56,6 +69,7 @@ DEFAULT_SETTINGS = {
 }
 
 _ENUMS = {
+    ('backups', 'cadence'): {'off', 'hourly', 'sixhourly', 'daily', 'weekly'},
     ('editor', 'wordWrap'): {'off', 'viewport', 'column'},
     ('editor', 'wrapIndent'): {'none', 'same', 'indent', 'deepIndent'},
     ('editor', 'overviewMode'): {'off', 'long', 'always'},
@@ -123,9 +137,19 @@ def _validated(section, values):
             try: value = float(value) if isinstance(default, float) else int(value)
             except (TypeError, ValueError): raise ValueError(f'{section}.{key} must be a number')
             if not lo <= value <= hi: raise ValueError(f'{section}.{key} must be between {lo} and {hi}')
+        elif isinstance(default, list): value = _names(section, key, value)
         elif isinstance(default, bool): value = bool(value)
         elif isinstance(default, str): value = str(value)
         out[key] = value
+    return out
+
+def _names(section, key, value):
+    "A list setting: strings only, and for `backups.include` only entries that exist."
+    if not isinstance(value, (list, tuple)): raise ValueError(f'{section}.{key} must be a list')
+    out = [str(x) for x in value]
+    if (section, key) == ('backups', 'include'):
+        if unknown := [x for x in out if x not in BACKUP_ENTRIES]:
+            raise ValueError(f'{section}.{key} does not know {unknown[0]!r}')
     return out
 
 def _origin(section, key, user, workspace, language):
@@ -142,7 +166,9 @@ class Settings:
     "Read and write user/workspace settings without allowing arbitrary paths or keys."
     def __init__(self, root=None, user_path=None):
         self.root = Path(root).resolve() if root else None
-        self.user_path = Path(user_path or USER_SETTINGS_FILE)
+        # resolved now, not at import: `leela_cfg` is what a test moves, and settings written to
+        # a path fixed at import are settings written into somebody else's run
+        self.user_path = Path(user_path or Path(leela_cfg)/'settings.json')
     @property
     def workspace_path(self): return self.root/WORKSPACE_SETTINGS_FILE if self.root else None
     def raw(self, scope):
@@ -186,6 +212,19 @@ class Settings:
         else: current = {}
         _write(path, current)
         return self.describe(language)
+
+def agent_cfg(settings=None):
+    """Where the agent's durable conversations live: `agent.configFolder`, else Leela's own config.
+
+    The files are `<history_name>-history.jsonl` and its sidecars, written by Ramabana whichever
+    surface is driving it, so pointing this at Ramabana's config dir makes one history serve both.
+    A folder that cannot be made is reported rather than silently becoming a second empty log.
+    """
+    folder = str(((settings or Settings()).effective().get('agent') or {}).get('configFolder') or '').strip()
+    if not folder: return Path(leela_cfg)
+    out = Path(folder).expanduser()
+    out.mkdir(parents=True, exist_ok=True)
+    return out
 
 def start_folder(root=None, settings=None):
     "Where the folder picker opens: `workbench.projectFolder`, else `~/code`, else home."

@@ -70,14 +70,16 @@ async function editorSettings(languageScope = null) {
         originalTheme = readTheme();
   let saved = false, previewView = null;
   const selected = (value, current) => value === current ? ' selected' : '';
-  const checked = (section, key) => (section === 'editor' ? lee.editorPrefs : section === 'files' ? lee.filePrefs :
-    section === 'workbench' ? lee.workbenchPrefs : lee.debugPrefs)[key] ? ' checked' : '';
+  const prefsOf = section => section === 'editor' ? lee.editorPrefs : section === 'files' ? lee.filePrefs :
+    section === 'workbench' ? lee.workbenchPrefs : section === 'backups' ? (lee.backupPrefs || {}) :
+    section === 'agent' ? (lee.agentPrefs || {}) : lee.debugPrefs;
+  const checked = (section, key) => prefsOf(section)[key] ? ' checked' : '';
   const fontSelect = CODE_FONTS.map(([name, detail]) =>
     `<option value="${esc(name)}"${selected(name, lee.editorPrefs.fontFamily)}>${esc(name)} — ${esc(detail)}</option>`).join('');
   const field = (section, key, label, input, help='') => `<label>${label}${input.replace('data-setting', `data-pref-section="${section}" data-pref="${key}"`)}${help ? `<small>${help}</small>` : ''}</label>`;
   const check = (section, key, label, help='') => `<label class="lee-settings-toggle"><input type="checkbox" data-pref-section="${section}" data-pref="${key}"${checked(section,key)}><span>${label}${help ? `<small>${help}</small>` : ''}</span></label>`;
   const select = (section, key, label, values, help='') => field(section,key,label,
-    `<select class="lee-select" data-setting>${values.map(([value,text]) => `<option value="${value}"${selected(value,(section==='editor'?lee.editorPrefs:section==='files'?lee.filePrefs:section==='workbench'?lee.workbenchPrefs:lee.debugPrefs)[key])}>${text}</option>`).join('')}</select>`,help);
+    `<select class="lee-select" data-setting>${values.map(([value,text]) => `<option value="${value}"${selected(value,prefsOf(section)[key])}>${text}</option>`).join('')}</select>`,help);
   const swatch = (family, mode) => {
     const [bg, bg1, accent] = THEMES[family][themeMode(mode)];
     return `background: linear-gradient(135deg, ${bg} 0 42%, ${bg1} 42% 62%, ${accent} 62%)`;
@@ -96,6 +98,8 @@ async function editorSettings(languageScope = null) {
     `<div class="lee-settings-layout"><nav class="lee-settings-nav" aria-label="Settings sections">` +
     `<button class="active" data-settings-page="editor">Text editor</button><button data-settings-page="appearance">Appearance</button>` +
     `<button data-settings-page="files">Files & save</button><button data-settings-page="debug">Run & debug</button>` +
+    `<button data-settings-page="agent">Agent</button>` +
+    `<button data-settings-page="backups">Backups</button>` +
     `<button data-settings-page="keys">Keybindings</button></nav><div class="lee-settings-content">` +
     `<section data-settings-section="editor"><div class="lee-settings-title"><span>Text editor</span><kbd>${esc(displayChord(lee.keys.find(k=>k.action==='settings')?.key||'mod+,'))}</kbd></div>` +
     `<p>Editing behavior updates live. Portable values are saved as JSON, not trapped in this browser.</p>` +
@@ -139,6 +143,33 @@ async function editorSettings(languageScope = null) {
     `<section data-settings-section="debug" hidden><h3>Run & debug</h3><p>Defaults for notebook DAP and direct debugpy sessions.</p><div class="lee-settings-checks">` +
     `${check('debug','justMyCode','Just my code')}${check('debug','stopOnEntry','Stop on entry')}${check('debug','subProcess','Debug subprocesses')}${check('debug','showInlineValues','Inline paused values')}${check('debug','breakOnRaised','Break on raised exceptions')}${check('debug','breakOnUncaught','Break on uncaught exceptions')}</div>` +
     `<div class="lee-setting-row"><span><strong>debugpy</strong><small>Python files, modules, tests, applications, and attach sessions use the selected project interpreter.</small></span><button class="lee-btn" data-open-runs>Run configurations…</button></div></section>` +
+    `<section data-settings-section="agent" hidden><h3>Agent</h3>` +
+    `<p>Where this agent's durable conversations live. Ramabana writes the log, the session names, ` +
+    `the branches and the plans from the same code Leela drives, so one folder can serve both: ` +
+    `point this at Ramabana's config dir and the conversations you had in the CLI are the ` +
+    `conversations you see here.</p>` +
+    `<div class="lee-settings-grid"><label class="wide">Conversation folder` +
+    `<input class="lee-input" data-pref-section="agent" data-pref="configFolder" spellcheck="false" ` +
+    `placeholder="${esc(lee.settingsMeta?.paths?.user?.replace(/settings\.json$/, '') || '')}" ` +
+    `value="${esc(lee.agentPrefs?.configFolder || '')}">` +
+    `<small>Empty means Leela's own config dir, which is where it has always been. ` +
+    `Backups and the pre-write copy follow this folder. Conversations already open keep the folder ` +
+    `they started in, so restart Leela after changing it.</small></label></div></section>` +
+    `<section data-settings-section="backups" hidden><h3>Backups</h3>` +
+    `<p>Dated copies of what cannot be rebuilt: conversations and their titles, branches, notes, ` +
+    `workspaces, keymaps and settings. A copy is also taken before anything overwrites the ` +
+    `conversation log, whatever the cadence says.</p>` +
+    `<div class="lee-settings-group"><div class="lee-settings-grid">` +
+    select('backups','cadence','Cadence',[['off','Off (pre-write copies only)'],['hourly','Hourly'],['sixhourly','Every six hours'],['daily','Daily'],['weekly','Weekly']],'How often a dated copy is taken while Leela is running.') +
+    field('backups','keepNewest','Keep newest',`<input class="lee-input" data-setting type="number" min="1" max="50" value="${lee.backupPrefs?.keepNewest??5}">`) +
+    `<label class="wide">Age bands (days)<input class="lee-input" data-pref-section="backups" data-pref="ageBands" value="${esc(lee.backupPrefs?.ageBands||'2,14,60')}"><small>One copy is kept inside each band, so a mistake noticed weeks later still has something to go back to.</small></label>` +
+    `</div></div>` +
+    `<div class="lee-settings-group"><h4>What a copy holds</h4>` +
+    `<div class="lee-settings-checks" data-backup-entries>reading…</div>` +
+    `<small>Anything unticked is not copied. Journals alone are tens of megabytes; the vault is a live database outside the config dir.</small></div>` +
+    `<div class="lee-setting-row"><span><strong>Take one now</strong><small data-backup-dir></small></span>` +
+    `<button class="lee-btn" data-backup-now>Back up now</button></div>` +
+    `<div class="lee-settings-group"><h4>Restore</h4><div data-backup-list class="lee-backup-list">reading…</div></div></section>` +
     `<section data-settings-section="keys" hidden><h3>Keybindings</h3><p>Every command can be rebound from the same single-source keymap.</p><button class="lee-btn" data-open-keys>Edit keybindings…</button></section>` +
     `</div></div><div class="lee-mfoot"><button class="lee-btn" data-reset>Reset this section</button><span class="lee-spacer"></span><button class="lee-btn" data-cancel>Cancel</button><button class="lee-btn go" data-save>Save settings</button></div>`,
     null,()=>{if(previewView)LeeCM.destroy(previewView);if(!saved){applyEditorPrefs(original);lee.filePrefs=originalFiles;lee.workbenchPrefs=originalWorkbench;lee.debugPrefs=originalDebug;applyTheme(originalTheme);}},
@@ -146,9 +177,11 @@ async function editorSettings(languageScope = null) {
   api('/lsp/status').then(d=>{const el=$('[data-lsp-state]',m);if(el){el.textContent=d.available?(d.alive?'connected':'available'):'optional';el.title=d.note||'';}}).catch(()=>{});
   await document.fonts.ready;
   previewView=createEditor($('#settingspreview',m),{doc:'# Programming ligatures and line guides\nfrom pathlib import Path\n\ndef compare(left: int, right: int) -> bool:\n    return left != right and left <= 100  # => result\n',lang:'python',lineNums:true});
-  const sections={editor:lee.editorPrefs,files:lee.filePrefs,workbench:lee.workbenchPrefs,debug:lee.debugPrefs};
+  const sections={editor:lee.editorPrefs,files:lee.filePrefs,workbench:lee.workbenchPrefs,debug:lee.debugPrefs,backups:lee.backupPrefs||{},agent:lee.agentPrefs||{}};
   const initialSections=Object.fromEntries(Object.entries(sections).map(([name,values])=>[name,{...values}]));
-  const update=()=>{$$('[data-pref]',m).forEach(input=>{const target=sections[input.dataset.prefSection];target[input.dataset.pref]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;});applyEditorPrefs(sections.editor);LeeCM.configure(previewView,sections.editor);};
+  const update=()=>{$$('[data-pref]',m).forEach(input=>{const target=sections[input.dataset.prefSection];target[input.dataset.pref]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;});
+    const entries=$$('[data-backup-entry]',m); if(entries.length)sections.backups.include=entries.filter(b=>b.checked).map(b=>b.dataset.backupEntry);
+    applyEditorPrefs(sections.editor);LeeCM.configure(previewView,sections.editor);};
   $$('[data-pref]',m).forEach(input=>input.addEventListener('input',update));
   let page='editor';
   $$('[data-settings-page]',m).forEach(button=>button.onclick=()=>{page=button.dataset.settingsPage;$$('[data-settings-page]',m).forEach(x=>x.classList.toggle('active',x===button));$$('[data-settings-section]',m).forEach(x=>x.hidden=x.dataset.settingsSection!==page);});
@@ -167,7 +200,43 @@ async function editorSettings(languageScope = null) {
   $$('[data-theme-density]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,density:b.dataset.themeDensity});paintPicker();});
   $('[data-reset]',m).onclick=async()=>{const section=page==='appearance'?'editor':page; if(!sections[section])return;await post('/settings/reset',{scope:scope.value,section,language:language.value});saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
   $('[data-cancel]',m).onclick=()=>m.remove();
-  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>value!==initialSections[section][key]));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})`,'ok');};
+  const same=(a,b)=>Array.isArray(a)||Array.isArray(b)?JSON.stringify(a)===JSON.stringify(b):a===b;
+  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})`,'ok');};
+  /* Restoring is a write over live state, so the list says what each copy holds and asks first. */
+  const paintBackups=async()=>{
+    const list=$('[data-backup-list]',m); if(!list) return;
+    let d; try{ d=await api('/backups'); }catch(e){ list.textContent=String(e.message||e); return; }
+    $('[data-backup-dir]',m).textContent=d.dir;
+    /* Painted once: a repaint after a run would drop ticks the person has not saved yet. */
+    const chooser=$('[data-backup-entries]',m);
+    if(chooser&&!$('[data-backup-entry]',chooser)){
+      chooser.innerHTML=(d.entries||[]).map(e=>`<label class="lee-settings-toggle">`+
+        `<input type="checkbox" data-backup-entry="${esc(e.name)}"${e.chosen?' checked':''}>`+
+        `<span>${esc(e.label)}<small>${esc(e.name)}</small></span></label>`).join('');
+      chooser.addEventListener('change',update);
+    }
+    if(!d.backups.length){ list.innerHTML='<div class="lee-dim">no copies yet</div>'; return; }
+    list.innerHTML=d.backups.map(b=>`<div class="lee-backup-row"><span><strong>${esc(b.name)}</strong>`+
+      `<small>${b.files} file${b.files===1?'':'s'} · ${Math.max(1,Math.round(b.bytes/1024))} KB`+
+      `${b.archived?'':' · uncompressed'}${b.reason?` · ${esc(b.reason)}`:''}`+
+      `${b.entries&&b.entries.length?`<br>${esc(b.entries.join(', '))}`:''}</small></span>`+
+      `<button class="lee-btn" data-restore="${esc(b.name)}">restore</button></div>`).join('');
+    $$('[data-restore]',list).forEach(button=>button.onclick=async()=>{
+      const name=button.dataset.restore;
+      if(!await confirmDialog('Restore this backup',
+        `Put the copy from ${name} back over the current conversations, notes and settings? `+
+        `A copy of what it replaces is kept first.`,'restore')) return;
+      try{ const out=await post('/backups/restore',{name});
+           status(`restored ${out.restored.length} item(s) from ${name} · ${out.note}`,'ok'); }
+      catch(e){ status(String(e.message||e),'err'); }
+    });
+  };
+  $('[data-backup-now]',m).onclick=async()=>{
+    try{ const out=await post('/backups/run',{reason:'asked for'});
+         status(out.name?`backed up as ${out.name}`:'nothing to back up yet','ok'); await paintBackups(); }
+    catch(e){ status(String(e.message||e),'err'); }
+  };
+  paintBackups();
   $('[data-open-keys]',m).onclick=()=>{saved=true;m.remove();editKeys();};
   $('[data-open-runs]',m).onclick=()=>{saved=true;m.remove();editRuns();};
 }
