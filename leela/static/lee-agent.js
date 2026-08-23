@@ -79,8 +79,8 @@ window.leeLoadModels = loadAgentModels;
 let bkPoll = 0;
 function backendRow(r) {
   const st = r.install || {}, running = st.state === 'running';
-  const note = running ? 'installing…'
-    : st.state === 'error' ? 'failed — see the log below'
+  const note = running ? `installing with ${esc(st.via || 'pip')}…`
+    : st.state === 'error' ? `${esc(st.via || 'the installer')} failed — see below`
     : r.available ? 'ready' : esc(r.why || 'not installed');
   return `<div class="lee-krow" data-bk="${esc(r.value)}">` +
     `<span><strong>${esc(r.label || r.value)}</strong><br><small>${note}</small>` +

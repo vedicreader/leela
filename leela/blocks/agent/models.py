@@ -63,13 +63,21 @@ def install_state(runtime=None):
     with _lock: return dict(_installs.get(runtime) or {}) if runtime else {k: dict(v) for k, v in _installs.items()}
 
 def _installer(target):
-    "pip in this interpreter, else uv driving it: a uv-made venv often carries no pip of its own."
+    """What to install with, which is a different question frozen and not.
+
+    uv resolves better and far faster, and a uv-made venv often has no pip at all, so it wins in a
+    normal environment. It cannot drive a frozen app: `--python` makes uv *run* the interpreter to
+    interrogate it, and a py2app binary answers that by starting Leela, so the install hangs
+    instead of failing. There the shipped pip runs as a module inside the interpreter that already
+    is the app, which needs no introspection.
+    """
     import importlib.util, shutil
     into = ['--target', str(target)] if target else []
+    if not getattr(sys, 'frozen', False) and (uv := shutil.which('uv')):
+        return [uv, 'pip', 'install', '--python', sys.executable, *into]
     if importlib.util.find_spec('pip') is not None:
         return [sys.executable, '-m', 'pip', 'install', '--upgrade', *into]
-    if (uv := shutil.which('uv')): return [uv, 'pip', 'install', '--python', sys.executable, *into]
-    raise RuntimeError('no pip and no uv here, so nothing can be installed for you')
+    raise RuntimeError('neither uv nor pip is here, so nothing can be installed for you')
 
 def _run_install(runtime, cmd):
     "The subprocess, on its own thread. Output is kept whole: a resolver error is the useful part."
@@ -106,7 +114,8 @@ def install_runtime(runtime):
         if target: target.mkdir(parents=True, exist_ok=True)
         cmd = [*_installer(target), *reqs]
         _installs[runtime] = row = {'runtime': runtime, 'state': 'running', 'log': '',
-                                    'cmd': ' '.join(cmd), 'requirements': reqs}
+                                    'cmd': ' '.join(cmd), 'requirements': reqs,
+                                    'via': Path(cmd[0]).name, 'target': str(target or '')}
     threading.Thread(target=_run_install, args=(runtime, cmd), daemon=True,
                      name=f'leela-install-{runtime}').start()
     return dict(row)

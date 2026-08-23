@@ -2336,10 +2336,18 @@ def test_a_runtime_no_package_provides_is_refused_before_any_subprocess(monkeypa
         with pytest.raises(ValueError): m.install_runtime(bad)
     assert ran == [], 'nothing was executed'
 
+def _pretend_pip(monkeypatch, present=True):
+    "This repository's venv is uv-made and has no pip; a bundle ships one. Model the bundle."
+    import importlib.util as iu
+    real = iu.find_spec
+    monkeypatch.setattr(iu, 'find_spec', lambda n, *a, **k: object() if n == 'pip' and present else real(n, *a, **k))
+
 def test_a_frozen_app_installs_beside_itself_and_a_normal_one_into_its_own_env(monkeypatch, tmp_path):
     "Writing into a signed bundle would break its signature, so `extras_site` is the target there."
-    import sys
+    import shutil, sys
     import leela.blocks.agent.models as m
+    _pretend_pip(monkeypatch)
+    monkeypatch.setattr(shutil, 'which', lambda n: None)          # no uv, so pip is the answer
     monkeypatch.setattr(m, 'extras_site', lambda: tmp_path/'extras')
     monkeypatch.setattr(m, '_run_install', lambda runtime, cmd: None)
     monkeypatch.setattr(sys, 'frozen', True, raising=False)
@@ -2350,4 +2358,36 @@ def test_a_frozen_app_installs_beside_itself_and_a_normal_one_into_its_own_env(m
     monkeypatch.delattr(sys, 'frozen', raising=False)
     m._installs.clear()
     assert '--target' not in m.install_runtime('litert')['cmd']
+    m._installs.clear()
+
+def test_uv_installs_a_backend_but_never_for_a_frozen_app(monkeypatch, tmp_path):
+    """uv resolves better, so it wins where it works. Pointed at a py2app binary with `--python` it
+    runs it to interrogate it, the binary starts Leela instead of answering, and the install hangs
+    rather than failing. The bundle ships pip for exactly that reason."""
+    import shutil, sys
+    import leela.blocks.agent.models as m
+    _pretend_pip(monkeypatch)
+    monkeypatch.setattr(shutil, 'which', lambda n: '/fake/uv' if n == 'uv' else None)
+    monkeypatch.setattr(m, 'extras_site', lambda: tmp_path/'extras')
+    monkeypatch.setattr(m, '_run_install', lambda runtime, cmd: None)
+
+    monkeypatch.delattr(sys, 'frozen', raising=False)
+    m._installs.clear()
+    assert m.install_runtime('litert')['via'] == 'uv', 'a normal environment prefers uv'
+
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    m._installs.clear()
+    row = m.install_runtime('litert')
+    assert row['via'] != 'uv', 'uv cannot introspect a frozen interpreter'
+    assert '-m pip install' in row['cmd'] and '--target' in row['cmd']
+    m._installs.clear()
+
+def test_with_neither_uv_nor_pip_the_install_says_so(monkeypatch):
+    "Better than a traceback out of a subprocess that was never going to run."
+    import shutil
+    import leela.blocks.agent.models as m
+    _pretend_pip(monkeypatch, present=False)
+    monkeypatch.setattr(shutil, 'which', lambda n: None)
+    m._installs.clear()
+    with pytest.raises(RuntimeError, match='neither uv nor pip'): m.install_runtime('litert')
     m._installs.clear()
