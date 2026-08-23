@@ -8,7 +8,8 @@ from . import errstr, leela_cfg
 from .core.projects import last_folders, recent_folders, remember, session  # noqa: F401
 
 __all__ = ['BACKENDS', 'backend', 'shell_ready', 'wait_for_http', 'start_cdp', 'warm_cdp',
-           'window_size', 'run_shell', 'keep_running_in_dock', 'watch_open_events', 'ShellApi',
+           'window_size', 'run_shell', 'keep_running_in_dock', 'dock_menu', 'DOCK_RECENT',
+           'watch_open_events', 'ShellApi',
            'session', 'remember', 'last_folders', 'recent_folders']
 
 BACKENDS = {'darwin': 'cocoa', 'win32': 'edgechromium', 'linux': 'gtk'}
@@ -97,27 +98,81 @@ def _unreachable(url):
     return (LOADING.replace('starting the workspace…', f'the workspace at {url} did not answer')
                    .replace('<i>', '<i style="color:#e06c75">'))
 
-def keep_running_in_dock():
-    """Closing the last window hides it instead of quitting, which is how a Mac app behaves.
+DOCK_RECENT = 8          #: rows on the Dock menu, which is a shortcut and not a file browser
 
-    pywebview stops the run loop when its last window closes, so nothing here can outlive that.
-    Both delegates are subclassed rather than patched, because an Objective-C method cannot be
-    reassigned after its class is built. Cmd+Q still quits. False when pywebview has moved on:
-    the old behaviour is worse than this, and neither is worth refusing to start over.
+_dock_target = None
+
+def _recent_target(on_folder):
+    "One for the life of the app: a menu holds no reference to a Python object, so this must."
+    global _dock_target
+    if _dock_target is None: _dock_target = _RecentTarget.alloc().init_with(on_folder)
+    return _dock_target
+
+def dock_menu(on_folder, recent=None):
+    "The Dock's own menu: the folders you last had open, newest first."
+    from AppKit import NSMenu, NSMenuItem
+    rows = (recent if recent is not None else recent_folders())[:DOCK_RECENT]
+    menu = NSMenu.alloc().init()
+    if not rows:
+        menu.addItem_(_disabled('No recent folders'))
+        return menu
+    target = _recent_target(on_folder)
+    for row in rows:
+        item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            row['name'], b'openRecent:', '')
+        item.setToolTip_(row['path'])
+        item.setRepresentedObject_(row['path'])
+        item.setTarget_(target)
+        menu.addItem_(item)
+    return menu
+
+def _disabled(title):
+    from AppKit import NSMenuItem
+    item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, None, '')
+    item.setEnabled_(False)
+    return item
+
+_hidden, _on_folder, _delegates = [], None, None
+
+def _dock_delegates():
+    """The two delegate subclasses, built once.
+
+    An Objective-C class name is global to the runtime, so defining these twice raises "overriding
+    existing Objective-C class" and the second call would silently fall back. They read module
+    state rather than closing over it, which is what lets them be built once.
     """
+    global _delegates
+    if _delegates is not None: return _delegates
+    from Foundation import NO, YES
+    from webview.platforms.cocoa import BrowserView
+    class Windows(BrowserView.WindowDelegate):
+        def windowShouldClose_(self, window):
+            window.orderOut_(None)
+            if window in _hidden: _hidden.remove(window)
+            _hidden.append(window)
+            return NO
+    class App(BrowserView.AppDelegate):
+        def applicationShouldHandleReopen_hasVisibleWindows_(self, app, visible):
+            if not visible and _hidden: _hidden.pop().makeKeyAndOrderFront_(None)
+            return YES
+        def applicationDockMenu_(self, app):
+            try: return dock_menu(_on_folder)
+            except Exception as e: print(f'  dock menu: {errstr(e)}'); return None
+    _delegates = (Windows, App)
+    return _delegates
+
+def keep_running_in_dock(on_folder=None):
+    """Hide the last window instead of quitting, the way a Mac app behaves, and fill the Dock menu.
+
+    Reopening shows the window closed most recently and no others: four windows closed one by one
+    should not all come back at once. Cmd+Q still quits. False when pywebview has moved on, which
+    leaves the old behaviour rather than refusing to start.
+    """
+    global _on_folder
     try:
-        from Foundation import NO, YES
         from webview.platforms.cocoa import BrowserView
-        class Windows(BrowserView.WindowDelegate):
-            def windowShouldClose_(self, window):
-                window.orderOut_(None)
-                return NO
-        class App(BrowserView.AppDelegate):
-            def applicationShouldHandleReopen_hasVisibleWindows_(self, app, visible):
-                if not visible:
-                    for i in BrowserView.instances.values(): i.window.makeKeyAndOrderFront_(None)
-                return YES
-        BrowserView.WindowDelegate, BrowserView.AppDelegate = Windows, App
+        _on_folder = on_folder
+        BrowserView.WindowDelegate, BrowserView.AppDelegate = _dock_delegates()
         return True
     except Exception as e:
         print(f'  the last window will quit Leela: {errstr(e)}')
@@ -135,7 +190,7 @@ def run_shell(urls, titles=(), url_wait=90, gui=None, icon=None, size=None, on_r
     w, h = size or window_size()
     STORAGE.mkdir(parents=True, exist_ok=True)
     api = ShellApi()
-    if sys.platform == 'darwin': keep_running_in_dock()   # before any window takes a delegate
+    if sys.platform == 'darwin': keep_running_in_dock(on_open_folder)   # before any window takes a delegate
     windows = [webview.create_window(t or 'leela', html=LOADING, width=w, height=h,
                                      min_size=MIN_SIZE, background_color='#171b20',
                                      text_select=True, zoomable=True, easy_drag=False,
@@ -181,6 +236,17 @@ def watch_open_events(on_folder):
 try:                                     # pragma: no cover - macOS only
     import objc
     from Foundation import NSObject
+    class _RecentTarget(NSObject):
+        "What a Dock menu row fires at. `objc.super`, as `_OpenHandler` needs for the same reason."
+        def init_with(self, fn):
+            self = objc.super(_RecentTarget, self).init()
+            if self is None: return None
+            self._fn = fn
+            return self
+        def openRecent_(self, sender):
+            path = sender.representedObject()
+            if self._fn and path: self._fn(str(path))
+
     class _OpenHandler(NSObject):
         "An Apple Event handler must be a selector on an Objective-C object."
         def init_with(self, fn):
@@ -192,4 +258,4 @@ try:                                     # pragma: no cover - macOS only
             return self
         def handleEvent_reply_(self, event, reply): self._fn(event, reply)
 except Exception:                        # pragma: no cover - everywhere else
-    _OpenHandler = None
+    _OpenHandler = _RecentTarget = None

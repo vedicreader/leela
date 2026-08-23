@@ -22,6 +22,7 @@ const ACTIONS = {
   sync_index: () => syncCodeIndex(),
   nbdev_prepare: () => leeNbdevPrepare(),
   fastship:     () => leeFastship(),
+  setup_models: () => leeSetupModal(),
   run_app:      () => runApp(),
   palette:      () => palette(),
   recent_tabs:  () => recentTabs(),

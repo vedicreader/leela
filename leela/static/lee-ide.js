@@ -3490,6 +3490,7 @@ function leeToolsMenu(anchor) {
     {label: 'Working directory…', run: leeCwd},
     {label: 'nbdev prepare…', detail: 'uv + settings.ini', run: leeNbdevPrepare},
     {label: 'fastship…', detail: 'releases for a package that is not nbdev', run: leeFastship},
+    {label: 'Models and updates…', detail: 'set one up, or pull a newer backend', run: () => leeSetupModal()},
     {separator: true},
     {label: 'Settings…', detail: displayChord(lee.keys.find(k => k.action === 'settings')?.key || 'mod+,'), run: editorSettings},
     {label: 'Workspace history…', detail: 'conflict-safe undo', run: operationHistory},

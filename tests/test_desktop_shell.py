@@ -169,6 +169,7 @@ def test_closing_the_last_window_hides_it_rather_than_quitting():
         assert issubclass(BrowserView.AppDelegate, was[1]) and BrowserView.AppDelegate is not was[1]
         # A Dock click with nothing visible is the only way back to a hidden window.
         assert hasattr(BrowserView.AppDelegate, 'applicationShouldHandleReopen_hasVisibleWindows_')
+        assert hasattr(BrowserView.AppDelegate, 'applicationDockMenu_')
     finally: BrowserView.WindowDelegate, BrowserView.AppDelegate = was
 
 def test_a_pywebview_that_moved_on_leaves_the_old_behaviour(monkeypatch, capsys):
@@ -182,3 +183,61 @@ def test_a_pywebview_that_moved_on_leaves_the_old_behaviour(monkeypatch, capsys)
     monkeypatch.setattr(builtins, '__import__', blocked)
     assert keep_running_in_dock() is False
     assert 'quit Leela' in capsys.readouterr().out
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='the Cocoa shell is macOS only')
+def test_reopening_brings_back_one_window_and_not_every_one_you_closed():
+    """Four windows closed one at a time should not all come back at once: the one closed most
+    recently is what a Dock click is asking for."""
+    pytest.importorskip('webview.platforms.cocoa')
+    from webview.platforms.cocoa import BrowserView
+    from leela.desktop import keep_running_in_dock
+    was = BrowserView.WindowDelegate, BrowserView.AppDelegate
+    class FakeWindow:
+        def __init__(self, n): self.n, self.hidden, self.fronted = n, False, 0
+        def orderOut_(self, _): self.hidden = True
+        def makeKeyAndOrderFront_(self, _): self.fronted += 1; self.hidden = False
+    try:
+        assert keep_running_in_dock() is True
+        wd = BrowserView.WindowDelegate.alloc().init()
+        ad = BrowserView.AppDelegate.alloc().init()
+        import leela.desktop as dk
+        dk._hidden.clear()
+        ws = [FakeWindow(i) for i in range(4)]
+        for w in ws: assert wd.windowShouldClose_(w) == 0, 'closing must be refused'
+        assert all(w.hidden for w in ws), 'every window is hidden, not closed'
+        ad.applicationShouldHandleReopen_hasVisibleWindows_(None, False)
+        assert [w.fronted for w in ws] == [0, 0, 0, 1], 'only the last one closed comes back'
+        ad.applicationShouldHandleReopen_hasVisibleWindows_(None, False)
+        assert [w.fronted for w in ws] == [0, 0, 1, 1], 'then the one before it'
+        # With something already on screen a Dock click must not conjure another window.
+        ad.applicationShouldHandleReopen_hasVisibleWindows_(None, True)
+        assert [w.fronted for w in ws] == [0, 0, 1, 1]
+    finally: BrowserView.WindowDelegate, BrowserView.AppDelegate = was
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='NSMenu is macOS only')
+def test_the_dock_menu_offers_recent_folders_and_opens_one():
+    "A Dock menu is a shortcut, so it is capped, and an empty one says so rather than being blank."
+    pytest.importorskip('AppKit')
+    from leela.desktop import DOCK_RECENT, dock_menu
+    opened = []
+    rows = [{'name': f'p{i}', 'path': f'/tmp/p{i}'} for i in range(DOCK_RECENT + 5)]
+    menu = dock_menu(opened.append, recent=rows)
+    assert menu.numberOfItems() == DOCK_RECENT, 'the Dock menu is not a file browser'
+    first = menu.itemAtIndex_(0)
+    assert first.title() == 'p0' and first.toolTip() == '/tmp/p0'
+    first.target().openRecent_(first)
+    assert opened == ['/tmp/p0'], 'a row opens the folder it names'
+    empty = dock_menu(None, recent=[])
+    assert empty.numberOfItems() == 1 and not empty.itemAtIndex_(0).isEnabled()
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='the Cocoa shell is macOS only')
+def test_installing_the_dock_behaviour_twice_is_not_an_error():
+    "An Objective-C class name is global, so building the delegates twice would raise."
+    pytest.importorskip('webview.platforms.cocoa')
+    from webview.platforms.cocoa import BrowserView
+    from leela.desktop import keep_running_in_dock
+    was = BrowserView.WindowDelegate, BrowserView.AppDelegate
+    try: assert [keep_running_in_dock() for _ in range(3)] == [True, True, True]
+    finally: BrowserView.WindowDelegate, BrowserView.AppDelegate = was
