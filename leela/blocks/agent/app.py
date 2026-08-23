@@ -14,7 +14,7 @@ from ...agent.runtime import estimate_tokens
 from ...core.web import diff_payload, fail, off_loop, sse
 from ...workspace import STEP_RANGE, TOOL_RANGE
 from .threads import TurnError
-from .turns import (edit_diffs, history_sessions, project_state_context, tool_preview,
+from .turns import (edit_diffs, history_sessions, project_state_context, surfaces, tool_preview,
                     tool_schemas)
 
 __all__ = ['CAPS', 'connect']
@@ -54,14 +54,15 @@ def connect(app, ctx):
         return fail(e, 400 if isinstance(e, (KeyError, ValueError)) else 500)
     def _grouped_history(ai, execution):
         "Sessions with their turns, computed once per state of the log."
-        key = (ws.history_stamp(ai), repr(sorted(r.get('id', '') for r in execution)))
+        here = surfaces(getattr(ai, 'cfg', None))
+        key = (ws.history_stamp(ai), repr(sorted(r.get('id', '') for r in execution)), len(here))
         if _history_cache.get('key') != key:
             turns = ws.with_timelines([r for r in ai.history if r.get('model') != 'scripted'])
             # the sidecar is where a conversation's name lives, and grouping cannot see it
             named = {row['id']: row for row in ai.sessions()}
             _history_cache.update(key=key, groups=[
                 {**g, **{k: v for k, v in (named.get(g['id']) or {}).items() if k in ('title', 'muted')}}
-                for g in history_sessions(turns, execution)])
+                for g in history_sessions(turns, execution, here)])
         return _history_cache['groups']
     def _settled_thread(target=''):
         """The conversation a branch operation may act on. Reshaping context under a live run or an

@@ -626,14 +626,18 @@ const sessionTurns = async id => {
   try { return (await api('/agent/history/session?id=' + encodeURIComponent(id))).turns || []; }
   catch (e) { status(String(e.message || e), 'err'); return []; }
 };
-const sessionCount = s => Number(s?.count ?? (s?.turns || []).length);
+/* Leela and the ramabana CLI append to one log, and only Leela marks the sessions it started, so
+   anything unmarked reads as the CLI's -- including Leela's own history from before the mark. */
+const leelaOnly = () => localStorage.getItem('leeHistoryLeelaOnly') === '1';
+const shownSessions = groups => leelaOnly() ? groups.filter(s => s.app === 'leela') : groups;
 async function showHistorySession(group, groups) {
   const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
   const index = document.createElement('nav'); index.className = 'lee-history-index';
   /* A conversation is known by what it was about, so its name is the whole option: the models and
      the turn count crowded out the one part a person reads. The time still identifies one that has
      no name yet, which is every conversation before its first turn finished. */
-  const options = (groups || []).map(s =>
+  const all = groups || [], shown = shownSessions(all), hidden = all.length - shown.length;
+  const options = shown.map(s =>
     `<option value="${esc(s.id)}"${s.id === group?.id ? ' selected' : ''}>` +
     `${esc(titleText(s.title) || sessionTime(s))}</option>`).join('');
   const turns = group ? await sessionTurns(group.id) : [];
@@ -641,10 +645,18 @@ async function showHistorySession(group, groups) {
   index.innerHTML = `<div class="lee-history-heading"><strong>History</strong>` +
     `<span>one continuous model context per session</span></div>` +
     `<select class="lee-select lee-history-select" aria-label="agent history session">${options}</select>` +
+    `<label class="lee-history-filter" title="Hide conversations this Leela did not start. History from before this filter existed is unmarked and hides with them.">` +
+    `<input type="checkbox" class="lee-history-leelaonly"${leelaOnly() ? ' checked' : ''}> Leela only` +
+    `${hidden ? ` <span class="lee-dim">(${hidden} hidden)</span>` : ''}</label>` +
     `<span class="lee-history-runs">${group?.code || 0} kernel run${group?.code === 1 ? '' : 's'}</span>` +
     (resumable ? `<button class="lee-btn go lee-history-resume" title="Continue this conversation">Resume</button>` : '');
   index.querySelector('select')?.addEventListener('change', e =>
-    showHistorySession(groups.find(s => s.id === e.target.value), groups));
+    showHistorySession(all.find(s => s.id === e.target.value), all));
+  index.querySelector('.lee-history-leelaonly')?.addEventListener('change', e => {
+    localStorage.setItem('leeHistoryLeelaOnly', e.target.checked ? '1' : '0');
+    const left = shownSessions(all);
+    showHistorySession(left.find(s => s.id === group?.id) || left[0], all);
+  });
   index.querySelector('.lee-history-resume')?.addEventListener('click', () => leeAgentResume(group));
   log.appendChild(index);
   if (!group) { log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>'); return; }
@@ -677,41 +689,22 @@ async function paintAgentThread(id) {
   lee.agentLive = log.innerHTML; log.scrollTop = log.scrollHeight;
   return d;
 }
-/* On a fresh process the active conversation is empty while turns from before the restart are
-   still on disk. Those are shown marked as out of context, with their own Resume: painting them
-   as this conversation would claim a context the model does not have. */
-async function carryAgentPrevious(log) {
-  const d = await api('/agent/history'), groups = d.sessions || [];
-  const group = groups.find(s => sessionCount(s));
-  if (!group) return;
-  const turns = await sessionTurns(group.id);
-  if (!turns.length) return;
-  const held = document.createElement('div');
-  renderTurns(held, turns, `previous conversation · ${sessionTime(group)}`);
-  held.insertAdjacentHTML('beforeend',
-    `<div class="lee-history-carry"><span>Not in the model's context yet.</span>` +
-    `<button class="lee-btn go" onclick="leeAgentResumeId('${esc(group.id)}')">Resume</button></div>`);
-  $('.lee-agent-welcome', log)?.remove();
-  log.prepend(...held.children);
-  lee.agentLive = log.innerHTML;
-  log.scrollTop = log.scrollHeight;
-}
+/* A fresh process starts on an empty conversation and stays there. Carrying the last one in was
+   the pane opening on work a person had moved on from, and its turns were not in the model's
+   context either way. History is where a past conversation is picked up from. */
 async function rehydrateAgentLive() {
   const log = $('#agentlog');
   if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentHydrating) return;
   lee.agentHydrating = true;
-  try {
-    const d = await paintAgentThread(lee.agentThread || '');
-    if (!d || (d.turns || []).length) return;
-    await carryAgentPrevious(log);
-  } catch (e) { /* an empty pane beats a boot that dies on a cold agent */ }
+  try { await paintAgentThread(lee.agentThread || ''); }
+  catch (e) { /* an empty pane beats a boot that dies on a cold agent */ }
   finally { lee.agentHydrating = false; }
 }
 async function leeAgentHistory() {
   if (lee.agentView === 'history') return restoreAgentLive();
   rememberAgentLive(); lee.agentView = 'history'; $('#agenthistory')?.classList.add('active');
-  const d = await api('/agent/history');
-  await showHistorySession((d.sessions || [])[0], d.sessions || []);
+  const d = await api('/agent/history'), all = d.sessions || [];
+  await showHistorySession(shownSessions(all)[0], all);
 }
 async function leeAgentResume(group) {
   if (!group) return;
@@ -957,14 +950,12 @@ async function leeAgentThreadClose(id = lee.agentThread) {
 }
 // The rehydrated banner survives `restoreAgentLive`, which round-trips the pane through
 // innerHTML: an id in an onclick attribute outlives that, a bound listener does not.
-const leeAgentResumeId = id => leeAgentResume({id});
 window.leeAgentNew = leeAgentNew; window.leeAgentThreadsToggle = leeAgentThreadsToggle;
 window.leeAgentThreadOpen = leeAgentThreadOpen; window.leeAgentReshape = leeAgentReshape; window.leeAgentAttend = leeAgentAttend;
 window.leeAgentThreadMute = leeAgentThreadMute; window.leeAgentThreadSwitch = leeAgentThreadSwitch;
 window.leeAgentThreadRename = leeAgentThreadRename; window.leeAgentThreadClose = leeAgentThreadClose;
 window.refreshAgentThreads = refreshAgentThreads;
 window.leeAgentResume = leeAgentResume;
-window.leeAgentResumeId = leeAgentResumeId;
 window.leeAgentHistory = leeAgentHistory;
 window.rehydrateAgentLive = rehydrateAgentLive; window.paintAgentThread = paintAgentThread;
 

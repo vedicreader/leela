@@ -2,14 +2,46 @@
 
 from __future__ import annotations
 
-import base64, json
+import base64, json, uuid
+from pathlib import Path
 
 from fastcore.basics import first
 
 from ...core.web import diff_payload
 
 __all__ = ['TOOL_GROUPS', 'tool_group', 'tool_schemas', 'tool_preview', 'edit_diffs',
-           'activity_changes', 'history_sessions', 'project_state_context', 'turn_media']
+           'activity_changes', 'history_sessions', 'project_state_context', 'turn_media',
+           'SURFACES_FILE', 'mark_surface', 'surfaces']
+
+SURFACES_FILE = 'agent-surfaces.json'   #: sessions Leela started, beside Ramabana's own metadata
+
+def surfaces(cfg):
+    "Session id -> the Leela surface that started it. Anything absent was not started here."
+    if not cfg: return {}
+    p = Path(cfg)/SURFACES_FILE
+    if not p.exists(): return {}
+    try:
+        rows = json.loads(p.read_text()).get('sessions', {})
+        return rows if isinstance(rows, dict) else {}
+    except Exception: return {}
+
+def mark_surface(cfg, sid, surface='agent', keep=4000):
+    "Record that Leela started `sid`. The CLI writes the same log and leaves no such mark."
+    if not cfg or not sid: return {}
+    rows = surfaces(cfg)
+    if rows.get(sid) == surface: return rows
+    rows[sid] = surface
+    if len(rows) > keep: rows = dict(list(rows.items())[-keep:])
+    p = Path(cfg)/SURFACES_FILE
+    tmp = p.with_name(f'.{p.name}.{uuid.uuid4().hex}.tmp')
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps({'version': 1, 'sessions': rows}, ensure_ascii=False))
+        tmp.replace(p)
+    except Exception: pass
+    finally:
+        if tmp.exists(): tmp.unlink()
+    return rows
 
 def project_state_context(ws, max_files=120, max_chars=12_000):
     "Bounded, current-disk evidence used when a person asks the charter to follow the code."
@@ -112,8 +144,14 @@ def activity_changes(a, versions):
             changed.append(row)
     return changed
 
-def history_sessions(turns, execution=()):
-    "Turns grouped by durable model-context id; old untagged history splits after 30m."
+def history_sessions(turns, execution=(), started_here=None):
+    """Turns grouped by durable model-context id; old untagged history splits after 30m.
+
+    `app` is `leela` for a session `started_here` records, `ramabana` for the rest. Leela and the
+    CLI append to one log, and only Leela leaves the mark, so history written before that mark
+    existed reads as the CLI's.
+    """
+    here = started_here or {}
     groups, by_id, legacy_n, legacy_last = [], {}, 0, None
     for turn in turns or ():
         sid, at = turn.get('session') or '', float(turn.get('at') or 0)
@@ -122,7 +160,8 @@ def history_sessions(turns, execution=()):
             sid, legacy_last = f'legacy-{legacy_n}', at
         if sid not in by_id:
             by_id[sid] = {'id': sid, 'started': at, 'ended': at, 'turns': [], 'models': [],
-                          'context_continues': True, 'code': 0}
+                          'context_continues': True, 'code': 0,
+                          'app': 'leela' if sid in here else 'ramabana'}
             groups.append(by_id[sid])
         g = by_id[sid]; g['turns'].append(turn); g['ended'] = max(g['ended'], at)
         if (model := turn.get('model')) and model not in g['models']: g['models'].append(model)
@@ -130,7 +169,8 @@ def history_sessions(turns, execution=()):
         sid = row['id']
         if sid in by_id: by_id[sid]['code'] = row.get('code', 0)
         else: groups.append({'id': sid, 'started': 0, 'ended': 0, 'turns': [], 'models': [],
-                             'context_continues': True, 'code': row.get('code', 0)})
+                             'context_continues': True, 'code': row.get('code', 0),
+                             'app': 'leela' if sid in here else 'ramabana'})
     return list(reversed(groups))
 
 def turn_media(ai):

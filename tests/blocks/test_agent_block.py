@@ -67,3 +67,25 @@ def test_an_unknown_conversation_is_refused_with_a_code_and_a_sentence(tmp_path)
             assert r.status_code == 409, (path, r.status_code, body)
             assert body.get('code') == 'thread_not_found', (path, body)
             assert body.get('message') and 'error' not in body, (path, body)
+
+
+def test_history_says_which_app_started_each_conversation(tmp_path):
+    """Leela and the ramabana CLI append to one log. The filter that hides the CLI's conversations
+    needs to tell them apart, and only Leela marks the sessions it started, so anything unmarked
+    is the CLI's.
+    """
+    from leela.blocks.agent.turns import history_sessions, mark_surface, surfaces
+    assert surfaces(tmp_path) == {} and surfaces(None) == {}
+    assert mark_surface(tmp_path, '') == {} and mark_surface(None, 's1') == {}
+    mark_surface(tmp_path, 'mine', 'agent')
+    mark_surface(tmp_path, 'mine', 'agent')            # marking twice writes one row
+    assert surfaces(tmp_path) == {'mine': 'agent'}
+
+    turns = [{'session': 'mine', 'at': 1}, {'session': 'theirs', 'at': 2}]
+    got = {g['id']: g['app'] for g in history_sessions(turns, (), surfaces(tmp_path))}
+    assert got == {'mine': 'leela', 'theirs': 'ramabana'}
+    # a kernel-run row with no turns is grouped too, and answers the same question
+    only = history_sessions([], [{'id': 'theirs', 'code': 2}], surfaces(tmp_path))
+    assert only[0]['app'] == 'ramabana'
+    # unmarked history from before this existed reads as the CLI's rather than crashing
+    assert all(g['app'] == 'ramabana' for g in history_sessions(turns))

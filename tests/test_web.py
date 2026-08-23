@@ -1319,3 +1319,19 @@ def test_saving_makes_the_cached_copy_current_again(tmp_path):
         assert r['ok']
         again = client.get('/tab/state', params={'path': tab.path}).json()
         assert again['cells'][0]['source'] == 'X = 2' and not again['stale']
+
+
+def test_the_history_list_and_the_model_picker_carry_what_the_pane_filters_on(tmp_path):
+    """`/agent/history` says which app started each conversation, so the pane can hide the CLI's.
+    `/agent/models` ships the job help, so the `?` beside a model control reads the same sentence
+    the server-rendered ones do.
+    """
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/agent/history').json()
+        assert all('app' in s for s in d['sessions'])
+        m = client.get('/agent/models').json()
+        assert m['job_help']['oneshot'] and set(m['jobs']) <= set(m['job_help'])
+        # the live conversation is Leela's, and says so once it has been grouped
+        from leela.blocks.agent.turns import surfaces
+        assert ws.ai.session_id in surfaces(ws.ai.cfg)

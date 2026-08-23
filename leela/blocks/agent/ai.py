@@ -733,6 +733,7 @@ class Assistant(Agent):
         self.video_jobs = VideoJobs() if video_available() else None
         self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
         super().__init__(host, model=model, sp=sp, **kwargs)
+        self.mark_surface()
         host.model_local = self.model_local     # a local-only api is gated on the turn model
         self.lend_model()   # so the vault's `ask` uses this session's engine, not a second one
         def user_steering(instruction: str) -> str:
@@ -740,6 +741,10 @@ class Assistant(Agent):
             return f'User steering after skipping the proposed call: {instruction}'
         self._steering_tool = user_steering
         self.turn_transactions = {}
+    def mark_surface(self):
+        "Claim the live session for Leela. The CLI shares this log and leaves no such mark."
+        from .turns import mark_surface
+        mark_surface(getattr(self, 'cfg', None), getattr(self, 'session_id', ''), self.surface)
     def _steered(self, prompt):
         """Fold in a steer that no tool result consumed.
 
