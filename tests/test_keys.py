@@ -158,3 +158,27 @@ def test_cell_menu_exposes_cross_notebook_clipboard_without_stealing_text_shortc
     assert "['cell_copy', 'cell_cut'].includes(k.action)" in js
     assert "lee.kind !== 'notebook'" in js
     assert 'selection?.from !== selection?.to' in js
+
+
+def test_cmd_z_is_notebook_undo_and_the_old_chord_migrates():
+    """Deleting a cell was not undoable by the key everyone presses: `mod+alt+z` was the only way
+    and nobody found it. Anyone still holding the old default moves to the new one."""
+    from leela.core import keys as K
+    by = {k.action: k for k in K.KEYS}
+    assert by['notebook_undo'].key == 'mod+z' and by['notebook_redo'].key == 'mod+shift+z'
+    assert K._SNAPSHOT_MIGRATIONS['notebook_undo'] == ('mod+alt+z', 'mod+z')
+    kept = K._migrated({'notebook_undo': 'mod+alt+z', 'notebook_redo': 'hyper+u'},
+                       K._SNAPSHOT_MIGRATIONS)
+    assert kept['notebook_undo'] == 'mod+z', 'the old default moves'
+    assert kept['notebook_redo'] == 'hyper+u', 'a chord somebody chose is left alone'
+
+def test_the_text_editor_keeps_the_chords_it_owns():
+    """`mod+z` inside a cell is CodeMirror's history, which the router cannot reach, so the router
+    has to decline rather than swallow the key."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'keys'/'keymap.js').read_text()
+    assert 'DEFER_IN_TEXT' in src
+    assert "'notebook_undo', 'notebook_redo'" in src
+    # It must decline before preventDefault, or CodeMirror never sees the key.
+    body = src[src.index('window.addEventListener(\'keydown\''):]
+    assert body.index('DEFER_IN_TEXT.has') < body.index('preventDefault')

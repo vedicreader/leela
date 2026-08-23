@@ -65,10 +65,12 @@ const ACTIONS = {
   cell_below:   async () => { const at = lee.sel + 1; await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted below', 'ok'); },
   cell_delete:  async () => { const at = lee.sel; await nbEdit({op: 'delete', i: at}); focusCell(Math.min(at, lee.cells.length - 1)); status('cell deleted', 'ok'); },
   notebook_undo: async () => {
+    if (lee.kind === 'text') return status('nothing to undo outside a notebook');
     const r = await nbEdit({op: 'undo', i: lee.sel});
     focusCell(r.index ?? lee.sel); status('cell operation undone', 'ok');
   },
   notebook_redo: async () => {
+    if (lee.kind === 'text') return status('nothing to redo outside a notebook');
     const r = await nbEdit({op: 'redo', i: lee.sel});
     focusCell(r.index ?? lee.sel); status('cell operation redone', 'ok');
   },

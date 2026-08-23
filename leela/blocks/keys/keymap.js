@@ -115,6 +115,16 @@ function findBinding(e, scope) {
   return null;
 }
 
+//: Chords the text editor owns while the caret is in a document. `mod+z` is notebook undo in the
+//: notebook -- deleting a cell was not undoable by it -- but inside a cell CodeMirror's own history
+//: is what the same key means, and it is not reachable from here.
+const DEFER_IN_TEXT = new Set(['notebook_undo', 'notebook_redo']);
+
+function inTextEditor(e) {
+  const path = e.composedPath ? e.composedPath() : [e.target];
+  return path.some(n => n instanceof Element && n.matches('.cm-content'));
+}
+
 window.addEventListener('keydown', e => {
   const scope = eventContext(e), match = findBinding(e, scope);
   // Kept on `lee` so the key editor and DevTools can tell "Chrome did not deliver it" from "the
@@ -123,6 +133,7 @@ window.addEventListener('keydown', e => {
                       shift: e.shiftKey, meta: e.metaKey, scope,
                       action: match?.binding.action || '', trusted: e.isTrusted};
   if (!match) return;
+  if (DEFER_IN_TEXT.has(match.binding.action) && inTextEditor(e)) return;
   e.preventDefault(); e.stopPropagation();
   leeAct(match.binding.action);
 }, true);

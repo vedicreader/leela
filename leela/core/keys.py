@@ -177,8 +177,8 @@ DEFAULTS = L(
     Key('cell_above',       'mod+alt+up',      'editor', 'insert cell above'),
     Key('cell_below',       'mod+alt+down',    'editor', 'insert cell below'),
     Key('cell_delete',      'mod+alt+backspace', 'editor', 'delete cell'),
-    Key('notebook_undo',    'mod+alt+z',       'editor', 'undo cell operation', 'toast'),
-    Key('notebook_redo',    'mod+alt+shift+z', 'editor', 'redo cell operation'),
+    Key('notebook_undo',    'mod+z',           'editor', 'undo cell operation', 'toast'),
+    Key('notebook_redo',    'mod+shift+z',     'editor', 'redo cell operation'),
     Key('cell_type',        'alt+shift+m',     'editor', 'code / markdown / prompt', 'toast'),
     Key('cell_split',       'alt+shift+-',     'editor', 'split cell'),
     Key('cell_collapse',    'hyper+c',         'editor', 'collapse / expand cell'),
@@ -352,6 +352,7 @@ _SNAPSHOT_MIGRATIONS = {
     'edit_keys': ('', 'hyper+k'),
     'rename_symbol': ('', 'mod+alt+r'), 'replace_workspace': ('', 'mod+shift+h'),
     'workspace_undo': ('', 'hyper+,'), 'workspace_redo': ('', 'hyper+.'),
+    'notebook_undo': ('mod+alt+z', 'mod+z'), 'notebook_redo': ('mod+alt+shift+z', 'mod+shift+z'),
 }
 
 def _migrated(d, table):
