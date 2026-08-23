@@ -392,3 +392,14 @@ def test_a_windowed_launch_is_given_a_utf8_locale(mac):
     installed. The plist sets it before the interpreter starts; `leela.use_utf8` cannot."""
     env = mac.PLIST['LSEnvironment']
     assert env['LANG'].lower().endswith('utf-8') and env['PYTHONUTF8'] == '1'
+
+
+def test_no_junk_directory_rides_along_inside_the_package():
+    """`leela` is copied whole, and py2app copies a directory, not a git tree. A `uv` run from
+    inside `leela/` left a 56MB `.venv` there and it went straight into the bundle, invisible to
+    `git status` because it is ignored."""
+    pkg = ROOT/'leela'
+    junk = [p.name for p in pkg.iterdir()
+            if p.is_dir() and (p.name in ('.venv', 'venv', 'node_modules', '.tox', 'dist', 'build')
+                               or (p/'pyvenv.cfg').is_file())]
+    assert junk == [], f'{junk} would be copied into the app; delete it'
