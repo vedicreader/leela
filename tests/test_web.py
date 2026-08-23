@@ -966,6 +966,26 @@ def test_the_journal_follows_the_folders_that_are_open(tmp_path):
     assert ws._journal_key == with_a, 'closing it goes back to the one it had'
     assert ws.journal.history is ws.history and ws.history.pinned == ws.journal.blobs
 
+def test_a_save_conflict_says_who_wrote_the_version_on_disk(tmp_path):
+    """`load disk version` read the same whether another process had written the file or Leela had
+    written it and the browser draft was holding a base from before that save. They need different
+    answers, and the dialog could not tell them apart."""
+    f = tmp_path/'notes.py'; f.write_text('one\n')
+    ws = Workspace(roots=[tmp_path]); ws.open(f)
+    with TestClient(ide_app(ws)) as client:
+        client.get(f'/tab/state?path={f}')                       # the version Leela read it at
+        stale = '0:0'
+        f.write_text('written by something else\n')
+        outside = client.post('/nb/save', json={'text': 'mine\n', 'base_disk_version': stale}).json()
+        assert 'another process wrote it' in outside['error'], outside
+        assert f'Draft base {stale}' in outside['error'], 'and what it compared'
+        saved = client.post('/nb/save', json={'text': 'two\n'}).json()
+        assert saved['ok'], saved
+        again = client.post('/nb/save', json={'text': 'three\n',
+                                             'base_disk_version': stale}).json()
+        assert 'Leela wrote that version itself' in again['error'], again
+    assert f.read_text() == 'two\n', 'and neither refusal wrote anything'
+
 def test_the_hub_gives_the_lifespan_to_every_workspace_not_just_the_default():
     """Lifespan carries no Host header. Dispatched by host it reached one workspace, so the others
     never heard the shutdown and never stopped their kernels, terminals or dev servers."""

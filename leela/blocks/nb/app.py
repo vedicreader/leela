@@ -345,7 +345,14 @@ def connect(app, ctx):
         current_version = _disk_version(t.path)
         base_version = str(d.get('base_disk_version') or '')
         if base_version and current_version != base_version and not d.get('force'):
-            return fail('the file changed on disk after this browser draft began; review it before overwriting', 409)
+            # Which of the two it is decides everything: another process wrote the file, or Leela
+            # wrote it and the browser's draft is holding a base from before that write. The
+            # dialog could not tell them apart, so a save conflict read the same either way.
+            mine = doc_versions.get(t.path or t.title) == current_version
+            whose = ('Leela wrote that version itself, so this draft began before its own last save'
+                     if mine else 'another process wrote it')
+            return fail('the file changed on disk after this browser draft began; review it before '
+                        f'overwriting. Draft base {base_version}, on disk {current_version}: {whose}.', 409)
         try:
             target = t.path or d.get('path')
             before = Path(target).read_text(encoding='utf-8', errors='replace') if target and Path(target).exists() else None
@@ -359,13 +366,17 @@ def connect(app, ctx):
                     if 0 <= c['i'] < len(nb): nb[c['i']].source = c['source']
                 nb.save(t.path or d.get('path'), sandbox=ctx.fs)
             else:
-                ctx.fs.write(t.path, d.get('text', ''))
+                ctx.fs.write(t.path, text := d.get('text', ''))
                 buffers.pop(t.path or t.title, None)
             t.dirty = False
             buffer_bases.pop(t.path or t.title, None)
             # what is cached now matches the file again, so this is the version it was read at
             doc_versions[t.path or t.title] = _disk_version(t.path)
-            after = Path(target).read_text(encoding='utf-8', errors='replace') if target and Path(target).exists() else None
+            # A text save already knows what it wrote. Reading it back cost a second pass over the
+            # file, which on a large notebook is the difference between a save and a pause.
+            after = (text if t.kind != 'notebook' else
+                     Path(target).read_text(encoding='utf-8', errors='replace')
+                     if target and Path(target).exists() else None)
             operation = ctx.journal.record(f'Save {t.title}', [(target, before, after)], kind='save')
             return {'ok': True, 'path': t.path, 'disk_version': _disk_version(t.path),
                     'operation_id': operation['id'] if operation else ''}
