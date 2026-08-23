@@ -43,19 +43,18 @@ async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
     if ([...select.options].some(o => o.value === wanted)) select.value = wanted;
   }
   MODEL_RUNTIMES = Object.fromEntries((d.models || []).map(m => [m.value, m.runtime || '']));
+  JOB_HELP = d.job_help || JOB_HELP;
   markHarness(selects.agent.value);
   paintJobModels(d);
   const notes = Object.values(d.auth || {}).map(x => x.note).filter(Boolean);
   if (notes.length) selects.agent.title = notes.join(' · ');
 }
 
-// The routed jobs with no control of their own, drawn from what the server reports rather than
-// listed here, so a job ramabana adds arrives with the release that adds it.
-const JOB_TITLES = {subagent: 'delegated searches run on this model',
-                    summary: 'compaction summaries and notebook digests',
-                    classify: 'short classification calls',
-                    oneshot: 'every cheap one-shot job that has no model of its own',
-                    inline: 'the harness inline job, not the prompt-cell assistant'};
+/* What each routed job spends its model on comes from the server, which is the same copy the
+   server-rendered controls use. Two copies of this drifted apart the first time. */
+let JOB_HELP = {};
+const helpMark = job => JOB_HELP[job]
+  ? `<span class="lee-help" tabindex="0" role="note" aria-label="${esc(JOB_HELP[job])}" title="${esc(JOB_HELP[job])}">?</span>` : '';
 function paintJobModels(d) {
   const host = $('#jobmodels'); if (!host) return;
   const jobs = Object.entries(d.jobs || {});
@@ -64,7 +63,7 @@ function paintJobModels(d) {
   const options = (d.models || []).map(m =>
     `<option value="${esc(m.value)}">${esc(m.label)} · ${esc(m.provider)}${esc(modelMark(m))}</option>`).join('');
   host.innerHTML = jobs.map(([job, current]) =>
-    `<label title="${esc(JOB_TITLES[job] || '')}">${esc(job)}<select class="lee-select" data-job="${esc(job)}">` +
+    `<label>${esc(job)}${helpMark(job)}<select class="lee-select" data-job="${esc(job)}">` +
     options + `</select></label>`).join('');
   for (const [job, current] of jobs) {
     const sel = host.querySelector(`[data-job="${job}"]`);

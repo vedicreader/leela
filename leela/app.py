@@ -13,6 +13,12 @@ from .core.inspectors import PROFILES, SORTS
 from . import errstr
 from .blocks.term.app import term_cwd
 from .core.ui import bar as btn_bar
+from .blocks.agent.models import JOB_HELP
+
+def help_mark(job):
+    "The `?` beside a model control, saying what that job spends its model on."
+    return Span('?', cls='lee-help', tabindex='0', role='note',
+                title=JOB_HELP.get(job, ''), aria_label=JOB_HELP.get(job, ''))
 from .core import DebugState, DocStore, RunState, connect_all
 from .blocks.fs.ui import files_panel as _files_panel
 from .blocks.tabs.app import disk_version as _disk_version
@@ -673,7 +679,7 @@ def _agent_panel(ws):
             Div(id='agentsuggest', cls='lee-agent-suggest', role='listbox', hidden=True),
             Div(Div(Select(Option('loading…', value=agent_model), id='agentmodel',
                            cls='lee-select lee-composer-model', onchange='leeAgentModel("agent", this.value)',
-                           aria_label='conversation model', title='model for this conversation'),
+                           aria_label='conversation model', title=JOB_HELP['turn']),
                     Select(Option('autopilot', value='autopilot', selected=control == 'autopilot'),
                            Option('guided', value='guided', selected=control == 'guided'),
                            Option('directed', value='directed', selected=control == 'directed'),
@@ -692,9 +698,11 @@ def _agent_panel(ws):
                     Span(id='agentbudgetstatus', cls='lee-agent-budget-status',
                          title='tool calls used in this turn'), cls='lee-composer-primary'),
                 Details(Summary('settings'),
-                    Div(Label('prompt cells', Select(Option('loading…', value=inline_model), id='inlinemodel',
+                    Div(Label('prompt cells', help_mark('inline'),
+                              Select(Option('loading…', value=inline_model), id='inlinemodel',
                               cls='lee-select', onchange='leeAgentModel("inline", this.value)')),
-                        Label('completion', Select(Option('loading…', value=completion_model), id='completionmodel',
+                        Label('completion', help_mark('completion'),
+                              Select(Option('loading…', value=completion_model), id='completionmodel',
                               cls='lee-select', onchange='leeAgentModel("completion", this.value)')),
                         Div(id='jobmodels'),   # the harness's other jobs, drawn from /agent/models
                         Label(Input(type='checkbox', id='autocompact', checked=ws.compact_auto,

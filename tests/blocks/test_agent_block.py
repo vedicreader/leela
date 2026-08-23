@@ -89,3 +89,19 @@ def test_history_says_which_app_started_each_conversation(tmp_path):
     assert only[0]['app'] == 'ramabana'
     # unmarked history from before this existed reads as the CLI's rather than crashing
     assert all(g['app'] == 'ramabana' for g in history_sessions(turns))
+
+
+def test_every_routed_job_says_where_its_model_is_spent():
+    """The settings pane renders three model controls server-side and the rest from
+    `/agent/models`. One copy of the text, because two drifted apart the first time.
+    """
+    from leela.agent.core import JOBS
+    from leela.blocks.agent.models import JOB_HELP
+    from leela.app import help_mark
+    assert set(JOBS) <= set(JOB_HELP), f'no help for {set(JOBS) - set(JOB_HELP)}'
+    assert 'falls back to oneshot' in JOB_HELP['classify']
+    # nothing calls the oneshot job directly: it is only what the unset cheap jobs fall back to
+    assert 'Nothing calls it directly' in JOB_HELP['oneshot']
+    assert 'follows the turn model' in JOB_HELP['summary']
+    assert JOB_HELP['turn'] in str(help_mark('turn')) and 'lee-help' in str(help_mark('turn'))
+    assert str(help_mark('nosuchjob'))                 # an unknown job renders, saying nothing

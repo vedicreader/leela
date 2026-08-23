@@ -213,7 +213,7 @@ def connect(app, ctx):
     @rt('/agent/models')
     def agent_models(legacy: bool = True):
         from ...agent.core import DFLT_LOCAL, available_models, auth_status, resolve
-        from .models import load_models, mark_models, runtimes
+        from .models import JOB_HELP, load_models, mark_models, runtimes
         notes = {}
         def _try(what, f, dflt=None):
             "`f()`, or `dflt` and a note saying why: no one failure may blank the picker."

@@ -3,7 +3,19 @@ import json, re
 from fastcore.all import Path
 from ... import leela_cfg
 
-__all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks', 'mark_models']
+__all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks',
+           'mark_models', 'JOB_HELP']
+
+#: What each routed job spends its model on. One copy: the settings pane renders three of these
+#: server-side and the rest from `/agent/models`, and two copies drifted apart the first time.
+JOB_HELP = {
+ 'turn': 'Every turn of this conversation and every tool call it makes. The model the agent is.',
+ 'inline': 'The assistant inside a notebook prompt cell. Unset, it falls back to oneshot.',
+ 'completion': 'Inline code completion as you type, and "AI edit" on an editor selection. Unset, it falls back to oneshot.',
+ 'oneshot': 'The fallback for the cheap jobs with no model of their own: classify, completion and inline. Nothing calls it directly, so setting it only moves the jobs you have left unset.',
+ 'classify': 'One-label questions the agent asks itself mid-turn. Unset, it falls back to oneshot.',
+ 'summary': 'Context compaction, conversation titles, agent charter drafts, and "summarise selection". Unset, it follows the turn model, so a long conversation is summarised by the model holding it.',
+ 'subagent': 'Delegated searches and folder-monitor reviews, which run as their own read-only agent. Defaults to gpt-4.1, not to oneshot.'}
 
 API_KEYS = ('base_url', 'api_key_env', 'vendor_name', 'api_name')
 
