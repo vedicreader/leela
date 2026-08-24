@@ -127,7 +127,7 @@ def _lee_bootstrap():
 			del sys.modules[_n]
 	import dhrishti.serving as ls
 	r = ls.serve_in_kernel(name={name!r}, port={port!r}, agent={agent!r}, token={token!r},
-	                       session_dir='leela_sessions', agent_session_dir='leela_agent_sessions')
+	                       session_dir='_leela_sessions', agent_session_dir='_leela_agent_sessions')
 	if {ipymini!r}:
 		try:
 			from IPython import get_ipython

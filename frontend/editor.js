@@ -562,11 +562,16 @@ function overviewPlugin(mode = 'off', threshold = 120) {
         cancelAnimationFrame(this.frame);
         this.frame = requestAnimationFrame(() => this.draw());
       };
+      /* Resize arrives in bursts: a splitter drag changes the pane's width at pointer rate, and
+         each of those would redraw every mounted editor's canvas. One draw once it settles. A
+         scroll still redraws on the next frame, because there the stripe is the thumb. */
+      this.settle = 0;
+      this.later = () => { clearTimeout(this.settle); this.settle = setTimeout(this.queue, 90); };
       addEventListener('scroll', this.queue, true);
       // Moving a panel resizes the pane that scrolls without scrolling it, changing the document,
       // or touching CodeMirror's geometry, so none of the above fires and the stripe kept its old
       // position and height: a leftover scroll bar stranded wherever the pane used to be.
-      this.ro = new ResizeObserver(this.queue);
+      this.ro = new ResizeObserver(() => this.later());
       this.observed = null;
       this.draw();
     }
@@ -652,6 +657,7 @@ function overviewPlugin(mode = 'off', threshold = 120) {
     destroy() {
       removeEventListener('scroll', this.queue, true);
       this.ro?.disconnect();
+      clearTimeout(this.settle);
       cancelAnimationFrame(this.frame);
       this.view.dom.classList.remove('cm-lee-has-overview');
       this.scroller?.classList.remove('has-overview');

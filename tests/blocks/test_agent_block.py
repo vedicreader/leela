@@ -5,10 +5,13 @@ whether the route was reachable and broke the moment the routes moved. Ask the a
 """
 
 from __future__ import annotations
+import time
 from fastcore.basics import first
 from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.workspace import Workspace
+from pathlib import Path
+ROOT = Path(__file__).resolve().parents[2]
 
 EXECUTION = ('/agent/run-policy', '/agent/tool-preview', '/agent/retry-tool', '/agent/rollback-tool',
              '/agent/steer', '/agent/state/save', '/agent/state/load')
@@ -221,3 +224,67 @@ def test_the_tools_row_reports_what_it_would_install_and_what_is_here(monkeypatc
     assert any('basedpyright' in r for r in row['requirements']), 'named, so the install is pinned'
     monkeypatch.setattr('leela.blocks.lsp.lsp.find_server', lambda: (None, None))
     assert first(r for r in models.tool_rows() if r['value'] == 'langserver')['available'] is False
+
+
+def test_listing_conversations_does_not_start_a_kernel(tmp_path):
+    """`api()` reaches for `ws.runtime()`, which starts one, and that is over a second. Listing what
+    has been said must not boot Python to decorate the answer with kernel run counts."""
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        assert client.get('/agent/history').status_code == 200
+        assert not ws.pool.kernels, 'opening history started a kernel'
+    src = (ROOT/'leela/blocks/agent/app.py').read_text()
+    route = src[src.index("@rt('/agent/history')"):src.index("@rt('/agent/history/session')")]
+    assert 'api_peek(' in route and 'await api(' not in route, 'the peek is what it may use'
+
+def test_history_is_leelas_own_until_the_rest_is_asked_for(tmp_path, monkeypatch):
+    """One log holds Leela's conversations and the CLI's, and most of it is the CLI's. Grouping and
+    shipping all of them so the browser could filter them out was the wrong end to do it at."""
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        mine, both = (client.get('/agent/history').json(),
+                      client.get('/agent/history?everything=1').json())
+    assert mine['only_leela'] is True and both['only_leela'] is False
+    assert all(s.get('app') == 'leela' for s in mine['sessions']), 'the default is this Leela\'s own'
+    assert len(both['sessions']) >= len(mine['sessions'])
+    assert mine['hidden'] == len(both['sessions']) - len(mine['sessions'])
+    assert both['hidden'] == 0, 'nothing is hidden when everything was asked for'
+    for s in mine['sessions'] + both['sessions']:
+        assert s['turns'] == [] and 'count' in s, 'the heading and how many turns, never the turns'
+    route = (ROOT/'leela/blocks/agent/app.py').read_text()
+    route = route[route.index("@rt('/agent/history')"):route.index("@rt('/agent/history/session')")]
+    assert "if not everything: groups = [g for g in groups if g.get('app') == 'leela']" in route
+
+def test_a_probe_serves_its_last_answer_and_refreshes_behind_it():
+    """Asking what is installed and who is signed in reaches for every backend and every account:
+    together they were most of a seven-second first paint of the model picker."""
+    from leela.blocks.agent import models
+    calls = []
+    def slow():
+        calls.append(1)
+        return f'answer {len(calls)}'
+    models._PROBED.pop('t', None)
+    assert models.probed('t', slow) == 'answer 1', 'the first caller has nothing to serve but the truth'
+    assert models.probed('t', slow) == 'answer 1' and len(calls) == 1, 'and the next waits for nothing'
+    models._PROBED['t']['at'] = 0            # stale
+    assert models.probed('t', slow) == 'answer 1', 'a stale answer is still served at once'
+    for _ in range(100):
+        if len(calls) > 1: break
+        time.sleep(.02)
+    assert len(calls) == 2, 'while it is refreshed behind'
+    assert models.probed('t', slow) == 'answer 2'
+    models._PROBED.pop('t', None)
+
+def test_which_row_a_chosen_model_is_is_a_lookup_not_a_scan():
+    """`selected` resolved every one of ninety-odd rows to find the one a chosen model matched, and
+    it ran three times a request. The catalog is probed with that index already built."""
+    src = (ROOT/'leela/blocks/agent/app.py').read_text()
+    route = src[src.index("def agent_models("):src.index("@rt('/agent/models/add')")]
+    picked = route[route.index('def selected('):route.index('# The routed jobs')]
+    assert 'by_id.get(' in picked and 'for r in rows' not in picked, 'no scan per selection'
+    assert "probed(f'catalog:{legacy}'" in route, 'and the catalog itself is probed'
+    assert 'if refresh: forget_probes()' in route, 'with a way to ask for a fresh one'
+    from leela.blocks.agent.models import catalog
+    rows, index = catalog(legacy=False)
+    assert rows and len(index) <= len(rows), 'one entry per row that resolves'
+    assert all(isinstance(k, str) and isinstance(v, str) for k, v in index.items())

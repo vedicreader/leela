@@ -328,3 +328,49 @@ def test_the_setup_modal_can_be_started_over():
     reset = panel[panel.index("$('#setupreset', box)"):panel.index("$('#setupdone', box)")]
     assert "'/agent/setup/dismiss', {dismissed: false}" in reset, 'and it clears the dismissal'
     assert 'leeSetupPane()' in reset and 'leeSetupModal()' in reset, 'then shows it again'
+
+
+def test_a_splitter_drag_does_no_work_that_has_to_wait_for_a_disk():
+    """`localStorage` is synchronous and disk-backed, and the drag handler wrote to it on every
+    pointer event. In a WKWebView that is the difference between a smooth drag and a stuttering
+    one; the width a person let go at is the only one worth keeping."""
+    src = (ROOT/'leela/blocks/editor/split.js').read_text()
+    def body(at):
+        "The `move` handler's own braces, so init code that clamps a stored width is not read as one."
+        start = src.index('{', at); depth = 0
+        for i in range(start, len(src)):
+            depth += (src[i] == '{') - (src[i] == '}')
+            if depth == 0: return src[start:i]
+        raise AssertionError('unbalanced move handler')
+    moves = [body(m.end()) for m in re.finditer(r'const move = ', src)]
+    assert len(moves) >= 2, 'both splitters have one'
+    for handler in moves:
+        assert 'setProperty' in handler, 'it still moves the pane'
+        assert 'localStorage' not in handler, f'this runs per pointer event: {handler.strip()[:90]}'
+    assert src.count('localStorage.setItem') >= 2, 'and both still remember where they were left'
+
+
+def test_the_overview_stripe_settles_after_a_resize_rather_than_chasing_it():
+    """A splitter drag resizes every mounted editor at pointer rate, and each redraw resizes and
+    repaints a canvas. Scroll still draws on the next frame, because there the stripe is the thumb."""
+    src = (ROOT/'frontend'/'editor.js').read_text()
+    plugin = src[src.index('function overviewPlugin'):src.index('const stickyPlugin')]
+    assert 'new ResizeObserver(() => this.later())' in plugin, 'resize goes through the debounce'
+    assert "addEventListener('scroll', this.queue, true)" in plugin, 'scroll does not'
+    assert 'clearTimeout(this.settle)' in plugin.split('destroy()')[1], 'and it is released'
+    bundle = (ROOT/'leela'/'vendor'/'lee-cm6.js').read_text()
+    assert 'ResizeObserver' in bundle, 'rebuild with frontend/node_modules/@esbuild/*/bin/esbuild'
+
+
+def test_the_first_history_read_is_paid_for_before_anybody_clicks():
+    """The agent's log is one append-only file that grows without bound. Reading a large one costs
+    seconds, and it is cached after that, so the first click on History paid for every session ever
+    while the second was instant."""
+    boot = (ROOT/'leela/static/js/boot.js').read_text()
+    live = (ROOT/'leela/blocks/agent/live.js').read_text()
+    assert 'warmAgentHistory' in boot and 'requestIdleCallback' in boot, 'at idle, not on the boot path'
+    warm = live[live.index('function warmAgentHistory'):live.index('async function leeAgentHistory')]
+    assert 'historyGroups()' in warm and 'catch' in warm, 'and it never speaks up if it fails'
+    # The same fetch the list itself uses, so the warm answer is the one the click is served.
+    groups = live[live.index('async function historyGroups'):live.index('async function showHistorySession')]
+    assert "'/agent/history'" in groups and 'everything=1' in groups

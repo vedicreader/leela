@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 from pathlib import Path
+ROOT = Path(__file__).resolve().parents[1]
 import pytest
 from starlette.testclient import TestClient
 from leela.app import ide_app
@@ -828,15 +829,15 @@ def test_leela_can_redirect_both_transcript_streams(tmp_path):
     "What the kernel bootstrap and `leela-dev` pass as session_dir/agent_session_dir."
     from dhrishti.runtime import hist_dir, agent_dir
     try:
-        set_logging(dir=tmp_path/'leela_sessions', agent_dir=tmp_path/'leela_agent_sessions')
-        assert hist_dir() == tmp_path/'leela_sessions'
-        assert agent_dir() == tmp_path/'leela_agent_sessions'
+        set_logging(dir=tmp_path/'_leela_sessions', agent_dir=tmp_path/'_leela_agent_sessions')
+        assert hist_dir() == tmp_path/'_leela_sessions'
+        assert agent_dir() == tmp_path/'_leela_agent_sessions'
         s = AgentSession(owner=lambda: {}, log=True)
         s.run('answer = 42')
-        assert s.log_path.parent.name == 'leela_agent_sessions'
+        assert s.log_path.parent.name == '_leela_agent_sessions'
         assert s.log_path.exists()
     finally:
-        set_logging(dir='leela_sessions', agent_dir='leela_agent_sessions')
+        set_logging(dir='_leela_sessions', agent_dir='_leela_agent_sessions')
 
 
 def test_the_runs_file_follows_the_folder_you_chose(tmp_path):
@@ -1145,14 +1146,20 @@ def test_the_kernel_limit_names_the_kernel_it_offers_to_close():
     assert all(k.shutdown_calls == 0 for k in pool.kernels.values()), 'nothing closes without a yes'
 
 def test_runtime_limit_is_structured_for_every_live_runtime_request(tmp_path):
+    """Every request that would start a kernel says so the same way when it cannot.
+
+    `/kernel/info` and `/vars` are not among them any more: they peek, so they cannot reach the
+    limit, and a page load no longer starts anything to be refused.
+    """
     from leela.blocks.runtime.kernels import KernelLimit
     ws = Workspace(roots=[tmp_path])
     e = KernelLimit('kernel limit reached (1)', candidate={'key': 'old', 'name': 'old', 'idle_for': 0}, limit=1)
     async def runtime(): raise e
     ws.runtime = runtime
     with TestClient(ide_app(ws)) as client:
-        requests = [('get', '/kernel/info', {}), ('get', '/vars', {}),
-                    ('post', '/inspect', {'json': {'code': '', 'pos': 0}}),
+        assert client.get('/kernel/info').status_code == 200, 'the pill never asks for one'
+        assert client.get('/vars').status_code == 200
+        requests = [('post', '/inspect', {'json': {'code': '', 'pos': 0}}),
                     ('post', '/vars/eval', {'json': {'code': '1'}})]
         for method, path, kw in requests:
             r = getattr(client, method)(path, **kw)
@@ -1161,12 +1168,12 @@ def test_runtime_limit_is_structured_for_every_live_runtime_request(tmp_path):
 
 
 def test_kernel_info_reports_an_auto_eviction_once(tmp_path):
+    "The pill peeks rather than starting one, so what it reports is the kernel the pool already has."
     from types import SimpleNamespace
     ws = Workspace(roots=[tmp_path])
     k = SimpleNamespace(alive=True, base=None, pid=1, name='new', boot_error=None, last_api_error='',
                         evicted={'key': 'old', 'name': 'old-project'})
-    async def runtime(): return k
-    ws.runtime = runtime
+    ws.kernel_peek = lambda tab=None: k
     with TestClient(ide_app(ws)) as client:
         assert client.get('/kernel/info').json()['evicted']['name'] == 'old-project'
         assert 'evicted' not in client.get('/kernel/info').json()
@@ -1243,3 +1250,29 @@ def test_a_busy_runtime_is_refused_even_when_named(tmp_path):
         # read inside: leaving the client ends the lifespan, which closes every kernel
         assert k.shutdown_calls == 0
     assert out['ok'] is False and 'running' in out['error']
+
+
+def test_nothing_a_page_load_asks_for_starts_a_kernel(tmp_path):
+    """Opening Leela booted Python whether or not anybody ran anything. `/kernel/info` paints the
+    kernel pill and `/vars` polls the variable list every 2.5 seconds, and both asked
+    `session.runtime()`, which starts one: over a second on the load path, and a process nobody
+    asked for. Both already draw the empty case."""
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        info = client.get('/kernel/info').json()
+        assert info['alive'] is False and info['pid'] is None
+        assert info['key'], 'it still says which kernel it would be'
+        variables = client.get('/vars').json()
+        assert variables['groups'] == [] and variables['runtime'].endswith(':live')
+        assert not ws.pool.kernels, 'a page load started a kernel'
+    for name in ('runtime/app.py', 'vars/app.py'):
+        src = (ROOT/'leela'/'blocks'/name).read_text()
+        for route in ("@rt('/kernel/info')", "@rt('/vars')"):
+            if route not in src: continue
+            body = src[src.index(route):src.index('@rt', src.index(route) + 10)]
+            code = '\n'.join(l for l in body.splitlines() if not l.strip().startswith(('#', '"', "'")))
+            assert 'await session.runtime()' not in code, f'{route} must not start one'
+            assert 'kernel_peek()' in code

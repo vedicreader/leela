@@ -260,3 +260,21 @@ The Tools row installs into `extras_site`, because the bundle is signed and read
 
 ## `leela/blocks/agent/panel.js` setup rows
 The rows were `.lee-krow`, the keyboard-help row: a flex line with `nowrap` and an ellipsis on every span, so `ready` rendered as `rea…` and every blurb was cut mid-sentence. `.lee-setup-row` is a grid of a name and a state with the sentence under them. The modal also had no way back once dismissed, and `/agent/setup/dismiss` already took a false, so `start over` puts the first-run prompt back.
+
+## `leela/blocks/agent/app.py` `agent_history`
+Opening the history list took 2.6 seconds. Almost none of it was the history: `api()` reaches for `ws.runtime()`, which **starts a kernel**, and a cold one is 1.2 seconds. Listing what has been said booted Python to decorate the answer with kernel run counts. `api_peek` asks the runtime only where one is already up. The list is also Leela's own conversations now, with `everything=1` for the ones the CLI started: one log holds both, most of it is the CLI's, and grouping all 138 so the browser could filter them to 3 was the wrong end to do it at. The client's "Leela only" box is checked unless it has been turned off, and toggling it re-asks rather than filtering a list the server never sent.
+
+## `leela/blocks/agent/models.py` `probed`
+`/agent/models` cost 6.8 seconds cold and is on the boot path. `available_models` reaches for every backend (3.7s) and `auth_status` asks every account (1.4s), and both answers barely move. They are served from the last probe and refreshed on a thread behind whoever asked; `ide_app` warms them at startup, so the window is still opening while the first one is paid for. The route also resolved every row's spec several times over in one request, once for the dedupe and again for `selected`. With the probes warm it is now about 0.5s.
+
+## `leela/blocks/editor/split.js` `initSplits`
+A splitter drag wrote `localStorage` on every pointer event, twice: the width, and a migration of the previous name for it. It is synchronous and disk-backed, which is the difference between a smooth drag and a stuttering one in a WKWebView. The width a person let go at is the only one worth keeping, so both are written on release. The overview stripe was also redrawing every mounted editor's canvas on every one of those resizes; resize-driven redraws settle at 90ms now, while a scroll still draws on the next frame, because there the stripe is the thumb.
+
+## `leela/blocks/agent/live.js` `rehydrateAgentLive`
+Conversations live in the agent's log, not in the process, so a fresh one holds none and the pane opened blank while the work sat on disk. Opening the app after working in a browser looked like the chats had been lost. An empty pane picks the newest conversation back up. The first read of that log is seconds on a large one and cached after, so it is warmed at idle once the page is interactive rather than on the first click.
+
+## `leela/blocks/runtime/app.py` `k_info`, `leela/blocks/vars/app.py` `vars_route`
+Opening Leela started a Python kernel whether or not anybody ran anything. The kernel pill asked `session.runtime()`, which creates one, and so did the variable list, which polls every 2.5 seconds from load. That was 1.4 seconds on the load path and a process nobody asked for. Both peek now: the pill has always drawn an empty circle for "no kernel" and an empty variable list is what no kernel means. Running a cell is what starts one. Neither can reach the kernel ceiling any more, so neither is in the set of requests that report it.
+
+## `leela/blocks/runtime/app.py` `runtime_info`
+`kernel_support` interrogates the project's interpreter, about half a second, and it ran again on every poll with no caching. It is the machine's answer about one path, so it is probed per interpreter: 433ms cold, 1ms after.

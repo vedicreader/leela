@@ -5088,13 +5088,18 @@ function initSplits() {
     sp.onpointerdown = (e) => {
       e.preventDefault(); sp.classList.add('drag'); sp.setPointerCapture(e.pointerId);
       const side = sp.dataset.split;
+      // `localStorage` is synchronous and disk-backed, and a drag fires this at pointer rate. The
+      // width a person let go at is the only one worth keeping, so it is written once, at the end.
       const move = (ev) => {
         const w = side === 'left' ? ev.clientX : window.innerWidth - ev.clientX;
         const v = Math.max(140, Math.min(window.innerWidth - 300, w));
         document.documentElement.style.setProperty(`--lee-${side}-w`, v + 'px');
-        localStorage.setItem(`lee-${side}-w`, v + 'px');
       };
-      const up = () => { sp.classList.remove('drag'); sp.onpointermove = null; sp.onpointerup = null; };
+      const up = () => {
+        sp.classList.remove('drag'); sp.onpointermove = null; sp.onpointerup = null;
+        const now = getComputedStyle(document.documentElement).getPropertyValue(`--lee-${side}-w`).trim();
+        if (now) localStorage.setItem(`lee-${side}-w`, now);
+      };
       sp.onpointermove = move; sp.onpointerup = up;
     };
   });
@@ -5108,12 +5113,16 @@ function initSplits() {
     const move = (ev) => {
       const v = Math.max(110, Math.min(limit(), bottom - ev.clientY));
       document.documentElement.style.setProperty('--lee-dock-h', v + 'px');
-      localStorage.setItem('lee-dock-h', v + 'px');
-      localStorage.setItem('lee-agent-h', v + 'px'); // migrate the previous bottom-dock preference
       requestAnimationFrame(() => lee.term?.refit());
     };
     dockSplit.onpointermove = move;
-    dockSplit.onpointerup = () => { dockSplit.classList.remove('drag'); dockSplit.onpointermove = null; };
+    dockSplit.onpointerup = () => {
+      dockSplit.classList.remove('drag'); dockSplit.onpointermove = null;
+      const now = getComputedStyle(document.documentElement).getPropertyValue('--lee-dock-h').trim();
+      if (!now) return;
+      localStorage.setItem('lee-dock-h', now);
+      localStorage.setItem('lee-agent-h', now);   // the previous name for this preference
+    };
   };
   ['left-w', 'right-w'].forEach(k => {
     const v = localStorage.getItem('lee-' + k);
@@ -5267,6 +5276,11 @@ async function boot() {
   if ($('#leesetup')) leeSetupPane();
   // The first paint is server-rendered without the preference, so it is only wrong when set.
   paintHiddenBtn(); if (treeHidden()) refreshFileTree(undefined, false).catch(() => {});
+  /* The agent's log is one append-only file and grows without bound; reading it the first time
+     costs seconds on a large one, and it is cached after that. Paying it here, once the page is
+     interactive, means the first click on History does not. */
+  requestIdleCallback ? requestIdleCallback(warmAgentHistory, {timeout: 4000})
+                      : setTimeout(warmAgentHistory, 2000);
   refreshProjectPills();
   setInterval(whenVisible(refreshKernelPill), 5000);
   // The pills change only when a root or the cwd does, and every one of those already calls

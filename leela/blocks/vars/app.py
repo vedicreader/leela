@@ -43,8 +43,13 @@ def connect(app, ctx):
                 'result': r.get('result'), 'scope': scope}
     @rt('/vars')
     async def vars_route(profile: str = 'minimal', sort: str = 'recent', scope: str = 'live'):
-        try: runtime = await session.runtime()
-        except KernelLimit as e: return fail(e)
+        """The live variables, or nothing where no kernel is running.
+
+        This polls every 2.5 seconds from load, and it asked `session.runtime()`, which starts one.
+        A pane that lists what is in memory must not be the thing that creates the memory: with no
+        kernel there are no variables, which is what it already draws.
+        """
+        runtime = session.kernel_peek()
         r = await runtime.api(_api_path('rows', scope), {'profile': profile, 'sort': sort}, 15) if runtime else None
         identity = ((getattr(runtime, 'base', None) or
                      (f'kernel:{session.kernel_key()}' if runtime is not None else 'none')) + f':{scope}')

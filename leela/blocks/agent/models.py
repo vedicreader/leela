@@ -1,11 +1,11 @@
 "Persistent user-added local and hosted model aliases."
-import json, re, subprocess, sys, threading
+import json, re, subprocess, sys, threading, time
 from fastcore.all import Path
 from fastcore.net import urljson
 from ... import extras_site, leela_cfg, use_extras
 
 __all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks',
-           'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements', 'install_runtime',
+           'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements', 'install_runtime', 'probed', 'catalog', 'forget_probes', 'warm_probes',
            'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed', 'SETUP_SIZES',
            'unavailable_detail', 'HARNESS', 'TOOLS', 'tool_rows',
            'updates']
@@ -58,6 +58,64 @@ INSTALLABLE = ('litert', 'mlx', 'llama')
 TOOLS = {'langserver': ('Language server',
                         ['basedpyright>=1.39'], 70,
                         'Red squiggles, hover types, go to definition and rename.')}
+
+#: The last answer from a probe, and the thread refreshing it. Asking what is installed reaches for
+#: every backend, and asking who is signed in asks every account: seconds on a cold machine, and the
+#: model picker is on the boot path.
+_PROBED, PROBE_TTL = {}, 90
+_probe_lock = threading.Lock()
+
+def probed(key, fn, ttl=PROBE_TTL):
+    """`fn()`'s last answer, with a stale one refreshed behind whoever asked.
+
+    The first caller waits, because there is nothing to serve yet. Everyone after that gets the
+    previous answer at once, which is what a picker needs: a model that appeared a minute ago is
+    worth showing a minute late, and a pane that will not open is not worth a fresher list.
+    """
+    with _probe_lock: row = _PROBED.get(key)
+    if row is None:
+        value = fn()
+        with _probe_lock: _PROBED[key] = {'at': time.time(), 'value': value, 'busy': False}
+        return value
+    if time.time() - row['at'] < ttl or row['busy']: return row['value']
+    row['busy'] = True
+    def again():
+        try:
+            value = fn()
+            with _probe_lock: _PROBED[key] = {'at': time.time(), 'value': value, 'busy': False}
+        except Exception:
+            with _probe_lock: row['at'], row['busy'] = time.time(), False
+    threading.Thread(target=again, daemon=True, name=f'leela-probe-{key}').start()
+    return row['value']
+
+def catalog(legacy=True):
+    """Every model this machine offers, and the id each row resolves to.
+
+    Both halves are probed together because the index is what makes a lookup a lookup: `selected`
+    used to scan all ninety-odd rows resolving each one, three times per request, to answer which
+    row a chosen model is.
+    """
+    from ...agent.core import available_models, resolve
+    rows = list(available_models(include_legacy=legacy) or [])
+    index = {}
+    for r in rows:
+        try: spec = resolve(r['value'])
+        except Exception: continue
+        if spec is not None: index.setdefault(spec.model_id, r['value'])
+    return rows, index
+
+def forget_probes():
+    "Drop every cached probe. The cache is process-wide, because what it holds is the machine's."
+    with _probe_lock: _PROBED.clear()
+
+def warm_probes():
+    "Pay for the first probe at startup rather than on the first click."
+    from ...agent.core import auth_status
+    for legacy in (True, False):
+        try: probed(f'catalog:{legacy}', lambda legacy=legacy: catalog(legacy))
+        except Exception: pass
+    try: probed('auth', auth_status)
+    except Exception: pass
 
 def tool_rows():
     "Each optional tool, whether it is here, and what installing it would fetch."
@@ -226,7 +284,9 @@ def setup_plan():
     from ...agent.core import auth_status
     rows = {r['value']: r for r in runtimes()}
     auth = {}
-    try: auth = auth_status()
+    # Asking every account whether it is signed in is over a second cold, and this is the first
+    # thing a packaged app draws.
+    try: auth = probed('auth', auth_status)
     except Exception: pass
     def ready(v):
         # `runtime_available` says the CLI is installed; being signed in is what `auth_status` knows.

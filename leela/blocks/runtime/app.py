@@ -49,11 +49,17 @@ def connect(app, ctx):
                          if enabled else 'leela asks before closing a runtime')}
     @rt('/runtime/info')
     async def runtime_info():
+        """Whether this project has an interpreter Leela can run cells with.
+
+        `kernel_support` interrogates that interpreter, which is most of half a second, and it was
+        run again on every poll. It is the machine's answer about one path, so it is probed.
+        """
+        from ..agent.models import probed
         from .kernels import project_python
         from .support import kernel_support
         root = session.project_root
         py = project_python([root]) if root else None
-        support = await off_loop(kernel_support, py) if py else {}
+        support = await off_loop(lambda: probed(f'support:{py}', lambda: kernel_support(py))) if py else {}
         return {'root': str(root or ''), 'python': py or '', 'needs_create': bool(root and not py),
             'needs_support': bool(py and not support.get('ipykernel', {}).get('available')),
             'support': support, 'active': ctx.pool.default_python or '',
@@ -100,11 +106,16 @@ def connect(app, ctx):
         return {'ok': True, 'base': k.base if k else None}
     @rt('/kernel/info')
     async def k_info():
+        """What the kernel pill shows. Never starts one: it reports that there is none.
+
+        This asked `session.runtime()`, which starts a kernel, so opening Leela booted Python
+        whether or not anybody ran anything, and paid over a second for it on the load path. The
+        pill has always drawn an empty circle for "no kernel"; running a cell is what starts one.
+        """
         from pathlib import Path
-        from .kernels import KernelLimit
-        try: k = await session.runtime()
-        except KernelLimit as e: return fail(e)
-        evicted = getattr(k, 'evicted', None); k.evicted = None
+        k = session.kernel_peek()
+        evicted = getattr(k, 'evicted', None)
+        if k is not None: k.evicted = None
         return {'alive': bool(k and k.alive), 'base': k.base if k else None,
             'pid': k.pid if k else None,
             'key': getattr(k, 'name', '') or Path(session.kernel_key()).name or 'kernel',

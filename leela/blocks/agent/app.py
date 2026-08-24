@@ -28,6 +28,15 @@ def connect(app, ctx):
     async def api(path, params=None, timeout=15):
         client = await ws.runtime()
         return await client.api(path, params, timeout) if client else None
+    async def api_peek(path, params=None, timeout=15):
+        """The runtime's inspector, but only where one is already running.
+
+        `ws.runtime()` starts a kernel, which is over a second, and a read that only decorates its
+        answer must not be what starts one: listing conversations booted Python to ask it nothing
+        the list could not do without.
+        """
+        client = ws.kernel_peek()
+        return await client.api(path, params, timeout) if client else None
 
     def live_assistants():
         "Only the assistants already built -- reaching for `ctx.ai` here would construct one."
@@ -183,8 +192,11 @@ def connect(app, ctx):
         except Exception as e: return _thread_error(e)
         return {'ok': True, 'session': thread.id}
     @rt('/agent/history')
-    async def agent_history(thread: str = ''):
-        """Every durable conversation, newest first, without their turns.
+    async def agent_history(thread: str = '', everything: bool = False):
+        """Leela's durable conversations, newest first, without their turns.
+
+        `everything` adds the ones the CLI started. One log holds both, and most of it is the CLI's,
+        so the list a person opens is Leela's own until they ask for the rest.
 
         The turns are what makes this expensive: shipping all of them was 60MB of JSON and forty
         seconds once Leela and the CLI shared one log. `count` says how many there are, and
@@ -193,12 +205,14 @@ def connect(app, ctx):
         try: t = _thread(thread)
         except Exception as e: return _thread_error(e)
         ai = t.ai
-        execution = await api('/agent/api/sessions') or {'sessions': []}
+        execution = await api_peek('/agent/api/sessions') or {'sessions': []}
         await off_loop(ws.fresh_history, ai)
         groups = _grouped_history(ai, execution.get('sessions', []))
+        theirs = len([g for g in groups if g.get('app') != 'leela'])
+        if not everything: groups = [g for g in groups if g.get('app') == 'leela']
         sessions = [{**g, 'turns': [], 'count': len(g['turns'])} for g in groups]
         return {'sessions': sessions, 'model': ai.model.name, 'current': ai.session_id,
-                'thread': t.id}
+                'thread': t.id, 'only_leela': not everything, 'hidden': 0 if everything else theirs}
     @rt('/agent/history/session')
     async def agent_history_session(id: str = '', thread: str = ''):
         "One stored conversation's turns, fetched when it is opened rather than with the list."
@@ -212,18 +226,35 @@ def connect(app, ctx):
         return {'ok': True, 'id': group['id'], 'count': len(group['turns']),
                 **{**group, 'turns': with_capabilities(t.ai, group['turns'])}}
     @rt('/agent/models')
-    def agent_models(legacy: bool = True):
+    def agent_models(legacy: bool = True, refresh: bool = False):
+        """Every model the picker offers, and which one each routed job is on.
+
+        Probing what is installed costs seconds on a cold machine and the answer barely moves, so
+        the catalog comes from `probed` and `refresh=1` is what asks for a new one. Which model each
+        routed job is on is this workspace's own state and is read fresh every time.
+        """
         from ...agent.core import DFLT_LOCAL, available_models, auth_status, resolve
-        from .models import JOB_HELP, load_models, mark_models, runtimes
+        from .models import JOB_HELP, catalog, forget_probes, load_models, mark_models, probed, runtimes
         notes = {}
         def _try(what, f, dflt=None):
             "`f()`, or `dflt` and a note saying why: no one failure may blank the picker."
             try: return f()
             except Exception as e: notes[what] = errstr(e); return dflt
-        def _spec(name): return _try(name, lambda: resolve(name))
+        # `selected` and the dedupe both resolve every row, so the same name is asked for many
+        # times in one request. Once each.
+        _specs = {}
+        def _spec(name):
+            if name not in _specs: _specs[name] = _try(name, lambda: resolve(name))
+            return _specs[name]
         def _name(what, get, dflt): return _try(what, get, dflt) or dflt
         saved = _try('saved models', load_models, []) or []
-        rows = _try('model catalog', lambda: available_models(include_legacy=legacy), []) or []
+        # The catalog and the id each row resolves to are the machine's, not this workspace's, and
+        # cost seconds to gather. Probed together, served from the last answer, refreshed behind
+        # this. `refresh` is the button: it drops the answer and gathers a new one now.
+        if refresh: forget_probes()
+        rows, by_id = _try('model catalog', lambda: probed(f'catalog:{legacy}',
+                                                           lambda: catalog(legacy)), ([], {})) or ([], {})
+        rows = [dict(r) for r in rows]      # decorated below with this workspace's own choices
         rows += [{'value':x['name'],'label':x['name'],'provider':x['runtime'],
                   'source':f"saved · {x['model_id']}",'custom':True} for x in saved]
         agent_dflt = ws.model or os.environ.get('LEELA_MODEL') or DFLT_LOCAL
@@ -242,15 +273,14 @@ def connect(app, ctx):
                 if row is None: rows.append(row := {'value': current, 'label': current})
                 row.update(provider='unavailable', source=why, unavailable=True)
                 continue
-            if not any((s := _spec(r['value'])) and s.model_id == spec.model_id for r in rows):
+            if spec.model_id not in by_id:
                 provider = spec.model_id.partition('/')[0] if not spec.local else spec.runtime
                 rows.append({'value': current, 'label': current, 'provider': provider,
                              'source': 'saved choice · provider credentials may be required'})
         def selected(current):
+            "Which row a chosen model is, by the id it resolves to. A lookup, not a scan."
             spec = _spec(current)
-            if spec is None: return current
-            return ifnone(first(r['value'] for r in rows
-                                if (s := _spec(r['value'])) and s.model_id == spec.model_id), current)
+            return current if spec is None else by_id.get(spec.model_id, current)
         # The routed jobs with no field of their own, reported chosen or not.
         from ...agent.core import JOBS, Routing
         routing = ctx.ai.routing if ws._ai is not None else Routing(turn=agent)
@@ -261,7 +291,9 @@ def connect(app, ctx):
         jobs = {j: _name(f'{j} model', lambda j=j: routing.name_for(j), '')
                 for j in JOBS if j not in ('turn', 'completion', 'inline')}
         return {'models': mark_models(rows), 'saved':saved, 'notes': notes,
-                'auth': _try('auth', auth_status, {}) or {}, 'runtimes': _try('runtimes', runtimes, []) or [],
+                # Asking every account whether it is signed in is the other slow half.
+                'auth': _try('auth', lambda: probed('auth', auth_status), {}) or {},
+                'runtimes': _try('runtimes', runtimes, []) or [],
                 'jobs': jobs, 'job_help': JOB_HELP,
                 'selected': {'agent': selected(agent), 'inline': selected(inline),
                              'completion': selected(completion), **jobs}}

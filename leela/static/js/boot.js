@@ -52,6 +52,11 @@ async function boot() {
   if ($('#leesetup')) leeSetupPane();
   // The first paint is server-rendered without the preference, so it is only wrong when set.
   paintHiddenBtn(); if (treeHidden()) refreshFileTree(undefined, false).catch(() => {});
+  /* The agent's log is one append-only file and grows without bound; reading it the first time
+     costs seconds on a large one, and it is cached after that. Paying it here, once the page is
+     interactive, means the first click on History does not. */
+  requestIdleCallback ? requestIdleCallback(warmAgentHistory, {timeout: 4000})
+                      : setTimeout(warmAgentHistory, 2000);
   refreshProjectPills();
   setInterval(whenVisible(refreshKernelPill), 5000);
   // The pills change only when a root or the cwd does, and every one of those already calls

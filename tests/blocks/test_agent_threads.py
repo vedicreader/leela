@@ -1146,7 +1146,11 @@ def _log(ws, rows):
 
 def test_the_history_list_carries_no_turns_and_is_computed_once_per_log(tmp_path):
     """All the turns of every conversation was 60MB of JSON and forty seconds once Leela and the
-    CLI shared one log. The list says how many; the turns come when one is opened."""
+    CLI shared one log. The list says how many; the turns come when one is opened.
+
+    `everything` because these sessions carry no surface mark, so the default list, which is this
+    Leela's own conversations, correctly leaves them out. What is under test here is the turns.
+    """
     ws = Workspace(roots=[tmp_path])
     rows = [{'session': 'agent_a', 'turn_id': 'agent_a:1', 'at': 10, 'model': 'm', 'prompt': 'p1', 'reply': 'r1'},
             {'session': 'agent_a', 'turn_id': 'agent_a:2', 'at': 20, 'model': 'm', 'prompt': 'p2', 'reply': 'r2'},
@@ -1154,7 +1158,7 @@ def test_the_history_list_carries_no_turns_and_is_computed_once_per_log(tmp_path
     _log(ws, rows)
     try:
         with TestClient(ide_app(ws)) as client:
-            listed = client.get('/agent/history').json()['sessions']
+            listed = client.get('/agent/history?everything=1').json()['sessions']
             found = {s['id']: s for s in listed}
             assert found['agent_a']['count'] == 2 and found['agent_b']['count'] == 1
             assert all(s['turns'] == [] for s in listed), 'no turn bodies in the list'
@@ -1163,7 +1167,7 @@ def test_the_history_list_carries_no_turns_and_is_computed_once_per_log(tmp_path
             assert client.get('/agent/history/session?id=nope').status_code == 404
             calls = []
             ws.ai.refresh_history = lambda: calls.append(1)
-            client.get('/agent/history'); client.get('/agent/history')
+            client.get('/agent/history?everything=1'); client.get('/agent/history?everything=1')
             assert calls == [], 'an unchanged log is not parsed again'
             _log(ws, rows + [{'session': 'agent_b', 'turn_id': 'agent_b:2', 'at': 40, 'model': 'm',
                               'prompt': 'p4', 'reply': 'r4'}])

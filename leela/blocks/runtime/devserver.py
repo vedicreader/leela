@@ -295,7 +295,7 @@ def _child(argv=None):
     import argparse
     from functools import partial
     from dhrishti.serving import serve as _serve
-    serve = partial(_serve, session_dir='leela_sessions', agent_session_dir='leela_agent_sessions')
+    serve = partial(_serve, session_dir='_leela_sessions', agent_session_dir='_leela_agent_sessions')
     p = argparse.ArgumentParser(prog='leela-dev')
     p.add_argument('--port', type=int, default=9000, help='base port for the inspector')
     p.add_argument('--name', default=None)

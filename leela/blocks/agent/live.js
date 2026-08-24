@@ -168,8 +168,16 @@ const sessionTurns = async id => {
 };
 /* Leela and the ramabana CLI append to one log, and only Leela marks the sessions it started, so
    anything unmarked reads as the CLI's, including Leela's history from before the mark. */
-const leelaOnly = () => localStorage.getItem('leeHistoryLeelaOnly') === '1';
+/* Checked unless it has been turned off: one log holds both, most of it is the CLI's, and the
+   list a person opens is their own work. Asking the server means the CLI's are not grouped and
+   shipped only to be filtered out here. */
+const leelaOnly = () => localStorage.getItem('leeHistoryLeelaOnly') !== '0';
 const shownSessions = groups => leelaOnly() ? groups.filter(s => s.app === 'leela') : groups;
+async function historyGroups() {
+  const d = await api('/agent/history' + (leelaOnly() ? '' : '?everything=1'));
+  lee.agentHistoryHidden = d.hidden || 0;
+  return d.sessions || [];
+}
 async function showHistorySession(group, groups) {
   const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
   log.dataset.foldScope = group?.id || '';   // these turns are that session's, whatever thread is live
@@ -177,7 +185,8 @@ async function showHistorySession(group, groups) {
   /* A conversation is known by what it was about, so its name is the whole option. The time
      identifies one that has no name yet, which is every conversation before its first turn
      finished. */
-  const all = groups || [], shown = shownSessions(all), hidden = all.length - shown.length;
+  const all = groups || [], shown = shownSessions(all);
+  const hidden = (all.length - shown.length) || lee.agentHistoryHidden || 0;
   const options = shown.map(s =>
     `<option value="${esc(s.id)}"${s.id === group?.id ? ' selected' : ''}>` +
     `${esc(titleText(s.title) || sessionTime(s))}</option>`).join('');
@@ -193,10 +202,11 @@ async function showHistorySession(group, groups) {
     (resumable ? `<button class="lee-btn go lee-history-resume" title="Continue this conversation">Resume</button>` : '');
   index.querySelector('select')?.addEventListener('change', e =>
     showHistorySession(all.find(s => s.id === e.target.value), all));
-  index.querySelector('.lee-history-leelaonly')?.addEventListener('change', e => {
+  index.querySelector('.lee-history-leelaonly')?.addEventListener('change', async e => {
     localStorage.setItem('leeHistoryLeelaOnly', e.target.checked ? '1' : '0');
-    const left = shownSessions(all);
-    showHistorySession(left.find(s => s.id === group?.id) || left[0], all);
+    // The CLI's conversations are not in `all` when the box was checked, so this asks again.
+    const groups = await historyGroups(), left = shownSessions(groups);
+    showHistorySession(left.find(s => s.id === group?.id) || left[0], groups);
   });
   index.querySelector('.lee-history-resume')?.addEventListener('click', () => leeAgentResume(group));
   log.appendChild(index);
@@ -231,30 +241,56 @@ async function paintAgentThread(id) {
   lee.agentLive = log.innerHTML; log.scrollTop = log.scrollHeight;
   return d;
 }
-/* A fresh process starts on an empty conversation and stays there. History is where a past
-   conversation is picked up from. */
+/* Conversations live in the agent's log, not in this process, so a fresh one holds none: opening
+   the app after working in a browser showed an empty pane while the work sat on disk. An empty pane
+   picks the newest conversation back up, which is what "where was I" means. */
 async function rehydrateAgentLive() {
   const log = $('#agentlog');
   if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentHydrating) return;
   lee.agentHydrating = true;
-  try { await paintAgentThread(lee.agentThread || ''); }
+  try {
+    const d = await paintAgentThread(lee.agentThread || '');
+    if (!(d?.turns || []).length) await resumeLatestAgent();
+  }
   catch (e) { /* an empty pane beats a boot that dies on a cold agent */ }
   finally { lee.agentHydrating = false; }
+}
+function paintResumed(d) {
+  const log = $('#agentlog');
+  if (log) {
+    log.dataset.foldScope = ''; log.innerHTML = '';
+    renderTurns(log, d.turns || [], 'resumed conversation');
+    log.scrollTop = log.scrollHeight;
+  }
+  lee.agentView = 'live'; lee.agentLive = log?.innerHTML || '';
+  $('#agenthistory')?.classList.remove('active');
+}
+async function resumeLatestAgent() {
+  // Nothing saved is the first run, not a failure, so this never speaks up about it.
+  try {
+    const d = await post('/agent/resume', {session: 'latest'});
+    if (!(d.turns || []).length) return;
+    paintResumed(d);
+    status(`picked up ${titleText(d.title) || d.session}`, 'ok');
+  } catch (_) {}
+}
+function warmAgentHistory() {
+  // Nothing is painted from it: this is the read that makes the next one cheap.
+  historyGroups().catch(() => {});
 }
 async function leeAgentHistory() {
   if (lee.agentView === 'history') return restoreAgentLive();
   rememberAgentLive(); lee.agentView = 'history'; $('#agenthistory')?.classList.add('active');
-  const d = await api('/agent/history'), all = d.sessions || [];
+  const all = await historyGroups();
   await showHistorySession(shownSessions(all)[0], all);
 }
 async function leeAgentResume(group) {
   if (!group) return;
   if (lee.agentBusy) return status('the model is already working', 'err');
   try {
-    const d = await post('/agent/resume', {session: group.id}), log = $('#agentlog');
-    if (log) { log.dataset.foldScope = ''; log.innerHTML = ''; renderTurns(log, d.turns || [], 'resumed conversation'); log.scrollTop = log.scrollHeight; }
-    lee.agentView = 'live'; lee.agentLive = log?.innerHTML || '';
-    $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus();
+    const d = await post('/agent/resume', {session: group.id});
+    paintResumed(d);
+    $('#agentprompt')?.focus();
     status(d.note || `resumed ${d.session}`, 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
 }

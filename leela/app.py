@@ -782,6 +782,17 @@ def _shell(ws, gate):
         Button('terminal / exec', cls='lee-pane-restore restore-bottom', onclick='leePane("bottom", true)'),
         id='shell', cls='lee-app')
 
+def _warm_probes():
+    """Pay for the model probes while the window is still opening.
+
+    `available_models` reaches for every backend and `auth_status` asks every account: together
+    they were most of a seven-second first paint of the model picker. On a thread, so a slow or
+    absent network delays nothing.
+    """
+    import threading
+    from .blocks.agent.models import warm_probes
+    threading.Thread(target=warm_probes, daemon=True, name='leela-warm-probes').start()
+
 def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     "Build the FastHTML IDE around an open workspace. `gate` decides who may open a terminal."
     gate = gate or TerminalGate()
@@ -864,7 +875,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     # Starlette's exclusion list spares `text/event-stream`. The streams stay unbuffered.
     app = FastHTML(default_hdrs=False, hdrs=hdrs,
                    middleware=(Middleware(GZipMiddleware, minimum_size=512),),
-                   on_startup=[ws.opened], on_shutdown=[ws.shutdown],
+                   on_startup=[ws.opened, _warm_probes], on_shutdown=[ws.shutdown],
                    routes=(Mount('/leestatic', Assets(*static_dirs())),
                            WebSocketRoute('/term/ws', term_ws)))
     app.static_route_exts()

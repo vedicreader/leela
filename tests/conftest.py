@@ -169,3 +169,17 @@ def serve(ws):
     finally:
         server.should_exit = True
         thread.join(timeout=3)
+
+
+@pytest.fixture(autouse=True)
+def _cold_probes():
+    """No test inherits another's answer about what is installed or who is signed in.
+
+    `probed` caches machine state for the life of the process, which is what a picker on the boot
+    path needs and what a suite must not carry between tests: one that patches `available_models`
+    was otherwise served the catalog a previous test had already cached.
+    """
+    from leela.blocks.agent.models import forget_probes
+    forget_probes()
+    yield
+    forget_probes()
