@@ -4,15 +4,31 @@ import json, os, queue, shutil, subprocess, threading, time
 from pathlib import Path
 from urllib.parse import quote
 
+#: Servers Leela will drive, in the order they are tried. Each speaks LSP on stdio and differs only
+#: in how it is asked to. `basedpyright` leads because it answers everything `start` asks for and
+#: carries its own node, so installing it needs neither a system node nor a download at first run.
+SERVERS = (('basedpyright-langserver', ('--stdio',)),
+           ('pyright-langserver', ('--stdio',)),
+           ('pyrefly', ('lsp',)),
+           ('ty', ('server',)))
+
+def find_server():
+    "The first language server on PATH, as `(name, argv)`, or `(None, None)`."
+    for name, args in SERVERS:
+        if (found := shutil.which(name)): return name, [found, *args]
+    return None, None
+
 def _why_unavailable(command, root):
-    "Why there is no Pyright, in the words the status pill shows. Empty means it is there."
+    "Why there is no language server, in the words the status pill shows. Empty means it is there."
     if command: return ''
-    return 'open a project folder for Pyright' if not root else 'pyright-langserver is not installed'
+    if not root: return 'open a project folder for a language server'
+    return 'a language server is not installed: get one from settings, models and updates'
 
 class PyrightService:
     def __init__(self, root):
         self.root = Path(root).resolve() if root else None
-        self.command = shutil.which('pyright-langserver') if self.root else None
+        self.server, self.argv = find_server() if self.root else (None, None)
+        self.command = self.argv[0] if self.argv else None
         self.process, self._seq = None, 0
         self._pending, self._diagnostics, self._versions = {}, {}, {}
         self._lock = threading.Lock()
@@ -24,7 +40,7 @@ class PyrightService:
     def _uri(self, path): return 'file://' + quote(str(Path(path).resolve()))
     def start(self):
         if self.alive or not self.available: return self.alive
-        self.process = subprocess.Popen([self.command, '--stdio'], cwd=str(self.root), stdin=subprocess.PIPE,
+        self.process = subprocess.Popen(self.argv, cwd=str(self.root), stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
         threading.Thread(target=self._read, daemon=True, name='leela-pyright').start()
         try:
@@ -35,9 +51,9 @@ class PyrightService:
                     'documentSymbol': {'hierarchicalDocumentSymbolSupport': True},
                     'rename': {'prepareSupport': True}, 'inlayHint': {}}}}, timeout=8)
             self._notify('initialized', {})
-            self.note = 'Pyright connected'
+            self.note = f'{self.server} connected'
         except Exception as e:
-            self.note = f'Pyright failed: {type(e).__name__}: {e}'
+            self.note = f'{self.server} failed: {type(e).__name__}: {e}'
             self.close()
             return False
         return True

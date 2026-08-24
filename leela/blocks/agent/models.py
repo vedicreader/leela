@@ -7,7 +7,7 @@ from ... import extras_site, leela_cfg, use_extras
 __all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks',
            'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements', 'install_runtime',
            'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed', 'SETUP_SIZES',
-           'unavailable_detail', 'HARNESS',
+           'unavailable_detail', 'HARNESS', 'TOOLS', 'tool_rows',
            'updates']
 
 #: What each routed job spends its model on. One copy: the settings pane renders three of these
@@ -51,6 +51,22 @@ def unavailable_detail(runtime):
 
 #: Runtimes a package can supply, named as rishi's own extras. The rest want a CLI, a daemon or a key.
 INSTALLABLE = ('litert', 'mlx', 'llama')
+
+#: Optional tools that are not a model: `(label, requirements, approximate MB, what it gives you)`.
+#: `basedpyright` over `ty` and `pyrefly` because it answers everything the LSP client asks for and
+#: carries its own node, so it needs neither a system node nor a download when first run.
+TOOLS = {'langserver': ('Language server',
+                        ['basedpyright>=1.39'], 70,
+                        'Red squiggles, hover types, go to definition and rename.')}
+
+def tool_rows():
+    "Each optional tool, whether it is here, and what installing it would fetch."
+    from ..lsp.lsp import find_server
+    found = find_server()[0]
+    return [{'value': name, 'label': label, 'requirements': reqs, 'mb': mb, 'blurb': blurb,
+             'available': bool(found) if name == 'langserver' else False,
+             'found': found or '', 'install': install_state(name)}
+            for name, (label, reqs, mb, blurb) in TOOLS.items()]
 
 def runtime_requirements(runtime):
     "What rishi asks for to serve `runtime` here, straight out of its metadata rather than copied."
@@ -98,15 +114,19 @@ def _run_install(runtime, cmd):
     from ...agent.core import runtime_available
     try: runtime_available.cache_clear()      # only `ollama` memoises, and only it would go stale
     except AttributeError: pass
+    if runtime in TOOLS:
+        from ..lsp.lsp import find_server
+        here = bool(find_server()[0])
+    else: here = bool(runtime_available(runtime))
     with _lock:
-        _installs[runtime].update(state='ok' if ok else 'error', log=log[-4000:],
-                                  available=bool(runtime_available(runtime)))
+        _installs[runtime].update(state='ok' if ok else 'error', log=log[-4000:], available=here)
 
 def install_runtime(runtime):
-    "Fetch one on-device backend, pinned to the rishi here, into somewhere a frozen app can import."
-    if runtime not in INSTALLABLE:
+    "Fetch one backend or tool, pinned to the rishi here, where a frozen app can reach it."
+    if runtime in TOOLS: reqs = list(TOOLS[runtime][1])
+    elif runtime not in INSTALLABLE:
         raise ValueError(f'{runtime} is not something a package provides; see its remedy')
-    if not (reqs := runtime_requirements(runtime)):
+    elif not (reqs := runtime_requirements(runtime)):
         raise ValueError(f'rishi declares no {runtime} backend for this platform')
     with _lock:
         if (cur := _installs.get(runtime)) and cur.get('state') == 'running': return dict(cur)
@@ -223,7 +243,7 @@ def setup_plan():
     ready_now = [a['value'] for a in accounts if a['ready']]
     installed = [o['value'] for o in offline if o['available']]
     return {'frozen': bool(getattr(sys, 'frozen', False)), 'dismissed': setup_dismissed(),
-            'accounts': accounts, 'offline': offline, 'ready': ready_now,
+            'accounts': accounts, 'offline': offline, 'tools': tool_rows(), 'ready': ready_now,
             # Set up means: something can answer a prompt. Until then the modal leads with setup;
             # after it, the same modal is where an update shows up.
             'done': bool(ready_now or installed)}

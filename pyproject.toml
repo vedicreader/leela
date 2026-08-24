@@ -21,7 +21,10 @@ dependencies = [
     # never select. They are `leela[local]` below, and the settings pane installs them on demand.
     # The rest of `[all]` is ramabana's own CLI (pyghostty, teleprint) and mcp, none of which Leela
     # imports; `dhrishti` and `jupyter-client` it depends on directly and are still here.
-    "ramabana>=0.1.25",   # 0.1.25 reports a binary diff instead of the LFS pointer text
+    # `[cli]` because `workspace._attachment_context` imports `ramabana.cli` for the media
+    # helpers, and that module needs pyghostty and teleprint. 0.9MB, and the alternative is
+    # media handling that cannot be reached without a terminal UI.
+    "ramabana[cli]>=0.1.25",
     "fastcore>=1.7.0",
     "exhash>=0.4.10",
     "fossick>=0.1.14",   # 0.1.14 caches JSON, not pickle: GHSA-w8v5-vhqr-4h9v has no fixed release
@@ -37,6 +40,9 @@ dependencies = [
     "httpx2>=2.10.0",
     "numpy>=1.26",
     "packaging>=24.0",
+    # `workspace._attachment_context` imports `ramabana.cli` for the media helpers, and that
+    # module imports rich, which ramabana declares nowhere. Ours to name while that is true.
+    "rich>=13.0",
     "pyyaml>=6.0",
     "dhrishti>=0.1.3",
     "watchfiles>=1.0",
@@ -56,7 +62,9 @@ github = [
 ]
 gateway = [
     "jupygate>=0.0.1",
-    "jupyasyncclient>=0.2.1",
+    # 0.2.8 made something the gateway does `async for` over a coroutine, so a kernel there
+    # executes nothing: "'async for' requires an object with __aiter__". Capped until fixed.
+    "jupyasyncclient>=0.2.1,!=0.2.8",
     "jupywire>=0.1.1",
 ]
 # On-device inference. Kept out of the default install and out of the desktop bundle because it is

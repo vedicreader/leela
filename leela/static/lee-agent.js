@@ -206,6 +206,15 @@ function offlineRow(o) {
     `${o.available ? '<span class="lee-dim">installed</span>'
       : `<button class="lee-btn" ${running ? 'disabled' : ''}>${running ? `${esc(st.via || 'installing')}\u2026` : 'install'}</button>`}</div>`;
 }
+function toolRow(o) {
+  const st = o.install || {}, running = st.state === 'running';
+  return `<div class="lee-krow" data-setup-get="${esc(o.value)}"><span><strong>${esc(o.label)}</strong>` +
+    ` <small>about ${o.mb} MB</small><br><small>${esc(o.blurb)}</small>` +
+    `${st.state === 'error' ? `<br><small class="warn">${esc(String(st.log).split('\n').slice(-2).join(' '))}</small>` : ''}</span>` +
+    `${o.available ? `<span class="lee-dim">${esc(o.found || 'installed')}</span>`
+      : `<button class="lee-btn" ${running ? 'disabled' : ''}>${running ? `${esc(st.via || 'installing')}\u2026` : 'install'}</button>`}</div>`;
+}
+
 function updateRows(u) {
   if (!u) return '<div class="lee-dim">checking\u2026</div>';
   const app = u.leela || {};
@@ -227,6 +236,7 @@ function renderSetup(host, d, u) {
     `<section class="lee-setup-pane"><h4>On device<small>large</small></h4>` +
     `${d.offline.length ? d.offline.map(offlineRow).join('') : '<div class="lee-dim">nothing for this machine</div>'}` +
     `</section></div>` +
+    `${(d.tools || []).length ? `<h4>Tools</h4><div class="lee-setup-updates">${d.tools.map(toolRow).join('')}</div>` : ''}` +
     `<h4>Updates</h4><div class="lee-setup-updates">${updateRows(u)}</div>` +
     `<div class="lee-mfoot"><button class="lee-btn go" id="setupdone">done</button></div>`;
   host.querySelectorAll('[data-setup-get]').forEach(row => row.querySelector('button')?.addEventListener('click', async () => {
@@ -242,7 +252,8 @@ function renderSetup(host, d, u) {
     leeSetupPane();
   };
   clearTimeout(bkPoll);
-  if (d.offline.some(o => (o.install || {}).state === 'running')) bkPoll = setTimeout(() => pollSetup(host), 2000);
+  const busy = [...(d.offline || []), ...(d.tools || [])].some(o => (o.install || {}).state === 'running');
+  if (busy) bkPoll = setTimeout(() => pollSetup(host), 2000);
 }
 async function leeSetupModal(known) {
   let d = known;

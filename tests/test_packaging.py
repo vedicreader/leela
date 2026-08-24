@@ -447,3 +447,22 @@ def test_distribution_signing_does_not_use_deep(mac):
     assert "'--deep'" not in body.split('--verify')[0], 'signing must walk inner code itself'
     assert "'--timestamp'" in body, 'notarisation requires a secure timestamp'
     assert "'runtime'" in body, 'the hardened runtime is required too'
+
+
+def test_what_only_a_lazy_import_reaches_is_still_bundled(mac, win):
+    """`workspace._attachment_context` imports `ramabana.cli` inside the function, so no scanner
+    follows it to rich, pyghostty or teleprint. Attaching a file in the app said rich was not
+    installed, and leaning `ramabana[all]` to `ramabana` is what took them out."""
+    for m in (mac, win):
+        assert {'rich', 'pyghostty', 'teleprint'} <= set(m.PACKAGES), 'reached only from cli.py'
+
+def test_the_media_helpers_can_actually_be_imported():
+    "The check the bundle cannot do for itself: the module Leela reaches for has what it needs."
+    from ramabana.cli import MEDIA, Attachment, media_note, media_parts   # noqa: F401
+    assert MEDIA, 'the media table is what `_attachment_context` reads'
+
+def test_leela_asks_for_the_ramabana_extra_that_module_needs():
+    "Plain `ramabana` does not carry pyghostty or teleprint, and `cli.py` imports both."
+    import tomllib
+    deps = tomllib.load(open(ROOT/'pyproject.toml', 'rb'))['project']['dependencies']
+    assert any(d.startswith('ramabana[') and 'cli' in d for d in deps), deps

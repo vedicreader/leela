@@ -2458,3 +2458,37 @@ def test_a_harness_whose_probe_returns_nothing_says_so(monkeypatch):
     assert m.unavailable_detail('claude') == 'probe() found nothing'
     mod.probe = lambda: (_ for _ in ()).throw(FileNotFoundError('claude is not on $PATH'))
     assert 'probe():' in m.unavailable_detail('claude')
+
+
+def test_the_language_server_is_an_installable_tool():
+    """The app ships no language server and finds one on PATH, so there were no squiggles in it and
+    nothing offering to fix that. It is a row on the setup modal now."""
+    from leela.blocks.agent.models import TOOLS, setup_plan, tool_rows
+    row = next(r for r in tool_rows() if r['value'] == 'langserver')
+    assert row['requirements'] and row['mb'] and row['blurb']
+    assert 'basedpyright' in row['requirements'][0], 'the one that carries its own node'
+    assert row['available'] is bool(row['found']), 'available means one was actually found'
+    assert [t['value'] for t in setup_plan()['tools']] == list(TOOLS)
+
+def test_a_tool_installs_through_the_same_path_as_a_backend(monkeypatch, tmp_path):
+    "One installer. A tool is not a rishi runtime, so its requirements come from `TOOLS`."
+    import leela.blocks.agent.models as m
+    m._installs.clear()
+    monkeypatch.setattr(m, '_run_install', lambda runtime, cmd: None)
+    row = m.install_runtime('langserver')
+    assert 'basedpyright' in row['cmd'] and row['requirements'] == m.TOOLS['langserver'][1]
+    m._installs.clear()
+    with pytest.raises(ValueError): m.install_runtime('nonsense')
+    m._installs.clear()
+
+def test_any_of_the_four_language_servers_will_do():
+    """Leela drove `pyright-langserver` by name. `ty` and `pyrefly` need no node at all, and
+    `basedpyright` brings its own, so the client asks for whichever is there."""
+    from leela.blocks.lsp.lsp import SERVERS, find_server
+    names = [n for n, _ in SERVERS]
+    assert names[0] == 'basedpyright-langserver', 'the most complete one leads'
+    assert {'pyrefly', 'ty'} <= set(names), 'and the ones that need no node are accepted'
+    for name, args in SERVERS: assert args, f'{name} needs the argv that puts it on stdio'
+    found, argv = find_server()
+    assert (found is None) == (argv is None)
+    if argv: assert argv[0].endswith(found) and len(argv) >= 1
