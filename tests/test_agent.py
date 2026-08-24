@@ -147,8 +147,11 @@ def test_cheap_jobs_stay_local_when_the_turn_goes_to_the_cloud(monkeypatch):
     r = models.Routing(turn='gemma-e2b')
     r.set('gemma-12b')
     assert r.spec('turn').name == 'gemma-12b'
+    # `summary` is the exception the policy cannot express: unset, it follows the turn, so a long
+    # conversation is summarised by the model holding it. `JOB_HELP` says so.
+    assert r.spec('summary').name == 'gemma-12b'
     for job, name in models.DEFAULT_POLICY.items():
-        if job == 'turn': continue
+        if job in ('turn', 'summary'): continue
         assert r.spec(job).name == (name or models.DFLT_LOCAL), job
         assert r.spec(job).local == (job != 'subagent'), job
     assert not r.spec('subagent').local, 'and delegation is deliberately not local'
@@ -265,9 +268,11 @@ def test_the_briefing_says_what_is_true_of_this_project():
     assert 'unless a tool\n  result in this conversation says so' in narrow
     assert 'ERROR:' in narrow
     assert 'inside the folders above' in narrow
+    # The last three arrive with a host that has them: `get_skills`, and `monitor_tools` for the
+    # folder watch. Naming them here keeps the check on `RULES` rather than on this host's shape.
     real = {t.__name__ for t in tools_for(MemHost())} | {'notebook_cells', 'delegate_parallel',
                                                          'memory_search', 'web_search', 'run_python',
-                                                         'read_skill'}   # only present with `get_skills`
+                                                         'read_skill', 'watch_folder'}
     assert {tool for tool, _ in RULES if tool} <= real
     h = MemHost({'/proj/AGENTS.md': '# House rules\n\nUse uv, never pip.\n'})
     ctx = project_context(h)
@@ -2272,8 +2277,11 @@ def test_moving_the_turn_model_leaves_every_other_job_where_the_policy_put_it(mo
     r = models.Routing(turn='gemma-e2b')
     r.set('gemma-12b')
     assert r.spec('turn').name == 'gemma-12b'
+    # `summary` is the exception the policy cannot express: unset, it follows the turn, so a long
+    # conversation is summarised by the model holding it. `JOB_HELP` says so.
+    assert r.spec('summary').name == 'gemma-12b'
     for job, name in models.DEFAULT_POLICY.items():
-        if job == 'turn': continue
+        if job in ('turn', 'summary'): continue
         assert r.spec(job).name == (name or models.DFLT_LOCAL), job
         assert r.spec(job).local == (job != 'subagent'), job
     assert not r.spec('subagent').local, 'and delegation is deliberately not local'
