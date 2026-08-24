@@ -142,7 +142,9 @@ def test_a_host_offers_only_the_tools_it_supports():
 
 
 def test_cheap_jobs_stay_local_when_the_turn_goes_to_the_cloud(monkeypatch):
-    "The whole argument for routing: pointing the turn at a frontier model must not move completions."
+    """Pointing the turn at a frontier model must not move completions. The cheap jobs sit on
+    the local default; delegation is the one whose default is a cloud model, because local
+    models did not do it well enough to be worth the wait."""
     monkeypatch.delenv('LEELA_MODEL', raising=False)
     r = models.Routing(turn='gemma-e2b')
     r.set('gemma-12b')
@@ -2269,23 +2271,6 @@ async def test_workspace_shutdown_cancels_agent_runs_before_close(tmp_path):
     assert order[:2] == ['cancel', 'close']
     assert run.state == 'detached'
 
-def test_moving_the_turn_model_leaves_every_other_job_where_the_policy_put_it(monkeypatch):
-    """The whole argument for routing: pointing the turn at a frontier model must not move
-    completions. The cheap jobs sit on the local default; delegation is the one job whose default
-    is a cloud model, because local models did not do it well enough to be worth the wait."""
-    monkeypatch.delenv('LEELA_MODEL', raising=False)
-    r = models.Routing(turn='gemma-e2b')
-    r.set('gemma-12b')
-    assert r.spec('turn').name == 'gemma-12b'
-    # `summary` is the exception the policy cannot express: unset, it follows the turn, so a long
-    # conversation is summarised by the model holding it. `JOB_HELP` says so.
-    assert r.spec('summary').name == 'gemma-12b'
-    for job, name in models.DEFAULT_POLICY.items():
-        if job in ('turn', 'summary'): continue
-        assert r.spec(job).name == (name or models.DFLT_LOCAL), job
-        assert r.spec(job).local == (job != 'subagent'), job
-    assert not r.spec('subagent').local, 'and delegation is deliberately not local'
-    assert models.DEFAULT_POLICY['subagent'] == r.spec('subagent').name
 
 
 def test_stream_disconnect_never_owns_or_cancels_the_turn():
