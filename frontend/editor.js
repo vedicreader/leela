@@ -546,6 +546,11 @@ function overviewPlugin(mode = 'off', threshold = 120) {
         this.frame = requestAnimationFrame(() => this.draw());
       };
       addEventListener('scroll', this.queue, true);
+      // Moving a panel resizes the pane that scrolls without scrolling it, changing the document,
+      // or touching CodeMirror's geometry, so none of the above fires and the stripe kept its old
+      // position and height: a leftover scroll bar stranded wherever the pane used to be.
+      this.ro = new ResizeObserver(this.queue);
+      this.observed = null;
       this.draw();
     }
     update(u) {
@@ -565,9 +570,22 @@ function overviewPlugin(mode = 'off', threshold = 120) {
       const v = getComputedStyle(this.view.dom).getPropertyValue(name).trim();
       return v || fallback;
     }
+    // Redraw when either the editor or the element that scrolls it changes size.
+    watch(scroller) {
+      if (this.observed === scroller) return;
+      this.observed = scroller;
+      this.ro.disconnect();
+      this.ro.observe(this.view.dom);                    // never `this.dom`: drawing resizes that
+      if (scroller !== this.view.scrollDOM) this.ro.observe(scroller);
+    }
     draw() {
       const doc = this.view.state.doc, lines = doc.lines;
+      const previous = this.scroller;
       const scroller = this.scroller = scrollerFor(this.view);
+      // The pane that scrolls can change when panels move. The old one keeps `has-overview`, and
+      // with it a hidden native scroll bar, unless it is cleared here.
+      if (previous && previous !== scroller) previous.classList.remove('has-overview');
+      this.watch(scroller);
       const shown = (mode === 'always' || (mode === 'long' && lines >= threshold)) &&
                     scroller.scrollHeight > scroller.clientHeight + 4;
       this.dom.hidden = !shown;
@@ -616,6 +634,7 @@ function overviewPlugin(mode = 'off', threshold = 120) {
     }
     destroy() {
       removeEventListener('scroll', this.queue, true);
+      this.ro?.disconnect();
       cancelAnimationFrame(this.frame);
       this.view.dom.classList.remove('cm-lee-has-overview');
       this.scroller?.classList.remove('has-overview');

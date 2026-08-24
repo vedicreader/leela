@@ -175,3 +175,24 @@ def test_the_hint_badge_and_the_help_panel_are_different_classes():
     assert '.lee-hint {' in css and 'display: inline-flex' in css.split('.lee-hint {')[1][:200]
     assert "cls='lee-hint'" in app and 'class="lee-hint"' in panel
     assert "cls='lee-help'" not in app and 'class="lee-help"' not in panel
+
+
+def test_the_overview_stripe_redraws_when_a_panel_resizes():
+    """It positions itself from `getBoundingClientRect` and redrew on scroll, document, viewport and
+    geometry changes. Moving a panel resizes the pane that scrolls without any of those, so the
+    stripe kept its old top and height and stranded itself where the pane used to be."""
+    src = (ROOT/'frontend'/'editor.js').read_text()
+    plugin = src[src.index('function overviewPlugin'):src.index('const stickyPlugin')]
+    assert 'new ResizeObserver' in plugin, 'resize is the signal that was missing'
+    assert 'this.ro?.disconnect()' in plugin or 'this.ro.disconnect()' in plugin, 'and it must be released'
+    assert 'never `this.dom`' in plugin, 'observing what draw() resizes would loop'
+    # The pane that scrolls can change; the old one must not keep the class that hides its bar.
+    assert "previous.classList.remove('has-overview')" in plugin
+
+def test_the_built_editor_bundle_matches_its_source():
+    "`lee-cm6.js` is committed, so a change to `frontend/editor.js` that was never built is a lie."
+    bundle = (ROOT/'leela'/'vendor'/'lee-cm6.js').read_text()
+    assert 'ResizeObserver' in bundle, 'rebuild with frontend/node_modules/@esbuild/*/bin/esbuild'
+    import re
+    m = re.search(r'CS\(\w+,\s*\{([^}]{200,6000})\}\)', bundle)
+    assert {'undo', 'redo'} <= set(re.findall(r'(\w+)\s*:\s*\(\)', m.group(1)))
