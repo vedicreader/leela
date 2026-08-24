@@ -278,3 +278,6 @@ Opening Leela started a Python kernel whether or not anybody ran anything. The k
 
 ## `leela/blocks/runtime/app.py` `runtime_info`
 `kernel_support` interrogates the project's interpreter, about half a second, and it ran again on every poll with no caching. It is the machine's answer about one path, so it is probed per interpreter: 433ms cold, 1ms after.
+
+## `leela/static/lee-ide.css` `.has-overview`
+The rule that hides a native scroll bar was `.lee-editor.has-overview`, but `scrollerFor` puts the class on whatever element really scrolls, which is not always `.lee-editor`: a markdown preview scrolls itself. Where the class landed anywhere else it hid nothing, so the stripe was drawn over a bar that stayed. The rule follows the class now. `overflowsDown` also takes hysteresis, 24px to appear and 8px to disappear, because rendered markdown settles over several frames and content within a few pixels of the threshold flipped with it; `.lee-md-preview` reserves its gutter so an appearing bar cannot rewrap the text that decides whether it is needed. Not reproduced: a browser test rendering markdown into a scrolling pane passed with and without these, in Chromium.

@@ -529,9 +529,13 @@ const OVERVIEW_W = 14;
    move when a bar inside it is drawn or not, so the answer stops depending on the answer. A code
    cell is where this bit: long lines give it the horizontal bar, and an agent pane streaming
    tokens re-measures every frame. */
-const overflowsDown = el => {
+const OVER_SHOW = 24, OVER_HIDE = 8;
+const overflowsDown = (el, shown = false) => {
   const box = el.getBoundingClientRect().height;
-  return box > 0 && el.scrollHeight > box + 4;
+  // Hysteresis, now that the measure itself holds still: rendered markdown settles over several
+  // frames as its images and fonts arrive, and content that lands within a few pixels of the
+  // threshold was appearing and disappearing with it.
+  return box > 0 && el.scrollHeight > box + (shown ? OVER_HIDE : OVER_SHOW);
 };
 
 // The element that really scrolls: CodeMirror's own, or the pane it is laid out inside. Never the
@@ -609,7 +613,7 @@ function overviewPlugin(mode = 'off', threshold = 120) {
       if (previous && previous !== scroller) previous.classList.remove('has-overview');
       this.watch(scroller);
       const shown = (mode === 'always' || (mode === 'long' && lines >= threshold)) &&
-                    overflowsDown(scroller);
+                    overflowsDown(scroller, this.dom.hidden === false);
       this.dom.hidden = !shown;
       this.view.dom.classList.toggle('cm-lee-has-overview', shown);
       // `has-overview` is the notebook stripe's class, hiding the bar of the pane that scrolls.

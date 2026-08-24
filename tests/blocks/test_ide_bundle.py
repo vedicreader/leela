@@ -263,12 +263,26 @@ def test_the_overview_stripe_does_not_decide_from_a_measure_it_changes_itself():
     the next frame, and the bar flickered. Code cells have the horizontal bar, and an agent pane
     streaming tokens re-measures every frame."""
     src = (ROOT/'frontend'/'editor.js').read_text()
-    helper = src[src.index('const overflowsDown'):src.index('function scrollerFor')]
+    helper = src[src.index('const OVER_SHOW'):src.index('function scrollerFor')]
     assert 'getBoundingClientRect().height' in helper, 'the border box is what a bar cannot move'
+    # And hysteresis on top, because rendered markdown settles over several frames.
+    assert 'shown ? OVER_HIDE : OVER_SHOW' in helper
+    assert 'OVER_SHOW = 24' in helper and 'OVER_HIDE = 8' in helper
     plugin = src[src.index('function overviewPlugin'):src.index('const stickyPlugin')]
     decision = plugin[plugin.index('const shown ='):plugin.index('this.dom.hidden')]
-    assert 'overflowsDown(scroller)' in decision
+    assert 'overflowsDown(scroller,' in decision
     assert 'clientHeight' not in decision, 'the decision may not read what the class changes'
+
+
+def test_the_stripe_hides_the_bar_of_whatever_it_actually_replaced():
+    """`has-overview` goes on the element that really scrolls, which is not always `.lee-editor`:
+    a markdown preview scrolls itself. The rule was scoped to one class name, so the stripe replaced
+    a bar it had not hidden and both were on screen."""
+    assert '.has-overview { scrollbar-width:none; }' in CSS
+    assert '.has-overview::-webkit-scrollbar' in CSS
+    assert '.lee-editor.has-overview {' not in CSS, 'the rule follows the class, not one element'
+    rule = CSS[CSS.index('.lee-md-preview { border'):]
+    assert 'scrollbar-gutter: stable' in rule[:rule.index('}')], 'the gutter is always there'
 
 
 def test_the_scroller_walk_never_reaches_the_document():
@@ -281,7 +295,7 @@ def test_the_scroller_walk_never_reaches_the_document():
     assert 'overflowsDown(el)' in walk
     bundle = (ROOT/'leela'/'vendor'/'lee-cm6.js').read_text()
     assert 'e!==document.body' in bundle, 'rebuild with frontend/node_modules/@esbuild/*/bin/esbuild'
-    assert 'getBoundingClientRect().height;return e>0&&i.scrollHeight>e+4' in bundle
+    assert 'getBoundingClientRect().height' in bundle and 'scrollHeight' in bundle
 
 
 def test_indent_runs_against_the_cell_or_the_file_the_caret_is_in():

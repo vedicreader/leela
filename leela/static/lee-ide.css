@@ -613,8 +613,11 @@ kbd {
 .lee-nb-overview { position:absolute; z-index:3; width:14px; cursor:default; touch-action:none;
   border-left:1px solid var(--lee-border); background:color-mix(in srgb, var(--lee-bg) 92%, transparent); }
 .lee-nb-overview[hidden] { display:none; }
-.lee-editor.has-overview { scrollbar-width:none; }
-.lee-editor.has-overview::-webkit-scrollbar { width:0; height:0; }
+/* The class goes on whichever element actually scrolls, which is not always `.lee-editor`: a
+   markdown cell's preview scrolls itself, and so does a pane the stripe was drawn against. Scoped
+   to one class name, the stripe replaced a bar it had not hidden, and both were on screen. */
+.has-overview { scrollbar-width:none; }
+.has-overview::-webkit-scrollbar { width:0; height:0; }
 .lee-editor-secondary { border:0; }
 .lee-split-head { height:28px; display:flex; align-items:center; gap:8px; padding:0 8px; border-bottom:1px solid var(--lee-border); color:var(--lee-fg3); font:11px var(--lee-mono); }
 .lee-split-head span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
@@ -1458,7 +1461,9 @@ kbd {
 .lee-md-stage[data-view="edit"] .lee-md-preview { display: none; }
 .lee-md-stage[data-view="rendered"] { grid-template-columns: minmax(0, 1fr); }
 .lee-md-stage[data-view="rendered"] .lee-cm { display: none; }
-.lee-md-preview { border: 1px solid var(--lee-border); border-radius: 5px; background: var(--lee-bg1); overflow: auto; padding: 16px 20px; min-height: 0; }
+/* `scrollbar-gutter` because the bar appearing narrows the box, which rewraps the text, which
+   can remove the overflow that called for the bar. The space is always there instead. */
+.lee-md-preview { border: 1px solid var(--lee-border); border-radius: 5px; background: var(--lee-bg1); overflow: auto; scrollbar-gutter: stable; padding: 16px 20px; min-height: 0; }
 .lee-md-preview[data-markdown-warnings]::before { content: attr(data-markdown-warnings); display: block; margin-bottom: 10px; color: var(--lee-yellow); font: 9px/1.4 var(--lee-mono); }
 @media (max-width: 980px) { .lee-md-stage { grid-template-columns: minmax(0, 1fr); } .lee-md-stage[data-view="split"] .lee-md-preview { display: none; } }
 
