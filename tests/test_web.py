@@ -1335,3 +1335,87 @@ def test_the_history_list_and_the_model_picker_carry_what_the_pane_filters_on(tm
         # the live conversation is Leela's, and says so once it has been grouped
         from leela.blocks.agent.turns import surfaces
         assert ws.ai.session_id in surfaces(ws.ai.cfg)
+
+
+def _nb_json(cells):
+    "A minimal notebook: (id, source, outputs) per cell."
+    import json
+    return json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {},
+                       'cells': [{'cell_type': 'code', 'id': i, 'source': s, 'outputs': o,
+                                  'execution_count': None, 'metadata': {}} for i, s, o in cells]})
+
+def test_a_clean_run_over_the_notebook_does_not_block_a_source_edit(tmp_path):
+    """`nbdev_clean` strips outputs and metadata; a browser save writes cell sources. Those never
+    touch the same thing, and a conflict on the version token alone stopped the save anyway."""
+    nb = tmp_path/'n.ipynb'
+    nb.write_text(_nb_json([('c1', 'x = 1', [{'output_type': 'stream', 'text': 'noise'}]),
+                            ('c2', 'y = 2', [])]))
+    ws = Workspace(roots=[tmp_path]); ws.open(nb)
+    with TestClient(ide_app(ws)) as client:
+        state = client.get('/tab/state').json()
+        # what nbdev-prepare does: same sources, outputs gone
+        nb.write_text(_nb_json([('c1', 'x = 1', []), ('c2', 'y = 2', [])]))
+        r = client.post('/nb/save', json={'path': str(nb), 'base_disk_version': state['disk_version'],
+                                          'cells': [{'i': 0, 'source': 'x = 11'}]})
+        assert r.status_code == 200, r.json()
+    import json
+    saved = json.loads(nb.read_text())
+    src = lambda c: ''.join(c['source']) if isinstance(c['source'], list) else c['source']
+    assert src(saved['cells'][0]) == 'x = 11', 'the browser edit landed'
+    assert src(saved['cells'][1]) == 'y = 2', 'the untouched cell is untouched'
+    assert not saved['cells'][0]['outputs'], 'and the clean was not undone'
+
+def test_a_source_changed_on_both_sides_still_refuses_and_names_the_cell(tmp_path):
+    "The one case worth stopping for, and it says which cell rather than only that something moved."
+    nb = tmp_path/'n.ipynb'
+    nb.write_text(_nb_json([('c1', 'x = 1', []), ('c2', 'y = 2', [])]))
+    ws = Workspace(roots=[tmp_path]); ws.open(nb)
+    with TestClient(ide_app(ws)) as client:
+        state = client.get('/tab/state').json()
+        nb.write_text(_nb_json([('c1', 'x = 999', []), ('c2', 'y = 2', [])]))
+        r = client.post('/nb/save', json={'path': str(nb), 'base_disk_version': state['disk_version'],
+                                          'cells': [{'i': 0, 'source': 'x = 11'}]})
+        assert r.status_code == 409
+        assert 'cell 1' in r.json()['error'], r.json()
+        assert 'x = 999' in nb.read_text(), 'the disk version is left alone'
+        forced = client.post('/nb/save', json={'path': str(nb), 'force': True,
+                                               'base_disk_version': state['disk_version'],
+                                               'cells': [{'i': 0, 'source': 'x = 11'}]})
+        assert forced.status_code == 200, 'force still wins'
+
+def test_a_cell_the_external_write_removed_is_not_reconciled(tmp_path):
+    "With the cell gone there is nothing to rebase onto, so the save refuses rather than guessing."
+    nb = tmp_path/'n.ipynb'
+    nb.write_text(_nb_json([('c1', 'x = 1', []), ('c2', 'y = 2', [])]))
+    ws = Workspace(roots=[tmp_path]); ws.open(nb)
+    with TestClient(ide_app(ws)) as client:
+        state = client.get('/tab/state').json()
+        nb.write_text(_nb_json([('c2', 'y = 2', [])]))
+        r = client.post('/nb/save', json={'path': str(nb), 'base_disk_version': state['disk_version'],
+                                          'cells': [{'i': 0, 'source': 'x = 11'}]})
+        assert r.status_code == 409
+
+
+def test_a_tab_whose_file_moved_is_reported_as_stale(tmp_path):
+    """`/tab/state` keeps serving the cached copy, so the flag is the only thing that says the file
+    moved. Nothing read it, and an open notebook showed the version from before `nbdev-prepare`."""
+    nb = tmp_path/'n.ipynb'
+    nb.write_text(_nb_json([('c1', 'x = 1', [{'output_type': 'stream', 'text': 'noise'}])]))
+    ws = Workspace(roots=[tmp_path]); ws.open(nb)
+    with TestClient(ide_app(ws)) as client:
+        first_read = client.get('/tab/state').json()
+        assert first_read['stale'] is False
+        nb.write_text(_nb_json([('c1', 'x = 1', [])]))
+        again = client.get('/tab/state').json()
+        assert again['stale'] is True, 'the file moved under the cached copy'
+        assert again['disk_version'] == first_read['disk_version'], 'and the token still names the cached one'
+
+def test_the_client_acts_on_the_stale_flag():
+    "Reloading a clean tab, and never dropping an unsaved buffer for a disk change."
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'editor'/'tabs.js').read_text()
+    assert 'if (st.stale) noteStaleTab(' in src, 'the flag has to be read'
+    body = src[src.index('function noteStaleTab'):]
+    assert 'st.dirty || recoveredDraft' in body, 'an unsaved buffer is never dropped'
+    assert body.index('st.dirty || recoveredDraft') < body.index('takeDiskVersion'), \
+        'the dirty case must return before anything adopts disk'

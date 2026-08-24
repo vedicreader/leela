@@ -47,6 +47,10 @@ async function mountTab(expectedPath = '') {
   const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
   if(mountVersion!==mountTabVersion)return;
   const recoveredDraft = await restoreDrafts(st);
+  // `/tab/state` serves the cached copy and flags that the file has moved under it, which is what a
+  // run of `nbdev-prepare` over an open notebook does. Nobody read the flag, so the tab showed the
+  // version from before the run with nothing saying so.
+  if (st.stale) noteStaleTab(st, recoveredDraft);
   // Only the tab's own editors are torn down. The exec strip belongs to the app, and destroying
   // it here would silently leave the box unmounted.
   lee.cellObserver?.disconnect(); lee.cellObserver = null;
@@ -157,3 +161,14 @@ function mountPdf(host, st) {
     `<noscript class="lee-dim">This view needs the browser's PDF viewer.</noscript></div></div>`;
 }
 
+function noteStaleTab(st, recoveredDraft) {
+  const name = (st.path || st.title || 'this file').split('/').pop();
+  // A recovered draft is the user's own unsaved work, so it is never dropped for a disk change.
+  if (st.dirty || recoveredDraft) {
+    status(`${name} changed on disk; your unsaved version is what you are looking at`, 'err');
+    return;
+  }
+  status(`${name} changed on disk — reloading`, 'busy');
+  takeDiskVersion(st.path).then(() => status(`${name} reloaded from disk`, 'ok'))
+                          .catch(e => status(String(e.message || e), 'err'));
+}

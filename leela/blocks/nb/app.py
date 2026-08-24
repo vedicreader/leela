@@ -21,6 +21,34 @@ __all__ = ['CAPS', 'connect']
 
 CAPS = ('fs', 'journal', 'inline_ai', 'tab', 'pending_approval', 'docs', 'debug', 'running')
 
+def _rebase_notebook(tab, payload, docs):
+    """Put a draft's source edits onto the notebook as it is on disk now.
+
+    Returns the cells whose source moved on both sides, `[]` when the rebase is clean, or None when
+    it cannot be attempted at all and the caller should refuse the save. Cells are matched by id,
+    because an external write may have added or removed one and shifted every index after it.
+    """
+    key = tab.path or tab.title
+    base = docs.get(key)
+    if base is None or not tab.path: return None
+    try: disk = Notebook.load(tab.path)
+    except Exception: return None
+    by_id = {c.id: c for c in disk.cells if c.id}
+    clash, edits = [], []
+    for c in payload.get('cells', []):
+        i = c.get('i')
+        if not isinstance(i, int) or not 0 <= i < len(base): return None
+        was = base[i]
+        now = by_id.get(was.id) if was.id else (disk[i] if i < len(disk) else None)
+        if now is None: return None                      # the cell is gone: not ours to reconcile
+        if now.source != was.source and now.source != c['source']:
+            clash.append(f'cell {i + 1}')
+        else: edits.append((now, c['source']))
+    if clash: return clash
+    for cell, source in edits: cell.source = source
+    docs[key] = disk
+    return []
+
 def connect(app, ctx):
     rt = app.route
     ws, store, dbgstate = ctx.session, ctx.docs, ctx.debug
@@ -344,14 +372,23 @@ def connect(app, ctx):
         if t is None:return fail('nothing open')
         current_version = _disk_version(t.path)
         base_version = str(d.get('base_disk_version') or '')
+        rebased = ''
         if base_version and current_version != base_version and not d.get('force'):
-            # Either another process wrote the file, or Leela wrote it and this draft's base
-            # predates that write. The message says which, since the dialog cannot tell them apart.
-            mine = doc_versions.get(t.path or t.title) == current_version
-            whose = ('Leela wrote that version itself, so this draft began before its own last save'
-                     if mine else 'another process wrote it')
-            return fail('the file changed on disk after this browser draft began; review it before '
-                        f'overwriting. Draft base {base_version}, on disk {current_version}: {whose}.', 409)
+            # A save writes cell sources and nothing else, and `nbdev_clean` rewrites outputs and
+            # metadata and nothing else, so the two rarely touch the same thing. Take the file as it
+            # is now and put the draft's edits back on top; only a source changed on both sides is a
+            # conflict worth stopping for.
+            clash = _rebase_notebook(t, d, docs) if t.kind == 'notebook' else None
+            if clash is None:
+                mine = doc_versions.get(t.path or t.title) == current_version
+                whose = ('Leela wrote that version itself, so this draft began before its own last save'
+                         if mine else 'another process wrote it')
+                return fail('the file changed on disk after this browser draft began; review it before '
+                            f'overwriting. Draft base {base_version}, on disk {current_version}: {whose}.', 409)
+            if clash:
+                return fail('the file changed on disk and so did these cells in the browser: '
+                            + ', '.join(clash) + '. Review them before overwriting.', 409)
+            rebased = current_version
         try:
             target = t.path or d.get('path')
             before = Path(target).read_text(encoding='utf-8', errors='replace') if target and Path(target).exists() else None
