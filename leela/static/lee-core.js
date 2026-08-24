@@ -636,12 +636,17 @@ function findBinding(e, scope) {
   return null;
 }
 
-//: Chords CodeMirror owns while the caret is in a document, and this router cannot call.
-const DEFER_IN_TEXT = new Set(['notebook_undo', 'notebook_redo']);
+//: Chords CodeMirror owns while the caret is in a document, and what to try there first. Its
+//: command returns false with nothing left to undo, which is when the cell operation is what
+//: `mod+z` must mean instead.
+const DEFER_IN_TEXT = {notebook_undo: 'undo', notebook_redo: 'redo'};
 
-function inTextEditor(e) {
+function textEditorOf(e) {
   const path = e.composedPath ? e.composedPath() : [e.target];
-  return path.some(n => n instanceof Element && n.matches('.cm-content'));
+  const el = path.find(n => n instanceof Element && n.matches('.cm-content'));
+  if (!el) return null;
+  const host = el.closest('.cm-editor');
+  return [...lee.editors.values()].find(v => v.dom === host) || null;
 }
 
 window.addEventListener('keydown', e => {
@@ -652,7 +657,12 @@ window.addEventListener('keydown', e => {
                       shift: e.shiftKey, meta: e.metaKey, scope,
                       action: match?.binding.action || '', trusted: e.isTrusted};
   if (!match) return;
-  if (DEFER_IN_TEXT.has(match.binding.action) && inTextEditor(e)) return;
+  const cmd = DEFER_IN_TEXT[match.binding.action], view = cmd && textEditorOf(e);
+  if (view) {
+    e.preventDefault(); e.stopPropagation();
+    if (LeeCM[cmd](view)) return;          // the document had something to undo
+    return void leeAct(match.binding.action);
+  }
   e.preventDefault(); e.stopPropagation();
   leeAct(match.binding.action);
 }, true);

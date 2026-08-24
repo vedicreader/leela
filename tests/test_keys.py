@@ -172,13 +172,22 @@ def test_cmd_z_is_notebook_undo_and_the_old_chord_migrates():
     assert kept['notebook_undo'] == 'mod+z', 'the old default moves'
     assert kept['notebook_redo'] == 'hyper+u', 'a chord somebody chose is left alone'
 
-def test_the_text_editor_keeps_the_chords_it_owns():
-    """`mod+z` inside a cell is CodeMirror's history, which the router cannot reach, so the router
-    has to decline rather than swallow the key."""
+def test_the_document_undoes_first_and_the_notebook_after():
+    """`mod+z` in a cell is CodeMirror's history until that runs out, and the cell operation after.
+    Its command answers False with nothing left, which is the whole hinge."""
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'keys'/'keymap.js').read_text()
-    assert 'DEFER_IN_TEXT' in src
-    assert "'notebook_undo', 'notebook_redo'" in src
-    # It must decline before preventDefault, or CodeMirror never sees the key.
-    body = src[src.index('window.addEventListener(\'keydown\''):]
-    assert body.index('DEFER_IN_TEXT.has') < body.index('preventDefault')
+    assert 'notebook_undo:' in src and 'notebook_redo:' in src, 'both chords route through it'
+    body = src[src.index("window.addEventListener('keydown'"):]
+    # The document is asked first, and only a False answer reaches the action.
+    assert body.index('LeeCM[cmd](view)') < body.index('leeAct(match.binding.action)')
+
+def test_undo_is_reachable_on_the_editor_bundle():
+    "The router calls it, so the vendored build has to export it. It did not before."
+    import re
+    from pathlib import Path
+    s = (Path(__file__).resolve().parents[1]/'leela'/'vendor'/'lee-cm6.js').read_text()
+    m = re.search(r'CS\(\w+,\s*\{([^}]{200,6000})\}\)', s)
+    names = set(re.findall(r'(\w+)\s*:\s*\(\)', m.group(1)))
+    assert {'undo', 'redo'} <= names, 'rebuild frontend/editor.js with esbuild'
+    assert {'create', 'getDoc', 'focus', 'selection'} <= names, 'and nothing else was dropped'

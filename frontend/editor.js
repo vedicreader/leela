@@ -12,7 +12,8 @@ import {EditorState, Compartment, StateEffect, StateField, Prec, RangeSet} from 
 import {EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
         drawSelection, rectangularSelection, crosshairCursor, Decoration, WidgetType,
         gutter, GutterMarker, placeholder as cmPlaceholder, ViewPlugin, highlightSpecialChars} from "@codemirror/view";
-import {defaultKeymap, history, historyKeymap, indentWithTab} from "@codemirror/commands";
+import {defaultKeymap, history, historyKeymap, indentWithTab,
+        undo as cmUndo, redo as cmRedo} from "@codemirror/commands";
 import {searchKeymap, highlightSelectionMatches, openSearchPanel} from "@codemirror/search";
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap,
         startCompletion as cmStartCompletion} from "@codemirror/autocomplete";
@@ -923,3 +924,8 @@ export function wordAtCursor(view) {
 export const lineCount = (view) => view.state.doc.lines;
 export const destroy = (view) => view.destroy();
 export const languages = () => Object.keys(LANGS);
+
+// False when the document has nothing left to undo, which is what lets a caller fall through to
+// undoing the cell operation instead. CodeMirror owns `mod+z` while the caret is in a document.
+export const undo = (view) => cmUndo(view);
+export const redo = (view) => cmRedo(view);
