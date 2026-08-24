@@ -1656,9 +1656,9 @@ def test_the_chord_splits_a_cell_into_one_cell_per_def():
         return prevented, await pg.evaluate("lee.cells.map(c => c.source)")
     event, sources = _run(go)
     assert event == {'prevented': True, 'matched': 'cell_split_symbols'}
-    assert sources == ['#| export\nimport os\n',
-                       '#| export\ndef f():\n    return 1\n',
-                       '#| export\nclass C: pass\n']
+    assert sources == ['#| export\nimport os',
+                       '#| export\ndef f():\n    return 1',
+                       '#| export\nclass C: pass']
 
 
 def test_the_tree_selects_more_than_one_row_and_the_clipboard_acts_on_all_of_them(tmp_path):
@@ -1700,3 +1700,65 @@ def test_the_tree_selects_more_than_one_row_and_the_clipboard_acts_on_all_of_the
     assert (tmp_path/'dest'/'a.py').is_file() and (tmp_path/'dest'/'b.py').is_file()
     assert not (tmp_path/'a.py').exists() and not (tmp_path/'b.py').exists()
     assert (tmp_path/'c.py').is_file(), 'the row that was not selected stays put'
+
+
+def test_a_code_block_in_rendered_markdown_has_no_scrollbar_of_its_own(tmp_path):
+    """Every fenced block in rendered markdown is a real CodeMirror editor with a copy header, and a
+    page of them each drew a thin vertical bar. Two causes: the box was `lines * 19px`, so wherever
+    the real line height was not 19px it was a few pixels short of its own text, and the overview
+    stripe ran inside each one, hiding and unhiding that bar as it decided whether it was needed."""
+    async def go(pg):
+        await pg.evaluate("""() => {
+          const host = document.createElement('div');
+          host.id = 'md-code-test';
+          host.style.cssText = 'position:fixed;inset:40px 20px auto 20px;width:600px';
+          document.body.appendChild(host);
+          for (const n of [1, 3, 6, 12])
+            mountCodeSurface(host, Array.from({length: n}, (_, i) => `x${i} = ${i}`).join('\\n'), 'python');
+        }""")
+        await pg.wait_for_selector('#md-code-test .lee-code-editor .cm-editor')
+        await pg.wait_for_timeout(400)
+        return await pg.evaluate("""() => [...document.querySelectorAll('#md-code-test .lee-code-editor')]
+            .map(el => {
+              const s = el.querySelector('.cm-scroller');
+              return {lines: el.querySelectorAll('.cm-line').length,
+                      over: s.scrollHeight - s.clientHeight,
+                      stripe: !!el.querySelector('.cm-lee-overview'),
+                      marked: el.classList.contains('has-overview') ||
+                              !!el.querySelector('.has-overview')};
+            })""")
+        return None
+    blocks = _run(go, roots=[tmp_path])
+    assert len(blocks) == 4
+    for b in blocks:
+        assert b['over'] <= 0, f"a {b['lines']}-line block overflows by {b['over']}px, so it draws a bar"
+        assert not b['stripe'], 'a read-only snippet gets no overview stripe'
+        assert not b['marked'], 'and nothing hides a bar on it'
+
+
+def test_the_snippet_box_is_not_short_of_its_own_text(tmp_path):
+    """The box was `lines * 19px`, and a line is `--lee-code-size` by `--lee-code-line-height`,
+    which are set from the editor preferences and are 13px by 1.5 by default: 19.5px. Every block
+    was half a pixel per line short of its own text, which is a scroll bar with a full-height thumb,
+    and more so for anyone who had changed either preference."""
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const s = getComputedStyle(document.documentElement);
+          const size = parseFloat(s.getPropertyValue('--lee-code-size'));
+          const ratio = parseFloat(s.getPropertyValue('--lee-code-line-height'));
+          const host = document.createElement('div');
+          host.style.cssText = 'position:fixed;inset:40px 20px auto 20px;width:600px';
+          document.body.appendChild(host);
+          mountCodeSurface(host, Array.from({length: 12}, (_, i) => `x${i} = ${i}`).join('\\n'), 'python');
+          const line = host.querySelector('.cm-line');
+          return {size, ratio, drawn: line.getBoundingClientRect().height,
+                  assumed: 19, over: (() => {
+                    const sc = host.querySelector('.cm-scroller');
+                    return sc.scrollHeight - sc.clientHeight;
+                  })()};
+        }""")
+    d = _run(go, roots=[tmp_path])
+    assert d['size'] * d['ratio'] != d['assumed'], \
+        f"a line is {d['size']}x{d['ratio']}={d['size'] * d['ratio']}px, which the old box called 19"
+    assert d['drawn'] > d['assumed'], f"a drawn line is {d['drawn']}px, taller than the 19 assumed"
+    assert d['over'] <= 0, f'and the box no longer overflows by {d["over"]}px'

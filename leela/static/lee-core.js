@@ -271,10 +271,12 @@ function mountCodeSurface(host, code, lang = 'python', promote = false) {
     `<button type="button" data-copy>copy</button>` +
     (promote ? `<button type="button" data-promote>promote to cell</button>` : '');
   const editor = document.createElement('div'); editor.className = 'lee-code-editor';
-  const lines = Math.max(1, String(code).split('\n').length);
-  editor.style.setProperty('--lee-code-lines', Math.min(lines, 18));
   shell.append(head, editor); host.appendChild(shell);
-  const view = createEditor(editor, {doc: String(code || ''), lang: codeLang(lang), readOnly: true, lineNums: true});
+  /* No overview stripe on a snippet. It is a read-only block a few lines long, a minimap of it says
+     nothing, and the stripe is what hides and unhides the block's own scroll bar as it decides
+     whether it is needed. A page of rendered markdown holds dozens of these. */
+  const view = createEditor(editor, {doc: String(code || ''), lang: codeLang(lang), readOnly: true,
+                                     lineNums: true, settings: {overviewMode: 'off'}});
   head.querySelector('[data-copy]').onclick = () => {
     navigator.clipboard?.writeText(String(code || '')); status('code copied', 'ok');
   };

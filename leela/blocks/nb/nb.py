@@ -207,7 +207,8 @@ class Notebook:
         The cell's own directives go on top of every part, so splitting an `#| export` cell leaves
         every part exported and a test cell can go under each. `default_exp` and its kind name the
         notebook rather than the cell, so they are not copied and they hold the original cell open.
-        Whatever was not a class or a function stays where it was, above.
+        Whatever was not a class or a function stays where it was, above. No part ends in a
+        newline: a cell source that does draws an empty line under itself in the editor.
         """
         c = self.cells[i]
         if c.cell_type != 'code': return 0
@@ -218,13 +219,13 @@ class Notebook:
         parts, keeps, at = [], [], 0
         for s in syms:
             keeps.append(body[at:s['start']]); at = s['end']
-            parts.append(f"{tag}{body[s['start']:s['end']].strip(chr(10))}\n")
+            parts.append(f"{tag}{body[s['start']:s['end']].strip(chr(10))}")
         keeps.append(body[at:])
         rest = ''.join(keeps)
         # A cell holding nothing but the directives it just handed on becomes the first part.
         stays = (head + rest).strip('\n') if rest.strip() or head != tag else ''
         self._checkpoint(i)
-        if stays: c.source = stays + '\n'
+        if stays: c.source = stays
         else: c.source, parts = parts[0], parts[1:]
         for n, src in enumerate(parts, 1):
             self.cells.insert(i + n, Cell(source=src, cell_type='code'))

@@ -124,22 +124,23 @@ def test_a_cell_splits_into_one_cell_per_class_and_function():
     "Source order, and whatever was not a def stays above where it was."
     made, cells = _split('#| export\nimport os\n\ndef f():\n    return 1\n\nclass C:\n    pass\n')
     assert made == 2
-    assert cells == ['#| export\nimport os\n',
-                     '#| export\ndef f():\n    return 1\n',
-                     '#| export\nclass C:\n    pass\n']
+    assert cells == ['#| export\nimport os',
+                     '#| export\ndef f():\n    return 1',
+                     '#| export\nclass C:\n    pass']
+    assert not any(s.endswith('\n') for s in cells), 'a trailing newline is an empty line in the editor'
 
 def test_every_part_of_an_export_cell_is_exported_too():
     "The point of the split is a test cell under each, so each part has to carry the directive."
     made, cells = _split('#| export\ndef f(): pass\n\ndef g(): pass\n')
     assert made == 1, 'nothing was left to keep, so the first part is the cell itself'
-    assert cells == ['#| export\ndef f(): pass\n', '#| export\ndef g(): pass\n']
+    assert cells == ['#| export\ndef f(): pass', '#| export\ndef g(): pass']
 
 def test_a_notebook_wide_directive_is_not_copied_onto_the_parts():
     "`default_exp` names the notebook. Copied onto every part it would be declared over and over."
     made, cells = _split('#| default_exp core\n#| export\ndef f(): pass\n')
     assert made == 1
-    assert cells[0] == '#| default_exp core\n#| export\n', 'and it holds the original cell open'
-    assert cells[1] == '#| export\ndef f(): pass\n'
+    assert cells[0] == '#| default_exp core\n#| export', 'and it holds the original cell open'
+    assert cells[1] == '#| export\ndef f(): pass'
 
 def test_a_cell_with_nothing_to_split_is_left_exactly_as_it_was():
     for src in ('x = 1\n', 'def (:\n', '', '#| export\n'):
@@ -163,8 +164,8 @@ def test_the_split_is_reachable_as_an_edit_op(tmp_path):
         client.get('/tab/state')
         r = client.post('/nb/edit', json={'op': 'split_symbols', 'i': 0})
         assert r.status_code == 200, r.text
-        assert [c['source'] for c in r.json()['cells']] == ['#| export\ndef f(): pass\n',
-                                                            '#| export\nclass C: pass\n']
+        assert [c['source'] for c in r.json()['cells']] == ['#| export\ndef f(): pass',
+                                                            '#| export\nclass C: pass']
 
 def test_creating_an_ipynb_by_filename_writes_valid_json(tmp_path):
     ws = Workspace(roots=[tmp_path])

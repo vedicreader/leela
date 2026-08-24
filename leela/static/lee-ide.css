@@ -1764,8 +1764,11 @@ kbd {
 .lee-code-head button:hover { background: var(--lee-bg2); color: var(--lee-fg); }
 .lee-code-head button[data-promote]:hover { color: var(--lee-green); }
 .lee-code-head button:active { transform: translateY(1px); }
-.lee-code-editor { height: min(calc(var(--lee-code-lines, 6) * 19px + 10px), 352px); min-height: 48px; }
-.lee-code-editor .cm-editor { height: 100%; }
+/* Sized by its own content, capped. The height was `lines * 19px`, and wherever the real line
+   height was not exactly 19px the box came up a few pixels short of its own text, so every snippet
+   in a page of markdown drew a scroll bar for the two pixels it could not show. */
+.lee-code-editor { max-height: 352px; min-height: 48px; }
+.lee-code-editor .cm-editor { height: auto; max-height: 352px; }
 .cm-editor .cm-scroller { line-height: var(--lee-code-line-height); }
 .cm-editor .cm-gutters { position: sticky; left: 0; z-index: 4; background: var(--lee-bg); }
 .cm-editor .cm-gutter { background: inherit; }
