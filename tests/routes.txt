@@ -41,6 +41,7 @@ GET,POST /agent/rollback-turn
 GET,POST /agent/run-policy
 GET,POST /agent/runs
 GET,POST /agent/runs/{run_id}/cancel
+GET,POST /agent/runs/{run_id}/steer
 GET,POST /agent/runs/{run_id}/terminate
 GET,POST /agent/runtimes
 GET,POST /agent/runtimes/install
@@ -64,6 +65,7 @@ GET,POST /agent/steer
 GET,POST /agent/stop
 GET,POST /agent/stream
 GET,POST /agent/subagent-writes
+GET,POST /agent/subagents
 GET,POST /agent/thread/close
 GET,POST /agent/thread/mute
 GET,POST /agent/thread/new

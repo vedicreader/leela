@@ -15,7 +15,7 @@ from ...core.web import diff_payload, fail, off_loop, sse
 from ...workspace import STEP_RANGE, TOOL_RANGE
 from .threads import TurnError
 from .turns import (edit_diffs, history_sessions, project_state_context, surfaces, tool_preview,
-                    tool_schemas)
+                    tool_schemas, with_capabilities)
 
 __all__ = ['CAPS', 'connect']
 
@@ -170,7 +170,7 @@ def connect(app, ctx):
         # `dict` is where a summarised name lives; `title` alone is only what a person typed
         row = t.dict()
         return {'ok': True, 'thread': t.id, 'state': row['state'], 'seq': t.feed.settled_seq,
-                'title': row['title'], 'turns': ws.with_timelines(turns)}
+                'title': row['title'], 'turns': with_capabilities(t.ai, ws.with_timelines(turns))}
     @rt('/agent/thread/title')
     async def agent_thread_title(req):
         d = await req.json()
@@ -209,7 +209,8 @@ def connect(app, ctx):
         group = first(g for g in _grouped_history(t.ai, execution.get('sessions', []))
                       if g['id'] == str(id))
         if group is None: return fail(f'no such conversation {id}', 404)
-        return {'ok': True, 'id': group['id'], 'count': len(group['turns']), **group}
+        return {'ok': True, 'id': group['id'], 'count': len(group['turns']),
+                **{**group, 'turns': with_capabilities(t.ai, group['turns'])}}
     @rt('/agent/models')
     def agent_models(legacy: bool = True):
         from ...agent.core import DFLT_LOCAL, available_models, auth_status, resolve
@@ -635,6 +636,51 @@ def connect(app, ctx):
         if t.ai.run(run_id) is None: return _run_missing(t, run_id)
         try: return {'ok': True, 'thread': t.id, **t.ai.terminate(run_id)}
         except Exception as e: return {'ok': False, 'error': errstr(e), 'thread': t.id}
+    @rt('/agent/runs/{run_id}/steer')
+    async def agent_run_steer(req, run_id: str):
+        """Say one thing to a delegated sub-agent, delivered on its next tool result.
+
+        A sub-agent cannot see the conversation that would otherwise correct it, so stopping one
+        that had gone wrong was the only thing a person could do to it.
+        """
+        try: d = await req.json()
+        except Exception: return fail('steer body must be JSON')
+        try: t = _thread(str(d.get('thread') or ''))
+        except Exception as e: return _thread_error(e)
+        run = t.ai.run(run_id)
+        if run is None: return _run_missing(t, run_id)
+        text = str(d.get('text') or '').strip()
+        if not text: return fail('nothing to say to it')
+        # the agent core carries the steer; an older one has no way to hand it over
+        if not hasattr(run, 'steer'):
+            return JSONResponse({'ok': False, 'code': 'steer_unsupported', 'thread': t.id, 'run': run_id,
+                                 'message': 'this ramabana release cannot carry a steer to a sub-agent'},
+                                status_code=501)
+        if not run.steer(text):
+            return JSONResponse({'ok': False, 'code': 'run_over', 'thread': t.id, 'run': run_id,
+                                 'message': f'that sub-agent is {run.state} and will read nothing more'},
+                                status_code=409)
+        return {'ok': True, 'thread': t.id, **run.dict()}
+    @rt('/agent/subagents')
+    def agent_subagents(action_id: str = '', thread: str = ''):
+        """One delegation: the call that asked, what its sub-agents did, and the runs still going.
+
+        A delegated conversation is thrown away when it ends, so these recorded calls are the only
+        account of it. `records_sub_calls` is false where the agent core still hands a read-only
+        sub-agent unwrapped tools, so an empty list is not read as "it did nothing".
+        """
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        rows = t.ai.activity.rows()
+        wanted = [r for r in rows if r.get('kind') == 'delegate'
+                  and (not action_id or r.get('id') == action_id)]
+        def flat(runs):
+            return [x for r in runs for x in (r, *flat(r.get('children') or []))]
+        return {'ok': True, 'thread': t.id,
+                'delegations': [{**d, 'calls': [r for r in rows if r.get('parent_action_id') == d.get('id')]}
+                                for d in wanted],
+                'runs': [r for r in flat(t.ai.runs(active=True)) if r.get('kind') == 'child'],
+                'records_sub_calls': hasattr(t.ai, '_record_sub')}
     @rt('/agent/turn')
     async def agent_turn(req):
         try: d = await req.json()

@@ -43,13 +43,73 @@ function usageMeta(usage, label = '', model = '') {
   return el;
 }
 
+/* One turn is one card, so what has been read can be folded away. Everything a turn paints goes
+   in its body: the live path used to append the prompt, the progress strip, the timeline and the
+   closing diffs as flat siblings of the log, which is why `markTurnUndone` had to guess a turn's
+   extent by walking to the next `.lee-user-message`. */
+const foldKey = () => `lee-agent-folded:${lee.agentThread || 'default'}`;
+const foldedTurns = () => { try { return new Set(JSON.parse(localStorage.getItem(foldKey()) || '[]')); } catch { return new Set(); } };
+const saveFolded = set => { try { localStorage.setItem(foldKey(), JSON.stringify([...set].slice(-400))); } catch {} };
+
+function agentTurnCard({prompt = '', model = '', route = '', turnId = ''} = {}) {
+  const card = document.createElement('article'); card.className = 'lee-agent-turn';
+  if (turnId) card.dataset.turn = turnId;
+  const meta = [model, route].filter(Boolean).join(' · ');
+  card.innerHTML = `<header class="lee-agent-turn-head"><button class="lee-agent-turn-fold" type="button"` +
+    ` aria-expanded="true" title="fold this turn. Hold alt for every turn">` +
+    `<i class="lee-agent-step-chevron" aria-hidden="true"></i></button>` +
+    `<span class="lee-agent-turn-title"></span><span class="lee-agent-turn-meta">${esc(meta)}</span></header>` +
+    `<div class="lee-agent-turn-body"></div>`;
+  // textContent, not the template: a prompt is whatever was typed
+  $('.lee-agent-turn-title', card).textContent = String(prompt).replace(/\s+/g, ' ').trim() || '(no prompt)';
+  return card;
+}
+const turnBody = card => card && $('.lee-agent-turn-body', card);
+/* A checkpoint the agent is blocked on must never sit behind a fold: its buttons and its ↵ / E / S
+   keys are the only way the run continues, and a folded body cannot be focused or clicked. */
+const turnAwaitingApproval = card => !!$('.lee-approval.proposed', card);
+const unfoldForApproval = node => foldAgentTurn(node?.closest?.('.lee-agent-turn'), false);
+
+function foldAgentTurn(card, folded) {
+  if (!card || (folded && turnAwaitingApproval(card))) return;
+  card.classList.toggle('folded', folded);
+  $('.lee-agent-turn-fold', card)?.setAttribute('aria-expanded', String(!folded));
+  turnBody(card)?.setAttribute('aria-hidden', String(folded));
+  const id = card.dataset.turn; if (!id) return;
+  const set = foldedTurns(); folded ? set.add(id) : set.delete(id); saveFolded(set);
+}
+const agentTurnCards = () => $$('.lee-agent-turn', $('#agentlog') || document);
+function foldAgentTurns(folded) { for (const card of agentTurnCards()) foldAgentTurn(card, folded); }
+/* The newest turn is the one being read, so it is never folded from storage: a turn folded before
+   a resume would otherwise hide the answer a person came back for. */
+function applyStoredFolds(log) {
+  const cards = $$('.lee-agent-turn', log), stored = foldedTurns();
+  cards.forEach((card, i) => { if (i < cards.length - 1 && stored.has(card.dataset.turn)) foldAgentTurn(card, true); });
+}
+/* One listener on the log, bound from `initAgentComposer` rather than from a paint: a conversation
+   with no turns paints nothing, and the log element itself outlives every repaint. */
+function bindAgentTurnFolds(log) {
+  if (!log || log._leeFoldsBound) return;
+  log._leeFoldsBound = true;
+  log.addEventListener('click', e => {
+    const button = e.target.closest?.('.lee-agent-turn-fold'); if (!button) return;
+    const card = button.closest('.lee-agent-turn'), folded = !card.classList.contains('folded');
+    if (e.altKey) foldAgentTurns(folded); else foldAgentTurn(card, folded);
+  });
+}
+/* the turn being read: whichever card holds focus, or the newest, which is where focus is when
+   it is in the composer */
+const currentAgentTurn = () => document.activeElement?.closest?.('.lee-agent-turn')
+  || $$('.lee-agent-turn', $('#agentlog') || document).at(-1);
+
 function renderTurns(log, turns, heading) {
   if (heading) log.insertAdjacentHTML('beforeend', `<div class="lee-vgroup">${esc(heading)}</div>`);
   for (const turn of (turns || [])) {
-    const item = document.createElement('article'); item.className = 'lee-history-turn';
-    item.innerHTML = `<div class="lee-history-meta"><span>${esc(turn.model)}</span>` +
-      `<span>${esc(turn.plan?.route || 'direct')}</span></div>`;
+    const card = agentTurnCard({prompt: turn.prompt, model: turn.model, route: turn.plan?.route || 'direct',
+                               turnId: turn.turn_id || ''});
+    const item = turnBody(card);
     item.appendChild(userMessage(turn.prompt));
+    let closing = null;
     if ((turn.timeline || []).length) {
       const root = document.createElement('div'); root.className = 'lee-agent-timeline'; item.appendChild(root);
       const paint = agentTimeline(root);
@@ -58,11 +118,12 @@ function renderTurns(log, turns, heading) {
         for (const child of part.children || []) paintActivity(child);
       };
       for (const part of reduceAgentTimeline(turn.timeline)) {
-        if (part.kind === 'prose') paint.chunk(part.text);
+        if (part.kind === 'prose') closing = paint.chunk(part.text);
         else if (part.kind === 'activity') paintActivity(part);
         // what the person said mid-turn, in the place they said it
         else if (part.kind === 'steer' && part.data?.text) paint.append(userMessage(part.data.text));
       }
+      closing = closing || root;
     } else {
       if ((turn.activity || []).length) {
         const steps = document.createElement('div'); steps.className = 'lee-agent-steps';
@@ -73,10 +134,17 @@ function renderTurns(log, turns, heading) {
       }
       const reply = document.createElement('div'); reply.className = 'lee-reply'; item.appendChild(reply);
       renderMarkdown(reply, turn.reply || '');
+      closing = reply;
     }
+    /* The revision bar used to be added by the live `done` handler alone, so undo, restore and
+       edit-what-the-agent-remembers vanished on every history toggle, resume, thread switch and
+       resync. It is painted from the turn record here, and the server says whether the operations
+       behind it can still be reached in this process. */
+    addResponseRevision(closing, turn.turn_id, turn.reply || '', turn.capabilities || {});
     const usage = usageMeta(turn.usage, turn.usage_label, turn.model); if (usage) item.appendChild(usage);
-    log.appendChild(item);
+    log.appendChild(card);
   }
+  applyStoredFolds(log);
 }
 /* A summarised title arrives as `Title: Ramabana CLI ASCII`, quotes and all, and stored ones keep
    the prefix after the storage point is fixed, so every display cleans it. */
@@ -553,8 +621,9 @@ function renderSessionCells(log, d) {
   }
 }
 
-function agentLog(html) {
+function agentLog(html, host = null) {
   const log = $('#agentlog');
+  if (host) { host.insertAdjacentHTML('beforeend', html); log.scrollTop = log.scrollHeight; return; }
   // Never use `innerHTML +=`: it reparses every existing child and silently detaches every
   // checkpoint, fork, rollback, CodeMirror and disclosure handler already in the log.
   log.insertAdjacentHTML('beforeend', html);

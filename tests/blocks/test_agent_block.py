@@ -105,3 +105,65 @@ def test_every_routed_job_says_where_its_model_is_spent():
     assert 'follows the turn model' in JOB_HELP['summary']
     assert JOB_HELP['turn'] in str(help_mark('turn')) and 'lee-hint' in str(help_mark('turn'))
     assert str(help_mark('nosuchjob'))                 # an unknown job renders, saying nothing
+
+
+def test_a_delegation_is_inspectable_and_says_when_nothing_was_recorded(tmp_path):
+    """A delegated sub-agent's conversation is thrown away when it answers, so its recorded calls
+    are the only account of it. Where the agent core still hands a read-only sub-agent unwrapped
+    tools there are none, and the pane must be told that rather than draw an empty list.
+    """
+    ws = Workspace(roots=[tmp_path])
+    app = ide_app(ws)
+    ai = ws.threads.active.ai
+    parent = ai.activity.start('delegate_search', {'question': 'which files import fastllm?'})
+    kid = ai.activity.start('search_code', {'query': 'fastllm'}, parent_action_id=parent.id)
+    ai.activity.finish(kid, 'backend.py:12'); ai.activity.finish(parent, 'one file does')
+    with TestClient(app) as client:
+        d = client.get('/agent/subagents').json()
+        assert d['ok'] and len(d['delegations']) == 1
+        one = d['delegations'][0]
+        assert one['id'] == parent.id and [c['tool'] for c in one['calls']] == ['search_code']
+        assert d['records_sub_calls'] is hasattr(ai, '_record_sub')
+        assert client.get(f'/agent/subagents?action_id={parent.id}').json()['delegations'][0]['id'] == parent.id
+        assert client.get('/agent/subagents?action_id=nope').json()['delegations'] == []
+
+
+def test_steering_one_sub_agent_answers_the_same_shape_however_it_refuses(tmp_path):
+    """Missing run, nothing said, and an agent core that cannot carry a steer are all structured,
+    the way `cancel` and `terminate` already answer. Which run is asked about is settled before
+    what was said to it, so a stale button in the pane names the run it could not reach.
+    """
+    ws = Workspace(roots=[tmp_path])
+    app = ide_app(ws)
+    assert '/agent/runs/{run_id}/steer' in paths(app)
+    run = ws.threads.active.ai._new_run('what imports fastllm?')
+    with TestClient(app) as client:
+        r = client.post('/agent/runs/run_nope/steer', json={'text': 'look in tests too'})
+        assert r.status_code == 404 and r.json()['code'] == 'run_not_found', r.json()
+        assert 'error' not in r.json() and r.json()['message']
+
+        assert client.post(f'/agent/runs/{run.id}/steer', json={'text': '   '}).status_code == 400
+
+        r = client.post(f'/agent/runs/{run.id}/steer', json={'text': 'look in tests too'})
+        if not hasattr(run, 'steer'):    # an agent core with no way to carry it says so, once
+            assert r.status_code == 501 and r.json()['code'] == 'steer_unsupported', r.json()
+            assert 'error' not in r.json() and r.json()['message']
+            return
+        assert r.status_code == 200 and r.json()['ok'] and r.json()['steer_pending'], r.json()
+        run.finish()
+        r = client.post(f'/agent/runs/{run.id}/steer', json={'text': 'too late'})
+        assert r.status_code == 409 and r.json()['code'] == 'run_over', r.json()
+
+
+def test_a_painted_turn_carries_what_can_still_be_done_to_it(tmp_path):
+    """Undo, restore and revise reached the browser only on the live `done` payload, so they
+    vanished on every repaint that rebuilt from the turn log. `known` separates a turn that
+    changed nothing from one this process no longer holds a boundary for.
+    """
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/agent/thread/turns').json()
+        assert d['ok'] and all('capabilities' in t for t in d['turns'])
+    caps = ws.threads.active.ai.turn_capabilities('nothing-like-this')
+    assert caps == {'revisable': False, 'undoable': False, 'branchable': False, 'known': False,
+                    'files': [], 'irreversible': []}

@@ -714,13 +714,73 @@ function usageMeta(usage, label = '', model = '') {
   return el;
 }
 
+/* One turn is one card, so what has been read can be folded away. Everything a turn paints goes
+   in its body: the live path used to append the prompt, the progress strip, the timeline and the
+   closing diffs as flat siblings of the log, which is why `markTurnUndone` had to guess a turn's
+   extent by walking to the next `.lee-user-message`. */
+const foldKey = () => `lee-agent-folded:${lee.agentThread || 'default'}`;
+const foldedTurns = () => { try { return new Set(JSON.parse(localStorage.getItem(foldKey()) || '[]')); } catch { return new Set(); } };
+const saveFolded = set => { try { localStorage.setItem(foldKey(), JSON.stringify([...set].slice(-400))); } catch {} };
+
+function agentTurnCard({prompt = '', model = '', route = '', turnId = ''} = {}) {
+  const card = document.createElement('article'); card.className = 'lee-agent-turn';
+  if (turnId) card.dataset.turn = turnId;
+  const meta = [model, route].filter(Boolean).join(' · ');
+  card.innerHTML = `<header class="lee-agent-turn-head"><button class="lee-agent-turn-fold" type="button"` +
+    ` aria-expanded="true" title="fold this turn. Hold alt for every turn">` +
+    `<i class="lee-agent-step-chevron" aria-hidden="true"></i></button>` +
+    `<span class="lee-agent-turn-title"></span><span class="lee-agent-turn-meta">${esc(meta)}</span></header>` +
+    `<div class="lee-agent-turn-body"></div>`;
+  // textContent, not the template: a prompt is whatever was typed
+  $('.lee-agent-turn-title', card).textContent = String(prompt).replace(/\s+/g, ' ').trim() || '(no prompt)';
+  return card;
+}
+const turnBody = card => card && $('.lee-agent-turn-body', card);
+/* A checkpoint the agent is blocked on must never sit behind a fold: its buttons and its ↵ / E / S
+   keys are the only way the run continues, and a folded body cannot be focused or clicked. */
+const turnAwaitingApproval = card => !!$('.lee-approval.proposed', card);
+const unfoldForApproval = node => foldAgentTurn(node?.closest?.('.lee-agent-turn'), false);
+
+function foldAgentTurn(card, folded) {
+  if (!card || (folded && turnAwaitingApproval(card))) return;
+  card.classList.toggle('folded', folded);
+  $('.lee-agent-turn-fold', card)?.setAttribute('aria-expanded', String(!folded));
+  turnBody(card)?.setAttribute('aria-hidden', String(folded));
+  const id = card.dataset.turn; if (!id) return;
+  const set = foldedTurns(); folded ? set.add(id) : set.delete(id); saveFolded(set);
+}
+const agentTurnCards = () => $$('.lee-agent-turn', $('#agentlog') || document);
+function foldAgentTurns(folded) { for (const card of agentTurnCards()) foldAgentTurn(card, folded); }
+/* The newest turn is the one being read, so it is never folded from storage: a turn folded before
+   a resume would otherwise hide the answer a person came back for. */
+function applyStoredFolds(log) {
+  const cards = $$('.lee-agent-turn', log), stored = foldedTurns();
+  cards.forEach((card, i) => { if (i < cards.length - 1 && stored.has(card.dataset.turn)) foldAgentTurn(card, true); });
+}
+/* One listener on the log, bound from `initAgentComposer` rather than from a paint: a conversation
+   with no turns paints nothing, and the log element itself outlives every repaint. */
+function bindAgentTurnFolds(log) {
+  if (!log || log._leeFoldsBound) return;
+  log._leeFoldsBound = true;
+  log.addEventListener('click', e => {
+    const button = e.target.closest?.('.lee-agent-turn-fold'); if (!button) return;
+    const card = button.closest('.lee-agent-turn'), folded = !card.classList.contains('folded');
+    if (e.altKey) foldAgentTurns(folded); else foldAgentTurn(card, folded);
+  });
+}
+/* the turn being read: whichever card holds focus, or the newest, which is where focus is when
+   it is in the composer */
+const currentAgentTurn = () => document.activeElement?.closest?.('.lee-agent-turn')
+  || $$('.lee-agent-turn', $('#agentlog') || document).at(-1);
+
 function renderTurns(log, turns, heading) {
   if (heading) log.insertAdjacentHTML('beforeend', `<div class="lee-vgroup">${esc(heading)}</div>`);
   for (const turn of (turns || [])) {
-    const item = document.createElement('article'); item.className = 'lee-history-turn';
-    item.innerHTML = `<div class="lee-history-meta"><span>${esc(turn.model)}</span>` +
-      `<span>${esc(turn.plan?.route || 'direct')}</span></div>`;
+    const card = agentTurnCard({prompt: turn.prompt, model: turn.model, route: turn.plan?.route || 'direct',
+                               turnId: turn.turn_id || ''});
+    const item = turnBody(card);
     item.appendChild(userMessage(turn.prompt));
+    let closing = null;
     if ((turn.timeline || []).length) {
       const root = document.createElement('div'); root.className = 'lee-agent-timeline'; item.appendChild(root);
       const paint = agentTimeline(root);
@@ -729,11 +789,12 @@ function renderTurns(log, turns, heading) {
         for (const child of part.children || []) paintActivity(child);
       };
       for (const part of reduceAgentTimeline(turn.timeline)) {
-        if (part.kind === 'prose') paint.chunk(part.text);
+        if (part.kind === 'prose') closing = paint.chunk(part.text);
         else if (part.kind === 'activity') paintActivity(part);
         // what the person said mid-turn, in the place they said it
         else if (part.kind === 'steer' && part.data?.text) paint.append(userMessage(part.data.text));
       }
+      closing = closing || root;
     } else {
       if ((turn.activity || []).length) {
         const steps = document.createElement('div'); steps.className = 'lee-agent-steps';
@@ -744,10 +805,17 @@ function renderTurns(log, turns, heading) {
       }
       const reply = document.createElement('div'); reply.className = 'lee-reply'; item.appendChild(reply);
       renderMarkdown(reply, turn.reply || '');
+      closing = reply;
     }
+    /* The revision bar used to be added by the live `done` handler alone, so undo, restore and
+       edit-what-the-agent-remembers vanished on every history toggle, resume, thread switch and
+       resync. It is painted from the turn record here, and the server says whether the operations
+       behind it can still be reached in this process. */
+    addResponseRevision(closing, turn.turn_id, turn.reply || '', turn.capabilities || {});
     const usage = usageMeta(turn.usage, turn.usage_label, turn.model); if (usage) item.appendChild(usage);
-    log.appendChild(item);
+    log.appendChild(card);
   }
+  applyStoredFolds(log);
 }
 /* A summarised title arrives as `Title: Ramabana CLI ASCII`, quotes and all, and stored ones keep
    the prefix after the storage point is fixed, so every display cleans it. */
@@ -1224,8 +1292,9 @@ function renderSessionCells(log, d) {
   }
 }
 
-function agentLog(html) {
+function agentLog(html, host = null) {
   const log = $('#agentlog');
+  if (host) { host.insertAdjacentHTML('beforeend', html); log.scrollTop = log.scrollHeight; return; }
   // Never use `innerHTML +=`: it reparses every existing child and silently detaches every
   // checkpoint, fork, rollback, CodeMirror and disclosure handler already in the log.
   log.insertAdjacentHTML('beforeend', html);
@@ -1329,10 +1398,15 @@ function showApproval(a, destination = null) {
   leePane('right', true); leeRight('agent');
   if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
   const log = $('#agentlog'); if (!log) return;
+  /* `pollApproval` and a notebook prompt cell both call this with no destination, and a checkpoint
+     that lands beside the turns instead of in the one it belongs to is a checkpoint nobody finds. */
+  const host = destination || (lee.agentTimeline?.root?.isConnected ? lee.agentTimeline.root : null)
+    || turnBody(currentAgentTurn()) || log;
   const schemas = a.schemas || [], byName = new Map(schemas.map(s => [s.name, s]));
   const card = document.createElement('section');
   card.className = 'lee-approval lee-proposal proposed'; card.dataset.id = a.id; card.dataset.tool = a.tool; card.tabIndex = -1;
-  const pendingRow = [...$$('.lee-agent-step.pending', log)].at(-1);
+  // the row this checkpoint replaces is in the turn it belongs to, not the last one anywhere in the log
+  const pendingRow = [...$$('.lee-agent-step.pending', host.closest('.lee-agent-turn') || log)].at(-1);
   if (pendingRow) { pendingRow.hidden = true; card._activityRow = pendingRow; }
   card._schema = byName.get(a.tool) || {name: a.tool, fields: Object.keys(a.args || {}).map(name => ({name, kind: 'string'}))};
   const explanation = checkpointExplanation(a.tool, a.args, card._schema);
@@ -1435,7 +1509,9 @@ function showApproval(a, destination = null) {
     else if (e.key.toLowerCase() === 's') { e.preventDefault(); $('[data-note]', card).focus(); }
     else if (e.key === 'Escape') switchTab('preview');
   };
-  (destination || log).appendChild(card); approvalCards.set(a.id, card); card.focus(); log.scrollTop = log.scrollHeight;
+  host.appendChild(card); approvalCards.set(a.id, card);
+  unfoldForApproval(card);      // focus and the ↵ / E / S keys do nothing inside a folded turn
+  card.focus(); log.scrollTop = log.scrollHeight;
   refreshProposalPreview(card); updateAgentRunstrip({waiting: a.tool});
   status(`${a.tool} is waiting at a checkpoint`, 'err');
 }
@@ -1459,15 +1535,18 @@ function editableResponse(raw) {
 }
 
 function markTurnUndone(out, bar, files, revise) {
-  // `rollback_turn` restores files and does not touch model history, so the turn is marked rather
-  // than deleted. The agent still carries it.
-  let first = out, last = bar;
-  while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
-  while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
-  for (let node = first; node; node = node.nextElementSibling) {
+  /* `rollback_turn` restores files and does not touch model history, so the turn is marked rather
+     than deleted. The agent still carries it.
+
+     Scoped to the turn's card. This used to walk siblings until it hit a `.lee-user-message`, and
+     the bar sits either inside the timeline or beside it depending on whether the turn ended on
+     prose or on a tool call, so the marked range differed between two turns that were undone the
+     same way. */
+  const card = bar.closest('.lee-agent-turn');
+  for (const node of (card ? $$('.lee-agent-turn-body > *', card) : [out])) {
     if (node !== bar) node.classList.add('lee-turn-undone');   // the bar carries the explanation
-    if (node === last) break;
   }
+  card?.classList.add('lee-turn-undone-card');
   const note = document.createElement('span');
   note.textContent = `${files} file${files === 1 ? '' : 's'} restored · the agent still remembers this turn`;
   bar.classList.add('lee-turn-undone-bar');
@@ -1478,35 +1557,52 @@ function markTurnUndone(out, bar, files, revise) {
 /* The pane is round-tripped through `innerHTML` by the history toggle, a rehydrate, a resume and
    every thread switch, and a bound listener does not survive that. The turn these controls act on
    is written into the DOM, and one delegated listener on the log dispatches them. */
+/* A turn that ended on a tool call has no prose, and its files are still its own to restore, so
+   the bar is not gated on there being an answer. Every button says why it is unavailable, and
+   `known` distinguishes "this turn changed nothing" from "this process no longer holds a boundary
+   for it", which is what a turn from before a restart or from past `MAX_CHECKPOINTS` looks like. */
 function addResponseRevision(out, turnId, raw, capabilities = {}) {
-  if (!turnId || !out || !raw.trim()) return;
+  if (!turnId || !out) return;
   const bar = document.createElement('div'); bar.className = 'lee-response-revision';
-  const files = capabilities.files || [];
+  const files = capabilities.files || [], gone = capabilities.known === false;
+  const unheld = 'Unavailable: this conversation was not run in this session, so there is no turn boundary to act on';
   const reviseWhy = capabilities.revisable ? 'Correct this answer and continue the next turn from your version'
-    : 'Unavailable: this turn failed before an assistant response entered model history';
+    : gone ? unheld : 'Unavailable: this turn failed before an assistant response entered model history';
   const undoWhy = capabilities.undoable ? `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn`
-    : 'Unavailable: this turn made no reversible file changes';
+    : gone ? unheld : 'Unavailable: this turn made no reversible file changes';
+  const unsayWhy = capabilities.branchable
+    ? 'Forget this turn: branch the conversation to just before it, keeping it in history'
+    : gone ? unheld : 'Unavailable: this turn has no captured boundary to branch at';
   bar.dataset.turn = turnId;
   bar.dataset.revisable = capabilities.revisable ? '1' : '';
   bar.dataset.undoable = capabilities.undoable ? '1' : '';
   bar.dataset.files = String(files.length);
   bar.innerHTML = `<span>turn ${esc(turnId.split(':').at(-1))}</span>` +
     `<button class="lee-btn" data-revise title="${esc(reviseWhy)}"${capabilities.revisable ? '' : ' disabled'}>Edit what agent remembers</button>` +
-    `<button class="lee-btn" data-unsay title="Forget this turn: branch the conversation to just before it, keeping it in history">Undo from conversation</button>` +
+    `<button class="lee-btn" data-unsay title="${esc(unsayWhy)}"${capabilities.branchable ? '' : ' disabled'}>Undo from conversation</button>` +
     `<button class="lee-btn warn" data-undo title="${esc(undoWhy)}"${capabilities.undoable ? '' : ' disabled'}>Restore files</button>`;
-  out.after(bar);
+  /* Last in the turn's body rather than straight after the answer. A turn that ended on prose has
+     that prose inside `.lee-agent-timeline`, so `out.after` put the bar in there too -- inside the
+     element `markTurnUndone` dims, which dimmed the bar's own explanation of why. The answer is
+     marked instead, because a class survives the `innerHTML` round-trips this pane takes and a
+     sibling relationship does not. */
+  out.classList.add('lee-turn-answer');
+  const body = out.closest('.lee-agent-turn-body');
+  if (body) body.appendChild(bar); else out.after(bar);
   bindResponseRevisions(bar.closest('#agentlog') || $('#agentlog'));
 }
 
 /* What the reply said, recovered from the DOM rather than from a closure: `renderMarkdown` keeps
    the markdown it rendered, which is the one copy that survives an `innerHTML` round-trip. */
+const turnAnswer = bar => $('.lee-turn-answer', bar.closest('.lee-agent-turn') || document)
+  || bar.previousElementSibling;
 function turnReplyText(bar) {
-  const reply = bar.previousElementSibling;
+  const reply = turnAnswer(bar);
   return reply?.dataset?.markdown ?? reply?.textContent ?? '';
 }
 
 function responseTurn(bar) {
-  return {turnId: bar.dataset.turn || '', out: bar.previousElementSibling,
+  return {turnId: bar.dataset.turn || '', out: turnAnswer(bar),
           raw: turnReplyText(bar), files: Number(bar.dataset.files || 0),
           revisable: !!bar.dataset.revisable, undoable: !!bar.dataset.undoable};
 }
@@ -1665,9 +1761,12 @@ function updateAgentRunstrip(state = {}) {
     // the model repeats on every row of a fan-out; the question does not
     const who = r.kind === 'child' ? `subagent ${(r.model || '').split('/').pop()}`.trim() : (r.model || 'Agent');
     const label = r.state === 'cancelling' ? `Cancelling ${who}…` : `${r.question || rootLabel} · ${who}`;
-    return `<span class="lee-agent-run"><span>${esc(label)}</span>` +
-      `<time>${esc(clock)}</time><button type="button" data-stop-run="${esc(r.id)}">Stop</button></span>`;
+    return `<span class="lee-agent-run${r.kind === 'child' ? ' child' : ''}"><span>${esc(label)}</span>` +
+      `<time>${esc(clock)}</time>` +
+      (r.kind === 'child' ? `<button type="button" data-open-subs>Open</button>` : '') +
+      `<button type="button" data-stop-run="${esc(r.id)}">Stop</button></span>`;
   }).join('') : esc(rootLabel);
+  $$('[data-open-subs]', strip).forEach(b => b.onclick = e => { e.stopPropagation(); leeSubagents(); });
   $$('[data-stop-run]', strip).forEach(btn => btn.onclick = async e => {
     e.stopPropagation();
     try { const d = await post(`/agent/runs/${encodeURIComponent(btn.dataset.stopRun)}/cancel`, {}); updateAgentRunstrip({runs: (await api('/agent/runs')).runs}); status(d.state, 'ok'); }
@@ -1694,7 +1793,9 @@ const steerDrawn = (log, text) => steerHost(log).lastElementChild?.dataset?.stee
 function placeSteer(log, card, text) {
   card.dataset.steer = text;
   const live = lee.agentTimeline;
-  if (live?.root?.isConnected) live.append(card); else log.appendChild(card);
+  // no live timeline: the turn's own body, so a steer is never a stray sibling between two turns
+  if (live?.root?.isConnected) live.append(card);
+  else (turnBody(currentAgentTurn()) || log).appendChild(card);
   log.scrollTop = log.scrollHeight;
   return card;
 }
@@ -1784,9 +1885,16 @@ function renderAgentStep(row, a) {
   summary.innerHTML = `<span class="lee-agent-step-state" aria-hidden="true"></span>` +
     `<span class="lee-agent-step-copy">${steered ? `<strong>You</strong> ${esc(steerSaid(a.args))}`
       : esc(a.summary || a.tool || 'Working')}</span>` +
+    // a delegation is the one step whose work happened somewhere this row cannot show
+    ((a.kind || '') === 'delegate' ? `<button class="lee-agent-step-open" type="button" data-open-sub` +
+      ` title="open this delegation: what its sub-agents did, and steer one that is still going">open</button>` : '') +
     `<span class="lee-agent-step-meta">${steered ? 'steered'
       : a.done && a.secs ? esc(Number(a.secs).toFixed(1) + 's') : esc(a.kind || '')}</span>` +
     `<span class="lee-agent-step-chevron" aria-hidden="true"></span>`;
+  // inside a `summary`, a click is the disclosure's unless it is taken
+  $('[data-open-sub]', summary)?.addEventListener('click', e => {
+    e.preventDefault(); e.stopPropagation(); leeSubagents(a.action_id || a.id || '');
+  });
   row.appendChild(summary);
 
   const args = a.args && typeof a.args === 'object' ? a.args : {};
@@ -1831,6 +1939,81 @@ function renderAgentStep(row, a) {
     mountDeferred();
   } else { summary.classList.add('empty'); row.ontoggle = null; }
 }
+
+/* A delegated sub-agent's conversation is thrown away the moment it answers, so its recorded calls
+   are the whole account of what it did. The runstrip shows one while it runs and forgets it, which
+   left a failed delegation as one row of prose and nothing to look at. */
+function subagentQuestions(args) {
+  const raw = (args || {}).questions ?? (args || {}).question ?? '';
+  try { const v = JSON.parse(raw); if (Array.isArray(v)) return v.map(String); } catch {}
+  return [String(raw)].filter(Boolean);
+}
+function subagentRunRow(r) {
+  const secs = r.started ? Math.max(0, Date.now() / 1000 - r.started) : 0;
+  return `<div class="lee-subagent-run" data-run="${esc(r.id)}">` +
+    `<strong>${esc(r.question || '(no question)')}</strong>` +
+    `<span>${esc(r.state)} · ${esc((r.model || '').split('/').pop())} · ` +
+    `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}` +
+    `${r.steer_pending ? ' · steer queued' : ''}</span>` +
+    `<button class="lee-btn" type="button" data-steer-run>Steer</button>` +
+    `<button class="lee-btn warn" type="button" data-stop-run="${esc(r.id)}">Stop</button></div>`;
+}
+function paintSubagents(box, d) {
+  const list = $('.lee-subagent-list', box);
+  const cards = (d.delegations || []).map(x => {
+    const calls = x.calls || [];
+    // an empty list is not the same answer as "it did nothing", and only the core knows which
+    const none = d.records_sub_calls
+      ? 'This delegation recorded no tool calls.'
+      : 'This build of the agent core hands a read-only sub-agent unwrapped tools, so nothing it did was recorded.';
+    return `<section class="lee-subagent ${x.ok ? 'ok' : 'failed'}">` +
+      `<header><strong>${esc(x.summary || x.tool)}</strong>` +
+      `<span>${esc(x.done ? (x.ok ? `answered in ${Number(x.secs || 0).toFixed(1)}s` : 'failed') : 'still working')}` +
+      ` · ${calls.length} recorded call${calls.length === 1 ? '' : 's'}</span></header>` +
+      `<ol class="lee-subagent-questions">${subagentQuestions(x.args).map(q => `<li>${esc(q)}</li>`).join('')}</ol>` +
+      `<div class="lee-subagent-calls" data-calls="${esc(x.id)}"></div>` +
+      (calls.length ? '' : `<p class="lee-dim">${esc(none)}</p>`) +
+      (x.detail ? `<details class="lee-subagent-answer"><summary>What it reported back</summary><pre>${esc(x.detail)}</pre></details>` : '') +
+      `</section>`;
+  }).join('');
+  const runs = (d.runs || []).map(subagentRunRow).join('');
+  list.innerHTML = (runs ? `<section class="lee-subagent running"><header><strong>Running now</strong>` +
+      `<span>steer one and it reads you on its next tool result</span></header>${runs}</section>` : '') +
+    (cards || `<p class="lee-dim">No delegated questions in this conversation yet.</p>`);
+  for (const x of d.delegations || []) {
+    const host = $(`[data-calls="${CSS.escape(x.id)}"]`, list); if (!host) continue;
+    for (const call of x.calls || []) {
+      const row = document.createElement('details'); renderAgentStep(row, call); host.appendChild(row);
+    }
+  }
+  $$('[data-stop-run]', list).forEach(b => b.onclick = async () => {
+    try { await post(`/agent/runs/${encodeURIComponent(b.dataset.stopRun)}/cancel`, {}); status('sub-agent stopping', 'ok'); }
+    catch (e) { status(e.message || String(e), 'err'); }
+  });
+  $$('[data-steer-run]', list).forEach(b => b.onclick = async () => {
+    const id = b.closest('.lee-subagent-run').dataset.run;
+    const text = await textDialog('Steer this sub-agent', 'It reads this on its next tool result', ''); if (!text) return;
+    try { await post(`/agent/runs/${encodeURIComponent(id)}/steer`, {text, thread: lee.agentThread || ''}); status('steer queued for that sub-agent', 'ok'); }
+    catch (e) { status(e.message || String(e), 'err'); }
+  });
+}
+async function leeSubagents(actionId = '') {
+  const url = () => '/agent/subagents?action_id=' + encodeURIComponent(actionId) +
+    (lee.agentThread ? '&thread=' + encodeURIComponent(lee.agentThread) : '');
+  let first;
+  try { first = await api(url()); } catch (e) { return status(e.message || String(e), 'err'); }
+  let timer = 0;
+  const box = modal(`<div class="lee-mhead">Sub-agents<span class="sub">what a delegated question actually did</span></div>` +
+    `<div class="lee-subagent-list"></div>`, null, () => clearInterval(timer),
+    {className: 'lee-subagent-modal', storageKey: 'subagents'});
+  paintSubagents(box, first);
+  // repaint while anything is still going; a finished delegation never changes again
+  timer = setInterval(async () => {
+    if (!box.isConnected) return clearInterval(timer);
+    try { paintSubagents(box, await api(url())); } catch (_) {}
+  }, 1200);
+}
+window.leeSubagents = leeSubagents;
 
 // A turn gets an immediate, persistent status surface, in the agent log rather than only in the
 // footer: long local inference must still look alive when the footer is out of sight.
@@ -2013,6 +2196,8 @@ async function attachPastedImage(blob) {
 }
 
 function initAgentComposer() {
+  // before the guard: a conversation with no turns paints nothing, so a paint is too late to bind
+  bindAgentTurnFolds($('#agentlog'));
   const input = $('#agentprompt'); if (!input || input.dataset.composerReady) return;
   input.dataset.composerReady = '1';
   $('[data-agent-pause]')?.addEventListener('click', pauseAgentAfterCurrent);
@@ -2059,12 +2244,15 @@ function initAgentComposer() {
   });
 }
 async function sendAgentCommand(line) {
-  const log = $('#agentlog'); log?.appendChild(userMessage(line));
+  // a command is a person's input and a reply, so it folds like every other exchange
+  const log = $('#agentlog'); if (!log) return;
+  const card = agentTurnCard({prompt: line, route: 'command'}), body = turnBody(card);
+  body.appendChild(userMessage(line)); log.appendChild(card);
   try {
     const d = await post('/agent/command', {line, thread: lee.agentThread || ''});
     if (/^\/reload(?:\s|$)/.test(line)) lee.agentVocabulary = null;
-    const out = document.createElement('div'); out.className = 'lee-reply lee-agent-reply'; log?.appendChild(out);
-    renderMarkdown(out, d.text || ''); if (log) log.scrollTop = log.scrollHeight;
+    const out = document.createElement('div'); out.className = 'lee-reply lee-agent-reply'; body.appendChild(out);
+    renderMarkdown(out, d.text || ''); log.scrollTop = log.scrollHeight;
     status('command finished', 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
 }
@@ -2180,21 +2368,27 @@ async function sendAgent(force = false) {
   lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
   lee.agentBusy = true; setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
-  log.appendChild(userMessage(q)); log.scrollTop = log.scrollHeight;
+  const card = agentTurnCard({prompt: q, model: $('#agentmodel')?.value || ''});
+  turnBody(card).appendChild(userMessage(q));
+  log.appendChild(card); log.scrollTop = log.scrollHeight;
   status('model is working…');
-  agentListen(accepted.thread || lee.agentThread, accepted.seq);
+  agentListen(accepted.thread || lee.agentThread, accepted.seq, card);
 }
 
 /* One conversation's feed, painted into the live pane. `sendAgent` calls this for the turn it
    just started; a thread switch calls it for a turn already running, replaying from the feed's
    last settled point so only the turn in flight is drawn again. */
-function agentListen(thread, since) {
+function agentListen(thread, since, card = null) {
   const log = $('#agentlog'); if (!log) return;
   $('.lee-agent-welcome', log)?.remove();
-  const progress = agentProgress(log);
-  const timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
-  log.appendChild(timelineRoot); log.scrollTop = log.scrollHeight;
-  const timeline = agentTimeline(timelineRoot), seen = timeline.actions;
+  /* A turn already in flight when this pane attached has no card yet: its prompt is in the feed,
+     and the `user` event below fills the title in. */
+  if (!card) { card = agentTurnCard({model: $('#agentmodel')?.value || ''}); log.appendChild(card); }
+  let host = turnBody(card);
+  let progress = agentProgress(host);
+  let timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
+  host.appendChild(timelineRoot); log.scrollTop = log.scrollHeight;
+  let timeline = agentTimeline(timelineRoot), seen = timeline.actions;
   // A steer is drawn by the steer block, which is not in this scope. It belongs in the turn,
   // between the prose before it and the call after, so it needs the same painter.
   lee.agentTimeline = timeline;
@@ -2243,7 +2437,12 @@ function agentListen(thread, since) {
   /* A turn already in flight when this pane attached: its prompt is in the feed, not on screen.
      `sendAgent` replays from its own user event, so it never arrives twice. */
   es.addEventListener('user', dedupe(d => {
-    log.insertBefore(userMessage(d.text || ''), timelineRoot); log.scrollTop = log.scrollHeight;
+    // `timelineRoot`'s parent, not the log: `insertBefore` throws when the reference is not a child,
+    // and the throw was swallowed after `lastSeq` had already advanced, losing the prompt for good
+    timelineRoot.parentElement.insertBefore(userMessage(d.text || ''), timelineRoot);
+    const title = $('.lee-agent-turn-title', card);
+    if (title && title.textContent === '(no prompt)') title.textContent = String(d.text || '').replace(/\s+/g, ' ').trim();
+    log.scrollTop = log.scrollHeight;
   }));
 
   es.addEventListener('chunk', dedupe(d => {
@@ -2252,7 +2451,9 @@ function agentListen(thread, since) {
     log.scrollTop = log.scrollHeight;
   }));
 
-  es.addEventListener('approval', dedupe(d => { timeline.seal(); progress.phase('Waiting for your approval'); showApproval(d, timelineRoot); }));
+  es.addEventListener('approval', dedupe(d => {
+    timeline.seal(); progress.phase('Waiting for your approval'); showApproval(d, timelineRoot);
+  }));
   es.addEventListener('execution', dedupe(d => updateAgentRunstrip(d)));
   es.addEventListener('state', dedupe(d => updateAgentRunstrip(d)));
   es.addEventListener('steer', dedupe(d => {
@@ -2286,7 +2487,19 @@ function agentListen(thread, since) {
       const group = sessions.find(s => s.id === thread) || sessions.find(s => s.id === history.current);
       const turns = await sessionTurns(group?.id);
       if (!turns.length) throw new Error('no recorded turns for this conversation');
-      log.innerHTML = ''; renderTurns(log, turns, 'Recovered conversation');
+      log.innerHTML = ''; approvalCards.clear(); renderTurns(log, turns, 'Recovered conversation');
+      /* `renderTurns` paints durable turns only, so a turn still in flight was painted nowhere and
+         the rest of it streamed into a detached root. It gets a fresh card, and everything this
+         listener paints into is re-pointed at it. */
+      if (!runDone) {
+        card = agentTurnCard({model: d.model || $('#agentmodel')?.value || ''});
+        log.appendChild(card); host = turnBody(card);
+        progress = agentProgress(host);
+        timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
+        host.appendChild(timelineRoot);
+        timeline = agentTimeline(timelineRoot); seen = timeline.actions; lee.agentTimeline = timeline;
+        body = null; raw = '';
+      }
       log.scrollTop = log.scrollHeight; lastSeq = d.latest; reconnect(0);
     } catch (e) {
       status('conversation replay failed; retrying without clearing the transcript', 'err');
@@ -2301,10 +2514,14 @@ function agentListen(thread, since) {
     addResponseRevision(closing, d.turn_id, raw, d.capabilities || {}); drawTurnMedia(closing, d.media);
     const usage = usageMeta(d.usage, d.usage_label, d.model); if (usage) timelineRoot.appendChild(usage);
     for (const e of (d.edits || []))
-      agentLog(`<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
-               `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
+      // into the turn's body, not `agentLog`: what this turn wrote is part of this turn
+      host.insertAdjacentHTML('beforeend',
+        `<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
+        `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
+    if (d.turn_id) card.dataset.turn = d.turn_id;
+    log.scrollTop = log.scrollHeight;
     const tail = d.usage_label ? `${d.note || 'done'} · ${d.usage_label}` : (d.note || 'done');
-    showProblems(d.problems);
+    showProblems(d.problems, host);   // a turn's problems belong to that turn
     if ((d.problems || []).length) status(d.problems[d.problems.length - 1], 'err');
     else status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
     await reloadAfterEdits(d.edits || []);
@@ -2397,11 +2614,11 @@ async function stopAgent() {
 /* Failures with nowhere else to go: a compaction the engine refused, a completion that came back
  * empty, anything the native model layer printed instead of raising. They appear in the agent pane
  * because that is where the turn they belong to is. */
-function showProblems(ps) {
+function showProblems(ps, host = null) {
   for (const p of (ps || [])) {
     if (lee.shownProblems.has(p)) continue;
     lee.shownProblems.add(p);
-    agentLog(`<div class="lee-runline err"><span class="res">⚠ ${esc(p)}</span></div>`);
+    agentLog(`<div class="lee-runline err"><span class="res">⚠ ${esc(p)}</span></div>`, host);
   }
 }
 

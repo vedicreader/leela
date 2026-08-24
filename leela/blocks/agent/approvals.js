@@ -95,10 +95,15 @@ function showApproval(a, destination = null) {
   leePane('right', true); leeRight('agent');
   if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
   const log = $('#agentlog'); if (!log) return;
+  /* `pollApproval` and a notebook prompt cell both call this with no destination, and a checkpoint
+     that lands beside the turns instead of in the one it belongs to is a checkpoint nobody finds. */
+  const host = destination || (lee.agentTimeline?.root?.isConnected ? lee.agentTimeline.root : null)
+    || turnBody(currentAgentTurn()) || log;
   const schemas = a.schemas || [], byName = new Map(schemas.map(s => [s.name, s]));
   const card = document.createElement('section');
   card.className = 'lee-approval lee-proposal proposed'; card.dataset.id = a.id; card.dataset.tool = a.tool; card.tabIndex = -1;
-  const pendingRow = [...$$('.lee-agent-step.pending', log)].at(-1);
+  // the row this checkpoint replaces is in the turn it belongs to, not the last one anywhere in the log
+  const pendingRow = [...$$('.lee-agent-step.pending', host.closest('.lee-agent-turn') || log)].at(-1);
   if (pendingRow) { pendingRow.hidden = true; card._activityRow = pendingRow; }
   card._schema = byName.get(a.tool) || {name: a.tool, fields: Object.keys(a.args || {}).map(name => ({name, kind: 'string'}))};
   const explanation = checkpointExplanation(a.tool, a.args, card._schema);
@@ -201,7 +206,9 @@ function showApproval(a, destination = null) {
     else if (e.key.toLowerCase() === 's') { e.preventDefault(); $('[data-note]', card).focus(); }
     else if (e.key === 'Escape') switchTab('preview');
   };
-  (destination || log).appendChild(card); approvalCards.set(a.id, card); card.focus(); log.scrollTop = log.scrollHeight;
+  host.appendChild(card); approvalCards.set(a.id, card);
+  unfoldForApproval(card);      // focus and the ↵ / E / S keys do nothing inside a folded turn
+  card.focus(); log.scrollTop = log.scrollHeight;
   refreshProposalPreview(card); updateAgentRunstrip({waiting: a.tool});
   status(`${a.tool} is waiting at a checkpoint`, 'err');
 }
@@ -225,15 +232,18 @@ function editableResponse(raw) {
 }
 
 function markTurnUndone(out, bar, files, revise) {
-  // `rollback_turn` restores files and does not touch model history, so the turn is marked rather
-  // than deleted. The agent still carries it.
-  let first = out, last = bar;
-  while (first.previousElementSibling && !first.previousElementSibling.classList.contains('lee-user-message')) first = first.previousElementSibling;
-  while (last.nextElementSibling && !last.nextElementSibling.classList.contains('lee-user-message')) last = last.nextElementSibling;
-  for (let node = first; node; node = node.nextElementSibling) {
+  /* `rollback_turn` restores files and does not touch model history, so the turn is marked rather
+     than deleted. The agent still carries it.
+
+     Scoped to the turn's card. This used to walk siblings until it hit a `.lee-user-message`, and
+     the bar sits either inside the timeline or beside it depending on whether the turn ended on
+     prose or on a tool call, so the marked range differed between two turns that were undone the
+     same way. */
+  const card = bar.closest('.lee-agent-turn');
+  for (const node of (card ? $$('.lee-agent-turn-body > *', card) : [out])) {
     if (node !== bar) node.classList.add('lee-turn-undone');   // the bar carries the explanation
-    if (node === last) break;
   }
+  card?.classList.add('lee-turn-undone-card');
   const note = document.createElement('span');
   note.textContent = `${files} file${files === 1 ? '' : 's'} restored · the agent still remembers this turn`;
   bar.classList.add('lee-turn-undone-bar');
@@ -244,35 +254,52 @@ function markTurnUndone(out, bar, files, revise) {
 /* The pane is round-tripped through `innerHTML` by the history toggle, a rehydrate, a resume and
    every thread switch, and a bound listener does not survive that. The turn these controls act on
    is written into the DOM, and one delegated listener on the log dispatches them. */
+/* A turn that ended on a tool call has no prose, and its files are still its own to restore, so
+   the bar is not gated on there being an answer. Every button says why it is unavailable, and
+   `known` distinguishes "this turn changed nothing" from "this process no longer holds a boundary
+   for it", which is what a turn from before a restart or from past `MAX_CHECKPOINTS` looks like. */
 function addResponseRevision(out, turnId, raw, capabilities = {}) {
-  if (!turnId || !out || !raw.trim()) return;
+  if (!turnId || !out) return;
   const bar = document.createElement('div'); bar.className = 'lee-response-revision';
-  const files = capabilities.files || [];
+  const files = capabilities.files || [], gone = capabilities.known === false;
+  const unheld = 'Unavailable: this conversation was not run in this session, so there is no turn boundary to act on';
   const reviseWhy = capabilities.revisable ? 'Correct this answer and continue the next turn from your version'
-    : 'Unavailable: this turn failed before an assistant response entered model history';
+    : gone ? unheld : 'Unavailable: this turn failed before an assistant response entered model history';
   const undoWhy = capabilities.undoable ? `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn`
-    : 'Unavailable: this turn made no reversible file changes';
+    : gone ? unheld : 'Unavailable: this turn made no reversible file changes';
+  const unsayWhy = capabilities.branchable
+    ? 'Forget this turn: branch the conversation to just before it, keeping it in history'
+    : gone ? unheld : 'Unavailable: this turn has no captured boundary to branch at';
   bar.dataset.turn = turnId;
   bar.dataset.revisable = capabilities.revisable ? '1' : '';
   bar.dataset.undoable = capabilities.undoable ? '1' : '';
   bar.dataset.files = String(files.length);
   bar.innerHTML = `<span>turn ${esc(turnId.split(':').at(-1))}</span>` +
     `<button class="lee-btn" data-revise title="${esc(reviseWhy)}"${capabilities.revisable ? '' : ' disabled'}>Edit what agent remembers</button>` +
-    `<button class="lee-btn" data-unsay title="Forget this turn: branch the conversation to just before it, keeping it in history">Undo from conversation</button>` +
+    `<button class="lee-btn" data-unsay title="${esc(unsayWhy)}"${capabilities.branchable ? '' : ' disabled'}>Undo from conversation</button>` +
     `<button class="lee-btn warn" data-undo title="${esc(undoWhy)}"${capabilities.undoable ? '' : ' disabled'}>Restore files</button>`;
-  out.after(bar);
+  /* Last in the turn's body rather than straight after the answer. A turn that ended on prose has
+     that prose inside `.lee-agent-timeline`, so `out.after` put the bar in there too -- inside the
+     element `markTurnUndone` dims, which dimmed the bar's own explanation of why. The answer is
+     marked instead, because a class survives the `innerHTML` round-trips this pane takes and a
+     sibling relationship does not. */
+  out.classList.add('lee-turn-answer');
+  const body = out.closest('.lee-agent-turn-body');
+  if (body) body.appendChild(bar); else out.after(bar);
   bindResponseRevisions(bar.closest('#agentlog') || $('#agentlog'));
 }
 
 /* What the reply said, recovered from the DOM rather than from a closure: `renderMarkdown` keeps
    the markdown it rendered, which is the one copy that survives an `innerHTML` round-trip. */
+const turnAnswer = bar => $('.lee-turn-answer', bar.closest('.lee-agent-turn') || document)
+  || bar.previousElementSibling;
 function turnReplyText(bar) {
-  const reply = bar.previousElementSibling;
+  const reply = turnAnswer(bar);
   return reply?.dataset?.markdown ?? reply?.textContent ?? '';
 }
 
 function responseTurn(bar) {
-  return {turnId: bar.dataset.turn || '', out: bar.previousElementSibling,
+  return {turnId: bar.dataset.turn || '', out: turnAnswer(bar),
           raw: turnReplyText(bar), files: Number(bar.dataset.files || 0),
           revisable: !!bar.dataset.revisable, undoable: !!bar.dataset.undoable};
 }
