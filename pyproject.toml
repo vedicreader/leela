@@ -21,7 +21,7 @@ dependencies = [
     # never select. They are `leela[local]` below, and the settings pane installs them on demand.
     # The rest of `[all]` is ramabana's own CLI (pyghostty, teleprint) and mcp, none of which Leela
     # imports; `dhrishti` and `jupyter-client` it depends on directly and are still here.
-    "ramabana>=0.1.24",   # `summary` follows the turn model, and `watch_folder` joined the tools
+    "ramabana>=0.1.25",   # 0.1.25 reports a binary diff instead of the LFS pointer text
     "fastcore>=1.7.0",
     "exhash>=0.4.10",
     "fossick>=0.1.14",   # 0.1.14 caches JSON, not pickle: GHSA-w8v5-vhqr-4h9v has no fixed release
