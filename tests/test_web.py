@@ -1419,3 +1419,50 @@ def test_the_client_acts_on_the_stale_flag():
     assert 'st.dirty || recoveredDraft' in body, 'an unsaved buffer is never dropped'
     assert body.index('st.dirty || recoveredDraft') < body.index('takeDiskVersion'), \
         'the dirty case must return before anything adopts disk'
+
+
+def test_a_rewrite_that_changed_nothing_is_not_a_disk_change(tmp_path):
+    """`nbdev_clean` rewrites a notebook it has nothing to change, and any formatter does the same.
+    On an mtime token that read as an outside write and turned the next save into a conflict."""
+    import time
+    from leela.blocks.tabs.app import disk_version
+    f = tmp_path/'n.ipynb'
+    f.write_text('same bytes')
+    was = disk_version(f)
+    time.sleep(0.01)
+    f.write_text('same bytes')
+    assert disk_version(f) == was, 'the same bytes are the same version'
+    f.write_text('other bytes')
+    assert disk_version(f) != was, 'and different bytes are not'
+
+def test_the_version_of_a_file_that_is_gone_is_missing_and_not_remembered(tmp_path):
+    "A deleted file must not answer with the token it had, which a cache makes easy to get wrong."
+    from leela.blocks.tabs.app import _TOKENS, disk_version
+    f = tmp_path/'gone.py'
+    f.write_text('x')
+    assert disk_version(f) not in ('', 'missing')
+    f.unlink()
+    assert disk_version(f) == 'missing'
+    assert str(f) not in _TOKENS and f not in _TOKENS, 'the stale entry is dropped'
+    assert disk_version('') == ''
+
+def test_polling_an_untouched_file_does_not_read_it(tmp_path, monkeypatch):
+    "A poll on every open tab must stay one `stat`, which is what it cost before the hash."
+    from leela.blocks.tabs.app import disk_version
+    f = tmp_path/'a.py'
+    f.write_text('x = 1\n')
+    first = disk_version(f)
+    reads = []
+    real = Path.read_bytes
+    monkeypatch.setattr(Path, 'read_bytes', lambda self: reads.append(self) or real(self))
+    assert disk_version(f) == first
+    assert reads == [], 'the cached stamp answered without touching the file'
+
+def test_the_token_cache_does_not_grow_without_bound(tmp_path):
+    "A long session opens many files, and none of these entries is worth keeping."
+    from leela.blocks.tabs import app as tabs
+    tabs._TOKENS.clear()
+    for i in range(tabs.TOKEN_CACHE + 5):
+        f = tmp_path/f'f{i}.py'; f.write_text(str(i))
+        tabs.disk_version(f)
+    assert len(tabs._TOKENS) <= tabs.TOKEN_CACHE

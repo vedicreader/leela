@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from fastcore.all import Path, first
 
 from fasthtml.common import Div
@@ -15,13 +17,29 @@ __all__ = ['CAPS', 'connect', 'disk_version']
 
 CAPS = ('fs', 'history', 'pool', 'tab', 'docs')
 
+#: `path -> ((mtime_ns, size), token)`. Hashing is only paid when the stat moves, which is the rare
+#: case; a poll on an untouched file costs one `stat` as it always did. Capped because a long session
+#: opens many files and none of these entries is ever worth keeping.
+_TOKENS, TOKEN_CACHE = {}, 512
+
 def disk_version(path):
-    "A cheap browser-watch token; changes whenever the active file is replaced or written."
+    """A browser-watch token that changes when the bytes change, and not when only the mtime does.
+
+    `nbdev_clean` rewrites a notebook it has nothing to change, and every tool that formats in place
+    does the same. On an mtime the rewrite read as an outside write and the next save was a conflict.
+    """
     if not path: return ''
-    try:
-        s = Path(path).stat()
-        return f'{s.st_mtime_ns}:{s.st_size}'
+    try: s = Path(path).stat()
+    except OSError:
+        _TOKENS.pop(path, None)
+        return 'missing'
+    stamp = (s.st_mtime_ns, s.st_size)
+    if (hit := _TOKENS.get(path)) and hit[0] == stamp: return hit[1]
+    try: digest = hashlib.blake2b(Path(path).read_bytes(), digest_size=8).hexdigest()
     except OSError: return 'missing'
+    if len(_TOKENS) >= TOKEN_CACHE: _TOKENS.clear()
+    _TOKENS[path] = (stamp, token := f'{s.st_size}:{digest}')
+    return token
 
 def connect(app, ctx):
     rt = app.route
