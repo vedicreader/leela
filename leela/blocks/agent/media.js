@@ -228,7 +228,9 @@ function agentListen(thread, since, card = null) {
       const group = sessions.find(s => s.id === thread) || sessions.find(s => s.id === history.current);
       const turns = await sessionTurns(group?.id);
       if (!turns.length) throw new Error('no recorded turns for this conversation');
-      log.innerHTML = ''; approvalCards.clear(); renderTurns(log, turns, 'Recovered conversation');
+      log.innerHTML = ''; approvalCards.clear(); log.dataset.foldScope = '';
+      progress.finish(false);   // its 250ms clock is cleared by `finish` alone, and it is replaced below
+      renderTurns(log, turns, 'Recovered conversation');
       /* `renderTurns` paints durable turns only, so a turn still in flight was painted nowhere and
          the rest of it streamed into a detached root. It gets a fresh card, and everything this
          listener paints into is re-pointed at it. */
@@ -240,6 +242,7 @@ function agentListen(thread, since, card = null) {
         host.appendChild(timelineRoot);
         timeline = agentTimeline(timelineRoot); seen = timeline.actions; lee.agentTimeline = timeline;
         body = null; raw = '';
+        refoldAfter(log);   // the last durable turn is no longer the newest, so it may fold again
       }
       log.scrollTop = log.scrollHeight; lastSeq = d.latest; reconnect(0);
     } catch (e) {

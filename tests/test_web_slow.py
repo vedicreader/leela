@@ -731,6 +731,30 @@ def test_every_painted_turn_carries_what_can_still_be_done_to_it():
     assert len(got['rows'][2]['off']) == 3, 'a turn this process holds no boundary for offers nothing'
     assert 'not run in this session' in got['rows'][2]['why'], 'and says which of the two reasons it is'
 
+def test_two_turns_in_one_card_keep_their_own_controls():
+    """A feed left following after `done` paints a turn another tab or the CLI started into the card
+    already on screen, so one card can hold two answers. Resolving a bar to the first `.lee-turn-answer`
+    in its card had the second turn's Undo and Revise acting on the first turn's text.
+    """
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const host = document.createElement('div'); document.body.appendChild(host);
+          const card = agentTurnCard({prompt: 'first', turnId: 't1'}), body = turnBody(card);
+          host.appendChild(card);
+          const one = document.createElement('div'); one.className = 'lee-reply'; body.appendChild(one);
+          renderMarkdown(one, 'the first answer');
+          addResponseRevision(one, 't1', 'the first answer', {revisable: true, branchable: true, known: true});
+          const two = document.createElement('div'); two.className = 'lee-reply'; body.appendChild(two);
+          renderMarkdown(two, 'the second answer');
+          addResponseRevision(two, 't2', 'the second answer', {revisable: true, branchable: true, known: true});
+          const out = $$('.lee-response-revision', card).map(b => ({turn: b.dataset.turn, raw: turnReplyText(b)}));
+          host.remove();
+          return out;
+        }""")
+    got = _run(go)
+    assert [b['turn'] for b in got] == ['t1', 't2']
+    assert got[0]['raw'] == 'the first answer' and got[1]['raw'] == 'the second answer'
+
 def test_a_saved_turn_replays_the_steer_that_interrupted_it():
     "A steer reaches the pane twice: live on the feed, and again whenever the turn is rebuilt."
     async def go(pg):

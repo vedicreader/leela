@@ -222,6 +222,8 @@ function subagentRunRow(r) {
 }
 function paintSubagents(box, d) {
   const list = $('.lee-subagent-list', box);
+  for (const row of $$('.lee-subagent-calls > details', list))
+    for (const v of (row._leeViews || [])) try { LeeCM.destroy(v); } catch {}
   const cards = (d.delegations || []).map(x => {
     const calls = x.calls || [];
     // an empty list is not the same answer as "it did nothing", and only the core knows which
@@ -268,11 +270,22 @@ async function leeSubagents(actionId = '') {
   const box = modal(`<div class="lee-mhead">Sub-agents<span class="sub">what a delegated question actually did</span></div>` +
     `<div class="lee-subagent-list"></div>`, null, () => clearInterval(timer),
     {className: 'lee-subagent-modal', storageKey: 'subagents'});
+  /* Repainted only when something actually moved. `paintSubagents` replaces the list wholesale, so
+     a repaint on every tick closed every step a person had opened and dropped its CodeMirror views
+     on the floor. A finished delegation never changes again, so polling stops with the last run. */
+  const moved = d => JSON.stringify([d.runs, (d.delegations || []).map(x => [x.id, x.done, x.ok, x.calls.length,
+    (x.calls || []).map(c => [c.id, c.done, c.ok])])]);
+  let seen = moved(first);
   paintSubagents(box, first);
-  // repaint while anything is still going; a finished delegation never changes again
+  const running = d => (d.runs || []).length || (d.delegations || []).some(x => !x.done);
+  if (!running(first)) return;
   timer = setInterval(async () => {
     if (!box.isConnected) return clearInterval(timer);
-    try { paintSubagents(box, await api(url())); } catch (_) {}
+    try {
+      const d = await api(url()), now = moved(d);
+      if (now !== seen) { seen = now; paintSubagents(box, d); }
+      if (!running(d)) clearInterval(timer);
+    } catch (_) {}
   }, 1200);
 }
 window.leeSubagents = leeSubagents;

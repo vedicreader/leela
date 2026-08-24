@@ -47,7 +47,10 @@ function usageMeta(usage, label = '', model = '') {
    in its body: the live path used to append the prompt, the progress strip, the timeline and the
    closing diffs as flat siblings of the log, which is why `markTurnUndone` had to guess a turn's
    extent by walking to the next `.lee-user-message`. */
-const foldKey = () => `lee-agent-folded:${lee.agentThread || 'default'}`;
+/* Scoped to whatever session was painted, which is not always the live thread: history view paints
+   another conversation's turns while `lee.agentThread` still names the live one. */
+const foldScope = () => $('#agentlog')?.dataset.foldScope || lee.agentThread || 'default';
+const foldKey = () => `lee-agent-folded:${foldScope()}`;
 const foldedTurns = () => { try { return new Set(JSON.parse(localStorage.getItem(foldKey()) || '[]')); } catch { return new Set(); } };
 const saveFolded = set => { try { localStorage.setItem(foldKey(), JSON.stringify([...set].slice(-400))); } catch {} };
 
@@ -86,6 +89,9 @@ function applyStoredFolds(log) {
   const cards = $$('.lee-agent-turn', log), stored = foldedTurns();
   cards.forEach((card, i) => { if (i < cards.length - 1 && stored.has(card.dataset.turn)) foldAgentTurn(card, true); });
 }
+/* `renderTurns` paints durable turns only, so on a resync the turn in flight is appended after it
+   has already decided which card is newest. Re-applied once that card exists. */
+const refoldAfter = log => applyStoredFolds(log);
 /* One listener on the log, bound from `initAgentComposer` rather than from a paint: a conversation
    with no turns paints nothing, and the log element itself outlives every repaint. */
 function bindAgentTurnFolds(log) {
@@ -97,10 +103,11 @@ function bindAgentTurnFolds(log) {
     if (e.altKey) foldAgentTurns(folded); else foldAgentTurn(card, folded);
   });
 }
-/* the turn being read: whichever card holds focus, or the newest, which is where focus is when
-   it is in the composer */
-const currentAgentTurn = () => document.activeElement?.closest?.('.lee-agent-turn')
-  || $$('.lee-agent-turn', $('#agentlog') || document).at(-1);
+const latestAgentTurn = () => agentTurnCards().at(-1);
+/* the turn being read: whichever card holds focus, or the newest, which is where focus is when it
+   is in the composer. Only for what a person aimed at; anything the server sends goes to the
+   newest, or a checkpoint would land in whichever old turn happened to hold focus */
+const currentAgentTurn = () => document.activeElement?.closest?.('.lee-agent-turn') || latestAgentTurn();
 
 function renderTurns(log, turns, heading) {
   if (heading) log.insertAdjacentHTML('beforeend', `<div class="lee-vgroup">${esc(heading)}</div>`);
@@ -165,6 +172,7 @@ const leelaOnly = () => localStorage.getItem('leeHistoryLeelaOnly') === '1';
 const shownSessions = groups => leelaOnly() ? groups.filter(s => s.app === 'leela') : groups;
 async function showHistorySession(group, groups) {
   const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
+  log.dataset.foldScope = group?.id || '';   // these turns are that session's, whatever thread is live
   const index = document.createElement('nav'); index.className = 'lee-history-index';
   /* A conversation is known by what it was about, so its name is the whole option. The time
      identifies one that has no name yet, which is every conversation before its first turn
@@ -216,6 +224,7 @@ async function paintAgentThread(id) {
   const d = await api('/agent/thread/turns' + (id ? '?thread=' + encodeURIComponent(id) : ''));
   const welcome = $('.lee-agent-welcome', log);
   approvalCards.clear();
+  log.dataset.foldScope = '';
   if ((d.turns || []).length) { log.innerHTML = ''; renderTurns(log, d.turns, titleText(d.title) || 'conversation'); }
   else log.innerHTML = welcome ? welcome.outerHTML : '';
   lee.agentView = 'live'; $('#agenthistory')?.classList.remove('active');
@@ -243,7 +252,7 @@ async function leeAgentResume(group) {
   if (lee.agentBusy) return status('the model is already working', 'err');
   try {
     const d = await post('/agent/resume', {session: group.id}), log = $('#agentlog');
-    if (log) { log.innerHTML = ''; renderTurns(log, d.turns || [], 'resumed conversation'); log.scrollTop = log.scrollHeight; }
+    if (log) { log.dataset.foldScope = ''; log.innerHTML = ''; renderTurns(log, d.turns || [], 'resumed conversation'); log.scrollTop = log.scrollHeight; }
     lee.agentView = 'live'; lee.agentLive = log?.innerHTML || '';
     $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus();
     status(d.note || `resumed ${d.session}`, 'ok');

@@ -718,7 +718,10 @@ function usageMeta(usage, label = '', model = '') {
    in its body: the live path used to append the prompt, the progress strip, the timeline and the
    closing diffs as flat siblings of the log, which is why `markTurnUndone` had to guess a turn's
    extent by walking to the next `.lee-user-message`. */
-const foldKey = () => `lee-agent-folded:${lee.agentThread || 'default'}`;
+/* Scoped to whatever session was painted, which is not always the live thread: history view paints
+   another conversation's turns while `lee.agentThread` still names the live one. */
+const foldScope = () => $('#agentlog')?.dataset.foldScope || lee.agentThread || 'default';
+const foldKey = () => `lee-agent-folded:${foldScope()}`;
 const foldedTurns = () => { try { return new Set(JSON.parse(localStorage.getItem(foldKey()) || '[]')); } catch { return new Set(); } };
 const saveFolded = set => { try { localStorage.setItem(foldKey(), JSON.stringify([...set].slice(-400))); } catch {} };
 
@@ -757,6 +760,9 @@ function applyStoredFolds(log) {
   const cards = $$('.lee-agent-turn', log), stored = foldedTurns();
   cards.forEach((card, i) => { if (i < cards.length - 1 && stored.has(card.dataset.turn)) foldAgentTurn(card, true); });
 }
+/* `renderTurns` paints durable turns only, so on a resync the turn in flight is appended after it
+   has already decided which card is newest. Re-applied once that card exists. */
+const refoldAfter = log => applyStoredFolds(log);
 /* One listener on the log, bound from `initAgentComposer` rather than from a paint: a conversation
    with no turns paints nothing, and the log element itself outlives every repaint. */
 function bindAgentTurnFolds(log) {
@@ -768,10 +774,11 @@ function bindAgentTurnFolds(log) {
     if (e.altKey) foldAgentTurns(folded); else foldAgentTurn(card, folded);
   });
 }
-/* the turn being read: whichever card holds focus, or the newest, which is where focus is when
-   it is in the composer */
-const currentAgentTurn = () => document.activeElement?.closest?.('.lee-agent-turn')
-  || $$('.lee-agent-turn', $('#agentlog') || document).at(-1);
+const latestAgentTurn = () => agentTurnCards().at(-1);
+/* the turn being read: whichever card holds focus, or the newest, which is where focus is when it
+   is in the composer. Only for what a person aimed at; anything the server sends goes to the
+   newest, or a checkpoint would land in whichever old turn happened to hold focus */
+const currentAgentTurn = () => document.activeElement?.closest?.('.lee-agent-turn') || latestAgentTurn();
 
 function renderTurns(log, turns, heading) {
   if (heading) log.insertAdjacentHTML('beforeend', `<div class="lee-vgroup">${esc(heading)}</div>`);
@@ -836,6 +843,7 @@ const leelaOnly = () => localStorage.getItem('leeHistoryLeelaOnly') === '1';
 const shownSessions = groups => leelaOnly() ? groups.filter(s => s.app === 'leela') : groups;
 async function showHistorySession(group, groups) {
   const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
+  log.dataset.foldScope = group?.id || '';   // these turns are that session's, whatever thread is live
   const index = document.createElement('nav'); index.className = 'lee-history-index';
   /* A conversation is known by what it was about, so its name is the whole option. The time
      identifies one that has no name yet, which is every conversation before its first turn
@@ -887,6 +895,7 @@ async function paintAgentThread(id) {
   const d = await api('/agent/thread/turns' + (id ? '?thread=' + encodeURIComponent(id) : ''));
   const welcome = $('.lee-agent-welcome', log);
   approvalCards.clear();
+  log.dataset.foldScope = '';
   if ((d.turns || []).length) { log.innerHTML = ''; renderTurns(log, d.turns, titleText(d.title) || 'conversation'); }
   else log.innerHTML = welcome ? welcome.outerHTML : '';
   lee.agentView = 'live'; $('#agenthistory')?.classList.remove('active');
@@ -914,7 +923,7 @@ async function leeAgentResume(group) {
   if (lee.agentBusy) return status('the model is already working', 'err');
   try {
     const d = await post('/agent/resume', {session: group.id}), log = $('#agentlog');
-    if (log) { log.innerHTML = ''; renderTurns(log, d.turns || [], 'resumed conversation'); log.scrollTop = log.scrollHeight; }
+    if (log) { log.dataset.foldScope = ''; log.innerHTML = ''; renderTurns(log, d.turns || [], 'resumed conversation'); log.scrollTop = log.scrollHeight; }
     lee.agentView = 'live'; lee.agentLive = log?.innerHTML || '';
     $('#agenthistory')?.classList.remove('active'); $('#agentprompt')?.focus();
     status(d.note || `resumed ${d.session}`, 'ok');
@@ -1401,7 +1410,7 @@ function showApproval(a, destination = null) {
   /* `pollApproval` and a notebook prompt cell both call this with no destination, and a checkpoint
      that lands beside the turns instead of in the one it belongs to is a checkpoint nobody finds. */
   const host = destination || (lee.agentTimeline?.root?.isConnected ? lee.agentTimeline.root : null)
-    || turnBody(currentAgentTurn()) || log;
+    || turnBody(latestAgentTurn()) || log;
   const schemas = a.schemas || [], byName = new Map(schemas.map(s => [s.name, s]));
   const card = document.createElement('section');
   card.className = 'lee-approval lee-proposal proposed'; card.dataset.id = a.id; card.dataset.tool = a.tool; card.tabIndex = -1;
@@ -1586,7 +1595,7 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
      element `markTurnUndone` dims, which dimmed the bar's own explanation of why. The answer is
      marked instead, because a class survives the `innerHTML` round-trips this pane takes and a
      sibling relationship does not. */
-  out.classList.add('lee-turn-answer');
+  out.classList.add('lee-turn-answer'); out.dataset.answerFor = turnId;
   const body = out.closest('.lee-agent-turn-body');
   if (body) body.appendChild(bar); else out.after(bar);
   bindResponseRevisions(bar.closest('#agentlog') || $('#agentlog'));
@@ -1594,8 +1603,14 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
 
 /* What the reply said, recovered from the DOM rather than from a closure: `renderMarkdown` keeps
    the markdown it rendered, which is the one copy that survives an `innerHTML` round-trip. */
-const turnAnswer = bar => $('.lee-turn-answer', bar.closest('.lee-agent-turn') || document)
-  || bar.previousElementSibling;
+/* Paired by turn id rather than by position. One card can hold two answers: a feed left following
+   after `done` paints a turn another tab or the CLI started into the card already on screen, and
+   `.lee-turn-answer` alone then resolved both bars to the first one. */
+const turnAnswer = bar => {
+  const card = bar.closest('.lee-agent-turn') || document, id = bar.dataset.turn || '';
+  return (id && $(`.lee-turn-answer[data-answer-for="${CSS.escape(id)}"]`, card))
+    || $('.lee-turn-answer', card) || bar.previousElementSibling;
+};
 function turnReplyText(bar) {
   const reply = turnAnswer(bar);
   return reply?.dataset?.markdown ?? reply?.textContent ?? '';
@@ -1960,6 +1975,8 @@ function subagentRunRow(r) {
 }
 function paintSubagents(box, d) {
   const list = $('.lee-subagent-list', box);
+  for (const row of $$('.lee-subagent-calls > details', list))
+    for (const v of (row._leeViews || [])) try { LeeCM.destroy(v); } catch {}
   const cards = (d.delegations || []).map(x => {
     const calls = x.calls || [];
     // an empty list is not the same answer as "it did nothing", and only the core knows which
@@ -2006,11 +2023,22 @@ async function leeSubagents(actionId = '') {
   const box = modal(`<div class="lee-mhead">Sub-agents<span class="sub">what a delegated question actually did</span></div>` +
     `<div class="lee-subagent-list"></div>`, null, () => clearInterval(timer),
     {className: 'lee-subagent-modal', storageKey: 'subagents'});
+  /* Repainted only when something actually moved. `paintSubagents` replaces the list wholesale, so
+     a repaint on every tick closed every step a person had opened and dropped its CodeMirror views
+     on the floor. A finished delegation never changes again, so polling stops with the last run. */
+  const moved = d => JSON.stringify([d.runs, (d.delegations || []).map(x => [x.id, x.done, x.ok, x.calls.length,
+    (x.calls || []).map(c => [c.id, c.done, c.ok])])]);
+  let seen = moved(first);
   paintSubagents(box, first);
-  // repaint while anything is still going; a finished delegation never changes again
+  const running = d => (d.runs || []).length || (d.delegations || []).some(x => !x.done);
+  if (!running(first)) return;
   timer = setInterval(async () => {
     if (!box.isConnected) return clearInterval(timer);
-    try { paintSubagents(box, await api(url())); } catch (_) {}
+    try {
+      const d = await api(url()), now = moved(d);
+      if (now !== seen) { seen = now; paintSubagents(box, d); }
+      if (!running(d)) clearInterval(timer);
+    } catch (_) {}
   }, 1200);
 }
 window.leeSubagents = leeSubagents;
@@ -2487,7 +2515,9 @@ function agentListen(thread, since, card = null) {
       const group = sessions.find(s => s.id === thread) || sessions.find(s => s.id === history.current);
       const turns = await sessionTurns(group?.id);
       if (!turns.length) throw new Error('no recorded turns for this conversation');
-      log.innerHTML = ''; approvalCards.clear(); renderTurns(log, turns, 'Recovered conversation');
+      log.innerHTML = ''; approvalCards.clear(); log.dataset.foldScope = '';
+      progress.finish(false);   // its 250ms clock is cleared by `finish` alone, and it is replaced below
+      renderTurns(log, turns, 'Recovered conversation');
       /* `renderTurns` paints durable turns only, so a turn still in flight was painted nowhere and
          the rest of it streamed into a detached root. It gets a fresh card, and everything this
          listener paints into is re-pointed at it. */
@@ -2499,6 +2529,7 @@ function agentListen(thread, since, card = null) {
         host.appendChild(timelineRoot);
         timeline = agentTimeline(timelineRoot); seen = timeline.actions; lee.agentTimeline = timeline;
         body = null; raw = '';
+        refoldAfter(log);   // the last durable turn is no longer the newest, so it may fold again
       }
       log.scrollTop = log.scrollHeight; lastSeq = d.latest; reconnect(0);
     } catch (e) {

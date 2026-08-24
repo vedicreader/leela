@@ -662,7 +662,7 @@ def connect(app, ctx):
                                 status_code=409)
         return {'ok': True, 'thread': t.id, **run.dict()}
     @rt('/agent/subagents')
-    def agent_subagents(action_id: str = '', thread: str = ''):
+    def agent_subagents(action_id: str = '', thread: str = '', limit: int = 40):
         """One delegation: the call that asked, what its sub-agents did, and the runs still going.
 
         A delegated conversation is thrown away when it ends, so these recorded calls are the only
@@ -674,13 +674,18 @@ def connect(app, ctx):
         rows = t.ai.activity.rows()
         wanted = [r for r in rows if r.get('kind') == 'delegate'
                   and (not action_id or r.get('id') == action_id)]
+        # newest first and bounded: recording every sub-agent call makes a session's whole stream
+        # far larger than it was, and this is polled while a delegation is running
+        wanted = list(reversed(wanted))[:max(1, limit)]
         def flat(runs):
             return [x for r in runs for x in (r, *flat(r.get('children') or []))]
+        # `runs(active=True)` keeps a live root's finished children, which are not running now
+        live = [r for r in flat(t.ai.runs(active=True))
+                if r.get('kind') == 'child' and r.get('state') in ('pending', 'running', 'cancelling')]
         return {'ok': True, 'thread': t.id,
                 'delegations': [{**d, 'calls': [r for r in rows if r.get('parent_action_id') == d.get('id')]}
                                 for d in wanted],
-                'runs': [r for r in flat(t.ai.runs(active=True)) if r.get('kind') == 'child'],
-                'records_sub_calls': hasattr(t.ai, '_record_sub')}
+                'runs': live, 'records_sub_calls': hasattr(t.ai, '_record_sub')}
     @rt('/agent/turn')
     async def agent_turn(req):
         try: d = await req.json()

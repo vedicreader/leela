@@ -127,6 +127,15 @@ def test_a_delegation_is_inspectable_and_says_when_nothing_was_recorded(tmp_path
         assert client.get(f'/agent/subagents?action_id={parent.id}').json()['delegations'][0]['id'] == parent.id
         assert client.get('/agent/subagents?action_id=nope').json()['delegations'] == []
 
+        # bounded and newest first: recording every sub-agent call makes the stream far larger than
+        # it was, and this is polled while a delegation runs
+        for i in range(6): ai.activity.finish(ai.activity.start('delegate_search', {'question': f'q{i}'}), 'ok')
+        got = client.get('/agent/subagents?limit=2').json()['delegations']
+        assert [x['args']['question'] for x in got] == ['q5', 'q4'], got
+        assert client.get('/agent/subagents?limit=0').json()['delegations'], 'a bad limit is not no answer'
+        # a live root keeps its finished children; those are not running now
+        assert client.get('/agent/subagents').json()['runs'] == []
+
 
 def test_steering_one_sub_agent_answers_the_same_shape_however_it_refuses(tmp_path):
     """Missing run, nothing said, and an agent core that cannot carry a steer are all structured,

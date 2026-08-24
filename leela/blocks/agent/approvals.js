@@ -98,7 +98,7 @@ function showApproval(a, destination = null) {
   /* `pollApproval` and a notebook prompt cell both call this with no destination, and a checkpoint
      that lands beside the turns instead of in the one it belongs to is a checkpoint nobody finds. */
   const host = destination || (lee.agentTimeline?.root?.isConnected ? lee.agentTimeline.root : null)
-    || turnBody(currentAgentTurn()) || log;
+    || turnBody(latestAgentTurn()) || log;
   const schemas = a.schemas || [], byName = new Map(schemas.map(s => [s.name, s]));
   const card = document.createElement('section');
   card.className = 'lee-approval lee-proposal proposed'; card.dataset.id = a.id; card.dataset.tool = a.tool; card.tabIndex = -1;
@@ -283,7 +283,7 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
      element `markTurnUndone` dims, which dimmed the bar's own explanation of why. The answer is
      marked instead, because a class survives the `innerHTML` round-trips this pane takes and a
      sibling relationship does not. */
-  out.classList.add('lee-turn-answer');
+  out.classList.add('lee-turn-answer'); out.dataset.answerFor = turnId;
   const body = out.closest('.lee-agent-turn-body');
   if (body) body.appendChild(bar); else out.after(bar);
   bindResponseRevisions(bar.closest('#agentlog') || $('#agentlog'));
@@ -291,8 +291,14 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
 
 /* What the reply said, recovered from the DOM rather than from a closure: `renderMarkdown` keeps
    the markdown it rendered, which is the one copy that survives an `innerHTML` round-trip. */
-const turnAnswer = bar => $('.lee-turn-answer', bar.closest('.lee-agent-turn') || document)
-  || bar.previousElementSibling;
+/* Paired by turn id rather than by position. One card can hold two answers: a feed left following
+   after `done` paints a turn another tab or the CLI started into the card already on screen, and
+   `.lee-turn-answer` alone then resolved both bars to the first one. */
+const turnAnswer = bar => {
+  const card = bar.closest('.lee-agent-turn') || document, id = bar.dataset.turn || '';
+  return (id && $(`.lee-turn-answer[data-answer-for="${CSS.escape(id)}"]`, card))
+    || $('.lee-turn-answer', card) || bar.previousElementSibling;
+};
 function turnReplyText(bar) {
   const reply = turnAnswer(bar);
   return reply?.dataset?.markdown ?? reply?.textContent ?? '';
