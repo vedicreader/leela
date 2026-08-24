@@ -11,7 +11,7 @@ from ...core.web import diff_payload
 
 __all__ = ['TOOL_GROUPS', 'tool_group', 'tool_schemas', 'tool_preview', 'edit_diffs',
            'activity_changes', 'history_sessions', 'project_state_context', 'turn_media',
-           'SURFACES_FILE', 'mark_surface', 'surfaces']
+           'with_capabilities', 'SURFACES_FILE', 'mark_surface', 'surfaces']
 
 SURFACES_FILE = 'agent-surfaces.json'   #: sessions Leela started, beside Ramabana's own metadata
 
@@ -128,6 +128,19 @@ def tool_schemas(agent):
                     'changes_state': tool.__name__ in WRITE_TOOLS,
                     'retryable': tool.__name__ not in WRITE_TOOLS,
                     'group': tool_group(tool.__name__), 'fields': fields})
+    return out
+
+def with_capabilities(ai, turns):
+    """Each turn with what can still be done to it, so a painted turn carries its own controls.
+
+    The live `done` payload was the only place these reached the browser, so undo, restore and
+    revise disappeared on every repaint that rebuilt from the turn log.
+    """
+    out = []
+    for turn in turns or ():
+        try: caps = ai.turn_capabilities(turn.get('turn_id') or '')
+        except Exception: caps = {}
+        out.append({**turn, 'capabilities': caps})
     return out
 
 def edit_diffs(a):

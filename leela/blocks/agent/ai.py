@@ -837,7 +837,13 @@ class Assistant(Agent):
             kind='agent', irreversible=irreversible)
         return out
     def turn_capabilities(self, turn_id):
-        "Which post-turn operations have a real checkpoint or artifact behind them."
+        """Which post-turn operations have a real checkpoint or artifact behind them.
+
+        `known` is whether this process holds anything for the turn at all. Checkpoints and
+        transactions live in memory, and `MAX_CHECKPOINTS` bounds the checkpoints, so a turn from
+        a restart ago or from far enough back in this session has no boundary to branch at. That
+        is a different answer from "this turn changed nothing", and the pane says so.
+        """
         checkpoint = self.checkpoints.get(str(turn_id), {})
         after = checkpoint.get('after') or []
         revisable = any(isinstance(m, dict) and m.get('role') == 'assistant' and
@@ -845,6 +851,7 @@ class Assistant(Agent):
         tx = self.turn_transactions.get(str(turn_id)) or {}
         files = list((tx.get('files') or {}).keys())
         return {'revisable': revisable, 'undoable': bool(files) and not tx.get('rolled_back'),
+            'branchable': str(turn_id) in self.checkpoints, 'known': bool(checkpoint or tx),
             'files': files, 'irreversible': list(tx.get('irreversible') or [])}
     def rollback_turn(self, turn_id):
         "Atomically restore every unchanged artifact from a completed turn."

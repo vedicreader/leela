@@ -46,6 +46,34 @@ staged and reports only the exception.
 `../sibling/x.py` creates a file elsewhere in the workspace. `_check` keeps it inside the roots, so
 this is an inconsistency rather than an escape, but the two should read the same way.
 
+### 8. The branching model has a complete backend and no way to reach it
+Found while adding collapsible turns. Cross-checking every `@rt('/agent…')` in
+`blocks/agent/app.py` against callers in `blocks/*/*.js` and `static/js/*.js` leaves thirteen routes
+with none: `/agent/branches`, `/agent/branch/parts`, `/agent/branch/switch`, `/agent/fork`,
+`/agent/conversation/parts`, `/agent/history/preview`, `/agent/history/apply`, `/agent/info`,
+`/agent/sessions`, `/agent/new`, `/agent/ask`, `/agent/approval/request`, and
+`/agent/runs/{id}/terminate`.
+
+The consequence is not cosmetic. `/agent/undo-turn` and `/agent/revise` each *create* a branch and
+return its `branch_id`; `Assistant.fork` and `switch_branch` can restore and switch between them.
+Nothing in the client lists branches or switches to one, so from a person's side the branching model
+is write-only: every undo and every edited answer forks the conversation into somewhere they can
+never go back to. `revise` at least prints the new `branch_id` into the bar it replaces. `unsay`
+prints nothing.
+
+What a UI needs is small, because the backend is done: a branch pill on the turn card reading
+`/agent/branches`, and a switcher calling `/agent/branch/switch`. `/agent/branch/parts` and
+`/agent/fork` support forking from a *part* of a turn rather than the whole turn, which is a second
+surface and can wait.
+
+### 9. `MAX_CHECKPOINTS` and `turn_transactions` disagree about how far back you can go
+`ramabana/agent.py` keeps 20 checkpoints and pops the rest; `Assistant.turn_transactions`
+(`blocks/agent/ai.py`) is unbounded. So past turn 20 of one session, "Restore files" is still offered
+and works while "Undo from conversation" and "Edit what agent remembers" have quietly stopped being
+possible. `turn_capabilities` now reports `branchable` and `known` so the pane can say which of the
+two reasons a control is unavailable for, but the underlying asymmetry is still there. Either bound
+the transactions to match, or persist checkpoints.
+
 ## Things that will waste your time if you do not know them
 
 - **`node` is blocked but esbuild is a native binary, and safecmd blocks its name too.** Drive it

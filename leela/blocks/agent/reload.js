@@ -77,11 +77,11 @@ async function stopAgent() {
 /* Failures with nowhere else to go: a compaction the engine refused, a completion that came back
  * empty, anything the native model layer printed instead of raising. They appear in the agent pane
  * because that is where the turn they belong to is. */
-function showProblems(ps) {
+function showProblems(ps, host = null) {
   for (const p of (ps || [])) {
     if (lee.shownProblems.has(p)) continue;
     lee.shownProblems.add(p);
-    agentLog(`<div class="lee-runline err"><span class="res">⚠ ${esc(p)}</span></div>`);
+    agentLog(`<div class="lee-runline err"><span class="res">⚠ ${esc(p)}</span></div>`, host);
   }
 }
 

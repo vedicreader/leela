@@ -109,21 +109,27 @@ async function sendAgent(force = false) {
   lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
   lee.agentBusy = true; setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
-  log.appendChild(userMessage(q)); log.scrollTop = log.scrollHeight;
+  const card = agentTurnCard({prompt: q, model: $('#agentmodel')?.value || ''});
+  turnBody(card).appendChild(userMessage(q));
+  log.appendChild(card); log.scrollTop = log.scrollHeight;
   status('model is working…');
-  agentListen(accepted.thread || lee.agentThread, accepted.seq);
+  agentListen(accepted.thread || lee.agentThread, accepted.seq, card);
 }
 
 /* One conversation's feed, painted into the live pane. `sendAgent` calls this for the turn it
    just started; a thread switch calls it for a turn already running, replaying from the feed's
    last settled point so only the turn in flight is drawn again. */
-function agentListen(thread, since) {
+function agentListen(thread, since, card = null) {
   const log = $('#agentlog'); if (!log) return;
   $('.lee-agent-welcome', log)?.remove();
-  const progress = agentProgress(log);
-  const timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
-  log.appendChild(timelineRoot); log.scrollTop = log.scrollHeight;
-  const timeline = agentTimeline(timelineRoot), seen = timeline.actions;
+  /* A turn already in flight when this pane attached has no card yet: its prompt is in the feed,
+     and the `user` event below fills the title in. */
+  if (!card) { card = agentTurnCard({model: $('#agentmodel')?.value || ''}); log.appendChild(card); }
+  let host = turnBody(card);
+  let progress = agentProgress(host);
+  let timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
+  host.appendChild(timelineRoot); log.scrollTop = log.scrollHeight;
+  let timeline = agentTimeline(timelineRoot), seen = timeline.actions;
   // A steer is drawn by the steer block, which is not in this scope. It belongs in the turn,
   // between the prose before it and the call after, so it needs the same painter.
   lee.agentTimeline = timeline;
@@ -172,7 +178,12 @@ function agentListen(thread, since) {
   /* A turn already in flight when this pane attached: its prompt is in the feed, not on screen.
      `sendAgent` replays from its own user event, so it never arrives twice. */
   es.addEventListener('user', dedupe(d => {
-    log.insertBefore(userMessage(d.text || ''), timelineRoot); log.scrollTop = log.scrollHeight;
+    // `timelineRoot`'s parent, not the log: `insertBefore` throws when the reference is not a child,
+    // and the throw was swallowed after `lastSeq` had already advanced, losing the prompt for good
+    timelineRoot.parentElement.insertBefore(userMessage(d.text || ''), timelineRoot);
+    const title = $('.lee-agent-turn-title', card);
+    if (title && title.textContent === '(no prompt)') title.textContent = String(d.text || '').replace(/\s+/g, ' ').trim();
+    log.scrollTop = log.scrollHeight;
   }));
 
   es.addEventListener('chunk', dedupe(d => {
@@ -181,7 +192,9 @@ function agentListen(thread, since) {
     log.scrollTop = log.scrollHeight;
   }));
 
-  es.addEventListener('approval', dedupe(d => { timeline.seal(); progress.phase('Waiting for your approval'); showApproval(d, timelineRoot); }));
+  es.addEventListener('approval', dedupe(d => {
+    timeline.seal(); progress.phase('Waiting for your approval'); showApproval(d, timelineRoot);
+  }));
   es.addEventListener('execution', dedupe(d => updateAgentRunstrip(d)));
   es.addEventListener('state', dedupe(d => updateAgentRunstrip(d)));
   es.addEventListener('steer', dedupe(d => {
@@ -215,7 +228,22 @@ function agentListen(thread, since) {
       const group = sessions.find(s => s.id === thread) || sessions.find(s => s.id === history.current);
       const turns = await sessionTurns(group?.id);
       if (!turns.length) throw new Error('no recorded turns for this conversation');
-      log.innerHTML = ''; renderTurns(log, turns, 'Recovered conversation');
+      log.innerHTML = ''; approvalCards.clear(); log.dataset.foldScope = '';
+      progress.finish(false);   // its 250ms clock is cleared by `finish` alone, and it is replaced below
+      renderTurns(log, turns, 'Recovered conversation');
+      /* `renderTurns` paints durable turns only, so a turn still in flight was painted nowhere and
+         the rest of it streamed into a detached root. It gets a fresh card, and everything this
+         listener paints into is re-pointed at it. */
+      if (!runDone) {
+        card = agentTurnCard({model: d.model || $('#agentmodel')?.value || ''});
+        log.appendChild(card); host = turnBody(card);
+        progress = agentProgress(host);
+        timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
+        host.appendChild(timelineRoot);
+        timeline = agentTimeline(timelineRoot); seen = timeline.actions; lee.agentTimeline = timeline;
+        body = null; raw = '';
+        refoldAfter(log);   // the last durable turn is no longer the newest, so it may fold again
+      }
       log.scrollTop = log.scrollHeight; lastSeq = d.latest; reconnect(0);
     } catch (e) {
       status('conversation replay failed; retrying without clearing the transcript', 'err');
@@ -230,10 +258,14 @@ function agentListen(thread, since) {
     addResponseRevision(closing, d.turn_id, raw, d.capabilities || {}); drawTurnMedia(closing, d.media);
     const usage = usageMeta(d.usage, d.usage_label, d.model); if (usage) timelineRoot.appendChild(usage);
     for (const e of (d.edits || []))
-      agentLog(`<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
-               `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
+      // into the turn's body, not `agentLog`: what this turn wrote is part of this turn
+      host.insertAdjacentHTML('beforeend',
+        `<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
+        `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
+    if (d.turn_id) card.dataset.turn = d.turn_id;
+    log.scrollTop = log.scrollHeight;
     const tail = d.usage_label ? `${d.note || 'done'} · ${d.usage_label}` : (d.note || 'done');
-    showProblems(d.problems);
+    showProblems(d.problems, host);   // a turn's problems belong to that turn
     if ((d.problems || []).length) status(d.problems[d.problems.length - 1], 'err');
     else status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
     await reloadAfterEdits(d.edits || []);

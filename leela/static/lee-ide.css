@@ -725,7 +725,26 @@ kbd {
 .lee-thread-select { width: min(190px, 24vw); min-width: 92px; color: var(--lee-fg2); text-overflow: ellipsis; }
 .lee-agent-head-actions .lee-btn { min-height: 25px; padding-inline: 7px; border-radius: 4px; color: var(--lee-fg4); }
 .lee-agent-head-actions .lee-btn:hover { color: var(--lee-fg); }
-.lee-history-turn { padding: 9px 0 12px; border-bottom: 1px solid var(--lee-border); }
+/* One turn, foldable. The body is clipped rather than `display: none`: it holds CodeMirror views
+   that measure their width from the DOM, `LeeCM` exports no re-measure, and `boot.js` only
+   re-measures `lee.editors` -- a step's view is not in there. Clipped, its width stays right. */
+.lee-agent-turn { margin: 0 0 10px; border-bottom: 1px solid var(--lee-border); }
+.lee-agent-turn-head { display: flex; align-items: center; gap: 6px; min-height: 24px; padding: 3px 2px; }
+.lee-agent-turn-fold {
+  display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px;
+  background: none; color: var(--lee-fg4); cursor: pointer;
+}
+.lee-agent-turn-fold:hover { background: var(--lee-active-line); color: var(--lee-fg); }
+.lee-agent-turn-fold .lee-agent-step-chevron { transform: rotate(225deg) translate(-1px, 1px); }
+.lee-agent-turn.folded .lee-agent-turn-fold .lee-agent-step-chevron { transform: none; }
+.lee-agent-turn-title {
+  flex: 1; min-width: 0; overflow: hidden; color: var(--lee-fg3); white-space: nowrap;
+  text-overflow: ellipsis; font: 10px/1.4 var(--lee-mono);
+}
+.lee-agent-turn.folded .lee-agent-turn-title { color: var(--lee-fg2); }
+.lee-agent-turn-meta { flex: none; color: var(--lee-fg4); font: 9px/1.3 var(--lee-mono); text-transform: uppercase; }
+.lee-agent-turn.folded > .lee-agent-turn-body { max-height: 0; overflow: hidden; visibility: hidden; }
+.lee-agent-turn.lee-turn-undone-card > .lee-agent-turn-head { opacity: .6; }
 .lee-history-index {
   position: sticky; top: 0; z-index: 2; display: grid;
   grid-template-columns: minmax(120px, auto) minmax(220px, 1fr) auto auto; align-items: center; gap: 10px;
@@ -771,7 +790,6 @@ kbd {
 .lee-session-code > summary code { overflow: hidden; color: var(--lee-fg2); text-overflow: ellipsis; white-space: nowrap; }
 .lee-session-code[open] > summary .lee-agent-step-chevron { transform: rotate(225deg) translate(-1px,1px); }
 .lee-session-code-body { margin: 0 4px 8px 54px; }
-.lee-history-meta { display: flex; gap: 8px; margin: 0 2px 5px; color: var(--lee-fg4); font-size: 10px; text-transform: uppercase; }
 .lee-user-message {
   margin: 4px 2px 10px; overflow: hidden; border: 1px solid var(--lee-border);
   border-left: 2px solid var(--lee-accent); border-radius: 5px;
@@ -879,6 +897,34 @@ kbd {
 .lee-agent-reply:empty { display: none; }
 .lee-agent-timeline { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .lee-agent-timeline > .lee-agent-reply { margin: 0 4px; }
+/* what a delegated question did, which is otherwise thrown away with its conversation */
+.lee-agent-step-open {
+  flex: none; padding: 1px 6px; border: 1px solid var(--lee-border); border-radius: 4px;
+  background: none; color: var(--lee-fg4); cursor: pointer; font: 9px/1.4 var(--lee-mono);
+}
+.lee-agent-step-open:hover { border-color: var(--lee-accent); color: var(--lee-fg); }
+.lee-subagent-modal .lee-modalbox { width: min(860px, 94vw); }
+.lee-subagent-list { display: grid; gap: 10px; max-height: 66vh; overflow: auto; padding: 10px 12px; }
+.lee-subagent {
+  border: 1px solid var(--lee-border); border-left: 2px solid var(--lee-fg4); border-radius: 5px;
+  background: var(--lee-bg1);
+}
+.lee-subagent.ok { border-left-color: var(--lee-green); }
+.lee-subagent.failed { border-left-color: var(--lee-red); }
+.lee-subagent.running { border-left-color: var(--lee-accent); }
+.lee-subagent > header { display: flex; align-items: baseline; gap: 8px; padding: 6px 9px; border-bottom: 1px solid var(--lee-border); }
+.lee-subagent > header strong { color: var(--lee-fg); font: 600 10.5px/1.3 var(--lee-mono); }
+.lee-subagent > header span { color: var(--lee-fg4); font-size: 9.5px; }
+.lee-subagent-questions { margin: 6px 9px; padding-left: 18px; color: var(--lee-fg2); font-size: 10.5px; line-height: 1.5; }
+.lee-subagent-calls { display: flex; flex-direction: column; gap: 5px; margin: 6px 9px; }
+.lee-subagent > .lee-dim { margin: 6px 9px; font-size: 10px; }
+.lee-subagent-answer > summary { padding: 6px 9px; border-top: 1px solid var(--lee-border); color: var(--lee-fg3); cursor: pointer; font: 9.5px/1.35 var(--lee-mono); }
+.lee-subagent-answer > pre { max-height: 260px; margin: 0; padding: 8px 9px; overflow: auto; color: var(--lee-fg2); white-space: pre-wrap; font: 9.5px/1.5 var(--lee-mono); }
+.lee-subagent-run { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-top: 1px solid var(--lee-border); }
+.lee-subagent-run:first-of-type { border-top: 0; }
+.lee-subagent-run strong { flex: 1; min-width: 0; overflow: hidden; color: var(--lee-fg2); white-space: nowrap; text-overflow: ellipsis; font: 400 10.5px/1.4 var(--lee-mono); }
+.lee-subagent-run span { flex: none; color: var(--lee-fg4); font-size: 9.5px; }
+.lee-agent-run.child > span { padding-left: 10px; border-left: 1px solid var(--lee-border); }
 .lee-agent-children { display: flex; flex-direction: column; gap: 5px; margin: 6px 8px 4px 18px; padding-left: 8px; border-left: 1px solid var(--lee-border); }
 .lee-agent-children > .lee-agent-step { margin: 0; }
 .lee-agent-question {
@@ -1281,17 +1327,20 @@ kbd {
 /* Expanded agent workspace: narrative stays readable on the left, action lifecycle in the
    centre, and concrete tool results form an artifact rail on the right. Narrow screens
    retain the single chronological stream, which is the only ordering that fits. */
-.lee-agent.timeline-workspace .lee-agentlog { display: grid; grid-template-columns: minmax(240px,.78fr) minmax(300px,1fr) minmax(260px,.9fr); align-content: start; gap: 0 12px; }
-.lee-agent.timeline-workspace .lee-user-message, .lee-agent.timeline-workspace .lee-agent-reply,
-.lee-agent.timeline-workspace .lee-timeline-prose, .lee-agent.timeline-workspace .lee-history-turn,
-.lee-agent.timeline-workspace .lee-vgroup, .lee-agent.timeline-workspace .lee-history-session-head,
+/* Per turn, not per log. The columns are assigned to direct children, and every one of them now
+   lives inside a turn card, so on the log this became a single column the moment turns got cards. */
+.lee-agent.timeline-workspace .lee-agent-turn-body { display: grid; grid-template-columns: minmax(240px,.78fr) minmax(300px,1fr) minmax(260px,.9fr); align-content: start; gap: 0 12px; }
+/* `grid-column` only lands on a direct child of the grid, so each of these names what the body
+   actually holds. `.lee-agent-timeline` is the narrative: prose sits inside it, not beside it. */
+.lee-agent.timeline-workspace .lee-user-message, .lee-agent.timeline-workspace .lee-agent-timeline,
+.lee-agent.timeline-workspace .lee-reply, .lee-agent.timeline-workspace .lee-vgroup,
+.lee-agent.timeline-workspace .lee-history-session-head,
 .lee-agent.timeline-workspace .lee-response-revision, .lee-agent.timeline-workspace .lee-agent-progress { grid-column: 1; }
 /* grid items stretch to their row by default, which made a two-line question as tall as the answer */
-.lee-agent.timeline-workspace .lee-agentlog > * { align-self: start; }
-/* a history turn is one article with its own children: it is a column, not a grid of its own */
-.lee-agent.timeline-workspace .lee-history-turn { grid-column: 1 / -1; display: block; }
+.lee-agent.timeline-workspace .lee-agent-turn-body > * { align-self: start; }
 .lee-agent.timeline-workspace .lee-agent-steps, .lee-agent.timeline-workspace .lee-approval { grid-column: 2; }
-.lee-agent.timeline-workspace .lee-runline, .lee-agent.timeline-workspace > .lee-diff { grid-column: 3; }
+.lee-agent.timeline-workspace .lee-runline,
+.lee-agent.timeline-workspace .lee-agent-turn-body > .lee-diff { grid-column: 3; }
 .lee-agent-welcome { display: grid; gap: 9px; max-width: 34rem; margin: 22px auto; padding: 16px; border-left: 2px solid var(--lee-aqua); background: color-mix(in srgb, var(--lee-aqua) 4%, var(--lee-bg)); }
 .lee-agent-welcome strong { color: var(--lee-fg); font-size: 12px; letter-spacing: -.01em; }.lee-agent-welcome span { max-width: 46ch; color: var(--lee-fg4); font-size: 10.5px; line-height: 1.55; }
 .lee-agent-welcome .lee-btn { justify-self: start; margin-top: 2px; }
@@ -1299,7 +1348,7 @@ kbd {
 .lee-compaction-event summary { padding: 7px 9px; color: var(--lee-aqua); cursor: pointer; font: 9.5px/1.35 var(--lee-mono); }
 .lee-compaction-event pre { max-height: 240px; margin: 0; padding: 8px 9px; overflow: auto; border-top: 1px solid var(--lee-border); color: var(--lee-fg2); white-space: pre-wrap; font: 9.5px/1.5 var(--lee-mono); }
 @media (max-width: 1100px) {
-  .lee-agent.timeline-workspace .lee-agentlog { display: block; }
+  .lee-agent.timeline-workspace .lee-agent-turn-body { display: block; }
   .lee-agent-state-onboard { grid-template-columns: 1fr 1fr; }
   .lee-agent-state-onboard > div { grid-column: 1 / -1; }
 }

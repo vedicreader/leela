@@ -251,6 +251,8 @@ DEFAULTS = L(
     Key('agent_threads',    'mod+shift+t',   'agent',  'switch conversation'),
     Key('agent_stop',       'alt+shift+c',   'agent',  'stop agent'),
     Key('agent_tools',      'alt+shift+t',   'agent',  'what the agent did'),
+    Key('agent_fold_turn',  'alt+shift+j',   'agent',  'fold this turn'),
+    Key('agent_fold_all',   'alt+shift+z',   'agent',  'fold every turn'),
     Key('term_new',         'ctrl+shift+`',  'term',   'new terminal',        'toast'),
     Key('term_next',        'ctrl+shift+]',  'term',   'next terminal'),
     Key('term_prev',        'ctrl+shift+[',  'term',   'previous terminal'),

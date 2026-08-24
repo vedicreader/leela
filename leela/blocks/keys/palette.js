@@ -8,6 +8,7 @@ function palette() {
     {name: 'Agent: run read-only calls', scope: 'agent', run: () => post('/agent/run-policy', {policy: 'reads'})},
     {name: 'Agent: edit starting state', scope: 'agent', run: leeAgentState},
     {name: 'Agent: steer after current call', scope: 'agent', run: () => $('#agentprompt')?.focus()},
+    {name: 'Agent: sub-agents', scope: 'agent', run: () => leeSubagents()},
   ];
   const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: k.key})).concat(agentCommands);
   let hits = cmds, sel = 0;

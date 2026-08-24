@@ -23,9 +23,12 @@ function updateAgentRunstrip(state = {}) {
     // the model repeats on every row of a fan-out; the question does not
     const who = r.kind === 'child' ? `subagent ${(r.model || '').split('/').pop()}`.trim() : (r.model || 'Agent');
     const label = r.state === 'cancelling' ? `Cancelling ${who}…` : `${r.question || rootLabel} · ${who}`;
-    return `<span class="lee-agent-run"><span>${esc(label)}</span>` +
-      `<time>${esc(clock)}</time><button type="button" data-stop-run="${esc(r.id)}">Stop</button></span>`;
+    return `<span class="lee-agent-run${r.kind === 'child' ? ' child' : ''}"><span>${esc(label)}</span>` +
+      `<time>${esc(clock)}</time>` +
+      (r.kind === 'child' ? `<button type="button" data-open-subs>Open</button>` : '') +
+      `<button type="button" data-stop-run="${esc(r.id)}">Stop</button></span>`;
   }).join('') : esc(rootLabel);
+  $$('[data-open-subs]', strip).forEach(b => b.onclick = e => { e.stopPropagation(); leeSubagents(); });
   $$('[data-stop-run]', strip).forEach(btn => btn.onclick = async e => {
     e.stopPropagation();
     try { const d = await post(`/agent/runs/${encodeURIComponent(btn.dataset.stopRun)}/cancel`, {}); updateAgentRunstrip({runs: (await api('/agent/runs')).runs}); status(d.state, 'ok'); }
@@ -52,7 +55,9 @@ const steerDrawn = (log, text) => steerHost(log).lastElementChild?.dataset?.stee
 function placeSteer(log, card, text) {
   card.dataset.steer = text;
   const live = lee.agentTimeline;
-  if (live?.root?.isConnected) live.append(card); else log.appendChild(card);
+  // no live timeline: the turn's own body, so a steer is never a stray sibling between two turns
+  if (live?.root?.isConnected) live.append(card);
+  else (turnBody(currentAgentTurn()) || log).appendChild(card);
   log.scrollTop = log.scrollHeight;
   return card;
 }
@@ -142,9 +147,16 @@ function renderAgentStep(row, a) {
   summary.innerHTML = `<span class="lee-agent-step-state" aria-hidden="true"></span>` +
     `<span class="lee-agent-step-copy">${steered ? `<strong>You</strong> ${esc(steerSaid(a.args))}`
       : esc(a.summary || a.tool || 'Working')}</span>` +
+    // a delegation is the one step whose work happened somewhere this row cannot show
+    ((a.kind || '') === 'delegate' ? `<button class="lee-agent-step-open" type="button" data-open-sub` +
+      ` title="open this delegation: what its sub-agents did, and steer one that is still going">open</button>` : '') +
     `<span class="lee-agent-step-meta">${steered ? 'steered'
       : a.done && a.secs ? esc(Number(a.secs).toFixed(1) + 's') : esc(a.kind || '')}</span>` +
     `<span class="lee-agent-step-chevron" aria-hidden="true"></span>`;
+  // inside a `summary`, a click is the disclosure's unless it is taken
+  $('[data-open-sub]', summary)?.addEventListener('click', e => {
+    e.preventDefault(); e.stopPropagation(); leeSubagents(a.action_id || a.id || '');
+  });
   row.appendChild(summary);
 
   const args = a.args && typeof a.args === 'object' ? a.args : {};
@@ -189,6 +201,94 @@ function renderAgentStep(row, a) {
     mountDeferred();
   } else { summary.classList.add('empty'); row.ontoggle = null; }
 }
+
+/* A delegated sub-agent's conversation is thrown away the moment it answers, so its recorded calls
+   are the whole account of what it did. The runstrip shows one while it runs and forgets it, which
+   left a failed delegation as one row of prose and nothing to look at. */
+function subagentQuestions(args) {
+  const raw = (args || {}).questions ?? (args || {}).question ?? '';
+  try { const v = JSON.parse(raw); if (Array.isArray(v)) return v.map(String); } catch {}
+  return [String(raw)].filter(Boolean);
+}
+function subagentRunRow(r) {
+  const secs = r.started ? Math.max(0, Date.now() / 1000 - r.started) : 0;
+  return `<div class="lee-subagent-run" data-run="${esc(r.id)}">` +
+    `<strong>${esc(r.question || '(no question)')}</strong>` +
+    `<span>${esc(r.state)} · ${esc((r.model || '').split('/').pop())} · ` +
+    `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}` +
+    `${r.steer_pending ? ' · steer queued' : ''}</span>` +
+    `<button class="lee-btn" type="button" data-steer-run>Steer</button>` +
+    `<button class="lee-btn warn" type="button" data-stop-run="${esc(r.id)}">Stop</button></div>`;
+}
+function paintSubagents(box, d) {
+  const list = $('.lee-subagent-list', box);
+  for (const row of $$('.lee-subagent-calls > details', list))
+    for (const v of (row._leeViews || [])) try { LeeCM.destroy(v); } catch {}
+  const cards = (d.delegations || []).map(x => {
+    const calls = x.calls || [];
+    // an empty list is not the same answer as "it did nothing", and only the core knows which
+    const none = d.records_sub_calls
+      ? 'This delegation recorded no tool calls.'
+      : 'This build of the agent core hands a read-only sub-agent unwrapped tools, so nothing it did was recorded.';
+    return `<section class="lee-subagent ${x.ok ? 'ok' : 'failed'}">` +
+      `<header><strong>${esc(x.summary || x.tool)}</strong>` +
+      `<span>${esc(x.done ? (x.ok ? `answered in ${Number(x.secs || 0).toFixed(1)}s` : 'failed') : 'still working')}` +
+      ` · ${calls.length} recorded call${calls.length === 1 ? '' : 's'}</span></header>` +
+      `<ol class="lee-subagent-questions">${subagentQuestions(x.args).map(q => `<li>${esc(q)}</li>`).join('')}</ol>` +
+      `<div class="lee-subagent-calls" data-calls="${esc(x.id)}"></div>` +
+      (calls.length ? '' : `<p class="lee-dim">${esc(none)}</p>`) +
+      (x.detail ? `<details class="lee-subagent-answer"><summary>What it reported back</summary><pre>${esc(x.detail)}</pre></details>` : '') +
+      `</section>`;
+  }).join('');
+  const runs = (d.runs || []).map(subagentRunRow).join('');
+  list.innerHTML = (runs ? `<section class="lee-subagent running"><header><strong>Running now</strong>` +
+      `<span>steer one and it reads you on its next tool result</span></header>${runs}</section>` : '') +
+    (cards || `<p class="lee-dim">No delegated questions in this conversation yet.</p>`);
+  for (const x of d.delegations || []) {
+    const host = $(`[data-calls="${CSS.escape(x.id)}"]`, list); if (!host) continue;
+    for (const call of x.calls || []) {
+      const row = document.createElement('details'); renderAgentStep(row, call); host.appendChild(row);
+    }
+  }
+  $$('[data-stop-run]', list).forEach(b => b.onclick = async () => {
+    try { await post(`/agent/runs/${encodeURIComponent(b.dataset.stopRun)}/cancel`, {}); status('sub-agent stopping', 'ok'); }
+    catch (e) { status(e.message || String(e), 'err'); }
+  });
+  $$('[data-steer-run]', list).forEach(b => b.onclick = async () => {
+    const id = b.closest('.lee-subagent-run').dataset.run;
+    const text = await textDialog('Steer this sub-agent', 'It reads this on its next tool result', ''); if (!text) return;
+    try { await post(`/agent/runs/${encodeURIComponent(id)}/steer`, {text, thread: lee.agentThread || ''}); status('steer queued for that sub-agent', 'ok'); }
+    catch (e) { status(e.message || String(e), 'err'); }
+  });
+}
+async function leeSubagents(actionId = '') {
+  const url = () => '/agent/subagents?action_id=' + encodeURIComponent(actionId) +
+    (lee.agentThread ? '&thread=' + encodeURIComponent(lee.agentThread) : '');
+  let first;
+  try { first = await api(url()); } catch (e) { return status(e.message || String(e), 'err'); }
+  let timer = 0;
+  const box = modal(`<div class="lee-mhead">Sub-agents<span class="sub">what a delegated question actually did</span></div>` +
+    `<div class="lee-subagent-list"></div>`, null, () => clearInterval(timer),
+    {className: 'lee-subagent-modal', storageKey: 'subagents'});
+  /* Repainted only when something actually moved. `paintSubagents` replaces the list wholesale, so
+     a repaint on every tick closed every step a person had opened and dropped its CodeMirror views
+     on the floor. A finished delegation never changes again, so polling stops with the last run. */
+  const moved = d => JSON.stringify([d.runs, (d.delegations || []).map(x => [x.id, x.done, x.ok, x.calls.length,
+    (x.calls || []).map(c => [c.id, c.done, c.ok])])]);
+  let seen = moved(first);
+  paintSubagents(box, first);
+  const running = d => (d.runs || []).length || (d.delegations || []).some(x => !x.done);
+  if (!running(first)) return;
+  timer = setInterval(async () => {
+    if (!box.isConnected) return clearInterval(timer);
+    try {
+      const d = await api(url()), now = moved(d);
+      if (now !== seen) { seen = now; paintSubagents(box, d); }
+      if (!running(d)) clearInterval(timer);
+    } catch (_) {}
+  }, 1200);
+}
+window.leeSubagents = leeSubagents;
 
 // A turn gets an immediate, persistent status surface, in the agent log rather than only in the
 // footer: long local inference must still look alive when the footer is out of sight.
@@ -371,6 +471,8 @@ async function attachPastedImage(blob) {
 }
 
 function initAgentComposer() {
+  // before the guard: a conversation with no turns paints nothing, so a paint is too late to bind
+  bindAgentTurnFolds($('#agentlog'));
   const input = $('#agentprompt'); if (!input || input.dataset.composerReady) return;
   input.dataset.composerReady = '1';
   $('[data-agent-pause]')?.addEventListener('click', pauseAgentAfterCurrent);
@@ -417,12 +519,15 @@ function initAgentComposer() {
   });
 }
 async function sendAgentCommand(line) {
-  const log = $('#agentlog'); log?.appendChild(userMessage(line));
+  // a command is a person's input and a reply, so it folds like every other exchange
+  const log = $('#agentlog'); if (!log) return;
+  const card = agentTurnCard({prompt: line, route: 'command'}), body = turnBody(card);
+  body.appendChild(userMessage(line)); log.appendChild(card);
   try {
     const d = await post('/agent/command', {line, thread: lee.agentThread || ''});
     if (/^\/reload(?:\s|$)/.test(line)) lee.agentVocabulary = null;
-    const out = document.createElement('div'); out.className = 'lee-reply lee-agent-reply'; log?.appendChild(out);
-    renderMarkdown(out, d.text || ''); if (log) log.scrollTop = log.scrollHeight;
+    const out = document.createElement('div'); out.className = 'lee-reply lee-agent-reply'; body.appendChild(out);
+    renderMarkdown(out, d.text || ''); log.scrollTop = log.scrollHeight;
     status('command finished', 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
 }

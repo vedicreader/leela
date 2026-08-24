@@ -661,6 +661,100 @@ def test_a_steer_is_drawn_inside_the_turn_it_interrupted():
     assert not got['stranded'], 'rather than after the whole turn'
     assert got['afterwards'] == 'and afterwards', 'with the log as the fallback when no turn is open'
 
+def test_a_turn_folds_away_and_a_checkpoint_is_never_folded_behind():
+    """Every turn painted the same flat run of siblings into one log, so there was nothing to fold
+    and nothing that knew where a turn ended. Folding a turn the agent is blocked on would hide the
+    only controls that let it continue, so a card holding a proposed checkpoint refuses.
+    """
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const log = $('#agentlog'); log.innerHTML = ''; lee.agentThread = 'fold-test';
+          localStorage.removeItem('lee-agent-folded:fold-test');
+          renderTurns(log, [{prompt: 'rename the widget', reply: 'renamed it', turn_id: 't1',
+                             capabilities: {revisable: true, known: true}},
+                            {prompt: 'and the tests', reply: 'done', turn_id: 't2',
+                             capabilities: {known: true}}], '');
+          const cards = $$('.lee-agent-turn', log);
+          const out = {cards: cards.length, titles: cards.map(c => $('.lee-agent-turn-title', c).textContent)};
+
+          foldAgentTurn(cards[0], true);
+          out.folded = cards[0].classList.contains('folded');
+          out.hidden = $('.lee-agent-turn-body', cards[0]).getBoundingClientRect().height === 0;
+          out.pressed = $('.lee-agent-turn-fold', cards[0]).getAttribute('aria-expanded');
+          out.remembered = localStorage.getItem('lee-agent-folded:fold-test');
+
+          // a checkpoint the run is blocked on
+          const ask = document.createElement('div'); ask.className = 'lee-approval proposed';
+          $('.lee-agent-turn-body', cards[1]).appendChild(ask);
+          foldAgentTurns(true);
+          out.blockedStayedOpen = !cards[1].classList.contains('folded');
+          unfoldForApproval(ask);
+          out.unfolded = !cards[1].classList.contains('folded');
+
+          log.innerHTML = ''; localStorage.removeItem('lee-agent-folded:fold-test'); lee.agentThread = '';
+          return out;
+        }""")
+    got = _run(go)
+    assert got['cards'] == 2 and got['titles'][0] == 'rename the widget'
+    assert got['folded'] and got['hidden'] and got['pressed'] == 'false'
+    assert 't1' in (got['remembered'] or ''), 'a fold is remembered per conversation'
+    assert got['blockedStayedOpen'], 'fold-all leaves the turn holding an unanswered checkpoint'
+    assert got['unfolded']
+
+def test_every_painted_turn_carries_what_can_still_be_done_to_it():
+    """`addResponseRevision` ran only from the live `done` handler, so undo, restore and revise
+    disappeared on every history toggle, resume, thread switch and resync. A turn that ended on a
+    tool call has no prose and its files are still its own, so the bar is not gated on an answer.
+    """
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const host = document.createElement('div'); host.id = 'agentlog-probe'; document.body.appendChild(host);
+          renderTurns(host, [
+            {prompt: 'rename it', reply: 'renamed', turn_id: 't1',
+             capabilities: {revisable: true, branchable: true, undoable: true, known: true, files: ['a.py']}},
+            {prompt: 'run the tests', reply: '', turn_id: 't2', activity: [{tool: 'run_shell', summary: 'run_shell', done: true, ok: true}],
+             capabilities: {revisable: false, branchable: true, undoable: true, known: true, files: ['b.py']}},
+            {prompt: 'an old one', reply: 'from before a restart', turn_id: 't3', capabilities: {known: false}}], '');
+          const bars = $$('.lee-response-revision', host);
+          const read = b => ({turn: b.dataset.turn,
+                              off: [...b.querySelectorAll('button')].filter(x => x.disabled).map(x => x.textContent),
+                              why: $('[data-unsay]', b).title});
+          const out = {n: bars.length, rows: bars.map(read)};
+          host.remove();
+          return out;
+        }""")
+    got = _run(go)
+    assert got['n'] == 3, 'including the turn that ended on a tool call and left no prose'
+    assert [r['turn'] for r in got['rows']] == ['t1', 't2', 't3']
+    assert got['rows'][0]['off'] == [], 'everything this turn can still do is offered'
+    assert got['rows'][1]['off'] == ['Edit what agent remembers'], 'no answer to edit, but files to restore'
+    assert len(got['rows'][2]['off']) == 3, 'a turn this process holds no boundary for offers nothing'
+    assert 'not run in this session' in got['rows'][2]['why'], 'and says which of the two reasons it is'
+
+def test_two_turns_in_one_card_keep_their_own_controls():
+    """A feed left following after `done` paints a turn another tab or the CLI started into the card
+    already on screen, so one card can hold two answers. Resolving a bar to the first `.lee-turn-answer`
+    in its card had the second turn's Undo and Revise acting on the first turn's text.
+    """
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const host = document.createElement('div'); document.body.appendChild(host);
+          const card = agentTurnCard({prompt: 'first', turnId: 't1'}), body = turnBody(card);
+          host.appendChild(card);
+          const one = document.createElement('div'); one.className = 'lee-reply'; body.appendChild(one);
+          renderMarkdown(one, 'the first answer');
+          addResponseRevision(one, 't1', 'the first answer', {revisable: true, branchable: true, known: true});
+          const two = document.createElement('div'); two.className = 'lee-reply'; body.appendChild(two);
+          renderMarkdown(two, 'the second answer');
+          addResponseRevision(two, 't2', 'the second answer', {revisable: true, branchable: true, known: true});
+          const out = $$('.lee-response-revision', card).map(b => ({turn: b.dataset.turn, raw: turnReplyText(b)}));
+          host.remove();
+          return out;
+        }""")
+    got = _run(go)
+    assert [b['turn'] for b in got] == ['t1', 't2']
+    assert got[0]['raw'] == 'the first answer' and got[1]['raw'] == 'the second answer'
+
 def test_a_saved_turn_replays_the_steer_that_interrupted_it():
     "A steer reaches the pane twice: live on the feed, and again whenever the turn is rebuilt."
     async def go(pg):
@@ -1290,29 +1384,39 @@ def test_response_fork_and_turn_undo_execute_against_a_successful_turn(tmp_path)
         if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
         page.fill('#agentprompt', 'create the requested file')
         page.evaluate("leeAct('agent_send')")
-        page.wait_for_function('!window.lee.agentBusy')
+        page.wait_for_function("$$('#agentlog .lee-response-revision').length === 1")
         undo = page.locator('.lee-response-revision [data-undo]')
         revise = page.locator('.lee-response-revision [data-revise]')
         assert not errors, errors
         assert undo.is_enabled() and revise.is_enabled()
-        assert undo.evaluate('(el) => typeof el.onclick') == 'function', undo.evaluate('(el) => el.outerHTML')
+        # one delegated listener on the log, not a handler per button: the pane's contents are
+        # replaced by every history toggle, resume and thread switch, and the log element is not
+        assert page.evaluate("!!$('#agentlog')._leeRevisionsBound")
         with page.expect_response(lambda r: '/agent/turn-transaction' in r.url) as transaction_response:
             undo.click()
         assert transaction_response.value.ok, transaction_response.value.text()
         with page.expect_response(lambda r: '/agent/rollback-turn' in r.url) as response:
-            page.get_by_role('button', name='restore files').click()
+            page.click('#dialogyes')   # by id: the dialog's yes reads the same as the bar's button
         assert response.value.ok, response.value.text()
         page.wait_for_timeout(100)
         assert path.read_text() == 'before\n', page.locator('#status').inner_text()
-        assert page.locator('.lee-user-message, .lee-agent-steps, .lee-agent-reply, .lee-response-revision').count() == 0
+        # marked, not deleted: `rollback_turn` restores files and leaves model history alone, so the
+        # agent still carries the turn and the pane must not pretend it never happened
+        assert page.locator('.lee-agent-turn .lee-turn-undone').count() > 0
+        assert page.locator('.lee-response-revision.lee-turn-undone-bar').count() == 1
+        assert '1 file restored' in page.locator('.lee-turn-undone-bar').inner_text()
         page.fill('#agentprompt', 'create the requested file again')
         page.evaluate("leeAct('agent_send')")
         page.wait_for_function('!window.lee.agentBusy')
-        revise = page.locator('.lee-response-revision [data-revise]')
+        # `agentBusy` is cleared at the top of the `done` handler and the bar is painted below it,
+        # so waiting on the flag alone races the control this test is about
+        page.wait_for_function("$$('#agentlog .lee-response-revision').length === 2")
+        # `.last`: the undone turn keeps its own revise button, inside the bar that explains it
+        revise = page.locator('.lee-response-revision [data-revise]').last
         revise.click(); page.wait_for_selector('[data-revision]')
         page.fill('[data-revision]', 'User-authored corrected response.')
         page.click('[data-apply]'); page.wait_for_timeout(100)
-        assert page.locator('.lee-agent-reply').last.get_attribute('data-user-revised') == '1'
+        assert page.locator('.lee-agent-turn').last.locator('.lee-turn-answer').get_attribute('data-user-revised') == '1'
         assert ws.ai.current_branch_id.startswith('branch_')
         browser.close()
 

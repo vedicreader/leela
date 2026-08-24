@@ -859,6 +859,8 @@ const ACTIONS = {
   agent_steer_force: () => sendAgent(true),
   agent_stop:   () => stopAgent(),
   agent_tools:  () => agentTools(),
+  agent_fold_turn: () => foldAgentTurn(currentAgentTurn(), !currentAgentTurn()?.classList.contains('folded')),
+  agent_fold_all: () => foldAgentTurns(!agentTurnCards().every(c => c.classList.contains('folded'))),
 
   close_others: () => closeTabs('others'),
   close_right:  () => closeTabs('right'),
