@@ -54,7 +54,7 @@ async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
    server-rendered controls use. Two copies of this drifted apart the first time. */
 let JOB_HELP = {};
 const helpMark = job => JOB_HELP[job]
-  ? `<span class="lee-help" tabindex="0" role="note" aria-label="${esc(JOB_HELP[job])}" title="${esc(JOB_HELP[job])}">?</span>` : '';
+  ? `<span class="lee-hint" tabindex="0" role="note" aria-label="${esc(JOB_HELP[job])}" title="${esc(JOB_HELP[job])}">?</span>` : '';
 function paintJobModels(d) {
   const host = $('#jobmodels'); if (!host) return;
   const jobs = Object.entries(d.jobs || {});

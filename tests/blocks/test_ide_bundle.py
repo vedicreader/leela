@@ -150,3 +150,28 @@ def test_the_pill_neutralises_the_button_defaults():
     rule = re.search(r'\.lee-pill \{(.*?)\}', CSS, re.S).group(1)
     for decl in ('appearance: none', '-webkit-appearance: none', 'border: 0', 'font-family: inherit',
                  'line-height:', 'align-items: center'): assert decl in rule, decl
+
+
+def test_no_class_is_both_an_inline_badge_and_a_container():
+    """`lee-help` was the `?` badge and the keyboard panel at once. The panel's rule is later in the
+    file, so it won, and every badge rendered as a padded two-column grid with a 50% radius."""
+    css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
+    import re
+    decls = {}
+    for m in re.finditer(r'^\.(lee-[\w-]+)\s*\{([^}]*)\}', css, re.M):
+        decls.setdefault(m.group(1), []).append(m.group(2))
+    for name, bodies in decls.items():
+        joined = ' '.join(bodies)
+        inline = 'display: inline-flex' in joined or 'display: inline-block' in joined
+        grid = 'display: grid' in joined or 'display: flex' in joined and 'inline' not in joined
+        assert not (inline and 'display: grid' in joined), \
+            f'.{name} is declared both inline and as a grid; two things are sharing one class'
+
+def test_the_hint_badge_and_the_help_panel_are_different_classes():
+    "The badge is `lee-hint`, the keyboard panel is `lee-help`. Neither may take the other's name."
+    css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
+    app = (ROOT/'leela'/'app.py').read_text()
+    panel = (ROOT/'leela'/'blocks'/'agent'/'panel.js').read_text()
+    assert '.lee-hint {' in css and 'display: inline-flex' in css.split('.lee-hint {')[1][:200]
+    assert "cls='lee-hint'" in app and 'class="lee-hint"' in panel
+    assert "cls='lee-help'" not in app and 'class="lee-help"' not in panel

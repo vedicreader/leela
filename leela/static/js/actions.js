@@ -350,6 +350,18 @@ function closeGitDiffTab(key) {
   if (wasActive) { lee.activeGitTab = ''; lee.gitMergeView && LeeCM.destroyMerge(lee.gitMergeView); lee.gitMergeView = null; htmxPost('/tab/select?i=' + Math.max(0, Number(returnTab) || 0)); }
   else layoutTabs();
 }
+function binaryDiffHtml(data) {
+  // An LFS pointer is text, so git diffs it as text: three lines of oid and size where the file
+  // should be. Say which file it is and what it weighs instead of rendering the stand-in.
+  const lfs = data.lfs || data.file?.lfs;
+  const size = Number(lfs?.size);
+  const detail = lfs
+    ? `Stored with Git LFS${Number.isFinite(size) && size ? ` · ${(size / 1024).toFixed(0)} KB` : ''}`
+    : 'Text comparison is not available for this file.';
+  return `<div class="lee-git-empty-state"><strong>Binary file changed</strong><span>${esc(detail)}</span>` +
+    `${lfs?.oid ? `<code>${esc(String(lfs.oid).replace(/^sha256:/, '').slice(0, 12))}</code>` : ''}</div>`;
+}
+
 async function openGitDiffTab(data) {
   const key = gitDiffTabKey(data), existing = lee.gitDiffTabs.get(key), returnTab = $('.lee-tab.active:not([data-git-diff])')?.dataset.i || existing?.returnTab || 0;
   lee.gitDiffTabs.set(key, {...existing, ...data, key, returnTab, view: existing?.view || data.view || 'unified'});
@@ -378,7 +390,7 @@ async function activateGitDiffTab(key) {
     catch (e) { status(e.message || String(e), 'err'); }
   });
   const body = host.querySelector('.lee-diff-document-body');
-  if (data.file?.binary) body.innerHTML = '<div class="lee-git-empty-state"><strong>Binary file changed</strong><span>Text comparison is not available for this file.</span></div>';
+  if (data.binary || data.file?.binary) body.innerHTML = binaryDiffHtml(data);
   else if (data.view === 'rendered' && isMarkdownPath(data.path)) await mountMarkdownDiff(body, data);
   else if (data.view === 'split') {
     body.className += ' split';

@@ -17,7 +17,7 @@ from .blocks.agent.models import JOB_HELP
 
 def help_mark(job):
     "The `?` beside a model control, saying what that job spends its model on."
-    return Span('?', cls='lee-help', tabindex='0', role='note',
+    return Span('?', cls='lee-hint', tabindex='0', role='note',
                 title=JOB_HELP.get(job, ''), aria_label=JOB_HELP.get(job, ''))
 from .core import DebugState, DocStore, RunState, connect_all
 from .blocks.fs.ui import files_panel as _files_panel

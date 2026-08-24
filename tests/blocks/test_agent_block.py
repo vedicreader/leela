@@ -103,5 +103,5 @@ def test_every_routed_job_says_where_its_model_is_spent():
     # nothing calls the oneshot job directly: it is only what the unset cheap jobs fall back to
     assert 'Nothing calls it directly' in JOB_HELP['oneshot']
     assert 'follows the turn model' in JOB_HELP['summary']
-    assert JOB_HELP['turn'] in str(help_mark('turn')) and 'lee-help' in str(help_mark('turn'))
+    assert JOB_HELP['turn'] in str(help_mark('turn')) and 'lee-hint' in str(help_mark('turn'))
     assert str(help_mark('nosuchjob'))                 # an unknown job renders, saying nothing

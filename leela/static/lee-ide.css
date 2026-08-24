@@ -732,8 +732,10 @@ kbd {
 .lee-history-select { width: 100%; min-width: 0; font-family: var(--lee-mono); }
 .lee-history-runs { color: var(--lee-fg4); font: 9.5px/1 var(--lee-mono); white-space: nowrap; }
 .lee-history-resume { white-space: nowrap; }
-.lee-help { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; margin-left: 4px; border: 1px solid var(--lee-fg4); border-radius: 50%; color: var(--lee-fg4); font-size: 9px; line-height: 1; cursor: help; }
-.lee-help:hover, .lee-help:focus { border-color: var(--lee-accent); color: var(--lee-accent); outline: none; }
+/* `lee-help` is the keyboard panel, further down and a grid. Two things cannot share a class: the
+   panel's rule won, and every one of these badges rendered as a padded two-column box. */
+.lee-hint { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; margin-left: 4px; border: 1px solid var(--lee-fg4); border-radius: 50%; color: var(--lee-fg4); font-size: 9px; line-height: 1; cursor: help; }
+.lee-hint:hover, .lee-hint:focus { border-color: var(--lee-accent); color: var(--lee-accent); outline: none; }
 .lee-history-filter { display: flex; align-items: center; gap: 5px; color: var(--lee-fg4); font-size: 10px; white-space: nowrap; }
 .lee-history-filter input { margin: 0; }
 .lee-history-session-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 4px 4px; }

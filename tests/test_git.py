@@ -1557,3 +1557,50 @@ def test_the_pull_request_panel_gets_a_blocking_github_client(monkeypatch, tmp_p
     api, owner, name = hub._api(str(tmp_path))
     assert not iscoroutinefunction(type(api.pulls.list).__call__)
     assert (owner, name) == ('vedicreader', 'leela')
+
+
+def lfs_aware():
+    "Skip unless the installed ramabana reports a binary diff. `diff_view` is ramabana's, not ours."
+    from ramabana.git import GitRepo
+    if not hasattr(GitRepo, 'LFS_MAGIC'):
+        pytest.skip('this ramabana does not report binary diffs; needs the LFS_MAGIC change')
+
+def _lfs_repo(tmp_path):
+    import subprocess
+    run = lambda *a: subprocess.run(['git', *a], cwd=tmp_path, check=True, capture_output=True)
+    run('init', '-q'); run('config', 'user.email', 'a@b.c'); run('config', 'user.name', 'T')
+    ptr = ('version https://git-lfs.github.com/spec/v1\n'
+           'oid sha256:' + 'a'*64 + '\nsize 237756\n')
+    (tmp_path/'pic.png').write_text(ptr)
+    (tmp_path/'notes.txt').write_text('one\n')
+    run('add', '-A'); run('commit', '-qm', 'first')
+    (tmp_path/'pic.png').write_text(ptr.replace('a'*64, 'b'*64))
+    (tmp_path/'notes.txt').write_text('one\ntwo\n')
+    return tmp_path
+
+def test_a_binary_diff_says_so_instead_of_showing_the_pointer(tmp_path):
+    """An LFS pointer is a text file, so git diffs it as text and the viewer showed three lines of
+    oid and size where the image should be."""
+    lfs_aware()
+    from ramabana.git import GitRepo
+    r = GitRepo.at(_lfs_repo(tmp_path))
+    pic = r.diff_view('pic.png')
+    assert pic['binary'] is True and pic['lfs']['size'] == '237756'
+    assert pic['left'] == '' and pic['right'] == '' and pic['content'] == ''
+    assert 'git-lfs.github.com' not in pic['left'] + pic['right'] + pic['content']
+    txt = r.diff_view('notes.txt')
+    assert txt['binary'] is False and txt['lfs'] is None, 'a text file is untouched'
+    assert 'two' in txt['content'], 'and still diffs'
+
+def test_the_diff_tab_renders_the_fact_and_not_the_pointer():
+    "Leela's half: the flag has to reach the tab, and the tab has to say something useful."
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    panel = (root/'leela'/'blocks'/'git'/'panel.js').read_text()
+    actions = (root/'leela'/'static'/'js'/'actions.js').read_text()
+    assert 'binary: !!patch.binary' in panel and 'lfs: patch.lfs' in panel, 'the flag must reach the tab'
+    assert '!patch.binary' in panel, 'a binary file cannot be edited into the working tree'
+    assert 'function binaryDiffHtml' in actions
+    assert 'data.binary || data.file?.binary' in actions, 'the old `file.binary` shape still works'
+    body = actions[actions.index('function binaryDiffHtml'):]
+    assert 'Git LFS' in body and 'oid' in body, 'say it is LFS and which object'
