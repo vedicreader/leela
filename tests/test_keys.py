@@ -182,12 +182,23 @@ def test_the_document_undoes_first_and_the_notebook_after():
     # The document is asked first, and only a False answer reaches the action.
     assert body.index('LeeCM[cmd](view)') < body.index('leeAct(match.binding.action)')
 
+def test_indent_is_named_so_it_reaches_the_palette_and_the_help():
+    """The three indent commands worked, because CodeMirror's `defaultKeymap` binds them, and were
+    in neither the palette nor the keys help because nothing named them. `indent_selection` had
+    only `mod+alt+\\`, which nobody finds."""
+    assert lookup('indent_more').key == 'mod+]'
+    assert lookup('indent_less').key == 'mod+['
+    assert lookup('indent_selection').key == 'hyper+]'
+    for action in ('indent_more', 'indent_less', 'indent_selection'):
+        k = lookup(action)
+        assert k.scope == 'editor', f'{action} is {k.scope}: indent only means anything in a document'
+        assert k.label, 'the palette lists labelled keys, so an unlabelled one is unreachable'
+    # The chords the tab strip and the terminal already own are the neighbouring brackets.
+    assert lookup('next_tab').key == 'alt+]' and lookup('prev_tab').key == 'alt+['
+
 def test_undo_is_reachable_on_the_editor_bundle():
     "The router calls it, so the vendored build has to export it. It did not before."
-    import re
-    from pathlib import Path
-    s = (Path(__file__).resolve().parents[1]/'leela'/'vendor'/'lee-cm6.js').read_text()
-    m = re.search(r'CS\(\w+,\s*\{([^}]{200,6000})\}\)', s)
-    names = set(re.findall(r'(\w+)\s*:\s*\(\)', m.group(1)))
+    from tests.assets import cm_exports
+    names = cm_exports()
     assert {'undo', 'redo'} <= names, 'rebuild frontend/editor.js with esbuild'
     assert {'create', 'getDoc', 'focus', 'selection'} <= names, 'and nothing else was dropped'

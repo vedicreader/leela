@@ -24,6 +24,28 @@ def git_paths(values):
     if not out: raise GitError('select at least one changed file')
     return out
 
+def _dropped(repo, branch, force):
+    """Delete a branch and report the commit it was at, which is the only handle for bringing it back.
+
+    Git prints `Deleted branch x (was abc1234)` and the gateway returns None, so the sha never
+    reached the panel. Read it first: after the delete there is no ref left to ask.
+    """
+    was = ''
+    try: was = repo.run('rev-parse', '--short', branch).strip()
+    except Exception: pass
+    repo.delete(branch, force)
+    return {'deleted': branch, 'was': was, 'recover': f'git branch {branch} {was}' if was else '',
+            'summary': f'{branch} deleted, was at {was}' if was else f'{branch} deleted'}
+
+def _dropped_stash(repo, ref):
+    "Same for a stash: its own commit is what `git stash store` needs to put it back."
+    was = ''
+    try: was = repo.run('rev-parse', '--short', ref).strip()
+    except Exception: pass
+    repo.stash_drop(ref)
+    return {'dropped': ref, 'was': was, 'recover': f'git stash store {was}' if was else '',
+            'summary': f'{ref} dropped, was at {was}' if was else f'{ref} dropped'}
+
 def _apply(repo, op, d):
     ops = {
         'stage': lambda: repo.stage(git_paths(d.get('paths'))),
@@ -40,7 +62,7 @@ def _apply(repo, op, d):
         'rename_branch': lambda: repo.rename_branch(d.get('branch') or '', d.get('name') or ''),
         'set_upstream': lambda: repo.set_upstream(d.get('branch') or '', d.get('upstream') or ''),
         'unset_upstream': lambda: repo.unset_upstream(d.get('branch') or ''),
-        'delete': lambda: repo.delete(d.get('branch') or '', bool(d.get('force'))),
+        'delete': lambda: _dropped(repo, d.get('branch') or '', bool(d.get('force'))),
         'delete_remote': lambda: repo.delete_remote(d.get('remote') or 'origin', d.get('branch') or ''),
         'commit': lambda: repo.commit(d.get('message') or '', bool(d.get('amend'))),
         'fetch': lambda: repo.fetch(d.get('remote') or '', bool(d.get('prune', True))),
@@ -50,7 +72,7 @@ def _apply(repo, op, d):
         'stash': lambda: repo.stash(d.get('message') or ''),
         'stash_pop': lambda: repo.stash_pop(d.get('ref') or 'stash@{0}'),
         'stash_apply': lambda: repo.stash_apply(d.get('ref') or 'stash@{0}'),
-        'stash_drop': lambda: repo.stash_drop(d.get('ref') or 'stash@{0}'),
+        'stash_drop': lambda: _dropped_stash(repo, d.get('ref') or 'stash@{0}'),
         'merge': lambda: repo.merge(d.get('branch') or '', d.get('strategy') or 'merge'),
         'rebase': lambda: repo.rebase(d.get('branch') or ''),
         'cherry_pick': lambda: repo.cherry_pick(d.get('ref') or ''),

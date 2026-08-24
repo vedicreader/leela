@@ -698,10 +698,10 @@ def _agent_panel(ws):
                     Span(id='agentbudgetstatus', cls='lee-agent-budget-status',
                          title='tool calls used in this turn'), cls='lee-composer-primary'),
                 Details(Summary('settings'),
-                    Div(Label('prompt cells', help_mark('inline'),
+                    Div(Label(Span('prompt cells', help_mark('inline'), cls='lee-routing-name'),
                               Select(Option('loading…', value=inline_model), id='inlinemodel',
                               cls='lee-select', onchange='leeAgentModel("inline", this.value)')),
-                        Label('completion', help_mark('completion'),
+                        Label(Span('completion', help_mark('completion'), cls='lee-routing-name'),
                               Select(Option('loading…', value=completion_model), id='completionmodel',
                               cls='lee-select', onchange='leeAgentModel("completion", this.value)')),
                         Div(id='jobmodels'),   # the harness's other jobs, drawn from /agent/models
@@ -787,7 +787,12 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     gate = gate or TerminalGate()
     _runstate = RunState()
     running_cells = _runstate.cells
-    hdrs = (Link(rel='icon', href=_asset('favicon.svg'), type='image/svg+xml'),
+    # The mark is line work with no plate, so the tab strip's own colour shows through it and
+    # which ink reads depends on the browser's scheme, not on Leela's theme.
+    hdrs = (Link(rel='icon', href=_asset('favicon.svg'), type='image/svg+xml',
+                 media='(prefers-color-scheme: light)'),
+            Link(rel='icon', href=_asset('favicon-dark.svg'), type='image/svg+xml',
+                 media='(prefers-color-scheme: dark)'),
             Script(src=_asset('htmx.min.js'), defer=True),
             Script("""try { const legacy = {system: 'leela:system:relaxed', dark: 'leela:dark:relaxed', light: 'leela:light:relaxed', cursor: 'cursor:light:tight'};
 const stored = localStorage.getItem('lee-theme') || 'cursor:light:tight';

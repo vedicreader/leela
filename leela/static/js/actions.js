@@ -86,6 +86,13 @@ const ACTIONS = {
     await nbEdit({op: 'split', i: at, offset: v ? LeeCM.cursor(v) : 0});
     focusCell(at + 1); status('cell split', 'ok');
   },
+  cell_split_symbols: async () => {
+    const at = lee.sel, was = lee.cells.length;
+    const r = await nbEdit({op: 'split_symbols', i: at});
+    const made = (r?.cells?.length ?? was) - was;
+    if (!made) return status('no top-level class or function to split out', 'err');
+    focusCell(at); status(`split into ${made + 1} cells`, 'ok');
+  },
   cell_collapse: () => setCellCollapsed(lee.sel),
   cell_duplicate: async () => {
     const at = lee.sel; await nbEdit({op: 'duplicate', i: at});
@@ -124,6 +131,9 @@ const ACTIONS = {
   memory_notes: () => leeMemoryNotes(),
   new_memory_note: () => leeNewMemoryNote(),
   open_vault: () => leeVaultWorkbench(),
+  indent_more:      () => leeIndent('indentMore'),
+  indent_less:      () => leeIndent('indentLess'),
+  indent_selection: () => leeIndent('indentSelection'),
   format_doc:   () => leeFormatDoc(),
   find_similar: () => findSimilar(),
   code_map:     () => codeMap(),
@@ -135,6 +145,12 @@ const ACTIONS = {
   exec_clear:   () => leeExecClear(),
   exec_promote: () => { leeScope('live'); runExec(); },
 
+  file_copy:      () => fileClipboard(false),
+  file_cut:       () => fileClipboard(true),
+  file_paste:     () => pasteEntries(),
+  file_duplicate: () => duplicateEntries(),
+  tree_mark_up:   () => markTreeStep(-1),
+  tree_mark_down: () => markTreeStep(1),
   open:         () => treeActivate(),
   tree_down:    () => moveTreeSelection(1),
   tree_up:      () => moveTreeSelection(-1),

@@ -1,40 +1,24 @@
 # Handoff
 
-Branch `claude/cross-file-extraction-c136ae`, pushed through `608b7d6`. Suite **1391 passed, 3
-skipped, 109 deselected**. Read `CLAUDE.md` and `AGENTS.md` first; the house style is enforced by
+Branch `claude/cross-file-extraction-c136ae`. Suite **1432 passed, 3 skipped, 112 deselected**,
+plus **70 passed, 2 failed** under `-m slow`. Those two failures are older than this work and fail
+the same way on a clean checkout: `test_user_checkbox_settings_survive_close_and_reopen` (saved
+settings come back with an empty `editor` block) and
+`test_response_fork_and_turn_undo_execute_against_a_successful_turn` (the Restore files button's
+`onclick` is an object, not a function). Both are real bugs and neither is on anything touched here.
+
+Closed since the last handoff: the setup modal and its rows, both scrollbar faults, the notebook
+save conflict and its per-cell tree walk, indent handling, splitting a cell into one cell per def,
+file-tree multi-select with move/copy/paste/duplicate, recoverable deletes and renames, six git
+panel faults, and the Tools row. `docs/regressions.md` carries an entry each.
+
+`packaging/.app-venv` is synced to the lock (ramabana 0.1.26, jupywire 0.1.5, jupyasyncclient 0.2.7).
+It is a pip venv, so nothing updates it on its own: check it against `uv.lock` before a build. Read `CLAUDE.md` and `AGENTS.md` first; the house style is enforced by
 review, not by a linter.
 
 ## Open, in the order the user raised them
 
-### 1. The setup modal renders unstyled
-A screenshot shows its content overlapping the editor text with no opaque box: the modal is
-transparent and the two panes plus the Tools section lie on top of the page. `leeSetupModal` calls
-`modal('')` and then `renderSetup` replaces the whole element's `innerHTML`. That throws away the
-`.lee-modalbox` wrapper `modal()` built, and with it every style and the close button. Render into
-the box instead of over it. `leela/blocks/agent/panel.js`, `renderSetup`.
-
-### 2. Scrollbars flicker on code cells in the agent pane
-Not diagnosed. The overview stripe redraws on a `ResizeObserver` now, and an agent pane that streams
-tokens resizes its cells continuously, so the stripe may be redrawing every frame. Suspect
-`overviewPlugin` in `frontend/editor.js`: `queue` coalesces into one `requestAnimationFrame`, which
-is still every frame under a steady stream. Consider not drawing at all for the agent pane's
-editors, or debouncing rather than coalescing.
-
-### 3. The leftover scroll bar is still there on the web
-Fixed for the app and reported still broken in a browser. `leela/vendor/lee-cm6.js` is served with a
-cache-busting query built from its mtime (`core/web.py:38`), so a stale bundle is unlikely but worth
-ruling out with a hard reload before looking further. If it reproduces, the app and the browser differ in which
-ancestor scrolls. `scrollerFor` walks up to the first element taller than its client height. In a
-browser that may be the document.
-
-### 4. Indent handling in the text editor
-Asked for, not started. There is no indent action in `core/keys.py` at all; the editor gets
-`indentWithTab` and whatever `defaultKeymap` binds. `frontend/editor.js` already exports `undo` and
-`redo` the same way, so the shape is known: export `indentMore`, `indentLess` and `indentSelection`,
-rebuild the bundle, add three actions and chords. `indentSelection` is the one the user is missing.
-It re-indents a block to its syntactic indentation.
-
-### 5. Notarisation
+### 1. Notarisation
 Wired and untested against Apple. `tools/build_release.py`: `notary_args` takes a keychain profile,
 an App Store Connect key or an Apple ID, in that order, and does nothing when none is set. The user
 was mid-enrolment in the Developer Program. Secrets to set: `LEELA_CERT_P12` (base64),
@@ -42,19 +26,34 @@ was mid-enrolment in the Developer Program. Secrets to set: `LEELA_CERT_P12` (ba
 app-specific password), `LEELA_TEAM_ID`. Run the first submission locally with
 `LEELA_NOTARY_PROFILE` rather than through CI. The feedback loop is minutes instead of a full run.
 
-### 6. The `v0.1.0` tag
+### 2. The `v0.1.0` tag
 Created locally, deliberately not pushed. Pushing it fires `desktop-artifacts.yml`, which builds both
 platforms and attaches them to a release; without a Developer ID that publishes a DMG Gatekeeper
 refuses. Push it after notarisation works.
 
-### 7. The Tools row has not been through a build
-`TOOLS` in `leela/blocks/agent/models.py` offers a language server, installed through the same path
-as a model backend. Tested in the suite, never exercised in a packaged app. `basedpyright` was chosen for two
-reasons: it answers every capability the LSP client asks for, and it carries its own node. `ty` and
-`pyrefly` need no node at all. Each of those lacks one thing the client wants.
+### 3. Git writes to the worktree outside the sandbox and the journal
+`ignore` and `resolve_conflict` write through ramabana's own `write_text` rather than `ctx.fs.write`,
+so there is no atomic save, no `FileHistory` version and no journal row: a conflict resolution is
+not in `/history/operations` and undo cannot reach it. `resolve_conflict` also takes the browser's
+editor text and writes it over whatever is on disk now, with no comparison against what the panes
+were built from. `/refactor/*` apply is the model to copy: it refuses when `_disk(path) != row.before`
+and rolls back every file it already wrote. `resolve_safe_conflicts` in ramabana writes and stages
+file by file with no rollback, so an error part way through leaves the earlier files written and
+staged and reports only the exception.
+
+### 4. `/fs/new` takes a path where `rename` takes a bare name
+`Sandbox.rename` refuses anything with a separator; `/fs/new` builds `Path(parent)/name`, so
+`../sibling/x.py` creates a file elsewhere in the workspace. `_check` keeps it inside the roots, so
+this is an inconsistency rather than an escape, but the two should read the same way.
 
 ## Things that will waste your time if you do not know them
 
+- **`node` is blocked but esbuild is a native binary, and safecmd blocks its name too.** Drive it
+  from `python` through `subprocess` with absolute paths:
+  `frontend/node_modules/@esbuild/darwin-arm64/bin/esbuild frontend/editor.js --bundle
+  --format=iife --global-name=LeeCM --minify --outfile=leela/vendor/lee-cm6.js`. A rebuild renames
+  minified symbols, so a test anchored on one breaks for no reason: `tests/assets.cm_exports`
+  reads the export map by content instead. Two tests learned that the hard way.
 - **`uv run` re-syncs and reverts an editable install.** Use `uv run --no-sync`, or `UV_NO_SYNC=1`.
   This silently ran tests against the wrong ramabana twice.
 - **`uv lock` caches the index.** Right after the user releases one of their own packages it will

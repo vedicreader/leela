@@ -200,6 +200,11 @@
   }
 }
 
+/* One rung between `--lee-fg2` and `--lee-fg4`, derived from whichever variant won rather than a
+   25th token every variant has to remember. 19 rules named it before anything defined it, and an
+   unresolved custom property drops the whole declaration, so those rules inherited their colour. */
+:root { --lee-fg3: color-mix(in srgb, var(--lee-fg2) 55%, var(--lee-fg4)); }
+
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
@@ -1488,12 +1493,30 @@ kbd {
 .lee-setup-panes > * { min-width: 0; }   /* or a long requirement string widens the column */
 /* One column under the width the two panes stop being readable side by side. */
 @media (max-width: 720px) { .lee-setup-panes { grid-template-columns: 1fr; } }
-.lee-setup-pane { border: 1px solid var(--lee-bd); border-radius: 6px; padding: 10px 12px; }
+.lee-setup-pane { border: 1px solid var(--lee-border); border-radius: 6px; padding: 10px 12px; }
 .lee-setup-pane.recommended { border-color: var(--lee-accent); }
 .lee-setup-pane h4 { margin: 0 0 8px; display: flex; justify-content: space-between;
                      align-items: baseline; gap: 8px; font-size: 12px; }
 .lee-setup-pane h4 small { color: var(--lee-fg4); font-weight: 400; }
 .lee-setup-updates { margin: 4px 0 0; }
+/* These rows were `.lee-krow`, the keyboard-help row: a flex line with `nowrap` and an ellipsis on
+   every span, which cut `ready` to `rea\2026` and every blurb mid-sentence. A name and its state on
+   one line, the sentence under them, and nothing truncated. */
+.lee-setup-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px;
+                 align-items: baseline; padding: 7px 0; border-top: 1px solid var(--lee-border); }
+.lee-setup-row:first-of-type { border-top: 0; }
+.lee-setup-row > span:first-child { min-width: 0; color: var(--lee-fg2); }
+.lee-setup-row small { display: inline-block; color: var(--lee-fg4); font-size: 10px; line-height: 1.5; }
+.lee-setup-row small.warn { color: var(--lee-red); }
+.lee-setup-row > .lee-dim, .lee-setup-row > .warn { padding: 0; font-size: 10px; white-space: nowrap; }
+.lee-setup-row > button, .lee-setup-row > a { justify-self: end; }
+.lee-setup-modal .lee-modalbox { width: min(860px, 94dvw); }
+/* `.sel` is the caret and stays one row; `.marked` is what an operation acts on. A cut row is
+   marked as leaving, and stays put until the paste, so nothing has happened yet. */
+.lee-node.lee-file.marked, .lee-node.lee-dir.marked > summary { background: var(--lee-sel); }
+.lee-node.lee-file.cut, .lee-node.lee-dir.cut > summary { opacity: .55; font-style: italic; }
+.lee-setup-body { padding: 10px 12px; }
+.lee-setup-body > h4 { margin: 12px 0 6px; font-size: 12px; }
 .lee-empty-recent h3 { margin: 0 0 6px; font: 600 10px/1.6 var(--lee-mono);
                        letter-spacing: .09em; text-transform: uppercase; color: var(--lee-fg4); }
 .lee-recentlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
@@ -1827,6 +1850,9 @@ kbd {
 .lee-routing-popover label { display: grid; grid-template-columns: 82px minmax(0,1fr); align-items: center; gap: 7px;
   color: var(--lee-fg4); font-size: 10px; }
 .lee-routing-popover label.lee-check-setting { display: flex; grid-column: 1 / -1; }
+/* The `?` is a third child of a two-column row, so on its own it took the control's column and
+   pushed the select onto a second line, into the 82px label column. Name and mark are one item. */
+.lee-routing-popover label > .lee-routing-name { display: flex; align-items: center; min-width: 0; }
 #jobmodels { display: grid; gap: 8px; }
 #jobmodels[hidden] { display: none; }
 .lee-agent-attachments { display: flex; gap: 5px; padding-bottom: 5px; overflow-x: auto; }
@@ -2006,7 +2032,8 @@ kbd {
 .lee-modal.lee-modal-expanded .lee-modalbox { width: calc(100vw - 16px) !important; height: calc(100dvh - 16px) !important;
   max-width: none; max-height: none; border-radius: 4px; resize: none; }
 .lee-modalbox > .lee-modallist, .lee-modalbox > .lee-docs, .lee-modalbox > .lee-gridwrap,
-.lee-modalbox > .lee-keyedit, .lee-modalbox > .lee-diff { min-height: 0; flex: 1 1 auto; overflow: auto; }
+.lee-modalbox > .lee-keyedit, .lee-modalbox > .lee-diff,
+.lee-modalbox > .lee-setup-body { min-height: 0; flex: 1 1 auto; overflow: auto; }
 .lee-modal.lee-git-diff-expanded { padding: 2vh 2vw; align-items: stretch; }
 .lee-modal.lee-git-diff-expanded .lee-modalbox { width: 96vw; max-height: 96vh; margin: 0 auto; }
 .lee-modal.lee-git-diff-expanded .lee-git-patch { max-height: none; flex: 1 1 auto; }
@@ -2958,7 +2985,7 @@ kbd {
 .lee-logpanel { display: none; flex-direction: column; min-height: 0; flex: 1; }
 .lee-logbody { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 10px; font-size: 12px; }
 .lee-logempty { padding: 14px; }
-.lee-logrow { padding: 5px 10px; border-bottom: 1px solid var(--lee-rule, rgba(128,128,128,.16)); }
+.lee-logrow { padding: 5px 10px; border-bottom: 1px solid var(--lee-border); }
 .lee-logrow.err { background: rgba(220, 60, 60, .07); }
 .lee-loghead { display: flex; gap: 8px; align-items: baseline; }
 .lee-loghead time { opacity: .55; font-variant-numeric: tabular-nums; font-size: 11px; }
@@ -3349,7 +3376,7 @@ kbd {
 .lee-find-bar[hidden] { display: none; }
 .lee-find-tools { display: flex; gap: 3px; align-items: center; }
 .lee-find-bar .lee-input { width: 100%; }
-.lee-find-bar.empty #leefindq { border-color: var(--lee-err, #c66); }
+.lee-find-bar.empty #leefindq { border-color: var(--lee-red); }
 .lee-find-count { min-width: 58px; padding: 0 3px; color: var(--lee-fg3); font-size: 11px; text-align: right; }
 .lee-find-tools button:not(.lee-btn) { border: 1px solid transparent; background: none; font: inherit;
                                        color: var(--lee-fg2); cursor: pointer; padding: 2px 5px;

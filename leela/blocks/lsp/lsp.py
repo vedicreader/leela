@@ -13,9 +13,17 @@ SERVERS = (('basedpyright-langserver', ('--stdio',)),
            ('ty', ('server',)))
 
 def find_server():
-    "The first language server on PATH, as `(name, argv)`, or `(None, None)`."
+    """The first language server here, as `(name, argv)`, or `(None, None)`.
+
+    PATH first, then the extras directory. A frozen app installs an optional tool there because the
+    bundle is signed and read-only, and nothing puts its `bin` on PATH, so a server installed from
+    the Tools row was found by nothing and the row went on offering to install it.
+    """
+    from ... import extras_bin
     for name, args in SERVERS:
         if (found := shutil.which(name)): return name, [found, *args]
+        here = extras_bin()/name
+        if here.is_file() and os.access(here, os.X_OK): return name, [str(here), *args]
     return None, None
 
 def _why_unavailable(command, root):

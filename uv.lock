@@ -2611,7 +2611,7 @@ requires-dist = [
     { name = "pywebview", marker = "extra == 'macapp'", specifier = ">=5.3" },
     { name = "pywebview", marker = "extra == 'windows'", specifier = ">=5.3" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ramabana", extras = ["cli"], specifier = ">=0.1.25" },
+    { name = "ramabana", extras = ["cli"], specifier = ">=0.1.26" },
     { name = "rich", specifier = ">=13.0" },
     { name = "rishi", extras = ["litert", "llama", "mlx"], marker = "extra == 'all'", specifier = ">=0.1.26" },
     { name = "rishi", extras = ["litert", "llama", "mlx"], marker = "extra == 'local'", specifier = ">=0.1.26" },
@@ -4723,7 +4723,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.1.25"
+version = "0.1.26"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
@@ -4740,9 +4740,9 @@ dependencies = [
     { name = "toolslm" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fc/97/6aaa9fa637220a521dda8d461ad0629ea57fb73294ff15b8c8cbc88836c4/ramabana-0.1.25.tar.gz", hash = "sha256:e0af6009b351317742dd8b99237946117eb4a96ea82fcb1960b85c8fc54e18eb", size = 232141, upload-time = "2026-08-24T03:05:52.711Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/30/99/17111b7c01ad6bc8e6b4f04a86b39c49e88f0c50136230873d55e7e28d9f/ramabana-0.1.26.tar.gz", hash = "sha256:b3c07d11b7265aefc09a039facd69cfef7e8eeeeba9b1589eae2731b64170864", size = 231504, upload-time = "2026-08-24T05:00:17.658Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/31/13/d5662f1c7e8a8099c2e4349f198348a239618b01444062b9daecc6d11ba7/ramabana-0.1.25-py3-none-any.whl", hash = "sha256:cf84a21111a80a0e4ba92d5dd229788d610e5c8d984c3990d1298686566a6813", size = 245219, upload-time = "2026-08-24T03:05:51.072Z" },
+    { url = "https://files.pythonhosted.org/packages/15/07/714bfa38024f1ffcb6b56425331ec8f0c93dd25b3d112341808949e12da2/ramabana-0.1.26-py3-none-any.whl", hash = "sha256:d0d9de5b80e5951483c0757a6ce850fa225038c655f5e09dec061b70111a27c8", size = 244503, upload-time = "2026-08-24T05:00:15.307Z" },
 ]
 
 [package.optional-dependencies]

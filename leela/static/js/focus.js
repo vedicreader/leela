@@ -11,6 +11,15 @@ function curLang() {
   return $('#editor')?.dataset.lang || 'python';
 }
 
+/* Indent from the palette, or from a chord the caret did not reach a document with. `curEditor`
+   answers for a notebook cell and for a whole file alike, which is what these have to cover. */
+function leeIndent(cmd) {
+  const v = curEditor();
+  if (!v) return status('put the cursor in some code first', 'err');
+  LeeCM.focus(v);
+  LeeCM[cmd](v);
+}
+
 function kernelComplete() {
   const v = curEditor();
   if (!v) return status('put the cursor in some code first', 'err');

@@ -1,8 +1,14 @@
-"""Generate every app-icon asset from `packaging/assets/leela-mark.png`.
+"""Generate every app-icon asset from the turtle artwork in `packaging/assets`.
 
 Icon Composer (`Leela.icon`) and the ICNS are built here together so they cannot drift. The plate
 and its rounded corners are drawn rather than baked into the artwork, which is what lets Icon
 Composer supply the material and tint the mark as a shape.
+
+The artwork comes as two whole drawings, `leela-turtle-light` and `leela-turtle-dark`: the same
+turtle in navy ink on cream and in cream ink on navy. Both carry their own background, and
+`leela-turtle-mask` is the line work's silhouette, so `mark` uses it as an alpha channel and gets
+the ink on its own. The tab icon ships as both, chosen by `prefers-color-scheme`; the app icon is
+the cream one, which is what reads on the navy plate.
 """
 
 import base64, io
@@ -11,12 +17,28 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT/'packaging'/'assets'
-MARK = ASSETS/'leela-mark.png'
+MARKS = {'light': ASSETS/'leela-turtle-light.png', 'dark': ASSETS/'leela-turtle-dark.png'}
+MASK = ASSETS/'leela-turtle-mask.png'
 GROUND = '#06203C'
-#: Committed, unlike the icons: it ships in the wheel, which has no build step to draw it. Kept
+PLATE = 'dark'           # the cream line work: the plate it sits on is navy
+#: Committed, unlike the icons: they ship in the wheel, which has no build step to draw them. Kept
 #: honest by `test_the_favicon_is_the_mark_it_is_generated_from`.
-FAVICON = ROOT/'leela'/'static'/'favicon.svg'
+FAVICONS = {'light': ROOT/'leela'/'static'/'favicon.svg',
+            'dark': ROOT/'leela'/'static'/'favicon-dark.svg'}
 FAVICON_PX = 64          # the plate stops carrying the mark's line work below this
+
+
+def mark(variant=PLATE):
+    "The turtle's line work with its own background masked away."
+    im = Image.open(MARKS[variant]).convert('RGBA')
+    im.putalpha(Image.open(MASK).convert('L'))
+    return im
+
+
+def png_href(im):
+    "One image as a base64 PNG data URI body."
+    buf = io.BytesIO(); im.save(buf, 'PNG', optimize=True)
+    return base64.b64encode(buf.getvalue()).decode()
 
 
 def image(size):
@@ -26,25 +48,25 @@ def image(size):
     plate = Image.new('RGBA', (size, size), (0, 0, 0, 0))
     ImageDraw.Draw(plate).rounded_rectangle((q(64), q(64), q(960), q(960)), radius=q(224), fill=GROUND)
     im.alpha_composite(plate)
-    mark = Image.open(MARK).convert('RGBA').resize((q(896), q(896)), Image.LANCZOS)
-    im.alpha_composite(mark, (q(64), q(64)))
+    im.alpha_composite(mark().resize((q(896), q(896)), Image.LANCZOS), (q(64), q(64)))
     return im
 
 
 def svg():
     "The mark as the flat artwork `iconmage create` takes: no plate, since it supplies its own."
-    href = base64.b64encode(MARK.read_bytes()).decode()
     return ('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
             'viewBox="0 0 1024 1024" width="1024" height="1024">\n'
-            f'  <image width="1024" height="1024" xlink:href="data:image/png;base64,{href}"/>\n'
+            f'  <image width="1024" height="1024" xlink:href="data:image/png;base64,{png_href(mark())}"/>\n'
             '</svg>\n')
 
 
-def favicon(size=FAVICON_PX):
-    "The plated mark as a tab icon: one committed SVG, so a page costs no extra request."
-    buf = io.BytesIO()
-    image(size).save(buf, 'PNG', optimize=True)
-    href = base64.b64encode(buf.getvalue()).decode()
+def favicon(variant=PLATE, size=FAVICON_PX):
+    """One variant's line work as a tab icon: a committed SVG, so a page costs no extra request.
+
+    No plate. A tab strip is the browser's own colour, and the point of shipping both is that the
+    ink sits on it directly.
+    """
+    href = png_href(mark(variant).resize((size, size), Image.LANCZOS))
     return ('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
             f'viewBox="0 0 {size} {size}" width="{size}" height="{size}">\n'
             f'  <image width="{size}" height="{size}" xlink:href="data:image/png;base64,{href}"/>\n'
@@ -54,7 +76,7 @@ def favicon(size=FAVICON_PX):
 def main():
     ASSETS.mkdir(parents=True, exist_ok=True)
     (ASSETS/'Leela.svg').write_text(svg())
-    FAVICON.write_text(favicon())
+    for variant, path in FAVICONS.items(): path.write_text(favicon(variant))
     iconset = ASSETS/'Leela.iconset'; iconset.mkdir(exist_ok=True)
     for points in (16, 32, 128, 256, 512):
         image(points).save(iconset/f'icon_{points}x{points}.png')

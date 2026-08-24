@@ -118,7 +118,9 @@ function findBinding(e, scope) {
 //: Chords CodeMirror owns while the caret is in a document, and what to try there first. Its
 //: command returns false with nothing left to undo, which is when the cell operation is what
 //: `mod+z` must mean instead.
-const DEFER_IN_TEXT = {notebook_undo: 'undo', notebook_redo: 'redo'};
+const DEFER_IN_TEXT = {notebook_undo: 'undo', notebook_redo: 'redo',
+                       indent_more: 'indentMore', indent_less: 'indentLess',
+                       indent_selection: 'indentSelection'};
 
 function textEditorOf(e) {
   const path = e.composedPath ? e.composedPath() : [e.target];

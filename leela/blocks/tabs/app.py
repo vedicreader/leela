@@ -150,6 +150,15 @@ def connect(app, ctx):
             known = docs.versions.get(docs.key(t))
             if known and known != held: keep_outside_write(t.path, held)
         return {'path': t.path if t else '', 'disk_version': held}
+    @rt('/tab/bar')
+    def tab_strip():
+        """The tab strip on its own, for a change the server made that the client did not ask for.
+
+        Deleting a folder and removing a root both close tabs server-side, and the strip is
+        index-addressed, so leaving it stale meant the next click selected and closed the wrong
+        document. Every other route that moves a tab already answers with this.
+        """
+        return tab_bar(session)
     @rt('/tab/reload')
     async def tab_reload(req):
         "Drop server-side editor caches so the next state read comes straight from disk."

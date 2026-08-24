@@ -9,6 +9,7 @@ from fastcore.all import first, L, Path, ifnone
 from fastcore.nbio import read_nb, write_nb, new_nb, nb2str
 from ... import Dictable
 from ..runtime.kernels import output_text
+from ..refactor.move import top_symbols
 import json
 
 __all__ = ['CELL_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans',
@@ -39,6 +40,18 @@ def _detached(cell):
     n = deepcopy(cell)
     n.id, n.running, n.fresh = cell_id(), False, False
     return n
+
+#: `default_exp` and its kind name the notebook, not the cell, so a split does not copy them on.
+NB_DIRECTIVE = ('default_exp', 'default_cls_lvl')
+
+def _directives(source):
+    "The cell's leading `#|` block, the part of it a split copies onto each piece, and the rest."
+    lines = source.splitlines(True)
+    n = 0
+    while n < len(lines) and lines[n].lstrip().startswith('#|'): n += 1
+    head = lines[:n]
+    tag = [l for l in head if not l.lstrip('#| ').startswith(NB_DIRECTIVE)]
+    return ''.join(head), ''.join(tag), ''.join(lines[n:])
 
 @dataclass
 class Cell(Dictable):
@@ -188,6 +201,35 @@ class Notebook:
         self.cells.insert(i+1, n)
         self.dirty = True
         return n
+    def split_symbols(self, i):
+        """Each top-level class and function of cell `i` into a cell of its own, in source order.
+
+        The cell's own directives go on top of every part, so splitting an `#| export` cell leaves
+        every part exported and a test cell can go under each. `default_exp` and its kind name the
+        notebook rather than the cell, so they are not copied and they hold the original cell open.
+        Whatever was not a class or a function stays where it was, above.
+        """
+        c = self.cells[i]
+        if c.cell_type != 'code': return 0
+        head, tag, body = _directives(c.source)
+        try: syms = top_symbols(body)
+        except SyntaxError: return 0
+        if not syms: return 0
+        parts, keeps, at = [], [], 0
+        for s in syms:
+            keeps.append(body[at:s['start']]); at = s['end']
+            parts.append(f"{tag}{body[s['start']:s['end']].strip(chr(10))}\n")
+        keeps.append(body[at:])
+        rest = ''.join(keeps)
+        # A cell holding nothing but the directives it just handed on becomes the first part.
+        stays = (head + rest).strip('\n') if rest.strip() or head != tag else ''
+        self._checkpoint(i)
+        if stays: c.source = stays + '\n'
+        else: c.source, parts = parts[0], parts[1:]
+        for n, src in enumerate(parts, 1):
+            self.cells.insert(i + n, Cell(source=src, cell_type='code'))
+        self.dirty = True
+        return len(parts)
     def detached(self, i):
         "A clipboard-safe copy of cell `i`, with a fresh identity and no running state."
         if not (0 <= i < len(self.cells)): return None

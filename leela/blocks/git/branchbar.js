@@ -103,8 +103,14 @@ function branchActions(anchor, d, b, after = (x) => x) {
     {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => showMergePreview(b.name, d, act)},
   ];
   if (!b.remote && !b.current) rows.push({separator: true}, {label: `Delete ${leaf}`, warn: true, run: async () => {
-    if (await confirmDialog('delete branch', `Delete ${b.name}? Commits only on it are lost.`, 'delete'))
-      await act('delete', {branch: b.name, force: !b.merged});
+    if (!await confirmDialog('delete branch', `Delete ${b.name}?`, 'delete')) return;
+    // Never `-D` behind one confirmation. Git refusing an unmerged branch is the warning, and
+    // `act` answering undefined is that refusal, so the second ask is the one that forces it.
+    if (await act('delete', {branch: b.name})) return;
+    if (await confirmDialog('force delete',
+        `Git refused: ${b.name} has commits that are on no other branch. Delete it anyway? ` +
+        'The log keeps the commit it was at, so it can be put back by sha.', 'force delete'))
+      await act('delete', {branch: b.name, force: true});
   }});
   openChromeMenu(anchor, rows);
 }

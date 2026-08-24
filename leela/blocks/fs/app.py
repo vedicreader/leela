@@ -25,6 +25,34 @@ SERVED_TYPES = {'.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/j
 
 CAPS = ('fs', 'fs_watch', 'journal', 'docs')
 
+def _forget(ctx, *paths):
+    """Drop server state for paths that have just moved or gone.
+
+    `/tab/state` prefers a cached buffer over the disk, so a path that is reused later served the
+    old file's text and saving put it back. A tab left on a path that no longer exists saves to a
+    `missing` disk version, which the client offers to force through, recreating the file under the
+    name it was renamed away from.
+    """
+    for path in paths:
+        if not path: continue
+        ctx.docs.forget(str(path))
+        for tab in ctx.session.tabs:
+            if tab.path and (tab.path == str(path) or Path(tab.path).is_relative_to(Path(path))):
+                ctx.docs.forget(tab.path)      # a folder's cache is keyed per file inside it
+                yield tab
+
+def _batch(items):
+    "What to call a batch in a journal label: the one name, or how many there were."
+    if len(items) == 1: return Path(items[0][0] if isinstance(items[0], tuple) else items[0]).name
+    return f'{len(items)} items'
+
+def _closed(ctx, path):
+    "Close every tab on `path` or under it, rightmost first, so no index shifts under the rest."
+    tabs = list(_forget(ctx, path))
+    for tab in sorted(tabs, key=lambda t: ctx.session.tabs.index(t), reverse=True):
+        ctx.session.close(ctx.session.tabs.index(tab))
+    return [t.path for t in tabs]
+
 def connect(app, ctx):
     rt = app.route
     @rt('/tree')
@@ -121,13 +149,51 @@ def connect(app, ctx):
         d = await req.json()
         try:
             old = ctx.fs._check(d['path'], must_exist=True)
-            before = old.read_text(encoding='utf-8', errors='replace') if old.is_file() else None
             entry = ctx.fs.rename(old, d['name'])
-            if before is not None:
-                ctx.journal.record(f'Rename {old.name} to {entry.name}',
-                    [(old, before, None), (entry.path, None, before)], kind='rename')
-            return {'ok': True, 'entry': entry.dict()}
+            # Where it went, not what was in it: a directory has no body and a binary does not
+            # survive being one, and undoing a move needs neither.
+            ctx.journal.record(f'Rename {old.name} to {entry.name}',
+                               [], kind='rename', moved=[(entry.path, old)])
+            moved = [ctx.session.retarget(tab, old, entry.path).path for tab in _forget(ctx, old)]
+            return {'ok': True, 'entry': entry.dict(), 'retargeted': moved}
         except Exception as e: return fail(e)
+    @rt('/fs/move')
+    async def fs_move(req):
+        """Move every selected path into one folder, as a single undoable operation.
+
+        One row per path that actually moved, so a partial failure is still reversible and the
+        failures come back named rather than as one exception for the whole selection.
+        """
+        d = await req.json()
+        dest, moved, failed = d.get('dest') or '', [], []
+        for path in d.get('paths') or ([d['path']] if d.get('path') else []):
+            try:
+                old = ctx.fs._check(path, must_exist=True)
+                entry = ctx.fs.move(old, dest)
+                moved.append((entry.path, old))
+                for tab in _forget(ctx, old): ctx.session.retarget(tab, old, entry.path)
+            except Exception as e: failed.append({'path': str(path), 'error': errstr(e)})
+        if moved:
+            ctx.journal.record(f'Move {_batch(moved)} to {Path(dest).name}', [], kind='move',
+                               moved=moved)
+        return {'ok': not failed, 'moved': [str(new) for new, _ in moved], 'failed': failed}
+    @rt('/fs/copy')
+    async def fs_copy(req):
+        "Copy every selected path into one folder. `duplicate` copies each beside itself instead."
+        d = await req.json()
+        paths = d.get('paths') or ([d['path']] if d.get('path') else [])
+        made, failed = [], []
+        for path in paths:
+            try:
+                src = ctx.fs._check(path, must_exist=True)
+                into = src.parent if d.get('duplicate') else (d.get('dest') or '')
+                entry = ctx.fs.copy(src, into, ctx.fs.free_name(src, into))
+                made.append(entry.path)
+            except Exception as e: failed.append({'path': str(path), 'error': errstr(e)})
+        if made:
+            label = f'Duplicate {_batch(made)}' if d.get('duplicate') else f'Copy {_batch(made)}'
+            ctx.journal.record(label, [], kind='copy', created=made)
+        return {'ok': not failed, 'created': [str(x) for x in made], 'failed': failed}
     @rt('/fs/remove-root')
     async def fs_remove_root(req):
         "Remove an open root from the workspace without touching anything on disk."
@@ -145,11 +211,12 @@ def connect(app, ctx):
         d = await req.json()
         try:
             p = ctx.fs._check(d['path'], must_exist=True)
-            before = p.read_text(encoding='utf-8', errors='replace') if p.is_file() else None
-            ctx.fs.delete(p)
-            if before is not None: ctx.journal.record(f'Delete {p.name}', [(p, before, None)], kind='delete')
-            if (i := ctx.session.find(d['path'])) is not None: ctx.session.close(i)
-            return {'ok': True}
+            closed = _closed(ctx, p)
+            # Aside, not gone: a folder used to leave no record at all and a binary came back as
+            # replacement characters. The trash holds whichever it is, whole.
+            key = ctx.fs.take(p, ctx.session.trash)
+            ctx.journal.record(f'Delete {p.name}', [], kind='delete', trashed=[(p, key)])
+            return {'ok': True, 'closed': closed}
         except Exception as e: return fail(e)
     def _serve_raw(path, download):
         "One file's bytes, for documents the browser renders itself. `inline` opens the viewer."

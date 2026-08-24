@@ -209,3 +209,54 @@ pygments finds a style or a lexer by importing its name, and no scanner sees tho
 ## `tools/build_release.py` `sign`
 Signing used `--deep`, which signs nested code with the outer bundle's own arguments and skips what it does not recognise. The notary service rejects the result. Fixed by walking inner code deepest-first with a timestamp and the hardened runtime, then the bundle.
 
+
+## `leela/blocks/agent/panel.js` `renderSetup`
+`leeSetupModal` called `modal('')` and then handed the returned element to `renderSetup`, which assigned its `innerHTML`. The returned element is the backdrop, so that assignment discarded the `.lee-modalbox` `modal()` had built, and with it every style, the drag grip, the expand control and the close button. The two panes, Tools and Updates lay transparent over the editor text. Fixed by giving the box a `.lee-setup-body` region and rewriting only that, so a re-render leaves the chrome alone. `done` now closes through `modal()`'s own teardown instead of removing the backdrop, which had left the key handler and the body's `overflow: hidden` behind.
+
+## `leela/static/lee-ide.css` `.lee-setup-pane`
+The pane border named `var(--lee-bd)`, which nothing defines. An unresolved custom property invalidates the whole `border` shorthand, so the panes drew no edge. `--lee-bd` appeared once in the file and nowhere else. Fixed by naming `--lee-border`. `--lee-fg3` was undefined the same way in 19 rules, all of them secondary labels, counts and snippets that silently inherited their colour. It is now derived once from `--lee-fg2` and `--lee-fg4` rather than added as a 25th token to all 16 theme variants, since it is a rung between two that every variant already sets. `--lee-err` and `--lee-rule` each had one use and a fallback, so they drew the fallback rather than the theme's colour; they now name `--lee-red` and `--lee-border`. `--lee-tab-size` and `--lee-indent-cols` look undefined but are written onto each indented line by `frontend/editor.js`.
+
+## `leela/app.py` `_agent_panel`, `leela/blocks/agent/panel.js` `paintJobModels`
+`.lee-routing-popover label` is a two-column grid: an 82px name, then the control. A row carrying a `?` passed three children, so the mark landed in the control's column and the select wrapped onto a second row into the name column, where every model name was clipped to about six characters and the right half of the popover stayed empty. Fixed by wrapping the name and its mark in one `.lee-routing-name` item, in both the server-rendered rows and the ones `paintJobModels` draws. A row without a mark was never affected, which is why `compaction` and `tool calls per turn` looked right beside them.
+
+## `leela/workspace.py` `initialize_notebook`
+A zero-byte `.ipynb` was made valid by writing a fresh `Notebook.blank`, whose cell carries a new id. The browser and the doc store still held the old one, so `_rebase_notebook` could not match a single cell, returned None, and the save was refused as a conflict that blamed another process. The symptom was running cells in a new notebook and getting `save the notebook before running this cell` partway through, because each run marks the tab dirty and the next cell's guard saves first. Fixed by writing the document already open on that path, so the ids the browser knows survive. `/nb/run/stream` passes the notebook it is about to run.
+
+## `leela/workspace.py` `initialize_empty_notebooks`
+A whole-tree walk ran on every cell of every streamed run, to catch a placeholder only another tool can leave: notebooks Leela creates are valid JSON when created. Now once per root, with the notebook actually being run handled by a single stat in `initialize_notebook`. `off_loop` is `@athreaded`, so the walk was never on the event loop, which is why this cost a run's latency rather than the whole server's.
+
+## `leela/blocks/nb/motion.js` `runCell`
+The guard that saves before running reported `save the notebook before running this cell` whenever `saveTab` returned false. `saveTab` had already put the real reason in the status line or opened the conflict dialog, and this wrote over it, leaving advice to do the thing that had just failed. It now returns and leaves the reason standing.
+
+## `frontend/editor.js` `overviewPlugin.draw`
+`shown` compared `scrollHeight` with `clientHeight`, and the class it then sets, `has-overview`, is what hides a native scroll bar. `clientHeight` excludes a horizontal bar, so hiding one grows it by that bar's thickness: a pane overflowing by less than a bar said it overflowed, took the class, grew, and said it did not on the next frame. The stripe's own `ResizeObserver` fed each toggle straight back in. Code cells are where it bit, because long lines give them the horizontal bar, and an agent pane streaming tokens re-measures every frame. Fixed with `overflowsDown`, which measures against the border box: a bar drawn inside it does not move it, so the answer no longer depends on the answer.
+
+## `frontend/editor.js` `scrollerFor`
+The walk up from the editor could reach `<body>` and return it. In the desktop app the window fits and the document does not overflow, so it never did; in a browser it does, and `has-overview` on `<body>` matches no rule, so the bar it was meant to hide stayed. That is why this read as fixed in the app and broken on the web. The walk now ends at `document.body` without answering with it.
+
+## `tests/blocks/test_ide_bundle.py` `test_the_built_editor_bundle_matches_its_source`
+The export check was anchored on `CS(`, a name the minifier chose, so it broke on the next rebuild of an unrelated part of `frontend/editor.js` and read as a missing export. It now looks for the exported names themselves.
+
+## `tools/build_icons.py` `MARKS`, `favicon`
+One mark on one plate could not answer a tab strip whose colour the browser picks. The artwork is now the two whole turtle drawings plus `leela-turtle-mask`, the line work's silhouette, used as an alpha channel so the ink comes out on its own. Two favicons are generated and served under `prefers-color-scheme`; the app icon stays the cream ink, which is what reads on the navy plate. `packaging/assets/leela-mark.png` is the previous mark and nothing draws from it now.
+
+## `leela/core/session.py` `Trash`, `OperationJournal.record`
+A journal resource was text, and neither a directory nor a binary survives being one. A folder delete recorded nothing at all, because `before` was only read for a file and the row was conditional on it, so a recursive tree removal left no row, no version and no undo. A binary was recorded with `errors='replace'`, so undoing a deleted PNG rewrote it as replacement characters, and undoing a renamed one wrote mojibake to the old path and unlinked the good file at the new one, leaving no intact copy. Fixed with three path-level row kinds beside the content one: `moved` for a rename or a move, and `at: trash`/`at: tree` for a delete and a create, which are the same row read from opposite ends. `Trash` holds what was deleted whole, so it costs a rename rather than a copy.
+
+## `leela/blocks/fs/app.py` `fs_rename`, `fs_delete`
+Neither route invalidated the document cache or fixed up open tabs. `/tab/state` prefers a cached buffer to the disk, so deleting a file and creating another at the same path served the deleted text and saving put it back. A renamed file left its tab on the old path, so the next save saw a `missing` disk version and the conflict dialog offered to force it through, recreating the file under the name it was renamed away from. The delete closed tabs by exact path, so a folder delete closed none of the tabs inside it while the index-addressed tab strip went stale behind it. `_forget` and `_closed` now do both, and `Workspace.retarget` moves a tab with its file.
+
+## `leela/blocks/fs/files.js` `treePaths`, `leeTreeClick`
+The tree had no multi-select and no move, copy, paste or duplicate: `selectTreeNode` cleared every `.sel` before setting one, no handler read a modifier, and `Sandbox.move` had no caller anywhere. Marks are now explicit and separate from the caret, which is what `treePaths` falls back to. A file row's own click handler stops propagation, so the modifier readings had to move into it: `leeTreeClick` is where a meta-click marks instead of opening. A meta-click never folds the caret in, because whichever row was highlighted on load would join a cut or a delete nobody chose it for.
+
+## `leela/blocks/git/panel.js` `wireGitPanel`
+The commit textarea was rendered with no value and the panel replaces its own `innerHTML` on every save anywhere in the repository, so a message being typed vanished on an autosave in an unrelated file. The draft is now `gitUI.commitDraft`, the way the branch filter already kept its query. The panel also kept selection keys for files that had moved between groups or been committed, so a bulk action posted paths that were no longer in the list it was made against; the keys are pruned against each snapshot.
+
+## `leela/blocks/git/app.py` `_dropped`
+`GitRepo.delete` and `stash_drop` return None, so `Deleted branch x (was abc1234)` never reached the panel, and that sha is the only handle for putting the branch back. Both now read the tip first, because afterwards there is no ref left to ask, and return the `git branch` or `git stash store` command that recovers it. `gitDo` puts it in the log, since a status line is gone in seconds. The branch pill also turned every unmerged delete into `git branch -D` behind one confirmation while the panel's menu sent no force at all; forcing is now a second, named ask in both.
+
+## `leela/blocks/lsp/lsp.py` `find_server`
+The Tools row installs into `extras_site`, because the bundle is signed and read-only, and `find_server` looked only on PATH. In a packaged app the language server installed correctly and was then found by nothing, so the row went on offering to install it. It now looks in `extras_bin()` too, which is where `pip install --target` puts a console script.
+
+## `leela/blocks/agent/panel.js` setup rows
+The rows were `.lee-krow`, the keyboard-help row: a flex line with `nowrap` and an ellipsis on every span, so `ready` rendered as `rea…` and every blurb was cut mid-sentence. `.lee-setup-row` is a grid of a name and a state with the sentence under them. The modal also had no way back once dismissed, and `/agent/setup/dismiss` already took a false, so `start over` puts the first-run prompt back.

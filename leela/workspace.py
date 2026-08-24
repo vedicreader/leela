@@ -130,6 +130,7 @@ class Workspace:
                  python=None,
                  transport='direct', gateway=None, cdp_port=9223):
         self.fs = Sandbox(roots)
+        self._swept = set()
         from .blocks.fs.watch import Watcher
         from .blocks.git.git import wire_env
         wire_env()
@@ -328,14 +329,21 @@ class Workspace:
         """Point the journal and the history at the folders open now."""
         key = self.journal_key()
         if key == self._journal_key: return self.journal
-        from .core.session import FileHistory, OperationJournal
+        from .core.session import FileHistory, OperationJournal, Trash
         self._journal_key = key
         self.history = FileHistory(leela_cfg/'history'/key)
+        self.trash = Trash(leela_cfg/'trash'/key)
         self.journal = OperationJournal(leela_cfg/'journals'/f'{key}.json', self.fs,
-                                        history=self.history)
+                                        history=self.history, trash=self.trash)
         self.history.pinned = self.journal.blobs   # an open operation's bodies survive pruning
         self._timeline_path = leela_cfg/'timelines'/f'{key}.json'
         return self.journal
+    def retarget(self, tab, old, new):
+        "Point one open tab at a path that has just moved, keeping its place in the strip."
+        rest = Path(tab.path).relative_to(Path(old)) if tab.path != str(old) else None
+        tab.path = str(Path(new)/rest) if rest is not None else str(new)
+        tab.title = Path(tab.path).name or tab.title
+        return tab
     def add_root(self, p):
         r = self.fs.add_root(p)
         self.rebind_journal()
@@ -850,17 +858,31 @@ class Workspace:
         if k is None: return await self.kernel(tab)
         await k.restart()
         return k
+    def initialize_notebook(self, path, nb=None):
+        """Make one zero-byte ``.ipynb`` valid JSON before code reads it, and report it when written.
+
+        `nb` is the document already open on that path. Writing it, rather than a fresh blank, keeps
+        the cell ids the browser and the server share: a blank invents new ones, and then the next
+        save cannot match a single cell and refuses as a conflict.
+        """
+        if not path: return None
+        path = Path(path)
+        try:
+            if path.stat().st_size: return None
+        except OSError: return None
+        (nb or Notebook.blank(path)).save(path, sandbox=self.fs)
+        return str(path)
     def initialize_empty_notebooks(self, root=None):
-        "Turn zero-byte ``.ipynb`` placeholders into valid empty notebooks before code runs."
+        """Turn zero-byte ``.ipynb`` placeholders into valid empty notebooks before code runs.
+
+        Once per root. It is a whole-tree walk, and it ran on every cell of every run to catch a
+        placeholder only another tool can leave: Leela's own new notebooks are valid when created.
+        """
         root = self.fs._check(root or self.cwd_for(), must_exist=True)
-        fixed = []
-        for path in self.fs.walk(root):
-            if path.suffix.lower() != '.ipynb': continue
-            try:
-                if path.stat().st_size == 0:
-                    Notebook.blank(path).save(path, sandbox=self.fs); fixed.append(str(path))
-            except OSError: continue
-        return fixed
+        if str(root) in self._swept: return []
+        self._swept.add(str(root))
+        return [f for p in self.fs.walk(root) if p.suffix.lower() == '.ipynb'
+                and (f := self.initialize_notebook(p))]
     def run_file_code(self, tab=None, src=None):
         "`(code, label)` that runs a tab's file as a script in its kernel, or `(None, why)`."
         from .blocks.runtime.kernels import run_file_src

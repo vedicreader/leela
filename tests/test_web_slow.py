@@ -55,10 +55,10 @@ def _launch_sync(pw):
     try: return pw.chromium.launch(**kw)
     except Exception as e: pytest.skip(f'no chromium for playwright: {e}')
 
-async def _on_page(fn):
+async def _on_page(fn, roots=()):
     "Boot the app, open it in chromium, hand the page to `fn`, and return what it returns."
     fake_kernels()
-    ws = Workspace(roots=[], approvals='auto')
+    ws = Workspace(roots=list(roots), approvals='auto')
     port = _free_port()
     srv = _serve(ws, port)
     await asyncio.sleep(1.2)
@@ -73,7 +73,7 @@ async def _on_page(fn):
     finally:
         srv.should_exit = True
 
-def _run(fn): return asyncio.run(_on_page(fn))
+def _run(fn, roots=()): return asyncio.run(_on_page(fn, roots))
 
 def test_python_errors_and_warnings_get_real_codemirror_squiggles():
     async def go(pg):
@@ -1479,3 +1479,120 @@ def test_one_find_pane_matches_over_a_document_and_over_every_cell():
     assert 0 < got['empty'] < 5000, 'an empty match must advance rather than spin'
     assert got['cells'] == [0, 0, 1, 1, 1, 1], 'two hits in the first cell, four in the second'
     assert got['closed'] == 0
+
+
+def test_indent_outdent_and_reindent_run_on_a_cell_and_on_a_file():
+    """The real chords on the real focused CodeMirror, in both surfaces the user works in. All three
+    commands already existed in `defaultKeymap`; what is new is Leela naming them, and a named chord
+    is routed by Leela's own keydown handler instead, so the routing is what needs proving."""
+    async def go(pg):
+        chord = """(key, code, hyper) => {
+            const e = new KeyboardEvent('keydown', {key, code, metaKey: MAC,
+                ctrlKey: !MAC || hyper, altKey: !!hyper, shiftKey: !!hyper,
+                bubbles: true, cancelable: true});
+            document.activeElement.dispatchEvent(e);
+            return e.defaultPrevented;
+        }"""
+        await pg.evaluate("leeAct('new_notebook')")
+        await pg.wait_for_selector('.lee-cell .cm-editor')
+        cell = await pg.evaluate("""(chordSrc) => {
+          const chord = eval(chordSrc);
+          const v = lee.editors.get(lee.cells[0].id);
+          LeeCM.setDoc(v, 'x = 1'); LeeCM.setSelection(v, 0, 0); LeeCM.focus(v);
+          const prevented = chord(']', 'BracketRight', false);
+          const indented = LeeCM.getDoc(v), matched = lee.lastKeyEvent.action;
+          chord('[', 'BracketLeft', false);
+          // `lastKeyEvent` is what the router matched. Without it the document would still change,
+          // because CodeMirror's own keymap answers these two, and the test would prove nothing.
+          return {prevented, indented, matched, back: lee.lastKeyEvent.action,
+                  outdented: LeeCM.getDoc(v)};
+        }""", chord)
+        # The file editor: the same view identity `curEditor` and the router both resolve for a
+        # python file, which is the other surface indent has to serve.
+        file = await pg.evaluate("""(chordSrc) => {
+          const chord = eval(chordSrc);
+          const host = document.createElement('div');
+          host.style.cssText = 'height:160px;position:fixed;inset:40px 20px auto 20px';
+          document.body.appendChild(host);
+          const v = LeeCM.create(host, {doc: 'def f():\\nx = 1\\n', lang: 'python', lineNums: true});
+          lee.editors.set('file', v); lee.kind = 'file'; lee.activeEditor = 'primary';
+          LeeCM.setSelection(v, 0, LeeCM.getDoc(v).length); LeeCM.focus(v);
+          const prevented = chord(']', 'BracketRight', true);      // hyper+] : re-indent
+          return {prevented, reindented: LeeCM.getDoc(v), matched: lee.lastKeyEvent.action};
+        }""", chord)
+        return cell, file
+    cell, file = _run(go)
+    assert cell['prevented'] is True, 'Leela owns the chord once it names it'
+    assert cell['matched'] == 'indent_more' and cell['back'] == 'indent_less', \
+        'the router matched Leela\'s bindings, not CodeMirror\'s own'
+    assert cell['indented'] == '    x = 1', f"cell indent gave {cell['indented']!r}"
+    assert cell['outdented'] == 'x = 1', f"cell outdent gave {cell['outdented']!r}"
+    assert file['prevented'] is True
+    assert file['matched'] == 'indent_selection', 'hyper+] is Leela\'s alone; CodeMirror binds mod+alt+\\'
+    assert file['reindented'] == 'def f():\n    x = 1\n', f"reindent gave {file['reindented']!r}"
+
+
+def test_the_chord_splits_a_cell_into_one_cell_per_def():
+    "The keybinding, on a real cell, through the real edit route: what the user actually presses."
+    async def go(pg):
+        await pg.evaluate("leeAct('new_notebook')")
+        await pg.wait_for_selector('.lee-cell .cm-editor')
+        await pg.evaluate("""() => {
+          const v = lee.editors.get(lee.cells[0].id);
+          LeeCM.setDoc(v, '#| export\\nimport os\\n\\ndef f():\\n    return 1\\n\\nclass C: pass\\n');
+          LeeCM.focus(v);
+        }""")
+        prevented = await pg.evaluate("""() => {
+          const e = new KeyboardEvent('keydown', {key: '/', code: 'Slash', altKey: true,
+            shiftKey: true, bubbles: true, cancelable: true});
+          document.activeElement.dispatchEvent(e);
+          return {prevented: e.defaultPrevented, matched: lee.lastKeyEvent.action};
+        }""")
+        await pg.wait_for_function('lee.cells.length === 3')
+        return prevented, await pg.evaluate("lee.cells.map(c => c.source)")
+    event, sources = _run(go)
+    assert event == {'prevented': True, 'matched': 'cell_split_symbols'}
+    assert sources == ['#| export\nimport os\n',
+                       '#| export\ndef f():\n    return 1\n',
+                       '#| export\nclass C: pass\n']
+
+
+def test_the_tree_selects_more_than_one_row_and_the_clipboard_acts_on_all_of_them(tmp_path):
+    """Multi-select by mouse, then one operation over the whole selection, on a real tree.
+
+    A file row's own click handler stops there, so a held modifier has to be read in that handler
+    or it never reaches the selection at all: this is the test that a meta-click marks instead of
+    opening.
+    """
+    for name in ('a.py', 'b.py', 'c.py'): (tmp_path/name).write_text('x = 1\n')
+    (tmp_path/'dest').mkdir()
+    async def go(pg):
+        # The root renders collapsed and fetches its children on the first click, so the rows this
+        # test is about do not exist until it is opened.
+        await pg.click('.lee-node.lee-dir.lee-root > summary')
+        await pg.wait_for_selector('.lee-node.lee-file')
+        pick = """(name) => {
+          const n = [...document.querySelectorAll('.lee-node.lee-file')]
+            .find(x => x.dataset.path.endsWith(name));
+          n.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, metaKey: true}));
+          return n.classList.contains('marked');
+        }"""
+        marked = [await pg.evaluate(pick, 'a.py'), await pg.evaluate(pick, 'b.py')]
+        opened = await pg.evaluate("lee.tabs ? lee.tabs.length : 0")
+        await pg.evaluate("leeAct('file_cut')")
+        cut = await pg.evaluate("lee.fileClip.paths.length")
+        await pg.evaluate("""() => {
+          const d = [...document.querySelectorAll('.lee-node.lee-dir')]
+            .find(x => x.dataset.path.endsWith('dest'));
+          selectTreeNode(d, true);
+        }""")
+        await pg.evaluate("leeAct('file_paste')")
+        await pg.wait_for_function("!lee.fileClip")
+        return marked, opened, cut
+    marked, opened, cut = _run(go, roots=[tmp_path])
+    assert marked == [True, True], 'a meta-click marks the row'
+    assert opened == 0, 'and does not open it'
+    assert cut == 2, 'the clipboard took the whole selection'
+    assert (tmp_path/'dest'/'a.py').is_file() and (tmp_path/'dest'/'b.py').is_file()
+    assert not (tmp_path/'a.py').exists() and not (tmp_path/'b.py').exists()
+    assert (tmp_path/'c.py').is_file(), 'the row that was not selected stays put'

@@ -1,7 +1,7 @@
 "Filesystem access for the IDE, confined to the open folders."
 
 from __future__ import annotations
-import os, re
+import os, shutil, re
 from dataclasses import dataclass
 from fastcore.all import Path, L, globtastic, atomic_save, mkdir as fc_mkdir
 from fastcore.shutil import move as fc_move
@@ -168,6 +168,30 @@ class Sandbox:
         fc_move(p, dst)
         _changed()
         return self.entry(dst)
+    def copy(self, ref, dest_dir, name=None):
+        """Copy a file or a whole directory into `dest_dir`; both ends are checked.
+
+        `name` renames on the way, which is what duplicating into the same folder needs. A copy
+        never overwrites: the caller picks a free name, so a slip cannot land on someone's work.
+        """
+        p = self._check(ref, must_exist=True)
+        d = self._check(dest_dir, must_exist=True)
+        if not d.is_dir(): raise NotADirectoryError(str(d))
+        if p.is_dir() and (p == d or p in d.parents): raise Unsafe('cannot copy a directory into itself')
+        dst = self._check(d/(name or p.name))
+        if dst.exists(): raise FileExistsError(str(dst))
+        shutil.copytree(p, dst) if p.is_dir() else shutil.copy2(p, dst)
+        _changed()
+        return self.entry(dst)
+    def free_name(self, ref, dest_dir=None):
+        "A name in `dest_dir` that nothing holds yet: `mod.py`, then `mod copy.py`, then `mod copy 2.py`."
+        p = self._check(ref, must_exist=True)
+        d = self._check(dest_dir, must_exist=True) if dest_dir else p.parent
+        stem, suffix = (p.stem, p.suffix) if p.is_file() else (p.name, '')
+        for n in range(0, 100):
+            name = f'{stem}{"" if n == 0 else " copy" if n == 1 else f" copy {n}"}{suffix}'
+            if not (d/name).exists(): return name
+        raise FileExistsError(f'no free name for {p.name} in {d}')
     def delete(self, ref):
         "Delete a file, or a directory and its contents. Refuses to delete an open root."
         p = self._check(ref, must_exist=True)
@@ -175,3 +199,14 @@ class Sandbox:
         p.delete()
         _changed()
         return str(p)
+    def take(self, ref, trash):
+        """Move `ref` into `trash` whole, and return the key that brings it back.
+
+        What `delete` means for anything a journal resource cannot hold: a directory, or a file that
+        is not text. Same guards, and the listing cache is dropped the same way.
+        """
+        p = self._check(ref, must_exist=True)
+        if p in self.roots: raise Unsafe('close the folder instead of deleting an open root')
+        key = trash.keep(p)
+        _changed()
+        return key

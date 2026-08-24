@@ -3,10 +3,10 @@
 from __future__ import annotations
 import asyncio
 from fastcore.basics import first
-import gzip, hashlib, json, time, uuid
+import gzip, hashlib, json, shutil, time, uuid
 from pathlib import Path
 
-__all__ = ['DocStore', 'DebugState', 'FileHistory', 'RunState', 'kernel_api']
+__all__ = ['DocStore', 'DebugState', 'FileHistory', 'RunState', 'Trash', 'kernel_api']
 
 #: How many versions of one file are kept. A person looking for what a tool overwrote is looking
 #: at this morning, not at last month, and every version holds the whole file.
@@ -185,10 +185,42 @@ class RunState:
 
 MAX_OPERATIONS = 200
 
+class Trash:
+    """Where a deleted file or folder goes, so deleting either is recoverable.
+
+    A journal resource is text, and neither a directory nor a binary survives being one: a folder
+    was recorded as nothing at all and a PNG came back as replacement characters. Moving the thing
+    itself aside keeps whatever it was, and costs one rename instead of a copy.
+    """
+    def __init__(self, root): self.root = Path(root)
+    def keep(self, path):
+        "Move `path` aside whole and return the key that brings it back."
+        p, key = Path(path), uuid.uuid4().hex[:12]
+        d = self.root/key
+        d.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(p), str(d/p.name))
+        return key
+    def held(self, key):
+        "The path a key holds, or None when the trash no longer has it."
+        d = self.root/str(key)
+        return first(sorted(d.iterdir())) if d.is_dir() else None
+    def restore(self, key, path):
+        "Move what `key` holds back to `path`, and forget the key."
+        src = self.held(key)
+        if src is None: raise FileNotFoundError(f'the trash no longer holds {key}')
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(p))
+        shutil.rmtree(self.root/str(key), ignore_errors=True)
+
+
 class OperationJournal:
     "The last `MAX_OPERATIONS` workspace operations, on disk, newest last."
-    def __init__(self, path, sandbox, history=None):
+    def __init__(self, path, sandbox, history=None, trash=None):
         self.path, self.sandbox = Path(path), sandbox
+        #: Deleted files and folders live here rather than as journal text, which cannot hold
+        #: either. `None` leaves a delete unrecoverable, so `record` refuses to pretend otherwise.
+        self.trash = trash
         #: Every write that reaches here is also kept version by version. Undo is one step back;
         #: after an agent or another editor has been through the tree a person wants this morning.
         self.history = history
@@ -202,11 +234,21 @@ class OperationJournal:
         tmp = self.path.with_suffix('.tmp')
         tmp.write_text(json.dumps({'operations': self.operations[-MAX_OPERATIONS:]}, ensure_ascii=False))
         tmp.replace(self.path)
-    def record(self, label, resources, kind='file', irreversible=()):
-        "Append one operation, or None when nothing actually changed."
+    def record(self, label, resources, kind='file', irreversible=(), moved=(), trashed=(),
+               created=()):
+        """Append one operation, or None when nothing actually changed.
+
+        `resources` are content changes, `(path, before, after)`. The rest name where something went
+        rather than what was in it, which is the only way to record a directory or a file that is
+        not text: `moved` are `(new, old)` pairs, `trashed` are `(path, key)` for what was deleted,
+        and `created` are paths this operation brought into being, which undo puts in the trash.
+        """
         rows = [{'path': str(path), 'before': before, 'after': after}
                 for path, before, after in resources if before != after]
-        if not rows and not irreversible: return None
+        paths = ([{'path': str(new), 'from': str(old)} for new, old in moved] +
+                 [{'path': str(path), 'at': 'trash', 'trash': str(key)} for path, key in trashed] +
+                 [{'path': str(path), 'at': 'tree'} for path in created])
+        if not rows and not paths and not irreversible: return None
         if self.history is not None:
             for row in rows:
                 try: self.history.keep(row['path'], row['before'], row['after'], label)
@@ -225,7 +267,8 @@ class OperationJournal:
         for prior in self.operations:
             if prior.get('undone'): prior['redoable'] = False
         op = {'id': 'op_' + uuid.uuid4().hex[:12], 'at': time.time(), 'label': str(label),
-              'kind': kind, 'resources': rows, 'irreversible': list(irreversible), 'undone': False}
+              'kind': kind, 'resources': rows + paths, 'irreversible': list(irreversible),
+              'undone': False}
         self.operations.append(op); self.operations = self.operations[-MAX_OPERATIONS:]; self._save()
         return op
     def blobs(self):
@@ -252,6 +295,44 @@ class OperationJournal:
         if text is None:
             if p.exists(): p.unlink()
         else: self.sandbox.write(p, text)
+    def _blocked(self, row, side):
+        """Why this row cannot be reversed, or None.
+
+        `side` names the state the tree has to be in already: undo checks `after` and then reverses
+        to `before`, redo the other way about.
+        """
+        p = self.sandbox._check(row['path'])
+        if 'at' in row:
+            # A delete and a create are the same row read from opposite ends: the thing is either
+            # in the tree or in the trash, and reversing it moves it across.
+            wants = row['at'] if side == 'after' else ('tree' if row['at'] == 'trash' else 'trash')
+            if wants == 'tree' and not p.exists(): return f'{p} is not there'
+            if wants == 'trash':
+                if p.exists(): return f'{p} is there again'
+                if row.get('trash') and (self.trash is None or self.trash.held(row['trash']) is None):
+                    return f'{p} is no longer in the trash'
+            return None
+        if 'from' in row:
+            here, there = (p, self.sandbox._check(row['from'])) if side == 'after' else \
+                          (self.sandbox._check(row['from']), p)
+            if not here.exists(): return f'{here} is not there to move'
+            if there.exists(): return f'{there} is in the way'
+            return None
+        return None if self._current(row['path']) == self._body(row, side) else str(p)
+    def _reverse(self, row, side):
+        "Put one row back to `side`: the text it held, or the place it was."
+        if 'at' in row:
+            p = self.sandbox._check(row['path'])
+            wants = row['at'] if side == 'after' else ('tree' if row['at'] == 'trash' else 'trash')
+            if wants == 'trash': row['trash'] = self.trash.keep(p)
+            else: self.trash.restore(row['trash'], p)
+            return None
+        if 'from' in row:
+            src, dst = (row['path'], row['from']) if side == 'before' else (row['from'], row['path'])
+            d = self.sandbox._check(dst)
+            d.parent.mkdir(parents=True, exist_ok=True)
+            return shutil.move(str(self.sandbox._check(src)), str(d))
+        return self._write(row['path'], self._body(row, side))
     def undo(self, operation_id=''):
         "Reverse one operation, named or the newest reversible one."
         back = reversed(self.operations)
@@ -261,10 +342,9 @@ class OperationJournal:
         if (big := [r['path'] for r in op['resources'] if not r.get('kept', True)]):
             raise ValueError('too large to have been copied, so it cannot be undone: ' + ', '.join(big))
         if op.get('undone'): raise ValueError('that operation was already undone')
-        conflicts = [str(self.sandbox._check(row['path'])) for row in op['resources']
-                     if self._current(row['path']) != self._body(row, 'after')]
+        conflicts = [why for row in op['resources'] if (why := self._blocked(row, 'after'))]
         if conflicts: raise ValueError('changed after the operation: ' + ', '.join(conflicts))
-        for row in op['resources']: self._write(row['path'], self._body(row, 'before'))
+        for row in reversed(op['resources']): self._reverse(row, 'before')
         op['undone'] = True; self._save(); return op
     def redo(self, operation_id=''):
         "Reapply one undone operation when every file still equals its restored text."
@@ -274,8 +354,7 @@ class OperationJournal:
         if (big := [r['path'] for r in op['resources'] if not r.get('kept', True)]):
             raise ValueError('too large to have been copied, so it cannot be redone: ' + ', '.join(big))
         if not op.get('undone'): raise ValueError('that operation was not undone')
-        conflicts = [str(self.sandbox._check(row['path'])) for row in op['resources']
-                     if self._current(row['path']) != self._body(row, 'before')]
+        conflicts = [why for row in op['resources'] if (why := self._blocked(row, 'before'))]
         if conflicts: raise ValueError('changed after the undo: ' + ', '.join(conflicts))
-        for row in op['resources']: self._write(row['path'], self._body(row, 'after'))
+        for row in op['resources']: self._reverse(row, 'after')
         op['undone'] = False; self._save(); return op

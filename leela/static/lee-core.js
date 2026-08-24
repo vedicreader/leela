@@ -639,7 +639,9 @@ function findBinding(e, scope) {
 //: Chords CodeMirror owns while the caret is in a document, and what to try there first. Its
 //: command returns false with nothing left to undo, which is when the cell operation is what
 //: `mod+z` must mean instead.
-const DEFER_IN_TEXT = {notebook_undo: 'undo', notebook_redo: 'redo'};
+const DEFER_IN_TEXT = {notebook_undo: 'undo', notebook_redo: 'redo',
+                       indent_more: 'indentMore', indent_less: 'indentLess',
+                       indent_selection: 'indentSelection'};
 
 function textEditorOf(e) {
   const path = e.composedPath ? e.composedPath() : [e.target];
@@ -755,6 +757,13 @@ const ACTIONS = {
     await nbEdit({op: 'split', i: at, offset: v ? LeeCM.cursor(v) : 0});
     focusCell(at + 1); status('cell split', 'ok');
   },
+  cell_split_symbols: async () => {
+    const at = lee.sel, was = lee.cells.length;
+    const r = await nbEdit({op: 'split_symbols', i: at});
+    const made = (r?.cells?.length ?? was) - was;
+    if (!made) return status('no top-level class or function to split out', 'err');
+    focusCell(at); status(`split into ${made + 1} cells`, 'ok');
+  },
   cell_collapse: () => setCellCollapsed(lee.sel),
   cell_duplicate: async () => {
     const at = lee.sel; await nbEdit({op: 'duplicate', i: at});
@@ -793,6 +802,9 @@ const ACTIONS = {
   memory_notes: () => leeMemoryNotes(),
   new_memory_note: () => leeNewMemoryNote(),
   open_vault: () => leeVaultWorkbench(),
+  indent_more:      () => leeIndent('indentMore'),
+  indent_less:      () => leeIndent('indentLess'),
+  indent_selection: () => leeIndent('indentSelection'),
   format_doc:   () => leeFormatDoc(),
   find_similar: () => findSimilar(),
   code_map:     () => codeMap(),
@@ -804,6 +816,12 @@ const ACTIONS = {
   exec_clear:   () => leeExecClear(),
   exec_promote: () => { leeScope('live'); runExec(); },
 
+  file_copy:      () => fileClipboard(false),
+  file_cut:       () => fileClipboard(true),
+  file_paste:     () => pasteEntries(),
+  file_duplicate: () => duplicateEntries(),
+  tree_mark_up:   () => markTreeStep(-1),
+  tree_mark_down: () => markTreeStep(1),
   open:         () => treeActivate(),
   tree_down:    () => moveTreeSelection(1),
   tree_up:      () => moveTreeSelection(-1),
@@ -2319,9 +2337,9 @@ async function runCell(i, advance) {
     // Code run from a file-backed notebook has to be visible to code that reads that notebook
     // during the cell, such as indexers, nbdev and papermill. Flush the whole browser document
     // first, or a newly created .ipynb is still zero-byte on disk while its cell runs.
-    if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) {
-      return status('save the notebook before running this cell', 'err');
-    }
+    // `saveTab` has already said why, in the status line or the conflict dialog. Repeating a
+    // generic `save the notebook` over the top of it hid the only diagnosable part.
+    if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return;
     const began = performance.now();
     c.running = true;
     el?.classList.add('running');
@@ -2975,6 +2993,15 @@ function curLang() {
   if (lee.scope === 'exec') return 'python';
   if (lee.kind === 'notebook') return lee.cells[lee.sel]?.cell_type === 'markdown' ? 'markdown' : 'python';
   return $('#editor')?.dataset.lang || 'python';
+}
+
+/* Indent from the palette, or from a chord the caret did not reach a document with. `curEditor`
+   answers for a notebook cell and for a whole file alike, which is what these have to cover. */
+function leeIndent(cmd) {
+  const v = curEditor();
+  if (!v) return status('put the cursor in some code first', 'err');
+  LeeCM.focus(v);
+  LeeCM[cmd](v);
 }
 
 function kernelComplete() {

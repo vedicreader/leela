@@ -13,7 +13,9 @@ import {EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLin
         drawSelection, rectangularSelection, crosshairCursor, Decoration, WidgetType,
         gutter, GutterMarker, placeholder as cmPlaceholder, ViewPlugin, highlightSpecialChars} from "@codemirror/view";
 import {defaultKeymap, history, historyKeymap, indentWithTab,
-        undo as cmUndo, redo as cmRedo} from "@codemirror/commands";
+        undo as cmUndo, redo as cmRedo,
+        indentMore as cmIndentMore, indentLess as cmIndentLess,
+        indentSelection as cmIndentSelection} from "@codemirror/commands";
 import {searchKeymap, highlightSelectionMatches, openSearchPanel} from "@codemirror/search";
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap,
         startCompletion as cmStartCompletion} from "@codemirror/autocomplete";
@@ -518,11 +520,26 @@ const OVERVIEW_W = 14;
    Whose bar, though: CodeMirror usually scrolls itself and in leela it does not -- `.cm-editor`
    is laid out at the height of the whole file inside `.lee-editor`. Measuring `view.dom` therefore
    measured the document, and the stripe came out a 14px canvas thousands of pixels tall. */
-// The element that really scrolls: CodeMirror's own, or the pane it is laid out inside.
+/* Vertical overflow measured against the border box rather than `clientHeight`.
+
+   `clientHeight` excludes a horizontal scroll bar, and hiding one is exactly what this stripe
+   does: `has-overview` sets `scrollbar-width: none`. So a pane overflowing by less than a bar's
+   thickness said "overflowing", got the class, grew its own `clientHeight` by the thickness of the
+   bar that just went away, and said "not overflowing" on the next frame. The border box does not
+   move when a bar inside it is drawn or not, so the answer stops depending on the answer. A code
+   cell is where this bit: long lines give it the horizontal bar, and an agent pane streaming
+   tokens re-measures every frame. */
+const overflowsDown = el => {
+  const box = el.getBoundingClientRect().height;
+  return box > 0 && el.scrollHeight > box + 4;
+};
+
+// The element that really scrolls: CodeMirror's own, or the pane it is laid out inside. Never the
+// document: in a browser it overflows where the app window does not, and `has-overview` on `<body>`
+// matches no rule, so the bar it was meant to hide stayed put.
 function scrollerFor(view) {
-  for (let el = view.scrollDOM; el; el = el.parentElement) {
-    if (el.scrollHeight > el.clientHeight + 4) return el;
-    if (el === document.body) break;
+  for (let el = view.scrollDOM; el && el !== document.body; el = el.parentElement) {
+    if (overflowsDown(el)) return el;
   }
   return view.scrollDOM;
 }
@@ -587,7 +604,7 @@ function overviewPlugin(mode = 'off', threshold = 120) {
       if (previous && previous !== scroller) previous.classList.remove('has-overview');
       this.watch(scroller);
       const shown = (mode === 'always' || (mode === 'long' && lines >= threshold)) &&
-                    scroller.scrollHeight > scroller.clientHeight + 4;
+                    overflowsDown(scroller);
       this.dom.hidden = !shown;
       this.view.dom.classList.toggle('cm-lee-has-overview', shown);
       // `has-overview` is the notebook stripe's class, hiding the bar of the pane that scrolls.
@@ -948,3 +965,9 @@ export const languages = () => Object.keys(LANGS);
 // undoing the cell operation instead. CodeMirror owns `mod+z` while the caret is in a document.
 export const undo = (view) => cmUndo(view);
 export const redo = (view) => cmRedo(view);
+/* `defaultKeymap` already answers Mod-] , Mod-[ and Mod-Alt-\\ inside any editor. Exporting the
+   commands is what lets `core/keys.py` name them, so they reach the palette and the keys help and
+   run against the cell or the file the caret is actually in. */
+export const indentMore = (view) => cmIndentMore(view);
+export const indentLess = (view) => cmIndentLess(view);
+export const indentSelection = (view) => cmIndentSelection(view);

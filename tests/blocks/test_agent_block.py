@@ -5,6 +5,7 @@ whether the route was reachable and broke the moment the routes moved. Ask the a
 """
 
 from __future__ import annotations
+from fastcore.basics import first
 from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.workspace import Workspace
@@ -105,3 +106,34 @@ def test_every_routed_job_says_where_its_model_is_spent():
     assert 'follows the turn model' in JOB_HELP['summary']
     assert JOB_HELP['turn'] in str(help_mark('turn')) and 'lee-hint' in str(help_mark('turn'))
     assert str(help_mark('nosuchjob'))                 # an unknown job renders, saying nothing
+
+
+def test_a_tool_installed_into_a_frozen_app_is_actually_found(tmp_path, monkeypatch):
+    """The Tools row installs into `extras_site`, because the bundle is signed and read-only, and
+    `find_server` looked only on PATH. So in a packaged app the language server installed, worked,
+    and was found by nothing: the row went on offering to install it forever."""
+    import leela
+    from leela.blocks.lsp import lsp
+    bin_dir = tmp_path/'extras'/'bin'
+    bin_dir.mkdir(parents=True)
+    monkeypatch.setattr(leela, 'extras_bin', lambda: bin_dir)
+    monkeypatch.setattr(lsp.shutil, 'which', lambda name: None)
+    assert lsp.find_server() == (None, None), 'nothing on PATH and nothing installed'
+    server = bin_dir/'basedpyright-langserver'
+    server.write_text('#!/bin/sh\nexec cat\n')
+    assert lsp.find_server() == (None, None), 'a file that cannot be run is not a server'
+    server.chmod(0o755)
+    name, argv = lsp.find_server()
+    assert name == 'basedpyright-langserver'
+    assert argv == [str(server), '--stdio'], 'and it is driven the way that server wants'
+
+def test_the_tools_row_reports_what_it_would_install_and_what_is_here(monkeypatch):
+    "The row is what a person clicks to get a language server, so it has to answer for one."
+    from leela.blocks.agent import models
+    monkeypatch.setattr('leela.blocks.lsp.lsp.find_server', lambda: ('basedpyright-langserver', []))
+    row = first(r for r in models.tool_rows() if r['value'] == 'langserver')
+    assert row['available'] is True and row['found'] == 'basedpyright-langserver'
+    assert row['mb'] and row['blurb'] and row['label']
+    assert any('basedpyright' in r for r in row['requirements']), 'named, so the install is pinned'
+    monkeypatch.setattr('leela.blocks.lsp.lsp.find_server', lambda: (None, None))
+    assert first(r for r in models.tool_rows() if r['value'] == 'langserver')['available'] is False

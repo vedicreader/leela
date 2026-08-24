@@ -613,6 +613,9 @@ def test_every_line_of_a_new_cell_is_added(repo_git):
     assert out['cells']['b'] == 'added'
     assert out['lines']['b'] == [{'from': 1, 'to': 2, 'kind': 'added'}]
 
+from pathlib import Path as _Path
+ROOT = _Path(__file__).resolve().parents[1]
+
 def _repo(path, name):
     path.mkdir(parents=True, exist_ok=True)
     git(path, 'init', '-b', name)
@@ -1604,3 +1607,55 @@ def test_the_diff_tab_renders_the_fact_and_not_the_pointer():
     assert 'data.binary || data.file?.binary' in actions, 'the old `file.binary` shape still works'
     body = actions[actions.index('function binaryDiffHtml'):]
     assert 'Git LFS' in body and 'oid' in body, 'say it is LFS and which object'
+
+
+def test_deleting_a_branch_or_a_stash_reports_the_commit_it_was_at(tmp_path):
+    """Git prints `Deleted branch x (was abc1234)` and the gateway returns None, so the sha never
+    reached the panel. It is the only handle for putting the branch back, and it has to be read
+    before the delete, because afterwards there is no ref left to ask."""
+    from leela.blocks.git.app import _dropped
+    from leela.blocks.git.git import GitRepo
+    r = GitRepo.at(_repo(tmp_path/'repo', 'main'))
+    r.run('branch', 'feature')
+    out = _dropped(r, 'feature', False)
+    assert out['deleted'] == 'feature' and len(out['was']) >= 7
+    assert out['recover'] == f"git branch feature {out['was']}"
+    assert out['was'] in out['summary'], 'the status line says it too'
+    r.run('branch', 'feature', out['was'])          # and the command it gives actually works
+    assert 'feature' in r.run('branch', '--list', 'feature')
+
+def test_one_reading_of_delete_a_branch_in_both_menus():
+    """The branch pill forced every unmerged delete after a single confirm while the panel's menu
+    sent no force at all, so the same branch was refused in one place and destroyed in the other."""
+    bar = (ROOT/'leela'/'blocks'/'git'/'branchbar.js').read_text()
+    menu = (ROOT/'leela'/'blocks'/'git'/'branchmenu.js').read_text()
+    assert 'force: !b.merged' not in bar, 'no forced delete behind one confirmation'
+    for src in (bar, menu):
+        first = src.index("act('delete'")
+        assert 'force' not in src[first:first + 60], 'the first attempt never forces'
+    assert "force: true" in bar and 'force delete' in bar, 'forcing is a second, named ask'
+
+def test_the_commit_message_survives_the_panel_being_redrawn():
+    """The panel replaces its own `innerHTML` on every save anywhere in the repository, and the
+    textarea was rendered with no value, so a message being typed vanished."""
+    views = (ROOT/'leela'/'blocks'/'git'/'views.js').read_text()
+    state = (ROOT/'leela'/'blocks'/'git'/'state.js').read_text()
+    panel = (ROOT/'leela'/'blocks'/'git'/'panel.js').read_text()
+    assert 'commitDraft' in state, 'the draft is panel state, not DOM state'
+    assert 'esc(gitUI.commitDraft)' in views, 'and it is rendered back'
+    assert 'gitUI.commitDraft = box.value' in panel, 'kept as it is typed'
+    assert "gitUI.commitDraft = ''" in panel, 'and cleared once it has been committed'
+
+def test_a_selection_does_not_outlive_the_change_list_it_was_made_against():
+    "A committed file left a key that rendered as nothing and was still posted by a bulk action."
+    panel = (ROOT/'leela'/'blocks'/'git'/'panel.js').read_text()
+    prune = panel[panel.index('const keys = new Set()'):panel.index('gitUI.snapshot = d')]
+    assert 'gitUI.selectedChanges.delete(key)' in prune
+    assert 'staged:' in prune and 'unstaged:' in prune, 'keys are group-qualified, so both groups'
+
+def test_the_tree_says_what_discard_really_restores():
+    "`git restore --worktree` restores from the index. The tree said HEAD."
+    files = (ROOT/'leela'/'blocks'/'fs'/'files.js').read_text()
+    ask = files[files.index("op === 'discard'"):]
+    ask = ask[:ask.index('return;')]
+    assert 'from the index' in ask and 'HEAD' not in ask

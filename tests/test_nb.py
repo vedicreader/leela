@@ -55,6 +55,117 @@ def test_project_execution_initializes_only_zero_byte_notebook_placeholders(tmp_
     assert json.loads(empty.read_text())['nbformat'] == 4
     assert malformed.read_text() == '{not json'
 
+def test_initialising_the_open_notebook_keeps_the_cell_ids_the_browser_knows(tmp_path):
+    """A zero-byte `.ipynb` was made valid by writing a fresh blank, whose cell has a new id. The
+    browser and the server still held the old one, so the next save could not match a single cell,
+    the rebase refused, and running a second cell reported `save the notebook before running this
+    cell` and blamed another process."""
+    p = tmp_path/'new.ipynb'; p.touch()
+    ws = Workspace(roots=[tmp_path])
+    nb = Notebook.load(p)                     # what the doc store holds for an open placeholder
+    ids = [c.id for c in nb.cells]
+    assert ws.initialize_notebook(p, nb) == str(p)
+    assert [c.id for c in Notebook.load(p).cells] == ids, 'the ids the browser knows must survive'
+    assert ws.initialize_notebook(p, nb) is None, 'a notebook that is already valid is left alone'
+    assert ws.initialize_notebook(None) is None and ws.initialize_notebook(tmp_path/'gone.ipynb') is None
+
+def test_the_placeholder_sweep_walks_a_root_once(tmp_path):
+    "It is a whole-tree walk, and it ran on every cell of every streamed run."
+    (tmp_path/'empty.ipynb').touch()
+    ws = Workspace(roots=[tmp_path])
+    assert ws.initialize_empty_notebooks(tmp_path) == [str(tmp_path/'empty.ipynb')]
+    (tmp_path/'later.ipynb').touch()
+    assert ws.initialize_empty_notebooks(tmp_path) == [], 'the same root is not walked again'
+    assert (tmp_path/'later.ipynb').stat().st_size == 0
+
+def test_a_streamed_run_initialises_the_notebook_it_is_about_to_run(tmp_path, monkeypatch):
+    "One stat for the notebook running, and the tree walk no longer once per cell."
+    p = tmp_path/'new.ipynb'; p.touch()
+    ws = Workspace(roots=[tmp_path]); ws.open(p)
+    seen, real = [], ws.initialize_notebook
+    def record(path, nb=None):
+        seen.append((path, nb))
+        return real(path, nb)
+    monkeypatch.setattr(ws, 'initialize_notebook', record)
+    async def no_kernel(tab=None): raise RuntimeError('no kernel in this test')
+    monkeypatch.setattr(ws, 'runtime', no_kernel)
+    with TestClient(ide_app(ws)) as client:
+        client.get('/tab/state')
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                client.post('/nb/run/stream', json={'path': str(p), 'i': 0, 'source': 'x = 1'})
+    routed = [path for path, nb in seen if nb is not None]   # the sweep passes no document
+    assert [str(path) for path in routed] == [str(p), str(p)], 'the run initialises what it runs'
+    assert len(ws._swept) == 1, 'two runs, one walk'
+
+def test_a_run_that_initialises_the_notebook_leaves_the_next_save_workable(tmp_path, monkeypatch):
+    """The symptom: running cells in a new notebook, then `save the notebook before running this
+    cell` partway through. Leela wrote the placeholder itself during the first run, and the save
+    that the next cell's guard performs was refused against the version the browser still held."""
+    p = tmp_path/'new.ipynb'; p.touch()
+    ws = Workspace(roots=[tmp_path]); ws.open(p)
+    async def no_kernel(tab=None): raise RuntimeError('no kernel in this test')
+    monkeypatch.setattr(ws, 'runtime', no_kernel)
+    with TestClient(ide_app(ws)) as client:
+        opened = client.get('/tab/state', params={'path': str(p)}).json()
+        with pytest.raises(RuntimeError):
+            client.post('/nb/run/stream', json={'path': str(p), 'i': 0, 'source': 'X = 1'})
+        assert p.stat().st_size, 'the run made the placeholder valid JSON'
+        r = client.post('/nb/save', json={'path': str(p), 'cells': [{'i': 0, 'source': 'X = 1'}],
+                                          'base_disk_version': opened['disk_version']})
+        assert r.status_code == 200, r.text
+    assert 'X = 1' in p.read_text()
+
+def _split(src):
+    nb = Notebook([Cell(source=src)])
+    return nb.split_symbols(0), [c.source for c in nb.cells]
+
+def test_a_cell_splits_into_one_cell_per_class_and_function():
+    "Source order, and whatever was not a def stays above where it was."
+    made, cells = _split('#| export\nimport os\n\ndef f():\n    return 1\n\nclass C:\n    pass\n')
+    assert made == 2
+    assert cells == ['#| export\nimport os\n',
+                     '#| export\ndef f():\n    return 1\n',
+                     '#| export\nclass C:\n    pass\n']
+
+def test_every_part_of_an_export_cell_is_exported_too():
+    "The point of the split is a test cell under each, so each part has to carry the directive."
+    made, cells = _split('#| export\ndef f(): pass\n\ndef g(): pass\n')
+    assert made == 1, 'nothing was left to keep, so the first part is the cell itself'
+    assert cells == ['#| export\ndef f(): pass\n', '#| export\ndef g(): pass\n']
+
+def test_a_notebook_wide_directive_is_not_copied_onto_the_parts():
+    "`default_exp` names the notebook. Copied onto every part it would be declared over and over."
+    made, cells = _split('#| default_exp core\n#| export\ndef f(): pass\n')
+    assert made == 1
+    assert cells[0] == '#| default_exp core\n#| export\n', 'and it holds the original cell open'
+    assert cells[1] == '#| export\ndef f(): pass\n'
+
+def test_a_cell_with_nothing_to_split_is_left_exactly_as_it_was():
+    for src in ('x = 1\n', 'def (:\n', '', '#| export\n'):
+        made, cells = _split(src)
+        assert (made, cells) == (0, [src]), f'{src!r} changed'
+    nb = Notebook([Cell(source='def f(): pass\n', cell_type='markdown')])
+    assert nb.split_symbols(0) == 0, 'markdown has no defs to find'
+
+def test_one_undo_puts_a_split_cell_back():
+    "Every part arrives on one checkpoint, so this is one undo and not one per class."
+    nb = Notebook([Cell(source='def f(): pass\n\ndef g(): pass\n\ndef h(): pass\n')])
+    assert nb.split_symbols(0) == 2 and len(nb.cells) == 3
+    nb.undo()
+    assert [c.source for c in nb.cells] == ['def f(): pass\n\ndef g(): pass\n\ndef h(): pass\n']
+
+def test_the_split_is_reachable_as_an_edit_op(tmp_path):
+    p = tmp_path/'n.ipynb'
+    Notebook([Cell(source='#| export\ndef f(): pass\n\nclass C: pass\n')]).save(p)
+    ws = Workspace(roots=[tmp_path]); ws.open(p)
+    with TestClient(ide_app(ws)) as client:
+        client.get('/tab/state')
+        r = client.post('/nb/edit', json={'op': 'split_symbols', 'i': 0})
+        assert r.status_code == 200, r.text
+        assert [c['source'] for c in r.json()['cells']] == ['#| export\ndef f(): pass\n',
+                                                            '#| export\nclass C: pass\n']
+
 def test_creating_an_ipynb_by_filename_writes_valid_json(tmp_path):
     ws = Workspace(roots=[tmp_path])
     p = tmp_path / 'new.ipynb'

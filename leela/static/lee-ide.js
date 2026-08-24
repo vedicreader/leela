@@ -1284,7 +1284,7 @@ let savedGitLists = {}, savedGitReviews = {}, savedGitNotes = {};
 try { savedGitLists = JSON.parse(localStorage.getItem('lee-git-changelists') || '{}'); } catch (_) {}
 try { savedGitReviews = JSON.parse(localStorage.getItem('lee-git-reviews') || '{}'); } catch (_) {}
 try { savedGitNotes = JSON.parse(localStorage.getItem('lee-git-review-notes') || '{}'); } catch (_) {}
-const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResults: [], expect: '', history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
+const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResults: [], expect: '', history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), commitDraft: '', changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
 // Which repository a panel request is about. Empty means the one the active tab lives in, which is
 // what the branch pill, the file tree and the editor's change marks always mean.
 function gitUrl(path, params = {}) {
@@ -1323,8 +1323,10 @@ async function gitDo(op, extra = {}) {
     const said = d.outcome?.summary || `complete · ${Math.round(performance.now() - started)} ms`;
     status(`git ${name} · ${said}${d.outcome?.note ? ' — ' + d.outcome.note : ''}`,
            d.outcome?.note ? 'err' : 'ok');
+    // `recover` is the only handle on a deleted branch or a dropped stash, and a status line is
+    // gone in seconds, so the log is where it has to end up.
     leeLog('git', `${name} · ${gitRepoName(gitUI.repo || d.root || '')}`,
-           [extra.branch, extra.ref, extra.message].filter(Boolean).join(' ') || '', 'ok');
+           [extra.branch, extra.ref, extra.message, d.outcome?.recover].filter(Boolean).join(' ') || '', 'ok');
     return d;
   } catch (e) {
     /* Reporting the failure here is what clears the running status line. Git refusing a switch
@@ -1349,12 +1351,19 @@ function gitFilterBanner(d) {
     `<strong>files here may not stay staged</strong><span>${esc(f.explain)}</span></div></section>`;
 }
 
-// The way back from the last thing that moved this branch. Offered whenever there is one, because
-// "that merge was not what I wanted" arrives a minute later.
+/* The way back from the last thing that moved this branch, because "that merge was not what I
+   wanted" arrives a minute later.
+
+   Only the guarded operations take a safepoint. Discard, branch create and delete, stash drop and
+   apply_patch take none, so after one of those the newest safepoint is some older merge, and the
+   banner was offering to undo that instead. It says how long ago, which is what tells the two
+   apart. */
 function gitUndoBanner(d) {
   const point = (d.safepoints || [])[0];
   if (!point) return '';
-  return `<section class="lee-git-undo"><span>last: ${esc(point.describe)}</span>` +
+  const when = point.at ? gitRelative(point.at) : '';
+  return `<section class="lee-git-undo"><span>last undoable: ${esc(point.describe)}` +
+    `${when ? ` <small>${esc(when)}</small>` : ''}</span>` +
     `<span class="lee-spacer"></span><button data-git-undo="${esc(point.token)}">undo</button></section>`;
 }
 
@@ -1376,7 +1385,7 @@ function gitChangesView(d) {
   return gitOperationBanner(d) + gitFilterBanner(d) + gitUndoBanner(d) + `<div class="lee-git-change-summary"><strong>${d.changes.length} changed file${d.changes.length === 1 ? '' : 's'}</strong><span>+${additions}</span><span>−${deletions}</span><small>${staged.length} staged · ${unstaged.length} unstaged</small></div>` + `<div class="lee-sc-actions"><button data-top="fetch">fetch</button><button data-top="pull">pull</button><button data-top="push">push</button>` +
     `${!d.upstream ? '<button data-top="publish">publish branch</button>' : ''}<button id="scstash">stash</button></div>` +
     `<div class="lee-git-selection" ${gitUI.selectedChanges.size ? '' : 'hidden'}><strong>${gitUI.selectedChanges.size} selected</strong><button data-selected-action="stage">stage</button><button data-selected-action="unstage">unstage</button><button data-selected-action="changelist">move to changelist</button><button data-selected-action="clear">clear</button></div>` +
-    `<form id="sccommit" class="lee-sc-commit"><label>Commit message<textarea rows="3" placeholder="Describe this change" aria-label="Commit message"></textarea></label>` +
+    `<form id="sccommit" class="lee-sc-commit"><label>Commit message<textarea rows="3" placeholder="Describe this change" aria-label="Commit message">${esc(gitUI.commitDraft)}</textarea></label>` +
     `<label class="lee-git-check"><input type="checkbox" name="amend"> amend previous commit</label><button type="button" id="screviewstaged" ${staged.length ? '' : 'disabled'}>review staged</button><button ${staged.length ? '' : 'disabled'}>commit ${staged.length || ''}</button></form>` +
     `<details class="lee-sc-group" open><summary><span>Staged changes</span><b>${staged.length}</b>${staged.length ? '<button type="button" id="scunstageall">unstage all</button>' : ''}</summary><div>${rows(staged, 'staged')}</div></details>` +
     `<details class="lee-sc-group" open><summary><span>Changes</span><b>${unstaged.length}</b>${unstaged.length ? '<button type="button" id="scstageall">stage all</button>' : ''}</summary><div>${rows(unstaged, 'unstaged')}</div></details>` +
@@ -2337,6 +2346,15 @@ async function renderGitPanel(snapshot = null) {
     wireGitPanel(host, null);
     return;
   }
+  // A key is `group:path`, so a file that was committed or moved between groups leaves a key that
+  // renders as nothing and still gets posted by a bulk action. The selection only means anything
+  // for the change list it was made against.
+  const keys = new Set();
+  for (const c of d.changes || []) {
+    if (c.staged) keys.add(`staged:${c.path}`);
+    if (c.unstaged) keys.add(`unstaged:${c.path}`);
+  }
+  for (const key of [...gitUI.selectedChanges]) if (!keys.has(key)) gitUI.selectedChanges.delete(key);
   gitUI.snapshot = d; paintGitPill(d);
   const view = gitUI.tab === 'changes' ? gitChangesView(d) : gitUI.tab === 'review' ? gitReviewView(d) : gitUI.tab === 'branches' ? gitBranchesView(d) : gitUI.tab === 'history' ? gitHistoryView(d) : gitResourcesView(d);
   host.innerHTML = gitScope() + gitSummary(d) + gitNav() + `<main class="lee-git-view">${view}</main>`;
@@ -2432,7 +2450,20 @@ function wireGitPanel(host, d) {
   host.querySelector('#scstageall')?.addEventListener('click', e => { e.preventDefault(); act('stage', {paths: d.changes.filter(x => x.unstaged).map(x => x.path)}); });
   host.querySelector('#scunstageall')?.addEventListener('click', e => { e.preventDefault(); act('unstage', {paths: d.changes.filter(x => x.staged).map(x => x.path)}); });
   host.querySelector('#scstash')?.addEventListener('click', async () => { const message = await inputDialog('stash changes', 'Optional message', '', 'work in progress'); if (message !== null) act('stash', {message}); });
-  host.querySelector('#sccommit')?.addEventListener('submit', e => { e.preventDefault(); const message = e.target.querySelector('textarea').value.trim(); if (message) act('commit', {message, amend: e.target.elements.amend.checked}); });
+  /* The panel re-renders on every save in the repository, not only on a click here, so a message
+     being typed has to survive `innerHTML`. The branch filter already worked this way. */
+  const commit = host.querySelector('#sccommit');
+  if (commit) {
+    const box = commit.querySelector('textarea');
+    box.oninput = () => { gitUI.commitDraft = box.value; };
+    commit.addEventListener('submit', e => {
+      e.preventDefault();
+      const message = box.value.trim();
+      if (!message) return status('write a commit message first', 'err');
+      gitUI.commitDraft = '';
+      act('commit', {message, amend: commit.elements.amend.checked});
+    });
+  }
   host.querySelector('#screviewstaged')?.addEventListener('click', () => showStagedReview(d));
   host.querySelector('[data-conflict-center]')?.addEventListener('click', () => showConflictCenter());
   host.querySelectorAll('[data-selected-action]').forEach(b => b.onclick = async () => {
@@ -4462,9 +4493,56 @@ function palette() {
 }
 
 const treeSel = () => $('.lee-node.sel');
-const visibleTreeNodes = () => $$('.lee-node').filter(n => n.getClientRects().length);
-function selectTreeNode(n) {
+/* One click is one selection; meta adds and removes, shift takes the run between. `.sel` stays the
+   caret, so the arrows and every single-target action keep working unchanged, and `treePaths` is
+   what an operation acts on: the marked set when there is one, otherwise the caret alone. */
+const treeMarked = () => $$('.lee-node.marked');
+const treePaths = () => {
+  const marked = treeMarked().map(n => n.dataset.path);
+  const sel = treeSel()?.dataset.path;
+  return marked.length ? marked : sel ? [sel] : [];
+};
+function markTreeNode(n, on) {
   if (!n) return;
+  n.classList.toggle('marked', on);
+  n.setAttribute('aria-multiselectable', 'true');
+}
+function clearTreeMarks() { treeMarked().forEach(n => n.classList.remove('marked')); }
+/* A file row opens on click and stops there, so the document listener never sees it. Held
+   modifiers have to mean "select" rather than "open", and both readings live here. */
+function leeTreeClick(e, path) {
+  e.preventDefault(); e.stopPropagation();
+  const n = e.target.closest('.lee-node');
+  setScope('files');
+  // Only what was clicked. Folding the caret in would put whichever row happened to be highlighted
+  // on load into a cut or a delete nobody chose it for; `treePaths` already falls back to the caret
+  // when nothing is marked at all.
+  if (e.metaKey || e.ctrlKey) {
+    markTreeNode(n, !n.classList.contains('marked'));
+    return selectTreeNode(n, true);
+  }
+  if (e.shiftKey) { markTreeRange(n); return; }
+  selectTreeNode(n);
+  leeOpenFile(path);
+}
+window.leeTreeClick = leeTreeClick;
+function markTreeStep(d) {
+  const nodes = visibleTreeNodes(), at = nodes.indexOf(treeSel());
+  const next = nodes[Math.max(0, Math.min(nodes.length - 1, at + d))];
+  if (!treeMarked().length) markTreeNode(treeSel(), true);
+  markTreeNode(next, true);
+  selectTreeNode(next, true);
+}
+function markTreeRange(to) {
+  const nodes = visibleTreeNodes(), from = treeSel();
+  const a = nodes.indexOf(from), b = nodes.indexOf(to);
+  if (a < 0 || b < 0) return markTreeNode(to, true);
+  for (const n of nodes.slice(Math.min(a, b), Math.max(a, b) + 1)) markTreeNode(n, true);
+}
+const visibleTreeNodes = () => $$('.lee-node').filter(n => n.getClientRects().length);
+function selectTreeNode(n, keepMarks = false) {
+  if (!n) return;
+  if (!keepMarks) clearTreeMarks();
   $$('.lee-node').forEach(x => { x.classList.remove('sel'); x.setAttribute('aria-selected', 'false'); });
   n.classList.add('sel'); n.setAttribute('aria-selected', 'true');
   n.scrollIntoView({block: 'nearest'});
@@ -4634,7 +4712,9 @@ async function treeGitAction(op) {
   const node = treeSel();
   if (!node || node.classList.contains('lee-root')) return status('select a file or folder first', 'err');
   const directory = node.classList.contains('lee-dir'), name = node.dataset.path.split('/').pop();
-  if (op === 'discard' && !await confirmDialog(`discard changes in ${name}`, 'This restores the selected tracked file from HEAD.', 'discard')) return;
+  // `git restore --worktree`, so the index is what comes back, not HEAD. Saying HEAD sent people
+  // to a version they had already staged past.
+  if (op === 'discard' && !await confirmDialog(`discard changes in ${name}`, 'This restores the selected file from the index, losing unstaged changes. It cannot be undone.', 'discard')) return;
   if (op === 'ignore' && !await confirmDialog(`ignore ${name}`, `Add ${name}${directory ? '/' : ''} to this repository's .gitignore.`, 'ignore')) return;
   try {
     const d = await post('/git/tree/action', {op, path: node.dataset.path, directory});
@@ -4680,16 +4760,69 @@ async function renameEntry() {
   await refreshFileTree(r.entry.path);
 }
 async function deleteEntry() {
-  const sel = treeSel(); if (!sel) return status('select a file or folder first');
-  const name = sel.dataset.path.split('/').pop(), folder = sel.classList.contains('lee-dir');
-  const warning = folder
-    ? 'This permanently deletes the folder and everything inside it from disk.'
-    : 'This permanently deletes the file from disk.';
+  const paths = treePaths(); if (!paths.length) return status('select a file or folder first');
+  const sel = treeSel();
+  const name = paths.length > 1 ? `${paths.length} items` : paths[0].split('/').pop();
+  const folder = paths.some(p => $(`.lee-node[data-path="${p}"]`)?.classList.contains('lee-dir'));
+  // Recoverable, and it says so: a delete now moves the file or the whole folder into the trash,
+  // and `workspace undo` puts it back where it was.
+  const warning = (folder ? 'Folders go too, with everything inside them. ' : '') +
+    'Deleted from disk, and recoverable with undo until the trash is cleared.';
   if (lee.filePrefs.confirmDelete !== false && !await confirmDialog('delete ' + name + ' from disk', warning, 'delete')) return;
-  const parent = sel.parentElement?.closest('.lee-node.lee-dir')?.dataset.path;
-  noteSelfWrite(sel.dataset.path);
-  await post('/fs/delete', {path: sel.dataset.path});
+  const parent = sel?.parentElement?.closest('.lee-node.lee-dir')?.dataset.path;
+  const failed = [];
+  for (const path of paths) {
+    noteSelfWrite(path);
+    try { await post('/fs/delete', {path}); } catch (e) { failed.push(path.split('/').pop()); }
+  }
+  clearTreeMarks();
+  await refreshTabStrip();
   await refreshFileTree(parent);
+  status(failed.length ? `could not delete ${failed.join(', ')}` : `deleted ${name}`,
+         failed.length ? 'err' : 'ok');
+}
+
+/* Cut and copy mark what to act on; paste is where. A cut is not a move until the paste, so
+   nothing has happened to the tree while the clipboard is full and Escape is enough to abandon it. */
+function fileClipboard(cut) {
+  const paths = treePaths(); if (!paths.length) return status('select a file or folder first');
+  lee.fileClip = {paths, cut};
+  $$('.lee-node.cut').forEach(n => n.classList.remove('cut'));
+  if (cut) paths.forEach(p => $(`.lee-node[data-path="${p}"]`)?.classList.add('cut'));
+  status(`${cut ? 'cut' : 'copied'} ${paths.length > 1 ? paths.length + ' items' : paths[0].split('/').pop()}`, 'ok');
+}
+const treeDir = n => n?.classList.contains('lee-dir') ? n.dataset.path
+                   : n?.parentElement?.closest('.lee-node.lee-dir')?.dataset.path;
+async function pasteEntries() {
+  const clip = lee.fileClip;
+  if (!clip?.paths?.length) return status('nothing on the clipboard');
+  const dest = treeDir(treeSel());
+  if (!dest) return status('select the folder to paste into', 'err');
+  const r = await post(clip.cut ? '/fs/move' : '/fs/copy', {paths: clip.paths, dest});
+  (clip.cut ? clip.paths : []).forEach(noteSelfWrite);
+  (r.moved || r.created || []).forEach(noteSelfWrite);
+  if (clip.cut) { lee.fileClip = null; $$('.lee-node.cut').forEach(n => n.classList.remove('cut')); }
+  clearTreeMarks();
+  await refreshFileTree(dest);
+  const done = (r.moved || r.created || []).length;
+  status(r.ok ? `${clip.cut ? 'moved' : 'copied'} ${done} into ${dest.split('/').pop()}`
+             : `${done} done, ${r.failed.map(f => f.path.split('/').pop()).join(', ')} refused`,
+         r.ok ? 'ok' : 'err');
+}
+async function duplicateEntries() {
+  const paths = treePaths(); if (!paths.length) return status('select a file or folder first');
+  const r = await post('/fs/copy', {paths, duplicate: true});
+  (r.created || []).forEach(noteSelfWrite);
+  clearTreeMarks();
+  await refreshFileTree(r.created?.[0]);
+  status(r.ok ? `duplicated ${paths.length > 1 ? paths.length + ' items' : paths[0].split('/').pop()}`
+             : `${(r.created || []).length} done, ${r.failed.length} refused`, r.ok ? 'ok' : 'err');
+}
+/* The server closed tabs we did not ask it to close. The strip is index-addressed, so a stale one
+   makes the next click land on a different document. */
+async function refreshTabStrip() {
+  const bar = $('#tabbar'); if (!bar) return;
+  try { bar.outerHTML = await (await fetch('/tab/bar')).text(); } catch (_) {}
 }
 async function removeRoot() {
   const sel = treeSel();
@@ -4697,6 +4830,7 @@ async function removeRoot() {
   const name = sel.dataset.path.split('/').pop();
   if (!await confirmDialog('remove ' + name + ' from workspace', 'Files stay on disk. Open tabs inside it will close.', 'remove')) return;
   await post('/fs/remove-root', {path: sel.dataset.path});
+  await refreshTabStrip();
   await refreshFileTree();
   status(name + ' removed from the workspace; files were not deleted', 'ok');
 }
@@ -4828,6 +4962,12 @@ document.addEventListener('keydown', e => {
 
 document.addEventListener('click', (e) => {
   const n = e.target.closest('.lee-node');
+  if (n && (e.metaKey || e.ctrlKey)) {
+    setScope('files');
+    markTreeNode(n, !n.classList.contains('marked'));
+    return selectTreeNode(n, true);
+  }
+  if (n && e.shiftKey) { setScope('files'); markTreeRange(n); return; }
   if (n) { selectTreeNode(n); setScope('files'); }
   if (e.target.closest('.lee-vars')) setScope('vars');
 });
@@ -5696,8 +5836,14 @@ function branchActions(anchor, d, b, after = (x) => x) {
     {label: `Merge ${leaf} into ${d.branch}`, disabled: b.current, run: () => showMergePreview(b.name, d, act)},
   ];
   if (!b.remote && !b.current) rows.push({separator: true}, {label: `Delete ${leaf}`, warn: true, run: async () => {
-    if (await confirmDialog('delete branch', `Delete ${b.name}? Commits only on it are lost.`, 'delete'))
-      await act('delete', {branch: b.name, force: !b.merged});
+    if (!await confirmDialog('delete branch', `Delete ${b.name}?`, 'delete')) return;
+    // Never `-D` behind one confirmation. Git refusing an unmerged branch is the warning, and
+    // `act` answering undefined is that refusal, so the second ask is the one that forces it.
+    if (await act('delete', {branch: b.name})) return;
+    if (await confirmDialog('force delete',
+        `Git refused: ${b.name} has commits that are on no other branch. Delete it anyway? ` +
+        'The log keeps the commit it was at, so it can be put back by sha.', 'force delete'))
+      await act('delete', {branch: b.name, force: true});
   }});
   openChromeMenu(anchor, rows);
 }

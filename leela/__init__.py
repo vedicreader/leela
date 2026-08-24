@@ -2,7 +2,7 @@
 
 __version__ = "0.1.0"
 
-__all__ = ['keys', 'errstr', 'Dictable', 'leela_cfg', 'extras_site', 'use_extras',
+__all__ = ['keys', 'errstr', 'Dictable', 'leela_cfg', 'extras_site', 'extras_bin', 'use_extras',
            'login_path', 'use_login_path', 'TOOL_DIRS', 'use_utf8', 'UTF8_LOCALES']
 
 import sys
@@ -15,6 +15,14 @@ leela_cfg = xdg_config_home()/'leela'
 def extras_site():
     "Where an optional backend goes. Not inside the bundle, which is signed and read-only."
     return xdg_data_home()/'leela'/'extras'/f'lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages'
+
+def extras_bin():
+    """Where an extra's console scripts land: `pip install --target X` writes them to `X/bin`.
+
+    Nothing puts that directory on PATH, so a language server installed into a frozen app was
+    installed correctly and then never found.
+    """
+    return extras_site()/'bin'
 
 def use_extras():
     """Put the extras directory first on `sys.path`, and say whether it was there.

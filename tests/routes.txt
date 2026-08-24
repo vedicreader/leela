@@ -136,10 +136,12 @@ GET,POST /files/panel
 GET,POST /fs/add-root
 GET,POST /fs/add_root
 GET,POST /fs/browse
+GET,POST /fs/copy
 GET,POST /fs/delete
 GET,POST /fs/events
 GET,POST /fs/find
 GET,POST /fs/forget-recent
+GET,POST /fs/move
 GET,POST /fs/new
 GET,POST /fs/paths
 GET,POST /fs/recent
@@ -265,6 +267,7 @@ GET,POST /settings/reset
 GET,POST /settings/save
 GET,POST /similar
 GET,POST /stack
+GET,POST /tab/bar
 GET,POST /tab/buffer
 GET,POST /tab/close
 GET,POST /tab/disk

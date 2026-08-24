@@ -136,8 +136,10 @@ def test_the_artwork_is_committed_and_everything_drawn_from_it_is_not():
     were committed so a build machine needed no Pillow, which the build extras now carry anyway --
     and a committed copy is one that can disagree with the artwork it came from."""
     import subprocess
-    mark = ROOT/'packaging'/'assets'/'leela-mark.png'
-    assert mark.is_file() and mark.stat().st_size > 1000, 'the artwork itself is the source'
+    pytest.importorskip('PIL')
+    import tools.build_icons as icons
+    for src in (*icons.MARKS.values(), icons.MASK):
+        assert src.is_file() and src.stat().st_size > 1000, f'{src.name} is a source of its own'
     tracked = subprocess.run(['git', 'ls-files', 'packaging/assets'], cwd=ROOT,
                              capture_output=True, text=True).stdout.split()
     drawn = {'Leela.png', 'Leela.ico', 'Leela.svg', 'Leela.icns'}
@@ -221,12 +223,22 @@ def test_a_release_says_what_is_missing_rather_than_failing_inside_shutil(monkey
         assert 'was not built' in str(e.value)
 
 def test_the_favicon_is_the_mark_it_is_generated_from():
-    """The favicon ships in the wheel, which has no build step, so it is committed like the JS
-    bundles rather than drawn at install. Committed and generated means it can drift."""
+    """The favicons ship in the wheel, which has no build step, so they are committed like the JS
+    bundles rather than drawn at install. Committed and generated means they can drift.
+
+    Two of them: the mark is line work with no plate, so a tab strip shows its own colour through
+    it and the ink has to follow `prefers-color-scheme`.
+    """
     pytest.importorskip('PIL')
     import tools.build_icons as icons
-    assert icons.FAVICON.read_text() == icons.favicon(), \
-        'leela/static/favicon.svg is stale; run python tools/build_icons.py'
+    for variant, path in icons.FAVICONS.items():
+        assert path.read_text() == icons.favicon(variant), \
+            f'{path.name} is stale; run python tools/build_icons.py'
+    assert icons.FAVICONS['light'].read_text() != icons.FAVICONS['dark'].read_text(), \
+        'one artwork under two names is not a light and a dark variant'
+    app = (ROOT/'leela'/'app.py').read_text()
+    for name in ('favicon.svg', 'favicon-dark.svg'):
+        assert f"_asset('{name}')" in app, f'{name} is generated but never served'
 
 def test_the_app_artefacts_attach_to_the_release_the_tag_names(tmp_path, monkeypatch):
     "The last two release steps: build the bundle, then put it on the release just made."

@@ -190,9 +190,141 @@ def test_the_overview_stripe_redraws_when_a_panel_resizes():
     assert "previous.classList.remove('has-overview')" in plugin
 
 def test_the_built_editor_bundle_matches_its_source():
-    "`lee-cm6.js` is committed, so a change to `frontend/editor.js` that was never built is a lie."
+    """`lee-cm6.js` is committed, so a change to `frontend/editor.js` that was never built is a lie.
+
+    The export map is read by the names it exports, not by the minifier's name for the call that
+    builds it: that one is chosen per build, and any edit to the source could rename it.
+    """
     bundle = (ROOT/'leela'/'vendor'/'lee-cm6.js').read_text()
     assert 'ResizeObserver' in bundle, 'rebuild with frontend/node_modules/@esbuild/*/bin/esbuild'
-    import re
-    m = re.search(r'CS\(\w+,\s*\{([^}]{200,6000})\}\)', bundle)
-    assert {'undo', 'redo'} <= set(re.findall(r'(\w+)\s*:\s*\(\)', m.group(1)))
+    from tests.assets import cm_exports
+    assert {'undo', 'redo'} <= cm_exports()
+
+
+def test_the_setup_modal_renders_into_the_box_and_not_over_it():
+    """`renderSetup` assigned to the element `modal()` returns, which is the backdrop. That threw
+    away the `.lee-modalbox` wrapper and with it every style, the grip and the close button, and the
+    two panes plus Tools lay transparent over the page. It re-renders, so overwriting the box itself
+    is no better: the second render would drop the chrome again."""
+    src = (ROOT/'leela/blocks/agent/panel.js').read_text()
+    render = src[src.index('function renderSetup('):src.index('async function leeSetupModal')]
+    assert '.lee-setup-body' in render, 'only the middle region may be rewritten'
+    assert not re.search(r'\bhost\.innerHTML\s*=|\bbox\.innerHTML\s*=', render), \
+        'assigning the box its own markup discards the chrome modal() built'
+    opener = src[src.index('async function leeSetupModal'):src.index('async function pollSetup')]
+    for part in ('lee-mhead', 'lee-setup-body', 'lee-mfoot'): assert part in opener, part
+    assert "$('.lee-modalbox', m)" in opener, 'renderSetup takes the box, never the backdrop'
+    assert 'm.remove()' in opener, "done must close through modal()'s own teardown"
+
+
+def test_the_setup_body_scrolls_and_every_colour_it_names_exists():
+    """`.lee-setup-pane` asked for `var(--lee-bd)`, which nothing defines, so the whole border
+    shorthand was invalid and the panes drew no edge at all. The box is `overflow: hidden`, so the
+    middle region has to be the one that scrolls or the Updates rows are unreachable."""
+    assert '.lee-modalbox > .lee-setup-body { min-height: 0; flex: 1 1 auto; overflow: auto; }' in CSS
+    declared = set(re.findall(r'(--lee-[\w-]+)\s*:', CSS))
+    # Some are written onto an element as an inline style instead: the indent guides from
+    # `frontend/editor.js`, the cell and code line counts from the bundles.
+    runtime = set(re.findall(r'--lee-[\w-]+', JS + (ROOT/'frontend/editor.js').read_text()))
+    used = set(re.findall(r'var\((--lee-[\w-]+)\s*\)', CSS))
+    assert used - declared - runtime == set(), f'undefined and nothing sets them: {sorted(used - declared - runtime)}'
+
+
+def test_a_routing_row_keeps_its_help_mark_out_of_the_control_column():
+    """`.lee-routing-popover label` is a two-column row: name, then control. A row with a `?` had
+    three children, so the mark took the control's column and the select wrapped onto a second line
+    into the 82px name column, where every model name was clipped. The name and its mark are one
+    item, in both the server-rendered rows and the ones `paintJobModels` draws."""
+    assert '.lee-routing-popover label > .lee-routing-name' in CSS
+    app = (ROOT/'leela/app.py').read_text()
+    panel = (ROOT/'leela/blocks/agent/panel.js').read_text()
+    popover = app[app.index("Details(Summary('settings')"):app.index("cls='lee-routing-popover'")]
+    for mark in re.finditer(r'help_mark\(', popover):
+        head = popover[:mark.start()].rindex('Label(')
+        assert 'lee-routing-name' in popover[head:popover.index(')', mark.end()) + 60], \
+            'a help mark outside a lee-routing-name is a third grid item'
+    rows = panel[panel.index('function paintJobModels'):panel.index('window.leeLoadModels')]
+    assert re.search(r'lee-routing-name">\$\{esc\(job\)\}\$\{helpMark\(job\)\}</span>', rows)
+
+
+def test_a_cell_run_blocked_by_a_failed_save_keeps_the_reason():
+    """`saveTab` reports why it failed, in the status line or the conflict dialog, and the run guard
+    then wrote `save the notebook before running this cell` over the top of it. The only diagnosable
+    part of the failure was replaced by advice to do the thing that had just failed."""
+    src = (ROOT/'leela/blocks/nb/motion.js').read_text()
+    assert 'save the notebook before running this cell' not in src
+    assert re.search(r"\.dirty'\) && !await saveTab\(true\)\) return;", src)
+
+
+def test_the_overview_stripe_does_not_decide_from_a_measure_it_changes_itself():
+    """`shown` compared `scrollHeight` against `clientHeight`, and `has-overview` sets
+    `scrollbar-width: none`. `clientHeight` excludes a horizontal bar, so hiding one grew it by the
+    bar's thickness: a pane overflowing by less than that said yes, took the class, then said no on
+    the next frame, and the bar flickered. Code cells have the horizontal bar, and an agent pane
+    streaming tokens re-measures every frame."""
+    src = (ROOT/'frontend'/'editor.js').read_text()
+    helper = src[src.index('const overflowsDown'):src.index('function scrollerFor')]
+    assert 'getBoundingClientRect().height' in helper, 'the border box is what a bar cannot move'
+    plugin = src[src.index('function overviewPlugin'):src.index('const stickyPlugin')]
+    decision = plugin[plugin.index('const shown ='):plugin.index('this.dom.hidden')]
+    assert 'overflowsDown(scroller)' in decision
+    assert 'clientHeight' not in decision, 'the decision may not read what the class changes'
+
+
+def test_the_scroller_walk_never_reaches_the_document():
+    """In a browser the document overflows where the app window does not, so the walk returned
+    `<body>`. `has-overview` on `<body>` matches no rule, so the bar it was meant to hide stayed:
+    the leftover scroll bar that was fixed in the app and not on the web."""
+    src = (ROOT/'frontend'/'editor.js').read_text()
+    walk = src[src.index('function scrollerFor'):src.index('function overviewPlugin')]
+    assert 'e !== document.body' in walk.replace('el', 'e'), 'body ends the walk, never answers it'
+    assert 'overflowsDown(el)' in walk
+    bundle = (ROOT/'leela'/'vendor'/'lee-cm6.js').read_text()
+    assert 'e!==document.body' in bundle, 'rebuild with frontend/node_modules/@esbuild/*/bin/esbuild'
+    assert 'getBoundingClientRect().height;return e>0&&i.scrollHeight>e+4' in bundle
+
+
+def test_indent_runs_against_the_cell_or_the_file_the_caret_is_in():
+    """Indent has to work in a notebook cell and in a python file. The router hands the chord to
+    CodeMirror's own command on the editor the event came from, which is either; the palette path
+    goes through `curEditor`, which answers for either. Neither may reach for the file editor."""
+    from tests.assets import cm_exports
+    assert {'indentMore', 'indentLess', 'indentSelection'} <= cm_exports(), \
+        'rebuild frontend/editor.js with frontend/node_modules/@esbuild/*/bin/esbuild'
+    router = (ROOT/'leela/blocks/keys/keymap.js').read_text()
+    deferred = router[router.index('const DEFER_IN_TEXT'):router.index('function textEditorOf')]
+    for action, cmd in (('indent_more', 'indentMore'), ('indent_less', 'indentLess'),
+                        ('indent_selection', 'indentSelection')):
+        assert f'{action}: ' in deferred and cmd in deferred, action
+    # `textEditorOf` matches any mounted editor, so a cell qualifies as much as a file.
+    assert '[...lee.editors.values()].find' in router
+    focus = (ROOT/'leela/static/js/focus.js').read_text()
+    body = focus[focus.index('function leeIndent'):focus.index('function kernelComplete')]
+    assert 'curEditor()' in body and "editors.get('file')" not in body
+    actions = (ROOT/'leela/static/js/actions.js').read_text()
+    for action in ('indent_more', 'indent_less', 'indent_selection'):
+        assert f'{action}:' in actions, f'{action} has no entry in the action table'
+
+
+def test_the_setup_rows_are_not_the_keyboard_help_row():
+    """`.lee-krow` is a flex line with `nowrap` and an ellipsis on every span. The setup modal
+    borrowed it, so `ready` rendered as `rea…` and every blurb was cut mid-sentence: these rows
+    are a name, a state and a sentence, and the sentence has to be allowed to wrap."""
+    panel = (ROOT/'leela/blocks/agent/panel.js').read_text()
+    assert 'lee-krow' not in panel, 'the help row is not this row'
+    rule = CSS[CSS.index('.lee-setup-row {'):]
+    rule = rule[:rule.index('}') + 1]
+    assert 'display: grid' in rule and 'minmax(0, 1fr) auto' in rule
+    # The state beside the name is the one column that may refuse to wrap; the sentence may not.
+    for m in re.finditer(r'(\.lee-setup-row[^{]*)\{([^}]*)\}', CSS):
+        if 'nowrap' in m.group(2):
+            assert 'lee-dim' in m.group(1) or 'warn' in m.group(1), m.group(1).strip()
+
+
+def test_the_setup_modal_can_be_started_over():
+    "Dismissed once, there was no way back to the first-run prompt. The route already took a false."
+    panel = (ROOT/'leela/blocks/agent/panel.js').read_text()
+    assert 'id="setupreset"' in panel, 'the modal offers it'
+    reset = panel[panel.index("$('#setupreset', box)"):panel.index("$('#setupdone', box)")]
+    assert "'/agent/setup/dismiss', {dismissed: false}" in reset, 'and it clears the dismissal'
+    assert 'leeSetupPane()' in reset and 'leeSetupModal()' in reset, 'then shows it again'

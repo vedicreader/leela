@@ -76,9 +76,9 @@ async function runCell(i, advance) {
     // Code run from a file-backed notebook has to be visible to code that reads that notebook
     // during the cell, such as indexers, nbdev and papermill. Flush the whole browser document
     // first, or a newly created .ipynb is still zero-byte on disk while its cell runs.
-    if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) {
-      return status('save the notebook before running this cell', 'err');
-    }
+    // `saveTab` has already said why, in the status line or the conflict dialog. Repeating a
+    // generic `save the notebook` over the top of it hid the only diagnosable part.
+    if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return;
     const began = performance.now();
     c.running = true;
     el?.classList.add('running');

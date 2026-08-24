@@ -20,12 +20,19 @@ JS = _bundles()
 class _NoTab: tab = None
 
 def test_a_file_row_opens_through_the_one_versioned_opener(tmp_path):
-    "Mouse opens used to stopPropagation without painting `.sel`; keys already did."
+    """Mouse opens used to stopPropagation without painting `.sel`; keys already did.
+
+    The row now names `leeTreeClick`, which is where a held modifier means select rather than open,
+    so the opener it has to reach is one call further in.
+    """
     from leela.blocks.fs.ui import tree_node
     (tmp_path/'alpha.py').write_text('x = 1\n')
     ws = Workspace(roots=[tmp_path])
     html = to_xml(tree_node(first(ws.fs.ls(str(tmp_path)))))
-    assert 'leeOpenFile(' in html
+    assert 'leeTreeClick(event,' in html and 'leeOpenFile(' not in html
+    src = (ROOT/'leela'/'blocks'/'fs'/'files.js').read_text()
+    handler = src[src.index('function leeTreeClick'):src.index('window.leeTreeClick')]
+    assert 'leeOpenFile(path)' in handler, 'a plain click still opens through the one opener'
 
 def test_git_info_answers_for_the_repository_it_is_asked_about(tmp_path):
     "Which repository a panel asks about travels as `repo`, so the route must answer for it."
@@ -92,11 +99,14 @@ def test_shell_still_exposes_workspace_and_git_switchers(tmp_path):
 
 def test_file_click_sets_the_same_selected_state_as_keyboard_navigation(tmp_path):
     "Mouse opens used to stopPropagation without painting `.sel`; keys already did."
-    from leela.blocks.fs.ui import tree_node
-    (tmp_path/'alpha.py').write_text('x = 1\n')
-    ws = Workspace(roots=[tmp_path])
-    html = to_xml(tree_node(first(ws.fs.ls(str(tmp_path)))))
-    assert 'leeOpenFile(' in html
+    src = (ROOT/'leela'/'blocks'/'fs'/'files.js').read_text()
+    handler = src[src.index('function leeTreeClick'):src.index('window.leeTreeClick')]
+    assert 'selectTreeNode(n)' in handler, 'a plain click paints the caret, as the arrows do'
+    assert "setScope('files')" in handler
+    # A modifier selects instead, and never opens: that is the whole of multi-select by mouse.
+    assert 'metaKey' in handler and 'shiftKey' in handler
+    opens = handler.index('leeOpenFile(path)')
+    assert handler.index('if (e.shiftKey)') < opens, 'the modifier readings return before opening'
 
 
 def test_the_agent_can_be_pointed_at_ramabanas_own_config_dir(tmp_path, monkeypatch):

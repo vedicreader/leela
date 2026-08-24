@@ -63,7 +63,8 @@ function paintJobModels(d) {
   const options = (d.models || []).map(m =>
     `<option value="${esc(m.value)}">${esc(m.label)} · ${esc(m.provider)}${esc(modelMark(m))}</option>`).join('');
   host.innerHTML = jobs.map(([job, current]) =>
-    `<label>${esc(job)}${helpMark(job)}<select class="lee-select" data-job="${esc(job)}">` +
+    `<label><span class="lee-routing-name">${esc(job)}${helpMark(job)}</span>` +
+    `<select class="lee-select" data-job="${esc(job)}">` +
     options + `</select></label>`).join('');
   for (const [job, current] of jobs) {
     const sel = host.querySelector(`[data-job="${job}"]`);
@@ -82,7 +83,7 @@ function backendRow(r) {
   const note = running ? `installing with ${esc(st.via || 'pip')}…`
     : st.state === 'error' ? `${esc(st.via || 'the installer')} failed — see below`
     : r.available ? 'ready' : esc(r.why || 'not installed');
-  return `<div class="lee-krow" data-bk="${esc(r.value)}">` +
+  return `<div class="lee-setup-row" data-bk="${esc(r.value)}">` +
     `<span><strong>${esc(r.label || r.value)}</strong><br><small>${note}</small>` +
     `${(r.requirements || []).length ? `<br><code>${esc(r.requirements.join(' '))}</code>` : ''}` +
     `${st.state === 'error' && st.log ? `<br><small class="warn">${esc(String(st.log).split('\n').slice(-3).join(' '))}</small>` : ''}</span>` +
@@ -117,7 +118,7 @@ async function pollBackends(m) {
 
 async function leeAddModel() {
   const d = await api('/agent/models');
-  const saved = (d.saved || []).map(x => `<div class="lee-krow"><span><strong>${esc(x.name)}</strong> · ${esc(x.runtime)}<br><small>${esc(x.model_id)}</small></span><button class="lee-btn warn" data-remove="${esc(x.name)}">remove</button></div>`).join('');
+  const saved = (d.saved || []).map(x => `<div class="lee-setup-row"><span><strong>${esc(x.name)}</strong> · ${esc(x.runtime)}<br><small>${esc(x.model_id)}</small></span><button class="lee-btn warn" data-remove="${esc(x.name)}">remove</button></div>`).join('');
   const m = modal(`<div class="lee-mhead">Add model<span class="sub">saved in Leela · API keys stay in environment variables</span></div>
     <label>name<input class="lee-input" id="modelalias" placeholder="ornith-test"></label>
     <label>model ID or Hugging Face URL<input class="lee-input" id="modelid" placeholder="https://huggingface.co/litert-community/… or openai/model-id"></label>
@@ -193,14 +194,14 @@ async function leeSetupPane() {
   if (!d.done && !d.dismissed) leeSetupModal(d);      // nothing can answer a prompt yet
 }
 function setupRow(a) {
-  return `<div class="lee-krow"><span><strong>${esc(a.label)}</strong><br>` +
+  return `<div class="lee-setup-row"><span><strong>${esc(a.label)}</strong><br>` +
     `<small>${esc(a.blurb)}</small>` +
     `${a.detail ? `<br><small class="warn">${esc(a.detail)}</small>` : ''}</span>` +
     `<span class="${a.ready ? 'lee-dim' : 'warn'}">${a.ready ? 'ready' : 'not set up'}</span></div>`;
 }
 function offlineRow(o) {
   const st = o.install || {}, running = st.state === 'running';
-  return `<div class="lee-krow" data-setup-get="${esc(o.value)}"><span><strong>${esc(o.label || o.value)}</strong>` +
+  return `<div class="lee-setup-row" data-setup-get="${esc(o.value)}"><span><strong>${esc(o.label || o.value)}</strong>` +
     ` <small>about ${o.mb} MB</small>` +
     `${st.state === 'error' ? `<br><small class="warn">${esc(String(st.log).split('\n').slice(-2).join(' '))}</small>` : ''}</span>` +
     `${o.available ? '<span class="lee-dim">installed</span>'
@@ -208,7 +209,7 @@ function offlineRow(o) {
 }
 function toolRow(o) {
   const st = o.install || {}, running = st.state === 'running';
-  return `<div class="lee-krow" data-setup-get="${esc(o.value)}"><span><strong>${esc(o.label)}</strong>` +
+  return `<div class="lee-setup-row" data-setup-get="${esc(o.value)}"><span><strong>${esc(o.label)}</strong>` +
     ` <small>about ${o.mb} MB</small><br><small>${esc(o.blurb)}</small>` +
     `${st.state === 'error' ? `<br><small class="warn">${esc(String(st.log).split('\n').slice(-2).join(' '))}</small>` : ''}</span>` +
     `${o.available ? `<span class="lee-dim">${esc(o.found || 'installed')}</span>`
@@ -219,55 +220,71 @@ function updateRows(u) {
   if (!u) return '<div class="lee-dim">checking\u2026</div>';
   const app = u.leela || {};
   const head = app.outdated
-    ? `<div class="lee-krow"><span><strong>Leela ${esc(app.latest)}</strong><br><small>you have ${esc(app.current)}</small></span>` +
+    ? `<div class="lee-setup-row"><span><strong>Leela ${esc(app.latest)}</strong><br><small>you have ${esc(app.current)}</small></span>` +
       `<a class="lee-btn go" href="${esc(app.url)}" target="_blank" rel="noreferrer">get it</a></div>`
-    : `<div class="lee-krow"><span><strong>Leela ${esc(app.current)}</strong><br><small>${app.latest ? 'up to date' : 'could not check'}</small></span></div>`;
+    : `<div class="lee-setup-row"><span><strong>Leela ${esc(app.current)}</strong><br><small>${app.latest ? 'up to date' : 'could not check'}</small></span></div>`;
   const rows = (u.outdated || []).map(r =>
-    `<div class="lee-krow" data-setup-get="${esc(r.runtime)}"><span><strong>${esc(r.dist)}</strong><br>` +
+    `<div class="lee-setup-row" data-setup-get="${esc(r.runtime)}"><span><strong>${esc(r.dist)}</strong><br>` +
     `<small>${esc(r.installed)} \u2192 ${esc(r.latest)}</small></span><button class="lee-btn">update</button></div>`).join('');
   return head + rows + (rows ? '' : (u.backends || []).length
     ? '<div class="lee-dim">backends are current</div>' : '');
 }
-function renderSetup(host, d, u) {
-  host.innerHTML = `<div class="lee-mhead">${d.done ? 'Models and updates' : 'Set up a model'}` +
-    `<span class="sub">${d.done ? 'what is installed here, and what is newer' : 'the agent has nothing to answer with yet'}</span></div>` +
-    `<div class="lee-setup-panes"><section class="lee-setup-pane${d.done ? '' : ' recommended'}"><h4>Accounts` +
+function setupBody(d, u) {
+  return `<div class="lee-setup-panes"><section class="lee-setup-pane${d.done ? '' : ' recommended'}"><h4>Accounts` +
     `<small>nothing to download</small></h4>${d.accounts.map(setupRow).join('')}</section>` +
     `<section class="lee-setup-pane"><h4>On device<small>large</small></h4>` +
     `${d.offline.length ? d.offline.map(offlineRow).join('') : '<div class="lee-dim">nothing for this machine</div>'}` +
     `</section></div>` +
     `${(d.tools || []).length ? `<h4>Tools</h4><div class="lee-setup-updates">${d.tools.map(toolRow).join('')}</div>` : ''}` +
-    `<h4>Updates</h4><div class="lee-setup-updates">${updateRows(u)}</div>` +
-    `<div class="lee-mfoot"><button class="lee-btn go" id="setupdone">done</button></div>`;
-  host.querySelectorAll('[data-setup-get]').forEach(row => row.querySelector('button')?.addEventListener('click', async () => {
+    `<h4>Updates</h4><div class="lee-setup-updates">${updateRows(u)}</div>`;
+}
+/* The box `modal()` built owns the head, the foot and the close button, so only the middle is
+   rewritten. Replacing the box's own markup threw all three away, and the styles with them. */
+function renderSetup(box, d, u) {
+  $('.lee-setup-body', box).innerHTML = setupBody(d, u);
+  box.querySelectorAll('[data-setup-get]').forEach(row => row.querySelector('button')?.addEventListener('click', async () => {
     const runtime = row.dataset.setupGet;
     const r = await post('/agent/runtimes/install', {runtime});
     if (!r.ok) return status(r.error || `could not install ${runtime}`, 'err');
     status(`installing ${runtime}\u2026 it keeps going if you close this`, 'busy');
-    pollSetup(host);
+    pollSetup(box);
   }));
-  $('#setupdone', host).onclick = async () => {
-    await post('/agent/setup/dismiss', {dismissed: true});
-    host.remove();
-    leeSetupPane();
-  };
   clearTimeout(bkPoll);
   const busy = [...(d.offline || []), ...(d.tools || [])].some(o => (o.install || {}).state === 'running');
-  if (busy) bkPoll = setTimeout(() => pollSetup(host), 2000);
+  if (busy) bkPoll = setTimeout(() => pollSetup(box), 2000);
 }
 async function leeSetupModal(known) {
   let d = known;
   if (!d) { try { d = await api('/agent/setup'); } catch (e) { return status(String(e.message || e), 'err'); } }
-  const m = modal('');
-  renderSetup(m, d, null);
+  const m = modal(`<div class="lee-mhead">${d.done ? 'Models and updates' : 'Set up a model'}` +
+    `<span class="sub">${d.done ? 'what is installed here, and what is newer' : 'the agent has nothing to answer with yet'}</span></div>` +
+    `<div class="lee-setup-body"></div>` +
+    `<div class="lee-mfoot"><button class="lee-btn" id="setupreset">start over</button>` +
+    `<span class="lee-spacer"></span><button class="lee-btn go" id="setupdone" autofocus>done</button></div>`,
+    null, null, {className: 'lee-setup-modal', storageKey: 'agent-setup'});
+  const box = $('.lee-modalbox', m);
+  /* Setting a model up is a thing people get part way through and want to begin again: this puts
+     the first-run prompt back rather than hiding it for good. */
+  $('#setupreset', box).onclick = async () => {
+    await post('/agent/setup/dismiss', {dismissed: false});
+    m.remove();
+    leeSetupPane();
+    leeSetupModal();
+  };
+  $('#setupdone', box).onclick = async () => {
+    await post('/agent/setup/dismiss', {dismissed: true});
+    m.remove();
+    leeSetupPane();
+  };
+  renderSetup(box, d, null);
   // The version check is a network call, so the modal opens first and fills this in.
-  try { renderSetup(m, d, await api('/agent/updates')); } catch (_) { renderSetup(m, d, {leela: {}}); }
+  try { renderSetup(box, d, await api('/agent/updates')); } catch (_) { renderSetup(box, d, {leela: {}}); }
 }
-async function pollSetup(host) {
-  if (!host.isConnected) return clearTimeout(bkPoll);
+async function pollSetup(box) {
+  if (!box.isConnected) return clearTimeout(bkPoll);
   try {
     const d = await api('/agent/setup');
-    if (d.ok) renderSetup(host, d, await api('/agent/updates').catch(() => null));
+    if (d.ok) renderSetup(box, d, await api('/agent/updates').catch(() => null));
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 window.leeSetupPane = leeSetupPane;

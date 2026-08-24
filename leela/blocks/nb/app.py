@@ -95,6 +95,9 @@ def connect(app, ctx):
         if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
             return fail('that cell is no longer at this position', 409)
         nb[i].source = d.get('source', nb[i].source)
+        # The notebook about to run is one stat; its tree is a walk, and that is once per root.
+        if ws.initialize_notebook(getattr(owner_tab, 'path', None), nb):
+            doc_versions[owner_tab.path] = _disk_version(owner_tab.path)
         await off_loop(ws.initialize_empty_notebooks, ws.cwd_for(owner_tab))
         await run_lock.acquire()
         try: k = await runtime_for(owner_tab)
@@ -334,6 +337,7 @@ def connect(app, ctx):
         elif op == 'type':
             nb.cycle_type(i) if d.get('cycle') else nb.set_type(i, d.get('cell_type', 'code'))
         elif op == 'split': nb.split(i, int(d.get('offset', 0)))
+        elif op == 'split_symbols': nb.split_symbols(i)
         elif op == 'duplicate': nb.duplicate(i)
         elif op in ('paste', 'paste_many'):
             raws = d.get('cells') if op == 'paste_many' else [d.get('cell')]

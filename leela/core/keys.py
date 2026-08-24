@@ -177,10 +177,18 @@ DEFAULTS = L(
     Key('cell_above',       'mod+alt+up',      'editor', 'insert cell above'),
     Key('cell_below',       'mod+alt+down',    'editor', 'insert cell below'),
     Key('cell_delete',      'mod+alt+backspace', 'editor', 'delete cell'),
+    # CodeMirror's own keymap already answers these inside an editor. Naming them here is what
+    # puts them in the palette and the keys help, and it is the same command either way, so the
+    # chord a hand already knows keeps working. `indent_selection` re-indents to the syntax; the
+    # only chord it had was `mod+alt+backslash`, which nobody finds.
+    Key('indent_more',      'mod+]',           'editor', 'indent'),
+    Key('indent_less',      'mod+[',           'editor', 'outdent'),
+    Key('indent_selection', 'hyper+]',         'editor', 're-indent to the syntax', 'toast'),
     Key('notebook_undo',    'mod+z',           'editor', 'undo cell operation', 'toast'),
     Key('notebook_redo',    'mod+shift+z',     'editor', 'redo cell operation'),
     Key('cell_type',        'alt+shift+m',     'editor', 'code / markdown / prompt', 'toast'),
     Key('cell_split',       'alt+shift+-',     'editor', 'split cell'),
+    Key('cell_split_symbols', 'alt+shift+/',   'editor', 'split into one cell per def', 'toast'),
     Key('cell_collapse',    'hyper+c',         'editor', 'collapse / expand cell'),
     Key('cell_duplicate',   'hyper+d',         'editor', 'duplicate cell below'),
     Key('cell_copy',        'mod+c',           'editor', 'copy cell'),
@@ -211,6 +219,14 @@ DEFAULTS = L(
     Key('new_file',         'n',             'files',  'new file',            'toast'),
     Key('new_dir',          'N',             'files',  'new folder',          'toast'),
     Key('rename',           'r',             'files',  'rename',              'toast'),
+    # Scope-qualified, the way `mod+enter` is three different runs: `cell_copy` is editor-scoped,
+    # so in the tree these are the only claim on the clipboard chords.
+    Key('file_copy',        'mod+c',         'files',  'copy'),
+    Key('file_cut',         'mod+x',         'files',  'cut'),
+    Key('file_paste',       'mod+v',         'files',  'paste into folder'),
+    Key('file_duplicate',   'mod+d',         'files',  'duplicate'),
+    Key('tree_mark_up',     'shift+up',      'files',  'extend selection up'),
+    Key('tree_mark_down',   'shift+down',    'files',  'extend selection down'),
     Key('delete',           'd',             'files',  'delete from disk'),
     Key('refresh_files',    'R',             'files',  'refresh'),
     Key('show_hidden',      'H',             'files',  'show dotfiles',       'toast'),

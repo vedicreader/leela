@@ -55,7 +55,7 @@ def tree_node(e, git_state=None, hidden=False, fs=None, opened=frozenset()):
     return Div(Span(e.name, cls='lee-fname'), Span(state[:1].upper(), cls='lee-tree-git') if state else '',
         cls='lee-node lee-file' + (f' git-{state}' if state else ''), data_path=e.path, role='treeitem',
         data_lang=e.lang or '', aria_selected='false',
-        onclick=f'event.preventDefault();event.stopPropagation();leeOpenFile({json.dumps(e.path)})')
+        onclick=f'leeTreeClick(event,{json.dumps(e.path)})')
 
 def files_panel(fs, hidden=False, opened=()):
     state = git_tree_state(fs)

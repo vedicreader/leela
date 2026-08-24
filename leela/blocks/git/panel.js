@@ -20,6 +20,15 @@ async function renderGitPanel(snapshot = null) {
     wireGitPanel(host, null);
     return;
   }
+  // A key is `group:path`, so a file that was committed or moved between groups leaves a key that
+  // renders as nothing and still gets posted by a bulk action. The selection only means anything
+  // for the change list it was made against.
+  const keys = new Set();
+  for (const c of d.changes || []) {
+    if (c.staged) keys.add(`staged:${c.path}`);
+    if (c.unstaged) keys.add(`unstaged:${c.path}`);
+  }
+  for (const key of [...gitUI.selectedChanges]) if (!keys.has(key)) gitUI.selectedChanges.delete(key);
   gitUI.snapshot = d; paintGitPill(d);
   const view = gitUI.tab === 'changes' ? gitChangesView(d) : gitUI.tab === 'review' ? gitReviewView(d) : gitUI.tab === 'branches' ? gitBranchesView(d) : gitUI.tab === 'history' ? gitHistoryView(d) : gitResourcesView(d);
   host.innerHTML = gitScope() + gitSummary(d) + gitNav() + `<main class="lee-git-view">${view}</main>`;
@@ -115,7 +124,20 @@ function wireGitPanel(host, d) {
   host.querySelector('#scstageall')?.addEventListener('click', e => { e.preventDefault(); act('stage', {paths: d.changes.filter(x => x.unstaged).map(x => x.path)}); });
   host.querySelector('#scunstageall')?.addEventListener('click', e => { e.preventDefault(); act('unstage', {paths: d.changes.filter(x => x.staged).map(x => x.path)}); });
   host.querySelector('#scstash')?.addEventListener('click', async () => { const message = await inputDialog('stash changes', 'Optional message', '', 'work in progress'); if (message !== null) act('stash', {message}); });
-  host.querySelector('#sccommit')?.addEventListener('submit', e => { e.preventDefault(); const message = e.target.querySelector('textarea').value.trim(); if (message) act('commit', {message, amend: e.target.elements.amend.checked}); });
+  /* The panel re-renders on every save in the repository, not only on a click here, so a message
+     being typed has to survive `innerHTML`. The branch filter already worked this way. */
+  const commit = host.querySelector('#sccommit');
+  if (commit) {
+    const box = commit.querySelector('textarea');
+    box.oninput = () => { gitUI.commitDraft = box.value; };
+    commit.addEventListener('submit', e => {
+      e.preventDefault();
+      const message = box.value.trim();
+      if (!message) return status('write a commit message first', 'err');
+      gitUI.commitDraft = '';
+      act('commit', {message, amend: commit.elements.amend.checked});
+    });
+  }
   host.querySelector('#screviewstaged')?.addEventListener('click', () => showStagedReview(d));
   host.querySelector('[data-conflict-center]')?.addEventListener('click', () => showConflictCenter());
   host.querySelectorAll('[data-selected-action]').forEach(b => b.onclick = async () => {

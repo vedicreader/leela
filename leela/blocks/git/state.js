@@ -22,7 +22,7 @@ let savedGitLists = {}, savedGitReviews = {}, savedGitNotes = {};
 try { savedGitLists = JSON.parse(localStorage.getItem('lee-git-changelists') || '{}'); } catch (_) {}
 try { savedGitReviews = JSON.parse(localStorage.getItem('lee-git-reviews') || '{}'); } catch (_) {}
 try { savedGitNotes = JSON.parse(localStorage.getItem('lee-git-review-notes') || '{}'); } catch (_) {}
-const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResults: [], expect: '', history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
+const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResults: [], expect: '', history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), commitDraft: '', changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
 // Which repository a panel request is about. Empty means the one the active tab lives in, which is
 // what the branch pill, the file tree and the editor's change marks always mean.
 function gitUrl(path, params = {}) {
@@ -61,8 +61,10 @@ async function gitDo(op, extra = {}) {
     const said = d.outcome?.summary || `complete · ${Math.round(performance.now() - started)} ms`;
     status(`git ${name} · ${said}${d.outcome?.note ? ' — ' + d.outcome.note : ''}`,
            d.outcome?.note ? 'err' : 'ok');
+    // `recover` is the only handle on a deleted branch or a dropped stash, and a status line is
+    // gone in seconds, so the log is where it has to end up.
     leeLog('git', `${name} · ${gitRepoName(gitUI.repo || d.root || '')}`,
-           [extra.branch, extra.ref, extra.message].filter(Boolean).join(' ') || '', 'ok');
+           [extra.branch, extra.ref, extra.message, d.outcome?.recover].filter(Boolean).join(' ') || '', 'ok');
     return d;
   } catch (e) {
     /* Reporting the failure here is what clears the running status line. Git refusing a switch
@@ -87,12 +89,19 @@ function gitFilterBanner(d) {
     `<strong>files here may not stay staged</strong><span>${esc(f.explain)}</span></div></section>`;
 }
 
-// The way back from the last thing that moved this branch. Offered whenever there is one, because
-// "that merge was not what I wanted" arrives a minute later.
+/* The way back from the last thing that moved this branch, because "that merge was not what I
+   wanted" arrives a minute later.
+
+   Only the guarded operations take a safepoint. Discard, branch create and delete, stash drop and
+   apply_patch take none, so after one of those the newest safepoint is some older merge, and the
+   banner was offering to undo that instead. It says how long ago, which is what tells the two
+   apart. */
 function gitUndoBanner(d) {
   const point = (d.safepoints || [])[0];
   if (!point) return '';
-  return `<section class="lee-git-undo"><span>last: ${esc(point.describe)}</span>` +
+  const when = point.at ? gitRelative(point.at) : '';
+  return `<section class="lee-git-undo"><span>last undoable: ${esc(point.describe)}` +
+    `${when ? ` <small>${esc(when)}</small>` : ''}</span>` +
     `<span class="lee-spacer"></span><button data-git-undo="${esc(point.token)}">undo</button></section>`;
 }
 
