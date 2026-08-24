@@ -666,8 +666,11 @@ def connect(app, ctx):
         """One delegation: the call that asked, what its sub-agents did, and the runs still going.
 
         A delegated conversation is thrown away when it ends, so these recorded calls are the only
-        account of it. `records_sub_calls` is false where the agent core still hands a read-only
-        sub-agent unwrapped tools, so an empty list is not read as "it did nothing".
+        account of it. An empty list is not the same answer as "it did nothing", so
+        `records_sub_calls` says whether linkage has ever been seen to work here: the core stamps
+        `parent_action_id` on a call made inside a delegation, and where a read-only sub-agent gets
+        unwrapped tools nothing is stamped at all. Evidence rather than a version check, because no
+        release has advertised this.
         """
         try: t = _thread(thread)
         except Exception as e: return _thread_error(e)
@@ -685,7 +688,7 @@ def connect(app, ctx):
         return {'ok': True, 'thread': t.id,
                 'delegations': [{**d, 'calls': [r for r in rows if r.get('parent_action_id') == d.get('id')]}
                                 for d in wanted],
-                'runs': live, 'records_sub_calls': hasattr(t.ai, '_record_sub')}
+                'runs': live, 'records_sub_calls': any(r.get('parent_action_id') for r in rows)}
     @rt('/agent/turn')
     async def agent_turn(req):
         try: d = await req.json()

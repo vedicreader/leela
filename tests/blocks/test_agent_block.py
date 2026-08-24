@@ -108,10 +108,24 @@ def test_every_routed_job_says_where_its_model_is_spent():
     assert str(help_mark('nosuchjob'))                 # an unknown job renders, saying nothing
 
 
+def test_an_unlinked_delegation_is_not_reported_as_having_done_nothing(tmp_path):
+    "No stamped call anywhere means we cannot account for the sub-agent, which is not the same thing."
+    ws = Workspace(roots=[tmp_path])
+    ai = ws.threads.active.ai
+    ai.activity.finish(ai.activity.start('delegate_search', {'question': 'anything?'}), 'nothing')
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/agent/subagents').json()
+        assert d['delegations'] and d['delegations'][0]['calls'] == []
+        assert d['records_sub_calls'] is False
+
 def test_a_delegation_is_inspectable_and_says_when_nothing_was_recorded(tmp_path):
     """A delegated sub-agent's conversation is thrown away when it answers, so its recorded calls
     are the only account of it. Where the agent core still hands a read-only sub-agent unwrapped
     tools there are none, and the pane must be told that rather than draw an empty list.
+
+    `records_sub_calls` was `hasattr(ai, '_record_sub')`, a name no ramabana release has, so the
+    answer was always no and the pane said nothing was being recorded even where it plainly was.
+    It is evidence now: a call stamped with the delegation it was made inside.
     """
     ws = Workspace(roots=[tmp_path])
     app = ide_app(ws)
@@ -124,7 +138,7 @@ def test_a_delegation_is_inspectable_and_says_when_nothing_was_recorded(tmp_path
         assert d['ok'] and len(d['delegations']) == 1
         one = d['delegations'][0]
         assert one['id'] == parent.id and [c['tool'] for c in one['calls']] == ['search_code']
-        assert d['records_sub_calls'] is hasattr(ai, '_record_sub')
+        assert d['records_sub_calls'] is True, 'a linked call is the evidence that linkage works'
         assert client.get(f'/agent/subagents?action_id={parent.id}').json()['delegations'][0]['id'] == parent.id
         assert client.get('/agent/subagents?action_id=nope').json()['delegations'] == []
 

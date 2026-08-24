@@ -1996,10 +1996,10 @@ function paintSubagents(box, d) {
     for (const v of (row._leeViews || [])) try { LeeCM.destroy(v); } catch {}
   const cards = (d.delegations || []).map(x => {
     const calls = x.calls || [];
-    // an empty list is not the same answer as "it did nothing", and only the core knows which
+    // an empty list is not the same answer as "it did nothing", and the server says which
     const none = d.records_sub_calls
       ? 'This delegation recorded no tool calls.'
-      : 'This build of the agent core hands a read-only sub-agent unwrapped tools, so nothing it did was recorded.';
+      : 'Nothing a sub-agent does is being recorded here, so this is not an account of what it did.';
     return `<section class="lee-subagent ${x.ok ? 'ok' : 'failed'}">` +
       `<header><strong>${esc(x.summary || x.tool)}</strong>` +
       `<span>${esc(x.done ? (x.ok ? `answered in ${Number(x.secs || 0).toFixed(1)}s` : 'failed') : 'still working')}` +
@@ -2072,6 +2072,9 @@ function agentProgress(log) {
     `<button class="lee-agent-stop" type="button">Stop</button>`;
   log.appendChild(el);
   const began = performance.now(), clock = setInterval(() => {
+    // The pane rebuilds this log whole, and only `finish` clears the clock, so a strip that is
+    // replaced rather than finished would be written to four times a second forever.
+    if (!el.isConnected) return clearInterval(clock);
     const secs = Math.floor((performance.now() - began) / 1000);
     $('.lee-agent-elapsed', el).textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
   }, 250);

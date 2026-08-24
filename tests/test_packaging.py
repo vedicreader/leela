@@ -138,8 +138,10 @@ def test_the_artwork_is_committed_and_everything_drawn_from_it_is_not():
     import subprocess
     pytest.importorskip('PIL')
     import tools.build_icons as icons
-    for src in (*icons.MARKS.values(), icons.MASK):
-        assert src.is_file() and src.stat().st_size > 1000, f'{src.name} is a source of its own'
+    assert icons.SHEET.is_file() and icons.SHEET.stat().st_size > 1000, 'one sheet is the source'
+    # Every mark is cut from it, so there is no second copy of the artwork to disagree with.
+    assert not list(icons.ASSETS.glob('leela-mark*.png')), 'the marks are generated, not committed'
+    assert not list(icons.ASSETS.glob('leela-turtle*.png')), 'and the old artwork is gone'
     tracked = subprocess.run(['git', 'ls-files', 'packaging/assets'], cwd=ROOT,
                              capture_output=True, text=True).stdout.split()
     drawn = {'Leela.png', 'Leela.ico', 'Leela.svg', 'Leela.icns'}
