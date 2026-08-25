@@ -242,7 +242,7 @@ function renderOutputs(c) {
     if (c.reply) {
       const reply = document.createElement('div');
       reply.className = 'lee-reply'; box.appendChild(reply);
-      renderMarkdown(reply, c.reply);
+      renderMarkdown(reply, (c.calls || []).length ? stripWorkLog(c.reply) : c.reply);
       const usage = usageMeta(c.usage, '', c.usage?.model); if (usage) box.appendChild(usage);
     }
     // pictures and video the turn generated do arrive as nbformat outputs, and draw as any other

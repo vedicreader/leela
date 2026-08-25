@@ -538,6 +538,44 @@ const overflowsDown = (el, shown = false) => {
   return box > 0 && el.scrollHeight > box + (shown ? OVER_HIDE : OVER_SHOW);
 };
 
+/* `has-overview`, with the width the hidden bar was taking held back as padding.
+
+   A scroll bar takes layout space wherever the platform draws it in the flow rather than over the
+   content: macOS with "Show scroll bars: Always", and every Windows and Linux desktop. Hiding it
+   hands that width to the text, wrapped text rewraps, and `scrollHeight` moves. That is the same
+   number the stripe decides on, so the class fed itself: the stripe appeared, the pane got wider
+   and shorter, it fell under the threshold, the stripe went, the bar came back, and it flickered
+   at frame rate. The rewrap is worth hundreds of pixels where a line sits near a wrap boundary,
+   so no hysteresis narrower than a paragraph would have held it.
+
+   The bar's thickness is measured, not assumed: it is zero where the platform draws overlay bars,
+   and that reserves nothing.
+
+   `by` names the stripe asking, because two of them reach the same pane. A file's stripe scrolls
+   `#editor` and so does a notebook's, and the notebook painter asserted "off" on every scroll of
+   any tab. It took the class straight back off under a file's stripe, which drew on regardless:
+   the native bar returned beside it, and which one you got depended on whose frame ran last. So a
+   pane's bar is only ever given back to whoever took it away. */
+export function overviewGutter(el, on, by = 'cm') {
+  if (!el) return;
+  const owner = el.dataset.leeOverview;
+  if (!on && owner && owner !== by) return;
+  if (el.classList.contains('has-overview') === on) { if (on) el.dataset.leeOverview = by; return; }
+  if (!on) {
+    el.classList.remove('has-overview');
+    el.style.paddingRight = el.dataset.leeGutter || '';
+    delete el.dataset.leeGutter; delete el.dataset.leeOverview;
+    return;
+  }
+  const css = getComputedStyle(el);
+  const bar = el.offsetWidth - el.clientWidth -
+              parseFloat(css.borderLeftWidth) - parseFloat(css.borderRightWidth);
+  el.dataset.leeGutter = el.style.paddingRight;
+  el.dataset.leeOverview = by;
+  el.classList.add('has-overview');
+  if (bar > .5) el.style.paddingRight = (parseFloat(css.paddingRight) + bar) + 'px';
+}
+
 // The element that really scrolls: CodeMirror's own, or the pane it is laid out inside. Never the
 // document: in a browser it overflows where the app window does not, and `has-overview` on `<body>`
 // matches no rule, so the bar it was meant to hide stayed put.
@@ -610,14 +648,16 @@ function overviewPlugin(mode = 'off', threshold = 120) {
       const scroller = this.scroller = scrollerFor(this.view);
       // The pane that scrolls can change when panels move. The old one keeps `has-overview`, and
       // with it a hidden native scroll bar, unless it is cleared here.
-      if (previous && previous !== scroller) previous.classList.remove('has-overview');
+      if (previous && previous !== scroller) overviewGutter(previous, false);
       this.watch(scroller);
       const shown = (mode === 'always' || (mode === 'long' && lines >= threshold)) &&
                     overflowsDown(scroller, this.dom.hidden === false);
       this.dom.hidden = !shown;
       this.view.dom.classList.toggle('cm-lee-has-overview', shown);
       // `has-overview` is the notebook stripe's class, hiding the bar of the pane that scrolls.
-      if (scroller !== this.view.scrollDOM) scroller.classList.toggle('has-overview', shown);
+      // CodeMirror's own scroller is not given it: `.cm-lee-has-overview .cm-scroller` reserves the
+      // stripe's 15px there, which is already at least what a bar in the flow was taking.
+      if (scroller !== this.view.scrollDOM) overviewGutter(scroller, shown);
       if (!shown) return;
       const dpr = devicePixelRatio || 1, w = OVERVIEW_W, h = Math.max(40, scroller.clientHeight);
       this.dom.width = w * dpr; this.dom.height = h * dpr;
@@ -664,7 +704,7 @@ function overviewPlugin(mode = 'off', threshold = 120) {
       clearTimeout(this.settle);
       cancelAnimationFrame(this.frame);
       this.view.dom.classList.remove('cm-lee-has-overview');
-      this.scroller?.classList.remove('has-overview');
+      overviewGutter(this.scroller, false);
       this.dom.remove();
     }
   });

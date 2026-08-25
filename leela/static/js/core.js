@@ -340,14 +340,24 @@ function polishActivityGroup(el) {
       `<span class="lee-agent-step-chevron" aria-hidden="true"></span>`;
   });
 }
+/* The fold a step row replaces. Only a `result` fold holding this one block goes with it: climbing to
+   the nearest `<details>` regardless took the whole "what I did" group, summary and later steps
+   included, and left the rest of the loop working on nodes already off the page. */
+function payloadContainer(code) {
+  const pre = code.parentElement, fold = pre.closest('details');
+  if (!fold) return pre;
+  const body = [...fold.children].filter(n => n.tagName !== 'SUMMARY');
+  const label = fold.querySelector(':scope > summary')?.textContent || '';
+  return body.length === 1 && body[0] === pre && /^\s*result\b/i.test(label) ? fold : pre;
+}
 function upgradePortableToolMarkdown(el) {
   $$('pre > code', el).forEach(code => {
+    if (!code.isConnected) return;
     const payload = portableToolPayload(code.textContent || ''); if (!payload) return;
     const row = document.createElement('details');
     renderAgentStep(row, {...payload, kind: portableToolKind(payload.tool), done: true, ok: true, secs: 0,
                           summary: portableToolSummary(payload.tool, payload.args)});
-    const container = code.parentElement.closest('details') || code.parentElement;
-    container.replaceWith(row);
+    payloadContainer(code).replaceWith(row);
   });
   $$('li', el).forEach(li => {
     if (/[⏳⌛]/u.test(li.textContent || '') && li.querySelector('code')) li.remove();
@@ -424,6 +434,11 @@ function routeMarkdownLinks(el) {
     });
   });
 }
+
+/* A prompt cell stores its work log twice: as `calls`, and again at the end of `reply`. The renderer
+   has no raw HTML, so the second copy read as literal `<details>` tags over an unrolled result. */
+const WORK_LOG = /\n*<details>\s*<summary>\s*what i did[^<]*<\/summary>[\s\S]*<\/details>\s*$/i;
+function stripWorkLog(text) { return String(text || '').replace(WORK_LOG, '').trimEnd(); }
 
 function renderMarkdown(el, text, allowRaw = false, onRender = null) {
   if (!el) return;

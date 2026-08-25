@@ -78,7 +78,11 @@ function paintNotebookOverview() {
   // Nothing to overview when the whole notebook fits, and the stripe would take the scrollbar
   // away to say so.
   const on = lee.kind === 'notebook' && host.scrollHeight > host.clientHeight + 4;
-  c.hidden = !on; host.classList.toggle('has-overview', on);
+  // `LeeCM.overviewGutter` rather than the class alone: it holds back the width the hidden bar
+  // was taking, which is what stops the pane rewrapping into a different answer every frame.
+  // Named, because a file's stripe hides the bar of this same pane: unnamed, the `off` below ran
+  // on every scroll of a text tab and put the bar back beside a stripe that had replaced it.
+  c.hidden = !on; LeeCM.overviewGutter(host, on, 'nb');
   if (!on) return;
   const stageBox = stage.getBoundingClientRect(), box = host.getBoundingClientRect();
   // Measured rather than pinned to the stage, so a split editor puts it on the notebook's own

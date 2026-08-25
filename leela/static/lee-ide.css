@@ -616,6 +616,8 @@ kbd {
 /* The class goes on whichever element actually scrolls, which is not always `.lee-editor`: a
    markdown cell's preview scrolls itself, and so does a pane the stripe was drawn against. Scoped
    to one class name, the stripe replaced a bar it had not hidden, and both were on screen. */
+/* No width compensation here: a bar drawn in the flow gives its width back to the text when this
+   hides it, and `LeeCM.overviewGutter` holds exactly the measured thickness back as padding. */
 .has-overview { scrollbar-width:none; }
 .has-overview::-webkit-scrollbar { width:0; height:0; }
 .lee-editor-secondary { border:0; }
