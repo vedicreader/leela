@@ -472,6 +472,148 @@ def test_conflicts_route_answers_json_for_a_clean_repo_and_a_stopped_merge(repo_
     d = c.get('/git/conflicts').json()
     assert [f['path'] for f in d['files']] == ['src/app.py'] and d['operation']['active'] == 'merge'
 
+def served(roots):
+    "One IDE over these folders, and the workspace whose journal the writes must reach."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    ws = Workspace(roots=roots)
+    return TestClient(ide_app(ws)), ws
+
+def gitop(client, **d): return client.post('/git/action', json=d)
+
+def journalled(ws, label):
+    return first(op for op in ws.journal.rows() if op['label'] == label)
+
+def test_ignoring_a_path_is_versioned_and_undoable(repo_git):
+    """`ignore` wrote through Ramabana's own `write_text`, so nothing kept a copy of what it
+    replaced and `/history/undo` could not reach it."""
+    c, ws = served([repo_git])
+    (repo_git/'.gitignore').write_text('build/\n')
+    assert gitop(c, op='ignore', path='src/app.py').status_code == 200
+    assert (repo_git/'.gitignore').read_text() == 'build/\nsrc/app.py\n'
+    op = journalled(ws, 'Git ignore')
+    assert op and op['paths'] == [str(repo_git/'.gitignore')] and op['reversible']
+    assert ws.history.rows(str(repo_git/'.gitignore'))
+    assert c.post('/history/undo', json={}).json()['ok']
+    assert (repo_git/'.gitignore').read_text() == 'build/\n'
+
+def test_ignoring_from_the_file_tree_is_journalled_the_same_way(repo_git):
+    "The tree route reaches the same write, so it must leave the same row behind."
+    c, ws = served([repo_git])
+    assert c.post('/git/tree/action', json={'op': 'ignore', 'path': str(repo_git/'src'/'app.py')}
+                  ).status_code == 200
+    op = journalled(ws, 'Git ignore')
+    assert op and op['paths'] == [str(repo_git/'.gitignore')] and op['reversible']
+
+def test_an_ignore_rule_already_there_writes_nothing(repo_git):
+    "Ramabana's no-op branch has to survive the override, or every ignore duplicates a rule."
+    c, ws = served([repo_git])
+    (repo_git/'.gitignore').write_text('src/app.py\n')
+    assert gitop(c, op='ignore', path='src/app.py').status_code == 200
+    assert (repo_git/'.gitignore').read_text() == 'src/app.py\n'
+    assert journalled(ws, 'Git ignore') is None
+
+def test_a_repository_above_every_open_folder_still_writes_its_ignore_rule(repo_git):
+    "The .gitignore then sits outside the sandbox; refusing it would break what works today."
+    c, ws = served([repo_git/'src'])
+    assert gitop(c, op='ignore', path='src/app.py').status_code == 200
+    assert (repo_git/'.gitignore').read_text() == 'src/app.py\n'
+    assert journalled(ws, 'Git ignore') is None
+
+RESOLVED = 'shared\nsettled\ntail\n'
+
+def resolving(client, **extra):
+    return gitop(client, op='resolve_conflict', path='src/app.py', choice='resolved',
+                 content=RESOLVED, **extra)
+
+def test_resolving_a_conflict_is_atomic_versioned_and_undoable(repo_git):
+    "The resolution went to disk through `write_text`: no version, and no row to undo."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    c, ws = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/app.py'})
+    assert resolving(c).status_code == 200
+    assert path.read_text() == RESOLVED
+    op = journalled(ws, 'Git resolve conflict')
+    assert op and op['paths'] == [str(path)] and op['reversible']
+    assert ws.history.rows(str(path))
+
+def test_resolving_a_conflict_refuses_when_the_file_moved_under_the_panes(repo_git):
+    "The browser's text was written over whatever was on disk now, destroying it silently."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    c, ws = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/app.py'})
+    path.write_text('someone else got here first\n')
+    r = resolving(c)
+    assert r.status_code == 409
+    assert r.json() == {'ok': False,
+                        'error': 'files changed after the conflict panes were built: src/app.py'}
+    assert path.read_text() == 'someone else got here first\n', 'their work is still there'
+    assert journalled(ws, 'Git resolve conflict') is None
+
+def test_a_resolution_with_nothing_to_compare_against_is_refused_not_guessed(repo_git):
+    "A choice made against text Leela never saw is exactly the write that cannot be checked."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    c, _ = served([repo_git])
+    r = resolving(c)
+    assert r.status_code == 409 and r.json()['ok'] is False
+    assert r.json()['error'].startswith('reopen src/app.py')
+    assert '<<<<<<<' in path.read_text()
+
+def test_the_panes_text_can_travel_on_the_request_instead(repo_git):
+    "So the check holds for a client that carries what it built the panes from."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    c, _ = served([repo_git])
+    assert resolving(c, before=path.read_text()).status_code == 200
+    assert path.read_text() == RESOLVED
+
+def test_choosing_a_whole_side_is_gated_the_same_way_a_resolution_is(repo_git):
+    "A checkout overwrites the working file, so a hand-edit made since the panes is the same loss."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    c, ws = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/app.py'})
+    path.write_text('someone else got here first\n')
+    r = gitop(c, op='resolve_conflict', path='src/app.py', choice='theirs')
+    assert r.status_code == 409
+    assert r.json() == {'ok': False,
+                        'error': 'files changed after the conflict panes were built: src/app.py'}
+    assert path.read_text() == 'someone else got here first\n', 'their work is still there'
+    assert journalled(ws, 'Git resolve conflict') is None
+
+def test_a_whole_side_with_nothing_to_compare_against_is_refused_too(repo_git):
+    "Same contract as a resolution: a write Leela cannot check is a write it does not make."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    c, _ = served([repo_git])
+    r = gitop(c, op='resolve_conflict', path='src/app.py', choice='theirs')
+    assert r.status_code == 409 and r.json()['ok'] is False
+    assert r.json()['error'].startswith('reopen src/app.py')
+    assert '<<<<<<<' in path.read_text()
+
+def test_the_whole_side_modal_sends_what_it_was_built_from():
+    "Or the gate rests on the server still remembering those panes, which it need not."
+    src = (ROOT/'leela'/'blocks'/'git'/'conflictpanes.js').read_text()
+    body = src[src.index('async function showWholeSideConflict'):]
+    assert "before: d.worktree" in body
+
+def test_resolving_safe_conflicts_is_journalled_too(repo_git):
+    "The same seam, reached from the conflict centre's one-click resolution."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    path.write_text('top\n<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> other\nnext\n')
+    c, ws = served([repo_git])
+    c.get('/git/conflicts')   # the plan the button is built from, and the batch's before-image
+    assert gitop(c, op='resolve_safe_conflicts', paths=['src/app.py']).status_code == 200
+    assert path.read_text() == 'top\nsame\nnext\n'
+    op = journalled(ws, 'Git resolve safe conflicts')
+    assert op and op['paths'] == [str(path)] and op['reversible']
+
+def test_a_resolution_keeps_the_files_mode(repo_git):
+    "`atomic_save` renames a new file into place, which would drop the executable bit."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    path.chmod(0o755)
+    c, _ = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/app.py'})
+    assert resolving(c).status_code == 200
+    assert path.stat().st_mode & 0o111, 'still executable'
+
 def test_git_errors_are_readable(tmp_path):
     with pytest.raises(GitError, match='not inside a Git repository'):
         GitRepo.at(tmp_path)
@@ -1659,3 +1801,449 @@ def test_the_tree_says_what_discard_really_restores():
     ask = files[files.index("op === 'discard'"):]
     ask = ask[:ask.index('return;')]
     assert 'from the index' in ask and 'HEAD' not in ask
+
+def staged_now(root):
+    "Which paths the index holds differently from HEAD."
+    return git(root, 'diff', '--cached', '--name-only').split()
+
+def unmerged_now(root, path='src/app.py'):
+    "Whether the index still holds this path's three conflict stages."
+    return bool(git(root, 'ls-files', '-u', '--', path).strip())
+
+def reviewable(repo_git):
+    "A branch ahead of a clean, checked-out main: what `can_apply` in a review needs."
+    r, path = GitRepo.at(repo_git), repo_git/'src'/'app.py'
+    r.create('feature'); path.write_text('value = 2\n')
+    git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', 'the feature')
+    r.checkout('main')
+    return r, path
+
+def reviewing(client, path='src/app.py'):
+    return client.get('/git/review/file', params={'base': 'main', 'head': 'feature', 'path': path})
+
+MERGED = 'value = 3\n'
+
+def applying(client, **extra):
+    return gitop(client, op='write_worktree', path='src/app.py', content=MERGED, **extra)
+
+def test_a_review_pane_is_served_with_the_worktree_it_would_be_applied_over(repo_git):
+    "The browser cannot echo back text it was never given, so the gate starts here."
+    _, path = reviewable(repo_git)
+    c, _ = served([repo_git])
+    d = reviewing(c).json()
+    assert d['can_apply'] and d['worktree'] == path.read_text()
+
+def test_applying_a_reviewed_result_refuses_when_the_file_moved_under_the_panes(repo_git):
+    "The merge pane's write went over whatever was on disk now, destroying it silently."
+    _, path = reviewable(repo_git)
+    c, ws = served([repo_git])
+    reviewing(c)
+    path.write_text('someone else got here first\n')
+    r = applying(c)
+    assert r.status_code == 409
+    assert r.json() == {'ok': False,
+                        'error': 'files changed after the diff panes were built: src/app.py'}
+    assert path.read_text() == 'someone else got here first\n', 'their work is still there'
+    assert journalled(ws, 'Git write worktree') is None
+
+def test_applying_with_nothing_to_compare_against_is_refused_not_guessed(repo_git):
+    "Same contract as a resolution: a write Leela cannot check is a write it does not make."
+    _, path = reviewable(repo_git)
+    c, _ = served([repo_git])
+    r = applying(c)
+    assert r.status_code == 409 and r.json()['ok'] is False
+    assert r.json()['error'].startswith('reopen src/app.py')
+    assert path.read_text() == 'value = 1\n'
+
+def test_the_reviewed_text_can_travel_on_the_request_instead(repo_git):
+    "And a permitted apply is still atomic, versioned and undoable."
+    _, path = reviewable(repo_git)
+    c, ws = served([repo_git])
+    assert applying(c, before=path.read_text()).status_code == 200
+    assert path.read_text() == MERGED
+    op = journalled(ws, 'Git write worktree')
+    assert op and op['paths'] == [str(path)] and op['reversible']
+    assert ws.history.rows(str(path))
+
+def test_a_remembered_conflict_pane_does_not_gate_a_review_apply(repo_git):
+    "One cache for both would let reading either one wave the other's write through."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    c, _ = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/app.py'})
+    assert applying(c).status_code == 409
+
+def test_a_notebook_is_never_written_from_a_diff_pane(repo_git):
+    "Those panes hold decoded cell sources, so writing them back would flatten the notebook."
+    write_nb(repo_git/'nb.ipynb', NOTEBOOK['cells'])
+    c, _ = served([repo_git])
+    r = gitop(c, op='write_worktree', path='nb.ipynb', content='x = 1\n', before='')
+    assert r.status_code == 400 and 'notebook' in r.json()['error']
+    assert (repo_git/'nb.ipynb').read_text().startswith('{')
+
+def test_the_tree_route_still_refuses_to_write_a_worktree_file(repo_git):
+    "The other route to a Git mutation must not become an ungated way in."
+    c, _ = served([repo_git])
+    r = c.post('/git/tree/action', json={'op': 'write_worktree', 'path': str(repo_git/'src'/'app.py'),
+                                         'content': MERGED})
+    assert r.status_code == 400 and 'unknown tree Git action' in r.json()['error']
+    assert (repo_git/'src'/'app.py').read_text() == 'value = 1\n'
+
+def test_undoing_a_resolution_puts_gits_index_back_too(repo_git):
+    "Undo restored the text and left the file staged, so only `git reset` finished the job."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    c, _ = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/app.py'})
+    assert resolving(c).status_code == 200
+    assert staged_now(repo_git) == ['src/app.py'] and not unmerged_now(repo_git)
+    assert c.post('/history/undo', json={}).json()['ok']
+    assert '<<<<<<<' in path.read_text()
+    assert unmerged_now(repo_git), 'conflicted again, all three stages, as it was'
+
+def test_redoing_a_resolution_stages_it_again(repo_git):
+    "The hook has to run both ways, or a redo leaves a settled file looking unresolved."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    c, _ = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/app.py'})
+    resolving(c); c.post('/history/undo', json={})
+    assert c.post('/history/redo', json={}).json()['ok']
+    assert path.read_text() == RESOLVED
+    assert staged_now(repo_git) == ['src/app.py'] and not unmerged_now(repo_git)
+
+def test_undoing_a_resolution_after_the_merge_was_committed_only_unstages(repo_git):
+    "Making a file conflicted again with no merge to finish leaves a state the IDE cannot end."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    c, _ = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/app.py'})
+    resolving(c)
+    git(repo_git, 'commit', '-m', 'merged')
+    op = c.post('/history/undo', json={}).json()['operation']
+    assert 'that merge is over' in op['note']
+    assert staged_now(repo_git) == [] and not unmerged_now(repo_git)
+    assert '<<<<<<<' in path.read_text(), 'the text is still put back'
+
+def test_a_git_row_that_staged_nothing_leaves_the_index_alone(repo_git):
+    "Only what the operation staged may be taken back out, never what was staged before it."
+    c, _ = served([repo_git])
+    (repo_git/'src'/'app.py').write_text('value = 2\n')
+    git(repo_git, 'add', '--', 'src/app.py')
+    assert gitop(c, op='ignore', path='build').status_code == 200
+    assert c.post('/history/undo', json={}).json()['ok']
+    assert staged_now(repo_git) == ['src/app.py'], 'their staging is untouched'
+
+def test_a_git_row_written_before_the_index_was_recorded_still_undoes(repo_git):
+    "A journal on disk outlives the release that wrote it."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    c, ws = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/app.py'})
+    resolving(c)
+    for key in ('root', 'staged', 'index'): ws.journal.operations[-1].pop(key, None)
+    assert c.post('/history/undo', json={}).json()['ok']
+    assert '<<<<<<<' in path.read_text()
+
+def whole_side(client, choice, before, path='src/app.py'):
+    return gitop(client, op='resolve_conflict', path=path, choice=choice, before=before)
+
+def test_choosing_ours_is_journalled_versioned_and_undoable(repo_git):
+    """`ours` was a Git checkout rather than a write through `saver`, so it staged a file and left
+    no journal row at all."""
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    markers = path.read_text()
+    c, ws = served([repo_git])
+    assert whole_side(c, 'ours', markers).status_code == 200
+    assert path.read_text() == MIXED_OURS
+    # `ours` is what HEAD already holds, so it is staged without differing from it.
+    assert not unmerged_now(repo_git)
+    op = journalled(ws, 'Git resolve conflict')
+    assert op and op['paths'] == [str(path)] and op['reversible']
+    assert ws.history.rows(str(path))
+    assert c.post('/history/undo', json={}).json()['ok']
+    assert path.read_text() == markers
+    assert unmerged_now(repo_git), 'conflicted again, all three stages, as it was'
+
+def test_choosing_theirs_undoes_and_redoes(repo_git):
+    "The hook has to run both ways here too, or a redo leaves a settled file looking unresolved."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    markers = path.read_text()
+    c, _ = served([repo_git])
+    assert whole_side(c, 'theirs', markers).status_code == 200
+    assert path.read_text() == MIXED_THEIRS
+    c.post('/history/undo', json={})
+    assert path.read_text() == markers and unmerged_now(repo_git)
+    assert c.post('/history/redo', json={}).json()['ok']
+    assert path.read_text() == MIXED_THEIRS
+    assert staged_now(repo_git) == ['src/app.py'] and not unmerged_now(repo_git)
+
+def test_keeping_the_working_tree_leaves_a_row_with_no_text_in_it(repo_git):
+    "It changes only the index, so without a row of its own nothing could take the staging back."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    markers = path.read_text()
+    c, ws = served([repo_git])
+    assert gitop(c, op='resolve_conflict', path='src/app.py', choice='worktree').status_code == 200
+    assert staged_now(repo_git) == ['src/app.py'] and not unmerged_now(repo_git)
+    op = journalled(ws, 'Git resolve conflict')
+    assert op and op['reversible'] and op['paths'] == [str(path)]
+    assert c.post('/history/undo', json={}).json()['ok']
+    assert unmerged_now(repo_git), 'conflicted again, all three stages'
+    assert path.read_text() == markers, 'the file was never written, so it is left alone'
+
+def test_keeping_the_working_tree_is_not_gated(repo_git):
+    "It stages the file exactly as it is on disk, so a disk that moved is the input, not a hazard."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    c, _ = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/app.py'})
+    path.write_text('hand written\n')
+    assert gitop(c, op='resolve_conflict', path='src/app.py', choice='worktree').status_code == 200
+    assert path.read_text() == 'hand written\n'
+    assert staged_now(repo_git) == ['src/app.py']
+
+def binary_conflict(repo_git):
+    "Leave `repo` mid-merge with a binary file conflicted, which is `choose one complete side`."
+    r, path = GitRepo.at(repo_git), repo_git/'src'/'logo.bin'
+    path.write_bytes(b'\x00base\x00')
+    git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', 'the binary')
+    r.create('other'); path.write_bytes(b'\x00theirs\x00')
+    git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', 'other side')
+    r.checkout('main'); path.write_bytes(b'\x00ours\x00')
+    git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', 'main side')
+    assert subprocess.run(['git', 'merge', 'other'], cwd=repo_git, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode != 0
+    return r, path
+
+def test_a_binary_side_leaves_a_row_and_an_undo_that_puts_the_bytes_back(repo_git):
+    "Its bodies cannot be journal text, so the row carries the stages the bytes are still in."
+    _, path = binary_conflict(repo_git)
+    assert path.read_bytes() == b'\x00ours\x00', 'git leaves our version in the tree'
+    c, ws = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/logo.bin'})
+    r = gitop(c, op='resolve_conflict', path='src/logo.bin', choice='theirs')
+    assert r.status_code == 200 and path.read_bytes() == b'\x00theirs\x00'
+    op = journalled(ws, 'Git resolve conflict')
+    assert op and op['reversible'] and op['paths'] == [str(path)]
+    undone = c.post('/history/undo', json={}).json()
+    assert undone['ok'] and not undone['operation']['note']
+    assert path.read_bytes() == b'\x00ours\x00', 'the bytes are back'
+    assert unmerged_now(repo_git, 'src/logo.bin'), 'conflicted again, all three stages'
+
+def test_a_binary_side_says_so_when_it_cannot_put_the_bytes_back(repo_git):
+    "A file edited after the merge left it is not any stage, and no copy of it is journal text."
+    _, path = binary_conflict(repo_git)
+    path.write_bytes(b'\x00hand\x00edited\x00')
+    c, _ = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/logo.bin'})
+    assert gitop(c, op='resolve_conflict', path='src/logo.bin', choice='theirs',
+                 before=path.read_text(errors='replace')).status_code == 200
+    note = c.post('/history/undo', json={}).json()['operation']['note']
+    assert 'is binary' in note and 'still holds the side you chose' in note
+    assert unmerged_now(repo_git, 'src/logo.bin'), 'the stages are back even so'
+
+def test_undoing_a_binary_side_after_the_merge_was_committed_says_what_it_left(repo_git):
+    "Unstaging alone leaves a working file nobody was told had been rewound. Or not rewound."
+    _, path = binary_conflict(repo_git)
+    c, _ = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/logo.bin'})
+    gitop(c, op='resolve_conflict', path='src/logo.bin', choice='theirs')
+    git(repo_git, 'commit', '-m', 'merged')
+    note = c.post('/history/undo', json={}).json()['operation']['note']
+    assert 'that merge is over' in note and 'still holds the side you chose' in note
+    assert path.read_bytes() == b'\x00theirs\x00'
+
+def test_a_side_that_deleted_the_file_is_never_staged_as_an_empty_one(repo_git):
+    """`git show :3:` is `''` for a missing stage, so writing it would stage the empty blob and
+    finish the merge with content nobody chose. Taking the file away is what the button asks for."""
+    r, path = GitRepo.at(repo_git), repo_git/'src'/'app.py'
+    r.create('other'); git(repo_git, 'rm', '-q', 'src/app.py')
+    git(repo_git, 'commit', '-m', 'deleted on the other side')
+    r.checkout('main'); path.write_text('value = 2\n')
+    git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', 'edited on main')
+    assert subprocess.run(['git', 'merge', 'other'], cwd=repo_git, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode != 0
+    c, ws = served([repo_git])
+    r2 = gitop(c, op='resolve_conflict', path='src/app.py', choice='theirs',
+               before=path.read_text())
+    assert r2.status_code == 200 and not path.exists()
+    assert git(repo_git, 'ls-files', '-s', '--', 'src/app.py') == '', 'no blob at all, empty or not'
+    assert git(repo_git, 'diff', '--cached', '--name-status') == 'D\tsrc/app.py'
+    assert journalled(ws, 'Git resolve conflict')
+
+def test_a_symlink_side_is_still_a_checkout(repo_git):
+    "A text write of `git show :2:` would write the link's target through it into another file."
+    r = GitRepo.at(repo_git)
+    (repo_git/'src'/'one.py').write_text('one\n'); (repo_git/'src'/'two.py').write_text('two\n')
+    (repo_git/'src'/'link').symlink_to('one.py')
+    git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', 'a link')
+    r.create('other')
+    (repo_git/'src'/'link').unlink(); (repo_git/'src'/'link').symlink_to('two.py')
+    git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', 'other side')
+    r.checkout('main')
+    (repo_git/'src'/'link').unlink(); (repo_git/'src'/'link').symlink_to('src/app.py')
+    git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', 'main side')
+    assert subprocess.run(['git', 'merge', 'other'], cwd=repo_git, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode != 0
+    c, _ = served([repo_git])
+    c.get('/git/conflict', params={'path': 'src/link'})
+    assert gitop(c, op='resolve_conflict', path='src/link', choice='ours').status_code == 200
+    link = repo_git/'src'/'link'
+    assert link.is_symlink() and str(link.readlink()) == 'src/app.py'
+    assert (repo_git/'src'/'one.py').read_text() == 'one\n', 'nothing was written through the link'
+
+def modify_delete(repo_git, deleted_by, name='src/app.py', body=None):
+    """Leave `repo` mid-merge with one side holding no file at all.
+
+    `git checkout --ours` refuses on the side that has no stage, which is the whole point.
+    """
+    r, path = GitRepo.at(repo_git), repo_git/name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if body is not None: path.write_bytes(body)
+    else: path.write_text('base\n')
+    git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', 'the file')
+    r.create('other')
+    if deleted_by == 'theirs': git(repo_git, 'rm', '-q', '--', name)
+    elif body is not None: path.write_bytes(b'\x00theirs\x00')
+    else: path.write_text('theirs\n')
+    git(repo_git, 'add', '-A'); git(repo_git, 'commit', '-m', 'other side')
+    r.checkout('main')
+    if deleted_by == 'ours': git(repo_git, 'rm', '-q', '--', name)
+    elif body is not None: path.write_bytes(b'\x00ours\x00')
+    else: path.write_text('ours\n')
+    git(repo_git, 'add', '-A'); git(repo_git, 'commit', '-m', 'main side')
+    assert subprocess.run(['git', 'merge', 'other'], cwd=repo_git, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode != 0
+    return r, path
+
+@pytest.mark.parametrize('deleted_by', ['ours', 'theirs'])
+def test_taking_the_side_that_deleted_the_file_removes_it(repo_git, deleted_by):
+    """It failed with `path 'src/app.py' does not have their version`, which is Git's answer to a
+    checkout, not to what the button asks for."""
+    _, path = modify_delete(repo_git, deleted_by)
+    survives = path.read_text()
+    c, ws = served([repo_git])
+    r = whole_side(c, deleted_by, survives)
+    assert r.status_code == 200, r.json()
+    assert not path.exists(), 'the side chosen has no file, so neither has the working tree'
+    assert not unmerged_now(repo_git), 'the removal is staged, so the conflict is settled'
+    op = journalled(ws, 'Git resolve conflict')
+    assert op and op['paths'] == [str(path)] and op['reversible']
+
+@pytest.mark.parametrize('deleted_by', ['ours', 'theirs'])
+def test_a_deleted_side_undoes_back_to_a_conflict(repo_git, deleted_by):
+    "Undo has to bring the file back and put the stages back, or the merge cannot be finished."
+    _, path = modify_delete(repo_git, deleted_by)
+    survives = path.read_text()
+    c, _ = served([repo_git])
+    assert whole_side(c, deleted_by, survives).status_code == 200
+    assert c.post('/history/undo', json={}).json()['ok']
+    assert path.read_text() == survives
+    assert unmerged_now(repo_git), 'conflicted again, the stages it had, as it was'
+
+@pytest.mark.parametrize('deleted_by', ['ours', 'theirs'])
+def test_a_deleted_side_redoes_to_the_deletion(repo_git, deleted_by):
+    "Redo must take the file away again rather than stage the side the choice discarded."
+    _, path = modify_delete(repo_git, deleted_by)
+    c, _ = served([repo_git])
+    assert whole_side(c, deleted_by, path.read_text()).status_code == 200
+    c.post('/history/undo', json={})
+    assert c.post('/history/redo', json={}).json()['ok']
+    assert not path.exists() and not unmerged_now(repo_git)
+
+def test_a_deleted_binary_side_survives_the_round_trip(repo_git):
+    "A binary body is not journal text, so only moving the file aside whole can bring it back."
+    _, path = modify_delete(repo_git, 'theirs', name='src/logo.bin', body=b'\x00base\x00')
+    bytes_before = path.read_bytes()
+    c, _ = served([repo_git])
+    r = gitop(c, op='resolve_conflict', path='src/logo.bin', choice='theirs',
+              before=path.read_text(errors='replace'))
+    assert r.status_code == 200, r.json()
+    assert not path.exists()
+    assert c.post('/history/undo', json={}).json()['ok']
+    assert path.read_bytes() == bytes_before, 'the bytes, not a lossy read of them'
+    assert unmerged_now(repo_git, 'src/logo.bin')
+
+def test_a_deleted_side_that_is_a_symlink_keeps_what_it_pointed_at(repo_git):
+    "Writing the stage back would follow the link and write through it into another tracked file."
+    (repo_git/'src'/'one.txt').write_text('one\n')
+    (repo_git/'src'/'two.txt').write_text('two\n')
+    link = repo_git/'src'/'link'
+    link.symlink_to('one.txt')
+    git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', 'the link')
+    r = GitRepo.at(repo_git)
+    r.create('other'); git(repo_git, 'rm', '-q', '--', 'src/link')
+    git(repo_git, 'commit', '-m', 'other side')
+    r.checkout('main'); link.unlink(); link.symlink_to('two.txt')
+    git(repo_git, 'add', '-A'); git(repo_git, 'commit', '-m', 'main side')
+    assert subprocess.run(['git', 'merge', 'other'], cwd=repo_git, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode != 0
+    c, _ = served([repo_git])
+    assert whole_side(c, 'theirs', link.read_text(), path='src/link').status_code == 200
+    assert not link.is_symlink()
+    assert (repo_git/'src'/'two.txt').read_text() == 'two\n', 'the target is untouched'
+    assert c.post('/history/undo', json={}).json()['ok']
+    assert link.is_symlink() and link.readlink().name == 'two.txt'
+
+def test_choosing_the_side_that_still_has_the_file_is_unchanged(repo_git):
+    "The checkout path must not be diverted by the new branch."
+    _, path = modify_delete(repo_git, 'theirs')
+    c, _ = served([repo_git])
+    assert whole_side(c, 'ours', path.read_text()).status_code == 200
+    assert path.read_text() == 'ours\n' and not unmerged_now(repo_git)
+
+def test_a_stale_file_refuses_the_whole_batch(repo_git):
+    "Half a batch applied is worse than none: the rest is staged work nobody confirmed."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    path.write_text('top\n<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> other\nnext\n')
+    c, ws = served([repo_git])
+    c.get('/git/conflicts')
+    path.write_text('someone else got here first\n')
+    r = gitop(c, op='resolve_safe_conflicts', paths=['src/app.py'])
+    assert r.status_code == 409
+    assert r.json() == {'ok': False,
+        'error': 'files changed after the conflict list was built: src/app.py'}
+    assert path.read_text() == 'someone else got here first\n', 'their work is still there'
+    assert journalled(ws, 'Git resolve safe conflicts') is None
+
+def test_a_batch_with_nothing_to_compare_against_is_refused(repo_git):
+    "Same contract as a resolution: a write Leela cannot check is a write it does not make."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    path.write_text('top\n<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> other\nnext\n')
+    c, ws = served([repo_git])
+    r = gitop(c, op='resolve_safe_conflicts', paths=['src/app.py'])
+    assert r.status_code == 409 and r.json()['error'].startswith('reopen the conflict list')
+    assert '<<<<<<<' in path.read_text()
+    assert journalled(ws, 'Git resolve safe conflicts') is None
+
+def test_a_batch_naming_no_paths_is_gated_too(repo_git):
+    "`paths` omitted resolves every conflicted file, so it is the one shape that must not slip by."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    path.write_text('top\n<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> other\nnext\n')
+    c, _ = served([repo_git])
+    c.get('/git/conflicts')
+    path.write_text('top\n<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> other\nedited\n')
+    r = gitop(c, op='resolve_safe_conflicts')
+    assert r.status_code == 409
+    assert r.json()['error'] == 'files changed after the conflict list was built: src/app.py'
+    assert '<<<<<<<' in path.read_text()
+
+def test_an_unsaved_tab_refuses_the_batch(repo_git):
+    "The tab holds edits the plan never saw, and the resolution would write straight over them."
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    path.write_text('top\n<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> other\nnext\n')
+    c, ws = served([repo_git])
+    c.get('/git/conflicts')
+    ws.open(path).dirty = True
+    r = gitop(c, op='resolve_safe_conflicts', paths=['src/app.py'])
+    assert r.status_code == 409 and r.json()['error'] == 'unsaved open file: src/app.py'
+    assert '<<<<<<<' in path.read_text()
+
+def test_a_batch_that_fails_part_way_leaves_nothing_staged(repo_git, monkeypatch):
+    """`resolve_safe_conflicts` writes and stages one file at a time, so a failure on the second
+    file leaves the first one's conflict stages already collapsed to one settled blob."""
+    _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
+    same = 'top\n<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> other\nnext\n'
+    path.write_text(same)
+    c, ws = served([repo_git])
+    c.get('/git/conflicts')
+    def boom(self): raise OSError('the disk went away')
+    monkeypatch.setattr(GitRepo, 'conflict_plan', boom)
+    assert gitop(c, op='resolve_safe_conflicts', paths=['src/app.py']).status_code != 200
+    assert path.read_text() == same, 'the write it did make is put back'
+    assert unmerged_now(repo_git), 'and so are the conflict stages it staged over'
+    assert journalled(ws, 'Git resolve safe conflicts') is None

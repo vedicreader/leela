@@ -190,7 +190,10 @@ async function showGitConflict(path) {
       if (left && !await confirmDialog('stage an unresolved file',
           `${left} conflict marker block${left === 1 ? '' : 's'} are still in ${path}. Stage it ` +
           `anyway, markers and all?`, 'stage anyway')) return;
-      const next = await gitDo('resolve_conflict', {path, choice: 'resolved', content});
+      // What the panes were built from, so a change made on disk since then is refused
+      // rather than overwritten.
+      const next = await gitDo('resolve_conflict',
+                               {path, choice: 'resolved', content, before: d.worktree});
       m.remove();
       afterConflictResolved(next, `${path} staged`);
     };
@@ -215,7 +218,10 @@ async function showWholeSideConflict(path, d) {
     const choice = b.dataset.choice;
     if (!await confirmDialog('resolve conflict', `Use ${choice} for ${path} and stage it as resolved?`, 'resolve')) return;
     m.remove();
-    afterConflictResolved(await gitDo('resolve_conflict', {path, choice}), `${path} staged`);
+    // A checkout overwrites the working file, so it is gated on the same before-image the
+    // three-pane resolution is, rather than on the server still remembering these panes.
+    afterConflictResolved(await gitDo('resolve_conflict', {path, choice, before: d.worktree}),
+                          `${path} staged`);
   });
 }
 

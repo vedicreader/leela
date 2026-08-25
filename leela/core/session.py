@@ -224,6 +224,9 @@ class OperationJournal:
         #: Every write that reaches here is also kept version by version. Undo is one step back;
         #: after an agent or another editor has been through the tree a person wants this morning.
         self.history = history
+        #: `kind -> hook(op, side)`, called once the rows are back. State a row's text cannot hold,
+        #: such as Git's index, belongs to the block that made it, not to the journal.
+        self.hooks = {}
         self.operations = []
         self._load()
     def _load(self):
@@ -235,20 +238,23 @@ class OperationJournal:
         tmp.write_text(json.dumps({'operations': self.operations[-MAX_OPERATIONS:]}, ensure_ascii=False))
         tmp.replace(self.path)
     def record(self, label, resources, kind='file', irreversible=(), moved=(), trashed=(),
-               created=()):
+               created=(), extra=None, hooked=False):
         """Append one operation, or None when nothing actually changed.
 
         `resources` are content changes, `(path, before, after)`. The rest name where something went
         rather than what was in it, which is the only way to record a directory or a file that is
         not text: `moved` are `(new, old)` pairs, `trashed` are `(path, key)` for what was deleted,
         and `created` are paths this operation brought into being, which undo puts in the trash.
+        `extra` is whatever this `kind`'s own undo hook needs, kept on the row. `hooked` marks an
+        operation that changed no file at all and is reversed by that hook alone; it may name the
+        paths it touched in `extra` for the history to show.
         """
         rows = [{'path': str(path), 'before': before, 'after': after}
                 for path, before, after in resources if before != after]
         paths = ([{'path': str(new), 'from': str(old)} for new, old in moved] +
                  [{'path': str(path), 'at': 'trash', 'trash': str(key)} for path, key in trashed] +
                  [{'path': str(path), 'at': 'tree'} for path in created])
-        if not rows and not paths and not irreversible: return None
+        if not rows and not paths and not irreversible and not hooked: return None
         if self.history is not None:
             for row in rows:
                 try: self.history.keep(row['path'], row['before'], row['after'], label)
@@ -266,9 +272,9 @@ class OperationJournal:
                 except Exception: pass       # no blob, so the bodies stay where they are
         for prior in self.operations:
             if prior.get('undone'): prior['redoable'] = False
-        op = {'id': 'op_' + uuid.uuid4().hex[:12], 'at': time.time(), 'label': str(label),
-              'kind': kind, 'resources': rows + paths, 'irreversible': list(irreversible),
-              'undone': False}
+        op = dict(extra or {}) | {'id': 'op_' + uuid.uuid4().hex[:12], 'at': time.time(),
+              'label': str(label), 'kind': kind, 'resources': rows + paths, 'hooked': bool(hooked),
+              'irreversible': list(irreversible), 'undone': False}
         self.operations.append(op); self.operations = self.operations[-MAX_OPERATIONS:]; self._save()
         return op
     def blobs(self):
@@ -279,12 +285,16 @@ class OperationJournal:
         "One side of a resource: inline on an older operation, else out of the blob store."
         if side in row: return row[side]
         return self.history.body(row.get(f'{side}_blob')) if self.history is not None else None
+    @staticmethod
+    def _has_work(op):
+        "Whether there is anything to reverse: text to put back, or a hook that stands in for it."
+        return bool(op.get('resources')) or bool(op.get('hooked'))
     def rows(self, limit=50):
         "The newest `limit` operations, without their `before`/`after` bodies."
         return [{k: v for k, v in op.items() if k != 'resources'} |
-                {'paths': [r['path'] for r in op.get('resources', [])],
-                 'reversible': bool(op.get('resources')) and not op.get('undone'),
-                 'redoable': bool(op.get('resources')) and op.get('undone') and op.get('redoable', True)}
+                {'paths': [r['path'] for r in op.get('resources', [])] or list(op.get('paths') or ()),
+                 'reversible': self._has_work(op) and not op.get('undone'),
+                 'redoable': self._has_work(op) and op.get('undone') and op.get('redoable', True)}
                 for op in reversed(self.operations[-int(limit):])]
     def _current(self, path):
         "One resource as it is on disk right now, or None when it is not there."
@@ -333,11 +343,14 @@ class OperationJournal:
             d.parent.mkdir(parents=True, exist_ok=True)
             return shutil.move(str(self.sandbox._check(src)), str(d))
         return self._write(row['path'], self._body(row, side))
+    def _hook(self, op, side):
+        "The `kind`'s own half of a reversal, once the text is back."
+        if (hook := self.hooks.get(op.get('kind'))): hook(op, side)
     def undo(self, operation_id=''):
         "Reverse one operation, named or the newest reversible one."
         back = reversed(self.operations)
         op = (first(x for x in back if x['id'] == operation_id) if operation_id else
-              first(x for x in back if x.get('resources') and not x.get('undone')))
+              first(x for x in back if self._has_work(x) and not x.get('undone')))
         if op is None: raise ValueError('no reversible workspace operation')
         if (big := [r['path'] for r in op['resources'] if not r.get('kept', True)]):
             raise ValueError('too large to have been copied, so it cannot be undone: ' + ', '.join(big))
@@ -345,11 +358,11 @@ class OperationJournal:
         conflicts = [why for row in op['resources'] if (why := self._blocked(row, 'after'))]
         if conflicts: raise ValueError('changed after the operation: ' + ', '.join(conflicts))
         for row in reversed(op['resources']): self._reverse(row, 'before')
-        op['undone'] = True; self._save(); return op
+        op['undone'] = True; self._save(); self._hook(op, 'before'); return op
     def redo(self, operation_id=''):
         "Reapply one undone operation when every file still equals its restored text."
         op = (first(x for x in reversed(self.operations) if x['id'] == operation_id) if operation_id else
-              first(x for x in self.operations if x.get('resources') and x.get('undone') and x.get('redoable', True)))
+              first(x for x in self.operations if self._has_work(x) and x.get('undone') and x.get('redoable', True)))
         if op is None: raise ValueError('no redoable workspace operation')
         if (big := [r['path'] for r in op['resources'] if not r.get('kept', True)]):
             raise ValueError('too large to have been copied, so it cannot be redone: ' + ', '.join(big))
@@ -357,4 +370,4 @@ class OperationJournal:
         conflicts = [why for row in op['resources'] if (why := self._blocked(row, 'before'))]
         if conflicts: raise ValueError('changed after the undo: ' + ', '.join(conflicts))
         for row in op['resources']: self._reverse(row, 'after')
-        op['undone'] = False; self._save(); return op
+        op['undone'] = False; self._save(); self._hook(op, 'after'); return op

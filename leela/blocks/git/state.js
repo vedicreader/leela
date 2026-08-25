@@ -27,7 +27,8 @@ const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResul
 // what the branch pill, the file tree and the editor's change marks always mean.
 function gitUrl(path, params = {}) {
   const q = new URLSearchParams(params);
-  if (gitUI.repo) q.set('repo', gitUI.repo);
+  // A tab outlives the panel's chosen repository, so an explicit one wins.
+  if (gitUI.repo && !q.has('repo')) q.set('repo', gitUI.repo);
   const query = q.toString();
   return query ? `${path}?${query}` : path;
 }
