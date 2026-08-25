@@ -83,6 +83,13 @@ function foldAgentTurn(card, folded) {
 }
 const agentTurnCards = () => $$('.lee-agent-turn', $('#agentlog') || document);
 function foldAgentTurns(folded) { for (const card of agentTurnCards()) foldAgentTurn(card, folded); }
+/* What has been answered is not what is being read. A conversation of any length is mostly turns
+   already dealt with, so every one before the newest is folded away: on a paint, and again when the
+   next turn begins. A turn holding a checkpoint is never folded, because `foldAgentTurn` refuses. */
+function foldOlderTurns(log, keep = 1) {
+  const cards = $$('.lee-agent-turn', log || $('#agentlog') || document);
+  cards.slice(0, Math.max(0, cards.length - keep)).forEach(card => foldAgentTurn(card, true));
+}
 /* The newest turn is the one being read, so it is never folded from storage: a turn folded before
    a resume would otherwise hide the answer a person came back for. */
 function applyStoredFolds(log) {
@@ -109,7 +116,7 @@ const latestAgentTurn = () => agentTurnCards().at(-1);
    newest, or a checkpoint would land in whichever old turn happened to hold focus */
 const currentAgentTurn = () => document.activeElement?.closest?.('.lee-agent-turn') || latestAgentTurn();
 
-function renderTurns(log, turns, heading) {
+function renderTurns(log, turns, heading, fold = true) {
   if (heading) log.insertAdjacentHTML('beforeend', `<div class="lee-vgroup">${esc(heading)}</div>`);
   for (const turn of (turns || [])) {
     const card = agentTurnCard({prompt: turn.prompt, model: turn.model, route: turn.plan?.route || 'direct',
@@ -152,6 +159,7 @@ function renderTurns(log, turns, heading) {
     log.appendChild(card);
   }
   applyStoredFolds(log);
+  if (fold) foldOlderTurns(log);
 }
 /* A summarised title arrives as `Title: Ramabana CLI ASCII`, quotes and all, and stored ones keep
    the prefix after the storage point is fixed, so every display cleans it. */

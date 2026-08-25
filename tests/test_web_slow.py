@@ -1762,3 +1762,50 @@ def test_the_snippet_box_is_not_short_of_its_own_text(tmp_path):
         f"a line is {d['size']}x{d['ratio']}={d['size'] * d['ratio']}px, which the old box called 19"
     assert d['drawn'] > d['assumed'], f"a drawn line is {d['drawn']}px, taller than the 19 assumed"
     assert d['over'] <= 0, f'and the box no longer overflows by {d["over"]}px'
+
+
+def test_only_the_newest_turn_is_open_when_a_conversation_is_painted(tmp_path):
+    """A conversation of any length is mostly turns already dealt with. Painting one, or beginning
+    the next, leaves the one being read open and folds the rest away."""
+    async def go(pg):
+        await pg.evaluate("""() => {
+          const log = document.querySelector('#agentlog');
+          log.innerHTML = ''; log.dataset.foldScope = 'fold-test';
+          renderTurns(log, [1, 2, 3, 4].map(n => ({turn_id: `t${n}`, prompt: `question ${n}`,
+                                                   model: 'm', timeline: []})), 'conversation');
+          return true;
+        }""")
+        painted = await pg.evaluate("""() => [...document.querySelectorAll('#agentlog .lee-agent-turn')]
+            .map(c => ({turn: c.dataset.turn, folded: c.classList.contains('folded')}))""")
+        # and the next turn beginning folds the one that was open
+        await pg.evaluate("""() => {
+          const log = document.querySelector('#agentlog');
+          const card = agentTurnCard({prompt: 'question 5', model: 'm', turnId: 't5'});
+          log.appendChild(card); foldOlderTurns(log);
+        }""")
+        after = await pg.evaluate("""() => [...document.querySelectorAll('#agentlog .lee-agent-turn')]
+            .map(c => ({turn: c.dataset.turn, folded: c.classList.contains('folded')}))""")
+        return painted, after
+    painted, after = _run(go, roots=[tmp_path])
+    assert [c['folded'] for c in painted] == [True, True, True, False], painted
+    assert [c['folded'] for c in after] == [True, True, True, True, False], after
+
+
+def test_a_turn_waiting_on_a_checkpoint_is_never_folded_away(tmp_path):
+    """Its buttons and its keys are the only way the run continues, and a folded body cannot be
+    clicked. `foldAgentTurn` refuses, so the bulk fold has to inherit that refusal."""
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const log = document.querySelector('#agentlog');
+          log.innerHTML = ''; log.dataset.foldScope = 'fold-approval-test';
+          const blocked = agentTurnCard({prompt: 'needs approval', model: 'm', turnId: 'a1'});
+          turnBody(blocked).innerHTML = '<div class="lee-approval proposed">approve?</div>';
+          const newer = agentTurnCard({prompt: 'later', model: 'm', turnId: 'a2'});
+          const newest = agentTurnCard({prompt: 'newest', model: 'm', turnId: 'a3'});
+          log.append(blocked, newer, newest);
+          foldOlderTurns(log);
+          return [...log.querySelectorAll('.lee-agent-turn')]
+            .map(c => ({turn: c.dataset.turn, folded: c.classList.contains('folded')}));
+        }""")
+    cards = _run(go, roots=[tmp_path])
+    assert [c['folded'] for c in cards] == [False, True, False], cards

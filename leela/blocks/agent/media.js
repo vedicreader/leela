@@ -111,7 +111,9 @@ async function sendAgent(force = false) {
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   const card = agentTurnCard({prompt: q, model: $('#agentmodel')?.value || ''});
   turnBody(card).appendChild(userMessage(q));
-  log.appendChild(card); log.scrollTop = log.scrollHeight;
+  log.appendChild(card);
+  foldOlderTurns(log);            // what came before is answered; this is the one being read
+  log.scrollTop = log.scrollHeight;
   status('model is working…');
   agentListen(accepted.thread || lee.agentThread, accepted.seq, card);
 }
