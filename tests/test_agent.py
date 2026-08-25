@@ -1165,6 +1165,23 @@ def test_a_streamed_cell_still_gets_its_activity_trail():
     assert '<details>' in nb[0].reply and 'Search Approvals' in nb[0].reply
     assert nb[0].calls and nb[0].calls[0]['tool'] == 'search_code'
 
+def test_a_later_turn_does_not_carry_the_cell_above_it_work_log():
+    "The trail is saved on the cell and shown from `calls`; sending it back as `<answer>` paid for it twice."
+    from leela.blocks.nb.nb import Cell, Notebook
+    from tests.fakemodel import Step, install
+    ws = Workspace(roots=[])
+    ws.add_root('.')
+    install(ws, [Step(tool=('search_code', {'query': 'Approvals'})),
+                 Step(text='found it')], token_delay=0)
+    nb = Notebook([Cell(source='where is approval handled?', cell_type='prompt'),
+                   Cell(source='and then?', cell_type='prompt')])
+    list(ws.ask_cell_stream(nb, 0))
+    assert '<details>' in nb[0].reply
+    ctx = ws._agent_context(nb, 1, nb[1].source)
+    assert 'found it' in ctx
+    assert '<details>' not in ctx and 'Search Approvals' not in ctx
+    assert len(ctx) < len(nb[0].reply)
+
 
 def test_workspace_at_attachments_are_grounded_and_sandboxed(tmp_path):
     p = tmp_path/'notes.txt'; p.write_text('the attached fact')

@@ -148,11 +148,17 @@ class Sandbox:
         if p.exists(): raise FileExistsError(str(p))
         _changed()
         return self.entry(fc_mkdir(p, parents=True))
-    def rename(self, ref, name):
-        "Rename in place. `name` must be a bare filename: a path here would write outside the folder."
-        p = self._check(ref, must_exist=True)
+    def _bare(self, name):
+        "A name typed by a person, refused unless it is one path component."
         if '/' in name or os.sep in name or name in ('', '.', '..'): raise Unsafe(f'{name!r} is not a bare filename')
-        dst = self._check(p.parent/name)
+        return name
+    def under(self, ref, name):
+        "Where an entry called `name` goes inside `ref`. `name` is one component; an empty `ref` is the first root."
+        return self._check(self._check(ref)/self._bare(name))
+    def rename(self, ref, name):
+        "Rename in place. `name` is a bare filename, as `under` requires."
+        p = self._check(ref, must_exist=True)
+        dst = self.under(p.parent, name)
         if dst.exists(): raise FileExistsError(str(dst))
         p.rename(dst)
         _changed()

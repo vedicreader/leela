@@ -5,6 +5,7 @@ part of why a folder delete left no record and a rename of a PNG could destroy i
 """
 
 from __future__ import annotations
+import json
 from pathlib import Path
 from starlette.testclient import TestClient
 from leela.app import ide_app
@@ -224,3 +225,27 @@ def test_the_tab_strip_can_be_refetched_after_the_server_closes_a_tab(tmp_path, 
         assert bar.count('data-i=') == 1, 'one tab left, and it is index 0'
     files = (Path(__file__).resolve().parents[2]/'leela'/'blocks'/'fs'/'files.js').read_text()
     assert files.count('refreshTabStrip()') >= 3, 'delete and remove-root both have to call it'
+
+def test_creating_refuses_the_names_renaming_refuses(tmp_path, monkeypatch):
+    """`/fs/new` joined the typed name onto `parent`, so `../sibling/x.py` created the file in
+    another folder while `rename` had always refused a separator. Both go through `Sandbox.under`.
+    """
+    monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
+    (tmp_path/'pkg').mkdir(); (tmp_path/'sibling').mkdir()
+    (tmp_path/'pkg'/'mod.py').write_text('x = 1\n')
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        for name in ('../sibling/escaped.py', 'deep/nested.py', '.', '..', ''):
+            made = client.post('/fs/new', json={'parent': str(tmp_path/'pkg'), 'name': name})
+            renamed = client.post('/fs/rename', json={'path': str(tmp_path/'pkg'/'mod.py'), 'name': name})
+            assert made.status_code == renamed.status_code == 400, name
+            assert made.json() == renamed.json(), f'{name!r} has to be refused the same way'
+        assert not (tmp_path/'sibling'/'escaped.py').exists(), 'nothing lands outside the parent'
+        assert not (tmp_path/'pkg'/'deep').exists()
+        assert ws.journal.rows() == [], 'a refused name records nothing to undo'
+        for name in ('made.py', 'notes.ipynb'):
+            assert client.post('/fs/new', json={'parent': str(tmp_path/'pkg'), 'name': name}).json()['ok']
+        assert client.post('/fs/new', json={'parent': str(tmp_path/'pkg'), 'name': 'sub',
+                                            'kind': 'dir'}).json()['ok']
+    assert (tmp_path/'pkg'/'made.py').is_file() and (tmp_path/'pkg'/'sub').is_dir()
+    assert json.loads((tmp_path/'pkg'/'notes.ipynb').read_text())['nbformat'] == 4

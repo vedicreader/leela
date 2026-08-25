@@ -1,7 +1,7 @@
 "The notebook document: cells, outputs, the .ipynb on disk, and source spans."
 
 from __future__ import annotations
-import ast, time, uuid
+import ast, re, time, uuid
 from base64 import b64encode
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -13,7 +13,7 @@ from ..refactor.move import top_symbols
 import json
 
 __all__ = ['CELL_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans',
-           'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras']
+           'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras', 'strip_work_log']
 
 CELL_TYPES = ('code', 'markdown', 'prompt')
 
@@ -21,8 +21,13 @@ MAX_CONTEXT = None
 MAX_CELL_OUT = None
 CONTEXT_MODES = ('auto', 'keep', 'discard')
 MAX_UNDO = 100
+WORK_LOG = re.compile(r'\n*<details>\s*<summary>\s*what i did[^<]*</summary>[\s\S]*</details>\s*\Z', re.I)
 
 def cell_id(): return uuid.uuid4().hex[:8]
+
+def strip_work_log(text):
+    "A reply without the `turn_md` fold `cell.calls` already holds. Mirrors `stripWorkLog`, `leela/static/js/core.js`."
+    return WORK_LOG.sub('', str(text or '')).rstrip()
 
 def media_output(m):
     "One `{'mime','data'}` a model generated, as the nbformat output that draws it."
@@ -343,14 +348,14 @@ class Notebook:
     def _context_cell(self, c, out_chars=None):
         "One cell as explicit, compaction-aware context markup."
         src = c.source.strip()
-        if not src and not c.reply: return ''
+        if not src and not strip_work_log(c.reply): return ''
         attr = f'id="{c.id}" type="{c.cell_type}" compact="{c.context_mode}"'
         body = [f'<cell {attr}>']
         if src: body.append(f'<source>\n{src}\n</source>')
         if c.cell_type == 'code' and (t := c.text.strip()):
             shown = t if out_chars is None else t[:out_chars]
             body.append(f'<output>\n{shown}\n</output>')
-        if c.is_prompt and c.reply: body.append(f'<answer>\n{c.reply.strip()}\n</answer>')
+        if c.is_prompt and (ans := strip_work_log(c.reply).strip()): body.append(f'<answer>\n{ans}\n</answer>')
         body.append('</cell>')
         return '\n'.join(body)
     def context(self, i, since=0, max_chars=MAX_CONTEXT, out_chars=MAX_CELL_OUT):

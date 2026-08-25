@@ -84,6 +84,35 @@ def _no_backup_threads(monkeypatch):
     monkeypatch.setattr(backups, 'schedule_backups', lambda *a, **k: (lambda: None))
 
 @pytest.fixture(autouse=True)
+def _sessions_off_the_repo(tmp_path_factory):
+    """No test writes an agent transcript into the checked-out repository.
+
+    `dhrishti`'s logging directories are process-global and default to relative paths, so a session
+    logs into whatever the working directory happens to be. `test_leela_can_redirect_both_transcript
+    _streams` restores those relative defaults in its `finally`, and a later test with a different
+    working directory wrote a session notebook into `tests/fixtures`, where `git add -A` would have
+    taken it.
+    """
+    from dhrishti.runtime import set_logging
+    root = tmp_path_factory.mktemp('sessions')
+    set_logging(dir=root/'_leela_sessions', agent_dir=root/'_leela_agent_sessions')
+    yield
+    set_logging(dir=root/'_leela_sessions', agent_dir=root/'_leela_agent_sessions')
+
+@pytest.fixture(autouse=True)
+def _no_warm_probes(monkeypatch):
+    """No test asks the machine what it holds behind its own back.
+
+    `ide_app` warms the model probes on a startup thread, and a suite that builds the app hundreds
+    of times leaves those threads running long after the test that made them. One gathers a catalog
+    under one test's environment and writes it in under the next test's, so a picker patched to
+    offer `gpt-4.1` was served a catalog with no OpenAI in it at all, at whatever interval the
+    thread happened to finish on.
+    """
+    from leela import app
+    monkeypatch.setattr(app, '_warm_probes', lambda: None)
+
+@pytest.fixture(autouse=True)
 def _isolate_vault(monkeypatch, tmp_path_factory):
     "Keep vault I/O out of ~/.vishalakshi and skip real encoders in the suite."
     vault = _pathlib.Path(TEST_CONFIG_HOME)/'vaults'/tmp_path_factory.mktemp('v').name

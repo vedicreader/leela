@@ -144,18 +144,23 @@ def test_a_subagent_is_given_inspect_python_and_no_write_tools():
     assert not (names & NO_SUB), 'a sub-agent must not spawn sub-agents of its own'
 
 def test_the_briefing_says_what_is_true_of_both_kernels():
-    "The briefing promises concurrency unconditionally, because it is unconditionally true."
-    from leela.agent.agent import system_prompt
-    from leela.agent.tools import NullHost
-    class Mini(NullHost): kernel_kind = 'ipymini'
-    for h in (Mini(['/x']), NullHost(['/x'])):
-        sp = system_prompt(h, [])
-        assert "while one of the user's cells is still running" in sp
-        assert 'one thing at a time' not in sp
-    assert 'subshell' in system_prompt(Mini(['/x']), [])
-    assert 'subshell' not in system_prompt(NullHost(['/x']), [])
+    """Leela runs each inspection in the kernel's own subshell, on either launcher, so its briefing
+    says so on either launcher.
 
-@pytest.mark.parametrize('kind', KINDS)
+    The claim is the host's to make: Ramabana reads `concurrent` off the launcher, because a kernel
+    that serialises is the common case, and this asserted the sentence against Ramabana's own test
+    doubles instead of Leela's host, so it went red when that gate arrived and said nothing about
+    Leela either way.
+    """
+    from leela.agent.agent import system_prompt
+    from leela.blocks.agent.ai import WorkspaceHost
+    from leela.workspace import Workspace
+    phrase = "while one of the user's cells is still running"
+    for kind in ('ipykernel', 'ipymini'):
+        host = WorkspaceHost(Workspace(roots=[], kernel=kind))
+        assert host.concurrent, kind
+        assert phrase in system_prompt(host, []), kind
+
 def test_overlay_gives_the_real_interpreter_while_a_cell_runs(tmp_path, kind):
     "The scope that makes `inspect_python` worth having, and the one I got wrong first."
     async def go():

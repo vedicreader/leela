@@ -4723,7 +4723,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.1.26"
+version = "0.1.27"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
@@ -4740,9 +4740,9 @@ dependencies = [
     { name = "toolslm" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/30/99/17111b7c01ad6bc8e6b4f04a86b39c49e88f0c50136230873d55e7e28d9f/ramabana-0.1.26.tar.gz", hash = "sha256:b3c07d11b7265aefc09a039facd69cfef7e8eeeeba9b1589eae2731b64170864", size = 231504, upload-time = "2026-08-24T05:00:17.658Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/21/7cdb68343b2375133e546bc433922727e18c7c1ad258f14938fe79ed9cf3/ramabana-0.1.27.tar.gz", hash = "sha256:fe98919c15b9bf2837b507ca9c082e6f7186cff66c785749293df3fbe2276a7d", size = 231559, upload-time = "2026-08-25T07:29:02.864Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/15/07/714bfa38024f1ffcb6b56425331ec8f0c93dd25b3d112341808949e12da2/ramabana-0.1.26-py3-none-any.whl", hash = "sha256:d0d9de5b80e5951483c0757a6ce850fa225038c655f5e09dec061b70111a27c8", size = 244503, upload-time = "2026-08-24T05:00:15.307Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/fd/0c63ba89a354b8a2fedd994680d9d03a78050a6a2a4af47b75e3b10b78e3/ramabana-0.1.27-py3-none-any.whl", hash = "sha256:7729b5b3b5a0aa5a8487fedecde2a3d3934525814ab21cff3529f176444bb9a0", size = 244552, upload-time = "2026-08-25T07:29:01.58Z" },
 ]
 
 [package.optional-dependencies]
@@ -4995,7 +4995,7 @@ wheels = [
 
 [[package]]
 name = "rishi"
-version = "0.1.28"
+version = "0.1.29"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aidialog" },
@@ -5009,9 +5009,9 @@ dependencies = [
     { name = "safepyrun" },
     { name = "truststore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0d/91/27cc856ac6a161dba0655e91d60b06ffdffe6198240b2190b8804641c3f2/rishi-0.1.28.tar.gz", hash = "sha256:c7ce7621a264f38195a10408f985078bf72dccbba877c2ae9561946772bbff28", size = 108263, upload-time = "2026-08-23T04:08:58.81Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8e/aa/c2227ad34a689714fc7dbf70d1ae5ba447b8b28a0d1b13737ae7503014d2/rishi-0.1.29.tar.gz", hash = "sha256:4b70b73dcb9cd01ab8e264ba9f3e6ae5fb64e082f426245876206cef3898f012", size = 108313, upload-time = "2026-08-25T04:11:33.444Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/1c/5d1ba0b0af13c0faaad5dac34edc07a52a0d785462a68dfd85a9dc0c544a/rishi-0.1.28-py3-none-any.whl", hash = "sha256:95aa4bc809970531bc0de179b1a178611dc8fbd93142eef7345fe0c6fbf416c1", size = 118297, upload-time = "2026-08-23T04:08:57.319Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/90/26219ebef0b8250af03a3c1976b763140ed400d4b8e8864027b105fcfeea/rishi-0.1.29-py3-none-any.whl", hash = "sha256:b3c0e27171fbb5d004b3baa274efba83a701357fca359a48cbb243077cc11929", size = 118361, upload-time = "2026-08-25T04:11:32Z" },
 ]
 
 [package.optional-dependencies]

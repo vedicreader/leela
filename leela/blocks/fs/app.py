@@ -134,12 +134,11 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/fs/new')
     async def fs_new(req):
-        "Create a file or folder. `kind` is 'file' or 'dir'."
+        "Create a file or folder directly inside `parent`. `kind` is 'file' or 'dir'; `name` is a bare filename."
         d = await req.json()
         parent, name, kind = d.get('parent') or '', d.get('name') or '', d.get('kind', 'file')
-        if not name: return fail('name required')
         try:
-            target = Path(parent)/name
+            target = ctx.fs.under(parent, name)
             e = ctx.fs.mkdir(target) if kind == 'dir' else ctx.session.create_document(target)
             if kind != 'dir': ctx.journal.record(f'Create {name}', [(e.path, None, Path(e.path).read_text())], kind='create')
             return {'ok': True, 'entry': e.dict()}

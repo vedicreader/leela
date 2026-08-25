@@ -64,6 +64,9 @@ TOOLS = {'langserver': ('Language server',
 #: model picker is on the boot path.
 _PROBED, PROBE_TTL = {}, 90
 _probe_lock = threading.Lock()
+#: Bumped whenever the answers are dropped. A probe gathering across that moment was asked about a
+#: machine that no longer applies, and its answer is discarded rather than written in behind.
+_probe_gen = 0
 
 def probe_path(key):
     "Where one probe's last answer is kept between runs."
@@ -83,6 +86,13 @@ def _write_probe(key, value):
         tmp.replace(p)
     except Exception: pass          # a probe that cannot be kept is still an answer
 
+def _keep(key, value, gen):
+    "Write an answer in, unless it was gathered about a machine `forget_probes` has since dropped."
+    with _probe_lock:
+        if gen != _probe_gen: return
+        _PROBED[key] = {'at': time.time(), 'value': value, 'busy': False}
+    _write_probe(key, value)
+
 def probed(key, fn, ttl=PROBE_TTL):
     """`fn()`'s last answer, with a stale one refreshed behind whoever asked.
 
@@ -91,23 +101,20 @@ def probed(key, fn, ttl=PROBE_TTL):
     served at once and re-probed behind it: a model installed since is worth showing a moment late,
     and a pane that will not open is not worth a fresher list.
     """
-    with _probe_lock: row = _PROBED.get(key)
+    with _probe_lock: row, gen = _PROBED.get(key), _probe_gen
     if row is None and (kept := _read_probe(key)) is not None:
         # `at: 0` so the refresh below fires: what a previous run saw is a starting point, not news.
         row = {'at': 0.0, 'value': kept, 'busy': False}
-        with _probe_lock: _PROBED[key] = row
+        with _probe_lock:
+            if gen == _probe_gen: _PROBED[key] = row
     if row is None:
         value = fn()
-        with _probe_lock: _PROBED[key] = {'at': time.time(), 'value': value, 'busy': False}
-        _write_probe(key, value)
+        _keep(key, value, gen)
         return value
     if time.time() - row['at'] < ttl or row['busy']: return row['value']
     row['busy'] = True
     def again():
-        try:
-            value = fn()
-            with _probe_lock: _PROBED[key] = {'at': time.time(), 'value': value, 'busy': False}
-            _write_probe(key, value)
+        try: _keep(key, fn(), gen)
         except Exception:
             with _probe_lock: row['at'], row['busy'] = time.time(), False
     threading.Thread(target=again, daemon=True, name=f'leela-probe-{key}').start()
@@ -135,7 +142,8 @@ def catalog(legacy=True):
 
 def forget_probes(disk=False):
     "Drop every cached probe. The cache is process-wide, because what it holds is the machine's."
-    with _probe_lock: keys, _ = list(_PROBED), _PROBED.clear()
+    global _probe_gen
+    with _probe_lock: keys, _probe_gen, _ = list(_PROBED), _probe_gen+1, _PROBED.clear()
     if not disk: return
     for key in keys:
         try: probe_path(key).unlink(missing_ok=True)

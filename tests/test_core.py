@@ -913,6 +913,15 @@ def test_settings_writes_are_atomic_and_leave_valid_json(tmp_path, monkeypatch):
     assert calls == [(user, {'mode': 'w', 'encoding': 'utf-8'})]
     assert json.loads(user.read_text()) == {'editor': {'fontSize': 17}}
 
+def test_the_user_settings_file_is_one_path_a_test_can_move(tmp_path, monkeypatch):
+    "`Settings` held a second copy of the expression, so moving the named one moved nothing."
+    import leela.blocks.settings.settings as module
+    monkeypatch.setattr(module, 'user_settings_file', lambda: tmp_path/'moved.json')
+    Settings().save('user', 'editor', {'ligatures': False, 'useTabs': True})
+    assert json.loads((tmp_path/'moved.json').read_text()) == {'editor': {'ligatures': False, 'useTabs': True}}
+    assert Settings().raw('user')['editor'] == {'ligatures': False, 'useTabs': True}
+    assert Settings().describe()['paths']['user'] == str(tmp_path/'moved.json')
+
 def test_workspace_settings_are_project_local_and_resettable(tmp_path):
     root, user = tmp_path/'project', tmp_path/'user.json'; root.mkdir()
     settings = Settings(root, user)
@@ -938,12 +947,13 @@ def test_env_store_reads_async_ops_inside_an_event_loop(monkeypatch):
 def test_the_config_dir_stays_inside_the_temp_dir(cfg_home):
     from leela import leela_cfg
     from leela.blocks.memory.memory import memory_path
-    from leela.blocks.settings.settings import USER_SETTINGS_FILE
+    from leela.blocks.settings.settings import user_settings_file
     from leela.workspace import ws_path
     # one of the two temp dirs: the session's, or this test's own, which is what `leela_cfg` moved to
     safe = (TEST_CONFIG_HOME, str(cfg_home))
-    for p in (leela_cfg, memory_path(), USER_SETTINGS_FILE, ws_path()):
+    for p in (leela_cfg, memory_path(), user_settings_file(), ws_path()):
         assert str(p).startswith(safe), f'{p} escapes the test config dirs'
+    assert str(user_settings_file()).startswith(str(cfg_home)), 'settings move with this test, not the session'
     real = Path.home()/'.config'/'leela'
     assert not str(real).startswith(safe)
     assert Path(leela_cfg) != real and real not in Path(leela_cfg).parents
@@ -954,6 +964,39 @@ def test_a_workspace_writes_its_memory_and_journal_under_the_temp_dir(tmp_path, 
     ws = Workspace(roots=[tmp_path])
     assert str(ws.memory.path).startswith((TEST_CONFIG_HOME, str(cfg_home)))
     assert str(ws.journal.path).startswith(str(cfg_home)), 'and its journal is this test\'s alone'
+
+def _saved(path): return json.loads(path.read_text())
+
+def test_a_rootless_save_does_not_blank_the_folders_and_tabs_beside_it(tmp_path):
+    "Model choices written through a bare `Workspace` rewrote the state file whole, losing both."
+    (proj := tmp_path/'proj').mkdir(); (proj/'a.py').write_text('x = 1')
+    state = tmp_path/'workspace.json'
+    lived = Workspace(roots=[proj]); lived._state_path = state
+    lived.open(proj/'a.py'); lived.save()
+    fresh = Workspace(roots=[]); fresh._state_path = state
+    fresh.model = 'gemma-12b'; fresh.save()
+    held = _saved(state)
+    assert held['roots'] == [str(r) for r in lived.fs.roots]
+    assert [t['path'] for t in held['tabs']] == [str(proj/'a.py')]
+    assert held['model'] == 'gemma-12b' and Workspace.load(state).model == 'gemma-12b'
+
+def test_a_named_partial_save_writes_only_those_keys(tmp_path):
+    (proj := tmp_path/'proj').mkdir()
+    state = tmp_path/'workspace.json'
+    lived = Workspace(roots=[proj]); lived._state_path = state; lived.save()
+    lived.model, lived.subagent_writes = 'gemma-12b', True
+    lived.save(only=('model',))
+    held = _saved(state)
+    assert held['model'] == 'gemma-12b' and held['subagent_writes'] is False
+    assert held['version'] == 2, 'a partial write still says what shape it is'
+
+def test_closing_the_last_folder_is_a_session_worth_saving(tmp_path):
+    "The folders are only left alone for a workspace that never had a session, never for an empty one."
+    (proj := tmp_path/'proj').mkdir()
+    state = tmp_path/'workspace.json'
+    ws = Workspace(roots=[proj]); ws._state_path = state; ws.save()
+    ws.drop_root(proj); ws.save()
+    assert _saved(state)['roots'] == []
 
 
 CLOSURE = 'leela.app'

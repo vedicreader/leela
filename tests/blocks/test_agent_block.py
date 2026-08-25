@@ -275,6 +275,28 @@ def test_a_probe_serves_its_last_answer_and_refreshes_behind_it():
     assert models.probed('t', slow) == 'answer 2'
     models._PROBED.pop('t', None)
 
+def test_a_probe_already_gathering_when_the_cache_is_dropped_does_not_come_back(tmp_path, monkeypatch):
+    """`forget_probes` means the machine changed under us: the refresh button, or the next test.
+
+    A probe already gathering wrote its answer in afterwards, so the next caller was served the
+    state that had just been thrown away, and it landed in whichever config dir was current by
+    then. In the suite that is one test's catalog answering another's request."""
+    import threading
+    import leela.blocks.agent.models as models
+    monkeypatch.setattr(models, 'leela_cfg', tmp_path)
+    models.forget_probes()
+    gathering, finish = threading.Event(), threading.Event()
+    def slow():
+        gathering.set(); finish.wait(5); return 'stale'
+    t = threading.Thread(target=lambda: models.probed('inflight', slow), daemon=True)
+    t.start()
+    assert gathering.wait(5), 'the probe is under way'
+    models.forget_probes()
+    finish.set(); t.join(5)
+    assert models.probed('inflight', lambda: 'fresh') == 'fresh', 'no answer from before the drop'
+    assert models.probe_path('inflight').read_text().count('stale') == 0, 'nor kept for the next run'
+    models.forget_probes(disk=True)
+
 def test_which_row_a_chosen_model_is_is_a_lookup_not_a_scan():
     """`selected` resolved every one of ninety-odd rows to find the one a chosen model matched, and
     it ran three times a request. The catalog is probed with that index already built."""

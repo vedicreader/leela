@@ -48,6 +48,7 @@ def test_pool_default_kernel_forwarded(monkeypatch):
     seen = {}
     class Fake:
         def __init__(self, **kw): seen.update(kw); self.alive = False
+        def touch(self): return self          # the pool stamps every kernel it hands out
         async def start(self): return self
     monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
     pool = KernelPool(default_kernel='ipymini')
@@ -183,6 +184,7 @@ def test_concurrent_pool_gets_share_one_start(monkeypatch):
     class Fake:
         alive = False
         def __init__(self, **kw): made.append(self)
+        def touch(self): return self          # the pool stamps every kernel it hands out
         async def start(self):
             await asyncio.sleep(0.02)
             self.alive = True
@@ -200,6 +202,8 @@ def test_pool_does_not_expose_a_half_started_kernel(monkeypatch):
     process_started, finish_start = asyncio.Event(), asyncio.Event()
     class Fake:
         def __init__(self, **kw): self.process_alive, self.kc = False, None
+        # Stamped before `start`, so without it this hangs on an event `start` never reaches.
+        def touch(self): return self
         @property
         def alive(self): return self.process_alive
         async def start(self):

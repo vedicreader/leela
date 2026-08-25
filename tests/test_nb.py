@@ -482,3 +482,32 @@ def test_a_prompt_cell_keeps_its_generated_media_across_a_save_and_reload(tmp_pa
     back = Notebook.load(str(tmp_path/'d.ipynb'))
     assert back[0].cell_type == 'prompt' and back[0].reply == 'here it is'
     assert back[0].outputs == outputs
+
+
+def _trail(steps=2, payload='x' * 4000):
+    "What `Agent.turn_md` appends to a prompt cell's reply."
+    return (f'<details><summary>what I did ({steps} steps)</summary>\n\n'
+            f'<details><summary>Search Approvals</summary>\n\n```\n{payload}\n```\n\n</details>\n\n</details>')
+
+def test_a_prompt_cell_work_log_is_not_fed_back_as_context():
+    "`cell.calls` already holds the trail; feeding `cell.reply` back whole paid for it again every turn."
+    nb = dialog()
+    nb[2].reply = f'Because 1+2+3 = 6.\n\n{_trail()}'
+    ctx = nb.context(4, since=0)
+    assert '<answer>' in ctx and 'Because 1+2+3 = 6.' in ctx
+    assert '<details>' not in ctx and 'Search Approvals' not in ctx and 'x' * 100 not in ctx
+    assert len(ctx) < len(dialog().context(4, since=0)) + 100
+    plain = dialog()
+    assert plain.context(4, since=0) == ctx
+    nb[2].calls = []
+    assert '<details>' not in nb.context(4, since=0)
+    nb[2].reply = f'Because 1+2+3 = 6.\n\n{_trail()}\n\n   \n'
+    assert '<details>' not in nb.context(4, since=0)
+    nb[2].reply = 'Because 1+2+3 = 6.\n\n<details><summary>my own working</summary>\n\n2+2\n\n</details>'
+    assert 'my own working' in nb.context(4, since=0)
+    nb[2].reply = _trail()
+    assert '<answer>' not in nb.context(4, since=0)
+    nb[2].source = ''
+    assert 'id="p1"' not in nb.context(4, since=0)
+    from leela.blocks.nb.nb import strip_work_log
+    assert strip_work_log('') == '' and strip_work_log(None) == ''

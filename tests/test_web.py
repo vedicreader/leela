@@ -16,7 +16,8 @@ import time
 from unittest.mock import Mock
 import pytest
 from leela.blocks.runtime.kernels import RuntimeBroker, KernelPool
-from leela.hub import LoopbackHostGuard, WorkspaceHub, WorkspaceSite, workspace_slug
+from leela.hub import (OPEN_PATH, LoopbackHostGuard, WorkspaceHub, WorkspaceSite,
+                       assign_slugs, workspace_slug, workspace_slugs)
 
 def test_the_shell_paints_status_theme_and_layout():
     from leela.app import _asset
@@ -1466,3 +1467,96 @@ def test_the_token_cache_does_not_grow_without_bound(tmp_path):
         f = tmp_path/f'f{i}.py'; f.write_text(str(i))
         tabs.disk_version(f)
     assert len(tabs._TOKENS) <= tabs.TOKEN_CACHE
+
+
+def _hub_get(hub, path, query=b''):
+    "Drive one HTTP request through the hub and return `(status, json)`."
+    sent = []
+    async def send(m): sent.append(m)
+    async def receive(): return {'type': 'http.request', 'body': b''}
+    asyncio.run(hub({'type': 'http', 'path': path, 'query_string': query, 'headers': []},
+                    receive, send))
+    return sent[0]['status'], json.loads(sent[-1]['body'])
+
+def test_a_folder_opened_while_leela_runs_becomes_its_own_workspace(tmp_path):
+    """`open_folder` added a root to the window that was already open, so the second folder shared
+    the first one's kernels, tabs and agent. A folder is a workspace, and a workspace is a window."""
+    (one := tmp_path/'one').mkdir(); (two := tmp_path/'two').mkdir()
+    made = []
+    def build(root, slug):
+        made.append(slug)
+        return WorkspaceSite(slug, Path(root).name, str(root), lambda *a: None)
+    hub = WorkspaceHub([WorkspaceSite('one', 'one', str(one), lambda *a: None)], 5001, build=build)
+    status, d = _hub_get(hub, OPEN_PATH, b'path=' + str(two).encode())
+    assert (status, d['ok']) == (200, True), d
+    assert d['url'] == 'http://two.localhost:5001/' and d['id'] == 'two'
+    assert set(hub.sites) == {'one', 'two'}, 'and the hub now serves both'
+
+def test_opening_a_folder_that_is_already_open_reuses_its_workspace(tmp_path):
+    "Two windows on one folder would be two kernels and two journals writing the same files."
+    (one := tmp_path/'one').mkdir()
+    def build(root, slug): raise AssertionError('nothing may be built for a folder already served')
+    hub = WorkspaceHub([WorkspaceSite('one', 'one', str(one), lambda *a: None)], 5001, build=build)
+    status, d = _hub_get(hub, OPEN_PATH, b'path=' + str(one).encode())
+    assert (status, d['id']) == (200, 'one')
+    assert list(hub.sites) == ['one'], 'and no second site was made for it'
+
+def test_opening_something_that_is_not_a_folder_is_refused_not_served(tmp_path):
+    (f := tmp_path/'notes.py').write_text('x = 1\n')
+    hub = WorkspaceHub([], 5001, build=lambda root, slug: None)
+    for raw in (str(f), str(tmp_path/'gone'), ''):
+        status, d = _hub_get(hub, OPEN_PATH, b'path=' + raw.encode())
+        assert (status, d['ok']) == (400, False), raw
+        assert 'not a folder' in d['error'], d
+
+def test_a_workspace_that_cannot_open_another_folder_says_so_rather_than_failing_silently(tmp_path):
+    hub = WorkspaceHub([], 5001)
+    status, d = _hub_get(hub, OPEN_PATH, b'path=' + str(tmp_path).encode())
+    assert (status, d['ok']) == (400, False)
+    assert 'cannot open another folder' in d['error'], d
+
+def test_a_folder_opened_after_startup_still_hears_the_shutdown(tmp_path):
+    """The lifespan legs were zipped over the sites present at startup, so a workspace opened later
+    never heard `lifespan.shutdown` and left its kernels, terminals and dev servers running."""
+    (late := tmp_path/'late').mkdir()
+    up, down = [], []
+    def site(slug, root=''):
+        async def app(scope, receive, send):
+            while True:
+                m = await receive()
+                if m['type'] == 'lifespan.startup': up.append(slug)
+                elif m['type'] == 'lifespan.shutdown': down.append(slug); return
+        return WorkspaceSite(slug, slug, root, app)
+    hub = WorkspaceHub([site('alpha')], 5001, build=lambda root, slug: site(slug, str(root)))
+    inbox, sent = asyncio.Queue(), []
+    async def drive():
+        task = asyncio.create_task(hub({'type': 'lifespan'}, inbox.get,
+                                       lambda m: sent.append(m) or asyncio.sleep(0)))
+        inbox.put_nowait({'type': 'lifespan.startup'})
+        await asyncio.sleep(0)
+        await asyncio.to_thread(hub.open_folder, late)
+        await asyncio.sleep(.05)
+        inbox.put_nowait({'type': 'lifespan.shutdown'})
+        await task
+    asyncio.run(drive())
+    assert sorted(up) == ['alpha', 'late'], 'the late workspace is started, not only registered'
+    assert sorted(down) == ['alpha', 'late'], 'and it is torn down with the rest'
+    assert [m['type'] for m in sent] == ['lifespan.startup.complete', 'lifespan.shutdown.complete']
+
+def test_a_folders_slug_does_not_depend_on_the_order_it_was_opened_in(tmp_path):
+    """The slug names the state file, and a counter made it positional: open two projects that both
+    end in `src` the other way round and each was served the other one's tabs."""
+    (a := tmp_path/'a'/'src').mkdir(parents=True); (b := tmp_path/'b'/'src').mkdir(parents=True)
+    store = tmp_path/'index.json'
+    forward = dict(zip([a, b], assign_slugs([a, b], store)))
+    assert len(set(forward.values())) == 2, forward
+    assert assign_slugs([b, a], store) == [forward[b], forward[a]], 'the other order, the same slugs'
+    assert assign_slugs([a], store) == [forward[a]], 'and one folder alone keeps what it was given'
+
+def test_a_slug_already_given_out_survives_a_corrupt_or_missing_index(tmp_path):
+    "The index is a convenience, not a source of truth: losing it must not raise, only re-assign."
+    (a := tmp_path/'src').mkdir()
+    store = tmp_path/'index.json'
+    assert assign_slugs([a], store) == ['src']
+    store.write_text('{not json')
+    assert assign_slugs([a], store) == ['src'], 'and the obvious slug is still the obvious one'

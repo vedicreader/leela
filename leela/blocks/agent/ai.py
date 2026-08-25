@@ -251,6 +251,10 @@ class Interventions(Approvals):
 class WorkspaceHost(Host):
     "A `Workspace`, answering the harness's questions."
     mk_chat = None                          # `Agent.lend_model` fills this; declaring it is the opt-in
+    # The default reads it off the launcher, because a kernel that serialises is the common case.
+    # Leela serves the inspector from inside the kernel process, so it holds for ipykernel too:
+    # `test_an_inspection_runs_beside_a_yielding_cell` is parametrised over both and passes on both.
+    concurrent = True
     def __init__(self, ws, session=None): self.ws, self.session = ws, session
     @property
     def capabilities(self):
