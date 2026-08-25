@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastcore.all import store_attr
 
+from ... import errstr
 from .fs import SKIP_DIRS
 
 __all__ = ['Watcher']
@@ -53,7 +54,11 @@ class Watcher:
         if wait and thread and thread is not threading.current_thread(): thread.join(timeout=WAIT)
     def _run(self, roots, stop):
         try: from watchfiles import watch
-        except ImportError: return
+        except ImportError as e:
+            # Said once, on the thread: silence here is why a frozen build went without a file
+            # watcher for as long as it did, and the tree looked merely stale rather than broken.
+            print(f'  the file tree will not follow the disk: {errstr(e)}')
+            return
         keep = lambda _change, p: not (set(Path(p).parts) & SKIP_DIRS)
         for batch in watch(*roots, stop_event=stop, watch_filter=keep, debounce=self.step,
                            rust_timeout=RUST_TIMEOUT):

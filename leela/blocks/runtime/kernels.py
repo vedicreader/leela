@@ -11,10 +11,10 @@ from jupyter_client.kernelspec import KernelSpec
 
 from ...core.inspectors import reg_dir, active
 
-from .support import clean_env
+from .support import LEELA_PY, clean_env, support_paths
 
 __all__ = ['ExecOutcome', 'Kernel', 'GatewayKernel', 'GatewayService', 'KernelPool', 'RuntimeBroker',
-           'KernelLimit',
+           'KernelLimit', 'check_gateway_deps',
            'bootstrap_src', 'output_text', 'ipymini_available', 'find_pythons', 'project_python',
            'nearest_python', 'python_for', 'venv_env', 'run_file_src']
 
@@ -108,13 +108,18 @@ def run_file_src(path, src=None, argv=(), cwd=None):
 BOOTSTRAP = '''
 def _lee_bootstrap():
 	import sys, importlib.util
-	for _p in {support!r}:
-		if _p and _p not in sys.path: sys.path.append(_p)
+	# Borrowed only by a kernel of Leela's own minor version. A frozen build ships bytecode-only
+	# modules in its zip, and another version reads their magic number and refuses: an import that
+	# fell through to them died as `bad magic number`, not as anything about the inspector.
+	if tuple(sys.version_info[:2]) == tuple({version!r}):
+		for _p in {support!r}:
+			if _p and _p not in sys.path: sys.path.append(_p)
 	# The project venv may contain an older dhrishti. Pin the inspector protocol to this
 	# Leela installation while every other import stays project-local. Best-effort: a frozen
 	# build imports dhrishti out of a zip, where there is no file to point at. A failed pin
 	# must leave nothing in sys.modules, or the fallback import finds the broken module.
 	try:
+		if tuple(sys.version_info[:2]) != tuple({version!r}): raise ImportError('another Python')
 		for _n in [n for n in sys.modules if n == 'dhrishti' or n.startswith('dhrishti.')]:
 			del sys.modules[_n]
 		_spec = importlib.util.spec_from_file_location('dhrishti', {dhrishti_init!r},
@@ -140,15 +145,15 @@ finally: del _lee_bootstrap
 
 def bootstrap_src(name=None, port=8000, agent='restricted', token=True, kernel='ipykernel'):
     "The bootstrap cell source for a kernel that should host an inspector."
-    support = [p for p in sys.path if p and os.path.isabs(p) and os.path.exists(p)]
+    support = support_paths()
     # Found, not imported: importing dhrishti for its `__file__` drags IPython, pandas and
     # numpy into the Leela server, which has no use for them. The kernel does the importing.
     spec = importlib.util.find_spec('dhrishti')
     if spec is None or not spec.origin: raise RuntimeError('dhrishti is not installed')
     dhrishti_init = str(Path(spec.origin).resolve())
     return BOOTSTRAP.format(name=name, port=port, agent=agent, token=token, support=support,
-        dhrishti_init=dhrishti_init, dhrishti_dir=str(Path(dhrishti_init).parent),
-        ipymini=(kernel == 'ipymini'))
+        version=LEELA_PY, dhrishti_init=dhrishti_init,
+        dhrishti_dir=str(Path(dhrishti_init).parent), ipymini=(kernel == 'ipymini'))
 
 def output_text(outs):
     "Flatten nbformat outputs to plain text: the terminal rendering, and the agent's view of a run."
@@ -572,6 +577,25 @@ class Kernel(_Inspector):
         if not c.get('found'): return ''
         return strip_ansi((c.get('data') or {}).get('text/plain') or '')
 
+#: What the `[gateway]` extra installs, with the version range each import has to satisfy.
+#: `jupyasyncclient` 0.2.8 leaves the gateway executing nothing, so it is excluded here as in `pyproject.toml`.
+GATEWAY_DEPS = (('jupygate', ''), ('jupyasyncclient', '>=0.2.1,!=0.2.8'))
+
+def check_gateway_deps():
+    "Raise a RuntimeError naming the distribution when the `[gateway]` extra is missing or out of range."
+    import importlib.metadata
+    from packaging.specifiers import SpecifierSet
+    for name, spec in GATEWAY_DEPS:
+        try: importlib.import_module(name)
+        except ImportError as e: raise RuntimeError(
+            f'gateway transport needs `pip install "leela[gateway]"`; {name} is not installed') from e
+        if not spec: continue
+        try: version = importlib.metadata.version(name)
+        except Exception: continue   # unknown version, such as a vendored copy, is not a reason to refuse
+        if not SpecifierSet(spec, prereleases=True).contains(version): raise RuntimeError(
+            f'gateway transport needs {name}{spec}, and {version} is installed; '
+            'reinstall with `pip install "leela[gateway]"`')
+
 class GatewayService:
     "One supervised jupygate for all workspace kernels in this Leela process."
     def __init__(self, port=8787, token=None):
@@ -580,13 +604,14 @@ class GatewayService:
     @property
     def url(self): return getattr(self.server, 'url', None) or f'http://127.0.0.1:{self.port}'
     def start(self):
+        check_gateway_deps()   # both imports, before the early return, so every kernel start is covered
         if self.server is not None: return self
-        try:
-            from jupygate.core import create_app, serve
-        except ImportError as e:
-            raise RuntimeError('gateway transport needs `pip install "leela[gateway]"`') from e
+        from jupygate.core import create_app, serve
         argv = [sys.executable, '-m', 'ipykernel_launcher', '-f', '{connection_file}']
-        self.server = serve(create_app(argv=argv, auth_token=self.token), port=self.port, in_thread=True)
+        try: self.server = serve(create_app(argv=argv, auth_token=self.token), port=self.port, in_thread=True)
+        except OSError as e: raise RuntimeError(   # jupygate gives up on the listen with a TimeoutError
+            f'gateway transport could not listen on port {self.port}; another Leela or a leftover '
+            'gateway is holding it') from e
         return self
     def stop(self):
         if self.server is not None: self.server.should_exit = True
@@ -610,6 +635,7 @@ class GatewayKernel(_Inspector):
     @property
     def pid(self): return None
     async def start(self, timeout=60):
+        check_gateway_deps()
         from jupyasyncclient import JupyAsyncKernelClient
         self.gateway.start()
         argv = _spec(self.python, ifnone(self.name, 'python3'), self.kernel).argv

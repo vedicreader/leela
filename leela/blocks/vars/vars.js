@@ -25,11 +25,31 @@ async function refreshVars(box) {
     try { d = await api(`/vars?profile=${profile}&sort=${sort}&scope=${lee.execScope}`); }
     catch (e) { box.innerHTML = `<div class="lee-err">${esc(e.message)}</div>`; return; }
     if (d.error) {
+      // An install runs for minutes and the panel polls every 2.5 seconds; repainting would throw
+      // away the disabled button and the progress line every poll.
+      if (lee.varsInstalling) return;
+      const pkgs = (d.packages || []).join(' and ');
       box.innerHTML = `<div class="lee-err"><strong>Dhrishti inspector unavailable</strong><span>${esc(d.error)}</span>` +
+        (d.can_install ? `<button class="lee-btn go" data-install-inspector>Install ${esc(pkgs)} into this environment</button>` : '') +
         `<button class="lee-btn" data-repair-inspector>Restart kernel and repair</button></div>`;
       $('[data-repair-inspector]', box).onclick = async () => {
         if (!await confirmDialog('Restart kernel', 'Repairing the inspector restarts this kernel and clears its live variables.', 'restart and repair')) return;
         await post('/kernel/restart'); markPreviousRuns(); await leeVars(); refreshKernelPill();
+      };
+      const install = $('[data-install-inspector]', box);
+      if (install) install.onclick = async () => {
+        if (!await confirmDialog('Install into this environment',
+            `Leela will install ${pkgs} into ${d.python}, then restart this kernel, which clears its live variables.`,
+            'install and restart')) return;
+        install.disabled = true; lee.varsInstalling = true;
+        status(`installing ${pkgs} into ${d.python.split('/').slice(-3).join('/')}…`);
+        try {
+          await post('/runtime/inspector', {python: d.python});
+          await post('/kernel/restart'); markPreviousRuns();
+          status('inspector ready · live variables connected', 'ok');
+        } catch (e) { status(String(e.message || e), 'err'); }
+        finally { lee.varsInstalling = false; install.disabled = false; }
+        await leeVars(); refreshKernelPill();
       };
       return;
     }

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from fasthtml.common import JSONResponse
 
+from ...core.inspectors import import_failure
 from ...core.session import kernel_api
 from ...core.web import fail
 from ..runtime.kernels import KernelLimit
+from ..runtime.support import INSPECTOR, installable
 
 __all__ = ['CAPS', 'connect']
 
@@ -53,10 +55,15 @@ def connect(app, ctx):
         r = await runtime.api(_api_path('rows', scope), {'profile': profile, 'sort': sort}, 15) if runtime else None
         identity = ((getattr(runtime, 'base', None) or
                      (f'kernel:{session.kernel_key()}' if runtime is not None else 'none')) + f':{scope}')
-        problem = (getattr(runtime, 'boot_error', '') or getattr(runtime, 'last_api_error', '') or
-                   'no dhrishti inspector') if not r else ''
+        boot = getattr(runtime, 'boot_error', '') or ''
+        problem = (boot or getattr(runtime, 'last_api_error', '') or 'no dhrishti inspector') if not r else ''
+        py = str(getattr(runtime, 'python', '') or '')
+        # Offered off the boot error alone. A failed inspector call is a live inspector that did not
+        # answer once, and installing packages is no answer to that.
+        can_install = bool(problem and import_failure(boot) and installable(py))
         return {**(r or {'groups': [], 'error': problem}), 'runtime': identity,
-                'inspector': 'dhrishti', 'python': str(getattr(runtime, 'python', '') or ''),
+                'inspector': 'dhrishti', 'python': py,
+                **({'can_install': True, 'packages': list(INSPECTOR)} if can_install else {}),
                 'cwd': str(getattr(runtime, 'cwd', '') or '')}
     @rt('/vars/expand')
     async def vars_expand(accessor: str, offset: int = 0, scope: str = 'live'):

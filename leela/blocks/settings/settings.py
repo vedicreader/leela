@@ -8,14 +8,17 @@ from fastcore.all import Path, atomic_save
 from ... import leela_cfg
 from ...core.backups import ENTRIES as BACKUP_ENTRIES, PRECIOUS
 
-__all__ = ['DEFAULT_SETTINGS', 'Settings', 'USER_SETTINGS_FILE', 'WORKSPACE_SETTINGS_FILE',
+__all__ = ['DEFAULT_SETTINGS', 'Settings', 'user_settings_file', 'WORKSPACE_SETTINGS_FILE',
            'CODE_FOLDER', 'agent_cfg', 'start_folder']
 
 #: Where the folder picker starts when nothing else names a folder. Home is mostly not projects.
 CODE_FOLDER = '~/code'
 
-USER_SETTINGS_FILE = Path(leela_cfg)/'settings.json'
 WORKSPACE_SETTINGS_FILE = '.leela/settings.json'
+
+# A call, not a constant: `leela_cfg` moves under a test, and a path fixed at import writes into
+# somebody else's run. One expression, so redirecting it redirects every read and write.
+def user_settings_file(): return Path(leela_cfg)/'settings.json'
 
 DEFAULT_SETTINGS = {
     'editor': {
@@ -163,9 +166,7 @@ class Settings:
     "Read and write user/workspace settings without allowing arbitrary paths or keys."
     def __init__(self, root=None, user_path=None):
         self.root = Path(root).resolve() if root else None
-        # resolved now, not at import: a test moves `leela_cfg`, and a path fixed at import
-        # writes into somebody else's run
-        self.user_path = Path(user_path or Path(leela_cfg)/'settings.json')
+        self.user_path = Path(user_path or user_settings_file())
     @property
     def workspace_path(self): return self.root/WORKSPACE_SETTINGS_FILE if self.root else None
     def raw(self, scope):

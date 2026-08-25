@@ -7,7 +7,7 @@ import subprocess
 
 from fastcore.xtras import Path
 
-__all__ = ['PROFILES', 'SORTS', 'reg_dir', 'active', 'alive']
+__all__ = ['PROFILES', 'SORTS', 'reg_dir', 'active', 'alive', 'import_failure']
 
 # Mirrors `dhrishti.core.PROFILES`; 'data' is always top-level. Pinned by `tests/test_inspectors.py`.
 PROFILES = {
@@ -18,6 +18,15 @@ PROFILES = {
 
 # Mirrors `dhrishti.core.SORTS`.
 SORTS = ('name', 'recent', 'type', 'size')
+
+#: What a kernel says when it cannot import the inspector, as opposed to when the inspector ran and
+#: something else went wrong. The second form is numpy's, whose ABI failure never names itself an
+#: ImportError until its eighteen lines of advice are over.
+IMPORT_FAULTS = ('ModuleNotFoundError', 'ImportError', 'No module named')
+
+def import_failure(err):
+    "Whether an inspector bootstrap error is a missing import, which restarting the kernel cannot fix."
+    return any(s in (err or '') for s in IMPORT_FAULTS)
 
 def reg_dir():
     "Where live inspectors register themselves; `$DHRISHTI_REG_DIR` overrides it."

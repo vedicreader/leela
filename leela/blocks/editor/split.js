@@ -101,7 +101,7 @@ async function refreshKernelPill() {
 async function checkProjectRuntime() {
   let d;
   try { d = await api('/runtime/info'); } catch (_) { return; }
-  if ((!d.needs_create && !d.needs_support) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
+  if ((!d.needs_create && !d.needs_support && !d.needs_inspector) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
   sessionStorage.setItem('lee-runtime-asked:' + d.root, '1');
   /* A folder with no environment at all gets one, without being asked, because with uv the fix is
      one command that a deleted directory undoes. Only for a missing environment: installing
@@ -116,19 +116,27 @@ async function checkProjectRuntime() {
     } catch (e) { status(`could not create .venv — ${String(e.message || e)}`, 'err'); }
     /* fall through to the dialog, which offers choosing an interpreter instead */
   }
-  if (d.needs_support) {
+  if (d.needs_support || d.needs_inspector) {
+    /* Two separate lacks, one dialog: the runtime cannot run notebook code without the launchers,
+       and the variables panel cannot read the namespace without what dhrishti imports. A folder
+       missing both should be asked once. */
+    const pkgs = (d.inspector_packages || []).map(p => `<code>${esc(p)}</code>`).join(' and ');
+    const wants = [d.needs_support ? '<code>ipykernel</code> and <code>ipymini</code> to run notebook code' : '',
+                   d.needs_inspector ? `${pkgs} to read live variables` : ''].filter(Boolean);
     const m = modal(`<div class="lee-mhead">enable project runtime<span class="sub">${esc(d.python)}</span></div>` +
       `<div class="lee-dialogcopy">Leela found this folder’s environment, but it needs ` +
-      `<code>ipykernel</code> and <code>ipymini</code> to run notebook code. ` +
+      `${wants.join(', and ')}. ` +
       `Leela installs them into this project environment with uv; the IDE remains separate.</div>` +
       `<div class="lee-mfoot"><button class="lee-btn go" id="runtimeenable">install kernel support</button>` +
       `<button class="lee-btn" id="runtimelater">not now</button></div>`);
     m.querySelector('#runtimeenable').onclick = async () => {
       m.querySelector('#runtimeenable').disabled = true; status('installing project kernel support…');
       try {
-        const r = await post('/runtime/support', {python: d.python}); m.remove();
-        status(`project runtime ready · ipykernel + ipymini`, 'ok');
-        refreshKernelPill();
+        if (d.needs_support) await post('/runtime/support', {python: d.python});
+        if (d.needs_inspector) await post('/runtime/inspector', {python: d.python});
+        m.remove();
+        status('project runtime ready', 'ok');
+        refreshKernelPill(); if (window.leeVars) leeVars();
       }
       catch (e) { status(String(e.message || e), 'err'); m.querySelector('#runtimeenable').disabled = false; }
     };

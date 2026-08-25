@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
-import os, shutil, subprocess
+import os, shutil, subprocess, sys, threading, time
 from pathlib import Path
 
-__all__ = ['clean_env', 'kernel_support', 'install_kernel_support']
+__all__ = ['clean_env', 'support_paths', 'kernel_support', 'install_kernel_support', 'LEELA_PY',
+           'INSPECTOR', 'INSPECTOR_TTL', 'installable', 'inspector_support', 'install_inspector_support']
+
+#: Leela's own minor version. A kernel may borrow Leela's `sys.path` only when it matches.
+LEELA_PY = tuple(sys.version_info[:2])
+
+#: What a kernel that cannot borrow Leela's own copy has to have of its own. `dhrishti` and not
+#: its imports: numpy and pandas are the two that are noticed missing, but IPython comes with it
+#: and the bundle's is bytecode for another version. Unpinned, because the versions are the
+#: project's choice. Pinned by `tests/test_runtime.py`.
+INSPECTOR = ('dhrishti',)
+
+#: Seconds an inspector answer is reused for. A person who installs pandas by hand should not have
+#: to restart Leela to be believed.
+INSPECTOR_TTL = 90
+
+_INSPECT = {}
+_locks, _locks_lock = {}, threading.Lock()
 
 def clean_env():
     "Environment for a child Python, without py2app's interpreter redirection state."
@@ -15,41 +32,100 @@ def clean_env():
     env['PYTHONUTF8'] = '1'
     return env
 
+def support_paths():
+    "The `sys.path` entries `bootstrap_src` hands a kernel to borrow from."
+    return [p for p in sys.path if p and os.path.isabs(p) and os.path.exists(p)]
+
+def _lock_for(python):
+    "One lock per interpreter: two installers in one venv is a race, and three surfaces offer it."
+    with _locks_lock: return _locks.setdefault(str(python), threading.Lock())
+
 def _run(args, timeout=180):
     return subprocess.run([str(x) for x in args], env=clean_env(), text=True,
         encoding='utf-8', errors='replace', capture_output=True, timeout=timeout)
 
-def _probe(python, module):
+def _last_line(text):
+    "The line a traceback ends on. numpy's ABI failure wraps its own in eighteen lines of advice."
+    return next((l for l in reversed((text or '').strip().splitlines()) if l.strip()), '').strip()
+
+def _probe(python, module, paths=()):
     "Whether `module` imports in `python`, with its version or the failure."
-    p = _run([python, '-c', f'import {module}; print(getattr({module}, "__version__", "installed"))'], 15)
+    # The same question the bootstrap asks, and asked the same way: paths only where the version
+    # matches. Extending regardless is what made a 3.13 kernel fail on the bundle's 3.12 bytecode.
+    pre = (f'import sys\nif tuple(sys.version_info[:2]) == {LEELA_PY!r}: '
+           f'sys.path.extend({list(paths)!r})\n') if paths else ''
+    p = _run([python, '-c', f'{pre}import {module}; print(getattr({module}, "__version__", "installed"))'], 15)
     return {'available': p.returncode == 0,
         'version': p.stdout.strip() if p.returncode == 0 else '',
-        'error': (p.stderr or p.stdout).strip() if p.returncode else ''}
+        'error': _last_line(p.stderr or p.stdout) if p.returncode else ''}
 
 def kernel_support(python):
     "Importability of both supported kernel launchers in ``python``."
     python = str(Path(python).expanduser())
     return {m: _probe(python, m) for m in ('ipykernel', 'ipymini')}
 
+def inspector_support(python, refresh=False):
+    """Whether a kernel on `python` could import the live-variable inspector.
+
+    Asked of the pinned dhrishti itself rather than of a list of package names, so a dependency
+    added upstream is answered for too, and so the answer includes what stopped it.
+    """
+    python = str(Path(python).expanduser())
+    hit = _INSPECT.get(python)
+    if not refresh and hit and time.time() - hit[0] < INSPECTOR_TTL: return hit[1]
+    state = _probe(python, 'dhrishti.serving', support_paths())
+    _INSPECT[python] = (time.time(), state)
+    return state
+
+def installable(python):
+    "Whether Leela may install into `python`. Never itself, and never inside a signed bundle."
+    if not python: return False
+    p = os.path.abspath(str(python))
+    if p == os.path.abspath(sys.executable): return False
+    return '/Contents/Resources/' not in p and '/Contents/MacOS/' not in p
+
+def _attempts(python, packages):
+    "Installer commands to try, in order, for environments that intentionally lack pip."
+    out = []
+    if uv := shutil.which('uv'): out.append([uv, 'pip', 'install', '--python', python, *packages])
+    out.append([python, '-m', 'pip', 'install', *packages])
+    if not uv and _run([python, '-m', 'ensurepip', '--upgrade']).returncode == 0:
+        out.insert(0, [python, '-m', 'pip', 'install', *packages])
+    return out
+
+def _log(command, p):
+    return {'command': command, 'returncode': p.returncode,
+        'output': (p.stdout + '\n' + p.stderr).strip()[-8000:]}
+
+def _detail(logs):
+    return next((a['output'] for a in reversed(logs) if a['output']), 'no installer answered')
+
 def install_kernel_support(python, packages=('ipykernel>=7.3.0', 'ipymini>=0.0.1')):
     "Install kernel packages, preferring uv for environments intentionally lacking pip."
     python = str(Path(python).expanduser().absolute())
-    attempts = []
-    if uv := shutil.which('uv'):
-        attempts.append([uv, 'pip', 'install', '--python', python, *packages])
-    attempts.append([python, '-m', 'pip', 'install', *packages])
-    if not uv:
-        bootstrap = _run([python, '-m', 'ensurepip', '--upgrade'])
-        if bootstrap.returncode == 0:
-            attempts.insert(0, [python, '-m', 'pip', 'install', *packages])
     logs = []
-    for command in attempts:
-        p = _run(command, 600)
-        logs.append({'command': command, 'returncode': p.returncode,
-            'output': (p.stdout + '\n' + p.stderr).strip()[-8000:]})
-        if p.returncode == 0:
-            support = kernel_support(python)
-            if all(x['available'] for x in support.values()):
-                return {'ok': True, 'python': python, 'support': support, 'attempts': logs}
-    detail = next((a['output'] for a in reversed(logs) if a['output']), 'no installer answered')
-    raise RuntimeError(f'kernel support installation failed: {detail}')
+    with _lock_for(python):
+        for command in _attempts(python, packages):
+            p = _run(command, 600)
+            logs.append(_log(command, p))
+            if p.returncode == 0:
+                support = kernel_support(python)
+                if all(x['available'] for x in support.values()):
+                    return {'ok': True, 'python': python, 'support': support, 'attempts': logs}
+    raise RuntimeError(f'kernel support installation failed: {_detail(logs)}')
+
+def install_inspector_support(python, packages=INSPECTOR):
+    "Give `python` its own copy of what the inspector imports, then ask it again."
+    python = str(Path(python).expanduser().absolute())
+    logs = []
+    with _lock_for(python):
+        for command in _attempts(python, packages):
+            p = _run(command, 600)
+            logs.append(_log(command, p))
+            if p.returncode != 0: continue
+            state = inspector_support(python, refresh=True)
+            if state['available']:
+                return {'ok': True, 'python': python, 'inspector': state, 'attempts': logs}
+            raise RuntimeError(f'{" and ".join(packages)} are installed, and the inspector still '
+                               f'will not import: {state["error"]}')
+    raise RuntimeError(f'could not install {" and ".join(packages)}: {_detail(logs)}')

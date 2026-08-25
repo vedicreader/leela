@@ -276,7 +276,7 @@ def test_the_picker_starts_where_your_projects_are_rather_than_at_home(tmp_path,
     from leela.blocks.settings import settings as S
     (code := tmp_path/'code').mkdir(); (mine := tmp_path/'elsewhere').mkdir()
     monkeypatch.setattr(S, 'CODE_FOLDER', str(code))
-    monkeypatch.setattr(S, 'USER_SETTINGS_FILE', tmp_path/'settings.json')
+    monkeypatch.setattr(S, 'user_settings_file', lambda: tmp_path/'settings.json')
     client, _ = _client(tmp_path)
     with client as c:
         assert c.get('/fs/browse', params={'path': ''}).json()['path'] == str(code)
@@ -288,7 +288,7 @@ def test_a_start_folder_that_is_not_there_falls_back_rather_than_failing(tmp_pat
     from leela.blocks.settings.settings import start_folder
     from leela.blocks.settings import settings as S
     monkeypatch.setattr(S, 'CODE_FOLDER', str(tmp_path/'no-such-folder'))
-    monkeypatch.setattr(S, 'USER_SETTINGS_FILE', tmp_path/'settings.json')
+    monkeypatch.setattr(S, 'user_settings_file', lambda: tmp_path/'settings.json')
     assert start_folder() == Path.home()
 
 
@@ -1276,3 +1276,112 @@ def test_nothing_a_page_load_asks_for_starts_a_kernel(tmp_path):
             code = '\n'.join(l for l in body.splitlines() if not l.strip().startswith(('#', '"', "'")))
             assert 'await session.runtime()' not in code, f'{route} must not start one'
             assert 'kernel_peek()' in code
+
+
+def test_a_kernel_that_cannot_import_the_inspector_is_offered_the_packages(tmp_path, monkeypatch):
+    """dhrishti.core imports numpy and pandas at module level, and a kernel borrows Leela's copies
+    over the sys.path `bootstrap_src` appends. A project interpreter on another minor version cannot:
+    the extension modules carry the wrong ABI tag, the bootstrap cell raises, and the panel used to
+    offer only a kernel restart, which cannot install a package."""
+    py = tmp_path/'.venv'/'bin'/'python'
+    py.parent.mkdir(parents=True); py.write_text('#!/bin/sh\nexit 1\n'); py.chmod(0o755)
+    ws = Workspace(roots=[tmp_path])
+    class Broken:
+        base, python, cwd, last_api_error = None, str(py), str(tmp_path), ''
+        boot_error = "ImportError: Original error was: No module named 'numpy._core._multiarray_umath'"
+        async def api(self, *a, **kw): return None
+    monkeypatch.setattr(Workspace, 'kernel_peek', lambda self: Broken())
+    with TestClient(ide_app(ws)) as c: d = c.get('/vars').json()
+    assert d['can_install'] is True and d['packages'] == list(support.INSPECTOR)
+    assert d['python'] == str(py)
+
+def test_an_inspector_that_answered_once_is_not_offered_an_install(tmp_path, monkeypatch):
+    "A failed inspector call is a live inspector that did not answer, and no package fixes that."
+    py = tmp_path/'.venv'/'bin'/'python'
+    py.parent.mkdir(parents=True); py.write_text('#!/bin/sh\nexit 1\n'); py.chmod(0o755)
+    ws = Workspace(roots=[tmp_path])
+    class Flaky:
+        base, python, cwd, boot_error = 'http://127.0.0.1:1', str(py), str(tmp_path), None
+        last_api_error = 'ReadTimeout: timed out'
+        async def api(self, *a, **kw): return None
+    monkeypatch.setattr(Workspace, 'kernel_peek', lambda self: Flaky())
+    with TestClient(ide_app(ws)) as c: d = c.get('/vars').json()
+    assert d['error'] == 'ReadTimeout: timed out' and 'can_install' not in d
+
+def test_leela_never_offers_to_install_into_its_own_interpreter():
+    "`pip install pandas` into a signed bundle is what `extras_site` exists to avoid."
+    assert not support.installable(sys.executable)
+    assert not support.installable('/Applications/Leela.app/Contents/Resources/lib/python')
+    assert not support.installable('')
+    assert support.installable('/project/.venv/bin/python')
+
+def test_the_inspector_probe_borrows_the_same_paths_the_kernel_is_given(monkeypatch):
+    "Probing a bare `import pandas` would nag every project whose interpreter matches Leela's."
+    from leela.blocks.runtime.kernels import bootstrap_src
+    assert repr(support.support_paths()) in bootstrap_src('k', 1, 'restricted', True, 'ipykernel')
+    seen = []
+    monkeypatch.setattr(support, '_run', lambda args, timeout=180: seen.append(list(map(str, args)))
+                        or completed(args))
+    support.inspector_support('/project/.venv/bin/python', refresh=True)
+    assert 'import dhrishti.serving' in seen[0][-1], seen
+    assert repr(support.support_paths()) in seen[0][-1]
+
+def test_installing_the_inspector_reports_what_still_stops_it(monkeypatch, tmp_path):
+    "A resolver that leaves an unusable numpy in place must not be reported as a repair."
+    python = tmp_path/'bin'/'python'; python.parent.mkdir(); python.write_text('')
+    monkeypatch.setattr(support.shutil, 'which', lambda n: '/usr/local/bin/uv' if n == 'uv' else None)
+    calls = []
+    monkeypatch.setattr(support, '_run', lambda args, timeout=180: calls.append(list(map(str, args)))
+                        or completed(args))
+    monkeypatch.setattr(support, 'inspector_support',
+                        lambda p, refresh=False: {'available': False, 'version': '', 'error': 'wrong ABI'})
+    with pytest.raises(RuntimeError, match='still will not import: wrong ABI'):
+        support.install_inspector_support(python)
+    assert calls[0][:5] == ['/usr/local/bin/uv', 'pip', 'install', '--python', str(python.absolute())]
+    assert list(support.INSPECTOR) == [c for c in calls[0] if c in support.INSPECTOR]
+
+def test_creating_a_venv_does_not_install_numpy_and_pandas_unasked(tmp_path, monkeypatch):
+    """`checkProjectRuntime` runs `/runtime/create` without asking when uv is there, on the rule that
+    a directory it made is a directory it may fill. That exemption does not reach a hundred megabytes
+    of numpy and pandas, so the inspector has its own route and its own dialog."""
+    python = tmp_path/'bin'/'python'; python.parent.mkdir(); python.write_text('')
+    calls = []
+    monkeypatch.setattr(support.shutil, 'which', lambda n: '/usr/local/bin/uv' if n == 'uv' else None)
+    monkeypatch.setattr(support, '_run', lambda args, timeout=180: calls.append(list(map(str, args)))
+                        or completed(args))
+    support.install_kernel_support(python)
+    assert not any(p in c for c in calls for p in support.INSPECTOR), calls
+    src = (ROOT/'leela'/'blocks'/'runtime'/'app.py').read_text()
+    assert "@rt('/runtime/inspector')" in src and 'install_inspector_support' in src
+
+
+def test_a_kernel_of_another_python_borrows_nothing_from_leela():
+    """Leela's `sys.path` was appended to every kernel. A frozen build ships bytecode-only modules
+    in its zip, so an import that fell through to them died as `bad magic number in 'stack_data'`:
+    a 3.13 project could not start the inspector against a 3.12 app, and installing numpy and
+    pandas did not help, because numpy and pandas were never what stopped it."""
+    from leela.blocks.runtime.kernels import bootstrap_src
+    from leela.blocks.runtime.support import LEELA_PY
+    src = bootstrap_src(name='t')
+    assert f'tuple(sys.version_info[:2]) == tuple({LEELA_PY!r})' in src, 'the paths are guarded'
+    guard, borrow = src.index('tuple(sys.version_info[:2]) =='), src.index('sys.path.append')
+    assert guard < borrow, 'and guarded before they are borrowed, not after'
+    assert src.count('tuple(sys.version_info[:2])') >= 2, 'the dhrishti pin is guarded too'
+
+def test_the_inspector_a_project_must_install_is_the_one_it_cannot_borrow():
+    "numpy and pandas are what is noticed missing; dhrishti is what actually has to be there."
+    from leela.blocks.runtime.support import INSPECTOR
+    assert INSPECTOR == ('dhrishti',)
+
+def test_the_inspector_probe_asks_the_question_the_kernel_asks(monkeypatch):
+    "A probe that extends the path where the kernel would not is a probe answering for nobody."
+    from leela.blocks.runtime import support
+    seen = {}
+    class Done:
+        returncode, stdout, stderr = 0, '1.0', ''
+    def fake(args, timeout=180): seen['code'] = args[-1]; return Done()
+    monkeypatch.setattr(support, '_run', fake)
+    monkeypatch.setattr(support, '_INSPECT', {})
+    support.inspector_support('/somewhere/python', refresh=True)
+    assert 'sys.version_info[:2]' in seen['code'], 'the probe is version-guarded like the bootstrap'
+    assert seen['code'].index('sys.version_info[:2]') < seen['code'].index('sys.path.extend')

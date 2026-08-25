@@ -480,3 +480,85 @@ def test_leela_asks_for_the_ramabana_extra_that_module_needs():
     import tomllib
     deps = tomllib.load(open(ROOT/'pyproject.toml', 'rb'))['project']['dependencies']
     assert any(d.startswith('ramabana[') and 'cli' in d for d in deps), deps
+
+
+def test_both_bundles_name_what_the_inspector_imports(mac, win):
+    """pandas reached the DMG only because py2app's scanner followed dhrishti's module-level import.
+    Leela's server never imports dhrishti, on purpose, so nothing in Leela's own source states the
+    dependency, and a scanner that stopped following it would drop the variables panel out of the
+    app with no test to say so."""
+    from leela.blocks.runtime.support import INSPECTOR
+    for m in (mac, win):
+        assert set(INSPECTOR) <= set(m.PACKAGES), f'{m.__name__} carries no {set(INSPECTOR) - set(m.PACKAGES)}'
+
+
+@pytest.mark.parametrize('which', ('mac', 'win'))
+def test_the_file_watcher_is_copied_whole_like_everything_imported_in_a_function(which, request):
+    """`blocks/fs/watch.py` imports watchfiles inside the watch thread, so the scanner never saw it.
+
+    The thread answers a failed import by returning, so the frozen app simply stopped following the
+    disk: no traceback, no message, a tree that looked stale rather than broken. The launch test
+    could not catch it either, because a watcher that never starts breaks nothing that it asserts.
+    """
+    assert 'watchfiles' in request.getfixturevalue(which).PACKAGES
+
+def test_the_watcher_says_why_it_stopped_rather_than_returning_in_silence(monkeypatch, capsys):
+    "It went unnoticed in every packaged build; the next time it must at least be readable."
+    import builtins, threading
+    from leela.blocks.fs.watch import Watcher
+    real = builtins.__import__
+    def no_watchfiles(name, *a, **kw):
+        if name == 'watchfiles': raise ImportError('No module named watchfiles')
+        return real(name, *a, **kw)
+    monkeypatch.setattr(builtins, '__import__', no_watchfiles)
+    w = object.__new__(Watcher)
+    w.step = 0
+    Watcher._run(w, [], threading.Event())
+    assert 'will not follow the disk' in capsys.readouterr().out
+
+
+def test_the_bundle_prefers_the_python_most_projects_are_on_not_the_newest():
+    """The version here is the version the app ships, and a kernel borrows Leela's `sys.path` only
+    from its own minor version. Shipping the newest would put the bundle ahead of every project and
+    turn borrowing off for all of them."""
+    import setup_app
+    versions = [c.split('python')[-1] for c in setup_app.FRAMEWORK_CANDIDATES if 'python3.1' in c]
+    for group in (versions[:3], versions[3:6], versions[6:9]):
+        assert group and group[0] == '3.13', f'3.13 leads its group, got {group}'
+        assert '3.14' in group and group.index('3.14') > 0, f'3.14 is offered, behind it: {group}'
+
+def test_no_standalone_interpreter_is_offered_to_py2app():
+    "uv's and pyenv's builds report an empty PYTHONFRAMEWORK; py2app cannot embed one."
+    import setup_app
+    for c in setup_app.FRAMEWORK_CANDIDATES:
+        assert '/uv/python/' not in c and '.pyenv' not in c, c
+
+
+def test_a_build_environment_on_another_python_is_rebuilt_not_reused(tmp_path, monkeypatch):
+    """Changing the framework interpreter left `.app-venv` alone, so the build announced
+    `framework Python: ...3.13` and then shipped 3.12 out of the environment it already had."""
+    import setup_app
+    venv = tmp_path/'.app-venv'
+    (venv/'bin').mkdir(parents=True)
+    (venv/'bin'/'python').write_text('')
+    monkeypatch.setattr(setup_app, 'VENV', venv)
+    monkeypatch.setattr(setup_app, 'py_version', lambda p: (3, 12) if 'app-venv' in str(p) else (3, 13))
+    ran = []
+    monkeypatch.setattr(setup_app, 'run', lambda *a, **k: ran.append([str(x) for x in a]))
+    setup_app.build_venv('/opt/homebrew/opt/python@3.13/bin/python3.13')
+    assert not (venv/'bin'/'python').exists() or any('venv' in c for c in ran[0]), \
+        'the stale environment was removed and a new one asked for'
+    assert ran and ran[0][1:3] == ['-m', 'venv'], ran[:1]
+
+def test_a_build_environment_on_the_same_python_is_kept(tmp_path, monkeypatch):
+    "Rebuilding it every time would add minutes to every build for nothing."
+    import setup_app
+    venv = tmp_path/'.app-venv'
+    (venv/'bin').mkdir(parents=True)
+    (venv/'bin'/'python').write_text('')
+    monkeypatch.setattr(setup_app, 'VENV', venv)
+    monkeypatch.setattr(setup_app, 'py_version', lambda p: (3, 13))
+    ran = []
+    monkeypatch.setattr(setup_app, 'run', lambda *a, **k: ran.append([str(x) for x in a]))
+    setup_app.build_venv('/opt/homebrew/opt/python@3.13/bin/python3.13')
+    assert not any(c[1:3] == ['-m', 'venv'] for c in ran), 'nothing was recreated'

@@ -6,6 +6,7 @@ import os, shutil
 
 from ... import errstr
 from ...core.web import fail, off_loop, pipeline_socket
+from .support import INSPECTOR
 
 __all__ = ['CAPS', 'connect']
 
@@ -56,13 +57,18 @@ def connect(app, ctx):
         """
         from ..agent.models import probed
         from .kernels import project_python
-        from .support import kernel_support
+        from .support import inspector_support, installable, kernel_support
         root = session.project_root
         py = project_python([root]) if root else None
         support = await off_loop(lambda: probed(f'support:{py}', lambda: kernel_support(py))) if py else {}
+        # Its own cache, not `probed`: an install has to be able to drop this one answer, and
+        # `forget_probes` drops every probe on the machine.
+        inspector = await off_loop(inspector_support, py) if py else {}
         return {'root': str(root or ''), 'python': py or '', 'needs_create': bool(root and not py),
             'needs_support': bool(py and not support.get('ipykernel', {}).get('available')),
             'support': support, 'active': ctx.pool.default_python or '',
+            'inspector': inspector, 'inspector_packages': list(INSPECTOR),
+            'needs_inspector': bool(py and installable(py) and not inspector.get('available')),
             'uv': bool(shutil.which('uv'))}
     @rt('/runtime/support')
     async def runtime_support(req):
@@ -72,6 +78,21 @@ def connect(app, ctx):
         if not py: return fail('choose a project interpreter first')
         try: return await off_loop(install_kernel_support, py)
         except Exception as e: return fail(f'could not install project kernel support — {errstr(e)}')
+    @rt('/runtime/inspector')
+    async def runtime_inspector(req):
+        """Give a project environment its own copy of what the live-variable inspector imports.
+
+        Separate from `/runtime/support`, which `/runtime/create` also calls: a folder that gets a
+        `.venv` without being asked should not also get numpy and pandas without being asked.
+        """
+        from .support import install_inspector_support, installable
+        d = await req.json()
+        py = d.get('python') or ctx.pool.default_python
+        if not py: return fail('choose a project interpreter first')
+        if not installable(py):
+            return fail('that is leela’s own interpreter; choose a project environment first')
+        try: return await off_loop(install_inspector_support, py)
+        except Exception as e: return fail(f'could not install the inspector’s packages — {errstr(e)}')
     @rt('/runtime/create')
     async def runtime_create():
         "Create a .venv in `project_root` and install only its kernel transport, never Leela itself."

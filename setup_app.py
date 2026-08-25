@@ -13,18 +13,25 @@ from fastcore.all import Path, first
 
 ROOT = Path(__file__).resolve().parent
 VENV = ROOT/'packaging'/'.app-venv'
-# Framework builds on macOS, best first.
+# Framework builds on macOS, best first. Not newest first: the version here is the version the
+# app ships, and a kernel may only borrow Leela's own `sys.path` from an interpreter of the same
+# minor version (`blocks/runtime/support.py`). So the order is what projects are most likely to be
+# on, and 3.13 leads. uv's and pyenv's interpreters are absent on purpose: both are
+# python-build-standalone, `PYTHONFRAMEWORK` is empty, and py2app cannot embed one in a bundle.
 FRAMEWORK_CANDIDATES = (
     '/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13',
+    '/Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14',
     '/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12',
     '/opt/homebrew/opt/python@3.13/bin/python3.13',
+    '/opt/homebrew/opt/python@3.14/bin/python3.14',
     '/opt/homebrew/opt/python@3.12/bin/python3.12',
     '/usr/local/opt/python@3.13/bin/python3.13',
+    '/usr/local/opt/python@3.14/bin/python3.14',
     '/usr/local/opt/python@3.12/bin/python3.12',
     '/usr/bin/python3',
 )
 
-__all__ = ['is_framework', 'framework_python', 'build_venv', 'platform_setup', 'main']
+__all__ = ['is_framework', 'framework_python', 'py_version', 'build_venv', 'platform_setup', 'main']
 
 def run(*args, **kw):
     print('·', ' '.join(str(a) for a in args))
@@ -48,10 +55,23 @@ def framework_python():
     "The first framework interpreter on this machine that py2app can build against."
     return first(p for c in FRAMEWORK_CANDIDATES if (p := Path(c)).exists() and is_framework(p))
 
+def py_version(python):
+    "The `(major, minor)` of `python`, or None when it will not say."
+    try: out = subprocess.run([str(python), '-c', 'import sys;print(*sys.version_info[:2])'],
+                              capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError): return None
+    try: return tuple(int(n) for n in out.stdout.split())
+    except ValueError: return None
+
 def build_venv(python, force=False):
     "A build environment on `python`: a plain `venv`, since `uv venv` links what we are avoiding."
     if force: shutil.rmtree(VENV, ignore_errors=True)
     exe = VENV/'bin'/'python'
+    # A build environment left over from another interpreter is not reusable: it was reused in
+    # silence, so the app went on shipping the old version while the build printed the new one.
+    if exe.exists() and py_version(exe) != py_version(python):
+        print(f'· rebuilding {VENV.name}: it is on {py_version(exe)}, this build wants {py_version(python)}')
+        shutil.rmtree(VENV, ignore_errors=True)
     if not exe.exists():
         VENV.parent.mkdir(parents=True, exist_ok=True)
         run(python, '-m', 'venv', VENV)

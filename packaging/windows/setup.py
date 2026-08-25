@@ -19,12 +19,21 @@ DATA_FILES = (tree(ROOT/'leela'/'static', 'leela/static', skip={'js'}) +
               tree(ROOT/'leela'/'vendor', 'leela/vendor') + [('.', [str(ASSETS/'Leela.png')])])
 
 PACKAGES = [
+    # `blocks/fs/watch.py` imports it inside the watch thread, so the scanner never sees it, and
+    # the thread answers a failed import by returning: the file tree simply stopped following the
+    # disk in every packaged build, with nothing said.
+    'watchfiles',
     'leela', 'ramabana', 'dhrishti', 'fastcore', 'fasthtml', 'starlette', 'uvicorn',
     'httpx', 'httpcore', 'anyio', 'certifi', 'websockets',
     'fossick', 'fastcdp', 'scrapling', 'html2text', 'readability',
     'webview', 'clr_loader', 'pythonnet',
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
-    'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'numpy', 'yaml',
+    'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'yaml',
+    # Named, not left to the scanner. Leela's server imports neither, and deliberately: the
+    # comment at `blocks/runtime/kernels.py` says so. They are here for the kernel, which
+    # imports dhrishti, which imports both at module level. Without them the variables panel
+    # is dead in every kernel that cannot find its own copy.
+    'numpy', 'pandas',
     # `ramabana.cli` is imported inside a function, so the scanner follows it to none of these.
     'rich', 'pyghostty', 'teleprint',
     'pygments',  # see the macOS definition: styles and lexers are imported by name, so none are found

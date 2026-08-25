@@ -3,7 +3,7 @@
 from __future__ import annotations
 import asyncio, atexit, hashlib, json, os, threading, time
 from dataclasses import dataclass
-from fastcore.all import Path, L, first, ifnone
+from fastcore.all import Path, L, atomic_save, first, ifnone
 
 from . import Dictable, leela_cfg
 from .agent.agent import Completer
@@ -79,6 +79,10 @@ class _EnvClient:
 
 def ws_path(): return leela_cfg/'workspace.json'
 
+#: What a saved session is, as against the preferences saved beside it. Only a workspace that has
+#: read or opened one writes them: a bare `Workspace` recording a model choice used to blank them.
+SESSION_KEYS = ('roots', 'tabs', 'active', 'active_root')
+
 TOOL_RANGE, STEP_RANGE = (20, 400), (8, 80)
 
 def budget_value(v, lo, hi):
@@ -130,6 +134,7 @@ class Workspace:
                  python=None,
                  transport='direct', gateway=None, cdp_port=9223):
         self.fs = Sandbox(roots)
+        self._owns_session = bool(self.fs.roots)
         self._swept = set()
         from .blocks.fs.watch import Watcher
         from .blocks.git.git import wire_env
@@ -346,6 +351,7 @@ class Workspace:
         return tab
     def add_root(self, p):
         r = self.fs.add_root(p)
+        self._owns_session = True
         self.rebind_journal()
         if not self.pool.kernels and self.pool.default_python is None:
             from .blocks.runtime.kernels import project_python
@@ -356,6 +362,7 @@ class Workspace:
     def drop_root(self, p):
         "Close a folder, and every tab that lived inside it."
         r = self.fs.drop_root(p)
+        self._owns_session = True   # closing the last folder is a session to save, not an empty one
         # The folder the project surfaces were about is gone, so the choice is stale. `project_root`
         # guards against it, but anything reading `active_root` directly would follow it out.
         if self.active_root and Path(self.active_root) not in self.fs.roots: self.active_root = ''
@@ -392,6 +399,7 @@ class Workspace:
     def _add_tab(self, t):
         "Append a tab, focus it, and point the variable panel back at its kernel."
         self.tabs.append(t)
+        self._owns_session = True
         self.active = len(self.tabs) - 1
         self.watch_env(None)
         return t
@@ -1027,6 +1035,7 @@ class Workspace:
         # that folder's session.
         try: d = Path(path or getattr(self, '_state_path', None) or ws_path()).read_json()
         except Exception: return 0
+        self._owns_session = True
         saved, opened = d.get('tabs') or [], 0
         for t in saved:
             place = str(t.get('path') or '')
@@ -1043,10 +1052,18 @@ class Workspace:
             self.active = ifnone(first(i for i, t in enumerate(self.tabs)
                                        if t.path == str(was.get('path') or '')), 0)
         return opened
-    def save(self, path=None):
-        "Persist folders and tabs. A kernel namespace does not survive the process."
+    def save(self, path=None, only=None):
+        "Persist the session, merged onto what the file already holds; `only` names a partial write."
         p = Path(path or getattr(self, '_state_path', None) or ws_path())
-        try: p.write_json(self.state())
+        state = self.state()
+        if only: state = {k: v for k, v in state.items() if k in {*only, 'version', 'saved'}}
+        elif not self._owns_session:
+            for k in SESSION_KEYS: state.pop(k)
+        try: held = p.read_json()
+        except Exception: held = {}
+        try:
+            with atomic_save(p, mode='w', encoding='utf-8') as f:
+                json.dump({**held, **state} if isinstance(held, dict) else state, f)
         except OSError: pass
         return p
     @classmethod
@@ -1070,6 +1087,7 @@ class Workspace:
                  approvals=approvals, agent_scope=agent_scope, python=python,
                  transport=transport, gateway=gateway)
         ws._state_path = p
+        ws._owns_session = True     # it read this file, so it is the one entitled to rewrite it
         ws.restore_settings(d)
         for r in d.get('roots', []):
             try: ws.add_root(r)
