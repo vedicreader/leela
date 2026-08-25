@@ -251,7 +251,7 @@ def connect(app, ctx):
         # The catalog and the id each row resolves to are the machine's, not this workspace's, and
         # cost seconds to gather. Probed together, served from the last answer, refreshed behind
         # this. `refresh` is the button: it drops the answer and gathers a new one now.
-        if refresh: forget_probes()
+        if refresh: forget_probes(disk=True)   # the button means ask again, not read the last answer
         rows, by_id = _try('model catalog', lambda: probed(f'catalog:{legacy}',
                                                            lambda: catalog(legacy)), ([], {})) or ([], {})
         rows = [dict(r) for r in rows]      # decorated below with this workspace's own choices
@@ -290,10 +290,13 @@ def connect(app, ctx):
         # had been saved correctly always came back reading as the turn model.
         jobs = {j: _name(f'{j} model', lambda j=j: routing.name_for(j), '')
                 for j in JOBS if j not in ('turn', 'completion', 'inline')}
+        # The catalog's rows are marked already; only the saved aliases and the rows added for
+        # an unavailable choice still need it.
         return {'models': mark_models(rows), 'saved':saved, 'notes': notes,
                 # Asking every account whether it is signed in is the other slow half.
                 'auth': _try('auth', lambda: probed('auth', auth_status), {}) or {},
-                'runtimes': _try('runtimes', runtimes, []) or [],
+                # What is installed here, which is a second cold and another machine-wide answer.
+                'runtimes': _try('runtimes', lambda: probed('runtimes', runtimes), []) or [],
                 'jobs': jobs, 'job_help': JOB_HELP,
                 'selected': {'agent': selected(agent), 'inline': selected(inline),
                              'completion': selected(completion), **jobs}}

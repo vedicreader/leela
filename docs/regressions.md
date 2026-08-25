@@ -287,3 +287,9 @@ Every fenced code block in rendered markdown is a real CodeMirror editor with a 
 
 ## `leela/blocks/agent/live.js` `foldOlderTurns`
 A painted conversation opened every turn it held, so most of the screen was work already dealt with. Painting one, and beginning the next, now leaves the turn being read open and folds the rest. It goes through `foldAgentTurn`, which refuses to fold a turn holding a checkpoint: those buttons and their keys are the only way the run continues, and a folded body cannot be clicked.
+
+## `leela/blocks/agent/models.py` `probed`, `mark_models`
+`/agent/models` was 6.8 seconds cold and the picker is drawn on load. The in-memory probe cache was empty exactly when it mattered, because a desktop app is a fresh process every launch, so probes are kept on disk under `leela_cfg/probes` and what a previous run learned is served at once and re-probed behind whoever asked. That alone left 2.7 seconds, and profiling named it: `mark_models` calls `model_marks` for every row, which reaches `spec_caps`, which scans the Hugging Face cache. Ninety-one rows, on every request. The marks go on inside `catalog`, so they are cached with it, and `mark_models` leaves a row that carries them alone. A fresh process now answers in about 190ms; a machine with no cache at all still pays once.
+
+## `leela/workspace.py` `drop_root`
+Closing a folder left `active_root` naming it. `project_root` guards, so the surfaces followed the next open folder, but the stale value was still there for anything reading it directly. Removing a root in the tree also repainted neither the workspace name in the header nor the project pills, so the header went on naming a folder that was no longer open.

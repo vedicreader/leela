@@ -356,6 +356,9 @@ class Workspace:
     def drop_root(self, p):
         "Close a folder, and every tab that lived inside it."
         r = self.fs.drop_root(p)
+        # The folder the project surfaces were about is gone, so the choice is stale. `project_root`
+        # guards against it, but anything reading `active_root` directly would follow it out.
+        if self.active_root and Path(self.active_root) not in self.fs.roots: self.active_root = ''
         self.rebind_journal()
         self.tabs = self.tabs.filter(lambda t: not (t.path and Path(t.path).is_relative_to(r)))
         self.active = min(self.active, max(0, len(self.tabs)-1))

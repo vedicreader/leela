@@ -4833,6 +4833,9 @@ async function removeRoot() {
   await post('/fs/remove-root', {path: sel.dataset.path});
   await refreshTabStrip();
   await refreshFileTree();
+  // The header names the folder the project surfaces are about, and that folder has just gone.
+  refreshProjectPills();
+  projectChanged();
   status(name + ' removed from the workspace; files were not deleted', 'ok');
 }
 /* `find` opens the same dialog with the repository filter focused. Browsing and searching are

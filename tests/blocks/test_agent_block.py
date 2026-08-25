@@ -283,8 +283,47 @@ def test_which_row_a_chosen_model_is_is_a_lookup_not_a_scan():
     picked = route[route.index('def selected('):route.index('# The routed jobs')]
     assert 'by_id.get(' in picked and 'for r in rows' not in picked, 'no scan per selection'
     assert "probed(f'catalog:{legacy}'" in route, 'and the catalog itself is probed'
-    assert 'if refresh: forget_probes()' in route, 'with a way to ask for a fresh one'
+    assert 'if refresh: forget_probes(disk=True)' in route, 'with a way to ask for a fresh one'
     from leela.blocks.agent.models import catalog
     rows, index = catalog(legacy=False)
     assert rows and len(index) <= len(rows), 'one entry per row that resolves'
     assert all(isinstance(k, str) and isinstance(v, str) for k, v in index.items())
+
+def test_a_probe_survives_the_process_that_made_it(tmp_path, monkeypatch):
+    """A desktop app is a fresh process every launch, so an in-memory cache is empty exactly when
+    the picker is first drawn. What a previous run learned is served at once and re-probed behind."""
+    import leela.blocks.agent.models as models
+    monkeypatch.setattr(models, 'leela_cfg', tmp_path)
+    models.forget_probes()
+    calls = []
+    def probe():
+        calls.append(1)
+        return {'rows': ['a', 'b'], 'n': len(calls)}
+    assert models.probed('disk-test', probe)['n'] == 1
+    assert models.probe_path('disk-test').is_file(), 'kept for the next process'
+    models.forget_probes()                       # as a new process starts: memory empty, disk warm
+    assert models.probed('disk-test', probe) == {'rows': ['a', 'b'], 'n': 1}, 'served from disk'
+    # What a previous run learned is a starting point, not news, so a refresh runs behind it. The
+    # caller waited for none of it: the answer above is the one that was already on disk.
+    for _ in range(100):
+        if len(calls) > 1: break
+        time.sleep(.02)
+    assert len(calls) == 2, 'and it is re-probed behind whoever asked'
+    models.forget_probes(disk=True)
+    assert not models.probe_path('disk-test').is_file(), 'the refresh button drops it'
+
+def test_the_picker_marks_a_model_once_not_once_per_request():
+    """`model_marks` reaches `spec_caps`, which scans the Hugging Face cache for a local model.
+    Running that over ninety rows on every request was three and a half seconds of a route that is
+    fetched on load. The catalog carries the marks; `mark_models` leaves a marked row alone."""
+    from leela.blocks.agent import models
+    rows = [{'value': 'x', 'modalities': 'text'}, {'value': 'y', 'gen_image': False}]
+    seen = []
+    original = models.model_marks
+    try:
+        models.model_marks = lambda name: seen.append(name) or {}
+        models.mark_models(rows)
+        assert seen == [], 'a row that already carries marks is not marked again'
+        models.mark_models([{'value': 'z'}])
+        assert seen == ['z'], 'and one that does not, is'
+    finally: models.model_marks = original

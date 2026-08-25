@@ -1,5 +1,5 @@
 "Persistent user-added local and hosted model aliases."
-import json, re, subprocess, sys, threading, time
+import json, os, re, subprocess, sys, threading, time
 from fastcore.all import Path
 from fastcore.net import urljson
 from ... import extras_site, leela_cfg, use_extras
@@ -65,17 +65,41 @@ TOOLS = {'langserver': ('Language server',
 _PROBED, PROBE_TTL = {}, 90
 _probe_lock = threading.Lock()
 
+def probe_path(key):
+    "Where one probe's last answer is kept between runs."
+    return leela_cfg/'probes'/f"{re.sub(r'[^A-Za-z0-9_.-]', '_', str(key))}.json"
+
+def _read_probe(key):
+    "The answer a previous run left, or None. A malformed one is simply not there."
+    try: return json.loads(probe_path(key).read_text())['value']
+    except Exception: return None
+
+def _write_probe(key, value):
+    p = probe_path(key)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f'.{p.name}.{os.getpid()}.tmp')
+        tmp.write_text(json.dumps({'at': time.time(), 'value': value}))
+        tmp.replace(p)
+    except Exception: pass          # a probe that cannot be kept is still an answer
+
 def probed(key, fn, ttl=PROBE_TTL):
     """`fn()`'s last answer, with a stale one refreshed behind whoever asked.
 
-    The first caller waits, because there is nothing to serve yet. Everyone after that gets the
-    previous answer at once, which is what a picker needs: a model that appeared a minute ago is
-    worth showing a minute late, and a pane that will not open is not worth a fresher list.
+    Kept on disk as well as in memory, because a desktop app is a fresh process every launch and an
+    in-memory cache is empty exactly when the picker is first drawn. What a previous run learned is
+    served at once and re-probed behind it: a model installed since is worth showing a moment late,
+    and a pane that will not open is not worth a fresher list.
     """
     with _probe_lock: row = _PROBED.get(key)
+    if row is None and (kept := _read_probe(key)) is not None:
+        # `at: 0` so the refresh below fires: what a previous run saw is a starting point, not news.
+        row = {'at': 0.0, 'value': kept, 'busy': False}
+        with _probe_lock: _PROBED[key] = row
     if row is None:
         value = fn()
         with _probe_lock: _PROBED[key] = {'at': time.time(), 'value': value, 'busy': False}
+        _write_probe(key, value)
         return value
     if time.time() - row['at'] < ttl or row['busy']: return row['value']
     row['busy'] = True
@@ -83,6 +107,7 @@ def probed(key, fn, ttl=PROBE_TTL):
         try:
             value = fn()
             with _probe_lock: _PROBED[key] = {'at': time.time(), 'value': value, 'busy': False}
+            _write_probe(key, value)
         except Exception:
             with _probe_lock: row['at'], row['busy'] = time.time(), False
     threading.Thread(target=again, daemon=True, name=f'leela-probe-{key}').start()
@@ -99,14 +124,22 @@ def catalog(legacy=True):
     rows = list(available_models(include_legacy=legacy) or [])
     index = {}
     for r in rows:
+        # The modality marks go on here rather than per request: `spec_caps` scans the Hugging Face
+        # cache for a local model, and doing that once per row per request was three and a half
+        # seconds of the picker.
+        r.update(model_marks(r.get('value')))
         try: spec = resolve(r['value'])
         except Exception: continue
         if spec is not None: index.setdefault(spec.model_id, r['value'])
     return rows, index
 
-def forget_probes():
+def forget_probes(disk=False):
     "Drop every cached probe. The cache is process-wide, because what it holds is the machine's."
-    with _probe_lock: _PROBED.clear()
+    with _probe_lock: keys, _ = list(_PROBED), _PROBED.clear()
+    if not disk: return
+    for key in keys:
+        try: probe_path(key).unlink(missing_ok=True)
+        except Exception: pass
 
 def warm_probes():
     "Pay for the first probe at startup rather than on the first click."
@@ -114,8 +147,9 @@ def warm_probes():
     for legacy in (True, False):
         try: probed(f'catalog:{legacy}', lambda legacy=legacy: catalog(legacy))
         except Exception: pass
-    try: probed('auth', auth_status)
-    except Exception: pass
+    for key, fn in (('auth', auth_status), ('runtimes', runtimes)):
+        try: probed(key, fn)
+        except Exception: pass
 
 def tool_rows():
     "Each optional tool, whether it is here, and what installing it would fetch."
@@ -329,8 +363,15 @@ def model_marks(name):
                                   'gen_video': c.gen_video}
 
 def mark_models(rows):
-    "Stamp every picker row with what its model accepts and returns. No row may fail the picker."
-    for r in rows: r.update(model_marks(r.get('value')))
+    """Stamp every picker row with what its model accepts and returns. No row may fail the picker.
+
+    A row the catalog already marked is left alone. `model_marks` reaches `spec_caps`, which scans
+    the Hugging Face cache for a local model, and running that over ninety rows on every request
+    was three and a half seconds of a picker that is drawn on load.
+    """
+    for r in rows:
+        if 'modalities' in r or 'gen_image' in r: continue
+        r.update(model_marks(r.get('value')))
     return rows
 
 def model_path(path=None): return Path(path or leela_cfg/'models.json')
