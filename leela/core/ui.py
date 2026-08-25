@@ -9,6 +9,11 @@ from fasthtml.common import Button, Div, NotStr
 __all__ = ['Btn', 'BARS', 'BUTTONS', 'bar', 'tip', 'btn', 'action_bar', 'menu_button',
            'activity_icon', 'ICONS']
 
+# The `web_` prefix promises a distinction nothing implements: these render beside their plain
+# counterparts in every surface, in the app as much as in a browser. Nothing filters them and no
+# rule hides them. Read them as the bars that were added later, not as the browser's own. A real
+# split would mean a flag from `serve_ide`, which knows, reaching every renderer, and `bar` reading
+# it per request rather than being the import-time table the keymap and the menus also share.
 BARS = ('toolbar', 'cell', 'files', 'keys', 'exec', 'vars', 'agent',
         'web_editor', 'web_files', 'web_vars')
 
@@ -66,7 +71,8 @@ BUTTONS = L(
     Btn('new_dir',      '+dir',     'new folder',                      'files'),
     Btn('refresh_files','⟳',        'reread the tree',                 'files'),
     Btn('show_hidden',  '.*',       'show dotfiles like .gitignore and .github', 'files'),
-    Btn('add_root',     'open…',    'open another folder',             'files'),
+    Btn('open_folder',  'open…',    'open a folder in a new window',   'files'),
+    Btn('add_root',     'add…',     'add a folder to this window',     'files'),
     Btn('help',         'all',      'every binding',                   'keys'),
     Btn('edit_keys',    'edit',     'change these keys',               'keys'),
     Btn('exec_run',     '▶ run',    'run this in the kernel',          'exec', 'go'),

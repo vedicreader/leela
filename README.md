@@ -287,7 +287,8 @@ involve no typing:
   `window.pywebview.api`.
 - **Open With -> Leela** on a folder, and a folder dropped on the Dock icon. macOS delivers
   that to the *running* application rather than through argv. `leela.desktop` answers the
-  `odoc` Apple Event and adds the folder to the open workspace.
+  `odoc` Apple Event and gives the folder a workspace and a window of its own. To put a
+  second folder in the window you are already in, use `add…` in the files bar.
 
 Windows has no such event. Explorer starts a new process with the path in argv, which the app
 already reads. To put leela on a folder's context menu:

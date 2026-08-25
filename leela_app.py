@@ -8,7 +8,8 @@ import asyncio, os, sys, threading
 from fastcore.all import Path, first, is_port_free
 from fastcore.net import free_port as any_port
 
-__all__ = ['free_port', 'folders', 'leela_args', 'serve', 'main', 'run']
+__all__ = ['free_port', 'folders', 'leela_args', 'serve', 'main', 'run', 'open_folder',
+           'titles_for']
 
 HOST = '127.0.0.1'
 
@@ -54,7 +55,7 @@ def main():
 def run():
     "The application: server on a thread, CDP Chrome beside it, native window on this one."
     from leela.desktop import last_folder, remember, run_shell, shell_ready, warm_cdp
-    from leela.hub import workspace_urls
+    from leela.hub import assign_slugs
     # One window. The rest stay in `recent`, which the Dock menu and welcome screen offer.
     dirs = remember(folders() or last_folder())
     port = free_port()
@@ -67,8 +68,11 @@ def run():
     serve(leela_args(port, dirs, ('--shell', 'none', '--cdp-port', str(cdp_port))), background=True)
     warm_cdp(cdp_port)          # a no-op unless `$LEELA_CDP_EAGER` asks for Chrome up front
     # One window per workspace: a single window on the bare loopback host would strand the rest.
-    urls = workspace_urls(dirs, port) if dirs else [f'http://127.0.0.1:{port}/']
-    run_shell(urls, titles=titles_for(dirs), icon=_icon(),
+    # Slugged here as well as in the server because both read one remembered assignment per folder.
+    slugs = assign_slugs([Path(d).expanduser().resolve() for d in dirs]) if dirs else ['leela']
+    urls = ([f'http://{s}.localhost:{port}/' for s in slugs] if dirs
+            else [f'http://127.0.0.1:{port}/'])
+    run_shell(urls, titles=titles_for(dirs), keys=slugs, icon=_icon(),
               on_open_folder=lambda p: open_folder(port, p))
 
 def titles_for(dirs):
@@ -76,15 +80,27 @@ def titles_for(dirs):
     return [f'leela — {Path(d).name}' for d in dirs] or ['leela']
 
 def open_folder(port, path, host=HOST):
-    "Add a folder to the running workspace, through the route its own picker uses."
-    import urllib.parse, urllib.request
-    from leela.desktop import remember, session
-    url = f'http://{host}:{port}/fs/add_root?path=' + urllib.parse.quote(str(path), safe='')
+    "Give a folder a workspace and a window of its own, through the running server\'s own route."
+    import json, urllib.error, urllib.parse, urllib.request
+    from leela.core.projects import note_folder
+    from leela.desktop import open_window
+    from leela.hub import OPEN_PATH
+    url = f'http://{host}:{port}{OPEN_PATH}?path=' + urllib.parse.quote(str(path), safe='')
     try:
-        urllib.request.urlopen(url, timeout=30).close()
-        remember(session()['folders'] + [str(path)])
+        with urllib.request.urlopen(url, timeout=60) as r: d = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return print(f'  could not open {path}: {_why(e)}')
     except Exception as e:
-        print(f'  could not open {path}: {type(e).__name__}: {e}')
+        return print(f'  could not open {path}: {type(e).__name__}: {e}')
+    if not d.get('ok'): return print(f"  could not open {path}: {d.get('error')}")
+    note_folder(str(path))      # union, not replace: the other windows are still open
+    return open_window(d['url'], f"leela — {d['name']}", key=d['id'])
+
+def _why(e):
+    "What a refusal said, which is the point of it. A 4xx still carries its body."
+    import json
+    try: return json.loads(e.read()).get('error') or str(e)
+    except Exception: return str(e)
 
 def _icon():
     "The window icon, for the backends that take one. macOS reads the bundle's ICNS instead."

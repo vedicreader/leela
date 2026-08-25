@@ -160,6 +160,7 @@ const ACTIONS = {
   new_dir:      () => newEntry('dir'),
   rename:       () => renameEntry(),
   delete:       () => deleteEntry(),
+  open_folder:  () => openFolderWindow(),
   add_root:     () => addRoot(),
   find_repo:    () => findRepo(),
   remove_root:  () => removeRoot(),
@@ -404,7 +405,8 @@ async function activateGitDiffTab(key) {
     if (data.mergeResult == null) return;
     const message = `Replace the working-tree version of ${data.path} with this reviewed result? The file will remain uncommitted.`;
     if (!await confirmDialog('apply split diff result', message, 'apply result')) return;
-    try { const next = await gitDo('write_worktree', {path: data.path, content: data.mergeResult}), fresh = await api(gitUrl('/git/diff', {path: data.path, staged: false})); data.base = 'index'; data.head = 'worktree'; data.baseLabel = 'index'; data.headLabel = 'working tree'; data.left = fresh.left || ''; data.right = fresh.right || ''; data.patch = fresh.content || fresh.text || ''; data.rawPatch = fresh.text || ''; data.group = 'unstaged'; data.mergeResult = null; gitUI.review = null; paintGitPill(next); await activateGitDiffTab(key); status(`${data.path} updated in the working tree`, 'ok'); }
+    const at = data.root ? {repo: data.root} : {};
+    try { const next = await gitDo('write_worktree', {path: data.path, content: data.mergeResult, before: data.worktreeBefore ?? null, ...at}), fresh = await api(gitUrl('/git/diff', {path: data.path, staged: false, ...at})); data.base = 'index'; data.head = 'worktree'; data.baseLabel = 'index'; data.headLabel = 'working tree'; data.left = fresh.left || ''; data.right = fresh.right || ''; data.patch = fresh.content || fresh.text || ''; data.rawPatch = fresh.text || ''; data.group = 'unstaged'; data.mergeResult = null; data.worktreeBefore = fresh.right || ''; gitUI.review = null; paintGitPill(next); await activateGitDiffTab(key); status(`${data.path} updated in the working tree`, 'ok'); }
     catch (e) { status(e.message || String(e), 'err'); }
   });
   const body = host.querySelector('.lee-diff-document-body');

@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-import asyncio, re
-from urllib.parse import urlsplit
+import asyncio, hashlib, json, re
+from urllib.parse import parse_qs, urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ['WorkspaceSite', 'WorkspaceHub', 'LoopbackHostGuard', 'workspace_slug',
-           'workspace_slugs', 'workspace_urls']
+__all__ = ['WorkspaceSite', 'WorkspaceHub', 'LoopbackHostGuard', 'OPEN_PATH', 'workspace_slug',
+           'workspace_slugs', 'assign_slugs', 'slug_map', 'save_slug_map', 'workspace_urls']
 
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
+#: Where a running Leela is asked for another workspace. On the hub, not on any one workspace,
+#: because it is the hub the new site joins.
+OPEN_PATH = '/hub/open'
 
 def workspace_slug(value, used=()):
     "A URL-safe slug for `value`, suffixed until it is not already in `used`."
@@ -20,17 +23,60 @@ def workspace_slug(value, used=()):
         slug, n = f'{base}-{n}', n + 1
     return slug
 
-def workspace_slugs(names):
-    "Slugs for `names`, disambiguated against each other and stable in order."
-    used = []
-    for n in names: used.append(workspace_slug(n, used))
-    return used
+def _pathmark(root):
+    return hashlib.blake2b(str(root).encode(), digest_size=3).hexdigest()
 
-def workspace_urls(roots, port):
+def slug_store():
+    from . import leela_cfg
+    return leela_cfg/'workspaces'/'index.json'
+
+def slug_map(store=None):
+    "Which slug each folder has been given. A missing or corrupt file reads as none, never an error."
+    try: d = json.loads(Path(store or slug_store()).read_text())
+    except (OSError, ValueError): return {}
+    return {str(k): str(v) for k, v in d.items()} if isinstance(d, dict) else {}
+
+def save_slug_map(m, store=None):
+    from fastcore.xtras import atomic_save
+    store = Path(store or slug_store())
+    try:
+        store.parent.mkdir(parents=True, exist_ok=True)
+        with atomic_save(store, mode='w') as f: json.dump(m, f, indent=1)
+    except OSError: pass
+
+def workspace_slugs(roots, taken=None, used=()):
+    "Slugs for `roots`, named after the folder and remembered per folder in `taken`."
+    # The slug names the state file, so a counter would hand a folder another project's tabs.
+    taken = {} if taken is None else taken
+    used, out = set(used) | set(taken.values()), []
+    for r in roots:
+        r = str(r)
+        if (s := taken.get(r)) is None:
+            s = workspace_slug(Path(r).name)
+            if s in used: s = workspace_slug(f'{s}-{_pathmark(r)}', used)
+            taken[r] = s
+        used.add(s); out.append(s)
+    return out
+
+def assign_slugs(roots, store=None):
+    "`workspace_slugs`, remembering the assignments it makes so the next launch repeats them."
+    taken = slug_map(store)
+    before = dict(taken)
+    out = workspace_slugs(roots, taken)
+    if taken != before: save_slug_map(taken, store)
+    return out
+
+def workspace_urls(roots, port, store=None):
     "Where each root will be served, before `serve_ide` has built the workspaces to say so."
     # Resolved, because `serve_ide` slugs resolved roots: a symlink would name another host.
-    names = (Path(r).expanduser().resolve().name for r in roots)
-    return [f'http://{s}.localhost:{port}/' for s in workspace_slugs(names)]
+    roots = [Path(r).expanduser().resolve() for r in roots]
+    return [f'http://{s}.localhost:{port}/' for s in assign_slugs(roots, store)]
+
+async def _json(send, body, status=200):
+    raw = json.dumps(body).encode()
+    await send({'type': 'http.response.start', 'status': status,
+                'headers': [(b'content-type', b'application/json; charset=utf-8')]})
+    await send({'type': 'http.response.body', 'body': raw})
 
 def _headers(scope): return {k.lower(): v for k, v in (scope.get('headers') or ())}
 
@@ -72,44 +118,89 @@ class LoopbackHostGuard:
 
 class WorkspaceHub:
     "ASGI host dispatcher for isolated workspace applications."
-    def __init__(self, sites, port, default=None):
+    def __init__(self, sites, port, default=None, build=None):
         self.sites = {s.slug: s for s in sites}
         self.port = int(port)
         self.default = default or next(iter(self.sites), '')
+        #: `build(root, slug)` -> `WorkspaceSite`. Without one the hub serves what it launched with.
+        self.build = build
+        self._loop = self._scope = None
+        self._queues, self._legs = {}, []
+    def url_for(self, slug): return f'http://{slug}.localhost:{self.port}/'
     def catalog(self):
         "Every workspace and the `*.localhost` URL that reaches it."
-        return [{'id': s.slug, 'name': s.name, 'root': s.root,
-                 'url': f'http://{s.slug}.localhost:{self.port}/'} for s in self.sites.values()]
+        return [{'id': s.slug, 'name': s.name, 'root': s.root, 'url': self.url_for(s.slug)}
+                for s in self.sites.values()]
     def site_for(self, scope):
         "The workspace a request's Host header names, or None."
         host = _host(_headers(scope))
         if host.endswith('.localhost'): return self.sites.get(host[:-10])
         if not host or host in LOOPBACK: return self.sites.get(self.default)
         return None
+    def site_at(self, root):
+        "The workspace already serving `root`, or None. A folder opened twice is one window."
+        root = str(root)
+        return next((s for s in self.sites.values() if s.root and s.root == root), None)
+    def add_site(self, site):
+        "Register a workspace built after launch, and give it the lifespan the others got."
+        self.sites[site.slug] = site
+        # Reached from a request, which uvicorn runs in a threadpool: no loop to create a task on.
+        if self._loop is not None: self._loop.call_soon_threadsafe(self._start_leg, site)
+        return self.url_for(site.slug)
+    def open_folder(self, root):
+        "The site serving `root`, building and registering one when nothing does yet."
+        if (s := self.site_at(root)) is not None: return s
+        if self.build is None: raise RuntimeError('this workspace cannot open another folder')
+        s = self.build(root, assign_slugs([root])[0])
+        if s is None: raise RuntimeError(f'no workspace could be built for {root}')
+        self.add_site(s)
+        return s
+    def _start_leg(self, site):
+        self._queues[site.slug] = q = asyncio.Queue()
+        q.put_nowait({'type': 'lifespan.startup'})
+        self._legs.append(asyncio.create_task(self._leg(site.app, q)))
+    async def _leg(self, app, q):
+        async def spent(message): pass
+        await app(dict(self._scope), q.get, spent)
     async def __call__(self, scope, receive, send):
         # Lifespan carries no Host header, so it belongs to every workspace rather than to
         # whichever answers for bare loopback: one that never hears it never stops its kernels.
         if scope.get('type') == 'lifespan': return await self._lifespan(scope, receive, send)
+        if scope.get('path') == OPEN_PATH: return await self._open(scope, send)
         site = self.site_for(scope)
         if site is None: return await _refuse(scope, send, 'unknown workspace host')
         scope = dict(scope)
         scope['leela.workspace_id'] = site.slug
         await site.app(scope, receive, send)
+    async def _open(self, scope, send):
+        "Serve a folder as its own workspace. The desktop shell then points a new window at it."
+        raw = (parse_qs(scope.get('query_string', b'').decode()).get('path') or [''])[0]
+        try: root = Path(raw).expanduser().resolve() if raw.strip() else None
+        except (OSError, ValueError): root = None
+        if root is None or not root.is_dir():
+            return await _json(send, {'ok': False, 'error': f'not a folder: {raw}'}, 400)
+        # Building one starts a kernel pool, which would stall every open window on the loop.
+        try: site = await asyncio.to_thread(self.open_folder, root)
+        except Exception as e: return await _json(send, {'ok': False, 'error': str(e)}, 400)
+        await _json(send, {'ok': True, 'id': site.slug, 'name': site.name, 'root': site.root,
+                           'url': self.url_for(site.slug)})
     async def _lifespan(self, scope, receive, send):
         "One startup and one shutdown, fanned out to every site and answered once."
-        async def spent(message): pass
-        queues = [asyncio.Queue() for _ in self.sites]
-        async def leg(app, q): await app(dict(scope), q.get, spent)
-        legs = [asyncio.create_task(leg(s.app, q)) for s, q in zip(self.sites.values(), queues)]
+        self._loop, self._scope = asyncio.get_running_loop(), dict(scope)
+        for s in self.sites.values(): self._queues[s.slug] = asyncio.Queue()
+        self._legs = [asyncio.create_task(self._leg(s.app, self._queues[s.slug]))
+                      for s in self.sites.values()]
         try:
             while True:
                 message = await receive()
-                for q in queues: q.put_nowait(message)
+                # Listed, not iterated: a folder opened while this is in flight adds a queue.
+                for q in list(self._queues.values()): q.put_nowait(message)
                 if message['type'] == 'lifespan.startup':
                     await send({'type': 'lifespan.startup.complete'})
                 elif message['type'] == 'lifespan.shutdown':
-                    await asyncio.gather(*legs, return_exceptions=True)
+                    await asyncio.gather(*self._legs, return_exceptions=True)
                     return await send({'type': 'lifespan.shutdown.complete'})
         finally:
-            for t in legs:
+            self._loop = None
+            for t in self._legs:
                 if not t.done(): t.cancel()

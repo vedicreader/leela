@@ -212,27 +212,66 @@ def test_opening_a_folder_in_the_app_is_remembered_for_next_launch(tmp_path, dir
     assert projects.last_folders() == []
     assert dirs[1] in projects.recent_folders()
 
-def test_a_folder_handed_to_a_running_app_is_added_to_it(tmp_path, dirs, monkeypatch):
+def test_a_folder_handed_to_a_running_app_gets_a_window_of_its_own(tmp_path, dirs, monkeypatch):
     """The Dock-drop path: macOS delivers the folder to the process already running.
 
-    It goes through the HTTP route because the server owns the `Workspace` on another thread
-    and another event loop.
+    It used to be added as another root of the window already open, so two projects shared one
+    kernel, one tab bar and one agent. A folder is a workspace, and a workspace is a window. It
+    still goes through HTTP because the server owns the workspaces on another thread and loop.
     """
     monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
     monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'v.db'))
     import threading
 
     import uvicorn
+    from leela import desktop
+    from leela.hub import WorkspaceHub, WorkspaceSite
     ws = Workspace(roots=[dirs[0]], port=8000)
-    server = uvicorn.Server(uvicorn.Config(ide_app(ws), host='127.0.0.1', port=5207,
-                                           log_level='error'))
+    projects.note_folder(dirs[0])
+    built, opened = [], []
+    def build(root, slug):
+        built.append(str(root))
+        return WorkspaceSite(slug, os.path.basename(str(root)), str(root),
+                             ide_app(Workspace(roots=[root])))
+    hub = WorkspaceHub([WorkspaceSite('alpha', 'alpha', str(dirs[0]), ide_app(ws))], 5207,
+                       build=build)
+    monkeypatch.setattr(desktop, 'open_window',
+                        lambda url, title='leela', key=None, **kw: opened.append((url, key)))
+    server = uvicorn.Server(uvicorn.Config(hub, host='127.0.0.1', port=5207, log_level='error'))
     threading.Thread(target=server.run, daemon=True).start()
     from leela.desktop import wait_for_http
     assert wait_for_http('http://127.0.0.1:5207/', timeout=30)
     try:
         leela_app.open_folder(5207, dirs[1])
-        assert str(dirs[1]) in [str(r) for r in ws.fs.roots]
-        assert dirs[1] in projects.last_folders()
+        assert built == [dirs[1]], 'the folder got a workspace of its own'
+        assert [str(r) for r in ws.fs.roots] == [dirs[0]], 'and was not added to the one already open'
+        assert opened == [(f'http://{hub.site_at(dirs[1]).slug}.localhost:5207/',
+                           hub.site_at(dirs[1]).slug)], 'and a window was pointed at it'
+        assert dirs[1] in projects.last_folders() and dirs[0] in projects.last_folders(), \
+            'both are open now: the open set is a union, not a replacement'
+        leela_app.open_folder(5207, dirs[1])
+        assert built == [dirs[1]], 'opening it again builds nothing'
+        assert len(opened) == 2 and opened[-1] == opened[0], 'and raises the window it already has'
+    finally: server.should_exit = True
+
+def test_a_folder_that_has_gone_is_refused_and_opens_no_window(tmp_path, dirs, monkeypatch):
+    "An empty window naming a folder that is not there is worse than a line saying why."
+    import threading
+
+    import uvicorn
+    from leela import desktop
+    from leela.hub import WorkspaceHub, WorkspaceSite
+    opened = []
+    hub = WorkspaceHub([WorkspaceSite('alpha', 'alpha', str(dirs[0]), lambda *a: None)], 5208,
+                       build=lambda root, slug: pytest.fail('nothing may be built for a non-folder'))
+    monkeypatch.setattr(desktop, 'open_window', lambda *a, **kw: opened.append(a))
+    server = uvicorn.Server(uvicorn.Config(hub, host='127.0.0.1', port=5208, log_level='error'))
+    threading.Thread(target=server.run, daemon=True).start()
+    from leela.desktop import wait_for_http
+    assert wait_for_http('http://127.0.0.1:5208/', timeout=30)
+    try:
+        assert leela_app.open_folder(5208, tmp_path/'never-existed') is None
+        assert opened == [], 'no window is left showing nothing'
     finally: server.should_exit = True
 
 @pytest.mark.skipif(sys.platform == 'darwin', reason='macOS really does register the handler')

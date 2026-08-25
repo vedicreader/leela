@@ -9,7 +9,8 @@ from .core.projects import last_folder, last_folders, recent_folders, remember, 
 
 __all__ = ['BACKENDS', 'backend', 'shell_ready', 'wait_for_http', 'start_cdp', 'warm_cdp',
            'window_size', 'run_shell', 'keep_running_in_dock', 'dock_menu', 'DOCK_RECENT',
-           'watch_open_events', 'ShellApi',
+           'watch_open_events', 'ShellApi', 'shell_api', 'make_window', 'open_window',
+           'off_main_thread', 'menus', 'menu_bar', 'mac_key', 'menu_chord',
            'session', 'remember', 'last_folders', 'last_folder', 'recent_folders']
 
 BACKENDS = {'darwin': 'cocoa', 'win32': 'edgechromium', 'linux': 'gtk'}
@@ -20,6 +21,13 @@ EAGER_CDP = 'LEELA_CDP_EAGER'
 
 class ShellApi:
     "What the page may ask the native window for, as `window.pywebview.api.*`."
+    #: Set by `run_shell`. Takes a folder and gives it a window of its own.
+    on_open_folder = None
+    def open_folder(self, path):
+        "Open a folder in a window of its own. pywebview runs every `js_api` call on its own thread."
+        if not path or self.on_open_folder is None: return False
+        self.on_open_folder(str(path))
+        return True
     def pick_folder(self):
         "The platform's own folder chooser. A path, or None if it was cancelled."
         import webview
@@ -169,8 +177,52 @@ def keep_running_in_dock(on_folder=None):
         print(f'  the last window will quit Leela: {errstr(e)}')
         return False
 
+#: Everything but the title and the size, so a window opened at launch and one opened an hour
+#: later are the same window.
+WINDOW_KW = dict(min_size=MIN_SIZE, background_color='#171b20', text_select=True, zoomable=True,
+                 easy_drag=False)
+
+_api = None
+#: Which window is showing which workspace, so a folder already open is raised, not opened twice.
+_windows = {}
+
+def shell_api():
+    "The one `ShellApi` every window shares."
+    global _api
+    if _api is None: _api = ShellApi()
+    return _api
+
+def make_window(title='leela', size=None):
+    "A window on the splash, waiting for a URL."
+    import webview
+    w, h = size or window_size()
+    STORAGE.mkdir(parents=True, exist_ok=True)
+    return webview.create_window(title or 'leela', html=LOADING, width=w, height=h,
+                                 js_api=shell_api(), **WINDOW_KW)
+
+def off_main_thread(fn, name='leela-shell'):
+    "Run `fn(arg)` on a thread of its own; `create_window` builds nothing on the main thread."
+    def go(arg): threading.Thread(target=fn, args=(arg,), daemon=True, name=name).start()
+    return go
+
+def open_window(url, title='leela', key=None, url_wait=90):
+    "A window on `url`, raised rather than opened twice when `key` already has one."
+    if key and (window := _windows.get(key)) is not None:
+        try: window.show()      # cocoa's `show` is a `callAfter`, so any thread may ask
+        except Exception as e: print(f'  could not raise the window for {title}: {errstr(e)}')
+        return window
+    window = make_window(title)
+    if key: _windows[key] = window
+    _point(window, url, url_wait)
+    return window
+
+def _point(window, url, url_wait=90):
+    "Wait for the server, then show the workspace. A window that never answers says so."
+    if wait_for_http(url, timeout=url_wait): window.load_url(url)
+    else: window.load_html(_unreachable(url))
+
 def run_shell(urls, titles=(), url_wait=90, gui=None, icon=None, size=None, on_ready=None,
-              on_open_folder=None):
+              on_open_folder=None, keys=()):
     "One native window per workspace URL, until they all close. Blocks, on the main thread."
     import webview
     ok, why = shell_ready()
@@ -178,26 +230,39 @@ def run_shell(urls, titles=(), url_wait=90, gui=None, icon=None, size=None, on_r
     urls = list(urls)
     if not urls: raise ValueError('the desktop shell needs at least one workspace URL')
     titles = list(titles) + [''] * (len(urls) - len(titles))
-    w, h = size or window_size()
-    STORAGE.mkdir(parents=True, exist_ok=True)
-    api = ShellApi()
-    if sys.platform == 'darwin': keep_running_in_dock(on_open_folder)   # before any window takes a delegate
-    windows = [webview.create_window(t or 'leela', html=LOADING, width=w, height=h,
-                                     min_size=MIN_SIZE, background_color='#171b20',
-                                     text_select=True, zoomable=True, easy_drag=False,
-                                     js_api=api)
-               for t in titles]
-    if on_open_folder is not None: watch_open_events(on_open_folder)
+    keys = list(keys) + [None] * (len(urls) - len(keys))
+    # Every native caller reaches this on the main thread, and none of them may build a window there.
+    open_folder = off_main_thread(on_open_folder, 'leela-open-folder') if on_open_folder else None
+    shell_api().on_open_folder = open_folder
+    if sys.platform == 'darwin': keep_running_in_dock(open_folder)  # before any window takes a delegate
+    windows = [make_window(t, size) for t in titles]
+    for key, window in zip(keys, windows):
+        if key: _windows[key] = window
+    if open_folder is not None: watch_open_events(open_folder)
     def load(*_):
         "Once the GUI loop is up: wait for the server, then point each window at it."
-        for window, url in zip(windows, urls):
-            if wait_for_http(url, timeout=url_wait): window.load_url(url)
-            else: window.load_html(_unreachable(url))
+        for window, url in zip(windows, urls): _point(window, url, url_wait)
         if on_ready is None: return
         try: on_ready()
         except Exception as e: print(f'  desktop shell: {errstr(e)}')
+    # One list, shared: pywebview rebuilds the bar whenever the focused window's menu is not the
+    # one it built last, and a window opened for a folder later has no menu of its own.
+    bar = menus()
     webview.start(load, gui=gui or why, debug=bool(os.environ.get('LEELA_WEBVIEW_DEBUG')),
-                  private_mode=False, storage_path=str(STORAGE), icon=icon)
+                  private_mode=False, storage_path=str(STORAGE), icon=icon, menu=bar)
+
+def menus():
+    "The menu bar, or an empty bar off macOS. Its own function so a test can build one."
+    if sys.platform != 'darwin': return []
+    try:
+        import webview
+        webview.settings['SHOW_DEFAULT_MENUS'] = False   # ours are in the order macOS expects
+        bar, specs = menu_bar()
+        install_menu_patch(specs)
+        return bar
+    except Exception as e:
+        print(f'  no menu bar: {errstr(e)}')
+        return []
 
 def watch_open_events(on_folder):
     "Answer the `odoc` Apple Event Finder sends a running Leela. macOS only, best-effort."
@@ -250,3 +315,123 @@ try:                                     # pragma: no cover - macOS only
         def handleEvent_reply_(self, event, reply): self._fn(event, reply)
 except Exception:                        # pragma: no cover - everywhere else
     _OpenHandler = _RecentTarget = None
+
+
+# The Mac menu bar. pywebview builds it; what is added here is the ordering, the chords it has no
+# support for, and the rows AppKit implements itself. See `docs/desktop.md`.
+
+CMD, CTRL, ALT, SHIFT = 1 << 20, 1 << 18, 1 << 19, 1 << 17
+_MODS = {'mod': CMD, 'cmd': CMD, 'ctrl': CTRL, 'alt': ALT, 'opt': ALT, 'shift': SHIFT,
+         'hyper': CMD | CTRL | ALT | SHIFT}
+#: AppKit spells these as private-use unichars, not as their names.
+_NAMED = {'up': '', 'down': '', 'left': '', 'right': '',
+          'pageup': '', 'pagedown': '', 'home': '', 'end': '',
+          'delete': '', 'enter': '\r', 'return': '\r', 'tab': '\t', 'space': ' ',
+          'backspace': '\x08', 'escape': '\x1b'}
+
+def mac_key(chord):
+    "`(keyEquivalent, modifierMask)` for one Leela chord, or None when AppKit cannot spell it."
+    parts = str(chord or '').split()[0].split('+') if chord else []
+    if not parts or not parts[-1]: return None
+    mask, base = 0, parts[-1]
+    for p in parts[:-1]:
+        if (m := _MODS.get(p.lower())) is None: return None
+        mask |= m
+    if len(base) == 1 and base.isupper(): mask |= SHIFT
+    base = _NAMED.get(base.lower(), base.lower())
+    if len(base) != 1: return None
+    return base, mask
+
+def menu_chord(action):
+    """The chord to put on a menu row, or None to leave it bare.
+
+    A key equivalent is consulted before the keystroke reaches the web view, so anything installed
+    here is taken away from the page. Only a global action with a modifier is safe: a scoped one
+    would fire outside its scope, and a bare letter would fire while you were typing it.
+    """
+    from .core.keys import lookup
+    k = lookup(action)
+    if k is None or not k.bound or k.scope != 'global': return None
+    first = k.keys[0]
+    if not (set(first.split('+')[:-1]) & {'mod', 'cmd', 'ctrl', 'alt', 'opt', 'hyper'}): return None
+    return mac_key(first)
+
+def _title(row):
+    from .core.keys import lookup
+    k = lookup(row.action)
+    t = (k.label if k and k.label else row.action.replace('_', ' '))
+    return t[:1].upper() + t[1:]
+
+def menu_bar(run=None):
+    "pywebview menus for `BAR`, plus the table `_decorate` needs to finish them off AppKit-side."
+    from webview.menu import Menu, MenuAction, MenuSeparator
+    from .blocks.keys.menus import BAR, Js, MenuItem, Std
+    run = run or _menu_run
+    menus, specs = [], {}
+    for title, rows in BAR:
+        items = []
+        for row in rows:
+            if isinstance(row, MenuItem) and not row.action: items.append(MenuSeparator()); continue
+            if isinstance(row, Std):
+                specs[(title, row.title)] = row
+                items.append(MenuAction(row.title, lambda: None))
+            elif isinstance(row, Js):
+                items.append(MenuAction(row.title, (lambda e: lambda: run(e))(row.expr)))
+            else:
+                name = _title(row)
+                specs[(title, name)] = row
+                items.append(MenuAction(name, (lambda a: lambda: run(f'leeAct("{a}")'))(row.action)))
+        menus.append(Menu(title, items))
+    return menus, specs
+
+def _menu_run(js):
+    "Run one expression in the window that has focus. pywebview already calls this off the main thread."
+    import webview
+    if (window := webview.active_window()) is None: return
+    try: window.evaluate_js(js)
+    except Exception as e: print(f'  menu: {errstr(e)}')
+
+_menu_patched = False
+
+def install_menu_patch(specs):
+    """Finish each item off as AppKit needs it, wherever pywebview builds the bar.
+
+    It rebuilds on every focus change to a window whose menu differs, so anything done once to the
+    bar after start is thrown away. This wraps the one method both rebuild paths go through.
+    """
+    global _menu_patched
+    if _menu_patched: return False
+    try:
+        from webview.platforms.cocoa import BrowserView
+    except Exception as e:
+        print(f'  no menu bar: {errstr(e)}')
+        return False
+    original = BrowserView._recreate_menus
+    def recreate(self, user_menu):
+        main = original(self, user_menu)
+        try: _decorate(main, specs)
+        except Exception as e: print(f'  menu bar: {errstr(e)}')
+        return main
+    BrowserView._recreate_menus = recreate
+    _menu_patched = True
+    return True
+
+def _decorate(main, specs):
+    "Chords onto the rows that may have one, and the responder chain onto the rows AppKit owns."
+    import AppKit
+    from .blocks.keys.menus import Std
+    for i in range(main.numberOfItems()):
+        sub = main.itemAtIndex_(i).submenu()
+        if sub is None: continue
+        title = str(sub.title())
+        for j in range(sub.numberOfItems()):
+            item = sub.itemAtIndex_(j)
+            spec = specs.get((title, str(item.title())))
+            if spec is None: continue
+            if isinstance(spec, Std):
+                item.setTarget_(None)          # nil target is what walks the responder chain
+                item.setAction_(spec.selector)
+                got = mac_key(f'{spec.mods}+{spec.key}') if spec.key else None
+            else: got = menu_chord(spec.action)
+            if got: item.setKeyEquivalent_(got[0]); item.setKeyEquivalentModifierMask_(got[1])
+        if title == 'Window': AppKit.NSApp().setWindowsMenu_(sub)

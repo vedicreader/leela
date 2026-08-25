@@ -14,7 +14,11 @@ Chrome starts on first page request. `Browser.available()` checks whether Chrome
 
 ## Folder selection
 
-Project folders come from launch arguments, saved folders, native folder pickers, macOS `odoc` events, or Windows argv. Late folder requests use the HTTP route.
+Project folders come from launch arguments, saved folders, native folder pickers, macOS `odoc` events, or Windows argv.
+
+A folder is a workspace, and a workspace is a window. A folder opened while Leela is running goes to `/hub/open`. That builds a workspace with a state file and a kernel pool of its own, registers it with the hub, and returns the `*.localhost` URL for a new window. Open a folder that is already open and it raises the window that folder has. `add_root` is the other action: it puts a second folder in the window you are in.
+
+The request goes over HTTP because the server owns the workspaces on another thread and another event loop. The window never goes up on the thread the request arrived on. `webview.create_window` builds nothing from the main thread once `webview.start` owns it, and the Dock menu and the `odoc` handler both arrive there.
 
 ## Inline browser
 
@@ -34,3 +38,11 @@ CDP constraints:
 ## Build
 
 `setup_app.py` prepares a framework Python when needed. Platform definitions live in `packaging/macos/setup.py` and `packaging/windows/setup.py`. Run `tests/test_packaging.py` for bundle checks.
+
+## The menu bar
+
+macOS gets a real menu bar: Leela, File, Edit, View, Run, Tools, Debug, Window, Help. `leela/blocks/keys/menus.py` `BAR` declares it beside the contextual menus. Its rows name keymap actions, so the labels come from the keymap. A row naming an action the keymap does not declare raises at import.
+
+Two kinds of row are not keymap actions. `Std` rows hand a raw selector to AppKit with a nil target. Cut, Copy, Paste, Select All, Minimize, Zoom and Enter Full Screen then reach the web view down the responder chain. `Js` rows carry an expression instead, which is how Debug gets in: it has no keymap actions, only functions on the page.
+
+A row shows a shortcut only where one is safe. AppKit reads a menu shortcut before the page does, and this keymap is scoped and full of bare letters, so a row takes one only when its action is global and carries a modifier.

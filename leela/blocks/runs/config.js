@@ -42,6 +42,11 @@ async function runApp() {
   m.querySelector('#editruns').onclick = () => { m.remove(); editRuns(); };
 }
 
+// The menu bar reaches this from `evaluate_js`, which runs in global scope and cannot see a
+// module-scope name. Same arguments the Debug chrome menu passes.
+window.leeDebugFile = () => startDirectDebug(
+  {name: lee.path?.split('/').pop() || 'Python', program: lee.path, debug: true});
+
 async function startDirectDebug(run={}) {
   let capabilities=await api('/debug/capabilities');
   if(!capabilities.debugpy){

@@ -7,6 +7,7 @@ import importlib.util, os, shutil, subprocess, sys, threading, time
 import pytest
 
 import leela_app
+from tests.assets import read
 from leela import desktop
 
 def test_each_platform_gets_the_webview_its_os_already_ships():
@@ -245,3 +246,163 @@ def test_a_dock_menu_with_no_history_says_so(monkeypatch, tmp_path):
     monkeypatch.setattr(projects, 'SESSION', tmp_path/'none.json')
     menu = dock_menu(None)
     assert menu.numberOfItems() == 1 and not menu.itemAtIndex_(0).isEnabled()
+
+
+def test_a_folder_is_never_opened_on_the_thread_running_the_gui():
+    """`webview.create_window` builds nothing at all when it is called from the main thread once
+    `webview.start` owns it, so a folder from the Dock or from Finder made a window that was not
+    one and then hung waiting for it to load."""
+    seen, done = [], threading.Event()
+    def note(path): seen.append((path, threading.current_thread().name)); done.set()
+    desktop.off_main_thread(note, 'leela-open-folder')('/tmp/somewhere')
+    assert done.wait(5), 'the handler never ran'
+    path, where = seen[0]
+    assert path == '/tmp/somewhere'
+    assert where != 'MainThread' and where == 'leela-open-folder', where
+
+def test_a_folder_already_open_raises_its_window_rather_than_opening_a_second(monkeypatch):
+    "Two windows on one folder would be two kernels and two journals writing the same files."
+    made, shown = [], []
+    class FakeWindow:
+        def __init__(self, title): self.title = title
+        def show(self): shown.append(self.title)
+        def load_url(self, url): self.url = url
+        def load_html(self, html): self.url = None
+    monkeypatch.setattr(desktop, '_windows', {})
+    monkeypatch.setattr(desktop, 'make_window', lambda title='leela', size=None:
+                        made.append(title) or FakeWindow(title))
+    monkeypatch.setattr(desktop, 'wait_for_http', lambda url, timeout=90: True)
+    first = desktop.open_window('http://one.localhost:5001/', 'leela — one', key='one')
+    again = desktop.open_window('http://one.localhost:5001/', 'leela — one', key='one')
+    assert made == ['leela — one'], 'the second ask built nothing'
+    assert again is first and shown == ['leela — one'], 'it raised the window there already was'
+
+def test_a_window_that_never_answers_says_so_rather_than_showing_the_splash_forever(monkeypatch):
+    shown = []
+    class FakeWindow:
+        def load_url(self, url): shown.append(('url', url))
+        def load_html(self, html): shown.append(('html', html))
+    monkeypatch.setattr(desktop, '_windows', {})
+    monkeypatch.setattr(desktop, 'make_window', lambda title='leela', size=None: FakeWindow())
+    monkeypatch.setattr(desktop, 'wait_for_http', lambda url, timeout=90: False)
+    desktop.open_window('http://gone.localhost:5001/', 'leela — gone', key='gone')
+    assert shown[0][0] == 'html' and 'did not answer' in shown[0][1]
+
+def test_the_page_can_ask_the_native_shell_for_a_window(monkeypatch):
+    "pywebview runs every `js_api` call on a thread of its own, which is where a window may be built."
+    asked = []
+    api = desktop.ShellApi()
+    monkeypatch.setattr(api, 'on_open_folder', lambda p: asked.append(p))
+    assert api.open_folder('/tmp/here') is True and asked == ['/tmp/here']
+    assert desktop.ShellApi().open_folder('/tmp/here') is False, 'and says so when nothing is wired'
+    assert api.open_folder('') is False, 'an empty path opens nothing'
+
+
+def test_the_menu_bar_is_in_the_order_macos_expects():
+    "pywebview puts its own View and Edit first, which no Mac app does. Ours are the only ones."
+    import webview
+    from leela.blocks.keys.menus import BAR
+    bar = desktop.menus()
+    assert [m.title for m in bar] == [t for t, _ in BAR]
+    assert bar[0].title == '__app__', 'the Leela menu is spliced into the app menu, not a second one'
+    assert [m.title for m in bar[1:]] == ['File', 'Edit', 'View', 'Run', 'Tools', 'Debug',
+                                          'Window', 'Help']
+    assert webview.settings['SHOW_DEFAULT_MENUS'] is False, 'or pywebview inserts its own first'
+    assert all(m.items for m in bar), 'no menu is empty'
+
+def test_the_menu_bar_names_only_actions_the_keymap_declares():
+    "A row naming nothing is a menu item that quietly does nothing when it is picked."
+    from leela.core.keys import KEYS
+    from leela.blocks.keys.menus import BAR, MenuItem
+    known = set(KEYS.attrgot('action'))
+    named = {r.action for _, rows in BAR for r in rows if isinstance(r, MenuItem) and r.action}
+    assert named - known == set()
+
+def test_the_menu_bar_names_only_actions_the_client_can_dispatch():
+    """`leeAct` answers `no handler for …` for anything absent from its table, so being in the
+    keymap is necessary and not sufficient."""
+    from leela.blocks.keys.menus import BAR, MenuItem
+    # Two ways in: the table in `actions.js`, and `ACTIONS.name =` from a block that owns the action.
+    js = read('leela/static/lee-core.js') + read('leela/static/lee-ide.js') + \
+        read('leela/static/lee-agent.js')
+    named = lambda a: f'  {a}:' in js or f'ACTIONS.{a} =' in js or f'ACTIONS.{a}=' in js
+    missing = sorted({r.action for _, rows in BAR for r in rows
+                      if isinstance(r, MenuItem) and r.action and not named(r.action)})
+    assert missing == [], missing
+
+def test_the_debug_menu_calls_functions_that_are_really_on_the_page():
+    "`evaluate_js` runs in global scope, so a module-scope name is not reachable from a menu."
+    from leela.blocks.keys.menus import BAR, Js
+    bundle = read('leela/static/lee-ide.js') + read('leela/static/lee-core.js')
+    for _, rows in BAR:
+        for r in rows:
+            if not isinstance(r, Js): continue
+            name = r.expr.split('(')[0]
+            assert f'window.{name} =' in bundle or f'window.{name}=' in bundle, r.expr
+
+@pytest.mark.parametrize('chord,want', [
+    ('mod+shift+p', ('p', desktop.CMD | desktop.SHIFT)),
+    ('mod+,',       (',', desktop.CMD)),
+    ('hyper+g',     ('g', desktop.CMD | desktop.CTRL | desktop.ALT | desktop.SHIFT)),
+    ('alt+shift+1', ('1', desktop.ALT | desktop.SHIFT)),
+    ('ctrl+`',      ('`', desktop.CTRL)),
+    ('alt+shift+b hyper+left', ('b', desktop.ALT | desktop.SHIFT)),   # the first chord only
+    ('hyper+left',  ('', desktop.CMD | desktop.CTRL | desktop.ALT | desktop.SHIFT)),
+    ('nonsense+x',  None),
+    ('',            None),
+])
+def test_a_leela_chord_becomes_the_key_equivalent_appkit_spells(chord, want):
+    assert desktop.mac_key(chord) == want
+
+def test_a_menu_row_takes_no_chord_that_would_be_stolen_from_the_page():
+    """A key equivalent is consulted before the keystroke reaches the web view. Binding the files
+    pane's bare `n` would fire New File every time the letter n was typed anywhere."""
+    assert desktop.menu_chord('new_file') is None, 'bare letter, and files-scoped'
+    assert desktop.menu_chord('run_cell') is None, 'editor-scoped: a menu cannot express scope'
+    assert desktop.menu_chord('quit') is None, 'unbound'
+    assert desktop.menu_chord('palette') == ('p', desktop.CMD | desktop.SHIFT), 'global, modified'
+    assert desktop.menu_chord('settings') == (',', desktop.CMD)
+
+def test_every_chord_the_menu_bar_installs_is_global_and_modified():
+    "The rule, over the real table rather than a chosen example."
+    from leela.core.keys import lookup
+    from leela.blocks.keys.menus import BAR, MenuItem
+    for _, rows in BAR:
+        for r in rows:
+            if not (isinstance(r, MenuItem) and r.action): continue
+            if desktop.menu_chord(r.action) is None: continue
+            k = lookup(r.action)
+            assert k.scope == 'global', f'{r.action} is {k.scope}-scoped and took a chord'
+            assert set(k.keys[0].split('+')[:-1]) & {'mod', 'cmd', 'ctrl', 'alt', 'opt', 'hyper'}, \
+                f'{r.action} took a bare chord'
+
+def test_picking_a_menu_row_runs_the_action_in_the_window_that_has_focus(monkeypatch):
+    "One bar serves every window, so the row cannot be bound to the window it was built with."
+    ran = []
+    class FakeWindow:
+        def evaluate_js(self, js): ran.append(js)
+    monkeypatch.setattr(desktop.webview if hasattr(desktop, 'webview') else desktop, 'x', 0,
+                        raising=False)
+    import webview
+    monkeypatch.setattr(webview, 'active_window', lambda: FakeWindow())
+    bar, specs = desktop.menu_bar()
+    save = next(i for i in bar[1].items if getattr(i, 'title', '') == 'Save')
+    save.function()
+    assert ran == ['leeAct("save")']
+    monkeypatch.setattr(webview, 'active_window', lambda: None)
+    save.function()
+    assert ran == ['leeAct("save")'], 'no focused window, nothing run, nothing raised'
+
+def test_the_standard_rows_are_left_to_appkit_rather_than_reimplemented():
+    "Cut, Copy, Paste and Select All work by reaching the responder chain, not by running JS."
+    from leela.blocks.keys.menus import BAR, Std
+    std = {r.title: r for _, rows in BAR for r in rows if isinstance(r, Std)}
+    assert {'Cut', 'Copy', 'Paste', 'Select All'} <= set(std)
+    assert std['Cut'].selector == 'cut:' and std['Cut'].key == 'x'
+    assert 'Enter Full Screen' in std, 'turning pywebview off takes its View menu with it'
+    assert std['Enter Full Screen'].selector == 'toggleFullScreen:'
+    assert {'Minimize', 'Zoom', 'Bring All to Front'} <= set(std), 'a Window menu macOS recognises'
+
+def test_the_menu_bar_is_a_no_op_off_macos(monkeypatch):
+    monkeypatch.setattr(desktop.sys, 'platform', 'linux')
+    assert desktop.menus() == []

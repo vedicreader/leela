@@ -50,6 +50,26 @@ function jsonError(text) {
 }
 window.leeOpenFolder = openFolder;
 
+/* A folder is a workspace, and a workspace is a window: `add_root` puts a second folder in the
+ * window you are already in, and this gives it one of its own. The native shell builds the window,
+ * because only the process running the GUI can; a browser gets a tab, being what it has. */
+async function openFolderWindow(path) {
+  path = path || await nativeFolder();
+  if (!path) return;
+  const name = path.split('/').pop();
+  status(`opening ${name}…`);
+  if (await shellReady()) {
+    try { await window.pywebview.api.open_folder(path); }
+    catch (e) { leeFail('project', `opening ${name}`, e); }
+    return;
+  }
+  const r = await fetch('/hub/open?path=' + encodeURIComponent(path), {method: 'POST'});
+  const d = await r.json().catch(() => ({ok: false, error: r.statusText}));
+  if (!d.ok) return leeFail('project', `opening ${name}`, new Error(d.error));
+  window.open(d.url, '_blank');
+}
+window.leeOpenFolderWindow = openFolderWindow;
+
 // The welcome screen's recent list: when Leela opens on nothing, this is the way back to work.
 async function paintRecent() {
   const host = $('#leerecent'); if (!host) return;

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 import ast, asyncio, ipaddress, json, os, re, sys, warnings
-from itertools import accumulate
+from itertools import accumulate, count
 from fasthtml.common import *
 from starlette.middleware import Middleware
 from starlette.middleware.gzip import GZipMiddleware
@@ -1211,7 +1211,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
     if not loopback:
         raise ValueError('Leela executes code and may only bind to a loopback address')
     from . import leela_cfg
-    from .hub import WorkspaceHub, WorkspaceSite, workspace_slugs
+    from .hub import WorkspaceHub, WorkspaceSite, assign_slugs
     roots = [Path(r).expanduser().resolve() for r in roots]
     gate = TerminalGate(host=host)
     requested_transport = transport
@@ -1227,25 +1227,31 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             print(f'  gateway unavailable; using direct kernel transport: {errstr(e)}')
     from .blocks.runtime.kernels import RuntimeBroker
     broker = RuntimeBroker()   # every shape gets the ceiling
+    from .core.projects import now_serving, served
+    hub = None
+    pool_ports = count(kernel_port, 100)
+    def site_for_root(root, slug):
+        "One independent workspace: its own state file, its own kernel pool, its own window."
+        state = leela_cfg/'workspaces'/f'{slug}.json'
+        kw = dict(port=next(pool_ports), agent=agent, kernel=kernel, model=model,
+                  approvals=approvals, agent_scope=agent_scope, python=python,
+                  transport=transport, gateway=gateway, cdp_port=cdp_port)
+        ws = (Workspace.load(path=state, **kw) if open_ws else Workspace(**kw)).at_exit()
+        state.parent.mkdir(parents=True, exist_ok=True)
+        ws._state_path = state
+        broker.register(ws.pool)
+        if ws.kernels_auto_manage: broker.auto_manage = True
+        if root not in ws.fs.roots: ws.add_root(root)
+        if ws.restore_remembered_agent_state(): ws.save()
+        ws.jobs.tick()
+        # Only for a folder opened at runtime: at launch the whole set is written below.
+        if hub is not None:
+            now_serving(host, port, [s.root for s in hub.sites.values()] + [str(root)])
+        return WorkspaceSite(slug, root.name, str(root),
+                             ide_app(ws, gate, workspace_catalog=lambda: hub.catalog()))
     if app_window and roots:
-        sites, hub = [], None
-        for i, (root, slug) in enumerate(zip(roots, workspace_slugs(r.name for r in roots))):
-            state = leela_cfg/'workspaces'/f'{slug}.json'
-            kw = dict(port=kernel_port + i * 100, agent=agent, kernel=kernel, model=model,
-                      approvals=approvals, agent_scope=agent_scope, python=python,
-                      transport=transport, gateway=gateway, cdp_port=cdp_port)
-            ws = (Workspace.load(path=state, **kw) if open_ws else Workspace(**kw)).at_exit()
-            state.parent.mkdir(parents=True, exist_ok=True)
-            ws._state_path = state
-            broker.register(ws.pool)
-            if ws.kernels_auto_manage: broker.auto_manage = True
-            if root not in ws.fs.roots: ws.add_root(root)
-            if ws.restore_remembered_agent_state(): ws.save()
-            ws.jobs.tick()
-            app = ide_app(ws, gate, workspace_catalog=lambda: hub.catalog())
-            sites.append(WorkspaceSite(slug, root.name, str(root), app))
-        hub = WorkspaceHub(sites, port)
-        app = hub
+        sites = [site_for_root(r, s) for r, s in zip(roots, assign_slugs(roots))]
+        app = hub = WorkspaceHub(sites, port, build=site_for_root)
         urls = [row['url'] for row in hub.catalog()]
         print(f'leela  {len(sites)} independent workspaces on :{port}')
         for row in hub.catalog(): print(f"  {row['name']}: {row['url']}")
@@ -1262,9 +1268,9 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
                     print(f"  Chrome {'reused' if result['reused'] else 'started'}: {url}")
             threading.Thread(target=open_windows, daemon=True, name='leela-cdp-open').start()
     else:
-        kw = dict(port=kernel_port, agent=agent, kernel=kernel, model=model, approvals=approvals,
-                  agent_scope=agent_scope, python=python, transport=transport, gateway=gateway,
-                  cdp_port=cdp_port)
+        kw = dict(port=next(pool_ports), agent=agent, kernel=kernel, model=model,
+                  approvals=approvals, agent_scope=agent_scope, python=python,
+                  transport=transport, gateway=gateway, cdp_port=cdp_port)
         if open_ws and not roots:
             ws = Workspace.load(**kw)
         else:
@@ -1283,7 +1289,15 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
         if not ws.fs.roots and not getattr(sys, 'frozen', False): ws.add_root(os.getcwd())
         if open_ws and not ws.tabs: ws.reopen_saved_tabs()
         if ws.restore_remembered_agent_state(): ws.save()
-        app = ide_app(ws, gate)
+        app = ide_app(ws, gate, workspace_catalog=lambda: hub.catalog() if hub else [])
+        if app_window:
+            # A launch with no folder still gets a hub, because the welcome screen is exactly
+            # where a folder is opened from, and a folder opens as a workspace the hub serves.
+            r0 = first(ws.fs.roots)
+            app = hub = WorkspaceHub(
+                [WorkspaceSite(assign_slugs([r0])[0] if r0 else 'leela',
+                               r0.name if r0 else 'leela', str(r0 or ''), app)],
+                port, build=site_for_root)
         if (secs := ws.jobs.tick()): print(f'  vault watches polled every {secs}s')
         print(f'leela  http://{host}:{port}   folders: '
               + (', '.join(p.name for p in ws.fs.roots) or 'no folder open yet'))
@@ -1299,7 +1313,6 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             threading.Thread(target=open_window, daemon=True, name='leela-cdp-open').start()
     if not gate.enabled: print(f'  {gate.why}')
     from .hub import LoopbackHostGuard
-    from .core.projects import now_serving, served
     now_serving(host, port, [str(r) for r in (roots or ws.fs.roots)])
     try: uvicorn.run(LoopbackHostGuard(app), host=host, port=port, log_level='warning')
     finally: served()

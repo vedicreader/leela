@@ -31,6 +31,8 @@ SHARED = {
     'workspace': 'workspace', 'project': 'pipelines', 'debug': 'debug', 'stack': 'stack',
     'packages': 'stack', 'history': 'refactor', 'jobs': 'vault', 'screen': 'keys',
     'release': 'pipelines', 'backups': 'settings',
+    # `/hub/*` is the hub itself, above every block: it is what a new workspace is added to.
+    'hub': None,
     'leestatic': None, 'home': None, 'diff': None, 'lint': None,
 }
 
