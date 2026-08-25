@@ -1,78 +1,110 @@
 # Handoff
 
-Branch `claude/cross-file-extraction-c136ae`. Suite **1432 passed, 3 skipped, 112 deselected**,
-plus **70 passed, 2 failed** under `-m slow`. Those two failures are older than this work and fail
-the same way on a clean checkout: `test_user_checkbox_settings_survive_close_and_reopen` (saved
-settings come back with an empty `editor` block) and
-`test_response_fork_and_turn_undo_execute_against_a_successful_turn` (the Restore files button's
-`onclick` is an object, not a function). Both are real bugs and neither is on anything touched here.
+Branch `claude/cross-file-extraction-c136ae`, not pushed. Suite **1445 passed, 3 skipped, 119
+deselected**, plus **75 passed, 1 failed** under `-m slow`. That one failure,
+`test_user_checkbox_settings_survive_close_and_reopen`, fails the same way on a clean checkout: saved
+settings come back with an empty `editor` block. It is a real bug in settings persistence and is
+older than any of this work.
 
-Closed since the last handoff: the setup modal and its rows, both scrollbar faults, the notebook
-save conflict and its per-cell tree walk, indent handling, splitting a cell into one cell per def,
-file-tree multi-select with move/copy/paste/duplicate, recoverable deletes and renames, six git
-panel faults, and the Tools row. `docs/regressions.md` carries an entry each.
+`dist/Leela.app` is built and installed to `/Applications`, byte-identical, launch-tested. It is one
+commit behind: the model-picker and `drop_root` work in `fcabca0` needs a rebuild.
 
-`packaging/.app-venv` is synced to the lock (ramabana 0.1.26, jupywire 0.1.5, jupyasyncclient 0.2.7).
-It is a pip venv, so nothing updates it on its own: check it against `uv.lock` before a build. Read `CLAUDE.md` and `AGENTS.md` first; the house style is enforced by
-review, not by a linter.
+Read `CLAUDE.md` and `AGENTS.md` first; the house style is enforced by review, not by a linter.
 
 ## Open, in the order the user raised them
 
-### 1. Notarisation
-Wired and untested against Apple. `tools/build_release.py`: `notary_args` takes a keychain profile,
-an App Store Connect key or an Apple ID, in that order, and does nothing when none is set. The user
-was mid-enrolment in the Developer Program. Secrets to set: `LEELA_CERT_P12` (base64),
-`LEELA_CERT_PASSWORD`, `LEELA_CODESIGN_IDENTITY`, `LEELA_APPLE_ID`, `LEELA_APPLE_PASSWORD` (an
-app-specific password), `LEELA_TEAM_ID`. Run the first submission locally with
-`LEELA_NOTARY_PROFILE` rather than through CI. The feedback loop is minutes instead of a full run.
+### 1. Opening a folder should make a new instance, and does not
+This is the user's own words: "how do I open a folder with a new leela instance in the app. that's
+the whole point of opening the app with a folder yeah."
 
-### 2. The `v0.1.0` tag
+How it stands. At **launch**, `app.py:1230` builds one independent `Workspace` per folder, each with
+its own state file under `leela_cfg/workspaces/<slug>.json`, its own kernel-pool port, and its own
+window, served by `WorkspaceHub`. That is the behaviour they want. While **running**,
+`leela_app.py:78` `open_folder` does something else entirely, and says so: "Add a folder to the
+running workspace". It posts to `/fs/add_root`, so a folder opened from the Dock, from Finder, or
+through the picker joins the current window as another root.
+
+What it would take: the hub already serves N sites, but they are built once at launch. Adding a site
+to a running hub means `WorkspaceHub` accepting a `WorkspaceSite` after construction, a `Workspace`
+built for the new folder with its own state file and pool port, and a new pywebview window pointed
+at its URL. `webview.create_window` can be called after `webview.start`, so the window half is
+cheap; the hub half is the work. Decide first whether "add root" should stay reachable at all, or
+become a second, explicit action.
+
+### 2. Mimic the toolbar on the Mac toolbar
+Not started, and assessed rather than guessed. `desktop.py` already reaches Cocoa
+(`from webview.platforms.cocoa import BrowserView`), so a real `NSToolbar` is reachable. The actions
+are already declared once, in `core/ui.py` `BARS` and `BUTTONS`, and `core/keys.py` for the chords,
+so a native toolbar can be generated from the same table rather than hand-listed, which is what
+keeps it from drifting. Clicks route back with `window.evaluate_js("leeAct('...')")`. The judgement
+to make is whether a native toolbar replaces the web one or duplicates it: two toolbars on screen is
+worse than either alone, and hiding the web one means every non-app surface loses it.
+
+### 3. The scrollbar flutter, if it is still there
+Two real defects were found and fixed on the way, both demonstrable: `has-overview` was scoped to
+`.lee-editor` so it hid nothing when it landed on any other scroller, and every code block in
+rendered markdown was `lines * 19px` tall while a line is `--lee-code-size` by
+`--lee-code-line-height`, 13 by 1.5, so each was short of its own text. The stripe also ran inside
+every snippet. A browser test reproduces the stripe half and fails without the fix.
+
+What was never reproduced is the *flutter itself*, in Chromium, with or without any of it. If the
+user still sees it, the untested theory is the macOS "Show scroll bars: Always" setting: bars that
+take layout space, which WKWebView honours and Chrome does not. Ask before writing more code.
+
+### 4. Notarisation
+Wired and untested against Apple. `tools/build_release.py`: `notary_args` takes a keychain profile,
+an App Store Connect key or an Apple ID, in that order, and does nothing when none is set. Secrets:
+`LEELA_CERT_P12` (base64), `LEELA_CERT_PASSWORD`, `LEELA_CODESIGN_IDENTITY`, `LEELA_APPLE_ID`,
+`LEELA_APPLE_PASSWORD` (app-specific), `LEELA_TEAM_ID`. Run the first submission locally with
+`LEELA_NOTARY_PROFILE` rather than through CI: minutes instead of a full run.
+
+### 5. The `v0.1.0` tag
 Created locally, deliberately not pushed. Pushing it fires `desktop-artifacts.yml`, which builds both
 platforms and attaches them to a release; without a Developer ID that publishes a DMG Gatekeeper
 refuses. Push it after notarisation works.
 
-### 3. Git writes to the worktree outside the sandbox and the journal
+### 6. Git writes to the worktree outside the sandbox and the journal
 `ignore` and `resolve_conflict` write through ramabana's own `write_text` rather than `ctx.fs.write`,
-so there is no atomic save, no `FileHistory` version and no journal row: a conflict resolution is
-not in `/history/operations` and undo cannot reach it. `resolve_conflict` also takes the browser's
-editor text and writes it over whatever is on disk now, with no comparison against what the panes
-were built from. `/refactor/*` apply is the model to copy: it refuses when `_disk(path) != row.before`
-and rolls back every file it already wrote. `resolve_safe_conflicts` in ramabana writes and stages
-file by file with no rollback, so an error part way through leaves the earlier files written and
-staged and reports only the exception.
+so there is no atomic save, no `FileHistory` version and no journal row: a conflict resolution is not
+in `/history/operations` and undo cannot reach it. `resolve_conflict` also takes the browser's editor
+text and writes it over whatever is on disk now, with no comparison against what the panes were built
+from. `/refactor/*` apply is the model to copy: it refuses when `_disk(path) != row.before` and rolls
+back every file it already wrote.
 
-### 4. `/fs/new` takes a path where `rename` takes a bare name
+### 7. `/fs/new` takes a path where `rename` takes a bare name
 `Sandbox.rename` refuses anything with a separator; `/fs/new` builds `Path(parent)/name`, so
 `../sibling/x.py` creates a file elsewhere in the workspace. `_check` keeps it inside the roots, so
 this is an inconsistency rather than an escape, but the two should read the same way.
 
-### 8. The branching model has a complete backend and no way to reach it
-Found while adding collapsible turns. Cross-checking every `@rt('/agent…')` in
-`blocks/agent/app.py` against callers in `blocks/*/*.js` and `static/js/*.js` leaves thirteen routes
-with none: `/agent/branches`, `/agent/branch/parts`, `/agent/branch/switch`, `/agent/fork`,
-`/agent/conversation/parts`, `/agent/history/preview`, `/agent/history/apply`, `/agent/info`,
-`/agent/sessions`, `/agent/new`, `/agent/ask`, `/agent/approval/request`, and
-`/agent/runs/{id}/terminate`.
+### 8. Settings persistence, and one line of collateral
+`test_user_checkbox_settings_survive_close_and_reopen` has been failing since before this work: the
+`editor` block comes back empty. Separately, writing the user's model choices through a
+`Workspace(roots=[])` rewrote `leela_cfg/workspace.json` whole, clearing its `roots` and an 18-tab
+list. Per-folder sessions and `desktop.json` are intact, so the desktop app is unaffected; a bare
+`leela` launch with no folder argument now opens empty. `backups/20260821_100912/workspace.json` has
+the old roots and tabs, four days stale.
 
-The consequence is not cosmetic. `/agent/undo-turn` and `/agent/revise` each *create* a branch and
-return its `branch_id`; `Assistant.fork` and `switch_branch` can restore and switch between them.
-Nothing in the client lists branches or switches to one, so from a person's side the branching model
-is write-only: every undo and every edited answer forks the conversation into somewhere they can
-never go back to. `revise` at least prints the new `branch_id` into the bar it replaces. `unsay`
-prints nothing.
+## Where the time went, and where it still is
 
-What a UI needs is small, because the backend is done: a branch pill on the turn card reading
-`/agent/branches`, and a switcher calling `/agent/branch/switch`. `/agent/branch/parts` and
-`/agent/fork` support forking from a *part* of a turn rather than the whole turn, which is a second
-surface and can wait.
+Measured on this machine, against the real config and a 74MB agent log.
 
-### 9. `MAX_CHECKPOINTS` and `turn_transactions` disagree about how far back you can go
-`ramabana/agent.py` keeps 20 checkpoints and pops the rest; `Assistant.turn_transactions`
-(`blocks/agent/ai.py`) is unbounded. So past turn 20 of one session, "Restore files" is still offered
-and works while "Undo from conversation" and "Edit what agent remembers" have quietly stopped being
-possible. `turn_capabilities` now reports `branchable` and `known` so the pane can say which of the
-two reasons a control is unavailable for, but the underlying asymmetry is still there. Either bound
-the transactions to match, or persist checkpoints.
+| route | was | now |
+| --- | --- | --- |
+| `/agent/models` | 6773 ms | ~190 ms in a fresh process |
+| `/vars` | 1411 ms | 1 ms |
+| `/kernel/info` | 1388 ms | 20 ms |
+| `/agent/history` | 2617 ms | 3 ms |
+| `/runtime/info` | ~450 ms every time | 1 ms after the first |
+
+The two that mattered were not slow code but work nothing asked for. `/kernel/info` and `/vars` both
+called `session.runtime()`, which **starts a kernel**, so opening Leela booted Python whether or not
+anybody ran anything. Both peek now. And `/agent/models` scanned the Hugging Face cache once per
+model row per request through `mark_models` -> `spec_caps`.
+
+Still there: `/code/status` is 1669ms cold and about 500ms after. `k.status()` has to compare the
+tree against the index to report what it reports, it runs once on load, and it is on a worker
+thread, so it is understood rather than neglected. And the agent log itself is 74MB and grows without
+bound; rotating it is ramabana's call, and worth raising.
 
 ## Things that will waste your time if you do not know them
 
@@ -82,6 +114,12 @@ the transactions to match, or persist checkpoints.
   --format=iife --global-name=LeeCM --minify --outfile=leela/vendor/lee-cm6.js`. A rebuild renames
   minified symbols, so a test anchored on one breaks for no reason: `tests/assets.cm_exports`
   reads the export map by content instead. Two tests learned that the hard way.
+- **A route that reads must not call `ws.runtime()`.** It starts a kernel, over a second, and that
+  is how a status pill and a variable list came to boot Python on every page load. `kernel_peek()`
+  is the read.
+- **`probed` caches machine state on disk, so a test that patches under it needs it cleared.**
+  `tests/conftest.py` has an autouse fixture doing that; without it one test is served the catalog
+  another already cached, and the failure appears in a third.
 - **`uv run` re-syncs and reverts an editable install.** Use `uv run --no-sync`, or `UV_NO_SYNC=1`.
   This silently ran tests against the wrong ramabana twice.
 - **`uv lock` caches the index.** Right after the user releases one of their own packages it will
