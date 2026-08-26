@@ -82,7 +82,6 @@ def titles_for(dirs):
 def open_folder(port, path, host=HOST):
     "Give a folder a workspace and a window of its own, through the running server\'s own route."
     import json, urllib.error, urllib.parse, urllib.request
-    from leela.core.projects import note_folder
     from leela.desktop import open_window
     from leela.hub import OPEN_PATH
     url = f'http://{host}:{port}{OPEN_PATH}?path=' + urllib.parse.quote(str(path), safe='')
@@ -93,7 +92,6 @@ def open_folder(port, path, host=HOST):
     except Exception as e:
         return print(f'  could not open {path}: {type(e).__name__}: {e}')
     if not d.get('ok'): return print(f"  could not open {path}: {d.get('error')}")
-    note_folder(str(path))      # union, not replace: the other windows are still open
     return open_window(d['url'], f"leela — {d['name']}", key=d['id'])
 
 def _why(e):

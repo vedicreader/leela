@@ -149,12 +149,22 @@ class WorkspaceHub:
         return self.url_for(site.slug)
     def open_folder(self, root):
         "The site serving `root`, building and registering one when nothing does yet."
-        if (s := self.site_at(root)) is not None: return s
+        if (s := self.site_at(root)) is not None: return self._noted(root, s)
         if self.build is None: raise RuntimeError('this workspace cannot open another folder')
         s = self.build(root, assign_slugs([root])[0])
         if s is None: raise RuntimeError(f'no workspace could be built for {root}')
         self.add_site(s)
-        return s
+        return self._noted(root, s)
+    def _noted(self, root, site):
+        """Remember the folder here, where both callers pass, rather than in the desktop one.
+
+        A folder opened as a site is reopened at launch and offered by the welcome screen only
+        if this runs; noting it in the shell left a browser opening the same folder with neither.
+        """
+        from .core.projects import note_folder
+        try: note_folder(str(root))
+        except Exception: pass
+        return site
     def _start_leg(self, site):
         self._queues[site.slug] = q = asyncio.Queue()
         q.put_nowait({'type': 'lifespan.startup'})

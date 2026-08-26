@@ -254,6 +254,23 @@ def test_a_folder_handed_to_a_running_app_gets_a_window_of_its_own(tmp_path, dir
         assert len(opened) == 2 and opened[-1] == opened[0], 'and raises the window it already has'
     finally: server.should_exit = True
 
+def test_a_folder_opened_as_its_own_site_is_remembered_whoever_opened_it(dirs):
+    """The browser posts `/hub/open` and gets no desktop shell, so the shell cannot be what remembers.
+
+    Noting it there left a folder opened from a browser tab out of the reopen set and out of the
+    welcome screen's recent list, while the same folder opened from the app was in both.
+    """
+    from leela.hub import WorkspaceHub, WorkspaceSite
+    build = lambda root, slug: WorkspaceSite(slug, os.path.basename(str(root)), str(root), lambda *a: None)
+    hub = WorkspaceHub([WorkspaceSite('alpha', 'alpha', dirs[0], lambda *a: None)], 5209, build=build)
+    hub.open_folder(dirs[1])
+    assert dirs[1] in projects.last_folders(), 'the hub is the seam both legs pass through'
+    assert projects.recent_folders()[0] == dirs[1]
+    projects.note_folder(dirs[0])
+    hub.open_folder(dirs[1])                       # already a site: reused, and raised to the top
+    assert projects.recent_folders()[0] == dirs[1]
+
+
 def test_a_folder_that_has_gone_is_refused_and_opens_no_window(tmp_path, dirs, monkeypatch):
     "An empty window naming a folder that is not there is worse than a line saying why."
     import threading
