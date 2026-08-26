@@ -18,7 +18,7 @@ from ramabana.git import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS   # re-expor
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
 FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
-WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS | NEWS_WRITE_TOOLS
+WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'promote_var'})
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_context',
            'notebook_approvals', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
@@ -475,12 +475,41 @@ class WorkspaceHost(Host):
         return ('isolated',) if s == 'isolated' else ('isolated', 'overlay')
     @property
     def kernel_kind(self): return getattr(self.ws, 'kernel_kind', 'ipykernel')
+    def _rows(self, path):
+        r = self._kernel().api_sync(path, {'profile': 'minimal', 'sort': 'name'})
+        return None if r is None else [v for g in r.get('groups', []) for v in g.get('nodes', [])]
     def list_vars(self):
+        "The merged view `DhrishtiHost` reads: what the user has, plus what this agent has bound."
         if self.session is not None:
             return '\n'.join(f'{v.name}: {v.type} = {v.value}' for _, vs in self.session.view('minimal') for v in vs)
-        r = self._kernel().api_sync('/api/rows', {'profile': 'minimal', 'sort': 'name'}) or {}
-        return '\n'.join(f"{v.get('name')}: {v.get('type')} = {v.get('value')}"
-            for g in r.get('groups', []) for v in g.get('nodes', []))
+        # an `agent='off'` inspector refuses the merged route, and owner-only beats nothing at all
+        rows = self._rows('/agent/api/rows')
+        if rows is None: rows = self._rows('/api/rows') or []
+        return '\n'.join(f"{v.get('name')}: {v.get('type')} = {v.get('value')}" for v in rows)
+    def owner_names(self):
+        "Top-level names in the user's own namespace, which nothing the agent does may replace."
+        if self.session is not None: return set(self.session.owner())
+        return {v.get('name') for v in (self._rows('/api/rows') or [])}
+    def promote_var(self, name):
+        "Hand one name the agent bound in its own layer to the user, the way the vars pane does."
+        name = str(name or '').strip()
+        if not name.isidentifier(): return f'{name!r} is not a variable name'
+        if name in self.owner_names():
+            return (f'{name!r} already exists in the user\'s namespace and will not be replaced. '
+                'Bind your result to a new name and promote that.')
+        if self.session is not None:
+            if name not in self.session.layer: return self._unbound(name)
+            self.session.owner()[name] = self.session.layer.pop(name)
+            self.session.ns.pop(name, None)
+            return f'{name} is now in the user\'s namespace'
+        r = self._kernel().api_sync('/api/promote', {'accessor': json.dumps([name])})
+        if r is None: return f'could not promote {name!r}: the kernel inspector refused or is unreachable'
+        if not r.get('ok'): return self._unbound(name) if 'no agent variable' in str(r.get('error')) else str(r['error'])
+        # stop shadowing it, or the layer's copy leaves the promoted name outside the owner policy
+        self._kernel().api_sync('/agent/api/exec', {'code': f'del {name}', 'scope': 'overlay'})
+        return f'{name} is now in the user\'s namespace'
+    @staticmethod
+    def _unbound(name): return f'no agent variable {name!r}; bind it with run_python first'
     def terminal_text(self, lines=200):
         terms = self.ws.terms.all()
         if not terms: return 'no terminal is open in the IDE'
@@ -517,6 +546,19 @@ class WorkspaceHost(Host):
         if fn:
             try: fn(text)
             except Exception: pass
+
+def _session_tools(host):
+    "The vars pane's promote gesture as a tool: the only route from the agent's layer to the user's."
+    def promote_var(name: str) -> str:
+        """Give the user a variable you bound with `run_python`, so their next cell can use it.
+
+        `run_python` binds into your own layer, which the user's cells cannot see. When the request
+        was to leave a result behind, bind it and then promote that name. A name the user already
+        has is refused rather than replaced; choose another one.
+        """
+        try: return host.promote_var(name)
+        except Exception as e: return f'promote_var failed: {errstr(e)}'
+    return [promote_var]
 
 def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
     "Leela's blended search as one tool: every backend at once, each hit stamped with what agreed."
@@ -669,6 +711,7 @@ def _irreversible(action):
     "How a completed action reads in the turn's irreversible list, or None if restoring files undoes."
     if action.tool == 'memory_forget': return f"memory_forget ({action.args.get('doc_id', 'unknown document')})"
     if action.tool == 'run_python': return 'run_python (live kernel state)'
+    if action.tool == 'promote_var': return f"promote_var ({action.args.get('name', 'a variable')} is now the user's)"
     if action.tool == 'run_shell': return f"run_shell ({action.args.get('command', 'command')})"
     if action.tool in GIT_WRITE_TOOLS: return action.tool
     return None
@@ -726,6 +769,7 @@ class Assistant(Agent):
         self.ws, self.surface = ws, surface
         self.session_state = str(getattr(ws, 'agent_state', '') or '')
         self._news_toolset = _news_tools(host)
+        self._session_toolset = _session_tools(host)
         self._search_toolset = _search_tools(host, legs=None if surface == 'agent' else FAST_SEARCH_LEGS)
         self.video_jobs = VideoJobs() if video_available() else None
         self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
@@ -782,8 +826,8 @@ class Assistant(Agent):
     def tools(self):
         if self._tools is None:
             registered = {f.__name__ for f in self.registry.tools}
-            self.registry.tools.extend(f for f in [*self._news_toolset, *self._search_toolset,
-                                                   *self._video_toolset]
+            self.registry.tools.extend(f for f in [*self._news_toolset, *self._session_toolset,
+                                                   *self._search_toolset, *self._video_toolset]
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             built = super().tools
@@ -800,7 +844,7 @@ class Assistant(Agent):
         A sub-agent sized to a different model is built from `registry.tools`, and one allowed to
         write is given the recorded wrappers, so both lists are filtered here.
         """
-        refused = {*GIT_WRITE_TOOLS, 'user_steering'}
+        refused = {*GIT_WRITE_TOOLS, 'user_steering', 'promote_var'}
         return [f for f in super()._sub_plain() if f.__name__ not in refused]
     def model_local(self):
         "Whether this turn's model runs on this machine, and what it is called."
@@ -920,4 +964,4 @@ class _PolicyApprovals(Approvals):
 def ide_tools(ws, session=None):
     "Every tool the agent gets, bound to one `Workspace`."
     host = WorkspaceHost(ws, session)
-    return tools_for(host, extra=_news_tools(host) + _search_tools(host))
+    return tools_for(host, extra=_news_tools(host) + _search_tools(host) + _session_tools(host))

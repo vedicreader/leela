@@ -1,5 +1,6 @@
 "The agent: tools, briefing, context window, routing and budgets."
 
+import json
 import threading
 import time
 import pytest
@@ -1060,13 +1061,13 @@ def test_workspace_path_refusal_names_the_folders_that_are_open(tmp_path):
 
 
 def test_workspace_agent_reaches_the_live_kernel_inspector():
-    from leela.blocks.agent.ai import WorkspaceHost
+    from leela.blocks.agent.ai import WorkspaceHost, ide_tools
     class K:
         base = 'http://kernel'
         def __init__(self): self.calls = []
         def api_sync(self, path, params=None, timeout=30):
             self.calls.append((path, params))
-            if path == '/api/rows':
+            if path.endswith('/api/rows'):
                 return {'groups': [{'nodes': [{'name': 'df', 'type': 'DataFrame', 'value': '[5×2]'}]}]}
             return {'ok': True, 'stdout': '', 'error': '', 'result': {'value': 'done'}}
     ws, k = Workspace(roots=[]), K()
@@ -1076,12 +1077,117 @@ def test_workspace_agent_reaches_the_live_kernel_inspector():
     assert h.run_python('df_norm = df.copy()') == 'done'
     assert h.inspect_python('df_norm.shape', scope='overlay') == 'done'
     # `run_python` goes through the agent endpoint too: `/api/exec` is the user's own namespace,
-    # where nothing stops the agent rebinding or deleting what they made.
-    assert [p for p, _ in k.calls] == ['/api/rows', '/agent/api/exec', '/agent/api/exec']
+    # where nothing stops the agent rebinding or deleting what they made. `list_vars` reads the
+    # merged view for the same reason: the owner rows cannot see what the overlay just bound.
+    assert [p for p, _ in k.calls] == ['/agent/api/rows', '/agent/api/exec', '/agent/api/exec']
     assert [(a or {}).get('scope') for p, a in k.calls if p == '/agent/api/exec'] == ['overlay', 'overlay']
-    names = {t.__name__ for t in tools_for(h)}
-    assert {'run_python', 'inspect_python', 'list_vars'} <= names
+    names = {t.__name__ for t in ide_tools(ws)}
+    assert {'run_python', 'inspect_python', 'list_vars', 'promote_var'} <= names
 
+
+class _Rows:
+    """A kernel inspector with two namespaces: the user's, and the layer `run_python` writes to.
+
+    `/api/rows` is what the user's next cell can see; `/agent/api/rows` is that plus the agent's own
+    bindings, which is the view `DhrishtiHost` reads and the one the agent must be shown.
+    """
+    base = 'http://kernel'
+    def __init__(self, owner=('df',), layer=('df_norm',)):
+        self.owner, self.layer, self.calls = list(owner), list(layer), []
+    @staticmethod
+    def _g(names): return {'groups': [{'nodes': [{'name': n, 'type': 'DataFrame', 'value': '[5×2]'} for n in names]}]}
+    def api_sync(self, path, params=None, timeout=30):
+        self.calls.append((path, params))
+        if path == '/api/rows': return self._g(self.owner)
+        if path == '/agent/api/rows': return self._g(self.owner + self.layer)
+        if path == '/api/promote':
+            name = json.loads((params or {})['accessor'])[0]
+            if name not in self.layer: return {'ok': False, 'error': f'no agent variable {name!r}'}
+            self.owner.append(name)          # dhrishti copies; it does not stop shadowing
+            return {'ok': True, 'error': None}
+        return {'ok': True, 'stdout': '', 'error': '', 'result': {'value': 'done'}}
+
+def _host(k, ws=None):
+    from leela.blocks.agent.ai import WorkspaceHost
+    ws = ws or Workspace(roots=[])
+    ws.kernel_peek = lambda tab=None: k
+    return WorkspaceHost(ws)
+
+def test_the_agent_is_shown_the_binding_it_just_made():
+    """`run_python` writes to the overlay, so an owner-only `list_vars` denies its own work.
+
+    The agent bound `df_norm` and was then told, by every reader Leela had, that `df_norm` does not
+    exist. Ramabana's own `DhrishtiHost.list_vars` reads `/agent/api/rows`; this reads it too.
+    """
+    k = _Rows()
+    h = _host(k)
+    assert 'df_norm: DataFrame' in h.list_vars()
+    assert h.owner_names() == {'df'}, "the user's own namespace is still asked about separately"
+
+def test_a_blind_agent_endpoint_falls_back_to_the_owner_rows():
+    "An `agent='off'` inspector refuses the merged route. Owner-only beats an empty briefing."
+    class Off(_Rows):
+        def api_sync(self, path, params=None, timeout=30):
+            return None if path == '/agent/api/rows' else super().api_sync(path, params, timeout)
+    h = _host(Off())
+    assert 'df: DataFrame' in h.list_vars()
+
+def test_a_binding_can_be_handed_to_the_user_and_stops_being_the_agents():
+    k = _Rows()
+    h = _host(k)
+    assert h.promote_var('df_norm') == "df_norm is now in the user's namespace"
+    assert 'df_norm' in h.owner_names()
+    assert ('/api/promote', {'accessor': '["df_norm"]'}) in k.calls
+    # the layer keeps its own copy of a promoted name, and a shadowed name is outside the policy
+    # that refuses owner mutations, so the shadow is dropped as part of handing it over
+    assert ('/agent/api/exec', {'code': 'del df_norm', 'scope': 'overlay'}) in k.calls
+
+def test_a_promotion_never_replaces_what_the_user_made():
+    "0e12791 took the agent's ability to overwrite the user away. Promotion may not give it back."
+    k = _Rows(owner=('df',), layer=('df', 'df_norm'))
+    h = _host(k)
+    out = h.promote_var('df')
+    assert 'will not be replaced' in out
+    assert not [c for c in k.calls if c[0] == '/api/promote'], 'refused before the kernel is asked'
+    assert h.promote_var('nowhere') == "no agent variable 'nowhere'; bind it with run_python first"
+    assert h.promote_var('1x') == "'1x' is not a variable name"
+
+def test_promotion_is_a_write_and_no_delegate_gets_it(tmp_path):
+    from leela.blocks.agent.ai import WRITE_TOOLS as LEELA_WRITES
+    assert 'promote_var' in LEELA_WRITES
+    ws = Workspace(roots=[tmp_path])
+    assert 'promote_var' in {t.__name__ for t in ws.ai.tools}
+    assert 'promote_var' not in {t.__name__ for t in ws.ai._sub_plain()}
+
+def test_the_name_a_prompt_asks_for_survives_the_way_people_write_it():
+    for prompt, want in [('scale the numeric columns as df_norm', 'df_norm'),
+                         ('Scale the numeric columns of `df` to 0..1 as `df_norm`.', 'df_norm'),
+                         ("bind it as 'out'", 'out'),
+                         ('just tell me about df', '')]:
+        assert Workspace._requested_name(prompt) == want, prompt
+
+def test_the_incomplete_action_retry_names_tools_that_exist(tmp_path):
+    """The retry told the model to call `scale_numeric`, which exists in neither Leela nor ramabana,
+    and measured completion against the owner rows that `run_python` cannot reach. It could not be
+    satisfied, so it burned every attempt."""
+    ws = Workspace(roots=[tmp_path])
+    agent = type('A', (), {'host': _host(_Rows(owner=(), layer=('df_norm',)), ws)})()
+    retry = ws._action_retry('scale the numeric columns as df_norm', agent)
+    assert 'scale_numeric' not in retry
+    assert 'run_python' in retry and 'promote_var' in retry
+    names = {t.__name__ for t in ws.ai.tools}
+    assert all(t in names for t in ('run_python', 'promote_var'))
+
+def test_a_landed_name_ends_the_retry_loop(tmp_path):
+    "What the loop is for: the user's next cell can read the name their prompt asked for."
+    ws = Workspace(roots=[tmp_path])
+    k = _Rows(owner=('df',), layer=('df_norm',))
+    agent = type('A', (), {'host': _host(k, ws)})()
+    prompt = 'Scale the numeric columns of `df` to 0..1 as `df_norm`.'
+    assert ws._action_retry(prompt, agent), 'nothing has reached the user yet'
+    assert ws._land(prompt, agent) == "df_norm is now in the user's namespace"
+    assert ws._action_retry(prompt, agent) == ''
+    assert ws._name_exists('df_norm', agent, owner=True)
 
 def test_a_stream_yields_before_it_finishes(spec):
     "The whole point. A stream that only yields at the end is a blocking call with extra steps."

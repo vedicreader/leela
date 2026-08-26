@@ -509,23 +509,40 @@ class Workspace:
         return context
     @staticmethod
     def _requested_name(prompt):
+        "The name a prompt asked to be left behind. People write it `as \\`df_norm\\`.`, backticks and all."
         import re
-        m = re.search(r'\bas\s+([A-Za-z_]\w*)\s*$', (prompt or '').strip())
+        m = re.search(r'\bas\s+[`\'"]?([A-Za-z_]\w*)[`\'"]?[.!]?\s*$', (prompt or '').strip())
         return m.group(1) if m else ''
-    def _name_exists(self, name, agent=None):
+    def _name_exists(self, name, agent=None, owner=False):
+        """Whether `name` is bound: in the agent's merged view, or in the user's own namespace.
+
+        The merged view is what the agent sees. Only the user's own namespace answers the question
+        a prompt cell asks, which is whether the next cell can use the name.
+        """
         if not name: return True
+        h = (agent or self.inline_ai).host
         try:
+            if owner: return name in h.owner_names()
             import re
-            return bool(re.search(rf'(?m)^{re.escape(name)}\s*:', (agent or self.inline_ai).host.list_vars()))
+            return bool(re.search(rf'(?m)^{re.escape(name)}\s*:', h.list_vars()))
         except Exception: return True
+    def _land(self, prompt, agent=None):
+        "Give the user the name their prompt asked to be left behind, if the agent bound it."
+        name = self._requested_name(prompt)
+        if not name: return ''
+        a = agent or self.inline_ai
+        try: out = a.host.promote_var(name)
+        except Exception: return ''
+        if out.startswith(name): a.host.note(out)
+        return out
     def _action_retry(self, prompt, agent=None):
         name = self._requested_name(prompt)
-        if not name or self._name_exists(name, agent): return ''
-        scale = (' Call `scale_numeric` with source `df` and this output name.'
-                 if 'scale' in prompt.lower() and 'numeric' in prompt.lower() else
-                 ' Call the appropriate execution tool now with only the required transformation.')
-        return (f'The action is incomplete: `{name}` does not exist in the live namespace. '
-                f'Do not explain or plan.{scale} Verify `{name}` exists, then answer briefly.')
+        if not name or self._name_exists(name, agent, owner=True): return ''
+        return (f'The action is incomplete: `{name}` is not in the user\'s namespace. '
+                'Do not explain or plan, and do not install anything: the session refuses pip and '
+                'shell escapes, so use only what the notebook has already imported. Call '
+                f'`run_python` with just the transformation asked for, binding it to `{name}`, then '
+                f'call `promote_var` with `{name}`. Answer briefly.')
     def ask_cell(self, nb, i):
         "Answer the prompt cell at `i`, with the notebook above it as its context."
         c = nb[i]
@@ -537,9 +554,10 @@ class Workspace:
         try:
             text = a.ask_with(c.source, context=self._agent_context(nb, i, c.source, a),
                               screen=screen, image=png, context_path=nb.path)
-            for _ in range(2):
+            for attempt in range(3):
+                self._land(c.source, a)
                 retry = self._action_retry(c.source, a)
-                if not retry: break
+                if not retry or attempt == 2: break
                 text += '\n\n' + a.ask(retry)
         finally:
             self._approval_target = None
@@ -672,6 +690,7 @@ class Workspace:
                     c.reply += chunk
                     c.calls = a.activity.rows(mark=a.activity._mark)
                     yield chunk
+                self._land(c.source, a)
                 retry = self._action_retry(c.source, a)
                 if not retry or attempt == 2: break
                 sep = '\n\n'

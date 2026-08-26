@@ -226,6 +226,34 @@ def test_overlay_still_refuses_to_touch_what_the_user_made(tmp_path, kind):
             await k.shutdown()
     _run(go())
 
+@pytest.mark.parametrize('kind', KINDS[:1])
+def test_a_binding_reaches_the_user_only_when_it_is_handed_over(tmp_path, kind):
+    """The whole round trip with no model in it: bind, be seen, hand over, be read by the user.
+
+    `run_python` writes to the agent's layer, so the user's next cell cannot see what it bound.
+    `promote_var` is the only route across, and it is the vars pane's own gesture."""
+    from leela.blocks.agent.ai import WorkspaceHost
+    async def go():
+        ws = Workspace(roots=[str(tmp_path)], port=8760, approvals='auto')
+        k = await ws.kernel()
+        try:
+            await k.execute('import pandas as pd\ndf = pd.DataFrame({"a": [1, 2], "b": [3, 4]})\n', timeout=30)
+            h = WorkspaceHost(ws)
+            h.run_python('df_norm = (df - df.mean()) / df.std()')
+            assert 'df_norm' in h.list_vars(), 'the agent cannot see its own binding'
+            assert 'df_norm' not in h.owner_names(), 'and the user cannot see it yet'
+            assert h.promote_var('df_norm') == "df_norm is now in the user's namespace"
+            after = await k.execute('print(df_norm.shape)', timeout=30)
+            assert '(2, 2)' in after.text, after.text
+            assert 'will not be replaced' in h.promote_var('df'), 'the user owns df'
+            # promotion hands the name over rather than sharing it: the owner policy covers it again
+            assert 'blocked' in h.run_python('df_norm["a"] = 0')
+            still = await k.execute('print(df_norm["a"].tolist())', timeout=30)
+            assert '0.0, 0.0' not in still.text, still.text
+        finally:
+            await ws.pool.close_all()
+    _run(go())
+
 def test_a_host_can_refuse_overlay():
     "`--agent-scope isolated` is the setting for a machine where even a scratch layer is unwanted."
     from leela.blocks.agent.ai import WorkspaceHost
@@ -270,12 +298,18 @@ def _model_available():
     return bool(_cached_model(MODEL_ID))
 
 @pytest.fixture(scope='module')
-def dialog_agent():
+def dialog_agent(tmp_path_factory):
     if not _model_available() and os.environ.get('LEELA_RUN_RISHI_INTEGRATION') != '1':
         pytest.skip(f'{MODEL_NAME} LiteRT bundle is not cached; set LEELA_RUN_RISHI_INTEGRATION=1 to download it')
-    ws = Workspace(roots=[str(DIALOG.parent)], inline_model=MODEL_NAME, approvals='auto')
-    ws.open(DIALOG)
-    nb = Notebook.load(DIALOG)
+    # Copied out: a real kernel logs its transcript into the folder the workspace is rooted at,
+    # which was `tests/fixtures`, so running this suite wrote session notebooks into the checkout.
+    import shutil
+    root = tmp_path_factory.mktemp('dialog')
+    dialog = root/DIALOG.name
+    shutil.copy2(DIALOG, dialog)
+    ws = Workspace(roots=[str(root)], inline_model=MODEL_NAME, approvals='auto')
+    ws.open(dialog)
+    nb = Notebook.load(dialog)
     async def prepare():
         kernel = await ws.kernel()
         result = await nb.run(1, kernel)
@@ -294,17 +328,21 @@ def test_real_dialog_prompt_uses_a_16k_litert_engine(dialog_agent):
     assert local_ctx(MODEL_NAME) == 16384
     assert backend.chat.ctx_limit == 16384
     assert backend.chat.engine.max_num_tokens == 16384
-    conv_kw = backend.chat._conv_kw
-    cfg = conv_kw.get('constrained_decoding_config')
-    assert conv_kw.get('enable_constrained_decoding') is True or getattr(cfg, 'enable', False)
-    assert {'run_python', 'inspect_python', 'list_vars'} <= {t.__name__ for t in backend.tools}
+    # rishi builds the config when it makes the conversation, so `_conv_kw` no longer carries it.
+    cfg = backend.chat._conv_kw.get('constrained_decoding_config') or backend.chat._constrained()
+    assert getattr(cfg, 'enable', False)
+    assert {'run_python', 'inspect_python', 'list_vars', 'promote_var'} <= {t.__name__ for t in backend.tools}
     cell = nb[PROMPT_CELL]
     message = ws.inline_ai.compose(
         cell.source,
         context=nb.context(PROMPT_CELL, since=nb.prompt_start(PROMPT_CELL)),
         context_path=nb.path,
     )
-    assert 3600 <= backend.pending_tokens(message) <= 5200
+    # Measured, not inherited: 56 tool schemas and a 2267-token briefing. The inline path is
+    # deliberately this large. litert-lm dropped and duplicated tokens past a 2048-token
+    # prefill until rishi 0.1.30 stopped its GPU backend defaulting to FLOAT16 activations,
+    # and the tool set was cut to 6 for one afternoon over it. See `docs/regressions.md`.
+    assert 5600 <= backend.pending_tokens(message) <= 6200
     assert backend.fits(message)
 
 def test_real_dialog_prompt_cell_completes_end_to_end(dialog_agent):

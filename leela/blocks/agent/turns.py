@@ -87,6 +87,8 @@ def tool_preview(agent, tool, args):
         return {'kind': 'diff', **diff_payload(before, _apply_edits(before, _edits(args.get('edits', '[]'))))}
     if tool in {'run_python', 'inspect_python'}:
         return {'kind': 'code', 'text': str(args.get('code', '')), 'language': 'python'}
+    if tool == 'promote_var':
+        return {'kind': 'code', 'text': str(args.get('name', '')), 'language': 'python'}
     if tool == 'run_shell':
         return {'kind': 'code', 'text': str(args.get('command', '')), 'language': 'bash'}
     if tool in {'edit_cell', 'add_cell'}:
@@ -98,7 +100,7 @@ def tool_preview(agent, tool, args):
 TOOL_GROUPS = {
     'Repository': {'search_code', 'similar_code', 'outline', 'list_files', 'grep', 'ls',
                    'view_file', 'edit_file', 'replace_text', 'create_file'},
-    'Runtime': {'run_python', 'inspect_python', 'list_vars', 'read_terminal', 'run_shell'},
+    'Runtime': {'run_python', 'inspect_python', 'list_vars', 'promote_var', 'read_terminal', 'run_shell'},
     'Web': {'web_search', 'read_url', 'research'},
 }
 
