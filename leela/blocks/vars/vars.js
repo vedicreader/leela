@@ -211,9 +211,26 @@ async function openGrid() {
   m.querySelector('#gnextcol').onclick = () => { coff = Math.min(Math.max(0, (page?.ncols || 1) - 1), coff + (page?.cols || 50)); draw(); };
   try { await draw(); } catch (e) { m.remove(); status(String(e.message || e), 'err'); }
 }
-async function promoteVar() {
+async function liveHas(name) {
+  try {
+    const d = await api('/vars?profile=minimal&sort=name&scope=live');
+    return (d.groups || []).some(g => (g.nodes || []).some(n => n.name === name));
+  } catch (e) { return false; }
+}
+
+/* Promoting over a live name cannot be undone, so the refusal is the server's own sentence and the
+ * replace is a second, deliberate answer to it. Only the pane can send one: the agent's tool is
+ * refused outright. */
+async function promoteVar(replace) {
   const r = selVar(); if (!r) return status('select a variable first');
-  const res = await api('/vars/promote?accessor=' + r.dataset.acc);
+  let res;
+  try { res = await api('/vars/promote?accessor=' + r.dataset.acc + (replace ? '&replace=1' : '')); }
+  catch (e) {
+    const refusal = String(e.message || e);
+    if (replace || !await liveHas(r.dataset.name)) return status(refusal, 'err');
+    if (!await confirmDialog('replace a live variable', refusal, 'replace it')) return status(refusal, 'err');
+    return promoteVar(true);
+  }
   res.ok ? (status('promoted ' + r.dataset.name, 'ok'), leeVars()) : status(res.error, 'err');
 }
 function copyVar(what) {

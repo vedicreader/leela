@@ -161,50 +161,6 @@ def _project_state_context(ws, max_files=120, max_chars=12_000):
             '\n\n## Current file map\n' + (names or '- no files') +
             '\n\n## Project-file excerpts\n' + ('\n\n'.join(excerpts) or '- none'))
 
-def _tool_preview(agent, tool, args):
-    "Dry-run preview for editable calls; never invokes the tool or mutates the workspace."
-    args = dict(args or {})
-    if tool == 'create_file':
-        path = args.get('path', '')
-        before = agent.host.text_at(path) or ''
-        return {'kind': 'diff', **_diff(before, str(args.get('text', '')))}
-    if tool == 'edit_file':
-        from .agent.tools import _cmds
-        from exhash import exhash
-        path = args.get('path', '')
-        before = agent.host.text_at(path)
-        if before is None: raise ValueError(f'no such file: {path}')
-        result = exhash(before, _cmds(args.get('commands', '[]')))
-        return {'kind': 'patch', 'text': str(result)}
-    if tool == 'replace_text':
-        from .agent.tools import _apply_edits, _edits
-        path = args.get('path', '')
-        before = agent.host.text_at(path)
-        if before is None: raise ValueError(f'no such file: {path}')
-        return {'kind': 'diff', **_diff(before, _apply_edits(before, _edits(args.get('edits', '[]'))))}
-    if tool in {'run_python', 'inspect_python'}:
-        return {'kind': 'code', 'text': str(args.get('code', '')), 'language': 'python'}
-    if tool == 'run_shell':
-        return {'kind': 'code', 'text': str(args.get('command', '')), 'language': 'bash'}
-    if tool in {'edit_cell', 'add_cell'}:
-        return {'kind': 'code', 'text': str(args.get('source') or args.get('commands') or ''), 'language': 'python'}
-    if tool in {'web_search', 'read_url', 'research'}:
-        return {'kind': 'network', 'text': str(args.get('url') or args.get('query') or '')}
-    return {'kind': 'json', 'text': json.dumps(args, indent=2, default=str)}
-
-TOOL_GROUPS = {
-    'Repository': {'search_code', 'similar_code', 'outline', 'list_files', 'grep', 'ls',
-                   'view_file', 'edit_file', 'replace_text', 'create_file'},
-    'Runtime': {'run_python', 'inspect_python', 'list_vars', 'read_terminal', 'run_shell'},
-    'Web': {'web_search', 'read_url', 'research'},
-}
-
-def _tool_group(name):
-    "Which browser-facing family a tool belongs to."
-    group = first(g for g, names in TOOL_GROUPS.items() if name in names)
-    if group: return group
-    return 'Notebook' if 'cell' in name or 'notebook' in name else 'Other'
-
 def _assigned_lines(source):
     "Top-level bindings made by Python source, as ``[(line, name)]``."
     try: tree = ast.parse(source or '')

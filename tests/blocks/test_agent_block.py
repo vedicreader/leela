@@ -45,6 +45,24 @@ def test_tool_groups_cover_the_families_the_picker_shows():
     assert tool_group('something_else') == 'Other'
     assert set(TOOL_GROUPS) == {'Repository', 'Runtime', 'Web'}
 
+def test_the_tool_tables_have_one_home():
+    """`app.py` carried its own `TOOL_GROUPS`, `_tool_group` and `_tool_preview`. Nothing called
+    them, and they drifted: `promote_var` was added to the ones in `turns.py` alone, so the two
+    tables disagreed about a tool that exists.
+    """
+    import ast
+    owner = 'leela/blocks/agent/turns.py'
+    for name in ('TOOL_GROUPS', 'tool_group', 'tool_preview'):
+        homes = []
+        for p in sorted((ROOT/'leela').rglob('*.py')):
+            if 'vendor' in p.parts: continue
+            for node in ast.walk(ast.parse(p.read_text())):
+                bound = ([t.id for t in getattr(node, 'targets', []) if isinstance(t, ast.Name)]
+                         if isinstance(node, ast.Assign) else
+                         [node.name] if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else [])
+                if any(b.lstrip('_') == name for b in bound): homes.append(p.relative_to(ROOT).as_posix())
+        assert homes == [owner], f'{name} is defined in {homes}'
+
 def test_history_groups_untagged_turns_by_the_gap_between_them():
     "Old history has no session id, so a 30 minute gap is what separates one context from the next."
     from leela.blocks.agent.turns import history_sessions

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from fasthtml.common import JSONResponse
 
 from ...core.inspectors import import_failure
@@ -17,6 +19,27 @@ CAPS = ()
 def _api_path(name, scope):
     "`live` asks the tab's kernel; `agent` asks its overlay, which mounts the same names."
     return f'/agent/api/{name}' if scope == 'agent' else f'/api/{name}'
+
+def _whole_name(accessor):
+    "The top-level name an accessor names, or None. dhrishti promotes nothing else."
+    try: a = json.loads(accessor)
+    except Exception: return None
+    if not (isinstance(a, list) and len(a) == 1 and isinstance(a[0], str)): return None
+    return a[0] if a[0].isidentifier() else None
+
+async def _replaces(api, name):
+    "What promoting `name` would take from the user, as one sentence, or ''."
+    info = await api('/agent/api/info')
+    if info is not None and name not in set(info.get('agent_names') or ()): return ''
+    rows = await api('/api/rows', {'profile': 'minimal', 'sort': 'name'})
+    if rows is None:
+        # an inspector that answered nothing at all is the one `/api/promote` reports for itself
+        if info is None: return ''
+        return (f'the live namespace could not be read, so promoting {name} may replace a value '
+                'that is already there')
+    if name not in {n.get('name') for g in rows.get('groups', []) for n in g.get('nodes', [])}: return ''
+    return (f'{name} already exists in the live namespace. Promoting replaces it, and the value '
+            'that is there now cannot be brought back.')
 
 def connect(app, ctx):
     rt = app.route
@@ -77,6 +100,16 @@ def connect(app, ctx):
         r = await api('/api/set', {'accessor': d['accessor'], 'expr': d['expr']})
         return r or {'ok': False, 'error': 'no kernel inspector'}
     @rt('/vars/promote')
-    async def vars_promote(accessor: str):
-        r = await api('/api/promote', {'accessor': accessor})
-        return r or {'ok': False, 'error': 'no kernel inspector'}
+    async def vars_promote(accessor: str, replace: int = 0):
+        "Hand one name the agent bound to the user; a name the user already has needs `replace`."
+        name = _whole_name(accessor)
+        try:
+            if name and not replace:
+                taken = await _replaces(api, name)
+                if taken: return fail(taken, 409)
+            r = await api('/api/promote', {'accessor': accessor})
+            if r is None: return {'ok': False, 'error': 'no kernel inspector'}
+            # a promoted name left in both layers falls outside the policy that refuses owner mutations
+            if r.get('ok') and name: await api('/agent/api/exec', {'code': f'del {name}', 'scope': 'overlay'})
+            return r
+        except KernelLimit as e: return fail(e)
