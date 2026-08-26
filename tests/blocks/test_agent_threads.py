@@ -62,6 +62,7 @@ def test_feed_wait_wakes_for_events_and_close():
 class _Run:
     id, terminal, state = 'run-1', False, 'completed'
     def dict(self): return {'id': self.id, 'state': 'completed', 'children': []}
+    def cancel(self, grace=None): self.terminal = True; return self.terminal
 
 
 class _AI:
@@ -75,7 +76,7 @@ class _AI:
     def __init__(self): self._run = _Run()
     def run(self, run_id=''): return self._run
     def runs(self, active=False): return []
-    def cancel(self, run_id=''): self._run.terminal = True
+    def cancel(self, run_id=''): self._run.terminal = True; return self._run.dict()
     def changes(self): return {}
     def turn_capabilities(self, turn_id): return {}
     def summarize_session(self): return {'title': 'A useful title', 'title_turns': 1, 'muted': False}
@@ -177,6 +178,122 @@ def test_a_second_turn_is_rejected_while_the_first_is_pending_registration():
     else: assert False
     release.set(); worker.join(1)
     assert not worker.is_alive() and result['accepted']['run'] == 'run-1'
+
+
+class _Latched(_AI):
+    "An assistant that registers its run before the engine reports it, as Ramabana's `stream` does."
+    registered = False
+    @property
+    def busy(self): return self.registered and not self._run.terminal
+    def runs(self, active=False): return [] if self._run.terminal else [self._run.dict()]
+
+
+def test_a_start_that_never_reports_leaves_the_pane_usable(tmp_path):
+    """The reported wedge: one slow start held `_pending` and the registered run for good, so every
+    later send was refused as busy until Leela was restarted."""
+    hold = threading.Event()
+    class Hung(_Workspace):
+        def __init__(self): super().__init__(); self.ai = self._ai = _Latched(); self.calls = 0
+        def ask_stream(self, prompt, attachments=(), on_registered=None, **kwargs):
+            self.calls += 1
+            if self.calls > 1: on_registered(self.ai._run); yield 'answer'; return
+            self.ai.registered = True; hold.wait(5)
+    ws, feed = Hung(), Feed(); runner = TurnRunner(ws, feed); runner.start_timeout = .05
+    try: runner.start('question')
+    except TurnError as e: assert e.code == 'turn_conflict' and 'send it again' in e.message
+    else: assert False
+    assert runner._pending == {}, 'the refused turn does not keep the slot'
+    assert not ws.ai.busy, 'nor the run it registered before it hung'
+    assert runner.start('second')['run'] == 'run-1'
+    assert [row['event'] for row in feed.since(0)][0] == 'user'
+    hold.set()
+
+
+def test_stop_clears_a_pending_turn_whose_starter_has_gone():
+    "The control a person reaches for when the pane is stuck is the one that unwedges it."
+    ws = _Workspace(); runner = TurnRunner(ws)
+    leaked = {'id': 'leaked', 'event': threading.Event(), 'gate': threading.Event(),
+              'accepted': False, 'run': '', 'error': None, 'at': time.time() - 41}
+    leaked['gate'].set(); runner._pending['leaked'] = leaked
+    try: runner.start('question')
+    except TurnError as e: assert e.code == 'thread_busy' and re.search(r'started 4\ds ago', e.message) and 'stop' in e.message
+    else: assert False
+    assert runner.stop()['cleared'] == 1
+    assert runner._pending == {} and runner.start('second')['run'] == 'run-1'
+
+
+def test_a_stream_that_ends_before_reporting_a_run_says_why_at_once():
+    """Ramabana's `stream` returns before `on_registered` when the backend will not load, so the
+    turn used to expire on the full start window with the reason sitting unread in `note`."""
+    class Unavailable(_Workspace):
+        def ask_stream(self, *args, on_registered=None, **kwargs):
+            self.ai.note = 'gpt-5.6-sol unavailable (RuntimeError: simulated provider outage)'
+            yield self.ai.note
+    ws, feed = Unavailable(), Feed(); runner = TurnRunner(ws, feed); runner.start_timeout = 5
+    started = time.time()
+    try: runner.start('question')
+    except TurnError as e: assert e.code == 'turn_conflict' and 'simulated provider outage' in e.message
+    else: assert False
+    assert time.time() - started < 1, 'the reason was there to be reported, not waited out'
+    assert runner._pending == {} and feed.since(0) == []
+
+
+def test_a_worker_is_not_parked_forever_when_the_starter_raises():
+    "An exit from `start` that misses the gate must cost that turn, not the conversation."
+    class Exploding(Feed):
+        def emit(self, event, data=None):
+            if event == 'user': raise RuntimeError('the pane went away')
+            return super().emit(event, data)
+    ws, feed = _Workspace(), Exploding(); runner = TurnRunner(ws, feed); runner.start_timeout = .05
+    try: runner.start('question')
+    except RuntimeError: pass
+    else: assert False
+    end = time.time() + 2
+    while runner._pending and time.time() < end: time.sleep(.01)
+    assert runner._pending == {} and ws.ai._run.terminal
+
+
+def test_the_stop_route_clears_a_wedged_pane(tmp_path):
+    "Every route a person can reach the wedge from: send is refused, and stop is what frees it."
+    ws = _threaded_workspace(tmp_path); thread = ws.threads.active
+    leaked = {'id': 'leaked', 'event': threading.Event(), 'gate': threading.Event(),
+              'accepted': False, 'run': '', 'error': None, 'at': time.time() - 41}
+    leaked['gate'].set(); thread.runner._pending['leaked'] = leaked
+    with TestClient(ide_app(ws)) as client:
+        refused = client.post('/agent/turn', json={'prompt': 'question', 'thread': thread.id})
+        assert refused.status_code == 409 and refused.json()['code'] == 'thread_busy'
+        assert 'stop' in refused.json()['message']
+        stopped = client.post('/agent/stop', json={'thread': thread.id})
+        assert stopped.json()['ok'] and stopped.json()['cleared'] == 1
+    assert thread.runner._pending == {}
+
+
+def test_stop_cancels_a_live_turn_without_dropping_it():
+    "Stopping a turn that is running is still a cancel the worker unwinds from, not an eviction."
+    release, result = threading.Event(), {}
+    class Live(_Workspace):
+        def ask_stream(self, *args, on_registered=None, **kwargs):
+            on_registered(self.ai._run); yield 'chunk'; release.wait(5)
+    ws = Live(); runner = TurnRunner(ws)
+    accepted = runner.start('question')
+    end = time.time() + 2
+    while not any(r['event'] == 'chunk' for r in runner.feed.since(0)) and time.time() < end: time.sleep(.01)
+    assert runner.stop(accepted['run'])['cleared'] == 0
+    assert list(runner._pending) and ws.ai._run.terminal, 'the run was cancelled, the turn left to unwind'
+    release.set()
+    while runner._pending and time.time() < end: time.sleep(.01)
+    assert runner._pending == {}
+
+
+def test_stop_leaves_a_live_sub_agent_of_a_finished_root_alone(tmp_path):
+    "`busy` with nothing pending is a delegation still running; stop must not lie about clearing it."
+    ws = _threaded_workspace(tmp_path); thread = ws.threads.active
+    root = thread.ai._new_run('delegated'); child = root.child('sub')
+    root.finish()
+    assert thread.ai.busy and thread.runner._pending == {}
+    thread.runner.stop('nothing')
+    assert not child.terminal, 'the sub-agent has its own controls, and stop is not one of them'
+    child.finish()
 
 
 def test_close_wakes_a_turn_waiting_for_registration():

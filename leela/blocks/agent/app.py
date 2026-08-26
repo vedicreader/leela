@@ -644,13 +644,13 @@ def connect(app, ctx):
         return {**t.ai.status(), 'thread': t.id}
     @rt('/agent/stop')
     async def agent_stop(req):
-        "Cancel the foreground root run of one conversation."
+        "Cancel the foreground root run of one conversation, and clear a start that never arrived."
         try:
             d = await req.json()
         except Exception: d = {}
         try: t = _thread(d.get('thread'))
         except Exception as e: return _thread_error(e)
-        try: return {'ok': True, 'thread': t.id, **t.ai.cancel((d.get('run_id') or '').strip())}
+        try: return {'ok': True, 'thread': t.id, **t.runner.stop((d.get('run_id') or '').strip(), ai=t.ai)}
         except Exception as e: return {'ok': False, 'error': errstr(e), 'thread': t.id}
     @rt('/agent/runs')
     def agent_runs(thread: str = ''):

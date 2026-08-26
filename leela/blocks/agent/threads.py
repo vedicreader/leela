@@ -335,8 +335,9 @@ class TurnRunner:
         def registered(run):
             nonlocal run_id
             run_id = run.id; threading.current_thread().name = f'leela-turn-{run_id}'
-            ready['run'] = run_id; ready['event'].set(); ready['gate'].wait()
-            if not ready['accepted']: ai.cancel(run_id); return
+            ready['run'] = run_id; ready['event'].set(); ready['gate'].wait(self.start_timeout)
+            # the run alone, not `ai.cancel`: a turn nobody accepted must not clear a live one's checkpoint
+            if not ready['accepted']: run.cancel(); return
             threading.Thread(target=self._watch, args=(ai, run_id), daemon=True,
                 name=f'leela-feed-{run_id}').start()
         try:
@@ -344,8 +345,10 @@ class TurnRunner:
                 context=context, context_path=context_path, grounding=grounding,
                 on_registered=registered, ai=ai)
             for chunk in stream:
+                if not run_id: return self._unstarted(ai, ready)
                 if not ready['accepted']: return
                 if chunk is not None:self.feed.emit('chunk', {'text': chunk, 'run': run_id})
+            if not run_id: return self._unstarted(ai, ready)
             if not ready['accepted']: return
             run = ai.run(run_id)
             # a turn that finished is told by `done`; `run` is how one that was stopped says so
@@ -366,29 +369,69 @@ class TurnRunner:
         finally:
             with self._lock:self._pending.pop(ready['id'], None)
 
+    def _unstarted(self, ai, ready):
+        "A stream that ended without reporting a run: `note` holds the reason, and `start` is waiting on it."
+        ready['error'] = TurnError('turn_conflict', f'the turn did not start ({self._note(ai)})', self.feed.thread)
+        ready['event'].set()
+
+    def _note(self, ai): return (getattr(ai, 'note', '') or '').strip() or 'the assistant said nothing about why'
+
+    def _busy_note(self):
+        with self._lock: started = min([r['at'] for r in self._pending.values()], default=0)
+        if not started: return 'the assistant is already working; use steering or stop it first'
+        return (f'a turn started {int(time.time() - started)}s ago is still holding this conversation; '
+                'steer it, or stop to clear it')
+
+    def abandon(self):
+        "Drop every turn whose starter has given up: a gate open on a turn nobody accepted."
+        with self._lock:
+            stale = [i for i, r in self._pending.items() if not r['accepted'] and r['gate'].is_set()]
+            for ident in stale: self._pending.pop(ident, None)
+        return stale
+
+    def _release(self, ai):
+        "Cancel what a refused turn left registered. A root already over is a live sub-agent's, so it stays."
+        for row in ai.runs(active=True):
+            run = ai.run(row['id'])
+            if run is not None and run.terminal: continue
+            try: ai.cancel(row['id'])
+            except Exception: pass
+
+    def stop(self, run_id='', ai=None):
+        "Stop the turn in flight, and clear a start that never arrived so the pane is usable again."
+        ai = ai or self.ai or self.workspace._ai
+        cleared = self.abandon()
+        out = ai.cancel(run_id)
+        with self._lock: pending = bool(self._pending)
+        if not pending: self._release(ai)
+        return {**out, 'cleared': len(cleared)}
+
     def start(self, prompt, attachments=(), reasoning=None, context='', context_path='', grounding=None):
         ai = self.ai or self.workspace.ai
         thread = ai.session_id
         self.feed.thread = thread
         ident = uuid.uuid4().hex[:8]
         ready = {'id': ident, 'event': threading.Event(), 'gate': threading.Event(),
-            'accepted': False, 'run': '', 'error': None}
+            'accepted': False, 'run': '', 'error': None, 'at': time.time()}
         worker = threading.Thread(target=self._work,
             args=(prompt, tuple(attachments), reasoning, context, context_path, grounding, ready), daemon=True,
             name=f'leela-turn-pending-{ident}')
         with self._lock:
-            if self._pending or ai.busy:
-                raise TurnError('thread_busy', 'the assistant is already working; use steering or stop it first', thread)
+            if self._pending or ai.busy: raise TurnError('thread_busy', self._busy_note(), thread)
             self._pending[ident] = ready
         worker.start()
         ready['event'].wait(self.start_timeout)
         run_id = ready['run']
         if ready['error'] is not None:
+            with self._lock: self._pending.pop(ident, None)
             ready['gate'].set()
             if isinstance(ready['error'], TurnError): raise ready['error']
             raise TurnError('turn_conflict', errstr(ready['error']), thread)
         if not run_id:
-            ready['gate'].set(); raise TurnError('turn_conflict', 'the turn did not start', thread)
+            with self._lock: self._pending.pop(ident, None)
+            ready['gate'].set(); self._release(ai)
+            raise TurnError('turn_conflict', f'nothing was reported in {self.start_timeout}s '
+                f'({self._note(ai)}), so the turn was cleared; send it again', thread)
         with self._lock:
             if ready['error'] is not None:
                 ready['gate'].set(); raise ready['error']
