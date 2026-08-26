@@ -1011,6 +1011,39 @@ def test_closing_the_last_folder_is_a_session_worth_saving(tmp_path):
     ws.drop_root(proj); ws.save()
     assert _saved(state)['roots'] == []
 
+def test_a_workspace_saved_before_one_folder_was_one_window_heals_when_it_loads(tmp_path):
+    "Folders piled into one file under the old model reopened all of them, and pointed git at the wrong one."
+    folders = tmp_path/'workspaces'; folders.mkdir()
+    made = {n: tmp_path/n for n in ('ramabana', 'leela', 'notes', 'litesearch', 'pobblebonk')}
+    made['worktree'] = tmp_path/'wt'/'leela'
+    for p in made.values(): p.mkdir(parents=True)
+    (made['leela']/'a.py').write_text('x = 1')
+    def write(slug, roots, active='', tabs=()):
+        (folders/f'{slug}.json').write_text(json.dumps(
+            {'version': 2, 'roots': [str(r) for r in roots], 'active': 0, 'active_root': str(active),
+             'tabs': [{'path': str(t), 'kind': 'text', 'title': Path(t).name} for t in tabs]}))
+    write('leela', [made['leela']]); write('pobblebonk', [made['pobblebonk']])
+    write('ramabana', [made['ramabana'], made['leela'], made['notes'], made['worktree']],
+          active=made['leela'], tabs=[made['leela']/'a.py'])
+    ws = Workspace.load(folders/'ramabana.json')
+    assert [str(r) for r in ws.fs.roots] == [str(made[n]) for n in ('ramabana', 'notes', 'worktree')], \
+        'the folder with a window of its own goes; an ordinary folder and a namesake with no window stay'
+    assert ws.active_root is None and str(ws.project_root) == str(made['ramabana'])
+    assert ws.tabs == [], 'and a tab under the folder that left does not reopen'
+    held = _saved(folders/'ramabana.json')
+    assert held['per_folder'] and len(held['roots']) == 3
+    ws.add_root(made['leela']); ws.save()
+    assert str(made['leela']) in [str(r) for r in Workspace.load(folders/'ramabana.json').fs.roots], \
+        'a folder opened here on purpose afterwards is not reconciled away again'
+    write('varga', [made['litesearch'], made['pobblebonk']], active=made['pobblebonk'])
+    varga = Workspace.load(folders/'varga.json')
+    assert [str(r) for r in varga.fs.roots] == [str(made['litesearch'])], 'a slug naming no root is not special'
+    assert varga.active_root is None and str(varga.project_root) == str(made['litesearch'])
+    legacy = tmp_path/'workspace.json'
+    legacy.write_text(json.dumps({'version': 2, 'roots': [str(made['leela']), str(made['pobblebonk'])],
+                                  'tabs': [], 'active': 0, 'active_root': str(made['pobblebonk'])}))
+    assert len(Workspace.load(legacy).fs.roots) == 2, 'the file outside `workspaces` is still many folders'
+
 
 CLOSURE = 'leela.app'
 

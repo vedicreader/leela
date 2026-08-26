@@ -17,7 +17,7 @@ from .blocks.runs.runs import Run, Runs
 from .blocks.search.search import Search
 from .blocks.term.term import Terminals
 
-__all__ = ['Tab', 'Workspace', 'ws_path']
+__all__ = ['Tab', 'Workspace', 'ws_path', 'has_own_window']
 
 class _EnvClient:
     "Read-only access to some *other* process's inspector, in the shape `Kernel.api` has."
@@ -78,6 +78,17 @@ class _EnvClient:
     async def restart(self): pass
 
 def ws_path(): return leela_cfg/'workspace.json'
+
+def has_own_window(root, state):
+    "Whether `root` opens as its own window, under a saved workspace beside `state` and not `state`."
+    from .hub import slug_map, workspace_slug
+    root, folder = str(root), Path(state).parent
+    slug = slug_map(folder/'index.json').get(root) or workspace_slug(Path(root).name)
+    p = folder/f'{slug}.json'
+    if p.name == Path(state).name: return False
+    try: held = p.read_json()
+    except Exception: return False
+    return root in (held.get('roots') or [])
 
 #: What a saved session is, as against the preferences saved beside it. Only a workspace that has
 #: read or opened one writes them: a bare `Workspace` recording a model choice used to blank them.
@@ -1019,7 +1030,7 @@ class Workspace:
                 'subagent_writes': self.subagent_writes,
                 'job_models': self.job_models,
                 'active_root': str(self.active_root or ''),
-                'saved': time.time()}
+                'per_folder': True, 'saved': time.time()}
     def restore_settings(self, d):
         """Everything a saved session holds that is not its folders or its tabs."""
         d = d if isinstance(d, dict) else {}
@@ -1108,7 +1119,13 @@ class Workspace:
         ws._state_path = p
         ws._owns_session = True     # it read this file, so it is the one entitled to rewrite it
         ws.restore_settings(d)
-        for r in d.get('roots', []):
+        saved_roots = [str(r) for r in d.get('roots', [])]
+        # A file written before one folder became one window holds folders that each open as a
+        # window of their own now. Reconciled once, so a folder added deliberately later stays.
+        stale = ([r for r in saved_roots if has_own_window(r, p)]
+                 if p.parent.name == 'workspaces' and not d.get('per_folder') else [])
+        for r in saved_roots:
+            if r in stale: continue
             try: ws.add_root(r)
             except Exception: pass
         for t in d.get('tabs', []):
@@ -1123,5 +1140,5 @@ class Workspace:
         if saved_root := str(d.get('active_root') or ''):
             try: ws.activate_root(saved_root)
             except Exception: pass
-        if ws.restore_remembered_agent_state(): ws.save()
+        if ws.restore_remembered_agent_state() or stale: ws.save()
         return ws

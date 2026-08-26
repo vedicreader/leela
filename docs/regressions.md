@@ -866,3 +866,184 @@ default, so undoing a customisation removes the entry instead of writing a defau
 
 Out of scope, and still true: an explicit override that a later default lands on is refused with a
 note. That is a real conflict between two chords a person can see, not a stale copy of a default.
+
+## `leela/blocks/vars/app.py` `vars_promote`, and the tool tables `leela/app.py` kept
+
+`/vars/promote` handed its accessor to dhrishti and returned whatever came back. Dhrishti's
+`_promote` runs `bridge.client.ns()[name] = s.layer[name]`, which rebinds the owner namespace
+without looking at what is there. So the `→live` button, the `p` key and the `variable` context
+menu could replace a variable the user made, with no warning and nothing to undo it with, while
+`WorkspaceHost.promote_var` refused the same collision before the kernel was asked.
+
+The route now takes `replace`, and without it refuses at 409 with one sentence, the shape
+`/refactor/apply` and the git routes answer a person with. The refusal is not the tool's. A model
+must not overwrite the user's work, so `promote_var` refuses outright and never sends `replace`. A
+person clicking `→live` on a name they own is deciding about their own namespace, so the pane can
+send one, after `confirmDialog`. The pane is the only caller that can.
+
+An accessor is a path, not a name. Dhrishti refuses any accessor of length other than 1 with `can
+only promote a whole (top-level) variable`, so nothing below the top level can replace anything and
+`_whole_name` returns None for it. Those requests pass through untouched and keep dhrishti's own
+sentence.
+
+Only a shadowed name is at stake. `/agent/api/info` carries `agent_names`, the agent layer alone,
+and `/api/rows` is the owner namespace. A name in both would be replaced. A name in the owner
+namespace alone cannot be promoted at all, and dhrishti answers `no agent variable`, so the pane
+must not raise a dialog over it. In `live` scope, the pane's default, every row is an owner name,
+and this is what keeps the ordinary gesture from turning into a confirmation.
+
+A probe that does not answer counts against the promote, because `Kernel.api` returns None for a
+timeout, a reset connection and a 403 alike, and reading that as an empty namespace is the silent
+overwrite again. An inspector that answers neither probe is a different case: there is no inspector,
+and `/api/promote` reports that for itself.
+
+A successful promote drops the agent's shadow with `del <name>` in the overlay, as the tool does.
+A promoted name left in both layers is outside the policy that refuses owner mutations, and the UI
+path and the tool path must not leave different states.
+
+`api()` in the client throws on any non-2xx and discards the status, so `promoteVar` used to lose
+the sentence entirely. It now catches, asks `/vars` whether the name is really in the live
+namespace, and only then offers the replace, the way `clearEngines` disambiguates its own 409.
+
+Separately, `leela/app.py` held copies of `TOOL_GROUPS`, `tool_group` and `tool_preview` that
+`leela/blocks/agent/turns.py` owns. Nothing called them. They had already drifted: `promote_var`
+was added to the `turns.py` tables alone, so the two disagreed about a tool that exists. The copies
+are deleted rather than repointed. `test_the_tool_tables_have_one_home` walks `leela/` and asserts
+one definition of each, which no later copy can satisfy.
+
+## `TurnRunner._pending`, and the pane that stayed busy until Leela was restarted
+
+`start` registered its turn in `_pending` and waited `start_timeout` seconds for the worker to
+report a run id. Only `_work`'s `finally` removed that entry, and it runs on the worker's thread.
+A worker that never reported never reached it, so the entry stayed for the life of the process.
+The first thing `start` checks is `if self._pending or ai.busy`, so every later send was refused
+with `thread_busy` and a sentence about the assistant already working, when nothing was. Stop did
+not help: it called `ai.cancel`, which answers `idle` when there is no run, and left `_pending`
+alone. Restarting Leela was the only way out.
+
+The turn that hangs is usually the one that failed. Ramabana's `Agent.stream` calls `_new_run`
+before it loads the backend, and returns before `on_registered` when the load fails, so the run is
+registered and `busy` is true while the reason sits unread in `ai.note`. `_work` now reports that:
+a stream that ends with no run id fills `ready['error']` from the note, and the pane gets the
+provider's own words at once instead of a silent thirty seconds. The timeout path names the note
+too. Both say the turn was cleared and can be sent again.
+
+The timeout path removes its own entry before it raises and cancels what the refused turn left
+registered, so a slow start costs that turn and nothing else. A root run that is already over is
+left alone: it belongs to a sub-agent still working, and `/agent/subagents` is where that is
+stopped. A turn that reports late is unchanged by any of this. `ready['accepted']` was already the
+answer to that question, and a turn nobody accepted cancels its own run and emits nothing. It
+cancels the run rather than calling `ai.cancel`, which would take the shared approvals state with
+it and drop a live turn's checkpoint.
+
+`stop` drops any turn whose starter has gone, which is a gate opened on a turn nobody accepted, and
+then cancels as before. A turn still streaming keeps its entry, because cancelling its run is what
+stops it and the worker unwinds through the `finally` on its own. `ai.busy` with nothing pending is
+a real thing, so a stop that clears nothing says `cleared: 0` rather than claiming otherwise.
+
+`thread_busy` now names the age of the turn that is holding the conversation and says stop will
+clear it. `start_timeout` stays at 30. Warm starts measure 1.67s and local models 3.85s to 7.9s.
+The only start that legitimately runs longer is a cold local model downloading or first-loading
+weights, which is unbounded, and needs progress reported rather than a larger number.
+
+`registered` waited on the gate with no timeout. Every exit from `start` sets it, so nothing was
+wrong yet, but one added `raise` between the wait and `ready['gate'].set()` would have parked a
+worker for good with a run left non-terminal and `busy` true. It is bounded by `start_timeout` now,
+and expiry counts as not accepted.
+
+Upstream, `ramabana.Agent.stream` should call `on_registered` before it can return, or report the
+failure through the same callback. Its first two exits are invisible to a caller that is waiting to
+be told a run id. `Backend._tried` is the other half: a backend that failed to load once is never
+retried, and nothing in Leela calls `Agent.retry`, so one transient outage costs every later turn
+in that conversation the full start window.
+
+## A folder that already has a window is not also a root of another one
+
+One folder became one window earlier on this branch. `serve_ide` builds a `Workspace` per launch
+folder, each with its own state file at `leela_cfg/workspaces/<slug>.json`. Nothing reconciled a
+file written before that, when one window held every folder the user had ever opened. Launching
+`ramabana` restored `roots` of `[ramabana, leela]` and opened both, and `leela` had a window and a
+state file of its own.
+
+`Workspace.load` now reconciles such a file once. A saved root is dropped when it opens as its own
+window: `has_own_window` takes the root's slug from `workspaces/index.json`, falls back to the slug
+its folder name would get, and drops the root only when `workspaces/<slug>.json` exists and lists
+that same root among its own. The path is what matches, never the folder name, so a second checkout
+named `leela` is kept while `leela.json` describes the first. The file's own state file is never a
+match, so the launch folder is never dropped.
+
+The rule cannot remove a folder that was added on purpose. `add_root` gives the added folder no
+state file and no slug, so `has_own_window` says no. `state` writes `per_folder: True` and `load`
+skips the reconcile for any file that carries it, so a folder added later stays even when it does
+have a window elsewhere. The reconcile saves only when it dropped something, which is what keeps
+the marker off files it left alone until they are next saved for another reason.
+
+A tab saved under a dropped root does not reopen: `Sandbox._check` refuses a path outside the open
+folders, and `load` already skips a tab it cannot open. `active_root` needed no change. It is
+restored through `activate_root`, which resolves through `root_of`, and that already refuses a
+folder the workspace does not own, so `project_root` falls back to the first open folder and the
+Git pill follows it.
+
+Two things this leaves. `journal_key` hashes the joined root list, so dropping a root moves
+`history/<key>`, `trash/<key>`, `journals/<key>.json` and `timelines/<key>.json` for that window.
+Adding or closing a folder has always moved them. And `/fs/add_root` calls `note_folder`, so a
+folder added to one window is also launched as a window of its own next time, and the marker now
+preserves the duplicate rather than resolving it. Either the add should not record a launch folder
+under `--app`, or the launch should skip a folder that is already a root of another launched
+workspace.
+
+## A reused Chrome, and the pages Leela opened in it
+
+Two reports about the inline browser, one cause each, both outliving Leela.
+
+Chrome takes `--force-device-scale-factor` at launch. `Browser.cdp` passes `SCALE_FLAG` to
+`cdp_connect`, and `cdp_connect` only passes it on when it has to start Chrome. A Chrome already
+listening on the port is reused as it is. That Chrome rasterises a screencast frame at whatever
+scale it was started with, for as long as it runs, and no reconnection changes it. Measured on
+Chrome 151: with the flag a page reports `devicePixelRatio` 2 and layout viewports of 1000 and 500
+CSS pixels; without it, 1 and 756/756.
+
+`Browser._measure` reads that ratio, `layoutViewport.clientWidth / cssLayoutViewport.clientWidth`,
+from the first page a session attaches to. The ratio is the browser's own scale factor. It reads
+the same under the `Emulation.setDeviceMetricsOverride` that `resize` applies, where
+`devicePixelRatio` reads back whatever the override said, which is why the ratio is the signal and
+`devicePixelRatio` is not. A browser under `MAX_SCALE` sets `Browser.warning`. The `ready` frame on
+`/browser/ws` carries `scale`, `note` and `browser`, and `warnScale` in `browser.js` shows the note
+once per Chrome, keyed by the browser's DevTools id in `localStorage`. The note is repeated on
+every `ready` so that a socket that fails mid-send is not the only time it was said.
+
+Leela does not relaunch that Chrome and does not offer to. The user has pages open in it, including
+pages Leela adopted, and a relaunch closes all of them for a difference in sharpness. Nor does
+Leela read the browser's command line: a Chrome started without the flag on a Retina display
+already rasterises at 2, and reading the flag would report a fault that is not there. What is
+measured is the effect.
+
+The Chrome that Leela itself launches under `--app-window` has this fault. `leela/app.py` opens the
+window with `fossick.cdp.cdp_app(url, port=cdp_port)`, which passes no extra flags, and the inline
+browser then reuses that same Chrome on that same port. Until `cdp_app` is given `SCALE_FLAG`, the
+desktop shell is a 1x browser and the note is what the user sees.
+
+`Browser._mine` was the set of targets Leela opened, and it lived on the `Browser` object. A page
+opened by one Leela was not recognised by the next, `shut(tid, mine_only=True)` spared it, and it
+could never be closed. Web tabs are `scratch`, so they are not saved either: after a restart the
+only way back to such a page is `/browser/attach`, and closing that tab left the page open in
+Chrome for the life of the browser.
+
+The set is now written to `leela_cfg/browser/pages-<port>.json` as `{'browser': <id>, 'targets':
+[...]}`. The id is the browser's own DevTools id, the last segment of its `webSocketDebuggerUrl`,
+which Chrome mints anew at every launch. `Browser._own` runs on every connect. It clears the
+in-memory set when a different browser answers on the port, reads the file only when the recorded
+id matches the live one, and keeps only targets that are still open. `shut` connects before it
+checks ownership, because that is when the file is read.
+
+Nothing else can enter the set. An id is recorded only by `Browser.open`, from Leela's own
+`Target.createTarget`. `/browser/attach` records nothing. A file that cannot be read, cannot be
+written or names a different browser leaves the set empty, and an empty set closes nothing.
+Ownership is given up only after `Target.closeTarget` has returned, so the two-second `wait_for` in
+`_shut_page` cannot drop an id for a page that is still open. The write is atomic and merges with
+what is already recorded, because the hub serves several workspaces from one process and each has
+its own `Browser` on the same port.
+
+Ownership lasts as long as the Chrome that holds the page. A page Leela opened, that the user then
+navigated somewhere of their own and kept, is still Leela's to close until that Chrome quits.
+Recording the URL would narrow this, and would put browsing history in `leela_cfg`.
