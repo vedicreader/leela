@@ -203,17 +203,28 @@ async function refreshProjectPills() {
   } catch (_) {}
   try {
     // Bare, not `gitUrl`: the pill and the tree badges describe the repository the active tab is
-    // in, so a panel pinned elsewhere must not repaint them.
-    const d = await gitInfo();
+    // in, so a panel pinned elsewhere must not repaint them. `api`, not `gitInfo`, because that
+    // helper throws for a folder outside a repository, and being outside one is a normal answer.
+    const d = await api('/git/info');
     const git = $('#gitpill'); if (!git) return;
+    if (!d || d.repo === false) {
+      git.textContent = 'no git'; git.className = 'lee-branch-switcher';
+      git.title = (d && d.note) || 'not inside a Git repository';
+      return;
+    }
     const n = (d.changes || []).length;
     git.textContent = `${d.branch}${n ? ' · ' + n : ''}`;
     git.className = 'lee-branch-switcher ' + (n ? 'lee-pill-warn' : 'lee-pill-on');
     git.title = `${d.root}${d.upstream ? ' · ' + d.upstream : ''}${d.ahead ? ' · ahead ' + d.ahead : ''}${d.behind ? ' · behind ' + d.behind : ''}`;
     paintGitTree(d);
     noticeGitState(d);
-  } catch (_) {
-    const git = $('#gitpill'); if (git) { git.textContent = 'no git'; git.className = 'lee-branch-switcher'; }
+  } catch (e) {
+    // A failure is not an absence. Saying `no git` here claims the folder is not a checkout,
+    // which is a statement about the user's project rather than about the request.
+    const git = $('#gitpill');
+    if (git) { git.textContent = 'git ?'; git.className = 'lee-branch-switcher lee-pill-warn';
+               git.title = 'could not read the repository: ' + ((e && e.message) || e); }
+    console.error('git pill', e);
   }
 }
 

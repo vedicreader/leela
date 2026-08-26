@@ -418,3 +418,39 @@ def test_a_cell_wears_its_id_rather_than_hiding_it_behind_a_hover():
     assert 'lee-cell-id' in paint and 'c.id' in paint
     assert '.lee-cell-id' in CSS, 'and it is styled rather than inheriting the size run-on'
     assert 'lee-cell-id' in JS, 'and the built bundle carries it'
+
+
+def test_rebuilding_the_shell_repaints_the_git_pill():
+    """Opening a folder swaps the whole shell, which puts the server's `no git` placeholder back.
+
+    Only a tab swap asked the server again, so the bar sat on the placeholder until a file was
+    clicked, claiming a perfectly ordinary checkout was not one.
+    """
+    boot = (ROOT/'leela/static/js/boot.js').read_text()
+    swap = boot[boot.index("htmx:afterSwap"):]
+    shell = swap[swap.index("id === 'shell'"):swap.index('});')]
+    assert 'refreshProjectPills' in shell, 'a rebuilt shell never asks what repository it is in'
+    tabs = swap[swap.index("id === 'tabbar'"):swap.index("id === 'shell'")]
+    assert 'refreshProjectPills' in tabs, 'and the tab swap must keep doing it'
+
+
+def test_the_git_pill_tells_a_broken_request_apart_from_a_folder_with_no_repository():
+    "One catch rendered both as `no git`, so a failure read as a fact about the user's project."
+    src = (ROOT/'leela/blocks/git/cwd.js').read_text()
+    fn = src[src.index('async function refreshProjectPills'):src.index('async function gitInfo')]
+    body, _, handler = fn.rpartition('} catch (e) {')
+    assert handler, 'the git branch no longer catches the error it needs to report'
+    code = '\n'.join(l for l in handler.splitlines() if not l.strip().startswith('//'))
+    assert 'no git' not in code, 'a request that failed still claims the folder is not a checkout'
+    assert 'git ?' in handler and 'console.error' in handler, 'and it says so both on screen and in the console'
+    # The absence is still reported, but only where the server actually said so.
+    assert "d.repo === false" in body and 'no git' in body
+    # `gitInfo` throws for a folder outside a repository, which would land in the catch again.
+    assert 'await api(' in body and 'await gitInfo()' not in body
+
+
+def test_the_pill_repaint_survives_a_broken_tree_or_notice():
+    "`paintGitTree` and `noticeGitState` run after the label, so neither can blank a good branch."
+    src = (ROOT/'leela/blocks/git/cwd.js').read_text()
+    fn = src[src.index('async function refreshProjectPills'):src.index('async function gitInfo')]
+    assert fn.index('git.textContent = `${d.branch}') < fn.index('paintGitTree(d)')
