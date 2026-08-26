@@ -9,13 +9,14 @@ function cellMetaTitle(c, i) {
   if (c.cell_type === 'code')
     rows.push([c.execution_count == null ? 'not run' : `run ${c.execution_count}`,
                formatCellTime(c.execution_ms), plural((c.outputs || []).length, 'output')].filter(Boolean).join(' · '));
-  rows.push(`id ${c.id}`, 'click to copy the id');
+  rows.push('click to copy the id');
   return rows.join('\n');
 }
 function paintCellMeta(el, c, i) {
   const meta = el && $('.lee-cell-meta', el); if (!meta) return;
   $('.lee-cell-no', meta).textContent = '#' + (i + 1);
   $('.lee-cell-size', meta).textContent = `${cellKind(c)} · ${plural(cellLines(c), 'line')}`;
+  const id = $('.lee-cell-id', meta); if (id) id.textContent = c.id;
   meta.dataset.cellId = c.id; meta.title = cellMetaTitle(c, i);
 }
 function copyCellId(button) {
@@ -79,7 +80,8 @@ function cellEl(c, i) {
     `<button class="lee-cell-meta" data-cell-id="${esc(c.id)}" title="${esc(cellMetaTitle(c, i))}" ` +
     `onclick="event.stopPropagation();leeCopyCellId(this)">` +
     `<span class="lee-cell-no">#${i + 1}</span>` +
-    `<span class="lee-cell-size">${esc(cellKind(c))} · ${esc(plural(cellLines(c), 'line'))}</span></button>` +
+    `<span class="lee-cell-size">${esc(cellKind(c))} · ${esc(plural(cellLines(c), 'line'))}</span>` +
+    `<span class="lee-cell-id">${esc(c.id)}</span></button>` +
     `<span class="lee-cell-summary">${esc(String(c.source || '').trim().split('\n')[0] || 'empty cell')}</span>` +
     `<span class="lee-cell-state ${state}" id="state-${c.id}" ` +
     `title="${state === 'done' ? 'ran successfully in the current kernel' : state === 'error' ? 'run failed in the current kernel' : state === 'previous' ? 'saved output from a previous kernel; run to restore variables' : 'not run'}">${stateSvg(state)}</span>` +

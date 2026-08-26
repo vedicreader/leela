@@ -405,6 +405,9 @@ body {
 .lee-cell-no { color: var(--lee-fg2); font-variant-numeric: tabular-nums; }
 .lee-cell.sel .lee-cell-no { color: var(--lee-accent); }
 .lee-cell-size { opacity: .75; white-space: nowrap; }
+/* Asked for often enough to earn a place: it was reachable only by hovering. */
+.lee-cell-id { opacity: .45; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lee-cell-meta:hover .lee-cell-id { opacity: .8; }
 .lee-cell.collapsed .lee-cell-meta { margin-right: 6px; }
 .lee-cell.collapsed .lee-cm, .lee-cell.collapsed [id^="out-"],
 .lee-cell.collapsed .lee-model-running { display: none; }

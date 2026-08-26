@@ -405,3 +405,16 @@ def test_the_first_history_read_is_paid_for_before_anybody_clicks():
     # The same fetch the list itself uses, so the warm answer is the one the click is served.
     groups = live[live.index('async function historyGroups'):live.index('async function showHistorySession')]
     assert "'/agent/history'" in groups and 'everything=1' in groups
+
+
+def test_a_cell_wears_its_id_rather_than_hiding_it_behind_a_hover():
+    "It was reachable only by hovering the meta button, and it is wanted often enough to be read."
+    src = (ROOT/'leela/blocks/nb/cells.js').read_text()
+    head = src[src.index('lee-cell-meta'):src.index('lee-cell-summary')]
+    assert 'lee-cell-id' in head, 'the id is not in the header markup'
+    assert '${esc(c.id)}' in head, 'and it is escaped'
+    # A repaint must move it too, or an id goes stale the moment a cell is inserted above it.
+    paint = src[src.index('function paintCellMeta'):src.index('function copyCellId')]
+    assert 'lee-cell-id' in paint and 'c.id' in paint
+    assert '.lee-cell-id' in CSS, 'and it is styled rather than inheriting the size run-on'
+    assert 'lee-cell-id' in JS, 'and the built bundle carries it'
