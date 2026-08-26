@@ -5285,46 +5285,59 @@ function observeEditorWidth() {
   for (const sel of ['#editor', '#shell', '#bottomdock']) { const el = $(sel); if (el) observer.observe(el); }
 }
 
+/* One step of boot, which costs itself and nothing after it when it fails.
+
+   `boot` was a single sequence of awaits, so one throw anywhere in it took every step below with
+   it: the branch and kernel pills kept the text the page was rendered with, the file watcher and
+   the polls never started, and nothing said why. */
+async function bootStep(name, fn) {
+  try { return await fn(); }
+  catch (e) { console.error('boot: ' + name, e); status(`${name} did not start: ${e.message || e}`, 'err'); }
+}
+
 /* ------------------------------------------------------------------ boot */
 async function boot() {
-  await Promise.all([loadKeys(), loadSettings()]);
+  await bootStep('settings', () => Promise.all([loadKeys(), loadSettings()]));
   // Model discovery can probe CLIs and registries; it must not hold the editor's first paint.
   loadAgentModels().catch(e => status(String(e.message || e), 'err'));
   refreshAgentThreads().catch(e => status(String(e.message || e), 'err'));
-  initSplits();
-  bindModClick();
-  mountExec();
-  initAgentComposer();
+  bootStep('panes', initSplits);
+  bootStep('click bindings', bindModClick);
+  bootStep('exec strip', mountExec);
+  bootStep('agent composer', initAgentComposer);
   // The agent pane is client-owned, so a reload starts it blank; the turns are on disk.
-  rehydrateAgentLive();
-  await mountTab();
-  layoutTabs();
-  new ResizeObserver(layoutTabs).observe($('#header'));
-  observeEditorWidth();
-  checkProjectRuntime();
-  leeVars();
+  bootStep('agent pane', rehydrateAgentLive);
+  await bootStep('editor', mountTab);
+  bootStep('tab strip', layoutTabs);
+  bootStep('header layout', () => new ResizeObserver(layoutTabs).observe($('#header')));
+  bootStep('editor width', observeEditorWidth);
+  bootStep('project runtime', checkProjectRuntime);
+  bootStep('variables', leeVars);
   setInterval(whenVisible(leeVars), 2500);   // the kernel's own inspector is the source of truth
   setInterval(watchOpenFile, 10000);   // a backstop: /fs/events is what actually reports a write
-  approvalLoop();                       // catches Rishi approvals raised outside an agent SSE stream
-  applyTheme(readTheme());   // also rewrites a pre-family value into `family:mode`
+  bootStep('approvals', approvalLoop);                       // catches Rishi approvals raised outside an agent SSE stream
+  bootStep('theme', () => applyTheme(readTheme()));   // also rewrites a pre-family value into `family:mode`
   // The first paint is server-rendered, so the welcome screen is already on the page when
   // Leela opens on no folder; only its recent list needs filling in.
-  if ($('#leerecent')) paintRecent();
+  if ($('#leerecent')) bootStep('recent folders', paintRecent);
   // Beside it, and only in a packaged app with nothing set up: `/agent/setup` decides, not this.
-  if ($('#leesetup')) leeSetupPane();
+  if ($('#leesetup')) bootStep('setup pane', leeSetupPane);
   // The first paint is server-rendered without the preference, so it is only wrong when set.
-  paintHiddenBtn(); if (treeHidden()) refreshFileTree(undefined, false).catch(() => {});
+  bootStep('file tree', paintHiddenBtn); if (treeHidden()) refreshFileTree(undefined, false).catch(() => {});
   /* The agent's log is one append-only file and grows without bound; reading it the first time
      costs seconds on a large one, and it is cached after that. Paying it here, once the page is
      interactive, means the first click on History does not. */
-  requestIdleCallback ? requestIdleCallback(warmAgentHistory, {timeout: 4000})
-                      : setTimeout(warmAgentHistory, 2000);
-  refreshProjectPills();
+  // `typeof`, because a bare reference to a global that does not exist is a ReferenceError, not a
+  // falsy value. WebKit has never shipped `requestIdleCallback`, so this line threw in the packaged
+  // app and took every step below it: both pills, the polls, the run log and the file watcher.
+  typeof requestIdleCallback === 'function' ? requestIdleCallback(warmAgentHistory, {timeout: 4000})
+                                            : setTimeout(warmAgentHistory, 2000);
+  bootStep('project pills', refreshProjectPills);
   setInterval(whenVisible(refreshKernelPill), 5000);
   // The pills change only when a root or the cwd does, and every one of those already calls
   // `refreshProjectPills`. Polling them was 24 requests a minute saying nothing.
-  runLogLoop();
-  watchFiles();
+  bootStep('run log', runLogLoop);
+  bootStep('file watcher', watchFiles);
   status('ready', 'ok');
 }
 

@@ -1279,7 +1279,9 @@ def test_nothing_a_page_load_asks_for_starts_a_kernel(tmp_path):
             body = src[src.index(route):src.index('@rt', src.index(route) + 10)]
             code = '\n'.join(l for l in body.splitlines() if not l.strip().startswith(('#', '"', "'")))
             assert 'await session.runtime()' not in code, f'{route} must not start one'
-            assert 'kernel_peek()' in code
+            # `runtime_peek` resolves the watched environment first and, like `kernel_peek`, only
+            # ever looks. Starting one is what this test forbids.
+            assert '_peek()' in code, f'{route} must peek at a runtime rather than start one'
 
 
 def test_a_kernel_that_cannot_import_the_inspector_is_offered_the_packages(tmp_path, monkeypatch):

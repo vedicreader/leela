@@ -148,14 +148,17 @@ def connect(app, ctx):
         This asked `session.runtime()`, which starts a kernel, so opening Leela booted Python
         whether or not anybody ran anything, and paid over a second for it on the load path. The
         pill has always drawn an empty circle for "no kernel"; running a cell is what starts one.
+
+        It peeked only the tab's own kernel, while `runtime()` runs in the watched environment when
+        there is one. The polled pill could therefore report dead while the kernel executing the
+        cells was alive, and disagree with the pill the page was rendered with.
         """
-        from pathlib import Path
-        k = session.kernel_peek()
+        k = session.runtime_peek()
         evicted = getattr(k, 'evicted', None)
         if k is not None: k.evicted = None
         return {'alive': bool(k and k.alive), 'base': k.base if k else None,
             'pid': k.pid if k else None,
-            'key': getattr(k, 'name', '') or Path(session.kernel_key()).name or 'kernel',
+            'key': session.runtime_label(k=k),
             'boot_error': k.boot_error if k else None,
             'api_error': getattr(k, 'last_api_error', '') if k else '',
             'cwd': str(session.cwd_for() or ''),

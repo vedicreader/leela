@@ -2112,3 +2112,40 @@ def test_a_draft_from_a_version_the_file_no_longer_has_is_discarded(tmp_path):
     assert stale['doc'].strip() == 'from disk', stale
     assert stale['rows'] == 0, 'the draft it could not place is dropped, not left to come back'
     assert kept.strip() == 'my unsaved edit', 'a draft of the version in hand is still the users work'
+
+def test_one_broken_step_of_boot_costs_itself_and_nothing_below_it(tmp_path):
+    """`boot` was a single sequence of awaits, so a throw anywhere in it took every step below with
+    it: the pills were never repainted, the file watcher and the polls never started, and nothing
+    said why. The steps below the failure are what this checks; the failure itself is reported."""
+    async def go(pg):
+        return await pg.evaluate("""async () => {
+          window.checkProjectRuntime = () => { throw new Error('a step that fails'); };
+          const watch = window.watchFiles, pills = window.refreshProjectPills, log = window.runLogLoop;
+          window.__ran = [];
+          window.watchFiles = () => { window.__ran.push('watcher'); return watch(); };
+          window.refreshProjectPills = () => { window.__ran.push('pills'); return pills(); };
+          window.runLogLoop = () => { window.__ran.push('runlog'); return log(); };
+          await boot();
+          return {ran: window.__ran, status: document.querySelector('#status')?.textContent || ''};
+        }""")
+    d = _run(go, roots=[tmp_path])
+    assert d['ran'] == ['pills', 'runlog', 'watcher'], 'every step below the one that threw still runs'
+    assert 'ready' in d['status'], 'and boot finishes'
+
+def test_boot_finishes_in_a_webview_without_requestidlecallback(tmp_path):
+    """WebKit has never shipped `requestIdleCallback`, and `boot` referenced it bare, which is a
+    ReferenceError rather than a falsy value. That is why the branch pill, the kernel poll, the run
+    log and the file watcher all worked in Chrome and none of them worked in the packaged app."""
+    async def go(pg):
+        return await pg.evaluate("""async () => {
+          delete window.requestIdleCallback;                 // the webview Leela ships in
+          const watch = window.watchFiles, pills = window.refreshProjectPills;
+          window.__ran = [];
+          window.watchFiles = () => { window.__ran.push('watcher'); return watch(); };
+          window.refreshProjectPills = () => { window.__ran.push('pills'); return pills(); };
+          await boot();
+          return {ran: window.__ran, status: document.querySelector('#status')?.textContent || ''};
+        }""")
+    d = _run(go, roots=[tmp_path])
+    assert d['ran'] == ['pills', 'watcher'], 'the steps below it run in a webview that lacks it'
+    assert 'ready' in d['status']

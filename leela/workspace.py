@@ -787,6 +787,18 @@ class Workspace:
         return await self.pool.get(key, cwd=cwd, name=name, agent=self.agent,
                                    python=python_for(cwd, self))
     def kernel_peek(self, tab=None): return self.pool.peek(self.kernel_key(tab))
+    def runtime_label(self, tab=None, k=False):
+        """What to call the runtime a tab runs in, alive or not.
+
+        The tab's own kernel is named by its key, so the pill says the same thing whether or not one
+        is running. It used to take the kernel's own name when there was one and the tab's file name
+        when there was not, so a notebook's kernel was `kosha` alive and `01_graph.ipynb` dead. A
+        watched environment is another kernel entirely, and is named by that kernel.
+        """
+        key = self.kernel_key(tab)
+        if k is False: k = self.runtime_peek(tab)
+        if k is not None and self.pool.peek(key) is not k and (nm := getattr(k, 'name', '')): return nm
+        return Path(key).name or 'kernel' 
     def watched_kernel(self):
         "The managed kernel selected in the env picker, if that is what is being watched."
         if not self.env_base: return None

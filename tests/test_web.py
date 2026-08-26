@@ -1578,3 +1578,46 @@ def test_a_kernel_that_will_not_start_is_answered_and_not_raised(tmp_path, monke
         assert c.status_code == 200
         assert 'ipykernel_launcher' in c.json()['kernel_error']
         assert 'matches' in c.json(), 'the index answers even where the kernel cannot'
+
+def test_the_branch_pill_is_rendered_true_and_never_claims_a_folder_has_no_repository(tmp_path):
+    """It shipped as the literal `no git`, so any first paint the client did not reach left a claim
+    about the project on screen. An unknown says so; only a folder really outside a checkout is
+    called one."""
+    from leela.app import _git_pill_text
+    import subprocess
+    repo = tmp_path/'repo'; (repo/'sub').mkdir(parents=True)
+    subprocess.run(['git', 'init', '-q', '-b', 'trunk', str(repo)], check=True)
+    assert _git_pill_text(Workspace(roots=[repo])) == 'trunk'
+    assert _git_pill_text(Workspace(roots=[repo/'sub'])) == 'trunk', 'a folder inside the checkout is in it'
+    plain = tmp_path/'plain'; plain.mkdir()
+    assert _git_pill_text(Workspace(roots=[plain])) == 'no git'
+    assert _git_pill_text(Workspace(roots=[])) == 'git …', 'nothing open is not a statement about git'
+    with TestClient(ide_app(Workspace(roots=[repo]))) as client:
+        assert 'trunk' in client.get('/').text
+
+def test_the_polled_kernel_pill_reads_the_runtime_the_cells_run_in(tmp_path):
+    """`/kernel/info` peeked only the tab's own kernel while `runtime()` runs in the watched
+    environment when there is one, so the pill reported dead for a kernel that was executing."""
+    (tmp_path/'nb.ipynb').write_text('{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
+    ws = Workspace(roots=[tmp_path]); ws.open(tmp_path/'nb.ipynb')
+    class _Live:
+        name, base, pid, boot_error, last_api_error, alive = 'watched', 'http://127.0.0.1:8401', 4321, None, '', True
+    live = _Live()
+    ws.env_base = live.base
+    ws.pool.kernels['somewhere/else'] = live
+    assert ws.runtime_peek() is live, 'precondition: this is where a run would go'
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/kernel/info').json()
+    assert d['alive'] is True and d['base'] == live.base and d['pid'] == 4321
+    assert d['key'] == 'watched', 'a watched environment is named by its own kernel'
+
+def test_the_kernel_pill_calls_a_tab_the_same_thing_alive_or_dead(tmp_path):
+    "It took the kernel's name alive and the tab's file name dead, so one notebook had two names."
+    (tmp_path/'01_graph.ipynb').write_text('{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
+    ws = Workspace(roots=[tmp_path]); tab = ws.open(tmp_path/'01_graph.ipynb')
+    tab.private_kernel = True
+    dead_name = ws.runtime_label()
+    class _Live:
+        name, base, pid, boot_error, last_api_error, alive = tmp_path.name, '', 1, None, '', True
+    ws.pool.kernels[ws.kernel_key()] = _Live()
+    assert ws.runtime_label() == dead_name == '01_graph.ipynb', 'the tab names its own kernel, running or not'

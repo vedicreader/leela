@@ -271,6 +271,22 @@ async def _explain(k, err, scope='live'):
     if not (err and 'is not defined' in err): return err
     return did_you_mean(err, await k.names(scope)) if k else err
 
+def _git_pill_text(ws):
+    """What the branch pill says before the client has asked anything.
+
+    It shipped as the literal `no git`, which is a claim that the folder is not a checkout. Any first
+    paint the client does not reach leaves that claim on screen, and it is the one thing `cwd.js`
+    refuses to say for a request it could not make. An unknown says so instead.
+    """
+    root = ws.project_root
+    if root is None: return 'git …'
+    try:
+        from .blocks.git.git import GitRepo, repo_root
+        r = repo_root(root)
+        if r is None: return 'no git'
+        return GitRepo.at(r).run('branch', '--show-current').strip() or 'git …'
+    except Exception: return 'git …'
+
 def _header(ws):
     "Project identity first, document tabs second, infrequent actions in menus."
     root = ws.project_root
@@ -278,7 +294,7 @@ def _header(ws):
         Button(Span('leela', cls='lee-brand'), Span(Path(root).name if root else 'open workspace',
                id='workspacename', cls='lee-workspace-name'), cls='lee-workspace-switcher',
                id='workspacepill', title='switch or open workspace', onclick='leeWorkspaceMenu(this)'),
-        Button('no git', id='gitpill', cls='lee-branch-switcher', title='switch branch',
+        Button(_git_pill_text(ws), id='gitpill', cls='lee-branch-switcher', title='switch branch',
                onclick='leeBranchMenu(this)'),
         Div(*(Button(glyph, id=f'git{op}', cls='lee-git-quick', title=title, aria_label=title,
                      onclick=f'leeGitQuick("{op}")')

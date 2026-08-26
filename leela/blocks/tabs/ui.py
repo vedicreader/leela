@@ -41,6 +41,6 @@ def kernel_pill(ws):
     if (k := ws.runtime_peek()) is None:
         return Span('no kernel', cls='lee-pill lee-pill-off', title='choose a kernel', **common)
     if not k.alive: return Span('kernel dead', cls='lee-pill lee-pill-err', title='choose a kernel', **common)
-    nm = getattr(k, 'name', '') or Path(ws.kernel_key()).name or 'kernel'
+    nm = ws.runtime_label(k=k)
     return Span(f'⏺ {nm}', cls='lee-pill lee-pill-on',
                 title=f'{k.base or "no inspector"} · pid {k.pid} — click to change', **common)
