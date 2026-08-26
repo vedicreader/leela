@@ -8,13 +8,15 @@
 Why the interpreter dance on macOS: docs/desktop.md.
 """
 from __future__ import annotations
-import argparse, json, os, shutil, subprocess, sys, sysconfig
+import argparse, json, os, re, shutil, subprocess, sys, sysconfig, time
 from fastcore.all import Path, first
 
 ROOT = Path(__file__).resolve().parent
 VENV = ROOT/'packaging'/'.app-venv'
 #: What the frozen app installs. The bundle is built from the lock over these.
 APP_EXTRAS = ('desktop', 'gateway', 'macapp')
+#: Written into the bundle at build; read back to tell a stale install from a current one.
+STAMP = 'leela-build.json'
 # Framework builds on macOS, best first. Not newest first: the version here is the version the
 # app ships, and a kernel may only borrow Leela's own `sys.path` from an interpreter of the same
 # minor version (`blocks/runtime/support.py`). So the order is what projects are most likely to be
@@ -33,7 +35,8 @@ FRAMEWORK_CANDIDATES = (
     '/usr/bin/python3',
 )
 
-__all__ = ['is_framework', 'framework_python', 'py_version', 'lock_requirements', 'build_venv', 'platform_setup', 'main']
+__all__ = ['is_framework', 'framework_python', 'py_version', 'lock_requirements', 'build_venv',
+           'git_stamp', 'stamp_path', 'write_stamp', 'read_stamp', 'platform_setup', 'main']
 
 def run(*args, **kw):
     print('·', ' '.join(str(a) for a in args))
@@ -64,6 +67,43 @@ def py_version(python):
     except (OSError, subprocess.SubprocessError): return None
     try: return tuple(int(n) for n in out.stdout.split())
     except ValueError: return None
+
+def git_stamp():
+    "The commit the tree is on and whether it is dirty, or `None` outside a checkout."
+    def git(*a):
+        r = subprocess.run(['git', *a], cwd=ROOT, capture_output=True, text=True, timeout=30)
+        return r.stdout.strip() if not r.returncode else None
+    try: sha = git('rev-parse', 'HEAD')
+    except (OSError, subprocess.SubprocessError): return None
+    if not sha: return None
+    return {'commit': sha, 'dirty': bool(git('status', '--porcelain', '--untracked-files=no')),
+            'version': _leela_version(), 'built': time.strftime('%Y-%m-%dT%H:%M:%S')}
+
+def _leela_version():
+    m = re.search(r'__version__\s*=\s*[\'"]([^\'"]+)', (ROOT/'leela'/'__init__.py').read_text())
+    return m.group(1) if m else ''
+
+def stamp_path(bundle):
+    "Where the build stamp lives inside `bundle`, on either platform."
+    b = Path(bundle)
+    return (b/'Contents'/'Resources'/STAMP) if b.suffix == '.app' else (b/STAMP)
+
+def write_stamp(bundle):
+    """Record which commit the bundle was built from.
+
+    A bundle is derived from the tree and nothing else compared them, so an app built before a fix
+    installs over one built after it and reports the version it always did.
+    """
+    if (st := git_stamp()) is None: st = {'commit': '', 'dirty': False, 'version': _leela_version(),
+                                          'built': time.strftime('%Y-%m-%dT%H:%M:%S')}
+    p = stamp_path(bundle)
+    if p.parent.is_dir(): p.write_text(json.dumps(st, indent=1) + '\n')
+    return st
+
+def read_stamp(bundle):
+    "The stamp `bundle` was built with, or None when it has none."
+    try: return json.loads(stamp_path(bundle).read_text())
+    except (OSError, ValueError): return None
 
 def build_venv(python, force=False):
     "A build environment on `python`: a plain `venv`, since `uv venv` links what we are avoiding."
@@ -157,6 +197,9 @@ def main(argv=None):
     args = [sys.executable, setup, *extra]
     if a.alias and sys.platform == 'darwin': args.append('--alias')
     run(*args, cwd=ROOT)
-    print(f"\nbuilt {ROOT/'dist'/('Leela.app' if sys.platform == 'darwin' else 'Leela')}")
+    out = ROOT/'dist'/('Leela.app' if sys.platform == 'darwin' else 'Leela')
+    stamp = write_stamp(out)
+    print(f"\nbuilt {out}")
+    print(f"  from {stamp['commit'][:12]}{' with uncommitted changes' if stamp['dirty'] else ''}")
 
 if __name__ == '__main__': main()

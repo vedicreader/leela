@@ -587,3 +587,37 @@ def test_the_exported_requirements_live_where_git_ignores_them():
     import setup_app
     assert setup_app.VENV.name == '.app-venv'
     assert (setup_app.VENV/'app-requirements.txt').parent == setup_app.VENV
+
+
+def test_a_built_bundle_records_the_commit_it_was_built_from(tmp_path):
+    "Without it, an app built before a fix installs over one built after and looks identical."
+    import setup_app
+    bundle = tmp_path/'Leela.app'
+    (bundle/'Contents'/'Resources').mkdir(parents=True)
+    st = setup_app.write_stamp(bundle)
+    assert setup_app.stamp_path(bundle).exists()
+    back = setup_app.read_stamp(bundle)
+    assert back == st and set(back) == {'commit', 'dirty', 'version', 'built'}
+    assert setup_app.read_stamp(tmp_path/'Nothing.app') is None, 'a bundle with no stamp says so'
+
+def test_the_stamp_lands_where_each_platform_keeps_it():
+    "macOS hides resources inside the bundle; the Windows folder is the bundle."
+    import setup_app
+    assert setup_app.stamp_path('/x/Leela.app').parts[-3:] == ('Contents', 'Resources', setup_app.STAMP)
+    assert setup_app.stamp_path('/x/Leela').parts[-1] == setup_app.STAMP
+
+@pytest.mark.skipif(not APP.exists(), reason='no built app in dist/ — run setup_app.py first')
+def test_the_built_app_matches_the_tree_it_was_built_from():
+    """The bundle is derived from the tree and nothing compared them.
+
+    Three times in one session a build was tested that predated the fix it was being tested for,
+    because an installed app carries no record of where it came from.
+    """
+    import setup_app
+    st = setup_app.read_stamp(ROOT/'dist'/'Leela.app')
+    assert st is not None, 'dist/Leela.app has no build stamp; rebuild it'
+    here = setup_app.git_stamp()
+    if here is None: pytest.skip('not a git checkout')
+    assert st['commit'] == here['commit'], (
+        f"dist/Leela.app was built from {st['commit'][:12]} but the tree is at "
+        f"{here['commit'][:12]}; rebuild before trusting it")
