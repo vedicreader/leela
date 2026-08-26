@@ -23,7 +23,8 @@ def connect(app, ctx):
     @rt('/browser/ready')
     def browser_ready():
         "Whether a page could be opened here: `ok` is a Chrome to drive, `running` is one already up."
-        return {'ok': browser.available(), 'running': browser.running(), 'port': browser.port}
+        return {'ok': browser.available(), 'running': browser.running(), 'port': browser.port,
+                'scale': browser.scale}
 
     @rt('/browser/external')
     def browser_external(url: str = ''):
@@ -114,7 +115,11 @@ def _socket(app, ctx, browser):
             w, h, _ = await browser.start_cast(tid, hello.get('w'), hello.get('h'),
                                                scale=hello.get('scale') or 1, owner=mine)
             cast = True
-            await say(t='ready', w=w, h=h, **await browser.state(tid))
+            # `note` names a Chrome that cannot rasterise at `MAX_SCALE`, and `browser` is the id
+            # the client dedupes it by. Both go on every `ready`: a socket that fails mid-send must
+            # not be the only time it was said.
+            await say(t='ready', w=w, h=h, scale=browser.scale, note=browser.warning,
+                      browser=browser.guid, **await browser.state(tid))
             # Guarded: Chrome dying here must leave neither a cast running nor a socket open.
             cdp, page = await browser.cdp(), await browser.page(tid)
         except Exception as e:

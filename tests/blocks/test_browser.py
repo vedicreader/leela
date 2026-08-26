@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio, functools, http.server, json, threading, time
+import asyncio, contextlib, functools, http.server, json, threading, time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from starlette.testclient import TestClient
@@ -64,9 +65,16 @@ def test_the_tab_payload_names_the_page_and_nothing_else(ws):
         d = client.get('/tab/state').json()
     assert d == {'kind': 'web', 'title': 'Some article', 'target': 'TARGET1'}
 
+class FakeConn:
+    "A CDP connection that never says anything, for the socket routes."
+    @contextlib.asynccontextmanager
+    async def on(self, method): yield asyncio.Queue()
+
 class FakeBrowser:
     "Enough of `Browser` for the routes, with no Chrome anywhere near it."
     port = 9223
+    scale, guid = 1.0, 'G1'
+    warning = 'the Chrome on port 9223 draws pages at 1x'
 
     def __init__(self, up=True, installed=True):
         self.up, self.installed, self.closed, self.opened = up, installed, [], []
@@ -91,6 +99,13 @@ class FakeBrowser:
                 'back': True, 'forward': False}
 
     async def markdown(self, tid, sel=None): return '# Example\n\nbody text\n'
+
+    async def start_cast(self, tid, w, h, quality=80, scale=1, owner=None):
+        return w or 800, h or 600, owner
+
+    async def stop_cast(self, tid, owner=None): return True
+    async def cdp(self): return FakeConn()
+    async def page(self, tid): return SimpleNamespace(sid='S1')
     async def shut(self, tid, mine_only=False):
         if mine_only and tid not in self.mine: return False
         self.closed.append(tid)
@@ -105,7 +120,8 @@ def test_a_browser_that_is_installed_but_not_running_yet_still_counts_as_availab
     "Chrome starts on the first page that wants one, so \"not up yet\" is not \"not here\"."
     c, ws = client
     ws.browser.up = False
-    assert c.get('/browser/ready').json() == {'ok': True, 'running': False, 'port': 9223}
+    assert c.get('/browser/ready').json() == {'ok': True, 'running': False, 'port': 9223,
+                                              'scale': 1.0}
 
 def test_no_chrome_at_all_is_reported_as_no_browser(client):
     c, ws = client
@@ -208,13 +224,171 @@ def test_no_chrome_is_started_merely_to_close_a_tab(client):
     c.post(f'/tab/close?i={ws.active}')
     assert not any(t.kind == 'web' for t in ws.tabs)
 
-def test_a_page_leela_adopted_is_never_shut_by_the_owning_check(monkeypatch):
+class FakeCDP:
+    "A CDP connection with an identity and a target list, for the ownership bookkeeping."
+    is_open = True
+
+    def __init__(self, guid='G1', targets=()):
+        self.wsconn = f'ws://127.0.0.1:9/devtools/browser/{guid}'
+        self.live, self.made, self.wedged = list(targets), 0, False
+
+    @property
+    async def pages(self): return [{'targetId': t, 'type': 'page'} for t in self.live]
+
+    @property
+    def target(self):
+        cdp = self
+        class T:
+            @staticmethod
+            async def createTarget(url, background=True):
+                cdp.made += 1
+                cdp.live.append(tid := f'NEW{cdp.made}')
+                return tid
+            @staticmethod
+            async def closeTarget(targetId):
+                if cdp.wedged: raise RuntimeError('chrome is not answering')
+                if targetId in cdp.live: cdp.live.remove(targetId)
+        return T
+
+class StubPage:
+    "A page that answers the two calls `open` and `_measure` make."
+    is_open = True
+
+    def __init__(self, raster=2, css=1): self.raster, self.css = raster, css
+    async def eval(self, expr): return 'a page'
+
+    @property
+    def page(self):
+        m = {'layoutViewport': {'clientWidth': self.raster},
+             'cssLayoutViewport': {'clientWidth': self.css}}
+        class D:
+            @staticmethod
+            async def getLayoutMetrics(): return m
+        return D
+
+def wired(cdp, port=4321):
+    "A `Browser` connected to `cdp`, taking back what it owns exactly as a real connect does."
+    b = Browser(port=port)
+    async def connect():
+        if b._cdp is None or b._cdp is not cdp:
+            b._cdp = cdp
+            await b._own()
+        return b._cdp
+    async def page(tid): return StubPage()
+    b.cdp, b.page = connect, page
+    return b
+
+def test_a_page_a_previous_leela_opened_is_still_closeable_after_a_restart():
+    """`_mine` lived on the process, so a page opened before a restart could never be closed.
+
+    The report: quit Leela, adopt the page again, close the tab, and the page is still in Chrome.
+    """
+    cdp = FakeCDP()
+    tid = asyncio.run(wired(cdp).open('https://example.com/a')).id
+    later = wired(cdp)                                    # a new process, an empty `_mine`
+    assert asyncio.run(later.shut(tid, mine_only=True)) is True
+    assert tid not in cdp.live
+
+def test_a_page_from_a_different_chrome_launch_is_never_taken_back():
+    "Ownership is keyed to the browser that answered, so a record cannot outlive its Chrome."
+    cdp = FakeCDP('G1')
+    tid = asyncio.run(wired(cdp).open('https://example.com/a')).id
+    other = FakeCDP('G2', targets=[tid])                  # the same id, a different launch
+    assert asyncio.run(wired(other).shut(tid, mine_only=True)) is False
+    assert tid in other.live
+
+def test_a_recorded_page_the_user_has_already_closed_is_not_taken_back():
+    cdp = FakeCDP()
+    tid = asyncio.run(wired(cdp).open('https://example.com/a')).id
+    cdp.live.remove(tid)
+    later = wired(cdp)
+    asyncio.run(later.cdp())
+    assert later._mine == set()
+
+def test_a_chrome_that_replaces_another_on_the_port_owns_none_of_its_pages():
+    "Reconnecting is not always to the same browser, and the ids do not carry over."
+    b = wired(FakeCDP('G1'))
+    asyncio.run(b.open('https://example.com/a'))
+    assert b._mine
+    b._cdp = FakeCDP('G2')
+    asyncio.run(b._own())
+    assert b._mine == set() and b.guid == 'G2'
+
+def test_a_record_that_cannot_be_read_owns_nothing():
+    "Erring towards not closing: an unreadable record spares every page rather than guessing."
+    cdp = FakeCDP(targets=['THEIRS'])
+    b = wired(cdp)
+    p = b._owned_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text('{not json')
+    assert asyncio.run(b.shut('THEIRS', mine_only=True)) is False
+    assert 'THEIRS' in cdp.live
+
+def test_a_close_chrome_refuses_leaves_the_page_owned():
+    "A close that fails must not be the thing that makes a page unclosable."
+    cdp = FakeCDP()
+    b = wired(cdp)
+    tid = asyncio.run(b.open('https://example.com/a')).id
+    cdp.wedged = True
+    assert asyncio.run(b.shut(tid, mine_only=True)) is False
+    assert tid in b._mine
+    cdp.wedged = False
+    assert asyncio.run(wired(cdp).shut(tid, mine_only=True)) is True
+
+def test_two_workspaces_on_one_chrome_do_not_forget_each_others_pages():
+    "One record per port, and the hub serves several workspaces out of one process."
+    cdp = FakeCDP()
+    a = asyncio.run(wired(cdp).open('https://example.com/a')).id
+    b = asyncio.run(wired(cdp).open('https://example.com/b')).id
+    third = wired(cdp)
+    asyncio.run(third.cdp())
+    assert {a, b} <= third._mine
+
+def test_adopting_a_page_records_no_ownership_of_it():
+    cdp = FakeCDP(targets=['THEIRS'])
+    b = wired(cdp)
+    asyncio.run(b.cdp())
+    assert b._mine == set() and not b._owned_path().exists()
+
+def test_a_chrome_that_cannot_rasterise_at_the_wanted_scale_is_measured_and_said():
+    """`SCALE_FLAG` takes at launch, so a Chrome that predates it goes on sending 1x frames.
+
+    The ratio between the two layout viewports is the browser's own scale factor, and it reads the
+    same under the `Emulation` override `resize` applies.
+    """
     b = Browser(port=1)
-    monkeypatch.setattr(b, 'cdp', lambda: asyncio.sleep(0))
+    asyncio.run(b._measure(StubPage(756, 756)))
+    assert b.scale == 1
+    assert 'port 1' in b.warning and SCALE_FLAG in b.warning and f'{MAX_SCALE}x' in b.warning
+
+def test_a_chrome_that_rasterises_at_the_wanted_scale_says_nothing():
+    b = Browser(port=1)
+    asyncio.run(b._measure(StubPage(1000, 500)))
+    assert b.scale == MAX_SCALE and b.warning == ''
+
+def test_a_page_with_no_layout_yet_is_left_unmeasured():
+    "An unmeasured browser is asked again at the next attach; a wrong 1 would never be revisited."
+    b = Browser(port=1)
+    asyncio.run(b._measure(StubPage(0, 0)))
+    assert b.scale is None and b.warning == ''
+
+def test_the_ready_frame_carries_the_note_and_the_browser_it_is_about(client):
+    "The panel is where the user is looking, and the browser id is what it dedupes the note by."
+    c, ws = client
+    with c.websocket_connect('/browser/ws') as sock:
+        sock.send_text(json.dumps({'id': 'T1', 'w': 800, 'h': 600, 'scale': 2}))
+        m = json.loads(sock.receive_text())
+    assert m['t'] == 'ready' and m['scale'] == 1.0 and m['browser'] == 'G1'
+    assert 'draws pages at 1x' in m['note']
+
+def test_a_page_leela_adopted_is_never_shut_by_the_owning_check():
+    cdp = FakeCDP(targets=['ADOPTED'])
+    b = wired(cdp)
     assert asyncio.run(b.shut('ADOPTED', mine_only=True)) is False
-    b._mine.add('OURS'); b._pages['OURS'] = object()
-    assert asyncio.run(b.shut('OURS', mine_only=True)) is True
-    assert 'OURS' not in b._mine
+    assert 'ADOPTED' in cdp.live
+    tid = asyncio.run(b.open('https://example.com/a')).id
+    assert asyncio.run(b.shut(tid, mine_only=True)) is True
+    assert 'OURS' not in b._mine and tid not in cdp.live
 
 class Recorder:
     def __init__(self): self.calls = []
@@ -460,6 +634,47 @@ def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, 
 
         assert client.get(f'/browser/close?id={target}').json() == {'ok': True}
 
+@pytest.mark.slow
+def test_a_real_chrome_started_without_the_flag_is_measured_at_one_to_one(ws, site, monkeypatch,
+                                                                          tmp_path):
+    """The user's report, reproduced: Leela reuses a Chrome that predates the flag and it stays 1x.
+
+    A fresh port and a throwaway profile, so the Chrome a person is using is never the one under
+    test. It is quit at the end, because this test is the only thing that opened it.
+    """
+    monkeypatch.setenv('FOSSICK_ALLOW_PRIVATE', '1')
+    pytest.importorskip('fastcdp')
+    port = _free_port()
+    try: asyncio.run(_start_chrome(port, tmp_path/'chrome', flags=[]))
+    except Exception as e: pytest.skip(f'no Chrome to drive: {e}')
+    b = ws.browser = Browser(port=port, headless=True, profile=tmp_path/'chrome')
+    try:
+        with TestClient(ide_app(ws)) as client:
+            assert 'id="tabbar"' in client.get(f'/browser/open?url={site}').text
+            target = ws.tabs[ws.active].ref
+            with client.websocket_connect('/browser/ws') as sock:
+                sock.send_text(json.dumps({'id': target, 'w': 800, 'h': 600, 'scale': 2}))
+                ready = _reply(sock, 'ready')
+            assert ready['scale'] == 1, ready
+            assert SCALE_FLAG in ready['note']
+            assert _jpeg_size(_last_frame(client, target)) == (800, 600), 'a 1x Chrome sends 1x'
+    finally: asyncio.run(_quit(b))
+
+async def _quit(b):
+    cdp = await b.cdp()
+    try: await cdp('Browser.close')
+    except Exception: pass
+
+def _last_frame(client, target):
+    "One frame from a second socket, which `startScreencast` always emits."
+    with client.websocket_connect('/browser/ws') as sock:
+        sock.send_text(json.dumps({'id': target, 'w': 800, 'h': 600, 'scale': 2}))
+        _reply(sock, 'ready')
+        for _ in range(40):
+            m = sock.receive()
+            if m.get('bytes'): return m['bytes']
+    raise AssertionError('no frame arrived')
+
 def _reply(sock, kind, sizes=None, tries=40):
     "Read past any frames the page painted meanwhile, to the reply that must be coming."
     for _ in range(tries):
@@ -495,8 +710,8 @@ def _free_port():
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
 
-async def _start_chrome(port, profile):
+async def _start_chrome(port, profile, flags=(SCALE_FLAG,)):
     from fossick.cdp import _debug_ready, cdp_setup
     if not _debug_ready(port):
         await cdp_setup(port=port, user_data_dir=profile, headless=True, timeout=60,
-                        extra_flags=[SCALE_FLAG])
+                        extra_flags=list(flags))

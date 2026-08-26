@@ -1,11 +1,11 @@
 "Web pages as tabs, drawn by the CDP Chrome fossick keeps. See `docs/desktop.md`."
 
 from __future__ import annotations
-import asyncio, os, shutil
+import asyncio, json, os, shutil
 from dataclasses import dataclass
 from fastcore.all import L, Path, ifnone, store_attr
 
-from ... import Dictable, errstr
+from ... import Dictable, errstr, leela_cfg
 
 __all__ = ['WebPage', 'Browser', 'BrowserUnavailable', 'DEFAULT_SIZE', 'MAX_SIZE', 'MAX_SCALE',
            'SCALE_FLAG']
@@ -38,6 +38,7 @@ class Browser:
         port, profile = int(port), profile or os.environ.get('LEELA_CDP_PROFILE') or None
         store_attr()
         self.note = ''
+        self.scale, self.warning, self.guid = None, '', ''
         self._cdp = self._loop = None
         self._pages, self._casts = {}, {}   # target -> its `Page`; target -> its cast's owner
         self._mine = set()                  # targets Leela opened, as against ones it adopted
@@ -49,6 +50,7 @@ class Browser:
             loop = asyncio.get_running_loop()
             if self._cdp is not None and self._cdp.is_open and self._loop is loop: return self._cdp
             self._cdp, self._pages, self._casts, self._loop = None, {}, {}, loop
+            self.scale, self.warning = None, ''
             try: from fossick.cdp import cdp_connect
             except ImportError as e:
                 raise BrowserUnavailable(f'the inline browser needs fossick ({errstr(e)})') from e
@@ -57,7 +59,69 @@ class Browser:
                                                extra_flags=[SCALE_FLAG])
             except Exception as e:
                 raise BrowserUnavailable(f'no Chrome on the CDP port {self.port}: {errstr(e)}') from e
+            await self._own()
             return self._cdp
+
+    def _guid_of(self, cdp):
+        "The browser's own DevTools id. Chrome mints a new one at every launch."
+        u = getattr(cdp, 'wsconn', '') or ''
+        return u.rsplit('/devtools/browser/', 1)[1] if '/devtools/browser/' in u else ''
+
+    def _owned_path(self): return leela_cfg/'browser'/f'pages-{self.port}.json'
+
+    def _stored(self):
+        "The `(browser, targets)` on disk for this port. Anything unreadable reads as nothing owned."
+        try: d = self._owned_path().read_json()
+        except Exception: return '', set()
+        if not isinstance(d, dict): return '', set()
+        return d.get('browser') or '', {t for t in (d.get('targets') or []) if isinstance(t, str)}
+
+    def _remember(self, drop=()):
+        """Write the owned set back, keeping what another Leela on this port owns.
+
+        Best effort. A file that cannot be written costs a page that stays open, never a page
+        closed by mistake. The write is atomic, so a torn file cannot name a target either.
+        """
+        if not self.guid: return
+        guid, stored = self._stored()
+        keep = sorted(((stored if guid == self.guid else set()) | self._mine) - set(drop))
+        try:
+            p = self._owned_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix('.writing')
+            tmp.write_text(json.dumps({'browser': self.guid, 'targets': keep}))
+            os.replace(tmp, p)
+        except Exception: pass
+
+    async def _own(self):
+        "Take back what a previous Leela opened, once this is the same Chrome and still open."
+        guid = self._guid_of(self._cdp)
+        if guid != self.guid: self._mine, self.guid = set(), guid
+        if not guid: return
+        stored_guid, stored = self._stored()
+        if stored_guid != guid or not stored: return
+        try: live = {t.get('targetId') or t.get('id') for t in await self._cdp.pages}
+        except Exception: return
+        self._mine |= stored & live
+
+    async def _measure(self, p):
+        """Read how many image pixels a frame carries per CSS pixel, and note a Chrome that is short.
+
+        The ratio between the two layout viewports is the browser's own scale factor. Unlike
+        `devicePixelRatio` it reads the same under an `Emulation` override, so `resize` cannot
+        move it. `SCALE_FLAG` only takes at launch, so a Chrome that answers at 1x answers at 1x
+        for as long as it runs.
+        """
+        try: m = await asyncio.wait_for(p.page.getLayoutMetrics(), 5)
+        except Exception: return
+        raster = (m.get('layoutViewport') or {}).get('clientWidth')
+        css = (m.get('cssLayoutViewport') or {}).get('clientWidth')
+        if not raster or not css: return
+        self.scale = round(raster/css, 2)
+        if self.scale >= MAX_SCALE: return
+        self.warning = (f'the Chrome on port {self.port} draws pages at {self.scale:g}x, because it '
+                        f'was started without {SCALE_FLAG}. Chrome takes that flag at launch only. '
+                        f'Quit that Chrome and open the page again for {MAX_SCALE}x text.')
 
     def running(self):
         "Whether a debug Chrome is already answering on the port, asked without starting one."
@@ -99,7 +163,9 @@ class Browser:
             if (p := self._pages.get(tid)) is not None and p.is_open: return p
             from fastcdp import Page
             self._pages[tid] = p = await Page.new(tid, cdp)
-            return p
+        # Measured outside the lock: a page held by a dialog must not block every other attach.
+        if self.scale is None: await self._measure(p)
+        return p
 
     def _as_page(self, t):
         "One CDP target row as a `WebPage`."
@@ -119,18 +185,26 @@ class Browser:
         tid = await cdp.target.createTarget(url=url, background=background)
         await asyncio.sleep(.05)   # createTarget answers before the load
         self._mine.add(tid)
+        self._remember()
         p = await self.page(tid)
         return WebPage(id=tid, url=url, title=await self.title(p) or url, attached=True)
 
     async def shut(self, tid, mine_only=False):
-        "Close one page in Chrome and forget its session. `mine_only` spares one Leela adopted."
-        if mine_only and tid not in self._mine: return False
-        p, _ = self._pages.pop(tid, None), self._casts.pop(tid, None)
-        self._mine.discard(tid)
+        """Close one page in Chrome and forget its session. `mine_only` spares one Leela adopted.
+
+        The connection comes first, because the set of pages Leela opened is read from disk when
+        it is made. A previous Leela's page is only recognised as Leela's own after that.
+        Ownership is given up once Chrome has closed the target, so a close that fails or is
+        cancelled leaves the page closeable.
+        """
         cdp = await self.cdp()
+        if mine_only and tid not in self._mine: return False
+        self._pages.pop(tid, None); self._casts.pop(tid, None)
         try: await cdp.target.closeTarget(targetId=tid)
-        except Exception: pass
-        return p is not None
+        except Exception: return False
+        self._mine.discard(tid)
+        self._remember(drop=[tid])
+        return True
 
     def check(self, url):
         "Normalise and refuse a URL the browser must not be pointed at."

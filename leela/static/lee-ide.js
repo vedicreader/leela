@@ -6208,7 +6208,8 @@ function mountWeb(host, st) {
     if (typeof ev.data !== 'string') return drawFrame(ctx, canvas, view, ev.data);
     const m = JSON.parse(ev.data);
     if (m.t === 'error') return say(m.error, 'err');
-    if (m.t === 'ready') { view.size = [m.w, m.h]; sizeCanvas(canvas, m.w, m.h); paintNav(host, m); say(''); }
+    if (m.t === 'ready') { view.size = [m.w, m.h]; sizeCanvas(canvas, m.w, m.h); paintNav(host, m);
+                           say(''); warnScale(m); }
     else if (m.t === 'nav') paintNav(host, m);
   };
 
@@ -6226,6 +6227,17 @@ function mountWeb(host, st) {
   wireInput(canvas, view);
   wireVisibility(view);
   canvas.focus();
+}
+
+/* Chrome takes `--force-device-scale-factor` at launch, so a browser already running when Leela
+   connects goes on drawing at 1x and no restart of Leela changes it. Said once per Chrome, which
+   is what the browser id keys: the server repeats the note on every `ready`. */
+function warnScale(m) {
+  if (!m.note) return;
+  const key = 'lee-web-scale';
+  if (localStorage.getItem(key) === (m.browser || '')) return;
+  localStorage.setItem(key, m.browser || '');
+  status(m.note, 'err');
 }
 
 /* A hidden window still has a live screencast behind it, so Chrome goes on encoding for a canvas
