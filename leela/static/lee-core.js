@@ -1356,7 +1356,10 @@ function saveTabLocation() {
   // A Map keeps a re-set key at its first insertion point, so the delete is what moves the key to
   // the end for the tail slice below.
   lee.locations.delete(key);
+  // Two scrollers, and only the inner one was kept. A notebook scrolls in `#editor`, and each cell's
+  // CodeMirror is its own scroller sitting at zero, so coming back to a tab landed at the top.
   lee.locations.set(key, {pos: LeeCM.cursor(view), scroll: view.scrollDOM.scrollTop,
+    host: $('#editor')?.scrollTop || 0,
     cell: lee.kind === 'notebook' ? lee.sel : -1});
   // Nothing else prunes this: a closed, renamed or deleted file leaves its entry behind, so the
   // cap is what keeps a long session and sessionStorage bounded.
@@ -1370,6 +1373,13 @@ function restoreTabLocation(st, skip = false) {
     let view = lee.editors.get('file');
     if (st.kind === 'notebook' && loc.cell >= 0 && loc.cell < lee.cells.length) {
       selectCell(loc.cell); view = ensureCellMounted(loc.cell);
+    }
+    // The cells of a long notebook mount as they are reached, so the height the offset was taken
+    // against arrives a frame late. Setting it twice lands on the second one.
+    const host = $('#editor');
+    if (host && loc.host) {
+      host.scrollTop = loc.host;
+      requestAnimationFrame(() => { if (host.scrollTop !== loc.host) host.scrollTop = loc.host; });
     }
     if (!view) return;
     LeeCM.setCursor(view, loc.pos); view.scrollDOM.scrollTop = loc.scroll || 0;
@@ -2196,15 +2206,18 @@ function outputEl(o) {
     i.src = 'data:image/png;base64,' + data['image/png'];
     d.appendChild(i); return d;
   }
-  if (data['text/markdown']) {
+  if (data['text/markdown'] != null) {
     d.classList.add('lee-md-output'); renderMarkdown(d, data['text/markdown']); return d;
   }
-  if (data['text/html'] || data['image/svg+xml']) {
+  // Presence, not truthiness. Clearing a rich display is publishing an empty one of the same type:
+  // fastprogress ends a progress bar with `HTML('')`, and testing the string sent that output down
+  // to its `text/plain`, which for any rich object is the placeholder `<... object>` repr.
+  const rich = data['text/html'] ?? data['image/svg+xml'];
+  if (rich != null) {
     // Rich reprs get their own shadow root: pandas ships a <style> block with every DataFrame and
     // `scoped` has been dead for years, so an output could restyle the IDE around it. Very large
     // HTML stays unparsed until requested, because parsing a multi-megabyte table on the main
     // thread triggers Chrome's hang dialog.
-    const rich = data['text/html'] || data['image/svg+xml'];
     const show = () => { d.textContent = ''; d.attachShadow({mode: 'open'}).innerHTML = rich; };
     if (rich.length > MAX_OUTPUT_CHARS) {
       const folded = document.createElement('button'); folded.className = 'lee-output-fold';

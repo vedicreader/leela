@@ -2149,3 +2149,53 @@ def test_boot_finishes_in_a_webview_without_requestidlecallback(tmp_path):
     d = _run(go, roots=[tmp_path])
     assert d['ran'] == ['pills', 'watcher'], 'the steps below it run in a webview that lacks it'
     assert 'ready' in d['status']
+
+def test_an_emptied_rich_display_renders_as_nothing_not_as_its_placeholder():
+    """Clearing a rich display is publishing an empty one of the same type: fastprogress ends a
+    progress bar with `HTML('')`. Testing the string rather than the key sent that output down to
+    its `text/plain`, which for any rich object is `<IPython.core.display.HTML object>` -- the line
+    that appeared under a finished `cg.from_dir(...)`."""
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const plain = '<IPython.core.display.HTML object>';
+          const cleared = outputEl({output_type: 'display_data',
+                                    data: {'text/html': '', 'text/plain': plain}});
+          const shown = outputEl({output_type: 'display_data',
+                                  data: {'text/html': '<b id="rich">bar</b>', 'text/plain': plain}});
+          const md = outputEl({output_type: 'display_data',
+                               data: {'text/markdown': '', 'text/plain': plain}});
+          const only = outputEl({output_type: 'execute_result', data: {'text/plain': 'kept'}});
+          return {cleared: cleared.textContent, clearedShadow: !!cleared.shadowRoot,
+                  shown: shown.shadowRoot?.querySelector('#rich')?.textContent || '',
+                  md: md.textContent, only: only.textContent};
+        }""")
+    d = _run(go)
+    assert d['cleared'] == '' and d['clearedShadow'], 'the cleared display renders empty, not as a repr'
+    assert d['shown'] == 'bar', 'and a display with content still renders it'
+    assert d['md'] == '', 'the same holds for an emptied markdown display'
+    assert d['only'] == 'kept', 'text is still what an output with only text says'
+
+def test_a_tab_comes_back_where_it_was_scrolled_to(tmp_path):
+    """Two scrollers, and only the inner one was kept: a notebook scrolls in `#editor` while each
+    cell's CodeMirror sits at zero, so every switch back landed at the top of the notebook."""
+    import json
+    cells = [{'cell_type': 'code', 'source': [f'x = {i}\n' * 4], 'metadata': {}, 'outputs': [],
+              'execution_count': None} for i in range(60)]
+    (tmp_path/'long.ipynb').write_text(json.dumps(
+        {'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    (tmp_path/'other.py').write_text('y = 1\n')
+    async def go(pg):
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'long.ipynb'))
+        await pg.wait_for_function("() => lee.path && lee.path.endsWith('long.ipynb') && lee.cells.length > 10")
+        await pg.evaluate("() => { $('#editor').scrollTop = 700; }")
+        await pg.wait_for_function("() => $('#editor').scrollTop > 0")
+        went = await pg.evaluate("() => $('#editor').scrollTop")
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'other.py'))
+        await pg.wait_for_function("() => lee.path && lee.path.endsWith('other.py')")
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'long.ipynb'))
+        await pg.wait_for_function("() => lee.path && lee.path.endsWith('long.ipynb') && lee.cells.length > 10")
+        await pg.wait_for_timeout(400)
+        return went, await pg.evaluate("() => $('#editor').scrollTop")
+    went, back = _run(go, roots=[tmp_path])
+    assert went > 100, 'precondition: the notebook was scrolled'
+    assert abs(back - went) < 80, f'came back at {back}, was left at {went}'

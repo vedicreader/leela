@@ -354,15 +354,18 @@ function outputEl(o) {
     i.src = 'data:image/png;base64,' + data['image/png'];
     d.appendChild(i); return d;
   }
-  if (data['text/markdown']) {
+  if (data['text/markdown'] != null) {
     d.classList.add('lee-md-output'); renderMarkdown(d, data['text/markdown']); return d;
   }
-  if (data['text/html'] || data['image/svg+xml']) {
+  // Presence, not truthiness. Clearing a rich display is publishing an empty one of the same type:
+  // fastprogress ends a progress bar with `HTML('')`, and testing the string sent that output down
+  // to its `text/plain`, which for any rich object is the placeholder `<... object>` repr.
+  const rich = data['text/html'] ?? data['image/svg+xml'];
+  if (rich != null) {
     // Rich reprs get their own shadow root: pandas ships a <style> block with every DataFrame and
     // `scoped` has been dead for years, so an output could restyle the IDE around it. Very large
     // HTML stays unparsed until requested, because parsing a multi-megabyte table on the main
     // thread triggers Chrome's hang dialog.
-    const rich = data['text/html'] || data['image/svg+xml'];
     const show = () => { d.textContent = ''; d.attachShadow({mode: 'open'}).innerHTML = rich; };
     if (rich.length > MAX_OUTPUT_CHARS) {
       const folded = document.createElement('button'); folded.className = 'lee-output-fold';
