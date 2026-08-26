@@ -2702,6 +2702,14 @@ async function takeDiskVersion(path) {
   await post('/tab/reload', {path});
   await mountTab();
 }
+async function leeReloadFromDisk() {
+  const name = (lee.path || '').split('/').pop();
+  if (!lee.path) return status('this tab has no file on disk', 'err');
+  if ($('.lee-tab.active')?.classList.contains('dirty') &&
+      !await confirmDialog(`reload ${name}`, 'This drops the unsaved edits in this tab and loads what is on disk.', 'reload')) return;
+  try { await takeDiskVersion(lee.path); status(`${name} reloaded from disk`, 'ok'); }
+  catch (e) { status(String(e.message || e), 'err'); }
+}
 async function reloadAfterEdits(edits) {
   const e = edits.find(x => x.path && x.path === lee.path);
   if (!e) return;

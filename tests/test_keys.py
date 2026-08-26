@@ -295,3 +295,15 @@ def test_undo_is_reachable_on_the_editor_bundle():
     names = cm_exports()
     assert {'undo', 'redo'} <= names, 'rebuild frontend/editor.js with esbuild'
     assert {'create', 'getDoc', 'focus', 'selection'} <= names, 'and nothing else was dropped'
+
+def test_reload_from_disk_is_reachable_without_a_chord():
+    """Every `takeDiskVersion` call sat behind some other flow, so a tab showing a version that had
+    moved on had no command to fix it. The palette lists any labelled action, and the File and tab
+    menus name it."""
+    k = lookup('reload_file')
+    assert k.label == 'reload from disk' and k.scope == 'global'
+    assert k.key == '', 'it is a menu and palette command; a default chord would need an audit'
+    assert 'reload_file' in {r['action'] for r in web_menus()['tab'] if r.get('action')}
+    from leela.blocks.keys.menus import BAR, MenuItem
+    files = first(rows for name, rows in BAR if name == 'File')
+    assert 'reload_file' in {r.action for r in files if isinstance(r, MenuItem) and r.action}

@@ -108,6 +108,7 @@ DEFAULTS = L(
     Key('save',             'mod+s',         'global', 'save',                'toast'),
     Key('save_all',         'alt+shift+s',   'global', 'save all'),
     Key('show_diff',        'alt+shift+d',   'global', 'what changed',        'toast'),
+    Key('reload_file',      '',              'global', 'reload from disk'),
     Key('local_history',    'hyper+h',       'global', 'local file history',  'toast'),
     Key('git_blame',        'hyper+b',       'global', 'who wrote this',      'toast'),
     Key('git_stage',        '',              'files',  'stage selected path'),

@@ -249,3 +249,32 @@ def test_creating_refuses_the_names_renaming_refuses(tmp_path, monkeypatch):
                                             'kind': 'dir'}).json()['ok']
     assert (tmp_path/'pkg'/'made.py').is_file() and (tmp_path/'pkg'/'sub').is_dir()
     assert json.loads((tmp_path/'pkg'/'notes.ipynb').read_text())['nbformat'] == 4
+
+def test_a_change_on_disk_drops_the_cached_copy_of_a_clean_tab(tmp_path, monkeypatch):
+    """Only the active tab's poll refreshed a cached document, so a background tab mounted the
+    version from before the change. A tab with unsaved edits holds the user's work, not a copy of
+    the file, and keeps what it has."""
+    monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
+    from leela.core.block import Ctx
+    from leela.core.session import DocStore
+    from leela.blocks.fs.app import _freshen
+    a, b = tmp_path/'a.py', tmp_path/'b.py'
+    a.write_text('A = 1\n'); b.write_text('B = 1\n')
+    ws = Workspace(roots=[tmp_path]); ws.open(a); ws.open(b)
+    docs = DocStore(ws)
+    ctx = Ctx(ws, name='fs', caps=('docs',), docs=docs)
+    for t in ws.tabs: docs.docs[t.path], docs.versions[t.path] = 'held', 'v0'
+    ws.tabs[1].dirty = True
+
+    _freshen(ctx, [str(a), str(b)])
+    assert str(a) not in docs.docs, 'the clean tab has to read the file again'
+    assert str(a) not in docs.versions, 'and it must not keep the version it read before'
+    assert docs.docs[str(b)] == 'held', 'unsaved edits are never dropped for a disk change'
+
+    docs.docs[str(a)] = 'held'
+    _freshen(ctx, [str(tmp_path/'elsewhere.py')])
+    assert docs.docs[str(a)] == 'held', 'a change to another file leaves this one alone'
+
+    _freshen(ctx, [], resync=True)
+    assert str(a) not in docs.docs, 'too many changes to name means every clean tab re-reads'
+    assert docs.docs[str(b)] == 'held'

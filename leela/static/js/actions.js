@@ -28,6 +28,7 @@ const ACTIONS = {
   recent_tabs:  () => recentTabs(),
   save:         () => saveTab(),
   save_all:     () => saveAllTabs(),
+  reload_file:  () => leeReloadFromDisk(),
   close_tab:    () => closeTab(),
   next_tab:     () => shiftTab(1),
   prev_tab:     () => shiftTab(-1),

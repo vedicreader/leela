@@ -2084,3 +2084,31 @@ def test_one_editor_in_a_panel_does_not_take_the_bar_back_from_another(tmp_path)
         assert d['bar'] == 0, f"{phase}: the panel drew its own bar beside the stripe: {got}"
     assert got['closed'] == {'bar': 0, 'held': got['closed']['held'], 'stripes': 1}, \
         f'closing the short editor must not disturb the one still drawing: {got}'
+
+def test_a_draft_from_a_version_the_file_no_longer_has_is_discarded(tmp_path):
+    """Drafts are keyed by path and cell id, and both survive a rewrite by another tool, so a draft
+    left over an older version landed back on the file that replaced it. Recovering it also
+    suppressed the reload that would have shown the new text."""
+    f = tmp_path/'note.py'; f.write_text('from disk\n')
+    async def go(pg):
+        await pg.evaluate("path => leeOpenFile(path)", str(f))
+        await pg.wait_for_function("() => lee.path && lee.diskVersion")
+        stale = await pg.evaluate("""async (path) => {
+          await draftPut({key: path, document: path, baseDiskVersion: 'a version that is gone',
+                          payload: {path, title: path, kind: 'text', text: 'a draft of the old file'},
+                          updatedAt: Date.now()});
+          await mountTab();
+          return {doc: LeeCM.getDoc(lee.editors.get('file')), rows: (await draftsFor(path)).length};
+        }""", str(f))
+        kept = await pg.evaluate("""async (path) => {
+          await draftPut({key: path, document: path, baseDiskVersion: lee.diskVersion,
+                          payload: {path, title: path, kind: 'text', text: 'my unsaved edit'},
+                          updatedAt: Date.now()});
+          await mountTab();
+          return LeeCM.getDoc(lee.editors.get('file'));
+        }""", str(f))
+        return stale, kept
+    stale, kept = _run(go, roots=[tmp_path])
+    assert stale['doc'].strip() == 'from disk', stale
+    assert stale['rows'] == 0, 'the draft it could not place is dropped, not left to come back'
+    assert kept.strip() == 'my unsaved edit', 'a draft of the version in hand is still the users work'

@@ -217,6 +217,16 @@ async function restoreDrafts(st) {
   let rows = [];
   try { rows = await draftsFor(documentKey); } catch (_) { return false; }
   if (!rows.length) return false;
+  // A draft belongs to the version of the file it was typed over. Cell ids survive a rewrite, so a
+  // draft left from an earlier version lands back on the file that replaced it, and recovering it
+  // is what suppresses the reload that would have shown the new text.
+  const current = rows.filter(r => !(r.baseDiskVersion && st.disk_version && r.baseDiskVersion !== st.disk_version));
+  if (!current.length) {
+    await clearDrafts(documentKey);
+    status(`${documentKey.split('/').pop()}: discarded a draft of an older version of the file`, 'err');
+    return false;
+  }
+  rows = current;
 
   let recovered = false;
   if (st.kind === 'text') {
@@ -717,6 +727,7 @@ const ACTIONS = {
   recent_tabs:  () => recentTabs(),
   save:         () => saveTab(),
   save_all:     () => saveAllTabs(),
+  reload_file:  () => leeReloadFromDisk(),
   close_tab:    () => closeTab(),
   next_tab:     () => shiftTab(1),
   prev_tab:     () => shiftTab(-1),

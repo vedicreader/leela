@@ -41,6 +41,17 @@ def _forget(ctx, *paths):
                 ctx.docs.forget(tab.path)      # a folder's cache is keyed per file inside it
                 yield tab
 
+def _freshen(ctx, paths, resync=False):
+    """Drop the cached copy of an open, unedited document that changed on disk.
+
+    `/tab/state` serves what `DocStore` holds, and only the active tab's poll ever refreshed it, so
+    a background tab mounted the version from before the change. A tab with unsaved edits keeps what
+    it holds: the cache is the user's work, not a copy of the file.
+    """
+    changed = {str(p) for p in paths}
+    for tab in ctx.session.tabs:
+        if tab.path and not tab.dirty and (resync or tab.path in changed): ctx.docs.forget(tab.path)
+
 def _batch(items):
     "What to call a batch in a journal label: the one name, or how many there were."
     if len(items) == 1: return Path(items[0][0] if isinstance(items[0], tuple) else items[0]).name
@@ -74,6 +85,7 @@ def connect(app, ctx):
             try:
                 while True:
                     paths, resync = await q.get()
+                    _freshen(ctx, paths, resync)
                     yield sse('changed', {'paths': paths, 'resync': resync})
             finally: ctx.fs_watch.unsubscribe(q)
         return StreamingResponse(events(), media_type='text/event-stream',
