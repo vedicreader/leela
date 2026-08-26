@@ -943,7 +943,7 @@ class Workspace:
             self._lsp = PyrightService(first(self.fs.roots))
         return self._lsp
     async def shutdown(self):
-        "Save the session, then stop every kernel, dev server, terminal and model it started."
+        "Save the session, then stop every kernel, dev server, terminal, model and browser it started."
         # Once, and each step guarded: what a skipped one leaves behind is a live subprocess.
         if self._down: return
         self._down = True
@@ -960,7 +960,7 @@ class Workspace:
         step(self._stop_notebook_approvals)
         if self._inline_ai is not None: step(self._inline_ai.close)
         if self._lsp is not None: step(self._lsp.close)
-        for coro in (self.dev.stop_all(), self.pool.close_all()):
+        for coro in (self.dev.stop_all(), self.pool.close_all(), self.browser.quit()):
             try: await coro
             except Exception: pass
     async def opened(self):

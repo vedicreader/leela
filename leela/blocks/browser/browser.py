@@ -20,6 +20,10 @@ MAX_SCALE = 2
 #: Only the browser's own factor rasterises higher, and it is fixed at launch.
 SCALE_FLAG = f'--force-device-scale-factor={MAX_SCALE}'
 
+#: Ports whose Chrome this process started, and the connected `Browser`s on each. One Chrome serves
+#: every window on a port, so closing it belongs to the last window out rather than the first.
+_OURS, _LIVE = set(), {}
+
 class BrowserUnavailable(RuntimeError):
     "No CDP Chrome to render into, and Leela could not start one."
 
@@ -54,11 +58,15 @@ class Browser:
             try: from fossick.cdp import cdp_connect
             except ImportError as e:
                 raise BrowserUnavailable(f'the inline browser needs fossick ({errstr(e)})') from e
+            # Asked before connecting: afterwards a Chrome Leela started looks like one it adopted.
+            started = not self.running()
             try: self._cdp = await cdp_connect(port=self.port, headless=self.headless,
                                                user_data_dir=self.profile,
                                                extra_flags=[SCALE_FLAG])
             except Exception as e:
                 raise BrowserUnavailable(f'no Chrome on the CDP port {self.port}: {errstr(e)}') from e
+            if started: _OURS.add(self.port)
+            _LIVE.setdefault(self.port, set()).add(self)
             await self._own()
             return self._cdp
 
@@ -70,11 +78,12 @@ class Browser:
     def _owned_path(self): return leela_cfg/'browser'/f'pages-{self.port}.json'
 
     def _stored(self):
-        "The `(browser, targets)` on disk for this port. Anything unreadable reads as nothing owned."
+        "The `(browser, targets, launched)` on disk for this port. Unreadable reads as nothing owned."
         try: d = self._owned_path().read_json()
-        except Exception: return '', set()
-        if not isinstance(d, dict): return '', set()
-        return d.get('browser') or '', {t for t in (d.get('targets') or []) if isinstance(t, str)}
+        except Exception: return '', set(), False
+        if not isinstance(d, dict): return '', set(), False
+        return (d.get('browser') or '', {t for t in (d.get('targets') or []) if isinstance(t, str)},
+                bool(d.get('launched')))
 
     def _remember(self, drop=()):
         """Write the owned set back, keeping what another Leela on this port owns.
@@ -83,13 +92,14 @@ class Browser:
         closed by mistake. The write is atomic, so a torn file cannot name a target either.
         """
         if not self.guid: return
-        guid, stored = self._stored()
+        guid, stored, _ = self._stored()
         keep = sorted(((stored if guid == self.guid else set()) | self._mine) - set(drop))
         try:
             p = self._owned_path()
             p.parent.mkdir(parents=True, exist_ok=True)
             tmp = p.with_suffix('.writing')
-            tmp.write_text(json.dumps({'browser': self.guid, 'targets': keep}))
+            tmp.write_text(json.dumps({'browser': self.guid, 'targets': keep,
+                                       'launched': self.port in _OURS}))
             os.replace(tmp, p)
         except Exception: pass
 
@@ -98,8 +108,11 @@ class Browser:
         guid = self._guid_of(self._cdp)
         if guid != self.guid: self._mine, self.guid = set(), guid
         if not guid: return
-        stored_guid, stored = self._stored()
-        if stored_guid != guid or not stored: return
+        stored_guid, stored, launched = self._stored()
+        if stored_guid != guid: return
+        # The same Chrome a Leela that died had started: still this Leela's to close, not adopted.
+        if launched: _OURS.add(self.port)
+        if not stored: return
         try: live = {t.get('targetId') or t.get('id') for t in await self._cdp.pages}
         except Exception: return
         self._mine |= stored & live
@@ -149,10 +162,30 @@ class Browser:
 
     async def close(self):
         "Drop Leela's connection. Chrome and its profile outlive it, on purpose."
+        _LIVE.get(self.port, set()).discard(self)
         cdp, self._cdp, self._pages, self._casts, self._loop = self._cdp, None, {}, {}, None
         if cdp is None: return
         try: await cdp.close()
         except Exception: pass
+
+    async def quit(self):
+        """Close the Chrome Leela started, and drop the connection either way.
+
+        One that was already answering on the port when Leela connected is somebody else's, and
+        outlives it. The graceful CDP close is the only handle there is: `cdp_connect` starts
+        Chrome in its own session and keeps no pid, so a browser left running cannot be signalled.
+        """
+        cdp = self._cdp
+        _LIVE.get(self.port, set()).discard(self)
+        if cdp is not None and self.port in _OURS and not _LIVE.get(self.port):
+            _OURS.discard(self.port)
+            # Bounded: a Chrome that will not answer must not hold up the rest of the teardown.
+            # It answers before it exits, and a socket that drops under the call means the same.
+            try: await asyncio.wait_for(cdp.browser.close(), 5)
+            except Exception: pass
+            try: self._owned_path().unlink()
+            except OSError: pass
+        await self.close()
 
     async def page(self, tid):
         "The `Page` for target `tid`, attaching to one Leela did not open itself."

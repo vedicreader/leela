@@ -78,9 +78,11 @@ class FakeBrowser:
 
     def __init__(self, up=True, installed=True):
         self.up, self.installed, self.closed, self.opened = up, installed, [], []
-        self.mine = set()
+        self.mine, self.quits = set(), 0
 
     def running(self): return self.up
+
+    async def quit(self): self.quits += 1
 
     def available(self): return self.up or self.installed
 
@@ -558,7 +560,7 @@ def site():
 
 @pytest.mark.slow
 def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, monkeypatch,
-                                                                      tmp_path):
+                                                                      tmp_path, request):
     """The whole path, once: Chrome renders, a frame arrives, a click lands, the page reads.
 
     `FOSSICK_ALLOW_PRIVATE` because the fixture site is on loopback, which the URL guard is
@@ -578,6 +580,9 @@ def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, 
     except Exception as e: pytest.skip(f'no Chrome to drive: {e}')
 
     ws.browser = Browser(port=port, headless=True, profile=profile)
+    # Leela adopts this Chrome rather than starting it, so its own teardown rightly leaves it
+    # running. Nothing else will: without this the suite leaks a headless Chrome per run.
+    request.addfinalizer(lambda: asyncio.run(_quit(ws.browser)))
     with TestClient(ide_app(ws)) as client:
         assert 'id="tabbar"' in client.get(f'/browser/open?url={site}').text
         target = ws.tabs[ws.active].ref
@@ -715,3 +720,99 @@ async def _start_chrome(port, profile, flags=(SCALE_FLAG,)):
     if not _debug_ready(port):
         await cdp_setup(port=port, user_data_dir=profile, headless=True, timeout=60,
                         extra_flags=list(flags))
+
+class FakeCdp:
+    "A connected CDP that records the browser-level close, and the pages call `_own` makes."
+    def __init__(self, guid='G1'):
+        self.wsconn, self.is_open, self.closed_browser = f'ws://x/devtools/browser/{guid}', True, 0
+        self.browser = SimpleNamespace(close=self._close)
+    async def _close(self): self.closed_browser += 1
+    @property
+    async def pages(self): return []
+    async def close(self): self.is_open = False
+
+def _connected(monkeypatch, port, running, guid='G1', cdp=None):
+    "A `Browser` taken through `cdp()` with Chrome either already up or started by us."
+    from leela.blocks.browser import browser as B
+    b, cdp = B.Browser(port=port), cdp or FakeCdp(guid)
+    monkeypatch.setattr(b, 'running', lambda: running)
+    monkeypatch.setattr(B, 'cdp_connect', lambda **kw: _ret(cdp), raising=False)
+    monkeypatch.setattr('fossick.cdp.cdp_connect', lambda **kw: _ret(cdp))
+    asyncio.run(b.cdp())
+    return b, cdp
+
+async def _ret(x): return x
+
+@pytest.fixture(autouse=True)
+def _no_leaked_ownership():
+    "Ownership is process-wide, so a test that claims a port must not hand it to the next one."
+    from leela.blocks.browser import browser as B
+    B._OURS.clear(); B._LIVE.clear()
+    yield
+    B._OURS.clear(); B._LIVE.clear()
+
+def test_quitting_closes_the_chrome_leela_started(monkeypatch, tmp_path):
+    "The whole point: what Leela launched dies with it, rather than outliving it on the port."
+    monkeypatch.setattr('leela.blocks.browser.browser.leela_cfg', Path(tmp_path))
+    b, cdp = _connected(monkeypatch, 9901, running=False)
+    asyncio.run(b.quit())
+    assert cdp.closed_browser == 1 and not cdp.is_open
+
+def test_quitting_leaves_a_chrome_leela_merely_adopted_running(monkeypatch, tmp_path):
+    "Somebody else's browser, with their tabs in it. Leela drops the connection and nothing more."
+    monkeypatch.setattr('leela.blocks.browser.browser.leela_cfg', Path(tmp_path))
+    b, cdp = _connected(monkeypatch, 9902, running=True)
+    asyncio.run(b.quit())
+    assert cdp.closed_browser == 0 and not cdp.is_open
+
+def test_the_last_window_out_closes_the_shared_chrome_not_the_first(monkeypatch, tmp_path):
+    "Windows share one Chrome per port. Closing one must not take the pages of the others with it."
+    monkeypatch.setattr('leela.blocks.browser.browser.leela_cfg', Path(tmp_path))
+    first, cdp = _connected(monkeypatch, 9903, running=False)
+    second, _ = _connected(monkeypatch, 9903, running=True, cdp=cdp)   # the same Chrome
+    asyncio.run(first.quit())
+    assert cdp.closed_browser == 0, 'the owner quit while another window was still using it'
+    asyncio.run(second.quit())
+    assert cdp.closed_browser == 1, 'the last one out did not close what the first one started'
+
+def test_a_chrome_left_behind_by_a_crashed_leela_is_owned_again_not_adopted(monkeypatch, tmp_path):
+    "Otherwise every crash leaks a headless Chrome that only the user, with lsof, can find."
+    monkeypatch.setattr('leela.blocks.browser.browser.leela_cfg', Path(tmp_path))
+    b, _ = _connected(monkeypatch, 9904, running=False)
+    b._mine.add('T1'); b._remember()
+    assert json.loads(b._owned_path().read_text())['launched'] is True
+    from leela.blocks.browser import browser as B
+    B._OURS.clear(); B._LIVE.clear()          # the crash
+    again, cdp = _connected(monkeypatch, 9904, running=True)
+    asyncio.run(again.quit())
+    assert cdp.closed_browser == 1
+
+def test_the_workspace_teardown_quits_the_browser(ws):
+    "The browser hangs off the same `shutdown` as the kernels, or nothing ever calls `quit`."
+    quit_calls = []
+    async def fake_quit(): quit_calls.append(True)
+    ws.browser.quit = fake_quit
+    asyncio.run(ws.shutdown())
+    assert quit_calls == [True]
+
+@pytest.mark.slow
+def test_the_chrome_leela_starts_really_does_die_when_leela_quits(tmp_path, monkeypatch):
+    """The fakes prove the decision; only a real Chrome proves the process goes away.
+
+    A free port and a throwaway profile, so this starts its own Chrome rather than adopting the
+    developer's, and cannot leave one behind on a well-known port if it fails.
+    """
+    pytest.importorskip('fastcdp')
+    monkeypatch.setattr('leela.blocks.browser.browser.leela_cfg', Path(tmp_path))
+    port = _free_port()
+    b = Browser(port=port, headless=True, profile=tmp_path/'chrome')
+    async def go():
+        try: await b.cdp()
+        except BrowserUnavailable as e: pytest.skip(f'no Chrome to drive: {e}')
+        assert b.running(), 'Chrome never came up, so there is nothing to prove'
+        await b.quit()
+    asyncio.run(go())
+    for _ in range(100):
+        if not b.running(): return
+        time.sleep(.1)
+    pytest.fail(f'Chrome is still answering on the CDP port {port} ten seconds after quit')
