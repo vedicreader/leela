@@ -105,7 +105,11 @@ def _why(e):
 def _icon():
     "The window icon, for the backends that take one. macOS reads the bundle's ICNS instead."
     here = Path(getattr(sys, '_MEIPASS', '') or Path(__file__).resolve().parent)
-    return first(str(c) for c in (here/'packaging'/'assets'/'Leela.png', here/'Leela.png',
-                                  here/'leela'/'Leela.png') if c.is_file())
+    found = first(str(c) for c in (here/'packaging'/'assets'/'Leela.png', here/'Leela.png',
+                                   here/'leela'/'Leela.png') if c.is_file())
+    # It is generated, not committed, and it went missing once with nothing to show for it but a
+    # window wearing the default icon.
+    if not found: print('  no window icon; run tools/build_icons.py')
+    return found
 
 if __name__ == '__main__': run()

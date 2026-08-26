@@ -272,8 +272,18 @@ def test_the_desktop_workflow_puts_the_artefacts_on_the_release():
         assert 'build_release.py upload' in step['run']
         assert step['if'] == "startsWith(github.ref, 'refs/tags/')"
 
+def test_a_missing_window_icon_is_reported_rather_than_shrugged_off(monkeypatch, capsys):
+    """`_icon` answers with `first`, which is None when nothing matches.
+
+    The PNG is generated rather than committed, so a checkout that has not run the generator has no
+    icon, and the window silently wore the default one."""
+    import leela_app
+    monkeypatch.setattr(leela_app.Path, 'is_file', lambda self: False)
+    assert leela_app._icon() is None
+    assert 'build_icons' in capsys.readouterr().out
+
 def test_the_icon_generator_is_reproducible(tmp_path, monkeypatch):
-    "The committed PNG must be the one the generator makes, or the two silently diverge."
+    "The generated PNG must be what the generator makes, or a stale one is shipped."
     pytest.importorskip('PIL')
     import tools.build_icons as icons
     made = icons.image(1024)
