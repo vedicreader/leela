@@ -302,7 +302,7 @@ function portableToolKind(tool) {
   if (['view_file', 'view_cell', 'notebook_cells', 'read_terminal'].includes(tool)) return 'view';
   if (['edit_file', 'create_file', 'edit_cell', 'add_cell'].includes(tool)) return 'edit';
   if (['web_search', 'read_url', 'research'].includes(tool)) return 'web';
-  if (['run_python', 'inspect_python', 'list_vars'].includes(tool)) return 'run';
+  if (['run_python', 'inspect_python', 'list_vars', 'promote_var'].includes(tool)) return 'run';
   if (tool === 'read_skill') return 'skill';
   if (tool.startsWith('delegate_')) return 'delegate';
   return 'tool';
@@ -318,6 +318,7 @@ function portableToolSummary(tool, args) {
   if (tool === 'list_files') return `Scan files · ${short(a.pattern) || 'all'}`;
   if (tool === 'run_python') return `Run Python · ${short(a.code).split(';')[0].slice(0, 82)}`;
   if (tool === 'inspect_python') return `Inspect · ${short(a.code).split(';')[0].slice(0, 82)}`;
+  if (tool === 'promote_var') return `Give to user · ${short(a.name)}`;
   if (tool === 'web_search') return `Search web · ${short(a.query).slice(0, 92)}`;
   if (tool === 'read_url') return `Read web · ${short(a.url).slice(0, 92)}`;
   const body = Object.entries(a).slice(0, 2).map(([k, v]) => `${k}: ${short(v).slice(0, 54)}`).join(' · ');

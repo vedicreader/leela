@@ -293,3 +293,538 @@ A painted conversation opened every turn it held, so most of the screen was work
 
 ## `leela/workspace.py` `drop_root`
 Closing a folder left `active_root` naming it. `project_root` guards, so the surfaces followed the next open folder, but the stale value was still there for anything reading it directly. Removing a root in the tree also repainted neither the workspace name in the header nor the project pills, so the header went on naming a folder that was no longer open.
+
+## `leela/blocks/fs/fs.py` `Sandbox.under`, `leela/blocks/fs/app.py` `fs_new`
+`Sandbox.rename` refused any name holding a path separator, and `/fs/new` joined the typed name onto `parent` with no such check, so `../sibling/x.py` in the new-file dialog created the file in another folder. `_check` held it inside the open roots, so it was an inconsistency between two routes rather than an escape. Both go through `Sandbox.under` now, which validates the name and resolves it against the parent in one place, so the new-file and rename dialogs refuse the same names with the same 400 body. Nested creation is still available where it is meant to be: `/refactor/move` takes a whole path, and `mkdir` and `touch` still make the parents they need.
+
+## `leela/blocks/settings/settings.py` `user_settings_file`, `Settings.__init__`
+The path of the user settings file was written twice: `USER_SETTINGS_FILE`, exported and read by nothing, and a second copy of the same expression inside `Settings.__init__`. Pointing the exported name somewhere else moved neither a read nor a write. A test that redirected it drove the settings modal, unticked a checkbox, ticked another, saved, reopened and got both back, then read its own file and found it empty, which read as user settings not surviving a save. There is one expression now, `user_settings_file()`, called rather than bound at import, so a config dir moved under a test takes the reads and the writes with it.
+
+## `leela/workspace.py` `Workspace.save`, `SESSION_KEYS`
+`save` wrote `state()` over the whole document, and `state()` always names `roots`, `tabs`, `active` and `active_root`. A workspace built to record a model choice holds no folders and no tabs, so writing those four fields blanked the session saved beside them: one `leela_cfg/workspace.json` lost its roots and eighteen tabs, and a bare `leela` launch opened empty. A save merges onto the document already on disk. `only` names the keys a partial write owns, and it still writes `version`, because a document without one is read as a version-1 document and every tab loses its `private_kernel`. The session keys are written by a workspace that read that file or opened something in it, and by no other. Closing the last folder is such a workspace, so an empty `roots` is still recorded. The write goes through `atomic_save`, since a read-modify-write interrupted halfway loses the whole session rather than the last change.
+
+## `frontend/editor.js` `overviewGutter`, `leela/static/lee-ide.css` `.has-overview`
+`has-overview` sets `scrollbar-width: none`, and where the platform draws the bar in the flow rather than over the content, that hands its width to the text. macOS does under Appearance > Show scroll bars > Always, and every Windows and Linux desktop does. Wrapped text rewraps at the new width, `scrollHeight` moves, and `scrollHeight` is the number the stripe decides on: the stripe appeared, the pane got wider and shorter, it fell under the threshold, the stripe went, the bar came back, and it flickered at frame rate. The rewrap is worth hundreds of pixels wherever a line sits near a wrap boundary, so the 24px/8px hysteresis could not have held it. This is the width twin of the height loop `overflowsDown` fixed, and that fix does not reach it: the border box holds still, but what is inside it does not. `overviewGutter` measures the bar's thickness on the element itself and holds it back as padding, so the content width does not move when the class does. The thickness is measured rather than assumed, so an overlay bar reserves nothing and no gutter appears where none is needed. CodeMirror's own scroller is left to `.cm-lee-has-overview .cm-scroller`, which already reserves the stripe's 15px, at least what a bar in the flow was taking. The notebook stripe in `leela/blocks/git/cwd.js` toggles the same class and goes through the same helper. Chromium on macOS draws overlay bars whatever `::-webkit-scrollbar` asks for, which is why no browser test had reproduced this; the test fixture asks for `scrollbar-gutter: stable`, which puts a bar in the flow there too.
+
+## `leela_app.py` `open_folder`, `leela/hub.py` `WorkspaceHub`
+Opening a folder while Leela was running posted to `/fs/add_root`, so the folder joined the window already open as a second root: one kernel, one tab bar and one agent across two unrelated projects. A launch already gave each folder a workspace of its own, so the Dock, Finder and the picker did the opposite of what the same app did a second earlier. `open_folder` asks the hub for a workspace instead, and the hub builds one with its own state file, its own kernel pool and its own window. `add_root` stays, saying what it does: it adds a folder to the window you are in.
+
+## `leela/hub.py` `WorkspaceHub._lifespan`
+The lifespan legs were locals, zipped over the sites present at startup. A workspace opened after that never received `lifespan.startup` and, worse, never received `lifespan.shutdown`, which is what stops a workspace's kernels, terminals, pyright and dev servers. Every folder opened at runtime would have outlived the quit. The queues and the tasks are hub state now, and `add_site` starts a leg for a late site. It reaches the loop through `call_soon_threadsafe`, because a request runs in uvicorn's threadpool where there is no running loop and `create_task` raises.
+
+## `leela/desktop.py` `off_main_thread`, `run_shell`
+`webview.create_window` builds nothing at all when it is called from the main thread after `webview.start` owns it: it appends a `Window` that is never realised, and the next `load_url` waits twenty seconds and raises. A Dock menu row and an `odoc` Apple Event both arrive on the main thread, so both ways of handing a folder to a running app were exactly the ways that could not open one. `run_shell` wraps the callback in `off_main_thread` once, where every native caller reaches it. `ShellApi.pick_folder` needed no wrapping: pywebview already runs each `js_api` call on a thread of its own.
+
+## `leela/hub.py` `workspace_slugs`
+The slug names the state file, and a counter made it positional: open two projects that both end in `src` the other way round and each was served the other one's tabs. The assignment is remembered per folder in `leela_cfg/workspaces/index.json`, so a folder keeps the slug it was given. A missing or corrupt index re-assigns rather than raising, since it is a convenience and not the source of truth.
+
+## `leela/desktop.py` `menu_chord`, `install_menu_patch`
+An `NSToolbar` mirroring the web toolbar was built here first and removed: it was the wrong feature and it stacked a second `run / next / all` above the web bar. What replaced it is the menu bar, and three things in it are not obvious.
+
+A menu item's key equivalent is consulted in `performKeyEquivalent:` before the keystroke reaches the web view, so every chord a menu row takes is a chord the page no longer gets. Leela's keymap is scoped and full of bare letters: `new_file` is `n` in the files pane, `delete` is `d`, `sort` is `o` in variables. Installing those would have fired New File every time the letter n was typed anywhere in the app. `menu_chord` takes a chord only when the action is `global` and its first chord carries a modifier; everything else shows no shortcut. A menu bar cannot express scope, so a scoped chord is declined even when it is modified.
+
+The bar is rebuilt whenever a window takes focus with a menu that is not the one pywebview built last, so anything done to `NSApp.mainMenu()` once, after start, is thrown away by the second window. `install_menu_patch` wraps `BrowserView._recreate_menus`, which is the one method both rebuild paths go through. It is a monkeypatch of a dependency and is written down as one.
+
+Turning off `SHOW_DEFAULT_MENUS` is what puts our menus in the order macOS expects, but it takes pywebview's own Edit and View menus with it, and its View menu was the only source of Enter Full Screen. Cut, Copy, Paste, Select All, Minimize, Zoom, Bring All to Front and Enter Full Screen are `Std` rows: a nil target and a raw selector, so AppKit walks the responder chain to the web view, rather than JS pretending to be a clipboard. The Leela menu is `Menu('__app__')`, which pywebview splices into the real application menu; a menu actually titled `Leela` produces a second one beside it.
+
+## `leela/blocks/git/git.py` `GitRepo.save`, `leela/blocks/git/app.py` `_journalled`, `_guard`
+`ignore` and the conflict resolutions wrote through Ramabana's own `Path.write_text`, so a `.gitignore` rule and a settled merge were the two IDE writes nothing kept a copy of: no `atomic_save`, no `FileHistory` version, no journal row, and nothing in `/history/operations` for undo to reach. `GitRepo.save` is the one call in `write_worktree` and `ignore` that touches bytes, and the block points it at `ctx.fs.write` for the length of one mutation, collecting `(path, before, after)` for `ctx.journal.record`. A mutation that fails after a write lands rolls every written file back, as `/refactor/apply` does. The saved mode is put back after the write, because `atomic_save` renames a fresh file into place and would drop the executable bit. A repository rooted above every open folder keeps its plain write and gets no row, rather than having an operation that works today refused. `resolve_conflict` was worse than unlogged: it took the browser's editor text and wrote it over whatever was on disk at that moment, with nothing compared against what the three panes were built from, so a change made in another editor between opening the panes and pressing resolve was destroyed without a word. `_guard` refuses when the worktree no longer reads as `/git/conflict` served it, answering with the shape `/refactor/apply` uses for the same refusal, a plain sentence at 409 rather than `Type: message` at 400, through `_failed` on every action route. The text the panes were built from is remembered per `(root, path)` when `/git/conflict` is served, and a request may carry it as `before` instead; a resolution with neither is refused rather than guessed at. That left two things undone, the merge-review pane's ungated write and the index an undo did not put back, and both are closed below.
+
+## `leela/blocks/runtime/support.py`, `leela/blocks/runtime/app.py`, `leela/blocks/vars/app.py`
+The variables panel reads a namespace through a dhrishti inspector running inside the kernel, and `dhrishti.core` imports numpy and pandas at module level. Leela's server never imports dhrishti and says so; `bootstrap_src` appends the server's own `sys.path` to the kernel's instead, so the kernel borrows Leela's copies. A kernel on the same Python minor version borrows them and works, which is why nothing caught this. A kernel on a different one cannot: the extension modules carry the wrong ABI tag. The frozen app is CPython 3.12, most project environments now are 3.13, and the bootstrap cell died on `Original error was: No module named 'numpy._core._multiarray_umath'` under eighteen lines of numpy's own troubleshooting advice. The panel printed all of it and offered one button, Restart kernel and repair, which restarts a kernel that will fail the same way.
+
+The interpreter that lacks the packages is the project's, never the app's. Shipping more in the bundle cannot reach it, so the fix installs into the environment the kernel actually runs in, on the pattern `/runtime/support` already set for `ipykernel` and `ipymini`. `inspector_support` asks the question the kernel asks, rather than a list of package names: it runs `import dhrishti.serving` in the candidate interpreter with `support_paths()` appended, so a project whose Python matches Leela's is told it needs nothing, and a dependency added upstream is answered for without editing a list here. `INSPECTOR` is the install list only, unpinned, because a project's own pandas is its choice. `/runtime/inspector` is a separate route from `/runtime/support` on purpose: `checkProjectRuntime` calls `/runtime/create` without asking when uv is present, on the rule that a directory Leela made is one it may fill, and that exemption does not stretch to a hundred megabytes of numpy and pandas. `installable` refuses Leela's own interpreter and anything inside a signed bundle, which is what `extras_site` exists for. The offer is made off `boot_error` alone: `last_api_error` is a live inspector that did not answer once, and no package fixes that. The panel suppresses its own 2.5-second repaint while an install runs, or the disabled button and the progress line are thrown away every poll.
+
+`packaging/macos/setup.py` and `packaging/windows/setup.py` now name pandas beside numpy. It was already in the DMG, but only because py2app's scanner followed the dhrishti import that Leela's source deliberately never makes, so no line anywhere stated the dependency and a scanner that stopped following it would have taken the variables panel out of the app with nothing to say so.
+
+## `leela/blocks/runtime/kernels.py` `check_gateway_deps`, `GatewayService.start`, `GatewayKernel.start`
+The `[gateway]` extra installs `jupygate` and `jupyasyncclient` together, and only the first import was guarded. `GatewayService.start` turned a missing `jupygate` into a `RuntimeError` naming `pip install "leela[gateway]"`, which `serve_ide` catches to fall back to the direct transport. `GatewayKernel.start` imported `jupyasyncclient` unguarded, so half an extra showed a traceback where the other half showed a sentence. The two failed at different points as well: `jupygate` failed at startup, where the fallback is, and `jupyasyncclient` failed at the first kernel start, after the transport choice was made and out of the fallback's reach, so every kernel in that session failed instead of the session using direct kernels.
+
+`check_gateway_deps` checks both imports and is called from `GatewayService.start` and from `GatewayKernel.start`, so the two report the same sentence and the failure lands at startup where `serve_ide` can still fall back. It runs before `GatewayService.start`'s early return, because a service that is already up would otherwise skip it. It also refuses a `jupyasyncclient` outside `>=0.2.1,!=0.2.8`: 0.2.8 makes the gateway `async for` over a coroutine, so a kernel there executes nothing and says nothing, and the range is checked with `packaging`'s `SpecifierSet` against the same constraint `pyproject.toml` states. A version `importlib.metadata` cannot report, as in a vendored copy, is allowed rather than refused.
+
+## `leela/blocks/runtime/kernels.py` `GatewayService.start`
+`jupygate.core.serve` with `in_thread=True` polls `server.started` for ten seconds and gives up with `TimeoutError('uvicorn did not start')`, which is what a port already held looks like from here. `TimeoutError` is an `OSError`, so `serve_ide`'s `except (ImportError, RuntimeError)` did not catch it: ten seconds of nothing, then a traceback, and no fallback to the direct transport. `start` now catches `OSError` and re-raises a `RuntimeError` naming the port and the two things that hold it, another Leela or a leftover gateway. An explicitly requested `--transport gateway` still refuses, because `serve_ide` re-raises whenever the transport was not `auto`.
+
+`--gateway-port 0`, which `leela_app.leela_args` passes for every desktop launch, is an ephemeral port: `serve` hands it to uvicorn, and `server.url` carries whichever port was bound, which `GatewayService.url` prefers over `self.port`. Two desktop windows cannot collide. What collides is a literal port, so the default 8787: a second `leela serve`, a gateway left behind by a crash, or `KernelPool.get` constructing its own `GatewayService()` on the default port in a process that already has one.
+
+## `leela/blocks/git/app.py` `_guard`, `_index_back`, `leela/core/session.py` `OperationJournal.hooks`
+The merge-review pane's apply-result button posts `write_worktree` carrying the text the reviewer edited in the right-hand pane, and nothing compared that text against the file it replaced. A save from an agent, a formatter or another editor between the tab opening and the button being pressed was overwritten without a word, which is the fault `_guard` already refuses for a conflict resolution. `_guard` now takes the operation rather than reading `choice`, and `/git/action` runs it for `write_worktree` too, so both answer with the same plain sentence at 409 through `_failed`. `/git/action` is the only route that reaches `write_worktree`: `/git/tree/action` allows `stage`, `unstage`, `discard` and `ignore` and nothing else, and `resolve_conflict` and `resolve_safe_conflicts` reach `GitRepo.write_worktree` in process rather than over a route. The before-image is what `/git/review/file` served, returned as `worktree` and remembered per `(root, path)`, and the browser echoes it back as `before` from the tab it was opened with. Merge reviews keep their own cache rather than sharing the conflict panes': one dictionary for both would mean that opening a review diff refreshed the text a stale conflict resolution is checked against, and waved it through. Only a review whose result can be applied is remembered, so paging through a forty-file review cannot evict the conflict panes. The pane's `left` is not usable as the before-image even though `can_apply` requires a clean tree at the base commit, because it is a Git blob: a checkout filter or a rename makes it differ from the file on disk for reasons that have nothing to do with anyone else's edit. A notebook is refused outright, since those panes hold decoded cell sources rather than the file and the browser hiding the button for `.ipynb` was all that stopped that write. The tab carries the repository it was built from and sends it, because a diff tab outlives the panel's chosen repository and would otherwise write its path into whichever repository is chosen now.
+
+Undo of a Git row put the text back and left Git's index where the operation had staged it, so a reversed resolution still read as staged and only `git reset` finished the job. The journal cannot know what an index is, so it grew the smallest seam that lets a block say: `OperationJournal.hooks` maps a row's `kind` to `hook(op, side)`, called once the rows are back, and `record` takes an `extra` dict kept on the row. The Git block registers the one hook there is. `GitRepo.stage` hands a `stager` the paths first, mirroring `saver`, and the block reads `git ls-files -s` for them before the staging happens, so the row carries the index entries the operation replaced rather than a guess at them. Undo replays those entries through `git update-index --index-info`, which puts a conflict's three stages back exactly, mode and all, and touches no file. `git restore --staged` will not do: `git add` destroys stages 1, 2 and 3, and copying HEAD into stage 0 leaves a third state, one where the conflict centre never offers the file again and a commit finishes the merge with content nobody chose. Once the merge is over there is no such state to return to, so a row whose entries are unmerged is unstaged instead and the undo says so in its `note`. A hook that fails reports in `note` rather than raising, because by then the text is back and the operation is saved. A row written before any of this, or one whose operation staged nothing, undoes exactly as it did.
+
+That left `resolve_conflict` with `ours`, `theirs` or `worktree`, which is a Git checkout rather than a write through `saver`, so it staged a file and left no journal row at all. That is closed below.
+
+## `leela/blocks/agent/models.py` `probed`, `forget_probes`, `tests/conftest.py` `_no_warm_probes`
+`forget_probes` dropped the cached answers and nothing told a probe already gathering that it had. The thread finished, wrote its value into `_PROBED` and into `probes/` on disk, and the next caller was served the state that had just been thrown away. Refresh in the model picker is `forget_probes(disk=True)`, so a refresh that arrived while a probe was under way could put the stale catalog straight back and keep it for the next launch as well. `probed` now reads a generation counter when it starts, `forget_probes` bumps it, and `_keep` commits only when the two still match. An answer gathered across a drop is still returned to whoever asked for it, and is not written in.
+
+The suite saw the same fault as an intermittent failure of `test_model_picker_shows_older_models_by_default`. `ide_app` warms the probes on a startup thread and nothing joins it, so a suite that builds the app hundreds of times has several of them running at once. One gathers a catalog under a test with no `OPENAI_API_KEY` and commits it after `_cold_probes` has cleared the cache for the next test, which had patched `_oai_cache` to offer `gpt-4.1` and was answered with a catalog holding no OpenAI rows at all. Which test the answer landed in depended on how long the gather happened to take, which is why the same tree passed one full run and failed the next. `_no_warm_probes` stops the startup warmer for the length of a test, on the pattern `_no_backup_threads` already set: the generation counter drops an answer gathered before the cache was cleared, and the fixture closes the narrower window where a leftover thread starts gathering after it and before the test has patched anything.
+
+## `leela/static/js/core.js` `stripWorkLog`, `payloadContainer`, `leela/blocks/nb/cells.js` `renderOutputs`
+A prompt cell keeps its work log twice. `Workspace.ask_cell` and `ask_cell_stream` write the tool rows
+into `cell.calls` and append `Agent.turn_md()`, the same rows as GitHub-flavoured `<details>` markdown,
+to the end of `cell.reply`. `renderOutputs` drew both: the rows as real accordions, then the reply
+underneath. `/markdown/render` is mdhtml, whose dialect has no raw HTML at all - raw enters through a
+`{=html}` fence, and a `div` classed `details` lowers to a `<details>` element - so the appended copy
+came out as literal `<details>` and `<summary>` text over a fully unrolled tool result, under a fold
+already holding it. `allow_raw` is not involved: it only rewrites `{=html}` fences, and the escaping
+happens either way. The reply is rendered without its trailing work log whenever `calls` has the rows,
+so the log is drawn once and the cell keeps the trail for the notebook it saves into.
+
+`upgradePortableToolMarkdown` turns a JSON tool payload in a `<pre><code>` into a step row, and
+replaced `code.parentElement.closest('details')`: the nearest `<details>` ancestor, whichever one that
+was. Where a fold holds several payloads as siblings, as mdhtml's `:::{.details}` lowers them, the
+first payload replaced the whole group, summary and later steps included. The rest of the loop then
+worked on nodes still parented by that detached group, where `replaceWith` is a no-op, so a two-step
+log read as one row and lost its title. `payloadContainer` takes the fold only when it is a `result`
+fold whose single non-summary child is this block, and the loop skips a `<code>` already off the page.
+
+## `leela/blocks/git/git.py` `GitRepo.sider`, `leela/blocks/git/app.py` `_sided`, `_bytes_back`, `leela/core/session.py` `OperationJournal.record`
+
+Choosing "use ours", "use theirs" or "keep the working tree" in the conflict centre left no journal row. `resolve_conflict` writes through `saver` only for `resolved`; the other three are `git checkout --ours`, `git checkout --theirs` and nothing at all, followed in every case by `git add`. A checkout writes the working file itself, so `_sandboxed` collected nothing, `rows` was empty and `_journalled` recorded nothing. Choosing a whole side overwrote whatever was on disk, and undo could not reach any of it.
+
+Reimplementing the checkout as `write_worktree(path, conflict_versions(path)[choice])` is the obvious fix and it is wrong. `git show :2:path` returns the blob in its *clean* form, and staging it cleans it a second time. In a repository with a `filter=` attribute, `checkout --ours` puts `OURS` in the tree and `BHEF` in the index, where writing the stage back puts `BHEF` in the tree and `OURS` in the index: the merge would commit content that is on neither side. The `eol=crlf` case, where the two agree, is what makes this look safe. A missing stage is worse than wrong: `git show :3:path` is `''` for the side of a modify/delete conflict that deleted the file, so a write of it stages the empty blob where `checkout --theirs` refuses with `path 'f.txt' does not have their version`. A symlink stage is the link's target, which `write_worktree` would follow and write *through* the link into whatever it points at. A submodule stage is a gitlink `git show` cannot read at all.
+
+So the checkout stays exactly as Ramabana runs it, and what it replaced is read rather than saved. `GitRepo.sider` is the seam, set per instance beside `saver` and `stager`: `resolve_conflict` reads the working file before the checkout, hashes it, and hands `(target, before, after, oid)` over afterwards in a `finally`, so a `git add` that fails after the checkout succeeded still leaves the block a row to roll back. `_sided` puts that row in the same list `_sandboxed` fills, so a text side is journalled, versioned and undone exactly as `resolved` is, and Git's bytes are the ones on disk.
+
+A binary side cannot be a journal row, because the bodies are text and one read back through `errors='replace'` is not the file. Its bytes are still in the index: Git leaves stage 2 in the tree for a binary conflict, so the file hashes to the stage-2 blob unless someone edited it. The row carries the hash, and undo restores the three stages and then runs `git checkout --ours` when the restored stage 2 still matches it. A hash that does not match means the file was edited after the merge left it, which no stage holds, and the undo says so in its `note` rather than putting the wrong bytes back. Nothing is written to the object database: a loose object from `git hash-object -w` is unreferenced, and `git gc --prune=now` deletes it, which would leave the row un-undoable with `bad object`.
+
+`worktree` writes no file at all, and a resolution that changes only the index had no way to be recorded: `OperationJournal.record` returns None without resources, and `rows`, `undo` and `redo` all read a row with none as spent. `record` takes `hooked` for a row its `kind`'s own hook reverses on its own, `_has_work` is the one place that decides, and `rows` falls back to a `paths` the row names itself so the history modal has something to show. Such a row becomes the default target of `/history/undo`, so an undo after keeping the working tree takes the staging back rather than the last edit.
+
+`ours` and `theirs` are gated exactly as `resolved` is, and refuse with the same plain sentence at 409 through `_failed`. The argument that a checkout takes its content from Git and so cannot be stale is only half of it: it overwrites the working file, and a hand-edit made after `/git/conflict` was served is the same loss `_guard` exists to refuse. Gating them only when a before-image happens to be around would make the protection depend on `PANES`, so the thirty-third conflict file opened would be written without a check, invisibly. `showWholeSideConflict` sends `before` now rather than leaning on the server still holding those panes. `worktree` is not gated: it stages the file exactly as it is on disk, so a disk that moved is what it was asked for.
+
+Two things in this area were still open at that point. Both are closed below.
+
+## `leela/blocks/nb/nb.py` `strip_work_log`, `Notebook._context_cell`
+
+The visible half of the doubled work log was closed above, in `renderOutputs`. The expensive half was
+not. `_context_cell` writes a prompt cell's whole `reply` back as `<answer>`, and `Notebook.context`
+is what grounds every later turn in the document: `Workspace._agent_context` for a prompt cell, and
+`nb.context(len(nb))` for a prompt-bar turn on the open notebook. So the trail `ask_cell` and
+`ask_cell_stream` append was paid for again on every turn after the one that produced it, with the
+tool results unrolled. `MAX_CONTEXT` and `MAX_CELL_OUT` are both `None`, so nothing capped that
+growth. Three tool calls in one cell of this repository, two `search_code` and one `read_file`, make a
+10,480-character trail under an 84-character answer: 99% of the cell's `reply`, carried forward
+untouched.
+
+`strip_work_log` removes a trailing `turn_md` fold, and `_context_cell` applies it before emitting
+`<answer>`. The pattern is the Python twin of `stripWorkLog` in `leela/static/js/core.js`, anchored
+with `\Z` and compiled without `re.M`, since a bare `$` under `MULTILINE` would end the match at any
+line break and eat the rest of the answer. The strip is unconditional, unlike the client's, which
+strips only when `calls` has rows: a cell read from an older `.ipynb` whose `calls` metadata is
+missing would otherwise keep padding the context forever. `_context_cell`'s empty test reads the
+stripped reply too, so a cell holding nothing but a trail leaves context entirely rather than
+contributing an empty `<cell>`.
+
+Nothing else changes. The notebook file keeps what it kept: `nbcell` still writes `reply` whole into
+`leela` metadata, so the trail survives a save and a reload, and `test_a_streamed_cell_still_gets_its_activity_trail`
+still holds. Stripping at the source instead, so `reply` never carried the trail, is the cleaner seam
+and is the one to take when there is room to check every reader of that metadata; the context builder
+is the one place the cost is actually incurred. A reply whose own prose ends in an unrelated
+`<details>` is not matched, because the summary text is anchored to the `turn_md` title.
+
+Two neighbours of this are still open. `<answer>` is emitted whole while `<output>` is clipped by
+`out_chars`, so a long prose reply is still an unbounded context term. And `notebook_approvals` inserts
+markdown cells holding `ask_md`/`answer_md` plus the call's arguments as indented JSON, at the default
+`context_mode='auto'`, so every approved write is re-sent on every later turn: the same duplication one
+cell over, which stripping a `<details>` does not touch.
+
+## `leela/blocks/git/git.py` `GitRepo.drop`, `stages`, `_drop_side`, `leela/blocks/git/app.py` `_dropped_files`, `_guard_batch`, `_rollback`
+
+Choosing the side of a modify/delete conflict that deleted the file failed with `error: path 'f.txt' does not have their version`. That is Git's answer to `git checkout --theirs` when stage 3 is not in the index, and it is not an answer to what the button asks for. `showWholeSideConflict` is the panel for exactly this conflict, and it draws the empty side as "This side does not have this file." Pressing it left the file conflicted and said something about a checkout nobody ran.
+
+A modify/delete conflict has two stages, never three. When they deleted, the index holds stages 1 and 2, `git status --short` reads `UD`, and the working file holds our version. When we deleted, it holds stages 1 and 3, reads `DU`, and the working file holds theirs. `git checkout` for the missing side refuses in both directions. So the side that has no stage is the side that asked for the file to go, and the resolution is to take it away and stage that. `GitRepo.stages` reads the unmerged entries and `resolve_conflict` takes `_drop_side` when the chosen side has none of them.
+
+The file is not deleted. It is moved aside whole, through a `dropper` seam set beside `saver`, into the journal's `Trash`. A modify/delete file can be binary, executable or a symlink, and none of those survives being journal text: a binary read back through `errors='replace'` is not the file, `atomic_save` drops the executable bit, and a symlink written back as text is a copy of whatever it pointed at. `Trash.keep` is one rename, which keeps all three, and `OperationJournal.record` already takes `trashed` rows that undo moves back. `git add` on the moved-aside path then stages the deletion, which is one call to `GitRepo.stage`, so the row still carries the index entries the operation replaced. Undo moves the file back and replays those entries, and the file is conflicted again with the stages it had. Redo moves it aside again and stages the deletion again.
+
+`git rm` would do the same two steps in one command, and it is the wrong one here. It leaves nothing for undo to move back. The journal's own trash is what makes the removal recoverable, so the removal has to go through it.
+
+`_dropped_files` does not resolve the path it is handed. `Path(target).resolve()` follows a symlink, so a conflicted link would have moved aside the file it points at, which is on nobody's side of the merge, and left the link itself in the tree. It resolves the parent and keeps the name. A gitlink is refused by name rather than moved: `git rm` on a submodule takes its whole working tree, and a mode-160000 stage cannot recreate the contents.
+
+`resolve_safe_conflicts` wrote over conflicted files through `saver` with nothing compared against what it overwrote. The plan the button is built from is `/git/conflicts`, and the confirm dialog quotes its count back: "Stage N deterministic resolutions?". The honest before-image is therefore every conflicted file's text at the moment that plan was served, so `/git/conflicts` remembers it and `_guard_batch` checks it. A file that moved, a file the plan never named, or a file an editor tab holds unsaved edits to refuses with the same plain sentence at 409 through `_failed` that `resolve_conflict` and `write_worktree` answer with.
+
+The remembered plan is one entry per repository, not one per file, unlike the conflict panes and the merge reviews. Those are keyed per file and capped at `PANES`, so a forty-file merge would evict its own before-images and the batch would be checked against nothing. The browser echoing them back, which is what a merge review does, would mean shipping every conflicted file's body to the page and back for a button that names only paths. One entry per repository cannot be evicted by another file being opened, and the entry is dropped once the batch runs, because by then every file in it has changed.
+
+`_guard_batch` names the paths it checked back into the request. Without `paths`, `resolve_safe_conflicts` resolves every file that is conflicted when Ramabana reads the plan again, which is not the set the guard looked at.
+
+Every check runs before the first file is written, so a stale file refuses the batch rather than half-applying it. That is not enough on its own. `resolve_safe_conflicts` writes and stages one file at a time, so a failure on the third of five leaves the first two written and their conflict stages already collapsed to one settled blob, and `record` is never reached, so there is no row to undo. `_rollback` put the worktree text back and left that index alone. It now replays the entries `_staged` captured, which is the same `update-index --index-info` the undo hook uses. A batch that fails part-way leaves the tree and the index as they were.
+
+## `frontend/editor.js` `overviewGutter`, `leela/blocks/git/cwd.js` `paintNotebookOverview`
+
+A file open in the IDE drew its overview stripe and the pane's own scroll bar at the same time,
+side by side down the right edge, wherever the platform draws bars in the flow: macOS under
+Appearance > Show scroll bars > Always, and every Windows and Linux desktop. The stripe is meant to
+be the bar, so a bar beside it is a second thing to scroll and the arrangement the stripe replaced.
+
+Two stripes reach the same element. `#editor` is the pane a notebook scrolls, and it is also the
+pane a file's CodeMirror is laid out inside at the height of the whole file, so `scrollerFor` walks
+up to it and the file's stripe hides its bar too. Both hide it by the same means, `overviewGutter`,
+which sets `has-overview` and holds the measured thickness back as `padding-right`. Neither knew
+about the other. `paintNotebookOverview` runs on every scroll of `#editor` and on every window
+resize, whatever the tab holds, and asserted `overviewGutter(host, false)` for anything that is not
+a notebook. So on a text tab the file's plugin added the class on its frame and the notebook
+painter took it off on its own, both queued on `requestAnimationFrame` by the same scroll event:
+the bar came back under a stripe that was still drawn, and which of the two you saw was decided by
+whichever frame ran last. Recorded live at 24 frames out of 24 showing both.
+
+The bar is now given back only to whoever took it away. `overviewGutter` takes a third argument
+naming the stripe, writes it to `dataset.leeOverview` when it hides a bar, and refuses an `off`
+from any other name. The notebook painter passes `'nb'` and the editor plugin `'cm'`, so the
+notebook's assertion on a text tab is a no-op while the file's stripe holds the pane. The claim
+still changes hands: opening a file over a notebook leaves the class on, and the file plugin's
+first `on` call takes the name over without touching the padding it inherits, which is the same
+thickness measured on the same element. Opening a notebook over a file goes the other way through
+the plugin's `destroy`, which releases under its own name before the notebook paints.
+
+This is not the flutter that `overviewGutter` was written for and does not undo it. That was one
+stripe feeding itself through the width its own class handed back to wrapped text; this is two
+stripes contradicting each other about one pane. The width compensation is untouched, and both of
+its tests still pass.
+
+## `leela/blocks/agent/approvals.js` `addResponseRevision`
+
+The three controls under a finished turn, `Edit what agent remembers`, `Undo from conversation` and
+`Restore files`, did nothing when clicked and gave no sign why. The report was "I see the buttons.
+I click edit and undo. Nothing happens."
+
+The dispatch was correct. `bindResponseRevisions` binds one delegated listener on `#agentlog`, the
+bar is painted inside it by `renderTurns` on every repaint, and a click on an available control
+opens its dialog. What the listener also does is `if (button.disabled) return`, and for the turn in
+the report all three were disabled: `turn_capabilities` reports `known: false` for a turn this
+process holds no checkpoint or transaction for, which is every turn from a conversation restored
+after a relaunch, and from past `MAX_CHECKPOINTS` in a long one.
+
+Nothing in the interface said so. `.lee-btn` has no disabled appearance in `lee-ide.css`, so a
+measurement of both states returned identical colour, background, border, opacity `1` and
+`cursor: pointer` for a dead control and a live one. The only explanation was the `title`, which is
+a hover in a packaged app with no status bar, and reads as a dead button before that.
+
+An unavailable control is now muted and states its reason on the row. The button stays, so a
+control nobody can reach today is still a control they can learn exists tomorrow. The reason moves
+out of the `title` into a `[data-unavailable]` line under the buttons: one shared sentence when the
+turn is unknown to this process, since all three would otherwise repeat it, and one clause per
+control otherwise. The muting and the line are inline styles rather than stylesheet rules, so the
+bar explains itself wherever it is painted.
+
+## `leela/blocks/runtime/engines.py` `EngineBroker.attach`
+
+Switching to an Ollama chat model failed with `AttributeError: type object 'OllamaChat' has no
+attribute 'create_engine'`. The same models answer in Ramabana, which reaches rishi directly and
+never passes through the broker.
+
+`attach` asked whether the model is local. `ModelSpec.local` is `backend not in HOSTED`, and
+`HOSTED` is `('remote', 'copilot', *AGENTS)`, so ollama is local. Local is not the question the
+broker needs answered. Ollama is a server that holds the weights in its own process, and rishi
+dials it. `OllamaChat` therefore has no `create_engine`, and neither do `ClaudeChat` or
+`CopilotChat`. Only `LitertChat`, `MlxChat` and `LlamaChat` have one. `attach` reached
+`engine_key`, `engine_kw` and `inspect.signature(cls.create_engine)`, and the guard there catches
+`ImportError` only, which is the uninstalled-runtime case rishi reports for itself.
+
+The broker now asks whether the runtime builds an engine this process holds. `_create_engine`
+returns the classmethod or None, `attach` returns None for a runtime that has none, and
+`engine_kw` is built from nothing for one. `engine_key` and `_build` are reachable only through
+`attach`, so the early return is the whole fix. The `spec.local` test stays in front of it: a
+hosted model needs no rishi import to be ruled out.
+
+`status` counts engines this process loaded. An Ollama workspace reports none, and that is
+correct. The weights are in Ollama's daemon and Leela cannot count or release them.
+
+## `leela/blocks/runtime/engines.py`, releasing an engine
+
+A local model whose chat failed keeps its weights. `Backend.start` swallows the failure, sets
+`chat` to None and records a note, and the backend stays in the agent's `_backends`. The engine it
+was handed stays loaded. Eviction runs in `_make_room` only, which is reached when a new engine is
+wanted and `max_engines` (`LEELA_MAX_ENGINES`, 3) is already met, so nothing releases it until a
+fourth distinct model is asked for. At the ceiling with every engine live, the answer is
+`RuntimeError('model engine limit reached ...')` and no eviction at all.
+
+A half-registered entry after a failed build was suspected and does not exist. `self.engines[key]
+= _Loaded(self._build(spec, kw), key)` builds before it assigns, so a `create_engine` that raises
+leaves the dictionary untouched and `be.kw` without an `engine`. Verified by running it.
+
+Releasing on the next `attach` was designed and rejected. Two holes:
+
+1. `Backend.start` sets `_tried` before the attempt, not after. For the whole of `_start`, which is
+   the weight load, a backend reads as tried with no chat, which is the same shape as one that
+   failed. Another workspace attaching in that window would close the engine the first is at that
+   moment building on.
+2. `_Loaded.users` does not know every holder. `RishiBackend.spawn` passes `chat.engine` to a
+   sub-agent backend rishi creates itself, `_oneshot` builds `_oneshot_chat` on it, and
+   `Agent.lend_model` hands it to a bare `rishi.Chat` for the vault. Leela registers none of them.
+   A parent backend that failed or closed can be the only registered user of an engine a live
+   vault chat is answering on.
+
+Both holes exist under `_make_room` today. Sweeping on every attach would turn a rare wrong
+eviction into a routine one. `/runtime/engines/clear` is the release instead: a person asks, the
+route refuses at 409 while a session is on a model and names it, and a forced clear closes it
+anyway. No timer and no reaper thread. A reaper would need the first hole closed first, which
+means a signal from ramabana that separates loading from failed, and the second closed by
+registering the engines `spawn` and `lend_model` hand out.
+
+`MlxChat.__new__` re-routes a vision repo to `MlxVlmChat`, and `get_runtime('mlx')` returns
+`MlxChat` either way. The broker builds a text engine from `MlxChat.create_engine` and hands it to
+a chat that is `MlxVlmChat`. The two signatures match, so `engine_key` cannot tell them apart.
+Untested here and not fixed.
+
+## `leela/blocks/browser/browser.py` `resize`, `start_cast`
+
+Every page in the inline browser was soft on a Retina display. The panel asked for `scale: 1` in all
+three places it told the server what viewport it wanted, so `Browser.resize` set
+`deviceScaleFactor=1` and the canvas drew a 1x frame into a box the display then painted at two
+device pixels per CSS pixel. The stream was also JPEG quality 62, which leaves visible artefacts on
+body text.
+
+`deviceScaleFactor` is not the lever. Measured against a real headless Chrome, with a 200px div and
+an 800x600 viewport, the screencast frame carries 200 image pixels for that div at
+`deviceScaleFactor=1` and at `deviceScaleFactor=2`, with `dontSetVisibleSize` and
+`Emulation.setVisibleSize`, and with the CDP window grown to 1700x1500 first. A per-page device
+scale factor changes what the page reads from `window.devicePixelRatio` and nothing about the
+raster. `Page.captureScreenshot` does honour it, which is what made the wrong answer look right.
+
+The one setting that changes it is the browser's own scale factor, taken at launch. Chrome started
+with `--force-device-scale-factor=2` sends 400 image pixels for the same div, and 1600x1200 for the
+same 800x600 viewport. `Browser.cdp` passes that flag as `SCALE_FLAG` through `cdp_connect`, and
+`start_cast` raises `maxWidth` and `maxHeight` from the viewport to `MAX_SCALE` times it, because
+pinning them to the CSS box was Chrome's instruction to scale a 2x frame straight back down.
+
+Two consequences to know about. The flag only applies to a Chrome that Leela starts: one already
+running on the CDP port when Leela connects goes on sending 1x frames, and picks the flag up when
+it is next restarted. And the factor is fixed for the browser, so a 1x display pays for 2x frames.
+
+The clamps stay in CSS pixels. `MAX_SIZE` and the 240x180 floors describe the viewport, which is
+the unit a click arrives in, and `scale` is clamped separately to `MAX_SCALE` because it is now
+only what the page reads as its `devicePixelRatio`. The click mapping is therefore untouched: the
+emulated viewport is still the canvas's CSS box, and `getBoundingClientRect` still reports CSS
+pixels. What changed on the client is the canvas backing store. `drawFrame` sizes it to the frame
+it is about to draw, so a 1600x1200 frame lands 1:1 in a box the display paints at 800x600, and a
+Chrome that sends 800x600 draws 1:1 as before. The frame is the only thing that knows how many
+pixels it carries, so nothing has to be told.
+
+`tests/blocks/test_browser.py` covers the real path end to end: it starts Chrome on a free port so
+`SCALE_FLAG` cannot be missed by reusing one already up, asks for an 800x600 viewport, and requires
+a 1600x1200 frame and a click at CSS (400, 300) reaching the page as (400, 300). The page reports
+the coordinates it received in its title, so the assertion is on the mapping rather than on a
+button being somewhere. A metrics override resizes the window Chrome composites into
+asynchronously, so an early frame is the window as it was, and the test restarts the cast until the
+window has converged.
+
+## `leela/blocks/tabs/app.py` `tab_close`
+
+`/browser/close` had no callers anywhere in the tree. Its docstring said "Close the page in Chrome.
+The Leela tab is closed by the tab strip, as usual", describing a pairing nobody had wired, so pages
+accumulated in the CDP Chrome for the life of the session. The report: "because I open
+vedicreader.com, close the tab, and when I go pages open in the browser it's still there."
+
+`/tab/close` now closes the Chrome page when the tab it dropped was a web tab. It takes the `Tab`
+that `Workspace.close` returns rather than re-reading the index, so the tab is already gone before
+Chrome is asked anything, and a Chrome that will not answer cannot hold the tab strip: the call is
+skipped entirely unless `running()` says a browser is already up, it is bounded by two seconds, and
+it swallows what it catches. Reaching `ctx.browser` from this block adds `browser` to its `CAPS`.
+
+A page adopted through `/browser/attach` is not closed. It came from the user's own Chrome and
+closing it would take away something Leela never opened, so `Browser` records the targets it
+created in `_mine` and `shut(tid, mine_only=True)` spares everything else. The CDP profile's own
+`about:blank` is never in that set, because `open` only ever navigates to a URL `check_url` has
+passed. The set survives a CDP reconnect, since the pages do, and is emptied with the page cache
+when the connection is rebuilt from nothing.
+
+Two things this does not reach. Quitting Leela still leaves every page it opened, because
+`Workspace.shutdown` says nothing about the browser and `Browser.close` deliberately outlives
+Chrome. And `_mine` is per window: a page opened in one Leela window and adopted in another is
+closed by the first window's tab strip and not by the second's.
+
+## `leela/blocks/runtime/engines.py`, the class that builds an engine
+
+An MLX vision model in Leela built the wrong engine. `get_runtime('mlx')` is asked for a runtime
+and is never shown the model, so it answers `MlxChat` for every mlx repo. `MlxChat.__new__`
+re-routes a vision or audio repo to `MlxVlmChat`, which loads through `mlx-vlm` rather than
+`mlx-lm`. The broker built its engine from `MlxChat.create_engine` and rishi then handed that
+engine to `MlxVlmChat`.
+
+What happens next depends on the repo, and neither answer is Leela's:
+
+- `mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit` fails at the build. `mlx-lm` has no
+  `qwen3_omni_moe` architecture and raises `ValueError: Model type qwen3_omni_moe not supported.`
+  It is raised inside `attach`, which is a code path Ramabana never runs, so the model works in
+  Ramabana and not here. That is the Ollama fault in another dress.
+- `mlx-community/Qwen3-VL-4B-Instruct-4bit` fails at the first turn. `mlx-lm` does carry a
+  `qwen3_vl` architecture, 57 lines with no vision in them, so the load succeeds, drops the vision
+  tower, and returns a text model with a `TokenizerWrapper` where a `Qwen3VLProcessor` belongs. The
+  turn then dies in mlx-vlm with `AttributeError: 'Model' object has no attribute 'config'`.
+  Measured, not read: both the failure and the repaired path were run against the real model.
+
+No case produces a wrong answer quietly. mlx-vlm reaches for `processor.image_processor` and calls
+the model with its own signature, and a text engine satisfies neither.
+
+The broker now asks which class rishi will build, not which class the runtime names. `_model_cls`
+routes through `cls.__new__`, which is rishi's own dispatch: `Chat.__new__` calls the subclass's
+`__new__` for exactly this reason, and its comment names this case. A class that does not override
+`__new__` has nowhere to re-route and is returned as it is, which also keeps `object.__new__` from
+being handed arguments it will not take.
+
+The resolved class is memoized per model on the broker. Rishi's sniff reads `config.json` through
+`hf_hub_download`, and `attach` runs on every turn: 0.5s to 2s per resolve, measured on a warm
+cache, because the hub still checks the etag. The memo is keyed on the runtime, the model id,
+`model_path` and `vlm`, which is what `MlxChat.__new__` reads. A future dispatch keyword would need
+adding there.
+
+**The cache was never confused about two models.** `engine_key` has always carried
+`_model_id(spec)`, so a text repo and a vision repo hold separate entries whatever class built
+them. One repo down two loaders is the case that did collide: `vlm=False` takes a vision repo
+through the text loader, `vlm` is not a `create_engine` parameter so `engine_kw` drops it, and both
+chats then keyed to one entry and shared one engine. The key now carries the class name, so they
+are two engines. Neither Leela nor Ramabana passes `vlm` today, so this was reachable only through
+a model's `config`.
+
+What rishi should expose, so this stops being Leela's problem: a resolver from `(runtime, model_id,
+kw)` to the chat class, beside `get_runtime`. Every caller that wants to know what a model will be
+before building it is otherwise left calling `__new__` for its type. `rishi.core.model_caps`
+answers a neighbouring question, and `_cfg_caps` reads the same `config.json` towers that
+`rishi.mlx.is_vlm` reads, so the sniff already exists twice inside rishi. Rishi was not edited here.
+
+## `leela/blocks/runtime/kernel.js` `pickKernel`
+
+`/runtime/broker` has answered with a `models` block since the engine broker was written, carrying
+`live`, `limit`, and a row per loaded engine. Nothing in the client asked for it. The docstring on
+`EngineBroker.status` says "for the runtime pane" and no pane painted it, so the weights this
+machine held were visible only to a route nobody called, and the memory a local model was holding
+could not be seen or released from the interface at all.
+
+The kernel picker now carries the list, under the launcher and interpreter it already offers. It is
+the modal a person opens to ask what this machine is running, and the weights belong to that
+question. A `clear weights` button under the list posts `/runtime/engines/clear`.
+
+Three things the picker must keep doing:
+
+- It opens whether or not the broker answers. `loadedModels` catches and returns null, and
+  `engineSection` paints nothing for null. A person comes here when a runtime is misbehaving, so a
+  broker that cannot answer must not be what keeps the picker shut.
+- A model row is not a kernel choice. One delegated handler takes every `.lee-mrow` click in the
+  modal and restarts the kernel on it, so the model rows carry `data-engine` and the handler
+  returns on them first. Without that, clicking a loaded model would have posted `/kernel/select`
+  with an undefined interpreter.
+- The refusal is the server's sentence. A 409 from the clear route names what is holding the
+  weights, `api` throws it as the message, and it is the text of the confirm that offers the force.
+  The force is a second answer to that sentence, never the first request. Whether the refusal is
+  answerable is decided by re-reading `in_use` from the broker, not by matching on the prose.
+
+Node is not available in this environment, so the JavaScript was not syntax-checked. The tests over
+it are assertions about the source text, which is what the rest of this repository does for client
+code.
+
+## `frontend/editor.js` `overviewGutter`, `overviewPlugin`
+
+The stripe and a scroll bar were still drawn together, one fault further in. Naming the stripe that
+hid a pane's bar separated a notebook's from a file's, but not one editor from another: both are
+`cm`, so an editor could hand back a bar it had never taken.
+
+Every editor in a scrolling panel resolves to that panel. `scrollerFor` walks up from an editor to
+the first ancestor that overflows, and for a panel of editors that is the panel, so all of them hide
+the same bar. At the default `overviewMode: 'long'` they do not agree about it: an editor of a
+hundred lines has no stripe and says `off` about the very pane the three-hundred-line editor beside
+it is drawing over. Under the previous rule that `off` was granted, because the name matched. The
+panel's bar came back, the long editor's stripe stayed up beside it, and nothing redrew to correct
+it. Recorded live in the agent panel: one editor gives `bar 0`, adding a short one beside it gives
+`bar 9` with the stripe still shown, and it stays that way through scrolling.
+
+The pane now holds the set of stripes that want its bar gone, in `dataset.leeOverview`, and gives it
+back when the last of them leaves. Each plugin instance claims under its own name rather than its
+kind. This subsumes the previous rule rather than replacing it: the notebook painter's `off` drops
+only `nb` from the set, so a file's stripe holding the same pane keeps it hidden, and a stripe that
+is destroyed while another still draws over the pane leaves the bar hidden for the one still there.
+
+The notebook-only path, which is where the fault was reported, was measured and is not this. A
+notebook scrolled on its own holds `has-overview` on `#editor` under the name `nb` from the first
+paint to the last, with the bar at zero throughout: forty-three cells of a real agent session
+repeated three times, every accordion opened, cells mounting lazily under a deep scroll, and a
+conversation painted into the panel beside it. What the same measurement did show is that this
+application never gets a platform scroll bar in the flow under test: `::-webkit-scrollbar` at the
+foot of `lee-ide.css` styles every bar in the app, and Chromium keeps those as overlay bars while
+macOS is set to show bars only when scrolling. A test that wants a bar taking layout space has to
+ask for one with `scrollbar-gutter: stable`, which is what both stripe tests now do.
+
+## `leela/blocks/agent/ai.py` `WorkspaceHost.list_vars`, `WorkspaceHost.promote_var`
+
+Commit `0e12791` moved `run_python` from `/api/exec` in the user's namespace to `/agent/api/exec` in
+the agent's overlay. That stopped the agent deleting what the user made. No reader moved with it.
+`list_vars` still queried `/api/rows`, which is owner-only, so the agent bound `df_norm` and was
+then told by every reader Leela had that `df_norm` does not exist. Ramabana's own
+`DhrishtiHost.list_vars` queries `/agent/api/rows`, the merged view, and Leela diverged from the
+library it is a seam over.
+
+Measured with a real kernel and no model: `run_python` returns ok, `/api/rows` gives `['df']`,
+`/agent/api/rows` gives `['df', 'df_norm']`, and the user's next cell raises `NameError`.
+
+`list_vars` now reads `/agent/api/rows` and falls back to `/api/rows` when that route returns
+nothing. An `agent='off'` inspector refuses the merged route with a 403, and owner-only rows beat an
+empty briefing.
+
+`owner_names` is the separate question: what the user's own namespace holds. `promote_var` is the
+only route across. It is `/api/promote`, which is the vars pane's `→live` gesture, given a tool
+name. Three things it must keep doing:
+
+- It refuses a name the user already owns, before the kernel is asked. Dhrishti's `_promote`
+  overwrites the owner binding without complaint, and the notebook fixture runs `approvals='auto'`,
+  where an approval gate resolves to yes without anyone reading it. The refusal is unconditional
+  because that is the only kind `0e12791`'s protection survives.
+- It drops the agent's shadow after promoting. `AgentSession.owner_names` excludes anything the
+  layer shadows, so a promoted name that stayed in both was outside the policy that refuses owner
+  mutations, and the agent could then mutate the object it had just handed over.
+- Every route answers in the same shape: the name is not the agent's, the name is already the
+  user's, the name is not an identifier, the inspector did not answer.
+
+## `leela/workspace.py` `_requested_name`, `_action_retry`
+
+`_action_retry` told the model to call `scale_numeric`. No such tool exists in Leela or in ramabana.
+It measured completion against `list_vars`, which the agent's own binding could not reach, so the
+retry could never be satisfied and burned all three attempts.
+
+`_requested_name` matched `as df_norm` and not ``as `df_norm`.``, which is how the dialog fixture and
+most people write it. The retry never fired for the prompt it was written for.
+
+The retry now names `run_python` and `promote_var`, and measures against `owner_names`. That is the
+question a prompt cell asks: whether the next cell can read the name. `_name_exists` reads the
+merged view by default, which is what the agent sees, and takes `owner=True` for the other question.
+Asking the merged view here would make the retry vacuous: an overlay binding would count as done and
+nothing would reach the user.
+
+`_land` promotes the name the prompt asked for at the top of each attempt of both retry loops. The
+prompt cell is the user's own instruction to bind that name, and the collision refusal means it
+cannot replace anything. It is Leela's step rather than a model tool call, so it appears as a status
+note and not as a row in the activity trail.
+
+## `rishi.litert` GPU activations, and the inline tool set that was cut over them
+
+litert-lm 0.16.1 dropped and duplicated generated tokens once a conversation's prefilled prompt
+passed 2048, which is two `prefill_1024` passes. A real inline turn sent 5832 tokens: 56 tool
+schemas and a 2257-token briefing. The on-device dialog model produced `SyntaxError` on every
+`run_python` call, and at 1773 tokens it still wrote `df_norm` as `dfnorm` and changed the digits in
+absolute notebook paths.
+
+The cause is the GPU backend defaulting to FLOAT16 activations. CPU was exact at every size.
+Measured against litert alone: `gpu/fp16, sp_tok=5500, tools=59` diverges at the first token;
+`gpu/fp32` at the same sizes is exact. rishi 0.1.30 builds GPU engines with
+`activation_data_type=FLOAT32` unless the caller names a dtype.
+
+Before that fix the inline surface on a litert engine was cut to six tools and no skills, through an
+`INLINE_TOOLS` allowlist, an `INLINE_DROP` routed through `Agent.budget`, and an `Assistant.frugal`
+flag. Measured on gemma-e4b at a 16384 window, against the dialog fixture's prompt cell, with
+`backend.pending_tokens`, which renders the string litert is actually sent:
+
+| tools | briefing | wire |
+|-------|----------|------|
+| 56, full briefing | 2267 | 5890 |
+| 10, no skill index | 865 | 1773 |
+| 6, no skill index | 812 | 1401 |
+
+`ramabana.agent.system_prompt` filters its rule list by the tool names on the table, so cutting
+tools cut the briefing too. What was left was dominated by `skill_index`: 3870 characters
+cataloguing 23 skills for a turn with no `read_skill` to open one.
+
+The cut is reverted. It cost `notebook_approvals` on on-device inline prompt cells, because the
+notebook tools were among those withheld, and it left those 23 skills unreachable. It bought
+correctness only while the FLOAT16 default stood. On rishi 0.1.30 the same fixture passes end to end
+with all 56 tools sent.
+
+The band in `test_real_dialog_prompt_uses_a_16k_litert_engine` is 5600 to 6200, measured on the
+restored path rather than inherited. It is large on purpose. Anyone who reads a slow inline turn as
+a prompt-size fault should check the engine's activation dtype before cutting tools again.

@@ -855,7 +855,11 @@ function paintNotebookOverview() {
   // Nothing to overview when the whole notebook fits, and the stripe would take the scrollbar
   // away to say so.
   const on = lee.kind === 'notebook' && host.scrollHeight > host.clientHeight + 4;
-  c.hidden = !on; host.classList.toggle('has-overview', on);
+  // `LeeCM.overviewGutter` rather than the class alone: it holds back the width the hidden bar
+  // was taking, which is what stops the pane rewrapping into a different answer every frame.
+  // Named, because a file's stripe hides the bar of this same pane: unnamed, the `off` below ran
+  // on every scroll of a text tab and put the bar back beside a stripe that had replaced it.
+  c.hidden = !on; LeeCM.overviewGutter(host, on, 'nb');
   if (!on) return;
   const stageBox = stage.getBoundingClientRect(), box = host.getBoundingClientRect();
   // Measured rather than pinned to the stage, so a split editor puts it on the notebook's own
@@ -1289,7 +1293,8 @@ const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResul
 // what the branch pill, the file tree and the editor's change marks always mean.
 function gitUrl(path, params = {}) {
   const q = new URLSearchParams(params);
-  if (gitUI.repo) q.set('repo', gitUI.repo);
+  // A tab outlives the panel's chosen repository, so an explicit one wins.
+  if (gitUI.repo && !q.has('repo')) q.set('repo', gitUI.repo);
   const query = q.toString();
   return query ? `${path}?${query}` : path;
 }
@@ -2379,7 +2384,7 @@ async function loadGitReviewFile(path, asTab = false) {
   try {
     const d = await api(gitUrl('/git/review/file', {base: gitUI.review.base, head: gitUI.review.head, mode: gitUI.review.mode, path}));
     gitUI.reviewPatch = d.patch || '';
-    if (asTab) return openGitDiffTab({...d, path, kind: 'review', baseLabel: gitUI.review.base, headLabel: gitUI.review.head, absolutePath: gitUI.snapshot.root + '/' + path, reviewKey: gitReviewKey({...gitUI.review, root: gitUI.snapshot.root}, path), allowWrite: !!d.can_apply && !path.toLowerCase().endsWith('.ipynb')});
+    if (asTab) return openGitDiffTab({...d, path, kind: 'review', baseLabel: gitUI.review.base, headLabel: gitUI.review.head, absolutePath: gitUI.snapshot.root + '/' + path, root: gitUI.snapshot.root, worktreeBefore: d.worktree ?? null, reviewKey: gitReviewKey({...gitUI.review, root: gitUI.snapshot.root}, path), allowWrite: !!d.can_apply && !path.toLowerCase().endsWith('.ipynb')});
     renderGitPanel(gitUI.snapshot);
   } catch (e) { leeFail('git', 'review file', e); }
 }
@@ -2862,7 +2867,10 @@ async function showGitConflict(path) {
       if (left && !await confirmDialog('stage an unresolved file',
           `${left} conflict marker block${left === 1 ? '' : 's'} are still in ${path}. Stage it ` +
           `anyway, markers and all?`, 'stage anyway')) return;
-      const next = await gitDo('resolve_conflict', {path, choice: 'resolved', content});
+      // What the panes were built from, so a change made on disk since then is refused
+      // rather than overwritten.
+      const next = await gitDo('resolve_conflict',
+                               {path, choice: 'resolved', content, before: d.worktree});
       m.remove();
       afterConflictResolved(next, `${path} staged`);
     };
@@ -2887,7 +2895,10 @@ async function showWholeSideConflict(path, d) {
     const choice = b.dataset.choice;
     if (!await confirmDialog('resolve conflict', `Use ${choice} for ${path} and stage it as resolved?`, 'resolve')) return;
     m.remove();
-    afterConflictResolved(await gitDo('resolve_conflict', {path, choice}), `${path} staged`);
+    // A checkout overwrites the working file, so it is gated on the same before-image the
+    // three-pane resolution is, rather than on the server still remembering these panes.
+    afterConflictResolved(await gitDo('resolve_conflict', {path, choice, before: d.worktree}),
+                          `${path} staged`);
   });
 }
 
@@ -4335,6 +4346,11 @@ async function runApp() {
   m.querySelector('#editruns').onclick = () => { m.remove(); editRuns(); };
 }
 
+// The menu bar reaches this from `evaluate_js`, which runs in global scope and cannot see a
+// module-scope name. Same arguments the Debug chrome menu passes.
+window.leeDebugFile = () => startDirectDebug(
+  {name: lee.path?.split('/').pop() || 'Python', program: lee.path, debug: true});
+
 async function startDirectDebug(run={}) {
   let capabilities=await api('/debug/capabilities');
   if(!capabilities.debugpy){
@@ -5173,7 +5189,7 @@ async function refreshKernelPill() {
 async function checkProjectRuntime() {
   let d;
   try { d = await api('/runtime/info'); } catch (_) { return; }
-  if ((!d.needs_create && !d.needs_support) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
+  if ((!d.needs_create && !d.needs_support && !d.needs_inspector) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
   sessionStorage.setItem('lee-runtime-asked:' + d.root, '1');
   /* A folder with no environment at all gets one, without being asked, because with uv the fix is
      one command that a deleted directory undoes. Only for a missing environment: installing
@@ -5188,19 +5204,27 @@ async function checkProjectRuntime() {
     } catch (e) { status(`could not create .venv — ${String(e.message || e)}`, 'err'); }
     /* fall through to the dialog, which offers choosing an interpreter instead */
   }
-  if (d.needs_support) {
+  if (d.needs_support || d.needs_inspector) {
+    /* Two separate lacks, one dialog: the runtime cannot run notebook code without the launchers,
+       and the variables panel cannot read the namespace without what dhrishti imports. A folder
+       missing both should be asked once. */
+    const pkgs = (d.inspector_packages || []).map(p => `<code>${esc(p)}</code>`).join(' and ');
+    const wants = [d.needs_support ? '<code>ipykernel</code> and <code>ipymini</code> to run notebook code' : '',
+                   d.needs_inspector ? `${pkgs} to read live variables` : ''].filter(Boolean);
     const m = modal(`<div class="lee-mhead">enable project runtime<span class="sub">${esc(d.python)}</span></div>` +
       `<div class="lee-dialogcopy">Leela found this folder’s environment, but it needs ` +
-      `<code>ipykernel</code> and <code>ipymini</code> to run notebook code. ` +
+      `${wants.join(', and ')}. ` +
       `Leela installs them into this project environment with uv; the IDE remains separate.</div>` +
       `<div class="lee-mfoot"><button class="lee-btn go" id="runtimeenable">install kernel support</button>` +
       `<button class="lee-btn" id="runtimelater">not now</button></div>`);
     m.querySelector('#runtimeenable').onclick = async () => {
       m.querySelector('#runtimeenable').disabled = true; status('installing project kernel support…');
       try {
-        const r = await post('/runtime/support', {python: d.python}); m.remove();
-        status(`project runtime ready · ipykernel + ipymini`, 'ok');
-        refreshKernelPill();
+        if (d.needs_support) await post('/runtime/support', {python: d.python});
+        if (d.needs_inspector) await post('/runtime/inspector', {python: d.python});
+        m.remove();
+        status('project runtime ready', 'ok');
+        refreshKernelPill(); if (window.leeVars) leeVars();
       }
       catch (e) { status(String(e.message || e), 'err'); m.querySelector('#runtimeenable').disabled = false; }
     };
@@ -6112,10 +6136,15 @@ window.leeCloneRepo = leeCloneRepo;
  * process with fossick's profile, so it cannot reach Leela's DOM, and a site fossick is signed in
  * to is one Leela can read.
  *
- * Coordinates are 1:1, because the server pins Chrome's viewport to the canvas's CSS size.
+ * Coordinates are 1:1, because the server pins Chrome's viewport to the canvas's CSS size. A
+ * frame may carry more pixels than that box, and lands in a backing store sized to it.
  */
 
 const wsURL = p => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${p}`;
+
+// What the page should read as its own `devicePixelRatio`, so it picks the assets the display
+// wants. How many pixels a frame carries is `SCALE_FLAG`, which Chrome takes at launch.
+const webScale = () => Math.min(window.devicePixelRatio || 1, 2);
 
 // Only the active tab is cast: a hidden canvas costs a JPEG encode per frame in Chrome.
 let webView = null;
@@ -6170,7 +6199,7 @@ function mountWeb(host, st) {
 
   sock.onopen = () => {
     const [w, h] = measure();
-    send({id: st.target, w, h, scale: 1});
+    send({id: st.target, w, h, scale: webScale()});
   };
   sock.onerror = () => say('the inline browser socket failed', 'err');
   sock.onclose = () => { if (webView === view) say('the browser disconnected — reopen the tab', 'err'); };
@@ -6188,7 +6217,8 @@ function mountWeb(host, st) {
   view.resizer = new ResizeObserver(() => {
     const [w, h] = measure();
     if (w === view.size[0] && h === view.size[1]) return;
-    view.size = [w, h]; sizeCanvas(canvas, w, h); send({t: 'resize', w, h, scale: 1});
+    view.size = [w, h]; sizeCanvas(canvas, w, h);
+    send({t: 'resize', w, h, scale: webScale()});
   });
   view.resizer.observe(body);
 
@@ -6204,14 +6234,15 @@ function wireVisibility(view) {
   const onChange = () => {
     if (webView !== view || view.sock.readyState !== 1) return;
     if (document.visibilityState === 'hidden') view.send({t: 'pause'});
-    else view.send({t: 'resume', w: view.size[0], h: view.size[1], scale: 1});
+    else view.send({t: 'resume', w: view.size[0], h: view.size[1], scale: webScale()});
   };
   document.addEventListener('visibilitychange', onChange);
   view.unwatch = () => document.removeEventListener('visibilitychange', onChange);
 }
 
+/* The CSS box is the viewport, in the same pixels a click arrives in. The backing store starts
+   there and `drawFrame` grows it to whatever the frame turns out to carry. */
 function sizeCanvas(canvas, w, h) {
-  // Backing store matches the CSS box: a DPR canvas would be sharper and cost Chrome 4x the JPEG.
   canvas.width = w; canvas.height = h;
   canvas.style.width = `${w}px`; canvas.style.height = `${h}px`;
 }
@@ -6223,6 +6254,12 @@ function drawFrame(ctx, canvas, view, buf) {
   view.drawing = true;
   createImageBitmap(new Blob([buf], {type: 'image/jpeg'}))
     .then(bmp => {
+      // The frame is the last word on its own size. A Chrome rasterising at 2x sends twice the
+      // pixels for the same viewport, and they land 1:1 in a box the display still paints at the
+      // CSS size. One that does not is drawn 1:1 too, rather than stretched.
+      if (bmp.width !== canvas.width || bmp.height !== canvas.height) {
+        canvas.width = bmp.width; canvas.height = bmp.height;
+      }
       ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
       bmp.close();
     })
@@ -6445,6 +6482,26 @@ function jsonError(text) {
   try { return JSON.parse(text).error || text; } catch (_) { return text; }
 }
 window.leeOpenFolder = openFolder;
+
+/* A folder is a workspace, and a workspace is a window: `add_root` puts a second folder in the
+ * window you are already in, and this gives it one of its own. The native shell builds the window,
+ * because only the process running the GUI can; a browser gets a tab, being what it has. */
+async function openFolderWindow(path) {
+  path = path || await nativeFolder();
+  if (!path) return;
+  const name = path.split('/').pop();
+  status(`opening ${name}…`);
+  if (await shellReady()) {
+    try { await window.pywebview.api.open_folder(path); }
+    catch (e) { leeFail('project', `opening ${name}`, e); }
+    return;
+  }
+  const r = await fetch('/hub/open?path=' + encodeURIComponent(path), {method: 'POST'});
+  const d = await r.json().catch(() => ({ok: false, error: r.statusText}));
+  if (!d.ok) return leeFail('project', `opening ${name}`, new Error(d.error));
+  window.open(d.url, '_blank');
+}
+window.leeOpenFolderWindow = openFolderWindow;
 
 // The welcome screen's recent list: when Leela opens on nothing, this is the way back to work.
 async function paintRecent() {

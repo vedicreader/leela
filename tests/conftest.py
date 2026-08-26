@@ -88,10 +88,12 @@ def _sessions_off_the_repo(tmp_path_factory):
     """No test writes an agent transcript into the checked-out repository.
 
     `dhrishti`'s logging directories are process-global and default to relative paths, so a session
-    logs into whatever the working directory happens to be. `test_leela_can_redirect_both_transcript
-    _streams` restores those relative defaults in its `finally`, and a later test with a different
-    working directory wrote a session notebook into `tests/fixtures`, where `git add -A` would have
-    taken it.
+    logs into whatever the working directory happens to be, and `test_leela_can_redirect_both_
+    transcript_streams` restores those relative defaults in its `finally`.
+
+    This covers the pytest process only. A kernel is another process and logs into the folder its
+    workspace is rooted at, which is correct and is why a test roots one at a temp copy rather than
+    at `tests/fixtures`.
     """
     from dhrishti.runtime import set_logging
     root = tmp_path_factory.mktemp('sessions')

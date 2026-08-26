@@ -6,6 +6,7 @@ pytestmark = pytest.mark.slow
 
 import asyncio
 import os as _os
+from pathlib import Path
 import socket
 import threading
 
@@ -38,6 +39,7 @@ def _serve(ws, port):
     threading.Thread(target=srv.run, daemon=True).start()
     return srv
 
+PARENT = Path(__file__).parent
 CHROMIUM = _os.environ.get('LEELA_CHROMIUM')
 
 async def _launch(pw):
@@ -55,7 +57,7 @@ def _launch_sync(pw):
     try: return pw.chromium.launch(**kw)
     except Exception as e: pytest.skip(f'no chromium for playwright: {e}')
 
-async def _on_page(fn, roots=()):
+async def _on_page(fn, roots=(), dpr=None):
     "Boot the app, open it in chromium, hand the page to `fn`, and return what it returns."
     fake_kernels()
     ws = Workspace(roots=list(roots), approvals='auto')
@@ -65,7 +67,7 @@ async def _on_page(fn, roots=()):
     try:
         async with async_playwright() as pw:
             b = await _launch(pw)
-            pg = await b.new_page()
+            pg = await b.new_page(**({'device_scale_factor': dpr} if dpr else {}))
             await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
             await pg.wait_for_function('window.lee && lee.keys.length')
             try: return await fn(pg)
@@ -73,7 +75,7 @@ async def _on_page(fn, roots=()):
     finally:
         srv.should_exit = True
 
-def _run(fn, roots=()): return asyncio.run(_on_page(fn, roots))
+def _run(fn, roots=(), dpr=None): return asyncio.run(_on_page(fn, roots, dpr))
 
 def test_python_errors_and_warnings_get_real_codemirror_squiggles():
     async def go(pg):
@@ -147,15 +149,26 @@ def test_results_are_folded_marked_and_dropped_when_they_go_stale():
 
 
 def test_a_scoped_letter_still_fires_when_no_text_field_has_it():
-    "The other half of contextual: a bare letter in the pane (not an input) still runs its action."
-    async def go(pg):
-        await pg.evaluate("leeAct('focus_files')")
-        return await pg.evaluate("""() => new Promise(res => {
-            const orig = ACTIONS.add_root; ACTIONS.add_root = () => { ACTIONS.add_root = orig; res(true); };
-            document.dispatchEvent(new KeyboardEvent('keydown', {key:'o', bubbles:true, cancelable:true}));
-            setTimeout(() => res(false), 200);
-        })""")
-    assert _run(go) is True
+    """The other half of contextual: a bare letter in the pane (not an input) still runs its action.
+
+    `o` opens a folder in a window of its own and `O` adds one to the window you are in. They are
+    one chord apart, so both are checked here: moving one and forgetting the other leaves a letter
+    silently unbound, which is what a keymap edit did.
+    """
+    def fires(key, action):
+        async def go(pg):
+            await pg.evaluate("leeAct('focus_files')")
+            return await pg.evaluate("""([key, name]) => new Promise(res => {
+                const orig = ACTIONS[name];
+                ACTIONS[name] = () => { ACTIONS[name] = orig; res(true); };
+                document.dispatchEvent(new KeyboardEvent('keydown',
+                    {key, shiftKey: key === key.toUpperCase() && key.length === 1 && /[A-Z]/.test(key),
+                     bubbles: true, cancelable: true}));
+                setTimeout(() => res(false), 200);
+            })""", [key, name := action])
+        return _run(go)
+    assert fires('o', 'open_folder') is True, 'a folder opens in a window of its own'
+    assert fires('O', 'add_root') is True, 'and the shifted letter adds one to this window'
 
 def test_platform_preferences_chord_opens_settings_from_the_editor():
     async def go(pg):
@@ -191,7 +204,7 @@ def test_bundled_code_fonts_load_and_ligatures_reach_codemirror():
 
 def test_user_checkbox_settings_survive_close_and_reopen(tmp_path, monkeypatch):
     import leela.blocks.settings.settings as settings_module
-    monkeypatch.setattr(settings_module, 'USER_SETTINGS_FILE', tmp_path/'settings.json')
+    monkeypatch.setattr(settings_module, 'user_settings_file', lambda: tmp_path/'settings.json')
     async def go(pg):
         await pg.evaluate("leeAct('settings')")
         await pg.wait_for_selector('[data-pref="ligatures"]')
@@ -730,6 +743,40 @@ def test_every_painted_turn_carries_what_can_still_be_done_to_it():
     assert got['rows'][1]['off'] == ['Edit what agent remembers'], 'no answer to edit, but files to restore'
     assert len(got['rows'][2]['off']) == 3, 'a turn this process holds no boundary for offers nothing'
     assert 'not run in this session' in got['rows'][2]['why'], 'and says which of the two reasons it is'
+
+def test_an_unavailable_turn_control_reads_as_unavailable_without_hovering():
+    """`.lee-btn` has no disabled appearance, so a dead Undo was pixel-identical to a live one down
+    to the pointer cursor and the delegated listener dropped the click: "I click edit and undo,
+    nothing happens". The reason existed only in a `title` nobody hovers in the packaged app."""
+    async def go(pg):
+        painted = await pg.evaluate("""() => {
+          const log = $('#agentlog'); log.innerHTML = '';
+          renderTurns(log, [
+            {prompt: 'rename it', reply: 'renamed', turn_id: 's:turn_000001',
+             capabilities: {revisable: true, branchable: true, undoable: true, known: true, files: ['a.py']}},
+            {prompt: 'an old one', reply: 'from before a restart', turn_id: 's:turn_000002',
+             capabilities: {known: false}}], '', false);
+          const bars = $$('.lee-response-revision', log);
+          const look = b => ({
+            buttons: [...b.querySelectorAll('button')].map(x => ({label: x.textContent, off: x.disabled,
+                                                                  faded: Number(getComputedStyle(x).opacity) < .9})),
+            note: $('[data-unavailable]', b)?.textContent || '',
+            noteShown: ($('[data-unavailable]', b)?.getBoundingClientRect().height || 0) > 0});
+          return {live: look(bars[0]), dead: look(bars[1])};
+        }""")
+        await pg.click('.lee-response-revision [data-revise]')
+        await pg.wait_for_timeout(300)
+        painted['revised'] = await pg.evaluate("() => !!$('[data-revision]')")
+        return painted
+    got = _run(go)
+    assert [b['off'] for b in got['live']['buttons']] == [False] * 3
+    assert not any(b['faded'] for b in got['live']['buttons']), 'a control that works is drawn full strength'
+    assert not got['live']['note'], 'and the row says nothing about availability'
+    assert [b['off'] for b in got['dead']['buttons']] == [True] * 3
+    assert all(b['faded'] for b in got['dead']['buttons']), 'an unavailable control is muted, not just inert'
+    assert got['dead']['noteShown'] and 'not run in this session' in got['dead']['note'], \
+        'and the reason is on the row, not in a tooltip'
+    assert got['revised'], 'an available control still opens its editor on a real click'
 
 def test_two_turns_in_one_card_keep_their_own_controls():
     """A feed left following after `done` paints a turn another tab or the CLI started into the card
@@ -1300,8 +1347,9 @@ def test_variable_route_uses_the_same_selected_runtime_as_execution(tmp_path):
                 {'name': 'answer', 'type': 'int', 'value': '42', 'accessor': ['answer']}
             ]}]}
     selected = SelectedRuntime()
-    async def runtime(tab=None): return selected
-    ws.runtime = runtime
+    # `kernel_peek`, not `runtime`: a page load must not start a kernel, so `/vars` reads the one
+    # already there. Stubbing `runtime` asserted the contract `475d960` retired.
+    ws.kernel_peek = lambda tab=None: selected
     ws.inspector = lambda tab=None: None
     with TestClient(ide_app(ws)) as client:
         result = client.get('/vars').json()
@@ -1809,3 +1857,230 @@ def test_a_turn_waiting_on_a_checkpoint_is_never_folded_away(tmp_path):
         }""")
     cards = _run(go, roots=[tmp_path])
     assert [c['folded'] for c in cards] == [False, True, False], cards
+
+
+_STRIPE_FIXTURE = r"""async () => {
+  const settle = () => new Promise(r => setTimeout(r, 150));
+  const pane = document.createElement('div');
+  pane.id = 'stripe-pane';
+  // `scrollbar-gutter: stable` is a bar in the flow, which is what macOS gives every WKWebView
+  // under Appearance > Show scroll bars > Always, and what `.lee-md-preview` already asks for.
+  // Chromium draws overlay bars on macOS whatever `::-webkit-scrollbar` says, so without this the
+  // pane hands nothing back and there is nothing to reproduce.
+  pane.style.cssText = 'position:fixed;top:0;left:0;width:520px;height:300px;overflow:auto;' +
+                       'scrollbar-gutter:stable;background:#111';
+  document.body.appendChild(pane);
+  const prose = document.createElement('div');
+  prose.id = 'stripe-prose';
+  prose.style.cssText = 'font:13px/20px monospace;overflow-wrap:anywhere;color:#888';
+  pane.appendChild(prose);
+  const tall = async n => {
+    prose.innerHTML = Array.from({length: 30},
+      () => '<p style="margin:0">' + 'a'.repeat(n) + '</p>').join('');
+    await settle();
+    return prose.getBoundingClientRect().height;
+  };
+  // The line length that wraps at the width the bar leaves and fits at the width it gives back,
+  // found rather than assumed: it is a font metric, and CI's is not this machine's.
+  const one = await tall(4);
+  let lo = 4, hi = 400;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; ((await tall(mid)) > one * 1.5 ? hi = mid : lo = mid); }
+  const withBar = {h: await tall(hi), width: prose.clientWidth};
+  pane.classList.add('has-overview'); await settle();
+  const hidden = {h: prose.getBoundingClientRect().height, width: prose.clientWidth};
+  pane.classList.remove('has-overview'); await settle();
+  return {line: hi, withBar, hidden};
+}"""
+
+_STRIPE_WATCH = r"""async (fixture) => {
+  const pane = document.getElementById('stripe-pane');
+  // Between the two heights, so the pane overflows with the bar and fits without it.
+  pane.style.height = (fixture.hidden.h + 200) + 'px';
+  const host = document.createElement('div'); pane.appendChild(host);
+  LeeCM.create(host, {doc: 'x = 1\ny = 2\n', lang: 'python',
+                      settings: {overviewMode: 'always', wordWrap: 'viewport'}});
+  let flips = 0, last = pane.classList.contains('has-overview');
+  const mo = new MutationObserver(() => {
+    const now = pane.classList.contains('has-overview');
+    if (now !== last) { flips++; last = now; }
+  });
+  mo.observe(pane, {attributes: true, attributeFilter: ['class']});
+  await new Promise(r => setTimeout(r, 1500));
+  mo.disconnect();
+  return {flips, shown: last, width: document.getElementById('stripe-prose').clientWidth};
+}"""
+
+
+def test_the_overview_stripe_holds_still_where_the_scroll_bar_takes_layout_space(tmp_path):
+    """`has-overview` hides the bar, and where the platform draws that bar in the flow its width
+    goes to the text. Wrapped text rewraps, `scrollHeight` moves, and that is the number the stripe
+    decides on: it appeared, the pane got shorter, it went, the bar came back, and it flickered at
+    frame rate. The rewrap here is 600px, so no hysteresis would have held it."""
+    async def go(pg):
+        fixture = await pg.evaluate(_STRIPE_FIXTURE)
+        return fixture, await pg.evaluate(_STRIPE_WATCH, fixture)
+    fixture, watch = _run(go, roots=[tmp_path])
+    assert fixture['withBar']['h'] > fixture['hidden']['h'] + 100, \
+        f'the fixture does not rewrap on the bar, so it proves nothing: {fixture}'
+    assert watch['flips'] <= 2, f"the stripe flickered {watch['flips']} times in 1.5s"
+    assert watch['width'] == fixture['withBar']['width'], \
+        'showing the stripe handed the bar\'s width to the text'
+
+
+_WORK_LOG_CELL = r"""async () => {
+  lee.kind = 'notebook';
+  const trail = '<details><summary>what I did (1 steps)</summary>\n\n' +
+    '- 🔍 Search code · offsetbox\n\n' +
+    '  <details><summary>result</summary>\n\n  ```\n  [kosha] /a/b.py:1657\n  ```\n\n  </details>\n\n</details>';
+  const host = document.createElement('div'); host.id = 'out-worklog'; document.body.appendChild(host);
+  const cell = {id: 'worklog', cell_type: 'prompt', usage: {}, outputs: [],
+                reply: 'the answer is four\n\n' + trail,
+                calls: [{tool: 'search_code', kind: 'search', done: true, ok: true, secs: 0,
+                         summary: 'Search code · offsetbox', args: {query: 'offsetbox'}}]};
+  renderOutputs(cell);
+  const reply = $('#out-worklog .lee-reply');
+  for (let i = 0; i < 100 && !reply.childElementCount; i++) await new Promise(r => setTimeout(r, 50));
+  const text = reply.textContent || '';
+  return {text, kept: cell.reply.includes('<details>'),
+          rows: $$('.lee-cell-agent-steps > details', host).length,
+          replyRows: $$('details', reply).length};
+}"""
+
+
+def test_a_prompt_cell_draws_its_work_log_once():
+    """`ask_cell` stores the log twice: as `calls`, and again as raw `<details>` markdown at the end of
+    `reply`. The renderer's dialect has no raw HTML, so the second copy came out as literal
+    `<details>`/`<summary>` tags over a fully unrolled result, under accordions already holding it."""
+    got = _run(lambda pg: pg.evaluate(_WORK_LOG_CELL))
+    assert 'the answer is four' in got['text'], got['text']
+    assert '<details>' not in got['text'] and '<summary>' not in got['text'], got['text']
+    assert 'what I did' not in got['text'] and '[kosha]' not in got['text'], got['text']
+    assert got['rows'] == 1 and got['replyRows'] == 0, got
+    assert got['kept'], 'the cell keeps the trail, so saving the notebook keeps the record'
+
+
+_PAYLOAD_GROUP = r"""async () => {
+  const md = ':::{.details}\n# what I did (2 steps)\n\n' +
+    '```json\n{"name": "view_file", "args": {"path": "a/b.py"}, "result": "one"}\n```\n\n' +
+    '```json\n{"name": "read_skill", "args": {"name": "write_docs"}, "result": "two"}\n```\n:::\n';
+  const host = document.createElement('div'); document.body.appendChild(host);
+  renderMarkdown(host, md);
+  for (let i = 0; i < 100 && !$('.lee-agent-step', host); i++) await new Promise(r => setTimeout(r, 50));
+  const group = $('details.lee-activity-group', host);
+  return {group: !!group, summary: group ? (group.querySelector(':scope > summary').textContent || '') : '',
+          rows: $$('.lee-agent-step', host).map(r => $('.lee-agent-step-copy', r).textContent.trim())};
+}"""
+
+
+def test_a_folded_work_log_survives_the_step_rows_it_holds():
+    """`upgradePortableToolMarkdown` climbed to the nearest `<details>` and replaced it, so the first
+    payload in a group took the whole group with it: the summary and every later step went, and the
+    log read as one row."""
+    got = _run(lambda pg: pg.evaluate(_PAYLOAD_GROUP))
+    assert got['rows'] == ['Read · a/b.py', 'Load skill · write_docs'], got
+    assert got['group'] and '2 steps' in got['summary'], got
+
+
+# No element may draw its own scroll bar down the same edge a stripe is drawn on. The pane is found
+# by where the bar lands, not named, because which element scrolls depends on the tab and the panel.
+_STRIPE_CLASH = r"""async (plan) => {
+  const desc = el => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') +
+                     (el.className ? '.' + String(el.className).trim().split(/\s+/).join('.') : '');
+  const bars = () => [...document.querySelectorAll('*')].filter(el =>
+    el.offsetWidth - el.clientWidth > 2 && el.getBoundingClientRect().height > 60);
+  const stripes = () => [...document.querySelectorAll('#nboverview, .cm-lee-overview')]
+    .filter(c => !c.hidden && c.getBoundingClientRect().height > 20);
+  const clash = () => stripes().flatMap(s => {
+    const right = s.getBoundingClientRect().right;
+    return bars().filter(b => Math.abs(b.getBoundingClientRect().right - right) < 24)
+                 .map(b => desc(s) + ' beside ' + desc(b));
+  });
+  const pane = document.querySelector(plan.scroller);
+  const seen = [], hit = new Set();
+  for (let i = 0; i < plan.steps; i++) {
+    pane.scrollTop = (i % 2 ? 1 : 3) * 400 + i * 90;
+    await new Promise(r => setTimeout(r, 90));
+    const c = clash(); c.forEach(x => hit.add(x));
+    seen.push({stripes: stripes().length, clash: c.length});
+  }
+  return {frames: seen.length, bad: seen.filter(f => f.clash).length,
+          striped: seen.filter(f => f.stripes).length, saw: [...hit],
+          held: pane.dataset.leeOverview || ''};
+}"""
+
+
+def test_a_stripe_and_the_pane_scroll_bar_are_never_drawn_at_once(tmp_path):
+    """`#editor` is the pane a file's stripe hides the bar of, and it is the pane a notebook's
+    stripe hides too. The notebook painter runs on every scroll of every tab and asserted `off`,
+    which took the class back off under a file's stripe: the stripe drew on regardless, the native
+    bar returned beside it, and whose frame ran last decided which of the two you saw."""
+    import json
+    (tmp_path/'long.py').write_text(''.join(
+        f'x{i} = {i}  # a comment long enough to be worth reading\n' for i in range(400)))
+    src = json.loads((PARENT/'fixtures'/'leela_agent_sessions'/'agent_20260825-073912.ipynb').read_text())
+    src['cells'] = [dict(c, id=f'r{r}k{k}') for r in range(3) for k, c in enumerate(src['cells'])]
+    (tmp_path/'nb.ipynb').write_text(json.dumps(src))
+    async def go(pg):
+        # A bar in the flow, which is what macOS gives every pane under Appearance > Show scroll
+        # bars > Always. Chromium draws overlay bars on macOS whatever `::-webkit-scrollbar` says,
+        # so without this `#editor` hands nothing back and there is nothing to see.
+        await pg.add_style_tag(content='#editor { scrollbar-gutter: stable; }')
+        out = {}
+        # The notebook on its own first, scrolled, which is where the fault was reported. Then the
+        # file over it, so a stripe takes the pane over from one already holding it.
+        for name, stripe in (('nb.ipynb', '#nboverview'), ('long.py', '#editor .cm-lee-overview')):
+            await pg.evaluate("(p) => leeOpenFile(p)", str(tmp_path/name))
+            await pg.wait_for_selector(stripe)
+            await pg.wait_for_timeout(600)
+            out[name] = await pg.evaluate(_STRIPE_CLASH, {'scroller': '#editor', 'steps': 24})
+        return out
+    got = _run(go, roots=[tmp_path])
+    for name, d in got.items():
+        assert d['striped'] == d['frames'], f'{name}: the stripe is not up for the whole watch: {d}'
+        assert d['bad'] == 0, f"{name}: a bar was drawn beside the stripe in {d['bad']} of " \
+                              f"{d['frames']} frames: {d['saw']}"
+    assert got['nb.ipynb']['held'] == 'nb', f"the notebook's stripe does not hold its pane: {got}"
+    assert got['long.py']['held'].startswith('cm'), f"the file's stripe does not hold its pane: {got}"
+
+
+_PANEL_PAIR = r"""async () => {
+  const panel = document.getElementById('agentlog');
+  // The panel scrolls and its bar takes layout space, as it does under Show scroll bars > Always.
+  panel.style.scrollbarGutter = 'stable';
+  panel.innerHTML = '';
+  const mount = n => {
+    const host = document.createElement('div'); panel.appendChild(host);
+    return LeeCM.create(host, {doc: Array.from({length: n}, (_, i) => `line ${i}`).join('\n'),
+      lang: 'python', settings: {overviewMode: 'long', overviewThreshold: 120}});
+  };
+  const look = () => ({bar: panel.offsetWidth - panel.clientWidth,
+                       held: panel.dataset.leeOverview || '',
+                       stripes: [...panel.querySelectorAll('.cm-lee-overview')].filter(c => !c.hidden).length});
+  mount(300);                                  // long enough for a stripe
+  await new Promise(r => setTimeout(r, 500));
+  const alone = look();
+  const short = mount(5);                      // too short for one, and it says so about the panel
+  await new Promise(r => setTimeout(r, 700));
+  const pair = look();
+  panel.scrollTop = 60; await new Promise(r => setTimeout(r, 400));
+  const scrolled = look();
+  LeeCM.destroy(short); await new Promise(r => setTimeout(r, 400));
+  return {alone, pair, scrolled, closed: look()};
+}"""
+
+
+def test_one_editor_in_a_panel_does_not_take_the_bar_back_from_another(tmp_path):
+    """Every editor in a scrolling panel resolves to that panel, so they all hide the same bar. At
+    `overviewMode: 'long'` a short one says `off` about the very pane a long one beside it is drawing
+    over. Naming the stripe's kind did not separate them, because both are `cm`: the short editor's
+    `off` was granted, the panel's bar came back, and the long editor's stripe stayed drawn beside
+    it. The pane counts the stripes that want its bar gone instead."""
+    got = _run(lambda pg: pg.evaluate(_PANEL_PAIR), roots=[tmp_path])
+    assert got['alone'] == {'bar': 0, 'held': got['alone']['held'], 'stripes': 1}, got
+    assert got['alone']['held'].startswith('cm'), got
+    for phase in ('alone', 'pair', 'scrolled'):
+        d = got[phase]
+        assert d['stripes'] == 1, f'{phase}: the long editor lost its stripe: {got}'
+        assert d['bar'] == 0, f"{phase}: the panel drew its own bar beside the stripe: {got}"
+    assert got['closed'] == {'bar': 0, 'held': got['closed']['held'], 'stripes': 1}, \
+        f'closing the short editor must not disturb the one still drawing: {got}'

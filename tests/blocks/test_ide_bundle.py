@@ -187,7 +187,24 @@ def test_the_overview_stripe_redraws_when_a_panel_resizes():
     assert 'this.ro?.disconnect()' in plugin or 'this.ro.disconnect()' in plugin, 'and it must be released'
     assert 'never `this.dom`' in plugin, 'observing what draw() resizes would loop'
     # The pane that scrolls can change; the old one must not keep the class that hides its bar.
-    assert "previous.classList.remove('has-overview')" in plugin
+    assert 'overviewGutter(previous, false, this.gutter)' in plugin
+
+
+def test_hiding_the_scroll_bar_holds_back_the_width_it_was_taking():
+    """Where the platform draws the bar in the flow, `has-overview` handed its width to the text.
+    Wrapped text rewrapped, `scrollHeight` moved, and that is the number the stripe decides on: it
+    appeared, the pane got shorter, it went, and it flickered at frame rate. The thickness is
+    measured, so an overlay bar reserves nothing."""
+    src = (ROOT/'frontend'/'editor.js').read_text()
+    gutter = src[src.index('export function overviewGutter'):src.index('// The element that really')]
+    assert 'el.offsetWidth - el.clientWidth' in gutter, 'the thickness is measured, never assumed'
+    assert 'paddingRight' in gutter and 'bar > .5' in gutter
+    assert 'el.dataset.leeGutter' in gutter, 'and it is given back when the stripe goes'
+    assert 'held.delete(by)' in gutter, 'to the stripes that took it, and to no others'
+    for name in ('leela/static/lee-ide.js', 'leela/blocks/git/cwd.js'):
+        nb = (ROOT/name).read_text()
+        assert "LeeCM.overviewGutter(host, on, 'nb')" in nb, f'{name} toggles the same class'
+        assert "host.classList.toggle('has-overview'" not in nb
 
 def test_the_built_editor_bundle_matches_its_source():
     """`lee-cm6.js` is committed, so a change to `frontend/editor.js` that was never built is a lie.

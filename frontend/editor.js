@@ -551,27 +551,30 @@ const overflowsDown = (el, shown = false) => {
    The bar's thickness is measured, not assumed: it is zero where the platform draws overlay bars,
    and that reserves nothing.
 
-   `by` names the stripe asking, because two of them reach the same pane. A file's stripe scrolls
-   `#editor` and so does a notebook's, and the notebook painter asserted "off" on every scroll of
-   any tab. It took the class straight back off under a file's stripe, which drew on regardless:
-   the native bar returned beside it, and which one you got depended on whose frame ran last. So a
-   pane's bar is only ever given back to whoever took it away. */
+   `by` names the stripe asking, and the pane counts them, because several reach the same pane and
+   they do not agree. A file's stripe scrolls `#editor` and so does a notebook's, and the notebook
+   painter asserted "off" on every scroll of any tab: it took the class back off under a file's
+   stripe, which drew on regardless, and the bar returned beside it. Editors do it to each other
+   too. Every editor in one scrolling panel resolves to that panel, and `overviewMode: 'long'` means
+   a short one says "off" about the very pane a long one beside it is drawing over. Naming the kind
+   was not enough, because both are `cm`. So the pane holds the set of stripes that want its bar
+   gone, and gives it back when the last of them leaves. */
 export function overviewGutter(el, on, by = 'cm') {
   if (!el) return;
-  const owner = el.dataset.leeOverview;
-  if (!on && owner && owner !== by) return;
-  if (el.classList.contains('has-overview') === on) { if (on) el.dataset.leeOverview = by; return; }
-  if (!on) {
+  const held = new Set((el.dataset.leeOverview || '').split(' ').filter(Boolean));
+  on ? held.add(by) : held.delete(by);
+  if (held.size) el.dataset.leeOverview = [...held].join(' '); else delete el.dataset.leeOverview;
+  if (el.classList.contains('has-overview') === (held.size > 0)) return;
+  if (!held.size) {
     el.classList.remove('has-overview');
     el.style.paddingRight = el.dataset.leeGutter || '';
-    delete el.dataset.leeGutter; delete el.dataset.leeOverview;
+    delete el.dataset.leeGutter;
     return;
   }
   const css = getComputedStyle(el);
   const bar = el.offsetWidth - el.clientWidth -
               parseFloat(css.borderLeftWidth) - parseFloat(css.borderRightWidth);
   el.dataset.leeGutter = el.style.paddingRight;
-  el.dataset.leeOverview = by;
   el.classList.add('has-overview');
   if (bar > .5) el.style.paddingRight = (parseFloat(css.paddingRight) + bar) + 'px';
 }
@@ -586,10 +589,14 @@ function scrollerFor(view) {
   return view.scrollDOM;
 }
 
+let overviewSeq = 0;
 function overviewPlugin(mode = 'off', threshold = 120) {
   return ViewPlugin.fromClass(class {
     constructor(view) {
       this.view = view;
+      // Its own name, not the kind's: a panel of editors all claim the panel, and one of them
+      // saying "off" must not speak for the rest.
+      this.gutter = 'cm' + (++overviewSeq);
       this.dom = document.createElement('canvas'); this.dom.className = 'cm-lee-overview';
       this.dom.setAttribute('aria-label', 'overview: diagnostics and uncommitted lines');
       view.dom.appendChild(this.dom);
@@ -648,7 +655,7 @@ function overviewPlugin(mode = 'off', threshold = 120) {
       const scroller = this.scroller = scrollerFor(this.view);
       // The pane that scrolls can change when panels move. The old one keeps `has-overview`, and
       // with it a hidden native scroll bar, unless it is cleared here.
-      if (previous && previous !== scroller) overviewGutter(previous, false);
+      if (previous && previous !== scroller) overviewGutter(previous, false, this.gutter);
       this.watch(scroller);
       const shown = (mode === 'always' || (mode === 'long' && lines >= threshold)) &&
                     overflowsDown(scroller, this.dom.hidden === false);
@@ -657,7 +664,7 @@ function overviewPlugin(mode = 'off', threshold = 120) {
       // `has-overview` is the notebook stripe's class, hiding the bar of the pane that scrolls.
       // CodeMirror's own scroller is not given it: `.cm-lee-has-overview .cm-scroller` reserves the
       // stripe's 15px there, which is already at least what a bar in the flow was taking.
-      if (scroller !== this.view.scrollDOM) overviewGutter(scroller, shown);
+      if (scroller !== this.view.scrollDOM) overviewGutter(scroller, shown, this.gutter);
       if (!shown) return;
       const dpr = devicePixelRatio || 1, w = OVERVIEW_W, h = Math.max(40, scroller.clientHeight);
       this.dom.width = w * dpr; this.dom.height = h * dpr;
@@ -704,7 +711,7 @@ function overviewPlugin(mode = 'off', threshold = 120) {
       clearTimeout(this.settle);
       cancelAnimationFrame(this.frame);
       this.view.dom.classList.remove('cm-lee-has-overview');
-      overviewGutter(this.scroller, false);
+      overviewGutter(this.scroller, false, this.gutter);
       this.dom.remove();
     }
   });

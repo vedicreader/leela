@@ -302,7 +302,7 @@ function portableToolKind(tool) {
   if (['view_file', 'view_cell', 'notebook_cells', 'read_terminal'].includes(tool)) return 'view';
   if (['edit_file', 'create_file', 'edit_cell', 'add_cell'].includes(tool)) return 'edit';
   if (['web_search', 'read_url', 'research'].includes(tool)) return 'web';
-  if (['run_python', 'inspect_python', 'list_vars'].includes(tool)) return 'run';
+  if (['run_python', 'inspect_python', 'list_vars', 'promote_var'].includes(tool)) return 'run';
   if (tool === 'read_skill') return 'skill';
   if (tool.startsWith('delegate_')) return 'delegate';
   return 'tool';
@@ -318,6 +318,7 @@ function portableToolSummary(tool, args) {
   if (tool === 'list_files') return `Scan files · ${short(a.pattern) || 'all'}`;
   if (tool === 'run_python') return `Run Python · ${short(a.code).split(';')[0].slice(0, 82)}`;
   if (tool === 'inspect_python') return `Inspect · ${short(a.code).split(';')[0].slice(0, 82)}`;
+  if (tool === 'promote_var') return `Give to user · ${short(a.name)}`;
   if (tool === 'web_search') return `Search web · ${short(a.query).slice(0, 92)}`;
   if (tool === 'read_url') return `Read web · ${short(a.url).slice(0, 92)}`;
   const body = Object.entries(a).slice(0, 2).map(([k, v]) => `${k}: ${short(v).slice(0, 54)}`).join(' · ');
@@ -340,14 +341,24 @@ function polishActivityGroup(el) {
       `<span class="lee-agent-step-chevron" aria-hidden="true"></span>`;
   });
 }
+/* The fold a step row replaces. Only a `result` fold holding this one block goes with it: climbing to
+   the nearest `<details>` regardless took the whole "what I did" group, summary and later steps
+   included, and left the rest of the loop working on nodes already off the page. */
+function payloadContainer(code) {
+  const pre = code.parentElement, fold = pre.closest('details');
+  if (!fold) return pre;
+  const body = [...fold.children].filter(n => n.tagName !== 'SUMMARY');
+  const label = fold.querySelector(':scope > summary')?.textContent || '';
+  return body.length === 1 && body[0] === pre && /^\s*result\b/i.test(label) ? fold : pre;
+}
 function upgradePortableToolMarkdown(el) {
   $$('pre > code', el).forEach(code => {
+    if (!code.isConnected) return;
     const payload = portableToolPayload(code.textContent || ''); if (!payload) return;
     const row = document.createElement('details');
     renderAgentStep(row, {...payload, kind: portableToolKind(payload.tool), done: true, ok: true, secs: 0,
                           summary: portableToolSummary(payload.tool, payload.args)});
-    const container = code.parentElement.closest('details') || code.parentElement;
-    container.replaceWith(row);
+    payloadContainer(code).replaceWith(row);
   });
   $$('li', el).forEach(li => {
     if (/[⏳⌛]/u.test(li.textContent || '') && li.querySelector('code')) li.remove();
@@ -424,6 +435,11 @@ function routeMarkdownLinks(el) {
     });
   });
 }
+
+/* A prompt cell stores its work log twice: as `calls`, and again at the end of `reply`. The renderer
+   has no raw HTML, so the second copy read as literal `<details>` tags over an unrolled result. */
+const WORK_LOG = /\n*<details>\s*<summary>\s*what i did[^<]*<\/summary>[\s\S]*<\/details>\s*$/i;
+function stripWorkLog(text) { return String(text || '').replace(WORK_LOG, '').trimEnd(); }
 
 function renderMarkdown(el, text, allowRaw = false, onRender = null) {
   if (!el) return;
@@ -833,6 +849,7 @@ const ACTIONS = {
   new_dir:      () => newEntry('dir'),
   rename:       () => renameEntry(),
   delete:       () => deleteEntry(),
+  open_folder:  () => openFolderWindow(),
   add_root:     () => addRoot(),
   find_repo:    () => findRepo(),
   remove_root:  () => removeRoot(),
@@ -1077,7 +1094,8 @@ async function activateGitDiffTab(key) {
     if (data.mergeResult == null) return;
     const message = `Replace the working-tree version of ${data.path} with this reviewed result? The file will remain uncommitted.`;
     if (!await confirmDialog('apply split diff result', message, 'apply result')) return;
-    try { const next = await gitDo('write_worktree', {path: data.path, content: data.mergeResult}), fresh = await api(gitUrl('/git/diff', {path: data.path, staged: false})); data.base = 'index'; data.head = 'worktree'; data.baseLabel = 'index'; data.headLabel = 'working tree'; data.left = fresh.left || ''; data.right = fresh.right || ''; data.patch = fresh.content || fresh.text || ''; data.rawPatch = fresh.text || ''; data.group = 'unstaged'; data.mergeResult = null; gitUI.review = null; paintGitPill(next); await activateGitDiffTab(key); status(`${data.path} updated in the working tree`, 'ok'); }
+    const at = data.root ? {repo: data.root} : {};
+    try { const next = await gitDo('write_worktree', {path: data.path, content: data.mergeResult, before: data.worktreeBefore ?? null, ...at}), fresh = await api(gitUrl('/git/diff', {path: data.path, staged: false, ...at})); data.base = 'index'; data.head = 'worktree'; data.baseLabel = 'index'; data.headLabel = 'working tree'; data.left = fresh.left || ''; data.right = fresh.right || ''; data.patch = fresh.content || fresh.text || ''; data.rawPatch = fresh.text || ''; data.group = 'unstaged'; data.mergeResult = null; data.worktreeBefore = fresh.right || ''; gitUI.review = null; paintGitPill(next); await activateGitDiffTab(key); status(`${data.path} updated in the working tree`, 'ok'); }
     catch (e) { status(e.message || String(e), 'err'); }
   });
   const body = host.querySelector('.lee-diff-document-body');
@@ -2055,7 +2073,7 @@ function renderOutputs(c) {
     if (c.reply) {
       const reply = document.createElement('div');
       reply.className = 'lee-reply'; box.appendChild(reply);
-      renderMarkdown(reply, c.reply);
+      renderMarkdown(reply, (c.calls || []).length ? stripWorkLog(c.reply) : c.reply);
       const usage = usageMeta(c.usage, '', c.usage?.model); if (usage) box.appendChild(usage);
     }
     // pictures and video the turn generated do arrive as nbformat outputs, and draw as any other
@@ -2701,6 +2719,7 @@ async function restartRunAll() {
  * runs it. Both restart the kernel, so what that costs is on screen while the choice is made. */
 async function pickKernel() {
   const o = await api('/kernel/options');
+  const models = await loadedModels();
   const row = (cur, main, sub, attrs) =>
     `<div class="lee-mrow${cur ? ' sel' : ''}" ${attrs}>${cur ? '● ' : '○ '}${esc(main)}` +
     `<span class="sub">${esc(sub)}</span></div>`;
@@ -2719,6 +2738,7 @@ async function pickKernel() {
     `<div class="lee-dim">choosing either of these restarts the kernel — its variables are lost</div>` +
     `<h4>launcher</h4><div class="lee-modallist">${kinds}</div>` +
     `<h4>interpreter</h4><div class="lee-modallist">${pys}</div>` +
+    engineSection(models) +
     `<div class="lee-runtime-cwd"><span>working directory</span><code>${esc(o.cwd || '')}</code>` +
     `<button class="lee-btn" id="kernelcwd">change</button></div>` +
     `<label class="lee-check-setting"><input type="checkbox" id="kernel-auto-manage"${o.auto_manage ? ' checked' : ''}> leela manages the runtime limit</label>` +
@@ -2726,6 +2746,8 @@ async function pickKernel() {
     `<div class="lee-mfoot"><button class="lee-btn" id="kernelattach">` +
     `${o.private ? 'attach to folder kernel' : 'give this tab its own kernel'}</button>` +
     `<span class="lee-dim">notebooks default to their own kernel; files share by folder</span></div>`);
+  const clearWeights = m.querySelector('#clearengines');
+  if (clearWeights) clearWeights.onclick = () => clearEngines(m);
   const reconnect = $('[data-kernel-reconnect]', m);
   if (reconnect) reconnect.onclick = async () => { await post('/kernel/restart'); m.remove(); status('kernel restarted', 'ok'); };
   m.querySelector('#kernel-auto-manage').onchange = async (e) => {
@@ -2748,7 +2770,7 @@ async function pickKernel() {
     refreshKernelPill(); leeVars();
   };
   m.addEventListener('click', async (e) => {
-    const r = e.target.closest('.lee-mrow'); if (!r) return;
+    const r = e.target.closest('.lee-mrow'); if (!r || r.dataset.engine) return;
     if (r.dataset.off) {
       if (!o.python) return status('choose a project interpreter before installing kernel support', 'err');
       m.remove(); status('installing ipykernel and ipymini with uv…');
@@ -2770,6 +2792,48 @@ async function pickKernel() {
   });
 }
 
+
+/* The weights the local models are loaded into, beside the kernels: one modal for what this machine
+ * is holding open. The broker is the only thing that knows, and one that cannot answer must not keep
+ * the kernel picker shut, since this is where a person comes when a runtime is misbehaving. */
+async function loadedModels() {
+  try { return (await api('/runtime/broker')).models || null; }
+  catch (e) { console.warn('Leela could not read the model engine broker:', e); return null; }
+}
+
+function engineSection(models) {
+  if (!models) return '';
+  const idle = s => s >= 60 ? `idle ${Math.round(s / 60)}m` : `idle ${Math.max(0, Math.round(s))}s`;
+  const rows = (models.engines || []).map(e =>
+    `<div class="lee-mrow" data-engine="1" style="cursor: default">${esc(e.runtime + '/' + e.model)}` +
+    `<span class="sub">${e.in_use ? 'in use' : idle(e.idle_for || 0)}</span></div>`).join('');
+  return `<h4>loaded models</h4>` +
+    (rows ? `<div class="lee-modallist">${rows}</div>` +
+            `<div class="lee-dim">${models.live} of ${models.limit} loaded · ` +
+            `weights outlive the chats built on them</div>` +
+            `<div class="lee-mfoot"><button class="lee-btn" id="clearengines">clear weights</button></div>`
+          : `<div class="lee-dim">no local model weights are loaded</div>`);
+}
+
+/* Releasing weights a session is answering on interrupts it, so the refusal is the server's own
+ * sentence and the force is a second, deliberate answer to it. */
+async function clearEngines(m) {
+  let d;
+  try { d = await post('/runtime/engines/clear', {}); }
+  catch (e) {
+    const refusal = String(e.message || e);
+    const held = ((await loadedModels())?.engines || []).filter(x => x.in_use);
+    if (!held.length) return status(refusal, 'err');   // not the one refusal a person can answer
+    if (!await confirmDialog('a session is using a loaded model',
+                             `${refusal} That session loses the model it is answering on.`,
+                             'clear anyway')) return status(refusal, 'err');
+    try { d = await post('/runtime/engines/clear', {force: true}); }
+    catch (err) { return status(String(err.message || err), 'err'); }
+  }
+  const freed = (d.freed || []).map(e => `${e.runtime}/${e.model}`).join(', ');
+  m.remove();
+  status(freed ? `released ${freed}${d.live ? ` · ${d.live} still loaded` : ''}` : d.note, 'ok');
+}
 
 /* The kernel ceiling names the runtime it would close and waits for an answer. `settings > runtimes`
  * mutes this, and leela closes the longest-idle one itself. */
@@ -3453,11 +3517,31 @@ async function refreshVars(box) {
     try { d = await api(`/vars?profile=${profile}&sort=${sort}&scope=${lee.execScope}`); }
     catch (e) { box.innerHTML = `<div class="lee-err">${esc(e.message)}</div>`; return; }
     if (d.error) {
+      // An install runs for minutes and the panel polls every 2.5 seconds; repainting would throw
+      // away the disabled button and the progress line every poll.
+      if (lee.varsInstalling) return;
+      const pkgs = (d.packages || []).join(' and ');
       box.innerHTML = `<div class="lee-err"><strong>Dhrishti inspector unavailable</strong><span>${esc(d.error)}</span>` +
+        (d.can_install ? `<button class="lee-btn go" data-install-inspector>Install ${esc(pkgs)} into this environment</button>` : '') +
         `<button class="lee-btn" data-repair-inspector>Restart kernel and repair</button></div>`;
       $('[data-repair-inspector]', box).onclick = async () => {
         if (!await confirmDialog('Restart kernel', 'Repairing the inspector restarts this kernel and clears its live variables.', 'restart and repair')) return;
         await post('/kernel/restart'); markPreviousRuns(); await leeVars(); refreshKernelPill();
+      };
+      const install = $('[data-install-inspector]', box);
+      if (install) install.onclick = async () => {
+        if (!await confirmDialog('Install into this environment',
+            `Leela will install ${pkgs} into ${d.python}, then restart this kernel, which clears its live variables.`,
+            'install and restart')) return;
+        install.disabled = true; lee.varsInstalling = true;
+        status(`installing ${pkgs} into ${d.python.split('/').slice(-3).join('/')}…`);
+        try {
+          await post('/runtime/inspector', {python: d.python});
+          await post('/kernel/restart'); markPreviousRuns();
+          status('inspector ready · live variables connected', 'ok');
+        } catch (e) { status(String(e.message || e), 'err'); }
+        finally { lee.varsInstalling = false; install.disabled = false; }
+        await leeVars(); refreshKernelPill();
       };
       return;
     }

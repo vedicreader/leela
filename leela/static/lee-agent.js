@@ -1631,26 +1631,40 @@ function markTurnUndone(out, bar, files, revise) {
    the bar is not gated on there being an answer. Every button says why it is unavailable, and
    `known` distinguishes "this turn changed nothing" from "this process no longer holds a boundary
    for it", which is what a turn from before a restart or from past `MAX_CHECKPOINTS` looks like. */
+/* An unavailable control is muted and states its reason on the row. `.lee-btn` has no disabled
+   appearance in the stylesheet, so a dead button was pixel-identical to a live one down to the
+   pointer cursor, and the only explanation was a `title` nobody hovers in the packaged app: the
+   report was "I click edit and undo, nothing happens". The reason is carried here rather than in
+   `lee-ide.css` so the bar explains itself wherever it is painted. */
+const REVISION_MUTED = 'opacity:.4;cursor:default';
+const REVISION_NOTE = 'flex:1 0 100%;order:9;margin-top:5px;color:var(--lee-fg4);font:9px/1.45 var(--lee-mono);white-space:normal';
 function addResponseRevision(out, turnId, raw, capabilities = {}) {
   if (!turnId || !out) return;
   const bar = document.createElement('div'); bar.className = 'lee-response-revision';
   const files = capabilities.files || [], gone = capabilities.known === false;
-  const unheld = 'Unavailable: this conversation was not run in this session, so there is no turn boundary to act on';
-  const reviseWhy = capabilities.revisable ? 'Correct this answer and continue the next turn from your version'
-    : gone ? unheld : 'Unavailable: this turn failed before an assistant response entered model history';
-  const undoWhy = capabilities.undoable ? `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn`
-    : gone ? unheld : 'Unavailable: this turn made no reversible file changes';
-  const unsayWhy = capabilities.branchable
-    ? 'Forget this turn: branch the conversation to just before it, keeping it in history'
-    : gone ? unheld : 'Unavailable: this turn has no captured boundary to branch at';
+  const unheld = 'this conversation was not run in this session, so there is no turn boundary to act on';
+  const controls = [
+    ['revise', 'lee-btn', 'Edit what agent remembers', !!capabilities.revisable,
+     'Correct this answer and continue the next turn from your version',
+     gone ? unheld : 'this turn failed before an assistant response entered model history'],
+    ['unsay', 'lee-btn', 'Undo from conversation', !!capabilities.branchable,
+     'Forget this turn: branch the conversation to just before it, keeping it in history',
+     gone ? unheld : 'this turn has no captured boundary to branch at'],
+    ['undo', 'lee-btn warn', 'Restore files', !!capabilities.undoable,
+     `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn`,
+     gone ? unheld : 'this turn made no reversible file changes']];
+  const off = controls.filter(c => !c[3]);
   bar.dataset.turn = turnId;
   bar.dataset.revisable = capabilities.revisable ? '1' : '';
   bar.dataset.undoable = capabilities.undoable ? '1' : '';
   bar.dataset.files = String(files.length);
   bar.innerHTML = `<span>turn ${esc(turnId.split(':').at(-1))}</span>` +
-    `<button class="lee-btn" data-revise title="${esc(reviseWhy)}"${capabilities.revisable ? '' : ' disabled'}>Edit what agent remembers</button>` +
-    `<button class="lee-btn" data-unsay title="${esc(unsayWhy)}"${capabilities.branchable ? '' : ' disabled'}>Undo from conversation</button>` +
-    `<button class="lee-btn warn" data-undo title="${esc(undoWhy)}"${capabilities.undoable ? '' : ' disabled'}>Restore files</button>`;
+    controls.map(([key, cls, label, on, why, cant]) =>
+      `<button class="${cls}" data-${key} title="${esc(on ? why : `Unavailable: ${cant}`)}"` +
+      `${on ? '' : ` disabled style="${REVISION_MUTED}"`}>${esc(label)}</button>`).join('') +
+    // one shared sentence when nothing is held for the turn, rather than the same one three times
+    (off.length ? `<small data-unavailable style="${REVISION_NOTE}">${esc(gone ? `Unavailable: ${unheld}`
+      : off.map(c => `${c[2]} is unavailable: ${c[5]}`).join(' · '))}</small>` : '');
   /* Last in the turn's body rather than straight after the answer. A turn that ended on prose has
      that prose inside `.lee-agent-timeline`, so `out.after` put the bar in there too -- inside the
      element `markTurnUndone` dims, which dimmed the bar's own explanation of why. The answer is
