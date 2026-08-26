@@ -17,12 +17,30 @@ class FakeChat:
     def create_engine(cls, model_id=None, model_path=None, adapter_path=None, **kw):
         return FakeEngine(model_id=model_id, model_path=model_path, adapter_path=adapter_path, **kw)
 
+class VlmChat(FakeChat):
+    "The class a vision repo is re-dispatched to. Its loader is not the text one."
+    @classmethod
+    def create_engine(cls, model_id=None, model_path=None, adapter_path=None, **kw):
+        return FakeEngine(model_id=model_id, vlm=True)
+
+class DispatchingChat(FakeChat):
+    "A runtime whose class picks its real class from the model, as `MlxChat.__new__` does."
+    def __new__(cls, model=None, *, runtime=None, model_path=None, vlm=None, **kw):
+        if cls is DispatchingChat and (vlm if vlm is not None else 'vl' in str(model or '')):
+            return object.__new__(VlmChat)
+        return object.__new__(cls)
+
+class ServerChat:
+    "A rishi chat for a runtime that is local but loads nothing here, as ollama's is: no `create_engine`."
+
 class FakeBackend:
     "What `RishiBackend` looks like to the broker before it has built a chat."
-    def __init__(self, spec, **kw): self.spec, self.kw, self.chat = spec, dict(kw), None
+    def __init__(self, spec, **kw):
+        self.spec, self.kw, self.chat, self._tried = spec, dict(kw), None, False
     def _runtime_kw(self): return dict(self.kw)
-    def start(self): self.chat = object(); return self.chat      # a chat now holds the engine
-    def close(self): self.chat = None
+    def start(self): self._tried, self.chat = True, object(); return self.chat   # a chat holds the engine
+    def failed(self): self._tried, self.chat = True, None; return self           # rishi could not build one
+    def close(self): self._tried, self.chat = True, None
 
 @pytest.fixture
 def broker(monkeypatch):
@@ -59,6 +77,68 @@ def test_a_remote_model_has_no_engine_to_share(broker):
     be = FakeBackend(ModelSpec('gpt', 'remote', 'openai/gpt-5', ctx=128_000))
     assert broker.attach(be) is None
     assert 'engine' not in be.kw and broker.status()['live'] == 0
+
+def test_a_local_server_runtime_has_no_engine_to_share(monkeypatch):
+    "Ollama runs the weights in its own server, so there is nothing here to load, share or count."
+    monkeypatch.setattr(eng, '_chat_cls', lambda runtime: ServerChat)
+    s = ModelSpec('qwen3', 'ollama', 'ollama/qwen3:8b', ctx=8000)
+    assert s.local, 'the point of this test is a local runtime the broker must still not build for'
+    b, be = EngineBroker(max_engines=2), FakeBackend(s, n_ctx=8000)
+    assert b.attach(be) is None
+    assert 'engine' not in be.kw and b.status()['live'] == 0
+    assert eng.engine_kw('ollama', {'n_ctx': 8000}) == {}
+
+def test_a_failed_chat_holds_its_engine_until_something_asks_for_it(broker):
+    """A dialog model whose chat failed keeps its weights: nothing releases an engine on its own.
+
+    `/runtime/engines/clear` is what a person asks with, and the ceiling is what asks for them
+    otherwise. Releasing on the next attach would close engines that are mid-load or lent out."""
+    be = FakeBackend(spec())
+    engine = broker.attach(be)
+    be.failed()
+    broker.attach(FakeBackend(spec('other')))
+    assert not engine.closed and be.kw['engine'] is engine
+    assert broker.drop() == [{'runtime': 'mlx', 'model': 'qwen'}, {'runtime': 'mlx', 'model': 'other'}]
+    assert engine.closed and broker.status()['live'] == 0
+
+def test_a_vision_model_is_built_by_the_class_that_will_receive_it(monkeypatch):
+    """The broker asked `get_runtime('mlx')`, which cannot see the model, and built a text engine
+    for a vision repo. Rishi then handed that engine to `MlxVlmChat` and the first turn died in
+    mlx-vlm with `'Model' object has no attribute 'config'`."""
+    monkeypatch.setattr(eng, '_chat_cls', lambda runtime: DispatchingChat)
+    b, be = EngineBroker(max_engines=2), FakeBackend(spec('qwen3-vl'))
+    engine = b.attach(be)
+    assert engine.kw.get('vlm'), 'the vision loader built it, not the runtime\'s own class'
+    assert be.kw['engine'] is engine
+
+def test_one_repo_down_two_loaders_is_two_engines(monkeypatch):
+    "`vlm=False` takes a vision repo down the text loader. One key for both hands over the wrong one."
+    monkeypatch.setattr(eng, '_chat_cls', lambda runtime: DispatchingChat)
+    b = EngineBroker(max_engines=3)
+    vis, txt = FakeBackend(spec('qwen3-vl')), FakeBackend(spec('qwen3-vl'), vlm=False)
+    assert b.attach(vis) is not b.attach(txt)
+    assert vis.kw['engine'].kw.get('vlm') and not txt.kw['engine'].kw.get('vlm')
+    assert b.status()['live'] == 2, 'two loaders on one repo are two engines'
+
+def test_two_models_on_one_runtime_were_never_confused(monkeypatch):
+    "The model id has always been in the key, so two repos never shared an entry. Only the class was missing."
+    monkeypatch.setattr(eng, '_chat_cls', lambda runtime: DispatchingChat)
+    b = EngineBroker(max_engines=3)
+    assert b.attach(FakeBackend(spec('qwen3-vl'))) is not b.attach(FakeBackend(spec('qwen3')))
+
+def test_the_chat_class_is_resolved_once_per_model(monkeypatch):
+    "Rishi's sniff reads the model config through the hub, and `attach` runs on every turn."
+    asked = []
+    class Counting(DispatchingChat):
+        def __new__(cls, model=None, **kw):
+            asked.append(model)
+            return DispatchingChat.__new__(cls, model, **kw)
+    monkeypatch.setattr(eng, '_chat_cls', lambda runtime: Counting)
+    b = EngineBroker(max_engines=3)
+    for _ in range(3): b.attach(FakeBackend(spec()))
+    assert asked == ['qwen'], 'one hub read for one model, however many turns attach'
+    b.attach(FakeBackend(spec('other')))
+    assert asked == ['qwen', 'other']
 
 def test_a_missing_backend_is_rishis_error_to_raise(monkeypatch):
     "The broker must not be what reports an uninstalled runtime; it just has nothing to share."

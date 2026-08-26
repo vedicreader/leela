@@ -24,6 +24,22 @@ def connect(app, ctx):
         return {**out, 'models': engine_broker().status(),   # weights, alongside namespaces
                 'auto_manage': bool(getattr(broker, 'auto_manage', False)),
                 'idle': ctx.pool.idle}
+    @rt('/runtime/engines/clear')
+    async def runtime_engines_clear(req):
+        """Release the loaded model weights. A model a session is talking to is refused, then forced.
+
+        Weights outlive the chats built on them, so the memory is held until something asks for it."""
+        from .engines import engine_broker
+        d = await req.json()
+        broker = engine_broker()
+        held = [e for e in broker.status()['engines'] if e['in_use']]
+        if held and not d.get('force'):
+            names = ', '.join(f"{e['runtime']}/{e['model']}" for e in held)
+            return fail(f'a session is using {names}; force the clear to close it anyway', 409)
+        freed = broker.close() if d.get('force') else broker.drop()
+        return {'ok': True, 'freed': freed, 'live': broker.status()['live'],
+                'note': (f'released {len(freed)} model ' + ('engine' if len(freed) == 1 else 'engines')
+                         if freed else 'no model weights were loaded')}
     @rt('/runtime/close')
     async def runtime_close(req):
         "Close one runtime by key. The limit dialog answers with the key it was offered."

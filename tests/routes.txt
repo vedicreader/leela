@@ -259,6 +259,7 @@ GET,POST /runtime/auto-manage
 GET,POST /runtime/broker
 GET,POST /runtime/close
 GET,POST /runtime/create
+GET,POST /runtime/engines/clear
 GET,POST /runtime/info
 GET,POST /runtime/inspector
 GET,POST /runtime/support

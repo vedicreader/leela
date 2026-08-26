@@ -1385,3 +1385,95 @@ def test_the_inspector_probe_asks_the_question_the_kernel_asks(monkeypatch):
     support.inspector_support('/somewhere/python', refresh=True)
     assert 'sys.version_info[:2]' in seen['code'], 'the probe is version-guarded like the bootstrap'
     assert seen['code'].index('sys.version_info[:2]') < seen['code'].index('sys.path.extend')
+
+class _FakeEngine:
+    closed = False
+    def close(self): self.closed = True
+
+class _FakeBackend:
+    "A backend as the engine broker sees one: a spec, kwargs to build from, and a chat or not."
+    def __init__(self, spec): self.spec, self.kw, self.chat, self._tried = spec, {}, None, False
+    def _runtime_kw(self): return dict(self.kw)
+
+def _loaded_engine(monkeypatch, live):
+    "One `mlx/qwen` engine in the process broker, with a session on it or with a chat that failed."
+    from leela.agent.core import ModelSpec
+    from leela.blocks.runtime import engines as eng
+    class Chat:
+        @classmethod
+        def create_engine(cls, model_id=None, **kw): return _FakeEngine()
+    monkeypatch.setattr(eng, '_chat_cls', lambda runtime: Chat)
+    b, be = eng.EngineBroker(max_engines=3), _FakeBackend(ModelSpec('qwen', 'mlx', 'qwen', ctx=8000))
+    engine = b.attach(be)
+    be._tried, be.chat = True, object() if live else None
+    monkeypatch.setattr(eng, '_BROKER', b)
+    return engine, be    # the users are a WeakSet, so the caller holds the backend
+
+def test_clearing_the_local_engines_releases_a_failed_models_weights(tmp_path, monkeypatch):
+    """The weights of a dialog model whose chat failed are held until this asks for them.
+
+    The answer says what went, so the person knows the memory came back."""
+    engine, be = _loaded_engine(monkeypatch, live=False)
+    with _client(tmp_path)[0] as c: r = c.post('/runtime/engines/clear', json={}).json()
+    assert r['ok'] and r['live'] == 0 and r['freed'] == [{'runtime': 'mlx', 'model': 'qwen'}]
+    assert r['note'] == 'released 1 model engine' and engine.closed
+
+def test_a_session_on_a_model_refuses_the_clear_and_names_it(tmp_path, monkeypatch):
+    "The same 409 shape every answerable refusal uses, naming what is holding the weights."
+    engine, be = _loaded_engine(monkeypatch, live=True)
+    with _client(tmp_path)[0] as c: r = c.post('/runtime/engines/clear', json={})
+    assert r.status_code == 409 and r.json()['ok'] is False
+    assert 'mlx/qwen' in r.json()['error'] and not engine.closed
+
+def test_a_forced_clear_closes_the_model_a_session_is_on(tmp_path, monkeypatch):
+    engine, be = _loaded_engine(monkeypatch, live=True)
+    with _client(tmp_path)[0] as c: r = c.post('/runtime/engines/clear', json={'force': True}).json()
+    assert r['ok'] and r['freed'] == [{'runtime': 'mlx', 'model': 'qwen'}] and engine.closed
+
+def test_clearing_nothing_says_nothing_was_loaded(tmp_path, monkeypatch):
+    from leela.blocks.runtime import engines as eng
+    monkeypatch.setattr(eng, '_BROKER', eng.EngineBroker(max_engines=3))
+    with _client(tmp_path)[0] as c: r = c.post('/runtime/engines/clear', json={}).json()
+    assert r['ok'] and r['freed'] == [] and r['note'] == 'no model weights were loaded'
+
+def _kernel_js(): return read('leela/blocks/runtime/kernel.js')
+
+def test_the_kernel_picker_lists_the_loaded_models_and_can_clear_them():
+    "`/runtime/broker` reported the loaded weights to nobody: no JS asked for them. This is the caller."
+    src = _kernel_js()
+    assert "api('/runtime/broker')" in src and 'engineSection(models)' in src
+    sec = src[src.index('function engineSection('):src.index('async function clearEngines(')]
+    for field in ('runtime', 'model', 'in_use', 'idle_for', 'live', 'limit'): assert field in sec, field
+    assert "id=\"clearengines\"" in sec
+
+def test_an_unhappy_broker_does_not_keep_the_kernel_picker_shut():
+    "The picker is where a person goes when a runtime is misbehaving. It must open without the weights."
+    src = _kernel_js()
+    block = src[src.index('async function loadedModels('):src.index('function engineSection(')]
+    assert 'catch' in block and 'return null' in block, 'a broker that cannot answer must not throw here'
+    assert "if (!models) return '';" in src, 'and the section is then simply not painted'
+
+def test_a_row_of_loaded_weights_does_not_restart_the_kernel():
+    "The picker's one click handler takes every `.lee-mrow`, and a model row is not a kernel choice."
+    src = _kernel_js()
+    assert "if (!r || r.dataset.engine) return;" in src
+    assert "data-engine=\"1\"" in src
+
+def test_the_refusal_is_shown_and_the_force_is_a_second_answer():
+    "A 409 carries the sentence naming what holds the weights. It is what the person is asked about."
+    src = _kernel_js()
+    block = src[src.index('async function clearEngines('):src.index('/* The kernel ceiling')]
+    assert 'const refusal = String(e.message || e);' in block, 'the server sentence, not a bare failure'
+    assert 'confirmDialog(' in block and 'refusal' in block.split('confirmDialog(')[1][:200]
+    assert "post('/runtime/engines/clear', {force: true})" in block
+    assert block.count("status(refusal, 'err')") == 2, 'shown when it cannot be answered, and when declined'
+    assert 'd.freed' in block and 'd.live' in block, 'and the outcome says what went'
+
+def test_the_broker_reports_the_engine_fields_the_picker_paints(tmp_path, monkeypatch):
+    "The contract the model list is drawn from, pinned where the route can see it."
+    engine, be = _loaded_engine(monkeypatch, live=True)
+    with _client(tmp_path)[0] as c: d = c.get('/runtime/broker').json()
+    assert d['models']['live'] == 1 and d['models']['limit'] == 3
+    e = d['models']['engines'][0]
+    assert e['runtime'] == 'mlx' and e['model'] == 'qwen' and e['in_use'] is True
+    assert isinstance(e['idle_for'], int) and e['users'] == 1

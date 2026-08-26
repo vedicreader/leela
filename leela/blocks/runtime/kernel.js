@@ -2,6 +2,7 @@
  * runs it. Both restart the kernel, so what that costs is on screen while the choice is made. */
 async function pickKernel() {
   const o = await api('/kernel/options');
+  const models = await loadedModels();
   const row = (cur, main, sub, attrs) =>
     `<div class="lee-mrow${cur ? ' sel' : ''}" ${attrs}>${cur ? '● ' : '○ '}${esc(main)}` +
     `<span class="sub">${esc(sub)}</span></div>`;
@@ -20,6 +21,7 @@ async function pickKernel() {
     `<div class="lee-dim">choosing either of these restarts the kernel — its variables are lost</div>` +
     `<h4>launcher</h4><div class="lee-modallist">${kinds}</div>` +
     `<h4>interpreter</h4><div class="lee-modallist">${pys}</div>` +
+    engineSection(models) +
     `<div class="lee-runtime-cwd"><span>working directory</span><code>${esc(o.cwd || '')}</code>` +
     `<button class="lee-btn" id="kernelcwd">change</button></div>` +
     `<label class="lee-check-setting"><input type="checkbox" id="kernel-auto-manage"${o.auto_manage ? ' checked' : ''}> leela manages the runtime limit</label>` +
@@ -27,6 +29,8 @@ async function pickKernel() {
     `<div class="lee-mfoot"><button class="lee-btn" id="kernelattach">` +
     `${o.private ? 'attach to folder kernel' : 'give this tab its own kernel'}</button>` +
     `<span class="lee-dim">notebooks default to their own kernel; files share by folder</span></div>`);
+  const clearWeights = m.querySelector('#clearengines');
+  if (clearWeights) clearWeights.onclick = () => clearEngines(m);
   const reconnect = $('[data-kernel-reconnect]', m);
   if (reconnect) reconnect.onclick = async () => { await post('/kernel/restart'); m.remove(); status('kernel restarted', 'ok'); };
   m.querySelector('#kernel-auto-manage').onchange = async (e) => {
@@ -49,7 +53,7 @@ async function pickKernel() {
     refreshKernelPill(); leeVars();
   };
   m.addEventListener('click', async (e) => {
-    const r = e.target.closest('.lee-mrow'); if (!r) return;
+    const r = e.target.closest('.lee-mrow'); if (!r || r.dataset.engine) return;
     if (r.dataset.off) {
       if (!o.python) return status('choose a project interpreter before installing kernel support', 'err');
       m.remove(); status('installing ipykernel and ipymini with uv…');
@@ -71,6 +75,48 @@ async function pickKernel() {
   });
 }
 
+
+/* The weights the local models are loaded into, beside the kernels: one modal for what this machine
+ * is holding open. The broker is the only thing that knows, and one that cannot answer must not keep
+ * the kernel picker shut, since this is where a person comes when a runtime is misbehaving. */
+async function loadedModels() {
+  try { return (await api('/runtime/broker')).models || null; }
+  catch (e) { console.warn('Leela could not read the model engine broker:', e); return null; }
+}
+
+function engineSection(models) {
+  if (!models) return '';
+  const idle = s => s >= 60 ? `idle ${Math.round(s / 60)}m` : `idle ${Math.max(0, Math.round(s))}s`;
+  const rows = (models.engines || []).map(e =>
+    `<div class="lee-mrow" data-engine="1" style="cursor: default">${esc(e.runtime + '/' + e.model)}` +
+    `<span class="sub">${e.in_use ? 'in use' : idle(e.idle_for || 0)}</span></div>`).join('');
+  return `<h4>loaded models</h4>` +
+    (rows ? `<div class="lee-modallist">${rows}</div>` +
+            `<div class="lee-dim">${models.live} of ${models.limit} loaded · ` +
+            `weights outlive the chats built on them</div>` +
+            `<div class="lee-mfoot"><button class="lee-btn" id="clearengines">clear weights</button></div>`
+          : `<div class="lee-dim">no local model weights are loaded</div>`);
+}
+
+/* Releasing weights a session is answering on interrupts it, so the refusal is the server's own
+ * sentence and the force is a second, deliberate answer to it. */
+async function clearEngines(m) {
+  let d;
+  try { d = await post('/runtime/engines/clear', {}); }
+  catch (e) {
+    const refusal = String(e.message || e);
+    const held = ((await loadedModels())?.engines || []).filter(x => x.in_use);
+    if (!held.length) return status(refusal, 'err');   // not the one refusal a person can answer
+    if (!await confirmDialog('a session is using a loaded model',
+                             `${refusal} That session loses the model it is answering on.`,
+                             'clear anyway')) return status(refusal, 'err');
+    try { d = await post('/runtime/engines/clear', {force: true}); }
+    catch (err) { return status(String(err.message || err), 'err'); }
+  }
+  const freed = (d.freed || []).map(e => `${e.runtime}/${e.model}`).join(', ');
+  m.remove();
+  status(freed ? `released ${freed}${d.live ? ` · ${d.live} still loaded` : ''}` : d.note, 'ok');
+}
 
 /* The kernel ceiling names the runtime it would close and waits for an answer. `settings > runtimes`
  * mutes this, and leela closes the longest-idle one itself. */
