@@ -1,6 +1,6 @@
 "`leela`, the browser IDE entry point."
 
-import argparse, ipaddress, os
+import argparse, ipaddress, os, sys
 
 __all__ = ['main']
 
@@ -62,6 +62,12 @@ def main(argv=None):
         print('  "keys" holds what you changed; copy a line out of "_defaults" to change one more.')
         for n in NOTES: print(f'  ⚠ {n}')
         return
+    # A window opened from Finder has launchd's environment, not a shell's, so the keys and the
+    # tools a profile exports are missing. `LEELA_SHELL_ENV=0` keeps the environment as launched.
+    if os.environ.get('LEELA_SHELL_ENV', '1') != '0' and (getattr(sys, 'frozen', False)
+                                                          or os.environ.get('LEELA_SHELL_ENV') == '1'):
+        from .core.envs import import_login_env
+        import_login_env()
     roots = [os.path.abspath(f) for f in a.folders]
     for r in roots:
         if not os.path.isdir(r): p.error(f'not a directory: {r}')

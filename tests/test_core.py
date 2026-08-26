@@ -1335,3 +1335,29 @@ def test_the_journal_keeps_bodies_by_reference_and_pins_them(tmp_path):
     assert h.body(row['before_blob']) == 'one\n', 'the operation still has what it needs'
     j.undo()
     assert f.read_text() == 'one\n'
+
+def test_a_window_opened_from_finder_takes_the_shell_environment_it_was_denied(tmp_path):
+    """An app launched from Finder has launchd's environment, so a key exported from a shell profile
+    is invisible to it while the same Leela started from a terminal sees it."""
+    import os
+    from leela.core.envs import import_login_env
+    shell = tmp_path/'fakeshell'
+    shell.write_text('#!/bin/sh\nprintf \'OPENAI_API_KEY=sk-from-profile\\0HOME=/somewhere/else\\0'
+                     'PATH=/opt/tools:/usr/bin\\0PWD=/tmp\\0\'\n')
+    shell.chmod(0o755)
+    env = {'HOME': '/real/home', 'PATH': '/usr/bin'}
+    added = import_login_env(shell=str(shell), env=env)
+    assert env['OPENAI_API_KEY'] == 'sk-from-profile', 'the key the profile exports arrives'
+    assert env['HOME'] == '/real/home', 'and nothing the launcher chose is overwritten'
+    assert env['PATH'].split(os.pathsep) == ['/usr/bin', '/opt/tools'], 'a directory it lacks can only add a tool'
+    assert 'PWD' not in env, 'the shell describing itself is not the environment'
+    assert set(added) == {'OPENAI_API_KEY', 'PATH'}
+
+def test_a_shell_that_cannot_be_asked_changes_nothing(tmp_path):
+    "Being unable to ask is not evidence about the environment, so it leaves it as it was."
+    from leela.core.envs import import_login_env
+    env = {'PATH': '/usr/bin'}
+    assert import_login_env(shell=str(tmp_path/'no-such-shell'), env=env) == []
+    broken = tmp_path/'broken'; broken.write_text('#!/bin/sh\nexit 3\n'); broken.chmod(0o755)
+    assert import_login_env(shell=str(broken), env=env) == []
+    assert env == {'PATH': '/usr/bin'}
