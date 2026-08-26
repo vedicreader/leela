@@ -240,9 +240,18 @@ def uv_argv(root, argv):
     What the terminal does. uv syncs the lock before it runs anything, so a venv that has drifted
     is repaired rather than failing halfway through with an import error.
     """
-    if not (Path(root)/'uv.lock').exists(): return None
+    root = Path(root)
+    if not (root/'uv.lock').exists(): return None
     exe = which('uv')
-    return [exe, 'run', '--project', str(root), *argv] if exe else None
+    if not exe: return None
+    # Spelled the way the project spells it. uv runs the project's own script where there is one
+    # and falls through to PATH where there is not, and PATH is where another interpreter's
+    # differently-spelled copy of the same tool is waiting.
+    name = argv[0]
+    bindir = root/'.venv'/'bin'
+    hit = first(n for n in (name, name.replace('_', '-'), name.replace('-', '_'))
+                if (bindir/n).exists())
+    return [exe, 'run', '--project', str(root), hit or name.replace('_', '-'), *argv[1:]]
 
 def nbdev_project(root):
     "An nbdev project: `settings.ini` for nbdev 2, or `[tool.nbdev]` in `pyproject.toml`."

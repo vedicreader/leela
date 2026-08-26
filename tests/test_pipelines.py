@@ -529,5 +529,12 @@ def test_a_uv_project_runs_through_uv_the_way_the_terminal_does(tmp_path, monkey
     assert uv_argv(root, ['nbdev-prepare']) is None, 'no lock, so uv does not own it'
     (root/'uv.lock').write_text('')
     assert uv_argv(root, ['nbdev-prepare']) == ['/opt/uv', 'run', '--project', str(root), 'nbdev-prepare']
+    # uv falls through to PATH for a name the project has not got, and PATH is where another
+    # interpreter's `nbdev_prepare` sits. The spelling handed to uv is the one the venv has.
+    bindir = root/'.venv'/'bin'; bindir.mkdir(parents=True)
+    (bindir/'nbdev-prepare').write_text('')
+    assert uv_argv(root, ['nbdev_prepare'])[4] == 'nbdev-prepare'
+    (bindir/'odd_name').write_text('')
+    assert uv_argv(root, ['odd_name'])[4] == 'odd_name', 'a command the project really spells that way'
     monkeypatch.setattr('leela.blocks.pipelines.pipelines.which', lambda n: None)
     assert uv_argv(root, ['nbdev-prepare']) is None, 'and without uv installed it falls back'
