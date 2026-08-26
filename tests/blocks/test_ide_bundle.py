@@ -454,3 +454,20 @@ def test_the_pill_repaint_survives_a_broken_tree_or_notice():
     src = (ROOT/'leela/blocks/git/cwd.js').read_text()
     fn = src[src.index('async function refreshProjectPills'):src.index('async function gitInfo')]
     assert fn.index('git.textContent = `${d.branch}') < fn.index('paintGitTree(d)')
+
+
+def test_a_finished_run_stops_its_clock_and_loses_its_stop_button():
+    """The strip drew every row from `Date.now()`, so a subagent that had stopped counted on.
+
+    The server sends `ended` and a terminal `state` for exactly this; neither was read.
+    """
+    src = (ROOT/'leela/blocks/agent/steer.js').read_text()
+    fn = src[src.index('function updateAgentRunstrip'):src.index('async function pauseAgentAfterCurrent')]
+    assert 'r.ended' in fn, 'the clock still ignores when the run actually ended'
+    assert 'TERMINAL.has(r.state)' in fn, 'and nothing tells a finished run from a working one'
+    stop = fn[fn.index('data-stop-run'):]
+    assert 'done ?' in fn[:fn.index('data-stop-run')], 'Stop is offered for a run that already stopped'
+    # The states must match ramabana's `Run.terminal`, or a row is called live that the server dropped.
+    assert set(re.findall(r"'(\w+)'", src[src.index('const TERMINAL'):src.index('function updateAgentRunstrip')])) \
+        == {'completed', 'cancelled', 'detached', 'terminated', 'failed'}
+    assert 'TERMINAL' in JS, 'and the built bundle carries it'

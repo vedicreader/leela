@@ -1,6 +1,9 @@
 /* Most callers pass no state, and a steer is not theirs to forget. Only a payload carrying
    `queued_steer` may change it, so the acknowledgement survives until the server says the steer
    was taken. */
+//: The run states `Run.terminal` covers. A row in one of them is history, not work in progress.
+const TERMINAL = new Set(['completed', 'cancelled', 'detached', 'terminated', 'failed']);
+
 function updateAgentRunstrip(state = {}) {
   const strip = $('#agentrunstrip'); if (!strip) return;
   if ('queued_steer' in state) setQueuedSteer(state.queued_steer || '');
@@ -18,7 +21,10 @@ function updateAgentRunstrip(state = {}) {
   // row leaves that a dozen characters. The rows take the width and the buttons go under them.
   strip.classList.toggle('fanned', flat.length > 1);
   $('.lee-agent-run-state', strip).innerHTML = flat.length ? flat.map(r => {
-    const elapsed = r.started ? Math.max(0, Date.now() / 1000 - r.started) : 0;
+    // `ended`, where the run has one: a finished run's clock counted on, and read as still working.
+    const done = TERMINAL.has(r.state);
+    const until = r.ended || (done ? r.started : Date.now() / 1000);
+    const elapsed = r.started ? Math.max(0, until - r.started) : 0;
     const clock = `${Math.floor(elapsed / 60)}:${String(Math.floor(elapsed % 60)).padStart(2, '0')}`;
     // the model repeats on every row of a fan-out; the question does not
     const who = r.kind === 'child' ? `subagent ${(r.model || '').split('/').pop()}`.trim() : (r.model || 'Agent');
@@ -26,7 +32,7 @@ function updateAgentRunstrip(state = {}) {
     return `<span class="lee-agent-run${r.kind === 'child' ? ' child' : ''}"><span>${esc(label)}</span>` +
       `<time>${esc(clock)}</time>` +
       (r.kind === 'child' ? `<button type="button" data-open-subs>Open</button>` : '') +
-      `<button type="button" data-stop-run="${esc(r.id)}">Stop</button></span>`;
+      (done ? '' : `<button type="button" data-stop-run="${esc(r.id)}">Stop</button>`) + `</span>`;
   }).join('') : esc(rootLabel);
   $$('[data-open-subs]', strip).forEach(b => b.onclick = e => { e.stopPropagation(); leeSubagents(); });
   $$('[data-stop-run]', strip).forEach(btn => btn.onclick = async e => {
