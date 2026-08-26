@@ -562,3 +562,28 @@ def test_a_build_environment_on_the_same_python_is_kept(tmp_path, monkeypatch):
     monkeypatch.setattr(setup_app, 'run', lambda *a, **k: ran.append([str(x) for x in a]))
     setup_app.build_venv('/opt/homebrew/opt/python@3.13/bin/python3.13')
     assert not any(c[1:3] == ['-m', 'venv'] for c in ran), 'nothing was recreated'
+
+
+def test_the_build_environment_installs_what_the_lock_names(tmp_path, monkeypatch):
+    """pip resolves `>=` against what it finds and keeps what it already has, so `.app-venv` went on
+    carrying the rishi and ramabana it was first built with while the repository moved. A build
+    shipped the exact on-device corruption the tree had already fixed."""
+    import setup_app
+    req = setup_app.lock_requirements()
+    assert req is not None and req.exists(), 'uv export answered nothing'
+    pinned = dict(line.split('==', 1) for line in req.read_text().splitlines()
+                  if '==' in line and not line.startswith(('#', ' ')))
+    import tomllib
+    lock = tomllib.loads((setup_app.ROOT/'uv.lock').read_text())
+    named = {p['name']: p['version'] for p in lock['package'] if 'version' in p}
+    for name in ('rishi', 'ramabana', 'fastcore'):
+        assert name in pinned, f'{name} missing from the exported requirements'
+        assert pinned[name].split(';')[0].strip() == named[name], \
+            f'{name} pinned at {pinned[name]} but the lock names {named[name]}'
+    assert 'leela' not in pinned, 'the project itself is installed editable, not from the lock'
+
+def test_the_exported_requirements_live_where_git_ignores_them():
+    "A generated file beside the build definition is one somebody commits by accident."
+    import setup_app
+    assert setup_app.VENV.name == '.app-venv'
+    assert (setup_app.VENV/'app-requirements.txt').parent == setup_app.VENV

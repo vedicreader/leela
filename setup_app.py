@@ -13,6 +13,8 @@ from fastcore.all import Path, first
 
 ROOT = Path(__file__).resolve().parent
 VENV = ROOT/'packaging'/'.app-venv'
+#: What the frozen app installs. The bundle is built from the lock over these.
+APP_EXTRAS = ('desktop', 'gateway', 'macapp')
 # Framework builds on macOS, best first. Not newest first: the version here is the version the
 # app ships, and a kernel may only borrow Leela's own `sys.path` from an interpreter of the same
 # minor version (`blocks/runtime/support.py`). So the order is what projects are most likely to be
@@ -31,7 +33,7 @@ FRAMEWORK_CANDIDATES = (
     '/usr/bin/python3',
 )
 
-__all__ = ['is_framework', 'framework_python', 'py_version', 'build_venv', 'platform_setup', 'main']
+__all__ = ['is_framework', 'framework_python', 'py_version', 'lock_requirements', 'build_venv', 'platform_setup', 'main']
 
 def run(*args, **kw):
     print('·', ' '.join(str(a) for a in args))
@@ -76,8 +78,31 @@ def build_venv(python, force=False):
         VENV.parent.mkdir(parents=True, exist_ok=True)
         run(python, '-m', 'venv', VENV)
     run(exe, '-m', 'pip', 'install', '--upgrade', '--quiet', 'pip', 'setuptools', 'wheel')
-    run(exe, '-m', 'pip', 'install', '--quiet', '-e', f'{ROOT}[desktop,gateway,macapp]')
+    if (req := lock_requirements()) is not None:
+        run(exe, '-m', 'pip', 'install', '--quiet', '--upgrade', '-r', req)
+        run(exe, '-m', 'pip', 'install', '--quiet', '--no-deps', '-e', f'{ROOT}[desktop,gateway,macapp]')
+    else: run(exe, '-m', 'pip', 'install', '--quiet', '-e', f'{ROOT}[desktop,gateway,macapp]')
     return exe
+
+def lock_requirements(extras=APP_EXTRAS):
+    """`uv.lock` as a pinned requirements file, or None where uv cannot answer.
+
+    pip resolves `>=` against whatever it finds and keeps whatever it already has, so a build
+    environment went on shipping the rishi and ramabana the app was built with months ago while
+    the repository moved. The lock is the tested set; the bundle should carry that one.
+    """
+    if not (ROOT/'uv.lock').exists(): return None
+    args = ['uv', 'export', '--frozen', '--no-dev', '--no-hashes', '--no-emit-project',
+            '--format', 'requirements-txt']
+    for e in extras: args += ['--extra', e]
+    try: out = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.SubprocessError): return None
+    if out.returncode or not out.stdout.strip():
+        print(f'· uv export failed; falling back to resolving from pyproject: {out.stderr.strip()[:200]}')
+        return None
+    (req := VENV/'app-requirements.txt').parent.mkdir(parents=True, exist_ok=True)
+    req.write_text(out.stdout)   # inside the venv, so git ignores it with everything else
+    return req
 
 def platform_setup():
     "The py2app or py2exe definition for this platform, and the argv it expects."
