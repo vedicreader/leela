@@ -4996,7 +4996,7 @@ wheels = [
 
 [[package]]
 name = "rishi"
-version = "0.1.30"
+version = "0.1.31"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aidialog" },
@@ -5010,9 +5010,9 @@ dependencies = [
     { name = "safepyrun" },
     { name = "truststore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/47/1f/a564493394d584a77f63794d5c211087d2545f6cab699bd50d97825ddf9d/rishi-0.1.30.tar.gz", hash = "sha256:5feac8a1b5377e983b24d41d1f22dc26f0580985a19afbd6ad9fe76099736b80", size = 108559, upload-time = "2026-08-25T23:52:15.37Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8e/f8/b2591b4fc0611e82fe23004b0ec8bea44759aeaab0ff6b1f52f7a3920da8/rishi-0.1.31.tar.gz", hash = "sha256:f3e133d96247da61c8e119fd30c76eb92c6a6c12fcbdc526aa168cb53049a786", size = 109133, upload-time = "2026-08-26T10:08:33.594Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/fb/8e0d6e26120ee194988d9da6951d24ca0f317350929b7e59b436832c69d3/rishi-0.1.30-py3-none-any.whl", hash = "sha256:b3cdc208ae08defc131f16bc18ac145ad5f44e94006bb2f277024505aff1edd0", size = 118587, upload-time = "2026-08-25T23:52:13.758Z" },
+    { url = "https://files.pythonhosted.org/packages/83/7a/f12e137d78a9d00d370f70ea173950b7cf5ca50e85dd98372efb21ca56a5/rishi-0.1.31-py3-none-any.whl", hash = "sha256:3b5aa8a638b92c3e920743b447c5659014c229b6648972fdf746ea64ed59fdb6", size = 119161, upload-time = "2026-08-26T10:08:31.948Z" },
 ]
 
 [package.optional-dependencies]
