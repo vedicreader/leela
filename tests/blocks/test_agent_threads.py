@@ -434,6 +434,7 @@ def test_turn_routes_validate_accept_and_replay(tmp_path):
     feed = Feed('thread-1')
     class Runner:
         def __init__(self): self.feed = feed; self.call = None
+        def held(self): return ''
         def start(self, prompt, attachments, reasoning, context, context_path, grounding):
             self.call = (prompt, tuple(attachments), reasoning)
             feed.emit('user', {'text': prompt, 'run': 'run-1'})
@@ -568,6 +569,7 @@ def test_a_producer_that_never_settles_does_not_hold_a_finite_subscriber():
     feed = Feed('thread-1')
     class Runner:
         def __init__(self): self.feed = feed
+        def held(self): return ''
         def start(self, prompt, *args):
             user = feed.emit('user', {'text': prompt, 'run': 'run-1'})
             feed.emit('chunk', {'text': 'answer', 'run': 'run-1'})
@@ -1105,6 +1107,7 @@ def test_a_turn_goes_to_the_conversation_the_browser_names(tmp_path):
     ws = Workspace(roots=[tmp_path])
     class Runner:
         def __init__(self, thread): self.thread, self.call, self.feed = thread, None, Feed(thread)
+        def held(self): return ''
         def start(self, prompt, attachments, reasoning, context, context_path, grounding):
             self.call = prompt; return {'ok': True, 'thread': self.thread, 'run': 'run-1', 'seq': 1}
         def close(self): self.feed.close()
@@ -1221,6 +1224,7 @@ def test_a_card_is_named_by_the_first_thing_said_in_it(tmp_path):
     feed = thread.feed
     class Runner:
         def __init__(self): self.feed = feed
+        def held(self): return ''
         def close(self): feed.close()
     thread.runner = Runner()
     runner = TurnRunner(ws, feed, thread=thread)
@@ -1307,3 +1311,61 @@ def test_a_reread_of_the_log_waits_for_the_log_to_change(tmp_path):
                   {'session': 'agent_a', 'turn_id': 'agent_a:2', 'at': 2, 'model': 'm'}])
         assert ws.fresh_history() is True and len(calls) == 2
     finally: ws.threads.shutdown()
+
+def test_a_turn_the_core_has_finished_with_stops_holding_the_conversation():
+    """The reported wedge: `turn_000007` came back `Unavailable`, so the core had no active run and
+    the pane painted ready, while the worker stayed in the provider's stream and the gate stayed
+    shut for twenty minutes."""
+    release = threading.Event()
+    class Stuck(_Workspace):
+        def ask_stream(self, *args, on_registered=None, **kwargs):
+            on_registered(self.ai._run); yield 'chunk'; release.wait(5)
+    ws = Stuck(); runner = TurnRunner(ws); runner.stale_after = .2
+    accepted = runner.start('question')
+    end = time.time() + 2
+    while not any(r['event'] == 'chunk' for r in runner.feed.since(0)) and time.time() < end: time.sleep(.01)
+    assert runner.held() and list(runner._pending), 'while it is fresh it is a turn, not a leak'
+    time.sleep(.25)
+    assert runner.held() == '', 'the core is running nothing, so nothing is holding the conversation'
+    assert runner.start('second')['run'] == 'run-1', 'and the next prompt goes through'
+    release.set()
+
+def test_a_worker_that_has_exited_never_holds_the_gate():
+    "An entry its worker can no longer pop is a leak, whatever the core says."
+    ws = _Workspace(); runner = TurnRunner(ws)
+    dead = threading.Thread(target=lambda: None); dead.start(); dead.join()
+    leaked = {'id': 'leaked', 'event': threading.Event(), 'gate': threading.Event(), 'worker': dead,
+              'accepted': True, 'run': 'run-1', 'error': None, 'at': time.time()}
+    leaked['gate'].set(); runner._pending['leaked'] = leaked
+    assert runner.held() == '' and runner._pending == {}
+
+def test_stop_clears_a_turn_that_cancel_cannot_reach():
+    """`cancel` reaches a turn between steps, so a worker parked in a provider's stream does not feel
+    it. Stop says it clears the conversation, and now it does."""
+    release = threading.Event()
+    class Stuck(_Workspace):
+        def ask_stream(self, *args, on_registered=None, **kwargs):
+            on_registered(self.ai._run); yield 'chunk'; release.wait(5)
+    ws = Stuck(); runner = TurnRunner(ws)
+    runner.start('question')
+    end = time.time() + 2
+    while not any(r['event'] == 'chunk' for r in runner.feed.since(0)) and time.time() < end: time.sleep(.01)
+    assert runner.stop()['cleared'] == 1
+    assert runner._pending == {} and runner.held() == ''
+    assert runner.start('second')['run'] == 'run-1'
+    release.set()
+
+def test_the_pane_is_never_ready_while_a_prompt_would_be_refused(tmp_path):
+    "One source of truth: what `/agent/status` and the conversation card say is what `start` does."
+    ws = _threaded_workspace(tmp_path); thread = ws.threads.active
+    leaked = {'id': 'leaked', 'event': threading.Event(), 'gate': threading.Event(),
+              'accepted': False, 'run': '', 'error': None, 'at': time.time() - 41}
+    leaked['gate'].set(); thread.runner._pending['leaked'] = leaked
+    assert thread.state == 'working', 'the card cannot say idle while the gate is shut'
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/agent/status', params={'thread': thread.id}).json()
+        assert d['busy'] is True and 'still holding this conversation' in d['held']
+        assert client.post('/agent/turn', json={'prompt': 'x', 'thread': thread.id}).status_code == 409
+        client.post('/agent/stop', json={'thread': thread.id})
+        clear = client.get('/agent/status', params={'thread': thread.id}).json()
+        assert clear['held'] == '' and clear['busy'] is False

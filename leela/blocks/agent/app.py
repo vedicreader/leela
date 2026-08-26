@@ -638,10 +638,16 @@ def connect(app, ctx):
         }
     @rt('/agent/status')
     def agent_status(thread: str = ''):
-        "Whether the assistant is loaded, what model it is on, and what it is doing right now."
+        """Whether the assistant is loaded, what model it is on, and what it is doing right now.
+
+        `busy` came from the core alone, which knows nothing of the gate that refuses a prompt, so a
+        conversation held by a turn the core had already finished with reported itself ready. `held`
+        is that gate's own reason, and it is what makes this `busy` true.
+        """
         try: t = _thread(thread)
         except Exception as e: return _thread_error(e)
-        return {**t.ai.status(), 'thread': t.id}
+        held = t.runner.held()
+        return {**t.ai.status(), 'thread': t.id, 'held': held, **({'busy': True} if held else {})}
     @rt('/agent/stop')
     async def agent_stop(req):
         "Cancel the foreground root run of one conversation, and clear a start that never arrived."

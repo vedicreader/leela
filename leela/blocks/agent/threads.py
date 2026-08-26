@@ -113,7 +113,7 @@ class Thread:
     @property
     def state(self):
         if self.approvals.pending is not None:return 'waiting'
-        if self.ai.busy:return 'working'
+        if self.ai.busy or self.runner.held():return 'working'
         run = self.ai.run()
         return 'failed' if run is not None and run.terminal and run.state == 'failed' else 'idle'
     def touch(self): self.touched = time.time(); return self
@@ -269,6 +269,8 @@ class TurnRunner:
         self.feed = feed or Feed()
         self._pending, self._lock = {}, threading.RLock()
         self.start_timeout = 30
+        #: How long a turn may hold the conversation after the core has stopped running anything.
+        self.stale_after = 60
 
     def _watch(self, ai, run_id):
         activity, approval, execution, compact = {}, '', '', ai.compactor.count
@@ -382,6 +384,47 @@ class TurnRunner:
         return (f'a turn started {int(time.time() - started)}s ago is still holding this conversation; '
                 'steer it, or stop to clear it')
 
+    def _reap(self, ai=None):
+        """Drop pending turns nothing is running any more, and stop their workers from speaking.
+
+        The gate is Leela's and `busy` is the core's, so a turn whose run has gone terminal while its
+        worker sits in the provider's stream held the conversation with nothing behind it. A worker
+        that has exited leaked its entry outright. Neither is a turn, so neither keeps the gate shut.
+        """
+        ai = ai or self.ai or getattr(self.workspace, '_ai', None)
+        try: running = bool(ai.runs(active=True)) if ai is not None else False
+        except Exception: return []                        # cannot tell, so do not clear
+        now, dropped = time.time(), []
+        with self._lock:
+            for ident, r in list(self._pending.items()):
+                worker = r.get('worker')
+                gone = worker is not None and not worker.is_alive()
+                quiet = (r['accepted'] and r['gate'].is_set() and not running
+                         and now - r['at'] >= self.stale_after)
+                if not (gone or quiet): continue
+                r['accepted'] = False        # whatever the worker still emits belongs to nobody
+                self._pending.pop(ident, None)
+                dropped.append(ident)
+        return dropped
+
+    def held(self):
+        """Why a prompt would be refused right now, or `''`.
+
+        The pane reads this rather than the core's `busy`, so what it shows cannot contradict what
+        `start` does.
+        """
+        self._reap()
+        with self._lock:
+            if not self._pending: return ''
+        return self._busy_note()
+
+    def _clear(self):
+        "Drop every pending turn. Stop says it clears the conversation, so it has to clear this too."
+        with self._lock:
+            idents = list(self._pending)
+            for ident in idents: self._pending.pop(ident)['accepted'] = False
+        return idents
+
     def abandon(self):
         "Drop every turn whose starter has given up: a gate open on a turn nobody accepted."
         with self._lock:
@@ -398,10 +441,16 @@ class TurnRunner:
             except Exception: pass
 
     def stop(self, run_id='', ai=None):
-        "Stop the turn in flight, and clear a start that never arrived so the pane is usable again."
+        """Stop the turn in flight, and clear what it left holding the conversation.
+
+        `cancel` reaches a turn between steps, so a worker parked in a provider's stream does not
+        feel it. A foreground stop therefore drops the gate itself, which is what its own refusal
+        message promises. Stopping one named run leaves the rest of the conversation as it was.
+        """
         ai = ai or self.ai or self.workspace._ai
         cleared = self.abandon()
         out = ai.cancel(run_id)
+        if not run_id: cleared += self._clear()
         with self._lock: pending = bool(self._pending)
         if not pending: self._release(ai)
         return {**out, 'cleared': len(cleared)}
@@ -416,6 +465,8 @@ class TurnRunner:
         worker = threading.Thread(target=self._work,
             args=(prompt, tuple(attachments), reasoning, context, context_path, grounding, ready), daemon=True,
             name=f'leela-turn-pending-{ident}')
+        ready['worker'] = worker
+        self._reap(ai)
         with self._lock:
             if self._pending or ai.busy: raise TurnError('thread_busy', self._busy_note(), thread)
             self._pending[ident] = ready
