@@ -4,10 +4,15 @@
  * process with fossick's profile, so it cannot reach Leela's DOM, and a site fossick is signed in
  * to is one Leela can read.
  *
- * Coordinates are 1:1, because the server pins Chrome's viewport to the canvas's CSS size.
+ * Coordinates are 1:1, because the server pins Chrome's viewport to the canvas's CSS size. A
+ * frame may carry more pixels than that box, and lands in a backing store sized to it.
  */
 
 const wsURL = p => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${p}`;
+
+// What the page should read as its own `devicePixelRatio`, so it picks the assets the display
+// wants. How many pixels a frame carries is `SCALE_FLAG`, which Chrome takes at launch.
+const webScale = () => Math.min(window.devicePixelRatio || 1, 2);
 
 // Only the active tab is cast: a hidden canvas costs a JPEG encode per frame in Chrome.
 let webView = null;
@@ -62,7 +67,7 @@ function mountWeb(host, st) {
 
   sock.onopen = () => {
     const [w, h] = measure();
-    send({id: st.target, w, h, scale: 1});
+    send({id: st.target, w, h, scale: webScale()});
   };
   sock.onerror = () => say('the inline browser socket failed', 'err');
   sock.onclose = () => { if (webView === view) say('the browser disconnected — reopen the tab', 'err'); };
@@ -80,7 +85,8 @@ function mountWeb(host, st) {
   view.resizer = new ResizeObserver(() => {
     const [w, h] = measure();
     if (w === view.size[0] && h === view.size[1]) return;
-    view.size = [w, h]; sizeCanvas(canvas, w, h); send({t: 'resize', w, h, scale: 1});
+    view.size = [w, h]; sizeCanvas(canvas, w, h);
+    send({t: 'resize', w, h, scale: webScale()});
   });
   view.resizer.observe(body);
 
@@ -96,14 +102,15 @@ function wireVisibility(view) {
   const onChange = () => {
     if (webView !== view || view.sock.readyState !== 1) return;
     if (document.visibilityState === 'hidden') view.send({t: 'pause'});
-    else view.send({t: 'resume', w: view.size[0], h: view.size[1], scale: 1});
+    else view.send({t: 'resume', w: view.size[0], h: view.size[1], scale: webScale()});
   };
   document.addEventListener('visibilitychange', onChange);
   view.unwatch = () => document.removeEventListener('visibilitychange', onChange);
 }
 
+/* The CSS box is the viewport, in the same pixels a click arrives in. The backing store starts
+   there and `drawFrame` grows it to whatever the frame turns out to carry. */
 function sizeCanvas(canvas, w, h) {
-  // Backing store matches the CSS box: a DPR canvas would be sharper and cost Chrome 4x the JPEG.
   canvas.width = w; canvas.height = h;
   canvas.style.width = `${w}px`; canvas.style.height = `${h}px`;
 }
@@ -115,6 +122,12 @@ function drawFrame(ctx, canvas, view, buf) {
   view.drawing = true;
   createImageBitmap(new Blob([buf], {type: 'image/jpeg'}))
     .then(bmp => {
+      // The frame is the last word on its own size. A Chrome rasterising at 2x sends twice the
+      // pixels for the same viewport, and they land 1:1 in a box the display still paints at the
+      // CSS size. One that does not is drawn 1:1 too, rather than stretched.
+      if (bmp.width !== canvas.width || bmp.height !== canvas.height) {
+        canvas.width = bmp.width; canvas.height = bmp.height;
+      }
       ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
       bmp.close();
     })

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio, functools, http.server, json, threading
+import asyncio, functools, http.server, json, threading, time
 from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
 
 from leela.app import ide_app
-from leela.blocks.browser.browser import Browser, BrowserUnavailable, WebPage
+from leela.blocks.browser.browser import (Browser, BrowserUnavailable, MAX_SCALE,
+                                          SCALE_FLAG, WebPage)
 
 def test_a_bare_domain_becomes_https_rather_than_a_relative_path():
     assert Browser().check('example.com/a') == 'https://example.com/a'
@@ -69,6 +70,7 @@ class FakeBrowser:
 
     def __init__(self, up=True, installed=True):
         self.up, self.installed, self.closed, self.opened = up, installed, [], []
+        self.mine = set()
 
     def running(self): return self.up
 
@@ -81,6 +83,7 @@ class FakeBrowser:
 
     async def open(self, url, background=True):
         self.opened.append(url)
+        self.mine.add('T9')
         return WebPage(id='T9', url=url, title='Opened')
 
     async def state(self, tid):
@@ -88,7 +91,10 @@ class FakeBrowser:
                 'back': True, 'forward': False}
 
     async def markdown(self, tid, sel=None): return '# Example\n\nbody text\n'
-    async def shut(self, tid): self.closed.append(tid); return True
+    async def shut(self, tid, mine_only=False):
+        if mine_only and tid not in self.mine: return False
+        self.closed.append(tid)
+        return True
 
 @pytest.fixture
 def client(ws):
@@ -163,6 +169,53 @@ def test_closing_the_page_closes_it_in_chrome(client):
     assert c.get('/browser/close?id=T1').json() == {'ok': True}
     assert ws.browser.closed == ['T1']
 
+def test_closing_the_leela_tab_closes_the_page_it_opened(client):
+    """`/browser/close` had no caller, so a page opened here outlived its tab for the session.
+
+    The report: open a site, close the tab, and it is still on the list `browse_tabs` offers.
+    """
+    c, ws = client
+    c.get('/browser/open?url=https://example.com/a')
+    assert ws.tabs[ws.active].kind == 'web'
+    c.post(f'/tab/close?i={ws.active}')
+    assert ws.browser.closed == ['T9']
+    assert not any(t.kind == 'web' for t in ws.tabs)
+
+def test_closing_the_tab_for_an_adopted_page_leaves_the_page_alone(client):
+    "A page from the user's own Chrome was only borrowed; the tab going away does not close it."
+    c, ws = client
+    c.get('/browser/attach?id=T1')
+    c.post(f'/tab/close?i={ws.active}')
+    assert ws.browser.closed == []
+
+def test_a_tab_closes_even_when_chrome_will_not(client):
+    "The strip must never be held by the browser: the tab is gone either way."
+    c, ws = client
+    async def wedged(tid, mine_only=False): raise RuntimeError('chrome is not answering')
+    c.get('/browser/open?url=https://example.com/a')
+    ws.browser.shut = wedged
+    n = len(ws.tabs)
+    assert 'id="tabbar"' in c.post(f'/tab/close?i={ws.active}').text
+    assert len(ws.tabs) == n - 1
+
+def test_no_chrome_is_started_merely_to_close_a_tab(client):
+    "Closing a stale web tab after Chrome has quit must not boot one to close nothing."
+    c, ws = client
+    c.get('/browser/open?url=https://example.com/a')
+    ws.browser.up = False
+    async def boom(tid, mine_only=False): raise AssertionError('connected!')
+    ws.browser.shut = boom
+    c.post(f'/tab/close?i={ws.active}')
+    assert not any(t.kind == 'web' for t in ws.tabs)
+
+def test_a_page_leela_adopted_is_never_shut_by_the_owning_check(monkeypatch):
+    b = Browser(port=1)
+    monkeypatch.setattr(b, 'cdp', lambda: asyncio.sleep(0))
+    assert asyncio.run(b.shut('ADOPTED', mine_only=True)) is False
+    b._mine.add('OURS'); b._pages['OURS'] = object()
+    assert asyncio.run(b.shut('OURS', mine_only=True)) is True
+    assert 'OURS' not in b._mine
+
 class Recorder:
     def __init__(self): self.calls = []
 
@@ -206,7 +259,7 @@ def test_the_stream_belongs_to_the_socket_rather_than_to_each_start(ws):
     b = Browser(port=1)
     started = []
 
-    async def fake_start(tid, w, h, quality=62, scale=1, owner=None):
+    async def fake_start(tid, w, h, quality=80, scale=1, owner=None):
         started.append(owner)
         b._casts[tid] = owner
         return w, h, owner
@@ -240,13 +293,63 @@ def test_two_attachers_to_one_page_get_the_same_session(monkeypatch):
 
 async def _both(browser, tid): return await asyncio.gather(browser.page(tid), browser.page(tid))
 
-def test_closing_a_page_forgets_the_cast_it_was_streaming(monkeypatch):
-    "Chrome does not reuse target ids, so an entry left behind is one nothing will ever clear."
-    b = Browser(port=1)
-    b._pages['T1'], b._casts['T1'] = object(), object()
-    monkeypatch.setattr(b, 'cdp', lambda: asyncio.sleep(0))
-    assert asyncio.run(b.shut('T1')) is True
-    assert 'T1' not in b._casts and 'T1' not in b._pages
+class FakePage:
+    "A `Page` that records the CDP calls `resize` and `start_cast` make."
+    is_open = True
+    def __init__(self): self.calls = []
+    def __getattr__(self, domain):
+        class D:
+            def __getattr__(_, name):
+                async def f(**kw): self.calls.append((name, kw))
+                return f
+        return D()
+
+def _cast(scale, **kw):
+    "Start a cast against a fake page and return what Chrome was told."
+    b, p = Browser(port=1), FakePage()
+    b._pages['T1'] = p
+    out = asyncio.run(b.start_cast('T1', 900, 700, scale=scale, **kw))
+    return out, dict(p.calls)
+
+def test_the_frame_ceiling_leaves_room_for_a_browser_that_rasterises_above_one_to_one():
+    """A frame captured at 1x and drawn into a 2x display is the blur this fixes.
+
+    `maxWidth` was pinned to the viewport in CSS pixels, so a Chrome rasterising at 2x had its
+    frame scaled straight back down to 1x before it reached the socket. It is a ceiling now.
+    """
+    (w, h, _), calls = _cast(2)
+    assert (w, h) == (900, 700), 'the viewport stays in CSS pixels'
+    assert calls['startScreencast']['maxWidth'] == 900*MAX_SCALE
+    assert calls['startScreencast']['maxHeight'] == 700*MAX_SCALE
+
+def test_the_page_is_told_the_device_pixel_ratio_of_the_panel_showing_it():
+    "A page reads `devicePixelRatio` to pick between a 1x and a 2x asset."
+    _, calls = _cast(2)
+    assert calls['setDeviceMetricsOverride'] == {'width': 900, 'height': 700, 'mobile': False,
+                                                 'deviceScaleFactor': 2.0}
+    _, calls = _cast(4)
+    assert calls['setDeviceMetricsOverride']['deviceScaleFactor'] == float(MAX_SCALE), 'clamped'
+
+def test_the_frames_are_encoded_at_the_quality_text_needs():
+    "Quality 62 leaves visible JPEG artefacts on body text, which is most of what a page is."
+    _, calls = _cast(1)
+    assert calls['startScreencast']['quality'] == 80
+
+def test_chrome_is_started_at_the_scale_a_screencast_frame_is_rasterised_at(monkeypatch):
+    """The only lever on how many pixels a frame carries is the browser's own scale factor.
+
+    Measured against Chrome, a 200px div is 200 image pixels in the frame at every per-page
+    `deviceScaleFactor`, and 400 with this flag. The flag only takes at launch, so a Chrome
+    already running when Leela connects goes on sending 1x frames.
+    """
+    assert SCALE_FLAG == '--force-device-scale-factor=2'
+    b, seen = Browser(port=1), {}
+    async def fake_connect(**kw):
+        seen.update(kw)
+        raise RuntimeError('far enough')
+    monkeypatch.setattr('fossick.cdp.cdp_connect', fake_connect)
+    with pytest.raises(BrowserUnavailable): asyncio.run(b.cdp())
+    assert seen['extra_flags'] == [SCALE_FLAG]
 
 async def _drive_owned(browser, cmd, owner):
     from leela.blocks.browser.app import _drive
@@ -263,7 +366,7 @@ PAGE = ("<!doctype html><meta charset=utf-8><title>idle</title>"
         "<p>A paragraph with enough prose in it that a reader has something to extract, "
         "which is what the markdown route is for.</p>"
         "<button id=b>Press</button>"
-        "<script>addEventListener('click',()=>{document.title='clicked'});"
+        "<script>addEventListener('click',e=>{document.title='at '+e.clientX+','+e.clientY});"
         "addEventListener('keydown',e=>{document.title+='+'+e.key});</script>")
 
 @pytest.fixture
@@ -294,10 +397,13 @@ def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, 
     profile = tmp_path/'chrome'
     # Start Chrome, but make no CDP connection here: a websocket belongs to the loop that
     # created it, and one opened by `asyncio.run` would be dead by the time the app used it.
-    try: asyncio.run(_start_chrome(9401, profile))
+    # A free port, not a fixed one: `SCALE_FLAG` is taken at launch, so a Chrome already up on a
+    # well-known port would be reused and would still be sending 1x frames.
+    port = _free_port()
+    try: asyncio.run(_start_chrome(port, profile))
     except Exception as e: pytest.skip(f'no Chrome to drive: {e}')
 
-    ws.browser = Browser(port=9401, headless=True, profile=profile)
+    ws.browser = Browser(port=port, headless=True, profile=profile)
     with TestClient(ide_app(ws)) as client:
         assert 'id="tabbar"' in client.get(f'/browser/open?url={site}').text
         target = ws.tabs[ws.active].ref
@@ -306,10 +412,10 @@ def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, 
         # the initial frame `startScreencast` always emits. A static page stops producing
         # frames once it has settled, so a third read here would simply block.
         with client.websocket_connect('/browser/ws') as sock:
-            sock.send_text(json.dumps({'id': target, 'w': 800, 'h': 600}))
+            sock.send_text(json.dumps({'id': target, 'w': 800, 'h': 600, 'scale': 2}))
             ready = json.loads(sock.receive_text())
             assert ready['t'] == 'ready', ready
-            assert (ready['w'], ready['h']) == (800, 600)
+            assert (ready['w'], ready['h']) == (800, 600), 'the viewport is CSS pixels'
             assert ready['url'].startswith('http://127.0.0.1:')
             assert ready['title'] == 'idle'
 
@@ -320,6 +426,7 @@ def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, 
             frame = sock.receive()
             assert frame.get('bytes'), f'expected a binary frame, got {frame}'
             assert frame['bytes'][:2] == b'\xff\xd8', 'not a JPEG'
+            sizes = [_jpeg_size(frame['bytes'])]
 
             for kind in ('mousePressed', 'mouseReleased'):
                 sock.send_text(json.dumps({'t': 'mouse', 'kind': kind, 'x': 400, 'y': 300,
@@ -331,10 +438,21 @@ def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, 
             # reply cannot arrive before the four events have been dispatched -- and closing
             # the socket instead would simply drop whatever had not been read yet.
             sock.send_text(json.dumps({'t': 'state'}))
-            nav = _reply(sock, 'nav')
+            nav = _reply(sock, 'nav', sizes)
+            # Chrome emits nothing for a page that has settled, and a metrics override resizes
+            # the window it composites into asynchronously, so an early frame is the window as it
+            # was. A restarted cast always emits one, and the window converges within a few.
+            for _ in range(10):
+                if sizes[-1] == (1600, 1200): break
+                time.sleep(.2)
+                sock.send_text(json.dumps({'t': 'resize', 'w': 800, 'h': 600, 'scale': 2}))
+                sizes.append(_frame(sock))
 
         # The page renamed itself for each event it received, so its title is the receipt.
-        assert nav['title'] == 'clicked+z', f'input did not reach the page: {nav}'
+        assert nav['title'] == 'at 400,300+z', f'input did not land where it was aimed: {nav}'
+        # The whole contract in two lines: twice the pixels on the wire, and the coordinates
+        # still the CSS ones the panel measured.
+        assert (1600, 1200) in sizes, f'an 800x600 viewport must cast at 2x: {sizes}'
 
         d = client.get(f'/browser/markdown?id={target}').json()
         assert 'Inline browser fixture' in d['markdown']
@@ -342,16 +460,43 @@ def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, 
 
         assert client.get(f'/browser/close?id={target}').json() == {'ok': True}
 
-def _reply(sock, kind, tries=40):
+def _reply(sock, kind, sizes=None, tries=40):
     "Read past any frames the page painted meanwhile, to the reply that must be coming."
     for _ in range(tries):
         m = sock.receive()
-        if m.get('bytes') is not None: continue      # a frame; keep looking for the reply
+        if m.get('bytes') is not None:               # a frame; keep looking for the reply
+            if sizes is not None: sizes.append(_jpeg_size(m['bytes']))
+            continue
         d = json.loads(m['text'])
         if d['t'] == kind: return d
     raise AssertionError(f'no {kind!r} reply arrived')
 
+def _frame(sock, tries=40):
+    "The size of the next frame, reading past whatever the socket is saying meanwhile."
+    for _ in range(tries):
+        m = sock.receive()
+        if m.get('bytes'): return _jpeg_size(m['bytes'])
+    raise AssertionError('no frame arrived')
+
+def _jpeg_size(b):
+    "A JPEG's `(width, height)` off its first frame header, so the test needs no image library."
+    i = 2
+    while i + 9 < len(b):
+        if b[i] != 0xFF: i += 1; continue
+        marker, n = b[i+1], int.from_bytes(b[i+2:i+4], 'big')
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            return int.from_bytes(b[i+7:i+9], 'big'), int.from_bytes(b[i+5:i+7], 'big')
+        i += 2 + n
+    raise AssertionError('no JPEG frame header')
+
+def _free_port():
+    import socket
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
 async def _start_chrome(port, profile):
     from fossick.cdp import _debug_ready, cdp_setup
     if not _debug_ready(port):
-        await cdp_setup(port=port, user_data_dir=profile, headless=True, timeout=60)
+        await cdp_setup(port=port, user_data_dir=profile, headless=True, timeout=60,
+                        extra_flags=[SCALE_FLAG])

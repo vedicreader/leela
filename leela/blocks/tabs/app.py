@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
+import asyncio, hashlib
 
 from fastcore.all import Path, first
 
@@ -15,7 +15,7 @@ from .ui import tab_bar
 
 __all__ = ['CAPS', 'connect', 'disk_version']
 
-CAPS = ('fs', 'history', 'pool', 'tab', 'docs')
+CAPS = ('fs', 'history', 'pool', 'tab', 'docs', 'browser')
 
 #: `path -> ((mtime_ns, size), token)`. Hashing is only paid when the stat moves, which is the rare
 #: case; a poll on an untouched file costs one `stat` as it always did. Capped because a long session
@@ -41,6 +41,16 @@ def disk_version(path):
     _TOKENS[path] = (stamp, token := f'{s.st_size}:{digest}')
     return token
 
+async def _shut_page(browser, tid):
+    """Close the Chrome page a web tab was showing, once the tab itself has gone.
+
+    A page adopted from the user's own Chrome is theirs and stays open. No Chrome is started to
+    close a page, and a wedged one cannot hold the tab strip: the tab is already closed either way.
+    """
+    if not (tid and browser.running()): return
+    try: await asyncio.wait_for(browser.shut(tid, mine_only=True), 2)
+    except Exception: pass
+
 def connect(app, ctx):
     rt = app.route
     session, docs = ctx.session, ctx.docs
@@ -60,9 +70,10 @@ def connect(app, ctx):
     @rt('/tab/close')
     async def tab_close(i: int):
         key = session.kernel_key(session.tabs[i]) if 0 <= i < len(session.tabs) else None
-        session.close(i); session.watch_env(None); session.save()
+        gone = session.close(i); session.watch_env(None); session.save()
         # A private key names one tab, a folder key names several. Both go when the last of them does.
         if key and not any(session.kernel_key(t) == key for t in session.tabs): await ctx.pool.close(key)
+        if gone is not None and gone.kind == 'web': await _shut_page(ctx.browser, gone.ref)
         return tab_bar(session)
     @rt('/tab/move')
     def tab_move(i: int, j: int):

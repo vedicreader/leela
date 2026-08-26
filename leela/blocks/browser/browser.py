@@ -7,10 +7,18 @@ from fastcore.all import L, Path, ifnone, store_attr
 
 from ... import Dictable, errstr
 
-__all__ = ['WebPage', 'Browser', 'BrowserUnavailable', 'DEFAULT_SIZE', 'MAX_SIZE']
+__all__ = ['WebPage', 'Browser', 'BrowserUnavailable', 'DEFAULT_SIZE', 'MAX_SIZE', 'MAX_SCALE',
+           'SCALE_FLAG']
 
+#: Viewport sizes are CSS pixels, because that is the unit a click arrives in.
 DEFAULT_SIZE = (1280, 800)
 MAX_SIZE = (2560, 1600)
+#: A frame costs `scale**2` pixels to encode, and no desktop display needs more than this.
+MAX_SCALE = 2
+#: How many image pixels a screencast frame carries per CSS pixel. A per-page `deviceScaleFactor`
+#: does not change this: measured against Chrome, a 200px div is 200 image pixels at any of them.
+#: Only the browser's own factor rasterises higher, and it is fixed at launch.
+SCALE_FLAG = f'--force-device-scale-factor={MAX_SCALE}'
 
 class BrowserUnavailable(RuntimeError):
     "No CDP Chrome to render into, and Leela could not start one."
@@ -32,6 +40,7 @@ class Browser:
         self.note = ''
         self._cdp = self._loop = None
         self._pages, self._casts = {}, {}   # target -> its `Page`; target -> its cast's owner
+        self._mine = set()                  # targets Leela opened, as against ones it adopted
         self._lock, self._attaching = asyncio.Lock(), asyncio.Lock()
 
     async def cdp(self):
@@ -44,7 +53,8 @@ class Browser:
             except ImportError as e:
                 raise BrowserUnavailable(f'the inline browser needs fossick ({errstr(e)})') from e
             try: self._cdp = await cdp_connect(port=self.port, headless=self.headless,
-                                               user_data_dir=self.profile)
+                                               user_data_dir=self.profile,
+                                               extra_flags=[SCALE_FLAG])
             except Exception as e:
                 raise BrowserUnavailable(f'no Chrome on the CDP port {self.port}: {errstr(e)}') from e
             return self._cdp
@@ -108,12 +118,15 @@ class Browser:
         cdp = await self.cdp()
         tid = await cdp.target.createTarget(url=url, background=background)
         await asyncio.sleep(.05)   # createTarget answers before the load
+        self._mine.add(tid)
         p = await self.page(tid)
         return WebPage(id=tid, url=url, title=await self.title(p) or url, attached=True)
 
-    async def shut(self, tid):
-        "Close one page in Chrome and forget its session."
+    async def shut(self, tid, mine_only=False):
+        "Close one page in Chrome and forget its session. `mine_only` spares one Leela adopted."
+        if mine_only and tid not in self._mine: return False
         p, _ = self._pages.pop(tid, None), self._casts.pop(tid, None)
+        self._mine.discard(tid)
         cdp = await self.cdp()
         try: await cdp.target.closeTarget(targetId=tid)
         except Exception: pass
@@ -170,15 +183,21 @@ class Browser:
         return (await p.eval('document.body ? document.body.innerText : ""') or '').strip()
 
     async def resize(self, tid, width, height, scale=1):
-        "Pin the viewport to the panel showing it, so panel (x, y) is page (x, y)."
+        """Pin the viewport to the panel showing it, so panel (x, y) is page (x, y).
+
+        `(width, height)` and the pair that comes back are CSS pixels. `scale` is the panel's
+        device pixel ratio, which sets what the page reads as its own `devicePixelRatio`; how
+        many image pixels a frame carries per CSS pixel is `SCALE_FLAG`, decided at launch.
+        """
         w = max(240, min(int(width or 0) or DEFAULT_SIZE[0], MAX_SIZE[0]))
         h = max(180, min(int(height or 0) or DEFAULT_SIZE[1], MAX_SIZE[1]))
+        s = max(1.0, min(float(scale or 1), MAX_SCALE))
         p = await self.page(tid)
         await p.emulation.setDeviceMetricsOverride(width=w, height=h, mobile=False,
-                                                   deviceScaleFactor=float(scale or 1))
+                                                   deviceScaleFactor=s)
         return w, h
 
-    async def start_cast(self, tid, width, height, quality=62, scale=1, owner=None):
+    async def start_cast(self, tid, width, height, quality=80, scale=1, owner=None):
         "Stream frames for `tid`. `(width, height, owner)`; `owner` is the socket that owns it."
         w, h = await self.resize(tid, width, height, scale)
         p = await self.page(tid)
@@ -186,7 +205,10 @@ class Browser:
             await p.emulation.setFocusEmulationEnabled(enabled=True)
             await p.page.bringToFront()
         except Exception: pass
-        await p.page.startScreencast(format='jpeg', quality=int(quality), maxWidth=w, maxHeight=h,
+        # A ceiling rather than a size: a frame Chrome rasterised at `SCALE_FLAG` must not be
+        # scaled back down to the CSS box, which is what pinning these to `w, h` did.
+        await p.page.startScreencast(format='jpeg', quality=int(quality),
+                                     maxWidth=round(w*MAX_SCALE), maxHeight=round(h*MAX_SCALE),
                                      everyNthFrame=1)
         owner = self._casts[tid] = ifnone(owner, object())
         return w, h, owner
