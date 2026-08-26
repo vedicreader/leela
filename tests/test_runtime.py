@@ -13,7 +13,7 @@ from leela.workspace import Workspace
 from tests.assets import JS, read
 import asyncio
 import sys
-from fastcore.all import Path
+from fastcore.all import Path, first
 from leela.blocks.runtime import devserver
 from leela.blocks.runtime.devserver import DevServer, DevServers, infer_watch, run_command, split_cmd
 from leela.blocks.runs.runs import RUNS_FILE, Run, Runs
@@ -1481,3 +1481,29 @@ def test_the_broker_reports_the_engine_fields_the_picker_paints(tmp_path, monkey
     e = d['models']['engines'][0]
     assert e['runtime'] == 'mlx' and e['model'] == 'qwen' and e['in_use'] is True
     assert isinstance(e['idle_for'], int) and e['users'] == 1
+
+def _bare_venv(tmp_path):
+    "A real interpreter with nothing installed in it, which is what a pruned project venv is."
+    import venv
+    venv.create(tmp_path/'v', with_pip=False)
+    return first(p for p in (tmp_path/'v'/'bin'/'python', tmp_path/'v'/'Scripts'/'python.exe') if p.exists())
+
+def test_an_environment_that_cannot_run_a_kernel_says_which_module_it_is_short_of(tmp_path):
+    """`uv sync` against another lock empties a project venv, and the kernel then exits before its
+    first message. jupyter_client can only say the kernel died; the environment can say why."""
+    from leela.blocks.runtime.kernels import missing_kernel_module
+    assert missing_kernel_module(sys.executable) is None, "leela's own interpreter has ipykernel"
+    py = _bare_venv(tmp_path)
+    assert missing_kernel_module(str(py)) == 'ipykernel_launcher'
+    assert missing_kernel_module(str(py), kernel='ipymini') == 'ipymini'
+    assert missing_kernel_module(str(tmp_path/'not-an-interpreter')) is None, \
+        'an interpreter that cannot be asked is not evidence of a missing module'
+
+def test_a_kernel_in_an_emptied_venv_fails_with_the_venv_and_not_the_protocol(tmp_path):
+    "It reported `Kernel died before replying to kernel_info`, which names the handshake, not the cause."
+    from leela.blocks.runtime.kernels import Kernel, KernelStartError
+    py = _bare_venv(tmp_path)
+    with pytest.raises(KernelStartError) as e:
+        asyncio.run(Kernel(python=str(py), inspect=False).start(timeout=10))
+    assert 'ipykernel_launcher' in str(e.value) and str(py) in str(e.value)
+    assert 'uv sync' in str(e.value), 'and it names the way out'

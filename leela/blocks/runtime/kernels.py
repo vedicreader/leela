@@ -1,7 +1,7 @@
 "Managed ipykernels: execution over the shell channel, inspection over HTTP to an in-kernel."
 
 from __future__ import annotations
-import asyncio, importlib.util, os, sys, queue, shutil, tempfile, time, uuid, warnings
+import asyncio, importlib.util, os, subprocess, sys, queue, shutil, tempfile, time, uuid, warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from fastcore.all import store_attr, ifnone, first, L
@@ -13,10 +13,10 @@ from ...core.inspectors import reg_dir, active
 
 from .support import LEELA_PY, clean_env, support_paths
 
-__all__ = ['ExecOutcome', 'Kernel', 'GatewayKernel', 'GatewayService', 'KernelPool', 'RuntimeBroker',
-           'KernelLimit', 'check_gateway_deps',
-           'bootstrap_src', 'output_text', 'ipymini_available', 'find_pythons', 'project_python',
-           'nearest_python', 'python_for', 'venv_env', 'run_file_src']
+__all__ = ['ExecOutcome', 'Kernel', 'KernelStartError', 'GatewayKernel', 'GatewayService', 'KernelPool',
+           'RuntimeBroker', 'KernelLimit', 'check_gateway_deps',
+           'bootstrap_src', 'output_text', 'ipymini_available', 'missing_kernel_module', 'find_pythons',
+           'project_python', 'nearest_python', 'python_for', 'venv_env', 'run_file_src']
 
 KERNELS = ('ipykernel', 'ipymini')
 
@@ -188,6 +188,24 @@ def _runtime_python(python=None):
         if helper.exists(): return str(helper)
     return sys.executable
 
+class KernelStartError(RuntimeError):
+    "A kernel that could not start, said in terms of the environment rather than the protocol."
+
+def missing_kernel_module(python=None, kernel='ipykernel'):
+    """The kernel package `python` cannot import, or None.
+
+    A venv without it exits before the first message, and jupyter_client can only report that the
+    kernel died before replying to `kernel_info`. Asked here, the environment says which module it
+    is short of. Only the failure path pays for this.
+    """
+    mod = 'ipymini' if kernel == 'ipymini' else 'ipykernel_launcher'
+    exe = _runtime_python(python)
+    if exe == sys.executable: return None if importlib.util.find_spec(mod) else mod
+    src = f"import importlib.util, sys; sys.exit(0 if importlib.util.find_spec({mod!r}) else 1)"
+    try: r = subprocess.run([exe, '-c', src], capture_output=True, timeout=20, env=clean_env())
+    except (OSError, subprocess.SubprocessError): return None   # cannot tell, so do not say
+    return None if r.returncode == 0 else mod
+
 def _frozen_pythonpath():
     "Module and extension paths a py2app helper process must inherit."
     if not getattr(sys, 'frozen', False): return None
@@ -358,8 +376,12 @@ class Kernel(_Inspector):
             self.kc = self.km.client(**client_kw)
             self.kc.start_channels()
             await self.kc.wait_for_ready(timeout=timeout)
-        except BaseException:
+        except BaseException as e:
             await self.shutdown()
+            if isinstance(e, Exception) and (mod := missing_kernel_module(self.python, self.kernel)):
+                raise KernelStartError(
+                    f'{_runtime_python(self.python)} cannot import {mod}, so it can run no kernel. '
+                    f'Run `uv sync` in that project, or pick another interpreter in the kernel picker.') from e
             raise
         if self.inspect: await self.bootstrap()
         return self

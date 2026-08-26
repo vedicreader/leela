@@ -1560,3 +1560,21 @@ def test_a_slug_already_given_out_survives_a_corrupt_or_missing_index(tmp_path):
     assert assign_slugs([a], store) == ['src']
     store.write_text('{not json')
     assert assign_slugs([a], store) == ['src'], 'and the obvious slug is still the obvious one'
+
+def test_a_kernel_that_will_not_start_is_answered_and_not_raised(tmp_path, monkeypatch):
+    """Both routes called `_k()` bare, so an environment that cannot run a kernel arrived as a 500
+    with an ASGI traceback, where every other route in that file answers with something the client
+    can read. The index completes without a kernel, so only the runtime names are lost."""
+    from leela.blocks.runtime.kernels import KernelPool, KernelStartError
+    async def _no_kernel(self, key, **kw):
+        raise KernelStartError('/p/.venv/bin/python cannot import ipykernel_launcher, so it can run no kernel.')
+    monkeypatch.setattr(KernelPool, 'get', _no_kernel)
+    (tmp_path/'m.py').write_text('def valuable(): return 1\n')
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        h = client.get('/exec/history')
+        assert h.status_code == 200 and h.json()['cells'] == []
+        assert 'ipykernel_launcher' in h.json()['error'], 'the reason, not an empty history'
+        c = client.post('/complete', json={'code': 'valu', 'pos': 4})
+        assert c.status_code == 200
+        assert 'ipykernel_launcher' in c.json()['kernel_error']
+        assert 'matches' in c.json(), 'the index answers even where the kernel cannot'

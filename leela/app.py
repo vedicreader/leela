@@ -1011,8 +1011,13 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 'text': await _explain(k, res.error) or res.text or 'ok'}
     @rt('/exec/history')
     async def exec_history(n: int = 200):
-        "The rolling history notebook, oldest first, as ctrl+up/down cycles through it."
-        r = await _api('/api/history', {'n': n})
+        """The rolling history notebook, oldest first, as ctrl+up/down cycles through it.
+
+        A kernel that will not start is answered, not raised: this route used to return a 500 with a
+        traceback where every other route in this file answers with a failure the client can read.
+        """
+        try: r = await _api('/api/history', {'n': n})
+        except Exception as e: return {'cells': [], 'error': errstr(e)}
         return {'cells': (r or {}).get('cells', [])}
     @rt('/lint')
     async def lint_route(req):
@@ -1061,15 +1066,20 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     async def complete_route(req, pos: int = 0):
         "Completions from the kernel, so venv modules complete like they do in a real shell."
         d = await req.json()
-        k = _debugstate.kernel or await _k()
         code, at=d.get('code',''),int(d.get('pos',pos))
-        if getattr(k, '_debug_thread', None) and hasattr(k, 'debug_complete'):
-            try: runtime=await k.debug_complete(code,at)
-            except Exception: runtime={'from':at,'matches':[]}
-        else:
-            try: runtime=await k.complete(code,at)
-            except Exception: runtime={'from':at,'matches':[]}
-        return await _off_loop(ws.search.merge_completions,code,at,runtime)
+        # The index answers without a kernel, so a kernel that will not start costs the runtime
+        # names and nothing else. It used to cost the request.
+        note = ''
+        try: k = _debugstate.kernel or await _k()
+        except Exception as e: k, note = None, errstr(e)
+        runtime = {'from':at,'matches':[]}
+        if k is not None:
+            debugging = getattr(k, '_debug_thread', None) and hasattr(k, 'debug_complete')
+            try: runtime = await (k.debug_complete(code,at) if debugging else k.complete(code,at))
+            except Exception: pass
+        out = await _off_loop(ws.search.merge_completions,code,at,runtime)
+        if note: out['kernel_error'] = note
+        return out
     @rt('/complete/warm')
     async def complete_warm():
         "Load the configured completion engine before the first requested suggestion."
