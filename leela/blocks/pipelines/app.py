@@ -9,7 +9,7 @@ from ...core.web import fail, off_loop, pipeline_socket
 from ..runtime.kernels import python_for
 from .deploys import Deploy
 from ...core.envs import EnvStore
-from .pipelines import PipelineError, nbdev_project, resolve_script
+from .pipelines import PipelineError, nbdev_project, resolve_script, uv_argv
 from .pipelines import Release, app_project, release_flow
 from ..git.repos import RepoSet, repo_for
 
@@ -38,7 +38,7 @@ def nbdev_prepare(session, target=''):
     if cfg is None: raise PipelineError(
         'no settings.ini and no [tool.nbdev] in any open folder — not an nbdev project')
     root = Path(cfg.config_path)
-    argv = resolve_script(['nbdev-prepare'], python_for(root, session))
+    argv = uv_argv(root, ['nbdev-prepare']) or resolve_script(['nbdev-prepare'], python_for(root, session))
     if argv[0] == 'nbdev-prepare': raise PipelineError(
         f'no nbdev-prepare in {root.name}: nbdev is not installed in the environment it uses')
     r = subprocess.run(argv, cwd=str(root), capture_output=True, text=True, timeout=900)

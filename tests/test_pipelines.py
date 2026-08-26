@@ -518,3 +518,16 @@ def test_prepare_says_what_it_looked_for_when_nbdev_is_not_installed():
     from leela.blocks.pipelines.pipelines import resolve_script
     # Both spellings are tried, so asking for the hyphen still finds an underscore-only install.
     assert resolve_script(['nbdev-prepare'], None, env={'PATH': ''}) == ['nbdev-prepare']
+
+
+def test_a_uv_project_runs_through_uv_the_way_the_terminal_does(tmp_path, monkeypatch):
+    """`uv run` syncs the lock first. Calling the venv's script does not, so a venv that had been
+    synced to another project's lock failed on an import instead of being repaired."""
+    from leela.blocks.pipelines.pipelines import uv_argv
+    root = tmp_path/'proj'; root.mkdir()
+    monkeypatch.setattr('leela.blocks.pipelines.pipelines.which', lambda n: '/opt/uv')
+    assert uv_argv(root, ['nbdev-prepare']) is None, 'no lock, so uv does not own it'
+    (root/'uv.lock').write_text('')
+    assert uv_argv(root, ['nbdev-prepare']) == ['/opt/uv', 'run', '--project', str(root), 'nbdev-prepare']
+    monkeypatch.setattr('leela.blocks.pipelines.pipelines.which', lambda n: None)
+    assert uv_argv(root, ['nbdev-prepare']) is None, 'and without uv installed it falls back'

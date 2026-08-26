@@ -161,7 +161,7 @@ class Pipeline:
         return self.steps[i + 1] if i + 1 < len(self.steps) else None
     def _resolve(self, argv, env):
         "The executable to spawn, from this pipeline's interpreter."
-        return resolve_script(argv, self.python, env)
+        return uv_argv(self.root, argv) or resolve_script(argv, self.python, env)
     async def _run(self, step):
         argv = list(step.argv) if step.argv else shlex.split(step.cmd)
         if not argv: raise PipelineError(f'{step.id} has no command to run')
@@ -233,6 +233,16 @@ class Pipeline:
 
 RELEASE_FILE = '.leela/release.json'
 ReleaseError = PipelineError
+
+def uv_argv(root, argv):
+    """`argv` through `uv run` where uv owns the project, else None.
+
+    What the terminal does. uv syncs the lock before it runs anything, so a venv that has drifted
+    is repaired rather than failing halfway through with an import error.
+    """
+    if not (Path(root)/'uv.lock').exists(): return None
+    exe = which('uv')
+    return [exe, 'run', '--project', str(root), *argv] if exe else None
 
 def nbdev_project(root):
     "An nbdev project: `settings.ini` for nbdev 2, or `[tool.nbdev]` in `pyproject.toml`."

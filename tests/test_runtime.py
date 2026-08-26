@@ -112,8 +112,12 @@ def test_the_environment_of_a_project_is_what_uv_and_a_console_script_read(tmp_p
     "One builder for every child Leela spawns, so a release step and a shell agree."
     from leela.blocks.runtime.kernels import venv_env
     py = _venv(tmp_path)
-    env = venv_env(str(py), {'PATH': '/usr/bin', 'PYTHONHOME': '/somewhere/else'})
-    assert env['VIRTUAL_ENV'] == str(tmp_path/'.venv') == env['UV_PROJECT_ENVIRONMENT']
+    env = venv_env(str(py), {'PATH': '/usr/bin', 'PYTHONHOME': '/somewhere/else',
+                             'UV_PROJECT_ENVIRONMENT': '/somewhere/else/.venv'})
+    assert env['VIRTUAL_ENV'] == str(tmp_path/'.venv')
+    # It applies wherever the process ends up, not where it started: a `uv sync` run in another
+    # checkout syncs that project's lock into this venv and prunes whatever the lock omits.
+    assert 'UV_PROJECT_ENVIRONMENT' not in env, 'a venv this one does not own is not ours to name'
     assert env['PATH'].split(os.pathsep)[0] == str(py.parent), 'the venv resolves console scripts first'
     assert 'PYTHONHOME' not in env, 'inherited from a frozen app, it would override the venv'
     assert venv_env(None, {'PATH': '/usr/bin'}) == {'PATH': '/usr/bin'}, 'nothing found, nothing claimed'
@@ -962,7 +966,7 @@ def test_a_run_with_no_project_interpreter_still_uses_leelas(tmp_path):
     assert s._cmd()[:4] == [sys.executable, '-u', '-m', 'leela.blocks.runtime.devserver']
 
 def test_the_run_environment_points_at_the_project_venv(tmp_path):
-    "PATH, VIRTUAL_ENV and UV_PROJECT_ENVIRONMENT, so a subprocess of the app lands there too."
+    "PATH and VIRTUAL_ENV, so a subprocess of the app lands there too."
     from leela.blocks.runtime.kernels import venv_env
     py = _venv(tmp_path)
     env = venv_env(str(py), {'PATH': '/usr/bin'})
