@@ -1361,3 +1361,61 @@ def test_a_shell_that_cannot_be_asked_changes_nothing(tmp_path):
     broken = tmp_path/'broken'; broken.write_text('#!/bin/sh\nexit 3\n'); broken.chmod(0o755)
     assert import_login_env(shell=str(broken), env=env) == []
     assert env == {'PATH': '/usr/bin'}
+
+def test_two_windows_accumulate_folders_in_the_one_saved_session(tmp_path):
+    """One file, several windows. `save` wrote the roots it had over the roots the file had, so
+    opening the app on one folder emptied a session that a browser window had four folders in."""
+    from leela.workspace import Workspace
+    a, b, c = (tmp_path/'a', tmp_path/'b', tmp_path/'c')
+    for d in (a, b, c): d.mkdir()
+    state = tmp_path/'workspace.json'
+    web, app = Workspace(roots=[a, b]), Workspace(roots=[c])
+    web.save(state)
+    app.save(state)
+    assert [Path(r).name for r in state.read_json()['roots']] == ['a', 'b', 'c'], \
+        'the window that saved second adds its folder rather than replacing theirs'
+    web.save(state)
+    assert [Path(r).name for r in state.read_json()['roots']] == ['a', 'b', 'c'], \
+        'and saving again does not take back a folder this window never had'
+
+def test_closing_a_folder_is_a_decision_the_saved_session_keeps(tmp_path):
+    "The cost of one shared workspace: a folder closed in one window is closed in the other."
+    from leela.workspace import Workspace
+    a, b = (tmp_path/'a', tmp_path/'b')
+    for d in (a, b): d.mkdir()
+    state = tmp_path/'workspace.json'
+    Workspace(roots=[a, b]).save(state)
+    other = Workspace(roots=[b])
+    other.drop_root(b)
+    other.save(state)
+    assert [Path(r).name for r in state.read_json()['roots']] == ['a'], 'b was closed, not merely absent'
+
+def test_a_save_that_races_another_loses_no_folder(tmp_path):
+    "The lock spans the read and the write, so concurrent saves merge instead of overwriting."
+    import threading
+    from leela.workspace import Workspace
+    state = tmp_path/'workspace.json'
+    dirs = []
+    for i in range(12):
+        d = tmp_path/f'r{i}'; d.mkdir(); dirs.append(d)
+    spaces = [Workspace(roots=[d]) for d in dirs]
+    start = threading.Event()
+    def run(ws):
+        start.wait(); ws.save(state)
+    threads = [threading.Thread(target=run, args=(w,)) for w in spaces]
+    for t in threads: t.start()
+    start.set()
+    for t in threads: t.join(20)
+    assert sorted(Path(r).name for r in state.read_json()['roots']) == sorted(d.name for d in dirs)
+
+def test_a_partial_save_and_an_unreadable_file_leave_the_folders_alone(tmp_path):
+    "`only` names what it writes, and a file that cannot be read is not evidence that nothing is open."
+    from leela.workspace import Workspace
+    a = tmp_path/'a'; a.mkdir()
+    state = tmp_path/'workspace.json'
+    Workspace(roots=[a]).save(state)
+    Workspace(roots=[]).save(state, only=('model',))
+    assert [Path(r).name for r in state.read_json()['roots']] == ['a'], 'a partial write is not a root list'
+    state.write_text('{not json')
+    Workspace(roots=[a]).save(state)
+    assert [Path(r).name for r in state.read_json()['roots']] == ['a']

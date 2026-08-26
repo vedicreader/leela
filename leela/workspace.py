@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import asyncio, atexit, hashlib, json, os, threading, time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from fastcore.all import Path, L, atomic_save, first, ifnone
 
@@ -78,6 +79,35 @@ class _EnvClient:
     async def restart(self): pass
 
 def ws_path(): return leela_cfg/'workspace.json'
+
+@contextmanager
+def _session_lock(path, timeout=5):
+    """Hold the saved session while it is read and rewritten, so two windows merge rather than race.
+
+    Advisory, and best effort: a platform without `flock`, or a lock nobody releases, gives the
+    caller the write anyway. A save that races is a worse session than one that does not; a save
+    that never happens is no session at all.
+    """
+    try: import fcntl
+    except ImportError: yield False; return
+    lock = Path(str(path) + '.lock')
+    fd = None
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lock), os.O_CREAT | os.O_RDWR, 0o600)
+        end = time.time() + timeout
+        while True:
+            try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); break
+            except OSError:
+                if time.time() >= end: yield False; return
+                time.sleep(.02)
+        try: yield True
+        finally: fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError: yield False
+    finally:
+        if fd is not None:
+            try: os.close(fd)
+            except OSError: pass
 
 def has_own_window(root, state):
     "Whether `root` opens as its own window, under a saved workspace beside `state` and not `state`."
@@ -206,6 +236,8 @@ class Workspace:
         self.agent_read_outside = False     # reads may leave the open folders; writes never do
         self.subagent_writes = False        # delegated sub-agents may only read unless this is on
         self.active_root = None
+        #: Folders this window closed. Everything else in the saved session belongs to somebody.
+        self._closed_roots = set()
         self.agent_state = ''
         self.agent_state_layers = {name: {'text': '', 'enabled': True, 'source': 'workspace'} for name in
                                    ('organization', 'project', 'task', 'preferences', 'branch', 'ephemeral')}
@@ -373,6 +405,9 @@ class Workspace:
     def drop_root(self, p):
         "Close a folder, and every tab that lived inside it."
         r = self.fs.drop_root(p)
+        # One saved session, several windows. A folder this window never had is another window's and
+        # is kept; one it closed is a decision, and `save` takes it out of the file.
+        self._closed_roots.add(str(r))
         self._owns_session = True   # closing the last folder is a session to save, not an empty one
         # The folder the project surfaces were about is gone, so the choice is stale. `project_root`
         # guards against it, but anything reading `active_root` directly would follow it out.
@@ -1094,6 +1129,18 @@ class Workspace:
             self.active = ifnone(first(i for i, t in enumerate(self.tabs)
                                        if t.path == str(was.get('path') or '')), 0)
         return opened
+    def _merge_roots(self, held, mine):
+        """The folders the saved session should hold: everything in it this window did not close,
+        then everything this window has.
+
+        One file, several windows. Overwriting the list meant the last window to save decided what
+        every other one would come back to, so opening the app on one folder emptied a session that
+        had four.
+        """
+        closed = self._closed_roots
+        out = [r for r in held if isinstance(r, str) and r not in closed]
+        return out + [r for r in mine if r not in out]
+
     def save(self, path=None, only=None):
         "Persist the session, merged onto what the file already holds; `only` names a partial write."
         p = Path(path or getattr(self, '_state_path', None) or ws_path())
@@ -1101,12 +1148,17 @@ class Workspace:
         if only: state = {k: v for k, v in state.items() if k in {*only, 'version', 'saved'}}
         elif not self._owns_session:
             for k in SESSION_KEYS: state.pop(k)
-        try: held = p.read_json()
-        except Exception: held = {}
-        try:
-            with atomic_save(p, mode='w', encoding='utf-8') as f:
-                json.dump({**held, **state} if isinstance(held, dict) else state, f)
-        except OSError: pass
+        # The lock spans the read and the write, so two windows saving together merge rather than
+        # race. A lock that cannot be taken is not a reason to lose the session.
+        with _session_lock(p):
+            try: held = p.read_json()
+            except Exception: held = {}
+            if not isinstance(held, dict): held = {}
+            if 'roots' in state: state['roots'] = self._merge_roots(held.get('roots') or [], state['roots'])
+            try:
+                with atomic_save(p, mode='w', encoding='utf-8') as f:
+                    json.dump({**held, **state}, f)
+            except OSError: pass
         return p
     @classmethod
     def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel',
@@ -1136,6 +1188,9 @@ class Workspace:
         # window of their own now. Reconciled once, so a folder added deliberately later stays.
         stale = ([r for r in saved_roots if has_own_window(r, p)]
                  if p.parent.name == 'workspaces' and not d.get('per_folder') else [])
+        # Reconciled away is closed, as far as the merge in `save` is concerned. Without this the
+        # next save reads the folders back out of the file it just healed.
+        ws._closed_roots.update(stale)
         for r in saved_roots:
             if r in stale: continue
             try: ws.add_root(r)
