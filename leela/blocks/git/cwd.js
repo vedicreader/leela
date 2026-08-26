@@ -170,6 +170,10 @@ function projectChanged() {
   // Every cached answer describes the folder we just left, on screen or not. They all go, or
   // opening one of these panels a minute later shows the old project's state.
   gitUI.snapshot = null; gitUI.history = [];
+  // Which repositories the workspace has changes when a folder is opened or closed, and this list
+  // was loaded once per page: a folder added afterwards never appeared under All repos, and the
+  // window that had been open longest was the one that showed least.
+  gitUI.repos = null; gitUI.reposResults = [];
   relUI.data = drvUI.data = null;
   Object.assign(wfUI, {data: null, runs: null, env: null, catalogue: null, docker: null});
   Object.assign(depUI, {data: null, infra: null, stack: null, records: null});

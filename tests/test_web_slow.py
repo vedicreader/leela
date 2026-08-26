@@ -2199,3 +2199,24 @@ def test_a_tab_comes_back_where_it_was_scrolled_to(tmp_path):
     went, back = _run(go, roots=[tmp_path])
     assert went > 100, 'precondition: the notebook was scrolled'
     assert abs(back - went) < 80, f'came back at {back}, was left at {went}'
+
+def test_all_repos_shows_a_folder_opened_after_the_page_was(tmp_path):
+    """`gitUI.repos` was fetched once per page and nothing cleared it, so under All repos the window
+    that had been open longest showed the least. A browser tab that reloads on open hid it."""
+    import subprocess
+    first, second = tmp_path/'first', tmp_path/'second'
+    for r in (first, second):
+        r.mkdir(); subprocess.run(['git', 'init', '-q', str(r)], check=True)
+    async def go(pg):
+        await pg.evaluate("() => { leePane('left', true); leeLeft('git'); }")
+        await pg.evaluate("() => { gitUI.tab = 'repos'; renderGitPanel(); }")
+        await pg.wait_for_function("() => gitUI.repos && gitUI.repos.repos")
+        before = await pg.evaluate("() => gitUI.repos.repos.map(r => r.root)")
+        await pg.evaluate("p => post('/fs/add-root', {path: p})", str(second))
+        await pg.evaluate("p => leeActivateRoot(p)", str(second))   # this leaves the pane on Files
+        await pg.evaluate("() => { leeLeft('git'); gitUI.tab = 'repos'; renderGitPanel(); }")
+        await pg.wait_for_function("() => gitUI.repos && gitUI.repos.repos.length > 1", timeout=8000)
+        return before, await pg.evaluate("() => gitUI.repos.repos.map(r => r.root)")
+    before, after = _run(go, roots=[first])
+    assert len(before) == 1 and len(after) == 2, (before, after)
+    assert any(r.endswith('second') for r in after), 'the folder just opened is one of the repositories'
