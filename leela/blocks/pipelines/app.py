@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from fastcore.basics import first
+from fastcore.xtras import Path
 
 from ...core.web import fail, off_loop, pipeline_socket
 from ..runtime.kernels import python_for
 from .deploys import Deploy
 from ...core.envs import EnvStore
-from .pipelines import PipelineError, resolve_script
+from .pipelines import PipelineError, nbdev_project, resolve_script
 from .pipelines import Release, app_project, release_flow
 from ..git.repos import RepoSet, repo_for
 
@@ -18,23 +19,32 @@ CAPS = ('fs', 'gate')
 
 KINDS = {'release': Release, 'deploy': Deploy}
 
+def nbdev_config(root):
+    """The nbdev config for `root`, or None. Whichever of the two files the project keeps.
+
+    `nbdev_project` decides; `get_config` is only asked for the paths, because on its own it
+    answers with defaults rather than nothing and any folder with a `pyproject.toml` passes.
+    """
+    if not nbdev_project(root): return None
+    from nbdev.config import get_config
+    try: return get_config(str(root), also_settings=True)
+    except Exception: return None
+
 def nbdev_prepare(session, target=''):
-    "nbdev's prepare, run in the folder that owns `settings.ini` and in that folder's venv."
-    import configparser, subprocess
+    "nbdev's prepare, run in the folder that owns its config and in that folder's venv."
+    import subprocess
     if not session.fs.roots: raise PipelineError('open a folder first')
-    root = repo_for(session, target)
-    settings = first(r/'settings.ini' for r in (root, *session.fs.roots) if (r/'settings.ini').exists())
-    if settings is None: raise PipelineError('no settings.ini in any open folder — not an nbdev project')
-    root = settings.parent
-    argv = resolve_script(['nbdev_prepare'], python_for(root, session))
-    if argv[0] == 'nbdev_prepare': raise PipelineError(f'nbdev is not installed in {root.name}')
+    cfg = first(c for r in (repo_for(session, target), *session.fs.roots) if (c := nbdev_config(r)))
+    if cfg is None: raise PipelineError(
+        'no settings.ini and no [tool.nbdev] in any open folder — not an nbdev project')
+    root = Path(cfg.config_path)
+    argv = resolve_script(['nbdev-prepare'], python_for(root, session))
+    if argv[0] == 'nbdev-prepare': raise PipelineError(
+        f'no nbdev-prepare in {root.name}: nbdev is not installed in the environment it uses')
     r = subprocess.run(argv, cwd=str(root), capture_output=True, text=True, timeout=900)
     if r.returncode: raise PipelineError((r.stderr or r.stdout or 'nbdev prepare failed').strip()[-4000:])
-    d = configparser.ConfigParser(); d.read(settings)
-    defaults = d.defaults()
-    return dict(ok=True, root=str(root), nbs_path=defaults.get('nbs_path', 'nbs'),
-        lib_path=defaults.get('lib_path', defaults.get('lib_name', '')),
-        log=(r.stdout or '')[-2000:])
+    return dict(ok=True, root=str(root), nbs_path=Path(cfg.nbs_path).name,
+        lib_path=Path(cfg.lib_path).name, log=(r.stdout or '')[-2000:])
 
 FASTSHIP_OPS = {
     'changelog': ('ship-changelog', 'Rewrite CHANGELOG.md from the issues closed since the last release.'),

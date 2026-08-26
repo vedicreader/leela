@@ -24,7 +24,7 @@ dependencies = [
     # `[cli]` because `workspace._attachment_context` imports `ramabana.cli` for the media
     # helpers, and that module needs pyghostty and teleprint. 0.9MB, and the alternative is
     # media handling that cannot be reached without a terminal UI.
-    "ramabana[cli]>=0.1.26",
+    "ramabana[cli]>=0.1.28",
     "fastcore>=1.7.0",
     "exhash>=0.4.10",
     "fossick>=0.1.14",   # 0.1.14 caches JSON, not pickle: GHSA-w8v5-vhqr-4h9v has no fixed release

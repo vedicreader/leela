@@ -2,6 +2,8 @@
 
 import asyncio
 import os
+from pathlib import Path
+from types import SimpleNamespace
 import pytest
 from leela.blocks.pipelines.pipelines import (APP_STEPS, Release, ReleaseError, app_project,
     default_steps, fastship_project, nbdev_project, release_flow)
@@ -486,3 +488,33 @@ VENV_TRACEBACK = '''  File "<string>", line 4, in <module>
     raise TypeError("Could not resolve authentication method.")
 TypeError: Could not resolve authentication method.
 '''
+
+
+def test_prepare_runs_for_a_project_configured_the_modern_way(tmp_path, monkeypatch):
+    """It demanded `settings.ini`, so a project keeping `[tool.nbdev]` was told it was not one.
+
+    That is how every nbdev project written since nbdev 2.3 is configured, ramabana included.
+    """
+    from leela.blocks.pipelines.app import nbdev_config, nbdev_prepare
+    from leela.blocks.pipelines.pipelines import PipelineError
+    root = project_releas(tmp_path/'modern', nbdev=True)
+    (root/'nbs').mkdir(exist_ok=True)
+    assert nbdev_config(root) is not None, 'pyproject-configured projects are nbdev projects'
+    assert nbdev_config(project_releas(tmp_path/'plain')) is None
+    ran = {}
+    class Done:
+        returncode, stdout, stderr = 0, 'prepared', ''
+    monkeypatch.setattr('subprocess.run', lambda argv, **kw: ran.update(argv=argv, cwd=kw.get('cwd')) or Done())
+    session = SimpleNamespace(fs=SimpleNamespace(roots=[Path(root)]))
+    monkeypatch.setattr('leela.blocks.pipelines.app.repo_for', lambda s, t: Path(root))
+    monkeypatch.setattr('leela.blocks.pipelines.app.python_for', lambda r, s: None)
+    d = nbdev_prepare(session)
+    assert d['ok'] and d['root'] == str(root) and d['nbs_path'] == 'nbs'
+    assert ran['cwd'] == str(root), 'and it runs in the folder that owns the config'
+
+
+def test_prepare_says_what_it_looked_for_when_nbdev_is_not_installed():
+    "`nbdev_prepare` with an underscore is not a file any current nbdev ships; the error said so wrongly."
+    from leela.blocks.pipelines.pipelines import resolve_script
+    # Both spellings are tried, so asking for the hyphen still finds an underscore-only install.
+    assert resolve_script(['nbdev-prepare'], None, env={'PATH': ''}) == ['nbdev-prepare']
