@@ -78,6 +78,19 @@ def test_saving_then_resetting_the_keymap_round_trips(client, monkeypatch, tmp_p
     assert saved['ok'] and p.exists()
     reset = client.post('/keys/reset', json={}).json()
     assert reset['ok'] and reset['keys'], 'defaults are back and the browser map was rebuilt'
+    assert json.loads(p.read_text())['keys'] == {}, 'an override set with nothing in it'
+    assert reset['overrides'] == {}, 'and the panel is told so, so its next save does not undo it'
+
+def test_a_keymap_posted_as_every_chord_is_stored_as_the_ones_that_differ(client, monkeypatch, tmp_path):
+    "An older client posts the whole map. Storing that freezes every action at today's default."
+    import leela.core.keys as keymap
+    p = tmp_path/'keys.json'
+    monkeypatch.setattr(keymap, 'keymap_path', lambda: p)
+    monkeypatch.setattr('leela.blocks.keys.app.keymap_path', lambda: p)
+    full = {k.action: k.key for k in keymap.DEFAULTS} | {'run_cell': 'ctrl+y'}
+    r = client.post('/keys/save', json={'text': json.dumps({'keys': full})}).json()
+    try: assert r['ok'] and json.loads(p.read_text())['keys'] == {'run_cell': 'ctrl+y'}
+    finally: keymap.reload(tmp_path/'gone.json')   # `KEYS` is global and the save just rebuilt it
 
 def test_settings_report_the_origin_of_each_effective_value(client):
     "With four layers, the value alone cannot answer 'why is it this'."

@@ -42,6 +42,13 @@ async function editKeys() {
   };
   const edited = new Map();                       // action -> chord, only what a person changed
   const chordOf = k => edited.has(k.action) ? edited.get(k.action) : (k.key || '');
+  /* The file records what differs from leela's own chords and nothing else. A map of all of them
+     freezes every action at today's default, and the next default that moves collides with it. */
+  const merged = () => {
+    const out = {...(d.overrides || {}), ...Object.fromEntries(edited)};
+    for (const a of Object.keys(out)) if (out[a] === (d.defaults || {})[a]) delete out[a];
+    return out;
+  };
   const paint = () => {
     const q = (m.querySelector('#keysearch').value || '').toLowerCase();
     const shown = rows().filter(k => !q ||
@@ -65,7 +72,7 @@ async function editKeys() {
     clearTimeout(checking);
     checking = setTimeout(async () => {
       try {
-        const r = await post('/keys/check', {keys: Object.fromEntries(edited)});
+        const r = await post('/keys/check', {keys: merged()});
         notes(r.notes);
         if (r.notes.length) status(r.notes[0], 'err');
       } catch (e) { notes([String(e.message || e)]); }
@@ -99,13 +106,15 @@ async function editKeys() {
   m.querySelector('#keysearch').addEventListener('input', paint);
   const applied = r => {
     lee.keys = r.keys; lee.help = r.help; lee.keyNotes = r.notes || [];
+    // Both are what the next save builds on, so a reset the modal outlives must not be undone by it.
+    if (r.overrides) d.overrides = r.overrides;
+    if (r.text) d.text = r.text;
     edited.clear(); notes(r.notes); paint();
     status(r.notes.length ? 'saved, but some entries were skipped' : 'keys saved and live', 'ok');
     remountEditors();
   };
   m.querySelector('#keysave').onclick = async () => {
-    const map = Object.fromEntries((lee.keys || []).map(k => [k.action, chordOf(k)]));
-    try { applied(await post('/keys/save', {text: JSON.stringify({keys: map}, null, 2)})); }
+    try { applied(await post('/keys/save', {text: JSON.stringify({keys: merged()}, null, 2)})); }
     catch (e) { status(String(e.message || e), 'err'); }
   };
   m.querySelector('#keyreset').onclick = async () => {

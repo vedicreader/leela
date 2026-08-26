@@ -175,10 +175,12 @@ Rebind in `keys.json` in leela's config dir, or wherever `$LEELA_KEYMAP` or `--k
 {"keys": {"run_cell": "mod+enter ctrl+y", "palette": "mod+shift+p", "quit": ""}}
 ```
 
-Separate chords with spaces. `""` unbinds. Start from `leela --write-keymap`, or edit it in
-the browser under keys, which applies without a restart. leela skips anything unparseable,
-unknown or conflicting, reports it, and keeps that action's default. A typo cannot stop
-leela starting.
+Separate chords with spaces. `""` unbinds. Only what you changed belongs in `keys`; every action
+absent from it follows leela's default, including when that default moves in a later release.
+`leela --write-keymap` writes the file and lists every action and its default under `_defaults`,
+which leela rewrites and never reads. Copy a line out of it to change one more. Editing in the
+browser under keys applies without a restart. leela skips anything unparseable, unknown or
+conflicting, reports it, and keeps that action's default. A typo cannot stop leela starting.
 
 ## Layout
 

@@ -7,7 +7,7 @@ from fastcore.all import L, Path, first, ifnone
 __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'WEB_ONLY_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
            'parse_key', 'web_key', 'by_scope', 'web_keymap',
            'help_rows', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
-           'apply_overrides', 'keymap_json', 'write_keymap', 'reload']
+           'apply_overrides', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload']
 
 EDITING_SCOPES = ('editor', 'exec', 'agent', 'term')
 SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term')
@@ -423,21 +423,49 @@ def apply_overrides(keys, over, notes=None):
         out = trial
     return out
 
-def keymap_json(keys=None):
-    "The effective map as the JSON a user would edit, with a comment explaining the format."
+_BULK = 50
+
+def bulk_map(over):
+    "Whether `over` names more actions than a person edits by hand, so a machine wrote it."
+    return len(over) > _BULK
+
+def _same_chord(a, b):
+    "Whether two chord strings bind the same keys in the same order."
+    if a == b: return True
+    try: return [_signature(c) for c in a.split()] == [_signature(c) for c in b.split()]
+    except ValueError: return False
+
+def only_changed(over, base=None):
+    "`over` without the entries that repeat a default."
+    d = {k.action: k.key for k in L(ifnone(base, DEFAULTS))}
+    return {a: c for a, c in over.items() if not _same_chord(d.get(a, ''), c)}
+
+def keymap_json(keys=None, over=None):
+    "The overrides as the JSON a user edits, with every action and its default beside them."
     ks = L(ifnone(keys, KEYS))
+    over = ifnone(over, only_changed({k.action: k.key for k in ks}))
     return {'_help': ['leela keymap: action -> chord, or several chords separated by spaces.',
                       'A chord is [mod+][ctrl+][alt+][shift+]base; hyper is Command+Control+Option+Shift on macOS; mod is Command on macOS and Control elsewhere; base is a character or a name '
                       '(enter, escape, tab, space, up, f1..f12).',
                       'An empty string unbinds the action. Delete an entry to take leela\'s default.',
+                      '"keys" holds only what you changed. Every action absent from it follows leela\'s default, '
+                      'including when that default moves in a later release.',
+                      '"_defaults" lists every action and the chord leela ships it with. leela rewrites it and '
+                      'never reads it. Copy a line into "keys" to change one.',
                       'Anything unparseable or conflicting is skipped and reported in the IDE.'],
-            'keys': {k.action: k.key for k in ks}}
+            '_defaults': {k.action: k.key for k in DEFAULTS},
+            'keys': dict(over)}
 
-def write_keymap(path=None, keys=None):
-    "Write the effective map where the user can edit it, and return the path."
+def write_keymap(path=None, keys=None, keep=True):
+    "Write the overrides where the user can edit them, keeping a copy of what was there."
+    from .backups import guard
     p = Path(path or keymap_path())
+    kept = read_overrides(p, notes=L()) if keep else {}
+    if bulk_map(kept): kept = only_changed(kept)
+    eff = only_changed({k.action: k.key for k in L(ifnone(keys, KEYS))})
+    guard(p, reason='before the keymap was rewritten')
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(keymap_json(keys), indent=2) + '\n')
+    p.write_text(json.dumps(keymap_json(keys, {**kept, **eff}), indent=2) + '\n')
     return p
 
 def reload(path=None):

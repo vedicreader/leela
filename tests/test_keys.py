@@ -2,6 +2,7 @@
 
 import json
 import pytest
+from fastcore.all import first
 from leela.core.keys import (DEFAULTS, KEYS, apply_overrides, help_rows,
                         keymap_json, lookup, read_overrides, web_keymap)
 from leela.core.ui import BARS, BUTTONS, bar, tip
@@ -130,9 +131,101 @@ def test_an_unreadable_keymap_is_a_note_not_a_crash(tmp_path):
 def test_the_written_template_reproduces_the_map(tmp_path):
     "What `--write-keymap` writes, read back, is the map it was written from."
     p = tmp_path / 'keys.json'
-    p.write_text(json.dumps(keymap_json()))
-    ks = apply_overrides(DEFAULTS, read_overrides(p, notes=[]), notes=[])
-    assert {k.action: k.key for k in ks} == {k.action: k.key for k in KEYS}
+    for over in ({}, {'run_cell': 'ctrl+y', 'quit': 'hyper+q', 'save': ''}):
+        want = apply_overrides(DEFAULTS, over, notes=[])
+        p.write_text(json.dumps(keymap_json(want)))
+        ks = apply_overrides(DEFAULTS, read_overrides(p, notes=[]), notes=[])
+        assert {k.action: k.key for k in ks} == {k.action: k.key for k in want}
+
+def _written(path, keys=None, keep=True):
+    from leela.core.keys import write_keymap
+    write_keymap(path, keys=keys, keep=keep)
+    return json.loads(path.read_text())
+
+def test_a_written_keymap_holds_only_what_a_person_changed(tmp_path):
+    """`--write-keymap` used to dump all ~160 chords. That froze the map: a default that moved
+    afterwards collided with the copy of its old chord sitting in the file."""
+    d = _written(tmp_path/'keys.json', keys=DEFAULTS)
+    assert d['keys'] == {}
+    ks = apply_overrides(DEFAULTS, {'run_cell': 'ctrl+y', 'save': ''}, notes=[])
+    d = _written(tmp_path/'changed.json', keys=ks)
+    assert d['keys'] == {'run_cell': 'ctrl+y', 'save': ''}
+
+def test_an_unbound_action_is_an_override_and_not_an_empty_one(tmp_path):
+    "`\"\"` unbinds, so a falsy check would drop the one entry the file exists to carry."
+    p = tmp_path/'keys.json'
+    ks = apply_overrides(DEFAULTS, {'save': ''}, notes=[])
+    assert _written(p, keys=ks)['keys'] == {'save': ''}
+    back = apply_overrides(DEFAULTS, read_overrides(p, notes=[]), notes=[])
+    assert not first(back.filter(lambda k: k.action == 'save')).bound
+    assert _written(p, keys=DEFAULTS)['keys'] == {'save': ''}, 'and it survives a second write'
+
+def test_the_action_names_stay_discoverable_without_binding_anything(tmp_path):
+    "A near-empty file still has to tell a person what there is to rebind."
+    p = tmp_path/'keys.json'
+    d = _written(p, keys=DEFAULTS)
+    assert d['_defaults'] == {k.action: k.key for k in DEFAULTS}
+    assert read_overrides(p, notes=[]) == {}, '`_defaults` is a reference, never an override'
+
+def test_a_chord_a_person_typed_survives_a_rewrite_even_when_it_equals_the_default(tmp_path):
+    "Writing over a hand-written file must not silently drop what is in it."
+    p = tmp_path/'keys.json'
+    p.write_text(json.dumps({'keys': {'save': lookup('save').key, 'run_cell': 'ctrl+y'}}))
+    assert _written(p, keys=DEFAULTS)['keys'] == {'save': lookup('save').key, 'run_cell': 'ctrl+y'}
+
+def test_a_full_dump_is_pruned_and_what_it_replaced_is_kept(tmp_path):
+    "The file the old writer left behind is the one that has to be repaired, and backed up first."
+    from leela.core.backups import backup_dir
+    p = tmp_path/'keys.json'
+    p.write_text(json.dumps({'_help': keymap_json()['_help'],
+                             'keys': {k.action: k.key for k in DEFAULTS}}))
+    assert _written(p, keys=DEFAULTS)['keys'] == {}
+    assert len(list((backup_dir()/'guard').glob('keys.json.*'))) == 1
+
+def test_a_keymap_written_before_a_default_moved_does_not_collide_after_it(tmp_path):
+    """`add_root` moved from `o` to `O` and `open_folder` took `o`. Every full dump written before
+    that carried the stale `add_root: o`, which `apply_overrides` refused on every launch."""
+    from dataclasses import replace
+    from fastcore.all import L
+    import leela.core.keys as K
+    was = L([replace(k, key='o') if k.action == 'add_root' else k
+             for k in DEFAULTS if k.action != 'open_folder'])
+    p = tmp_path/'keys.json'
+    p.write_text(json.dumps({'_help': keymap_json()['_help'],
+                             'keys': {k.action: k.key for k in was}}))
+    notes = []
+    apply_overrides(DEFAULTS, read_overrides(p, notes=notes), notes=notes)
+    assert [n for n in notes if 'add_root' in n], 'the old full dump is what collides'
+    keep = K.DEFAULTS
+    K.DEFAULTS = was
+    try: K.write_keymap(p, keys=was)
+    finally: K.DEFAULTS = keep
+    assert json.loads(p.read_text())['keys'] == {}
+    notes = []
+    ks = apply_overrides(DEFAULTS, read_overrides(p, notes=notes), notes=notes)
+    assert notes == []
+    assert {k.action: k.key for k in ks}['add_root'] == 'O'
+
+def test_reset_empties_the_overrides_and_the_defaults_come_back(tmp_path, monkeypatch):
+    "Reset is the recovery path, so what it writes has to leave nothing behind."
+    import leela.core.keys as K
+    p = tmp_path/'keys.json'
+    p.write_text(json.dumps({'keys': {'save': 'ctrl+y'}}))
+    monkeypatch.setenv('LEELA_KEYMAP', str(p))
+    K.reload()
+    assert K.lookup('save').key == 'ctrl+y'
+    K.write_keymap(keys=K.DEFAULTS, keep=False)
+    assert json.loads(p.read_text())['keys'] == {}
+    K.reload()
+    assert {k.action: k.key for k in K.KEYS} == {k.action: k.key for k in K.DEFAULTS}
+    assert K.NOTES == []
+
+def test_the_keys_panel_saves_the_overrides_and_not_a_copy_of_every_chord():
+    "The panel's save was the third full-dump writer, and the bundle is what the browser runs."
+    from tests.assets import JS as js
+    assert 'const merged = ' in js and 'JSON.stringify({keys: merged()}' in js
+    assert "post('/keys/check', {keys: merged()})" in js, 'the check sees what the save will write'
+    assert 'if (r.overrides) d.overrides = r.overrides;' in js, 'a reset is not undone by a save'
 
 
 @pytest.mark.parametrize('name', BARS)

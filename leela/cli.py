@@ -49,8 +49,9 @@ def main(argv=None):
                    help='keybindings file to apply over the defaults '
                         '(default: $LEELA_KEYMAP, else keys.json in leela’s config dir)')
     p.add_argument('--write-keymap', action='store_true',
-                   help='write every action and its current chord to that file, then exit — '
-                        'the starting point for rebinding anything your terminal swallows')
+                   help='write the chords you have changed to that file, with every action and its '
+                        'default listed beside them, then exit — the starting point for rebinding '
+                        'anything your terminal swallows')
     a = p.parse_args(argv)
     if a.keymap: os.environ['LEELA_KEYMAP'] = os.path.abspath(a.keymap)
     if a.write_keymap:
@@ -58,6 +59,7 @@ def main(argv=None):
         path = write_keymap()
         print(f'wrote {path}')
         print('  action -> chord, or several chords separated by spaces; "" unbinds it.')
+        print('  "keys" holds what you changed; copy a line out of "_defaults" to change one more.')
         for n in NOTES: print(f'  ⚠ {n}')
         return
     roots = [os.path.abspath(f) for f in a.folders]

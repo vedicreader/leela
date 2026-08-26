@@ -828,3 +828,41 @@ with all 56 tools sent.
 The band in `test_real_dialog_prompt_uses_a_16k_litert_engine` is 5600 to 6200, measured on the
 restored path rather than inherited. It is large on purpose. Anyone who reads a slow inline turn as
 a prompt-size fault should check the engine's activation dtype before cutting tools again.
+
+## `leela/core/keys.py` `keymap_json`, `write_keymap`
+
+`keymap_json` built `'keys': {k.action: k.key for k in ks}` over every action, so every writer left a
+complete snapshot of all ~160 bindings in `keys.json`. Three writers did it: `leela --write-keymap`,
+`/keys/reset`, and the keys panel's save button, which posted `Object.fromEntries(lee.keys.map(...))`
+as the whole file.
+
+The file then froze the map at the moment it was written. A user's `keys.json` held 100 entries, none
+of which differed from leela's own chords. When `add_root` moved from `o` to `O` and `open_folder`
+took `o`, the stale `"add_root": "o"` collided with the new default and `apply_overrides` refused it
+on every launch: `keymap: add_root -> 'o' conflicts (...) — kept O`. Every future default that moves
+collides the same way. The file's own `_help` said "Delete an entry to take leela's default", which
+was only true of a file holding overrides.
+
+`keys` now holds what differs from the defaults and nothing else. `only_changed` compares chords
+through `_signature`, so case, surrounding whitespace and `mod` against `ctrl` do not read as a
+change; `''` is compared like any other chord, so an unbind is kept. `_defaults` lists every action
+and the chord leela ships it with. leela rewrites `_defaults` on each write and never reads it, so
+the action names stay discoverable and none of them binds anything.
+
+A file's entries are a person's choices, so `write_keymap` preserves them verbatim, including one
+that repeats a default. The exception is a map naming more than 50 actions: no one edits that many by
+hand, so it is one of leela's own dumps and its default-equal entries are pruned. `read_overrides`
+runs first, so `_GENERATED_DEFAULT_MIGRATIONS` and `_SNAPSHOT_MIGRATIONS` move a legacy chord onto
+today's default before the comparison, and the rewrite drops it rather than promoting it to a
+permanent choice. `/keys/save` applies the same rule to what it is posted, so a stale bundle posting
+the whole map cannot reinstate the fault. `guard` takes a copy before either write.
+
+`/keys/reset` writes an empty override set. `reload` after it leaves `KEYS` equal to `DEFAULTS`.
+
+The panel posts its base overrides merged with what was edited, minus anything that now equals the
+default, so undoing a customisation removes the entry instead of writing a default-equal one.
+`/keys/check` is sent the same merged map the save will write. `applied` adopts the `overrides` and
+`text` the server hands back, so a save in a modal opened before a reset cannot undo that reset.
+
+Out of scope, and still true: an explicit override that a later default lands on is refused with a
+note. That is a real conflict between two chords a person can see, not a stale copy of a default.
