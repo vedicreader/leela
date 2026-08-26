@@ -278,3 +278,28 @@ def test_a_change_on_disk_drops_the_cached_copy_of_a_clean_tab(tmp_path, monkeyp
     _freshen(ctx, [], resync=True)
     assert str(a) not in docs.docs, 'too many changes to name means every clean tab re-reads'
     assert docs.docs[str(b)] == 'held'
+
+NB_JSON = ('{"cells": [{"cell_type": "code", "source": ["x = 1"], "metadata": {}, "outputs": [],'
+           ' "execution_count": null}], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
+
+def test_a_notebook_dropped_by_a_change_on_disk_is_read_back_for_the_next_run(tmp_path, monkeypatch):
+    """Freshening a clean tab drops what `DocStore` holds, and `/nb/run` reads that and nothing else,
+    so a notebook that was open answered `no notebook open` until it was mounted again."""
+    monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
+    from leela.core.session import DocStore
+    p = tmp_path/'n.ipynb'; p.write_text(NB_JSON)
+    ws = Workspace(roots=[tmp_path]); ws.open(p)
+    docs = DocStore(ws)
+    tab, nb, _ = docs.owner(str(p))
+    assert nb is not None and len(nb) == 1, 'precondition: the run route finds it'
+
+    docs.forget(str(p))                       # what a change on disk does to a clean tab
+    tab, nb, _ = docs.owner(str(p))
+    assert nb is not None and len(nb) == 1, 'the file is read back rather than reported missing'
+    assert docs.versions[str(p)], 'and what was read is stamped with the version it came from'
+    docs.forget(str(p))
+    assert docs.current() is not None, 'the same holds for the routes that ask for the active tab'
+
+    p.unlink()
+    docs.forget(str(p))
+    assert docs.owner(str(p))[1] is None, 'a file that is gone is still nothing to run'

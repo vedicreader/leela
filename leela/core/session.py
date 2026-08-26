@@ -131,7 +131,8 @@ class DocStore:
     def key(tab): return None if tab is None else (tab.path or tab.title)
     def current(self):
         "The notebook behind the active tab, or None when the active tab is not one."
-        return self.docs.get(self.key(self.session.tab)) if self.session.tab else None
+        t = self.session.tab
+        return self.doc_for(t) if t is not None and t.kind == 'notebook' else None
     def tab_for(self, ref):
         "The tab a request names, falling back to the active one. Survives a tab switch mid-flight."
         ref = str(ref or '')
@@ -142,7 +143,22 @@ class DocStore:
         tab = self.tab_for(ref)
         if tab is None or tab.kind != 'notebook': return None, None, None
         lock = self.run_locks.setdefault(self.session.kernel_key(tab), asyncio.Lock())
-        return tab, self.docs.get(self.key(tab)), lock
+        return tab, self.doc_for(tab), lock
+
+    def doc_for(self, tab):
+        """The notebook behind `tab`, read from disk when nothing is held.
+
+        What is held is a cache, and a change on disk drops it. A run arriving before the next mount
+        then found nothing and answered `no notebook open`, for a notebook that is open.
+        """
+        key = self.key(tab)
+        if (nb := self.docs.get(key)) is not None or not getattr(tab, 'path', ''): return nb
+        from ..blocks.nb.nb import Notebook
+        from ..blocks.tabs.app import disk_version
+        try: nb = Notebook.load(tab.path)
+        except Exception: return None
+        self.docs[key], self.versions[key] = nb, disk_version(tab.path)
+        return nb
     def mark_all_stale(self):
         "A reset namespace makes every saved output historical, even though it stays useful."
         for nb in self.docs.values():
