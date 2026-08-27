@@ -1621,3 +1621,46 @@ def test_the_kernel_pill_calls_a_tab_the_same_thing_alive_or_dead(tmp_path):
         name, base, pid, boot_error, last_api_error, alive = tmp_path.name, '', 1, None, '', True
     ws.pool.kernels[ws.kernel_key()] = _Live()
     assert ws.runtime_label() == dead_name == '01_graph.ipynb', 'the tab names its own kernel, running or not'
+
+def test_one_language_server_however_many_lints_arrive_together(tmp_path):
+    """`start` checked `alive` and spawned with nothing between them, and a notebook mount fires one
+    lint per mounted cell, so a window ran two language servers with one of them orphaned."""
+    import threading
+    from leela.blocks.lsp.lsp import PyrightService
+    svc = PyrightService(tmp_path)
+    spawned = []
+    class _Proc:
+        def poll(self): return None
+        def __init__(self): spawned.append(1)
+    def _start(self):
+        if self.alive: return True
+        time.sleep(.05)                      # the window the race used to fit through
+        self.process = _Proc()
+        return True
+    monkey = PyrightService._start
+    PyrightService._start = _start
+    try:
+        threads = [threading.Thread(target=svc.start) for _ in range(8)]
+        for t in threads: t.start()
+        for t in threads: t.join(5)
+    finally: PyrightService._start = monkey
+    assert len(spawned) == 1, f'{len(spawned)} language servers for one workspace'
+
+def test_a_frozen_app_does_not_run_itself_to_read_package_versions(tmp_path, monkeypatch):
+    """In the bundle `sys.executable` is Leela, so the fallback ran `Leela.app/Contents/MacOS/Leela
+    -c ...`: it relaunched the app and then waited out the eight second timeout, once per switch,
+    for any project without an environment of its own."""
+    (tmp_path/'pyproject.toml').write_text('[project]\nname = "x"\ndependencies = ["fastcore"]\n')
+    import sys
+    ran = []
+    monkeypatch.setattr('leela.blocks.editor.app.subprocess.run',
+                        lambda *a, **kw: ran.append(a) or (_ for _ in ()).throw(AssertionError('spawned')))
+    monkeypatch.setattr('leela.blocks.runtime.kernels.nearest_python', lambda *a, **kw: None)
+    monkeypatch.setattr('leela.blocks.runtime.kernels.project_python', lambda *a, **kw: None)
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    ws = Workspace(roots=[tmp_path])
+    ws.pool.default_python = None
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/editor/packages', params={'path': str(tmp_path/'pyproject.toml')}).json()
+    assert d == {'packages': [], 'summary': {}, 'note': 'no interpreter for this project'}
+    assert ran == [], 'and nothing was run to find that out'

@@ -1526,6 +1526,9 @@ function noteStaleTab(st, recoveredDraft) {
   takeDiskVersion(st.path).then(() => status(`${name} reloaded from disk`, 'ok'))
                           .catch(e => status(String(e.message || e), 'err'));
 }
+// A later tab must not take the answers asked for an earlier one.
+let fileExtrasVersion = 0;
+
 /* An image, in the same chrome as a PDF. Fit is the default because an image opened from a vault
    or a file tree is being identified rather than inspected. The dimensions are shown either way,
    since "is this the 2x asset" is the usual question. */
@@ -1582,12 +1585,12 @@ async function mountFile(host, st) {
             `<div class="lee-cm" id="filecm"></div>` +
             `<div class="lee-md-preview" id="mdpreview" data-markdown=""></div></div>`
           : '<div class="lee-cm" id="filecm"></div>');
+  // Nothing in the editor depends on these two answers, and awaiting them held an empty box on
+  // screen for as long as they took: `/editor/packages` starts an interpreter to read version
+  // metadata, and `/git/file` is four git subprocesses. Together they were 80 to 200ms of blank
+  // pyproject. The file is mounted from the text `/tab/state` already carried, and each answer is
+  // applied when it lands, to the editor it was asked for.
   let git = {ranges: []}, packages = null;
-  if (st.path) {
-    const requests = [api('/git/file?path=' + encodeURIComponent(st.path)).catch(() => git)];
-    if (isProject && lee.workbenchPrefs.dependencyHints !== false) requests.push(api('/editor/packages?path=' + encodeURIComponent(st.path)).catch(() => null));
-    [git, packages] = await Promise.all(requests);
-  }
   lee.fileGit = git;
   const key = st.path || st.title;
   const v = createEditor($('#filecm'), {
@@ -1628,6 +1631,18 @@ async function mountFile(host, st) {
   if(st.lang==='python'&&st.path&&lee.editorPrefs.inlayHints)api('/lsp/inlay-hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>LeeCM.setInlayHints?.(v,d.hints||[])).catch(()=>{});
   if(st.lang==='python'&&st.path&&['symbols','pathAndSymbols'].includes(crumbMode))api('/lsp/symbols',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>{const el=$('#editorcrumbs');if(el){const names=(d.symbols||[]).slice(0,40).map(s=>`<button data-line="${(s.range?.start?.line||0)+1}">${esc(s.name)}</button>`).join('');el.insertAdjacentHTML('beforeend',`<i>›</i><span class="lee-breadcrumb-symbols">${names}</span>`);el.onclick=e=>{const b=e.target.closest('[data-line]');if(b)jumpToLine(b.dataset.line);};}}).catch(()=>{});
   if (packages) paintPackageVersions(v, packages);
+  if (st.path) {
+    const mine = ++fileExtrasVersion;
+    api('/git/file?path=' + encodeURIComponent(st.path)).then(d => {
+      if (mine !== fileExtrasVersion || !d) return;
+      lee.fileGit = d;
+      LeeCM.setChangedLines(v, d.ranges || []);
+      if (isMd) paintMarkdownFileChanges($('#mdpreview'), d.ranges || []);
+    }).catch(() => {});
+    if (isProject && lee.workbenchPrefs.dependencyHints !== false)
+      api('/editor/packages?path=' + encodeURIComponent(st.path))
+        .then(d => { if (mine === fileExtrasVersion && d) paintPackageVersions(v, d); }).catch(() => {});
+  }
   closeChangePopup(); armChangeGutter($('#filecm'));
   $('#filecm').addEventListener('focusin', () => { lee.activeEditor='primary'; setScope('editor'); });
 }

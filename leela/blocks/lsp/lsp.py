@@ -40,6 +40,9 @@ class PyrightService:
         self.process, self._seq = None, 0
         self._pending, self._diagnostics, self._versions = {}, {}, {}
         self._lock = threading.Lock()
+        #: Held across the spawn and the handshake. `_lock` is the one that guards writes, and
+        #: `start` writes, so this cannot be the same one.
+        self._start_lock = threading.Lock()
         self.note = _why_unavailable(self.command, self.root)
     @property
     def available(self): return bool(self.command)
@@ -47,6 +50,13 @@ class PyrightService:
     def alive(self): return bool(self.process and self.process.poll() is None)
     def _uri(self, path): return 'file://' + quote(str(Path(path).resolve()))
     def start(self):
+        # The check and the spawn had nothing between them, and a notebook mount fires one lint
+        # request per mounted cell, so a window ended up running two language servers with one of
+        # them orphaned. The handshake is inside the lock: the second caller waits for the first
+        # server rather than starting a second.
+        with self._start_lock: return self._start()
+
+    def _start(self):
         if self.alive or not self.available: return self.alive
         self.process = subprocess.Popen(self.argv, cwd=str(self.root), stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)

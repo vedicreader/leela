@@ -127,8 +127,14 @@ def connect(app, ctx):
         try:
             p = ctx.fs._check(path, must_exist=True)
             if p.name != 'pyproject.toml': return {'packages': [], 'summary': {}}
-            # A pyproject is annotated with the versions installed beside it.
-            python = python_for(p.parent, session=ctx) or sys.executable
+            # A pyproject is annotated with the versions installed beside it. In a frozen app
+            # `sys.executable` is the bundle, so the fallback ran `Leela.app/Contents/MacOS/Leela
+            # -c ...`, which relaunches Leela and then waits out the eight second timeout. A project
+            # with no environment of its own gets no annotations instead.
+            python = python_for(p.parent, session=ctx)
+            if python is None and getattr(sys, 'frozen', False):
+                return {'packages': [], 'summary': {}, 'note': 'no interpreter for this project'}
+            python = python or sys.executable
             rows = project_package_rows(p, python)
             return {'packages': rows, 'summary': {
                 'total': len(rows), 'installed': sum(r['installed'] is not None for r in rows),

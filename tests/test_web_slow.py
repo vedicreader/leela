@@ -2100,3 +2100,28 @@ def test_the_overview_stripe_follows_the_pane_it_was_measured_against(tmp_path):
     opened, wide, closed = _run(go, roots=[tmp_path], dpr=None)
     assert opened == 0, f'the stripe starts on the edge, not {opened}px from it'
     assert wide == 0 and closed == 0, f'and stays there through a pane opening and closing: {wide}, {closed}'
+
+def test_a_project_file_mounts_before_the_answers_it_does_not_need(tmp_path):
+    """`/editor/packages` starts an interpreter to read version metadata and `/git/file` is four git
+    subprocesses, and the mount awaited both before creating the editor. A pyproject was a blank box
+    for as long as they took, which read as a file that would not load."""
+    (tmp_path/'pyproject.toml').write_text('[project]\nname = "x"\ndependencies = ["fastcore"]\n')
+    import time
+    async def go(pg):
+        async def slow(route):
+            await asyncio.sleep(1.5)
+            await route.continue_()
+        await pg.route('**/editor/packages*', slow)
+        await pg.route('**/git/file*', slow)
+        began = time.monotonic()
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'pyproject.toml'))
+        await pg.wait_for_function(
+            "() => lee.path && lee.path.endsWith('pyproject.toml') && lee.editors.get('file')", timeout=8000)
+        mounted = time.monotonic() - began
+        text = await pg.evaluate("() => LeeCM.getDoc(lee.editors.get('file'))")
+        # and the answers still land, on the editor they were asked for
+        await pg.wait_for_function("() => lee.fileGit && lee.fileGit.ranges", timeout=8000)
+        return mounted, text
+    mounted, text = _run(go, roots=[tmp_path])
+    assert 'name = "x"' in text, 'the file is on screen'
+    assert mounted < 1.0, f'the editor waited {mounted:.2f}s for answers it does not need'
