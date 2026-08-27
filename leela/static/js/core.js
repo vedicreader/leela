@@ -18,7 +18,7 @@ const lee = {
   hist: [], histIdx: 0,
   varOpen: new Set(), varPrev: {}, varStates: new Map(), varFingerprints: new Map(), varRuntime: '',
   term: null, terms: new Map(), activeTerm: '', termSeq: 0,
-  cellObserver: null, lastDoc: null, buffers: new Map(), dirtyBuffers: new Set(), bufferTimers: new Map(),
+  cellObserver: null, cellMountTimer: 0, cellsOwed: null, lastDoc: null, buffers: new Map(), dirtyBuffers: new Set(), bufferTimers: new Map(),
   autoSaveTimer: null, saving: false, editVersion: 0, collapsedCells: new Set(), fileGit: null,
   diskVersion: '', seenDiskVersion: '', watchingDisk: false,
   breakpoints: new Map(), debugThread: null, debugCell: null, debugState: null, directDebug: false, debugWatches: [],

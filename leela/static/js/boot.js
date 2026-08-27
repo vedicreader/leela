@@ -14,10 +14,16 @@ function observeEditorWidth() {
   const remeasure = () => {
     cancelAnimationFrame(frame);
     // Coalesced: a drag on the splitter fires this per frame, and each measure is a layout read.
-    frame = requestAnimationFrame(() => {
-      for (const v of lee.editors.values()) { try { v.requestMeasure(); } catch (_) { /* torn down */ } }
-      lee.gitMergeView?.a?.requestMeasure?.(); lee.gitMergeView?.b?.requestMeasure?.();
-    });
+    //
+    // Spread, because a notebook that has been scrolled through holds 156 editors and measuring all
+    // of them lands in one frame: 128ms in the engine the packaged app runs, which is what opening
+    // the agent pane felt like. A slice per frame costs the same total and blocks nothing.
+    const views = [...lee.editors.values(), lee.gitMergeView?.a, lee.gitMergeView?.b].filter(Boolean);
+    const slice = () => {
+      for (const v of views.splice(0, 12)) { try { v.requestMeasure(); } catch (_) { /* torn down */ } }
+      if (views.length) frame = requestAnimationFrame(slice);
+    };
+    frame = requestAnimationFrame(slice);
   };
   const observer = new ResizeObserver(remeasure);
   for (const sel of ['#editor', '#shell', '#bottomdock']) { const el = $(sel); if (el) observer.observe(el); }

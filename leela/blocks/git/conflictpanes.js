@@ -57,6 +57,15 @@ function replaceConflict(scan, index, lines) {
 }
 
 async function showGitConflict(path) {
+  // A notebook is answered cell by cell, in `conflictcells.js`. The route says whether git holds
+  // three readable notebooks; when it does not, the text panes are still the honest fallback.
+  if (/\.ipynb$/i.test(path)) {
+    let nb = null;
+    try { nb = await api(gitUrl('/git/notebook/conflict', {path})); }
+    catch (e) { status(`cell merge unavailable · ${e.message || e}`, 'err'); }
+    if (nb && nb.notebook) return showNotebookConflict(path, nb);
+    if (nb && nb.error) status(`${nb.error}; showing the text panes`, 'err');
+  }
   try {
     const d = await api(gitUrl('/git/conflict', {path}));
     const original = scanConflicts(d.worktree || '');

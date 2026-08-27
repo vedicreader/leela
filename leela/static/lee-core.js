@@ -18,7 +18,7 @@ const lee = {
   hist: [], histIdx: 0,
   varOpen: new Set(), varPrev: {}, varStates: new Map(), varFingerprints: new Map(), varRuntime: '',
   term: null, terms: new Map(), activeTerm: '', termSeq: 0,
-  cellObserver: null, lastDoc: null, buffers: new Map(), dirtyBuffers: new Set(), bufferTimers: new Map(),
+  cellObserver: null, cellMountTimer: 0, cellsOwed: null, lastDoc: null, buffers: new Map(), dirtyBuffers: new Set(), bufferTimers: new Map(),
   autoSaveTimer: null, saving: false, editVersion: 0, collapsedCells: new Set(), fileGit: null,
   diskVersion: '', seenDiskVersion: '', watchingDisk: false,
   breakpoints: new Map(), debugThread: null, debugCell: null, debugState: null, directDebug: false, debugWatches: [],
@@ -1795,11 +1795,26 @@ function observeNotebookCells(host, cells) {
   // Cell shells preserve the notebook's geometry, and CodeMirror is only created near the
   // viewport, so a 150-cell notebook paints immediately instead of constructing 150 editors in
   // one uninterruptible task.
+  //
+  // Built when the pane stops, not while it moves. Constructing one editor costs a whole frame in
+  // the engine the packaged app runs, and scrolling a 155-cell notebook end to end crosses about
+  // eighty of them: 103ms frames against 17 idle. Waiting for the scroll to settle builds the same
+  // editors and holds 60fps throughout.
   lee.cellObserver?.disconnect();
+  clearTimeout(lee.cellMountTimer);
+  const owed = lee.cellsOwed = new Set();
+  const drain = () => {
+    lee.cellMountTimer = 0;
+    for (const i of owed) ensureCellMounted(i);
+    owed.clear();
+  };
   lee.cellObserver = new IntersectionObserver(entries => {
     for (const e of entries) if (e.isIntersecting) {
-      const i = +e.target.dataset.i; ensureCellMounted(i); lee.cellObserver?.unobserve(e.target);
+      owed.add(+e.target.dataset.i); lee.cellObserver?.unobserve(e.target);
     }
+    if (!owed.size) return;
+    clearTimeout(lee.cellMountTimer);
+    lee.cellMountTimer = setTimeout(drain, 120);
   }, {root: host, rootMargin: '700px 0px'});
   $$('.lee-cell', host).forEach((el, i) => {
     if (i === lee.sel || cells[i]?.running) ensureCellMounted(i);

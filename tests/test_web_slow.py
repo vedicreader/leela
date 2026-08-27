@@ -2277,3 +2277,72 @@ def test_any_two_tabs_can_be_read_side_by_side(tmp_path):
     assert out['cells'] == 2 and out['split'], out
     assert 'first = 1' in out['text'] and 'a heading' in out['text'], 'the cells are what it shows'
     assert out['saved']['path'].endswith('left.ipynb'), 'and the pane comes back on the next load'
+
+def _nb_merge_text(cells):
+    "A notebook whose cells are `(id, source)` pairs, written the way nbformat writes them."
+    import json
+    return json.dumps({'cells': [{'id': i, 'cell_type': 'code', 'metadata': {}, 'execution_count': 1,
+                                  'outputs': [{'output_type': 'stream', 'name': 'stdout', 'text': ['old\n']}],
+                                  'source': [src]} for i, src in cells],
+                       'metadata': {'kernelspec': {'name': 'python3'}}, 'nbformat': 4, 'nbformat_minor': 5},
+                      indent=1) + '\n'
+
+def _conflicted_notebook_repo(tmp_path):
+    "A repository mid-merge: two cells both sides changed, one cell only theirs added, one untouched."
+    import subprocess
+    root = tmp_path/'repo'; root.mkdir()
+    run = lambda *a: subprocess.run(['git', *a], cwd=root, check=True, capture_output=True, text=True)
+    run('init', '-q', '-b', 'main')
+    run('config', 'user.email', 't@example.com'); run('config', 'user.name', 'T')
+    nb = root/'n.ipynb'
+    nb.write_text(_nb_merge_text([('a', 'x = 1'), ('b', 'y = 1'), ('d', 'z = 1')]))
+    run('add', 'n.ipynb'); run('commit', '-qm', 'base')
+    run('checkout', '-qb', 'other')
+    nb.write_text(_nb_merge_text([('a', 'x = 3'), ('b', 'y = 3'), ('d', 'z = 1'), ('c', 'theirs_only = 1')]))
+    run('commit', '-qam', 'theirs')
+    run('checkout', '-q', 'main')
+    nb.write_text(_nb_merge_text([('a', 'x = 2'), ('b', 'y = 2'), ('d', 'z = 1')]))
+    run('commit', '-qam', 'ours')
+    merge = subprocess.run(['git', 'merge', 'other'], cwd=root, capture_output=True, text=True)
+    assert merge.returncode != 0, 'the merge is supposed to conflict'
+    return root, nb
+
+def test_a_conflicted_notebook_is_merged_cell_by_cell_in_the_browser(tmp_path):
+    """The text panes showed a conflicted notebook as JSON with markers through it, which is neither
+    a notebook nor anything a person can answer. `.ipynb` now opens the cell view instead: two sides
+    per contested cell, the settled cells folded away, and no apply until every row has an answer."""
+    import json
+    root, nb = _conflicted_notebook_repo(tmp_path)
+    assert '<<<<<<<' in nb.read_text(), 'precondition: the file on disk is marked up'
+    async def go(pg):
+        await pg.evaluate("p => showGitConflict(p)", str(nb))
+        await pg.wait_for_selector('.lee-modal-nbmerge .lee-nbmerge-row')
+        opened = await pg.evaluate("""() => ({
+          rows: $$('.lee-modal-nbmerge .lee-nbmerge-row').length,
+          context: $('.lee-modal-nbmerge .lee-nbmerge-context summary').textContent,
+          left: $('.lee-modal-nbmerge [data-nb-left]').textContent,
+          blocked: $('.lee-modal-nbmerge [data-nb-apply]').disabled,
+          text: $('.lee-modal-nbmerge .lee-nbmerge-rows').innerText})""")
+        take = """([k, c]) => document.querySelector(`[data-key="${k}"][data-choice="${c}"]`).click()"""
+        await pg.evaluate(take, ['a', 'ours'])
+        await pg.evaluate(take, ['b', 'both'])
+        half = await pg.evaluate("() => ({left: $('.lee-modal-nbmerge [data-nb-left]').textContent, blocked: $('.lee-modal-nbmerge [data-nb-apply]').disabled})")
+        await pg.evaluate(take, ['c', 'theirs'])
+        ready = await pg.evaluate("() => ({left: $('.lee-modal-nbmerge [data-nb-left]').textContent, blocked: $('.lee-modal-nbmerge [data-nb-apply]').disabled})")
+        await pg.evaluate("() => $('.lee-modal-nbmerge [data-nb-apply]').click()")
+        await pg.wait_for_selector('.lee-modal-nbmerge', state='detached')
+        await pg.wait_for_function("() => gitUI.snapshot && gitUI.snapshot.changes")
+        return opened, half, ready, await pg.evaluate("() => api('/git/info')")
+    opened, half, ready, info = _run(go, roots=[root])
+    assert opened['rows'] == 3, f'three cells owe an answer: {opened}'
+    assert '1 settled cell' in opened['context'], opened['context']
+    assert 'z = 1' not in opened['text'], 'the settled cell is folded away until it is asked for'
+    assert 'x = 2' in opened['text'] and 'x = 3' in opened['text'], 'both sides of a contested cell are shown'
+    assert opened['blocked'] and '3 of 3' in opened['left'], opened
+    assert half['blocked'] and '1 of 3' in half['left'], half
+    assert not ready['blocked'] and 'all 3' in ready['left'], ready
+    book = json.loads(nb.read_text())
+    assert [''.join(c['source']) for c in book['cells']] == \
+        ['x = 2', 'y = 2', 'y = 3', 'z = 1', 'theirs_only = 1'], book['cells']
+    assert book['metadata']['kernelspec']['name'] == 'python3', 'the notebook keeps its own metadata'
+    assert not [c for c in info['changes'] if c['conflicted']], 'the merge has nothing left to settle'
