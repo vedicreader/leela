@@ -1352,6 +1352,20 @@ function updateToolbarForKind(kind) {
   refreshMarkdownCellActions();   // whether a reply can become a cell depends on this tab
 }
 
+/* A save Leela made is not a change somebody else made. `/tabs/save-all` writes from the buffers the
+   server holds, so the browser kept the version it had before that write: the next save read as
+   `another process wrote it`, and the poll that watches the open file called it an outside edit and
+   reloaded the tab. What was written comes back with the new version of each file, and both the
+   editor's token and any draft that descends from it are moved on to it. */
+function takeSavedVersions(d) {
+  refreshKernelPill();
+  const versions = (d && d.versions) || {};
+  for (const [key, version] of Object.entries(versions)) {
+    if (key === (lee.path || lee.tabKey)) { lee.diskVersion = version; lee.seenDiskVersion = version; }
+    rebaseDrafts(key, version);
+  }
+}
+
 let mountTabVersion=0;
 function saveTabLocation() {
   const view = curEditor(), key = lee.path || lee.tabKey;
@@ -1399,7 +1413,7 @@ async function mountTab(expectedPath = '') {
   // and switching inside the delay left that tab dirty with nothing left to save it. The server
   // holds a buffer for every tab, so it persists what is dirty, once the last mirror has landed.
   clearTimeout(lee.autoSaveTimer);
-  if (autoSaveEnabled()) setTimeout(() => post('/tabs/save-all').then(refreshKernelPill).catch(() => {}), 160);
+  if (autoSaveEnabled()) setTimeout(() => post('/tabs/save-all').then(takeSavedVersions).catch(() => {}), 160);
   lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab
   const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
   if(mountVersion!==mountTabVersion)return;

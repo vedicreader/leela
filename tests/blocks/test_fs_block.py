@@ -303,3 +303,25 @@ def test_a_notebook_dropped_by_a_change_on_disk_is_read_back_for_the_next_run(tm
     p.unlink()
     docs.forget(str(p))
     assert docs.owner(str(p))[1] is None, 'a file that is gone is still nothing to run'
+
+def test_a_save_leela_made_is_not_a_change_to_follow(tmp_path, monkeypatch):
+    """Leela's own write reached the watcher like anybody else's, so the tab dropped what it held and
+    read the file again on its next mount, and the version it had been told about no longer matched
+    what was on disk. That is the `another process wrote it` a person sees after autosave."""
+    monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
+    from leela.core.block import Ctx
+    from leela.core.session import DocStore
+    from leela.blocks.fs.app import _freshen
+    from leela.blocks.tabs.app import disk_version
+    p = tmp_path/'m.py'; p.write_text('x = 1\n')
+    ws = Workspace(roots=[tmp_path]); ws.open(p)
+    docs = DocStore(ws)
+    ctx = Ctx(ws, name='fs', caps=('docs',), docs=docs)
+    docs.docs[str(p)], docs.versions[str(p)] = 'held', disk_version(p)
+
+    _freshen(ctx, [str(p)])
+    assert docs.docs[str(p)] == 'held', 'what is on disk is what it holds, so there is nothing to drop'
+
+    p.write_text('x = 2\n')                      # somebody else, this time
+    _freshen(ctx, [str(p)])
+    assert str(p) not in docs.docs, 'a change it did not make is still followed'

@@ -1666,3 +1666,19 @@ def test_a_frozen_app_does_not_run_itself_to_read_package_versions(tmp_path, mon
         d = client.get('/editor/packages', params={'path': str(tmp_path/'pyproject.toml')}).json()
     assert d == {'packages': [], 'summary': {}, 'note': 'no interpreter for this project'}
     assert ran == [], 'and nothing was run to find that out'
+
+def test_saving_every_tab_says_what_it_wrote(tmp_path):
+    """`/tabs/save-all` wrote from the buffers the server holds and answered with a count. The browser
+    kept the version it had before that write, so its next save read as another process having
+    written the file, and the poll that watches the open file called it an outside edit."""
+    p = tmp_path/'m.py'; p.write_text('x = 1\n')
+    ws = Workspace(roots=[tmp_path]); ws.open(p)
+    with TestClient(ide_app(ws)) as client:
+        before = client.get('/tab/watch').json()['disk_version']
+        client.post('/tab/buffer', json={'path': str(p), 'kind': 'text', 'text': 'x = 2\n'})
+        d = client.post('/tabs/save-all').json()
+        assert d['ok'] and d['saved'] == 1
+        assert d['versions'][str(p)] == client.get('/tab/watch').json()['disk_version'], \
+            'the version it reports is the one on disk after the write'
+        assert d['versions'][str(p)] != before, 'and it is not the version the browser started with'
+    assert p.read_text() == 'x = 2\n'

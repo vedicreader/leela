@@ -50,7 +50,13 @@ def _freshen(ctx, paths, resync=False):
     """
     changed = {str(p) for p in paths}
     for tab in ctx.session.tabs:
-        if tab.path and not tab.dirty and (resync or tab.path in changed): ctx.docs.forget(tab.path)
+        if not tab.path or tab.dirty: continue
+        if not (resync or tab.path in changed): continue
+        # A save Leela made is not a change to follow: what is on disk is what it holds, and dropping
+        # it there made the tab read the file again on its next mount, and its own write look like an
+        # outside edit. `versions` is stamped whenever a document is read or written.
+        if ctx.docs.versions.get(tab.path) == disk_version(tab.path): continue
+        ctx.docs.forget(tab.path)
 
 def _batch(items):
     "What to call a batch in a journal label: the one name, or how many there were."

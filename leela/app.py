@@ -957,7 +957,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     @rt('/tabs/save-all')
     async def tabs_save_all():
         "Persist every dirty open tab, including buffers belonging to inactive tabs."
-        saved, errors = 0, []
+        saved, errors, versions = 0, [], {}
         for t in ws.tabs:
             if not t.dirty: continue
             key = t.path or t.title
@@ -976,11 +976,15 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 t.dirty = False
                 _buffer_bases.pop(key, None)
                 _doc_versions[key] = _disk_version(t.path)
+                versions[key] = _doc_versions[key]
                 saved += 1
             except Exception as e: errors.append(f'{t.title}: {errstr(e)}')
         ws.save()
         if errors: return _fail('; '.join(errors))
-        return {'ok': True, 'saved': saved}
+        # What was written, and what it now says on disk. Without this the browser kept the version
+        # it had before the save, and the next one read as another process having written the file:
+        # the save was Leela's own.
+        return {'ok': True, 'saved': saved, 'versions': versions}
     def _on_disk(path):
         "What the file says now, or None when it is not there."
         try: return Path(path).read_text(encoding='utf-8', errors='replace')
