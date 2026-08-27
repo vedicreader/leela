@@ -2501,10 +2501,11 @@ async function runCell(i, advance) {
     } finally { clearInterval(cellClock); }
     c.running = false;
     el?.classList.remove('running');
-    // A run rewrites the outputs, which is a change to the document. Only typing scheduled a save,
-    // so a notebook that had been run and not typed in sat with its dot on until somebody pressed
-    // save, and the server had already marked the tab dirty for it.
-    if (lee.path === runPath) markDirty();
+    // A run rewrites the outputs, which is a change to the document, and only typing used to
+    // schedule a save. Saved here rather than marked dirty: marking it left the notebook to the
+    // autosave delay, and the next run flushed it on the way in, so every cell wrote the whole file
+    // twice. Once a run has saved it, the next run finds nothing to flush.
+    if (lee.path === runPath && autoSaveEnabled()) saveTab(true).catch(() => {});
     leeVars();
   }
   if (advance === 'insert') { await nbEdit({op: 'insert', i: i + 1}); focusCell(i + 1); }

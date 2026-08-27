@@ -2195,3 +2195,53 @@ def test_the_state_box_says_why_a_save_failed_and_names_what_it_activated(tmp_pa
     still_open, badge = _run(go, roots=[tmp_path])
     assert still_open, 'a refused save keeps the state in front of the person who wrote it'
     assert badge == 'Kosha charter', f'the badge names the charter, not the word active: {badge!r}'
+
+def test_running_cells_one_after_another_stays_quick(tmp_path):
+    """Two things sat in front of a run. The stream waited out a 120ms output poll for a cell that
+    printed nothing, and the run before it had only marked the tab dirty, so this run flushed the
+    whole notebook to disk on the way in. On gheasy's 155-cell notebook that was 172ms a cell for
+    work the kernel does in two."""
+    import json, statistics
+    cells = [{'cell_type': 'code', 'source': [f'z{i} = {i}'], 'metadata': {}, 'outputs': [],
+              'execution_count': None} for i in range(8)]
+    (tmp_path/'runs.ipynb').write_text(json.dumps(
+        {'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    async def go(pg):
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'runs.ipynb'))
+        await pg.wait_for_function("() => lee.path.endsWith('runs.ipynb') && lee.cells.length === 8")
+        await pg.evaluate("() => runCell(0, false)")          # this one starts the kernel
+        await pg.wait_for_function("() => !lee.cells[0].running", timeout=60000)
+        times = []
+        for i in range(1, 7):
+            times.append(await pg.evaluate(
+                "async i => { const t = performance.now(); await runCell(i, false); return performance.now() - t; }", i))
+        return times
+    times = _run(go, roots=[tmp_path])
+    median = statistics.median(times)
+    assert median < 90, f'a cell that assigns a number took {median:.0f}ms: {[round(t) for t in times]}'
+
+def test_running_a_cell_writes_the_notebook_once(tmp_path):
+    """Marking the tab dirty after a run left the file to the autosave delay, and the next run
+    flushed it on the way in, so every cell wrote the whole notebook twice. On a 184KB notebook that
+    is two writes and two git refreshes per cell, against a run that takes twelve milliseconds."""
+    import json
+    cells = [{'cell_type': 'code', 'source': [f'z{i} = {i}'], 'metadata': {}, 'outputs': [],
+              'execution_count': None} for i in range(6)]
+    (tmp_path/'runs.ipynb').write_text(json.dumps(
+        {'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    async def go(pg):
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'runs.ipynb'))
+        await pg.wait_for_function("() => lee.path.endsWith('runs.ipynb') && lee.cells.length === 6")
+        await pg.evaluate("() => performance.clearResourceTimings()")
+        # back to back, which is what pressing run repeatedly does: the flush on the way into a run
+        # and the autosave the last one queued are both still owed
+        for i in range(3):
+            await pg.evaluate("i => runCell(i, false)", i)
+            await pg.wait_for_function(f"() => !lee.cells[{i}].running", timeout=30000)
+        await pg.wait_for_timeout(1500)          # past the autosave delay, so anything owed lands
+        return await pg.evaluate("""() => ({
+          saves: performance.getEntriesByType('resource').filter(e => e.name.includes('/nb/save')).length,
+          dirty: !!$('.lee-tab.active.dirty')})""")
+    out = _run(go, roots=[tmp_path])
+    assert out['saves'] == 3, f"three cells, three writes, got {out['saves']}"
+    assert not out['dirty'], 'and the tab is not left waiting to be saved'

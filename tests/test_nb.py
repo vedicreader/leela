@@ -511,3 +511,30 @@ def test_a_prompt_cell_work_log_is_not_fed_back_as_context():
     assert 'id="p1"' not in nb.context(4, since=0)
     from leela.blocks.nb.nb import strip_work_log
     assert strip_work_log('') == '' and strip_work_log(None) == ''
+
+def test_a_cell_that_prints_nothing_does_not_wait_out_the_output_poll(tmp_path):
+    """The stream waited on the output queue with a 120ms timeout and re-checked whether the cell had
+    finished, so a cell that printed nothing -- an assignment, an import, a definition, most cells in
+    most notebooks -- paid that 120ms in full on top of the two it took to run. Five of them cost six
+    tenths of a second of waiting for nothing."""
+    import json, time
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    cells = [{'cell_type': 'code', 'source': [f'q{i} = {i}'], 'metadata': {}, 'outputs': [],
+              'execution_count': None} for i in range(6)]
+    p = tmp_path/'quiet.ipynb'
+    p.write_text(json.dumps({'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    ws = Workspace(roots=[tmp_path], approvals='auto', python=sys.executable)
+    ws.open(p)
+    with TestClient(ide_app(ws)) as client:
+        path = client.get('/tab/state').json()['path']
+        body = lambda i: {'i': i, 'id': None, 'source': f'q{i} = {i}', 'path': path}
+        with client.stream('POST', '/nb/run/stream', json=body(0)) as r:   # this one starts the kernel
+            for _ in r.iter_lines(): pass
+        began = time.perf_counter()
+        for i in range(1, 6):
+            with client.stream('POST', '/nb/run/stream', json=body(i)) as r:
+                assert any('event: done' in line for line in r.iter_lines())
+        took = time.perf_counter() - began
+    assert took < .4, f'five quiet cells took {took:.2f}s; the poll alone would have been 0.6s'

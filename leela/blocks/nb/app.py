@@ -109,13 +109,23 @@ def connect(app, ctx):
             if owner_tab: owner_tab.running += 1
             def emitted(_i, _output): q.put_nowait([dict(x) for x in nb[i].outputs])
             task = asyncio.create_task(nb.run(i, k, on_output=emitted))
+            # The end of the cell wakes this loop. It used to wait on the queue with a 120ms timeout
+            # and re-check, so a cell that finished without printing anything -- an assignment, an
+            # import, a definition, most cells in most notebooks -- paid that 120ms in full, every
+            # run, on top of the two milliseconds it took to execute.
+            task.add_done_callback(lambda _: q.put_nowait(None))
             run_key = ((owner_tab.path or owner_tab.title) if owner_tab else '', nb[i].id)
             running_cells[run_key] = (k, task)
             try:
-                while not task.done() or not q.empty():
-                    try: outputs = await asyncio.wait_for(q.get(), 0.12)
-                    except asyncio.TimeoutError: continue
-                    while not q.empty(): outputs = q.get_nowait()
+                while True:
+                    outputs = await q.get()
+                    if outputs is None:
+                        if q.empty(): break
+                        continue
+                    while not q.empty():
+                        nxt = q.get_nowait()
+                        if nxt is None: break
+                        outputs = nxt
                     yield sse('output', {'i': i, 'outputs': outputs})
                 c = await task
                 if owner_tab: owner_tab.dirty = True
