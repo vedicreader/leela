@@ -171,8 +171,11 @@ def test_a_second_turn_is_rejected_while_the_first_is_pending_registration():
     ws = Delayed(); runner = TurnRunner(ws)
     worker = threading.Thread(target=lambda: result.setdefault('accepted', runner.start('first')))
     worker.start()
-    end = time.time() + 1
+    # Generous, because what is being tested is the refusal, not how fast a thread is scheduled: a
+    # one second bound failed twice in a loaded suite and passed every time on its own.
+    end = time.time() + 5
     while not runner._pending and time.time() < end: time.sleep(.005)
+    assert runner._pending, 'precondition: the first turn is registered'
     try: runner.start('second')
     except TurnError as e: assert e.code == 'thread_busy'
     else: assert False
