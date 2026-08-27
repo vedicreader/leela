@@ -589,8 +589,8 @@ class Workspace:
         return (f'The action is incomplete: `{name}` is not in the user\'s namespace. '
                 'Do not explain or plan, and do not install anything: the session refuses pip and '
                 'shell escapes, so use only what the notebook has already imported. Call '
-                f'`run_python` with just the transformation asked for, binding it to `{name}`, then '
-                f'call `promote_var` with `{name}`. Answer briefly.')
+                f'`run_python` with just the transformation asked for, binding it to `{name}`. '
+                'Leela hands that name to the user once you have bound it. Answer briefly.')
     def ask_cell(self, nb, i):
         "Answer the prompt cell at `i`, with the notebook above it as its context."
         c = nb[i]

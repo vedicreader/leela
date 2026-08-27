@@ -21,7 +21,7 @@ FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
 FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
 MAX_ATTRS = 20
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
-WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'promote_var', 'run_cell'})
+WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell'})
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_context',
            'notebook_approvals', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
@@ -590,7 +590,12 @@ class WorkspaceHost(Host):
         if self.session is not None: return set(self.session.owner())
         return {v.get('name') for v in (self._rows('/api/rows') or [])}
     def promote_var(self, name):
-        "Hand one name the agent bound in its own layer to the user, the way the vars pane does."
+        """Hand one name the agent bound in its own layer to the user, the way the vars pane does.
+
+        Leela's, not the model's. `Workspace._land` calls it when the user's own prompt named the
+        destination. There is no tool for it: the overlay exists so that nothing the agent decides
+        to do reaches the namespace, and a promotion the agent can choose is that decision back.
+        """
         name = str(name or '').strip()
         if not name.isidentifier(): return f'{name!r} is not a variable name'
         if name in self.owner_names():
@@ -650,16 +655,7 @@ class WorkspaceHost(Host):
             except Exception: pass
 
 def _session_tools(host):
-    "The promote gesture, one variable read, and the Run button, as the three tools Leela adds."
-    def promote_var(name: str) -> str:
-        """Give the user a variable you bound with `run_python`, so their next cell can use it.
-
-        `run_python` binds into your own layer, which the user's cells cannot see. When the request
-        was to leave a result behind, bind it and then promote that name. A name the user already
-        has is refused rather than replaced; choose another one.
-        """
-        try: return host.promote_var(name)
-        except Exception as e: return f'promote_var failed: {errstr(e)}'
+    "One variable read and the Run button, as the two tools Leela adds to the live session."
     def inspect_var(name: str, attrs: str = '') -> str:
         """Ask about one live variable by name: whether it is bound, what it is, and any attributes.
 
@@ -684,7 +680,7 @@ def _session_tools(host):
         """
         try: return clip(host.nb_run_cell(path, cell_id, timeout))
         except Exception as e: return f'run_cell failed: {errstr(e)}'
-    return [promote_var, inspect_var, run_cell]
+    return [inspect_var, run_cell]
 
 def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
     "Leela's blended search as one tool: every backend at once, each hit stamped with what agreed."
@@ -836,8 +832,7 @@ def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, h
 def _irreversible(action):
     "How a completed action reads in the turn's irreversible list, or None if restoring files undoes."
     if action.tool == 'memory_forget': return f"memory_forget ({action.args.get('doc_id', 'unknown document')})"
-    if action.tool == 'run_python': return 'run_python (live kernel state)'
-    if action.tool == 'promote_var': return f"promote_var ({action.args.get('name', 'a variable')} is now the user's)"
+    if action.tool in {'run_python', 'run_cell'}: return f'{action.tool} (live kernel state)'
     if action.tool == 'run_shell': return f"run_shell ({action.args.get('command', 'command')})"
     if action.tool in GIT_WRITE_TOOLS: return action.tool
     return None
@@ -970,7 +965,7 @@ class Assistant(Agent):
         A sub-agent sized to a different model is built from `registry.tools`, and one allowed to
         write is given the recorded wrappers, so both lists are filtered here.
         """
-        refused = {*GIT_WRITE_TOOLS, 'user_steering', 'promote_var'}
+        refused = {*GIT_WRITE_TOOLS, 'user_steering'}
         return [f for f in super()._sub_plain() if f.__name__ not in refused]
     def model_local(self):
         "Whether this turn's model runs on this machine, and what it is called."

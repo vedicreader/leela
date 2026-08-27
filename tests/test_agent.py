@@ -1082,7 +1082,7 @@ def test_workspace_agent_reaches_the_live_kernel_inspector():
     assert [p for p, _ in k.calls] == ['/agent/api/rows', '/agent/api/exec', '/agent/api/exec']
     assert [(a or {}).get('scope') for p, a in k.calls if p == '/agent/api/exec'] == ['overlay', 'overlay']
     names = {t.__name__ for t in ide_tools(ws)}
-    assert {'run_python', 'inspect_python', 'list_vars', 'promote_var'} <= names
+    assert {'run_python', 'inspect_python', 'list_vars'} <= names
 
 
 class _Rows:
@@ -1133,6 +1133,7 @@ def test_a_blind_agent_endpoint_falls_back_to_the_owner_rows():
     assert 'df: DataFrame' in h.list_vars()
 
 def test_a_binding_can_be_handed_to_the_user_and_stops_being_the_agents():
+    "Leela's own gesture, for `_land`. That the model cannot ask for it is the test below."
     k = _Rows()
     h = _host(k)
     assert h.promote_var('df_norm') == "df_norm is now in the user's namespace"
@@ -1152,12 +1153,20 @@ def test_a_promotion_never_replaces_what_the_user_made():
     assert h.promote_var('nowhere') == "no agent variable 'nowhere'; bind it with run_python first"
     assert h.promote_var('1x') == "'1x' is not a variable name"
 
-def test_promotion_is_a_write_and_no_delegate_gets_it(tmp_path):
-    from leela.blocks.agent.ai import WRITE_TOOLS as LEELA_WRITES
-    assert 'promote_var' in LEELA_WRITES
+def test_no_tool_hands_the_agents_own_binding_to_the_user(tmp_path):
+    """The overlay exists so that nothing the agent decides to do reaches the user's namespace.
+
+    A promotion the agent could call was that decision handed back: it bound a name in its own
+    layer and then moved it across on its own judgement. Landing a name stays Leela's, and only
+    when the user's own prompt named it.
+    """
+    from leela.blocks.agent.ai import WRITE_TOOLS as LEELA_WRITES, ide_tools
     ws = Workspace(roots=[tmp_path])
-    assert 'promote_var' in {t.__name__ for t in ws.ai.tools}
-    assert 'promote_var' not in {t.__name__ for t in ws.ai._sub_plain()}
+    for names in ({t.__name__ for t in ws.ai.tools}, {t.__name__ for t in ws.ai._sub_plain()},
+                  {t.__name__ for t in ide_tools(ws)}):
+        assert not [n for n in names if 'promote' in n], sorted(names)
+    assert 'promote_var' not in LEELA_WRITES, 'not a write, because it is not a tool'
+    assert ws.ai.host.promote_var, 'the mechanism `_land` calls is still there'
 
 def test_a_failed_run_reports_what_it_had_already_done():
     """A NameError on the last line read as total failure, and the live model call two lines above
@@ -1361,9 +1370,8 @@ def test_the_incomplete_action_retry_names_tools_that_exist(tmp_path):
     agent = type('A', (), {'host': _host(_Rows(owner=(), layer=('df_norm',)), ws)})()
     retry = ws._action_retry('scale the numeric columns as df_norm', agent)
     assert 'scale_numeric' not in retry
-    assert 'run_python' in retry and 'promote_var' in retry
-    names = {t.__name__ for t in ws.ai.tools}
-    assert all(t in names for t in ('run_python', 'promote_var'))
+    assert 'run_python' in retry and 'promote_var' not in retry, 'the model has no promotion to call'
+    assert 'run_python' in {t.__name__ for t in ws.ai.tools}
 
 def test_a_landed_name_ends_the_retry_loop(tmp_path):
     "What the loop is for: the user's next cell can read the name their prompt asked for."

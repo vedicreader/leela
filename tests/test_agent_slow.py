@@ -231,7 +231,8 @@ def test_a_binding_reaches_the_user_only_when_it_is_handed_over(tmp_path, kind):
     """The whole round trip with no model in it: bind, be seen, hand over, be read by the user.
 
     `run_python` writes to the agent's layer, so the user's next cell cannot see what it bound.
-    `promote_var` is the only route across, and it is the vars pane's own gesture."""
+    `host.promote_var` is the only route across, it is the vars pane's own gesture, and no tool
+    exposes it: `_land` calls it when the user's own prompt named the destination."""
     from leela.blocks.agent.ai import WorkspaceHost
     async def go():
         ws = Workspace(roots=[str(tmp_path)], port=8760, approvals='auto')
@@ -331,7 +332,7 @@ def test_real_dialog_prompt_uses_a_16k_litert_engine(dialog_agent):
     # rishi builds the config when it makes the conversation, so `_conv_kw` no longer carries it.
     cfg = backend.chat._conv_kw.get('constrained_decoding_config') or backend.chat._constrained()
     assert getattr(cfg, 'enable', False)
-    assert {'run_python', 'inspect_python', 'list_vars', 'promote_var'} <= {t.__name__ for t in backend.tools}
+    assert {'run_python', 'inspect_python', 'list_vars'} <= {t.__name__ for t in backend.tools}
     cell = nb[PROMPT_CELL]
     message = ws.inline_ai.compose(
         cell.source,
