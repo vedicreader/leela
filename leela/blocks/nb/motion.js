@@ -121,6 +121,10 @@ async function runCell(i, advance) {
     } finally { clearInterval(cellClock); }
     c.running = false;
     el?.classList.remove('running');
+    // A run rewrites the outputs, which is a change to the document. Only typing scheduled a save,
+    // so a notebook that had been run and not typed in sat with its dot on until somebody pressed
+    // save, and the server had already marked the tab dirty for it.
+    if (lee.path === runPath) markDirty();
     leeVars();
   }
   if (advance === 'insert') { await nbEdit({op: 'insert', i: i + 1}); focusCell(i + 1); }

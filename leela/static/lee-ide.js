@@ -852,6 +852,8 @@ function nbOverview() {
 function paintNotebookOverview() {
   const host = $('#editor'), stage = $('#editorstage'), c = nbOverview();
   if (!c || !host || !stage) return;
+  watchNotebookPane();
+  nbPaneSize = host.clientWidth + 'x' + host.clientHeight;
   // Nothing to overview when the whole notebook fits, and the stripe would take the scrollbar
   // away to say so.
   const on = lee.kind === 'notebook' && host.scrollHeight > host.clientHeight + 4;
@@ -895,6 +897,26 @@ let nbOverviewFrame = 0;
 function queueNotebookOverview() {
   cancelAnimationFrame(nbOverviewFrame);
   nbOverviewFrame = requestAnimationFrame(paintNotebookOverview);
+}
+/* The stripe is placed by measuring the pane, and a pane resize is not a window resize. Opening the
+   agent pane, dragging a splitter or collapsing the bottom dock moves the notebook's right edge
+   without one, and the stripe stayed where that edge used to be, hanging in the middle of the page.
+
+   Only a size that really changed queues a paint, because the paint pads the pane it measures and
+   the observer would otherwise wake itself. */
+let nbPane = null, nbPaneObserver = null, nbPaneSize = '';
+function watchNotebookPane() {
+  if (!('ResizeObserver' in window)) return;
+  const host = $('#editor'); if (!host) return;
+  nbPaneObserver ||= new ResizeObserver(() => {
+    const el = $('#editor'); if (!el) return;
+    const size = el.clientWidth + 'x' + el.clientHeight;
+    if (size === nbPaneSize) return;
+    nbPaneSize = size; queueNotebookOverview();
+  });
+  if (host === nbPane) return;
+  if (nbPane) nbPaneObserver.unobserve(nbPane);
+  nbPaneObserver.observe(host); nbPane = host;
 }
 document.addEventListener('scroll', e => {
   if (e.target?.id === 'editor') queueNotebookOverview();
@@ -989,7 +1011,10 @@ async function refreshProjectPills() {
     const d = await api('/git/info');
     const git = $('#gitpill'); if (!git) return;
     if (!d || d.repo === false) {
-      git.textContent = 'no git'; git.className = 'lee-branch-switcher';
+      // With no folder open there is nothing to be inside or outside of, so the pill says neither.
+      const nothingOpen = !!(d && String(d.note || '').startsWith('no folder'));
+      git.textContent = nothingOpen ? 'git …' : 'no git';
+      git.className = 'lee-branch-switcher';
       git.title = (d && d.note) || 'not inside a Git repository';
       return;
     }

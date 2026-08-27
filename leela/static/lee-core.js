@@ -1392,7 +1392,11 @@ async function mountTab(expectedPath = '') {
   lee.activeGitTab = '';
   if (lee.gitMergeView) { LeeCM.destroyMerge(lee.gitMergeView); lee.gitMergeView = null; }
   syncGitDiffTabs();
+  // A queued autosave belongs to the tab being left, and cancelling it was all this did, so typing
+  // and switching inside the delay left that tab dirty with nothing left to save it. The server
+  // holds a buffer for every tab, so it persists what is dirty, once the last mirror has landed.
   clearTimeout(lee.autoSaveTimer);
+  if (autoSaveEnabled()) setTimeout(() => post('/tabs/save-all').then(refreshKernelPill).catch(() => {}), 160);
   lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab
   const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
   if(mountVersion!==mountTabVersion)return;
@@ -2430,6 +2434,10 @@ async function runCell(i, advance) {
     } finally { clearInterval(cellClock); }
     c.running = false;
     el?.classList.remove('running');
+    // A run rewrites the outputs, which is a change to the document. Only typing scheduled a save,
+    // so a notebook that had been run and not typed in sat with its dot on until somebody pressed
+    // save, and the server had already marked the tab dirty for it.
+    if (lee.path === runPath) markDirty();
     leeVars();
   }
   if (advance === 'insert') { await nbEdit({op: 'insert', i: i + 1}); focusCell(i + 1); }

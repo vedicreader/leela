@@ -52,7 +52,11 @@ async function mountTab(expectedPath = '') {
   lee.activeGitTab = '';
   if (lee.gitMergeView) { LeeCM.destroyMerge(lee.gitMergeView); lee.gitMergeView = null; }
   syncGitDiffTabs();
+  // A queued autosave belongs to the tab being left, and cancelling it was all this did, so typing
+  // and switching inside the delay left that tab dirty with nothing left to save it. The server
+  // holds a buffer for every tab, so it persists what is dirty, once the last mirror has landed.
   clearTimeout(lee.autoSaveTimer);
+  if (autoSaveEnabled()) setTimeout(() => post('/tabs/save-all').then(refreshKernelPill).catch(() => {}), 160);
   lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab
   const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
   if(mountVersion!==mountTabVersion)return;
