@@ -69,6 +69,10 @@ async function mountTab(expectedPath = '') {
   // it here would silently leave the box unmounted.
   lee.cellObserver?.disconnect(); lee.cellObserver = null;
   lee.editors.forEach((v, k) => { if (k !== 'exec') { LeeCM.destroy(v); lee.editors.delete(k); } });
+  // The notebook being left keeps its shells, so coming back to it is a reattach rather than a
+  // hundred elements built and laid out again. A dirty one is not kept: its summaries and outputs
+  // describe a version that is not on disk.
+  if (lee.kind === 'notebook' && !$('.lee-tab.active.dirty')) keepNotebookShells($('#editor'), lee.tabKey, lee.diskVersion);
   // A screencast is a live encode in Chrome while it runs, so leaving the tab stops it. The page
   // stays open and the tab reattaches on the way back.
   closeWebView();

@@ -2144,3 +2144,28 @@ def test_a_project_file_mounts_before_the_answers_it_does_not_need(tmp_path):
     mounted, text = _run(go, roots=[tmp_path])
     assert 'name = "x"' in text, 'the file is on screen'
     assert mounted < 1.0, f'the editor waited {mounted:.2f}s for answers it does not need'
+
+def test_opening_a_file_does_not_wait_for_the_panel_beside_it(tmp_path):
+    """`leeOpenFile` awaited `leeVars`, so a switch was not done until the variables panel had
+    painted: 97ms of the 113 a switch into a 100-cell notebook cost in the engine the packaged app
+    runs. The panel is beside the editor, not part of it."""
+    import json
+    cells = [{'cell_type': 'code', 'source': [f'x{i} = {i}\n'], 'metadata': {}, 'outputs': [],
+              'execution_count': None} for i in range(12)]
+    (tmp_path/'nb.ipynb').write_text(json.dumps(
+        {'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    (tmp_path/'other.py').write_text('y = 1\n')
+    async def go(pg):
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'other.py'))
+        await pg.wait_for_function("() => lee.path.endsWith('other.py')")
+        # a panel that never answers must not hold the file off the screen
+        await pg.evaluate("() => { window.__realVars = window.leeVars; window.leeVars = () => new Promise(() => {}); }")
+        try:
+            await asyncio.wait_for(
+                pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'nb.ipynb')), timeout=8)
+        finally:
+            await pg.evaluate("() => { window.leeVars = window.__realVars; }")
+        return await pg.evaluate("() => [lee.path, lee.cells.length, $$('.lee-cell').length]")
+    path, n, drawn = _run(go, roots=[tmp_path])
+    assert path.endswith('nb.ipynb') and n == 12, 'the switch finished'
+    assert drawn == 12, 'and the notebook is on screen'

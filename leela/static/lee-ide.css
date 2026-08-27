@@ -1394,7 +1394,13 @@ kbd {
 .lee-mfoot { padding: 6px 10px 2px; border-top: 1px solid var(--lee-border); font-size: 11px; }
 
 /* ---- notebook cells ---- */
-.lee-cell { display: flex; gap: 6px; padding: 3px 8px; border-left: 2px solid transparent; }
+/* A cell off screen is not laid out until it is reached, and remembers its own size once it has
+   been. Laying out a hundred of them is what a switch into a long notebook cost: about 30ms of the
+   130 in the window Leela ships. `auto` in `contain-intrinsic-size` is what keeps the scroll
+   position honest, since a cell that has been seen keeps its measured height rather than the
+   placeholder. */
+.lee-cell { display: flex; gap: 6px; padding: 3px 8px; border-left: 2px solid transparent;
+  content-visibility: auto; contain-intrinsic-size: auto 220px; }
 .lee-cell.sel { border-left-color: var(--lee-accent); background: var(--lee-active-line); }
 .lee-cell.running { border-left-color: var(--lee-yellow); }
 .lee-cell.dragging { opacity: .45; }

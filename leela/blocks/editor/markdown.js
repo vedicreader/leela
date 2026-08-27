@@ -201,7 +201,10 @@ async function leeOpenFile(path) {
   if(old)old.replaceWith(fresh);
   else $('#header')?.insertBefore(fresh,$('.lee-tab-overflow')||null);
   htmx.process(fresh);
-  await mountTab(path);await leeVars();refreshProjectPills();requestAnimationFrame(layoutTabs);
+  // The variables panel is beside the editor, not part of it, and awaiting it held the switch open
+  // for as long as it took to paint: 97ms of the 113 a notebook switch cost in the window Leela
+  // ships. The file is on screen; the panel catches up.
+  await mountTab(path);leeVars();refreshProjectPills();requestAnimationFrame(layoutTabs);
   const after = $$('.lee-node').find(n => n.dataset.path === path);
   if (after) selectTreeNode(after);
 }

@@ -1332,7 +1332,10 @@ async function leeOpenFile(path) {
   if(old)old.replaceWith(fresh);
   else $('#header')?.insertBefore(fresh,$('.lee-tab-overflow')||null);
   htmx.process(fresh);
-  await mountTab(path);await leeVars();refreshProjectPills();requestAnimationFrame(layoutTabs);
+  // The variables panel is beside the editor, not part of it, and awaiting it held the switch open
+  // for as long as it took to paint: 97ms of the 113 a notebook switch cost in the window Leela
+  // ships. The file is on screen; the panel catches up.
+  await mountTab(path);leeVars();refreshProjectPills();requestAnimationFrame(layoutTabs);
   const after = $$('.lee-node').find(n => n.dataset.path === path);
   if (after) selectTreeNode(after);
 }
@@ -1409,6 +1412,10 @@ async function mountTab(expectedPath = '') {
   // it here would silently leave the box unmounted.
   lee.cellObserver?.disconnect(); lee.cellObserver = null;
   lee.editors.forEach((v, k) => { if (k !== 'exec') { LeeCM.destroy(v); lee.editors.delete(k); } });
+  // The notebook being left keeps its shells, so coming back to it is a reattach rather than a
+  // hundred elements built and laid out again. A dirty one is not kept: its summaries and outputs
+  // describe a version that is not on disk.
+  if (lee.kind === 'notebook' && !$('.lee-tab.active.dirty')) keepNotebookShells($('#editor'), lee.tabKey, lee.diskVersion);
   // A screencast is a live encode in Chrome while it runs, so leaving the tab stops it. The page
   // stays open and the tab reattaches on the way back.
   closeWebView();
@@ -1753,6 +1760,35 @@ function observeNotebookCells(host, cells) {
   });
 }
 
+/* Coming back to a notebook built every cell of it again, and laying a hundred of those out is what
+   a switch costs: 319KB of elements for a 100-cell notebook, about 160ms of layout in the window
+   Leela ships and 10 to 30 in Chrome. The shells are kept per file on the way out and reattached on
+   the way back, so only the editors near the viewport are built again.
+
+   Kept only for a file that was clean, and taken only when the file has not moved under it: a shell
+   carries the cell's summary line and its outputs, and both are answers about a particular version. */
+const nbShells = new Map();
+const NB_SHELLS = 4;
+
+function keepNotebookShells(host, key, version) {
+  if (!host || !key || !version || !$('.lee-cell', host)) return;
+  const frag = document.createDocumentFragment();
+  while (host.firstChild) frag.appendChild(host.firstChild);
+  // The views are already destroyed. What they left behind is not a shell, so it goes.
+  frag.querySelectorAll('.lee-cm').forEach(cm => { cm.innerHTML = ''; });
+  nbShells.delete(key);
+  nbShells.set(key, {frag, version, ids: [...frag.querySelectorAll('.lee-cell')].map(el => el.dataset.id).join()});
+  for (const stale of [...nbShells.keys()].slice(0, nbShells.size - NB_SHELLS)) nbShells.delete(stale);
+}
+
+function takeNotebookShells(host, st) {
+  const key = st.path || st.title, held = key && nbShells.get(key);
+  if (!held || held.version !== st.disk_version || held.ids !== st.cells.map(c => c.id).join()) return false;
+  nbShells.delete(key);          // moving a fragment empties it, so it is good for one mount
+  host.appendChild(held.frag);
+  return true;
+}
+
 function mountNotebook(host, st) {
   lee.cellObserver?.disconnect();
   for (const [key, view] of [...lee.editors.entries()]) {
@@ -1760,8 +1796,10 @@ function mountNotebook(host, st) {
     LeeCM.destroy(view); lee.editors.delete(key);
   }
   host.innerHTML = '';
-  host.appendChild(notebookToc(st.cells));
-  st.cells.forEach((c, i) => host.appendChild(cellEl(c, i)));
+  if (!takeNotebookShells(host, st)) {
+    host.appendChild(notebookToc(st.cells));
+    st.cells.forEach((c, i) => host.appendChild(cellEl(c, i)));
+  }
   selectCell(Math.min(lee.sel, st.cells.length - 1));
   observeNotebookCells(host, st.cells);
   lee.notebookGit = {};       // marks belong to the notebook that was open, not the next one
