@@ -2245,3 +2245,35 @@ def test_running_a_cell_writes_the_notebook_once(tmp_path):
     out = _run(go, roots=[tmp_path])
     assert out['saves'] == 3, f"three cells, three writes, got {out['saves']}"
     assert not out['dirty'], 'and the tab is not left waiting to be saved'
+
+def test_any_two_tabs_can_be_read_side_by_side(tmp_path):
+    """The split offered text tabs only and refused everything else, so two notebooks -- which is
+    what somebody merging them wants to see -- could not be put beside each other at all."""
+    import json
+    cells = [{'cell_type': 'code', 'source': ['first = 1'], 'metadata': {}, 'outputs': [], 'execution_count': 3},
+             {'cell_type': 'markdown', 'source': ['## a heading'], 'metadata': {}}]
+    (tmp_path/'left.ipynb').write_text(json.dumps(
+        {'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    (tmp_path/'right.py').write_text('side = 2\n')
+    async def go(pg):
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'left.ipynb'))
+        await pg.wait_for_function("() => lee.path.endsWith('left.ipynb') && lee.cells.length === 2")
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'right.py'))
+        await pg.wait_for_function("() => lee.path.endsWith('right.py')")
+        # the notebook is offered even though the tab in front is a file
+        await pg.evaluate("() => leeSplit('vertical')")
+        await pg.wait_for_selector('.lee-modallist .lee-mrow')
+        offered = await pg.evaluate("() => [...$$('.lee-modallist .lee-mrow')].map(b => b.textContent)")
+        await pg.evaluate("""() => { const row = [...$$('.lee-modallist .lee-mrow')]
+          .find(b => b.textContent.includes('left.ipynb')); row.click(); }""")
+        await pg.wait_for_selector('#editor2 .lee-split-cell')
+        return offered, await pg.evaluate("""() => ({
+          cells: $$('#editor2 .lee-split-cell').length,
+          text: $('#editor2').innerText,
+          split: $('#editorstage').classList.contains('split-vertical'),
+          saved: JSON.parse(localStorage.getItem('lee-editor-split') || 'null')})""")
+    offered, out = _run(go, roots=[tmp_path])
+    assert any('left.ipynb' in o for o in offered), f'the notebook was not offered: {offered}'
+    assert out['cells'] == 2 and out['split'], out
+    assert 'first = 1' in out['text'] and 'a heading' in out['text'], 'the cells are what it shows'
+    assert out['saved']['path'].endswith('left.ipynb'), 'and the pane comes back on the next load'

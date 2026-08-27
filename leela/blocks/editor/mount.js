@@ -119,10 +119,40 @@ async function mountFile(host, st) {
   $('#filecm').addEventListener('focusin', () => { lee.activeEditor='primary'; setScope('editor'); });
 }
 
+/* What the second pane can hold. A notebook goes in as a reading copy: its cells are what a person
+   compares across a merge, and the editors, the kernel and the selection all belong to one notebook
+   at a time. The live surfaces are bound to the pane they were opened in and are not offered. */
+const SPLIT_KINDS = {text: 'editable', notebook: 'reading copy', pdf: 'view', image: 'view'};
+
+function secondaryNotebook(host, st) {
+  "The cells of a notebook, to read beside something else. No editors, no outputs, no execution."
+  const cells = (st.cells || []).map((c, i) =>
+    `<article class="lee-split-cell ${esc(c.cell_type)}"><header>${i + 1} · ${esc(c.cell_type)}` +
+    `${c.execution_count != null ? ` · [${esc(String(c.execution_count))}]` : ''}</header>` +
+    `<pre>${esc(String(c.source || ''))}</pre></article>`).join('');
+  host.querySelector('.lee-split-body').innerHTML =
+    cells || '<div class="lee-dim">this notebook has no cells</div>';
+}
+
 async function mountSecondary(path, direction = 'vertical') {
   const stage=$('#editorstage'),host=$('#editor2'); if (!stage || !host) return;
   const st=await api('/tab/state?path='+encodeURIComponent(path));
-  if (st.kind!=='text') return status('split view currently opens text files; notebooks stay in the primary editor','err');
+  if (!SPLIT_KINDS[st.kind]) return status(`a ${st.kind || 'blank'} tab cannot be opened beside another; text, notebooks, PDFs and images can`,'err');
+  if (st.kind !== 'text') {
+    if (lee.editors.get('secondary')) { LeeCM.destroy(lee.editors.get('secondary')); lee.editors.delete('secondary'); }
+    stage.classList.add('split',`split-${direction}`); stage.classList.remove(`split-${direction==='vertical'?'horizontal':'vertical'}`);
+    host.hidden=false;
+    host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path||path))}</span>` +
+      `<span class="lee-dim">${esc(SPLIT_KINDS[st.kind])}</span>` +
+      `<button class="lee-btn" onclick="leeCloseSplit()">close</button></div>` +
+      `<div class="lee-split-body" id="filecm2"></div>`;
+    if (st.kind === 'notebook') secondaryNotebook(host, st);
+    else if (st.kind === 'pdf') mountPdf($('.lee-split-body', host), st);
+    else mountImage($('.lee-split-body', host), st);
+    lee.secondaryPath = path; lee.activeEditor = 'primary';
+    localStorage.setItem('lee-editor-split', JSON.stringify({path, direction}));
+    return;
+  }
   if (lee.editors.get('secondary')) { LeeCM.destroy(lee.editors.get('secondary')); lee.editors.delete('secondary'); }
   stage.classList.add('split',`split-${direction}`); stage.classList.remove(`split-${direction==='vertical'?'horizontal':'vertical'}`);
   host.hidden=false; host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path))}</span><button class="lee-btn" onclick="leeCloseSplit()">close</button></div><div class="lee-cm" id="filecm2"></div>`;
@@ -133,9 +163,12 @@ async function mountSecondary(path, direction = 'vertical') {
 function leeCloseSplit(){const stage=$('#editorstage'),host=$('#editor2'),v=lee.editors.get('secondary');if(v)LeeCM.destroy(v);lee.editors.delete('secondary');lee.secondaryPath='';lee.activeEditor='primary';stage?.classList.remove('split','split-vertical','split-horizontal');if(host){host.hidden=true;host.innerHTML='';}localStorage.removeItem('lee-editor-split');}
 window.leeCloseSplit=leeCloseSplit;
 function leeSplit(direction='vertical') {
-  const rows=$$('.lee-tab').filter(t=>t.dataset.kind==='text'&&t.title!==lee.path).map(t=>({path:t.title,label:$('.lee-tab-name',t)?.textContent||t.title}));
-  if (!rows.length) return status('open another text file before splitting','err');
-  const m=modal(`<div class="lee-mhead">Split editor<span class="sub">${direction==='vertical'?'side by side':'top and bottom'}</span></div><div class="lee-modallist">${rows.map((r,i)=>`<button class="lee-mrow" data-i="${i}"><strong>${esc(r.label)}</strong><span class="sub">${esc(compactPath(r.path))}</span></button>`).join('')}</div>`);
+  // Any open tab the second pane can hold, not only the text ones: two notebooks beside each other
+  // is what a person merging them is looking for.
+  const rows=$$('.lee-tab').filter(t=>SPLIT_KINDS[t.dataset.kind]&&t.title!==lee.path)
+    .map(t=>({path:t.title,kind:t.dataset.kind,label:$('.lee-tab-name',t)?.textContent||t.title}));
+  if (!rows.length) return status('open another file before splitting','err');
+  const m=modal(`<div class="lee-mhead">Split editor<span class="sub">${direction==='vertical'?'side by side':'top and bottom'}</span></div><div class="lee-modallist">${rows.map((r,i)=>`<button class="lee-mrow" data-i="${i}"><strong>${esc(r.label)}</strong><span class="sub">${esc(r.kind)} · ${esc(compactPath(r.path))}</span></button>`).join('')}</div>`);
   $$('.lee-mrow',m).forEach(b=>b.onclick=()=>{const r=rows[+b.dataset.i];m.remove();mountSecondary(r.path,direction);});
 }
 window.leeSplit=leeSplit;
