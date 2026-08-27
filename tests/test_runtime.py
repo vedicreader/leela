@@ -1509,3 +1509,23 @@ def test_a_kernel_in_an_emptied_venv_fails_with_the_venv_and_not_the_protocol(tm
         asyncio.run(Kernel(python=str(py), inspect=False).start(timeout=10))
     assert 'ipykernel_launcher' in str(e.value) and str(py) in str(e.value)
     assert 'uv sync' in str(e.value), 'and it names the way out'
+
+def test_a_frozen_app_hands_a_child_its_own_interpreter_and_not_the_bundles(monkeypatch):
+    """py2app points `PYTHONPATH`, `PYTHONHOME` and `__PYVENV_LAUNCHER__` at the bundle so its helper
+    starts. A child that keeps them imports the bundle's standard library under another interpreter:
+    `nbdev-test` run from the packaged app died inside `linecache` doing that, before it reported a
+    single notebook. Kernels were already started from `clean_env`; pipelines and terminals go
+    through `venv_env`, which did not."""
+    from leela.blocks.runtime.kernels import venv_env
+    for k, v in {'PYTHONPATH': '/bundle/lib', 'PYTHONHOME': '/bundle', 'RESOURCEPATH': '/bundle',
+                 '__PYVENV_LAUNCHER__': '/bundle/python', 'PYTHONEXECUTABLE': '/bundle/python'}.items():
+        monkeypatch.setenv(k, v)
+    kept = venv_env('/tmp/project/.venv/bin/python')
+    assert kept['PYTHONPATH'] == '/bundle/lib', 'a normal install has one environment and keeps it'
+
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    env = venv_env('/tmp/project/.venv/bin/python')
+    for name in ('PYTHONPATH', 'PYTHONHOME', 'RESOURCEPATH', '__PYVENV_LAUNCHER__', 'PYTHONEXECUTABLE'):
+        assert name not in env, f'{name} reached the child'
+    assert env['VIRTUAL_ENV'] == '/tmp/project/.venv', 'and the project venv is still what it runs in'
+    assert env['PATH'].split(os.pathsep)[0] == '/tmp/project/.venv/bin'

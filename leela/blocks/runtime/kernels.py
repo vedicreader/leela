@@ -65,7 +65,14 @@ def python_for(cwd=None, session=None, stop=None):
     return session.pool.default_python or project_python(session.fs.roots)
 
 def venv_env(python, env=None):
-    "`env` (this process's, by default) with `python`'s environment in front of it."
+    """`env` (this process's, by default) with `python`'s environment in front of it.
+
+    A frozen app starts from `clean_env`. py2app points `PYTHONPATH`, `PYTHONHOME` and
+    `__PYVENV_LAUNCHER__` at the bundle so its own helper starts, and a child that keeps them
+    imports the bundle's standard library under another interpreter. `nbdev-test` run from the app
+    died inside `linecache` doing exactly that, before it could report a single notebook.
+    """
+    if env is None and getattr(sys, 'frozen', False): env = clean_env()
     env = dict(os.environ if env is None else env)
     if not python: return env
     bindir = str(Path(python).parent)
