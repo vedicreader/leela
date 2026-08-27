@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json, os, re
+import asyncio, json, os, re
 from pathlib import Path
 
 from fasthtml.common import JSONResponse, StreamingResponse
@@ -730,6 +730,11 @@ def connect(app, ctx):
                 'delegations': [{**d, 'calls': [r for r in rows if r.get('parent_action_id') == d.get('id')]}
                                 for d in wanted],
                 'runs': live, 'records_sub_calls': any(r.get('parent_action_id') for r in rows)}
+    async def _warm_runtime():
+        "Start a kernel for the turn about to run, and let a failure be the tool's to report."
+        try: await ws.runtime()
+        except Exception: pass
+
     @rt('/agent/turn')
     async def agent_turn(req):
         try: d = await req.json()
@@ -755,6 +760,11 @@ def connect(app, ctx):
         except Exception as e: return _thread_error(e)
         try: grounding = await off_loop(ws.prepare_turn, attachments, context)
         except Exception as e: return fail(e)
+        # The agent's own tools run Python in an overlay over the tab's kernel, and a turn asked for
+        # in a window where nothing has been run yet had no kernel to overlay. Started here, on the
+        # loop that owns the kernels, so the first tool call meets a live one instead of the tool
+        # thread waiting on a start it cannot make.
+        if ws.runtime_peek() is None: asyncio.ensure_future(_warm_runtime())
         try: return await off_loop(runner.start, q, attachments, reasoning,
                                     context, context_path, grounding)
         except Exception as e:

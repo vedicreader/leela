@@ -2638,3 +2638,32 @@ def test_memory_says_what_to_do_when_the_runtime_it_needs_is_missing():
     assert 'LiteRT' in note and 'settings' in note.lower() and 'litert_lm' not in note
     assert _why_no_vault(ValueError('disk full')) == 'memory ingest failed (ValueError: disk full)', \
         'a failure that is not a missing runtime is still reported as itself'
+
+def _wait_kernel(ws, want=True, secs=10):
+    "Poll for the kernel the turn asked for. A fixed sleep is a bound, and this suite is loaded."
+    end = time.time() + secs
+    while time.time() < end and (ws.runtime_peek() is None) == want: time.sleep(.02)
+    return ws.runtime_peek()
+
+def test_a_turn_starts_a_kernel_when_the_window_has_none(ws):
+    """The agent's own tools run Python in an overlay over the tab's kernel. Asked for a turn in a
+    window where nothing had been run yet, there was no kernel to overlay, and the tool reported that
+    it could not reach the inspector rather than starting one."""
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    assert ws.runtime_peek() is None, 'precondition: nothing has been run in this window'
+    with TestClient(ide_app(ws)) as client:
+        client.post('/agent/turn', json={'prompt': 'hello'})
+        assert _wait_kernel(ws) is not None, 'the turn asked for a kernel'
+
+def test_a_turn_leaves_a_running_kernel_alone(ws):
+    "A kernel that is already up is the one the overlay belongs to, so nothing else is started."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    with TestClient(ide_app(ws)) as client:
+        client.post('/agent/turn', json={'prompt': 'first'})
+        first = _wait_kernel(ws)
+        assert first is not None
+        client.post('/agent/turn', json={'prompt': 'second'})
+        time.sleep(.4)
+        assert ws.runtime_peek() is first, 'the same kernel, not a second one'
