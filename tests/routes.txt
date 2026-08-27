@@ -166,6 +166,8 @@ GET,POST /git/history
 GET,POST /git/info
 GET,POST /git/merge-preview
 GET,POST /git/notebook
+GET,POST /git/notebook/conflict
+GET,POST /git/notebook/conflict/resolve
 GET,POST /git/pr
 GET,POST /git/rebase-preview
 GET,POST /git/reflog
