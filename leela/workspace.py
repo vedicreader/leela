@@ -1154,7 +1154,13 @@ class Workspace:
             try: held = p.read_json()
             except Exception: held = {}
             if not isinstance(held, dict): held = {}
-            if 'roots' in state: state['roots'] = self._merge_roots(held.get('roots') or [], state['roots'])
+            if 'roots' in state:
+                state['roots'] = self._merge_roots(held.get('roots') or [], state['roots'])
+                # A scratch folder is not a project. Only the session a person opens is guarded: a
+                # test names its own file and keeps whatever it puts there.
+                if p == ws_path():
+                    from .core.projects import _temporary
+                    state['roots'] = [r for r in state['roots'] if not _temporary(Path(r))]
             try:
                 with atomic_save(p, mode='w', encoding='utf-8') as f:
                     json.dump({**held, **state}, f)

@@ -311,7 +311,12 @@ def connect(app, ctx):
     async def git_info(repo: str = ''):
         "Answers `repo: False` rather than a 400, since being outside a repository is a normal answer."
         try:
-            target = repo_for(ctx.session, repo)
+            try: target = repo_for(ctx.session, repo)
+            # No folder open is the same kind of answer as no repository: normal, and not the
+            # client's failure to report. Raised, it reached the browser console as a problem.
+            except GitError as e:
+                if 'open a folder first' not in str(e): raise
+                return {'ok': True, 'repo': False, 'root': '', 'note': 'no folder open'}
             if repo_root(target) is None:
                 return {'ok': True, 'repo': False, 'root': '',
                         'note': f'{Path(target).name or target} is not inside a Git repository'}

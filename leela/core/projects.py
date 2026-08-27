@@ -11,17 +11,41 @@ from .. import leela_cfg
 __all__ = ['SESSION', 'SERVING', 'MAX_RECENT', 'session', 'remember', 'note_folder', 'drop_folder',
            'last_folders', 'last_folder', 'recent_folders', 'forget_recent', 'serving', 'now_serving', 'served']
 
-SESSION = leela_cfg/'desktop.json'
+#: The session a person opens. A test points `SESSION` at its own file; the guard below
+#: is about this one.
+DEFAULT_SESSION = SESSION = leela_cfg/'desktop.json'
 #: A running Leela's address. The desktop shell takes whatever port is free, so nothing outside
 #: it could otherwise guess where to post.
 SERVING = leela_cfg/'serving.json'
 MAX_RECENT = 12
+
+def _temporary(p):
+    """Whether `p` is inside the system temp dir.
+
+    A folder there is a test's, a probe's or an unpacked archive's, and none of them is a project a
+    person wants reopened next launch. One of them written into the session is a folder they then
+    have to close by hand, in every window.
+    """
+    import tempfile
+    try: p, root = Path(p).expanduser().resolve(), Path(tempfile.gettempdir()).resolve()
+    except (OSError, ValueError): return False
+    return p == root or root in p.parents
 
 def _dir(p):
     "`p` resolved, or None when it is not an existing directory."
     try: p = Path(p).expanduser().resolve()
     except (OSError, ValueError): return None
     return str(p) if p.is_dir() else None
+
+def _lasting(paths):
+    """`paths` without the temporary ones, when this is the session a person actually opens.
+
+    A test names its own file and may keep whatever it likes in it. The real session is the one that
+    must never fill up with a suite's scratch folders, which is how eleven `tmp…` directories came to
+    be sitting in somebody's window.
+    """
+    if Path(SESSION) != DEFAULT_SESSION: return list(paths)
+    return [p for p in paths if not _temporary(Path(p))]
 
 def _clean(paths):
     "Existing directories, resolved, de-duplicated, in the order given."
@@ -38,6 +62,7 @@ def session():
 _LOCK = threading.RLock()
 
 def _write(folders, recent):
+    folders, recent = _lasting(folders), _lasting(recent)
     with atomic_save(SESSION, mode='w') as f:
         json.dump({'folders': folders, 'recent': recent[:MAX_RECENT]}, f, indent=1)
     return folders

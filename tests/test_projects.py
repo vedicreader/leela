@@ -405,3 +405,39 @@ def test_with_nothing_remembered_a_launch_opens_no_folder(tmp_path, monkeypatch)
     import leela.core.projects as projects
     monkeypatch.setattr(projects, 'SESSION', tmp_path/'empty.json')
     assert projects.last_folder() == []
+
+def test_a_folder_under_the_system_temp_dir_is_never_remembered(tmp_path, monkeypatch):
+    """A folder in the temp dir belongs to a test, a probe or an unpacked archive. One written into
+    the session a person opens is a folder they then have to close by hand, in every window, and a
+    suite that opened eleven of them put all eleven in front of somebody."""
+    import tempfile
+    from pathlib import Path
+    from leela.core import projects
+    from leela.workspace import Workspace
+    # pytest's own `tmp_path` is under the real temp dir, so the temp dir is narrowed to a subtree
+    # of it here. Otherwise there is no folder in this test the guard would keep.
+    scratch_root = tmp_path/'scratch'; scratch_root.mkdir()
+    monkeypatch.setattr(tempfile, 'gettempdir', lambda: str(scratch_root))
+    desktop = tmp_path/'desktop.json'
+    monkeypatch.setattr(projects, 'SESSION', desktop)
+    monkeypatch.setattr(projects, 'DEFAULT_SESSION', desktop)   # the guarded one, for this test
+    scratch = scratch_root/'tmpabcd'; scratch.mkdir()
+    real = tmp_path/'project'; real.mkdir()
+    assert projects._temporary(scratch) and not projects._temporary(real)
+    projects.note_folder(str(scratch)); projects.note_folder(str(real))
+    assert [Path(f).name for f in projects.session()['folders']] == [real.name]
+    assert not any(projects._temporary(Path(f)) for f in projects.session()['recent'])
+
+    state = tmp_path/'workspace.json'
+    monkeypatch.setattr('leela.workspace.ws_path', lambda: state)
+    Workspace(roots=[real]).save(state)
+    Workspace(roots=[scratch]).save(state)
+    assert [Path(r).name for r in state.read_json()['roots']] == [real.name], \
+        'and the saved session never carries one either, however it got in'
+
+def test_a_test_naming_its_own_session_file_keeps_what_it_puts_there(tmp_path, monkeypatch):
+    "The guard is about the session a person opens. Anything else is the caller's own file."
+    from leela.core import projects
+    monkeypatch.setattr(projects, 'SESSION', tmp_path/'desktop.json')
+    projects.note_folder(str(tmp_path))          # pytest's own tmp_path is under the temp dir
+    assert projects.session()['folders'] == [str(tmp_path.resolve())]
