@@ -51,7 +51,11 @@ def _patch_fasttransport():
     import httpcore2._utils as core_utils
     import httpcore2._async.connection_pool as connection_pool
     import httpcore2._async.http11 as http11
-    import httpcore2._async.http2 as http2
+    # HTTP/2 is an extra: this module imports `h2`, which an environment without the extra does
+    # not have. One attribute is patched on it, so a missing one is not a reason for the whole
+    # app to refuse to import.
+    try: import httpcore2._async.http2 as http2
+    except ImportError: http2 = None
     class safe_async_iterate:
         """`httpcore2`'s helper as a class, because a generator-based one cannot always stop.
 
@@ -68,7 +72,7 @@ def _patch_fasttransport():
     core_utils.safe_async_iterate = safe_async_iterate
     connection_pool.safe_async_iterate = safe_async_iterate
     http11.safe_async_iterate = safe_async_iterate
-    http2.safe_async_iterate = safe_async_iterate
+    if http2 is not None: http2.safe_async_iterate = safe_async_iterate
     async def stream(self, method, url, *, headers=None, params=None, json=None, data=None, files=None):
         async with self._client() as client:
             async with client.sse(url, method=method, headers=self._request_headers(headers, files=files),

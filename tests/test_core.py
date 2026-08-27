@@ -1390,6 +1390,22 @@ def test_the_shell_a_person_chose_is_the_one_asked(tmp_path, monkeypatch):
     Settings(user_path=user).save('user', 'terminal', {'shell': '/opt/homebrew/bin/fish'})
     assert envs.preferred_shell() == '/opt/homebrew/bin/fish', 'the chosen shell is the one asked'
 
+def test_the_shell_is_asked_without_the_bundles_interpreter_pointed_at_it(tmp_path, monkeypatch):
+    """A packaged app hands every child `PYTHONHOME` and `PYTHONPATH` aimed at itself. The shell
+    does not read them, but the `python` a profile runs does, and it dies on a path configuration
+    and takes the whole profile with it: fish exited 1 having exported nothing, so every key was
+    missing in the app and present everywhere else."""
+    from leela.core import envs
+    shell = tmp_path/'profile-runs-python'
+    # what a startup file doing anything with python amounts to, once the bundle has pointed it home
+    shell.write_text("#!/bin/sh\nif [ -n \"$PYTHONHOME\" ]; then exit 1; fi\n"
+                     "printf 'GITHUB_TOKEN=ghp-from-the-profile\\0'\n")
+    shell.chmod(0o755)
+    monkeypatch.setattr(envs.sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(envs.os, 'environ', {'PYTHONHOME': '/Leela.app/Contents/Resources',
+                                             'PYTHONPATH': '/Leela.app/python313.zip'})
+    assert envs.shell_env(str(shell)) == {'GITHUB_TOKEN': 'ghp-from-the-profile'}
+
 def test_a_value_typed_into_leela_beats_the_environment_it_was_launched_with(tmp_path, monkeypatch):
     """The escape hatch. Asking the shell is a guess about a machine, and where the guess is wrong
     there has to be somewhere to say so, or every hosted model refuses every turn with no way in."""

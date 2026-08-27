@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio, inspect, json, os, re, subprocess, threading
+import asyncio, inspect, json, os, re, subprocess, sys, threading
 
 __all__ = ['EnvStore', 'EnvError', 'import_login_env', 'preferred_shell', 'shell_env',
+           'BUNDLE_ONLY', 'clean_env', 'strip_bundle',
            'env_file', 'stored_env', 'apply_stored_env', 'set_env', 'unset_env', 'env_rows',
            'is_secret', 'KNOWN_KEYS']
 
@@ -85,6 +86,29 @@ def env_rows():
                      'editable': True, 'removable': mine})
     return rows
 
+#: What py2app sets so its own helper starts, and what makes a child import the bundle's standard
+#: library under somebody else's interpreter.
+BUNDLE_ONLY = ('PYTHONHOME', 'PYTHONPATH', 'PYTHONEXECUTABLE', '__PYVENV_LAUNCHER__', 'RESOURCEPATH')
+
+def strip_bundle(env):
+    """`env` without py2app's interpreter redirection state, unchanged where there is none.
+
+    Outside a bundle this returns what it was given, untouched: a caller that claimed nothing about
+    an environment still claims nothing, which is what `venv_env(None, env)` and git's `env_for` both
+    promise.
+    """
+    if not getattr(sys, 'frozen', False): return env
+    for name in BUNDLE_ONLY: env.pop(name, None)
+    env['PYTHONUTF8'] = '1'
+    return env
+
+def clean_env():
+    "Environment for a child, without py2app's interpreter redirection state."
+    env = os.environ.copy()
+    for name in BUNDLE_ONLY: env.pop(name, None)
+    env['PYTHONUTF8'] = '1'
+    return env
+
 #: Names that describe the shell that printed them, not the environment a program wants.
 _SHELL_ONLY = {'_', 'PWD', 'OLDPWD', 'SHLVL', 'PS1', 'TERM', 'TERM_SESSION_ID', 'TMPDIR'}
 
@@ -111,7 +135,11 @@ def shell_env(shell=None, timeout=8):
     """
     shell = shell or preferred_shell()
     for args in (('-l', '-i', '-c', 'env -0'), ('-l', '-c', 'env -0')):
-        try: r = subprocess.run([shell, *args], capture_output=True, timeout=timeout)
+        # `clean_env`, or the shell inherits the bundle's `PYTHONHOME` and hands it to whatever
+        # Python its startup files run. A `python` that dies on a path configuration takes the whole
+        # profile with it: fish exited 1 with nothing exported, so every key was missing in the app
+        # and present everywhere else.
+        try: r = subprocess.run([shell, *args], capture_output=True, timeout=timeout, env=clean_env())
         except (OSError, subprocess.SubprocessError): return {}
         if r.returncode != 0: continue
         out = {}
