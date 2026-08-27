@@ -98,6 +98,33 @@ def test_a_streamed_run_initialises_the_notebook_it_is_about_to_run(tmp_path, mo
     assert [str(path) for path in routed] == [str(p), str(p)], 'the run initialises what it runs'
     assert len(ws._swept) == 1, 'two runs, one walk'
 
+def test_a_run_records_what_the_cell_bound_and_what_made_its_output(tmp_path, monkeypatch):
+    """Two things a finished run is the only place to learn: which cell bound a variable, and
+
+    which source the outputs on screen came from. Neither was written down, so the variable panel
+    could not say where a name came from and an edited cell kept a traceback for source it no
+    longer had.
+    """
+    from leela.blocks.runtime.kernels import ExecOutcome
+    from leela.blocks.nb.nb import src_hash
+    p = tmp_path/'w.ipynb'
+    Notebook([Cell(source='total = 6 * 7', cell_type='code', id='c1')]).save(p)
+    ws = Workspace(roots=[tmp_path]); ws.open(p)
+    class K:
+        async def execute(self, code, **kw):
+            return ExecOutcome(ok=True, execution_count=1,
+                               outputs=[{'output_type': 'stream', 'name': 'stdout', 'text': '42\n'}])
+        async def api(self, path, params=None, timeout=15): return None
+    async def runtime(tab=None): return K()
+    monkeypatch.setattr(ws, 'runtime', runtime)
+    with TestClient(ide_app(ws)) as client:
+        client.get('/tab/state', params={'path': str(p)})
+        r = client.post('/nb/run', json={'path': str(p), 'i': 0, 'id': 'c1', 'source': 'total = 6 * 7'})
+    assert r.status_code == 200, r.text
+    assert 'cell c1 of' in ws.origins.note('total'), ws.origins.rows
+    cell = r.json()['cell']
+    assert cell['output_hash'] == src_hash('total = 6 * 7') and cell['stale'] is False
+
 def test_a_run_that_initialises_the_notebook_leaves_the_next_save_workable(tmp_path, monkeypatch):
     """The symptom: running cells in a new notebook, then `save the notebook before running this
     cell` partway through. Leela wrote the placeholder itself during the first run, and the save
@@ -234,7 +261,7 @@ def test_a_prompt_cell_carries_its_context_and_its_answer():
     ctx = dialog().context(2)
     assert '<cell id="m1" type="markdown" compact="auto">' in ctx and '## Loading' in ctx
     assert '<cell id="c1" type="code" compact="auto">' in ctx and 'df = load()' in ctx
-    assert '<output>' in ctx and 'dtype: int64' in ctx
+    assert '<output count="1">' in ctx and 'dtype: int64' in ctx, 'the run the output came from'
     nb = dialog()
     assert nb.prompt_start(4) == 0
     ctx = nb.context(4, since=nb.prompt_start(4))

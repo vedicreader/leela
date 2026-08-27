@@ -1199,6 +1199,74 @@ def test_one_variable_can_be_asked_about_without_globals():
     assert h.inspect_var('nowhere') == "nowhere is not bound, in the user's namespace or your own layer"
     assert h.inspect_var('1x') == "'1x' is not a variable name"
 
+def test_a_variable_says_which_run_bound_it():
+    """A value alone does not say where it came from, and a name bound by a call that then raised
+
+    looked exactly like one bound by a call that worked.
+    """
+    class Broken(_Rows):
+        def api_sync(self, path, params=None, timeout=30):
+            if path == '/agent/api/exec' and 'boom' in ((params or {}).get('code') or ''):
+                self.calls.append((path, params))
+                return {'ok': False, 'stdout': '', 'error': 'ValueError: boom', 'result': None}
+            return super().api_sync(path, params, timeout)
+    k = Broken(owner=('df',), layer=('df_norm',))
+    h = _host(k)
+    h.run_python('df_norm = df.copy()')
+    rows = {r.split(':')[0]: r for r in h.list_vars().splitlines()}
+    assert 'run_python at' in rows['df_norm'], rows['df_norm']
+    assert 'which then failed' not in rows['df_norm']
+    assert rows['df'] == 'df: DataFrame = [5×2]', 'a name nothing here bound carries no note'
+    h.run_python('df_norm = boom()')
+    assert 'which then failed' in h.list_vars(), 'the binding predates an error and says so'
+
+def test_an_isolated_run_claims_nothing_about_provenance():
+    "Its writes are discarded, so attributing a name to it would be a lie."
+    h = _host(_Rows())
+    h.inspect_python('df_norm = df.copy()')
+    assert 'run_python at' not in h.list_vars()
+
+def test_a_cell_run_is_the_provenance_of_what_it_bound(tmp_path):
+    from leela.core.session import Origins
+    from leela.blocks.nb.nb import Cell
+    o = Origins()
+    o.cell(Cell(source='import numpy as np\ntotal = 1 + 1', id='c1'), 'work.ipynb')
+    assert 'cell c1 of work.ipynb at' in o.note('total')
+    assert o.note('np'), 'an import binds a name too'
+    assert o.note('nothing') == ''
+    o.cell(Cell(source='bad = 1', id='c2', outputs=[{'output_type': 'error', 'ename': 'ValueError'}]))
+    assert 'which then failed' in o.note('bad')
+
+def test_output_is_marked_when_the_source_that_made_it_is_gone(tmp_path):
+    """The traceback shown was for an assertion the cell no longer contained, and nothing said so.
+
+    Output carries the hash of the source that produced it, and the context the model reads says
+    which run it was and whether the cell has changed since.
+    """
+    from leela.blocks.nb.nb import Cell, Notebook, src_hash
+    c = Cell(source='assert x == 1', cell_type='code', id='c1', execution_count=3, execution_ms=12.0,
+             outputs=[{'output_type': 'error', 'ename': 'AssertionError', 'evalue': '',
+                       'traceback': ['AssertionError']}])
+    c.output_hash = src_hash(c.source)
+    nb = Notebook([c, Cell(source='x', cell_type='code', id='c2')])
+    ctx = nb.context(1)
+    assert 'count="3"' in ctx and 'ms="12"' in ctx and 'stale=' not in ctx
+    c.source = 'assert x == 2'
+    assert 'stale="true"' in nb.context(1), 'the cell was edited after the run that made this output'
+    c.clear()
+    assert c.output_hash == '' and not c.stale
+
+def test_the_hash_of_a_run_survives_the_file(tmp_path):
+    from leela.blocks.nb.nb import Cell, Notebook, src_hash
+    p = tmp_path/'w.ipynb'
+    c = Cell(source='x = 1', cell_type='code', id='c1', execution_count=1,
+             outputs=[{'output_type': 'stream', 'name': 'stdout', 'text': '1'}])
+    c.output_hash = src_hash('x = 0')
+    Notebook([c]).save(p)
+    back = Notebook.load(p)
+    assert back[0].output_hash == src_hash('x = 0')
+    assert back[0].stale, 'a notebook reopened knows its output predates its source'
+
 def test_the_writable_folders_are_named_before_the_first_refusal(tmp_path):
     """Both folders were open and both were said to be the agent's, and the edit to the second was
 

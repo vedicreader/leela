@@ -6,7 +6,8 @@ from fastcore.basics import first
 import gzip, hashlib, json, shutil, time, uuid
 from pathlib import Path
 
-__all__ = ['DocStore', 'DebugState', 'FileHistory', 'RunState', 'Trash', 'kernel_api']
+__all__ = ['DocStore', 'DebugState', 'FileHistory', 'Origins', 'RunState', 'Trash',
+           'assigned_names', 'kernel_api']
 
 #: How many versions of one file are kept. A person looking for what a tool overwrote is looking
 #: at this morning, not at last month, and every version holds the whole file.
@@ -14,6 +15,44 @@ KEEP_PER_PATH = 60
 #: Bodies past this are noted but not copied. A 70MB notebook saved through a day is gigabytes of
 #: history for a file git already tracks, and copying it makes saving slow.
 MAX_BODY = 2_000_000
+
+def assigned_names(code):
+    "Top-level names `code` binds, so what ran can be attributed without diffing the namespace."
+    import ast
+    try: tree = ast.parse(code)
+    except SyntaxError: return []
+    out = []
+    for n in tree.body:
+        if isinstance(n, ast.Assign): out += [t.id for t in n.targets if isinstance(t, ast.Name)]
+        elif isinstance(n, (ast.AnnAssign, ast.AugAssign)) and isinstance(n.target, ast.Name): out.append(n.target.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): out.append(n.name)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)): out += [a.asname or a.name.split('.')[0] for a in n.names]
+    return list(dict.fromkeys(out))
+
+class Origins:
+    """What last bound each name: the cell or the tool, when, and whether that run then failed.
+
+    A variable in the panel is the end of something, and reading it says nothing about which cell
+    or tool put it there, or whether the run that did went on to raise afterwards.
+    """
+    LIMIT = 2000
+    def __init__(self): self.rows = {}
+    def record(self, names, by, ok=True):
+        at = time.time()
+        for n in names: self.rows[n] = {'by': by, 'at': at, 'ok': bool(ok)}
+        if len(self.rows) > self.LIMIT:
+            for n in sorted(self.rows, key=lambda k: self.rows[k]['at'])[:len(self.rows) - self.LIMIT]:
+                del self.rows[n]
+    def cell(self, cell, where='', ok=None):
+        "Record one cell run. `ok` defaults to whether the cell's own outputs hold an error."
+        self.record(assigned_names(cell.source), f"cell {cell.id}{f' of {where}' if where else ''}",
+                    not cell.has_error if ok is None else ok)
+    def note(self, name):
+        "One name's provenance as the suffix `list_vars` puts after it, or ''."
+        r = self.rows.get(name)
+        if r is None: return ''
+        stamp = time.strftime('%H:%M:%S', time.localtime(r['at']))
+        return f"  ({r['by']} at {stamp}{'' if r['ok'] else ', which then failed'})"
 
 async def kernel_api(session, path, params=None, timeout=15, tab=None):
     "Proxy an inspector call through the exact runtime `Run` would use."

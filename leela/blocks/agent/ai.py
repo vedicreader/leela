@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from ..runtime.kernels import python_for, venv_env
-import ast, asyncio, functools, inspect, json, os, re, threading
+import asyncio, functools, inspect, json, os, re, threading
 from fnmatch import fnmatch
 from fastcore.all import L, Path, delegates, first
 from ... import errstr, leela_cfg
@@ -11,6 +11,7 @@ from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, p
 from ...agent.tools import MAX_HITS, MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS
 from ...agent.tools import DENY, MAX_GREP_HITS, Host, clip, failed, tools_for
 from ...agent.spec import MAX_OPS, SpecHost
+from ...core.session import assigned_names as _assigned
 from ..vault.jobs import cadence
 from .video import VideoJobs, video_available, video_tools
 
@@ -250,18 +251,6 @@ class Interventions(Approvals):
                 if row['tool'] == name and row['args'] == dict(args or {}))
             return self._execution_meta.pop(i) if i is not None else {}
 
-def _assigned(code):
-    "Top-level names `code` binds, so a run that ended in an exception can say what it had done."
-    try: tree = ast.parse(code)
-    except SyntaxError: return []
-    out = L()
-    for n in tree.body:
-        if isinstance(n, ast.Assign): out += [t.id for t in n.targets if isinstance(t, ast.Name)]
-        elif isinstance(n, (ast.AnnAssign, ast.AugAssign)) and isinstance(n.target, ast.Name): out.append(n.target.id)
-        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): out.append(n.name)
-        elif isinstance(n, (ast.Import, ast.ImportFrom)): out += [a.asname or a.name.split('.')[0] for a in n.names]
-    return list(dict.fromkeys(out))
-
 class WorkspaceHost(Host):
     "A `Workspace`, answering the harness's questions."
     mk_chat = None                          # `Agent.lend_model` fills this; declaring it is the opt-in
@@ -462,6 +451,7 @@ class WorkspaceHost(Host):
         try: c = asyncio.run_coroutine_threadsafe(nb.run(i, k), loop).result(max(1, int(timeout)))
         except TimeoutError: return f'cell {cell_id} has not finished in {timeout}s; it is still running in the kernel'
         except Exception as e: return f'could not run cell {cell_id}: {errstr(e)}'
+        if (origins := getattr(self.ws, 'origins', None)) is not None: origins.cell(c, path)
         return self._cell_report(path, c, before)
     def _var_snapshot(self):
         "Name to value for every visible variable, or None when no inspector will say."
@@ -537,10 +527,18 @@ class WorkspaceHost(Host):
         if self.session is not None:
             before = set(self.session.layer)
             r = self.session.run(code, scope=scope)
-            return self._session_text(r, sorted(set(self.session.layer) - before))
+            bound = sorted(set(self.session.layer) - before)
+            self._note_origin(bound, scope, ok=not r.error)
+            return self._session_text(r, bound)
         r = self._kernel().api_sync('/agent/api/exec', {'code': code, 'scope': scope})
-        failed_overlay = scope == 'overlay' and (r or {}).get('error')
-        return self._exec_text(r, self._bound_after(code) if failed_overlay else ())
+        failed = bool((r or {}).get('error'))
+        bound = self._bound_after(code) if failed and scope == 'overlay' else ()
+        self._note_origin(bound if failed else _assigned(code), scope, ok=not failed)
+        return self._exec_text(r, bound)
+    def _note_origin(self, names, scope, ok=True):
+        "Attribute what the overlay bound. `isolated` discards its writes, so it binds nothing."
+        origins = getattr(self.ws, 'origins', None)
+        if names and origins is not None and scope == 'overlay': origins.record(names, 'run_python', ok)
     def run_python(self, code):
         """Run in the agent's own layer over the user's namespace, never in the namespace itself.
 
@@ -572,7 +570,11 @@ class WorkspaceHost(Host):
         rows = self._rows('/agent/api/rows')
         if rows is None: rows = self._rows('/api/rows') or []
         return [{'name': v.get('name'), 'type': v.get('type'), 'value': v.get('value')} for v in rows]
-    def list_vars(self): return '\n'.join(f"{r['name']}: {r['type']} = {r['value']}" for r in self._var_rows())
+    def list_vars(self):
+        "Every visible variable, and what last bound it: a value alone does not say where it came from."
+        origins = getattr(self.ws, 'origins', None)
+        return '\n'.join(f"{r['name']}: {r['type']} = {r['value']}"
+                         + ('' if origins is None else origins.note(r['name'])) for r in self._var_rows())
     def inspect_var(self, name, attrs=()):
         "One name, without `globals()`: whether it is bound, what it is, and the attributes asked for."
         name = str(name or '').strip()

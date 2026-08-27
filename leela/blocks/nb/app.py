@@ -15,7 +15,7 @@ from ...core.web import fail, off_loop, sse
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
-from .nb import Cell, Notebook, cell_extras, inline_values
+from .nb import Cell, Notebook, cell_extras, inline_values, src_hash
 
 __all__ = ['CAPS', 'connect']
 
@@ -57,6 +57,7 @@ def connect(app, ctx):
     running_cells = ctx.running.cells
     def doc(): return store.current()
     def run_owner(d): return store.owner(d.get('path'))
+    def note_origin(tab, cell): ws.origins.cell(cell, (tab.path or tab.title) if tab else '')
     def dbg(method=None): return paused_kernel(dbgstate, method)
     def debug_ui(state): return notebook_state_ui(dbgstate, ctx.fs, state)
     def previous_runs(): store.mark_all_stale()
@@ -81,6 +82,7 @@ def connect(app, ctx):
             owner_tab.running += 1
             try: c = await nb.run(i, k)
             finally: owner_tab.running = max(0, owner_tab.running - 1)
+        note_origin(owner_tab, c)
         if owner_tab: owner_tab.dirty = True
         rows, result = await cell_extras(k, c)
         return {'ok': not c.has_error, 'i': i, 'cell': c.dict(), 'result': result,
@@ -128,6 +130,7 @@ def connect(app, ctx):
                         outputs = nxt
                     yield sse('output', {'i': i, 'outputs': outputs})
                 c = await task
+                note_origin(owner_tab, c)
                 if owner_tab: owner_tab.dirty = True
                 rows, result = await cell_extras(k, c)
                 yield sse('done', {'ok': not c.has_error, 'i': i, 'cell': c.dict(), 'result': result,
@@ -191,7 +194,8 @@ def connect(app, ctx):
                 result = await task
                 c.outputs, c.execution_count = result.outputs, result.execution_count
                 c.execution_ms = (asyncio.get_running_loop().time() - started) * 1000
-                c.fresh = True
+                c.fresh, c.output_hash = True, src_hash(c.source)
+                note_origin(owner_tab, c)
                 if owner_tab: owner_tab.dirty = True
                 yield sse('done', {'ok': result.ok, 'i': i, 'cell': c.dict(),
                                     'error': result.error})

@@ -233,6 +233,8 @@ class Workspace:
         self.compact_auto, self.compact_strategy = True, 'surgical'
         self.tool_budget, self.step_budget = 'auto', 'auto'
         self.allow_workspace_repo_writes = False
+        from .core.session import Origins
+        self.origins = Origins()       # which cell or tool last bound each live variable
         self.agent_read_outside = False     # reads may leave the open folders; writes never do
         self.subagent_writes = False        # delegated sub-agents may only read unless this is on
         self.active_root = None

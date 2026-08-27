@@ -1,7 +1,7 @@
 "The notebook document: cells, outputs, the .ipynb on disk, and source spans."
 
 from __future__ import annotations
-import ast, re, time, uuid
+import ast, hashlib, re, time, uuid
 from base64 import b64encode
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -50,6 +50,18 @@ def _detached(cell):
 #: `default_exp` and its kind name the notebook, not the cell, so a split does not copy them on.
 NB_DIRECTIVE = ('default_exp', 'default_cls_lvl')
 
+def src_hash(source):
+    "A short digest of one cell's source, for telling output that came from it from output that did not."
+    return hashlib.sha256((source or '').encode()).hexdigest()[:12]
+
+def _output_attrs(c):
+    "What the model needs beside an output to judge it: which run it was, and whether it still applies."
+    bits = []
+    if c.execution_count is not None: bits.append(f'count="{c.execution_count}"')
+    if c.execution_ms is not None: bits.append(f'ms="{c.execution_ms:.0f}"')
+    if c.stale: bits.append('stale="true"')
+    return (' ' + ' '.join(bits)) if bits else ''
+
 def _directives(source):
     "The cell's leading `#|` block, the part of it a split copies onto each piece, and the rest."
     lines = source.splitlines(True)
@@ -75,6 +87,9 @@ class Cell(Dictable):
     approval: dict | None = None
     context_mode: str = 'auto'
     fresh: bool = False
+    #: The source hash the outputs came from. A cell edited since its run keeps outputs that
+    #: describe source that is gone, and a traceback for an assertion nobody can find any more.
+    output_hash: str = ''
     def __post_init__(self):
         if self.context_mode not in CONTEXT_MODES: self.context_mode = 'auto'
     @property
@@ -82,11 +97,17 @@ class Cell(Dictable):
     @property
     def has_error(self): return any(o.get('output_type') == 'error' for o in self.outputs)
     @property
+    def stale(self):
+        "Whether the outputs held here were produced by source this cell no longer has."
+        return bool(self.outputs and self.output_hash and self.output_hash != src_hash(self.source))
+    def dict(self): return {**super().dict(), 'stale': self.stale}
+    @property
     def is_prompt(self): return self.cell_type == 'prompt'
     @property
     def is_approval(self): return self.approval is not None
     def clear(self):
         self.outputs, self.execution_count, self.execution_ms, self.fresh = [], None, None, False
+        self.output_hash = ''
         self.reply, self.calls, self.usage = '', [], {}
         return self
     def nbcell(self):
@@ -97,6 +118,7 @@ class Cell(Dictable):
             c['outputs'] = list(self.outputs)
             c['execution_count'] = self.execution_count
             if self.execution_ms is not None: meta['execution_ms'] = round(self.execution_ms, 3)
+            if self.output_hash: meta['output_hash'] = self.output_hash
         elif self.is_prompt:
             c['cell_type'] = 'markdown'
             meta.update(kind='prompt', reply=self.reply, calls=list(self.calls), usage=dict(self.usage))
@@ -114,6 +136,7 @@ class Cell(Dictable):
             id=str(c.get('id') or cell_id()),
             cell_type='prompt' if meta.get('kind') == 'prompt' else c.get('cell_type', 'code'),
             execution_count=c.get('execution_count'), execution_ms=meta.get('execution_ms'),
+            output_hash=str(meta.get('output_hash') or ''),
             reply=str(meta.get('reply') or ''), calls=list(meta.get('calls') or []), usage=dict(meta.get('usage') or {}),
             context_mode=str(meta.get('context') or 'auto'), approval=dict(meta) if meta.get('kind') == 'approval' else None)
 
@@ -330,6 +353,7 @@ class Notebook:
             c.running = False
             c.execution_ms = (time.perf_counter() - started) * 1000
             c.fresh = True
+            c.output_hash = src_hash(c.source)
         self.dirty = True
         return c
     async def run_all(self, kernel, on_output=None, stop_on_error=True):
@@ -355,7 +379,7 @@ class Notebook:
         if src: body.append(f'<source>\n{src}\n</source>')
         if c.cell_type == 'code' and (t := c.text.strip()):
             shown = t if out_chars is None else t[:out_chars]
-            body.append(f'<output>\n{shown}\n</output>')
+            body.append(f'<output{_output_attrs(c)}>\n{shown}\n</output>')
         if c.is_prompt and (ans := strip_work_log(c.reply).strip()): body.append(f'<answer>\n{ans}\n</answer>')
         body.append('</cell>')
         return '\n'.join(body)
