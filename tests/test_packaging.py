@@ -631,3 +631,19 @@ def test_the_built_app_matches_the_tree_it_was_built_from():
     assert st['commit'] == here['commit'], (
         f"dist/Leela.app was built from {st['commit'][:12]} but the tree is at "
         f"{here['commit'][:12]}; rebuild before trusting it")
+
+def test_the_runtime_the_vault_reads_a_model_id_from_is_in_the_bundle(mac):
+    """`vishalakshi` imports `rishi.litert` for one model id, and that module is the litert module.
+    Leaving `litert_lm` out took the vault, and with it memory, out of the packaged app: every save
+    of an agent state answered 400 and the box that asked for it had no way to say why."""
+    assert 'litert_lm' not in mac.HEAVY, 'the bundle carries the runtime the vault reads from'
+    assert 'mlx' in mac.HEAVY and 'llama_cpp' in mac.HEAVY, 'the ones that are really optional still are'
+
+def test_an_installed_backend_survives_a_restart():
+    """`use_extras` puts the directory an optional backend is installed into on `sys.path`, and it
+    was called in one place: straight after an install. A backend worked for the session that
+    installed it and was gone at the next launch, which made every install look like it had failed."""
+    cli = (ROOT/'leela'/'cli.py').read_text()
+    body = cli[cli.index('def main('):]
+    assert 'use_extras()' in body, 'the process puts the extras directory on its own path at startup'
+    assert body.index('use_extras()') < body.index('serve_ide'), 'and before anything imports a backend'

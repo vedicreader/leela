@@ -623,7 +623,9 @@ def test_configured_agent_does_not_offer_setup_again():
     ws = Workspace(roots=[])
     ws.agent_state_layers['project']['text'] = '# Goal\n\nMaintain this project.'
     html = str(_agent_panel(ws))
-    assert 'state active' in html
+    # The badge names the charter the agent is carrying, taken from its first heading. It said
+    # `state active` for every state there could be, so it never said which one was loaded.
+    assert 'Goal' in html and 'no state' not in html
     assert 'Set up agent state' not in html
 
 def test_agent_memory_api_selects_notes_per_surface_and_rebriefs(tmp_path):

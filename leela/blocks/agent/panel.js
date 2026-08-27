@@ -201,7 +201,10 @@ function setupRow(a) {
 }
 function offlineRow(o) {
   const st = o.install || {}, running = st.state === 'running';
+  // The recommended one is named as such and offered first: it is the smallest, it runs on any Mac,
+  // and the vault answers with it, so a bundle without it has no memory rather than a slower one.
   return `<div class="lee-setup-row" data-setup-get="${esc(o.value)}"><span><strong>${esc(o.label || o.value)}</strong>` +
+    `${o.recommended ? ' <small class="lee-setup-pick">recommended</small>' : ''}` +
     ` <small>about ${o.mb} MB</small>` +
     `${st.state === 'error' ? `<br><small class="warn">${esc(String(st.log).split('\n').slice(-2).join(' '))}</small>` : ''}</span>` +
     `${o.available ? '<span class="lee-dim">installed</span>'

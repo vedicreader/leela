@@ -75,6 +75,21 @@ def _registered_encoder(path, store):
         return r[0] if r else None
     except Exception: return None
 
+
+def _why_no_vault(e):
+    """Why memory could not take something, in terms of what to do about it.
+
+    The vault reaches its own model through `rishi.litert`, so where LiteRT is not installed the
+    failure arrives as `No module named 'litert_lm'`, which says nothing about memory and nothing
+    about the remedy. The packaged app is exactly that case: the runtime is a download, not part of
+    the bundle.
+    """
+    missing = getattr(e, 'name', '') or ''
+    if isinstance(e, ImportError) and missing in ('litert_lm', 'rishi', 'vishalakshi'):
+        return ('memory needs the LiteRT runtime here, and it is not installed. '
+                'Install it under Models in the settings pane, and memory comes back.')
+    return f'memory ingest failed ({errstr(e)})'
+
 class Memory:
     "MemoryPort over a vishalakshi vault: one store per project, one shared by all of them."
     def __init__(self, shelf=GLOBAL, path=None, encoder=None, offline=None, kosha=None, **_):
@@ -130,7 +145,7 @@ class Memory:
                 f"remembered {out.get('nodes', 0)} sections · {out.get('chunks', 0)} chunks")
             return dict(out, source=source)
         except Exception as e:
-            self.note = f'memory ingest failed ({errstr(e)})'
+            self.note = _why_no_vault(e)
             return None
     def remember_agent_state(self, title, text, meta=None):
         "Store an edited conversation summary as a reusable agent starting state."

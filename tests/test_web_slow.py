@@ -2169,3 +2169,29 @@ def test_opening_a_file_does_not_wait_for_the_panel_beside_it(tmp_path):
     path, n, drawn = _run(go, roots=[tmp_path])
     assert path.endswith('nb.ipynb') and n == 12, 'the switch finished'
     assert drawn == 12, 'and the notebook is on screen'
+
+def test_the_state_box_says_why_a_save_failed_and_names_what_it_activated(tmp_path):
+    """Save and activate closed the box only when the request answered. A refusal, which is what the
+    packaged app gets because it cannot reach memory at all, left the box open with no reason on it
+    and no toast, so the button read as dead. The badge said `state active` for every state there
+    could be, so it never said which charter the agent was carrying."""
+    async def go(pg):
+        await pg.evaluate("() => { leePane('right', true); leeRight('agent'); }")
+        await pg.route('**/agent/state/save', lambda route: asyncio.ensure_future(
+            route.fulfill(status=400, content_type='application/json',
+                          body='{"ok": false, "error": "memory is unavailable here"}')))
+        await pg.evaluate("() => leeAgentState()")
+        await pg.wait_for_selector('[data-save]')
+        await pg.evaluate("() => { document.querySelector('#agentstatetext').value = '# Kosha charter\\nrules for this workspace'; }")
+        await pg.click('[data-save]')
+        await pg.wait_for_function("() => document.querySelector('[data-state-help]')?.textContent.includes('memory is unavailable')",
+                                   timeout=8000)
+        open_after_refusal = await pg.evaluate("() => !!document.querySelector('[data-save]')")
+
+        await pg.unroute('**/agent/state/save')
+        await pg.click('[data-activate]')
+        await pg.wait_for_function("() => !document.querySelector('[data-activate]')", timeout=8000)
+        return open_after_refusal, await pg.evaluate("() => document.querySelector('#agentnames')?.textContent")
+    still_open, badge = _run(go, roots=[tmp_path])
+    assert still_open, 'a refused save keeps the state in front of the person who wrote it'
+    assert badge == 'Kosha charter', f'the badge names the charter, not the word active: {badge!r}'

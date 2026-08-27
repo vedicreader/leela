@@ -625,18 +625,36 @@ async function leeAgentState() {
         (d.missing_paths.length ? ` · missing paths: ${d.missing_paths.join(', ')}` : ' · paths current') +
         (d.duplicate_headings.length ? ` · duplicate headings: ${d.duplicate_headings.join(', ')}` : '');
     };
+    // The badge is what says which charter the agent is carrying, so it takes the state's own
+    // heading rather than the word `active`.
+    const stateLabel = () => (text.value.split('\n').find(l => l.startsWith('#') && l.replace(/^#+\s*/, '').trim())
+      || '').replace(/^#+\s*/, '').trim().slice(0, 40) || 'state active';
     const markActive = () => {
-      const badge = $('#agentnames'); if (badge) badge.textContent = 'state active';
+      const badge = $('#agentnames'); if (badge) { badge.textContent = stateLabel(); badge.title = 'active starting state'; }
       $('.lee-agent-welcome', $('#agentlog'))?.remove();
     };
-    $('[data-save]', box).onclick = async () => {
+    // A save that fails leaves the state in the editor and the box open, with the reason on it.
+    // Neither button said anything when the request was refused, so a person pressed a control that
+    // did nothing: the packaged app cannot reach memory at all, and this is how that looked.
+    const attempt = async (button, run) => {
+      const el = $(`[data-${button}]`, box), label = el.textContent;
+      el.disabled = true; el.textContent = 'Working…';
+      try { await run(); box.remove(); }
+      catch (e) {
+        const why = e.message || String(e);
+        $('[data-state-help]', box).textContent = why;
+        status(why, 'err');
+      }
+      finally { el.disabled = false; el.textContent = label; }
+    };
+    $('[data-save]', box).onclick = () => attempt('save', async () => {
       const d = await post('/agent/state/save', {title: $('#agentstatetitle', box).value, text: text.value, layer: layer.value, activate: true});
-      markActive(); status(d.saved?.skipped ? 'state already in memory and activated' : 'state saved to memory and activated', 'ok'); box.remove();
-    };
-    $('[data-activate]', box).onclick = async () => {
+      markActive(); status(d.saved?.skipped ? 'state already in memory and activated' : 'state saved to memory and activated', 'ok');
+    });
+    $('[data-activate]', box).onclick = () => attempt('activate', async () => {
       await post('/agent/state/activate', {text: text.value, layer: layer.value});
-      markActive(); status('starting state activated without saving', 'ok'); box.remove();
-    };
+      markActive(); status('starting state activated without saving', 'ok');
+    });
     $$('.lee-agent-state-row', box).forEach(row => row.onclick = async () => {
       const compared = await post('/agent/state/compare', {id: row.dataset.id, current: text.value});
       const review = modal(`<div class="lee-mhead">Compare state revision<span class="sub">choose how this revision enters ${esc(layer.value)}</span></div>` +

@@ -51,7 +51,7 @@ INCLUDES = ['leela.cli', 'leela.desktop', 'leela.app', 'packaging.requirements',
             'webview.platforms.winforms', 'webview.platforms.edgechromium']
 
 #: See the macOS definition. Kept identical there and here, which `test_packaging.py` asserts.
-HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'litert_lm', 'llama_cpp', 'cv2', 'transformers',
+HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'llama_cpp', 'cv2', 'transformers',
          'scipy', 'spacy', 'torch', 'blis', 'thinc', 'srsly', 'llguidance')
 
 EXCLUDES = ['tkinter', 'test', 'py2app', 'webview.platforms.cocoa', 'webview.platforms.gtk',

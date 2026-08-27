@@ -594,6 +594,30 @@ def _right_workspace(ws):
         Div(_agent_panel(ws), _vars_panel(ws), _memory_panel(), cls='lee-rightbody'),
         cls='lee-right right-agent', id='right')
 
+def _state_text(ws):
+    "Every layer's text, in the order they are applied. `agent_state` is only the resolved one."
+    layers = [str(d.get('text') or '') for d in (ws.agent_state_layers or {}).values() if d.get('enabled', True)]
+    return '\n'.join([ws.agent_state or '', *layers])
+
+def _state_label(ws):
+    """What the agent pane calls the state it is carrying.
+
+    The badge read `state active` for every state there could be, so a person could not tell which
+    charter the agent had been given, nor that it was the one they had just activated.
+    """
+    text = _state_text(ws)
+    if not text.strip(): return 'no state'
+    head = first(l.lstrip('# ').strip() for l in text.splitlines()
+                 if l.startswith('#') and l.lstrip('# ').strip())
+    return (head or 'state active')[:40]
+
+def _state_title(ws):
+    "The badge's tooltip: which layers carry the state, and where each came from."
+    if not _state_text(ws).strip(): return 'no starting state; click to write one'
+    rows = [f"{name}: {d.get('source') or 'workspace'}" for name, d in (ws.agent_state_layers or {}).items()
+            if d.get('text') and d.get('enabled', True)]
+    return ' · '.join(rows) or 'active starting state'
+
 def _agent_panel(ws):
     "Bottom centre; model choices load asynchronously after the editor can paint."
     from .agent.core import DFLT_LOCAL, env as _env
@@ -610,7 +634,8 @@ def _agent_panel(ws):
     return Section(
         Div(Div(Span('agent', cls='lee-ptitle'),
                 Span(Span(cls='lee-agent-status-dot'), 'ready', id='agentstatus', cls='lee-agent-status ready', title='agent ready'),
-                Span('state active' if has_state else 'no state', id='agentnames', cls='lee-agent-state-badge'),
+                Span(_state_label(ws), id='agentnames', cls='lee-agent-state-badge',
+                     title=_state_title(ws), onclick='leeAgentState()'),
                 cls='lee-agent-heading'),
             Span(cls='lee-spacer'),
             Div(Button(Span('conversations', cls='lee-thread-toggle-label'),

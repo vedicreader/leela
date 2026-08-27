@@ -3467,3 +3467,5 @@ kbd {
 .lee-lh-row span { color: var(--lee-fg4); font-size: 11px; }
 .lee-lh-view { overflow: auto; max-height: 60vh; }
 .lee-lh-head { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; color: var(--lee-fg3); }
+
+.lee-setup-pick { color: var(--lee-green); font-weight: 600; }

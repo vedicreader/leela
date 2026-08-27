@@ -53,9 +53,11 @@ PACKAGES = [
 ]
 
 #: What `leela[local]` drags in, by module name. Measured on the bundle it used to be in: mlx 204MB,
-#: cv2 125, transformers 99, scipy 97, spacy 24, llama_cpp 18, litert_lm and the mlx sidecars.
+#: cv2 125, transformers 99, scipy 97, spacy 24, llama_cpp 18, and the mlx sidecars.
+#: `litert_lm` is not among them any more: `vishalakshi` imports `rishi.litert` to read one model id,
+#: so leaving it out took the vault, and with it memory, out of the packaged app entirely.
 #: `tests/test_packaging.py` holds the two platform definitions to the same list.
-HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'litert_lm', 'llama_cpp', 'cv2', 'transformers',
+HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'llama_cpp', 'cv2', 'transformers',
          'scipy', 'spacy', 'torch', 'blis', 'thinc', 'srsly', 'llguidance')
 
 #: Packages py2app cannot carry either way, put in place after it runs. `apsw` is one package whose

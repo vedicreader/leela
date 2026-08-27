@@ -6,7 +6,7 @@ from ... import extras_site, leela_cfg, use_extras
 
 __all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks',
            'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements', 'install_runtime', 'probed', 'catalog', 'forget_probes', 'warm_probes',
-           'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed', 'SETUP_SIZES',
+           'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed', 'SETUP_SIZES', 'RECOMMENDED',
            'unavailable_detail', 'HARNESS', 'TOOLS', 'tool_rows',
            'updates']
 
@@ -243,6 +243,10 @@ def install_runtime(runtime):
 #: Approximate installed size, so nobody starts a 400MB download without being told.
 SETUP_SIZES = {'mlx': 400, 'llama': 120, 'litert': 70}
 
+#: The local runtime Leela recommends. It is the smallest of the three, it runs on any Mac, and the
+#: vault answers with it, so a packaged app without it has no memory rather than a slower one.
+RECOMMENDED = 'litert'
+
 #: The first-run wording for an account runtime. `runtime_remedy` is the terser picker version.
 ACCOUNTS = (
  ('claude', 'Claude Code', 'Sign in once with `claude /login` and Leela drives it. No key to manage.'),
@@ -340,8 +344,9 @@ def setup_plan():
                  'why': rows.get(v, {}).get('why', ''),
                  'detail': '' if ready(v) else rows.get(v, {}).get('detail', '')}
                 for v, label, blurb in ACCOUNTS]
-    offline = [{**rows[v], 'mb': SETUP_SIZES.get(v)} for v in INSTALLABLE
-               if v in rows and rows[v]['requirements']]
+    offline = [{**rows[v], 'mb': SETUP_SIZES.get(v), 'recommended': v == RECOMMENDED}
+               for v in INSTALLABLE if v in rows and rows[v]['requirements']]
+    offline.sort(key=lambda r: not r['recommended'])   # the one we recommend is the one offered first
     ready_now = [a['value'] for a in accounts if a['ready']]
     installed = [o['value'] for o in offline if o['available']]
     return {'frozen': bool(getattr(sys, 'frozen', False)), 'dismissed': setup_dismissed(),

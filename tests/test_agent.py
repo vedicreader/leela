@@ -2615,3 +2615,26 @@ def test_any_of_the_four_language_servers_will_do():
     found, argv = find_server()
     assert (found is None) == (argv is None)
     if argv: assert argv[0].endswith(found) and len(argv) >= 1
+
+def test_the_local_runtime_leela_recommends_is_named_and_offered_first():
+    """LiteRT is the smallest of the three, it runs on any Mac, and the vault answers with it, so a
+    packaged app without it has no memory rather than a slower one. The setup pane said nothing about
+    which to take."""
+    from leela.blocks.agent.models import RECOMMENDED, SETUP_SIZES, setup_plan
+    assert RECOMMENDED == 'litert' and SETUP_SIZES['litert'] < SETUP_SIZES['mlx']
+    plan = setup_plan()
+    offline = plan['offline']
+    if not offline: return                      # everything is installed on this machine
+    assert offline[0]['recommended'], f"offered first: {[o['value'] for o in offline]}"
+    assert offline[0]['value'] == RECOMMENDED
+    assert sum(o['recommended'] for o in offline) == 1, 'one recommendation, not a list of them'
+
+def test_memory_says_what_to_do_when_the_runtime_it_needs_is_missing():
+    """The vault reaches its model through `rishi.litert`, so without LiteRT the failure arrives as
+    `No module named 'litert_lm'`: nothing about memory, nothing about the remedy. The packaged app
+    is that case, because the runtime is a download rather than part of the bundle."""
+    from leela.blocks.memory.memory import _why_no_vault
+    note = _why_no_vault(ModuleNotFoundError("No module named 'litert_lm'", name='litert_lm'))
+    assert 'LiteRT' in note and 'settings' in note.lower() and 'litert_lm' not in note
+    assert _why_no_vault(ValueError('disk full')) == 'memory ingest failed (ValueError: disk full)', \
+        'a failure that is not a missing runtime is still reported as itself'
