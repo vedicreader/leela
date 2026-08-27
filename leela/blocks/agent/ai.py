@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from ..runtime.kernels import python_for, venv_env
-import asyncio, functools, inspect, json, os, re, threading
+import ast, asyncio, functools, inspect, json, os, re, threading
 from fnmatch import fnmatch
 from fastcore.all import L, Path, delegates, first
 from ... import errstr, leela_cfg
@@ -18,8 +18,9 @@ from ramabana.git import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS   # re-expor
 
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
 FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
+MAX_ATTRS = 20
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
-WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'promote_var'})
+WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'promote_var', 'run_cell'})
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_context',
            'notebook_approvals', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
@@ -249,6 +250,18 @@ class Interventions(Approvals):
                 if row['tool'] == name and row['args'] == dict(args or {}))
             return self._execution_meta.pop(i) if i is not None else {}
 
+def _assigned(code):
+    "Top-level names `code` binds, so a run that ended in an exception can say what it had done."
+    try: tree = ast.parse(code)
+    except SyntaxError: return []
+    out = L()
+    for n in tree.body:
+        if isinstance(n, ast.Assign): out += [t.id for t in n.targets if isinstance(t, ast.Name)]
+        elif isinstance(n, (ast.AnnAssign, ast.AugAssign)) and isinstance(n.target, ast.Name): out.append(n.target.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): out.append(n.name)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)): out += [a.asname or a.name.split('.')[0] for a in n.names]
+    return list(dict.fromkeys(out))
+
 class WorkspaceHost(Host):
     "A `Workspace`, answering the harness's questions."
     mk_chat = None                          # `Agent.lend_model` fills this; declaring it is the opt-in
@@ -272,6 +285,11 @@ class WorkspaceHost(Host):
         "The folder the agent's commands run in: the chosen one, else the first open."
         root = self.ws.project_root
         return str(root) if root else (self.roots[0] if self.roots else '')
+    @property
+    def writable_roots(self):
+        "The open folders a write may land in, which is not every folder the agent may read."
+        if len(self.ws.fs.roots) < 2 or self.ws.allow_workspace_repo_writes: return self.roots
+        return [self.project] if self.project else self.roots
     def _readable_outside(self, path):
         "A path outside the open folders that may still be read, or None. Credentials never are."
         if not getattr(self.ws, 'agent_read_outside', False): return None
@@ -302,7 +320,9 @@ class WorkspaceHost(Host):
         target = self.check(path)
         active = Path(self.project).expanduser().resolve() if self.project else None
         if len(self.ws.fs.roots) > 1 and active and not target.is_relative_to(active) and not self.ws.allow_workspace_repo_writes:
-            raise Unsafe('writes to another workspace repository are disabled; enable workspace repository writes in agent settings')
+            raise Unsafe(f'{path} is readable, but writes to another workspace repository are disabled. '
+                f'Writable: {", ".join(self.writable_roots)}. Enable workspace repository writes in '
+                'agent settings to write to the other open folders')
         return target
     def write(self, path, text): return self.ws.fs.write(self.check_write(path), text).path
     def text_at(self, path): return self.ws.text_at(path)
@@ -420,6 +440,44 @@ class WorkspaceHost(Host):
         if len(nb) == 2 and not nb[0].source.strip() and nb[1] is c: nb.delete(0)
         nb.save(p, sandbox=self.ws.fs)
         return c.id
+    def nb_run_cell(self, path, cell_id, timeout=120):
+        """Run one cell in the kernel its notebook's tab runs in, the way the Run button does.
+
+        The file is left alone: the outputs come back to the caller rather than to disk. The
+        bindings it reports are the merged view before and after, so a rebind shows as well as
+        a new name.
+        """
+        from ..nb.nb import Notebook
+        p = self.check(path, must_exist=True)
+        nb = Notebook.load(p)
+        i = first(i for i, c in enumerate(nb.cells) if c.id == cell_id)
+        if i is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
+        if nb[i].cell_type != 'code': return f'cell {cell_id} is a {nb[i].cell_type} cell; only code cells run'
+        loop = self._loop()
+        if loop is None: return 'no running event loop owns the kernels here, so no cell can be run'
+        tab = first(t for t in getattr(self.ws, 'tabs', []) if str(getattr(t, 'path', '') or '') == str(p))
+        try: k = asyncio.run_coroutine_threadsafe(self.ws.runtime(tab), loop).result(120)
+        except Exception as e: return f'could not start the kernel for {path}: {errstr(e)}'
+        before = self._var_snapshot()
+        try: c = asyncio.run_coroutine_threadsafe(nb.run(i, k), loop).result(max(1, int(timeout)))
+        except TimeoutError: return f'cell {cell_id} has not finished in {timeout}s; it is still running in the kernel'
+        except Exception as e: return f'could not run cell {cell_id}: {errstr(e)}'
+        return self._cell_report(path, c, before)
+    def _var_snapshot(self):
+        "Name to value for every visible variable, or None when no inspector will say."
+        try: return {r['name']: r['value'] for r in self._var_rows()}
+        except Exception: return None
+    def _cell_report(self, path, c, before):
+        "What one run did: its outputs, whether it raised, its execution count, and what moved."
+        head = f'ran cell {c.id} of {path}  [In[{c.execution_count}]'
+        if c.execution_ms is not None: head += f', {c.execution_ms:.0f} ms'
+        after = self._var_snapshot()
+        changed = ([] if before is None or after is None
+                   else sorted(n for n, v in after.items() if before.get(n) != v))
+        body = [head + ']', c.text.rstrip() or '(no output)']
+        if c.has_error: body.append('the cell raised: the traceback above is from this run')
+        body.append('bindings changed: ' + (', '.join(changed) if changed else 'none'))
+        return '\n'.join(body)
     def _kernel(self):
         k = self.ws.runtime_peek() or self._start_kernel()
         if k is None or not getattr(k, 'base', None) or not hasattr(k, 'api_sync'):
@@ -431,45 +489,71 @@ class WorkspaceHost(Host):
         Tools run on the turn's own thread, so this hands the work to the loop that owns the
         kernels and waits. Called on that loop there is nothing to wait for, and the peek stands.
         """
+        loop = self._loop()
+        if loop is None: return None
+        try: return asyncio.run_coroutine_threadsafe(self.ws.runtime(), loop).result(120)
+        except Exception: return None
+    def _loop(self):
+        "The loop that owns the kernels, or None when this call is already on it or it is gone."
         loop = getattr(self.ws, '_loop', None)
         if loop is None or not loop.is_running(): return None
         try:
             if asyncio.get_running_loop() is loop: return None
         except RuntimeError: pass
-        try: return asyncio.run_coroutine_threadsafe(self.ws.runtime(), loop).result(120)
-        except Exception: return None
+        return loop
     @staticmethod
-    def _exec_text(r):
+    def _partial(out, error, bound=()):
+        """A failed run said in full. An exception on its own read as though nothing had happened,
+
+        and the expensive half of the call had already happened: printed output, and names bound
+        before the line that raised. A live kernel cannot roll those back, so it reports them.
+        """
+        return ((f'{out}\n' if out else '') + error +
+                '\n[partial run: everything before the error already happened' +
+                (f'; bound {", ".join(bound)}' if bound else '') + ']')
+    def _exec_text(self, r, bound=()):
         if not r: return 'kernel inspector did not answer'
-        if r.get('error'): return r['error']
         out = r.get('stdout') or ''
+        if r.get('error'): return self._partial(out, r['error'], bound)
         result = r.get('result')
         if isinstance(result, dict): result = result.get('value') or result.get('text') or str(result)
         if result is not None: out += ('\n' if out else '') + str(result)
         return out or '(ok)'
-    @staticmethod
-    def _session_text(r):
+    def _session_text(self, r, bound=()):
         "One `AgentSession` run as the text the model sees."
-        if r.error: return r.error
         out = r.stdout or ''
+        if r.error: return self._partial(out, r.error, bound)
         if r.result is not None: out += ('\n' if out else '') + r.result.value
         return out or '(ok)'
+    def _bound_after(self, code):
+        "Of the names the call meant to bind, the ones that exist now. The kernel keeps no before."
+        names = _assigned(code)
+        if not names: return ()
+        try: have = {r['name'] for r in self._var_rows()}
+        except Exception: return ()
+        return [n for n in names if n in have]
+    def _run(self, code, scope):
+        "One execution, reported with whatever it managed before an exception ended it."
+        if self.session is not None:
+            before = set(self.session.layer)
+            r = self.session.run(code, scope=scope)
+            return self._session_text(r, sorted(set(self.session.layer) - before))
+        r = self._kernel().api_sync('/agent/api/exec', {'code': code, 'scope': scope})
+        failed_overlay = scope == 'overlay' and (r or {}).get('error')
+        return self._exec_text(r, self._bound_after(code) if failed_overlay else ())
     def run_python(self, code):
         """Run in the agent's own layer over the user's namespace, never in the namespace itself.
 
         The overlay reads the user's variables, keeps what the agent binds across calls, and blocks
         a mutation of anything the user owns.
         """
-        scope = 'overlay' if 'overlay' in self.scopes else 'isolated'
-        if self.session is not None: return self._session_text(self.session.run(code, scope=scope))
-        return self._exec_text(self._kernel().api_sync('/agent/api/exec', {'code': code, 'scope': scope}))
+        return self._run(code, 'overlay' if 'overlay' in self.scopes else 'isolated')
     def inspect_python(self, code, scope='isolated'):
         "Read-only execution in one of `AgentSession`'s scopes; neither can change what the user made."
         if scope not in self.scopes:
             return (f'scope {scope!r} is not available here (allowed: {", ".join(self.scopes)}); '
                 'the workspace was opened with a narrower agent scope')
-        if self.session is not None: return self._session_text(self.session.run(code, scope=scope))
-        return self._exec_text(self._kernel().api_sync('/agent/api/exec', {'code': code, 'scope': scope}))
+        return self._run(code, scope)
     @property
     def scopes(self):
         s = getattr(self.ws, 'agent_scope', 'overlay')
@@ -479,14 +563,26 @@ class WorkspaceHost(Host):
     def _rows(self, path):
         r = self._kernel().api_sync(path, {'profile': 'minimal', 'sort': 'name'})
         return None if r is None else [v for g in r.get('groups', []) for v in g.get('nodes', [])]
-    def list_vars(self):
+    def _var_rows(self):
         "The merged view `DhrishtiHost` reads: what the user has, plus what this agent has bound."
         if self.session is not None:
-            return '\n'.join(f'{v.name}: {v.type} = {v.value}' for _, vs in self.session.view('minimal') for v in vs)
+            return [{'name': v.name, 'type': v.type, 'value': v.value}
+                    for _, vs in self.session.view('minimal') for v in vs]
         # an `agent='off'` inspector refuses the merged route, and owner-only beats nothing at all
         rows = self._rows('/agent/api/rows')
         if rows is None: rows = self._rows('/api/rows') or []
-        return '\n'.join(f"{v.get('name')}: {v.get('type')} = {v.get('value')}" for v in rows)
+        return [{'name': v.get('name'), 'type': v.get('type'), 'value': v.get('value')} for v in rows]
+    def list_vars(self): return '\n'.join(f"{r['name']}: {r['type']} = {r['value']}" for r in self._var_rows())
+    def inspect_var(self, name, attrs=()):
+        "One name, without `globals()`: whether it is bound, what it is, and the attributes asked for."
+        name = str(name or '').strip()
+        if not name.isidentifier(): return f'{name!r} is not a variable name'
+        row = first(r for r in self._var_rows() if r['name'] == name)
+        if row is None: return f"{name} is not bound, in the user's namespace or your own layer"
+        out = [f"{name}: {row['type']} = {row['value']}"]
+        for a in [str(a).strip() for a in list(attrs)[:MAX_ATTRS]]:
+            if a: out.append(f'{name}.{a} = ' + self.inspect_python(f'{name}.{a}').strip())
+        return '\n'.join(out)
     def owner_names(self):
         "Top-level names in the user's own namespace, which nothing the agent does may replace."
         if self.session is not None: return set(self.session.owner())
@@ -552,7 +648,7 @@ class WorkspaceHost(Host):
             except Exception: pass
 
 def _session_tools(host):
-    "The vars pane's promote gesture as a tool: the only route from the agent's layer to the user's."
+    "The promote gesture, one variable read, and the Run button, as the three tools Leela adds."
     def promote_var(name: str) -> str:
         """Give the user a variable you bound with `run_python`, so their next cell can use it.
 
@@ -562,7 +658,31 @@ def _session_tools(host):
         """
         try: return host.promote_var(name)
         except Exception as e: return f'promote_var failed: {errstr(e)}'
-    return [promote_var]
+    def inspect_var(name: str, attrs: str = '') -> str:
+        """Ask about one live variable by name: whether it is bound, what it is, and any attributes.
+
+        `attrs` is a comma separated list, e.g. `shape, dtypes`. Use this rather than an
+        `inspect_python` expression over `globals()` or `vars()`, which the sandbox refuses:
+        this reads the same merged view `list_vars` does, and needs no approval. `list_vars`
+        for the whole namespace, this for one name.
+        """
+        try: return clip(host.inspect_var(name, [a for a in str(attrs).replace(',', ' ').split() if a]))
+        except Exception as e: return f'inspect_var failed: {errstr(e)}'
+    def run_cell(path: str, cell_id: str, timeout: int = 120) -> str:
+        """Run one notebook cell in the user's live kernel, exactly as pressing Run on it would.
+
+        This is the tool for "does this cell work now". The cell's source runs as it is on disk,
+        in the kernel that notebook's tab uses, against the user's own namespace and execution
+        counter. `run_python` is not a substitute: that runs in your own layer over the namespace,
+        so what it does to imports and to name lookup is not what the user's cell will do.
+
+        You get the outputs, the exception if it raised, the execution count, how long it took,
+        and which variables changed. The notebook file is not written; saving stays the user's.
+        Take `cell_id` from `notebook_cells`, and fix a cell with `edit_cell` before running it.
+        """
+        try: return clip(host.nb_run_cell(path, cell_id, timeout))
+        except Exception as e: return f'run_cell failed: {errstr(e)}'
+    return [promote_var, inspect_var, run_cell]
 
 def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
     "Leela's blended search as one tool: every backend at once, each hit stamped with what agreed."
@@ -856,6 +976,10 @@ class Assistant(Agent):
         return (bool(spec and spec.local), spec.name if spec else 'an unresolved model')
     def system_prompt(self):
         base = super().system_prompt() + api_context(self.host)
+        if (writable := self.host.writable_roots) != self.host.roots:
+            base += ('\n\n## Writable folders\n\nEvery folder above can be read. Edits and new files may only '
+                'land in:\n' + ''.join(f'\n- {r}' for r in writable) + '\n\nA write anywhere else is refused '
+                'until the user turns on workspace repository writes in agent settings.')
         layers = getattr(self.ws, 'agent_state_layers', {})
         enabled = [(name, row.get('text', '')) for name, row in layers.items()
             if row.get('enabled', True) and str(row.get('text', '')).strip()]
