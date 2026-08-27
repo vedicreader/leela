@@ -425,9 +425,15 @@ function resolveMarkdownImages(el) {
   });
 }
 
+/* pywebview injects its bridge asynchronously, so `window.pywebview` is undefined for the first
+   moment of a packaged app's life. `lee.inShell` is what `shellReady` settled on; until it does,
+   a `window.open` that comes back null is itself the answer, because WKWebView refuses a scripted
+   one. Getting this wrong navigated the whole app window to the site, with no way back. */
+const inDesktopShell = () => Boolean(window.pywebview || lee.inShell);
+
 async function openExternal(url) {
   if (!url) return status('choose a source first', 'err');
-  if (!window.pywebview && window.open(url, '_blank', 'noopener,noreferrer')) return;
+  if (!inDesktopShell() && window.open(url, '_blank', 'noopener,noreferrer')) return;
   try { await post('/browser/external', {url}); }
   catch (e) { status(`could not open ${url}: ${e.message || e}`, 'err'); }
 }
@@ -439,9 +445,9 @@ function routeMarkdownLinks(el) {
     a.dataset.leeLink = '1'; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.addEventListener('click', e => {
       if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // the browser's to handle
-      if (!window.pywebview) return;
       e.preventDefault(); e.stopPropagation();
-      openExternal(href);
+      if (inDesktopShell()) return openExternal(href);
+      if (!window.open(href, '_blank', 'noopener,noreferrer')) openExternal(href);
     });
   });
 }

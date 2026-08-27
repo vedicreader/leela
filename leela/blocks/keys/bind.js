@@ -144,6 +144,13 @@ function remountEditors() {
  * press asks permission. */
 async function captureScreen() {
   try {
+    // WKWebView offers no `navigator.mediaDevices` at all, so the window Leela ships could never
+    // take a picture this way. It is also the one case where the server is on the same machine as
+    // the display, so it can take it instead.
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      const r = await post('/screen/native', {});
+      return status(`screen captured (${Math.round(r.bytes / 1024)}kb) — it rides along with your next question`, 'ok');
+    }
     if (!lee.vtrack || lee.vtrack.readyState === 'ended') {
       const s = await navigator.mediaDevices.getDisplayMedia({video: true});
       lee.vtrack = s.getVideoTracks()[0];

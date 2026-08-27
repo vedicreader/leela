@@ -125,7 +125,7 @@ async function branchPr(d) {
               : c.pending ? `${c.pending} check${c.pending === 1 ? '' : 's'} running` : 'checks green';
   return {id: 'pr', label: `#${pr.number} ${pr.title}`.slice(0, 60),
     detail: `${pr.base}${pr.behind_base ? ` · ${pr.behind_base} behind base` : ''} · ${health}`,
-    run: () => window.open(pr.url, '_blank')};
+    run: () => openExternal(pr.url)};
 }
 
 function branchTopActions(d) {

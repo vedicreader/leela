@@ -1,6 +1,7 @@
 "Binding a `Workspace` to the agent harness."
 
 from __future__ import annotations
+from ..runtime.kernels import python_for, venv_env
 import asyncio, functools, inspect, json, os, re, threading
 from fnmatch import fnmatch
 from fastcore.all import L, Path, delegates, first
@@ -523,7 +524,10 @@ class WorkspaceHost(Host):
         d = self.check(cwd) if cwd else self.check(self.project)
         if not d.is_dir(): d = d.parent
         new_session = os.name == 'posix'
+        # The bundle's interpreter redirection is taken off: a shell command that runs python
+        # would otherwise import the app's own standard library.
         p = subprocess.Popen(str(command), shell=True, cwd=str(d), text=True, errors='replace',
+                             env=venv_env(python_for(d, session=None)),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             start_new_session=new_session)
         try:

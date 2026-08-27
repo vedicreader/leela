@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import json, sys
 
 from fastcore.all import Path, first
 from ramabana.git import (GitError, GitRepo as _GitRepo, _invalidate, _plural, _unborn, clone,
@@ -14,13 +14,19 @@ from ..nb.nb import merge_rows as _merge_rows, merged_cells as _merged_cells
 __all__ = ['GitRepo', 'GitError', 'repo_root', 'clone', 'clone_target', 'wire_env']
 
 def _project_env(cwd):
-    "The virtualenv a checkout's own hooks and filters run under."
+    """The virtualenv a checkout's own hooks and filters run under.
+
+    `None` handed git the app's own environment, so in the bundle a Python `filter.clean` -- nbdev's
+    cleaner, pre-commit -- ran against the bundle's standard library and died on every staging.
+    """
     from ..runtime.kernels import project_python, venv_env
     p = Path(cwd).expanduser().resolve()
     for d in (p, *p.parents):
         if (py := project_python([d])): return venv_env(py)
         if (d/'.git').exists(): break
-    return None
+    # No venv found: git inherits what Leela has, except in the bundle, where what Leela has points
+    # at the bundle's own standard library and a Python `filter.clean` dies on it.
+    return venv_env(None) if getattr(sys, 'frozen', False) else None
 
 def wire_env():
     "Git runs under the checkout's own virtualenv. `Workspace` calls this."

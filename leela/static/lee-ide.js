@@ -2569,9 +2569,9 @@ function wireGitPanel(host, d) {
   host.querySelector('#gitcompareright')?.addEventListener('change', rememberCompare);
   host.querySelector('#gitcompareswap')?.addEventListener('click', () => { const left = $('#gitcompareleft'), right = $('#gitcompareright'), value = left.value; left.value = right.value; right.value = value; rememberCompare(); });
   host.querySelector('#gitcomparego')?.addEventListener('click', () => { rememberCompare(); showGitCompare(gitUI.compareFrom, gitUI.compareTo); });
-  host.querySelector('[data-hosted-pr]')?.addEventListener('click', e => window.open(e.currentTarget.dataset.url, '_blank', 'noopener,noreferrer'));
+  host.querySelector('[data-hosted-pr]')?.addEventListener('click', e => openExternal(e.currentTarget.dataset.url));
   host.querySelector('#gitaddremote')?.addEventListener('click', async () => { const name = await inputDialog('add remote', 'Remote name', '', 'origin'); if (!name) return; const url = await inputDialog('add remote', 'Fetch URL', '', 'https://github.com/owner/repository.git'); if (url) act('add_remote', {name, url}); });
-  host.querySelectorAll('[data-remote]').forEach(row => { const remote = row.dataset.remote; row.querySelector('[data-open-remote]')?.addEventListener('click', b => window.open(b.currentTarget.dataset.url, '_blank', 'noopener,noreferrer')); row.querySelector('[data-fetch-remote]').onclick = () => act('fetch', {remote}); row.querySelector('[data-edit-remote]').onclick = async () => { const url = await inputDialog('edit remote', `${remote} fetch URL`, row.querySelector('code').textContent, 'https://github.com/owner/repository.git'); if (url) act('set_remote', {name: remote, url}); }; row.querySelector('[data-remove-remote]').onclick = async () => { if (await confirmDialog('remove remote', `Remove ${remote}? Local commits and branches remain.`, 'remove')) act('remove_remote', {name: remote}); }; });
+  host.querySelectorAll('[data-remote]').forEach(row => { const remote = row.dataset.remote; row.querySelector('[data-open-remote]')?.addEventListener('click', b => openExternal(b.currentTarget.dataset.url)); row.querySelector('[data-fetch-remote]').onclick = () => act('fetch', {remote}); row.querySelector('[data-edit-remote]').onclick = async () => { const url = await inputDialog('edit remote', `${remote} fetch URL`, row.querySelector('code').textContent, 'https://github.com/owner/repository.git'); if (url) act('set_remote', {name: remote, url}); }; row.querySelector('[data-remove-remote]').onclick = async () => { if (await confirmDialog('remove remote', `Remove ${remote}? Local commits and branches remain.`, 'remove')) act('remove_remote', {name: remote}); }; });
   host.querySelector('#gitaddworktree')?.addEventListener('click', async () => { const path = await inputDialog('add worktree', 'Directory path', '', '../project-feature'); if (!path) return; const branch = await inputDialog('add worktree', 'Existing branch, or a new branch name', '', 'feature/name'); if (branch) act('add_worktree', {path, branch, create: !(d.branches || []).some(b => !b.remote && b.name === branch)}); });
 }
 async function showStagedReview(d) {
@@ -6090,7 +6090,7 @@ async function branchPr(d) {
               : c.pending ? `${c.pending} check${c.pending === 1 ? '' : 's'} running` : 'checks green';
   return {id: 'pr', label: `#${pr.number} ${pr.title}`.slice(0, 60),
     detail: `${pr.base}${pr.behind_base ? ` · ${pr.behind_base} behind base` : ''} · ${health}`,
-    run: () => window.open(pr.url, '_blank')};
+    run: () => openExternal(pr.url)};
 }
 
 function branchTopActions(d) {
@@ -6649,9 +6649,11 @@ const shortHome = p => lee.home && p.startsWith(lee.home) ? '~' + p.slice(lee.ho
 async function shellReady(waitMs = 1500) {
   for (const end = Date.now() + waitMs; !inShell() && Date.now() < end;)
     await new Promise(r => setTimeout(r, 50));
-  return inShell();
+  return (lee.inShell = inShell());
 }
 window.leeShellReady = shellReady;
+lee.inShell = inShell();
+shellReady().catch(() => {});   // so `inDesktopShell` has an answer before anything asks
 
 // The platform folder chooser, or null if there is none or it was cancelled.
 async function nativeFolder() {
@@ -6701,7 +6703,9 @@ async function openFolderWindow(path) {
   const r = await fetch('/hub/open?path=' + encodeURIComponent(path), {method: 'POST'});
   const d = await r.json().catch(() => ({ok: false, error: r.statusText}));
   if (!d.ok) return leeFail('project', `opening ${name}`, new Error(d.error));
-  window.open(d.url, '_blank');
+  // In the app window a scripted `window.open` opens nothing and returns null; `openExternal`
+  // knows that and asks the server to open a real browser instead.
+  openExternal(d.url);
 }
 window.leeOpenFolderWindow = openFolderWindow;
 

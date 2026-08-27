@@ -406,3 +406,29 @@ def test_the_standard_rows_are_left_to_appkit_rather_than_reimplemented():
 def test_the_menu_bar_is_a_no_op_off_macos(monkeypatch):
     monkeypatch.setattr(desktop.sys, 'platform', 'linux')
     assert desktop.menus() == []
+
+def test_nothing_opens_a_window_the_app_cannot_open():
+    """A scripted `window.open` is `WKNavigationTypeOther`, and pywebview's delegate only acts on a
+    link activation, so in the packaged app it opens nothing and returns null. Four git and workspace
+    buttons took the bare form and failed silently. `openExternal` is the one place that checks the
+    return value and asks the server for a real browser instead."""
+    js = read('leela/static/lee-core.js') + read('leela/static/lee-ide.js') + read('leela/static/lee-agent.js')
+    calls = [l.strip() for l in js.splitlines() if 'window.open(' in l]
+    assert calls, 'the guarded form went missing rather than the guard'
+    for line in calls:
+        assert 'inDesktopShell()' in line or 'openExternal(' in line, \
+            f'a window this app cannot open: {line[:120]}'
+
+def test_an_external_link_never_navigates_the_app_window_away():
+    """pywebview injects its bridge asynchronously, so `window.pywebview` is undefined for the first
+    moment of the packaged app's life. A markdown link clicked in that window took the browser
+    branch, which in WKWebView means the app's own window navigates to the site with no back."""
+    js = read('leela/static/lee-core.js')
+    assert 'const inDesktopShell = () => Boolean(window.pywebview || lee.inShell)' in js
+    handler = js.split('function routeMarkdownLinks')[1].split('\n}')[0]
+    assert 'if (!window.pywebview) return;' not in handler, 'the synchronous look is the bug'
+    assert handler.index('e.preventDefault()') < handler.index('inDesktopShell()'), \
+        'the default is stopped before the question is asked, so an unsettled bridge cannot navigate'
+    assert 'openExternal(href)' in handler, 'a blocked or refused window still opens, via the server'
+    assert 'lee.inShell = inShell()' in read('leela/blocks/workspace/projects.js'), \
+        'nothing settles the flag `inDesktopShell` reads'

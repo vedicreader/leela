@@ -6,6 +6,8 @@ import json, subprocess, sys
 from pathlib import Path
 
 from ...core.web import fail, off_loop
+from ..runtime.support import clean_env
+from ..runtime.kernels import venv_env, _runtime_python
 
 __all__ = ['CAPS', 'connect', 'project_package_rows']
 
@@ -32,7 +34,7 @@ def _installed_versions(names, python):
     if not names: return {}
     try:
         proc = subprocess.run([str(python), '-c', _VERSIONS_SCRIPT, json.dumps(names)],
-                              capture_output=True, text=True, timeout=8, check=True)
+                              capture_output=True, text=True, timeout=8, check=True, env=clean_env())
         return json.loads(proc.stdout)
     except Exception: return {n: None for n in names}
 
@@ -105,13 +107,15 @@ def connect(app, ctx):
                 from ..runtime.kernels import python_for
                 # ruff finds `pyproject.toml` from `cwd`, so it must be the folder the *file* is in.
                 cwd = _format_cwd(ctx, d.get('path'))
-                # The formatter comes from that folder's own environment.
-                python = python_for(cwd, session=ctx) or sys.executable
+                # The formatter comes from that folder's own environment. `_runtime_python` rather
+                # than `sys.executable`: in the bundle that name is the app itself.
+                python = python_for(cwd, session=ctx) or _runtime_python()
                 def format_python():
                     "ruff first, then black, whichever the project has."
                     failures = []
                     for cmd in ([str(python), '-m', 'ruff', 'format', '-'], [str(python), '-m', 'black', '-q', '-']):
-                        result = subprocess.run(cmd, input=text, text=True, capture_output=True, cwd=cwd, timeout=30)
+                        result = subprocess.run(cmd, input=text, text=True, capture_output=True, cwd=cwd,
+                                                timeout=30, env=venv_env(python))
                         if result.returncode == 0: return result.stdout
                         failures.append(result.stderr.strip())
                     raise RuntimeError('install ruff or black in the project environment · '

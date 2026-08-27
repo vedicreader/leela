@@ -647,3 +647,41 @@ def test_an_installed_backend_survives_a_restart():
     body = cli[cli.index('def main('):]
     assert 'use_extras()' in body, 'the process puts the extras directory on its own path at startup'
     assert body.index('use_extras()') < body.index('serve_ide'), 'and before anything imports a backend'
+
+#: What the bundle has to be able to import for a feature a person uses on their first day. Every one
+#: of these was shipped and unusable at some point because the scanner cannot see how it is reached:
+#: `cmath` through a Cython module, `ipykernel_launcher` through a `-m` string, `chardet`'s
+#: accelerator as a top-level extension, `nbformat`'s schema as a data file beside `__file__`.
+BUNDLED_IMPORTS = ('cmath', 'ipykernel_launcher', 'dhrishti', 'chardet', 'nbformat', 'vishalakshi', 'litert_lm')
+
+@pytest.mark.slow
+def test_the_bundle_can_import_what_its_features_need():
+    """Every other check here asserts a name is on a list. This one asks the bundle's own interpreter,
+    which is the only thing that knows whether a module is reachable once it is inside a zip."""
+    app = ROOT/'dist'/'Leela.app'
+    if not app.is_dir(): pytest.skip('dist/Leela.app is not built')
+    python = app/'Contents'/'MacOS'/'python'
+    if not python.exists(): pytest.skip('the bundle ships no interpreter helper')
+    src = 'import ' + ', '.join(BUNDLED_IMPORTS)
+    env = {'PYTHONHOME': str(app/'Contents'/'Resources'),
+           'PYTHONPATH': ':'.join([str(app/'Contents'/'Resources'/'lib'/'python313.zip'),
+                                   str(app/'Contents'/'Resources'/'lib'/'python3.13'),
+                                   str(app/'Contents'/'Resources'/'lib'/'python3.13'/'lib-dynload')])}
+    r = subprocess.run([str(python), '-c', src], capture_output=True, text=True, timeout=180, env=env)
+    assert r.returncode == 0, f'the bundle cannot import what it ships:\n{r.stderr.strip()[-1500:]}'
+
+
+@pytest.mark.slow
+def test_the_bundle_ships_no_binary_nothing_can_reach():
+    """`claude_agent_sdk` looks for its bundled CLI beside its own `__file__`, which is inside
+    `python313.zip`, so `.exists()` is false however the app is started. It was 93 MB of a 205 MB
+    zip, and Leela reaches the real `claude` on PATH regardless."""
+    import zipfile
+    app = ROOT/'dist'/'Leela.app'
+    if not app.is_dir(): pytest.skip('dist/Leela.app is not built')
+    z = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3*.zip')))
+    if not z: pytest.skip('the bundle keeps no zip')
+    with zipfile.ZipFile(z) as f: names = f.namelist()
+    assert any(n.startswith('claude_agent_sdk/') for n in names), 'the SDK itself is still wanted'
+    assert not [n for n in names if n.startswith('claude_agent_sdk/_bundled/')], \
+        'the post-build step stopped stripping the unreachable binary'

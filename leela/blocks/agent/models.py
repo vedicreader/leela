@@ -3,6 +3,7 @@ import json, os, re, subprocess, sys, threading, time
 from fastcore.all import Path
 from fastcore.net import urljson
 from ... import extras_site, leela_cfg, use_extras
+from ..runtime.support import clean_env
 
 __all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks',
            'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements', 'install_runtime', 'probed', 'catalog', 'forget_probes', 'warm_probes',
@@ -197,13 +198,16 @@ def _installer(target):
     if not getattr(sys, 'frozen', False) and (uv := shutil.which('uv')):
         return [uv, 'pip', 'install', '--python', sys.executable, *into]
     if importlib.util.find_spec('pip') is not None:
-        return [sys.executable, '-m', 'pip', 'install', '--upgrade', *into]
+        # `_runtime_python`: in a bundle `sys.executable` is the app, and installing a backend would
+        # launch a second Leela rather than a pip.
+        from ..runtime.kernels import _runtime_python
+        return [_runtime_python(), '-m', 'pip', 'install', '--upgrade', *into]
     raise RuntimeError('neither uv nor pip is here, so nothing can be installed for you')
 
 def _run_install(runtime, cmd):
     "The subprocess, on its own thread. Output is kept whole: a resolver error is the useful part."
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, env=clean_env())
         ok, log = p.returncode == 0, (p.stdout or '') + (p.stderr or '')
     except Exception as e:
         from ... import errstr

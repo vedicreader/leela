@@ -29,6 +29,10 @@ PACKAGES = [
     'webview', 'clr_loader', 'pythonnet',
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
     'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'yaml',
+    # `readability` falls back to `chardet`, whose accelerator is a top-level extension the
+    # scanner never sees, and whose models are data files a zip import cannot read. Without it
+    # the agent's web tool, research and `to_md` all die in the bundle and nowhere else.
+    'chardet', 'nbformat', 'uvloop',
     # Named, not left to the scanner. Leela's server imports neither, and deliberately: the
     # comment at `blocks/runtime/kernels.py` says so. They are here for the kernel, which
     # imports dhrishti, which imports both at module level. Without them the variables panel
@@ -47,8 +51,29 @@ GRAFTED = ('apsw',)
 
 # `packaging` is included and not copied whole: the repository root holds a directory of that name,
 # and a bare name is a path to py2app before it is a module. See the macOS definition.
+def _mypyc_modules():
+    """Compiled accelerators that sit beside a package rather than inside it.
+
+    `chardet` is built with mypyc, so importing it imports a top-level extension whose name is a hash
+    of the build. Nothing references it by name, so no scanner finds it, and the package looks
+    complete without it: `readability`, the agent's web tool and research all die on the import.
+    The hash moves with the version, so it is read from the environment being frozen rather than
+    written down.
+    """
+    import sysconfig
+    site = Path(sysconfig.get_paths()['purelib'])
+    return sorted(f.name.split('.')[0] for f in site.glob('*__mypyc*.so')) + \
+           sorted(f.name.split('.')[0] for f in site.glob('*__mypyc*.pyd'))
+
 INCLUDES = ['leela.cli', 'leela.desktop', 'leela.app', 'packaging.requirements',
-            'webview.platforms.winforms', 'webview.platforms.edgechromium']
+            'webview.platforms.winforms', 'webview.platforms.edgechromium',
+            # Reached from inside a Cython module, so the scanner never sees them, and `pandas` is
+            # copied whole rather than scanned. Without `cmath` the variables panel is dead in the
+            # shipped app and nowhere else. `ipykernel_launcher` is named as a string in the kernel's
+            # argv, so nothing follows it.
+            'cmath', 'ipykernel_launcher']
+INCLUDES += _mypyc_modules()
+
 
 #: See the macOS definition. Kept identical there and here, which `test_packaging.py` asserts.
 HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'llama_cpp', 'cv2', 'transformers',

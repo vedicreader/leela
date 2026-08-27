@@ -1,5 +1,6 @@
 "A small Debug Adapter Protocol client for direct Python/debugpy sessions."
 from __future__ import annotations
+from ..runtime.support import clean_env
 
 import json, queue, subprocess, threading, time
 from pathlib import Path
@@ -12,7 +13,7 @@ DAP_COMMANDS = {'continue': 'continue', 'next': 'next', 'stepIn': 'stepIn',
 
 def debugpy_available(python):
     try:
-        return subprocess.run([str(python), '-c', 'import debugpy'], capture_output=True,
+        return subprocess.run([str(python), '-c', 'import debugpy'], capture_output=True, env=clean_env(),
                               timeout=5).returncode == 0
     except Exception: return False
 
@@ -37,7 +38,7 @@ class DebugSession:
     def start_adapter(self):
         if not debugpy_available(self.python):
             raise RuntimeError(f'debugpy is not installed in {self.python}')
-        self.process = subprocess.Popen([self.python, '-m', 'debugpy.adapter'], cwd=self.cwd,
+        self.process = subprocess.Popen([self.python, '-m', 'debugpy.adapter'], cwd=self.cwd, env=clean_env(),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
         threading.Thread(target=self._read, daemon=True, name='leela-debugpy-dap').start()
         threading.Thread(target=self._stderr, daemon=True, name='leela-debugpy-stderr').start()

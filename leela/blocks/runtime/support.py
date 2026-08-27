@@ -5,7 +5,7 @@ from __future__ import annotations
 import os, shutil, subprocess, sys, threading, time
 from pathlib import Path
 
-__all__ = ['clean_env', 'support_paths', 'kernel_support', 'install_kernel_support', 'LEELA_PY',
+__all__ = ['clean_env', 'work_dir', 'support_paths', 'kernel_support', 'install_kernel_support', 'LEELA_PY',
            'INSPECTOR', 'INSPECTOR_TTL', 'installable', 'inspector_support', 'install_inspector_support']
 
 #: Leela's own minor version. A kernel may borrow Leela's `sys.path` only when it matches.
@@ -24,13 +24,40 @@ INSPECTOR_TTL = 90
 _INSPECT = {}
 _locks, _locks_lock = {}, threading.Lock()
 
+#: What py2app sets so its own helper starts, and what makes a child import the bundle's standard
+#: library under somebody else's interpreter.
+BUNDLE_ONLY = ('PYTHONHOME', 'PYTHONPATH', 'PYTHONEXECUTABLE', '__PYVENV_LAUNCHER__', 'RESOURCEPATH')
+
+def strip_bundle(env):
+    """`env` without py2app's interpreter redirection state, unchanged where there is none.
+
+    Outside a bundle this returns what it was given, untouched: a caller that claimed nothing about
+    an environment still claims nothing, which is what `venv_env(None, env)` and git's `env_for` both
+    promise.
+    """
+    if not getattr(sys, 'frozen', False): return env
+    for name in BUNDLE_ONLY: env.pop(name, None)
+    env['PYTHONUTF8'] = '1'
+    return env
+
 def clean_env():
     "Environment for a child Python, without py2app's interpreter redirection state."
     env = os.environ.copy()
-    for name in ('PYTHONHOME', 'PYTHONPATH', 'PYTHONEXECUTABLE', '__PYVENV_LAUNCHER__', 'RESOURCEPATH'):
-        env.pop(name, None)
+    for name in BUNDLE_ONLY: env.pop(name, None)
     env['PYTHONUTF8'] = '1'
     return env
+
+def work_dir(cwd=None):
+    """`cwd` as a string, or a directory a child can actually be started in.
+
+    A double-clicked app inherits `/` as its working directory, and one started from `open` inherits
+    the bundle, which is read-only and code-signed. Either way a kernel launched there cannot write
+    a file beside itself, and the error it gives says nothing about why.
+    """
+    if cwd: return str(cwd)
+    here = os.getcwd()
+    if not getattr(sys, 'frozen', False): return here
+    return here if here != os.sep and os.access(here, os.W_OK) else str(Path.home())
 
 def support_paths():
     "The `sys.path` entries `bootstrap_src` hands a kernel to borrow from."

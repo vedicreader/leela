@@ -11,7 +11,7 @@ from jupyter_client.kernelspec import KernelSpec
 
 from ...core.inspectors import reg_dir, active
 
-from .support import LEELA_PY, clean_env, support_paths
+from .support import LEELA_PY, clean_env, strip_bundle, support_paths, work_dir
 
 __all__ = ['ExecOutcome', 'Kernel', 'KernelStartError', 'GatewayKernel', 'GatewayService', 'KernelPool',
            'RuntimeBroker', 'KernelLimit', 'check_gateway_deps',
@@ -72,8 +72,7 @@ def venv_env(python, env=None):
     imports the bundle's standard library under another interpreter. `nbdev-test` run from the app
     died inside `linecache` doing exactly that, before it could report a single notebook.
     """
-    if env is None and getattr(sys, 'frozen', False): env = clean_env()
-    env = dict(os.environ if env is None else env)
+    env = strip_bundle(dict(os.environ if env is None else env))
     if not python: return env
     bindir = str(Path(python).parent)
     env['VIRTUAL_ENV'] = str(Path(bindir).parent)
@@ -373,7 +372,7 @@ class Kernel(_Inspector):
             manager_kw['transport_encryption'] = 'required'
         self.km = AsyncKernelManager(**manager_kw)
         self.km._kernel_spec = _spec(self.python, ifnone(self.name, 'python3'), self.kernel)
-        cwd = str(self.cwd) if self.cwd else os.getcwd()
+        cwd = work_dir(self.cwd)
         try:
             await self.km.start_kernel(cwd=cwd, env=_kernel_env(self.python))
             client_kw = {}
@@ -674,7 +673,7 @@ class GatewayKernel(_Inspector):
         self.kc = await JupyAsyncKernelClient.connect(self.gateway.url, token=self.gateway.token,
             timeout=timeout, argv=argv,
             env=_kernel_env(self.python),
-            cwd=str(self.cwd or os.getcwd()))
+            cwd=work_dir(self.cwd))
         self._alive = True
         if self.inspect: await self.bootstrap()
         return self

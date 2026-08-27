@@ -835,7 +835,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             key = hello.get('id') or kind
             from .blocks.runtime.kernels import venv_env
             py = _term_python(ws, cwd)
-            env = venv_env(py) if py else None
+            # Even with no project interpreter: `venv_env` is where the bundle's own redirection is
+            # taken off, and a terminal that keeps it runs `python` against the bundle's stdlib.
+            env = venv_env(py)
             prelude = path_prelude(py, shell.get('shell')) if argv is None else ''
             if argv is None:
                 argv = shell_argv(shell.get('shell'), shell.get('shellArgs'), shell.get('loginShell'))
@@ -1186,6 +1188,28 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             text = json.dumps(ws.runs.template(t.path if t else None), indent=2) + '\n'
         return {'path': str(p or ''), 'exists': bool(p and p.exists()), 'text': text,
                 'note': ws.runs.note}
+    @rt('/screen/native')
+    async def screen_native():
+        """Take the picture from here, for a window whose engine will not.
+
+        `getDisplayMedia` is how the browser does it, and WKWebView does not offer
+        `navigator.mediaDevices` at all, so in the packaged app the shortcut and the Tools entry
+        both failed with a TypeError. The server is on the same Mac as the display, which is the one
+        thing that is true of the desktop app and not of a browser tab.
+        """
+        import shutil, subprocess, tempfile
+        if sys.platform != 'darwin': return _fail('capturing from the server is a macOS path')
+        exe = shutil.which('screencapture')
+        if not exe: return _fail('screencapture is not on this machine')
+        with tempfile.NamedTemporaryFile(suffix='.png') as f:
+            # `-x` is no shutter sound; the picture is the whole display, which is what the browser
+            # path grabs once a person has picked one.
+            r = subprocess.run([exe, '-x', f.name], capture_output=True, text=True, timeout=30)
+            if r.returncode: return _fail((r.stderr or 'screencapture failed').strip())
+            png = Path(f.name).read_bytes()
+        if not png: return _fail('the capture came back empty')
+        ws.put_screen(png=png, note='a screenshot of this display')
+        return {'ok': True, 'bytes': len(png)}
     @rt('/screen')
     async def screen(req):
         "Park a screenshot to go with the next question."

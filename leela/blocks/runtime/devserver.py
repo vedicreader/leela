@@ -27,9 +27,14 @@ def _boot_src(paths=None):
     `-m` fails because the module is not on that interpreter's path yet. PYTHONPATH *prepends*, so
     leela's copy of fasthtml would shadow the project's own.
     """
+    from .support import LEELA_PY
     paths = leela_path() if paths is None else list(paths)
+    # Only where the minor version matches, the same condition `_probe` and the kernel bootstrap
+    # ask. Leela's path carries bytecode and extension modules built for Leela's interpreter, and a
+    # project on another 3.x that extended anyway died on the import rather than on the command.
     return ('import sys\n'
-            f'sys.path.extend([p for p in {paths!r} if p not in sys.path])\n'
+            f'if tuple(sys.version_info[:2]) == {LEELA_PY!r}:\n'
+            f' sys.path.extend([p for p in {paths!r} if p not in sys.path])\n'
             'from leela.blocks.runtime.devserver import _child\n'
             '_child(sys.argv[1:])\n')
 
@@ -104,7 +109,8 @@ class DevServer:
     def _cwd(self):
         if self.cwd: return str(self.cwd)
         a = self.argv[0]
-        return str(Path(a).parent) if a.endswith('.py') else os.getcwd()
+        from .support import work_dir
+        return str(Path(a).parent) if a.endswith('.py') else work_dir()
     async def start(self):
         "Spawn the app on a pty and begin draining it. Returns self once the inspector registers."
         if self.alive: return self

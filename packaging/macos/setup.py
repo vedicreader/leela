@@ -31,6 +31,10 @@ PACKAGES = [
     'webview',                      # the shell itself
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
     'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'yaml',
+    # `readability` falls back to `chardet`, whose accelerator is a top-level extension the
+    # scanner never sees, and whose models are data files a zip import cannot read. Without it
+    # the agent's web tool, research and `to_md` all die in the bundle and nowhere else.
+    'chardet', 'nbformat', 'uvloop',
     # Named, not left to the scanner. Leela's server imports neither, and deliberately: the
     # comment at `blocks/runtime/kernels.py` says so. They are here for the kernel, which
     # imports dhrishti, which imports both at module level. Without them the variables panel
@@ -66,12 +70,35 @@ HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'llama_cpp', 'cv2', 'transform
 #: `ImportError: No module named 'apsw'`, because the lookup wants an `__init__.py` to find.
 GRAFTED = ('apsw',)
 # Entry points, lazy optionals, and pywebview's Cocoa half, reached as `webview.platforms.<gui>`.
+def _mypyc_modules():
+    """Compiled accelerators that sit beside a package rather than inside it.
+
+    `chardet` is built with mypyc, so importing it imports a top-level extension whose name is a hash
+    of the build. Nothing references it by name, so no scanner finds it, and the package looks
+    complete without it: `readability`, the agent's web tool and research all die on the import.
+    The hash moves with the version, so it is read from the environment being frozen rather than
+    written down.
+    """
+    import sysconfig
+    site = Path(sysconfig.get_paths()['purelib'])
+    return sorted(f.name.split('.')[0] for f in site.glob('*__mypyc*.so')) + \
+           sorted(f.name.split('.')[0] for f in site.glob('*__mypyc*.pyd'))
+
 INCLUDES = [
     'leela.cli', 'leela.desktop', 'leela.app',
     'packaging.requirements',       # `leela.blocks.editor.app` imports it inside a function
     'webview.platforms.cocoa',
     'objc', 'Foundation', 'AppKit', 'WebKit', 'Quartz',
+    # Reached from inside a Cython module, so the scanner cannot see them, and `pandas` is copied
+    # whole rather than scanned. Without `cmath` the variables panel is dead in the shipped app and
+    # nowhere else: a build machine has a system Python to fall back on and a user does not.
+    'cmath', 'readline', 'syslog',
+    # Named as a string in the kernel's argv, so nothing follows it. A project with no environment of
+    # its own runs on the bundle's interpreter, which then has no kernel to launch.
+    'ipykernel_launcher',
 ]
+INCLUDES += _mypyc_modules()
+
 
 # Build tooling and other platforms' backends: ~100MB, and half a library a frozen app never wanted.
 EXCLUDES = [
@@ -156,6 +183,29 @@ def graft(app, name):
     shutil.copytree(src, dest, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     return dest.relative_to(app)
 
+#: Entries that can never be reached from inside `python313.zip`. `claude_agent_sdk` looks for its
+#: bundled CLI with `Path(__file__).parent.parent.parent/'_bundled'/name` and `.exists()`, which is
+#: always false for a path inside an archive. Leela reaches the real `claude` on PATH, which
+#: `use_login_path` repairs at startup, so the copy is 93MB of a 205MB zip that nothing can open.
+UNREACHABLE = ('claude_agent_sdk/_bundled/',)
+
+def strip_zip(app, prefixes=UNREACHABLE):
+    "Rewrite the bundle's zip without entries nothing can read. Returns the megabytes saved."
+    import zipfile
+    z = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3*.zip')))
+    if not z: return 0
+    keep, dropped = [], 0
+    with zipfile.ZipFile(z) as src:
+        for info in src.infolist():
+            if info.filename.startswith(prefixes): dropped += info.compress_size; continue
+            keep.append((info, src.read(info.filename)))
+    if not dropped: return 0
+    tmp = z.with_suffix('.zip.new')
+    with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as out:
+        for info, data in keep: out.writestr(info, data)
+    tmp.replace(z)
+    return round(dropped / 1e6)
+
 class Frozen(Distribution):
     """A distribution with no `install_requires`, which py2app 0.28.10 and up refuse outright.
 
@@ -198,4 +248,5 @@ if __name__ == '__main__':
     # the icon step never ran and a stale bundle sat there instead.
     if (built := ROOT/'dist'/'Leela.app').is_dir():
         for name in GRAFTED: print(f'  grafted {name} -> {graft(built, name)}')
+        if (saved := strip_zip(built)): print(f'  dropped {saved}MB of unreachable archive entries')
         if install_modern_icon(built): print(f'  Icon Composer icon installed in {built}')

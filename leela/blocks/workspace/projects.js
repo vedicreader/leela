@@ -14,9 +14,11 @@ const shortHome = p => lee.home && p.startsWith(lee.home) ? '~' + p.slice(lee.ho
 async function shellReady(waitMs = 1500) {
   for (const end = Date.now() + waitMs; !inShell() && Date.now() < end;)
     await new Promise(r => setTimeout(r, 50));
-  return inShell();
+  return (lee.inShell = inShell());
 }
 window.leeShellReady = shellReady;
+lee.inShell = inShell();
+shellReady().catch(() => {});   // so `inDesktopShell` has an answer before anything asks
 
 // The platform folder chooser, or null if there is none or it was cancelled.
 async function nativeFolder() {
@@ -66,7 +68,9 @@ async function openFolderWindow(path) {
   const r = await fetch('/hub/open?path=' + encodeURIComponent(path), {method: 'POST'});
   const d = await r.json().catch(() => ({ok: false, error: r.statusText}));
   if (!d.ok) return leeFail('project', `opening ${name}`, new Error(d.error));
-  window.open(d.url, '_blank');
+  // In the app window a scripted `window.open` opens nothing and returns null; `openExternal`
+  // knows that and asks the server to open a real browser instead.
+  openExternal(d.url);
 }
 window.leeOpenFolderWindow = openFolderWindow;
 

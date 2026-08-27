@@ -1,6 +1,7 @@
 "Predictable human search (rg unless a mode is picked), semantic agent search, and every hit."
 
 from __future__ import annotations
+from ..runtime.support import clean_env
 import ast, json, re, shutil, subprocess
 from dataclasses import dataclass, field
 from fastcore.all import L, Path, first, ifnone, store_attr
@@ -588,7 +589,7 @@ class Search:
         self._stdlib = L()
         if py := project_python(self.fs.roots):
             try:
-                r = subprocess.run([py, '-c', 'import sysconfig;print(sysconfig.get_paths()["stdlib"])'],
+                r = subprocess.run([py, '-c', 'import sysconfig;print(sysconfig.get_paths()["stdlib"])'], env=clean_env(),
                                    capture_output=True, text=True, timeout=10)
                 if (d := Path(r.stdout.strip() or '.')).is_dir(): self._stdlib = L(d)
             except Exception: pass

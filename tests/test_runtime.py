@@ -1510,6 +1510,29 @@ def test_a_kernel_in_an_emptied_venv_fails_with_the_venv_and_not_the_protocol(tm
     assert 'ipykernel_launcher' in str(e.value) and str(py) in str(e.value)
     assert 'uv sync' in str(e.value), 'and it names the way out'
 
+def test_every_way_a_child_gets_its_environment_leaves_the_bundle_behind(monkeypatch):
+    """The first fix only covered the default. A caller handing in its own dict skipped it, which is
+    what the dev server does, and a terminal in a folder with no venv skipped `venv_env` entirely.
+    One strip, applied to whoever hands the environment in."""
+    from leela.blocks.runtime.kernels import venv_env
+    from leela.blocks.runtime.support import BUNDLE_ONLY, strip_bundle
+    for k in BUNDLE_ONLY: monkeypatch.setenv(k, '/bundle')
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    for env in (venv_env('/tmp/p/.venv/bin/python'),          # the default
+                venv_env(None),                                # a folder with no project interpreter
+                venv_env('/tmp/p/.venv/bin/python', {**os.environ}),   # the dev server's explicit dict
+                strip_bundle({**os.environ})):
+        assert not [k for k in BUNDLE_ONLY if k in env], f'the bundle reached a child: {env}'
+
+def test_the_pipeline_routes_run_a_child_with_that_environment():
+    "`nbdev-prepare` and the ship steps take their own route, and it went around the pty's environment."
+    src = (ROOT/'leela'/'blocks'/'pipelines'/'app.py').read_text()
+    runs = [l for l in src.splitlines() if 'subprocess.run(' in l]
+    assert runs, 'the routes still spawn something'
+    for line in runs:
+        block = src[src.index(line):src.index(line) + 400]
+        assert 'env=' in block, f'a child with no environment of its own: {line.strip()}'
+
 def test_a_frozen_app_hands_a_child_its_own_interpreter_and_not_the_bundles(monkeypatch):
     """py2app points `PYTHONPATH`, `PYTHONHOME` and `__PYVENV_LAUNCHER__` at the bundle so its helper
     starts. A child that keeps them imports the bundle's standard library under another interpreter:
@@ -1529,3 +1552,33 @@ def test_a_frozen_app_hands_a_child_its_own_interpreter_and_not_the_bundles(monk
         assert name not in env, f'{name} reached the child'
     assert env['VIRTUAL_ENV'] == '/tmp/project/.venv', 'and the project venv is still what it runs in'
     assert env['PATH'].split(os.pathsep)[0] == '/tmp/project/.venv/bin'
+
+
+def test_a_frozen_app_starts_children_somewhere_they_can_write(monkeypatch, tmp_path):
+    """A double-clicked app inherits `/` as its working directory and one opened from the bundle
+    inherits the bundle, which is read-only. A kernel started there cannot write a file beside
+    itself, and says nothing that names the reason."""
+    from leela.blocks.runtime.support import work_dir
+    assert work_dir(tmp_path) == str(tmp_path), 'a chosen directory is never second-guessed'
+    monkeypatch.chdir(tmp_path)
+    assert work_dir() == os.getcwd(), 'unfrozen, the working directory is the answer'
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    assert work_dir() == os.getcwd(), 'a writable one is still the answer'
+    monkeypatch.chdir(os.sep)
+    assert work_dir() == str(Path.home()), 'from `/`, somewhere a child can write'
+    assert work_dir(tmp_path) == str(tmp_path)
+
+def test_a_devserver_child_borrows_leelas_path_only_on_leelas_python():
+    """`_boot_src` runs under the project's interpreter. Leela's `sys.path` carries bytecode and
+    extension modules built for Leela's own, so a project on another 3.x that extended anyway died
+    on the import instead of running the command."""
+    from leela.blocks.runtime.devserver import _boot_src
+    from leela.blocks.runtime.support import LEELA_PY
+    src = _boot_src(['/somewhere/leela'])
+    assert f'if tuple(sys.version_info[:2]) == {LEELA_PY!r}:' in src
+    guard, extend = src.index('sys.version_info'), src.index('sys.path.extend')
+    assert guard < extend, 'the version is asked before the path is taken'
+    ns = {}
+    exec(src.split('from leela')[0], ns)          # the guard alone, under this interpreter
+    assert '/somewhere/leela' in ns['sys'].path
+    ns['sys'].path.remove('/somewhere/leela')
