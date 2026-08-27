@@ -1019,8 +1019,11 @@ kbd {
 .lee-agent-step.kind-edit { border-left-color: var(--lee-orange); }
 .lee-agent-step.kind-run { border-left-color: var(--lee-green); }
 .lee-agent-step.kind-web { border-left-color: var(--lee-blue); }
+/* Five columns, and every child says which one it is in. A delegation adds an `open` button between
+   the copy and the meta, and with four positional columns that pushed the kind into the 12px chevron
+   column, where `delegate` wrapped one letter to a line and the chevron fell to a row of its own. */
 .lee-agent-step > summary {
-  display: grid; grid-template-columns: 14px minmax(0, 1fr) auto 12px; align-items: center;
+  display: grid; grid-template-columns: 14px minmax(0, 1fr) auto auto 12px; align-items: center;
   gap: 7px; min-height: 30px; padding: 3px 7px 3px 5px; border-radius: 3px;
   cursor: pointer; list-style: none; transition: background .16s cubic-bezier(.16,1,.3,1), color .16s;
 }
@@ -1045,7 +1048,10 @@ kbd {
 .lee-agent-step-copy { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lee-agent-step-copy { color: var(--lee-fg2); }
 .lee-agent-step.pending .lee-agent-step-copy { color: var(--lee-fg2); }
-.lee-agent-step-meta { color: var(--lee-fg4); font-size: 9.5px; font-variant-numeric: tabular-nums; }
+.lee-agent-step-copy { grid-column: 2; }
+.lee-agent-step-open { grid-column: 3; }
+.lee-agent-step-meta { grid-column: 4; white-space: nowrap; color: var(--lee-fg4); font-size: 9.5px; font-variant-numeric: tabular-nums; }
+.lee-agent-step-chevron { grid-column: 5; }
 .lee-agent-step-chevron {
   width: 6px; height: 6px; justify-self: center; border-right: 1px solid currentColor;
   border-bottom: 1px solid currentColor; transform: rotate(45deg) translate(-1px, 1px);

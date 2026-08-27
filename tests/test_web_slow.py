@@ -2346,3 +2346,28 @@ def test_a_conflicted_notebook_is_merged_cell_by_cell_in_the_browser(tmp_path):
         ['x = 2', 'y = 2', 'y = 3', 'z = 1', 'theirs_only = 1'], book['cells']
     assert book['metadata']['kernelspec']['name'] == 'python3', 'the notebook keeps its own metadata'
     assert not [c for c in info['changes'] if c['conflicted']], 'the merge has nothing left to settle'
+
+def test_a_delegation_row_keeps_its_kind_on_one_line(tmp_path):
+    """A step's summary is a grid, and a delegation has one child more than the others: the `open`
+    button. With four positional columns the kind landed in the twelve pixel chevron column, where
+    `delegate` wrapped one letter to a line and the chevron dropped to a row of its own."""
+    async def go(pg):
+        await pg.evaluate("() => { leePane('right', true); leeRight('agent'); }")
+        return await pg.evaluate("""() => {
+          const host = document.createElement('div'); host.style.width = '420px';
+          document.querySelector('#agentlog').appendChild(host);
+          const row = document.createElement('details'); host.appendChild(row);
+          renderAgentStep(row, {kind: 'delegate', id: 'x', action_id: 'x', done: false,
+            summary: 'Delegate: Review the exact open source notebook /Users/somebody/code/personal/orgs/rishi/nbs/00_core.ipynb and report'});
+          const meta = row.querySelector('.lee-agent-step-meta');
+          const chev = row.querySelector('.lee-agent-step-chevron');
+          const open = row.querySelector('.lee-agent-step-open');
+          const box = e => { const r = e.getBoundingClientRect(); return {w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top), right: Math.round(r.right)}; };
+          return {meta: box(meta), chev: box(chev), open: box(open), text: meta.textContent};
+        }""")
+    d = _run(go, roots=[tmp_path])
+    assert d['text'] == 'delegate'
+    assert d['meta']['h'] <= 20, f"the kind is stacked: {d['meta']}"
+    assert d['meta']['w'] >= 40, f"the kind has no room: {d['meta']}"
+    assert abs(d['meta']['top'] - d['chev']['top']) <= 4, 'the chevron is on the same row, not below'
+    assert d['open']['right'] <= d['meta']['right'], 'and the open button comes before the kind'
