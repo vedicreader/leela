@@ -9,6 +9,8 @@ from leela.blocks.agent.ai import GIT_WRITE_TOOLS, WRITE_TOOLS
 from ramabana.git import git_tools as _git_tools
 from leela.blocks.git.git import GitError, GitRepo, repo_root
 from leela.workspace import Workspace
+from leela.app import ide_app
+from starlette.testclient import TestClient
 import threading
 from ramabana.git import GitGateway, classify, gateway
 from leela.blocks.git.repos import MEMBERS, RepoSet, clone_url, discover
@@ -2247,3 +2249,78 @@ def test_a_batch_that_fails_part_way_leaves_nothing_staged(repo_git, monkeypatch
     assert path.read_text() == same, 'the write it did make is put back'
     assert unmerged_now(repo_git), 'and so are the conflict stages it staged over'
     assert journalled(ws, 'Git resolve safe conflicts') is None
+
+def _nb_text(cells):
+    "A notebook whose cells are `(id, source)` pairs, written the way nbformat writes them."
+    import json
+    return json.dumps({'cells': [{'id': i, 'cell_type': 'code', 'metadata': {}, 'execution_count': 1,
+                                  'outputs': [{'output_type': 'stream', 'name': 'stdout', 'text': ['old\n']}],
+                                  'source': [src]} for i, src in cells],
+                       'metadata': {'kernelspec': {'name': 'python3'}}, 'nbformat': 4, 'nbformat_minor': 5},
+                      indent=1) + '\n'
+
+def _conflicted_notebook(tmp_path):
+    "A repository mid-merge, with one notebook conflicted on one cell and added on another."
+    import subprocess
+    root = tmp_path/'repo'; root.mkdir()
+    run = lambda *a: subprocess.run(['git', *a], cwd=root, check=True, capture_output=True, text=True)
+    run('init', '-q', '-b', 'main')
+    run('config', 'user.email', 't@example.com'); run('config', 'user.name', 'T')
+    nb = root/'n.ipynb'
+    nb.write_text(_nb_text([('a', 'x = 1'), ('b', 'y = 1')]))
+    run('add', 'n.ipynb'); run('commit', '-qm', 'base')
+    run('checkout', '-qb', 'other')
+    nb.write_text(_nb_text([('a', 'x = 3'), ('b', 'y = 1'), ('c', 'theirs_only = 1')]))
+    run('commit', '-qam', 'theirs')
+    run('checkout', '-q', 'main')
+    nb.write_text(_nb_text([('a', 'x = 2'), ('b', 'y = 1')]))
+    run('commit', '-qam', 'ours')
+    merge = subprocess.run(['git', 'merge', 'other'], cwd=root, capture_output=True, text=True)
+    assert merge.returncode != 0, 'the merge is supposed to conflict'
+    return root, nb
+
+def test_a_conflicted_notebook_is_read_as_cells_not_as_marked_up_json(tmp_path):
+    """The worktree file carries conflict markers, so the text panes showed unreadable JSON. Git keeps
+    all three sides in the index as whole notebooks, and those are what a person can answer about."""
+    root, nb = _conflicted_notebook(tmp_path)
+    assert '<<<<<<<' in nb.read_text(), 'precondition: the file on disk is marked up'
+    ws = Workspace(roots=[root])
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/git/notebook/conflict', params={'path': str(nb)}).json()
+    assert d['notebook'] and d['owed'] == 2, d
+    states = {r['key']: r['state'] for r in d['rows']}
+    assert states == {'a': 'both', 'b': 'same', 'c': 'added'}, states
+    a = first(r for r in d['rows'] if r['key'] == 'a')
+    assert ''.join(a['ours']['source']) == 'x = 2' and ''.join(a['theirs']['source']) == 'x = 3'
+
+def test_choosing_per_cell_writes_a_notebook_and_settles_the_merge(tmp_path):
+    "What the buttons do: one side, the other, or both, and the file that comes out is a notebook."
+    import json
+    root, nb = _conflicted_notebook(tmp_path)
+    ws = Workspace(roots=[root])
+    with TestClient(ide_app(ws)) as client:
+        r = client.post('/git/notebook/conflict/resolve',
+                        json={'path': str(nb), 'choices': {'a': 'both', 'c': 'ours'}}).json()
+        assert r.get('ok') is not False, r
+        book = json.loads(nb.read_text())
+        sources = [''.join(c['source']) for c in book['cells']]
+        assert sources == ['x = 2', 'x = 3', 'y = 1'], sources
+        assert book['metadata']['kernelspec']['name'] == 'python3', 'the notebook keeps its own metadata'
+        decided = [c for c in book['cells'] if ''.join(c['source']).startswith('x =')]
+        assert all(c['outputs'] == [] and c['execution_count'] is None for c in decided), \
+            'a cell somebody decided about comes back without a run that belongs to another source'
+        assert len({c['id'] for c in book['cells']}) == 3, 'both sides of one cell are two cells with two ids'
+        status = client.get('/git/info').json()
+        assert not [c for c in status['changes'] if c['conflicted']], 'the merge has nothing left to settle'
+
+def test_a_cell_nobody_answered_for_is_refused_rather_than_guessed(tmp_path):
+    "Writing half a decision would settle a merge on a cell nobody looked at."
+    root, nb = _conflicted_notebook(tmp_path)
+    ws = Workspace(roots=[root])
+    with TestClient(ide_app(ws)) as client:
+        r = client.post('/git/notebook/conflict/resolve', json={'path': str(nb), 'choices': {'a': 'ours'}})
+        assert r.status_code >= 400 and 'needs an answer' in r.json()['error']
+        bad = client.post('/git/notebook/conflict/resolve',
+                          json={'path': str(nb), 'choices': {'a': 'mine'}})
+        assert bad.status_code >= 400 and 'unknown choice' in bad.json()['error']
+    assert '<<<<<<<' in nb.read_text(), 'and the conflict is still there to answer'

@@ -9,6 +9,7 @@ from ramabana.git import (GitError, GitRepo as _GitRepo, _invalidate, _plural, _
     clone_target, gateway, repo_root)
 
 from ..nb.nb import source_spans as _source_spans
+from ..nb.nb import merge_rows as _merge_rows, merged_cells as _merged_cells
 
 __all__ = ['GitRepo', 'GitError', 'repo_root', 'clone', 'clone_target', 'wire_env']
 
@@ -114,6 +115,53 @@ class GitRepo(_GitRepo):
             self.save(target, '\n'.join(lines + [rule]) + '\n')
             _invalidate(self.root)
         return {'path': str(target), 'rule': rule}
+    #: Where git keeps the three sides of a conflict while a merge is unfinished.
+    STAGES = {'base': 1, 'ours': 2, 'theirs': 3}
+
+    def _stage(self, path, stage):
+        "One side of a conflicted file, as text, or `''` where that side has no file."
+        from ramabana.git import _run
+        r = _run(self.root, 'show', f':{stage}:{path}', check=False)
+        return r.stdout if r.returncode == 0 else ''
+
+    def notebook_conflict(self, path):
+        """The two sides of a conflicted notebook, cell by cell.
+
+        The worktree file carries conflict markers, which make a notebook unreadable and say nothing
+        about cells. Git keeps all three sides in the index as whole notebooks, so those are what is
+        read: a person answers about cells, not about JSON.
+        """
+        sides, raw = {}, {}
+        for name, stage in self.STAGES.items():
+            text = self._stage(path, stage)
+            raw[name] = text
+            try: sides[name] = (json.loads(text) or {}).get('cells') or [] if text else []
+            except (TypeError, json.JSONDecodeError): sides[name] = None
+        unreadable = [n for n, v in sides.items() if v is None]
+        if unreadable:
+            return {'notebook': False, 'path': path, 'rows': [],
+                'error': f"the {', '.join(unreadable)} side is not a notebook Leela can read"}
+        if not any(raw.values()):
+            return {'notebook': False, 'path': path, 'rows': [],
+                'error': 'this file is not conflicted: git holds no merge stages for it'}
+        rows = _merge_rows(sides['base'], sides['ours'], sides['theirs'])
+        owed = [r for r in rows if r['state'] in ('both', 'added', 'deleted')]
+        return {'notebook': True, 'path': path, 'rows': rows, 'owed': len(owed),
+                'operation': self._operation()}
+
+    def resolve_notebook_conflict(self, path, choices):
+        "Write the notebook a set of per-cell choices makes, and stage it as resolved."
+        info = self.notebook_conflict(path)
+        if not info.get('notebook'): raise GitError(info.get('error') or 'not a conflicted notebook')
+        cells = _merged_cells(info['rows'], choices)
+        if cells is None: raise GitError('every conflicting cell needs an answer before this can be written')
+        # `ours` is the shape the resolved file keeps: its metadata, its nbformat, its own everything
+        # but the cells. Taking the other side's would rewrite a kernelspec nobody asked about.
+        book = json.loads(self._stage(path, self.STAGES['ours']) or self._stage(path, self.STAGES['theirs']))
+        book['cells'] = cells
+        out = self.resolve_conflict(path, 'resolved', json.dumps(book, indent=1, ensure_ascii=False) + '\n')
+        return {**out, 'cells': len(cells)}
+
     def blame_notebook(self, path):
         "`git blame` for a notebook, grouped into the cells you actually wrote."
         rows = self.blame(path)

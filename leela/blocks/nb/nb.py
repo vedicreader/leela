@@ -13,7 +13,8 @@ from ..refactor.move import top_symbols
 import json
 
 __all__ = ['CELL_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans',
-           'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras', 'strip_work_log']
+           'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras', 'strip_work_log',
+           'merge_rows', 'merged_cells', 'CHOICES']
 
 CELL_TYPES = ('code', 'markdown', 'prompt')
 
@@ -383,6 +384,76 @@ def read_cells(text):
     if not isinstance(nb, dict): return None
     cells = nb.get('cells')
     return cells if isinstance(cells, list) else None
+
+#: What a person can do with one conflicting row.
+CHOICES = ('ours', 'theirs', 'both', 'drop')
+
+def _src(cell): return ''.join(cell.get('source') or []) if isinstance(cell, dict) else ''
+
+def _key(cell, i):
+    "A cell's identity for lining two sides up: its own id, else where it sits."
+    return (cell or {}).get('id') or f'@{i}'
+
+def _clear(cell):
+    "A cell as a resolution leaves it: its source, without a run that belongs to the file before it."
+    out = dict(cell or {})
+    if out.get('cell_type') == 'code': out['outputs'], out['execution_count'] = [], None
+    return out
+
+def merge_rows(base, ours, theirs):
+    """The two sides of a conflicted notebook, lined up cell by cell.
+
+    Git holds all three sides of a conflict in the index as whole notebooks, so nothing here reads
+    the markers in the worktree file: they make a notebook unreadable and say nothing about cells.
+    Cells are matched by their own id where a notebook has them, and by position where it does not.
+
+    `state` is what a person has to answer: `both` needs a decision, `added` and `deleted` need one,
+    and the rest are context.
+    """
+    ours, theirs, base = list(ours or []), list(theirs or []), list(base or [])
+    at = lambda cells: {_key(c, i): c for i, c in enumerate(cells)}
+    ours_at, theirs_at, base_at = at(ours), at(theirs), at(base)
+    order, seen = [], set()
+    for cells in (ours, theirs):
+        for i, c in enumerate(cells):
+            k = _key(c, i)
+            if k not in seen: seen.add(k); order.append(k)
+    rows = []
+    for k in order:
+        o, t, b = ours_at.get(k), theirs_at.get(k), base_at.get(k)
+        if o is not None and t is not None:
+            same = _src(o) == _src(t) and o.get('cell_type') == t.get('cell_type')
+            state = 'same' if same else ('ours' if _src(t) == _src(b) else 'theirs' if _src(o) == _src(b) else 'both')
+        elif o is not None: state = 'added' if b is None else 'deleted'
+        else: state = 'added' if b is None else 'deleted'
+        rows.append({'key': k, 'id': (o or t or {}).get('id') or '', 'state': state,
+                     'ours': o, 'theirs': t, 'base': b,
+                     'side': 'ours' if t is None else 'theirs' if o is None else 'both'})
+    return rows
+
+def merged_cells(rows, choices=None):
+    """The cells a set of choices makes, in order, with `None` where one is still owed.
+
+    A cell somebody decided about comes back without its outputs: they were produced by a version of
+    the source that no longer exists. A cell nobody had to decide about is untouched.
+    """
+    choices, out = dict(choices or {}), []
+    for row in rows:
+        state, o, t = row['state'], row['ours'], row['theirs']
+        pick = choices.get(row['key'])
+        if state == 'same': out.append(o if o is not None else t); continue
+        if state == 'ours' and pick is None: out.append(o); continue
+        if state == 'theirs' and pick is None: out.append(t); continue
+        if pick is None: return None                     # this row is still owed an answer
+        if pick == 'drop': continue
+        if pick == 'both':
+            # Both sides of one cell are two cells, and two cells may not carry one id.
+            kept = [_clear(c) for c in (o, t) if c is not None]
+            for c in kept[1:]: c['id'] = cell_id()
+            out += kept
+        elif pick == 'ours' and o is not None: out.append(_clear(o))
+        elif pick == 'theirs' and t is not None: out.append(_clear(t))
+    return out
 
 def source_spans(text, cells):
     "The 1-based file line numbers holding each cell's source strings, or `None` for a cell that cannot be located."

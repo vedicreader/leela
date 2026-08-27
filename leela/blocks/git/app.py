@@ -11,6 +11,7 @@ from ...core.web import fail, off_loop
 from ramabana.git import GitError, clone, clone_target, gateway, repo_root
 from .git import GitRepo
 from .repos import RepoSet, clone_url, find_repos, repo_for
+from ..nb.nb import CHOICES
 
 __all__ = ['CAPS', 'connect', 'git_paths', 'Stale']
 
@@ -529,6 +530,28 @@ def connect(app, ctx):
         try:
             r, relative = repo_relative(path, 'file')
             return await off_loop(r.file_changes, relative)
+        except Exception as e: return fail(e)
+    @rt('/git/notebook/conflict')
+    async def git_notebook_conflict(path: str = ''):
+        "The two sides of a conflicted notebook, cell by cell, read from git's own merge stages."
+        try:
+            r, relative = repo_relative(path, 'notebook')
+            return await off_loop(r.notebook_conflict, relative)
+        except Exception as e: return fail(e)
+    @rt('/git/notebook/conflict/resolve')
+    async def git_notebook_conflict_resolve(req):
+        "Write the notebook a set of per-cell choices makes, and stage it as resolved."
+        d = await req.json()
+        choices = {str(k): str(v) for k, v in (d.get('choices') or {}).items()}
+        bad = sorted({v for v in choices.values()} - set(CHOICES))
+        if bad: return fail(f"unknown choice {', '.join(bad)}; use {', '.join(CHOICES)}")
+        try:
+            r, relative = repo_relative(d.get('path') or '', 'notebook')
+            # Through the journal, like every other worktree mutation: the write is atomic and
+            # versioned, and the index it staged over can be put back.
+            return await off_loop(lambda: _journalled(ctx, r, 'resolve_notebook_conflict',
+                                                      lambda: r.resolve_notebook_conflict(relative, choices),
+                                                      'cells'))
         except Exception as e: return fail(e)
     @rt('/git/notebook')
     async def git_notebook(path: str = ''):
