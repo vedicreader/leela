@@ -4,30 +4,58 @@ from __future__ import annotations
 
 import asyncio, inspect, os, subprocess, threading
 
-__all__ = ['EnvStore', 'EnvError', 'import_login_env']
+__all__ = ['EnvStore', 'EnvError', 'import_login_env', 'preferred_shell', 'shell_env']
 
 #: Names that describe the shell that printed them, not the environment a program wants.
 _SHELL_ONLY = {'_', 'PWD', 'OLDPWD', 'SHLVL', 'PS1', 'TERM', 'TERM_SESSION_ID', 'TMPDIR'}
 
+def preferred_shell():
+    """The shell to ask about the environment: the terminal setting, else `$SHELL`.
+
+    `$SHELL` is the shell the login record names, which is not always the one a person uses. Leela
+    already has somewhere to say otherwise, and the terminal reads it, so this reads the same place
+    rather than adding a second answer to one question.
+    """
+    try:
+        from ..blocks.settings.settings import Settings
+        if (chosen := str((Settings().effective().get('terminal') or {}).get('shell') or '').strip()):
+            return chosen
+    except Exception: pass
+    return os.environ.get('SHELL') or '/bin/zsh'
+
+def shell_env(shell=None, timeout=8):
+    """What `shell` exports, as `{name: value}`, asked the way a person's terminal is.
+
+    Interactive first. zsh reads `.zshrc` only for an interactive shell, and that is where an
+    `OPENAI_API_KEY` usually lives, so a login-but-not-interactive shell answered with eight names
+    and no key at all. Shells that refuse `-i` are asked again without it.
+    """
+    shell = shell or preferred_shell()
+    for args in (('-l', '-i', '-c', 'env -0'), ('-l', '-c', 'env -0')):
+        try: r = subprocess.run([shell, *args], capture_output=True, timeout=timeout)
+        except (OSError, subprocess.SubprocessError): return {}
+        if r.returncode != 0: continue
+        out = {}
+        for row in r.stdout.split(b'\0'):
+            name, sep, value = row.partition(b'=')
+            if sep and name: out[name.decode('utf-8', 'replace')] = value.decode('utf-8', 'replace')
+        if out: return out
+    return {}
+
 def import_login_env(shell=None, env=None, timeout=8):
-    """Merge the login shell's exported environment into this process, and return what was added.
+    """Merge the shell's exported environment into this process, and return what was added.
 
     An app opened from Finder inherits launchd's environment rather than a shell's, so an
     `OPENAI_API_KEY` exported from a shell profile is invisible to it while the same Leela started
     from a terminal sees it. Names this process already has are kept: nothing the launcher chose is
     overwritten, `PATH` included, which only gains the directories the shell knows about.
     """
-    shell = shell or os.environ.get('SHELL') or '/bin/zsh'
-    try: r = subprocess.run([shell, '-l', '-c', 'env -0'], capture_output=True, timeout=timeout)
-    except (OSError, subprocess.SubprocessError): return []
-    if r.returncode != 0: return []
+    exported = shell_env(shell, timeout)
+    if not exported: return []
     target = os.environ if env is None else env
     added, path = [], []
-    for row in r.stdout.split(b'\0'):
-        name, sep, value = row.partition(b'=')
-        if not sep: continue
-        k, v = name.decode('utf-8', 'replace'), value.decode('utf-8', 'replace')
-        if not k or k in _SHELL_ONLY: continue
+    for k, v in exported.items():
+        if k in _SHELL_ONLY: continue
         if k == 'PATH': path = [d for d in v.split(os.pathsep) if d]
         elif k not in target: target[k], _ = v, added.append(k)
     # A directory the shell has and this process does not can only add a tool, so it goes on the end.

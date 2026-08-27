@@ -1362,6 +1362,34 @@ def test_a_shell_that_cannot_be_asked_changes_nothing(tmp_path):
     assert import_login_env(shell=str(broken), env=env) == []
     assert env == {'PATH': '/usr/bin'}
 
+def test_the_shell_is_asked_the_way_a_person_uses_it(tmp_path):
+    """zsh reads `.zshrc` only for an interactive shell, and that is where an API key usually lives.
+    Asked with `-l` alone it answered with eight names and no key, so every hosted model refused
+    every turn in the packaged app and nowhere else."""
+    from leela.core.envs import shell_env
+    shell = tmp_path/'fussy'
+    # only an interactive shell exports the key, which is what a `.zshrc` amounts to
+    shell.write_text("#!/bin/sh\ncase \"$*\" in *-i*) printf 'OPENAI_API_KEY=sk-interactive\\0';; esac\n"
+                     "printf 'HOME=/somewhere\\0'\n")
+    shell.chmod(0o755)
+    assert shell_env(str(shell)).get('OPENAI_API_KEY') == 'sk-interactive'
+    plain = tmp_path/'plain'
+    plain.write_text("#!/bin/sh\ncase \"$*\" in *-i*) exit 2;; esac\nprintf 'PATH=/opt/tools\\0'\n")
+    plain.chmod(0o755)
+    assert shell_env(str(plain)) == {'PATH': '/opt/tools'}, 'a shell that refuses -i is asked without it'
+
+def test_the_shell_a_person_chose_is_the_one_asked(tmp_path, monkeypatch):
+    """`$SHELL` is the shell the login record names, which is not always the one in use. Leela
+    already has a terminal setting for that, and this reads the same one."""
+    from leela.blocks.settings.settings import Settings
+    from leela.core import envs
+    monkeypatch.setenv('SHELL', '/bin/zsh')
+    user = tmp_path/'settings.json'
+    monkeypatch.setattr('leela.blocks.settings.settings.user_settings_file', lambda: str(user))
+    assert envs.preferred_shell() == '/bin/zsh', 'nothing chosen, so the login record stands'
+    Settings(user_path=user).save('user', 'terminal', {'shell': '/opt/homebrew/bin/fish'})
+    assert envs.preferred_shell() == '/opt/homebrew/bin/fish', 'the chosen shell is the one asked'
+
 def test_two_windows_accumulate_folders_in_the_one_saved_session(tmp_path):
     """One file, several windows. `save` wrote the roots it had over the roots the file had, so
     opening the app on one folder emptied a session that a browser window had four folders in."""

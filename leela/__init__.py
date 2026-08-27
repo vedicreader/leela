@@ -37,16 +37,12 @@ def use_extras():
 #: Where user tools live when `launchd` hands an app a PATH with none of them on it.
 TOOL_DIRS = ('/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '~/.local/bin', '~/.cargo/bin')
 
-def login_path(timeout=3):
-    "The PATH an interactive shell would have, or None if asking does not work."
-    import os, subprocess
-    sh = os.environ.get('SHELL')
-    if not sh: return None
-    try:
-        p = subprocess.run([sh, '-l', '-c', 'printf %s "$PATH"'], capture_output=True, text=True,
-                           timeout=timeout)
-    except Exception: return None
-    return out if p.returncode == 0 and (out := p.stdout.strip()) and os.pathsep in out else None
+def login_path(timeout=8):
+    "The PATH a person's own terminal has, or None if asking does not work."
+    import os
+    from .core.envs import shell_env
+    out = (shell_env(timeout=timeout) or {}).get('PATH', '').strip()
+    return out if out and os.pathsep in out else None
 
 def use_login_path():
     "The PATH a terminal has, for a launch that inherited almost none. `TOOL_DIRS` when asking fails."
