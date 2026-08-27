@@ -1836,15 +1836,19 @@ function updateAgentRunstrip(state = {}) {
   const strip = $('#agentrunstrip'); if (!strip) return;
   if ('queued_steer' in state) setQueuedSteer(state.queued_steer || '');
   if ('runs' in state) lee.agentRuns = state.runs || [];
-  const runs = lee.agentRuns || [], active = runs.length > 0;
+  const runs = lee.agentRuns || [];
+  const flattenRuns = rows => rows.flatMap(r => [r, ...flattenRuns(r.children || [])]);
+  const flat = flattenRuns(runs);
+  // A row that has ended is history. Counting them as work kept the strip up over a finished
+  // delegation and left the composer in steer mode, so the next thing typed was offered to a run
+  // that was already over instead of being sent as a turn.
+  const active = flat.some(r => !TERMINAL.has(r.state));
   strip.hidden = !active && !lee.agentBusy && !state.waiting;
   updateAgentSendMode(active || lee.agentBusy ? 'steer' : 'send');
   const rootLabel = state.waiting ? `Waiting · ${state.waiting}`
     : lee.queuedSteer ? 'Steering queued · applies after the current tool call'
     : state.run_policy ? `Running automatically · ${runPolicyLabel(state.run_policy)}`
     : `${($('#agentcontrol')?.value || 'guided').toUpperCase()} · agent working`;
-  const flattenRuns = rows => rows.flatMap(r => [r, ...flattenRuns(r.children || [])]);
-  const flat = flattenRuns(runs);
   // A fan-out's rows tell each other apart only by what each subagent was asked, and the buttons'
   // row leaves that a dozen characters. The rows take the width and the buttons go under them.
   strip.classList.toggle('fanned', flat.length > 1);
@@ -1856,7 +1860,10 @@ function updateAgentRunstrip(state = {}) {
     const clock = `${Math.floor(elapsed / 60)}:${String(Math.floor(elapsed % 60)).padStart(2, '0')}`;
     // the model repeats on every row of a fan-out; the question does not
     const who = r.kind === 'child' ? `subagent ${(r.model || '').split('/').pop()}`.trim() : (r.model || 'Agent');
-    const label = r.state === 'cancelling' ? `Cancelling ${who}…` : `${r.question || rootLabel} · ${who}`;
+    // The root's line says what the agent is doing, which is not what a delegate was asked. A child
+    // with no question of its own borrowed it and read as the agent working.
+    const what = r.question || (r.kind === 'child' ? 'delegated' : rootLabel);
+    const label = r.state === 'cancelling' ? `Cancelling ${who}…` : `${what} · ${who}`;
     return `<span class="lee-agent-run${r.kind === 'child' ? ' child' : ''}"><span>${esc(label)}</span>` +
       `<time>${esc(clock)}</time>` +
       (r.kind === 'child' ? `<button type="button" data-open-subs>Open</button>` : '') +

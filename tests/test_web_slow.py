@@ -808,8 +808,18 @@ def test_the_agent_pane_draws_its_runs_its_steers_and_its_work_logs():
              question: 'check the recovery path', children: []}];
           updateAgentRunstrip({runs: lee.agentRuns});
           const many = measure();
+          // a delegate that answered, and a root that has not
+          root.children[0].state = 'completed'; root.children[0].ended = now + 12;
+          root.children[1].question = '';
+          updateAgentRunstrip({runs: lee.agentRuns});
+          const mixed = {rows: measure().rows, send: $('#agentsend').textContent.trim(),
+                         hidden: $('#agentrunstrip').hidden};
+          // everything over: nothing is running, so nothing says it is
+          for (const r of [root, ...root.children]) { r.state = 'completed'; r.ended = now + 20; }
+          updateAgentRunstrip({runs: lee.agentRuns});
+          const over = {hidden: $('#agentrunstrip').hidden, send: $('#agentsend').textContent.trim()};
           lee.agentRuns = []; updateAgentRunstrip({runs: []});
-          return {one, many};
+          return {one, many, mixed, over};
         }""")
         out['steps'] = await pg.evaluate("""() => {
           const draw = a => {
@@ -894,6 +904,15 @@ def test_the_agent_pane_draws_its_runs_its_steers_and_its_work_logs():
     asked = [r['text'] for r in many['rows'][1:]]
     assert any('review the refactor' in t for t in asked) and any('check the recovery' in t for t in asked), \
         'and each row leads with what its subagent was asked, which is all that tells them apart'
+
+    mixed, over = got['runstrip']['mixed'], got['runstrip']['over']
+    assert not mixed['hidden'] and mixed['send'] == 'Steer after this call', \
+        'a root still working holds the strip and the composer'
+    assert not any('agent working' in r['text'] for r in mixed['rows'][1:]), \
+        'a delegate with no question of its own does not borrow the root line and read as the agent'
+    assert any('delegated' in r['text'] for r in mixed['rows'][1:]), 'it says what it is instead'
+    assert over['hidden'], 'with every run ended there is nothing in flight to report'
+    assert over['send'] == 'Send', 'and what is typed next is a turn, not a steer at a finished run'
 
     steps = got['steps']
     assert steps['said']['copy'] == 'You use the other file instead', 'what the person actually said'
