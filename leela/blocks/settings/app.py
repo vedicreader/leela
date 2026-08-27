@@ -23,6 +23,27 @@ def connect(app, ctx):
             return {'ok': True, **_settings().save(d.get('scope', 'user'), d.get('section', 'editor'),
                                                     d.get('values') or {}, d.get('language') or '')}
         except Exception as e: return fail(e)
+    @rt('/settings/env')
+    def settings_env():
+        "Names Leela exports and names it found, never the value of a secret."
+        from ...core.envs import env_rows, env_file
+        return {'ok': True, 'entries': env_rows(), 'path': str(env_file()),
+                'note': 'A kernel or terminal already running keeps the environment it started with.'}
+    @rt('/settings/env/save')
+    async def settings_env_save(req):
+        "Set one name for Leela to export, over whatever the shell said."
+        from ...core.envs import set_env, env_rows
+        d = await req.json()
+        try: return {'ok': True, **await off_loop(set_env, d.get('key'), d.get('value')),
+                     'entries': env_rows()}
+        except Exception as e: return fail(e)
+    @rt('/settings/env/remove')
+    async def settings_env_remove(req):
+        "Forget one name Leela stored. What the shell exports is the shell's."
+        from ...core.envs import unset_env, env_rows
+        d = await req.json()
+        try: return {'ok': True, **await off_loop(unset_env, d.get('key')), 'entries': env_rows()}
+        except Exception as e: return fail(e)
     @rt('/settings/reset')
     async def settings_reset(req):
         d = await req.json()

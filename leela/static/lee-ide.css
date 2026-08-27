@@ -840,6 +840,12 @@ kbd {
 .lee-backup-row span { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .lee-backup-row strong { color: var(--lee-fg); font: 600 10.5px/1.4 var(--lee-mono); }
 .lee-backup-row small { color: var(--lee-fg4); font: 9px/1.4 var(--lee-mono); }
+.lee-env-list { display: flex; flex-direction: column; gap: 3px; max-height: 320px; overflow: auto; }
+.lee-env-row { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 6px;
+               background: var(--lee-bg2); }
+.lee-env-row span { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.lee-env-row strong { color: var(--lee-fg); font: 600 10.5px/1.4 var(--lee-mono); }
+.lee-env-row small { color: var(--lee-fg4); font: 9px/1.4 var(--lee-mono); }
 .lee-thread-toggle { display: inline-flex; align-items: center; gap: 5px; }
 .lee-thread-toggle.unread { color: var(--lee-accent); }
 .lee-thread-toggle.wants { color: var(--lee-red); }

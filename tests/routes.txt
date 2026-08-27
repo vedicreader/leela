@@ -270,6 +270,9 @@ GET,POST /screen/native
 GET,POST /search
 GET,POST /search/stream
 GET,POST /settings
+GET,POST /settings/env
+GET,POST /settings/env/remove
+GET,POST /settings/env/save
 GET,POST /settings/reset
 GET,POST /settings/save
 GET,POST /similar

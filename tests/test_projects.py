@@ -340,12 +340,15 @@ def test_the_tool_directories_are_added_when_the_shell_cannot_be_asked(monkeypat
     "No SHELL, or one that fails, still has to leave the usual places on PATH."
     import os
     import leela
-    monkeypatch.delenv('SHELL', raising=False)
+    from leela.core import envs
+    # Named, not inherited: `preferred_shell` reads a real setting, and a test must not depend on
+    # what this machine's own settings say.
+    monkeypatch.setattr(envs, 'preferred_shell', lambda: str(tmp_path/'no-such-shell'))
     monkeypatch.setenv('PATH', '/usr/bin')
     real = tmp_path/'bin'; real.mkdir()
     monkeypatch.setattr(leela, 'TOOL_DIRS', (str(real), '/definitely/not/here'))
     got = leela.use_login_path().split(os.pathsep)
-    assert leela.login_path() is None, 'with no SHELL there is nothing to ask'
+    assert leela.login_path() is None, 'a shell that cannot be run answers nothing'
     assert str(real) in got and '/definitely/not/here' not in got, 'only directories that exist'
 
 def test_asking_the_shell_never_hangs_the_launch(monkeypatch):

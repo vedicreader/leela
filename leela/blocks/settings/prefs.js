@@ -94,6 +94,7 @@ async function editorSettings(languageScope = null) {
     `<button class="active" data-settings-page="editor">Text editor</button><button data-settings-page="appearance">Appearance</button>` +
     `<button data-settings-page="files">Files & save</button><button data-settings-page="debug">Run & debug</button>` +
     `<button data-settings-page="agent">Agent</button>` +
+    `<button data-settings-page="environment">Environment</button>` +
     `<button data-settings-page="backups">Backups</button>` +
     `<button data-settings-page="keys">Keybindings</button></nav><div class="lee-settings-content">` +
     `<section data-settings-section="editor"><div class="lee-settings-title"><span>Text editor</span><kbd>${esc(displayChord(lee.keys.find(k=>k.action==='settings')?.key||'mod+,'))}</kbd></div>` +
@@ -165,6 +166,16 @@ async function editorSettings(languageScope = null) {
     `<div class="lee-setting-row"><span><strong>Take one now</strong><small data-backup-dir></small></span>` +
     `<button class="lee-btn" data-backup-now>Back up now</button></div>` +
     `<div class="lee-settings-group"><h4>Restore</h4><div data-backup-list class="lee-backup-list">reading…</div></div></section>` +
+    `<section data-settings-section="environment" hidden><h3>Environment</h3>` +
+    `<p>What Leela exports to the models, the kernels and the terminals it starts. Leela asks your ` +
+    `shell for these at startup; anything set here is used instead, which is the way out when ` +
+    `asking the shell gives the wrong answer.</p>` +
+    `<div class="lee-settings-group"><div data-env-list class="lee-env-list">reading…</div></div>` +
+    `<div class="lee-settings-group"><h4>Add or replace</h4><div class="lee-settings-grid">` +
+    `<label>Name<input class="lee-input" data-env-key placeholder="OPENAI_API_KEY" spellcheck="false"></label>` +
+    `<label>Value<input class="lee-input" data-env-value type="password" autocomplete="off" spellcheck="false"></label>` +
+    `</div><div class="lee-setting-row"><span data-env-note class="lee-dim"></span>` +
+    `<button class="lee-btn go" data-env-save>Set variable</button></div></div></section>` +
     `<section data-settings-section="keys" hidden><h3>Keybindings</h3><p>Every command can be rebound from the same single-source keymap.</p><button class="lee-btn" data-open-keys>Edit keybindings…</button></section>` +
     `</div></div><div class="lee-mfoot"><button class="lee-btn" data-reset>Reset this section</button><span class="lee-spacer"></span><button class="lee-btn" data-cancel>Cancel</button><button class="lee-btn go" data-save>Save settings</button></div>`,
     null,()=>{if(previewView)LeeCM.destroy(previewView);if(!saved){applyEditorPrefs(original);lee.filePrefs=originalFiles;lee.workbenchPrefs=originalWorkbench;lee.debugPrefs=originalDebug;applyTheme(originalTheme);}},
@@ -197,6 +208,25 @@ async function editorSettings(languageScope = null) {
   $('[data-cancel]',m).onclick=()=>m.remove();
   const same=(a,b)=>Array.isArray(a)||Array.isArray(b)?JSON.stringify(a)===JSON.stringify(b):a===b;
   $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})`,'ok');};
+  /* A secret's value never comes back from the server, so a row says that it is set, not what it is. */
+  const paintEnv=async(d=null)=>{
+    const list=$('[data-env-list]',m); if(!list) return;
+    try{ d=d||await api('/settings/env'); }catch(e){ list.textContent=String(e.message||e); return; }
+    $('[data-env-note]',m).textContent=d.note||'';
+    list.innerHTML=(d.entries||[]).map(e=>`<div class="lee-env-row"><span><strong>${esc(e.key)}</strong>`+
+      `<small>${e.set?(e.secret?'set':esc(e.value)):'not set'}${e.source?` · ${esc(e.source)}`:''}</small></span>`+
+      (e.removable?`<button class="lee-btn" data-env-remove="${esc(e.key)}">Remove</button>`:'')+`</div>`).join('');
+    $$('[data-env-remove]',m).forEach(b=>b.onclick=async()=>{
+      try{ paintEnv(await post('/settings/env/remove',{key:b.dataset.envRemove})); status(`${b.dataset.envRemove} removed`,'ok'); }
+      catch(e){ status(String(e.message||e),'err'); }});
+  };
+  $('[data-env-save]',m).onclick=async()=>{
+    const key=$('[data-env-key]',m).value.trim(), value=$('[data-env-value]',m).value;
+    try{ const d=await post('/settings/env/save',{key,value});
+      $('[data-env-key]',m).value=''; $('[data-env-value]',m).value='';
+      paintEnv(d); status(`${key} set`,'ok'); }
+    catch(e){ status(String(e.message||e),'err'); }};
+  paintEnv();
   /* Restoring is a write over live state, so the list says what each copy holds and asks first. */
   const paintBackups=async()=>{
     const list=$('[data-backup-list]',m); if(!list) return;

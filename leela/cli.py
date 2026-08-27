@@ -74,6 +74,10 @@ def main(argv=None):
                                                           or os.environ.get('LEELA_SHELL_ENV') == '1'):
         from .core.envs import import_login_env
         import_login_env()
+    # Leela's own, whatever the launch was, and last: a value typed into Leela is the answer for a
+    # machine where asking the shell gives the wrong one.
+    from .core.envs import apply_stored_env
+    apply_stored_env()
     roots = [os.path.abspath(f) for f in a.folders]
     for r in roots:
         if not os.path.isdir(r): p.error(f'not a directory: {r}')

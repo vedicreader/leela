@@ -1390,6 +1390,52 @@ def test_the_shell_a_person_chose_is_the_one_asked(tmp_path, monkeypatch):
     Settings(user_path=user).save('user', 'terminal', {'shell': '/opt/homebrew/bin/fish'})
     assert envs.preferred_shell() == '/opt/homebrew/bin/fish', 'the chosen shell is the one asked'
 
+def test_a_value_typed_into_leela_beats_the_environment_it_was_launched_with(tmp_path, monkeypatch):
+    """The escape hatch. Asking the shell is a guess about a machine, and where the guess is wrong
+    there has to be somewhere to say so, or every hosted model refuses every turn with no way in."""
+    import leela
+    from leela.core import envs
+    monkeypatch.setattr(leela, 'leela_cfg', tmp_path)
+    env = {'OPENAI_API_KEY': 'sk-from-a-shell-that-is-wrong'}
+    assert envs.apply_stored_env(env) == [], 'nothing stored, nothing claimed'
+    assert env['OPENAI_API_KEY'] == 'sk-from-a-shell-that-is-wrong'
+    monkeypatch.setattr(envs.os, 'environ', {})
+    envs.set_env('OPENAI_API_KEY', 'sk-typed-in')
+    assert envs.apply_stored_env(env) == ['OPENAI_API_KEY']
+    assert env['OPENAI_API_KEY'] == 'sk-typed-in', 'what a person typed wins'
+    assert oct((tmp_path/'env.json').stat().st_mode)[-3:] == '600', 'a file of keys is not world readable'
+    envs.unset_env('OPENAI_API_KEY')
+    assert envs.stored_env() == {}
+
+def test_the_environment_editor_refuses_what_is_not_a_variable(tmp_path, monkeypatch):
+    "A name that a shell cannot export is a typo, and saying so beats writing it down."
+    import leela
+    from leela.core import envs
+    monkeypatch.setattr(leela, 'leela_cfg', tmp_path)
+    monkeypatch.setattr(envs.os, 'environ', {})
+    for bad in ('', '9LIVES', 'has space', 'has-dash', 'PATH=x'):
+        with pytest.raises(envs.EnvError): envs.set_env(bad, 'v')
+    with pytest.raises(envs.EnvError): envs.set_env('OPENAI_API_KEY', '')
+    with pytest.raises(envs.EnvError): envs.unset_env('OPENAI_API_KEY')   # the shell's, not Leela's
+    envs.set_env('LEE_OK', 'v')
+    assert envs.stored_env() == {'LEE_OK': 'v'}
+
+def test_a_secrets_value_never_leaves_the_server(tmp_path, monkeypatch):
+    "The panel says a key is set. What it is set to is not something a browser needs."
+    import leela
+    from leela.core import envs
+    monkeypatch.setattr(leela, 'leela_cfg', tmp_path)
+    monkeypatch.setattr(envs.os, 'environ', {'OPENAI_API_KEY': 'sk-secret', 'EDITOR': 'vim'})
+    envs.set_env('MY_TOKEN', 'tok-secret')
+    rows = {r['key']: r for r in envs.env_rows()}
+    assert not [r for r in rows.values() if r['secret'] and r['value']], 'no secret value in the payload'
+    assert 'sk-secret' not in json.dumps(rows) and 'tok-secret' not in json.dumps(rows)
+    assert rows['OPENAI_API_KEY']['set'] and rows['OPENAI_API_KEY']['source'] == 'environment'
+    assert rows['MY_TOKEN']['removable'], "Leela's own can be taken away again"
+    assert not rows['OPENAI_API_KEY']['removable'], 'what the shell exports is the shell\'s'
+    assert 'EDITOR' not in rows, 'the whole environment is not the browser\'s business'
+    assert rows['ANTHROPIC_API_KEY']['set'] is False, 'the names the models read are offered anyway'
+
 def test_two_windows_accumulate_folders_in_the_one_saved_session(tmp_path):
     """One file, several windows. `save` wrote the roots it had over the roots the file had, so
     opening the app on one folder emptied a session that a browser window had four folders in."""

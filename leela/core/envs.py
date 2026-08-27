@@ -2,9 +2,88 @@
 
 from __future__ import annotations
 
-import asyncio, inspect, os, subprocess, threading
+import asyncio, inspect, json, os, re, subprocess, threading
 
-__all__ = ['EnvStore', 'EnvError', 'import_login_env', 'preferred_shell', 'shell_env']
+__all__ = ['EnvStore', 'EnvError', 'import_login_env', 'preferred_shell', 'shell_env',
+           'env_file', 'stored_env', 'apply_stored_env', 'set_env', 'unset_env', 'env_rows',
+           'is_secret', 'KNOWN_KEYS']
+
+#: The names the agent's model backends read, offered whether or not anything has set them.
+KNOWN_KEYS = ('ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY')
+
+#: A value under one of these names is never sent to a browser.
+_SECRETISH = ('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'PASSWD', 'CREDENTIAL')
+
+_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*\Z')
+
+def is_secret(name): return any(w in str(name).upper() for w in _SECRETISH)
+
+def env_file():
+    from .. import leela_cfg
+    return leela_cfg/'env.json'
+
+def stored_env():
+    "What Leela itself has been told to export. An unreadable file is an empty one."
+    try: out = json.loads(env_file().read_text(encoding='utf-8'))
+    except Exception: return {}
+    return {k: str(v) for k, v in out.items() if isinstance(k, str) and _NAME.match(k)}
+
+def _write(values):
+    path = env_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix('.json.new')
+    tmp.write_text(json.dumps(values, indent=1, sort_keys=True) + '\n', encoding='utf-8')
+    os.chmod(tmp, 0o600)
+    tmp.replace(path)
+
+def apply_stored_env(env=None):
+    """Put Leela's own values into the environment, over whatever the shell said. Returns the names.
+
+    Last, and winning: this is the escape hatch for a machine where asking the shell gives the wrong
+    answer, so a value typed into Leela has to beat the one that is already wrong.
+    """
+    target = os.environ if env is None else env
+    values = stored_env()
+    target.update(values)
+    return sorted(values)
+
+def set_env(key, value):
+    "Store one name for Leela to export, and export it now."
+    key, value = str(key or '').strip(), str(value if value is not None else '')
+    if not _NAME.match(key): raise EnvError(
+        f'{key or "a name"} is not an environment variable name: letters, digits and underscore, not starting with a digit')
+    if not value: raise EnvError(f'{key} needs a value; remove it instead to unset it')
+    _write({**stored_env(), key: value})
+    os.environ[key] = value
+    return {'key': key, 'secret': is_secret(key)}
+
+def unset_env(key):
+    "Forget one name Leela stored. What the shell exports is the shell's, and stays."
+    key = str(key or '').strip()
+    values = stored_env()
+    if key not in values: raise EnvError(f'{key} is not one of Leela\'s: it comes from the environment Leela was started in')
+    del values[key]
+    _write(values)
+    os.environ.pop(key, None)
+    return {'key': key, 'removed': True}
+
+def env_rows():
+    """Every name worth showing, with a value only where one is safe to show.
+
+    Leela's own, the names the model backends read, and anything already in the environment that
+    looks like a credential. A secret's value never leaves the server; that it is set does.
+    """
+    values = stored_env()
+    names = set(values) | set(KNOWN_KEYS) | {k for k in os.environ if is_secret(k)}
+    rows = []
+    for key in sorted(names):
+        mine, live = key in values, os.environ.get(key, '')
+        secret = is_secret(key)
+        rows.append({'key': key, 'secret': secret, 'set': bool(live),
+                     'value': '' if secret else live,
+                     'source': 'leela' if mine else ('environment' if live else ''),
+                     'editable': True, 'removable': mine})
+    return rows
 
 #: Names that describe the shell that printed them, not the environment a program wants.
 _SHELL_ONLY = {'_', 'PWD', 'OLDPWD', 'SHLVL', 'PS1', 'TERM', 'TERM_SESSION_ID', 'TMPDIR'}

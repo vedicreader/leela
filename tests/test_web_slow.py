@@ -569,6 +569,40 @@ def test_user_checkbox_settings_survive_close_and_reopen(tmp_path, monkeypatch):
     assert saved.get('editor', {}) == {'ligatures': False, 'useTabs': True}
 
 
+def test_a_key_can_be_set_from_inside_leela_when_the_shell_gives_the_wrong_answer(tmp_path, monkeypatch):
+    """The escape hatch, end to end. Asking the shell is a guess about a machine; where it guesses
+    wrong every hosted model refuses every turn, and there has to be a way in that does not involve
+    a terminal. What a secret is set to never comes back from the server, so the row says `set`."""
+    import leela
+    monkeypatch.setattr(leela, 'leela_cfg', tmp_path)
+    async def go(pg):
+        out = {}
+        await pg.evaluate("leeAct('settings')")
+        await pg.wait_for_selector('[data-settings-page="environment"]')
+        await pg.click('[data-settings-page="environment"]')
+        await pg.wait_for_selector('[data-env-list] .lee-env-row')
+        await pg.fill('[data-env-key]', 'OPENAI_API_KEY')
+        await pg.fill('[data-env-value]', 'sk-typed-into-leela')
+        await pg.click('[data-env-save]')
+        await pg.wait_for_selector('[data-env-remove="OPENAI_API_KEY"]')
+        row = pg.locator('.lee-env-row', has=pg.locator('[data-env-remove="OPENAI_API_KEY"]'))
+        out['row'] = await row.inner_text()
+        out['refused'] = ''
+        await pg.fill('[data-env-key]', 'not a name')
+        await pg.fill('[data-env-value]', 'x')
+        await pg.click('[data-env-save]')
+        await pg.wait_for_function("document.querySelector('#status')?.textContent.includes('environment variable')", timeout=8000)
+        out['refused'] = await pg.evaluate("document.querySelector('#status')?.textContent || ''")
+        await pg.click('[data-env-remove="OPENAI_API_KEY"]')
+        await pg.wait_for_selector('[data-env-remove="OPENAI_API_KEY"]', state='detached')
+        return out
+    out = _run(go)
+    assert 'OPENAI_API_KEY' in out['row'] and 'set' in out['row']
+    assert 'sk-typed-into-leela' not in out['row'], 'the value of a secret stays on the server'
+    assert 'environment variable name' in out['refused'], 'a name a shell cannot export is refused, and says why'
+    from leela.core.envs import stored_env
+    assert stored_env() == {}, 'and removing it takes it back out of the file'
+
 def test_tabs_and_panes_overflow_switch_and_come_back_where_they_were_left():
     """One page for the shell's layout. Tabs past the strip's width belong in the overflow menu and
     nowhere else, `mod+e` is the switcher's chord, `sessionStorage` died with the window so every
