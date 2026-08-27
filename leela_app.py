@@ -17,9 +17,14 @@ HOST = '127.0.0.1'
 # directory left over from running the app would then shadow it. See `leela.use_extras`.
 if getattr(sys, 'frozen', False):
     from leela import use_extras, use_login_path, use_utf8
+    from leela.core.envs import import_login_env
     use_extras()
     use_utf8()            # no LANG means an ASCII default, and importing rishi.claude then raises
     use_login_path()      # Finder starts an app with almost no PATH, so git and claude go missing
+    # And the rest of the environment with it. A window opened from Finder has launchd's, so a key
+    # exported from a shell profile is missing and every hosted model refuses the turn. This is the
+    # entry the bundle freezes; `leela.cli` is the terminal's and does the same for itself.
+    if os.environ.get('LEELA_SHELL_ENV', '1') != '0': import_login_env()
 
 def free_port(preferred=5001):
     "`preferred` if nothing holds it, else whatever the OS hands out."
