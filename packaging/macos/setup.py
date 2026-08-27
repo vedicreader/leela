@@ -68,7 +68,12 @@ HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'llama_cpp', 'cv2', 'transform
 #: `__init__` is the extension module: the scanner flattens it to a lone `apsw.so` and loses
 #: `apsw.ext`, which is how fastlite opens the vault, and naming it in `PACKAGES` instead only gets
 #: `ImportError: No module named 'apsw'`, because the lookup wants an `__init__.py` to find.
-GRAFTED = ('apsw',)
+#: Packages the freezer's zip cannot hold. `apsw` has the extension module for its own `__init__`,
+#: and a flattened copy loses `apsw.ext` and with it the vault. `playwright` and `patchright` each
+#: carry a Node binary they have to *execute*, and a file inside an archive cannot be executed, so
+#: browser fetching failed in the packaged app and nowhere else. A grafted package is the real one:
+#: `strip_zip` takes the archive's copy away so there is only one.
+GRAFTED = ('apsw', 'playwright', 'patchright')
 # Entry points, lazy optionals, and pywebview's Cocoa half, reached as `webview.platforms.<gui>`.
 def _mypyc_modules():
     """Compiled accelerators that sit beside a package rather than inside it.
@@ -183,15 +188,37 @@ def graft(app, name):
     shutil.copytree(src, dest, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     return dest.relative_to(app)
 
+def link_duplicates(app, floor=1_000_000):
+    """Hardlink identical files across the grafted packages. Returns the megabytes saved.
+
+    `patchright` is a fork of `playwright` and ships the same 121MB Node binary, byte for byte, so
+    grafting both wrote it twice. A hardlink leaves two real, executable files and one copy of the
+    bytes; these are read-only library files, so nothing can write through one and surprise the
+    other.
+    """
+    import hashlib, os
+    lib = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3.*')))
+    seen, saved = {}, 0
+    for name in GRAFTED:
+        for f in sorted((lib/name).rglob('*')):
+            if not f.is_file() or f.is_symlink() or f.stat().st_size < floor: continue
+            key = (f.stat().st_size, hashlib.sha256(f.read_bytes()).hexdigest())
+            if (other := seen.get(key)) is None: seen[key] = f; continue
+            if os.stat(f).st_ino == os.stat(other).st_ino: continue
+            saved += f.stat().st_size
+            f.unlink(); os.link(other, f)
+    return round(saved / 1e6)
+
 #: Entries that can never be reached from inside `python313.zip`. `claude_agent_sdk` looks for its
 #: bundled CLI with `Path(__file__).parent.parent.parent/'_bundled'/name` and `.exists()`, which is
 #: always false for a path inside an archive. Leela reaches the real `claude` on PATH, which
 #: `use_login_path` repairs at startup, so the copy is 93MB of a 205MB zip that nothing can open.
 UNREACHABLE = ('claude_agent_sdk/_bundled/',)
 
-def strip_zip(app, prefixes=UNREACHABLE):
-    "Rewrite the bundle's zip without entries nothing can read. Returns the megabytes saved."
+def strip_zip(app, prefixes=None):
+    "Rewrite the bundle's zip without entries nothing can read, or that were grafted. Megabytes saved."
     import zipfile
+    prefixes = UNREACHABLE + tuple(f'{n}/' for n in GRAFTED) if prefixes is None else prefixes
     z = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3*.zip')))
     if not z: return 0
     keep, dropped = [], 0
@@ -249,4 +276,5 @@ if __name__ == '__main__':
     if (built := ROOT/'dist'/'Leela.app').is_dir():
         for name in GRAFTED: print(f'  grafted {name} -> {graft(built, name)}')
         if (saved := strip_zip(built)): print(f'  dropped {saved}MB of unreachable archive entries')
+        if (saved := link_duplicates(built)): print(f'  linked {saved}MB of duplicate grafted files')
         if install_modern_icon(built): print(f'  Icon Composer icon installed in {built}')

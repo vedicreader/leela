@@ -1159,6 +1159,125 @@ def test_promotion_is_a_write_and_no_delegate_gets_it(tmp_path):
     assert 'promote_var' in {t.__name__ for t in ws.ai.tools}
     assert 'promote_var' not in {t.__name__ for t in ws.ai._sub_plain()}
 
+def test_a_failed_run_reports_what_it_had_already_done():
+    """A NameError on the last line read as total failure, and the live model call two lines above
+
+    it had already gone out and bound its reply. What ran before the error is not undone, so the
+    result says so: the printed output, and the names that exist because of this call.
+    """
+    class Broken(_Rows):
+        def api_sync(self, path, params=None, timeout=30):
+            if path == '/agent/api/exec':
+                self.calls.append((path, params))
+                return {'ok': False, 'stdout': 'calling the model...\n',
+                        'error': "NameError: name 'typo' is not defined", 'result': None}
+            return super().api_sync(path, params, timeout)
+    h = _host(Broken(owner=('df',), layer=('reply',)))
+    out = h.run_python('reply = ask()\nprint(typo)')
+    assert 'calling the model...' in out, 'the output it printed before the error is not thrown away'
+    assert "NameError: name 'typo' is not defined" in out
+    assert 'partial run' in out and 'bound reply' in out, out
+
+def test_a_failed_isolated_inspection_claims_no_bindings():
+    "`isolated` discards its writes, so a name that survives was already there and is not news."
+    class Broken(_Rows):
+        def api_sync(self, path, params=None, timeout=30):
+            if path == '/agent/api/exec':
+                self.calls.append((path, params))
+                return {'ok': False, 'stdout': '', 'error': 'TypeError: nope', 'result': None}
+            return super().api_sync(path, params, timeout)
+    out = _host(Broken()).inspect_python('df_norm = df.shape')
+    assert 'TypeError: nope' in out and 'bound' not in out
+
+def test_one_variable_can_be_asked_about_without_globals():
+    "Naming a variable was a `globals()` expression the isolated sandbox refuses. Now it is a tool."
+    k = _Rows()
+    h = _host(k)
+    out = h.inspect_var('df', ['shape'])
+    assert 'df: DataFrame' in out and 'df.shape = done' in out
+    assert ('/agent/api/exec', {'code': 'df.shape', 'scope': 'isolated'}) in k.calls
+    assert h.inspect_var('nowhere') == "nowhere is not bound, in the user's namespace or your own layer"
+    assert h.inspect_var('1x') == "'1x' is not a variable name"
+
+def test_the_writable_folders_are_named_before_the_first_refusal(tmp_path):
+    """Both folders were open and both were said to be the agent's, and the edit to the second was
+
+    refused as a cross-workspace write. Readable and writable are two lists, and the briefing and
+    the refusal both name the writable one.
+    """
+    from leela.blocks.agent.ai import WorkspaceHost
+    a, b = tmp_path/'a', tmp_path/'b'
+    for d in (a, b): d.mkdir()
+    ws = Workspace(roots=[a, b])
+    h = WorkspaceHost(ws)
+    assert h.roots == [str(a), str(b)]
+    assert h.writable_roots == [str(a)], 'only the project the agent is working in'
+    with pytest.raises(Exception) as e: h.check_write(str(b/'x.py'))
+    assert 'Writable: ' in str(e.value) and str(a) in str(e.value)
+    assert 'Writable folders' in ws.ai.system_prompt()
+    ws.allow_workspace_repo_writes = True
+    assert h.writable_roots == h.roots
+    assert 'Writable folders' not in ws.ai.system_prompt(), 'nothing to warn about when they match'
+
+def test_one_open_folder_is_writable_and_says_nothing(tmp_path):
+    from leela.blocks.agent.ai import WorkspaceHost
+    ws = Workspace(roots=[tmp_path])
+    assert WorkspaceHost(ws).writable_roots == [str(tmp_path)]
+    assert 'Writable folders' not in ws.ai.system_prompt()
+
+def test_a_notebook_cell_runs_in_the_users_own_kernel(tmp_path):
+    """`run_python` runs in the agent's layer, so it could never answer "does this cell work".
+
+    The substitutes changed source-inspection behaviour and were not what Jupyter would do. This
+    runs the exact cell in the tab's kernel, and reports the count, the output and what moved.
+    """
+    import asyncio, json as _json
+    from leela.blocks.runtime.kernels import ExecOutcome
+    from leela.workspace import Workspace
+    nbp = tmp_path/'work.ipynb'
+    nbp.write_text(_json.dumps({'cells': [
+        {'cell_type': 'code', 'id': 'c1', 'source': 'total = 6 * 7\nprint(total)',
+         'metadata': {}, 'outputs': [], 'execution_count': None}],
+        'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    class K:
+        base = 'http://kernel'
+        def __init__(self): self.ran = []
+        async def execute(self, code, **kw):
+            self.ran.append(code)
+            return ExecOutcome(ok=True, execution_count=7,
+                               outputs=[{'output_type': 'stream', 'name': 'stdout', 'text': '42\n'}])
+    k = K()
+    ws = Workspace(roots=[tmp_path], port=8277)
+    async def go():
+        await ws.opened()
+        ws.runtime = lambda tab=None: _done(k)
+        host, loop = ws.inline_ai.host, asyncio.get_running_loop()
+        host._var_snapshot = lambda: {'total': '42'} if k.ran else {}
+        out = str(await loop.run_in_executor(None, lambda: host.nb_run_cell(str(nbp), 'c1')))
+        await ws.shutdown()
+        return out
+    async def _done(v): return v
+    out = asyncio.run(go())
+    assert k.ran == ['total = 6 * 7\nprint(total)'], 'the cell as written, not a rewrite of it'
+    assert 'In[7]' in out and '42' in out and 'bindings changed: total' in out, out
+    assert _json.loads(nbp.read_text())['cells'][0]['outputs'] == [], 'the file is the user\'s to save'
+
+def test_a_cell_that_is_not_there_is_said_so_not_run(tmp_path):
+    from leela.blocks.agent.ai import WorkspaceHost
+    import json as _json
+    nbp = tmp_path/'work.ipynb'
+    nbp.write_text(_json.dumps({'cells': [{'cell_type': 'markdown', 'id': 'm1', 'source': 'hi',
+        'metadata': {}}], 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    h = WorkspaceHost(Workspace(roots=[tmp_path]))
+    assert 'no cell' in h.nb_run_cell(str(nbp), 'nope')
+    assert 'only code cells run' in h.nb_run_cell(str(nbp), 'm1')
+
+def test_running_a_cell_is_a_write_and_the_new_reads_are_not(tmp_path):
+    from leela.blocks.agent.ai import WRITE_TOOLS as LEELA_WRITES, ide_tools
+    assert 'run_cell' in LEELA_WRITES and 'inspect_var' not in LEELA_WRITES
+    names = {t.__name__ for t in ide_tools(Workspace(roots=[tmp_path]))}
+    assert {'run_cell', 'inspect_var'} <= names
+
 def test_the_name_a_prompt_asks_for_survives_the_way_people_write_it():
     for prompt, want in [('scale the numeric columns as df_norm', 'df_norm'),
                          ('Scale the numeric columns of `df` to 0..1 as `df_norm`.', 'df_norm'),

@@ -685,3 +685,24 @@ def test_the_bundle_ships_no_binary_nothing_can_reach():
     assert any(n.startswith('claude_agent_sdk/') for n in names), 'the SDK itself is still wanted'
     assert not [n for n in names if n.startswith('claude_agent_sdk/_bundled/')], \
         'the post-build step stopped stripping the unreachable binary'
+
+
+@pytest.mark.slow
+def test_the_browser_driver_is_a_file_the_app_can_execute():
+    """`playwright` and `patchright` drive a browser by *running* `driver/node`, and a file inside
+    `python313.zip` cannot be run, so fossick's browser fetching failed in the packaged app and
+    nowhere else. Both are grafted onto disk, and the two identical Node binaries share one copy."""
+    import os, zipfile
+    app = ROOT/'dist'/'Leela.app'
+    if not app.is_dir(): pytest.skip('dist/Leela.app is not built')
+    lib = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3.*')))
+    nodes = [lib/name/'driver'/'node' for name in ('playwright', 'patchright')]
+    for node in nodes:
+        assert node.is_file(), f'{node} is not on disk, so nothing can run it'
+        assert os.access(node, os.X_OK), f'{node} lost its execute bit on the way into the bundle'
+    a, b = (os.stat(n) for n in nodes)
+    assert a.st_ino == b.st_ino, 'the same 121MB binary is in the bundle twice'
+    z = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3*.zip')))
+    with zipfile.ZipFile(z) as f: names = f.namelist()
+    assert not [n for n in names if n.split('/')[0] in ('playwright', 'patchright')], \
+        'the archive still holds a copy that would shadow the grafted one'
