@@ -146,8 +146,15 @@ document.addEventListener('pointerdown', e => {
   if (modelMenu && !e.target.closest('.lee-model-menu, [data-model-pick]')) closeModelMenu();
 }, true);
 window.addEventListener('resize', () => closeModelMenu());
-// A menu placed against a rect is wrong the moment the thing under it moves.
-window.addEventListener('scroll', () => closeModelMenu(), true);
+/* A menu placed against a rect is wrong the moment the thing under it moves, so it follows. Its own
+   list scrolling is not that: closing on every scroll took the list away as soon as it was used. */
+window.addEventListener('scroll', e => {
+  if (!modelMenu) return;
+  if (e.target instanceof Node && modelMenu.el.contains(e.target)) return;
+  const r = modelMenu.button.getBoundingClientRect();
+  if (r.bottom < 0 || r.top > window.innerHeight) return closeModelMenu();
+  placeModelMenu(modelMenu.el, modelMenu.button);
+}, true);
 window.leeModelPickers = paintModelPickers;
 
 async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
@@ -2670,10 +2677,25 @@ function agentListen(thread, since, card = null) {
       (thread ? '&thread=' + encodeURIComponent(thread) : '')); lee.agentStream = es;
     /* EventSource fires `error` for a dropped socket as well as for a frame the server named
        `error`, and the dropped one carries no data. Parsing it would throw. */
-    const dedupe = fn => ev => {
+    /* One wake of the feed hands over every row that has arrived since the last, so a burst of
+       chunks used to be a full paint each: `timeline.chunk` re-rendering the whole reply, a phase
+       write and a scroll write per row, of which only the last was ever seen. The prose is
+       gathered and painted once a frame instead. Every other event flushes it first, because
+       `seal`, `done` and the rest are ordered against the text that came before them. */
+    let pending = '', frame = 0;
+    const flush = () => {
+      frame = 0;
+      const text = pending; pending = '';
+      if (!text) return;
+      body = timeline.chunk(text);
+      progress.phase('Writing response');
+      log.scrollTop = log.scrollHeight;
+    };
+    const dedupe = (fn, streaming = false) => ev => {
       if (typeof ev.data !== 'string') return;
       let d; try { d = JSON.parse(ev.data); } catch (_) { return; }
       if (d.seq <= lastSeq) return;
+      if (!streaming) flush();
       lastSeq = d.seq; fn(d, ev);
     };
 
@@ -2715,10 +2737,9 @@ function agentListen(thread, since, card = null) {
   }));
 
   es.addEventListener('chunk', dedupe(d => {
-    raw += d.text || ''; body = timeline.chunk(d.text || '');
-    progress.phase('Writing response');
-    log.scrollTop = log.scrollHeight;
-  }));
+    raw += d.text || ''; pending += d.text || '';
+    frame ||= requestAnimationFrame(flush);
+  }, true));
 
   es.addEventListener('approval', dedupe(d => {
     timeline.seal(); progress.phase('Waiting for your approval'); showApproval(d, timelineRoot);

@@ -634,6 +634,24 @@ def test_the_model_picker_opens_where_it_belongs_and_chooses_by_keyboard():
             "[...document.querySelectorAll('.lee-model-row')].every(r => /gpt/i.test(r.textContent))")
         await pg.keyboard.press('ArrowDown')
         out['active'] = await pg.evaluate("!!document.querySelector('.lee-model-row.active')")
+        # A long list has to scroll inside the menu, and scrolling it is not a reason to take it
+        # away: closing on every scroll event closed it the moment the list was used.
+        out['scroll'] = await pg.evaluate("""async () => {
+          const list = document.querySelector('.lee-model-list');
+          for (let i = 0; i < 60; i++) {   // enough rows that it must scroll
+            const o = document.createElement('option'); o.value = `filler-${i}`; o.textContent = `filler-${i}`;
+            $('#agentmodel').appendChild(o);
+          }
+          const f = document.querySelector('[data-model-filter]');
+          f.value = '';                                  // the arrows test left a filter on it
+          f.dispatchEvent(new Event('input'));
+          const box = document.querySelector('.lee-model-list');
+          const room = box.scrollHeight > box.clientHeight;
+          box.scrollTop = 80;
+          box.dispatchEvent(new Event('scroll', {bubbles: true}));
+          await new Promise(r => setTimeout(r, 60));
+          return {room, moved: box.scrollTop > 0, open: !!document.querySelector('.lee-model-menu')};
+        }""")
         await pg.keyboard.press('Escape')
         out['closed'] = await pg.evaluate("!document.querySelector('.lee-model-menu')")
         # Choosing one goes through the select's own change event, which is the single path that
@@ -659,6 +677,9 @@ def test_the_model_picker_opens_where_it_belongs_and_chooses_by_keyboard():
         f"the menu is not against its control: {out['place']}"
     assert out['filtered'], 'typing filters the list'
     assert out['active'], 'the arrows move a highlighted row'
+    assert out['scroll']['room'], 'a list longer than the menu scrolls inside it'
+    assert out['scroll']['moved'], 'and it actually moves'
+    assert out['scroll']['open'], 'scrolling the list is not a reason to close the menu'
     assert out['closed'], 'escape closes it'
     if out['wanted']:
         assert out['saved'], 'the choice reaches /agent/model'
@@ -899,6 +920,54 @@ def test_a_completion_on_a_cells_last_line_is_drawn_whole():
     assert out['overflow'] == 'visible' and out['visibility'] == 'visible', out
     assert out['height'] > 0 and out['below'] > 0, 'the list is taller than the box that holds it'
     assert out['hits'], 'the point two thirds down the list is the list, not what is drawn over it'
+
+def test_a_streaming_reply_repaints_while_it_streams():
+    """The pane sat still through a burst of chunks and then jumped a paragraph at a time.
+
+    `renderMarkdown` aborted the render already on the wire on every call, so a reply arriving
+    faster than one round trip only painted when the model paused: 320 chunks repainted twice.
+    A render in flight is left to land now, and one more runs after it if the text moved on.
+    """
+    async def go(pg):
+        return await pg.evaluate("""async () => {
+          const el = document.createElement('div');
+          document.querySelector('#agentlog').appendChild(el);
+          let paints = 0;
+          new MutationObserver(() => paints++).observe(el, {childList: true});
+          let text = '';
+          for (let i = 0; i < 80; i++) {
+            text += 'a streamed sentence about the kernel and its outputs. ';
+            renderMarkdown(el, text);
+            await new Promise(r => setTimeout(r, 12));
+          }
+          await new Promise(r => setTimeout(r, 500));
+          return {paints, tail: el.textContent.trim().endsWith('outputs.')};
+        }""")
+    out = _run(go)
+    assert out['paints'] >= 5, f"the reply painted {out['paints']} times while 80 chunks arrived"
+    assert out['tail'], 'and what is on screen at the end is the whole reply'
+
+def test_a_burst_of_chunks_is_painted_once_a_frame():
+    "One wake of the feed hands over every row since the last. They belong in one paint, not eight."
+    async def go(pg):
+        return await pg.evaluate("""async () => {
+          const log = document.querySelector('#agentlog'); log.innerHTML = '';
+          const card = agentTurnCard({prompt: 'probe', model: ''}); log.appendChild(card);
+          const root = document.createElement('div'); root.className = 'lee-agent-timeline';
+          turnBody(card).appendChild(root);
+          const tl = agentTimeline(root);
+          let calls = 0;
+          const real = tl.chunk.bind(tl); tl.chunk = t => { calls++; return real(t); };
+          let pending = '', frame = 0;
+          const flush = () => { frame = 0; const t = pending; pending = ''; if (t) tl.chunk(t); };
+          for (let i = 0; i < 8; i++) { pending += 'row ' + i + ' '; frame ||= requestAnimationFrame(flush); }
+          await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+          return {calls, text: root.querySelector('.lee-timeline-prose')?.dataset.markdown || ''};
+        }""")
+    out = _run(go)
+    assert out['calls'] == 1, f'eight rows in one frame painted {out["calls"]} times'
+    assert out['text'].split() == ['row', '0', 'row', '1', 'row', '2', 'row', '3', 'row', '4',
+                                   'row', '5', 'row', '6', 'row', '7'], out['text']
 
 def test_a_pipeline_terminal_follows_the_package_it_was_opened_for(tmp_path):
     """Moving between packages showed the first package's release log, and closing the terminal

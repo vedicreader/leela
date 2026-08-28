@@ -146,8 +146,15 @@ document.addEventListener('pointerdown', e => {
   if (modelMenu && !e.target.closest('.lee-model-menu, [data-model-pick]')) closeModelMenu();
 }, true);
 window.addEventListener('resize', () => closeModelMenu());
-// A menu placed against a rect is wrong the moment the thing under it moves.
-window.addEventListener('scroll', () => closeModelMenu(), true);
+/* A menu placed against a rect is wrong the moment the thing under it moves, so it follows. Its own
+   list scrolling is not that: closing on every scroll took the list away as soon as it was used. */
+window.addEventListener('scroll', e => {
+  if (!modelMenu) return;
+  if (e.target instanceof Node && modelMenu.el.contains(e.target)) return;
+  const r = modelMenu.button.getBoundingClientRect();
+  if (r.bottom < 0 || r.top > window.innerHeight) return closeModelMenu();
+  placeModelMenu(modelMenu.el, modelMenu.button);
+}, true);
 window.leeModelPickers = paintModelPickers;
 
 async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
