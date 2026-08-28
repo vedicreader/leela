@@ -17,9 +17,14 @@ SCOPES = ('project', 'workspace')
 def connect(app, ctx):
     rt = app.route
     def scope_roots(scope):
-        "The folders a scope names: the active project's, or `None` for the whole workspace."
+        """The folders a scope names: the checkout being worked in, or `None` for every open folder.
+
+        The checkout, not the folder that is open: with a folder of clones open the two options in
+        the picker named the same thing, and the indexed legs already answered from one repo while
+        ripgrep answered from all of them.
+        """
         if scope != 'project': return None
-        root = ctx.session.project_root
+        root = ctx.session.project_repo
         return [root] if root is not None else None
     def searched(roots):
         "The folders actually searched, for the client to say where the answer came from."
@@ -27,7 +32,7 @@ def connect(app, ctx):
     @rt('/search')
     async def search_route(q: str = '', regex: bool = False, limit: int = 60, mode: str = 'rg',
         exts: str = '', scope: str = 'project'):
-        "Ripgrep by default, scoped to `project` since a workspace holds several checkouts."
+        "Ripgrep by default, scoped to the checkout since a workspace holds several of them."
         if mode not in MODES: return fail(f'unknown search mode {mode!r}')
         if scope not in SCOPES: return fail(f'unknown search scope {scope!r}')
         roots = scope_roots(scope)

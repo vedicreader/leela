@@ -342,6 +342,33 @@ def test_the_search_route_follows_the_chosen_folder_and_never_takes_a_root(tmp_p
         filtered = c.get('/search', params={'q': 'needle', 'exts': 'md', 'scope': 'workspace'}).json()
         assert filtered['hits'] == [] and filtered['exts'] == 'md'
 
+def test_project_scope_is_the_checkout_not_the_folder_of_clones(tmp_path):
+    """With `orgs` open as one folder the two scopes named the same thing, and the indexed legs
+    answered from one repo while ripgrep answered from all of them."""
+    import subprocess
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    orgs = tmp_path/'orgs'
+    a, b = orgs/'repo-a', orgs/'repo-b'
+    for d in (a, b):
+        d.mkdir(parents=True)
+        subprocess.run(['git', 'init', '-q', str(d)], check=True)
+    (a/'one.py').write_text('needle = 1\n')
+    (b/'two.py').write_text('needle = 2\n')
+    ws = Workspace(roots=[orgs])
+    with TestClient(ide_app(ws)) as c:
+        ws.open(a/'one.py')
+        first = c.get('/search', params={'q': 'needle'}).json()
+        assert first['searched'] == [str(a)], 'the checkout the open file is in'
+        assert [Path(h['path']).name for h in first['hits']] == ['one.py']
+        ws.open(b/'two.py')
+        after = c.get('/search', params={'q': 'needle'}).json()
+        assert after['searched'] == [str(b)] and [Path(h['path']).name for h in after['hits']] == ['two.py']
+        both = c.get('/search', params={'q': 'needle', 'scope': 'workspace'}).json()
+        assert sorted(Path(h['path']).name for h in both['hits']) == ['one.py', 'two.py'], 'the widening still widens'
+        assert both['searched'] == [str(orgs)]
+
 def a_notebook(path):
     "A saved notebook with a def in one cell and a class with a method in the next."
     from leela.blocks.nb.nb import Cell, Notebook
