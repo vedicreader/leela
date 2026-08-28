@@ -84,8 +84,19 @@ def venv_env(python, env=None):
     env.pop('PYTHONHOME', None)
     return env
 
-def find_pythons(roots=()):
-    "Interpreters a kernel could be launched under: this one, plus any venv in an open folder."
+def _venv_roots(roots):
+    "Each open folder and the checkouts directly inside it: one folder of repos holds a venv each."
+    for r in L(roots):
+        yield Path(r)
+        try: yield from sorted(d for d in Path(r).iterdir() if d.is_dir() and not d.name.startswith('.'))
+        except OSError: pass
+
+def find_pythons(roots=(), current=None):
+    """Interpreters a kernel could be launched under: this one, `current`, and the venvs in reach.
+
+    `current` is what `python_for` resolved for the open tab, which the walk up can find deeper than
+    a folder of checkouts is scanned. Listing it is what makes the picker able to mark it.
+    """
     from shutil import which
     out, seen = L(), set()
     def add(p, label):
@@ -94,7 +105,10 @@ def find_pythons(roots=()):
         seen.add(p)
         out.append({'path': p, 'label': label})
     add(sys.executable, 'this one (leela’s own)')
-    for r in L(roots):
+    if current:
+        d = Path(current).parents
+        add(current, f'{d[2].name}/{d[1].name}' if len(d) > 2 else str(current))
+    for r in _venv_roots(roots):
         for d, p in _venv_pythons(r): add(p, f'{Path(r).name}/{d}')
     for n in ('python3', 'python'):
         if (w := which(n)): add(w, f'{n} on PATH')

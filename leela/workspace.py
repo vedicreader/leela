@@ -925,7 +925,7 @@ class Workspace:
                                 else 'install project kernel support')} for n in KERNELS],
             'running_kind': getattr(k, 'kernel_kind', self.pool.default_kernel),
             'pythons': [{**p, 'current': p['path'] == cur_py or (cur_py is None and i == 0)}
-                        for i, p in enumerate(find_pythons(self.fs.roots))],
+                        for i, p in enumerate(find_pythons(self.fs.roots, cur_py))],
             'python': cur_py,
             'auto_manage': self.kernels_auto_manage,
         }

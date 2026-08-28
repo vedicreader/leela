@@ -372,6 +372,30 @@ def test_opening_a_terminal_really_builds_its_argv_from_the_settings(tmp_path):
         finally:
             ws.terms.close_all()
 
+def test_the_picker_lists_the_venvs_of_repos_inside_one_open_folder(tmp_path):
+    """A folder of checkouts opened as one root: the kernel already ran in the repo's own venv, but
+    the picker only scanned the root itself, so that interpreter was neither listed nor marked."""
+    orgs = tmp_path/'orgs'; orgs.mkdir()
+    _venv(orgs)
+    pb = _venv(orgs/'dockeasy')
+    (orgs/'dockeasy'/'nbs').mkdir(parents=True)
+    nb = orgs/'dockeasy'/'nbs'/'00_core.ipynb'
+    nb.write_text('{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
+    ws = Workspace(roots=[orgs])
+    opts = ws.kernel_options(ws.open(nb))
+    assert opts['python'] == str(pb), 'the notebook runs in its own repo\'s venv'
+    assert str(pb) in [p['path'] for p in opts['pythons']], 'and the picker offers it'
+    assert [p['path'] for p in opts['pythons'] if p['current']] == [str(pb)], 'and marks it'
+
+def test_the_picker_lists_a_venv_deeper_than_the_scan_reaches(tmp_path):
+    "Two levels down is past the scan, so the interpreter in use is listed because it is in use."
+    root = tmp_path/'code'; root.mkdir()
+    p = _venv(root/'org'/'repo')
+    (root/'org'/'repo'/'nb.ipynb').write_text('{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
+    ws = Workspace(roots=[root])
+    opts = ws.kernel_options(ws.open(root/'org'/'repo'/'nb.ipynb'))
+    assert [x['path'] for x in opts['pythons'] if x['current']] == [str(p)]
+
 def test_a_notebook_gets_its_own_project_venv_not_the_last_one_chosen(tmp_path):
     "The reported failure: opening a notebook under `nbs/` ran it in another checkout's venv."
     from leela.blocks.runtime.kernels import python_for
