@@ -125,5 +125,11 @@ testpaths = ["tests"]
 addopts = "-m 'not slow'"
 markers = ["slow: drives a browser, starts a kernel, or loads a model"]
 
+[tool.uv]
+# Leela imports no `mcp`; `koshas` brings it and asks only for `>=1.2.0`. 2.x renamed `FastMCP`
+# to `MCPServer`, which `ramabana.mcp` imports, so an unconstrained resolve takes the major and
+# `import ramabana.mcp` stops working. A constraint rather than a dependency: it is not ours.
+constraint-dependencies = ["mcp<2"]
+
 [tool.uv.sources]
 leela = { workspace = true }
