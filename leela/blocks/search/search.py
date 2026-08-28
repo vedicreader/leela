@@ -244,7 +244,7 @@ class Search:
                 state = k.status(pyproject=False)
                 if not state.get('files') or state.get('new_files') or state.get('stale_files'): self._sync()
             except Exception: pass
-        try: rows = k.context(q, graph=True, env=True, limit=limit)
+        try: rows = k.context(q, graph=False, env=True, limit=limit)
         except Exception as e:
             self.note = f'kosha search failed ({type(e).__name__}); literal scan'
             return None
@@ -256,8 +256,6 @@ class Search:
             out.append(Hit(path=path, line=int(m.get('lineno') or 1),
                 text=(r.get('content') or '').strip().split('\n')[0][:200],
                 kind='kosha', symbol=str(m.get('mod_name') or ''),
-                score=float(r.get('pagerank') or 0.0),
-                callers=[str(c) for c in (r.get('callers') or [])][:5],
                 package=str(m.get('package') or '')))
         self.backend, self.note = 'kosha', 'semantic repo + installed packages · existing paths only'
         return out

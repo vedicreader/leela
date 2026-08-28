@@ -149,7 +149,11 @@ def test_agent_search_uses_kosha_semantics_and_drops_stale_paths(monkeypatch, tm
     s = Search(Sandbox([tmp_path])); s._k = FakeKosha(); s._k_tried = True
     hits = s.agent_search('change the clustering method')
     assert [h.path for h in hits] == [str(current)]
-    assert seen == [('change the clustering method', {'graph': True, 'env': True, 'limit': 20})]
+    # `graph=False`: the enrichment is a second lookup that costs about 40% of the call, and the
+    # ordering is the RRF merge either way. The tool text the agent reads carries no callers, so
+    # asking for them was fetching relations to throw away. The search panel still asks.
+    assert seen == [('change the clustering method', {'graph': False, 'env': True, 'limit': 20})]
+    assert [h.callers for h in hits] == [None]
     assert s.backend == 'kosha' and 'existing paths only' in s.note
 
 def test_agent_search_falls_back_to_current_files_when_kosha_has_no_live_hit(monkeypatch, tmp_path):
