@@ -80,10 +80,18 @@ async def _json(send, body, status=200):
 
 def _headers(scope): return {k.lower(): v for k, v in (scope.get('headers') or ())}
 
-def _host(headers):
-    "The Host header's name: an IPv6 literal unbracketed, the port dropped, lowercased."
-    raw = headers.get(b'host', b'').decode().lower()
-    return raw[1:].split(']', 1)[0] if raw.startswith('[') else raw.split(':', 1)[0]
+def _name(raw):
+    """A host name from a header or a URL: an IPv6 literal unbracketed, the port and root dot gone.
+
+    `vruksha.localhost.` is `vruksha.localhost` written absolutely, which is what a browser sends
+    when a search domain has made the short form ambiguous. Reading the two as different names
+    turned choosing a workspace from the folder list into `invalid Host header`.
+    """
+    raw = str(raw or '').lower()
+    name = raw[1:].split(']', 1)[0] if raw.startswith('[') else raw.split(':', 1)[0]
+    return name.rstrip('.')
+
+def _host(headers): return _name(headers.get(b'host', b'').decode())
 
 async def _refuse(scope, send, why):
     "Turn a request away over whichever protocol it arrived on."
@@ -108,7 +116,7 @@ class LoopbackHostGuard:
         host = _host(headers)
         allowed = not host or host in LOOPBACK or host.endswith('.localhost')
         origin = headers.get(b'origin', b'').decode()
-        origin_host = (urlsplit(origin).hostname or '').lower() if origin else ''
+        origin_host = _name(urlsplit(origin).hostname) if origin else ''
         origin_ok = not origin or origin_host in LOOPBACK or origin_host.endswith('.localhost')
         browser_ok = headers.get(b'sec-fetch-site', b'').decode().lower() != 'cross-site'
         if allowed and origin_ok and browser_ok:

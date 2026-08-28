@@ -1129,6 +1129,15 @@ def test_the_exit_teardown_falls_back_to_its_own_loop_when_the_server_has_gone(t
     ws.shutdown_now()
     assert ws._down
 
+def test_a_fully_qualified_host_reaches_the_workspace_it_names():
+    "The dot is the DNS root, not a different workspace."
+    from leela.hub import _host
+    site = WorkspaceSite(slug='vruksha', name='vruksha', root='/w/vruksha', app=object())
+    hub = WorkspaceHub([site], port=5001)
+    assert _host({b'host': b'vruksha.localhost.:5001'}) == 'vruksha.localhost'
+    got = hub.site_for({'type': 'http', 'headers': [(b'host', b'vruksha.localhost.:5001')]})
+    assert got is site, 'the trailing dot is not part of the slug'
+
 def test_workspace_hub_rejects_unknown_hosts_instead_of_opening_default_workspace():
     called, messages = [], []
     async def app(scope, receive, send): called.append(scope)
@@ -1153,6 +1162,12 @@ def test_loopback_guard_rejects_dns_rebinding_and_cross_site_browser_requests():
                                   (b'sec-fetch-site', b'cross-site')]))
     assert rebound[0]['status'] == cross_site[0]['status'] == 421
     assert not called
+    # `vruksha.localhost.` is the same name written absolutely, and a browser sends it that way
+    # when a search domain has made the short form ambiguous: choosing that workspace from the
+    # folder list loaded a window that answered `invalid Host header`.
+    absolute = asyncio.run(run([(b'host', b'vruksha.localhost.:5001'),
+                                (b'origin', b'http://vruksha.localhost.:5001')]))
+    assert called and not absolute, 'a fully qualified loopback name is that name'
 
 def test_runtime_broker_refuses_a_thirteenth_heap_without_evicting_live_state(monkeypatch):
     broker = RuntimeBroker(max_kernels=1)
