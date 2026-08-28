@@ -180,12 +180,31 @@ class Settings:
             out = _merge(out, (user.get('languages') or {}).get(language, {}))
             out = _merge(out, (workspace.get('languages') or {}).get(language, {}))
         return out
+    def layers(self):
+        """Every layer that names each key, least specific first.
+
+        `origins` answers with the one layer in charge, which cannot warn you about a layer you are
+        not looking at: editing all languages, nothing said that a `languages.python` block held the
+        same key and would win. This says all of them and lets the panel decide.
+        """
+        out = {}
+        for scope in ('user', 'workspace'):
+            data = self.raw(scope)
+            for section, values in data.items():
+                if section == 'languages' or not isinstance(values, dict): continue
+                for key in values: out.setdefault(section, {}).setdefault(key, []).append(scope)
+            for lang, block in (data.get('languages') or {}).items():
+                for section, values in (block or {}).items():
+                    if not isinstance(values, dict): continue
+                    for key in values: out.setdefault(section, {}).setdefault(key, []).append(f'{scope}:{lang}')
+        return out
     def describe(self, language=''):
         user, workspace = self.raw('user'), self.raw('workspace')
         effective = self.effective(language)
         origins = {section: {key: _origin(section, key, user, workspace, language) for key in values}
                    for section, values in DEFAULT_SETTINGS.items()}
-        return {'effective': effective, 'origins': origins, 'user': user, 'workspace': workspace,
+        return {'effective': effective, 'origins': origins, 'layers': self.layers(),
+                'user': user, 'workspace': workspace,
                 'paths': {'user': str(self.user_path), 'workspace': str(self.workspace_path or '')},
                 'language': language}
     def _path(self, scope, verb):

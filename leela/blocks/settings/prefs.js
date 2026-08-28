@@ -90,6 +90,7 @@ async function editorSettings(languageScope = null) {
     `<div class="lee-settings-scope"><label>Save to <select class="lee-select" data-settings-scope><option value="user"${selected('user',rememberedScope)}>User</option><option value="workspace"${selected('workspace',rememberedScope)}>Workspace</option></select></label>` +
     `<label>Apply to <select class="lee-select" data-settings-language><option value=""${selected('',languageScope)}>All languages</option><option value="python"${selected('python',languageScope)}>Python</option><option value="markdown"${selected('markdown',languageScope)}>Markdown</option></select></label>` +
     `<span data-settings-target></span><span data-settings-path>${esc(lee.settingsMeta?.paths?.user || '')}</span></div>` +
+    `<div class="lee-settings-shadow" data-settings-shadow hidden></div>` +
     `<div class="lee-settings-layout"><nav class="lee-settings-nav" aria-label="Settings sections">` +
     `<button class="active" data-settings-page="editor">Text editor</button><button data-settings-page="appearance">Appearance</button>` +
     `<button data-settings-page="files">Files & save</button><button data-settings-page="debug">Run & debug</button>` +
@@ -190,9 +191,55 @@ async function editorSettings(languageScope = null) {
     applyEditorPrefs(sections.editor);LeeCM.configure(previewView,sections.editor);};
   $$('[data-pref]',m).forEach(input=>input.addEventListener('input',update));
   let page='editor';
-  $$('[data-settings-page]',m).forEach(button=>button.onclick=()=>{page=button.dataset.settingsPage;$$('[data-settings-page]',m).forEach(x=>x.classList.toggle('active',x===button));$$('[data-settings-section]',m).forEach(x=>x.hidden=x.dataset.settingsSection!==page);});
+  $$('[data-settings-page]',m).forEach(button=>button.onclick=()=>{page=button.dataset.settingsPage;$$('[data-settings-page]',m).forEach(x=>x.classList.toggle('active',x===button));$$('[data-settings-section]',m).forEach(x=>x.hidden=x.dataset.settingsSection!==page);paintSettingsOrigins();});
+  /* Which layer supplies a value is the one thing this panel could not say, and the reason
+     "I saved it to user and nothing happened" is a fair thing to think: a `languages.python` block
+     in the same file beats the plain section, and a workspace file beats both. The server has
+     always worked this out; `describe` returns it as `origins` and nothing read it. */
+  const ORIGIN_RANK = target => ({default: 0, user: 1, workspace: 2}[target] ?? (target.startsWith('workspace:') ? 4 : 3));
+  // Every layer holding the key, not just the one in charge: a `languages.python` block is
+  // invisible from the all-languages view, and that is exactly the case worth warning about.
+  const layersOf = (section, key) => lee.settingsMeta?.layers?.[section]?.[key] || [];
+  const originOf = (section, key) =>
+    layersOf(section, key).slice().sort((a, b) => ORIGIN_RANK(a) - ORIGIN_RANK(b)).pop()
+    || lee.settingsMeta?.origins?.[section]?.[key] || 'default';
+  const savingAs = () => scope.value + (language.value ? ':' + language.value : '');
+  function paintSettingsOrigins() {
+    const here = ORIGIN_RANK(savingAs()), over = new Map();
+    for (const input of $$('[data-pref]', m)) {
+      const section = input.dataset.prefSection, origin = originOf(section, input.dataset.pref);
+      const row = input.closest('label') || input.parentElement;
+      $('[data-origin]', row)?.remove();
+      if (origin === 'default') continue;
+      const beats = ORIGIN_RANK(origin) > here;
+      row.insertAdjacentHTML('beforeend',
+        `<small data-origin class="lee-origin${beats ? ' beats' : ''}" title="${beats
+          ? 'set in ' + esc(origin) + ', which is more specific than what you are saving to, so it wins'
+          : 'the value in effect comes from ' + esc(origin)}">from ${esc(origin)}</small>`);
+      if (beats && input.offsetParent !== null) over.set(origin, (over.get(origin) || 0) + 1);
+    }
+    const note = $('[data-settings-shadow]', m); if (!note) return;
+    note.hidden = !over.size;
+    if (!over.size) return;
+    const [origin, n] = [...over.entries()][0];
+    note.innerHTML = `<span><strong>${n} of these come from ${esc(origin)}</strong>` +
+      `<small>More specific than ${esc(savingAs())}, so it wins whatever you save here. ` +
+      `Saving to all languages does not clear it.</small></span>` +
+      `<button class="lee-btn" data-clear-shadow="${esc(origin)}">Clear ${esc(origin)} for this section</button>`;
+    $('[data-clear-shadow]', note).onclick = async () => {
+      const [oscope, olang] = origin.split(':');
+      const section = page === 'appearance' ? 'editor' : page;
+      if (!sections[section]) return status('nothing to clear on this page', 'err');
+      try {
+        await post('/settings/reset', {scope: oscope, section, language: olang || ''});
+        await loadSettings(language.value);
+        status(`${origin} cleared for ${section}`, 'ok');
+        saved = true; m.remove(); setTimeout(() => editorSettings(language.value), 0);
+      } catch (e) { status(String(e.message || e), 'err'); }
+    };
+  }
   const scope=$('[data-settings-scope]',m),language=$('[data-settings-language]',m),path=$('[data-settings-path]',m),target=$('[data-settings-target]',m);
-  const paintPath=()=>{path.textContent=lee.settingsMeta?.paths?.[scope.value]||'';target.textContent=`${scope.value} · ${language.value||'all languages'}`;};
+  const paintPath=()=>{path.textContent=lee.settingsMeta?.paths?.[scope.value]||'';target.textContent=`${scope.value} · ${language.value||'all languages'}`;paintSettingsOrigins();};
   scope.onchange=()=>{localStorage.setItem('lee-settings-save-scope',scope.value);paintPath();};paintPath();
   language.onchange=()=>{localStorage.setItem('lee-settings-language-scope',language.value);saved=true;m.remove();editorSettings(language.value);};
   // Every click previews live; the modal's close handler puts the original back unless saved.

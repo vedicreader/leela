@@ -686,6 +686,42 @@ def test_the_model_picker_opens_where_it_belongs_and_chooses_by_keyboard():
         assert out['value'] == out['wanted'], 'and the select carries it, for every reader of it'
         assert out['wanted'].split('/')[-1][:6] in out['button'], 'the control shows what was chosen'
 
+def test_settings_say_which_layer_a_value_comes_from_and_offer_to_clear_it(tmp_path, monkeypatch):
+    """A `languages.python` block in the user file beats the plain user section, and a workspace
+    file beats both, so "I saved it to user and nothing happened" is a fair thing to think. The
+    server has always worked out which layer supplies each key; nothing showed it."""
+    import json
+    import leela.blocks.settings.settings as settings_module
+    user = tmp_path/'settings.json'
+    user.write_text(json.dumps({'editor': {'fontFamily': 'JetBrains Mono', 'useTabs': False},
+                                'languages': {'python': {'editor': {'useTabs': True}}}}))
+    monkeypatch.setattr(settings_module, 'user_settings_file', lambda: user)
+    async def go(pg):
+        out = {}
+        await pg.evaluate("() => leeAct('settings')")
+        await pg.wait_for_selector('[data-pref="useTabs"]')
+        await pg.select_option('[data-settings-scope]', 'user')
+        await pg.select_option('[data-settings-language]', '')          # reloads the modal
+        await pg.wait_for_selector('[data-pref="useTabs"]')
+        out['plain'] = await pg.evaluate(
+            "() => $('[data-pref=\"useTabs\"]').closest('label').querySelector('[data-origin]')?.textContent || ''")
+        out['banner_all'] = await pg.evaluate("() => !$('[data-settings-shadow]').hidden")
+        await pg.select_option('[data-settings-language]', 'python')
+        await pg.wait_for_selector('[data-pref="useTabs"]')
+        out['py'] = await pg.evaluate(
+            "() => $('[data-pref=\"useTabs\"]').closest('label').querySelector('[data-origin]')?.textContent || ''")
+        return out
+    out = _run(go)
+    assert out['plain'] == 'from user:python', 'the layer in charge is named on the control'
+    assert out['banner_all'], 'and saying it wins over what you are about to save is the whole point'
+    assert out['py'] == 'from user:python', 'still named when that is the layer being edited'
+    # what the button does, asked of the server the button asks
+    s = settings_module.Settings(user_path=user)
+    assert s.raw('user')['languages']['python']['editor'] == {'useTabs': True}
+    s.reset('user', 'editor', 'python')
+    assert not (s.raw('user').get('languages', {}).get('python') or {}).get('editor'), 'cleared'
+    assert s.effective('python')['editor']['useTabs'] is False, 'and the user value is back in charge'
+
 def test_tabs_and_panes_overflow_switch_and_come_back_where_they_were_left():
     """One page for the shell's layout. Tabs past the strip's width belong in the overflow menu and
     nowhere else, `mod+e` is the switcher's chord, `sessionStorage` died with the window so every

@@ -1969,6 +1969,16 @@ kbd {
 .lee-agent-context span { overflow: hidden; text-overflow: ellipsis; }
 .lee-agent-attachment button { border: 0; background: transparent; color: var(--lee-fg4); cursor: pointer; font-size: 9px; }
 .lee-agent-attachment button:hover { color: var(--lee-red); }
+.lee-origin { margin-left: 6px; padding: 1px 5px; border-radius: 999px; background: var(--lee-bg2);
+  color: var(--lee-fg4); font: 9px/1.5 var(--lee-mono); white-space: nowrap; }
+.lee-origin.beats { background: color-mix(in srgb, var(--lee-red) 18%, transparent); color: var(--lee-red); }
+.lee-settings-shadow { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--lee-red) 35%, var(--lee-border)); border-radius: 6px;
+  background: color-mix(in srgb, var(--lee-red) 8%, transparent); }
+.lee-settings-shadow[hidden] { display: none; }
+.lee-settings-shadow span { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.lee-settings-shadow strong { color: var(--lee-fg); font: 600 10.5px/1.4 var(--lee-mono); }
+.lee-settings-shadow small { color: var(--lee-fg4); font: 9.5px/1.4 var(--lee-mono); }
 .lee-model-pick { display: inline-flex; align-items: center; overflow: hidden; text-align: left;
   text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .lee-model-pick::after { flex: none; margin-left: auto; padding-left: 6px; content: '⌄'; color: var(--lee-fg4); }
