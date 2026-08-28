@@ -68,10 +68,18 @@ def discover(roots, extra=(), hidden=()):
     return [p for p in out if str(p) not in away]
 
 def repo_for(session, target=''):
-    "The project a panel is about: one this workspace lists, or the active tab's."
+    """The project a panel is about: one this workspace lists, the chosen folder's, or the open file's.
+
+    The chosen folder is taken only when it is itself a checkout. A folder of checkouts -- a
+    directory of clones, opened to work across them -- is not one, and answering with it made every
+    Git surface say the folder is not a repository while every file open inside it was in one.
+    Falling through to the tab is what makes the panel follow the file from repository to
+    repository, which is the same rule the pill and the tree badges already describe.
+    """
     if str(target or '').strip(): return RepoSet(session.fs.roots).require(target)
     chosen = session.active_root
-    if chosen is not None and chosen in session.fs.roots: return repo_root(chosen) or chosen
+    if chosen is not None and chosen in session.fs.roots and (root := repo_root(chosen)) is not None:
+        return root
     cwd = session.cwd_for()
     if cwd is None: raise GitError('open a folder first')
     return repo_root(cwd) or Path(cwd)

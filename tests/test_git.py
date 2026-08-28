@@ -783,6 +783,25 @@ def test_choosing_a_folder_moves_source_control_to_that_checkout(tmp_path):
         assert client.get('/cwd').json()['cwd'] == str(b)
     assert ws.state()['active_root'] == str(b), 'and it survives a restart'
 
+def test_a_folder_of_checkouts_follows_the_file_from_repository_to_repository(tmp_path):
+    """Open a directory of clones -- `orgs`, or anything holding a set of repositories -- and every
+    Git surface said the folder is not a repository, while every file open inside it was in one.
+    The chosen folder is only an answer when it is itself a checkout."""
+    from leela.blocks.git.repos import discover
+    a, b = _repo(tmp_path/'ramabana', 'main'), _repo(tmp_path/'rishi', 'dev')
+    (tmp_path/'repos.txt').write_text('ramabana\nrishi\n')
+    ws = Workspace(roots=[tmp_path])            # the container, not the checkouts
+    assert [p.name for p in discover([tmp_path])] == ['ramabana', 'rishi'], 'both are found'
+    with TestClient(ide_app(ws)) as client:
+        assert client.get('/git/info').json()['repo'] is False, 'the container is not one itself'
+        ws.open(str(a/'readme.md'))
+        assert client.get('/git/info').json()['branch'] == 'main', "the open file's repository"
+        ws.open(str(b/'readme.md'))
+        d = client.get('/git/info').json()
+        assert d['branch'] == 'dev' and d['root'] == str(b), 'and it follows to the next one'
+        # An explicit choice still wins: a panel pinned to one repository stays there.
+        assert client.get('/git/info', params={'repo': str(a)}).json()['branch'] == 'main'
+
 def test_opening_a_file_in_another_checkout_says_which_project_too(tmp_path):
     from starlette.testclient import TestClient
     from leela.app import ide_app
