@@ -461,17 +461,23 @@ function stripWorkLog(text) { return String(text || '').replace(WORK_LOG, '').tr
 function renderMarkdown(el, text, allowRaw = false, onRender = null) {
   if (!el) return;
   el.dataset.markdown = String(text || '');
-  el._leeMarkdownSeq = (el._leeMarkdownSeq || 0) + 1;
-  const seq = el._leeMarkdownSeq;
-  clearTimeout(el._leeMarkdownTimer);
-  el._leeMarkdownAbort?.abort();
+  /* A render already on the wire is left to land. It used to be aborted on every call, so a
+     reply streaming faster than one round trip repainted only when the model paused: each chunk
+     cancelled the render the one before it had started. One request at a time now, and a follow-up
+     when the text moved on while it was out. */
+  if (el._leeMarkdownBusy) { el._leeMarkdownDirty = true; return; }
+  /* At most one render every 32ms, and at least one: this used to restart the wait on every call,
+     so text arriving faster than 32ms held the render off for as long as it kept coming. The
+     pending one reads `dataset.markdown` when it fires, so it always renders the latest. */
+  if (el._leeMarkdownTimer) return;
   el._leeMarkdownTimer = setTimeout(async () => {
-    const controller = new AbortController(); el._leeMarkdownAbort = controller;
+    el._leeMarkdownTimer = 0; el._leeMarkdownBusy = true; el._leeMarkdownDirty = false;
+    const sent = el.dataset.markdown;
     try {
-      const r = await fetch('/markdown/render', {method: 'POST', signal: controller.signal,
-        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: el.dataset.markdown, allow_raw: allowRaw})});
+      const r = await fetch('/markdown/render', {method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: sent, allow_raw: allowRaw})});
       if (!r.ok) throw new Error((await r.json()).error || r.statusText);
-      const d = await r.json(); if (seq !== el._leeMarkdownSeq) return;
+      const d = await r.json(); if (!el.isConnected) return;
       el.innerHTML = d.html;
       if (d.warnings?.length) el.dataset.markdownWarnings = d.warnings.join(' · ');
       else delete el.dataset.markdownWarnings;
@@ -483,13 +489,17 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
         upgradePortableToolMarkdown(el); enhanceCodeBlocks(el); addMarkdownCellAction(el);
       });
     } catch (e) {
-      if (e.name === 'AbortError' || seq !== el._leeMarkdownSeq || !el.isConnected) return;
+      if (!el.isConnected || el.dataset.markdown !== sent) return;
       el.textContent = el.dataset.markdown;
       el.dataset.markdownWarnings = `renderer unavailable: ${e.message || e}`;
       if (!el._leeMarkdownReported) {
         el._leeMarkdownReported = true;
         console.warn('Leela markdown fallback:', e);
       }
+    } finally {
+      el._leeMarkdownBusy = false;
+      // the text moved on while this one was out, so the screen is a render behind
+      if (el._leeMarkdownDirty || el.dataset.markdown !== sent) renderMarkdown(el, el.dataset.markdown, allowRaw, onRender);
     }
   }, 32);
 }
