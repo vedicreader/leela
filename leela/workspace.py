@@ -189,6 +189,8 @@ class Workspace:
         from .core.ports import build as build_provider
         from .blocks.memory.memory import memory_shelf
         self.search = build_provider('search', self.fs)
+        # the index a search reads is the one for the folder being worked in, as the interpreter is
+        self.search.focus = self.cwd_for
         root = first(self.fs.roots)
         self.memory = build_provider('memory', shelf=memory_shelf(root),
                                      kosha=getattr(self.search, '_kosha', None))

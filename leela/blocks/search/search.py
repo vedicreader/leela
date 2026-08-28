@@ -3,8 +3,10 @@
 from __future__ import annotations
 from ..runtime.support import clean_env
 import ast, json, re, shutil, subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from functools import wraps
+from inspect import isroutine
 from fastcore.all import L, Path, first, ifnone, store_attr
 from fastcore.aio import athreaded
 from fastcore.parallel import threaded
@@ -100,130 +102,100 @@ class _Serial:
 
     A handle per thread is the other answer, and the wrong one here: a handle carries an embedding
     function, and `athreaded` hands work to a pool that is as wide as the machine.
+
+    A store is an object that is itself callable, so wrapping every callable attribute in a function
+    replaced `code_st` with something that had no `rows_where`, and the symbol leg answered with that
+    AttributeError on every search anyone ran. An attribute that is not a method is proxied instead
+    of called: `k.code_st.rows_where(...)` and `k.codedb.t.store.fts_search(...)` reach the real
+    thing, and reach it holding the same two locks.
     """
-    def __init__(self, inner): self.inner = inner
-    def __getattr__(self, name):
-        attr = getattr(self.inner, name)
-        if not callable(attr): return attr
+    _PLAIN = (str, bytes, bool, int, float, complex, Path, type(None))
+    def __init__(self, inner, dbs=None):
+        self.__dict__['inner'] = inner
+        self.__dict__['dbs'] = tuple(dbs) if dbs is not None else tuple(
+            db for db in (getattr(inner, 'codedb', None), getattr(inner, 'envdb', None)) if db is not None)
+    def _held(self):
+        from contextlib import ExitStack
+        from litesearch.core import db_lock
+        stack = ExitStack()
+        for db in self.dbs: stack.enter_context(db_lock(db))
+        return stack
+    def _locked(self, attr):
         @wraps(attr)
         def call(*a, **kw):
-            from litesearch.core import db_lock
-            with db_lock(self.inner.codedb), db_lock(self.inner.envdb): return attr(*a, **kw)
+            with self._held():
+                out = attr(*a, **kw)
+                # a lazy row iterator would otherwise do its reading after the lock was dropped
+                return list(out) if isinstance(out, Iterator) else out
         return call
+    def __call__(self, *a, **kw): return self._locked(self.inner)(*a, **kw)
+    def __getattr__(self, name):
+        attr = getattr(self.inner, name)
+        if isinstance(attr, (self._PLAIN, type)): return attr
+        if isroutine(attr): return self._locked(attr)
+        return _Serial(attr, self.dbs) if callable(attr) or hasattr(attr, '__dict__') else attr
 
 class Search:
     "Human search uses explicit modes; inline-agent search uses Kosha with an rg fallback."
-    def __init__(self, sandbox, prefer_kosha=True):
+    def __init__(self, sandbox, prefer_kosha=True, focus=None):
         store_attr('prefer_kosha', fs=sandbox)
+        self.focus = focus
         self._k = None
         self._k_tried = False
+        self._k_root = None
         self._k_note = 'kosha not tried yet'
         self.backend = 'scan'
         self.note = ''
         self._completion_cache = {}
         self._agent_sync_tried = False
-        self._ks = {}
-    @staticmethod
-    def _is_repo(d):
-        d = Path(d)
-        return any((d/n).exists() for n in ('.git', 'pyproject.toml', 'setup.py'))
-    @staticmethod
-    def _is_indexed(d): return (Path(d)/'.kosha'/'code.db').exists()
-    def index_roots(self, roots=None):
-        """Every checkout whose own index can answer, in workspace order.
+    def _focus(self):
+        "Where the person is working, when the workspace has said. See `Workspace.cwd_for`."
+        try: return self.focus() if callable(self.focus) else self.focus
+        except Exception: return None
+    def kosha_root(self, path=None):
+        """The checkout whose index answers for `path`: the nearest one at or above it.
 
-        A folder of checkouts is not a checkout. When an open folder holds repos that carry a
-        `.kosha`, those are the indexes and the folder's own is not one: indexing thirty checkouts
-        flat is both slower to build and worse to search than the fifteen indexes already on disk.
-
-        A repo opened directly answers for itself alone, indexed or not, which is what builds the
-        index the first time. Its own subfolders are not read even where one has an index: a stray
-        `.kosha` under `leela/leela` indexes the files `leela` already holds, and reading both
-        returns every hit twice.
+        The walk the interpreter already takes. One folder of checkouts opened as one root holds an
+        index per repo, and the repo a file sits in is the repo that indexed it, so reading the
+        folder's own index reads one nothing ever built. The walk stops at the open folder, because
+        a checkout above the workspace is somebody else's.
         """
-        out = L()
-        for r in L(roots or self.fs.roots):
-            r = Path(r)
-            if self._is_repo(r): out.append(r); continue
-            try: kids = L(sorted(d for d in r.iterdir() if d.is_dir() and self._is_indexed(d)))
-            except OSError: kids = L()
-            out += kids or L(r)
-        return out.unique()
-    def _primary(self):
-        "The checkout `_kosha` is about: the open folder itself, or the first indexed repo inside it."
-        return first(self.index_roots()) or first(self.fs.roots)
-    def _make_kosha(self, root=None, probe=True):
-        """A fresh Kosha handle: separate SQLite connections for readers and the sync writer.
-
-        `probe` is the status call that proves the databases open. It counts graph nodes, so the
-        checkouts a fan-out reaches are opened without it: fifteen of them cost seconds, and the
-        query that follows fails just as loudly if a database is not there.
-        """
+        roots = L(self.fs.roots)
+        try: p = Path(path or self._focus() or '').resolve() if (path or self._focus()) else None
+        except OSError: p = None
+        stop = first(r for r in roots if p is not None and (Path(r) == p or Path(r) in p.parents))
+        if p is not None:
+            for d in (p, *p.parents):
+                if (d/'.kosha').exists() or any((d/n).exists() for n in ('.git', 'pyproject.toml')): return d
+                if stop is not None and Path(d) == Path(stop): break
+        return stop or first(roots)
+    def _make_kosha(self, root=None):
+        "A fresh Kosha handle: separate SQLite connections for readers and the sync writer."
         from kosha import Kosha
-        k=Kosha(dir=root or self._primary(),install_skill=False,busy_timeout=30000)
-        if probe: k.status(pyproject=False)
+        k=Kosha(dir=root or self.kosha_root(),install_skill=False,busy_timeout=30000)
+        k.status(pyproject=False)
         return _Serial(k)
-    def _kosha(self):
-        "The kosha handle, or None. Tried once, since retrying on every keystroke would stall the search."
+    def _kosha(self, path=None):
+        """The kosha handle for the checkout in hand, or None.
+
+        Tried once per checkout, since retrying on every keystroke would stall the search. Moving to
+        a file in another repo is what makes it try again, and what it tries is that repo's index.
+        """
+        root = self.kosha_root(path)
+        if self._k_root is not None and root != self._k_root: self._k, self._k_tried = None, False
         if self._k_tried: return self._k
-        self._k_tried = True
+        self._k_tried, self._k_root = True, root
         if not self.prefer_kosha:
             self._k_note = 'kosha disabled'
             return None
         try:
-            k=self._make_kosha()
+            k=self._make_kosha(root)
             self._k = k
-            self.backend, self.note = 'kosha', 'repo + installed packages'
+            self.backend, self.note = 'kosha', f'{Path(root).name} + installed packages' if root else 'repo + installed packages'
         except Exception as e:
             self._k_note = f'kosha unavailable ({errstr(e)})'
             self.note = self._k_note + '; literal scan'
         return self._k
-    def _kosha_at(self, root):
-        "The handle for one checkout. The primary keeps `_kosha`'s single-try state and its notes."
-        if not root or Path(root) == Path(self._primary() or '.'): return self._kosha()
-        key = str(root)
-        if key in self._ks: return self._ks[key]
-        self._ks[key] = None
-        if not self.prefer_kosha: return None
-        try: self._ks[key] = self._make_kosha(Path(root), probe=False)
-        except Exception as e: self.note = f'kosha unavailable for {Path(root).name} ({errstr(e)})'
-        return self._ks[key]
-    def _koshas(self, roots=None):
-        "A handle per checkout in scope. Nothing is created for a repo that has no index of its own."
-        return L(self._kosha_at(r) for r in self.index_roots(roots)).filter(lambda k: k is not None)
-    def _kosha_for(self, path):
-        "The index of the checkout `path` lives in, for a lookup anchored to one file."
-        try: p = Path(path).resolve() if path else None
-        except OSError: p = None
-        owner = first(r for r in self.index_roots().sorted(key=lambda r: -len(str(r)))
-                      if p is not None and (r == p or r in p.parents))
-        return self._kosha_at(owner) if owner is not None else self._kosha()
-    def _fan(self, run, roots=None, limit=None, what='kosha'):
-        """`run(k)` over every checkout in scope, taking one row from each in turn.
-
-        Round-robin, not concatenation: a limit spent entirely on the first checkout would make a
-        folder of thirty repos answer as if only one of them were open. `None` when not one index
-        answered, which is what tells a leg to report itself unavailable.
-        """
-        from itertools import zip_longest
-        rows, answered = [], False
-        for k in self._koshas(roots):
-            try: got = run(k)
-            except Exception as e:
-                self.note = f'{what} failed for {Path(str(_get(k, "root", "") or "")).name} ({errstr(e)})'
-                continue
-            if got is None: continue
-            answered = True
-            rows.append(list(got))
-        if not answered: return None
-        out = L(x for row in zip_longest(*rows) for x in row if x is not None)
-        return out[:limit] if limit else out
-    def _spread(self, roots=None):
-        "How many checkouts an indexed leg just read, for a note that says so."
-        return len(self._koshas(roots))
-    def _indexed_note(self, what, roots=None):
-        n = self._spread(roots)
-        return f'{what} · indexed files' if n < 2 else f'{what} · {n} indexed checkouts'
     def _covers(self, path):
         "Whether the sandbox can open an indexed path. Kosha may index a wider checkout."
         try: return bool(path) and self.fs.covers(Path(path).resolve())
@@ -244,20 +216,24 @@ class Search:
                 callers=[str(c) for c in (row.get('callers') or [])][:8],
                 package=package, sources=['kosha context']))
         return out
-    def _context(self, q, limit, roots=None):
+    def _context(self, q, limit):
         "Kosha's composed repo + environment retrieval, including graph context."
-        rows = self._fan(lambda k: k.context(q, graph=True, env=True, limit=limit),
-                         roots, limit, 'Kosha context')
-        if rows is None: return None
+        k = self._kosha()
+        if k is None: return None
+        try: rows = k.context(q, graph=True, env=True, limit=limit)
+        except Exception as e:
+            self.note = f'Kosha context failed ({errstr(e)})'
+            return None
         out = self._context_rows(rows)
         self.backend = 'context'
         local_n = sum(h.kind == 'context' for h in out)
         self.note = f'Kosha composed retrieval · {local_n} repo + {len(out)-local_n} environment'
         return out
-    def _repo_context(self, q, limit, roots=None):
-        rows = self._fan(lambda k: k.repo_context(q, columns=','.join(_SIM_COLS), limit=limit),
-                         roots, limit, 'Kosha repo search')
-        if rows is None: return None
+    def _repo_context(self, q, limit):
+        k = self._kosha()
+        if k is None: return None
+        try: rows = k.repo_context(q, columns=','.join(_SIM_COLS), limit=limit)
+        except Exception as e: self.note = f'Kosha repo search failed ({errstr(e)})'; return None
         out = self._context_rows(rows, 'repo-context')
         self.backend, self.note = 'repo', f'Kosha code store · {len(out)} results'
         return out
@@ -330,55 +306,24 @@ class Search:
         start=min(int(runtime.get('from',pos)),int(graph.get('from',pos)))
         vals=list(dict.fromkeys([*runtime.get('matches',[]),*graph.get('matches',[])]))
         return {'from':start,'matches':vals[:limit],'graph':graph.get('details',[])}
-    #: What one Kosha status counts per checkout, against what the one shared environment DB holds.
-    PER_REPO = ('files', 'stale_files', 'new_files')
-    def _repo_counts(self, k):
-        """One checkout's indexed, stale and new file counts.
-
-        Kosha's own `status` reads the environment for its package numbers, and that is the slow
-        half of it. Fifteen checkouts share one environment database, so asking each of them cost
-        seven seconds to learn the same thing fifteen times. This asks only what is the repo's own.
-        """
-        from kosha.core import dir2files, repo_skip_folder_re, strict_skip_file_re
-        known = {r['path']: r['uploaded_at'] for r in k.code_st(select='path,uploaded_at') if r['path']}
-        stale = sum(1 for p, at in known.items() if Path(p).exists() and Path(p).stat().st_mtime != at)
-        new = sum(1 for p in dir2files(Path(_get(k, 'root', '.')), strict_skip_file_re,
-                                       repo_skip_folder_re, exts=['.py']) if str(p) not in known)
-        return {'files': len(known), 'stale_files': stale, 'new_files': new}
     def status(self):
-        "Every checkout's index as one answer: repo counts added up, environment counts not doubled."
-        ks = self._koshas()
-        if not ks: return {'ok': False, 'note': self._k_note}
-        try: out = {'ok': True, 'root': str(self._primary() or ''), **ks[0].status(pyproject=False)}
+        k = self._kosha()
+        if k is None: return {'ok': False, 'note': self._k_note}
+        try: return {'ok': True, **k.status(pyproject=False), 'root': str(k.root)}
         except Exception as e: return {'ok': False, 'note': errstr(e)}
-        for n in self.PER_REPO: out[n] = 0
-        repos = []
-        for k in ks:
-            root = str(_get(k, 'root', '') or '')
-            try: counts = self._repo_counts(k)
-            except Exception as e:
-                repos.append({'root': root, 'note': errstr(e)})
-                continue
-            repos.append({'root': root, **counts})
-            for n in self.PER_REPO: out[n] += counts.get(n, 0) or 0
-        return {**out, 'repos': repos}
     def _kosha_hits(self, q, limit):
         "Semantic repo + environment results for the coding agent, filtered to paths that still exist."
-        ks = self._koshas()
-        if not ks: return None
+        k = self._kosha()
+        if k is None: return None
         if not self._agent_sync_tried:
             self._agent_sync_tried = True
             try:
-                states = [self._repo_counts(k) for k in ks]
-                # an empty checkout beside fifteen indexed ones is not a reason to index anything:
-                # a search the indexes can already answer must not start an embedding run.
-                if not any(st.get('files') for st in states) or all(
-                    st.get('new_files') or st.get('stale_files') for st in states): self._sync()
+                state = k.status(pyproject=False)
+                if not state.get('files') or state.get('new_files') or state.get('stale_files'): self._sync()
             except Exception: pass
-        rows = self._fan(lambda k: k.context(q, graph=False, env=True, limit=limit), limit=limit,
-                         what='kosha search')
-        if rows is None:
-            self.note = 'kosha search failed; literal scan'
+        try: rows = k.context(q, graph=False, env=True, limit=limit)
+        except Exception as e:
+            self.note = f'kosha search failed ({type(e).__name__}); literal scan'
             return None
         out = L()
         for r in rows:
@@ -487,20 +432,23 @@ class Search:
         hits = L(self._hit(r, kind, (r.get(score_key) or 0.0) if score_key else 0.0) for r in rows)
         for h in hits: h.path = self._here(h.path) or h.path
         return hits.filter(lambda h: self._covers(h.path))
-    def _fts(self, q, limit, roots=None):
+    def _fts(self, q, limit):
         "Kosha's lexical FTS5 leg only: no embedding and no vector search hidden behind it."
-        def run(k):
+        k = self._kosha()
+        if k is None: return None
+        try:
             from kosha.core import filt2wh, parseq, pre
             raw, filters = parseq(q)
             fq = pre(raw, wide=True, extract_kw=False)
-            return k.codedb.t.store.fts_search(fq, _SIM_COLS, 'rank', limit,
+            rows = k.codedb.t.store.fts_search(fq, _SIM_COLS, 'rank', limit,
                 where=filt2wh(filters, 'code'), quote=True)
-        rows = self._fan(run, roots, limit, 'kosha FTS')
-        if rows is None: return None
-        self.backend, self.note = 'fts', self._indexed_note('kosha FTS5', roots)
+        except Exception as e:
+            self.note = f'kosha FTS failed ({errstr(e)})'
+            return None
+        self.backend, self.note = 'fts', 'kosha FTS5 · indexed files'
         return self._indexed_hits(rows, 'fts', 'rank')
-    def _symbols(self, q, limit, roots=None):
-        "Exact/fuzzy symbol names across every checkout in scope and Kosha's shared environment DB."
+    def _symbols(self, q, limit):
+        "Exact/fuzzy symbol names across this repo and Kosha's shared environment DB."
         k = self._kosha()
         if k is None: return None
         name = (q or '').strip()
@@ -520,13 +468,10 @@ class Search:
                         select=cols, limit=limit - len(found))
                     found.extend(more)
                 return found
-            # one environment database serves every checkout, so it is read once, not per repo
-            rr = self._fan(lambda h: rows(h.code_st), roots, limit, 'Kosha symbol search')
-            er = rows(k.env_st, True)
+            rr, er = rows(k.code_st), rows(k.env_st, True)
         except Exception as e:
             self.note = f'Kosha symbol search failed ({errstr(e)})'
             return None
-        if rr is None: return None
         out = L()
         for row, env in [*((r, False) for r in rr), *((r, True) for r in er)]:
             m = _meta(row)
@@ -536,16 +481,17 @@ class Search:
                 symbol=str(m.get('mod_name') or m.get('name') or ''),
                 package=str(row.get('package') or m.get('package') or '')))
         self.backend = 'symbols'
-        n = self._spread(roots)
-        where = 'repo' if n < 2 else f'{n} checkouts'
-        self.note = f'Kosha metadata · {where} + {k.pkgs.count} indexed environment packages'
+        self.note = f'Kosha metadata · repo + {k.pkgs.count} indexed environment packages'
         return out[:limit]
-    def _ann(self, q, limit, roots=None):
+    def _ann(self, q, limit):
         "Kosha hybrid FTS + HNSW search, used only when the caller explicitly selects ANN."
-        rows = self._fan(lambda k: k.repo_context(q, ann=True, limit=limit), roots, limit, 'kosha ANN')
-        if rows is None: return None
-        self.backend = 'ann'
-        self.note = self._indexed_note('kosha FTS5 + HNSW embeddings', roots)
+        k = self._kosha()
+        if k is None: return None
+        try: rows = k.repo_context(q, ann=True, limit=limit)
+        except Exception as e:
+            self.note = f'kosha ANN failed ({errstr(e)})'
+            return None
+        self.backend, self.note = 'ann', 'kosha FTS5 + HNSW embeddings · indexed files'
         return self._indexed_hits(rows, 'ann', 'pagerank')
     @staticmethod
     def _hit(row, kind, score=0.0):
@@ -558,7 +504,7 @@ class Search:
             score=float(score if score else (_get(row, '_dist') or _get(row, 'dist') or 0.0)))
     def _anchor(self, path, line):
         "Store rowid covering `path:line`, preferring `Kosha.anchor` when the release has it."
-        k = self._kosha_for(path)
+        k = self._kosha(path)
         if k is None:
             self.note = f'{self._k_note}; no vector index'
             return None, None
@@ -584,7 +530,7 @@ class Search:
     def _hits_from(self, rows, kind='ann'): return L(self._hit(r, getattr(r, 'kind', None) or kind) for r in (rows or ()))
     def similar(self, path, line=1, limit=15):
         "Code nearest the chunk at `path:line`, reusing the stored vector rather than re-embedding."
-        k = self._kosha_for(path)
+        k = self._kosha(path)
         if k is None: return L()
         if hasattr(k, 'similar'):
             try:
@@ -623,7 +569,7 @@ class Search:
             members=self._hits_from(c.members, 'cluster')) for c in cs)
     def peers(self, path, line=1, limit=25, min_count=None, max_count=None):
         "The cluster this chunk belongs to; degrades to nearest neighbours when too small."
-        k = self._kosha_for(path)
+        k = self._kosha(path)
         if k is None: return L()
         kw = {n: v for n, v in (('min_count', min_count), ('max_count', max_count)) if v is not None}
         if hasattr(k, 'peers'):
@@ -673,9 +619,12 @@ class Search:
         if key in seen: return L()
         seen.add(key)
         out = L()
-        rows = self._fan(lambda k: k.codedb.t.store.rows_where("json_extract(metadata, '$.name') = ?",
-            [name], select=', '.join(_SIM_COLS), limit=limit), limit=limit, what='Kosha definition lookup')
-        if rows is not None: out = self._indexed_hits(rows, 'definition')
+        if (k := self._kosha(path)) is not None:
+            try:
+                rows = k.codedb.t.store.rows_where("json_extract(metadata, '$.name') = ?", [name],
+                    select=', '.join(_SIM_COLS), limit=limit)
+                out = self._indexed_hits(rows, 'definition')
+            except Exception as e: self.note = f'Kosha definition lookup failed ({errstr(e)}); scanning files'
         if not out:
             for p in self.fs.walk().filter(lambda p: p.suffix.lower() in _CODE_SUFFIXES):
                 for hit in self.symbols(p):
@@ -899,12 +848,9 @@ class Search:
         "Index refresh on a daemon thread; the returned fastcore thread carries its result in `.result`."
         return self._sync(notebooks, graph)
     sync_background = sync
-    def _writer(self, root):
-        "A sync handle for one checkout, keeping the no-argument call the primary has always made."
-        return self._make_kosha() if Path(root) == Path(self._primary() or '.') else self._make_kosha(root)
-    def _sync_one(self, root, notebooks=True, graph=True):
-        "Refresh one checkout's repository store, treating each notebook cell as its own chunk."
-        try:k=self._writer(root)
+    def _sync(self, notebooks=True, graph=True):
+        "Refresh Kosha's repository store, treating each notebook cell as its own chunk."
+        try:k=self._make_kosha()
         except Exception as e:return {'ok':False,'note':f'Kosha unavailable ({errstr(e)})'}
         try:
             from kosha.core import code_exts, file_parse
@@ -912,32 +858,22 @@ class Search:
             if notebooks: k.update_repo(dir=k.root, exts=exts, verbose=False, embed=True)
             else: k.sync(dir=k.root, pyproject=False, sync_graph=graph, verbose=False)
             indexed = sum(len(file_parse(Path(p))) for p in self.fs.walk()
-                if notebooks and p.suffix.lower() == '.ipynb' and self._within(p, [Path(k.root)]))
+                if notebooks and p.suffix.lower() == '.ipynb')
             if graph and notebooks:
                 try: k.graph.sync(dir=k.root, pkgs=[], force=False)
                 except Exception: pass
         except Exception as e:
             return {'ok':False,'note':f'Kosha sync failed ({errstr(e)})'}
+        self._completion_cache.clear()
+        self._agent_sync_tried = True
+        graph_note = 'graph enabled' if graph else 'graph unchanged'
+        self.backend,self.note='kosha',f'index synced · {graph_note} · {indexed} notebook cells'
         status=k.status(pyproject=False)
         for db in (getattr(k,'codedb',None),getattr(k,'envdb',None),getattr(getattr(k,'graph',None),'db',None)):
             try:
                 if db:db.close()
             except Exception:pass
-        return {'ok':True,'status':status,'notebook_cells':indexed}
-    def _sync(self, notebooks=True, graph=True, roots=None):
-        "Refresh the index of every checkout in scope. A folder of checkouts syncs the repos in it."
-        done = L((r, self._sync_one(r, notebooks, graph)) for r in self.index_roots(roots))
-        ok = done.filter(lambda d: d[1]['ok'])
-        if not ok: return first(r for _, r in done) or {'ok':False,'note':'nothing to sync'}
-        self._completion_cache.clear()
-        self._agent_sync_tried = True
-        indexed = sum(r['notebook_cells'] for _, r in ok)
-        graph_note = 'graph enabled' if graph else 'graph unchanged'
-        where = 'index synced' if len(ok) < 2 else f'{len(ok)} checkouts synced'
-        self.backend,self.note='kosha',f'{where} · {graph_note} · {indexed} notebook cells'
-        first_status = first(r['status'] for _, r in ok)
-        return {'ok':True,'note':self.note,'status':first_status,'notebook_cells':indexed,
-                'synced':[str(r) for r, _ in ok]}
+        return {'ok':True,'note':self.note,'status':status,'notebook_cells':indexed}
     def agent_search(self, q, limit=20):
         "Natural-language search for the inline agent: Kosha first, current disk fallback."
         q = (q or '').strip()
@@ -973,12 +909,12 @@ class Search:
         return out
 
     def _runners(self, q, limit, regex=False, exts=(), roots=None):
-        "The `all` legs as callables, each returning hits or None, narrowed to the searched folders."
+        "The `all` legs as callables, each returning hits or None. Only rg can be narrowed."
         return {'files': lambda: self._files(q, limit),
             'rg': lambda: self._rg(q, limit, regex, exts, roots),
-            'symbols': lambda: self._symbols(q, limit, roots),
-            'fts': lambda: self._fts(q, limit, roots),
-            'ann': lambda: self._ann(q, limit, roots)}
+            'symbols': lambda: self._symbols(q, limit),
+            'fts': lambda: self._fts(q, limit),
+            'ann': lambda: self._ann(q, limit)}
     def leg(self, name, q, limit=40, regex=False, exts=(), roots=None):
         "One backend of `all`, scored the way `all` scores it; `(hits, note)`, never raising."
         runners = self._runners(q, limit, regex, exts, roots)
@@ -1029,10 +965,10 @@ class Search:
         if not q: return L()
         if force_scan: mode = 'rg'
         if mode == 'all': return self._place(self._keep(self._all(q, limit, regex, legs), exts, roots))
-        scoped = {'context': self._context, 'repo': self._repo_context,
+        indexed = {'context': self._context, 'repo': self._repo_context, 'env': self._env_context,
             'fts': self._fts, 'ann': self._ann, 'symbols': self._symbols}
-        if mode in scoped or mode == 'env':
-            hits = self._env_context(q, limit) if mode == 'env' else scoped[mode](q, limit, roots)
+        if mode in indexed:
+            hits = indexed[mode](q, limit)
             if hits is None: return L()
             return self._place(self._keep(hits, exts, roots))
         return self._place(self._rg(q, limit, regex, exts, roots))

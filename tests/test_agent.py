@@ -2022,7 +2022,7 @@ def _index_legs(ws, monkeypatch, path):
             'ann': [Hit(path=path, line=2, text='return x', kind='ann', symbol='compute_total',
                         score=0.9)]}
     for name, hits in rows.items():
-        def leg(q, limit, roots=None, name=name, hits=hits): return ran.append(name) or L(hits)
+        def leg(q, limit, name=name, hits=hits): return ran.append(name) or L(hits)
         monkeypatch.setattr(ws.search, f'_{name}', leg)
     return ran
 

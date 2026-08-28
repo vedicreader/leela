@@ -62,7 +62,7 @@ def test_the_jump_route_says_which_direction_it_went(ws, tmp_path, monkeypatch):
 def no_index(monkeypatch):
     "No Kosha index, so the site-packages scan is what answers. The index has its own tests."
     from leela.blocks.search.search import Search
-    monkeypatch.setattr(Search, '_kosha', lambda self: None)
+    monkeypatch.setattr(Search, '_kosha', lambda self, path=None: None)
 
 def _venv(root, files):
     "A project with a virtualenv whose site-packages holds `files`, keyed by relative path."

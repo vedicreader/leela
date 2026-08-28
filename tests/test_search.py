@@ -8,7 +8,7 @@ from leela.blocks.search.search import Hit, Search
 import time
 import pytest
 from leela.blocks.memory.memory import Memory, _added_epoch, source_kind
-from fastcore.all import L, Path
+from fastcore.all import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 def test_default_search_uses_ripgrep_and_reports_real_lines(tmp_path):
@@ -70,6 +70,49 @@ def test_kosha_is_bound_to_the_workspace_not_the_packaged_apps_cwd(monkeypatch, 
     assert seen[0]['busy_timeout'] == 30000
     assert 'xdg_dir' not in seen[0]
     assert seen[1] == {'pyproject': False}
+
+def _repo(root, indexed=True):
+    "A checkout on disk, with its own Kosha index when `indexed`."
+    (root/'nbs').mkdir(parents=True, exist_ok=True)
+    (root/'.git').mkdir(exist_ok=True)
+    (root/'mod.py').write_text('def thing(): pass\n')
+    if indexed: (root/'.kosha').mkdir(exist_ok=True)
+    return root
+
+def test_the_index_read_is_the_one_belonging_to_the_repo_being_worked_in(monkeypatch, tmp_path):
+    """The reported failure: `orgs` open as one folder, and every indexed leg read an index at
+    `orgs` that nothing had built, while the index in each repo below it sat unread. The walk is
+    the one the interpreter already takes for a venv."""
+    orgs = tmp_path/'orgs'; orgs.mkdir()
+    a, b = _repo(orgs/'dockeasy'), _repo(orgs/'fossick')
+    s = Search(Sandbox([orgs]), prefer_kosha=False)
+    assert s.kosha_root(b/'nbs'/'00_core.ipynb') == b, 'the notebook belongs to the repo holding it'
+    assert s.kosha_root(a/'mod.py') == a
+    s.focus = lambda: b/'nbs'
+    assert s.kosha_root() == b, 'and the folder being worked in is what says which, unasked'
+    s.focus = lambda: orgs
+    assert s.kosha_root() == orgs, 'outside every checkout, the open folder is the answer'
+
+def test_the_walk_for_an_index_stops_at_the_open_folder(tmp_path):
+    "A checkout above the workspace is somebody else's, the same as a virtualenv above it."
+    outer = _repo(tmp_path/'outer')
+    inner = outer/'project'
+    (inner/'nbs').mkdir(parents=True)
+    s = Search(Sandbox([inner]), prefer_kosha=False)
+    assert s.kosha_root(inner/'nbs') == inner, 'not `outer`, which the workspace cannot open'
+
+def test_moving_to_another_repo_reopens_the_index_for_that_repo(monkeypatch, tmp_path):
+    "One handle is cached per checkout, so switching files does not keep reading the last repo's."
+    orgs = tmp_path/'orgs'; orgs.mkdir()
+    a, b = _repo(orgs/'dockeasy'), _repo(orgs/'fossick')
+    opened = []
+    s = Search(Sandbox([orgs]))
+    s._make_kosha = lambda root=None: opened.append(Path(root or s.kosha_root())) or SimpleNamespace(root=root)
+    s.focus = lambda: a
+    assert s._kosha().root == a
+    s.focus = lambda: b
+    assert s._kosha().root == b, 'the second repo answers for itself'
+    assert opened == [a, b], 'and each was opened once, when it was first needed'
 
 def test_kosha_sync_has_fastcore_thread_and_awaitable_surfaces(monkeypatch, tmp_path):
     s = Search(Sandbox([tmp_path]), prefer_kosha=False)
@@ -196,100 +239,6 @@ def test_repo_and_environment_modes_target_their_kosha_stores(monkeypatch, tmp_p
     assert s.search('body', mode='env')[0].kind == 'env-context'
     assert called == ['repo', 'env']
 
-def _checkout(root, indexed=True):
-    "A repo on disk, with its own Kosha index when `indexed`."
-    root.mkdir(parents=True, exist_ok=True)
-    (root/'.git').mkdir(exist_ok=True)
-    (root/'mod.py').write_text('def thing(): pass\n')
-    if indexed:
-        (root/'.kosha').mkdir(exist_ok=True)
-        (root/'.kosha'/'code.db').write_text('')
-    return root
-
-class _RowStore:
-    def __init__(self, rows, files=()): self.rows, self.files = rows, L(files)
-    def fts_search(self, *a, **kw): return list(self.rows)
-    def rows_where(self, *a, **kw): return list(self.rows)
-    def __call__(self, select=None, **kw):
-        "What `status` reads to count a checkout's indexed files."
-        return [{'path': str(f), 'uploaded_at': Path(f).stat().st_mtime} for f in self.files]
-
-class _RepoIndex:
-    "One checkout's index, answering with a row that names a file inside it."
-    def __init__(self, root, files=1):
-        self.root, self.files = Path(root), files
-        row = {'content': f'def thing(): pass  # {self.root.name}', 'path': str(self.root/'mod.py'),
-               'metadata': {'path': str(self.root/'mod.py'), 'lineno': 1, 'name': 'thing'}}
-        self.code_st = self.env_st = _RowStore([row], [self.root/'mod.py'])
-        self.codedb = SimpleNamespace(t=SimpleNamespace(store=_RowStore([row])))
-        self.pkgs = SimpleNamespace(count=0)
-    def status(self, **kw): return {'files': self.files, 'packages': 509, 'stale_files': 0}
-    def repo_context(self, q, **kw): return list(self.codedb.t.store.rows)
-    def context(self, q, **kw): return list(self.codedb.t.store.rows)
-
-def _fanned(tmp_path, **kw):
-    "A workspace whose one open folder holds two indexed checkouts and one without an index."
-    orgs = tmp_path/'orgs'
-    a, b = _checkout(orgs/'repo-a'), _checkout(orgs/'repo-b')
-    bare = _checkout(orgs/'repo-c', indexed=False)
-    s = Search(Sandbox([orgs]))
-    made = []
-    def make(root=None, probe=True):
-        root = root or s._primary()
-        made.append(Path(root))
-        return _RepoIndex(root, **kw)
-    s._make_kosha = make
-    return s, orgs, a, b, bare, made
-
-def test_a_folder_of_checkouts_names_each_repos_index_not_the_folders(tmp_path):
-    """The reported failure: `orgs` open as one folder, and every indexed leg answered from one
-    index at `orgs` that held nothing, while each repo's own index sat unread beside it."""
-    s, orgs, a, b, bare, _ = _fanned(tmp_path)
-    assert list(s.index_roots()) == [a, b], 'the repos with an index, and not the folder holding them'
-    assert bare not in s.index_roots(), 'a checkout without an index is not one to read'
-    assert list(Search(Sandbox([a])).index_roots()) == [a], 'a repo opened directly still answers for itself'
-    _checkout(a/'vendored')
-    assert list(Search(Sandbox([a])).index_roots()) == [a], 'and not twice over, through an index inside it'
-
-def test_an_indexed_leg_reads_every_checkout_and_spends_its_limit_across_them(tmp_path):
-    s, orgs, a, b, bare, made = _fanned(tmp_path)
-    hits = s.search('thing', mode='fts')
-    assert {Path(h.path).parent for h in hits} == {a, b}, 'both checkouts answered'
-    assert '2 indexed checkouts' in s.note
-    assert [Path(h.path).parent for h in hits] == [a, b], 'one row from each in turn, not all of the first'
-    assert bare not in made, 'and nothing was built in the checkout that has no index'
-    assert not (bare/'.kosha').exists()
-
-def test_a_lookup_anchored_to_a_file_reads_that_files_own_checkout(tmp_path):
-    s, orgs, a, b, bare, _ = _fanned(tmp_path)
-    assert s._kosha_for(b/'mod.py').root == b
-    assert s._kosha_for(a/'mod.py').root == a
-    assert s._kosha_for(orgs/'loose.py').root == a, 'outside any checkout, the primary answers'
-
-def test_status_adds_up_repo_files_and_does_not_count_the_shared_environment_twice(tmp_path):
-    "One environment database serves every checkout, so summing its package count would treble it."
-    s, orgs, a, b, bare, _ = _fanned(tmp_path)
-    st = s.status()
-    assert st['ok'] and st['files'] == 2, 'one indexed file in each of the two checkouts'
-    assert st['packages'] == 509, 'and the shared environment counted once, not once per checkout'
-    assert [Path(r['root']) for r in st['repos']] == [a, b]
-
-def test_sync_refreshes_each_checkout_rather_than_the_folder_that_holds_them(tmp_path):
-    orgs = tmp_path/'orgs'
-    a, b = _checkout(orgs/'repo-a'), _checkout(orgs/'repo-b')
-    synced = []
-    class Writer:
-        def __init__(self, root): self.root = Path(root); self.graph = SimpleNamespace(db=None, sync=lambda **kw: None)
-        codedb = envdb = None
-        def update_repo(self, **kw): synced.append(Path(kw['dir']))
-        def status(self, **kw): return {'files': 1}
-    s = Search(Sandbox([orgs]))
-    s._make_kosha = lambda root=None, probe=True: Writer(root or s._primary())
-    out = s._sync(notebooks=True, graph=True)
-    assert out['ok'] and synced == [a, b], 'the repos are what carry an index'
-    assert [Path(r) for r in out['synced']] == [a, b]
-    assert '2 checkouts synced' in out['note']
-
 def test_package_public_api_is_exposed_through_kosha(tmp_path):
     "Every row carries the file and line it is defined at, so the listing is a way into the package."
     real = tmp_path/'basics.py'; real.write_text('def store_attr(): pass\n')
@@ -332,12 +281,12 @@ def test_search_modes_are_explicit_not_inferred_from_the_query(monkeypatch, tmp_
     called = []
     monkeypatch.setattr(s, '_rg', lambda q, limit, regex=False, exts=(), roots=None:
                         called.append('rg') or [])
-    monkeypatch.setattr(s, '_fts', lambda q, limit, roots=None: called.append('fts') or [Hit('/x', 1, 'x')])
-    monkeypatch.setattr(s, '_ann', lambda q, limit, roots=None: called.append('ann') or [Hit('/x', 1, 'x')])
+    monkeypatch.setattr(s, '_fts', lambda q, limit: called.append('fts') or [Hit('/x', 1, 'x')])
+    monkeypatch.setattr(s, '_ann', lambda q, limit: called.append('ann') or [Hit('/x', 1, 'x')])
     s.search('a long semantic-looking question')
     s.search('literal name', mode='fts')
     s.search('conceptual equivalent', mode='ann')
-    monkeypatch.setattr(s, '_symbols', lambda q, limit, roots=None: called.append('symbols') or [Hit('/x', 1, 'x')])
+    monkeypatch.setattr(s, '_symbols', lambda q, limit: called.append('symbols') or [Hit('/x', 1, 'x')])
     s.search('SomeClass', mode='symbols')
     assert called == ['rg', 'fts', 'ann', 'symbols']
 
@@ -542,7 +491,7 @@ def test_the_streaming_search_reports_each_backend_as_it_finishes(tmp_path):
     legs = {d['leg']: d for n, d in events if n == 'leg'}
     assert set(legs) == set(Search.ALL_LEGS), 'every leg reports, even the ones with no index'
     assert any(h['line'] == 1 for h in legs['rg']['hits']), 'and rg found the definition'
-    assert legs['ann']['hits'] == [] and 'unavailable' in legs['ann']['note']
+    assert legs['ann']['hits'] == [], 'an index holding nothing reports no hits, not a failure'
 
 def test_the_stream_says_so_when_there_is_nothing_to_search_for(tmp_path):
     from starlette.testclient import TestClient
@@ -662,16 +611,27 @@ class _FakeConn: pass
 class _FakeDb:
     def __init__(self): self.conn = _FakeConn()
 
+class _FakeStore:
+    "A store is callable *and* carries methods, the shape that left the symbol leg with neither."
+    def __init__(self, owner): self.owner = owner
+    def __call__(self, **kw): return self.rows_where()
+    def rows_where(self, *a, **kw):
+        self.owner.enter()
+        return iter([{'content': 'def thing(): pass', 'metadata': '{"name": "thing"}'}])
+
 class _FakeKosha:
     "Counts how many threads are inside a call at once, which is what apsw refuses to allow."
     def __init__(self):
         self.codedb, self.envdb, self.inside, self.clashes = _FakeDb(), _FakeDb(), 0, 0
-    def status(self, **kw): return {}
-    def context(self, *a, **kw):
+        self.code_st = self.env_st = _FakeStore(self)
+    def enter(self):
         self.inside += 1
         if self.inside > 1: self.clashes += 1
         time.sleep(0.02)
         self.inside -= 1
+    def status(self, **kw): return {}
+    def context(self, *a, **kw):
+        self.enter()
         return []
 
 def _hammer(target, n=4):
@@ -691,7 +651,23 @@ def test_one_search_handle_is_never_inside_two_threads_at_once():
     k = _Serial(guarded)
     _hammer(lambda: k.context('q'))
     assert guarded.clashes == 0, 'one call at a time, through litesearch\'s own connection lock'
-    assert k.codedb is guarded.codedb, 'anything that is not a call is passed straight through'
+    assert k.status() == {}, 'and a plain result still comes back as itself'
+
+def test_a_store_reached_through_the_handle_keeps_its_methods_and_the_lock():
+    """A store is an object that is callable, so wrapping every callable attribute in a function
+    left `code_st` with no `rows_where` at all, and the symbol leg answered with that AttributeError
+    on every search anyone ran. Reaching the real store is no reason to read it unguarded: apsw
+    refuses a cursor on a connection another thread is inside, reading as much as writing."""
+    from leela.blocks.search.search import _Serial
+    guarded = _FakeKosha()
+    k = _Serial(guarded)
+    rows = k.code_st.rows_where("json_extract(metadata, '$.name') = ?", ['thing'])
+    assert [r['content'] for r in rows] == ['def thing(): pass'], 'the store answers, as a store'
+    assert isinstance(rows, list), 'and its lazy rows are drained while the lock is still held'
+    _hammer(lambda: k.code_st.rows_where('1', []))
+    assert guarded.clashes == 0, 'one reader at a time, as on the handle itself'
+    _hammer(lambda: k.code_st(select='path'))
+    assert guarded.clashes == 0, 'calling the store itself is guarded too'
 
 def test_the_search_handle_arrives_wrapped(monkeypatch, tmp_path):
     "The guard belongs to the handle every reader shares, not to the call sites that use it."
