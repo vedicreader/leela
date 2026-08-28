@@ -562,3 +562,48 @@ def test_documents_that_were_never_files_are_not_walked(vault):
     assert before == 2, 'only filed documents are candidates'
 
 sys.path.insert(0, str(ROOT/'tools'))
+
+
+class _FakeConn: pass
+class _FakeDb:
+    def __init__(self): self.conn = _FakeConn()
+
+class _FakeKosha:
+    "Counts how many threads are inside a call at once, which is what apsw refuses to allow."
+    def __init__(self):
+        self.codedb, self.envdb, self.inside, self.clashes = _FakeDb(), _FakeDb(), 0, 0
+    def status(self, **kw): return {}
+    def context(self, *a, **kw):
+        self.inside += 1
+        if self.inside > 1: self.clashes += 1
+        time.sleep(0.02)
+        self.inside -= 1
+        return []
+
+def _hammer(target, n=4):
+    threads = [threading.Thread(target=target) for _ in range(n)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+
+def test_one_search_handle_is_never_inside_two_threads_at_once():
+    """apsw binds a connection to whichever thread is in it, and every reader shares one handle:
+    `/search/stream` runs three legs at once, so four concurrent composed searches lost one to
+    `ThreadingViolationError` and the leg reported the exception instead of its results."""
+    from leela.blocks.search.search import _Serial
+    bare = _FakeKosha()
+    _hammer(lambda: bare.context('q'))
+    assert bare.clashes, 'the test cannot see the fault it is about'   # control
+    guarded = _FakeKosha()
+    k = _Serial(guarded)
+    _hammer(lambda: k.context('q'))
+    assert guarded.clashes == 0, 'one call at a time, through litesearch\'s own connection lock'
+    assert k.codedb is guarded.codedb, 'anything that is not a call is passed straight through'
+
+def test_the_search_handle_arrives_wrapped(monkeypatch, tmp_path):
+    "The guard belongs to the handle every reader shares, not to the call sites that use it."
+    import kosha
+    from leela.blocks.search.search import _Serial
+    fake = _FakeKosha()
+    monkeypatch.setattr(kosha, 'Kosha', lambda **kw: fake)
+    s = Search(Sandbox([tmp_path]))
+    assert isinstance(s._make_kosha(), _Serial)

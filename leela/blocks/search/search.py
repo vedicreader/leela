@@ -4,6 +4,7 @@ from __future__ import annotations
 from ..runtime.support import clean_env
 import ast, json, re, shutil, subprocess
 from dataclasses import dataclass, field
+from functools import wraps
 from fastcore.all import L, Path, first, ifnone, store_attr
 from fastcore.aio import athreaded
 from fastcore.parallel import threaded
@@ -86,6 +87,30 @@ class Cluster:
         return {'centroid': self.centroid, 'size': self.size, 'label': self.label,
             'files': self.files, 'members': [m.dict() for m in self.members]}
 
+class _Serial:
+    """A Kosha handle held behind litesearch's own connection locks.
+
+    apsw binds a connection to whichever thread is inside it, and one handle is shared by every
+    reader: `/search/stream` runs the fts, symbols and ann legs at once, and the agent searches
+    while a person does. Four concurrent `context` calls lost one to `ThreadingViolationError`, and
+    the leg reported the exception instead of its results. `db_lock` is litesearch's guard for this
+    exact fault, keyed on the connection, so a caller arriving through either library waits on the
+    same lock rather than on a second one that knows nothing about it. Both databases, always in the
+    same order, because a composed retrieval reads the repository and the environment together.
+
+    A handle per thread is the other answer, and the wrong one here: a handle carries an embedding
+    function, and `athreaded` hands work to a pool that is as wide as the machine.
+    """
+    def __init__(self, inner): self.inner = inner
+    def __getattr__(self, name):
+        attr = getattr(self.inner, name)
+        if not callable(attr): return attr
+        @wraps(attr)
+        def call(*a, **kw):
+            from litesearch.core import db_lock
+            with db_lock(self.inner.codedb), db_lock(self.inner.envdb): return attr(*a, **kw)
+        return call
+
 class Search:
     "Human search uses explicit modes; inline-agent search uses Kosha with an rg fallback."
     def __init__(self, sandbox, prefer_kosha=True):
@@ -103,7 +128,7 @@ class Search:
         root=self.fs.roots[0] if self.fs.roots else None
         k=Kosha(dir=root,install_skill=False,busy_timeout=30000)
         k.status(pyproject=False)
-        return k
+        return _Serial(k)
     def _kosha(self):
         "The kosha handle, or None. Tried once, since retrying on every keystroke would stall the search."
         if self._k_tried: return self._k
