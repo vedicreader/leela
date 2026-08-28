@@ -74,7 +74,9 @@ def connect(app, ctx):
         from ..agent.models import probed
         from .kernels import project_python
         from .support import inspector_support, installable, kernel_support
-        root = session.project_root
+        # The checkout in hand, not the folder that holds it: a panel offering to create an
+        # environment has to offer it where the work is, and name the one already there.
+        root = session.project_repo
         py = project_python([root]) if root else None
         support = await off_loop(lambda: probed(f'support:{py}', lambda: kernel_support(py))) if py else {}
         # Its own cache, not `probed`: an install has to be able to drop this one answer, and
@@ -111,8 +113,8 @@ def connect(app, ctx):
         except Exception as e: return fail(f'could not install the inspector’s packages — {errstr(e)}')
     @rt('/runtime/create')
     async def runtime_create():
-        "Create a .venv in `project_root` and install only its kernel transport, never Leela itself."
-        root = session.project_root
+        "Create a .venv in the checkout in hand, and install only its kernel transport, never Leela itself."
+        root = session.project_repo
         if root is None: return fail('open a folder first')
         target = root/'.venv'
         if target.exists(): return fail(f'{target} already exists')

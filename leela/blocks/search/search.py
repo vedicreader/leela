@@ -160,15 +160,15 @@ class Search:
         folder's own index reads one nothing ever built. The walk stops at the open folder, because
         a checkout above the workspace is somebody else's.
         """
+        from ...core.projects import PROJECT_MARKERS, nearest_marked
         roots = L(self.fs.roots)
-        try: p = Path(path or self._focus() or '').resolve() if (path or self._focus()) else None
+        here = path or self._focus()
+        try: p = Path(here).resolve() if here else None
         except OSError: p = None
         stop = first(r for r in roots if p is not None and (Path(r) == p or Path(r) in p.parents))
-        if p is not None:
-            for d in (p, *p.parents):
-                if (d/'.kosha').exists() or any((d/n).exists() for n in ('.git', 'pyproject.toml')): return d
-                if stop is not None and Path(d) == Path(stop): break
-        return stop or first(roots)
+        # `.kosha` first: a folder someone has already indexed answers for itself, checkout or not.
+        found = nearest_marked(p, ('.kosha', *PROJECT_MARKERS), stop)[0] if p is not None else None
+        return found or stop or first(roots)
     def _make_kosha(self, root=None):
         "A fresh Kosha handle: separate SQLite connections for readers and the sync writer."
         from kosha import Kosha

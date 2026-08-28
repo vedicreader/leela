@@ -1626,6 +1626,14 @@ def test_the_branch_pill_is_rendered_true_and_never_claims_a_folder_has_no_repos
     assert _git_pill_text(Workspace(roots=[repo/'sub'])) == 'trunk', 'a folder inside the checkout is in it'
     plain = tmp_path/'plain'; plain.mkdir()
     assert _git_pill_text(Workspace(roots=[plain])) == 'no git'
+    # a folder of clones is not a checkout, and the file open inside it is in one
+    clones = tmp_path/'orgs'; (clones/'repo-a').mkdir(parents=True)
+    subprocess.run(['git', 'init', '-q', '-b', 'main', str(clones/'repo-a')], check=True)
+    (clones/'repo-a'/'mod.py').write_text('x = 1\n')
+    ws = Workspace(roots=[clones])
+    assert _git_pill_text(ws) == 'no git', 'with nothing open, the folder itself is what it is'
+    ws.open(clones/'repo-a'/'mod.py')
+    assert _git_pill_text(ws) == 'main', 'and the pill follows the file into its repository'
     assert _git_pill_text(Workspace(roots=[])) == 'git …', 'nothing open is not a statement about git'
     with TestClient(ide_app(Workspace(roots=[repo]))) as client:
         assert 'trunk' in client.get('/').text

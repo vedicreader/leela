@@ -8,8 +8,35 @@ from fastcore.xtras import Path, atomic_save
 
 from .. import leela_cfg
 
-__all__ = ['SESSION', 'SERVING', 'MAX_RECENT', 'session', 'remember', 'note_folder', 'drop_folder',
+__all__ = ['SESSION', 'SERVING', 'MAX_RECENT', 'PROJECT_MARKERS', 'nearest_marked', 'project_dir',
+           'session', 'remember', 'note_folder', 'drop_folder',
            'last_folders', 'last_folder', 'recent_folders', 'forget_recent', 'serving', 'now_serving', 'served']
+
+#: What makes a directory the project a surface acts on, rather than a directory inside one.
+PROJECT_MARKERS = ('.git', 'pyproject.toml', 'setup.py', 'settings.ini')
+
+def nearest_marked(start, markers, stop=None):
+    """The nearest directory at or above `start` holding one of `markers`, and the marker it holds.
+
+    One walk, because a workspace has several answers keyed to the same question and they have to
+    agree: which interpreter a kernel starts in, which index a search reads, which checkout a
+    release runs in. `stop` is the open folder, and the walk does not pass it: what is above the
+    workspace belongs to something else. `markers` are relative paths, so `.venv/bin/python` asks
+    about a file and `.git` asks about a directory.
+    """
+    try: start = Path(start).resolve()
+    except (OSError, ValueError): return None, None
+    try: stop = Path(stop).resolve() if stop else None
+    except (OSError, ValueError): stop = None
+    for d in (start, *start.parents):
+        for m in markers:
+            if (hit := d/m).exists(): return d, hit
+        if stop is not None and d == stop: break
+    return None, None
+
+def project_dir(start, stop=None):
+    "The nearest checkout at or above `start`, not searched past `stop`. See `nearest_marked`."
+    return nearest_marked(start, PROJECT_MARKERS, stop)[0]
 
 #: The session a person opens. A test points `SESSION` at its own file; the guard below
 #: is about this one.

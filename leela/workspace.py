@@ -441,9 +441,24 @@ class Workspace:
         if self.active_root and self.active_root in self.fs.roots: return self.active_root
         return first(self.fs.roots)
     @property
-    def runs(self):
-        "The saved runs of the folder the project surfaces are about. That is not always the first opened."
+    def project_repo(self):
+        """The checkout a project surface acts on: the nearest one at or above the folder in hand.
+
+        `project_root` is the folder that is open, which is not always a checkout. A folder of
+        clones opened to work across them is not one, and acting on it put a `.venv`, a run
+        configuration and a release beside the clones instead of inside the one being worked on.
+        The walk is the one the interpreter and the code index already take.
+        """
+        from .core.projects import project_dir
         root = self.project_root
+        if root is None: return None
+        if project_dir(root, root) is not None: return root
+        cwd = self.cwd_for()
+        return (project_dir(cwd, root) if cwd else None) or root
+    @property
+    def runs(self):
+        "The saved runs of the checkout the project surfaces are about. That is not always the first opened."
+        root = self.project_repo
         if self._runs is None or self._runs.root != root: self._runs = Runs(root)
         return self._runs
     def _add_tab(self, t):
@@ -898,7 +913,7 @@ class Workspace:
             p = self.fs._check(name_or_path, must_exist=True)
             r = self.runs.for_file(p)
             if save: self.runs.add(r)
-        root = self.project_root
+        root = self.project_repo
         cwd = r.resolved_cwd(root) if root else None
         # An app belongs in its own project's environment.
         from .blocks.runtime.kernels import python_for

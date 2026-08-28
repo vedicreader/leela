@@ -57,7 +57,7 @@ def connect(app, ctx):
         run = ctx.runs.get(name) if name else None
         config = run.dict() if run else dict(d)
         from ..runtime.support import work_dir
-        root = ws.project_root or Path(work_dir())
+        root = ws.project_repo or Path(work_dir())
         cwd = config.get('cwd') or str(root)
         if cwd and not Path(cwd).is_absolute(): cwd = str((root/str(cwd)).resolve())
         # Resolved after `cwd`, so the debugger uses the venv of whatever is being debugged.

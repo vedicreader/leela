@@ -294,7 +294,7 @@ def _git_pill_text(ws):
     paint the client does not reach leaves that claim on screen, and it is the one thing `cwd.js`
     refuses to say for a request it could not make. An unknown says so instead.
     """
-    root = ws.project_root
+    root = ws.project_repo
     if root is None: return 'git …'
     try:
         from .blocks.git.git import GitRepo, repo_root

@@ -45,15 +45,14 @@ def project_python(roots=()):
         if (p := first(p for _, p in _venv_pythons(root) if p.exists())): return str(p)
     return None
 
+#: The interpreters `nearest_python` looks for, as paths relative to a project folder.
+VENV_PYTHONS = tuple(f'{d}/{b}' for d in VENV_DIRS for b in VENV_BINS)
+
 def nearest_python(start, stop=None):
     "The nearest conventional venv interpreter at or above `start`, not searched past `stop`."
-    try: start = Path(start).resolve()
-    except Exception: return None
-    stop = Path(stop).resolve() if stop else None
-    for d in (start, *start.parents):
-        if (p := first(p for _, p in _venv_pythons(d) if p.exists())): return str(p)
-        if stop is not None and d == stop: break
-    return None
+    from ...core.projects import nearest_marked
+    p = nearest_marked(start, VENV_PYTHONS, stop)[1]
+    return str(p) if p else None
 
 def python_for(cwd=None, session=None, stop=None):
     "The interpreter anything Leela spawns for `cwd` should be inside."

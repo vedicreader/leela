@@ -19,6 +19,28 @@ def test_capabilities_resolves_the_interpreter_from_the_project_not_the_first_ro
     assert got['python'] == str(python_for(ws.cwd_for(), ws) or got['python'])
     assert set(got) == {'python', 'debugpy', 'notebook', 'direct'}
 
+def test_a_relative_program_is_resolved_against_the_checkout_being_worked_in(monkeypatch, tmp_path):
+    "Beside the clones is nowhere: `main.py` means the one in the repo the open file is in."
+    import subprocess
+    from leela.blocks.debug import debug as debug_mod
+    orgs = tmp_path/'orgs'; a = orgs/'repo-a'; a.mkdir(parents=True)
+    subprocess.run(['git', 'init', '-q', str(a)], check=True)
+    (a/'main.py').write_text('print(1)\n')
+    launched = {}
+    class FakeSession:
+        alive = False
+        def __init__(self, python, cwd): launched.update(python=str(python), cwd=str(cwd))
+        def start_adapter(self): pass
+        def launch(self, config, breakpoints): launched['config'] = config
+        def disconnect(self): pass
+    monkeypatch.setattr(debug_mod, 'DebugSession', FakeSession)
+    ws = Workspace(roots=[orgs])
+    ws.open(a/'main.py')
+    with TestClient(ide_app(ws)) as client:
+        assert client.post('/debug/start', json={'program': 'main.py'}).json()['ok']
+    assert launched['config']['program'] == str(a/'main.py'), 'the checkout, not the folder of clones'
+    assert launched['cwd'] == str(a)
+
 def test_every_debug_route_refuses_the_same_way_with_no_session(tmp_path):
     "One recovery message from every route, so a dead debugger never looks like a dead UI."
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:

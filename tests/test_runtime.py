@@ -314,6 +314,53 @@ def test_the_interpreter_and_a_new_venv_follow_the_chosen_folder(tmp_path):
         assert created['root'] == str(b) and created['python'].startswith(str(b))
         assert (b/'.venv').is_dir() and not (a/'.venv'/'pyvenv.cfg').exists(), 'nothing landed in a'
 
+def test_a_folder_of_clones_creates_the_venv_in_the_checkout_being_worked_in(tmp_path):
+    """`orgs` open as one folder: the environment panel described `orgs` and offered to create a
+    `.venv` beside the clones. The same walk the kernel takes names the checkout instead."""
+    import subprocess
+    orgs = tmp_path/'orgs'
+    a = orgs/'dockeasy'; (a/'nbs').mkdir(parents=True)
+    subprocess.run(['git', 'init', '-q', str(a)], check=True)
+    _notebook(a/'nbs'/'00_core.ipynb')
+    ws = Workspace(roots=[orgs])
+    with TestClient(ide_app(ws)) as c:
+        assert c.get('/runtime/info').json()['root'] == str(orgs), 'nothing open, so the open folder'
+        ws.open(a/'nbs'/'00_core.ipynb')
+        info = c.get('/runtime/info').json()
+        assert info['root'] == str(a), 'the checkout the notebook is in'
+        assert info['needs_create'] is True and info['python'] == ''
+        created = c.post('/runtime/create').json()
+    assert created['root'] == str(a) and (a/'.venv').is_dir()
+    assert not (orgs/'.venv').exists(), 'nothing landed beside the clones'
+
+def test_run_configurations_belong_to_the_checkout_not_the_folder_of_clones(tmp_path):
+    "A release, a run and an interpreter are all the same question, and have to give one answer."
+    import subprocess
+    orgs = tmp_path/'orgs'
+    a, b = orgs/'repo-a', orgs/'repo-b'
+    for d in (a, b):
+        d.mkdir(parents=True)
+        subprocess.run(['git', 'init', '-q', str(d)], check=True)
+        (d/'main.py').write_text('print(1)\n')
+    ws = Workspace(roots=[orgs])
+    assert ws.project_repo == orgs, 'with nothing open, the folder that is open'
+    ws.open(a/'main.py')
+    assert ws.project_repo == a and Path(ws.runs.root) == a
+    ws.open(b/'main.py')
+    assert ws.project_repo == b and Path(ws.runs.root) == b, 'and it follows the file'
+    assert Path(Workspace(roots=[a]).project_repo) == a, 'a checkout opened directly is itself'
+
+def test_one_walk_answers_where_the_project_is(tmp_path):
+    "The interpreter, the index and the release all ask this, so they ask it in one place."
+    from leela.core.projects import nearest_marked, project_dir
+    root = tmp_path/'repo'; (root/'nbs').mkdir(parents=True)
+    (root/'pyproject.toml').write_text('[project]\nname = "x"\n')
+    assert project_dir(root/'nbs') == root
+    assert project_dir(tmp_path) is None, 'a folder that is not a checkout is not one'
+    assert project_dir(root/'nbs', stop=root/'nbs') is None, 'the walk does not pass the open folder'
+    py = _venv(root)
+    assert nearest_marked(root/'nbs', ['.venv/bin/python'])[1] == py, 'the marker found comes back'
+
 def test_the_path_prelude_is_written_in_the_users_own_shell():
     "`export FOO=bar` is not fish, and fish has no `export` at all."
     from leela.blocks.term.term import path_prelude
