@@ -26,6 +26,130 @@ function markHarness(model) {
   if (banner) banner.hidden = MODEL_RUNTIMES[model] !== 'cursor';
 }
 
+/* The model list is long, and a native `<select>` hands its menu to the platform. WKWebView draws a
+   list that long at the top of the screen rather than under the control, so in the packaged app the
+   picker opened nowhere near the thing it belongs to. The select stays: it is the value, the id and
+   the change event every other caller already reads, and this only draws a menu Leela can place
+   itself. Every option comes from the select, so `loadAgentModels` keeps filling one list. */
+const MODEL_MENU_MIN = 280, MODEL_MENU_ROOM = 220;
+let modelMenu = null;
+
+function modelLabel(select) {
+  const o = select.options[select.selectedIndex];
+  return o ? o.textContent : (select.value || 'choose a model');
+}
+function paintModelPickers(root = document) {
+  for (const b of $$('[data-model-pick]', root)) {
+    const select = $('#' + b.dataset.modelPick, root) || b.previousElementSibling;
+    if (select) b.textContent = modelLabel(select);
+  }
+}
+function closeModelMenu(focus = false) {
+  if (!modelMenu) return;
+  const {el, button} = modelMenu;
+  modelMenu = null;
+  el.remove();
+  button.setAttribute('aria-expanded', 'false');
+  if (focus) button.focus();
+}
+function placeModelMenu(el, button) {
+  const r = button.getBoundingClientRect(), width = Math.max(r.width, MODEL_MENU_MIN);
+  el.style.width = `${Math.min(width, window.innerWidth - 16)}px`;
+  const below = window.innerHeight - r.bottom;
+  // Above when there is not room under it, and never off the edge: the fault being fixed here is a
+  // menu that had nothing to do with where its control was.
+  el.style.maxHeight = `${Math.max(160, Math.min(340, (below > MODEL_MENU_ROOM ? below : r.top) - 12))}px`;
+  el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - width - 8))}px`;
+  if (below > MODEL_MENU_ROOM) { el.style.top = `${r.bottom + 4}px`; el.style.bottom = 'auto'; }
+  else { el.style.bottom = `${window.innerHeight - r.top + 4}px`; el.style.top = 'auto'; }
+}
+function openModelMenu(select, button) {
+  if (modelMenu?.button === button) return closeModelMenu(true);
+  closeModelMenu();
+  const el = document.createElement('div');
+  el.className = 'lee-model-menu'; el.id = 'modelmenu';
+  el.innerHTML = `<input class="lee-input lee-model-filter" data-model-filter placeholder="filter models…"` +
+    ` autocomplete="off" spellcheck="false" aria-controls="modellist" aria-label="filter models">` +
+    `<div class="lee-model-list" id="modellist" role="listbox" data-model-list></div>`;
+  document.body.appendChild(el);
+  button.setAttribute('aria-expanded', 'true');
+  const list = $('[data-model-list]', el), filter = $('[data-model-filter]', el);
+  let rows = [], active = 0;
+  const paint = () => {
+    const want = filter.value.trim().toLowerCase();
+    rows = [...select.options].filter(o => !want ||
+      `${o.textContent} ${o.value}`.toLowerCase().includes(want));
+    if (!rows.length) { list.innerHTML = '<div class="lee-model-empty">no model matches</div>'; return; }
+    active = Math.max(0, rows.findIndex(o => o.value === select.value));
+    list.innerHTML = rows.map((o, i) =>
+      `<button type="button" class="lee-model-row${o.value === select.value ? ' chosen' : ''}"` +
+      ` role="option" id="modelrow${i}" aria-selected="${o.value === select.value}"` +
+      ` data-value="${esc(o.value)}" title="${esc(o.title || '')}">${esc(o.textContent)}</button>`).join('');
+    move(active);
+  };
+  const move = i => {
+    if (!rows.length) return;
+    active = (i + rows.length) % rows.length;
+    const items = $$('.lee-model-row', list);
+    items.forEach((x, n) => x.classList.toggle('active', n === active));
+    items[active]?.scrollIntoView({block: 'nearest'});
+    filter.setAttribute('aria-activedescendant', `modelrow${active}`);
+  };
+  const commit = value => {
+    closeModelMenu(true);
+    if (value === select.value) return;
+    select.value = value;
+    // The select's own `change` is what saves it, so one path answers for the picker and the
+    // keyboard, and a refusal unwinds through `loadAgentModels` as it always did.
+    select.dispatchEvent(new Event('change', {bubbles: true}));
+    paintModelPickers();
+  };
+  list.onclick = e => { const row = e.target.closest('[data-value]'); if (row) commit(row.dataset.value); };
+  filter.oninput = paint;
+  filter.onkeydown = e => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); move(active + 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); move(active - 1); }
+    else if (e.key === 'Home') { e.preventDefault(); move(0); }
+    else if (e.key === 'End') { e.preventDefault(); move(rows.length - 1); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (rows[active]) commit(rows[active].value); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeModelMenu(true); }
+    else if (e.key === 'Tab') closeModelMenu();
+  };
+  modelMenu = {el, button, select};
+  paint();
+  placeModelMenu(el, button);
+  filter.focus();
+}
+function attachModelPicker(select) {
+  if (!select || select.dataset.leePicked) return;
+  select.dataset.leePicked = '1';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `${select.className} lee-model-pick`;
+  button.dataset.modelPick = select.id || '';
+  button.setAttribute('role', 'combobox');
+  button.setAttribute('aria-haspopup', 'listbox');
+  button.setAttribute('aria-expanded', 'false');
+  button.setAttribute('aria-label', select.getAttribute('aria-label') || 'model');
+  button.title = select.title || '';
+  button.textContent = modelLabel(select);
+  button.onclick = () => openModelMenu(select, button);
+  button.onkeydown = e => {
+    if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openModelMenu(select, button); }
+  };
+  select.hidden = true;                       // kept for its id, its value and its change event
+  select.insertAdjacentElement('beforebegin', button);
+  select.addEventListener('change', () => { button.textContent = modelLabel(select); });
+  return button;
+}
+document.addEventListener('pointerdown', e => {
+  if (modelMenu && !e.target.closest('.lee-model-menu, [data-model-pick]')) closeModelMenu();
+}, true);
+window.addEventListener('resize', () => closeModelMenu());
+// A menu placed against a rect is wrong the moment the thing under it moves.
+window.addEventListener('scroll', () => closeModelMenu(), true);
+window.leeModelPickers = paintModelPickers;
+
 async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
   const selects = {agent: $('#agentmodel'), inline: $('#inlinemodel'), completion: $('#completionmodel')};
   if (!selects.agent || !selects.inline || !selects.completion) return;
@@ -46,6 +170,8 @@ async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
   JOB_HELP = d.job_help || JOB_HELP;
   markHarness(selects.agent.value);
   paintJobModels(d);
+  for (const select of Object.values(selects)) attachModelPicker(select);
+  paintModelPickers();
   const notes = Object.values(d.auth || {}).map(x => x.note).filter(Boolean);
   if (notes.length) selects.agent.title = notes.join(' · ');
 }
@@ -70,6 +196,7 @@ function paintJobModels(d) {
     const sel = host.querySelector(`[data-job="${job}"]`);
     if ([...sel.options].some(o => o.value === current)) sel.value = current;
     sel.onchange = () => leeAgentModel(job, sel.value);
+    attachModelPicker(sel);
   }
 }
 window.leeLoadModels = loadAgentModels;

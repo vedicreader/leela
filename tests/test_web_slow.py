@@ -603,6 +603,68 @@ def test_a_key_can_be_set_from_inside_leela_when_the_shell_gives_the_wrong_answe
     from leela.core.envs import stored_env
     assert stored_env() == {}, 'and removing it takes it back out of the file'
 
+def test_the_model_picker_opens_where_it_belongs_and_chooses_by_keyboard():
+    """A native `<select>` hands its menu to the platform, and WKWebView drew a list this long at
+    the top of the screen rather than under the control. The menu is Leela's now, so it can be
+    placed, filtered and driven from the keyboard -- and the select stays underneath it as the
+    value, the id and the change event every other caller reads."""
+    async def go(pg):
+        out = {}
+        await pg.wait_for_selector('[data-model-pick]')
+        button = pg.locator('[data-model-pick="agentmodel"]')
+        out['label'] = (await button.inner_text()).strip()
+        out['select_hidden'] = await pg.evaluate("$('#agentmodel').hidden")
+        await button.click()
+        await pg.wait_for_selector('.lee-model-menu .lee-model-row')
+        out['rows'] = await pg.locator('.lee-model-row').count()
+        # measured after the open animation, which translates the box while it runs
+        await pg.evaluate("() => Promise.all(document.querySelector('.lee-model-menu')"
+                          ".getAnimations().map(a => a.finished))")
+        # the fault this test is about: a menu with nothing to do with where its control is
+        out['place'] = await pg.evaluate("""() => {
+          const m = document.querySelector('.lee-model-menu').getBoundingClientRect();
+          const b = document.querySelector('[data-model-pick]').getBoundingClientRect();
+          return {gap: Math.round(Math.min(Math.abs(m.top - b.bottom), Math.abs(b.top - m.bottom))),
+                  dx: Math.round(Math.abs(m.left - b.left)), top: Math.round(m.top),
+                  inside: m.left >= 0 && m.right <= innerWidth && m.top >= 0 && m.bottom <= innerHeight};
+        }""")
+        await pg.keyboard.type('gpt')
+        await pg.wait_for_function("document.querySelectorAll('.lee-model-row').length > 0")
+        out['filtered'] = await pg.evaluate(
+            "[...document.querySelectorAll('.lee-model-row')].every(r => /gpt/i.test(r.textContent))")
+        await pg.keyboard.press('ArrowDown')
+        out['active'] = await pg.evaluate("!!document.querySelector('.lee-model-row.active')")
+        await pg.keyboard.press('Escape')
+        out['closed'] = await pg.evaluate("!document.querySelector('.lee-model-menu')")
+        # Choosing one goes through the select's own change event, which is the single path that
+        # saves it: the picker must not become a second way of doing the same thing.
+        await button.click()
+        await pg.wait_for_selector('.lee-model-menu .lee-model-row')
+        wanted = await pg.evaluate(
+            "() => [...$('#agentmodel').options].map(o => o.value).find(v => v !== $('#agentmodel').value)")
+        out['wanted'] = wanted
+        if wanted:
+            await pg.fill('[data-model-filter]', wanted)
+            async with pg.expect_response(lambda r: '/agent/model' in r.url) as saved:
+                await pg.keyboard.press('Enter')
+            out['saved'] = (await saved.value).ok
+            out['value'] = await pg.evaluate("$('#agentmodel').value")
+            out['button'] = (await button.inner_text()).strip()
+        return out
+    out = _run(go)
+    assert out['select_hidden'], 'the native menu is what was wrong; the select itself still carries the value'
+    assert out['rows'] > 0 and out['label']
+    assert out['place']['inside'], f"the menu is off screen: {out['place']}"
+    assert out['place']['gap'] <= 8 and out['place']['dx'] <= 8, \
+        f"the menu is not against its control: {out['place']}"
+    assert out['filtered'], 'typing filters the list'
+    assert out['active'], 'the arrows move a highlighted row'
+    assert out['closed'], 'escape closes it'
+    if out['wanted']:
+        assert out['saved'], 'the choice reaches /agent/model'
+        assert out['value'] == out['wanted'], 'and the select carries it, for every reader of it'
+        assert out['wanted'].split('/')[-1][:6] in out['button'], 'the control shows what was chosen'
+
 def test_tabs_and_panes_overflow_switch_and_come_back_where_they_were_left():
     """One page for the shell's layout. Tabs past the strip's width belong in the overflow menu and
     nowhere else, `mod+e` is the switcher's chord, `sessionStorage` died with the window so every

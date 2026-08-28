@@ -1969,6 +1969,21 @@ kbd {
 .lee-agent-context span { overflow: hidden; text-overflow: ellipsis; }
 .lee-agent-attachment button { border: 0; background: transparent; color: var(--lee-fg4); cursor: pointer; font-size: 9px; }
 .lee-agent-attachment button:hover { color: var(--lee-red); }
+.lee-model-pick { display: inline-flex; align-items: center; overflow: hidden; text-align: left;
+  text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.lee-model-pick::after { flex: none; margin-left: auto; padding-left: 6px; content: '⌄'; color: var(--lee-fg4); }
+.lee-model-menu { position: fixed; z-index: 60; display: flex; flex-direction: column; padding: 4px;
+  border: 1px solid var(--lee-border); border-radius: 6px; background: var(--lee-bg1);
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--lee-bg) 72%, transparent);
+  animation: lee-popover-in .12s cubic-bezier(.16,1,.3,1) both; }
+.lee-model-filter { margin: 0 0 4px; }
+.lee-model-list { overflow: auto; }
+.lee-model-row { display: block; width: 100%; overflow: hidden; padding: 5px 8px; border: 0;
+  border-radius: 3px; background: transparent; color: var(--lee-fg2); cursor: pointer;
+  text-align: left; text-overflow: ellipsis; white-space: nowrap; font: 10.5px/1.35 var(--lee-mono); }
+.lee-model-row:hover, .lee-model-row.active { background: var(--lee-sel); color: var(--lee-fg); }
+.lee-model-row.chosen { color: var(--lee-accent); }
+.lee-model-empty { padding: 8px; color: var(--lee-fg4); font: 10px/1.4 var(--lee-mono); }
 .lee-agent-suggest {
   position: absolute; left: 8px; right: 8px; bottom: calc(100% - 1px); z-index: 20;
   max-height: 260px; padding: 4px; overflow: auto; border: 1px solid var(--lee-border);
