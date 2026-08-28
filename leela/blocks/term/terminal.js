@@ -21,7 +21,14 @@ function nextTermId(kind, taken = []) {
   do { lee.termSeq += 1; } while (used.has('term-' + lee.termSeq));
   return 'term-' + lee.termSeq;
 }
-function termLabel(kind, id) { return kind === 'git' ? 'lazygit' : kind === 'release' ? 'release pipeline' : kind === 'deploy' ? 'deploy' : kind === 'drive' ? 'drive' : kind === 'gh-auth' ? 'gh auth' : `terminal ${id.split('-').pop()}`; }
+/* `root` names the package a pipeline terminal is watching. There is one of these per package,
+   and two of them are otherwise the same word. */
+function termLabel(kind, id, root = '') {
+  const name = kind === 'git' ? 'lazygit' : kind === 'release' ? (root ? 'release' : 'release pipeline')
+    : kind === 'deploy' ? 'deploy' : kind === 'drive' ? 'drive' : kind === 'gh-auth' ? 'gh auth'
+    : `terminal ${id.split('-').pop()}`;
+  return root ? `${name} · ${root.replace(/\/+$/, '').split('/').pop()}` : name;
+}
 function paintTermTabs() {
   const bar = $('#termtabs'); if (!bar) return;
   /* The close control belongs to the tab, not the header, so a background terminal is closed

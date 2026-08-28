@@ -10,6 +10,18 @@ import leela_app
 from tests.assets import read
 from leela import desktop
 
+def test_the_pipeline_terminal_is_keyed_by_the_package_it_watches():
+    """A browser test covers the behaviour; this catches a silent revert without paying for one.
+
+    `openReleaseTerm` keyed its record by kind alone, so one `release` terminal served every
+    package and showed whichever one it was opened with first.
+    """
+    for f in ('leela/blocks/term/dock.js', 'leela/static/lee-ide.js'):
+        js = read(f)
+        body = js.split('async function openReleaseTerm')[1].split('\nasync function')[0]
+        assert 'const id = kind,' not in body, f
+        assert '`${kind}:${at}`' in body, f
+
 def test_each_platform_gets_the_webview_its_os_already_ships():
     assert desktop.backend('darwin') == 'cocoa'
     assert desktop.backend('win32') == 'edgechromium'

@@ -838,6 +838,40 @@ def test_a_completion_on_a_cells_last_line_is_drawn_whole():
     assert out['height'] > 0 and out['below'] > 0, 'the list is taller than the box that holds it'
     assert out['hits'], 'the point two thirds down the list is the list, not what is drawn over it'
 
+def test_a_pipeline_terminal_follows_the_package_it_was_opened_for(tmp_path):
+    """Moving between packages showed the first package's release log, and closing the terminal
+
+    was the only way to see the one you were looking at. The record was keyed by kind alone, so
+    there was one `release` terminal for the whole window holding the socket opened with whichever
+    package came first. The server always kept one pipeline per package.
+    """
+    a, b = tmp_path/'alpha', tmp_path/'beta'
+    for d in (a, b): d.mkdir()
+    async def go(pg):
+        out = {}
+        await pg.evaluate(f"openReleaseTerm({str(a)!r}, 'release')")
+        await pg.wait_for_function("lee.terms.size === 1")
+        await pg.evaluate(f"openReleaseTerm({str(b)!r}, 'release')")
+        await pg.wait_for_function("lee.terms.size === 2")
+        out['ids'] = await pg.evaluate("[...lee.terms.keys()]")
+        out['labels'] = await pg.evaluate("[...lee.terms.values()].map(t => t.label)")
+        out['cwds'] = await pg.evaluate("[...lee.terms.values()].map(t => t.cwd)")
+        out['showing'] = await pg.evaluate("lee.activeTerm")
+        # back to the first package: the record is re-shown, not rebuilt, and none is added
+        await pg.evaluate(f"openReleaseTerm({str(a)!r}, 'release')")
+        out['after_back'] = await pg.evaluate("[lee.terms.size, lee.activeTerm]")
+        # the same package by a path with a trailing slash is the same package
+        await pg.evaluate(f"openReleaseTerm({str(a)!r} + '/', 'release')")
+        out['after_slash'] = await pg.evaluate("lee.terms.size")
+        return out
+    out = _run(go, roots=[tmp_path])
+    assert out['ids'] == [f'release:{a}', f'release:{b}'], out['ids']
+    assert out['labels'] == ['release · alpha', 'release · beta'], out['labels']
+    assert out['cwds'] == [str(a), str(b)], 'each socket is told its own package'
+    assert out['showing'] == f'release:{b}', 'the one just opened is the one on screen'
+    assert out['after_back'] == [2, f'release:{a}'], out['after_back']
+    assert out['after_slash'] == 2, 'a trailing slash is not a second package'
+
 def test_the_agent_pane_draws_its_runs_its_steers_and_its_work_logs():
     """The runstrip was a single 34px line whatever it held, so a root and its subagents spilled out
     of it over the conversation, and a `.lee-spacer` beside them left each row 118px of a 420px pane

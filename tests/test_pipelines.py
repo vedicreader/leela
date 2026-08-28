@@ -141,6 +141,26 @@ def test_the_transcript_covers_the_whole_release_not_just_the_last_step(tmp_path
     assert 'alpha' in tail and 'beta' in tail
     assert '❯ echo alpha' in tail and '✓ first exited 0' in tail
 
+def test_each_package_gets_its_own_pipeline(tmp_path):
+    """One pipeline per package, and the terminal that watches one is keyed the same way.
+
+    The route holds `live[(kind, root)]`, so a release running in one package keeps running while
+    another is looked at. The client used to key its terminal by kind alone and show the first
+    package's log for all of them; `dock.js` keys by root now, and this is the other half.
+    """
+    import subprocess
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    a, b = project_releas(tmp_path/'a'), project_releas(tmp_path/'b')
+    for r in (a, b): subprocess.run(['git', 'init', '-b', 'main'], cwd=r, check=True, capture_output=True)
+    with TestClient(ide_app(Workspace(roots=[a, b]))) as client:
+        first = client.get('/releases', params={'repo': str(a)}).json()
+        second = client.get('/releases', params={'repo': str(b)}).json()
+        again = client.get('/releases', params={'repo': str(a)}).json()
+    assert first['root'] == str(a) and second['root'] == str(b), (first['root'], second['root'])
+    assert again['root'] == str(a), 'asking for one package does not move the other'
+
 def test_a_late_viewer_is_replayed_what_it_missed(tmp_path):
     root = project_releas(tmp_path/'p', steps=[{'id': 'a', 'label': 'first', 'cmd': 'echo alpha'}])
     r = Release(root)

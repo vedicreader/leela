@@ -21,7 +21,14 @@ function nextTermId(kind, taken = []) {
   do { lee.termSeq += 1; } while (used.has('term-' + lee.termSeq));
   return 'term-' + lee.termSeq;
 }
-function termLabel(kind, id) { return kind === 'git' ? 'lazygit' : kind === 'release' ? 'release pipeline' : kind === 'deploy' ? 'deploy' : kind === 'drive' ? 'drive' : kind === 'gh-auth' ? 'gh auth' : `terminal ${id.split('-').pop()}`; }
+/* `root` names the package a pipeline terminal is watching. There is one of these per package,
+   and two of them are otherwise the same word. */
+function termLabel(kind, id, root = '') {
+  const name = kind === 'git' ? 'lazygit' : kind === 'release' ? (root ? 'release' : 'release pipeline')
+    : kind === 'deploy' ? 'deploy' : kind === 'drive' ? 'drive' : kind === 'gh-auth' ? 'gh auth'
+    : `terminal ${id.split('-').pop()}`;
+  return root ? `${name} · ${root.replace(/\/+$/, '').split('/').pop()}` : name;
+}
 function paintTermTabs() {
   const bar = $('#termtabs'); if (!bar) return;
   /* The close control belongs to the tab, not the header, so a background terminal is closed
@@ -432,18 +439,23 @@ async function openReleaseTerm(root = '', kind = 'release') {
   await loadTermBundle();
   const d = await api('/term/info');
   if (!d.enabled) return status(d.why, 'err');
-  const id = kind, prior = lee.terms.get(id);
+  /* Keyed by the root as well as the kind. The server already keeps one pipeline per package,
+     but a single `release` record held the socket opened with whichever package came first, so
+     moving to another package re-showed that one and closing it was the only way through. */
+  const at = String(root || '').replace(/\/+$/, '');
+  const id = at ? `${kind}:${at}` : kind, prior = lee.terms.get(id);
   if (prior && !prior.exited) return switchTerm(id);
   if (prior) { prior.view.dispose(); prior.host.remove(); lee.terms.delete(id); }
   $('#shell').classList.add('show-term');
   const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
   const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
   host.dataset.term = id; parent.appendChild(host);
-  const record = {id, kind, label: termLabel(kind, id), cwd: root || d.cwd, host, view: null};
+  const label = termLabel(kind, id, at);
+  const record = {id, kind, label, cwd: at || d.cwd, host, view: null};
   record.view = LeeTerm.create(host, {
-    token: d.token, cwd: root || d.cwd, kind, id,
+    token: d.token, cwd: at || d.cwd, kind, id,
     url: kind === 'drive' ? '/drive/ws' : '/pipeline/ws',
-    onStatus: m => status(`${termLabel(kind, id)}: ${m}`),
+    onStatus: m => status(`${label}: ${m}`),
     onExit: () => { record.exited = true; paintTermTabs(); },
   });
   lee.terms.set(id, record); switchTerm(id);
