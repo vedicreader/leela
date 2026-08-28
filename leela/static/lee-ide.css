@@ -1479,6 +1479,13 @@ kbd {
 .lee-cm {
   border: 1px solid var(--lee-border); border-radius: 0 0 5px 5px; background: var(--lee-bg1); overflow: hidden;
 }
+/* A completion list opened on a cell's last line is taller than the room under it, and two
+   things cut it off: `overflow` on the code box, and the paint containment `content-visibility`
+   puts on the cell. The containment also makes each cell a stacking context, so what did escape
+   was painted over by the next one. While a tooltip is up, neither clips and this cell is on top. */
+.lee-cm:has(.cm-tooltip) { overflow: visible; }
+.lee-cell:has(.cm-tooltip) { content-visibility: visible; }
+.lee-cell:has(.cm-tooltip), .lee-cm:has(.cm-tooltip) { position: relative; z-index: 20; }
 /* Markdown: a rendered pane beside the source. The editor is only ever *hidden*, never
    unmounted, so blame, the change gutter and saving keep working in every view. */
 .lee-md-bar { border-bottom: 0; }

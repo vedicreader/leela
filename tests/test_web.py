@@ -448,6 +448,21 @@ def test_screen_capture_route_rejects_oversized_payloads_before_decoding(tmp_pat
     assert 'larger than 9 MB' in response.json()['error']
 
 
+def test_nothing_clips_a_completion_opened_on_a_cells_last_line():
+    """The list was cut off at the code box and the rest painted over by the next cell.
+
+    Two clippers, and a fix for one alone leaves it cut: `.lee-cm` clips with `overflow`, and
+    `.lee-cell` clips through the paint containment `content-visibility: auto` brings with it,
+    which also makes every cell a stacking context that the next one paints over.
+    """
+    css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
+    assert 'content-visibility: auto' in css, 'the containment this is about is still there'
+    for rule in ('.lee-cm:has(.cm-tooltip) { overflow: visible; }',
+                 '.lee-cell:has(.cm-tooltip) { content-visibility: visible; }'):
+        assert rule in css, rule
+    lift = [ln for ln in css.splitlines() if ':has(.cm-tooltip)' in ln and 'z-index' in ln]
+    assert lift and 'position: relative' in lift[0], 'lifted over the cells after it, not just unclipped'
+
 def test_one_static_prefix_serves_both_the_authored_and_vendored_asset_trees(tmp_path):
     "`/leestatic` spans `leela/static` and `leela/vendor` as if they were one folder."
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:

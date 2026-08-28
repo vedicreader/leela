@@ -804,6 +804,40 @@ def test_a_notebook_recovers_its_drafts_and_answers_the_editing_chords():
                               '#| export\nclass C: pass']
 
 
+def test_a_completion_on_a_cells_last_line_is_drawn_whole():
+    """It was cut off at the code box, and what escaped was painted over by the next cell.
+
+    Two clippers: `overflow` on `.lee-cm`, and the paint containment `content-visibility: auto`
+    brings to `.lee-cell`, which also makes each cell a stacking context the next one paints over.
+    The check is what the person sees: the list is taller than the box, and the point two thirds
+    of the way down it belongs to the list.
+    """
+    async def go(pg):
+        await pg.evaluate("leeAct('new_notebook')")
+        await pg.wait_for_selector('.lee-cell .cm-editor')
+        await pg.evaluate("""() => {
+          const view = lee.editors.get(lee.cells[0].id);
+          LeeCM.setDoc(view, ['x = 1', 'y = 2', 'd'].join(String.fromCharCode(10)));
+          LeeCM.setSelection(view, LeeCM.getDoc(view).length, LeeCM.getDoc(view).length);
+          view.focus();
+        }""")
+        await pg.keyboard.press('Alt+/')
+        await pg.wait_for_selector('.cm-tooltip-autocomplete')
+        return await pg.evaluate("""() => {
+          const tip = document.querySelector('.cm-tooltip-autocomplete');
+          const box = tip.closest('.lee-cm'), cell = tip.closest('.lee-cell');
+          const t = tip.getBoundingClientRect(), b = box.getBoundingClientRect();
+          const at = document.elementFromPoint(t.left + t.width / 2, t.top + t.height * 2 / 3);
+          return {overflow: getComputedStyle(box).overflow,
+                  visibility: getComputedStyle(cell).contentVisibility,
+                  below: t.bottom - b.bottom, height: t.height,
+                  hits: !!(at && at.closest('.cm-tooltip-autocomplete'))};
+        }""")
+    out = _run(go)
+    assert out['overflow'] == 'visible' and out['visibility'] == 'visible', out
+    assert out['height'] > 0 and out['below'] > 0, 'the list is taller than the box that holds it'
+    assert out['hits'], 'the point two thirds down the list is the list, not what is drawn over it'
+
 def test_the_agent_pane_draws_its_runs_its_steers_and_its_work_logs():
     """The runstrip was a single 34px line whatever it held, so a root and its subagents spilled out
     of it over the conversation, and a `.lee-spacer` beside them left each row 118px of a 420px pane
