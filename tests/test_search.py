@@ -8,7 +8,7 @@ from leela.blocks.search.search import Hit, Search
 import time
 import pytest
 from leela.blocks.memory.memory import Memory, _added_epoch, source_kind
-from fastcore.all import Path
+from fastcore.all import L, Path
 ROOT = Path(__file__).resolve().parents[1]
 
 def test_default_search_uses_ripgrep_and_reports_real_lines(tmp_path):
@@ -196,6 +196,100 @@ def test_repo_and_environment_modes_target_their_kosha_stores(monkeypatch, tmp_p
     assert s.search('body', mode='env')[0].kind == 'env-context'
     assert called == ['repo', 'env']
 
+def _checkout(root, indexed=True):
+    "A repo on disk, with its own Kosha index when `indexed`."
+    root.mkdir(parents=True, exist_ok=True)
+    (root/'.git').mkdir(exist_ok=True)
+    (root/'mod.py').write_text('def thing(): pass\n')
+    if indexed:
+        (root/'.kosha').mkdir(exist_ok=True)
+        (root/'.kosha'/'code.db').write_text('')
+    return root
+
+class _RowStore:
+    def __init__(self, rows, files=()): self.rows, self.files = rows, L(files)
+    def fts_search(self, *a, **kw): return list(self.rows)
+    def rows_where(self, *a, **kw): return list(self.rows)
+    def __call__(self, select=None, **kw):
+        "What `status` reads to count a checkout's indexed files."
+        return [{'path': str(f), 'uploaded_at': Path(f).stat().st_mtime} for f in self.files]
+
+class _RepoIndex:
+    "One checkout's index, answering with a row that names a file inside it."
+    def __init__(self, root, files=1):
+        self.root, self.files = Path(root), files
+        row = {'content': f'def thing(): pass  # {self.root.name}', 'path': str(self.root/'mod.py'),
+               'metadata': {'path': str(self.root/'mod.py'), 'lineno': 1, 'name': 'thing'}}
+        self.code_st = self.env_st = _RowStore([row], [self.root/'mod.py'])
+        self.codedb = SimpleNamespace(t=SimpleNamespace(store=_RowStore([row])))
+        self.pkgs = SimpleNamespace(count=0)
+    def status(self, **kw): return {'files': self.files, 'packages': 509, 'stale_files': 0}
+    def repo_context(self, q, **kw): return list(self.codedb.t.store.rows)
+    def context(self, q, **kw): return list(self.codedb.t.store.rows)
+
+def _fanned(tmp_path, **kw):
+    "A workspace whose one open folder holds two indexed checkouts and one without an index."
+    orgs = tmp_path/'orgs'
+    a, b = _checkout(orgs/'repo-a'), _checkout(orgs/'repo-b')
+    bare = _checkout(orgs/'repo-c', indexed=False)
+    s = Search(Sandbox([orgs]))
+    made = []
+    def make(root=None, probe=True):
+        root = root or s._primary()
+        made.append(Path(root))
+        return _RepoIndex(root, **kw)
+    s._make_kosha = make
+    return s, orgs, a, b, bare, made
+
+def test_a_folder_of_checkouts_names_each_repos_index_not_the_folders(tmp_path):
+    """The reported failure: `orgs` open as one folder, and every indexed leg answered from one
+    index at `orgs` that held nothing, while each repo's own index sat unread beside it."""
+    s, orgs, a, b, bare, _ = _fanned(tmp_path)
+    assert list(s.index_roots()) == [a, b], 'the repos with an index, and not the folder holding them'
+    assert bare not in s.index_roots(), 'a checkout without an index is not one to read'
+    assert list(Search(Sandbox([a])).index_roots()) == [a], 'a repo opened directly still answers for itself'
+    _checkout(a/'vendored')
+    assert list(Search(Sandbox([a])).index_roots()) == [a], 'and not twice over, through an index inside it'
+
+def test_an_indexed_leg_reads_every_checkout_and_spends_its_limit_across_them(tmp_path):
+    s, orgs, a, b, bare, made = _fanned(tmp_path)
+    hits = s.search('thing', mode='fts')
+    assert {Path(h.path).parent for h in hits} == {a, b}, 'both checkouts answered'
+    assert '2 indexed checkouts' in s.note
+    assert [Path(h.path).parent for h in hits] == [a, b], 'one row from each in turn, not all of the first'
+    assert bare not in made, 'and nothing was built in the checkout that has no index'
+    assert not (bare/'.kosha').exists()
+
+def test_a_lookup_anchored_to_a_file_reads_that_files_own_checkout(tmp_path):
+    s, orgs, a, b, bare, _ = _fanned(tmp_path)
+    assert s._kosha_for(b/'mod.py').root == b
+    assert s._kosha_for(a/'mod.py').root == a
+    assert s._kosha_for(orgs/'loose.py').root == a, 'outside any checkout, the primary answers'
+
+def test_status_adds_up_repo_files_and_does_not_count_the_shared_environment_twice(tmp_path):
+    "One environment database serves every checkout, so summing its package count would treble it."
+    s, orgs, a, b, bare, _ = _fanned(tmp_path)
+    st = s.status()
+    assert st['ok'] and st['files'] == 2, 'one indexed file in each of the two checkouts'
+    assert st['packages'] == 509, 'and the shared environment counted once, not once per checkout'
+    assert [Path(r['root']) for r in st['repos']] == [a, b]
+
+def test_sync_refreshes_each_checkout_rather_than_the_folder_that_holds_them(tmp_path):
+    orgs = tmp_path/'orgs'
+    a, b = _checkout(orgs/'repo-a'), _checkout(orgs/'repo-b')
+    synced = []
+    class Writer:
+        def __init__(self, root): self.root = Path(root); self.graph = SimpleNamespace(db=None, sync=lambda **kw: None)
+        codedb = envdb = None
+        def update_repo(self, **kw): synced.append(Path(kw['dir']))
+        def status(self, **kw): return {'files': 1}
+    s = Search(Sandbox([orgs]))
+    s._make_kosha = lambda root=None, probe=True: Writer(root or s._primary())
+    out = s._sync(notebooks=True, graph=True)
+    assert out['ok'] and synced == [a, b], 'the repos are what carry an index'
+    assert [Path(r) for r in out['synced']] == [a, b]
+    assert '2 checkouts synced' in out['note']
+
 def test_package_public_api_is_exposed_through_kosha(tmp_path):
     "Every row carries the file and line it is defined at, so the listing is a way into the package."
     real = tmp_path/'basics.py'; real.write_text('def store_attr(): pass\n')
@@ -238,12 +332,12 @@ def test_search_modes_are_explicit_not_inferred_from_the_query(monkeypatch, tmp_
     called = []
     monkeypatch.setattr(s, '_rg', lambda q, limit, regex=False, exts=(), roots=None:
                         called.append('rg') or [])
-    monkeypatch.setattr(s, '_fts', lambda q, limit: called.append('fts') or [Hit('/x', 1, 'x')])
-    monkeypatch.setattr(s, '_ann', lambda q, limit: called.append('ann') or [Hit('/x', 1, 'x')])
+    monkeypatch.setattr(s, '_fts', lambda q, limit, roots=None: called.append('fts') or [Hit('/x', 1, 'x')])
+    monkeypatch.setattr(s, '_ann', lambda q, limit, roots=None: called.append('ann') or [Hit('/x', 1, 'x')])
     s.search('a long semantic-looking question')
     s.search('literal name', mode='fts')
     s.search('conceptual equivalent', mode='ann')
-    monkeypatch.setattr(s, '_symbols', lambda q, limit: called.append('symbols') or [Hit('/x', 1, 'x')])
+    monkeypatch.setattr(s, '_symbols', lambda q, limit, roots=None: called.append('symbols') or [Hit('/x', 1, 'x')])
     s.search('SomeClass', mode='symbols')
     assert called == ['rg', 'fts', 'ann', 'symbols']
 
