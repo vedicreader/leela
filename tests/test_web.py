@@ -478,12 +478,30 @@ def test_selection_help_uses_summary_and_completion_jobs_without_editing(tmp_pat
     assert [c[0] for c in calls] == ['summary', 'completion']
 
 def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
+    """The property is that the tag is escaped, not that the string `onerror=` is absent.
+
+    It used to be spelled the second way, which passed only because the highlighter split the
+    attribute across spans. Highlighting is an mdhtml extra, and without it the same safe output
+    holds the same characters.
+    """
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         raw = '```{=html}\n<img src=x onerror=alert(1)>\n```'
         safe = client.post('/markdown/render', json={'text': raw, 'allow_raw': False}).json()['html']
         trusted = client.post('/markdown/render', json={'text': raw, 'allow_raw': True}).json()['html']
-    assert 'onerror=' not in safe and 'language-html' in safe
-    assert 'onerror=' in trusted
+    assert '<img' not in safe and '&lt;img src=x onerror=alert(1)&gt;' in safe, safe
+    assert 'language-html' in safe, 'shown as the html it is'
+    assert '<img' in trusted and 'onerror' in trusted, 'an explicit `{=html}` block is deliberate'
+
+def test_a_render_does_not_report_a_missing_package_as_a_problem_with_the_markdown(tmp_path):
+    """mdhtml moved highlighting into its `hl` extra. Asking for it anyway renders the same plain
+
+    code and warns about a missing Python package, which the editor draws on the person's document
+    as a diagnostic they cannot act on.
+    """
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        out = client.post('/markdown/render', json={'text': '```python\nx = 1\n```'}).json()
+    assert '<code class="language-python">' in out['html']
+    assert not [w for w in out['warnings'] if 'highlight' in w or 'pip install' in w], out['warnings']
 
 
 def test_model_discovery_does_not_block_shell_render_or_editor_mount():

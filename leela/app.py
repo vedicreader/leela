@@ -43,6 +43,18 @@ from .workspace import STEP_RANGE, TOOL_RANGE, Workspace
 
 __all__ = ['ide_app', 'serve_ide']
 
+def _md_highlight():
+    """`spans` when mdhtml can highlight, else off.
+
+    mdhtml's highlighting is the `hl` extra. Asking for it without `fastpylight` installed renders
+    the same plain code and adds a warning about a missing package to every render, which the
+    editor then shows the person as a problem with their Markdown.
+    """
+    try: import fastpylight; return 'spans'
+    except ImportError: return None
+
+MD_HIGHLIGHT = _md_highlight()
+
 def _patch_fasttransport():
     "Keep the response context as the sole owner of an SSE iterator's cleanup."
     import fasttransport.core as ft
@@ -930,10 +942,10 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if not d.get('allow_raw', True):
             text = re.sub(r'(?m)^([ \t]*`{3,})\{=html\}([ \t]*)$', r'\1html\2', text)
         try:
-            from mdhtml import to_mdhtml, to_html
-            symbolic = to_mdhtml(text, math='on', implicit_figures=True,
+            from mdhtml import md2mdhtml, mdhtml2html
+            symbolic = md2mdhtml(text, math='on', implicit_figures=True,
                                  bare_autolinks=True, frontmatter=False)
-            rendered = to_html(symbolic, refs='ids', auto_ids=False, hl='spans')
+            rendered = mdhtml2html(symbolic, refs='ids', auto_ids=False, hl=MD_HIGHLIGHT)
             warnings = list(getattr(symbolic, 'warnings', ())) + list(getattr(rendered, 'warnings', ()))
             return {'html': str(rendered), 'warnings': list(dict.fromkeys(map(str, warnings)))}
         except Exception as e: return _fail(e)
@@ -1094,8 +1106,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if lang != 'markdown': return {'diagnostics': []}
         diagnostics = []
         try:
-            from mdhtml import to_mdhtml
-            symbolic = to_mdhtml(code, math='on', implicit_figures=True,
+            from mdhtml import md2mdhtml
+            symbolic = md2mdhtml(code, math='on', implicit_figures=True,
                                  bare_autolinks=True, frontmatter=False)
             for warning in getattr(symbolic, 'warnings', ()):
                 diagnostics.append({'from': 0, 'to': min(1, len(code)), 'severity': 'warning',
