@@ -153,6 +153,11 @@ each as a pty step keeping its own exit code. A project that packages a desktop 
 more, after the release the artefacts attach to. Deploy runs the project's `deploy.py` stage by
 stage, or scaffolds the first one from dockeasy, vpseasy and cfeasy. Drive is the same
 deploy taken apart, one library call per step. A failure names the deepest frame in your own
+
+<p align="center">
+<img src="docs/screenshots/release-maturin.png" width="290" alt="the maturin flow: test, wheel, workflow, changelog, tag">
+<img src="docs/screenshots/release-crate.png" width="290" alt="the crate flow: test, clippy, package, publish">
+</p>
 packages, rewritten to the checkout you have open. Secrets stay in dockeasy's store and are
 never sent to the browser.
 
