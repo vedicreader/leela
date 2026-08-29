@@ -92,11 +92,17 @@ not yet reachable from the editor.
 
 ## Exporting a notebook into something shippable
 
-`spikes/nbrust` settles whether the nbdev path extends to these languages: a Rust notebook exports
-through `nb_export(mod_maker=CargoMaker)` into a crate, and `ship-rs-build` turns that crate into
-an installable wheel. It does, and it needed one line and one class, because nbdev's cell
-collection was already language-neutral and reads the same kernelspec this page is about. Read
-that spike's README before designing anything around it.
+`spikes/nbship` settles whether the nbdev path extends to these languages, and it does for both. A
+Rust notebook exports through `nb_export(mod_maker=CargoMaker)` into a crate that maturin turns
+into a wheel, with `#[pyfunction]` and `#[pyclass]` bindings written at export so the cells stay
+plain Rust. A JavaScript notebook exports into an ESM package that `deno bundle` turns into one
+minified file a CDN can serve.
+
+Both makers are small because nbdev's cell collection was already language-neutral and reads the
+same kernelspec this page is about, and because `pub` and `export` are already the export list
+that Python needs an `__all__` for. Read that spike's README before designing anything around it.
+
+![The bundle, imported into a browser from a URL](screenshots/cdn-in-browser.png)
 
 ## What stays Python
 
