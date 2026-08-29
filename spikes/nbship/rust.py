@@ -59,6 +59,11 @@ requires-python = ">=3.9"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+
+# What `ship-rs-init` would write. The version lives in Cargo.toml, which is why `[project]`
+# above declares it dynamic and does not carry one.
+[tool.fastship]
+branch = "{branch}"
 '''
 
 #: How a Rust error becomes a Python exception. `Display` is all this needs, so it works for an
@@ -240,6 +245,7 @@ class CargoMaker:
     crate = 'nbcrate'
     version = '0.1.0'
     description = ''
+    branch = 'main'
     pyo3 = True
     deps = ''
     def __init__(self, dest, name, nb_path, is_new=True, parse=True, solo_nb=False):
@@ -262,8 +268,8 @@ class CargoMaker:
             CARGO_TOML.format(crate=self.crate, version=self.version, deps=self.deps),
             encoding='utf-8')
         (self.dest/'pyproject.toml').write_text(
-            PYPROJECT.format(dist=self.crate.replace('_', '-'), description=self.description),
-            encoding='utf-8')
+            PYPROJECT.format(dist=self.crate.replace('_', '-'), description=self.description,
+                             branch=self.branch), encoding='utf-8')
         (self.dest/'.gitignore').write_text(GITIGNORE, encoding='utf-8')
         mods = self._mods()
         if not self.pyo3:
@@ -273,8 +279,8 @@ class CargoMaker:
         else: text, self.skipped = binding(mods, self.crate)
         (self.dest/'src'/'lib.rs').write_text(text, encoding='utf-8')
 
-def cargo_maker(crate, version='0.1.0', description='', pyo3=True, deps=''):
+def cargo_maker(crate, version='0.1.0', description='', pyo3=True, deps='', branch='main'):
     "A `CargoMaker` bound to one crate, ready to hand to `nb_export(mod_maker=...)`."
     return type('BoundCargoMaker', (CargoMaker,),
                 {'crate': crate, 'version': version, 'description': description,
-                 'pyo3': pyo3, 'deps': deps})
+                 'pyo3': pyo3, 'deps': deps, 'branch': branch})

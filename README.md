@@ -146,7 +146,9 @@ the same boxes, and a form builds new ones. Every file written is
 [gheasy](https://github.com/vedicreader/gheasy)'s, and one of them is the
 [fastship](https://github.com/AnswerDotAI/fastship) release for a Python package that is not
 an nbdev template. Release runs the flow the project is: nbdev's four commands where
-`settings.ini` or `[tool.nbdev]` says so, fastship's five where a `pyproject.toml` does not,
+`settings.ini` or `[tool.nbdev]` says so, maturin's for a crate with Python bindings (test, wheel,
+refresh the workflow, tag -- the runners build every platform and publish), `cargo publish` for a
+crate without, fastship's five where a `pyproject.toml` does not,
 each as a pty step keeping its own exit code. A project that packages a desktop app gets two
 more, after the release the artefacts attach to. Deploy runs the project's `deploy.py` stage by
 stage, or scaffolds the first one from dockeasy, vpseasy and cfeasy. Drive is the same

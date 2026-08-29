@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT/'spikes'))
 from nbship import rust as R                                              # noqa: E402
 from nbship.rust import CargoMaker, cargo_maker, binding, Skipped         # noqa: E402
 from nbship.js import esm_maker, bundle, declarations, ToolMissing        # noqa: E402
-from nbship.cli import export, _slug                                      # noqa: E402
+from nbship.cli import export, workflow, _slug                            # noqa: E402
 from nbdev.export import nb_export                                        # noqa: E402
 from fastcore.nbio import langs                                           # noqa: E402
 
@@ -144,6 +144,7 @@ def test_the_exported_crate_has_the_shape_maturin_needs(tmp_path):
     assert '/target/' in ignore and '/dist/' in ignore, 'the build outputs, named before they exist'
     # What `fastship.get_rs_config` refuses a project without.
     assert 'dynamic = ["version"]' in proj and '\nversion =' not in proj
+    assert '[tool.fastship]' in proj, 'what `ship-rs-init` would have written, written already'
 
 def test_only_the_exported_cells_reach_the_crate(tmp_path):
     "The cell that printed while exploring is the point of a notebook, and must not be shipped."
@@ -383,3 +384,16 @@ def test_the_declarations_come_from_the_jsdoc_the_cells_carried(tmp_path):
     types = (declarations(d).parent/'src'/'geom.d.ts').read_text()
     assert 'export function dist2(x: number, y: number): number;' in types
     assert 'export class Point' in types
+
+@pytest.mark.slow
+def test_the_release_workflow_is_maturins_own(tmp_path):
+    """Only the runners can build a wheel for every platform, so the tag is the trigger and the
+    upload happens there. Generating the matrix is maturin's job, not this exporter's."""
+    if not shutil.which('maturin'): pytest.skip('maturin is not installed')
+    dest, _ = export(NB, out=tmp_path/'geometry', crate='geometry')
+    y = workflow(dest).read_text()
+    assert {'linux', 'musllinux', 'windows', 'macos', 'sdist', 'release'} <= set(
+        __import__('re').findall(r'^  ([a-z]+):', y, __import__('re').M))
+    assert 'uv publish' in y and 'PYPI_API_TOKEN' in y
+    from leela.blocks.pipelines.pipelines import release_flow
+    assert release_flow(dest) == 'maturin', 'and Leela puts it in the flow that expects that'

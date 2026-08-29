@@ -120,6 +120,25 @@ The tests:
     python -m pytest tests/test_nbship.py            # no toolchain needed
     python -m pytest tests/test_nbship.py -m slow    # the parser, the wheel and the browser
 
+## Publishing it
+
+The crate comes out release-ready: `[tool.fastship]` is already in the `pyproject.toml`, so
+`ship-rs-init` has nothing left to do, and `--ci` writes maturin's own release workflow.
+
+    python -m nbship geometry.ipynb --ci
+
+Nothing is uploaded from your machine, and that is the point: only the runners can build a wheel
+for linux, musllinux, macOS and Windows. The tag is the trigger.
+
+    ship-changelog        # notes from the issues closed since the last release
+    ship-release          # tag the version in Cargo.toml, push it
+
+Leela's Release panel runs the same sequence. `release_flow` now answers `maturin` for a crate with
+Python bindings and `crate` for one without, so the panel offers `cargo test`, the local wheel, the
+workflow refresh and the tag for the first, and `cargo test`, clippy, package and `cargo publish`
+for the second. A maturin crate used to be claimed by the fastship flow, because it has a
+`pyproject.toml` -- and that flow would have tried to `ship-pypi` one platform's wheel.
+
 ## What this does not answer
 
 - **Where it lives.** This belongs in its own package, not in Leela: CI has to run the export for

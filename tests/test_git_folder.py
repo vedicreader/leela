@@ -150,3 +150,50 @@ def test_a_conflict_outranks_everything_else():
     from leela.blocks.fs.ui import GIT_RANK
     assert GIT_RANK[-1] == 'conflict'
     assert GIT_RANK.index('untracked') > GIT_RANK.index('ignored')
+
+# the release flow a crate gets ---------------------------------------------------------------------
+
+from leela.blocks.pipelines.pipelines import (CRATE_STEPS, MATURIN_STEPS, default_steps,  # noqa: E402
+                                              maturin_project, release_flow, rust_project)
+
+def _crate_files(d, pyproject=None):
+    d.mkdir(parents=True, exist_ok=True)
+    (d/'Cargo.toml').write_text('[package]\nname = "x"\nversion = "0.1.0"\n')
+    if pyproject is not None: (d/'pyproject.toml').write_text(pyproject)
+    return d
+
+MATURIN_PY = ('[build-system]\nrequires = ["maturin>=1.0,<2.0"]\nbuild-backend = "maturin"\n'
+              '[project]\nname = "x"\ndynamic = ["version"]\n')
+
+def test_a_crate_with_python_bindings_releases_through_maturin(tmp_path):
+    d = _crate_files(tmp_path/'a', MATURIN_PY)
+    assert maturin_project(d) and release_flow(d) == 'maturin'
+    assert [s.id for s in default_steps(d)] == ['test', 'wheel', 'ci', 'changelog', 'release']
+
+def test_a_crate_without_them_releases_to_crates_io(tmp_path):
+    d = _crate_files(tmp_path/'b')
+    assert rust_project(d) and not maturin_project(d)
+    assert release_flow(d) == 'crate'
+    assert [s.id for s in default_steps(d)] == ['test', 'clippy', 'package', 'publish']
+
+def test_a_maturin_crate_is_not_mistaken_for_a_plain_python_package(tmp_path):
+    """It has a `pyproject.toml`, so the fastship flow used to claim it -- and `ship-pypi` would
+    upload one platform's wheel where the workflow builds every platform's."""
+    d = _crate_files(tmp_path/'c', MATURIN_PY)
+    assert release_flow(d) != 'fastship'
+    assert not any(s.cmd.startswith('ship-pypi') for s in default_steps(d))
+
+def test_nothing_is_published_from_the_maturin_flow_itself():
+    "The tag is the trigger; the runners build and upload, because only they have every platform."
+    assert not any('upload' in s.cmd or 'twine' in s.cmd for s in MATURIN_STEPS)
+    assert MATURIN_STEPS[-1].cmd == 'ship-release'
+
+def test_each_publishing_step_names_the_credential_it_needs():
+    for steps in (MATURIN_STEPS, CRATE_STEPS):
+        for s in steps:
+            if 'publish' in s.id or 'release' in s.id or s.id == 'changelog':
+                assert s.needs, f'{s.id} publishes but names no secret'
+
+def test_a_pyproject_that_is_not_maturin_is_not_a_maturin_crate(tmp_path):
+    d = _crate_files(tmp_path/'d', '[build-system]\nbuild-backend = "hatchling.build"\n')
+    assert not maturin_project(d) and release_flow(d) == 'crate'

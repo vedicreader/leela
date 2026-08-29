@@ -15,7 +15,7 @@ from fastcore.script import call_parse
 from .parse import CargoMissing, RustSyntaxError
 from .rust import cargo_maker
 
-__all__ = ['ship_rs', 'export', 'build']
+__all__ = ['ship_rs', 'export', 'build', 'workflow']
 
 def _slug(name): return ''.join(c if c.isalnum() else '_' for c in Path(name).stem).strip('_')
 
@@ -48,6 +48,22 @@ def build(dest, release=True, outdir='dist'):
     if not wheels: raise RuntimeError('maturin reported success but wrote no wheel')
     return wheels[-1]
 
+def workflow(dest, out='.github/workflows/CI.yml'):
+    """Write the release workflow, which is maturin's own.
+
+    Only the runners can build a wheel for every platform, so the tag is the trigger and the upload
+    happens there. `maturin generate-ci` knows that matrix -- linux, musllinux, macOS, Windows and
+    the sdist -- better than anything written here would.
+    """
+    if not shutil.which('maturin'): raise RuntimeError('maturin is not installed')
+    target = Path(dest)/out
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # `-o` is resolved against `cwd`, which is already the crate, so it stays relative.
+    r = subprocess.run(['maturin', 'generate-ci', 'github', '-o', out],
+                       cwd=dest, capture_output=True, text=True, timeout=300)
+    if r.returncode: raise RuntimeError(f'maturin generate-ci failed:\n{r.stderr[-2000:]}')
+    return target
+
 def _report(skipped, quiet=False):
     if quiet or not skipped: return
     print(f'\n{len(skipped)} item(s) stayed in the crate, with no Python binding:', file=sys.stderr)
@@ -65,6 +81,7 @@ def ship_rs(
     deps: str = '',           # Extra [dependencies] lines, eg 'rand = "0.8"'
     no_pyo3: bool = False,    # Write a plain Rust crate with no Python binding
     no_build: bool = False,   # Write the crate and stop
+    ci: bool = False,         # Also write the release workflow maturin generates
     install: bool = False,    # Install the wheel into this interpreter
     quiet: bool = False,      # Do not list what stayed behind
 ):
@@ -77,6 +94,9 @@ def ship_rs(
     except CargoMissing as e: raise SystemExit(str(e))
     print(f'crate  {dest}')
     _report(skipped, quiet)
+    if ci and not no_pyo3:
+        try: print(f'ci     {workflow(dest)}')
+        except RuntimeError as e: raise SystemExit(str(e))
     if no_build: return
     try: wheel = build(dest)
     except RuntimeError as e: raise SystemExit(str(e))
