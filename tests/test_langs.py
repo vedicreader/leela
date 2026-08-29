@@ -112,6 +112,28 @@ def test_a_language_with_no_server_installed_says_so_rather_than_raising(tmp_pat
 def test_a_language_leela_knows_no_server_for_says_that_instead(tmp_path):
     assert 'no language server' in LspService(tmp_path, 'cobol').note
 
+def test_a_language_server_is_rooted_in_the_checkout_being_worked_in(tmp_path):
+    """A server reads the project's configuration from its root, and a folder of clones holds no
+    `Cargo.toml` and no `pyproject.toml`. One service per language *and* root, so moving to a file
+    in another repo starts that repo's server instead of going on asking one rooted beside them."""
+    import subprocess
+    orgs = tmp_path/'orgs'
+    a, b = orgs/'repo-a', orgs/'repo-b'
+    for d in (a, b):
+        d.mkdir(parents=True)
+        subprocess.run(['git', 'init', '-q', str(d)], check=True)
+        (d/'main.py').write_text('x = 1\n')
+    ws = Workspace(roots=[orgs])
+    ws.open(a/'main.py')
+    first_service = ws.lsp_for('python')
+    assert first_service.root == a, 'the checkout, not the folder holding it'
+    ws.open(b/'main.py')
+    second = ws.lsp_for('python')
+    assert second.root == b and second is not first_service, 'the other repo gets its own'
+    ws.open(a/'main.py')
+    assert ws.lsp_for('python') is first_service, 'and coming back reuses the first, not a third'
+
+
 def test_each_language_asks_for_its_own_servers(monkeypatch):
     asked = []
     monkeypatch.setattr(shutil, 'which', lambda name: asked.append(name) or None)

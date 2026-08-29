@@ -1012,12 +1012,20 @@ class Workspace:
             if src is None: return None, f'could not read {Path(t.path).name}'
         return run_file_src(t.path, src, cwd=self.cwd_for(t)), Path(t.path).name
     def lsp_for(self, lang='python'):
-        "The language server for `lang`, started on first use. One per language, not one per call."
+        """The language server for `lang` in the checkout being worked in, started on first use.
+
+        One per language *and* root: a server is rooted where it reads the project's configuration
+        from, and a folder of clones holds neither a `Cargo.toml` nor a `pyproject.toml` of its own.
+        Keyed by both, so moving to a file in another repo starts that repo's server rather than
+        going on asking one rooted beside the clones.
+        """
         lang = lang or 'python'
-        if lang not in self._lsps:
+        root = self.project_repo or first(self.fs.roots)
+        key = (lang, str(root or ''))
+        if key not in self._lsps:
             from .blocks.lsp.lsp import LspService
-            self._lsps[lang] = LspService(first(self.fs.roots), lang)
-        return self._lsps[lang]
+            self._lsps[key] = LspService(root, lang)
+        return self._lsps[key]
     @property
     def lsp(self):
         "Python's language server. What every caller meant while Python was the only language."
