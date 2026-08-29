@@ -90,6 +90,14 @@ One thing is not done here: `frontend/editor.js` still asks the server for diagn
 Hover, symbols, inlay hints and rename are routed; inline squiggles from a non-Python server are
 not yet reachable from the editor.
 
+## Exporting a notebook into something shippable
+
+`spikes/nbrust` settles whether the nbdev path extends to these languages: a Rust notebook exports
+through `nb_export(mod_maker=CargoMaker)` into a crate, and `ship-rs-build` turns that crate into
+an installable wheel. It does, and it needed one line and one class, because nbdev's cell
+collection was already language-neutral and reads the same kernelspec this page is about. Read
+that spike's README before designing anything around it.
+
 ## What stays Python
 
 - **Variables.** dhrishti is a Python inspector that lives inside the kernel process. A Rust or
