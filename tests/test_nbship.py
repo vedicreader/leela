@@ -1,9 +1,11 @@
 """nbdev for the languages Leela now runs: a notebook exported into something shippable.
 
 Rust goes to a cargo crate with a PyO3 binding and out as a wheel; JavaScript goes to an ESM
-package and out as a CDN bundle. This covers `spikes/nbship`, which is not part of Leela's
-runtime. It lives here rather than beside the spike so the export paths are checked on every run;
-only the builds ask for a toolchain.
+package and out as a CDN bundle. This covers `spikes/nbship`, which is not part of Leela's runtime.
+It lives here rather than beside the spike so the export paths are checked on every run.
+
+The generator's tests feed it the parser's output rather than running the parser, so they need no
+toolchain. The parser has its own tests, and they are slow because it is a Rust program.
 """
 import json, os as _os, shutil, subprocess, sys
 from pathlib import Path
@@ -14,154 +16,172 @@ ROOT = Path(__file__).resolve().parent.parent
 SPIKE = ROOT/'spikes'/'nbship'
 sys.path.insert(0, str(ROOT/'spikes'))
 
-from nbship.rust import CargoMaker, cargo_maker, pub_fns, pub_structs     # noqa: E402
+from nbship import rust as R                                              # noqa: E402
+from nbship.rust import CargoMaker, cargo_maker, binding, Skipped         # noqa: E402
 from nbship.js import esm_maker, bundle, declarations, ToolMissing        # noqa: E402
+from nbship.cli import export, _slug                                      # noqa: E402
 from nbdev.export import nb_export                                        # noqa: E402
 from fastcore.nbio import langs                                           # noqa: E402
 
 NB = SPIKE/'nbs'/'geometry.ipynb'
 JS_NB = SPIKE/'nbs'/'geometry-js.ipynb'
 
-def _export(tmp_path, crate='demo_geom', nb=None, pyo3=True):
-    dest = tmp_path/crate
-    nb_export(str(nb or NB), lib_path=str(dest), mod_maker=cargo_maker(crate, pyo3=pyo3),
-              solo_nb=True)
-    return dest
+# building the parser's answers by hand, which is also what documents its shape ------------------
 
-# what makes a Rust notebook exportable at all --------------------------------------------------
+def fn(name, args=(), ret='()', doc='', recv=None, skip=None, **kw):
+    return {'kind': 'fn', 'name': name, 'doc': doc, 'recv': recv, 'ret': ret, 'skip': skip,
+            'is_async': False, 'args': [{'name': n, 'ty': t} for n, t in args], **kw}
 
-def test_rust_gets_a_comment_character_so_its_directives_are_seen():
-    "Without this, `//| export` falls through to fastcore's `#` default and nothing is exported."
-    assert langs['rust'] == '//'
+def struct(name, fields=(), methods=(), statics=(), derives=('Debug', 'Clone'), doc='', skip=None):
+    return {'kind': 'struct', 'name': name, 'doc': doc, 'derives': list(derives), 'skip': skip,
+            'tuple': False, 'methods': list(methods), 'statics': list(statics),
+            'fields': [{'name': n, 'ty': t, 'skip': None} for n, t in fields]}
 
-def test_the_notebook_this_spike_exports_is_a_rust_notebook():
-    meta = json.loads(NB.read_text())['metadata']
-    assert meta['kernelspec']['language'] == 'rust', 'the language Leela now round-trips'
+def gen(items, crate='demo', monkeypatch=None):
+    "Run the generator over one module's worth of parsed items."
+    monkeypatch.setattr(R, 'rust_items', lambda src, exe=None: items)
+    return binding({'geom': ''}, crate)
 
-# reading the export list out of the language itself ---------------------------------------------
+# what the generator writes ----------------------------------------------------------------------
 
-def test_public_functions_are_the_export_list():
-    "Rust has a visibility keyword, so unlike Python there is no `__all__` to reconstruct."
-    src = 'pub fn a(x: i64) -> i64 { x }\nfn b() {}\npub fn c(s: &str, n: u8) {}\n'
-    assert pub_fns(src) == [('a', [('x', 'i64')], 'i64'), ('c', [('s', '&str'), ('n', 'u8')], '()')]
+def test_a_function_becomes_a_pyfunction_with_its_doc(monkeypatch):
+    lib, left = gen([fn('dist2', [('x', 'i64'), ('y', 'i64')], 'i64', doc='Squared distance.')],
+                    monkeypatch=monkeypatch)
+    assert '/// Squared distance.' in lib, 'the Rust doc becomes the Python docstring'
+    assert '#[pyfunction]' in lib
+    assert 'fn dist2(x: i64, y: i64) -> i64 { geom::dist2(x, y) }' in lib
+    assert 'm.add_function(wrap_pyfunction!(dist2, m)?)?;' in lib
+    assert left == []
 
-def test_a_method_is_not_a_free_function():
-    assert pub_fns('impl P {\n    pub fn len(&self) -> i64 { 0 }\n}') == []
+def test_a_result_becomes_a_python_exception(monkeypatch):
+    "PyO3 only converts errors it knows. Mapping through `Display` works for any error type."
+    lib, _ = gen([fn('parse', [('s', 'String')], 'Result<i64, ParseIntError>')],
+                 monkeypatch=monkeypatch)
+    assert 'fn parse(s: String) -> PyResult<i64>' in lib
+    assert 'PyValueError::new_err(e.to_string())' in lib
 
-def test_a_doc_comment_does_not_hide_the_function_under_it():
-    assert [n for n, _, _ in pub_fns('/// docs\npub fn f() {}')] == ['f']
+def test_a_result_of_an_exported_type_is_wrapped_before_it_is_raised(monkeypatch):
+    lib, _ = gen([struct('Point', [('x', 'i64')]),
+                  fn('parse', [('s', 'String')], 'Result<Point, E>')], monkeypatch=monkeypatch)
+    assert 'fn parse(s: String) -> PyResult<PyPoint>' in lib
+    assert 'geom::parse(s).map(PyPoint).map_err(' in lib
+
+def test_an_exported_type_crosses_in_both_directions(monkeypatch):
+    lib, _ = gen([struct('Point', [('x', 'i64')]),
+                  fn('mid', [('a', 'Point'), ('b', 'Point')], 'Point')], monkeypatch=monkeypatch)
+    assert 'fn mid(a: PyPoint, b: PyPoint) -> PyPoint { PyPoint(geom::mid(a.0, b.0)) }' in lib
+
+def test_an_exported_type_inside_a_container_is_refused_with_a_reason(monkeypatch):
+    "Unpacking a `Vec<Point>` into a `Vec<PyPoint>` is a conversion this does not write yet."
+    lib, left = gen([struct('Point', [('x', 'i64')]), fn('all', ret='Vec<Point>')],
+                    monkeypatch=monkeypatch)
+    assert 'fn all' not in lib
+    assert len(left) == 1 and 'container' in left[0].why
+
+def test_what_the_parser_refused_is_carried_through_verbatim(monkeypatch):
+    lib, left = gen([fn('largest', ret='T', skip='takes a generic parameter `T`')],
+                    monkeypatch=monkeypatch)
+    assert 'largest' not in lib
+    assert str(left[0]) == 'fn `largest` takes a generic parameter `T`'
+
+def test_a_struct_becomes_a_class_the_module_never_learns_about(monkeypatch):
+    """`#[pyclass]` has to sit on the struct definition, so rewriting the exported module to carry
+    it would make that module need pyo3 -- and the notebook would stop running in Leela."""
+    lib, _ = gen([struct('Point', [('x', 'i64'), ('y', 'i64')],
+                         methods=[fn('dist2', ret='i64', recv='&self')],
+                         statics=[fn('new', [('x', 'i64'), ('y', 'i64')], 'Self')])],
+                 monkeypatch=monkeypatch)
+    assert '#[pyclass(name = "Point")]' in lib
+    assert '#[derive(Clone)]' in lib
+    assert 'pub struct PyPoint(pub geom::Point);' in lib
+    assert 'fn new(x: i64, y: i64) -> Self { Self(geom::Point::new(x, y)) }' in lib
+    assert 'fn x(&self) -> i64 { self.0.x.clone() }' in lib
+    assert 'fn dist2(&self) -> i64 { self.0.dist2() }' in lib
+    assert 'fn __repr__' in lib
+    assert 'm.add_class::<PyPoint>()?;' in lib
+
+def test_a_struct_with_no_constructor_gets_one_from_its_fields(monkeypatch):
+    lib, _ = gen([struct('P', [('x', 'i64')])], monkeypatch=monkeypatch)
+    assert 'fn new(x: i64) -> Self { Self(geom::P { x }) }' in lib
+
+def test_an_associated_function_becomes_a_staticmethod(monkeypatch):
+    lib, _ = gen([struct('P', [('x', 'i64')], statics=[fn('origin', ret='Self')])],
+                 monkeypatch=monkeypatch)
+    assert '#[staticmethod]' in lib
+    assert 'fn origin() -> Self { Self(geom::P::origin()) }' in lib
+
+def test_a_mutating_method_keeps_its_receiver(monkeypatch):
+    lib, _ = gen([struct('P', [('x', 'i64')],
+                         methods=[fn('nudge', [('d', 'i64')], recv='&mut self')])],
+                 monkeypatch=monkeypatch)
+    assert 'fn nudge(&mut self, d: i64) { self.0.nudge(d) }' in lib
+
+def test_repr_and_clone_appear_only_when_the_struct_derives_them(monkeypatch):
+    lib, _ = gen([struct('P', [('x', 'i64')], derives=())], monkeypatch=monkeypatch)
+    assert 'fn __repr__' not in lib and '#[derive(Clone)]' not in lib
+
+def test_an_async_function_is_refused_rather_than_mis_generated(monkeypatch):
+    lib, left = gen([{**fn('load', ret='String'), 'is_async': True}], monkeypatch=monkeypatch)
+    assert 'fn load' not in lib and 'async' in left[0].why
+
+def test_a_crate_with_no_python_binding_is_still_a_crate(tmp_path):
+    dest, left = export(NB, out=tmp_path/'plain', crate='plain', pyo3=False)
+    lib = (dest/'src'/'lib.rs').read_text()
+    assert lib.strip().endswith('pub mod geom;')
+    assert 'pyo3' not in lib and left == []
 
 # the crate that comes out ------------------------------------------------------------------------
 
 def test_the_exported_crate_has_the_shape_maturin_needs(tmp_path):
-    d = _export(tmp_path)
-    assert sorted(p.relative_to(d).as_posix() for p in d.rglob('*') if p.is_file()) == [
+    dest, _ = export(NB, out=tmp_path/'demo', crate='demo_geom')
+    assert sorted(p.relative_to(dest).as_posix() for p in dest.rglob('*') if p.is_file()) == [
         'Cargo.toml', 'pyproject.toml', 'src/geom.rs', 'src/lib.rs']
-    cargo = (d/'Cargo.toml').read_text()
+    cargo = (dest/'Cargo.toml').read_text()
     assert 'crate-type = ["cdylib", "rlib"]' in cargo and 'pyo3' in cargo
-    proj = (d/'pyproject.toml').read_text()
+    proj = (dest/'pyproject.toml').read_text()
     assert 'build-backend = "maturin"' in proj
     # What `fastship.get_rs_config` refuses a project without.
     assert 'dynamic = ["version"]' in proj and '\nversion =' not in proj
 
 def test_only_the_exported_cells_reach_the_crate(tmp_path):
     "The cell that printed while exploring is the point of a notebook, and must not be shipped."
-    src = (_export(tmp_path)/'src'/'geom.rs').read_text()
-    assert 'pub fn dist2' in src and 'pub fn gcd' in src
+    dest, _ = export(NB, out=tmp_path/'demo', crate='demo_geom')
+    src = (dest/'src'/'geom.rs').read_text()
+    assert 'pub fn dist2' in src and 'pub struct Point' in src
     assert 'println!' not in src, 'the exploration cell stayed in the notebook'
     assert '//| export' not in src, 'the directive is consumed, not copied'
+    assert 'pyo3' not in src, 'the module the notebook runs stays free of pyo3'
 
-def test_the_binding_is_generated_so_the_notebook_can_stay_plain_rust(tmp_path):
-    """The cells carry no PyO3, so Leela's cargo runner can run them with no pyo3 dependency.
-    Every `#[pyfunction]` here was written at export from a `pub fn` that was exported."""
-    lib = (_export(tmp_path)/'src'/'lib.rs').read_text()
-    assert 'pub mod geom;' in lib
-    assert 'fn dist2(x: i64, y: i64) -> i64 { geom::dist2(x, y) }' in lib
-    assert 'fn gcd(a: u64, b: u64) -> u64 { geom::gcd(a, b) }' in lib
-    assert lib.count('#[pyfunction]') == 2
-    assert 'wrap_pyfunction!(dist2, m)' in lib and 'wrap_pyfunction!(gcd, m)' in lib
-    assert "fn demo_geom(m: &Bound<'_, PyModule>) -> PyResult<()>" in lib
-
-def test_a_crate_that_is_not_for_python_carries_no_pyo3(tmp_path):
-    lib = (_export(tmp_path, crate='plain', pyo3=False)/'src'/'lib.rs').read_text()
-    assert 'pub mod geom;' in lib
-    assert 'pyo3' not in lib and '#[pymodule]' not in lib
+def test_the_notebook_names_the_crate_when_nothing_else_does():
+    "The crate takes the notebook's name; the module inside it takes `default_exp`."
+    assert _slug('01_my-notebook.ipynb') == '01_my_notebook'
 
 def test_a_second_notebook_joins_the_crate_rather_than_replacing_it(tmp_path):
-    "`nb_export` makes one maker per module, so `lib.rs` has to be rebuilt from what is on disk."
     other = tmp_path/'extra.ipynb'
     nb = json.loads(NB.read_text())
     nb['cells'] = [{'cell_type': 'code', 'id': 'x0', 'metadata': {}, 'outputs': [],
                     'execution_count': None, 'source': '//| default_exp extra'},
                    {'cell_type': 'code', 'id': 'x1', 'metadata': {}, 'outputs': [],
-                    'execution_count': None, 'source': '//| export\npub fn twice(n: i64) -> i64 { n * 2 }'}]
+                    'execution_count': None,
+                    'source': '//| export\npub fn twice(n: i64) -> i64 { n * 2 }'}]
     other.write_text(json.dumps(nb))
-    d = _export(tmp_path)
-    nb_export(str(other), lib_path=str(d), mod_maker=cargo_maker('demo_geom'), solo_nb=True)
-    lib = (d/'src'/'lib.rs').read_text()
+    dest, _ = export([NB, other], out=tmp_path/'demo', crate='demo_geom')
+    lib = (dest/'src'/'lib.rs').read_text()
     assert 'pub mod geom;' in lib and 'pub mod extra;' in lib
     assert 'wrap_pyfunction!(twice, m)' in lib and 'wrap_pyfunction!(dist2, m)' in lib
 
-# a struct becomes a class ------------------------------------------------------------------------
+# what makes a Rust notebook exportable at all ----------------------------------------------------
 
-def test_a_struct_is_read_with_its_derives_fields_and_methods():
-    src = ("""#[derive(Debug, Clone)]
-pub struct P { pub x: i64, pub y: i64 }
+def test_rust_gets_a_comment_character_so_its_directives_are_seen():
+    "Without this, `//| export` falls through to fastcore's `#` default and nothing is exported."
+    assert langs['rust'] == '//'
 
-impl P {
-    pub fn new(x: i64, y: i64) -> Self { Self { x, y } }
-    pub fn norm(&self) -> i64 { self.x }
-    pub fn bump(&mut self) {}
-    pub fn hidden() -> i64 { 1 }
-}""")
-    st = pub_structs(src)[0]
-    assert (st.name, st.debug, st.clone) == ('P', True, True)
-    assert st.fields == [('x', 'i64'), ('y', 'i64')]
-    assert st.ctor == [('x', 'i64'), ('y', 'i64')]
-    assert [(n, r, a, t) for n, r, a, t in st.methods] == [
-        ('norm', '&self', [], 'i64'), ('bump', '&mut self', [], '()')]
+def test_javascript_needed_no_such_patch():
+    assert langs['javascript'] == '//'
 
-def test_an_impl_block_in_another_cell_still_belongs_to_its_struct(tmp_path):
-    "Cells are concatenated into one module, so the struct and its impl need not be one cell."
-    lib = (_export(tmp_path)/'src'/'lib.rs').read_text()
-    assert 'fn dist2(&self) -> i64 { self.0.dist2() }' in lib
-
-def test_the_wrapper_keeps_the_module_it_wraps_free_of_pyo3(tmp_path):
-    """`#[pyclass]` has to sit on the struct definition, so rewriting `geom.rs` to carry it would
-    make that module need pyo3 to compile -- and the notebook would stop running in Leela."""
-    d = _export(tmp_path)
-    assert 'pyo3' not in (d/'src'/'geom.rs').read_text()
-    assert 'pyclass' not in (d/'src'/'geom.rs').read_text()
-    lib = (d/'src'/'lib.rs').read_text()
-    assert '#[pyclass(name = "Point")]' in lib
-    assert 'pub struct PyPoint(pub geom::Point);' in lib
-    assert 'm.add_class::<PyPoint>()?;' in lib
-
-def test_the_generated_class_carries_the_constructor_getters_and_methods(tmp_path):
-    lib = (_export(tmp_path)/'src'/'lib.rs').read_text()
-    assert 'fn new(x: i64, y: i64) -> Self { Self(geom::Point::new(x, y)) }' in lib
-    assert lib.count('#[getter]') == 2
-    assert 'fn x(&self) -> i64 { self.0.x.clone() }' in lib
-    assert 'fn dist2(&self) -> i64 { self.0.dist2() }' in lib
-
-def test_a_method_returning_self_is_rewrapped(tmp_path):
-    "Otherwise it would return the inner Rust type, which Python has never heard of."
-    lib = (_export(tmp_path)/'src'/'lib.rs').read_text()
-    assert 'fn scaled(&self, k: i64) -> Self { Self(self.0.scaled(k)) }' in lib
-
-def test_repr_is_only_written_when_the_struct_can_be_debugged(tmp_path):
-    lib = (_export(tmp_path)/'src'/'lib.rs').read_text()
-    assert 'fn __repr__' in lib, 'the demo struct derives Debug'
-    nb = tmp_path/'plain.ipynb'
-    d = json.loads(NB.read_text())
-    d['cells'] = [{'cell_type': 'code', 'id': 'p0', 'metadata': {}, 'outputs': [],
-                   'execution_count': None, 'source': '//| default_exp bare'},
-                  {'cell_type': 'code', 'id': 'p1', 'metadata': {}, 'outputs': [],
-                   'execution_count': None, 'source': '//| export\npub struct Bare { pub n: i64 }'}]
-    nb.write_text(json.dumps(d))
-    lib2 = (_export(tmp_path/'other', nb=nb, crate='bare')/'src'/'lib.rs').read_text()
-    assert '#[pyclass(name = "Bare")]' in lib2
-    assert 'fn __repr__' not in lib2 and '#[derive(Clone)]' not in lib2
+def test_the_notebooks_this_spike_exports_name_their_languages():
+    assert json.loads(NB.read_text())['metadata']['kernelspec']['language'] == 'rust'
+    assert json.loads(JS_NB.read_text())['metadata']['kernelspec']['language'] == 'javascript'
 
 # JavaScript: an ESM package and a CDN bundle -----------------------------------------------------
 
@@ -169,10 +189,6 @@ def _export_js(tmp_path, pkg='demo-geom'):
     dest = tmp_path/pkg
     nb_export(str(JS_NB), lib_path=str(dest), mod_maker=esm_maker(pkg), solo_nb=True)
     return dest
-
-def test_javascript_needs_no_patch_to_be_exportable():
-    "Unlike Rust, `javascript` is already in fastcore's comment-character map."
-    assert langs['javascript'] == '//'
 
 def test_the_exported_package_is_a_publishable_esm_package(tmp_path):
     d = _export_js(tmp_path)
@@ -185,8 +201,7 @@ def test_the_exported_package_is_a_publishable_esm_package(tmp_path):
 def test_only_exported_javascript_cells_reach_the_package(tmp_path):
     src = (_export_js(tmp_path)/'src'/'geom.js').read_text()
     assert 'export function dist2' in src and 'export class Point' in src
-    assert 'console.log' not in src, 'the exploration cell stayed in the notebook'
-    assert '//| export' not in src
+    assert 'console.log' not in src and '//| export' not in src
 
 def test_the_cdn_file_is_versioned_so_it_can_be_cached_forever(tmp_path, monkeypatch):
     "A CDN URL that is immutable needs the version in the name, not just in package.json."
@@ -199,49 +214,112 @@ def test_a_missing_bundler_is_named_rather_than_guessed_at(tmp_path, monkeypatch
     with pytest.raises(ToolMissing) as e: bundle(_export_js(tmp_path))
     assert 'deno' in str(e.value)
 
+# the parser, which is a Rust program -------------------------------------------------------------
+
+HARD = '''
+/// Squared distance.
+pub fn dist2(x: i64, y: i64) -> i64 { x * x + y * y }
+pub fn largest<T: PartialOrd>(v: Vec<T>) -> T { v.into_iter().next().unwrap() }
+pub fn first(v: &Vec<String>) -> &String { &v[0] }
+pub fn parse(s: String) -> Result<i64, std::num::ParseIntError> { s.parse() }
+fn private_helper() -> i64 { 1 }
+
+#[derive(Debug, Clone)]
+pub struct Point { pub x: i64, pub y: i64, secret: i64 }
+
+impl Point {
+    pub fn new(x: i64, y: i64) -> Self { Self { x, y, secret: 0 } }
+    pub fn dist2(&self) -> i64 { 0 }
+    pub fn nudge(&mut self, d: i64) { self.x += d; }
+    fn hidden(&self) -> i64 { 0 }
+}
+
+impl std::fmt::Display for Point {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { write!(f, "p") }
+}
+
+pub struct Wrapper<T> { pub inner: T }
+pub trait Shape { fn area(&self) -> f64; }
+pub mod nested { pub fn deep() -> i64 { 7 } }
+'''
+
+@pytest.fixture(scope='module')
+def parsed():
+    from nbship.parse import rust_items, parser_path
+    if not shutil.which('cargo') and not parser_path(build=False):
+        pytest.skip('cargo is needed once, to build the Rust parser')
+    return {i['name']: i for i in rust_items(HARD)}
+
+@pytest.mark.slow
+def test_the_parser_sees_what_a_regex_cannot(parsed):
+    "Every one of these was either invisible to the old regexes or silently mis-generated."
+    assert parsed['dist2']['skip'] is None
+    assert 'generic parameter' in parsed['largest']['skip']
+    assert 'borrow' in parsed['first']['skip']
+    assert parsed['parse']['skip'] is None, 'a Result is bindable; the error becomes an exception'
+    assert 'generic' in parsed['Wrapper']['skip']
+    assert 'no Python equivalent' in parsed['Shape']['skip']
+    assert 'private_helper' not in parsed, 'private items are not public API'
+    assert parsed['deep']['skip'] is None, 'an item inside a `mod` is still exported code'
+
+@pytest.mark.slow
+def test_the_parser_reads_a_struct_the_way_rustc_does(parsed):
+    p = parsed['Point']
+    assert p['derives'] == ['Debug', 'Clone']
+    assert [f['name'] for f in p['fields']] == ['x', 'y'], 'a private field is not a getter'
+    assert [m['name'] for m in p['methods']] == ['dist2', 'nudge'], 'and `hidden` is private'
+    assert [s['name'] for s in p['statics']] == ['new']
+    assert parsed['Point']['methods'][1]['recv'] == '&mut self'
+    assert not any(m['name'] == 'fmt' for m in p['methods']), 'a trait impl is not the type API'
+
+@pytest.mark.slow
+def test_unparseable_rust_is_reported_with_a_line_rather_than_mis_read():
+    from nbship.parse import rust_items, RustSyntaxError, parser_path
+    if not shutil.which('cargo') and not parser_path(build=False): pytest.skip('no cargo')
+    with pytest.raises(RustSyntaxError) as e: rust_items('pub fn broken( {')
+    assert 'line' in str(e.value)
+
 # the whole chain, against the real toolchains ----------------------------------------------------
 
 @pytest.mark.slow
-def test_the_exported_crate_builds_into_a_wheel_that_python_can_call(tmp_path):
-    "The claim this spike exists to settle: a Rust notebook reaches PyPI as a wheel that works."
+def test_a_notebook_becomes_a_wheel_whose_bindings_all_work(tmp_path):
+    "The claim the whole spike exists to settle, settled the only way it can be."
     for tool in ('cargo', 'maturin'):
         if not shutil.which(tool): pytest.skip(f'{tool} is not installed')
-    d = _export(tmp_path)
-    r = subprocess.run(['maturin', 'build', '--release', '--out', 'dist'], cwd=d,
-                       capture_output=True, text=True, timeout=900)
-    assert r.returncode == 0, r.stderr[-3000:]
-    wheels = list((d/'dist').glob('*.whl'))
-    assert len(wheels) == 1, wheels
-    venv = tmp_path/'venv'
-    subprocess.run(['uv', 'venv', '-q', str(venv)], check=True, timeout=300)
-    py = venv/'bin'/'python'
-    subprocess.run(['uv', 'pip', 'install', '-q', '--python', str(py), str(wheels[0])],
-                   check=True, timeout=600)
-    out = subprocess.run([str(py), '-c', 'import demo_geom as g; print(g.dist2(3,4), g.gcd(48,18))'],
-                         capture_output=True, text=True, timeout=120)
-    assert out.returncode == 0, out.stderr
-    assert out.stdout.split() == ['25', '6']
+    dest, skipped = export(NB, out=tmp_path/'geometry', crate='geometry')
+    assert [s.name for s in skipped] == ['largest'], 'the generic one, and only that one'
 
-@pytest.mark.slow
-def test_the_class_the_wrapper_generated_behaves_like_a_python_class(tmp_path):
-    "The pyclass claim, settled the only way it can be: build it and use it."
-    for tool in ('cargo', 'maturin'):
-        if not shutil.which(tool): pytest.skip(f'{tool} is not installed')
-    d = _export(tmp_path)
-    r = subprocess.run(['maturin', 'build', '--release', '--out', 'dist'], cwd=d,
-                       capture_output=True, text=True, timeout=900)
-    assert r.returncode == 0, r.stderr[-3000:]
+    from nbship.cli import build
+    wheel = build(dest)
     venv = tmp_path/'venv'
     subprocess.run(['uv', 'venv', '-q', str(venv)], check=True, timeout=300)
     py = venv/'bin'/'python'
-    subprocess.run(['uv', 'pip', 'install', '-q', '--python', str(py),
-                    str(next((d/'dist').glob('*.whl')))], check=True, timeout=600)
-    script = ('import demo_geom as g\n'
-              'p = g.Point(3, 4)\n'
-              'print(repr(p), p.x, p.y, p.dist2(), p.scaled(2).dist2())\n')
-    out = subprocess.run([str(py), '-c', script], capture_output=True, text=True, timeout=120)
-    assert out.returncode == 0, out.stderr
-    assert out.stdout.strip() == 'Point { x: 3, y: 4 } 3 4 25 100'
+    subprocess.run(['uv', 'pip', 'install', '-q', '--python', str(py), str(wheel)],
+                   check=True, timeout=900)
+    script = '''
+import geometry as g, json
+p = g.Point(3, 4)
+q = g.Point(1, 1); q.nudge(2, 3)
+out = {'fn': g.dist2(3, 4), 'doc': g.dist2.__doc__,
+       'repr': repr(p), 'getter': p.x, 'method': p.dist2(), 'self': repr(p.scaled(2)),
+       'static': repr(g.Point.origin()), 'mut': repr(q),
+       'ok': repr(g.parse_point("7, 8")), 'generic': hasattr(g, 'largest')}
+try: g.parse_point("nope")
+except ValueError as e: out['err'] = str(e)
+print(json.dumps(out))
+'''
+    r = subprocess.run([str(py), '-c', script], capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out['fn'] == 25
+    assert out['doc'] == 'Squared distance from the origin.'
+    assert out['repr'] == 'Point { x: 3, y: 4 }' and out['getter'] == 3 and out['method'] == 25
+    assert out['self'] == 'Point { x: 6, y: 8 }'
+    assert out['static'] == 'Point { x: 0, y: 0 }'
+    assert out['mut'] == 'Point { x: 3, y: 4 }', '`&mut self` mutated the wrapped value'
+    assert out['ok'] == 'Point { x: 7, y: 8 }'
+    assert 'invalid digit' in out['err'], 'the Rust error arrived as a Python ValueError'
+    assert out['generic'] is False, 'and the one that could not cross is simply absent'
 
 @pytest.mark.slow
 def test_the_javascript_package_bundles_and_runs_in_a_browser(tmp_path):
@@ -281,8 +359,8 @@ def test_the_javascript_package_bundles_and_runs_in_a_browser(tmp_path):
     try:
         with sync_playwright() as pw:
             kw = {'args': ['--no-sandbox']}
-            if (exe := _os.environ.get('LEELA_CHROMIUM', '/opt/pw-browsers/chromium')):
-                if Path(exe).exists(): kw['executable_path'] = exe
+            exe = _os.environ.get('LEELA_CHROMIUM', '/opt/pw-browsers/chromium')
+            if Path(exe).exists(): kw['executable_path'] = exe
             try: b = pw.chromium.launch(**kw)
             except Exception as e: pytest.skip(f'no chromium: {e}')
             pg = b.new_page()

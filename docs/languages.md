@@ -102,6 +102,14 @@ Both makers are small because nbdev's cell collection was already language-neutr
 same kernelspec this page is about, and because `pub` and `export` are already the export list
 that Python needs an `__all__` for. Read that spike's README before designing anything around it.
 
+One command takes a Rust notebook to an installed wheel:
+
+    python -m nbship geometry.ipynb --install
+
+The binding is generated from a `syn` parse rather than from regular expressions, so every item
+that cannot cross into Python is named with its reason instead of quietly producing a crate that
+does not compile.
+
 ![The bundle, imported into a browser from a URL](screenshots/cdn-in-browser.png)
 
 ## What stays Python

@@ -178,3 +178,5 @@ packaging/assets/Leela-renders/
 # capture side-products: the SVG and PNG are the artefacts, the text dump is a debugging aid
 docs/screenshots/*.txt
 leela/_shot.ipynb
+# nbship's parser builds into a cache dir; the crate's own target/ is local only
+spikes/nbship/rustparse/target/
