@@ -60,6 +60,15 @@ DEFAULT_SETTINGS = {
         # serve both surfaces.
         'configFolder': '',
     },
+    # What `all` pays for each ranking signal, and what the search dialog is allowed to remember.
+    # `leela.blocks.search.search.SETTING_WEIGHTS` maps these names onto the scorer's own; the
+    # numbers here and its dataclass defaults are the same numbers, and a test says so.
+    'search': {
+        'telemetry': 'vault', 'snippets': False,
+        'legFiles': 110.0, 'legSymbols': 100.0, 'legRg': 80.0, 'legFts': 60.0, 'legAnn': 40.0,
+        'legRank': 10.0, 'symbolExact': 120.0, 'symbolPart': 55.0, 'queryInText': 40.0,
+        'queryInFilename': 20.0, 'demoteNoise': 25.0,
+    },
     'terminal': {
         'shell': '',
         'shellArgs': [],
@@ -80,12 +89,14 @@ _ENUMS = {
     ('files', 'autoSave'): {'off', 'afterDelay', 'onFocusChange', 'onWindowChange'},
     ('workbench', 'breadcrumbs'): {'off', 'path', 'symbols', 'pathAndSymbols'},
     ('workbench', 'problemsScope'): {'file', 'workspace'},
+    ('search', 'telemetry'): {'off', 'local', 'vault'},
 }
 _RANGES = {
     ('editor', 'fontSize'): (9, 28), ('editor', 'lineHeight'): (1, 2.4),
     ('editor', 'tabSize'): (1, 8), ('editor', 'lineLength'): (40, 240),
     ('editor', 'overviewThreshold'): (20, 5000), ('editor', 'scrollMargin'): (0, 20),
     ('files', 'autoSaveDelay'): (100, 60000),
+    **{('search', k): (0, 500) for k in DEFAULT_SETTINGS['search'] if k not in ('telemetry', 'snippets')},
 }
 
 def _read(path):

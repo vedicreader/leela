@@ -267,6 +267,9 @@ GET,POST /runtime/inspector
 GET,POST /runtime/support
 GET,POST /screen
 GET,POST /search
+GET,POST /search/events
+GET,POST /search/signals
+GET,POST /search/signals/purge
 GET,POST /search/stream
 GET,POST /settings
 GET,POST /settings/reset

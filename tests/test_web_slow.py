@@ -2245,3 +2245,93 @@ def test_running_a_cell_writes_the_notebook_once(tmp_path):
     out = _run(go, roots=[tmp_path])
     assert out['saves'] == 3, f"three cells, three writes, got {out['saves']}"
     assert not out['dirty'], 'and the tab is not left waiting to be saved'
+
+SEARCH_STUB = """() => {
+  window._opened = []; window._events = [];
+  window.openLocation = hit => window._opened.push(hit);
+  const hits = n => Array.from({length: n}, (_, i) => ({
+    path: `/w/file${i}.py`, line: i + 1, text: `def thing${i}(): pass`, kind: 'symbol',
+    symbol: `thing${i}`, score: 100 - i, sources: ['rg'], callers: [],
+    why: {leg: 'rg', symbol_exact: i === 2 ? 1 : 0, text: 1, leg_rank: 1 / (1 + i), demote: 0}}));
+  const real = window.api;
+  window.api = (url, opts) => {
+    if (url.startsWith('/search?')) {
+      const mode = new URLSearchParams(url.split('?')[1]).get('mode');
+      return Promise.resolve({backend: mode, note: '', hits: hits(mode === 'rg' ? 4 : 3),
+                              searched: ['/w'], weights: {legRg: 80, symbolExact: 120}});
+    }
+    if (url.startsWith('/search/signals')) return Promise.resolve(
+      {ok: true, telemetry: 'local', snippets: false, dir: '/w/events', vault: '/w/search.db',
+       weights: {legRg: 80, symbolExact: 120}, defaults: {legRg: 80, symbolExact: 120},
+       keys: {legRg: 'rg', symbolExact: 'symbol_exact'}, summary: {searches: 0}});
+    if (url === '/search/events') { window._events.push(JSON.parse(opts.body)); return Promise.resolve({ok: true}); }
+    if (url === '/code/status') return Promise.resolve({ok: true, files: 1, packages: 0, graph_nodes: 0});
+    return real(url, opts);
+  };
+  localStorage.setItem('lee-search-mode', 'rg');
+  codeSearch();
+}"""
+
+def test_the_code_search_dialog_has_one_selection_and_one_keyboard():
+    """Tab used to move DOM focus rather than the mode, because the dialog's own key handler ran
+    after the modal's focus trap, so Enter landed on a focused rail button whose activation the
+    handler then cancelled: the mode never changed and Enter did nothing. Selection and focus are
+    one thing now -- focus stays in the query box, the selection is `aria-activedescendant`, Tab
+    switches the mode, Enter steps into the results and then opens, and a click previews before it
+    commits.
+    """
+    async def go(pg):
+        await pg.evaluate(SEARCH_STUB)
+        await pg.fill('#cs', 'thing')
+        await pg.wait_for_function("() => $$('.lee-search-result').length === 4")
+        out = {}
+        out['starts_on_rg'] = await pg.evaluate("() => $('.lee-searchrail-mode.active').dataset.mode")
+
+        await pg.keyboard.press('Tab')
+        await pg.wait_for_function("() => $('.lee-searchrail-mode.active').dataset.mode === 'context'")
+        out['tab_keeps_focus'] = await pg.evaluate("() => document.activeElement.id")
+        out['tab_marks_the_rail'] = await pg.evaluate("() => !!$('.lee-searchrail-mode.cursor')")
+        await pg.wait_for_function("() => $$('.lee-search-result').length === 3")
+
+        # Enter on the rail steps into the results. It must not open anything.
+        await pg.keyboard.press('Enter')
+        out['enter_stays_open'] = await pg.evaluate("() => !!$('.lee-code-search-modal') && !window._opened.length")
+        out['enter_leaves_the_rail'] = await pg.evaluate("() => !$('.lee-searchrail-mode.cursor')")
+
+        # Arrows are always the results, wherever the rail cursor was.
+        await pg.keyboard.press('ArrowDown')
+        await pg.keyboard.press('ArrowDown')
+        out['selected'] = await pg.evaluate("() => $$('.lee-search-result').findIndex(r => r.classList.contains('sel'))")
+        out['activedescendant'] = await pg.evaluate("() => $('#cs').getAttribute('aria-activedescendant')")
+        out['focus_after_arrows'] = await pg.evaluate("() => document.activeElement.id")
+
+        await pg.keyboard.press('Enter')
+        out['opened_by_enter'] = await pg.evaluate("() => window._opened.map(h => h.line)")
+
+        # A click previews. The second click on the row it is previewing is what opens it.
+        await pg.evaluate(SEARCH_STUB)
+        await pg.fill('#cs', 'thing')
+        await pg.wait_for_function("() => $$('.lee-search-result').length === 4")
+        await pg.click('.lee-search-result:nth-child(3)')
+        await pg.wait_for_function("() => $('#cspreviewtitle').textContent === 'thing2'")
+        out['click_previews'] = await pg.evaluate("() => window._opened.length")
+        await pg.click('.lee-search-result:nth-child(3)')
+        out['click_again_opens'] = await pg.evaluate("() => window._opened.map(h => h.line)")
+
+        out['events'] = await pg.evaluate(
+            "() => window._events.flatMap(b => (b.events || []).map(e => e.kind))")
+        out['session'] = await pg.evaluate(
+            "() => (window._events.map(b => b.session).filter(Boolean).at(-1) || {}).q || ''")
+        return out
+    out = _run(go)
+    assert out['starts_on_rg'] == 'rg'
+    assert out['tab_keeps_focus'] == 'cs', 'Tab moves the mode, not the focus'
+    assert out['tab_marks_the_rail'] and out['enter_leaves_the_rail']
+    assert out['enter_stays_open'], 'Enter on the rail steps into the results, it does not open one'
+    assert out['selected'] == 2 and out['activedescendant'] == 'cshit2'
+    assert out['focus_after_arrows'] == 'cs', 'the arrows never take the focus out of the query box'
+    assert out['opened_by_enter'] == [3], 'Enter in the results opens the selected hit'
+    assert out['click_previews'] == 0, 'one click previews'
+    assert out['click_again_opens'] == [3], 'the second click on the previewing row opens it'
+    assert 'query' in out['events'] and 'impression' in out['events'] and 'open' in out['events']
+    assert out['session'] == 'thing', 'closing the dialog files the session it just ran'

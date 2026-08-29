@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 
 from ...core.web import fail, found, off_loop
+from .search import SETTING_WEIGHTS, Weights
+from .signals import Signals, search_vault_path
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('fs', 'search')
+CAPS = ('fs', 'search', 'vaults')
 
 MODES = ('context', 'repo', 'env', 'all', 'rg', 'symbols', 'fts', 'ann')
 
@@ -16,6 +18,21 @@ SCOPES = ('project', 'workspace')
 
 def connect(app, ctx):
     rt = app.route
+    signals = Signals()
+    def prefs():
+        "The effective `search` settings: the ranking weights and what may be remembered."
+        from ..settings.settings import Settings
+        try: return Settings(ctx.session.project_root).effective().get('search') or {}
+        except Exception: return {}
+    def weigh(values=None):
+        "Rank with the weights settings currently hold. Read per request, so a change is live."
+        ctx.search.weights = Weights.load(values if values is not None else prefs())
+        return ctx.search.weights
+    async def remember(session):
+        "One document per search session, in a vault of its own the vault surfaces can then read."
+        if not await off_loop(signals.remember, session): return None
+        try: return ctx.vaults.attach(search_vault_path(), name='search')
+        except Exception: return None
     def scope_roots(scope):
         "The folders a scope names: the active project's, or `None` for the whole workspace."
         if scope != 'project': return None
@@ -31,10 +48,11 @@ def connect(app, ctx):
         if mode not in MODES: return fail(f'unknown search mode {mode!r}')
         if scope not in SCOPES: return fail(f'unknown search scope {scope!r}')
         roots = scope_roots(scope)
+        w = weigh()
         hits = await off_loop(ctx.search.search, q, limit=limit, regex=regex, mode=mode,
             exts=exts, roots=roots)
         return found(ctx.search, hits) | {
-            'scope': scope, 'exts': exts, 'searched': searched(roots)}
+            'scope': scope, 'exts': exts, 'searched': searched(roots), 'weights': w.settings()}
     @rt('/search/stream')
     async def search_stream(req, q: str = '', regex: bool = False, limit: int = 60,
         exts: str = '', scope: str = 'project'):
@@ -44,9 +62,10 @@ def connect(app, ctx):
         if scope not in SCOPES: return fail(f'unknown search scope {scope!r}')
         roots = scope_roots(scope)
         per = max(12, min(limit, 40))
+        w = weigh()
         async def events():
             yield sse('start', {'legs': list(ctx.search.ALL_LEGS), 'scope': scope,
-                'searched': searched(roots)})
+                'searched': searched(roots), 'weights': w.settings()})
             if not (q or '').strip():
                 yield sse('done', {'note': 'nothing to search for'})
                 return
@@ -95,6 +114,36 @@ def connect(app, ctx):
         "Code like the function at `path:line`: `mode=cluster` for the family it belongs to, `mode=knn`."
         fn = ctx.search.peers if mode == 'cluster' else ctx.search.similar
         return found(ctx.search, await off_loop(fn, path, line, limit=limit))
+    @rt('/search/events')
+    async def search_events(req):
+        """What was asked, shown, previewed and opened. Recording never fails a search, so a
+        problem is reported in `note` and the batch is dropped."""
+        try: d = await req.json()
+        except Exception: return fail('expected a JSON batch')
+        held = prefs()
+        mode = str(held.get('telemetry') or 'vault')
+        if mode == 'off': return {'ok': True, 'recorded': 0, 'note': 'search telemetry is off'}
+        n = await off_loop(signals.record, d.get('events') or [], bool(held.get('snippets')))
+        session, remembered = d.get('session') or {}, False
+        if mode == 'vault' and session:
+            # The vault write loads an encoder, so it happens off the request. A search must never
+            # wait on it, and a vault that will not open must never lose the event log.
+            asyncio.ensure_future(remember(session))
+            remembered = True
+        return {'ok': True, 'recorded': n, 'remembering': remembered, 'note': signals.note}
+    @rt('/search/signals')
+    async def search_signals(days: int = 30):
+        "The metrics a ranker is tuned from, and where they were read."
+        held = prefs()
+        return {'ok': True, 'telemetry': held.get('telemetry', 'vault'),
+            'snippets': bool(held.get('snippets')), 'dir': str(signals.dir),
+            'vault': str(search_vault_path()), 'weights': Weights.load(held).settings(),
+            'defaults': Weights().settings(), 'keys': SETTING_WEIGHTS,
+            'summary': await off_loop(signals.summary, days)}
+    @rt('/search/signals/purge')
+    async def search_signals_purge():
+        "Delete every event file. The vault documents are left alone; the vault surfaces own those."
+        return {'ok': True, 'removed': await off_loop(signals.purge)}
     @rt('/clusters')
     async def clusters_route(limit: int = 40):
         "An ANN clustering of the whole indexed corpus: a map of the codebase by embedding distance."

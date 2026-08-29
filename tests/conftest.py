@@ -120,6 +120,9 @@ def _isolate_vault(monkeypatch, tmp_path_factory):
     vault = _pathlib.Path(TEST_CONFIG_HOME)/'vaults'/tmp_path_factory.mktemp('v').name
     vault.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv('VISHALAKSHI_VAULT', str(vault/'vault.db'))
+    # The search telemetry vault is a second file, and a route that records one search session
+    # would otherwise write into the person's own `~/.vishalakshi`.
+    monkeypatch.setenv('LEELA_SEARCH_VAULT', str(vault/'search.db'))
     monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
 
 ROWS = {
