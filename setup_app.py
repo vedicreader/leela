@@ -36,7 +36,8 @@ FRAMEWORK_CANDIDATES = (
 )
 
 __all__ = ['is_framework', 'framework_python', 'py_version', 'lock_requirements', 'build_venv',
-           'git_stamp', 'stamp_path', 'write_stamp', 'read_stamp', 'platform_setup', 'main']
+           'git_stamp', 'stamp_path', 'write_stamp', 'read_stamp', 'platform_setup', 'running_from',
+           'main']
 
 def run(*args, **kw):
     print('·', ' '.join(str(a) for a in args))
@@ -169,6 +170,23 @@ def check():
         print('pywebview       installed')
     except ImportError: print('pywebview       MISSING — pip install "leela[desktop]"')
 
+def running_from(bundle):
+    """The pids of processes running out of `bundle`, so a build does not overwrite a live app.
+
+    py2app writes the bundle in place, and `python313.zip` is the running app's standard library.
+    Replacing it under a live process leaves every import it has not made yet reading a file that
+    is no longer the one it opened: `ZipImportError: bad local file header`, from whatever happens
+    to import next, naming nothing that would lead anyone back to a rebuild.
+    """
+    target = str(Path(bundle).resolve())
+    try: out = subprocess.run(['ps', '-Ao', 'pid,command'], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError): return []
+    pids = []
+    for line in out.splitlines()[1:]:
+        pid, _, command = line.strip().partition(' ')
+        if target in command and pid.isdigit(): pids.append(int(pid))
+    return pids
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog='setup_app.py', description=__doc__.splitlines()[0])
     p.add_argument('--alias', action='store_true',
@@ -176,8 +194,14 @@ def main(argv=None):
                         'seconds and tracks your edits, but is not distributable.')
     p.add_argument('--check', action='store_true', help='report what would happen, then stop')
     p.add_argument('--rebuild-venv', action='store_true', help='discard packaging/.app-venv and make it again')
+    p.add_argument('--force', action='store_true', help='build even where the app being replaced is running')
     a = p.parse_args(argv)
     if a.check: return check()
+    out = ROOT/'dist'/('Leela.app' if sys.platform == 'darwin' else 'Leela')
+    if not a.force and (live := running_from(out)):
+        raise SystemExit(f'{out} is running as pid {", ".join(map(str, live))}. Quit it first, or pass --force.\n'
+                         'A build replaces the standard library the running app imports from, and it fails from '
+                         'then on with a zip error that says nothing about the build.')
 
     setup, extra = platform_setup()
     # `LEELA_APP_VENV` marks the re-exec, so a bad build env reports rather than forks forever.
@@ -197,7 +221,6 @@ def main(argv=None):
     args = [sys.executable, setup, *extra]
     if a.alias and sys.platform == 'darwin': args.append('--alias')
     run(*args, cwd=ROOT)
-    out = ROOT/'dist'/('Leela.app' if sys.platform == 'darwin' else 'Leela')
     stamp = write_stamp(out)
     print(f"\nbuilt {out}")
     print(f"  from {stamp['commit'][:12]}{' with uncommitted changes' if stamp['dirty'] else ''}")

@@ -617,6 +617,23 @@ def test_the_stamp_lands_where_each_platform_keeps_it():
     assert setup_app.stamp_path('/x/Leela').parts[-1] == setup_app.STAMP
 
 @pytest.mark.skipif(not APP.exists(), reason='no built app in dist/ — run setup_app.py first')
+def test_a_build_refuses_to_overwrite_the_app_that_is_running(tmp_path):
+    """py2app writes in place, and `python313.zip` is the running app's standard library. Replacing
+    it under a live process made every import it had not yet made fail with `bad local file header`,
+    naming nothing that would lead anyone back to the rebuild that did it."""
+    import setup_app, subprocess, sys, time
+    bundle = tmp_path/'Leela.app'
+    bundle.mkdir()
+    assert setup_app.running_from(bundle) == [], 'nothing is running from it yet'
+    live = subprocess.Popen([sys.executable, '-c', 'import sys, time; time.sleep(30)', str(bundle)])
+    try:
+        for _ in range(50):
+            if (pids := setup_app.running_from(bundle)): break
+            time.sleep(0.1)
+        assert live.pid in pids, 'the process running out of the bundle is named'
+    finally:
+        live.terminate(); live.wait(5)
+
 def test_the_built_app_matches_the_tree_it_was_built_from():
     """The bundle is derived from the tree and nothing compared them.
 
