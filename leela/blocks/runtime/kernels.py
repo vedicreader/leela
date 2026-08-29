@@ -16,6 +16,7 @@ from .support import LEELA_PY, clean_env, strip_bundle, support_paths, work_dir
 __all__ = ['ExecOutcome', 'Kernel', 'KernelStartError', 'GatewayKernel', 'GatewayService', 'KernelPool',
            'RuntimeBroker', 'KernelLimit', 'check_gateway_deps',
            'bootstrap_src', 'output_text', 'ipymini_available', 'missing_kernel_module', 'find_pythons',
+           'installed_kernels', 'kernelspec_for', 'installed_spec',
            'project_python', 'nearest_python', 'python_for', 'venv_env', 'run_file_src']
 
 KERNELS = ('ipykernel', 'ipymini')
@@ -240,13 +241,41 @@ def _kernel_env(python=None):
     if python is None and (path := _frozen_pythonpath()): env['PYTHONPATH'] = path
     return env
 
-def _spec(python=None, name='python3', kernel='ipykernel'):
-    "A kernelspec pinned to a specific interpreter, so the kernel runs in *this* venv."
+def _spec(python=None, name='python3', kernel='ipykernel', lang='python'):
+    """A kernelspec pinned to a specific interpreter, so the kernel runs in *this* venv.
+
+    Python is the language Leela pins an interpreter for. Any other language runs whatever
+    kernelspec is installed for it, unmodified, because there is no venv of ours to point it at."""
+    if lang and lang != 'python': return installed_spec(lang)
     runtime = _runtime_python(python)
     if kernel == 'ipymini': argv = [runtime, '-Xfrozen_modules=off', '-m', 'ipymini', '-f', '{connection_file}']
     else: argv = [runtime, '-m', 'ipykernel_launcher', '-f', '{connection_file}']
     metadata = {'supported_encryption': 'curve'} if kernel == 'ipykernel' else {}
     return KernelSpec(argv=argv, display_name=name, language='python', metadata=metadata)
+
+def installed_kernels():
+    "Every Jupyter kernelspec on this machine, as `{name: spec}`. An unreadable store is none."
+    from jupyter_client.kernelspec import KernelSpecManager
+    try: return KernelSpecManager().get_all_specs()
+    except Exception: return {}
+
+def kernelspec_for(lang):
+    "The installed kernelspec name that runs `lang`, or None. The registry's own name wins."
+    from ...core.langs import lang_named
+    l = lang_named(lang)
+    specs = installed_kernels()
+    if l and l.kernel in specs: return l.kernel
+    return first(n for n, s in specs.items()
+                 if str(((s.get('spec') or {}).get('language') or '')).lower() == str(lang).lower())
+
+def installed_spec(lang):
+    "The `KernelSpec` for `lang`, or a `KernelStartError` naming what would install one."
+    from jupyter_client.kernelspec import KernelSpecManager
+    from ...core.langs import lang_named
+    if (name := kernelspec_for(lang)): return KernelSpecManager().get_kernel_spec(name)
+    l = lang_named(lang)
+    how = f' Install one with `{l.install}`.' if l and l.install else ''
+    raise KernelStartError(f'no Jupyter kernel is installed for {lang}.{how}')
 
 class _Inspector:
     "The inspector-client half shared by `Kernel` and `GatewayKernel`."
@@ -345,8 +374,10 @@ class Kernel(_Inspector):
         agent='restricted',
         port=8000,
         kernel='ipykernel',
+        lang='python',
     ):
         if kernel not in KERNELS: kernel = 'ipykernel'
+        if lang != 'python': inspect, kernel = False, 'ipykernel'   # dhrishti reads Python namespaces
         if kernel == 'ipymini' and not ipymini_available():
             warnings.warn("ipymini is unavailable in this interpreter; falling back to ipykernel. "
                 "Install project kernel support from Leela's kernel picker.")
@@ -374,17 +405,25 @@ class Kernel(_Inspector):
         "OS pid of the kernel process, or None."
         p = getattr(getattr(self.km, 'provisioner', None), 'process', None)
         return getattr(p, 'pid', None)
+    async def chdir(self, path):
+        "Move the kernel to `path`. Only Python is asked in its own language; nothing else is asked."
+        if self.lang != 'python': return False
+        r = await self.execute(f'import os as __leela_os; __leela_os.chdir({str(path)!r}); del __leela_os')
+        if not r.ok: raise RuntimeError(r.error or f'could not change kernel cwd to {path}')
+        self.cwd = path
+        return True
     async def start(self, timeout=60):
         "Launch the kernel, wait for it to answer, then bootstrap its inspector."
-        manager_kw = {'kernel_name': self.kernel if self.kernel == 'ipymini' else 'python3'}
-        if os.name != 'nt' and self.kernel == 'ipykernel':
+        spec_name = kernelspec_for(self.lang) if self.lang != 'python' else None
+        manager_kw = {'kernel_name': spec_name or (self.kernel if self.kernel == 'ipymini' else 'python3')}
+        if os.name != 'nt' and self.kernel == 'ipykernel' and self.lang == 'python':
             self._ipc_dir = tempfile.mkdtemp(prefix='lee-k-', dir='/tmp' if os.path.isdir('/tmp') else None)
             manager_kw.update(transport='ipc', ip=os.path.join(self._ipc_dir, 'k'))
         elif os.name != 'nt': manager_kw.update(transport='tcp', ip='127.0.0.1')
         elif self.kernel == 'ipykernel':
             manager_kw['transport_encryption'] = 'required'
         self.km = AsyncKernelManager(**manager_kw)
-        self.km._kernel_spec = _spec(self.python, ifnone(self.name, 'python3'), self.kernel)
+        self.km._kernel_spec = _spec(self.python, ifnone(self.name, 'python3'), self.kernel, self.lang)
         cwd = work_dir(self.cwd)
         try:
             await self.km.start_kernel(cwd=cwd, env=_kernel_env(self.python))
@@ -662,6 +701,7 @@ class GatewayService:
 
 class GatewayKernel(_Inspector):
     "The `Kernel` interface over jupygate + jupyasyncclient, so a kernel outlives a client reconnect."
+    lang = 'python'
     def __init__(self, gateway, cwd=None, name=None, python=None, inspect=True,
         agent='restricted', port=8000, kernel='ipykernel'):
         store_attr()
@@ -824,6 +864,17 @@ class KernelPool:
         if kernel and kernel in KERNELS: self.default_kernel = kernel
         if python is not False: self.default_python = python
         return {'kernel': self.default_kernel, 'python': self.default_python}
+    def _class_for(self, kw):
+        """What runs this language: a Jupyter kernel where one is installed, else Leela's own runner.
+
+        The gateway transport carries Python. A language Leela runs itself has no wire protocol to
+        put through it, so it stays in this process whichever transport the workspace picked."""
+        from .runners import runner_for
+        lang = kw.get('lang') or 'python'
+        if lang == 'python': return GatewayKernel if self.transport == 'gateway' else Kernel
+        if kernelspec_for(lang): return Kernel
+        if (r := runner_for(lang)) is not None: return r
+        return Kernel                            # `installed_spec` raises, naming the install
     async def get(self, key, **kw):
         "The kernel for `key`, starting it once even when several browser panels ask together."
         self._sweeping()
@@ -833,11 +884,14 @@ class KernelPool:
         async def start_one():
             kw.setdefault('kernel', self.default_kernel)
             kw.setdefault('python', self.default_python)
-            cls = GatewayKernel if self.transport == 'gateway' else Kernel
+            from .runners import Runner
+            cls, args = self._class_for(kw), dict(kw)
             if cls is GatewayKernel:
                 if self.gateway is None: self.gateway = GatewayService().start()
-                kw['gateway'] = self.gateway
-            k = self.kernels[key] = cls(port=self.port, **kw)
+                args['gateway'] = self.gateway
+                args.pop('lang', None)          # the gateway carries Python, and takes no language
+            if issubclass(cls, Runner): args['key'] = key
+            k = self.kernels[key] = cls(port=self.port, **args)
             k.evicted = evicted
             k.touch()
             try: return await k.start()

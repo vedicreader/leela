@@ -90,7 +90,7 @@ async function openMergeConflict(conflictBox) {
       const view = lee.cells[i] && lee.editors.get(lee.cells[i].id);
       const draft = view ? LeeCM.getDoc(view) : (lee.cells[i]?.source || '');
       merges[i] = LeeCM.createMerge($(`[data-cell-merge="${i}"]`, m), {left: disk.cells?.[i]?.source || '', right: draft,
-        lang: lee.cells[i]?.cell_type === 'markdown' ? 'markdown' : 'python', settings: lee.editorPrefs});
+        lang: lee.cells[i]?.cell_type === 'markdown' ? 'markdown' : nbLang(), settings: lee.editorPrefs});
     }
     $('[data-cancel]', m).onclick = () => m.remove();
     $('[data-save-merge]', m).onclick = async () => {

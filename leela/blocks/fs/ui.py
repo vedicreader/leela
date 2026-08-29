@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import json, os
 from pathlib import Path
 from urllib.parse import quote
 
@@ -14,7 +14,10 @@ from ..git.git import GitError, GitRepo
 __all__ = ['git_tree_state', 'tree_node', 'files_panel']
 
 def git_tree_state(fs):
-    "Absolute changed paths for file-tree decoration, across every open repository."
+    """Absolute changed paths for file-tree decoration, across every open repository.
+
+    Ignored files are in here too. Knowing that a file is deliberately not committed is the same
+    question as knowing that one is missing, and only one of the two used to be answerable."""
     out = {}
     seen = set()
     for root in fs.roots:
@@ -25,15 +28,43 @@ def git_tree_state(fs):
         try:
             for c in repo.decorations(): out[str((repo.root/c['path']).resolve())] = c
         except GitError: pass
+        for rel in _ignored_paths(repo):
+            out.setdefault(str((repo.root/rel).resolve()), {'path': rel, 'ignored': True})
     return out
+
+def _ignored_paths(repo):
+    "What git is deliberately not tracking here. A failure is no decoration, never no tree."
+    try: out = repo.run('ls-files', '--others', '--ignored', '--exclude-standard', '--directory')
+    except Exception: return ()
+    return [l.strip() for l in str(out or '').splitlines() if l.strip()]
+
+#: Worst news first, so a folder can take the strongest state under it and mean something by it.
+GIT_RANK = ('ignored', 'staged', 'modified', 'untracked', 'conflict')
 
 def _git_class(change):
     "One file's Git decoration, worst news first: a conflict outranks an unstaged edit."
     if not change: return ''
+    if change.get('ignored'): return 'ignored'
     if change['conflicted']: return 'conflict'
     if change['untracked']: return 'untracked'
     if change['staged'] and not change['unstaged']: return 'staged'
     return 'modified'
+
+def _folder_class(path, git_state):
+    """The strongest state anywhere under this folder.
+
+    A folder you have just created is entirely untracked, and every row inside it is out of sight
+    until you open it. Rolling the state up is what makes `which ones am I missing` answerable
+    without expanding the tree."""
+    try: prefix = str(Path(path).resolve())
+    except Exception: return ''
+    best = ''
+    for key, change in git_state.items():
+        if not (key == prefix or key.startswith(prefix + os.sep)): continue
+        c = _git_class(change)
+        if c and (not best or GIT_RANK.index(c) > GIT_RANK.index(best)): best = c
+        if best == GIT_RANK[-1]: break
+    return best
 
 def _kids(fs, path, git_state, hidden, opened):
     # A remembered folder can be gone, or outside the roots, by the time this draws.
@@ -47,9 +78,12 @@ def tree_node(e, git_state=None, hidden=False, fs=None, opened=frozenset()):
         # Drawn children and the lazy fetch together would give the folder two copies of itself.
         lazy = {} if rows else dict(hx_get=f'/tree?path={quote(e.path)}' + ('&hidden=1' if hidden else ''),
             hx_target='next .lee-kids', hx_trigger='click once')
-        summary = Summary(Span('▸', cls='lee-caret'), Span(e.name, cls='lee-fname'), **lazy)
+        state = _folder_class(e.path, git_state or {})
+        summary = Summary(Span('▸', cls='lee-caret'), Span(e.name, cls='lee-fname'),
+            Span(state[:1].upper(), cls='lee-tree-git') if state else '', **lazy)
         return Details(summary, Div(*rows, cls='lee-kids'), data_path=e.path, role='treeitem',
-            cls='lee-node lee-dir' + (' lee-root' if e.is_root else ''), open=bool(rows),
+            cls='lee-node lee-dir' + (' lee-root' if e.is_root else '')
+                + (f' git-{state}' if state else ''), open=bool(rows),
             aria_expanded='true' if rows else 'false', aria_selected='false')
     state = _git_class((git_state or {}).get(str(Path(e.path).resolve())))
     return Div(Span(e.name, cls='lee-fname'), Span(state[:1].upper(), cls='lee-tree-git') if state else '',

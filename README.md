@@ -45,6 +45,37 @@ recently-used switcher. Overflow tabs fold into a `+N` menu. Autosave is atomic,
 into IndexedDB, and version-checked against disk. Cells fold, headings build an outline, and
 every pane minimises.
 
+### Rust and JavaScript notebooks
+
+A notebook's kernelspec says what its cells are, and Leela runs three of them. Python is a managed
+ipykernel as before. Rust and JavaScript run on an installed Jupyter kernel where there is one
+(`evcxr_jupyter`, `deno jupyter`), and on Leela's own runner where there is not: Rust cells become
+a scratch cargo crate that grows, so rustc's diagnostics arrive as the cell's error output with
+`E0382` as its name and the compiler's own rendering underneath; JavaScript cells run against one
+long-lived node context, so a binding made in one cell is there in the next. `notebook language`
+in the command palette switches a notebook over. See
+[a notebook that is not Python](docs/languages.md).
+
+![The borrow checker, in a notebook cell](docs/screenshots/rust-borrow-checker.png)
+
+### Staging a folder of a language you have just met
+
+`git add` honours `.gitignore`, so the difficulty with a folder you have just created is that it
+does not have one, and `target/` or `__pycache__` go in with everything else. `stage this folder,
+ignores first` writes the rules the folder's project kinds need -- Rust, maturin, Python, Node,
+detected from the files that declare them and only where `git check-ignore` says a rule is missing
+-- and then stages. The rules go in the folder's own `.gitignore`, because `/target/` at the root
+of a repository does not match `mycrate/target/`.
+
+The tree colours every file and every folder by its state: staged, modified, untracked, ignored,
+conflicted. A folder takes the strongest state under it, so a new one reads as untracked before
+you expand it.
+
+<p align="center">
+<img src="docs/screenshots/git-tree-before.png" width="300" alt="before: the crate is untracked">
+<img src="docs/screenshots/git-tree-after.png" width="300" alt="after: sources staged, target ignored">
+</p>
+
 ### Live variables
 
 Each notebook tab owns a real kernel with an inspector inside it. The tree stays responsive
@@ -115,11 +146,18 @@ the same boxes, and a form builds new ones. Every file written is
 [gheasy](https://github.com/vedicreader/gheasy)'s, and one of them is the
 [fastship](https://github.com/AnswerDotAI/fastship) release for a Python package that is not
 an nbdev template. Release runs the flow the project is: nbdev's four commands where
-`settings.ini` or `[tool.nbdev]` says so, fastship's five where a `pyproject.toml` does not,
+`settings.ini` or `[tool.nbdev]` says so, maturin's for a crate with Python bindings (test, wheel,
+refresh the workflow, tag -- the runners build every platform and publish), `cargo publish` for a
+crate without, fastship's five where a `pyproject.toml` does not,
 each as a pty step keeping its own exit code. A project that packages a desktop app gets two
 more, after the release the artefacts attach to. Deploy runs the project's `deploy.py` stage by
 stage, or scaffolds the first one from dockeasy, vpseasy and cfeasy. Drive is the same
 deploy taken apart, one library call per step. A failure names the deepest frame in your own
+
+<p align="center">
+<img src="docs/screenshots/release-maturin.png" width="290" alt="the maturin flow: test, wheel, workflow, changelog, tag">
+<img src="docs/screenshots/release-crate.png" width="290" alt="the crate flow: test, clippy, package, publish">
+</p>
 packages, rewritten to the checkout you have open. Secrets stay in dockeasy's store and are
 never sent to the browser.
 
@@ -189,6 +227,7 @@ leela/
   agent/          the alias seam: `leela.agent.*` is `ramabana.*`
   core/           what every block may import
     block.py      `Ctx` (capabilities), the block contract, ordered wiring
+    langs.py      the languages Leela runs, serves and highlights
     ports.py      the contracts a workspace depends on, and the provider registry
     keys.py       single-source keymap and the user's overrides
     ui.py         button bars and shared atoms, over those same actions
@@ -201,6 +240,7 @@ leela/
   blocks/         one folder per feature: `connect(app, ctx)` plus a `CAPS` tuple
     nb git search memory agent runtime research workflows pipelines drive
     fs term keys tabs vars runs stack refactor lsp debug editor settings workspace
+    runtime       kernels, model engines, and the runners for a language with no kernel
     browser       a CDP page as a tab: screencast in, input out
     vault         the corpus, what fills it, and the queue that does the filling
   workspace.py    open folders, open tabs, and which kernel each tab talks to

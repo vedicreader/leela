@@ -12,7 +12,7 @@ from ..term.term import SCROLLBACK, Pty
 __all__ = ['Pipeline', 'PipelineError', 'Step', 'env_value', 'resolve_script', 'Release',
            'ReleaseError', 'RELEASE_FILE', 'nbdev_project', 'fastship_project', 'app_project',
            'release_flow', 'default_steps', 'NBDEV_STEPS', 'FASTSHIP_STEPS', 'PLAIN_STEPS',
-           'APP_STEPS']
+           'APP_STEPS', 'MATURIN_STEPS', 'CRATE_STEPS', 'rust_project', 'maturin_project']
 
 class PipelineError(RuntimeError):
     pass
@@ -308,6 +308,46 @@ APP_STEPS = [
         'Upload what dist/ holds to the release this version just tagged.', ['GITHUB_TOKEN']),
 ]
 
+def rust_project(root):
+    "A crate: something cargo can build, whether or not Python ever sees it."
+    return (Path(root)/'Cargo.toml').exists()
+
+def maturin_project(root):
+    "A crate that is also a Python package: maturin builds the wheel, so the release is PyPI's."
+    root = Path(root)
+    if not rust_project(root): return False
+    try:
+        import tomllib
+        with open(root/'pyproject.toml', 'rb') as f: data = tomllib.load(f)
+    except (OSError, ValueError): return False
+    backend = str((data.get('build-system') or {}).get('build-backend') or '')
+    return backend.startswith('maturin') or 'maturin' in (data.get('tool') or {})
+
+MATURIN_STEPS = [
+    Step('test', 'test', 'cargo test', 'Run the crate\'s own tests before anything is published.'),
+    Step('wheel', 'build the wheel', 'maturin build --release --out dist',
+        'Build here first. A tag that fails to compile on the runners is a tag you have to undo.'),
+    Step('ci', 'refresh the workflow', 'maturin generate-ci github -o .github/workflows/CI.yml',
+        'maturin writes the matrix: linux, musllinux, macOS, Windows, and the sdist. Rewriting it '
+        'from maturin keeps it right when your Python range or targets change.'),
+    Step('changelog', 'changelog', 'ship-changelog',
+        'Rewrite CHANGELOG.md from the issues closed since the last release.', ['GITHUB_TOKEN']),
+    Step('release', 'tag and push', 'ship-release',
+        'Tag the version from Cargo.toml and push it. The workflow builds every platform\'s wheel '
+        'and publishes them, so nothing is uploaded from here.', ['GITHUB_TOKEN']),
+]
+
+CRATE_STEPS = [
+    Step('test', 'test', 'cargo test', 'Run the crate\'s tests before anything is published.'),
+    Step('clippy', 'clippy', 'cargo clippy --all-targets -- -D warnings',
+        'The lints. A crate other people will read is worth the stricter pass.'),
+    Step('package', 'package', 'cargo package',
+        'Build the .crate the registry would receive, and verify it on its own.'),
+    Step('publish', 'publish to crates.io', 'cargo publish',
+        'Upload it. A version on crates.io cannot be replaced, only yanked.',
+        ['CARGO_REGISTRY_TOKEN']),
+]
+
 def fastship_project(root):
     "A Python package fastship releases: a `pyproject.toml`, and not an nbdev project."
     return (Path(root)/'pyproject.toml').exists() and not nbdev_project(root)
@@ -318,8 +358,13 @@ def app_project(root):
     return (root/'tools'/'build_release.py').exists() and (root/'setup_app.py').exists()
 
 def release_flow(root):
-    "Which of the three release flows this project uses."
+    """Which release flow this project uses.
+
+    Rust is asked before fastship, because a maturin crate has a `pyproject.toml` too and the
+    fastship flow would try to `ship-pypi` a wheel that only the runners can build."""
     if nbdev_project(root): return 'nbdev'
+    if maturin_project(root): return 'maturin'
+    if rust_project(root): return 'crate'
     return 'fastship' if fastship_project(root) else 'plain'
 
 def _with_app(steps):
@@ -328,7 +373,8 @@ def _with_app(steps):
     i = max(at) + 1 if at else len(steps)
     return [*steps[:i], *APP_STEPS, *steps[i:]]
 
-_FLOWS = {'nbdev': NBDEV_STEPS, 'fastship': FASTSHIP_STEPS, 'plain': PLAIN_STEPS}
+_FLOWS = {'nbdev': NBDEV_STEPS, 'fastship': FASTSHIP_STEPS, 'plain': PLAIN_STEPS,
+          'maturin': MATURIN_STEPS, 'crate': CRATE_STEPS}
 
 def default_steps(root):
     steps = list(_FLOWS[release_flow(root)])

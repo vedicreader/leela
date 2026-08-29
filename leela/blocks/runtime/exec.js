@@ -1,13 +1,30 @@
+// `/exec` runs in whatever runtime the open tab runs in, so a Rust notebook makes this box Rust.
+// The placeholder is built at mount and the bundle exposes no way to rewrite one, so a language
+// change remounts rather than saying `python` over a box that runs something else.
+function execLang() {
+  const lang = lee.kind === 'notebook' ? nbLang() : 'python';
+  if (lee.execLang === lang) return;
+  lee.execLang = lang;
+  const v = lee.editors.get('exec');
+  if (!v) return;                     // not mounted yet; `mountExec` reads `lee.execLang` itself
+  LeeCM.destroy(v);
+  lee.editors.delete('exec');
+  mountExec();
+}
+
 function mountExec() {
   const host = $('#execbox'); if (!host || lee.editors.has('exec')) return;
+  const lang = lee.execLang || 'python';
   const v = createEditor(host, {
-    doc: '', lang: 'python', placeholder: `python — ${displayChord('mod+enter')} runs · ctrl+shift+↑/↓ history`,
+    doc: '', lang, placeholder: `${lang} — ${displayChord('mod+enter')} runs · ctrl+shift+↑/↓ history`,
     completeUrl: '/complete', onDefinition: name => findDefinition(name),
     onSelection: () => { clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120); },
   });
   lee.editors.set('exec', v);
-  host.addEventListener('focusin', () => setScope('exec'));
   leeScope(lee.execScope);
+  if (host.dataset.wired) return;     // a remount replaces the editor, not the box around it
+  host.dataset.wired = '1';
+  host.addEventListener('focusin', () => setScope('exec'));
   api('/exec/history').then(d => { lee.hist = d.cells || []; lee.histIdx = lee.hist.length; }).catch(() => {});
 }
 

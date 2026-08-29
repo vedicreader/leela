@@ -1085,12 +1085,16 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     @rt('/lint')
     async def lint_route(req):
         "Compiler or structural diagnostics for an unsaved buffer; source is never run."
+        from .core.langs import lang_named
         d = await req.json(); lang, code = d.get('lang'), str(d.get('code') or '')
-        if lang == 'python':
-            diagnostics = _python_diagnostics(code, d.get('path') or '<cell>')
-            path = str(d.get('path') or '')
-            if path.endswith('.py'):
-                rows, note = await _off_loop(ws.lsp.diagnostics, path, code)
+        path = str(d.get('path') or '')
+        if lang_named(lang):
+            # Python's own parse comes first and needs no server; every language's server comes
+            # second and needs a real file on disk to anchor its diagnostics to.
+            diagnostics = _python_diagnostics(code, path or '<cell>') if lang == 'python' else []
+            if path and Path(path).suffix.lower() in (lang_named(lang).exts or ()):
+                srv = ws.lsp_for(lang)
+                rows, note = await _off_loop(srv.diagnostics, path, code)
                 lines, starts = _line_starts(code)
                 def offset(pos):
                     row = max(0, min(int(pos.get('line', 0)), len(lines)-1))
@@ -1099,9 +1103,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 diagnostics += [{'from': offset(x.get('range', {}).get('start', {})),
                                  'to': offset(x.get('range', {}).get('end', {})),
                                  'severity': severity.get(x.get('severity'), 'info'),
-                                 'message': x.get('message', ''), 'source': x.get('source') or 'Pyright',
+                                 'message': x.get('message', ''), 'source': x.get('source') or srv.server or lang,
                                  'code': str(x.get('code') or '')} for x in rows]
-                return {'diagnostics': diagnostics, 'lsp': {'available': ws.lsp.available, 'note': note}}
+                return {'diagnostics': diagnostics, 'lsp': {'available': srv.available, 'note': note}}
             return {'diagnostics': diagnostics}
         if lang != 'markdown': return {'diagnostics': []}
         diagnostics = []

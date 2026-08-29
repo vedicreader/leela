@@ -41,7 +41,7 @@ MENUS = {
               S(), S('clip_to_vault'), S(), S('new_file'),
               S('new_dir'), S(), S('file_cut'), S('file_copy'), S('file_paste'),
               S('file_duplicate'), S(), S('rename'), S('delete', 'warn')),
-    'folder': L(S('git_stage'), S('git_ignore'), S(), S('new_file'), S('new_dir'), S(),
+    'folder': L(S('add_folder'), S('git_stage'), S('git_ignore'), S(), S('new_file'), S('new_dir'), S(),
                 S('copy_rel_path'), S('copy_abs_path'), S(),
                 S('clip_to_vault'), S(), S('file_cut'), S('file_copy'), S('file_paste'),
                 S('file_duplicate'), S(), S('rename'), S('delete', 'warn'), S(), S('open_folder'), S('add_root'),

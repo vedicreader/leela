@@ -263,6 +263,12 @@ const CODE_LANGS = {py: 'python', python: 'python', js: 'javascript', javascript
   zsh: 'bash', fish: 'bash', rs: 'rust', rust: 'rust', go: 'go', java: 'java', c: 'cpp', cc: 'cpp',
   cpp: 'cpp', cxx: 'cpp', h: 'cpp', hpp: 'cpp', xml: 'xml', svg: 'xml', ini: 'properties',
   properties: 'properties'};
+//: The languages Leela serves a language server and a runtime for. Mirrors `LANGS` in
+//: `leela/core/langs.py`; `tests/test_langs.py` checks the two still agree.
+const LSP_LANGS = ['python', 'rust', 'javascript', 'typescript'];
+const nbLang = () => lee.nbLang || 'python';
+const servedLang = (l) => LSP_LANGS.includes(String(l || ''));
+
 function codeLang(name = '', path = '') {
   const raw = String(name || '').toLowerCase().replace(/^language-/, '');
   const ext = String(path || '').split('.').pop().toLowerCase();
@@ -769,6 +775,8 @@ const ACTIONS = {
   run_selection: () => runSelection(),
   pick_kernel:  () => pickKernel(),
   new_notebook: () => htmxPost('/tab/new?kind=notebook'),
+  notebook_language: () => pickNotebookLanguage(),
+  add_folder:   () => treeAddFolder(),
   edit_keys:    () => editKeys(),
   cell_select_above: () => focusCell(lee.sel - 1),
   cell_select_below: () => focusCell(lee.sel + 1),
@@ -1452,6 +1460,9 @@ async function mountTab(expectedPath = '') {
   closeWebView();
   const host = $('#editor'); if (!host) return;
   lee.kind = st.kind; lee.path = st.path || ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
+  // A notebook's kernelspec, so cells highlight and lint as the language they are.
+  lee.nbLang = st.kind === 'notebook' ? (st.lang || 'python') : '';
+  execLang();
   await loadSettings(st.lang || (st.kind === 'notebook' ? 'python' : ''));
   updateToolbarForKind(st.kind);
   rememberRecentTab(st);
@@ -1666,8 +1677,8 @@ async function mountFile(host, st) {
       if (next !== 'rendered') requestAnimationFrame(() => LeeCM.focus(v));
     };
   }
-  if(st.lang==='python'&&st.path&&lee.editorPrefs.inlayHints)api('/lsp/inlay-hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>LeeCM.setInlayHints?.(v,d.hints||[])).catch(()=>{});
-  if(st.lang==='python'&&st.path&&['symbols','pathAndSymbols'].includes(crumbMode))api('/lsp/symbols',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>{const el=$('#editorcrumbs');if(el){const names=(d.symbols||[]).slice(0,40).map(s=>`<button data-line="${(s.range?.start?.line||0)+1}">${esc(s.name)}</button>`).join('');el.insertAdjacentHTML('beforeend',`<i>›</i><span class="lee-breadcrumb-symbols">${names}</span>`);el.onclick=e=>{const b=e.target.closest('[data-line]');if(b)jumpToLine(b.dataset.line);};}}).catch(()=>{});
+  if(servedLang(st.lang)&&st.path&&lee.editorPrefs.inlayHints)api('/lsp/inlay-hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>LeeCM.setInlayHints?.(v,d.hints||[])).catch(()=>{});
+  if(servedLang(st.lang)&&st.path&&['symbols','pathAndSymbols'].includes(crumbMode))api('/lsp/symbols',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>{const el=$('#editorcrumbs');if(el){const names=(d.symbols||[]).slice(0,40).map(s=>`<button data-line="${(s.range?.start?.line||0)+1}">${esc(s.name)}</button>`).join('');el.insertAdjacentHTML('beforeend',`<i>›</i><span class="lee-breadcrumb-symbols">${names}</span>`);el.onclick=e=>{const b=e.target.closest('[data-line]');if(b)jumpToLine(b.dataset.line);};}}).catch(()=>{});
   if (packages) paintPackageVersions(v, packages);
   if (st.path) {
     const mine = ++fileExtrasVersion;
@@ -1988,7 +1999,10 @@ function setCellTime(c, ms, running = false) {
 
 /* The banner says where a cell sits and how big it is. The gutter carries the execution count,
  * which is blank until the cell runs and renumbers on every rerun. */
-const cellKind = (c) => ({code: 'py', markdown: 'md', prompt: 'prompt'}[c.cell_type] || c.cell_type);
+//: The gutter tag. A code cell is tagged with the notebook's own language, not always Python.
+const LANG_TAGS = {python: 'py', rust: 'rs', javascript: 'js', typescript: 'ts'};
+const cellKind = (c) => c.cell_type === 'code' ? (LANG_TAGS[nbLang()] || nbLang())
+  : ({markdown: 'md', prompt: 'prompt'}[c.cell_type] || c.cell_type);
 const cellLines = (c) => String(c.source || '').split('\n').length;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 function cellMetaTitle(c, i) {
@@ -2176,7 +2190,7 @@ function mountCell(c, i) {
   const source = lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : c.source;
   c.source = source;
   const v = createEditor($('#cm-' + c.id), {
-    doc: source, lang: c.cell_type === 'code' ? 'python' : c.cell_type === 'markdown' ? 'markdown' : '',
+    doc: source, lang: c.cell_type === 'code' ? nbLang() : c.cell_type === 'markdown' ? 'markdown' : '',
     placeholder: c.cell_type === 'prompt' ? `ask the inline model — ${displayChord('mod+enter')} answers in place` : '',
     completeUrl: c.cell_type === 'code' ? '/complete' : null,
     onDefinition: c.cell_type === 'code' ? name => findDefinition(name) : null,
@@ -2443,6 +2457,29 @@ function markDirty() {
   if (t) { t.classList.add('dirty'); setTabSaveState(t, 'pending'); }
   scheduleAutoSave();
 }
+
+/* A notebook's language is its kernelspec, so choosing one here writes the file and drops the
+   runtime the old language was using. Unbound by default: a button and a palette entry, like every
+   other action whose chord is not worth spending. */
+async function pickNotebookLanguage() {
+  if (lee.kind !== 'notebook') return status('open a notebook first', 'err');
+  const o = await post('/nb/language', {path: lee.tabKey || ''});
+  const rows = (o.langs || []).map(l =>
+    `<div class="lee-mrow${l.current ? ' sel' : ''}" data-lang="${esc(l.id)}">` +
+    `${l.current ? '● ' : '○ '}${esc(l.label)}<span class="sub">${esc(l.how)}</span></div>`).join('');
+  const m = modal(
+    `<div class="lee-mhead">notebook language<span class="sub">${esc(o.path || '')}</span></div>` +
+    `<div class="lee-dim">this is written into the notebook, and closes the runtime it is using</div>` +
+    `<div class="lee-modallist">${rows}</div>`);
+  m.querySelectorAll('[data-lang]').forEach(el => el.onclick = async () => {
+    m.remove();
+    try {
+      const d = await post('/nb/language', {path: lee.tabKey || '', lang: el.dataset.lang});
+      status(`this notebook is ${d.lang} now`, 'ok');
+      await mountTab();
+    } catch (e) { status(String(e.message || e), 'err'); }
+  });
+}
 /* Put a position in the middle of the view rather than merely inside it.
 
    `scrollIntoView` moves the minimum distance, so a match below the fold arrives on the last
@@ -2630,7 +2667,7 @@ async function revealDebugFrame(state) {
   pane.querySelector('.lee-mhead .sub').textContent = src.path || src.name || 'external frame';
   const host = pane.querySelector('.lee-debug-source-editor'); host.innerHTML = '';
   if (host._leeView) LeeCM.destroy(host._leeView);
-  host._leeView = createEditor(host, {doc: src.content || '', lang: 'python', readOnly: true, lineNums: true});
+  host._leeView = createEditor(host, {doc: src.content || '', lang: nbLang(), readOnly: true, lineNums: true});
   LeeCM.setDebugLine(host._leeView, src.line); const pos = host._leeView.state.doc.line(Math.min(src.line, host._leeView.state.doc.lines)).from;
   host._leeView.dispatch({selection: {anchor: pos}, scrollIntoView: true});
 }
@@ -3242,7 +3279,7 @@ function curEditor() {
 }
 function curLang() {
   if (lee.scope === 'exec') return 'python';
-  if (lee.kind === 'notebook') return lee.cells[lee.sel]?.cell_type === 'markdown' ? 'markdown' : 'python';
+  if (lee.kind === 'notebook') return lee.cells[lee.sel]?.cell_type === 'markdown' ? 'markdown' : nbLang();
   return $('#editor')?.dataset.lang || 'python';
 }
 
@@ -3453,7 +3490,7 @@ async function openMergeConflict(conflictBox) {
       const view = lee.cells[i] && lee.editors.get(lee.cells[i].id);
       const draft = view ? LeeCM.getDoc(view) : (lee.cells[i]?.source || '');
       merges[i] = LeeCM.createMerge($(`[data-cell-merge="${i}"]`, m), {left: disk.cells?.[i]?.source || '', right: draft,
-        lang: lee.cells[i]?.cell_type === 'markdown' ? 'markdown' : 'python', settings: lee.editorPrefs});
+        lang: lee.cells[i]?.cell_type === 'markdown' ? 'markdown' : nbLang(), settings: lee.editorPrefs});
     }
     $('[data-cancel]', m).onclick = () => m.remove();
     $('[data-save-merge]', m).onclick = async () => {
@@ -3612,16 +3649,33 @@ async function saveAllTabs() {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 
+// `/exec` runs in whatever runtime the open tab runs in, so a Rust notebook makes this box Rust.
+// The placeholder is built at mount and the bundle exposes no way to rewrite one, so a language
+// change remounts rather than saying `python` over a box that runs something else.
+function execLang() {
+  const lang = lee.kind === 'notebook' ? nbLang() : 'python';
+  if (lee.execLang === lang) return;
+  lee.execLang = lang;
+  const v = lee.editors.get('exec');
+  if (!v) return;                     // not mounted yet; `mountExec` reads `lee.execLang` itself
+  LeeCM.destroy(v);
+  lee.editors.delete('exec');
+  mountExec();
+}
+
 function mountExec() {
   const host = $('#execbox'); if (!host || lee.editors.has('exec')) return;
+  const lang = lee.execLang || 'python';
   const v = createEditor(host, {
-    doc: '', lang: 'python', placeholder: `python — ${displayChord('mod+enter')} runs · ctrl+shift+↑/↓ history`,
+    doc: '', lang, placeholder: `${lang} — ${displayChord('mod+enter')} runs · ctrl+shift+↑/↓ history`,
     completeUrl: '/complete', onDefinition: name => findDefinition(name),
     onSelection: () => { clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120); },
   });
   lee.editors.set('exec', v);
-  host.addEventListener('focusin', () => setScope('exec'));
   leeScope(lee.execScope);
+  if (host.dataset.wired) return;     // a remount replaces the editor, not the box around it
+  host.dataset.wired = '1';
+  host.addEventListener('focusin', () => setScope('exec'));
   api('/exec/history').then(d => { lee.hist = d.cells || []; lee.histIdx = lee.hist.length; }).catch(() => {});
 }
 

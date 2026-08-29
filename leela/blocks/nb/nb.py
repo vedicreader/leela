@@ -142,13 +142,28 @@ class Cell(Dictable):
 
 class Notebook:
     "An open .ipynb: an ordered list of `Cell`s that can run against a `Kernel`."
-    def __init__(self, cells=None, path=None):
+    def __init__(self, cells=None, path=None, meta=None):
         self.cells = L(ifnone(cells, [Cell()]))
         self.path = str(path) if path else ''
+        self.meta = dict(meta or {})
         self.dirty = False
         self._undo, self._redo = [], []
     def __len__(self): return len(self.cells)
     def __getitem__(self, i): return self.cells[i]
+    @property
+    def lang(self):
+        "The notebook's language, from its kernelspec. A notebook that names none is Python."
+        for k in ('kernelspec', 'language_info'):
+            v = self.meta.get(k)
+            if isinstance(v, dict) and (name := v.get('language') or v.get('name')): return str(name)
+        return 'python'
+    def set_lang(self, lang, display=None, kernel=None):
+        "Name this notebook's language, in the two places nbformat readers look for it."
+        self.meta['kernelspec'] = {'name': kernel or lang, 'language': lang,
+                                   'display_name': display or lang.title()}
+        self.meta['language_info'] = {'name': lang}
+        self.dirty = True
+        return self.lang
     @classmethod
     def load(cls, path):
         "Open an `.ipynb`. A zero-byte file (what `touch` leaves) is a new document, not a parse error."
@@ -156,19 +171,22 @@ class Notebook:
         if p.exists() and p.stat().st_size == 0: return cls.blank(path)
         nb = read_nb(str(path))
         cells = [Cell.from_nb(c) for c in nb['cells']] or [Cell()]
-        return cls(cells, path)
+        # A notebook whose metadata is missing, or is not a mapping, is a notebook without a
+        # language, not a notebook that fails to open.
+        meta = nb.get('metadata')
+        return cls(cells, path, meta if isinstance(meta, dict) else None)
     @classmethod
-    def blank(cls, path=None): return cls([Cell()], path)
+    def blank(cls, path=None, meta=None): return cls([Cell()], path, meta)
     def save(self, path=None, sandbox=None):
         "Write the notebook; `sandbox` confines the write to the open folders."
         p = str(path or self.path)
         if not p: raise ValueError('notebook has no path')
-        nb = new_nb([c.nbcell() for c in self.cells])
+        nb = new_nb([c.nbcell() for c in self.cells], meta=deepcopy(self.meta))
         if sandbox is not None: sandbox.write(p, nb2str(nb))
         else: write_nb(nb, p)
         self.path, self.dirty = p, False
         return p
-    def _snapshot(self, i=0): return dict(cells=deepcopy(list(self.cells)), dirty=self.dirty, index=i)
+    def _snapshot(self, i=0): return dict(cells=deepcopy(list(self.cells)), meta=deepcopy(self.meta), dirty=self.dirty, index=i)
     def _checkpoint(self, i=0):
         self._undo.append(self._snapshot(i))
         del self._undo[:-MAX_UNDO]
@@ -179,6 +197,7 @@ class Notebook:
         dst.append(self._snapshot(snap['index']))
         del dst[:-MAX_UNDO]
         self.cells, self.dirty = L(deepcopy(snap['cells'])), snap['dirty']
+        self.meta = deepcopy(snap.get('meta') or {})
         return max(0, min(snap['index'], len(self.cells) - 1))
     def undo(self):
         "Restore the notebook before its last structural operation; return the focus index."

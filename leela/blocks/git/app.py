@@ -524,6 +524,33 @@ def connect(app, ctx):
                 return snapshot | {'outcome': outcome} if isinstance(outcome, dict) else snapshot
             return await off_loop(act)
         except Exception as e: return _failed(e)
+    @rt('/git/tree/prepare')
+    async def git_tree_prepare(req):
+        """Stage a folder the way a person who knows the language would.
+
+        `git add` already honours `.gitignore`; a folder you just made does not have one, which is
+        the whole difficulty. This writes the rules the folder's project kinds need -- and only the
+        ones git says are missing -- and then stages, so `target/` and `__pycache__` never have to
+        be noticed one at a time.
+        """
+        from .ignores import prepare
+        d = await req.json()
+        try:
+            def act():
+                repository, relative = repo_relative(d.get('path') or '', 'tree path')
+                folder = Path(repository.root)/relative if relative else Path(repository.root)
+                if not folder.is_dir(): raise GitError(f'{folder.name} is not a folder')
+                rules = prepare(repository, folder, write=not d.get('dry_run'))
+                staged = []
+                if not d.get('dry_run'):
+                    # The rules live inside the folder, so staging the folder carries them along.
+                    paths = [relative or '.']
+                    _journalled(ctx, repository, 'stage',
+                                lambda: _apply(repository, 'stage', {'paths': paths}))
+                    staged = paths
+                return repository.info() | {'prepared': rules | {'staged': staged}}
+            return await off_loop(act)
+        except Exception as e: return _failed(e)
     @rt('/git/file')
     async def git_file(path: str = ''):
         "The active editor file's Git state, always in *its own* repository."

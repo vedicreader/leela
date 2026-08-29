@@ -561,6 +561,14 @@ body {
 .lee-file.git-staged .lee-fname { color: var(--lee-green); }
 .lee-file.git-untracked .lee-fname { color: var(--lee-aqua); }
 .lee-file.git-conflict .lee-fname { color: var(--lee-red); font-weight: 600; }
+/* Deliberately not committed. Dim rather than coloured: it is the one state that is not a job. */
+.lee-file.git-ignored .lee-fname { color: var(--lee-dim, #888); opacity: .55; }
+/* A folder takes the strongest state under it, so a new one reads as untracked before it is opened. */
+.lee-dir.git-modified > summary > .lee-fname { color: var(--lee-orange); }
+.lee-dir.git-staged > summary > .lee-fname { color: var(--lee-green); }
+.lee-dir.git-untracked > summary > .lee-fname { color: var(--lee-aqua); }
+.lee-dir.git-conflict > summary > .lee-fname { color: var(--lee-red); font-weight: 600; }
+.lee-dir.git-ignored > summary > .lee-fname { color: var(--lee-dim, #888); opacity: .55; }
 .lee-tree-git { margin-left: auto; font: 600 9px/1 var(--lee-mono); color: currentColor; opacity: .9; }
 .lee-dir > summary { list-style: none; cursor: pointer; padding: 1px 0; }
 .lee-dir > summary::-webkit-details-marker { display: none; }

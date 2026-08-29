@@ -436,6 +436,36 @@ def connect(app, ctx):
                     'operation_id': operation['id'] if operation else ''}
         except Exception as e:
             return fail(e)
+    @rt('/nb/language')
+    async def nb_language(req):
+        """Read or set which language this notebook's cells are.
+
+        The notebook's kernelspec is the only record of it, so setting one writes the file. The
+        runtime a tab already holds is for the old language, so it goes; the next run starts the
+        one this notebook now names.
+        """
+        from ...core.langs import LANGS, lang_named
+        from ..runtime.kernels import kernelspec_for
+        from ..runtime.runners import runner_for
+        d = await req.json() if req.method == 'POST' else {}
+        owner_tab, nb, _ = run_owner(d)
+        if nb is None: return fail('no notebook open')
+        want = str(d.get('lang') or '')
+        if want:
+            if not (l := lang_named(want)): return fail(f'Leela does not know the language {want!r}')
+            nb.set_lang(l.id, display=l.label, kernel=kernelspec_for(l.id) or l.kernel)
+            owner_tab.nb_lang = l.id
+            # A notebook that has never been saved has nowhere to write a kernelspec. It keeps the
+            # language in memory and carries it into the file the first save creates.
+            if nb.path:
+                try: nb.save(sandbox=ctx.fs)
+                except Exception as e: return fail(e)
+            await ws.pool.close(ws.kernel_key(owner_tab))
+        return {'lang': nb.lang, 'path': owner_tab.path,
+                'langs': [{'id': l.id, 'label': l.label, 'current': l.id == nb.lang,
+                           'how': ('a Jupyter kernel is installed' if kernelspec_for(l.id)
+                                   else 'Leela runs it' if runner_for(l.id)
+                                   else f'needs `{l.install}`')} for l in LANGS.values()]}
     @rt('/nb/interrupt')
     async def nb_interrupt(req):
         "Interrupt one exact running cell, force-restarting its managed kernel if needed."
