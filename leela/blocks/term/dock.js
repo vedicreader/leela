@@ -37,15 +37,19 @@ async function openTerm(kind = 'shell', forceNew = false) {
   const external = $('#termexternal');
   if (external) external.hidden = !(d.external || []).length;
   const live = (d.open || []).filter(t => t.alive).map(t => t.id).filter(Boolean);
+  // A shell is one process in one directory and cannot follow the project by itself, so there is
+  // one per checkout, the way there is one kernel per project. Switching to a file in another repo
+  // reaches that repo's shell; the one you were using stays exactly where you left it.
+  const here = t => kind !== 'shell' || (t.project || '') === (d.project || '');
   if (!forceNew) {
-    const existing = [...lee.terms.entries()].find(([, t]) => t.kind === kind);
+    const existing = [...lee.terms.entries()].find(([, t]) => t.kind === kind && here(t));
     if (existing) return switchTerm(existing[0]);
     // A session this page has never seen, still running from before a reload. Reattaching is the
     // point of letting a pty outlive its socket, and it has to be visible to be closable, or its
     // process is orphaned where nobody can stop it.
-    const orphan = live.find(id => !lee.terms.has(id) && (kind === 'git' ? id === 'git'
-                                                                        : id.startsWith('term-')));
-    if (orphan) return adoptTerm(orphan, kind, d);
+    const orphan = (d.open || []).filter(t => t.alive && t.id && !lee.terms.has(t.id))
+      .find(t => (kind === 'git' ? t.id === 'git' : String(t.id).startsWith('term-')) && here(t));
+    if (orphan) return adoptTerm(orphan.id, kind, d, orphan.project);
   }
   const id = nextTermId(kind, live);
   if (lee.terms.has(id)) return switchTerm(id);
@@ -53,7 +57,8 @@ async function openTerm(kind = 'shell', forceNew = false) {
   const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
   const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
   host.dataset.term = id; parent.appendChild(host);
-  const record = {id, kind, label: termLabel(kind, id), cwd: d.cwd, host, view: null};
+  const record = {id, kind, label: termLabel(kind, id, kind === 'shell' ? d.project : ''),
+                  cwd: d.cwd, project: d.project || '', host, view: null};
   record.view = LeeTerm.create(host, {
     token: d.token, cwd: d.cwd, kind, id,
     onStatus: m => status(`${record.label}: ${m}`),
@@ -119,12 +124,13 @@ window.leeRunTerm = leeRunTerm;
 // Reconnect to a pty that is already running rather than starting one. Same component and the same
 // id, so the server hands back the session it still has, which makes the process inside it visible
 // in a tab and therefore closable.
-function adoptTerm(id, kind, d) {
+function adoptTerm(id, kind, d, project = '') {
   $('#shell').classList.add('show-term');
   const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
   const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
   host.dataset.term = id; parent.appendChild(host);
-  const record = {id, kind, label: termLabel(kind, id), cwd: d.cwd, host, view: null};
+  const record = {id, kind, label: termLabel(kind, id, kind === 'shell' ? project : ''),
+                  cwd: d.cwd, project: project || '', host, view: null};
   record.view = LeeTerm.create(host, {
     token: d.token, cwd: d.cwd, kind, id,
     onStatus: m => status(`${record.label}: ${m}`),

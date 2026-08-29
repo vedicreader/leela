@@ -408,15 +408,19 @@ async function openTerm(kind = 'shell', forceNew = false) {
   const external = $('#termexternal');
   if (external) external.hidden = !(d.external || []).length;
   const live = (d.open || []).filter(t => t.alive).map(t => t.id).filter(Boolean);
+  // A shell is one process in one directory and cannot follow the project by itself, so there is
+  // one per checkout, the way there is one kernel per project. Switching to a file in another repo
+  // reaches that repo's shell; the one you were using stays exactly where you left it.
+  const here = t => kind !== 'shell' || (t.project || '') === (d.project || '');
   if (!forceNew) {
-    const existing = [...lee.terms.entries()].find(([, t]) => t.kind === kind);
+    const existing = [...lee.terms.entries()].find(([, t]) => t.kind === kind && here(t));
     if (existing) return switchTerm(existing[0]);
     // A session this page has never seen, still running from before a reload. Reattaching is the
     // point of letting a pty outlive its socket, and it has to be visible to be closable, or its
     // process is orphaned where nobody can stop it.
-    const orphan = live.find(id => !lee.terms.has(id) && (kind === 'git' ? id === 'git'
-                                                                        : id.startsWith('term-')));
-    if (orphan) return adoptTerm(orphan, kind, d);
+    const orphan = (d.open || []).filter(t => t.alive && t.id && !lee.terms.has(t.id))
+      .find(t => (kind === 'git' ? t.id === 'git' : String(t.id).startsWith('term-')) && here(t));
+    if (orphan) return adoptTerm(orphan.id, kind, d, orphan.project);
   }
   const id = nextTermId(kind, live);
   if (lee.terms.has(id)) return switchTerm(id);
@@ -424,7 +428,8 @@ async function openTerm(kind = 'shell', forceNew = false) {
   const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
   const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
   host.dataset.term = id; parent.appendChild(host);
-  const record = {id, kind, label: termLabel(kind, id), cwd: d.cwd, host, view: null};
+  const record = {id, kind, label: termLabel(kind, id, kind === 'shell' ? d.project : ''),
+                  cwd: d.cwd, project: d.project || '', host, view: null};
   record.view = LeeTerm.create(host, {
     token: d.token, cwd: d.cwd, kind, id,
     onStatus: m => status(`${record.label}: ${m}`),
@@ -490,12 +495,13 @@ window.leeRunTerm = leeRunTerm;
 // Reconnect to a pty that is already running rather than starting one. Same component and the same
 // id, so the server hands back the session it still has, which makes the process inside it visible
 // in a tab and therefore closable.
-function adoptTerm(id, kind, d) {
+function adoptTerm(id, kind, d, project = '') {
   $('#shell').classList.add('show-term');
   const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
   const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
   host.dataset.term = id; parent.appendChild(host);
-  const record = {id, kind, label: termLabel(kind, id), cwd: d.cwd, host, view: null};
+  const record = {id, kind, label: termLabel(kind, id, kind === 'shell' ? project : ''),
+                  cwd: d.cwd, project: project || '', host, view: null};
   record.view = LeeTerm.create(host, {
     token: d.token, cwd: d.cwd, kind, id,
     onStatus: m => status(`${record.label}: ${m}`),
@@ -1069,6 +1075,10 @@ function projectChanged() {
   const left = $('#left');
   if (left?.classList.contains('left-drive')) leeDrive();
   if (left?.classList.contains('left-workflows')) leeWorkflows();
+  // A shell cannot cd itself, and typing into one somebody is using is not a fix. Reaching for the
+  // one that belongs to this checkout is, and only where the pane is already open: switching a
+  // project should not start a process nobody asked for.
+  if ($('#shell')?.classList.contains('show-term')) openTerm('shell').catch(() => {});
 }
 
 // Which repository a panel request is about lives in `gitUI.repo`, and `gitUrl` puts it on the
@@ -5483,6 +5493,12 @@ async function boot() {
   // app and took every step below it: both pills, the polls, the run log and the file watcher.
   typeof requestIdleCallback === 'function' ? requestIdleCallback(warmAgentHistory, {timeout: 4000})
                                             : setTimeout(warmAgentHistory, 2000);
+  /* 286kb, fetched on the first terminal action with the person waiting on it. Fetching it while
+     nothing is waiting spends the same time where nobody is watching. `requestIdleCallback` again:
+     WebKit, which is the packaged app, has never shipped it. */
+  const warmTerm = () => loadTermBundle().catch(() => {});
+  typeof requestIdleCallback === 'function' ? requestIdleCallback(warmTerm, {timeout: 8000})
+                                            : setTimeout(warmTerm, 3000);
   bootStep('project pills', refreshProjectPills);
   setInterval(whenVisible(refreshKernelPill), 5000);
   // The pills change only when a root or the cwd does, and every one of those already calls

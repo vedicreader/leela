@@ -76,6 +76,12 @@ async function boot() {
   // app and took every step below it: both pills, the polls, the run log and the file watcher.
   typeof requestIdleCallback === 'function' ? requestIdleCallback(warmAgentHistory, {timeout: 4000})
                                             : setTimeout(warmAgentHistory, 2000);
+  /* 286kb, fetched on the first terminal action with the person waiting on it. Fetching it while
+     nothing is waiting spends the same time where nobody is watching. `requestIdleCallback` again:
+     WebKit, which is the packaged app, has never shipped it. */
+  const warmTerm = () => loadTermBundle().catch(() => {});
+  typeof requestIdleCallback === 'function' ? requestIdleCallback(warmTerm, {timeout: 8000})
+                                            : setTimeout(warmTerm, 3000);
   bootStep('project pills', refreshProjectPills);
   setInterval(whenVisible(refreshKernelPill), 5000);
   // The pills change only when a root or the cwd does, and every one of those already calls

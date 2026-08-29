@@ -203,6 +203,10 @@ function projectChanged() {
   const left = $('#left');
   if (left?.classList.contains('left-drive')) leeDrive();
   if (left?.classList.contains('left-workflows')) leeWorkflows();
+  // A shell cannot cd itself, and typing into one somebody is using is not a fix. Reaching for the
+  // one that belongs to this checkout is, and only where the pane is already open: switching a
+  // project should not start a process nobody asked for.
+  if ($('#shell')?.classList.contains('show-term')) openTerm('shell').catch(() => {});
 }
 
 // Which repository a panel request is about lives in `gitUI.repo`, and `gitUrl` puts it on the

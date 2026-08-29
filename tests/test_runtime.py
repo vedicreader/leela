@@ -399,6 +399,29 @@ def test_an_external_terminal_is_offered_only_when_one_is_installed(tmp_path, mo
     assert T.external_terminal_argv(tmp_path) is None, 'no terminal, no button'
 
 
+def test_a_terminal_says_which_checkout_it_belongs_to(tmp_path):
+    """A shell is one process in one directory and cannot follow the project by itself, so the
+    client keeps one per checkout. It can only do that if the server says which checkout each pty
+    is in, and which one a new terminal would open in."""
+    import subprocess
+    orgs = tmp_path/'orgs'
+    a, b = orgs/'repo-a', orgs/'repo-b'
+    for d in (a, b):
+        (d/'src').mkdir(parents=True)
+        subprocess.run(['git', 'init', '-q', str(d)], check=True)
+        (d/'src'/'main.py').write_text('x = 1\n')
+    ws = Workspace(roots=[orgs])
+    with TestClient(ide_app(ws)) as c:
+        assert c.get('/term/info').json()['project'] == str(orgs), 'nothing open, so the open folder'
+        ws.open(a/'src'/'main.py')
+        first = c.get('/term/info').json()
+        assert first['project'] == str(a), 'the checkout the open file is in'
+        ws.open(b/'src'/'main.py')
+        assert c.get('/term/info').json()['project'] == str(b), 'and it follows the file'
+        from leela.blocks.term.app import term_project
+        assert term_project(ws, a/'src') == str(a), 'a directory inside the checkout is in it'
+        assert term_project(ws, None) == ''
+
 def test_opening_a_terminal_really_builds_its_argv_from_the_settings(tmp_path):
     "Actually open the pty, because nothing else here does."
     settings = tmp_path/'.leela'/'settings.json'
