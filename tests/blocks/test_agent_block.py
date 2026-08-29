@@ -24,6 +24,38 @@ def test_the_execution_surface_is_reachable(tmp_path):
     missing = [p for p in EXECUTION if p not in got]
     assert missing == [], missing
 
+def test_saved_states_say_which_project_and_layer_they_came_from(tmp_path, monkeypatch):
+    """Every workspace saves into the one shared store, so the list has always held other projects'
+    charters. Nothing said so, and `Working state` with a date is not something anyone can reuse on
+    purpose. The layer is recorded on the way in, and the origin is reported on the way out."""
+    from leela.blocks.memory.memory import Memory
+    here, elsewhere = tmp_path/'here', tmp_path/'elsewhere'
+    for d in (here, elsewhere): d.mkdir()
+    remembered = []
+    monkeypatch.setattr(Memory, 'remember_agent_state',
+                        lambda self, title, text, meta=None: remembered.append((title, text, meta or {})) or
+                        {'doc_id': f'doc-{len(remembered)}'})
+    monkeypatch.setattr(Memory, 'agent_states', lambda self, limit=40: [
+        {'id': 'ours', 'title': 'Working state', 'added_at': 2,
+         'meta': {'agent': {'layer': 'project', 'roots': [str(here)], 'revision': 3}}},
+        {'id': 'theirs', 'title': 'Another charter', 'added_at': 1,
+         'meta': {'agent': {'layer': 'organization', 'roots': [str(elsewhere)]}}}])
+    ws = Workspace(roots=[here])
+    with TestClient(ide_app(ws)) as c:
+        c.post('/agent/state/save', json={'title': 'Working state', 'text': '# Goal\n\nShip it.',
+                                          'layer': 'project', 'activate': False})
+        assert remembered[0][2]['layer'] == 'project', 'the layer is saved with the state'
+        d = c.get('/agent/states').json()
+        rows = {s['id']: s for s in d['states']}
+        assert set(rows) == {'ours', 'theirs'}, "another project's state is offered for reuse"
+        assert rows['ours']['mine'] is True and rows['ours']['where'] == 'here'
+        assert rows['ours']['layer'] == 'project' and rows['ours']['revision'] == 3
+        assert rows['theirs']['mine'] is False and rows['theirs']['where'] == 'elsewhere'
+        assert rows['theirs']['layer'] == 'organization'
+        assert d['layers_seen'] == ['organization', 'project']
+        narrowed = c.get('/agent/states', params={'scope': 'project'}).json()
+        assert [s['id'] for s in narrowed['states']] == ['ours'], 'and the narrowing still narrows'
+
 def test_every_agent_route_comes_from_the_block(tmp_path):
     "A route left behind in `ide_app` is a route the block cannot own."
     from leela.app import ide_app as _f

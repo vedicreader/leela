@@ -1319,6 +1319,10 @@ kbd {
 .lee-agent-state-list { padding: 4px; }
 .lee-agent-state-row { width: 100%; display: flex; flex-direction: column; gap: 2px; padding: 7px 8px; border: 0; border-bottom: 1px solid var(--lee-border); background: transparent; color: var(--lee-fg2); cursor: pointer; text-align: left; }
 .lee-agent-state-row:hover, .lee-agent-state-row.active { background: var(--lee-sel); }.lee-agent-state-row span { color: var(--lee-fg4); font-size: 9px; }
+.lee-state-origin { display: flex; gap: 6px; align-items: baseline; }
+.lee-state-origin em { color: var(--lee-fg3); font-style: normal; text-transform: uppercase; letter-spacing: .04em; }
+.lee-state-here { color: var(--lee-ok, var(--lee-fg3)); }
+.lee-agent-state-row.mine strong { color: var(--lee-fg); }
 .lee-agent-state-onboard { display: grid; grid-template-columns: minmax(220px,1fr) minmax(260px,1.2fr) auto auto; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-aqua) 5%, var(--lee-bg1)); }
 .lee-agent-state-onboard > div { display: flex; flex-direction: column; gap: 2px; }.lee-agent-state-onboard strong { color: var(--lee-fg); font-size: 11px; }.lee-agent-state-onboard span { color: var(--lee-fg4); font-size: 9.5px; line-height: 1.35; }
 .lee-agent-state-onboard .lee-input { margin: 0; }.lee-agent-state-onboard.configured { background: var(--lee-bg1); }

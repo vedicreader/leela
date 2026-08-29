@@ -1372,8 +1372,16 @@ window.rehydrateAgentLive = rehydrateAgentLive; window.paintAgentThread = paintA
 async function leeAgentState() {
   try {
     const [draft, saved, template] = await Promise.all([api('/agent/state/draft'), api('/agent/states'), api('/agent/state/template')]);
-    const rows = (saved.states || []).map(s => `<button class="lee-agent-state-row" data-id="${esc(s.id)}">` +
-      `<strong>${esc(s.title)}</strong><span>${esc(new Date((s.added_at || 0) * 1000).toLocaleString())}</span></button>`).join('');
+    // Every workspace saves into one store, so this list has always held other projects' charters.
+    // The row says which layer it was written for and which folders it was written in, because a
+    // title and a date are not enough to reuse one deliberately.
+    const stateRow = s => `<button class="lee-agent-state-row${s.mine ? ' mine' : ''}" data-id="${esc(s.id)}">` +
+      `<strong>${esc(s.title)}</strong>` +
+      `<span class="lee-state-origin">${s.layer ? `<em>${esc(s.layer)}</em>` : ''}` +
+      `${s.where ? `<span>${esc(s.where)}</span>` : '<span class="lee-dim">no folder recorded</span>'}` +
+      `${s.mine ? '<span class="lee-state-here">this project</span>' : ''}</span>` +
+      `<span>${esc(new Date((s.added_at || 0) * 1000).toLocaleString())}</span></button>`;
+    const rows = (saved.states || []).map(stateRow).join('');
     const box = modal(`<div class="lee-mhead">Agent state<span class="sub">remembered rules that stay visible and follow the code</span></div>` +
       `<section class="lee-agent-state-onboard${saved.active ? ' configured' : ''}"${saved.active ? ' hidden' : ''}><div><strong>Start with a worked template</strong>` +
       `<span>Describe what you want this agent to do. The configured summary model fills a complete charter using only tools that are actually installed.</span></div>` +
@@ -1393,7 +1401,9 @@ async function leeAgentState() {
       `<div class="lee-state-ref-pane active" data-ref-pane="conversation"><pre class="lee-agent-conversation">${esc(draft.conversation || '(no completed turns)')}</pre></div>` +
       `<div class="lee-state-ref-pane" data-ref-pane="tools"><div class="lee-state-tool-list">${template.tools.map(t => `<button data-tool-name="${esc(t.name)}"><strong>${esc(t.name)}</strong><span>${esc(t.group)} · ${esc(t.description)}</span></button>`).join('')}</div></div>` +
       `<div class="lee-state-ref-pane lee-md" data-ref-pane="preview" id="agentstatepreview"></div>` +
-      `<div class="lee-state-ref-pane" data-ref-pane="saved"><div class="lee-agent-state-list">${rows || '<div class="lee-dim">No saved states yet.</div>'}</div></div></section></div>` +
+      `<div class="lee-state-ref-pane" data-ref-pane="saved"><label class="lee-fieldlabel">Show<select class="lee-select" id="agentstatescope">` +
+      `<option value="everywhere">every project on this machine</option><option value="project">this project only</option></select></label>` +
+      `<div class="lee-agent-state-list">${rows || '<div class="lee-dim">No saved states yet.</div>'}</div></div></section></div>` +
       `<div class="lee-mfoot"><button class="lee-btn go" data-save>Save to memory + activate</button>` +
       `<button class="lee-btn" data-activate>Activate without saving</button>` +
       `<span class="lee-dim">Drag the lower-right edge to resize · double-click the title to expand.</span></div>`,
@@ -1480,7 +1490,7 @@ async function leeAgentState() {
       await post('/agent/state/activate', {text: text.value, layer: layer.value});
       markActive(); status('starting state activated without saving', 'ok');
     });
-    $$('.lee-agent-state-row', box).forEach(row => row.onclick = async () => {
+    const bindStateRows = () => $$('.lee-agent-state-row', box).forEach(row => row.onclick = async () => {
       const compared = await post('/agent/state/compare', {id: row.dataset.id, current: text.value});
       const review = modal(`<div class="lee-mhead">Compare state revision<span class="sub">choose how this revision enters ${esc(layer.value)}</span></div>` +
         `<div class="lee-diff lee-state-update-diff">${diffHtml(compared.diff.rows || [])}</div>` +
@@ -1493,6 +1503,14 @@ async function leeAgentState() {
       $('[data-merge]', review).onclick = () => { text.value = text.value.trim() + '\n\n' + compared.state.trim(); review.remove(); status('revision merged into editor; review before activation', 'ok'); };
       $('[data-cancel]', review).onclick = () => review.remove();
     });
+    bindStateRows();
+    $('#agentstatescope', box).onchange = async e => {
+      const list = $('.lee-agent-state-list', box);
+      const d = await api('/agent/states?scope=' + encodeURIComponent(e.target.value));
+      list.innerHTML = (d.states || []).map(stateRow).join('') ||
+        `<div class="lee-dim">No states saved ${e.target.value === 'project' ? 'in this project' : 'yet'}.</div>`;
+      bindStateRows();
+    };
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 window.leeAgentState = leeAgentState;

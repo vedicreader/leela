@@ -504,13 +504,39 @@ def connect(app, ctx):
         ok = await off_loop(ctx.memory.forget, doc_id); ws.save()
         refresh_assistants()
         return {'ok': ok, 'note': ctx.memory.note}
+    def _state_origin(state):
+        """One saved state with where it came from: its layer, its folders, and whether they are ours.
+
+        States are kept in the one store every workspace shares, so the list has always held other
+        projects' as well. Nothing said so, and a row that reads `Working state` and a date is not
+        something anyone can reuse deliberately.
+        """
+        agent = dict(((state.get('meta') or {}).get('agent') or {}))
+        roots = [str(r) for r in (agent.get('roots') or [])]
+        def resolved(paths):
+            out = set()
+            for r in paths:
+                try: out.add(str(Path(r).expanduser().resolve()))
+                except (OSError, ValueError): out.add(str(r))
+            return out
+        mine = resolved(roots) == resolved(str(r) for r in ctx.fs.roots) if roots else False
+        return {**state, 'layer': str(agent.get('layer') or ''), 'roots': roots,
+                'where': ', '.join(Path(r).name for r in roots), 'mine': mine,
+                'revision': agent.get('revision') or 0}
     @rt('/agent/states')
-    def agent_states():
-        "Saved conversation states and the state currently injected into the briefing."
+    def agent_states(scope: str = 'everywhere'):
+        """Saved states, each saying where it came from, and the state now in the briefing.
+
+        `scope=project` narrows to states saved from these folders; the default is every one this
+        machine has, which is what makes another project's charter reusable here.
+        """
         active = any(str(layer.get('text') or '').strip() and layer.get('enabled', True)
                      for layer in ws.agent_state_layers.values())
-        return {'active': active, 'active_text': ws.agent_state,
-                'layers': ws.agent_state_layers, 'states': ctx.memory.agent_states()}
+        states = [_state_origin(s) for s in ctx.memory.agent_states()]
+        if scope == 'project': states = [s for s in states if s['mine']]
+        return {'active': active, 'active_text': ws.agent_state, 'scope': scope,
+                'layers': ws.agent_state_layers, 'states': states,
+                'layers_seen': sorted({s['layer'] for s in states if s['layer']})}
     @rt('/agent/state/template')
     def agent_state_template():
         "A complete, usable rules template with this workspace's actual tool catalog."
@@ -553,12 +579,15 @@ def connect(app, ctx):
         d = await req.json(); text = (d.get('text') or '').strip()
         if not text: return fail('agent state is empty')
         title = (d.get('title') or '').strip() or 'Agent state'
+        layer = (d.get('layer') or 'task').strip()
+        # The layer is saved with the state: which of organization, project or task a charter was
+        # written for is most of what makes somebody else's reusable.
         saved = await off_loop(ctx.memory.remember_agent_state, title, text,
                                  {'session': ctx.ai.session_id if ws._ai is not None else '',
                                   'turns': len(ctx.ai.history) if ws._ai is not None else 0,
+                                  'layer': layer,
                                   'roots': [str(root) for root in ctx.fs.roots]})
         if not saved: return fail(ctx.memory.note)
-        layer = (d.get('layer') or 'task').strip()
         if d.get('activate', True): _set_agent_state(text, layer=layer, source='memory')
         return {'ok': True, 'saved': saved, 'active': ws.agent_state}
     @rt('/agent/state/suggest')
