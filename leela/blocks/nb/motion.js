@@ -185,7 +185,7 @@ async function revealDebugFrame(state) {
   pane.querySelector('.lee-mhead .sub').textContent = src.path || src.name || 'external frame';
   const host = pane.querySelector('.lee-debug-source-editor'); host.innerHTML = '';
   if (host._leeView) LeeCM.destroy(host._leeView);
-  host._leeView = createEditor(host, {doc: src.content || '', lang: 'python', readOnly: true, lineNums: true});
+  host._leeView = createEditor(host, {doc: src.content || '', lang: nbLang(), readOnly: true, lineNums: true});
   LeeCM.setDebugLine(host._leeView, src.line); const pos = host._leeView.state.doc.line(Math.min(src.line, host._leeView.state.doc.lines)).from;
   host._leeView.dispatch({selection: {anchor: pos}, scrollIntoView: true});
 }

@@ -107,8 +107,10 @@ def connect(app, ctx):
                     docs.versions[key] = held
             except Exception as e: return {'kind': 'error', 'error': errstr(e)}
             docs.docs[key] = nb
+            t.nb_lang = nb.lang
             return {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
-                    'disk_version': held, 'stale': stale, 'cells': [c.dict() for c in nb.cells]}
+                    'lang': nb.lang, 'disk_version': held, 'stale': stale,
+                    'cells': [c.dict() for c in nb.cells]}
         if t.kind in ('pdf', 'image'):
             return {'kind': t.kind, 'path': t.path, 'title': t.title,
                     'disk_version': disk_version(t.path)}

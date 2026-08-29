@@ -1,6 +1,9 @@
 /* The banner says where a cell sits and how big it is. The gutter carries the execution count,
  * which is blank until the cell runs and renumbers on every rerun. */
-const cellKind = (c) => ({code: 'py', markdown: 'md', prompt: 'prompt'}[c.cell_type] || c.cell_type);
+//: The gutter tag. A code cell is tagged with the notebook's own language, not always Python.
+const LANG_TAGS = {python: 'py', rust: 'rs', javascript: 'js', typescript: 'ts'};
+const cellKind = (c) => c.cell_type === 'code' ? (LANG_TAGS[nbLang()] || nbLang())
+  : ({markdown: 'md', prompt: 'prompt'}[c.cell_type] || c.cell_type);
 const cellLines = (c) => String(c.source || '').split('\n').length;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 function cellMetaTitle(c, i) {
@@ -188,7 +191,7 @@ function mountCell(c, i) {
   const source = lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : c.source;
   c.source = source;
   const v = createEditor($('#cm-' + c.id), {
-    doc: source, lang: c.cell_type === 'code' ? 'python' : c.cell_type === 'markdown' ? 'markdown' : '',
+    doc: source, lang: c.cell_type === 'code' ? nbLang() : c.cell_type === 'markdown' ? 'markdown' : '',
     placeholder: c.cell_type === 'prompt' ? `ask the inline model — ${displayChord('mod+enter')} answers in place` : '',
     completeUrl: c.cell_type === 'code' ? '/complete' : null,
     onDefinition: c.cell_type === 'code' ? name => findDefinition(name) : null,
@@ -454,4 +457,27 @@ function markDirty() {
   const t = $('.lee-tab.active');
   if (t) { t.classList.add('dirty'); setTabSaveState(t, 'pending'); }
   scheduleAutoSave();
+}
+
+/* A notebook's language is its kernelspec, so choosing one here writes the file and drops the
+   runtime the old language was using. Unbound by default: a button and a palette entry, like every
+   other action whose chord is not worth spending. */
+async function pickNotebookLanguage() {
+  if (lee.kind !== 'notebook') return status('open a notebook first', 'err');
+  const o = await post('/nb/language', {path: lee.tabKey || ''});
+  const rows = (o.langs || []).map(l =>
+    `<div class="lee-mrow${l.current ? ' sel' : ''}" data-lang="${esc(l.id)}">` +
+    `${l.current ? '● ' : '○ '}${esc(l.label)}<span class="sub">${esc(l.how)}</span></div>`).join('');
+  const m = modal(
+    `<div class="lee-mhead">notebook language<span class="sub">${esc(o.path || '')}</span></div>` +
+    `<div class="lee-dim">this is written into the notebook, and closes the runtime it is using</div>` +
+    `<div class="lee-modallist">${rows}</div>`);
+  m.querySelectorAll('[data-lang]').forEach(el => el.onclick = async () => {
+    m.remove();
+    try {
+      const d = await post('/nb/language', {path: lee.tabKey || '', lang: el.dataset.lang});
+      status(`this notebook is ${d.lang} now`, 'ok');
+      await mountTab();
+    } catch (e) { status(String(e.message || e), 'err'); }
+  });
 }

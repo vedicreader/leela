@@ -7,7 +7,7 @@ function curEditor() {
 }
 function curLang() {
   if (lee.scope === 'exec') return 'python';
-  if (lee.kind === 'notebook') return lee.cells[lee.sel]?.cell_type === 'markdown' ? 'markdown' : 'python';
+  if (lee.kind === 'notebook') return lee.cells[lee.sel]?.cell_type === 'markdown' ? 'markdown' : nbLang();
   return $('#editor')?.dataset.lang || 'python';
 }
 

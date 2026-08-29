@@ -53,6 +53,7 @@ const ACTIONS = {
   run_selection: () => runSelection(),
   pick_kernel:  () => pickKernel(),
   new_notebook: () => htmxPost('/tab/new?kind=notebook'),
+  notebook_language: () => pickNotebookLanguage(),
   edit_keys:    () => editKeys(),
   cell_select_above: () => focusCell(lee.sel - 1),
   cell_select_below: () => focusCell(lee.sel + 1),

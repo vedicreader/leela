@@ -10,7 +10,7 @@ EAGER = ('fs', 'fs_watch', 'pool', 'search', 'memory', 'research', 'journal', 'h
 
 # `runs` follows the active project root, so a block that copied it at connect would answer for
 # whichever folder happened to open first
-LAZY = ('ai', 'inline_ai', 'completer', 'lsp', 'tab', 'approvals', 'pending_approval', 'runs')
+LAZY = ('ai', 'inline_ai', 'completer', 'lsp', 'lsp_for', 'tab', 'approvals', 'pending_approval', 'runs')
 
 APP = ('docs', 'debug', 'running', 'gate', 'catalog')
 

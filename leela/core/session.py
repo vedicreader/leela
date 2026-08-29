@@ -152,12 +152,16 @@ class DocStore:
         then found nothing and answered `no notebook open`, for a notebook that is open.
         """
         key = self.key(tab)
-        if (nb := self.docs.get(key)) is not None or not getattr(tab, 'path', ''): return nb
-        from ..blocks.nb.nb import Notebook
-        from ..blocks.tabs.app import disk_version
-        try: nb = Notebook.load(tab.path)
-        except Exception: return None
-        self.docs[key], self.versions[key] = nb, disk_version(tab.path)
+        nb = self.docs.get(key)
+        if nb is None and getattr(tab, 'path', ''):
+            from ..blocks.nb.nb import Notebook
+            from ..blocks.tabs.app import disk_version
+            try: nb = Notebook.load(tab.path)
+            except Exception: return None
+            self.docs[key], self.versions[key] = nb, disk_version(tab.path)
+        # The tab is what the workspace asks for a language, and this is where the notebook that
+        # knows one arrives. A run reaching here before the first mount gets the right runtime.
+        if nb is not None: tab.nb_lang = nb.lang
         return nb
     def mark_all_stale(self):
         "A reset namespace makes every saved output historical, even though it stays useful."

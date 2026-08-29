@@ -229,6 +229,7 @@ GET,POST /nb/debug/stream
 GET,POST /nb/debug/variables
 GET,POST /nb/edit
 GET,POST /nb/interrupt
+GET,POST /nb/language
 GET,POST /nb/run
 GET,POST /nb/run/stream
 GET,POST /nb/save

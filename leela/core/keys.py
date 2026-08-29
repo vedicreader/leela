@@ -144,6 +144,7 @@ DEFAULTS = L(
     Key('run_file',         'mod+alt+enter',  'global', 'run this script',    'toast'),
     Key('run_selection',    'hyper+s',       'global', 'run the selection in the kernel'),
     Key('new_notebook',     'hyper+n',       'global', 'new notebook'),
+    Key('notebook_language', '',           'global', 'notebook language'),
     Key('edit_keys',        'hyper+k',       'global', 'edit keybindings'),
     Key('run_app',          'alt+shift+a',   'global', 'run a configuration', 'toast'),
     Key('terminal',         'ctrl+`',        'global', 'terminal',            'toast'),

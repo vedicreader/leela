@@ -263,6 +263,12 @@ const CODE_LANGS = {py: 'python', python: 'python', js: 'javascript', javascript
   zsh: 'bash', fish: 'bash', rs: 'rust', rust: 'rust', go: 'go', java: 'java', c: 'cpp', cc: 'cpp',
   cpp: 'cpp', cxx: 'cpp', h: 'cpp', hpp: 'cpp', xml: 'xml', svg: 'xml', ini: 'properties',
   properties: 'properties'};
+//: The languages Leela serves a language server and a runtime for. Mirrors `LANGS` in
+//: `leela/core/langs.py`; `tests/test_langs.py` checks the two still agree.
+const LSP_LANGS = ['python', 'rust', 'javascript', 'typescript'];
+const nbLang = () => lee.nbLang || 'python';
+const servedLang = (l) => LSP_LANGS.includes(String(l || ''));
+
 function codeLang(name = '', path = '') {
   const raw = String(name || '').toLowerCase().replace(/^language-/, '');
   const ext = String(path || '').split('.').pop().toLowerCase();

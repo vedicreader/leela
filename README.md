@@ -45,6 +45,19 @@ recently-used switcher. Overflow tabs fold into a `+N` menu. Autosave is atomic,
 into IndexedDB, and version-checked against disk. Cells fold, headings build an outline, and
 every pane minimises.
 
+### Rust and JavaScript notebooks
+
+A notebook's kernelspec says what its cells are, and Leela runs three of them. Python is a managed
+ipykernel as before. Rust and JavaScript run on an installed Jupyter kernel where there is one
+(`evcxr_jupyter`, `deno jupyter`), and on Leela's own runner where there is not: Rust cells become
+a scratch cargo crate that grows, so rustc's diagnostics arrive as the cell's error output with
+`E0382` as its name and the compiler's own rendering underneath; JavaScript cells run against one
+long-lived node context, so a binding made in one cell is there in the next. `notebook language`
+in the command palette switches a notebook over. See
+[a notebook that is not Python](docs/languages.md).
+
+![The borrow checker, in a notebook cell](docs/screenshots/rust-borrow-checker.png)
+
 ### Live variables
 
 Each notebook tab owns a real kernel with an inspector inside it. The tree stays responsive
@@ -189,6 +202,7 @@ leela/
   agent/          the alias seam: `leela.agent.*` is `ramabana.*`
   core/           what every block may import
     block.py      `Ctx` (capabilities), the block contract, ordered wiring
+    langs.py      the languages Leela runs, serves and highlights
     ports.py      the contracts a workspace depends on, and the provider registry
     keys.py       single-source keymap and the user's overrides
     ui.py         button bars and shared atoms, over those same actions
@@ -201,6 +215,7 @@ leela/
   blocks/         one folder per feature: `connect(app, ctx)` plus a `CAPS` tuple
     nb git search memory agent runtime research workflows pipelines drive
     fs term keys tabs vars runs stack refactor lsp debug editor settings workspace
+    runtime       kernels, model engines, and the runners for a language with no kernel
     browser       a CDP page as a tab: screencast in, input out
     vault         the corpus, what fills it, and the queue that does the filling
   workspace.py    open folders, open tabs, and which kernel each tab talks to

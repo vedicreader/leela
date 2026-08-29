@@ -150,6 +150,9 @@ class Tab(Dictable):
     running: int = 0
     cwd: str = ''
     ref: str = ''
+    #: A notebook's own language, from its kernelspec. Set when the document is read, because the
+    #: tab knows its path and the parsed notebook lives in the nb block's store, not here.
+    nb_lang: str = ''
     def __post_init__(self):
         if not self.title: self.title = Path(self.path).name or 'untitled'
         if self.path.endswith('.ipynb'): self.kind = 'notebook'
@@ -159,7 +162,7 @@ class Tab(Dictable):
         elif Path(self.path).suffix.lower() in VIDEO_EXTS: self.kind = 'video'
         if self.private_kernel is None: self.private_kernel = self.kind == 'notebook'
     @property
-    def lang(self): return 'python' if self.kind == 'notebook' else lang_for(self.path)
+    def lang(self): return (self.nb_lang or 'python') if self.kind == 'notebook' else lang_for(self.path)
 
 class Workspace:
     "The IDE's session: open folders, open tabs, and the kernels behind them."
@@ -212,7 +215,7 @@ class Workspace:
         self.feeds = Feeds()
         self.jobs = Jobs(leela_cfg/'jobs'/f'{self._journal_key}.db', memory=self.memory)
         register_all(self.jobs, self.memory, search=self.search, cwd=root, feeds=self.feeds)
-        self._lsp = None
+        self._lsps = {}
         self.env_base = None
         self.terms = Terminals(cwd=first(self.fs.roots))
         self.agent = agent
@@ -820,7 +823,8 @@ class Workspace:
         try: name = self.fs.root_of(t.path).name if t and t.path else Path(cwd).name
         except Exception: name = Path(cwd).name if cwd else None
         return await self.pool.get(key, cwd=cwd, name=name, agent=self.agent,
-                                   python=python_for(cwd, self))
+                                   python=python_for(cwd, self),
+                                   lang=(t.nb_lang if t else '') or 'python')
     def kernel_peek(self, tab=None): return self.pool.peek(self.kernel_key(tab))
     def runtime_label(self, tab=None, k=False):
         """What to call the runtime a tab runs in, alive or not.
@@ -853,9 +857,14 @@ class Workspace:
                 await k.bootstrap()
         desired, current = self.cwd_for(t), getattr(k, 'cwd', None)
         if desired and current and Path(desired).resolve() != Path(current).resolve():
-            result = await k.execute(f'import os as __leela_os; __leela_os.chdir({str(desired)!r}); del __leela_os')
-            if not result.ok: raise RuntimeError(result.error or f'could not change kernel cwd to {desired}')
-            k.cwd = desired
+            # `chdir` is the runtime's own answer to this: Python runs an `os.chdir`, a runner moves
+            # a field, and a kernel in a language we cannot address declines. A fixture kernel has
+            # none, and the inline exec it used to get is what it still gets.
+            if (move := getattr(k, 'chdir', None)) is not None: await move(desired)
+            else:
+                result = await k.execute(f'import os as __leela_os; __leela_os.chdir({str(desired)!r}); del __leela_os')
+                if not result.ok: raise RuntimeError(result.error or f'could not change kernel cwd to {desired}')
+                k.cwd = desired
         return k
     def runtime_peek(self, tab=None):
         "The selected runtime without starting a tab kernel."
@@ -983,12 +992,17 @@ class Workspace:
             src = self.text_at(t.path)
             if src is None: return None, f'could not read {Path(t.path).name}'
         return run_file_src(t.path, src, cwd=self.cwd_for(t)), Path(t.path).name
+    def lsp_for(self, lang='python'):
+        "The language server for `lang`, started on first use. One per language, not one per call."
+        lang = lang or 'python'
+        if lang not in self._lsps:
+            from .blocks.lsp.lsp import LspService
+            self._lsps[lang] = LspService(first(self.fs.roots), lang)
+        return self._lsps[lang]
     @property
     def lsp(self):
-        if self._lsp is None:
-            from .blocks.lsp.lsp import PyrightService
-            self._lsp = PyrightService(first(self.fs.roots))
-        return self._lsp
+        "Python's language server. What every caller meant while Python was the only language."
+        return self.lsp_for('python')
     async def shutdown(self):
         "Save the session, then stop every kernel, dev server, terminal, model and browser it started."
         # Once, and each step guarded: what a skipped one leaves behind is a live subprocess.
@@ -1006,7 +1020,7 @@ class Workspace:
         step(self._notebook_approvals.cancel_all)
         step(self._stop_notebook_approvals)
         if self._inline_ai is not None: step(self._inline_ai.close)
-        if self._lsp is not None: step(self._lsp.close)
+        for service in list(self._lsps.values()): step(service.close)
         for coro in (self.dev.stop_all(), self.pool.close_all(), self.browser.quit()):
             try: await coro
             except Exception: pass
