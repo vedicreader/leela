@@ -145,6 +145,7 @@ DEFAULTS = L(
     Key('run_selection',    'hyper+s',       'global', 'run the selection in the kernel'),
     Key('new_notebook',     'hyper+n',       'global', 'new notebook'),
     Key('notebook_language', '',           'global', 'notebook language'),
+    Key('add_folder',       '',              'global', 'stage this folder, ignores first'),
     Key('edit_keys',        'hyper+k',       'global', 'edit keybindings'),
     Key('run_app',          'alt+shift+a',   'global', 'run a configuration', 'toast'),
     Key('terminal',         'ctrl+`',        'global', 'terminal',            'toast'),

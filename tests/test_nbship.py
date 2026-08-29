@@ -135,11 +135,13 @@ def test_a_crate_with_no_python_binding_is_still_a_crate(tmp_path):
 def test_the_exported_crate_has_the_shape_maturin_needs(tmp_path):
     dest, _ = export(NB, out=tmp_path/'demo', crate='demo_geom')
     assert sorted(p.relative_to(dest).as_posix() for p in dest.rglob('*') if p.is_file()) == [
-        'Cargo.toml', 'pyproject.toml', 'src/geom.rs', 'src/lib.rs']
+        '.gitignore', 'Cargo.toml', 'pyproject.toml', 'src/geom.rs', 'src/lib.rs']
     cargo = (dest/'Cargo.toml').read_text()
     assert 'crate-type = ["cdylib", "rlib"]' in cargo and 'pyo3' in cargo
     proj = (dest/'pyproject.toml').read_text()
     assert 'build-backend = "maturin"' in proj
+    ignore = (dest/'.gitignore').read_text()
+    assert '/target/' in ignore and '/dist/' in ignore, 'the build outputs, named before they exist'
     # What `fastship.get_rs_config` refuses a project without.
     assert 'dynamic = ["version"]' in proj and '\nversion =' not in proj
 

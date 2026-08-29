@@ -176,6 +176,7 @@ GET,POST /git/review
 GET,POST /git/review/file
 GET,POST /git/sync-plan
 GET,POST /git/tree/action
+GET,POST /git/tree/prepare
 GET,POST /history/file
 GET,POST /history/files
 GET,POST /history/operations

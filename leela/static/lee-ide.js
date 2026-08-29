@@ -5126,6 +5126,24 @@ document.addEventListener('contextmenu', e => {
   if (e.target.closest('#editor')) { e.preventDefault(); setScope('editor'); openMenu('editor', e.clientX, e.clientY); }
 });
 
+/* Staging a folder is `git add`, which honours .gitignore -- and a folder you have just made does
+   not have one. This writes the rules its project kinds need before it stages, so the build output
+   of a language you are meeting for the first time never has to be recognised file by file. */
+async function treeAddFolder() {
+  const n = treeSel() || $('.lee-node.lee-dir');
+  const path = n?.dataset.path;
+  if (!path) return status('select a folder in the tree first', 'err');
+  if (!n.classList.contains('lee-dir')) return status('that is a file; pick its folder', 'err');
+  try {
+    const d = await post('/git/tree/prepare', {path});
+    const p = d.prepared || {};
+    const kinds = (p.kinds || []).join(' + ');
+    status(p.added?.length ? `staged ${path.split('/').pop()}, and taught .gitignore about ${kinds}`
+                           : `staged ${path.split('/').pop()}`, 'ok');
+    gitUI.snapshot = d; paintGitPill(d);
+    await refreshFileTree(path, false);
+  } catch (e) { leeFail('git', 'add folder', e); }
+}
 function initSplits() {
   const savedLeft = localStorage.getItem('lee-left-view');
   // Every panel is saved on switch, so every panel is restorable.

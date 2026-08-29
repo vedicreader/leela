@@ -58,6 +58,24 @@ in the command palette switches a notebook over. See
 
 ![The borrow checker, in a notebook cell](docs/screenshots/rust-borrow-checker.png)
 
+### Staging a folder of a language you have just met
+
+`git add` honours `.gitignore`, so the difficulty with a folder you have just created is that it
+does not have one, and `target/` or `__pycache__` go in with everything else. `stage this folder,
+ignores first` writes the rules the folder's project kinds need -- Rust, maturin, Python, Node,
+detected from the files that declare them and only where `git check-ignore` says a rule is missing
+-- and then stages. The rules go in the folder's own `.gitignore`, because `/target/` at the root
+of a repository does not match `mycrate/target/`.
+
+The tree colours every file and every folder by its state: staged, modified, untracked, ignored,
+conflicted. A folder takes the strongest state under it, so a new one reads as untracked before
+you expand it.
+
+<p align="center">
+<img src="docs/screenshots/git-tree-before.png" width="300" alt="before: the crate is untracked">
+<img src="docs/screenshots/git-tree-after.png" width="300" alt="after: sources staged, target ignored">
+</p>
+
 ### Live variables
 
 Each notebook tab owns a real kernel with an inspector inside it. The tree stays responsive
