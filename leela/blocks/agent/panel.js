@@ -40,8 +40,16 @@ function modelLabel(select) {
 }
 function paintModelPickers(root = document) {
   for (const b of $$('[data-model-pick]', root)) {
-    const select = $('#' + b.dataset.modelPick, root) || b.previousElementSibling;
-    if (select) b.textContent = modelLabel(select);
+    // The routed jobs have no id of their own -- they are `[data-job]` rows this file draws -- and
+    // `'#' + ''` is not a selector but a SyntaxError, thrown before the sibling fallback below it
+    // could answer. It took `loadAgentModels` down with it, and with it every error that reloading
+    // the panel was supposed to report.
+    // `attachModelPicker` inserts the button *before* the select it stands for, so the select is
+    // what follows it. Looking the other way found the previous row's label and read `options` off
+    // whatever that was.
+    const id = b.dataset.modelPick;
+    const select = (id && $('#' + id, root)) || b.nextElementSibling;
+    if (select && select.options) b.textContent = modelLabel(select);
   }
 }
 function closeModelMenu(focus = false) {
@@ -298,8 +306,13 @@ async function leeAgentModel(target, model) {
     if (d.ok && target === 'agent') markHarness(model);
     status(d.ok ? `${target} model saved: ${d.model}` : (d.error || 'model switch failed'), d.ok ? 'ok' : 'err');
     if (d.ok && target === 'completion') api('/complete/warm').catch(() => {});
-    if (!d.ok) await loadAgentModels();
-  } catch (e) { await loadAgentModels(); status(e.message || String(e), 'err'); }
+    if (!d.ok) await loadAgentModels().catch(() => {});
+  } catch (e) {
+    // The message first: a refusal is the one sentence there is to act on, and putting the panel
+    // back ahead of it meant a failure in the reload -- there was one -- threw the message away.
+    status(e.message || String(e), 'err');
+    await loadAgentModels().catch(() => {});
+  }
   finally { if (select) select.disabled = false; }
 }
 window.leeAgentModel = leeAgentModel;

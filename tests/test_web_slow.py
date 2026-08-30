@@ -301,6 +301,40 @@ def test_tab_takes_the_completion_that_is_on_screen():
     assert out['accepted'] == 'sanskrit_parse', 'Tab accepts the open completion'
     assert out['indented'].startswith((' ', '\t')), 'and still indents when nothing is offered'
 
+def test_changing_a_routed_job_model_saves_it_and_a_refusal_says_so():
+    """Changing the subagent model did nothing and said nothing. The routed jobs are rows this file
+    draws, with no id of their own, and `paintModelPickers` built `'#' + ''` for each -- a
+    SyntaxError, not a selector. It took `loadAgentModels` down, and `leeAgentModel` reloaded the
+    panel before reporting, so the reload's failure threw the refusal away before anyone saw it.
+    """
+    async def go(pg):
+        errors = []
+        pg.on('pageerror', lambda e: errors.append(str(e)))
+        await pg.evaluate("() => leeLoadModels()")
+        await pg.wait_for_selector('#jobmodels [data-job="subagent"]', state='attached')
+        picked = await pg.evaluate("""async () => {
+          const sel = document.querySelector('#jobmodels [data-job="subagent"]');
+          const before = sel.value;
+          const other = [...sel.options].map(o => o.value).find(v => v !== before);
+          sel.previousElementSibling.click();                       // the picker the person clicks
+          await new Promise(r => setTimeout(r, 150));
+          const row = [...document.querySelectorAll('.lee-model-menu [data-value]')]
+                        .find(r => r.dataset.value === other);
+          row.click();
+          await new Promise(r => setTimeout(r, 400));
+          return {before, other, value: sel.value, label: sel.previousElementSibling.textContent};
+        }""")
+        refused = await pg.evaluate("""async () => {
+          await window.leeAgentModel('subagent', 'no-such-model-anywhere');
+          return document.querySelector('#status')?.textContent || '';
+        }""")
+        return {'picked': picked, 'refused': refused, 'errors': errors}
+    out = _run(go)
+    assert out['errors'] == [], out['errors']
+    assert out['picked']['value'] == out['picked']['other'], 'the choice lands on the select'
+    assert out['picked']['other'].split(' ')[0] in out['picked']['label'], 'and the picker says so'
+    assert 'no-such-model-anywhere' in out['refused'], f"a refusal is reported: {out['refused']!r}"
+
 def test_the_modals_the_editor_opens_own_their_focus_and_their_controls():
     """One page for every overlay a person reaches from the editing surface: the kernel picker traps
     focus and answers the arrows, the platform preferences chord opens settings from a focused cell,
