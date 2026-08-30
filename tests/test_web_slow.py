@@ -1076,6 +1076,106 @@ def test_a_burst_of_chunks_is_painted_once_a_frame():
     assert out['text'].split() == ['row', '0', 'row', '1', 'row', '2', 'row', '3', 'row', '4',
                                    'row', '5', 'row', '6', 'row', '7'], out['text']
 
+def test_a_code_block_is_mounted_once_however_often_the_reply_around_it_repaints():
+    """A reply is re-rendered whole on every chunk, and every render rebuilt its code surfaces.
+
+    Measured on one nine-second turn ending in eight blocks: 455 CodeMirror views constructed and
+    447 thrown away, 1.7s of main thread, in the faster of the two engines Leela runs in. The
+    packaged app runs the slower one, and this was the jitter in the agent pane. Surfaces are keyed
+    by the code they hold and re-parented now, so only a block whose text moved is built again.
+    """
+    async def go(pg):
+        return await pg.evaluate("""async () => {
+          const el = document.createElement('div'); el.className = 'lee-reply';
+          document.querySelector('#agentlog').appendChild(el);
+          let built = 0;
+          const real = window.createEditor;
+          window.createEditor = (...a) => { built++; return real(...a); };
+          const block = n => '```python\\ndef f' + n + '(x):\\n    return x + ' + n + '\\n```';
+          let text = block(1) + '\\n\\n' + block(2) + '\\n\\nand then ';
+          try {
+            for (let i = 0; i < 12; i++) {
+              text += 'one more word ';
+              renderMarkdown(el, text, false, null, 8);
+              await new Promise(r => setTimeout(r, 40));
+            }
+            await new Promise(r => setTimeout(r, 700));
+          } finally { window.createEditor = real; }
+          return {built, surfaces: el.querySelectorAll('.lee-code-surface').length,
+                  bare: el.querySelectorAll('pre > code').length,
+                  text: el.textContent.includes('def f2')};
+        }""")
+    out = _run(go)
+    assert out['surfaces'] == 2 and out['bare'] == 0, f'two fences, two surfaces: {out}'
+    assert out['text'], 'and the code is still the code'
+    assert out['built'] == 2, f'two code blocks were mounted {out["built"]} times over 12 repaints'
+
+def test_the_agent_pane_follows_the_stream_without_dragging_a_reader_off_what_they_are_reading():
+    """Every paint in the pane wrote `scrollTop = scrollHeight`, and wrote it *before* the markdown
+    render it had just asked for had landed: the pane was measured short, jumped when the text
+    arrived, and took the reader with it however far up they had scrolled.
+
+    Stickiness follows the reader now. The last step is the one that made this worth scoping: a
+    checkpoint's proposal editor re-renders as a person types in it, and it must not re-pin the log.
+    """
+    async def go(pg):
+        return await pg.evaluate("""async () => {
+          const log = document.querySelector('#agentlog');
+          dropCodeSurfaces(log); log.innerHTML = '';
+          const card = agentTurnCard({prompt: 'probe', model: ''}); log.appendChild(card);
+          const root = document.createElement('div'); root.className = 'lee-agent-timeline';
+          turnBody(card).appendChild(root);
+          const tl = agentTimeline(root);
+          const settle = () => new Promise(r => setTimeout(r, 700));
+          const scrollTo = at => { log.scrollTop = at; log.dispatchEvent(new Event('scroll')); };
+          tl.chunk('a filler paragraph about kernels and their outputs.\\n\\n'.repeat(120));
+          await settle();
+          stickAgentLog(log, true);
+          const bottom = log.scrollTop;
+          scrollTo(0);                                  // the reader goes back up to read
+          tl.chunk('another sentence arrives while they read. ');
+          await settle();
+          const held = log.scrollTop;
+          scrollTo(log.scrollHeight);                   // and comes back down to follow again
+          tl.chunk('and one more after that. ');
+          await settle();
+          const followed = log.scrollHeight - log.scrollTop - log.clientHeight;
+          // A checkpoint's own editor rendering is not the stream painting.
+          const box = document.createElement('div');
+          box.className = 'lee-approval';
+          card.appendChild(box);
+          const inner = document.createElement('div'); box.appendChild(inner);
+          scrollTo(0);
+          renderMarkdown(inner, 'a proposal the person is editing', false, null, 8);
+          await settle();
+          return {bottom, held, followed, afterProposal: log.scrollTop};
+        }""")
+    out = _run(go)
+    assert out['bottom'] > 100, f'the pane has to be scrollable for this to mean anything: {out}'
+    assert out['held'] == 0, f'a reader who scrolled up was dragged to {out["held"]}'
+    assert out['followed'] <= 60, f'a reader at the bottom stopped following: {out["followed"]}px short'
+    assert out['afterProposal'] == 0, 'typing in a checkpoint re-pinned the log to the bottom'
+
+def test_every_editor_refuses_the_systems_own_autocorrect():
+    """WKWebView hands a `contenteditable` to NSSpellChecker and a browser does not, so the packaged
+    app curled quotes and corrected identifiers under CodeMirror. `leela/desktop.py` turns it off
+    for the process; this is the same refusal on the view, for every editor Leela builds.
+    """
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const el = document.createElement('div'); document.body.appendChild(el);
+          const v = createEditor(el, {doc: 'x = 1', lang: 'python'});
+          const named = n => v.contentDOM.getAttribute(n);
+          return {spellcheck: named('spellcheck'), autocorrect: named('autocorrect'),
+                  autocapitalize: named('autocapitalize'),
+                  everyMounted: [...document.querySelectorAll('.cm-content')]
+                    .every(n => n.getAttribute('spellcheck') === 'false')};
+        }""")
+    out = _run(go)
+    assert out['spellcheck'] == 'false', out
+    assert out['autocorrect'] == 'off' and out['autocapitalize'] == 'off', out
+    assert out['everyMounted'], 'an editor on the page was left with the system spell checker on'
+
 def test_a_pipeline_terminal_follows_the_package_it_was_opened_for(tmp_path):
     """Moving between packages showed the first package's release log, and closing the terminal
 

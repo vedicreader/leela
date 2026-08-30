@@ -8,7 +8,8 @@ from . import errstr, leela_cfg
 from .core.projects import last_folder, last_folders, recent_folders, remember, session  # noqa: F401
 
 __all__ = ['BACKENDS', 'backend', 'shell_ready', 'wait_for_http', 'start_cdp', 'warm_cdp',
-           'window_size', 'run_shell', 'keep_running_in_dock', 'dock_menu', 'DOCK_RECENT',
+           'window_size', 'run_shell', 'quiet_text_substitution', 'NO_SUBSTITUTION',
+           'keep_running_in_dock', 'dock_menu', 'DOCK_RECENT',
            'watch_open_events', 'ShellApi', 'shell_api', 'make_window', 'open_window',
            'off_main_thread', 'menus', 'menu_bar', 'mac_key', 'menu_chord',
            'session', 'remember', 'last_folders', 'last_folder', 'recent_folders']
@@ -165,6 +166,26 @@ def _dock_delegates():
     _delegates = (Windows, App)
     return _delegates
 
+#: What macOS rewrites as you type, and must not while you are typing code. WKWebView hands a
+#: `contenteditable` to NSSpellChecker; a browser does not, which is why the packaged app turned
+#: quotes into curly quotes and moved the caret out from under CodeMirror, and the served one
+#: never did. Written to Leela's own defaults domain, so nothing outside Leela changes.
+NO_SUBSTITUTION = ('NSAutomaticQuoteSubstitutionEnabled', 'NSAutomaticDashSubstitutionEnabled',
+                   'NSAutomaticTextReplacementEnabled', 'NSAutomaticSpellingCorrectionEnabled',
+                   'NSAutomaticPeriodSubstitutionEnabled', 'NSAutomaticCapitalizationEnabled')
+
+def quiet_text_substitution():
+    "Turn off the system's autocorrect for this app. True when it took."
+    if sys.platform != 'darwin': return False
+    try:
+        from Foundation import NSUserDefaults
+        d = NSUserDefaults.standardUserDefaults()
+        for k in NO_SUBSTITUTION: d.setBool_forKey_(False, k)
+        return True
+    except Exception as e:
+        print(f'  the system may still autocorrect what you type: {errstr(e)}')
+        return False
+
 def keep_running_in_dock(on_folder=None):
     "Hide the last window rather than quit, and fill the Dock menu. Reopen shows one window. Cmd+Q quits."
     global _on_folder
@@ -234,7 +255,9 @@ def run_shell(urls, titles=(), url_wait=90, gui=None, icon=None, size=None, on_r
     # Every native caller reaches this on the main thread, and none of them may build a window there.
     open_folder = off_main_thread(on_open_folder, 'leela-open-folder') if on_open_folder else None
     shell_api().on_open_folder = open_folder
-    if sys.platform == 'darwin': keep_running_in_dock(open_folder)  # before any window takes a delegate
+    if sys.platform == 'darwin':
+        quiet_text_substitution()                                   # before a web view can ask
+        keep_running_in_dock(open_folder)                           # before any window takes a delegate
     windows = [make_window(t, size) for t in titles]
     for key, window in zip(keys, windows):
         if key: _windows[key] = window

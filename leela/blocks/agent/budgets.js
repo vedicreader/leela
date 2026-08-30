@@ -47,13 +47,24 @@ async function leeAgentQuickBudget() {
 }
 window.leeAgentQuickBudget = leeAgentQuickBudget;
 
-async function refreshAgentBudget() {
+async function paintAgentBudget() {
   const el = $('#agentbudgetstatus'); if (!el) return;
   try {
     const d = await api('/agent/status');
     el.textContent = `${d.tool_calls || 0} / ${d.tool_limit || '—'}`;
     el.title = `${d.tool_calls || 0} of ${d.tool_limit || 'unknown'} tool calls used this turn`;
   } catch (_) {}
+}
+/* This used to be called straight from the stream's `activity` handler, so a turn making a hundred
+   tool calls asked the server a hundred times for a counter that reads "12 / 40". Leading edge, so
+   the first call of a turn still paints at once; trailing, so the number on screen is the last one. */
+const BUDGET_GAP = 1000;
+let budgetTimer = 0, budgetAt = -Infinity;
+function refreshAgentBudget() {
+  const wait = BUDGET_GAP - (performance.now() - budgetAt);
+  if (wait <= 0) { budgetAt = performance.now(); return paintAgentBudget(); }
+  clearTimeout(budgetTimer);
+  budgetTimer = setTimeout(() => { budgetAt = performance.now(); paintAgentBudget(); }, wait);
 }
 
 async function leeLocalMultimodal(enabled) {
@@ -116,7 +127,7 @@ function leeRight(which) {
     const active = b.dataset.right === which;
     b.classList.toggle('active', active); b.setAttribute('aria-selected', String(active));
   });
-  if (which === 'agent') requestAnimationFrame(() => { const log = $('#agentlog'); if (log) log.scrollTop = log.scrollHeight; });
+  if (which === 'agent') requestAnimationFrame(() => stickAgentLog());
   if (which === 'memory' && !lee.memoryLoaded) leeMemoryNotes();
 }
 window.leeRight = leeRight;

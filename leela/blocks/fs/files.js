@@ -176,9 +176,22 @@ async function patchTree(paths) {
   }
   await Promise.all([...want].map(patchTreeDir));
 }
+/* `/git/info` is several git subprocesses, and in the packaged app they are forked from the process
+   drawing the window. A build writing without pause fired one of these per debounced batch. One at
+   a time, and at most one more queued behind it: the trailing call always runs, so the marks still
+   settle on the truth, but a hundred batches cost two walks of the repository rather than a
+   hundred. */
+let gitMarksBusy = false, gitMarksAgain = false;
 async function refreshGitTreeMarks() {
-  const d = await gitInfoOrNull(gitUrl('/git/info'));
-  if (d) paintGitTree(d);
+  if (gitMarksBusy) { gitMarksAgain = true; return; }
+  gitMarksBusy = true;
+  try {
+    const d = await gitInfoOrNull(gitUrl('/git/info'));
+    if (d) paintGitTree(d);
+  } finally {
+    gitMarksBusy = false;
+    if (gitMarksAgain) { gitMarksAgain = false; refreshGitTreeMarks(); }
+  }
 }
 
 let fsWatchTimer = null, fsWatchSeen = [], fsWatchSince = 0;

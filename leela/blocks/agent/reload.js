@@ -1,14 +1,32 @@
 /* Reloading the open tab is what makes an AI edit visible without a refresh, but only when there is
  * nothing of the user's to lose. A buffer with unsaved edits is offered with the diff instead, and
  * the choice is the user's. */
+/* Taking the disk version remounts the tab, which destroys the CodeMirror the caret is in: an agent
+   edit or a build landing between two keystrokes took the keystrokes with it, and typing looked
+   like it had stopped working. Only the two reloads nobody asked for wait for the caret to leave.
+   An explicit reload, a tab switch, a refactor and a conflict resolution all go straight through
+   `takeDiskVersion`, because in every one of those a person asked for exactly this. */
+const editorHasFocus = () => !!document.activeElement?.closest?.('.cm-editor');
+/* `key` is what stops these stacking up: the 10s poll and the `/fs/events` push both reach
+   `watchOpenFile`, and without it a minute of typing over a busy tree queues a dozen reloads that
+   all fire the moment the caret leaves, remounting the tab a dozen times. */
+const waitingReloads = new Set();
+function whenEditorIdle(fn, key = '', tries = 40) {
+  if (!editorHasFocus()) { waitingReloads.delete(key); return fn(); }
+  if (key && tries === 40 && waitingReloads.has(key)) return;
+  if (key) waitingReloads.add(key);
+  // 20s of unbroken typing and this gives up; `watchOpenFile`'s own poll comes round again.
+  if (tries > 0) setTimeout(() => whenEditorIdle(fn, key, tries - 1), 500);
+  else waitingReloads.delete(key);
+}
 function scheduleAgentFileReload(path) {
   if (path !== lee.path || $('.lee-tab.active')?.classList.contains('dirty')) return;
   clearTimeout(lee.agentReloadTimer);
-  lee.agentReloadTimer = setTimeout(async () => {
+  lee.agentReloadTimer = setTimeout(() => whenEditorIdle(async () => {
     if (path !== lee.path || $('.lee-tab.active')?.classList.contains('dirty')) return;
     try { await takeDiskVersion(path); status(`${path.split('/').pop()} updated from the agent edit`, 'ok'); }
     catch (e) { status(String(e.message || e), 'err'); }
-  }, 90);
+  }, 'agent:' + path), 90);
 }
 async function watchOpenFile() {
   if (!lee.path || lee.watchingDisk || document.hidden) return;
@@ -27,8 +45,15 @@ async function watchOpenFile() {
       lee.seenDiskVersion = d.disk_version;
       return;
     }
-    await takeDiskVersion(lee.path);
-    status(`${lee.path.split('/').pop()} updated from disk`, 'ok');
+    /* Deferred while the caret is in the editor, and `seenDiskVersion` is deliberately not advanced
+       on this path: it is what tells the save endpoint an outside write happened, and moving it
+       here would make the deferred change read as our own when the caret finally leaves. */
+    const path = lee.path;
+    whenEditorIdle(async () => {
+      if (path !== lee.path || $('.lee-tab.active')?.classList.contains('dirty')) return;
+      try { await takeDiskVersion(path); status(`${path.split('/').pop()} updated from disk`, 'ok'); }
+      catch (_) { /* the next poll tries again */ }
+    }, 'watch:' + path);
   } catch (_) {
     // Watching is convenience; a transient request failure should not interrupt editing.
   } finally { lee.watchingDisk = false; }

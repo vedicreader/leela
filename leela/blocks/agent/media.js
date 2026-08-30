@@ -46,6 +46,12 @@ function reduceAgentTimeline(events) {
   return parts;
 }
 
+/* A reply is re-rendered from the top on every pass, so the gap between passes is paid over the
+   whole reply, not over the words that arrived. 32ms is right for a preview following a person's
+   typing and far too eager for this: at a hundred it is text arriving ten times a second, which
+   reads as continuous, for a third of the renders. */
+const AGENT_RENDER_GAP = 100;
+
 function agentTimeline(root) {
   const actions = new Map(); let prose = null;
   const seal = () => { prose = null; };
@@ -73,7 +79,7 @@ function agentTimeline(root) {
   };
   return {root, actions, seal, activity, chunk(text) {
     if (!prose) { prose = document.createElement('div'); prose.className = 'lee-reply lee-agent-reply lee-timeline-prose'; prose._text = ''; root.appendChild(prose); }
-    prose._text += text || ''; renderMarkdown(prose, prose._text); return prose;
+    prose._text += text || ''; renderMarkdown(prose, prose._text, false, null, AGENT_RENDER_GAP); return prose;
   }, append(node) { seal(); if (node) root.appendChild(node); return node; }};
 }
 
@@ -113,7 +119,7 @@ async function sendAgent(force = false) {
   turnBody(card).appendChild(userMessage(q));
   log.appendChild(card);
   foldOlderTurns(log);            // what came before is answered; this is the one being read
-  log.scrollTop = log.scrollHeight;
+  stickAgentLog(log, true);       // sending a turn is asking to watch it, wherever you had scrolled
   status('model is working…');
   agentListen(accepted.thread || lee.agentThread, accepted.seq, card);
 }
@@ -130,7 +136,7 @@ function agentListen(thread, since, card = null) {
   let host = turnBody(card);
   let progress = agentProgress(host);
   let timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
-  host.appendChild(timelineRoot); log.scrollTop = log.scrollHeight;
+  host.appendChild(timelineRoot); stickAgentLog(log);
   let timeline = agentTimeline(timelineRoot), seen = timeline.actions;
   // A steer is drawn by the steer block, which is not in this scope. It belongs in the turn,
   // between the prose before it and the call after, so it needs the same painter.
@@ -156,7 +162,10 @@ function agentListen(thread, since, card = null) {
       if (!text) return;
       body = timeline.chunk(text);
       progress.phase('Writing response');
-      log.scrollTop = log.scrollHeight;
+      // `chunk` renders asynchronously, so this measures the pane as it was before the text landed.
+      // The real one is the `lee-markdown-rendered` listener in `live.js`; this one is for the
+      // height the progress strip and the timeline rows just took.
+      stickAgentLog(log);
     };
     const dedupe = (fn, streaming = false) => ev => {
       if (typeof ev.data !== 'string') return;
@@ -189,7 +198,7 @@ function agentListen(thread, since, card = null) {
     }
     if (a.done && a.ok && a.kind === 'edit' && a.args?.path) scheduleAgentFileReload(a.args.path);
     progress.phase(a.done ? 'Reviewing tool results' : (a.summary || `Running ${a.tool}`));
-    log.scrollTop = log.scrollHeight;
+    stickAgentLog(log);
   }));
 
   /* A turn already in flight when this pane attached: its prompt is in the feed, not on screen.
@@ -200,7 +209,7 @@ function agentListen(thread, since, card = null) {
     timelineRoot.parentElement.insertBefore(userMessage(d.text || ''), timelineRoot);
     const title = $('.lee-agent-turn-title', card);
     if (title && title.textContent === '(no prompt)') title.textContent = String(d.text || '').replace(/\s+/g, ' ').trim();
-    log.scrollTop = log.scrollHeight;
+    stickAgentLog(log);
   }));
 
   es.addEventListener('chunk', dedupe(d => {
@@ -244,7 +253,7 @@ function agentListen(thread, since, card = null) {
       const group = sessions.find(s => s.id === thread) || sessions.find(s => s.id === history.current);
       const turns = await sessionTurns(group?.id);
       if (!turns.length) throw new Error('no recorded turns for this conversation');
-      log.innerHTML = ''; approvalCards.clear(); log.dataset.foldScope = '';
+      dropCodeSurfaces(log); log.innerHTML = ''; approvalCards.clear(); log.dataset.foldScope = '';
       progress.finish(false);   // its 250ms clock is cleared by `finish` alone, and it is replaced below
       renderTurns(log, turns, 'Recovered conversation');
       /* `renderTurns` paints durable turns only, so a turn still in flight was painted nowhere and
@@ -260,7 +269,8 @@ function agentListen(thread, since, card = null) {
         body = null; raw = '';
         refoldAfter(log);   // the last durable turn is no longer the newest, so it may fold again
       }
-      log.scrollTop = log.scrollHeight; lastSeq = d.latest; reconnect(0);
+      // The transcript was replaced under the reader, so there is no scroll position left to keep.
+      stickAgentLog(log, true); lastSeq = d.latest; reconnect(0);
     } catch (e) {
       status('conversation replay failed; retrying without clearing the transcript', 'err');
       reconnect(1000);
@@ -279,7 +289,7 @@ function agentListen(thread, since, card = null) {
         `<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
         `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
     if (d.turn_id) card.dataset.turn = d.turn_id;
-    log.scrollTop = log.scrollHeight;
+    stickAgentLog(log);
     const tail = d.usage_label ? `${d.note || 'done'} · ${d.usage_label}` : (d.note || 'done');
     showProblems(d.problems, host);   // a turn's problems belong to that turn
     if ((d.problems || []).length) status(d.problems[d.problems.length - 1], 'err');

@@ -28,6 +28,26 @@ def test_each_platform_gets_the_webview_its_os_already_ships():
     assert desktop.backend('linux') == 'gtk'
     assert desktop.backend('sunos5') is None
 
+def test_the_system_text_checker_is_turned_off_before_a_window_can_ask(monkeypatch):
+    """WKWebView hands a `contenteditable` to NSSpellChecker where a browser does not, so the
+    packaged app curled quotes and corrected identifiers behind CodeMirror's back. Written to
+    Leela's own defaults domain, so nothing outside Leela changes.
+    """
+    written = {}
+    class Defaults:
+        def setBool_forKey_(self, value, key): written[key] = value
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    monkeypatch.setitem(sys.modules, 'Foundation',
+                        type('F', (), {'NSUserDefaults': type('D', (), {
+                            'standardUserDefaults': staticmethod(lambda: Defaults())})})())
+    assert desktop.quiet_text_substitution() is True
+    assert set(written) == set(desktop.NO_SUBSTITUTION)
+    assert not any(written.values())
+
+def test_the_text_checker_is_a_mac_question_and_nothing_else_is_asked(monkeypatch):
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    assert desktop.quiet_text_substitution() is False
+
 def test_an_unsupported_platform_is_refused_with_a_reason_rather_than_a_traceback():
     ok, why = desktop.shell_ready('sunos5')
     assert not ok and 'sunos5' in why

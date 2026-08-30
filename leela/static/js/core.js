@@ -88,6 +88,10 @@ function applyEditorPrefs(prefs = lee.editorPrefs, persist = false) {
   root.style.setProperty('--lee-code-line-height', String(p.lineHeight));
   root.dataset.editorLigatures = p.ligatures ? 'on' : 'off';
   for (const [key,view] of lee.editors) LeeCM.configure?.(view, ['file','secondary'].includes(key)?p:{...p,overviewMode:'off'});
+  // Snippet surfaces in rendered markdown are not in `lee.editors`, and are no longer rebuilt on
+  // the next render, so this is the only thing that reaches them. `overviewMode` stays off: a
+  // read-only block a few lines long has nothing to draw a stripe of.
+  for (const view of codeSurfaceViews()) LeeCM.configure?.(view, {...p, overviewMode: 'off'});
   if (persist) localStorage.setItem('lee-editor-settings', JSON.stringify(p));
   return p;
 }
@@ -101,7 +105,30 @@ async function loadSettings(language = '') {
   } catch (_) { applyEditorPrefs(lee.editorPrefs); }
 }
 applyEditorPrefs(lee.editorPrefs);
-function createEditor(el, opts = {}) { return LeeCM.create(el, {...opts, settings: {...lee.editorPrefs, ...(opts.settings||{})}}); }
+/* macOS hands a `contenteditable` to its own text checker, and WKWebView takes it up where a
+   browser does not: the packaged app curled quotes, corrected identifiers and, because the rewrite
+   lands behind CodeMirror's back, dropped the next character typed at the start of the line. The
+   served workspace never did any of it, which is why this only ever looked like a Mac-app bug.
+   Set on the view rather than in the CodeMirror build, because `frontend/editor.js` needs esbuild
+   and the bundle is committed; CodeMirror only clears attributes it set itself, so these survive.
+   `leela/desktop.py:quiet_text_substitution` turns the same thing off one layer down. */
+const TYPING_ATTRS = {spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off',
+                      'data-gramm': 'false'};
+function quietTyping(view) {
+  try { for (const [k, v] of Object.entries(TYPING_ATTRS)) view.contentDOM.setAttribute(k, v); }
+  catch (_) { /* a view torn down before it was ever drawn */ }
+  return view;
+}
+function createEditor(el, opts = {}) {
+  return quietTyping(LeeCM.create(el, {...opts, settings: {...lee.editorPrefs, ...(opts.settings||{})}}));
+}
+// A merge is two editors, and the writable one is `b`. Both, so a selection copied out of the
+// read-only side is the bytes on disk and not the system's idea of them.
+function createMerge(el, opts = {}) {
+  const merge = LeeCM.createMerge(el, opts);
+  quietTyping(merge.a); quietTyping(merge.b);
+  return merge;
+}
 try { lee.recentTabs = JSON.parse(sessionStorage.getItem('lee-recent-tabs') || '[]'); }
 catch (_) { lee.recentTabs = []; }
 // The caret in each file, across restarts, so `localStorage` rather than `sessionStorage`, which
@@ -297,6 +324,7 @@ function mountCodeSurface(host, code, lang = 'python', promote = false) {
     navigator.clipboard?.writeText(String(code || '')); status('code copied', 'ok');
   };
   head.querySelector('[data-promote]')?.addEventListener('click', () => promoteCodeToNotebook(String(code || ''), codeLang(lang)));
+  shell._leeView = view;    // `enhanceCodeBlocks` re-parents the shell, and needs its view back
   return view;
 }
 function portableToolPayload(raw) {
@@ -382,9 +410,33 @@ function upgradePortableToolMarkdown(el) {
   });
   polishActivityGroup(el);
 }
+/* A streaming reply is re-rendered whole on every pass, and this used to destroy every code surface
+   in it and build them all again. Measured on one nine-second turn ending in eight code blocks: 455
+   CodeMirror views constructed, 447 thrown away, 1.7s of main thread, in the faster of the two
+   engines Leela runs in. The surfaces are kept and re-parented instead, keyed by the code they
+   hold, so a pass builds only the block whose text actually moved. `tools/profile_agent.py`. */
+// The length is in the key so the parts cannot run together: no separator is safe inside code.
+const codeKey = (lang, n, text) => `${lang}:${n}:${text.length}:${text}`;
+/* Every snippet view on the page, read from the DOM rather than from a registry: a surface lives
+   exactly as long as its shell, so the document is the register and nothing in it can go stale.
+   `querySelectorAll` rather than `$$`, because `applyEditorPrefs` calls this at load, above the
+   line `$$` is declared on, and reading a `const` before it is initialised throws. */
+function codeSurfaceViews(root = document) {
+  return [...root.querySelectorAll('.lee-code-surface')].map(s => s._leeView).filter(Boolean);
+}
+/* Reuse means the views under a subtree outlive the render that built them, so a caller that throws
+   that subtree away has to say so. Every `innerHTML = ''` over rendered markdown is one of those. */
+function dropCodeSurfaces(root) {
+  if (!root) return;
+  for (const el of [root, ...root.querySelectorAll('[data-markdown]')]) {
+    for (const shell of (el._leeCodeSurfaces || new Map()).values())
+      try { LeeCM.destroy(shell._leeView); } catch {}
+    el._leeCodeSurfaces = new Map(); el._leeCodeViews = [];
+  }
+}
 function enhanceCodeBlocks(el) {
-  for (const v of (el._leeCodeViews || [])) try { LeeCM.destroy(v); } catch {}
-  el._leeCodeViews = [];
+  const held = el._leeCodeSurfaces instanceof Map ? el._leeCodeSurfaces : new Map();
+  const kept = new Map(), seen = new Map();
   $$('pre > code', el).forEach(code => {
     const pre = code.parentElement, text = code.textContent || '';
     const declared = [...code.classList].find(x => x.startsWith('language-')) || '';
@@ -392,10 +444,28 @@ function enhanceCodeBlocks(el) {
     const python = /^(language-)?(py|python)$/.test(declared.toLowerCase());
     const named = declared.replace(/^language-/, '').toLowerCase();
     if (!declared || !CODE_LANGS[named] || text.length > 40000) return;
+    // Two blocks holding the same code are two surfaces, so the count is part of the key. Counted
+    // per language, as the key is: counting on the text alone renumbered a Python block because a
+    // shell block above it happened to hold the same characters.
+    const n = (seen.get(codeKey(lang, 0, text)) || 0) + 1; seen.set(codeKey(lang, 0, text), n);
+    const key = codeKey(lang, n, text);
     const host = document.createElement('div'); pre.replaceWith(host);
-    el._leeCodeViews.push(mountCodeSurface(host, text.replace(/\n$/, ''), lang,
-                                           python && el.classList.contains('lee-reply')));
+    const shell = held.get(key);
+    if (shell && shell._leeView) {
+      host.appendChild(shell); kept.set(key, shell);
+      // It was measured while detached, or in a pane of another width.
+      try { shell._leeView.requestMeasure(); } catch (_) { /* torn down under us */ }
+      return;
+    }
+    const view = mountCodeSurface(host, text.replace(/\n$/, ''), lang,
+                                  python && el.classList.contains('lee-reply'));
+    const built = view && view.dom.closest('.lee-code-surface');
+    if (built) kept.set(key, built);
   });
+  for (const [key, shell] of held)
+    if (!kept.has(key)) try { LeeCM.destroy(shell._leeView); } catch {}
+  el._leeCodeSurfaces = kept;
+  el._leeCodeViews = [...kept.values()].map(s => s._leeView);
 }
 /* This copies an answer into the open notebook, so it needs one. Hidden rather than disabled, and
    back the moment a notebook tab is focused. */
@@ -464,7 +534,10 @@ function routeMarkdownLinks(el) {
 const WORK_LOG = /\n*<details>\s*<summary>\s*what i did[^<]*<\/summary>[\s\S]*<\/details>\s*$/i;
 function stripWorkLog(text) { return String(text || '').replace(WORK_LOG, '').trimEnd(); }
 
-function renderMarkdown(el, text, allowRaw = false, onRender = null) {
+/* `delay` is the floor between renders. 32ms is right for a preview following a person's typing;
+   a reply streaming from a model is re-rendered whole on every pass, so the agent pane asks for a
+   longer one. See `AGENT_RENDER_GAP` in `blocks/agent/media.js`. */
+function renderMarkdown(el, text, allowRaw = false, onRender = null, delay = 32) {
   if (!el) return;
   el.dataset.markdown = String(text || '');
   /* A render already on the wire is left to land. It used to be aborted on every call, so a
@@ -472,9 +545,9 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
      cancelled the render the one before it had started. One request at a time now, and a follow-up
      when the text moved on while it was out. */
   if (el._leeMarkdownBusy) { el._leeMarkdownDirty = true; return; }
-  /* At most one render every 32ms, and at least one: this used to restart the wait on every call,
-     so text arriving faster than 32ms held the render off for as long as it kept coming. The
-     pending one reads `dataset.markdown` when it fires, so it always renders the latest. */
+  /* At most one render every `delay`, and at least one: this used to restart the wait on every
+     call, so text arriving faster than the gap held the render off for as long as it kept coming.
+     The pending one reads `dataset.markdown` when it fires, so it always renders the latest. */
   if (el._leeMarkdownTimer) return;
   el._leeMarkdownTimer = setTimeout(async () => {
     el._leeMarkdownTimer = 0; el._leeMarkdownBusy = true; el._leeMarkdownDirty = false;
@@ -493,6 +566,8 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
         if (onRender) try { onRender(el); } catch (e) { console.warn('Leela markdown annotation:', e); }
         resolveMarkdownImages(el); routeMarkdownLinks(el);
         upgradePortableToolMarkdown(el); enhanceCodeBlocks(el); addMarkdownCellAction(el);
+        // Only now is the text on the page. Anything that measures the result waits for this.
+        el.dispatchEvent(new CustomEvent('lee-markdown-rendered', {bubbles: true}));
       });
     } catch (e) {
       if (!el.isConnected || el.dataset.markdown !== sent) return;
@@ -505,9 +580,10 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null) {
     } finally {
       el._leeMarkdownBusy = false;
       // the text moved on while this one was out, so the screen is a render behind
-      if (el._leeMarkdownDirty || el.dataset.markdown !== sent) renderMarkdown(el, el.dataset.markdown, allowRaw, onRender);
+      if (el._leeMarkdownDirty || el.dataset.markdown !== sent)
+        renderMarkdown(el, el.dataset.markdown, allowRaw, onRender, delay);
     }
-  }, 32);
+  }, delay);
 }
 
 async function api(url, opts, retried) {

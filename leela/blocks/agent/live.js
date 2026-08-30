@@ -1,11 +1,53 @@
+/* Following a feed is sticking to its bottom; it is not dragging a reader back down. Every paint in
+   this pane used to write `scrollTop = scrollHeight` unconditionally, and to write it *before* the
+   markdown render it had just asked for had landed, so the pane was measured short, jumped when the
+   text arrived, and took the reader with it however far up they had scrolled to read.
+
+   Stickiness is sampled from the reader's own scrolling: once they leave the bottom nothing the
+   stream paints moves them, and scrolling back down opts in again. `force` is for the moves that
+   are the reader's, not the stream's: taking the live pane back from History, and sending a turn. */
+const BOTTOM_SLACK = 60;
+const nearAgentBottom = log =>
+  !log.clientHeight || log.scrollHeight - log.scrollTop - log.clientHeight <= BOTTOM_SLACK;
+function stickAgentLog(log, force = false) {
+  log = log || $('#agentlog'); if (!log) return;
+  if (!log._leeStickBound) {
+    log._leeStickBound = true; log._leeStick = true;
+    log.addEventListener('scroll', () => { log._leeStick = nearAgentBottom(log); }, {passive: true});
+  }
+  if (force) log._leeStick = true;
+  if (log._leeStick) log.scrollTop = log.scrollHeight;
+}
+/* A render lands a frame or more after the call that asked for it, so the pane is re-stuck when the
+   content is actually there. `renderMarkdown` announces every one of its renders.
+
+   Only the reply prose, not every render inside the pane: a checkpoint's proposal editor and the
+   agent-state box re-render as a person types in them, and re-pinning the log to the bottom on
+   every keystroke is the exact thing this change is here to stop. */
+document.addEventListener('lee-markdown-rendered', e => {
+  const log = $('#agentlog'), el = e.target;
+  if (!log || !log.contains(el)) return;
+  if (!el.closest('.lee-agent-turn') || el.closest('.lee-approval, .lee-proposal')) return;
+  stickAgentLog(log);
+});
+
+/* The live pane is set aside as its own nodes, not as `innerHTML`. Serialising a long conversation
+   and parsing it back paid for the whole log on every History toggle, and threw away every code
+   surface the replies had mounted: the fragment keeps them alive and costs one pointer.
+   `null` means "the live pane is whatever is on screen", which is the case until History takes it. */
 function rememberAgentLive() {
-  if (!lee.agentView || lee.agentView === 'live') lee.agentLive = $('#agentlog')?.innerHTML || '';
+  const log = $('#agentlog');
+  if (!log || (lee.agentView && lee.agentView !== 'live')) return;
+  const held = document.createDocumentFragment();
+  held.append(...log.childNodes);
+  lee.agentLive = held;
 }
 function restoreAgentLive() {
   const log = $('#agentlog'); if (!log) return;
-  log.innerHTML = lee.agentLive || ''; lee.agentView = 'live';
+  log.replaceChildren(lee.agentLive || document.createDocumentFragment());
+  lee.agentLive = null; lee.agentView = 'live';
   $('#agenthistory')?.classList.remove('active');
-  log.scrollTop = log.scrollHeight;
+  stickAgentLog(log, true);
 }
 function userMessage(text) {
   const raw = String(text || '').trim(), long = raw.length > 900 || raw.split('\n').length > 14;
@@ -187,7 +229,7 @@ async function historyGroups() {
   return d.sessions || [];
 }
 async function showHistorySession(group, groups) {
-  const log = $('#agentlog'); if (!log) return; log.innerHTML = ''; approvalCards.clear();
+  const log = $('#agentlog'); if (!log) return; dropCodeSurfaces(log); log.innerHTML = ''; approvalCards.clear();
   log.dataset.foldScope = group?.id || '';   // these turns are that session's, whatever thread is live
   const index = document.createElement('nav'); index.className = 'lee-history-index';
   /* A conversation is known by what it was about, so its name is the whole option. The time
@@ -243,10 +285,12 @@ async function paintAgentThread(id) {
   const welcome = $('.lee-agent-welcome', log);
   approvalCards.clear();
   log.dataset.foldScope = '';
+  dropCodeSurfaces(log);
   if ((d.turns || []).length) { log.innerHTML = ''; renderTurns(log, d.turns, titleText(d.title) || 'conversation'); }
   else log.innerHTML = welcome ? welcome.outerHTML : '';
   lee.agentView = 'live'; $('#agenthistory')?.classList.remove('active');
-  lee.agentLive = log.innerHTML; log.scrollTop = log.scrollHeight;
+  // Nothing to set aside: the live pane is what was just painted into the log.
+  lee.agentLive = null; stickAgentLog(log, true);
   return d;
 }
 /* Conversations live in the agent's log, not in this process, so a fresh one holds none: opening
@@ -266,11 +310,11 @@ async function rehydrateAgentLive() {
 function paintResumed(d) {
   const log = $('#agentlog');
   if (log) {
-    log.dataset.foldScope = ''; log.innerHTML = '';
+    log.dataset.foldScope = ''; dropCodeSurfaces(log); log.innerHTML = '';
     renderTurns(log, d.turns || [], 'resumed conversation');
-    log.scrollTop = log.scrollHeight;
+    stickAgentLog(log, true);
   }
-  lee.agentView = 'live'; lee.agentLive = log?.innerHTML || '';
+  lee.agentView = 'live'; lee.agentLive = null;
   $('#agenthistory')?.classList.remove('active');
 }
 async function resumeLatestAgent() {
@@ -289,8 +333,17 @@ function warmAgentHistory() {
 async function leeAgentHistory() {
   if (lee.agentView === 'history') return restoreAgentLive();
   rememberAgentLive(); lee.agentView = 'history'; $('#agenthistory')?.classList.add('active');
-  const all = await historyGroups();
-  await showHistorySession(shownSessions(all)[0], all);
+  /* `rememberAgentLive` moves the nodes out rather than copying them, so from here until the
+     history is painted the only copy of the conversation is in `lee.agentLive`. A history read
+     that fails must put it back, or the pane is left blank with the work in a variable. */
+  try {
+    const all = await historyGroups();
+    await showHistorySession(shownSessions(all)[0], all);
+    return;
+  } catch (e) {
+    restoreAgentLive();
+    return status(`history unavailable: ${e.message || e}`, 'err');
+  }
 }
 async function leeAgentResume(group) {
   if (!group) return;
@@ -494,7 +547,7 @@ async function leeAgentNew() {
   try {
     const d = await post('/agent/thread/new', {}); lee.agentThread = d.active; lee.agentBusy = false; lee.agentTitle = '';
     approvalCards.clear(); const log = $('#agentlog'), input = $('#agentprompt');
-    if (log) { log.innerHTML = ''; lee.agentLive = ''; lee.agentView = 'live'; } if (input) input.value = '';
+    if (log) { dropCodeSurfaces(log); log.innerHTML = ''; lee.agentLive = null; lee.agentView = 'live'; } if (input) input.value = '';
     await refreshAgentThreads(); $('#agenthistory')?.classList.remove('active'); input?.focus(); status('new conversation started', 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
 }
@@ -530,7 +583,7 @@ async function leeAgentThreadClose(id = lee.agentThread) {
   if (!id) return; const closing = id;
   try {
     const d = await post('/agent/thread/close', {thread:closing}); lee.agentThreadDrafts.delete(closing);
-    paintAgentThreads(d); const log = $('#agentlog'); if (log) log.innerHTML = ''; if (d.active) { const active = d.active; lee.agentThread = ''; await leeAgentThreadSwitch(active); }
+    paintAgentThreads(d); const log = $('#agentlog'); if (log) { dropCodeSurfaces(log); log.innerHTML = ''; } if (d.active) { const active = d.active; lee.agentThread = ''; await leeAgentThreadSwitch(active); }
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 // The rehydrated banner survives `restoreAgentLive`, which round-trips the pane through innerHTML:
@@ -712,10 +765,10 @@ function renderSessionCells(log, d) {
 
 function agentLog(html, host = null) {
   const log = $('#agentlog');
-  if (host) { host.insertAdjacentHTML('beforeend', html); log.scrollTop = log.scrollHeight; return; }
+  if (host) { host.insertAdjacentHTML('beforeend', html); stickAgentLog(log); return; }
   // Never use `innerHTML +=`: it reparses every existing child and silently detaches every
   // checkpoint, fork, rollback, CodeMirror and disclosure handler already in the log.
   log.insertAdjacentHTML('beforeend', html);
-  log.scrollTop = log.scrollHeight;
+  stickAgentLog(log);
 }
 

@@ -109,7 +109,7 @@ async function showGitConflict(path) {
 
     for (const key of ['base', 'ours', 'theirs']) {
       const {text, ranges} = conflictSide(original, key);
-      views[key] = LeeCM.create(editorFor(key), {
+      views[key] = createEditor(editorFor(key), {
         doc: text, lang, readOnly: true, lineNums: true, settings: lee.editorPrefs});
       views[key]._ranges = ranges;
       LeeCM.setChangedLines(views[key], marks(ranges, 0));
@@ -118,7 +118,7 @@ async function showGitConflict(path) {
     // `refresh` dispatches marks. `programmatic` is why a button's own `setDoc` does not come back
     // round here and refresh a second time from stale text.
     let programmatic = false;
-    views.result = LeeCM.create(editorFor('result'), {
+    views.result = createEditor(editorFor('result'), {
       doc: d.worktree || '', lang, lineNums: true, settings: lee.editorPrefs,
       onChange: text => { if (!programmatic) setTimeout(() => refresh(text, false), 0); }});
 

@@ -89,7 +89,7 @@ async function openMergeConflict(conflictBox) {
     for (let i = 0; i < count; i++) {
       const view = lee.cells[i] && lee.editors.get(lee.cells[i].id);
       const draft = view ? LeeCM.getDoc(view) : (lee.cells[i]?.source || '');
-      merges[i] = LeeCM.createMerge($(`[data-cell-merge="${i}"]`, m), {left: disk.cells?.[i]?.source || '', right: draft,
+      merges[i] = createMerge($(`[data-cell-merge="${i}"]`, m), {left: disk.cells?.[i]?.source || '', right: draft,
         lang: lee.cells[i]?.cell_type === 'markdown' ? 'markdown' : nbLang(), settings: lee.editorPrefs});
     }
     $('[data-cancel]', m).onclick = () => m.remove();
@@ -113,7 +113,7 @@ async function openMergeConflict(conflictBox) {
     `<div class="lee-merge-host"></div><div class="lee-mfoot"><span class="lee-dim">Use the arrows to accept disk changes into your result.</span>` +
     `<span class="lee-spacer"></span><button class="lee-btn" data-cancel>cancel</button><button class="lee-btn go" data-save-merge>save merged result</button></div>`,
     null, () => { if (mergeView) LeeCM.destroyMerge(mergeView); }, {className: 'lee-merge-modal', storageKey: 'merge'});
-  mergeView = LeeCM.createMerge($('.lee-merge-host', m), {left: disk.text || '', right: draft,
+  mergeView = createMerge($('.lee-merge-host', m), {left: disk.text || '', right: draft,
     lang: curLang(), settings: lee.editorPrefs});
   $('[data-cancel]', m).onclick = () => m.remove();
   $('[data-save-merge]', m).onclick = async () => {

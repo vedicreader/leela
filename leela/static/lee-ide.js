@@ -2925,7 +2925,7 @@ async function showGitConflict(path) {
 
     for (const key of ['base', 'ours', 'theirs']) {
       const {text, ranges} = conflictSide(original, key);
-      views[key] = LeeCM.create(editorFor(key), {
+      views[key] = createEditor(editorFor(key), {
         doc: text, lang, readOnly: true, lineNums: true, settings: lee.editorPrefs});
       views[key]._ranges = ranges;
       LeeCM.setChangedLines(views[key], marks(ranges, 0));
@@ -2934,7 +2934,7 @@ async function showGitConflict(path) {
     // `refresh` dispatches marks. `programmatic` is why a button's own `setDoc` does not come back
     // round here and refresh a second time from stale text.
     let programmatic = false;
-    views.result = LeeCM.create(editorFor('result'), {
+    views.result = createEditor(editorFor('result'), {
       doc: d.worktree || '', lang, lineNums: true, settings: lee.editorPrefs,
       onChange: text => { if (!programmatic) setTimeout(() => refresh(text, false), 0); }});
 
@@ -4835,9 +4835,22 @@ async function patchTree(paths) {
   }
   await Promise.all([...want].map(patchTreeDir));
 }
+/* `/git/info` is several git subprocesses, and in the packaged app they are forked from the process
+   drawing the window. A build writing without pause fired one of these per debounced batch. One at
+   a time, and at most one more queued behind it: the trailing call always runs, so the marks still
+   settle on the truth, but a hundred batches cost two walks of the repository rather than a
+   hundred. */
+let gitMarksBusy = false, gitMarksAgain = false;
 async function refreshGitTreeMarks() {
-  const d = await gitInfoOrNull(gitUrl('/git/info'));
-  if (d) paintGitTree(d);
+  if (gitMarksBusy) { gitMarksAgain = true; return; }
+  gitMarksBusy = true;
+  try {
+    const d = await gitInfoOrNull(gitUrl('/git/info'));
+    if (d) paintGitTree(d);
+  } finally {
+    gitMarksBusy = false;
+    if (gitMarksAgain) { gitMarksAgain = false; refreshGitTreeMarks(); }
+  }
 }
 
 let fsWatchTimer = null, fsWatchSeen = [], fsWatchSince = 0;
@@ -5425,6 +5438,20 @@ async function checkProjectRuntime() {
    Intermittent only because it takes a resize that happens to miss a re-measure.
 
    `requestMeasure` is plain EditorView API, so no new `LeeCM` export and no vendored rebuild. */
+/* An editor skipped by the sweep above still holds the width the pane used to have, which is the
+   band cutting through the text this whole observer exists to prevent. It is measured the moment it
+   is scrolled to instead, so the cost is paid for the editors a person actually looks at. */
+function measureWhenSeen(views) {
+  if (!views.length || !('IntersectionObserver' in window)) return;
+  const io = new IntersectionObserver(entries => {
+    for (const e of entries) if (e.isIntersecting) {
+      io.unobserve(e.target);
+      try { e.target._leeMeasure?.requestMeasure(); } catch (_) { /* torn down while off screen */ }
+    }
+  }, {rootMargin: '200px 0px'});
+  for (const v of views) { try { v.dom._leeMeasure = v; io.observe(v.dom); } catch (_) {} }
+}
+
 function observeEditorWidth() {
   if (!('ResizeObserver' in window)) return;
   let frame = 0;
@@ -5436,9 +5463,22 @@ function observeEditorWidth() {
     // of them lands in one frame: 128ms in the engine the packaged app runs, which is what opening
     // the agent pane felt like. A slice per frame costs the same total and blocks nothing.
     const views = [...lee.editors.values(), lee.gitMergeView?.a, lee.gitMergeView?.b].filter(Boolean);
+    /* A measure is only worth paying for on an editor somebody can see. A notebook scrolled end to
+       end holds a view per cell and re-measured every one of them on every splitter drag; the ones
+       off screen are marked instead and measured when they scroll back in, which is what
+       `observeNotebookCells` already does for building them. */
+    const tall = window.innerHeight || 900;
+    const onScreen = v => {
+      try { const r = v.dom.getBoundingClientRect(); return r.bottom > -tall && r.top < tall * 2; }
+      catch (_) { return false; }
+    };
+    const later = [];
     const slice = () => {
-      for (const v of views.splice(0, 12)) { try { v.requestMeasure(); } catch (_) { /* torn down */ } }
+      for (const v of views.splice(0, 12)) {
+        try { onScreen(v) ? v.requestMeasure() : later.push(v); } catch (_) { /* torn down */ }
+      }
       if (views.length) frame = requestAnimationFrame(slice);
+      else measureWhenSeen(later.splice(0));
     };
     frame = requestAnimationFrame(slice);
   };
@@ -5710,7 +5750,7 @@ function moveDiffs(m, files) {
     const i = +row.dataset.moveFile;
     if (!row.open || built[i]) return;
     const f = files[i];
-    built[i] = LeeCM.createMerge($(`[data-move-diff="${i}"]`, row), {
+    built[i] = createMerge($(`[data-move-diff="${i}"]`, row), {
       left: f.before || '', right: f.after, lang: codeLang('', f.path),
       settings: lee.editorPrefs, readOnlyRight: true, revertControls: false});
   }));

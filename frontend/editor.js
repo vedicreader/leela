@@ -508,6 +508,19 @@ function appKeymap(binds) {
   }));
 }
 
+/* macOS hands a `contenteditable` to its own text checker, and WKWebView takes it up where a browser
+   does not: the packaged app curled quotes, corrected identifiers, and — because the rewrite lands
+   behind CodeMirror's back, so the change has to be recovered by diffing the mutated line — dropped
+   the next character typed at the start of that line. The served workspace never did any of it,
+   which is why it only ever looked like a bug in the Mac app.
+
+   `leela/desktop.py:quiet_text_substitution` turns the same thing off for the process, and
+   `createEditor` in `leela/static/js/core.js` sets these on the view as well, so a checkout whose
+   `leela/vendor/lee-cm6.js` predates this line is still covered. */
+const quietTyping = EditorView.contentAttributes.of({
+  spellcheck: "false", autocorrect: "off", autocapitalize: "off", "data-gramm": "false",
+});
+
 const OVERVIEW_W = 14;
 
 /* The overview stripe: the scrollbar, marked up.
@@ -886,6 +899,7 @@ export function create(el, opts = {}) {
     crosshairCursor(),
     syntaxHighlighting(hl, {fallback: true}),
     theme,
+    quietTyping,
     ghostField, inlineField, changesField, breakpointField, debugLineField, packageField, inlayHintField, ghostKeymap,
     language.of(langExt(lang)),
     editable.of(EditorView.editable.of(!readOnly)),
@@ -932,7 +946,7 @@ export function createMerge(el, opts = {}) {
   const {left = '', right = '', lang = 'python', settings = {}, onChange = null,
     readOnlyRight = false, revertControls = 'a-to-b'} = opts;
   const side = (readOnly = false) => [
-    settingsExt(settings), langExt(lang), syntaxHighlighting(hl, {fallback: true}), theme,
+    settingsExt(settings), langExt(lang), syntaxHighlighting(hl, {fallback: true}), theme, quietTyping,
     lineNumbers(), drawSelection(), highlightSelectionMatches(), readOnly ? EditorState.readOnly.of(true) : [],
     keymap.of([...searchKeymap, ...historyKeymap, ...defaultKeymap]),
   ];

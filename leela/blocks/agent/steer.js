@@ -126,12 +126,19 @@ async function pollApproval() {
   } catch (_) {}
 }
 
-// An approval must not sit unseen while the model works. Idle, only a background job raises one.
+/* An approval must not sit unseen while the model works. Idle, only a background job raises one.
+
+   Two seconds while busy, not the 750ms this used to run at: the turn's own SSE feed carries an
+   `approval` event and paints the checkpoint the moment it is raised, so this poll is the backstop
+   for a run whose stream this tab is not attached to. At 750ms it was four requests a second of the
+   process the window is drawing in, for something the stream had already said. */
+const APPROVAL_GAP = {hidden: 5000, busy: 2000, idle: 5000};
 async function approvalLoop() {
   if (!document.hidden) await pollApproval();
   // attention is about the conversations a person is *not* looking at, so it is polled even hidden
   try { await refreshAgentThreads(); } catch (_) {}
-  setTimeout(approvalLoop, document.hidden ? 5000 : lee.agentBusy ? 750 : 5000);
+  setTimeout(approvalLoop, document.hidden ? APPROVAL_GAP.hidden
+                         : lee.agentBusy ? APPROVAL_GAP.busy : APPROVAL_GAP.idle);
 }
 
 function readableDetail(value) {

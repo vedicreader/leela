@@ -27,7 +27,7 @@ function moveDiffs(m, files) {
     const i = +row.dataset.moveFile;
     if (!row.open || built[i]) return;
     const f = files[i];
-    built[i] = LeeCM.createMerge($(`[data-move-diff="${i}"]`, row), {
+    built[i] = createMerge($(`[data-move-diff="${i}"]`, row), {
       left: f.before || '', right: f.after, lang: codeLang('', f.path),
       settings: lee.editorPrefs, readOnlyRight: true, revertControls: false});
   }));
