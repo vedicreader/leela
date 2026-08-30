@@ -18,6 +18,7 @@ import {defaultKeymap, history, historyKeymap, indentWithTab,
         indentSelection as cmIndentSelection} from "@codemirror/commands";
 import {searchKeymap, highlightSelectionMatches, openSearchPanel} from "@codemirror/search";
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap,
+        acceptCompletion,
         startCompletion as cmStartCompletion} from "@codemirror/autocomplete";
 import {syntaxHighlighting, HighlightStyle, indentUnit, bracketMatching,
         foldGutter, foldKeymap, indentOnInput, StreamLanguage, syntaxTree} from "@codemirror/language";
@@ -482,8 +483,12 @@ export const clearGhost = (view) => setGhost(view, "");
 
 // Tab accepts, escape dismisses -- and both fall through when nothing is pending,
 // so indent and CodeMirror's own escape behaviour are untouched the rest of the time.
+// Tab: take the suggestion that is on screen, whichever kind it is, and indent when there is
+// none. `completionKeymap` leaves Tab alone and `indentWithTab` takes it, so an open completion
+// list was indented past rather than accepted -- in every other editor Tab accepts it.
 const ghostKeymap = Prec.highest(keymap.of([
   {key: "Tab", run: acceptGhost},
+  {key: "Tab", run: acceptCompletion},          // false when no option is selected, so indent still gets Tab
   {key: "Escape", run: (v) => (ghost(v) ? (clearGhost(v), true) : false)},
 ]));
 function bindFind(view) {

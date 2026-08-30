@@ -264,6 +264,43 @@ def test_a_standalone_code_surface_lints_finds_navigates_and_fits_its_own_text()
     assert got['claimed'] and got['merge'] and got['found']['selection'] == 'whole-file-target'
     assert got['unchanged'] == got['found']['doc'] and got['closed'] == 0
 
+def test_tab_takes_the_completion_that_is_on_screen():
+    """Tab accepted a ghost suggestion and otherwise indented, and `completionKeymap` does not bind
+    Tab at all, so an open completion list was indented past rather than accepted. Every editor
+    people arrive from accepts it with Tab, and indenting is what Tab does when nothing is offered.
+    """
+    import json
+    async def go(pg):
+        await pg.route('**/complete*', lambda route: asyncio.ensure_future(route.fulfill(
+            status=200, content_type='application/json',
+            body=json.dumps({'from': 0, 'matches': ['sanskrit_parse'], 'graph': []}))))
+        await pg.evaluate("""() => {
+          const host = document.createElement('div'); host.id = 'tab-complete';
+          host.style.cssText = 'width:420px;height:120px'; document.body.appendChild(host);
+          window._tabView = LeeCM.create(host, {doc: 'sanskrit', lang: 'python', completeUrl: '/complete'});
+          window._tabView.focus(); window._tabView.dispatch({selection: {anchor: 8}});
+        }""")
+        await pg.keyboard.type('_')
+        await pg.wait_for_selector('.cm-tooltip-autocomplete')
+        await pg.keyboard.press('Tab')
+        await pg.wait_for_timeout(150)
+        accepted = await pg.evaluate("() => LeeCM.getDoc(window._tabView)")
+        # and where nothing is offered at all, Tab is still indent
+        await pg.evaluate("""() => {
+          const host = document.createElement('div'); host.id = 'tab-plain';
+          host.style.cssText = 'width:420px;height:120px'; document.body.appendChild(host);
+          window._plainView = LeeCM.create(host, {doc: 'x = 1', lang: 'python'});
+          window._plainView.focus(); window._plainView.dispatch({selection: {anchor: 0}});
+        }""")
+        await pg.keyboard.press('Tab')
+        await pg.wait_for_timeout(100)
+        indented = await pg.evaluate("() => LeeCM.getDoc(window._plainView)")
+        await pg.evaluate("() => { document.getElementById('tab-complete').remove(); document.getElementById('tab-plain').remove(); }")
+        return {'accepted': accepted, 'indented': indented}
+    out = _run(go)
+    assert out['accepted'] == 'sanskrit_parse', 'Tab accepts the open completion'
+    assert out['indented'].startswith((' ', '\t')), 'and still indents when nothing is offered'
+
 def test_the_modals_the_editor_opens_own_their_focus_and_their_controls():
     """One page for every overlay a person reaches from the editing surface: the kernel picker traps
     focus and answers the arrows, the platform preferences chord opens settings from a focused cell,
