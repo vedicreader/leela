@@ -6,7 +6,8 @@ import os, shutil, subprocess, sys, threading, time
 from pathlib import Path
 
 __all__ = ['clean_env', 'strip_bundle', 'BUNDLE_ONLY', 'work_dir', 'support_paths', 'kernel_support', 'install_kernel_support', 'LEELA_PY',
-           'INSPECTOR', 'INSPECTOR_TTL', 'installable', 'inspector_support', 'install_inspector_support']
+           'INSPECTOR', 'INSPECTOR_TTL', 'KERNEL_PACKAGES', 'as_installed', 'installable', 'inspector_support',
+           'install_inspector_support']
 
 #: Leela's own minor version. A kernel may borrow Leela's `sys.path` only when it matches.
 LEELA_PY = tuple(sys.version_info[:2])
@@ -20,6 +21,13 @@ INSPECTOR = ('dhrishti',)
 #: Seconds an inspector answer is reused for. A person who installs pandas by hand should not have
 #: to restart Leela to be believed.
 INSPECTOR_TTL = 90
+
+#: What a project environment needs to run either kernel. `ipymini` names `comm`, `ipython` and
+#: `kernmini` and no more, but imports `fastcore` and `microio`, and `kernmini` moved `debug` out
+#: from under it after the version `ipymini` asks for, so resolving the declared requirements alone
+#: installs a kernel that cannot start. These are the distributions, and `as_installed` supplies the
+#: versions.
+KERNEL_PACKAGES = ('ipykernel', 'ipymini', 'kernmini', 'fastcore', 'microio')
 
 _INSPECT = {}
 _locks, _locks_lock = {}, threading.Lock()
@@ -90,6 +98,21 @@ def installable(python):
     if p == os.path.abspath(sys.executable): return False
     return '/Contents/Resources/' not in p and '/Contents/MacOS/' not in p
 
+def as_installed(names=KERNEL_PACKAGES):
+    """`names` pinned to the versions Leela is running, and left loose where Leela has none.
+
+    Leela's own environment is the one combination of these that is known to start a kernel: it is
+    resolved from a lock and every release is tested against it. Asking an index for the newest of
+    each instead is what produced `ipymini 0.1.20` beside `kernmini 0.1.9`, which import each other
+    and do not fit. When Leela upgrades, so does what it installs.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+    out = []
+    for name in names:
+        try: out.append(f'{name}=={version(name)}')
+        except (PackageNotFoundError, ValueError, OSError): out.append(name)
+    return out
+
 def _attempts(python, packages):
     "Installer commands to try, in order, for environments that intentionally lack pip."
     out = []
@@ -106,10 +129,15 @@ def _log(command, p):
 def _detail(logs):
     return next((a['output'] for a in reversed(logs) if a['output']), 'no installer answered')
 
-def install_kernel_support(python, packages=('ipykernel>=7.3.0', 'ipymini>=0.0.1')):
-    "Install kernel packages, preferring uv for environments intentionally lacking pip."
+def install_kernel_support(python, packages=None):
+    """Install kernel packages, preferring uv for environments intentionally lacking pip.
+
+    An installer that returned 0 and left a kernel that will not import is a failure of the
+    packages, not of the installer, and saying so is the difference between a report about
+    `ipymini` and one about the `pip` a uv environment was never going to have.
+    """
     python = str(Path(python).expanduser().absolute())
-    logs = []
+    packages, logs, unimportable = list(packages or as_installed()), [], ''
     with _lock_for(python):
         for command in _attempts(python, packages):
             p = _run(command, 600)
@@ -118,7 +146,9 @@ def install_kernel_support(python, packages=('ipykernel>=7.3.0', 'ipymini>=0.0.1
                 support = kernel_support(python)
                 if all(x['available'] for x in support.values()):
                     return {'ok': True, 'python': python, 'support': support, 'attempts': logs}
-    raise RuntimeError(f'kernel support installation failed: {_detail(logs)}')
+                unimportable = '; '.join(f"{name} installed but does not import ({x['error']})"
+                                         for name, x in support.items() if not x['available'])
+    raise RuntimeError(f'kernel support installation failed: {unimportable or _detail(logs)}')
 
 def install_inspector_support(python, packages=INSPECTOR):
     "Give `python` its own copy of what the inspector imports, then ask it again."

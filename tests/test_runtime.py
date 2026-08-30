@@ -861,7 +861,8 @@ def test_install_prefers_uv_when_the_project_venv_has_no_pip(monkeypatch, tmp_pa
     result = support.install_kernel_support(python)
     assert result['ok']
     assert calls[0][:5] == ['/usr/local/bin/uv', 'pip', 'install', '--python', str(python.absolute())]
-    assert 'ipykernel>=7.3.0' in calls[0] and 'ipymini>=0.0.1' in calls[0]
+    # pinned to what Leela runs, because the newest of each do not fit each other
+    assert [c for c in calls[0] if c.startswith('ipykernel==')] and [c for c in calls[0] if c.startswith('ipymini==')]
 
 def test_the_environment_leela_wires_up_actually_imports():
     from inspect import signature
@@ -1467,6 +1468,35 @@ def test_a_kernel_of_another_python_borrows_nothing_from_leela():
     guard, borrow = src.index('tuple(sys.version_info[:2]) =='), src.index('sys.path.append')
     assert guard < borrow, 'and guarded before they are borrowed, not after'
     assert src.count('tuple(sys.version_info[:2])') >= 2, 'the dhrishti pin is guarded too'
+
+def test_a_new_environment_gets_the_kernel_versions_leela_itself_runs():
+    """Resolving the declared requirements gave `ipymini 0.1.20` beside `kernmini 0.1.9`, which
+    import each other and do not fit: `ipymini` imports `kernmini.debug`, and 0.1.9 does not ship
+    it. `ipymini` also names neither `fastcore` nor `microio` and imports both. Leela's own
+    environment is the combination known to start a kernel, so that is what is installed."""
+    import importlib.metadata as md
+    from leela.blocks.runtime.support import KERNEL_PACKAGES, as_installed
+    assert set(KERNEL_PACKAGES) >= {'ipykernel', 'ipymini', 'kernmini', 'fastcore', 'microio'}
+    pinned = dict(spec.split('==') for spec in as_installed() if '==' in spec)
+    for name in KERNEL_PACKAGES:
+        assert pinned[name] == md.version(name), f'{name} is pinned to the one Leela runs'
+    loose = as_installed(('ipykernel', 'no-such-distribution-at-all'))
+    assert loose[-1] == 'no-such-distribution-at-all', 'and a name Leela lacks is left to resolve'
+
+def test_an_installed_kernel_that_will_not_import_is_reported_as_that(monkeypatch, tmp_path):
+    """The installer returned 0 and the kernel would not import, and what reached the person was
+    `No module named pip` from the fallback attempt: a report about the installer a uv environment
+    was never going to have, rather than about the package that does not work."""
+    from leela.blocks.runtime import support
+    monkeypatch.setattr(support, '_run', lambda args, timeout=180: completed(args))
+    monkeypatch.setattr(support, 'kernel_support', lambda python: {
+        'ipykernel': {'available': True, 'version': '7.3.0', 'error': ''},
+        'ipymini': {'available': False, 'version': '', 'error': "ModuleNotFoundError: No module named 'kernmini.debug'"}})
+    with pytest.raises(RuntimeError) as caught:
+        support.install_kernel_support(tmp_path/'.venv'/'bin'/'python')
+    said = str(caught.value)
+    assert 'ipymini installed but does not import' in said and 'kernmini.debug' in said
+    assert 'pip' not in said, 'the fallback installer is not the news'
 
 def test_the_inspector_a_project_must_install_is_the_one_it_cannot_borrow():
     "numpy and pandas are what is noticed missing; dhrishti is what actually has to be there."
