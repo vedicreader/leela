@@ -3414,6 +3414,11 @@ function modal(inner, onKey, onClose, options = {}) {
     // Nested dialogs form a stack, and only the top one owns keys, or one Escape closes every
     // layer at once.
     if ($$('.lee-modal').at(-1) !== m) return;
+    // The dialog's own keys come first. A dialog that means something by Tab says so by preventing
+    // the default; the trap below then never sees it. Handling Tab here first made that branch
+    // unreachable, and a dialog that bound it looked like it had no binding at all.
+    if (onKey) onKey(e, m);
+    if (e.defaultPrevented) return;
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); requestClose(); return; }
     if (e.key === 'Tab') {
       const items = focusables(); if (!items.length) { e.preventDefault(); box.focus(); return; }
@@ -3422,8 +3427,6 @@ function modal(inner, onKey, onClose, options = {}) {
       else if (!e.shiftKey && (at < 0 || at === items.length - 1)) { e.preventDefault(); items[0].focus(); }
       return;
     }
-    if (onKey) onKey(e, m);
-    if (e.defaultPrevented) return;
     const rows = $$('.lee-mrow:not([data-off])', m), at = rows.indexOf(document.activeElement);
     if (rows.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault(); e.stopPropagation();
@@ -3796,13 +3799,117 @@ const SEARCH_MODES = [
   ['ann', 'ANN', 'Kosha embedding ANN'],
 ];
 
+/* What a search was asked, what it showed, and what was worth opening. Queued and posted in
+   batches: a keystroke never waits on a write, and a failed write never fails a search. */
+function searchSignals(session) {
+  const queue = [];
+  let queryId = '', askedAt = 0, timer = null, shown = new Map(), previewKey = '', previewAt = 0, opened = 0;
+  let context = {};
+  const key = h => `${h.path || ''}:${h.line || 0}:${h.package || ''}`;
+  const flush = doc => {
+    clearTimeout(timer); timer = null;
+    const events = queue.splice(0, queue.length);
+    if (!events.length && !doc) return;
+    post('/search/events', {events, session: doc || null}).catch(() => {});
+  };
+  const push = (kind, row = {}) => {
+    queue.push({session, query_id: queryId, kind, at: Date.now() / 1000, ...row});
+    if (!timer) timer = setTimeout(() => flush(), 4000);
+  };
+  const closePreview = () => {
+    if (!previewKey) return;
+    const row = shown.get(previewKey);
+    push('preview', {key: previewKey, rank: row?.rank ?? 0, dwell: Math.round(performance.now() - previewAt)});
+    previewKey = '';
+  };
+  const doc = () => ({session, query_id: queryId, ...context, opened, shown_n: shown.size,
+                      shown: [...shown.values()].sort((a, b) => a.rank - b.rank)});
+  return {
+    // A query typed over one that had already answered is the strongest negative signal there is.
+    query(q, mode, scope, exts) {
+      closePreview();
+      if (queryId && shown.size) push('refine', {q});
+      queryId = `${session}:${Date.now().toString(36)}`;
+      askedAt = performance.now(); shown = new Map(); opened = 0;
+      context = {q, mode, scope, exts};
+      push('query', context);
+    },
+    leg(leg, ms, n) { push('leg', {leg, ms: Math.round(ms), n}); },
+    impression(rows) {
+      shown = new Map(rows.map((h, rank) => [key(h), {rank, path: h.path, line: h.line,
+        symbol: h.symbol || '', package: h.package || '', sources: h.sources || [h.kind],
+        previewed: false, opened: false}]));
+      push('impression', {n: rows.length, ms: Math.round(performance.now() - askedAt)});
+    },
+    preview(hit, rank) {
+      if (!hit) return;
+      const k = key(hit); if (k === previewKey) return;
+      closePreview();
+      previewKey = k; previewAt = performance.now();
+      const row = shown.get(k); if (row) row.previewed = true;
+      if (!row) shown.set(k, {rank, path: hit.path, line: hit.line, symbol: hit.symbol || '',
+        sources: hit.sources || [hit.kind], previewed: true, opened: false});
+    },
+    open(hit, rank) {
+      if (!hit) return;
+      closePreview(); opened += 1;
+      const row = shown.get(key(hit)); if (row) row.opened = true;
+      push('open', {key: key(hit), rank, path: hit.path, line: hit.line, symbol: hit.symbol || '',
+        sources: hit.sources || [hit.kind], why: hit.why || null, score: hit.score || 0,
+        ms: Math.round(performance.now() - askedAt), ...context});
+    },
+    mode(next) { push('mode', {mode: next}); },
+    close() {
+      closePreview();
+      if (queryId && !opened) push('abandon', {n: shown.size});
+      flush(queryId ? doc() : null);
+    },
+  };
+}
+
+/* Every slider in plain words: what the number buys, and what it is paying for. The settings keys
+   are named for the scorer's own fields, which say nothing to somebody who has not read it. */
+const WEIGHT_LABELS = {
+  legFiles: ['a matching filename', 'a file whose name contains what you typed'],
+  legSymbols: ['a matching name in the code', 'a function or class the code index knows'],
+  legRg: ['the words, found in a file', 'a line containing exactly what you typed'],
+  legFts: ['a keyword match', 'the search index found your words in a file'],
+  legAnn: ['a match by meaning', 'code that does something similar, in different words'],
+  legRank: ['being near the top of its own list', 'how much to respect the order each search came back in'],
+  symbolExact: ['the name is exactly what you typed', 'searching `merge` and finding `def merge`'],
+  symbolPart: ['the name contains what you typed', 'searching `merge` and finding `merge_dicts`'],
+  queryInText: ['your words in the matching line', 'the line itself contains what you typed'],
+  queryInFilename: ['your words in the filename', 'the file is called something like what you typed'],
+  demoteNoise: ['pushing junk down', 'points taken off `node_modules`, `dist`, `build`, `vendor` and minified files'],
+};
+
+/* One hit's score from one set of weights, the arithmetic `Weights.score` does on the server. The
+   panel re-ranks with it rather than asking again, so a slider moves the list as it is dragged. */
+function weighHit(hit, weights, keys) {
+  const why = hit.why; if (!why) return Number(hit.score || 0);
+  let out = 0;
+  for (const [name, field] of Object.entries(keys || {})) {
+    if (field === why.leg) { out += Number(weights[name] || 0); continue; }
+    if (field !== 'leg' && field in why) out += Number(weights[name] || 0) * Number(why[field] || 0);
+  }
+  return out;
+}
+
 async function codeSearch() {
+  const session = crypto.randomUUID?.() || String(Math.random()).slice(2);
+  const signals = searchSignals(session);
   let hits = [], sel = 0, backend = '', previewView = null, searchSeq = 0;
+  // Two zones, one selection. Tab walks the rail and switches as it goes; Enter on the rail steps
+  // into the results, and Enter in the results opens. Arrows are always the results.
+  let zone = 'list', tuned = false, weights = {}, weightKeys = {}, weightDefaults = {};
   let mode = localStorage.getItem('lee-search-mode') || 'all';
   if (!SEARCH_MODES.some(([id]) => id === mode)) mode = 'all';
   const counts = {};
   const m = modal(
-    `<div class="lee-searchbar"><input class="lee-input" id="cs" placeholder="search code, symbols and meaning…" autofocus>
+    `<div class="lee-searchbar"><input class="lee-input" id="cs" placeholder="search code, symbols and meaning…" autofocus
+            role="combobox" aria-expanded="true" aria-controls="cslist" aria-autocomplete="list">
+     <button class="lee-btn" id="cstune" type="button" aria-pressed="false">weights</button>
+     <button class="lee-btn" id="cslog" type="button" aria-pressed="false">log</button>
      <button class="lee-btn" id="kosharefresh" type="button">sync</button></div>` +
     // A workspace holds several checkouts, so "this project" is the default and "everything
     // open" is the deliberate widening.
@@ -3813,40 +3920,56 @@ async function codeSearch() {
        <label>files<input class="lee-input" id="csexts" placeholder="py, ts — blank for all"
               aria-label="restrict to file extensions"></label>
        <span class="lee-dim" id="csscopenote"></span></div>` +
+    `<div class="lee-search-weights" id="csweights" hidden></div>` +
     `<div class="lee-kosha-status" id="koshastatus"><span>Opening Kosha…</span></div>
      <div class="lee-code-search-body">
        <nav class="lee-searchrail" id="csrail" aria-label="search mode">${SEARCH_MODES.map(([id, label, tip]) =>
-         `<button class="lee-searchrail-mode" data-mode="${id}" title="${esc(tip)}">` +
+         `<button class="lee-searchrail-mode" data-mode="${id}" tabindex="-1" title="${esc(tip)}">` +
          `<span>${esc(label)}</span><b data-count-for="${id}"></b></button>`).join('')}
          <span class="lee-dim lee-searchrail-hint">tab / shift+tab</span></nav>
-       <div class="lee-modallist" id="cslist"><div class="lee-dim">type to search repository + environment context</div></div>
+       <div class="lee-modallist" id="cslist" role="listbox" aria-label="search results"><div class="lee-dim">type to search repository + environment context</div></div>
        <aside class="lee-search-preview"><header><div><strong id="cspreviewtitle">Code preview</strong>` +
        `<span id="cspreviewmeta">Select a result</span></div>` +
        `<div class="lee-search-actions"><button class="lee-btn" id="cspkg" hidden>Package API</button>` +
        `<button class="lee-btn go" id="csopen" disabled>Open file</button></div></header>` +
        `<div id="cspreview"><div class="lee-search-preview-empty">Matches open here with syntax highlighting.</div></div>` +
-       `<div class="lee-search-relations" id="csrelations"></div></aside></div>`,
+       `<div class="lee-search-relations" id="csrelations"></div></aside></div>` +
+       `<div class="lee-search-hints"><kbd>tab</kbd> changes the kind of search` +
+       `<kbd>enter</kbd> goes into the results, then opens one<kbd>↑↓</kbd> moves` +
+       `<span class="lee-dim lee-search-hint-click">click previews, clicking it again opens it</span>` +
+       `<span class="lee-spacer"></span><span class="lee-dim" id="cssignals"></span></div>`,
     (e) => {
-      if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, hits.length - 1); paint(); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); paint(); }
-      else if (e.key === 'Enter') { e.preventDefault(); go(); }
-      // Tab walks the modes rather than the focus. The dialog traps Tab anyway.
+      // The panel owns its own keyboard: a slider needs its arrows, and Tab has to reach the next
+      // control in it rather than the next search mode.
+      if (e.target?.closest?.('.lee-search-weights')) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); zone = 'list'; select(sel + 1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); zone = 'list'; select(sel - 1); }
+      else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (zone === 'rail') { zone = 'list'; paintRail(); select(sel); input.focus(); }
+        else go();
+      }
       else if (e.key === 'Tab') { e.preventDefault(); cycleMode(e.shiftKey ? -1 : 1); }
     }, () => {
       if (previewView) LeeCM.destroy(previewView);
+      clearTimeout(previewTimer);
       // Closing the dialog must stop the search, or four backends work on for nothing.
       if (liveStream) { try { liveStream.close(); } catch {} liveStream = null; }
+      signals.close();
     });
   m.classList.add('lee-code-search-modal');
   const list = $('#cslist', m), input = $('#cs', m), preview = $('#cspreview', m), open = $('#csopen', m);
-  const pkgBtn = $('#cspkg', m);
+  const pkgBtn = $('#cspkg', m), panel = $('#csweights', m);
   const scopeEl = $('#csscope', m), extsEl = $('#csexts', m);
   // Remembered, so somebody who works in Python does not retype `py` every time.
   scopeEl.value = localStorage.getItem('lee-search-scope') || 'project';
   extsEl.value = localStorage.getItem('lee-search-exts') || '';
   const paintRail = () => {
-    $$('.lee-searchrail-mode', m).forEach(b =>
-      b.classList.toggle('active', b.dataset.mode === mode));
+    $$('.lee-searchrail-mode', m).forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === mode);
+      b.classList.toggle('cursor', zone === 'rail' && b.dataset.mode === mode);
+      b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
+    });
     // A count means something only once that mode has run. Blank is "not asked yet", which must
     // not look like nought.
     SEARCH_MODES.forEach(([id]) => {
@@ -3855,23 +3978,47 @@ async function codeSearch() {
       el.classList.toggle('zero', counts[id] === 0);
     });
   };
-  const setMode = next => {
+  const setMode = (next, from = 'click') => {
     if (!next || next === mode) return;
     mode = next; localStorage.setItem('lee-search-mode', mode);
+    zone = from === 'tab' ? 'rail' : 'list';
+    signals.mode(mode);
     paintRail();
     if (input.value.trim()) search(); else paint();
     input.focus();
   };
+  // Tab switches as it walks: the mode you are on is the mode that answered, so there is never a
+  // pending choice to lose track of. The searches it fires are debounced by `search`.
   const cycleMode = step => {
     const at = SEARCH_MODES.findIndex(([id]) => id === mode);
-    const next = SEARCH_MODES[(at + step + SEARCH_MODES.length) % SEARCH_MODES.length];
-    setMode(next[0]);
+    setMode(SEARCH_MODES[(at + step + SEARCH_MODES.length) % SEARCH_MODES.length][0], 'tab');
   };
+  const rowId = i => `cshit${i}`;
+  const select = (next, withPreview = true) => {
+    if (!hits.length) return;
+    sel = Math.max(0, Math.min(next, hits.length - 1));
+    $$('.lee-search-result', list).forEach((row, i) => {
+      const on = i === sel;
+      row.classList.toggle('sel', on); row.setAttribute('aria-selected', String(on));
+      if (on) row.scrollIntoView({block: 'nearest'});
+    });
+    input.setAttribute('aria-activedescendant', rowId(sel));
+    if (withPreview) showPreview();
+  };
+  let previewTimer = null;
   const showPreview = () => {
+    // Debounced: a held arrow key would otherwise mount and tear down one editor per row.
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(paintPreview, 70);
+  };
+  const paintPreview = () => {
     if (previewView) { LeeCM.destroy(previewView); previewView = null; }
     const h = hits[sel];
     if (!h) {
       preview.innerHTML = '<div class="lee-search-preview-empty">No result selected.</div>';
+      // The header named the last hit, which a mode with no matches of its own does not have.
+      $('#cspreviewtitle', m).textContent = 'Code preview';
+      $('#cspreviewmeta', m).textContent = 'Select a result';
       open.disabled = true; pkgBtn.hidden = true; return;
     }
     const filename = h.path.split('/').pop() || h.package || 'indexed source';
@@ -3886,6 +4033,7 @@ async function codeSearch() {
     preview.innerHTML = '<div class="lee-search-preview-editor"></div>';
     previewView = mountCodeSurface($('.lee-search-preview-editor', preview), h.text || '(no indexed preview)',
                                    codeLang('', h.path), false);
+    signals.preview(h, sel);
     const relations = $('#csrelations', m), callers = h.callers || [];
     relations.innerHTML = callers.length ? `<span>called by</span>` + callers.map(name =>
       `<button data-symbol="${esc(name)}">${esc(name.split('.').pop())}</button>`).join('') : '';
@@ -3895,21 +4043,29 @@ async function codeSearch() {
       if (mode === 'context') search(); else setMode('context');
     });
   };
+  // Only once a weight has been moved: until then the streamed leg order is the order, and a list
+  // that re-sorted under the cursor while it filled would be unreadable.
+  const ranked = () => tuned ? [...hits].sort((a, b) =>
+    weighHit(b, weights, weightKeys) - weighHit(a, weights, weightKeys) ||
+    a.path.localeCompare(b.path) || a.line - b.line) : hits;
   const paint = () => {
     if (!hits.length) {
       list.innerHTML = `<div class="lee-dim">${backend ? 'no matches · ' + esc(backend) : 'type to search'}</div>`;
+      input.removeAttribute('aria-activedescendant');
       showPreview(); return;
     }
+    hits = ranked();
     list.innerHTML = hits.map((h, i) => {
       const f = h.path.split('/').pop() || h.package || 'environment';
       const foundBy = (h.sources || [h.kind]).join(' + ');
-      return `<button class="lee-search-result${i === sel ? ' sel' : ''}" data-i="${i}">` +
+      return `<button class="lee-search-result${i === sel ? ' sel' : ''}" id="${rowId(i)}" role="option" ` +
+        `tabindex="-1" aria-selected="${i === sel}" data-i="${i}">` +
         `<span class="lee-search-result-kind">${esc(h.kind.startsWith('env-') ? 'PKG' : h.kind === 'file' ? 'FILE' : h.symbol ? 'SYM' : 'TXT')}</span>` +
         `<span><strong>${esc(h.symbol || h.text.split('\n')[0].slice(0, 90))}</strong>` +
         `<small>${esc(h.package ? h.package + ' · ' : '')}${esc(f)}:${h.line}</small></span>` +
         `<em>${esc(foundBy)}</em></button>`;
     }).join('');
-    $('.lee-search-result.sel', list)?.scrollIntoView({block: 'nearest'}); showPreview();
+    select(sel);
   };
   /* A name Kosha knows the file for opens it; one it does not still answers the other question. */
   const packageApi = async h => {
@@ -3929,14 +4085,19 @@ async function codeSearch() {
   };
   const go = async () => {
     const h = hits[sel]; if (!h) return;
+    signals.open(h, sel);
     if (h.path) { m.remove(); return openLocation(h); }
     if (!h.package) return status('package source is indexed read-only', 'info');
     await packageApi(h);
   };
-  // One click opens at the line. Arrow keys preview without committing.
+  // A click selects and previews. A second click on the row it is previewing is what opens it, so
+  // a mouse can read a result before committing to it, exactly as the arrow keys can.
   list.onclick = e => {
     const row = e.target.closest('[data-i]'); if (!row) return;
-    sel = +row.dataset.i; paint(); go();
+    const at = +row.dataset.i;
+    zone = 'list';
+    if (at === clicked) return go();
+    clicked = at; select(at, false); clearTimeout(previewTimer); paintPreview();
   };
   open.onclick = go;
   pkgBtn.onclick = () => { const h = hits[sel]; if (h?.package) packageApi(h); };
@@ -3946,6 +4107,7 @@ async function codeSearch() {
   // hit a later leg finds again adds its name to the existing row rather than a second one.
   const streamAll = (q, seq) => new Promise(resolve => {
     const slots = new Map(), seen = new Map();
+    const started = performance.now();
     let notes = [];
     const es = new EventSource('/search/stream?q=' + encodeURIComponent(q) +
                                '&scope=' + encodeURIComponent(scopeEl.value) +
@@ -3962,6 +4124,7 @@ async function codeSearch() {
     es.addEventListener('start', e => {
       const d = JSON.parse(e.data);
       for (const leg of d.legs || []) slots.set(leg, []);      // fixes the order once
+      if (d.weights) setWeights(d.weights);
       const where = (d.searched || []).map(p => p.split('/').pop()).join(', ');
       $('#csscopenote', m).textContent = where ? `searched ${where}` : '';
     });
@@ -3977,6 +4140,7 @@ async function codeSearch() {
         seen.set(key, h); kept.push(h);
       }
       slots.set(d.leg, kept);
+      signals.leg(d.leg, performance.now() - started, (d.hits || []).length);
       recount();
       backend = `all · ${[...slots.keys()].filter(k => slots.get(k).length).join(' + ') || 'searching'}`;
       // The list grew at the end, so the selection still points at its row.
@@ -3985,20 +4149,21 @@ async function codeSearch() {
     });
     es.addEventListener('done', e => {
       if (notes.length) backend += ' · ' + notes.slice(0, 2).join('; ');
-      paint(); stop();
+      paint(); signals.impression(hits); stop();
     });
     es.onerror = () => { backend = backend || 'search stream failed'; paint(); stop(); };
   });
 
-  let timer, liveStream = null;
+  let timer, liveStream = null, clicked = -1;
   const search = () => {
     clearTimeout(timer); const seq = ++searchSeq;
     if (liveStream) { try { liveStream.close(); } catch {} liveStream = null; }
     timer = setTimeout(async () => {
       const q = input.value.trim();
       if (!q) { hits = []; backend = ''; paint(); return; }
+      signals.query(q, mode, scopeEl.value, extsEl.value.trim());
       if (mode === 'all') {
-        hits = []; sel = 0; backend = 'all · searching';
+        hits = []; sel = 0; clicked = -1; backend = 'all · searching';
         list.innerHTML = `<div class="lee-search-progress"><span></span>every backend, fastest first…</div>`;
         return streamAll(q, seq);
       }
@@ -4008,13 +4173,14 @@ async function codeSearch() {
                             '&scope=' + encodeURIComponent(scopeEl.value) +
                             '&exts=' + encodeURIComponent(extsEl.value.trim()));
         if (seq !== searchSeq) return;
-        hits = d.hits || []; backend = d.backend + (d.note ? ' · ' + d.note : ''); sel = 0;
+        hits = d.hits || []; backend = d.backend + (d.note ? ' · ' + d.note : ''); sel = 0; clicked = -1;
+        if (d.weights) setWeights(d.weights);
         // Which folders were walked, because "no matches" and "no matches here" are different
         // answers.
         const where = (d.searched || []).map(p => p.split('/').pop()).join(', ');
         $('#csscopenote', m).textContent = where ? `searched ${where}` : '';
         counts[mode] = hits.length; paintRail();
-        paint(); status(`search: ${d.backend}${d.note ? ' — ' + d.note : ''}`);
+        paint(); signals.impression(hits); status(`search: ${d.backend}${d.note ? ' — ' + d.note : ''}`);
       } catch (e) {
         if (seq !== searchSeq) return;
         hits = []; backend = e.message || String(e); paint(); status(backend, 'err');
@@ -4030,11 +4196,126 @@ async function codeSearch() {
     localStorage.setItem('lee-search-exts', extsEl.value.trim());
     if (input.value.trim()) search();
   });
+  const setWeights = values => { weights = {...weights, ...values}; };
+  /* Every weight `all` pays, with the list re-ranking as one is dragged. Ranking you cannot see
+     is ranking you cannot tune, so each hit carries the features it scored on and the panel does
+     the same arithmetic the server did. */
+  let view = 'weights';
+  const paintPanel = d => {
+    held = d;
+    weightKeys = d.keys || {}; weightDefaults = d.defaults || {}; setWeights(d.weights || {});
+    const s = d.summary || {};
+    const slider = name => {
+      const [label, help] = WEIGHT_LABELS[name] || [name.replace(/([A-Z])/g, ' $1').toLowerCase(), ''];
+      return `<label class="lee-weight" title="${esc(help)}"><span>${esc(label)}<small>${esc(help)}</small></span>` +
+        `<input type="range" min="0" max="500" step="1" data-weight="${esc(name)}" value="${Number(weights[name] || 0)}" aria-label="${esc(label)}">` +
+        `<input class="lee-input" type="number" min="0" max="500" data-weight-value="${esc(name)}" value="${Number(weights[name] || 0)}"></label>`;
+    };
+    const legs = Object.entries(s.legs || {}).map(([leg, row]) =>
+      `${esc(leg)} ${row.won || 0}/${row.found || 0}`).join(' · ');
+    panel.innerHTML =
+      `<section data-panel="weights">` +
+      `<p class="lee-weight-lead">Every result gets a score, and the highest score goes to the top. ` +
+      `These are the points each thing is worth. Drag one and the list below re-sorts as you go.</p>` +
+      `<div class="lee-weight-group"><h4>Points for how a result was found</h4><div class="lee-weight-grid">` +
+      Object.keys(d.keys || {}).filter(k => k.startsWith('leg')).map(slider).join('') + `</div></div>` +
+      `<div class="lee-weight-group"><h4>Points for how well it matches</h4><div class="lee-weight-grid">` +
+      Object.keys(d.keys || {}).filter(k => !k.startsWith('leg')).map(slider).join('') + `</div></div>` +
+      `<div class="lee-weight-actions"><button class="lee-btn" data-weights-reset type="button">defaults</button>` +
+      `<span class="lee-spacer"></span><button class="lee-btn go" data-weights-save type="button">save weights</button></div></section>` +
+      `<section data-panel="log"><div class="lee-weight-group"><h4>What Leela keeps about your searches</h4><div class="lee-weight-row">` +
+      `<label>keep<select class="lee-select" data-signal="telemetry">` +
+      ['off', 'local', 'vault'].map(v => `<option value="${v}"${v === d.telemetry ? ' selected' : ''}>${v}</option>`).join('') +
+      `</select></label>` +
+      `<label class="lee-settings-toggle"><input type="checkbox" data-signal="snippets"${d.snippets ? ' checked' : ''}><span>keep matched text</span></label>` +
+      `<button class="lee-btn" data-signals-purge type="button">purge log</button></div>` +
+      `<div class="lee-dim lee-weight-note">${esc(s.searches || 0)} searches · ${esc(s.opens || 0)} opened · ` +
+      `MRR ${esc(s.mrr || 0)} · abandoned ${Math.round((s.abandon_rate || 0) * 100)}% · retyped ${Math.round((s.refine_rate || 0) * 100)}%` +
+      `${legs ? ' · won/found ' + esc(legs) : ''}<br>${esc(d.dir || '')}${d.telemetry === 'vault' ? ' · vault ' + esc(d.vault || '') : ''}</div></div>` +
+      // What was recorded, not just how much of it: a log you cannot read is a log you cannot
+      // trust, and the rank a search was opened at is the number the weights are answering to.
+      `<div class="lee-weight-group"><h4>Your recent searches</h4><div class="lee-search-log">` +
+      ((s.recent || []).map(r => `<button data-recall="${esc(r.q)}" data-recall-mode="${esc(r.mode || 'all')}">` +
+        `<strong>${esc(r.q)}</strong><span>${esc(r.mode || 'all')} · ${esc(r.n || 0)} shown` +
+        `${r.ms ? ' · ' + esc(r.ms) + 'ms' : ''}${r.previewed ? ' · ' + esc(r.previewed) + ' previewed' : ''}</span>` +
+        `<em>${r.opened.length ? 'opened #' + (r.opened[0].rank + 1) + ' ' + esc((r.opened[0].path || '').split('/').pop() || r.opened[0].symbol)
+             : r.abandoned ? 'abandoned' : 'no open'}</em></button>`).join('') ||
+        '<div class="lee-dim">nothing recorded yet</div>') + `</div></div>` +
+      `<div class="lee-dim lee-weight-note">Click a row to run that search again. Leela keeps what you ` +
+      `searched for, what it showed you, what you looked at and what you opened${d.telemetry === 'vault' ?
+      ', and files one note per search in a vault of its own' : ''}. None of it leaves this machine.</div>` +
+      `</div></section>`;
+    $$('[data-panel]', panel).forEach(el => el.hidden = el.dataset.panel !== view);
+    const retune = () => { tuned = true; paint(); };
+    $$('[data-weight]', panel).forEach(el => el.oninput = () => {
+      weights[el.dataset.weight] = Number(el.value);
+      $(`[data-weight-value="${el.dataset.weight}"]`, panel).value = el.value;
+      retune();
+    });
+    $$('[data-weight-value]', panel).forEach(el => el.oninput = () => {
+      weights[el.dataset.weightValue] = Number(el.value);
+      $(`[data-weight="${el.dataset.weightValue}"]`, panel).value = el.value;
+      retune();
+    });
+    $('[data-weights-reset]', panel).onclick = () => {
+      setWeights(weightDefaults);
+      $$('[data-weight]', panel).forEach(el => el.value = weights[el.dataset.weight]);
+      $$('[data-weight-value]', panel).forEach(el => el.value = weights[el.dataset.weightValue]);
+      retune();
+    };
+    $('[data-weights-save]', panel).onclick = async () => {
+      try {
+        await post('/settings/save', {scope: 'user', section: 'search', values: weights});
+        status('search weights saved', 'ok');
+        if (input.value.trim()) { tuned = false; search(); }
+      } catch (e) { status(e.message || String(e), 'err'); }
+    };
+    $$('[data-signal]', panel).forEach(el => el.onchange = async () => {
+      const value = el.type === 'checkbox' ? el.checked : el.value;
+      try { await post('/settings/save', {scope: 'user', section: 'search', values: {[el.dataset.signal]: value}}); }
+      catch (e) { status(e.message || String(e), 'err'); }
+    });
+    // A recorded search is a search you can run again, which is what makes the log worth reading.
+    $$('[data-recall]', panel).forEach(el => el.onclick = () => {
+      input.value = el.dataset.recall;
+      panel.hidden = true; $('#cstune', m).setAttribute('aria-pressed', 'false');
+      if (el.dataset.recallMode !== mode) setMode(el.dataset.recallMode); else search();
+      input.focus();
+    });
+    $('[data-signals-purge]', panel).onclick = async () => {
+      if (!await confirmDialog('Purge the search log', 'Delete every recorded search event? The vault documents are not touched.', 'purge')) return;
+      const out = await post('/search/signals/purge', {});
+      status(`removed ${out.removed} search event file${out.removed === 1 ? '' : 's'}`, 'ok');
+      loadPanel();
+    };
+  };
+  let held = null;
+  const loadPanel = async (force = false) => {
+    if (held && !force) return paintPanel(held);
+    try { paintPanel(await api('/search/signals')); }
+    catch (e) { panel.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+  };
+  // Two questions, one panel: what the ranking pays for, and what it has recorded so far. Each
+  // button shows its own; pressing the one already showing puts the results back.
+  const showPanel = next => {
+    panel.hidden = !panel.hidden && view === next;
+    view = next;
+    ['cstune', 'cslog'].forEach(id =>
+      $(`#${id}`, m).setAttribute('aria-pressed', String(!panel.hidden && view === (id === 'cstune' ? 'weights' : 'log'))));
+    if (!panel.hidden) loadPanel(view === 'log'); else input.focus();
+  };
+  $('#cstune', m).onclick = () => showPanel('weights');
+  $('#cslog', m).onclick = () => showPanel('log');
   api('/code/status').then(d => {
     const el = $('#koshastatus', m); if (!el) return;
     el.innerHTML = d.ok ? `<span class="ok">Kosha connected</span><span>${Number(d.files || 0).toLocaleString()} files</span>` +
       `<span>${Number(d.packages || 0).toLocaleString()} packages</span><span>${Number(d.graph_nodes || 0).toLocaleString()} graph nodes</span>` +
       `${d.stale_files ? `<span class="warn">${d.stale_files} stale files</span>` : ''}` : `<span class="warn">${esc(d.note || 'Kosha unavailable')}</span>`;
+  }).catch(() => {});
+  api('/search/signals?days=30').then(d => {
+    weightKeys = d.keys || {}; weightDefaults = d.defaults || {}; setWeights(d.weights || {});
+    const s = d.summary || {}, el = $('#cssignals', m);
+    if (el && s.searches) el.textContent = `${s.searches} searches recorded · ${Math.round((s.open_rate || 0) * 100)}% opened`;
   }).catch(() => {});
   $('#kosharefresh', m).onclick = async () => {
     const button = $('#kosharefresh', m); button.disabled = true; button.textContent = 'syncing…';

@@ -15,7 +15,7 @@ from ... import Dictable, errstr
 from ..fs.fs import LANGS
 from ..nb.nb import cell_at, cell_lines, cell_of, read_cells, source_spans
 
-__all__ = ['Hit', 'Cluster', 'Search']
+__all__ = ['Hit', 'Cluster', 'Search', 'Weights', 'DEMOTED', 'SETTING_WEIGHTS']
 
 _CODE_SUFFIXES = frozenset(LANGS) | {'.txt', '.rst', '.cfg', '.ini'}
 MAX_SCAN_BYTES = 2_000_000
@@ -62,6 +62,7 @@ class Hit(Dictable):
     symbol: str = ''
     score: float = 0.0
     callers: list = None
+    why: dict = None
     package: str = ''
     module: str = ''
     sources: list = field(default_factory=list)
@@ -69,6 +70,52 @@ class Hit(Dictable):
     cell_index: int = -1
     cell_line: int = 0
     column: int = 0
+
+#: Paths that are never the answer to a code search, whatever matched in them.
+DEMOTED = re.compile(r'(^|/)(node_modules|dist|build|vendor|third_party)(/|$)|\.min\.(js|css)$')
+
+#: Settings key -> weight field. The settings file is camelCase and says which leg it means; the
+#: dataclass is named for the feature. One table, so neither spelling has to guess the other.
+SETTING_WEIGHTS = {'legFiles': 'files', 'legSymbols': 'symbols', 'legRg': 'rg', 'legFts': 'fts',
+    'legAnn': 'ann', 'legRank': 'leg_rank', 'symbolExact': 'symbol_exact',
+    'symbolPart': 'symbol_part', 'queryInText': 'text', 'queryInFilename': 'filename',
+    'demoteNoise': 'demote'}
+
+@dataclass
+class Weights(Dictable):
+    """What `all` pays for each signal. One weight per leg, one per lexical feature, so a hit's
+    score is `sum(weight * feature)` and the client can re-rank without asking again."""
+    files: float = 110.0
+    symbols: float = 100.0
+    rg: float = 80.0
+    fts: float = 60.0
+    ann: float = 40.0
+    symbol_exact: float = 120.0
+    symbol_part: float = 55.0
+    text: float = 40.0
+    filename: float = 20.0
+    leg_rank: float = 10.0
+    demote: float = 25.0
+    @classmethod
+    def load(cls, values=None):
+        "A `search` settings section, by either spelling, ignoring everything that is not a weight."
+        ok = {}
+        for k, v in (values or {}).items():
+            name = SETTING_WEIGHTS.get(k, k if k in cls.__dataclass_fields__ else '')
+            if not name: continue
+            try: ok[name] = float(v)
+            except (TypeError, ValueError): continue
+        return cls(**ok)
+    def settings(self):
+        "The weights under the names the settings file uses."
+        return {k: getattr(self, name) for k, name in SETTING_WEIGHTS.items()}
+    def leg(self, name): return float(getattr(self, name, self.ann))
+    def score(self, why):
+        "The score of one feature vector. The same arithmetic the weights panel does live."
+        out = self.leg(why.get('leg', ''))
+        for k, v in why.items():
+            if k != 'leg': out += getattr(self, k, 0.0) * float(v)
+        return out
 
 @dataclass
 class Cluster:
@@ -148,6 +195,7 @@ class Search:
         self.note = ''
         self._completion_cache = {}
         self._agent_sync_tried = False
+        self.weights = Weights()
     def _focus(self):
         "Where the person is working, when the workspace has said. See `Workspace.cwd_for`."
         try: return self.focus() if callable(self.focus) else self.focus
@@ -884,21 +932,28 @@ class Search:
         self.note = f'Kosha returned no existing paths; {self.note}'
         return self._place(fallback)
     ALL_LEGS = ('files', 'symbols', 'rg', 'fts', 'ann')
-    LEG_PRIORITY = {'files': 110, 'symbols': 100, 'rg': 80, 'fts': 60, 'ann': 40}
     @staticmethod
     def hit_key(hit):
         "What makes two hits the same hit, so two engines finding one location merge into one row."
         return (hit.path, int(hit.line), hit.package if hit.kind == 'env-symbol' else '')
-    def relevance(self, source, hit, q):
-        "How `all` ranks one hit, shared so a leg reported on its own scores identically."
+    def features(self, source, hit, q, rank=0):
+        """Why this hit ranks where it does, as the vector the weights are paid against. `leg_rank`
+        normalises the backend's own ordering, whose raw scores are pagerank, FTS rank and cosine
+        distance and so are not comparable across legs."""
         query, leaf = q.lower(), re.split(r'::|\\|->|\.', q)[-1].lower()
         symbol, text, filename = hit.symbol.lower(), hit.text.lower(), Path(hit.path).name.lower()
-        relevance = self.LEG_PRIORITY.get(source, 40)
-        if symbol and symbol.rsplit('.', 1)[-1] == leaf: relevance += 120
-        elif leaf and leaf in symbol: relevance += 55
-        if query and query in text: relevance += 40
-        if leaf and leaf in filename: relevance += 20
-        return relevance + min(10.0, abs(float(hit.score or 0.0)))
+        exact = bool(symbol) and symbol.rsplit('.', 1)[-1] == leaf
+        return {'leg': source,
+            'symbol_exact': float(exact),
+            'symbol_part': float(not exact and bool(leaf) and leaf in symbol),
+            'text': float(bool(query) and query in text),
+            'filename': float(bool(leaf) and leaf in filename),
+            'leg_rank': 1.0 / (1 + max(0, int(rank))),
+            'demote': -float(bool(DEMOTED.search(hit.path.replace('\\', '/'))))}
+    def relevance(self, source, hit, q, rank=0):
+        "How `all` ranks one hit, shared so a leg reported on its own scores identically."
+        hit.why = self.features(source, hit, q, rank)
+        return self.weights.score(hit.why)
     def _files(self, q, limit=40):
         "Workspace paths whose filename or relative path contains `q`."
         query, out = q.casefold(), L()
@@ -922,9 +977,10 @@ class Search:
         try: rows = runners[name]()
         except Exception as e: return L(), f'{name} failed: {errstr(e)}'
         if rows is None: return L(), f'{name} unavailable'
+        ranks = {id(h): i for i, h in enumerate(rows)}
         hits = self._place(self._keep(L(rows), exts, roots))
         for h in hits:
-            h.score = self.relevance(name, h, q)
+            h.score = self.relevance(name, h, q, ranks.get(id(h), 0))
             h.sources = [name]
         return L(sorted(hits, key=lambda h: (-h.score, h.path, h.line))), ''
     def _all(self, q, limit, regex=False, legs=None):
@@ -941,11 +997,11 @@ class Search:
             if rows is None:
                 notes.append(f'{name} unavailable')
                 continue
-            legs.extend((name, h) for h in rows)
+            legs.extend((name, rank, h) for rank, h in enumerate(rows))
         merged = {}
-        for source, hit in legs:
+        for source, rank, hit in legs:
             key = self.hit_key(hit)
-            relevance = self.relevance(source, hit, q)
+            relevance = self.relevance(source, hit, q, rank)
             if key not in merged or relevance > merged[key][0]:
                 old_sources = merged[key][1].sources if key in merged else []
                 hit.sources = list(dict.fromkeys([*old_sources, source]))
@@ -955,7 +1011,7 @@ class Search:
                 merged[key][1].sources = list(dict.fromkeys([*merged[key][1].sources, source]))
         out = L(row[1] for row in sorted(merged.values(), key=lambda row: (-row[0], row[1].path, row[1].line)))
         self.backend = 'all'
-        used = sorted({source for source, _ in legs})
+        used = sorted({source for source, _, _ in legs})
         self.note = (' + '.join(used) if used else 'no available search backend')
         if notes and not used: self.note += ' · ' + '; '.join(notes[:2])
         return out[:limit]

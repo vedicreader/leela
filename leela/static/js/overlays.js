@@ -61,6 +61,11 @@ function modal(inner, onKey, onClose, options = {}) {
     // Nested dialogs form a stack, and only the top one owns keys, or one Escape closes every
     // layer at once.
     if ($$('.lee-modal').at(-1) !== m) return;
+    // The dialog's own keys come first. A dialog that means something by Tab says so by preventing
+    // the default; the trap below then never sees it. Handling Tab here first made that branch
+    // unreachable, and a dialog that bound it looked like it had no binding at all.
+    if (onKey) onKey(e, m);
+    if (e.defaultPrevented) return;
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); requestClose(); return; }
     if (e.key === 'Tab') {
       const items = focusables(); if (!items.length) { e.preventDefault(); box.focus(); return; }
@@ -69,8 +74,6 @@ function modal(inner, onKey, onClose, options = {}) {
       else if (!e.shiftKey && (at < 0 || at === items.length - 1)) { e.preventDefault(); items[0].focus(); }
       return;
     }
-    if (onKey) onKey(e, m);
-    if (e.defaultPrevented) return;
     const rows = $$('.lee-mrow:not([data-off])', m), at = rows.indexOf(document.activeElement);
     if (rows.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault(); e.stopPropagation();

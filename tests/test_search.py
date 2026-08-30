@@ -4,7 +4,7 @@ import asyncio, sys, threading
 from pathlib import Path
 from types import SimpleNamespace
 from leela.blocks.fs.fs import Sandbox
-from leela.blocks.search.search import Hit, Search
+from leela.blocks.search.search import Hit, Search, Weights
 import time
 import pytest
 from leela.blocks.memory.memory import Memory, _added_epoch, source_kind
@@ -481,9 +481,44 @@ def test_a_leg_is_scored_exactly_as_the_batch_answer_scores_it(tmp_path):
     assert hits[0].sources == ['rg']
     from dataclasses import replace
     pristine = replace(hits[0], score=0.0, sources=[])
-    assert hits[0].score == s.relevance('rg', pristine, 'merge_dicts') == 120.0
-    assert s.relevance('rg', hits[0], 'merge_dicts') == 130.0, 'documented: not idempotent'
+    # rg's 80, the query being in the line, and the leg's own first place: 80 + 40 + 10.
+    assert hits[0].score == s.relevance('rg', pristine, 'merge_dicts') == 130.0
+    assert s.relevance('rg', hits[0], 'merge_dicts') == 130.0, 'scored from features, not from the last score'
     assert [h.score for h in hits] == sorted((h.score for h in hits), reverse=True)
+
+def test_a_hit_carries_the_features_it_was_scored_on(tmp_path):
+    "Ranking nobody can see is ranking nobody can tune, so the score is the weights times these."
+    p = tmp_path/'core.py'; p.write_text('def merge_dicts(a, b):\n    return a | b\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    hits, _ = s.leg('rg', 'merge_dicts', 20)
+    why = hits[0].why
+    assert why['leg'] == 'rg' and why['text'] == 1.0 and why['leg_rank'] == 1.0
+    assert Weights().score(why) == hits[0].score
+    assert Weights(rg=0, text=0, leg_rank=0).score(why) == 0.0, 'every term is paid for by a weight'
+
+def test_the_weights_rank_and_settings_are_where_they_come_from(tmp_path):
+    "A weight turned down has to move the hit it was paying for."
+    p = tmp_path/'core.py'; p.write_text('def merge_dicts(a, b):\n    return a | b\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    loud = s.leg('rg', 'merge_dicts', 20)[0][0].score
+    s.weights = Weights.load({'legRg': 0.0, 'queryInText': 0.0})
+    assert s.leg('rg', 'merge_dicts', 20)[0][0].score == 10.0, 'only the leg rank is left'
+    assert loud > 10.0
+    assert Weights.load({'legRg': 'nonsense', 'unknown': 3}) == Weights(), 'junk is ignored, not fatal'
+    assert Weights.load({'rg': 7}).rg == Weights.load({'legRg': 7}).rg == 7.0, 'either spelling'
+
+def test_noise_paths_are_demoted_and_the_weight_says_by_how_much(tmp_path):
+    "A match in `node_modules` is not the answer to a code search, but a person may disagree."
+    (tmp_path/'node_modules').mkdir()
+    (tmp_path/'node_modules'/'core.py').write_text('def merge_dicts(a, b): return a | b\n')
+    (tmp_path/'core.py').write_text('def merge_dicts(a, b):\n    return a | b\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    hits = s.leg('rg', 'merge_dicts', 20)[0]
+    noise = [h for h in hits if 'node_modules' in h.path][0]
+    mine = [h for h in hits if 'node_modules' not in h.path][0]
+    assert noise.why['demote'] == -1.0 and mine.why['demote'] == -0.0
+    assert Weights(demote=0.0).score(noise.why) - Weights().score(noise.why) == 25.0
+    assert Weights(demote=0.0).score(mine.why) == Weights().score(mine.why), 'nought means no opinion'
 
 def test_an_unavailable_leg_says_so_instead_of_taking_the_others_down(tmp_path):
     "One absent index must not cost the other three their answers."

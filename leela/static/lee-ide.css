@@ -2484,6 +2484,9 @@ kbd {
 .lee-searchrail-mode:hover { border-color: var(--lee-border); color: var(--lee-fg); }
 .lee-searchrail-mode.active { border-color: color-mix(in srgb, var(--lee-accent) 55%, var(--lee-border)); background: var(--lee-bg1); color: var(--lee-fg); }
 .lee-searchrail-mode.active b { color: var(--lee-accent); }
+/* Tab moves the mode and switches to it, so the rail carries the keyboard's position as well as
+   the mode that answered. They are the same row; the cursor ring says the keyboard is on it. */
+.lee-searchrail-mode.cursor { box-shadow: inset 0 0 0 1px var(--lee-accent); }
 .lee-searchrail-hint { margin-top: auto; padding: 6px 7px 2px; font: 8px/1.2 var(--lee-mono); }
 .lee-code-search-body > .lee-modallist { min-height: 0; border-right: 1px solid var(--lee-border); padding: 4px; }
 .lee-search-result { width: 100%; display: grid; grid-template-columns: 34px minmax(0,1fr) auto; align-items: center;
@@ -2522,6 +2525,39 @@ kbd {
 .lee-search-progress { display: flex; align-items: center; gap: 8px; padding: 12px; color: var(--lee-fg4); font-size: 11px; }
 .lee-search-progress span { width: 8px; height: 8px; border: 1px solid var(--lee-accent); border-top-color: transparent;
   border-radius: 50%; animation: lee-spin .72s linear infinite; }
+/* The keyboard model, said once where it is used, and what the dialog has recorded so far. */
+.lee-search-hints { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-top: 1px solid var(--lee-border);
+  background: var(--lee-bg1); color: var(--lee-fg4); font: 9px/1.4 var(--lee-mono); }
+.lee-search-hints kbd { margin-left: 6px; }
+.lee-search-hints kbd:first-child { margin-left: 0; }
+.lee-search-hint-click { margin-left: 14px; }
+/* Weights: sliders over the same features every hit carries, so the list re-ranks as one moves. */
+.lee-search-weights { max-height: 34vh; overflow: auto; padding: 8px 10px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1); }
+.lee-search-weights[hidden] { display: none; }
+.lee-weight-group { margin-bottom: 10px; }
+.lee-weight-group h4 { margin: 0 0 5px; color: var(--lee-fg3); font: 600 9px/1 var(--lee-mono); text-transform: uppercase; letter-spacing: .06em; }
+.lee-weight-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 6px 18px; }
+.lee-weight-lead { margin: 0 0 8px; max-width: 92ch; color: var(--lee-fg3); font: 10px/1.6 var(--lee-mono); }
+.lee-weight { display: grid; grid-template-columns: minmax(0, 1fr) 96px 46px; align-items: center; gap: 8px; color: var(--lee-fg3); font: 10px/1.3 var(--lee-mono); }
+.lee-weight > span { display: flex; flex-direction: column; min-width: 0; }
+.lee-weight small { color: var(--lee-fg4); font: 8.5px/1.4 var(--lee-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-weight input[type=range] { width: 100%; accent-color: var(--lee-accent); }
+/* The spinner takes half the box at this size, and a three-digit weight then shows two digits. */
+.lee-weight input[type=number] { width: 100%; padding: 2px 4px; font: 9.5px/1.2 var(--lee-mono); appearance: textfield; }
+.lee-weight input[type=number]::-webkit-inner-spin-button { appearance: none; margin: 0; }
+.lee-weight-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--lee-fg4); font: 9.5px/1 var(--lee-mono); }
+.lee-weight-row label { display: flex; align-items: center; gap: 5px; margin: 0; }
+.lee-weight-row .lee-settings-toggle span { display: flex; align-items: center; }
+.lee-weight-row select { border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg1); color: var(--lee-fg2); font: 9px/1 var(--lee-mono); padding: 3px 4px; }
+.lee-weight-note { margin-top: 6px; font: 9px/1.5 var(--lee-mono); }
+.lee-weight-actions { display: flex; align-items: center; gap: 8px; }
+.lee-search-log { display: flex; flex-direction: column; gap: 1px; max-height: 132px; overflow: auto; }
+.lee-search-log button { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, .9fr); gap: 10px;
+  align-items: center; padding: 4px 6px; border: 0; border-radius: 3px; background: transparent; color: var(--lee-fg3);
+  cursor: pointer; font: 9.5px/1.4 var(--lee-mono); text-align: left; }
+.lee-search-log button:hover { background: var(--lee-sel); color: var(--lee-fg); }
+.lee-search-log strong, .lee-search-log span, .lee-search-log em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-search-log span, .lee-search-log em { color: var(--lee-fg4); font-style: normal; }
 .lee-package-api { min-height: 180px; max-height: 68vh; overflow: auto; padding: 4px; }
 .lee-package-api button { width: 100%; display: grid;
                           grid-template-columns: minmax(140px, .8fr) minmax(0,1.1fr) minmax(0,.7fr);
