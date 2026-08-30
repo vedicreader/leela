@@ -48,6 +48,9 @@ async function stopCell(i) {
   const c = lee.cells[i];
   if (!c?.running) return status(`cell ${i + 1} is not running`, 'err');
   status(`stopping cell ${i + 1}…`);
+  // A prompt cell is a turn of the inline agent rather than anything in a kernel. The server
+  // stops the agent; this ends the reply stream that is holding the cell open here.
+  lee.promptRuns?.get(c.id)?.abort();
   const r = await post('/nb/interrupt', {path: lee.tabKey || '', id: c.id});
   status(r.forced ? 'cell stopped · kernel restarted because interrupt was ignored' : 'cell stopped',
          r.forced ? 'err' : 'ok');

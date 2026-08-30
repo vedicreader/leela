@@ -524,9 +524,9 @@ async function api(url, opts, retried) {
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify(data || {})});
 
-async function postEvents(url, data, onEvent) {
+async function postEvents(url, data, onEvent, signal = null) {
   const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
-                              body: JSON.stringify(data || {})});
+                              body: JSON.stringify(data || {}), signal});
   if (!r.ok) throw new Error((await r.text()) || r.statusText);
   const reader = r.body.getReader(), decoder = new TextDecoder();
   let pending = '';

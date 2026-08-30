@@ -28,6 +28,32 @@ def dialog():
         Cell(source='and the mean?', cell_type='prompt', id='p2'),
     ])
 
+def test_stopping_a_prompt_cell_stops_the_agent_rather_than_denying_it_is_running(tmp_path, monkeypatch):
+    """A prompt cell is a turn of the inline agent, not anything in a kernel, so `/nb/interrupt`
+    could not find it among the running cells and answered `that cell is not running` while it
+    plainly was. There was no way to stop one at all."""
+    import json
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    p = tmp_path/'ask.ipynb'
+    p.write_text(json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {}, 'cells': [
+        {'id': 'p1', 'cell_type': 'raw', 'metadata': {'leela': {'kind': 'prompt'}},
+         'source': ['why is the sum 6?']},
+        {'id': 'c1', 'cell_type': 'code', 'metadata': {}, 'execution_count': None, 'outputs': [],
+         'source': ['x = 1']}]}))
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    ws.open(p)
+    stopped = []
+    with TestClient(ide_app(ws)) as client:
+        client.get('/tab/state')
+        monkeypatch.setattr(type(ws.inline_ai), 'cancel', lambda self, *a, **kw: stopped.append(True))
+        d = client.post('/nb/interrupt', json={'path': str(p), 'id': 'p1'}).json()
+        assert d['ok'] and d['stopped'] == 'prompt', d
+        assert stopped, 'the inline agent was asked to stop'
+        idle = client.post('/nb/interrupt', json={'path': str(p), 'id': 'c1'}).json()
+        assert idle['ok'] is False and 'not running' in idle['error'], 'an idle code cell still says so'
+
 def test_a_prompt_cell_is_written_as_valid_markdown(tmp_path):
     "nbformat has no prompt cell, so plain Jupyter must still be able to open the file."
     p = tmp_path / 'd.ipynb'

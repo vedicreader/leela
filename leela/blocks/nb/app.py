@@ -468,10 +468,26 @@ def connect(app, ctx):
                                    else f'needs `{l.install}`')} for l in LANGS.values()]}
     @rt('/nb/interrupt')
     async def nb_interrupt(req):
-        "Interrupt one exact running cell, force-restarting its managed kernel if needed."
+        """Interrupt one exact running cell, force-restarting its managed kernel if needed.
+
+        A prompt cell is not in a kernel: it is a turn of the inline agent, and it was answered
+        here with `that cell is not running` while it plainly was. The agent has a stop of its own
+        -- refuse the calls still to come, release the one already waiting -- and that is what Stop
+        means for a prompt.
+        """
         d = await req.json()
-        item = running_cells.get((d.get('path') or '', d.get('id') or ''))
-        if item is None: return fail('that cell is not running')
+        cell_id = d.get('id') or ''
+        item = running_cells.get((d.get('path') or '', cell_id))
+        if item is None:
+            nb = doc()
+            c = first(x for x in (nb or []) if x.id == cell_id)
+            if c is not None and c.is_prompt:
+                # `cancel`, which is what the agent panel's own stop reaches: it refuses the calls
+                # still to come and releases the one already waiting for an approval.
+                ctx.inline_ai.cancel()
+                c.running = False
+                return {'ok': True, 'stopped': 'prompt', 'note': 'asked the inline agent to stop'}
+            return fail('that cell is not running')
         k, _task = item
         if not hasattr(k, 'stop'): return fail('this external runtime cannot be stopped safely')
         return await k.stop(timeout=2.0)

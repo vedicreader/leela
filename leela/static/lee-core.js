@@ -524,9 +524,9 @@ async function api(url, opts, retried) {
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify(data || {})});
 
-async function postEvents(url, data, onEvent) {
+async function postEvents(url, data, onEvent, signal = null) {
   const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
-                              body: JSON.stringify(data || {})});
+                              body: JSON.stringify(data || {}), signal});
   if (!r.ok) throw new Error((await r.text()) || r.statusText);
   const reader = r.body.getReader(), decoder = new TextDecoder();
   let pending = '';
@@ -2530,6 +2530,9 @@ async function stopCell(i) {
   const c = lee.cells[i];
   if (!c?.running) return status(`cell ${i + 1} is not running`, 'err');
   status(`stopping cell ${i + 1}…`);
+  // A prompt cell is a turn of the inline agent rather than anything in a kernel. The server
+  // stops the agent; this ends the reply stream that is holding the cell open here.
+  lee.promptRuns?.get(c.id)?.abort();
   const r = await post('/nb/interrupt', {path: lee.tabKey || '', id: c.id});
   status(r.forced ? 'cell stopped · kernel restarted because interrupt was ignored' : 'cell stopped',
          r.forced ? 'err' : 'ok');
@@ -2803,6 +2806,11 @@ async function askCell(i, src, el) {
     let r = null, raw = '';
     const out = $('#out-' + c.id), seen = new Map();
     if (out) out.innerHTML = '<div class="lee-agent-steps lee-cell-agent-steps"></div><div class="lee-reply"></div>';
+    // Held so Stop can end the turn here as well as asking the agent to stop: the reply stream is
+    // the only thing keeping the cell marked running once the agent has been told.
+    lee.promptRuns = lee.promptRuns || new Map();
+    const abort = new AbortController();
+    lee.promptRuns.set(cellId, abort);
     await postEvents('/nb/ask/stream', {i, source: src}, (event, data) => {
       if (event === 'chunk') {
         raw += data.text || '';
@@ -2816,7 +2824,7 @@ async function askCell(i, src, el) {
       } else if (event === 'approval') showApproval(data);
       else if (event === 'error') throw new Error(data.text || 'model failed');
       else if (event === 'done') r = data;
-    });
+    }, abort.signal);
     if (!r) throw new Error('the model stream ended without a result');
     if (lee.path !== runPath || lee.cells[i]?.id !== cellId) { leeVars(); return; }
     Object.assign(c, r.cell);
@@ -2832,8 +2840,12 @@ async function askCell(i, src, el) {
            r.ok && !here && !(r.problems || []).length ? 'ok' : 'err');
     markDirty();
     leeVars();
-  } catch (e) { status(String(e.message || e), 'err'); }
+  } catch (e) {
+    if (e?.name === 'AbortError') status(`prompt cell ${i + 1} stopped`, 'ok');
+    else status(String(e.message || e), 'err');
+  }
   finally {
+    lee.promptRuns?.delete(cellId);
     if (clock) clearInterval(clock);
     if (c.execution_ms == null) c.execution_ms = performance.now() - began;
     setCellTime(c, c.execution_ms, false);
