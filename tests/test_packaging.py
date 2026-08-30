@@ -621,18 +621,23 @@ def test_a_build_refuses_to_overwrite_the_app_that_is_running(tmp_path):
     """py2app writes in place, and `python313.zip` is the running app's standard library. Replacing
     it under a live process made every import it had not yet made fail with `bad local file header`,
     naming nothing that would lead anyone back to the rebuild that did it."""
-    import setup_app, subprocess, sys, time
+    import os, setup_app, subprocess, sys, time
     bundle = tmp_path/'Leela.app'
-    bundle.mkdir()
+    (bundle/'Contents'/'MacOS').mkdir(parents=True)
+    inside = bundle/'Contents'/'MacOS'/'python'
+    os.symlink(sys.executable, inside)
     assert setup_app.running_from(bundle) == [], 'nothing is running from it yet'
-    live = subprocess.Popen([sys.executable, '-c', 'import sys, time; time.sleep(30)', str(bundle)])
+    # a process that merely names the bundle is not running from it: this test does, and so does
+    # every grep and editor with the path on its command line
+    mentions = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(20)', str(bundle)])
+    live = subprocess.Popen([str(inside), '-c', 'import time; time.sleep(20)'])
     try:
         for _ in range(50):
             if (pids := setup_app.running_from(bundle)): break
             time.sleep(0.1)
-        assert live.pid in pids, 'the process running out of the bundle is named'
+        assert pids == [live.pid], f'the process running out of the bundle, and only it: {pids}'
     finally:
-        live.terminate(); live.wait(5)
+        for p in (mentions, live): p.terminate(); p.wait(5)
 
 def test_the_built_app_matches_the_tree_it_was_built_from():
     """The bundle is derived from the tree and nothing compared them.

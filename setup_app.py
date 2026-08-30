@@ -184,7 +184,11 @@ def running_from(bundle):
     pids = []
     for line in out.splitlines()[1:]:
         pid, _, command = line.strip().partition(' ')
-        if target in command and pid.isdigit(): pids.append(int(pid))
+        # The executable, not the whole command line: this very check names the bundle in its own
+        # arguments, and so does every grep, editor and shell that has the path in it.
+        exe = command.split(' ', 1)[0]
+        if exe.startswith(target + os.sep) and pid.isdigit() and int(pid) != os.getpid():
+            pids.append(int(pid))
     return pids
 
 def main(argv=None):
