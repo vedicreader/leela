@@ -51,10 +51,26 @@ function reduceAgentTimeline(events) {
    typing and far too eager for this: at a hundred it is text arriving ten times a second, which
    reads as continuous, for a third of the renders. */
 const AGENT_RENDER_GAP = 100;
+/* A hundred is still too eager once the reply is long, because every pass costs the whole of it:
+   a round trip that parses and highlights the document again, an `innerHTML` write, and a
+   re-measure of every code surface in it. A 20,000-character answer at a fixed gap is six hundred
+   passes over an average of ten thousand characters. The gap grows with the text, which brings
+   that to about a hundred and fifty passes and the work down with them.
+
+   `tail` is what keeps the pane live in between: the characters that have arrived since the last
+   render, as plain text after the rendered prose. It costs a `textContent` write and no parse, so
+   words still appear at the rate they arrive. `seal` renders the stretch properly and drops it,
+   and every path that ends a stretch of prose goes through `seal`. */
+const AGENT_RENDER_CEILING = 1200;
+const agentRenderGap = n => Math.min(AGENT_RENDER_CEILING, AGENT_RENDER_GAP + Math.round(n / 20));
 
 function agentTimeline(root) {
-  const actions = new Map(); let prose = null;
-  const seal = () => { prose = null; };
+  const actions = new Map(); let prose = null, tail = null, rendered = 0;
+  const dropTail = () => { if (tail) { tail.remove(); tail = null; } };
+  const seal = () => {
+    const el = prose; prose = null; rendered = 0; dropTail();
+    if (el) flushMarkdown(el);
+  };
   const activity = a => {
     const id = a.action_id || a.id; if (!id) return null;
     let held = actions.get(id), row = held?.row;
@@ -77,9 +93,27 @@ function agentTimeline(root) {
     }
     return row;
   };
+  /* The tail exists only while there is text the render has not reached, so a stretch the render
+     has caught up with is one element, as it was before any of this. Nothing before the first
+     render either: a short reply is parsed within the first gap and never shows its own markup. */
+  const showTail = () => {
+    const rest = prose && rendered ? prose._text.slice(rendered) : '';
+    if (!rest) return dropTail();
+    if (!tail) { tail = document.createElement('div'); tail.className = 'lee-agent-reply-tail'; }
+    tail.textContent = rest;
+    if (!tail.isConnected) prose.after(tail);
+  };
+  // `prose !== el` is a stretch that was sealed or replaced while its render was on the wire
+  const painted = (el, sent) => { if (prose !== el) return; rendered = (sent || '').length; showTail(); };
   return {root, actions, seal, activity, chunk(text) {
-    if (!prose) { prose = document.createElement('div'); prose.className = 'lee-reply lee-agent-reply lee-timeline-prose'; prose._text = ''; root.appendChild(prose); }
-    prose._text += text || ''; renderMarkdown(prose, prose._text, false, null, AGENT_RENDER_GAP); return prose;
+    if (!prose) {
+      prose = document.createElement('div'); prose.className = 'lee-reply lee-agent-reply lee-timeline-prose';
+      prose._text = ''; rendered = 0; root.appendChild(prose);
+    }
+    prose._text += text || '';
+    renderMarkdown(prose, prose._text, false, painted, agentRenderGap(prose._text.length));
+    showTail();
+    return prose;
   }, append(node) { seal(); if (node) root.appendChild(node); return node; }};
 }
 
@@ -119,6 +153,7 @@ async function sendAgent(force = false) {
   turnBody(card).appendChild(userMessage(q));
   log.appendChild(card);
   foldOlderTurns(log);            // what came before is answered; this is the one being read
+  trimAgentLog(log);
   stickAgentLog(log, true);       // sending a turn is asking to watch it, wherever you had scrolled
   status('model is working…');
   agentListen(accepted.thread || lee.agentThread, accepted.seq, card);
@@ -132,7 +167,7 @@ function agentListen(thread, since, card = null) {
   $('.lee-agent-welcome', log)?.remove();
   /* A turn already in flight when this pane attached has no card yet: its prompt is in the feed,
      and the `user` event below fills the title in. */
-  if (!card) { card = agentTurnCard({model: $('#agentmodel')?.value || ''}); log.appendChild(card); }
+  if (!card) { card = agentTurnCard({model: $('#agentmodel')?.value || ''}); log.appendChild(card); trimAgentLog(log); }
   let host = turnBody(card);
   let progress = agentProgress(host);
   let timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';

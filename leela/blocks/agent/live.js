@@ -132,6 +132,31 @@ function foldOlderTurns(log, keep = 1) {
   const cards = $$('.lee-agent-turn', log || $('#agentlog') || document);
   cards.slice(0, Math.max(0, cards.length - keep)).forEach(card => foldAgentTurn(card, true));
 }
+/* Folding hides a turn from layout; it does not free it. Every turn of a session stays in the live
+   pane holding its rendered replies and one CodeMirror view per code block in them, so a long day's
+   conversation is hundreds of live views the pane carries through every paint. The pane keeps the
+   last `LIVE_TURNS` and History holds the rest, which is where a conversation already lives.
+
+   A turn holding a checkpoint is never dropped: its buttons are the only way that run continues. */
+const LIVE_TURNS = 30;
+function trimAgentLog(log, keep = LIVE_TURNS) {
+  log = log || $('#agentlog');
+  if (!log || (lee.agentView && lee.agentView !== 'live')) return 0;
+  const cards = $$('.lee-agent-turn', log);
+  let dropped = 0;
+  for (const card of cards.slice(0, Math.max(0, cards.length - keep))) {
+    if (turnAwaitingApproval(card)) continue;
+    dropCodeSurfaces(card); card.remove(); dropped += 1;
+  }
+  if (!dropped) return 0;
+  for (const [id, node] of approvalCards) if (!node.isConnected) approvalCards.delete(id);
+  if (!$('.lee-agent-trimmed', log)) {
+    const note = document.createElement('div'); note.className = 'lee-agent-trimmed';
+    note.textContent = 'Earlier turns in this conversation are in History.';
+    log.prepend(note);
+  }
+  return dropped;
+}
 /* The newest turn is the one being read, so it is never folded from storage: a turn folded before
    a resume would otherwise hide the answer a person came back for. */
 function applyStoredFolds(log) {
@@ -216,17 +241,92 @@ const sessionTurns = async id => {
   try { return (await api('/agent/history/session?id=' + encodeURIComponent(id))).turns || []; }
   catch (e) { status(String(e.message || e), 'err'); return []; }
 };
+/* The three preferences this pane keeps, each of which used to live only in `localStorage` and so
+   came back at its default whenever the app was launched on a different port.
+
+   settings.json answers with a default for every key, so `lee.prefs` cannot say whether a value was
+   chosen, and `prefAdopt` reads that default as a choice and migrates nothing. `origins` names the
+   layer each key came from, and only `default` means nobody has saved one. The control's own
+   default is saved where it differs from settings', which is how the history filter stays on for
+   someone who never asked for it off. */
+const AGENT_PREFS = {notify: ['lee-agent-notify', v => v === 'on', false],
+                     reasoning: ['lee-agent-reasoning', v => v, ''],
+                     historyLeelaOnly: ['leeHistoryLeelaOnly', v => v !== '0', true]};
+async function adoptAgentPrefs() {
+  for (const [key, [legacy, parse, dflt]] of Object.entries(AGENT_PREFS)) {
+    if ((lee.settingsMeta?.origins?.agent?.[key] || 'default') !== 'default') continue;
+    const old = localStorage.getItem(legacy), value = old === null ? dflt : parse(old);
+    if (value !== lee.prefs?.agent?.[key]) await prefSet('agent', key, value);
+  }
+}
+let agentPrefsAdopted;
+// Once per session, and not before `loadSettings` has said what is already saved.
+const agentPrefsReady = () =>
+  lee.settingsMeta ? (agentPrefsAdopted ||= adoptAgentPrefs()) : Promise.resolve();
 /* Leela and the ramabana CLI append to one log, and only Leela marks the sessions it started, so
    anything unmarked reads as the CLI's, including Leela's history from before the mark. */
 /* Checked unless it has been turned off: one log holds both, most of it is the CLI's, and the
    list a person opens is their own work. Asking the server means the CLI's are not grouped and
    shipped only to be filtered out here. */
-const leelaOnly = () => localStorage.getItem('leeHistoryLeelaOnly') !== '0';
+const leelaOnly = () => prefGet('agent', 'historyLeelaOnly', true);
 const shownSessions = groups => leelaOnly() ? groups.filter(s => s.app === 'leela') : groups;
 async function historyGroups() {
+  await agentPrefsReady();
   const d = await api('/agent/history' + (leelaOnly() ? '' : '?everything=1'));
   lee.agentHistoryHidden = d.hidden || 0;
   return d.sessions || [];
+}
+/* The inline panel's asks belong beside the conversations: both answer what the model was asked
+   and whether the answer was any good. A `stale` is neither, so it is named rather than counted. */
+const COMPLETION_VERDICT = {replace: 'accepted', discard: 'rejected', stale: 'selection moved'};
+const percent = r => r === null || r === undefined ? '—' : Math.round(r * 100) + '%';
+async function appendCompletions(log) {
+  let d;
+  try { d = await api('/ai/completions?days=30'); }
+  catch (e) { return log.insertAdjacentHTML('beforeend',
+    `<div class="lee-dim">completions unavailable: ${esc(e.message || e)}</div>`); }
+  const s = d.summary || {};
+  const box = document.createElement('section');
+  box.className = 'lee-completions';
+  box.innerHTML = `<div class="lee-vgroup">completions</div>` +
+    `<div class="lee-weight-group"><h4>What Leela keeps about your completions</h4><div class="lee-weight-row">` +
+    `<label>keep<select class="lee-select" data-completion-pref="telemetry">` +
+    ['on', 'off'].map(v => `<option value="${v}"${v === d.telemetry ? ' selected' : ''}>${v}</option>`).join('') +
+    `</select></label>` +
+    `<label class="lee-settings-toggle"><input type="checkbox" data-completion-pref="snippets"` +
+    `${d.snippets ? ' checked' : ''}><span>keep the code</span></label>` +
+    `<button class="lee-btn" data-completions-purge type="button">purge log</button></div>` +
+    `<div class="lee-dim lee-weight-note">${esc(s.asks || 0)} asked · ${esc(s.answered || 0)} answered · ` +
+    `${esc(s.replaced || 0)} accepted · ${esc(s.discarded || 0)} rejected · accepted ${percent(s.accept_rate)}` +
+    `${d.telemetry === 'off' ? ' · recording is off, so nothing new is kept' : ''}` +
+    `<br>${esc(d.dir || '')}</div></div>` +
+    `<div class="lee-weight-group"><h4>Accepted per model</h4><div class="lee-completion-models">` +
+    ((s.models || []).map(m => `<div data-completion-model="${esc(m.model)}"><strong>${esc(m.model)}</strong>` +
+      `<span>${esc(m.replaced || 0)} accepted · ${esc(m.discarded || 0)} rejected` +
+      `${m.stale ? ' · ' + esc(m.stale) + ' stale' : ''}</span><em>${percent(m.accept_rate)}</em></div>`).join('') ||
+      `<div class="lee-dim">nothing decided yet</div>`) + `</div></div>` +
+    `<div class="lee-weight-group"><h4>Recent completions</h4><div class="lee-completion-log">` +
+    ((s.recent || []).map(r => `<div data-completion="${esc(r.kind)}">` +
+      `<strong>${esc(r.instruction || '(no instruction)')}</strong>` +
+      `<span>${esc(r.model || 'unknown')}${r.lang ? ' · ' + esc(r.lang) : ''}` +
+      `${r.ms ? ' · ' + esc(r.ms) + 'ms' : ''}</span>` +
+      `<em>${esc(COMPLETION_VERDICT[r.kind] || r.kind)}</em></div>`).join('') ||
+      `<div class="lee-dim">nothing recorded yet</div>`) + `</div></div>`;
+  log.appendChild(box);
+  $$('[data-completion-pref]', box).forEach(el => el.onchange = async () => {
+    const value = el.type === 'checkbox' ? el.checked : el.value;
+    try { await post('/settings/save', {scope: 'user', section: 'completions',
+                                        values: {[el.dataset.completionPref]: value}}); }
+    catch (e) { status(e.message || String(e), 'err'); }
+  });
+  $('[data-completions-purge]', box).onclick = async () => {
+    if (!await confirmDialog('Purge the completion log',
+        'Delete every recorded completion event? The conversations are not touched.', 'purge')) return;
+    const out = await post('/ai/completions/purge', {});
+    status(`removed ${out.removed} completion event file${out.removed === 1 ? '' : 's'}`, 'ok');
+    box.remove();
+    await appendCompletions(log);
+  };
 }
 async function showHistorySession(group, groups) {
   const log = $('#agentlog'); if (!log) return; dropCodeSurfaces(log); log.innerHTML = ''; approvalCards.clear();
@@ -253,14 +353,17 @@ async function showHistorySession(group, groups) {
   index.querySelector('select')?.addEventListener('change', e =>
     showHistorySession(all.find(s => s.id === e.target.value), all));
   index.querySelector('.lee-history-leelaonly')?.addEventListener('change', async e => {
-    localStorage.setItem('leeHistoryLeelaOnly', e.target.checked ? '1' : '0');
+    await prefSet('agent', 'historyLeelaOnly', e.target.checked);
     // The CLI's conversations are not in `all` when the box was checked, so this asks again.
     const groups = await historyGroups(), left = shownSessions(groups);
     showHistorySession(left.find(s => s.id === group?.id) || left[0], groups);
   });
   index.querySelector('.lee-history-resume')?.addEventListener('click', () => leeAgentResume(group));
   log.appendChild(index);
-  if (!group) { log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>'); return; }
+  if (!group) {
+    log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>');
+    return appendCompletions(log);
+  }
   log.insertAdjacentHTML('beforeend', `<div class="lee-history-session-head">` +
     `<strong>${esc(titleText(group.title) || sessionTime(group))}</strong>` +
     `<span>${titleText(group.title) ? `${esc(sessionTime(group))} · ` : ''}` +
@@ -273,6 +376,7 @@ async function showHistorySession(group, groups) {
       renderSessionCells(log, transcript);
     }
   }
+  await appendCompletions(log);
   log.scrollTop = 0;
 }
 /* The live pane is DOM only, so a reload, an htmx swap of the shell, or a switch to a conversation
@@ -289,6 +393,7 @@ async function paintAgentThread(id) {
   if ((d.turns || []).length) { log.innerHTML = ''; renderTurns(log, d.turns, titleText(d.title) || 'conversation'); }
   else log.innerHTML = welcome ? welcome.outerHTML : '';
   lee.agentView = 'live'; $('#agenthistory')?.classList.remove('active');
+  trimAgentLog(log);   // a conversation of any length arrives here whole
   // Nothing to set aside: the live pane is what was just painted into the log.
   lee.agentLive = null; stickAgentLog(log, true);
   return d;
@@ -511,19 +616,21 @@ async function leeAgentThreadMute(id = lee.agentThread) {
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 async function refreshAgentThreads() {
+  await agentPrefsReady();   // the list paints the notify box, which is one of them
   const d = await api('/agent/threads'); paintAgentThreads(d); notifyAgentAttention(d); return d;
 }
 /* Off by default, and permission is asked for only when a person turns it on, because a prompt
    nobody invited is why browsers stopped honouring them. Every state is terminal: unsupported and
    denied disable delivery and say so once. */
-function agentNotifyEnabled() { return localStorage.getItem('lee-agent-notify') === 'on'; }
+function agentNotifyEnabled() { return prefGet('agent', 'notify', false) === true; }
 async function leeAgentNotifyToggle(on) {
-  if (!on) { localStorage.setItem('lee-agent-notify', 'off'); return status('notifications off', 'ok'); }
-  if (!('Notification' in window)) { localStorage.setItem('lee-agent-notify', 'off'); return status('this browser has no notifications', 'err'); }
+  const off = async (said, tone) => { await prefSet('agent', 'notify', false); return status(said, tone); };
+  if (!on) return off('notifications off', 'ok');
+  if (!('Notification' in window)) return off('this browser has no notifications', 'err');
   let state = Notification.permission;
   if (state === 'default') { try { state = await Notification.requestPermission(); } catch (_) { state = 'denied'; } }
-  if (state !== 'granted') { localStorage.setItem('lee-agent-notify', 'off'); return status('notifications are blocked for this site', 'err'); }
-  localStorage.setItem('lee-agent-notify', 'on'); status('notifications on', 'ok');
+  if (state !== 'granted') return off('notifications are blocked for this site', 'err');
+  await prefSet('agent', 'notify', true); status('notifications on', 'ok');
 }
 /* One notification per thing that happened, keyed by what happened: replay, a reconnect and a
    second tab all deliver the same terminal event. */

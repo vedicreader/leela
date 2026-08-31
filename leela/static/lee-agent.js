@@ -981,6 +981,31 @@ function foldOlderTurns(log, keep = 1) {
   const cards = $$('.lee-agent-turn', log || $('#agentlog') || document);
   cards.slice(0, Math.max(0, cards.length - keep)).forEach(card => foldAgentTurn(card, true));
 }
+/* Folding hides a turn from layout; it does not free it. Every turn of a session stays in the live
+   pane holding its rendered replies and one CodeMirror view per code block in them, so a long day's
+   conversation is hundreds of live views the pane carries through every paint. The pane keeps the
+   last `LIVE_TURNS` and History holds the rest, which is where a conversation already lives.
+
+   A turn holding a checkpoint is never dropped: its buttons are the only way that run continues. */
+const LIVE_TURNS = 30;
+function trimAgentLog(log, keep = LIVE_TURNS) {
+  log = log || $('#agentlog');
+  if (!log || (lee.agentView && lee.agentView !== 'live')) return 0;
+  const cards = $$('.lee-agent-turn', log);
+  let dropped = 0;
+  for (const card of cards.slice(0, Math.max(0, cards.length - keep))) {
+    if (turnAwaitingApproval(card)) continue;
+    dropCodeSurfaces(card); card.remove(); dropped += 1;
+  }
+  if (!dropped) return 0;
+  for (const [id, node] of approvalCards) if (!node.isConnected) approvalCards.delete(id);
+  if (!$('.lee-agent-trimmed', log)) {
+    const note = document.createElement('div'); note.className = 'lee-agent-trimmed';
+    note.textContent = 'Earlier turns in this conversation are in History.';
+    log.prepend(note);
+  }
+  return dropped;
+}
 /* The newest turn is the one being read, so it is never folded from storage: a turn folded before
    a resume would otherwise hide the answer a person came back for. */
 function applyStoredFolds(log) {
@@ -1065,17 +1090,92 @@ const sessionTurns = async id => {
   try { return (await api('/agent/history/session?id=' + encodeURIComponent(id))).turns || []; }
   catch (e) { status(String(e.message || e), 'err'); return []; }
 };
+/* The three preferences this pane keeps, each of which used to live only in `localStorage` and so
+   came back at its default whenever the app was launched on a different port.
+
+   settings.json answers with a default for every key, so `lee.prefs` cannot say whether a value was
+   chosen, and `prefAdopt` reads that default as a choice and migrates nothing. `origins` names the
+   layer each key came from, and only `default` means nobody has saved one. The control's own
+   default is saved where it differs from settings', which is how the history filter stays on for
+   someone who never asked for it off. */
+const AGENT_PREFS = {notify: ['lee-agent-notify', v => v === 'on', false],
+                     reasoning: ['lee-agent-reasoning', v => v, ''],
+                     historyLeelaOnly: ['leeHistoryLeelaOnly', v => v !== '0', true]};
+async function adoptAgentPrefs() {
+  for (const [key, [legacy, parse, dflt]] of Object.entries(AGENT_PREFS)) {
+    if ((lee.settingsMeta?.origins?.agent?.[key] || 'default') !== 'default') continue;
+    const old = localStorage.getItem(legacy), value = old === null ? dflt : parse(old);
+    if (value !== lee.prefs?.agent?.[key]) await prefSet('agent', key, value);
+  }
+}
+let agentPrefsAdopted;
+// Once per session, and not before `loadSettings` has said what is already saved.
+const agentPrefsReady = () =>
+  lee.settingsMeta ? (agentPrefsAdopted ||= adoptAgentPrefs()) : Promise.resolve();
 /* Leela and the ramabana CLI append to one log, and only Leela marks the sessions it started, so
    anything unmarked reads as the CLI's, including Leela's history from before the mark. */
 /* Checked unless it has been turned off: one log holds both, most of it is the CLI's, and the
    list a person opens is their own work. Asking the server means the CLI's are not grouped and
    shipped only to be filtered out here. */
-const leelaOnly = () => localStorage.getItem('leeHistoryLeelaOnly') !== '0';
+const leelaOnly = () => prefGet('agent', 'historyLeelaOnly', true);
 const shownSessions = groups => leelaOnly() ? groups.filter(s => s.app === 'leela') : groups;
 async function historyGroups() {
+  await agentPrefsReady();
   const d = await api('/agent/history' + (leelaOnly() ? '' : '?everything=1'));
   lee.agentHistoryHidden = d.hidden || 0;
   return d.sessions || [];
+}
+/* The inline panel's asks belong beside the conversations: both answer what the model was asked
+   and whether the answer was any good. A `stale` is neither, so it is named rather than counted. */
+const COMPLETION_VERDICT = {replace: 'accepted', discard: 'rejected', stale: 'selection moved'};
+const percent = r => r === null || r === undefined ? '—' : Math.round(r * 100) + '%';
+async function appendCompletions(log) {
+  let d;
+  try { d = await api('/ai/completions?days=30'); }
+  catch (e) { return log.insertAdjacentHTML('beforeend',
+    `<div class="lee-dim">completions unavailable: ${esc(e.message || e)}</div>`); }
+  const s = d.summary || {};
+  const box = document.createElement('section');
+  box.className = 'lee-completions';
+  box.innerHTML = `<div class="lee-vgroup">completions</div>` +
+    `<div class="lee-weight-group"><h4>What Leela keeps about your completions</h4><div class="lee-weight-row">` +
+    `<label>keep<select class="lee-select" data-completion-pref="telemetry">` +
+    ['on', 'off'].map(v => `<option value="${v}"${v === d.telemetry ? ' selected' : ''}>${v}</option>`).join('') +
+    `</select></label>` +
+    `<label class="lee-settings-toggle"><input type="checkbox" data-completion-pref="snippets"` +
+    `${d.snippets ? ' checked' : ''}><span>keep the code</span></label>` +
+    `<button class="lee-btn" data-completions-purge type="button">purge log</button></div>` +
+    `<div class="lee-dim lee-weight-note">${esc(s.asks || 0)} asked · ${esc(s.answered || 0)} answered · ` +
+    `${esc(s.replaced || 0)} accepted · ${esc(s.discarded || 0)} rejected · accepted ${percent(s.accept_rate)}` +
+    `${d.telemetry === 'off' ? ' · recording is off, so nothing new is kept' : ''}` +
+    `<br>${esc(d.dir || '')}</div></div>` +
+    `<div class="lee-weight-group"><h4>Accepted per model</h4><div class="lee-completion-models">` +
+    ((s.models || []).map(m => `<div data-completion-model="${esc(m.model)}"><strong>${esc(m.model)}</strong>` +
+      `<span>${esc(m.replaced || 0)} accepted · ${esc(m.discarded || 0)} rejected` +
+      `${m.stale ? ' · ' + esc(m.stale) + ' stale' : ''}</span><em>${percent(m.accept_rate)}</em></div>`).join('') ||
+      `<div class="lee-dim">nothing decided yet</div>`) + `</div></div>` +
+    `<div class="lee-weight-group"><h4>Recent completions</h4><div class="lee-completion-log">` +
+    ((s.recent || []).map(r => `<div data-completion="${esc(r.kind)}">` +
+      `<strong>${esc(r.instruction || '(no instruction)')}</strong>` +
+      `<span>${esc(r.model || 'unknown')}${r.lang ? ' · ' + esc(r.lang) : ''}` +
+      `${r.ms ? ' · ' + esc(r.ms) + 'ms' : ''}</span>` +
+      `<em>${esc(COMPLETION_VERDICT[r.kind] || r.kind)}</em></div>`).join('') ||
+      `<div class="lee-dim">nothing recorded yet</div>`) + `</div></div>`;
+  log.appendChild(box);
+  $$('[data-completion-pref]', box).forEach(el => el.onchange = async () => {
+    const value = el.type === 'checkbox' ? el.checked : el.value;
+    try { await post('/settings/save', {scope: 'user', section: 'completions',
+                                        values: {[el.dataset.completionPref]: value}}); }
+    catch (e) { status(e.message || String(e), 'err'); }
+  });
+  $('[data-completions-purge]', box).onclick = async () => {
+    if (!await confirmDialog('Purge the completion log',
+        'Delete every recorded completion event? The conversations are not touched.', 'purge')) return;
+    const out = await post('/ai/completions/purge', {});
+    status(`removed ${out.removed} completion event file${out.removed === 1 ? '' : 's'}`, 'ok');
+    box.remove();
+    await appendCompletions(log);
+  };
 }
 async function showHistorySession(group, groups) {
   const log = $('#agentlog'); if (!log) return; dropCodeSurfaces(log); log.innerHTML = ''; approvalCards.clear();
@@ -1102,14 +1202,17 @@ async function showHistorySession(group, groups) {
   index.querySelector('select')?.addEventListener('change', e =>
     showHistorySession(all.find(s => s.id === e.target.value), all));
   index.querySelector('.lee-history-leelaonly')?.addEventListener('change', async e => {
-    localStorage.setItem('leeHistoryLeelaOnly', e.target.checked ? '1' : '0');
+    await prefSet('agent', 'historyLeelaOnly', e.target.checked);
     // The CLI's conversations are not in `all` when the box was checked, so this asks again.
     const groups = await historyGroups(), left = shownSessions(groups);
     showHistorySession(left.find(s => s.id === group?.id) || left[0], groups);
   });
   index.querySelector('.lee-history-resume')?.addEventListener('click', () => leeAgentResume(group));
   log.appendChild(index);
-  if (!group) { log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>'); return; }
+  if (!group) {
+    log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>');
+    return appendCompletions(log);
+  }
   log.insertAdjacentHTML('beforeend', `<div class="lee-history-session-head">` +
     `<strong>${esc(titleText(group.title) || sessionTime(group))}</strong>` +
     `<span>${titleText(group.title) ? `${esc(sessionTime(group))} · ` : ''}` +
@@ -1122,6 +1225,7 @@ async function showHistorySession(group, groups) {
       renderSessionCells(log, transcript);
     }
   }
+  await appendCompletions(log);
   log.scrollTop = 0;
 }
 /* The live pane is DOM only, so a reload, an htmx swap of the shell, or a switch to a conversation
@@ -1138,6 +1242,7 @@ async function paintAgentThread(id) {
   if ((d.turns || []).length) { log.innerHTML = ''; renderTurns(log, d.turns, titleText(d.title) || 'conversation'); }
   else log.innerHTML = welcome ? welcome.outerHTML : '';
   lee.agentView = 'live'; $('#agenthistory')?.classList.remove('active');
+  trimAgentLog(log);   // a conversation of any length arrives here whole
   // Nothing to set aside: the live pane is what was just painted into the log.
   lee.agentLive = null; stickAgentLog(log, true);
   return d;
@@ -1360,19 +1465,21 @@ async function leeAgentThreadMute(id = lee.agentThread) {
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 async function refreshAgentThreads() {
+  await agentPrefsReady();   // the list paints the notify box, which is one of them
   const d = await api('/agent/threads'); paintAgentThreads(d); notifyAgentAttention(d); return d;
 }
 /* Off by default, and permission is asked for only when a person turns it on, because a prompt
    nobody invited is why browsers stopped honouring them. Every state is terminal: unsupported and
    denied disable delivery and say so once. */
-function agentNotifyEnabled() { return localStorage.getItem('lee-agent-notify') === 'on'; }
+function agentNotifyEnabled() { return prefGet('agent', 'notify', false) === true; }
 async function leeAgentNotifyToggle(on) {
-  if (!on) { localStorage.setItem('lee-agent-notify', 'off'); return status('notifications off', 'ok'); }
-  if (!('Notification' in window)) { localStorage.setItem('lee-agent-notify', 'off'); return status('this browser has no notifications', 'err'); }
+  const off = async (said, tone) => { await prefSet('agent', 'notify', false); return status(said, tone); };
+  if (!on) return off('notifications off', 'ok');
+  if (!('Notification' in window)) return off('this browser has no notifications', 'err');
   let state = Notification.permission;
   if (state === 'default') { try { state = await Notification.requestPermission(); } catch (_) { state = 'denied'; } }
-  if (state !== 'granted') { localStorage.setItem('lee-agent-notify', 'off'); return status('notifications are blocked for this site', 'err'); }
-  localStorage.setItem('lee-agent-notify', 'on'); status('notifications on', 'ok');
+  if (state !== 'granted') return off('notifications are blocked for this site', 'err');
+  await prefSet('agent', 'notify', true); status('notifications on', 'ok');
 }
 /* One notification per thing that happened, keyed by what happened: replay, a reconnect and a
    second tab all deliver the same terminal event. */
@@ -1968,11 +2075,17 @@ async function unsayTurn(bar) {
     catch (e) { status(`undone from the conversation; these files were not restored: ${e.message || e}`, 'err'); }
   }
   markTurnUndone(out, bar, (restored?.paths || []).length, revisable ? $('[data-revise]', bar) : null);
-  for (const path of restored?.paths || []) if (path === lee.path) await takeDiskVersion(path);
+  noteHeldRestores(await reloadRestored(restored?.paths || []));
   await refreshAgentThreads();
   status(restored ? `undone from the conversation · ${(restored.paths || []).length} file(s) restored`
                   : 'undone from the conversation; files left as they are', 'ok');
 }
+
+/* Naming what was left alone matters more here than anywhere else: a tab held back still holds the
+   version from before the restore, and the person is the only one who can decide between the two. */
+const noteHeldRestores = held => held.length && status(
+  `${held.length} file${held.length === 1 ? '' : 's'} with unsaved edits ${held.length === 1 ? 'was' : 'were'} not reloaded: `
+  + held.map(p => p.split('/').pop()).join(', '), 'err');
 
 async function restoreTurnFiles(bar) {
   const {turnId, out, revisable} = responseTurn(bar);
@@ -1986,7 +2099,7 @@ async function restoreTurnFiles(bar) {
       const d = await post('/agent/rollback-turn', {turn_id: turnId, thread: lee.agentThread || ''});
       // Marked before the files are reloaded, so a reload that raises still shows the turn undone.
       markTurnUndone(out, bar, (d.paths || []).length, revisable ? $('[data-revise]', bar) : null);
-      for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
+      noteHeldRestores(await reloadRestored(d.paths || []));
       status('turn changes rolled back', 'ok');
     } catch (e) { status(e.message || String(e), 'err'); }
   }
@@ -2581,12 +2694,14 @@ function initAgentComposer() {
   /* A one-line box with a placeholder telling you to write in it takes Enter, or it eats what you
      typed. It is not in a form and has no default action, so Enter does nothing unless it is bound
      here. */
-  const notify = $('#agentnotify'); if (notify) notify.checked = agentNotifyEnabled();
-  const reasoning = $('#agentreasoning');
-  if (reasoning) {
-    reasoning.value = localStorage.getItem('lee-agent-reasoning') || 'auto';
-    reasoning.onchange = () => localStorage.setItem('lee-agent-reasoning', reasoning.value);
-  }
+  const notify = $('#agentnotify'), reasoning = $('#agentreasoning');
+  if (reasoning) reasoning.onchange = () => prefSet('agent', 'reasoning', reasoning.value);
+  // Both are settings, and settings arrive over the network: painted from the cache, then again.
+  const paint = () => {
+    if (notify) notify.checked = agentNotifyEnabled();
+    if (reasoning) reasoning.value = prefGet('agent', 'reasoning', '') || 'auto';
+  };
+  paint(); agentPrefsReady().then(paint);
   const grow = () => {
     input.style.height = 'auto';
     input.style.height = Math.min(190, Math.max(64, input.scrollHeight)) + 'px';
@@ -2686,10 +2801,26 @@ function reduceAgentTimeline(events) {
    typing and far too eager for this: at a hundred it is text arriving ten times a second, which
    reads as continuous, for a third of the renders. */
 const AGENT_RENDER_GAP = 100;
+/* A hundred is still too eager once the reply is long, because every pass costs the whole of it:
+   a round trip that parses and highlights the document again, an `innerHTML` write, and a
+   re-measure of every code surface in it. A 20,000-character answer at a fixed gap is six hundred
+   passes over an average of ten thousand characters. The gap grows with the text, which brings
+   that to about a hundred and fifty passes and the work down with them.
+
+   `tail` is what keeps the pane live in between: the characters that have arrived since the last
+   render, as plain text after the rendered prose. It costs a `textContent` write and no parse, so
+   words still appear at the rate they arrive. `seal` renders the stretch properly and drops it,
+   and every path that ends a stretch of prose goes through `seal`. */
+const AGENT_RENDER_CEILING = 1200;
+const agentRenderGap = n => Math.min(AGENT_RENDER_CEILING, AGENT_RENDER_GAP + Math.round(n / 20));
 
 function agentTimeline(root) {
-  const actions = new Map(); let prose = null;
-  const seal = () => { prose = null; };
+  const actions = new Map(); let prose = null, tail = null, rendered = 0;
+  const dropTail = () => { if (tail) { tail.remove(); tail = null; } };
+  const seal = () => {
+    const el = prose; prose = null; rendered = 0; dropTail();
+    if (el) flushMarkdown(el);
+  };
   const activity = a => {
     const id = a.action_id || a.id; if (!id) return null;
     let held = actions.get(id), row = held?.row;
@@ -2712,9 +2843,27 @@ function agentTimeline(root) {
     }
     return row;
   };
+  /* The tail exists only while there is text the render has not reached, so a stretch the render
+     has caught up with is one element, as it was before any of this. Nothing before the first
+     render either: a short reply is parsed within the first gap and never shows its own markup. */
+  const showTail = () => {
+    const rest = prose && rendered ? prose._text.slice(rendered) : '';
+    if (!rest) return dropTail();
+    if (!tail) { tail = document.createElement('div'); tail.className = 'lee-agent-reply-tail'; }
+    tail.textContent = rest;
+    if (!tail.isConnected) prose.after(tail);
+  };
+  // `prose !== el` is a stretch that was sealed or replaced while its render was on the wire
+  const painted = (el, sent) => { if (prose !== el) return; rendered = (sent || '').length; showTail(); };
   return {root, actions, seal, activity, chunk(text) {
-    if (!prose) { prose = document.createElement('div'); prose.className = 'lee-reply lee-agent-reply lee-timeline-prose'; prose._text = ''; root.appendChild(prose); }
-    prose._text += text || ''; renderMarkdown(prose, prose._text, false, null, AGENT_RENDER_GAP); return prose;
+    if (!prose) {
+      prose = document.createElement('div'); prose.className = 'lee-reply lee-agent-reply lee-timeline-prose';
+      prose._text = ''; rendered = 0; root.appendChild(prose);
+    }
+    prose._text += text || '';
+    renderMarkdown(prose, prose._text, false, painted, agentRenderGap(prose._text.length));
+    showTail();
+    return prose;
   }, append(node) { seal(); if (node) root.appendChild(node); return node; }};
 }
 
@@ -2754,6 +2903,7 @@ async function sendAgent(force = false) {
   turnBody(card).appendChild(userMessage(q));
   log.appendChild(card);
   foldOlderTurns(log);            // what came before is answered; this is the one being read
+  trimAgentLog(log);
   stickAgentLog(log, true);       // sending a turn is asking to watch it, wherever you had scrolled
   status('model is working…');
   agentListen(accepted.thread || lee.agentThread, accepted.seq, card);
@@ -2767,7 +2917,7 @@ function agentListen(thread, since, card = null) {
   $('.lee-agent-welcome', log)?.remove();
   /* A turn already in flight when this pane attached has no card yet: its prompt is in the feed,
      and the `user` event below fills the title in. */
-  if (!card) { card = agentTurnCard({model: $('#agentmodel')?.value || ''}); log.appendChild(card); }
+  if (!card) { card = agentTurnCard({model: $('#agentmodel')?.value || ''}); log.appendChild(card); trimAgentLog(log); }
   let host = turnBody(card);
   let progress = agentProgress(host);
   let timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
@@ -3001,19 +3151,39 @@ async function watchOpenFile() {
   } finally { lee.watchingDisk = false; }
 }
 
+/* Every tab holding one of `paths`, not only the one on screen. `/fs/events` and `/tab/watch` both
+   report the active tab alone, so a file restored under a background tab had no way to be heard
+   about: the copy from before sat in `lee.buffers` and in the server's document store until the
+   next `/tabs/save-all` wrote it back over the file that had just been restored.
+
+   The server decides what it dropped, and only those are cleared here: a tab with unsaved edits is
+   held rather than silently discarded, and comes back in `held` for the caller to report. */
+async function forgetDiskVersions(paths, force = false) {
+  const want = [...new Set((paths || []).filter(Boolean))];
+  if (!want.length) return {paths: [], held: []};
+  const d = await post('/tab/reload', {paths: want, force});
+  for (const path of d.paths || []) {
+    lee.heldSaveConflicts.delete(path);
+    // Remove any durable browser draft too, or `mountTab` restores the very buffer that was dropped.
+    await clearDrafts(path);
+    for (const key of [...lee.buffers.keys()])
+      if (key === path || key.startsWith(path + ':')) {
+        lee.buffers.delete(key); lee.dirtyBuffers.delete(key);
+      }
+  }
+  return d;
+}
+// Accepting disk for the tab on screen is explicit, so it takes what is there over unsaved edits.
 async function takeDiskVersion(path) {
-  lee.heldSaveConflicts.delete(path);
-  // Accepting disk is explicit. Remove any durable browser draft first, or `mountTab` restores
-  // the very buffer the user chose to discard.
-  await clearDrafts(path);
-  // Clear both client and server document caches, so the mount reads the bytes the tool just
-  // wrote rather than replaying the notebook object from before the turn.
-  for (const key of [...lee.buffers.keys()])
-    if (key === path || key.startsWith(path + ':')) {
-      lee.buffers.delete(key); lee.dirtyBuffers.delete(key);
-    }
-  await post('/tab/reload', {path});
+  await forgetDiskVersions([path], true);
   await mountTab();
+}
+/* What a rollback owes every tab holding a file it restored: the one on screen is remounted, and
+   the rest read from disk when they are next shown. Returns the paths it would not touch. */
+async function reloadRestored(paths) {
+  const d = await forgetDiskVersions(paths);
+  if ((d.paths || []).includes(lee.path)) await mountTab();
+  return d.held || [];
 }
 async function leeReloadFromDisk() {
   const name = (lee.path || '').split('/').pop();

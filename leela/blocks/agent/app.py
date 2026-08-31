@@ -460,7 +460,7 @@ def connect(app, ctx):
         notes = await off_loop(ctx.memory.agent_notes)
         rows = [{**note, 'text': await off_loop(ctx.memory.exact_text, str(note['id']))} for note in notes]
         return {'notes': rows, 'selected': ws.agent_memory_selection,
-                'targets': {'agent': 'Agent conversation', 'inline': 'Prompt cells',
+                'targets': {'agent': 'Agent conversation', 'inline': 'Prompt cells and inline AI',
                             'completion': 'Code completion'}}
     @rt('/agent/memory/save')
     async def agent_memory_save(req):

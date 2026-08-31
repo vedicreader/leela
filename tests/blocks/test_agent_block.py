@@ -399,3 +399,125 @@ def test_the_picker_marks_a_model_once_not_once_per_request():
         models.mark_models([{'value': 'z'}])
         assert seen == ['z'], 'and one that does not, is'
     finally: models.model_marks = original
+
+def _completion_prefs(values):
+    "Write a `completions` settings section the way the settings dialog does."
+    from leela.blocks.settings.settings import Settings
+    Settings(None).save('user', 'completions', values)
+
+def test_only_a_decided_completion_counts_towards_the_accept_rate(tmp_path):
+    """A rate is accepts over decisions. An ask still open, one abandoned, and one whose selection
+    moved under it are not decisions, and counting any of them would report a rejection nobody made.
+    """
+    from leela.blocks.agent.completions import summary
+    rows = [{'kind': 'ask', 'ask_id': 'a', 'instruction': 'add a docstring', 'model': 'm1'},
+            {'kind': 'reply', 'ask_id': 'a', 'model': 'm1', 'ms': 900},
+            {'kind': 'replace', 'ask_id': 'a'},
+            {'kind': 'ask', 'ask_id': 'b', 'instruction': 'rename it', 'model': 'm1'},
+            {'kind': 'reply', 'ask_id': 'b', 'model': 'm1'},
+            {'kind': 'discard', 'ask_id': 'b'},
+            {'kind': 'ask', 'ask_id': 'c', 'instruction': 'stale one', 'model': 'm1'},
+            {'kind': 'reply', 'ask_id': 'c', 'model': 'm1'},
+            {'kind': 'stale', 'ask_id': 'c'},
+            {'kind': 'ask', 'ask_id': 'd', 'instruction': 'still open', 'model': 'm1'},
+            {'kind': 'ask', 'ask_id': 'e', 'instruction': 'walked away', 'model': 'm1'},
+            {'kind': 'abandon', 'ask_id': 'e'}]
+    d = summary(rows)
+    assert d['asks'] == 5 and d['answered'] == 3
+    assert d['replaced'] == 1 and d['discarded'] == 1
+    assert d['accept_rate'] == 0.5, 'one accept and one reject, whatever else was asked'
+    assert [r['ask_id'] for r in d['recent']] == ['c', 'b', 'a'], 'newest first, decisions only'
+    assert d['recent'][-1]['instruction'] == 'add a docstring' and d['recent'][-1]['ms'] == 900
+    assert summary([{'kind': 'ask', 'ask_id': 'z'}])['accept_rate'] is None, 'no decision, no rate'
+
+def test_the_accept_rate_is_reported_per_model(tmp_path):
+    "The point of the log: which model's suggestions get taken."
+    from leela.blocks.agent.completions import summary
+    rows = [{'kind': 'ask', 'ask_id': 'a', 'model': 'fast'}, {'kind': 'reply', 'ask_id': 'a', 'model': 'fast'},
+            {'kind': 'replace', 'ask_id': 'a'},
+            {'kind': 'ask', 'ask_id': 'b', 'model': 'fast'}, {'kind': 'reply', 'ask_id': 'b', 'model': 'fast'},
+            {'kind': 'discard', 'ask_id': 'b'},
+            {'kind': 'ask', 'ask_id': 'c', 'model': 'slow'}, {'kind': 'reply', 'ask_id': 'c', 'model': 'slow'},
+            {'kind': 'replace', 'ask_id': 'c'},
+            {'kind': 'stale', 'ask_id': 'unknown-ask'}]
+    models = {m['model']: m for m in summary(rows)['models']}
+    assert models['fast']['replaced'] == 1 and models['fast']['discarded'] == 1
+    assert models['fast']['accept_rate'] == 0.5
+    assert models['slow']['accept_rate'] == 1.0 and models['slow']['discarded'] == 0
+    assert models['unknown']['stale'] == 1 and models['unknown']['accept_rate'] is None, \
+        'an outcome whose ask is off the end of the log still has to go somewhere'
+
+def test_completion_events_are_recorded_and_reduced_to_the_fields_this_version_stores(tmp_path):
+    from leela.blocks.agent.completions import completions
+    _completion_prefs({'telemetry': 'on', 'snippets': False})
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        out = client.post('/ai/events', json={'events': [
+            {'kind': 'ask', 'ask_id': '1', 'instruction': 'add a docstring', 'model': 'm1',
+             'text': 'def f(): pass', 'secret': 'no'},
+            {'kind': 'replace', 'ask_id': '1'},
+            {'kind': 'invented', 'ask_id': '1'}]}).json()
+        assert out['ok'] and out['recorded'] == 2, 'a kind nobody declared is dropped, not stored'
+        rows = list(completions().read())
+        assert [r['kind'] for r in rows] == ['ask', 'replace']
+        assert 'secret' not in rows[0] and 'text' not in rows[0], 'the code is kept only when asked for'
+        assert rows[0]['instruction'] == 'add a docstring' and rows[0]['at'] > 0
+        d = client.get('/ai/completions').json()
+        assert d['ok'] and d['telemetry'] == 'on' and d['snippets'] is False
+        assert d['summary']['asks'] == 1 and d['summary']['accept_rate'] == 1.0
+        assert d['summary']['recent'][0]['instruction'] == 'add a docstring'
+        assert client.post('/ai/completions/purge', json={}).json()['removed'] == 1
+        assert client.get('/ai/completions').json()['summary']['asks'] == 0
+
+def test_nothing_about_a_completion_is_recorded_when_the_setting_says_not_to(tmp_path):
+    from leela.blocks.agent.completions import completions
+    _completion_prefs({'telemetry': 'off'})
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        out = client.post('/ai/events', json={'events': [{'kind': 'ask', 'ask_id': '1'}]}).json()
+    assert out['recorded'] == 0 and 'off' in out['note']
+    assert list(completions().read()) == []
+
+def test_the_suggested_code_is_kept_only_when_the_setting_says_so(tmp_path):
+    "The selection and the reply are the person's own code. Off unless asked for."
+    from leela.blocks.agent.completions import completions
+    _completion_prefs({'telemetry': 'on', 'snippets': True})
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        client.post('/ai/events', json={'events': [
+            {'kind': 'reply', 'ask_id': '1', 'reply': 'def secret_key(): ...'}]})
+    assert [r.get('reply') for r in completions().read()] == ['def secret_key(): ...']
+
+def _pane_js():
+    from tests.assets import read
+    return read('leela/blocks/agent/live.js') + read('leela/blocks/agent/steer.js')
+
+def test_the_panes_three_preferences_round_trip_through_settings(tmp_path):
+    """`localStorage` is per origin and the app takes whatever port it is given, so a preference
+    kept only there read as its default at the next launch: notifications a person switched on came
+    back off without anyone asking."""
+    from leela.blocks.settings.settings import Settings, DEFAULT_SETTINGS
+    for key in ('notify', 'reasoning', 'historyLeelaOnly'): assert key in DEFAULT_SETTINGS['agent'], key
+    path = tmp_path/'settings.json'
+    Settings(root=tmp_path, user_path=path).save(
+        'user', 'agent', {'notify': True, 'reasoning': 'high', 'historyLeelaOnly': False})
+    got = Settings(root=tmp_path, user_path=path).effective()['agent']
+    assert (got['notify'], got['reasoning'], got['historyLeelaOnly']) == (True, 'high', False)
+
+def test_the_per_origin_keys_are_read_only_by_the_one_migration():
+    "Each old key is named once, in the table the migration reads, and nowhere else."
+    src = _pane_js()
+    for legacy in ('lee-agent-notify', 'lee-agent-reasoning', 'leeHistoryLeelaOnly'):
+        assert src.count(legacy) == 1, legacy
+    assert "prefGet('agent', 'notify', false)" in src and "prefSet('agent', 'notify', true)" in src
+    assert "prefGet('agent', 'historyLeelaOnly', true)" in src
+    assert "prefSet('agent', 'historyLeelaOnly', e.target.checked)" in src
+    assert "prefSet('agent', 'reasoning', reasoning.value)" in src
+
+def test_the_migration_asks_which_layer_a_value_came_from(tmp_path):
+    """settings.json answers with a default for every key, so a saved `false` and a default `false`
+    read the same and `prefAdopt` would skip the migration. `origins` tells them apart."""
+    from leela.blocks.settings.settings import Settings
+    path = tmp_path/'settings.json'
+    s = Settings(root=tmp_path, user_path=path)
+    assert s.describe()['origins']['agent']['notify'] == 'default'
+    s.save('user', 'agent', {'notify': False})
+    assert Settings(root=tmp_path, user_path=path).describe()['origins']['agent']['notify'] == 'user'
+    assert "origins?.agent?.[key]" in _pane_js(), 'the pane decides from origins, not from the value'

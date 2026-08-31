@@ -80,6 +80,9 @@ GET,POST /agent/turn-transaction
 GET,POST /agent/undo-turn
 GET,POST /agent/updates
 GET,POST /agent/workspace-repo-writes
+GET,POST /ai/completions
+GET,POST /ai/completions/purge
+GET,POST /ai/events
 GET,POST /backups
 GET,POST /backups/restore
 GET,POST /backups/run

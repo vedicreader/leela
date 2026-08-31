@@ -37,6 +37,19 @@ function mountMedia(host, st) {
     `${esc(name)} could not be played by this browser.</${tag}></div></div>`;
 }
 
+/* The setting names the three views `source`, `preview` and `split`; the buttons and the stage's
+   CSS have always said `edit`, `rendered` and `split`, so the names meet here and nowhere else.
+   Adopted once a page: `origins` still says `default` until the settings are read again, so a
+   second adoption would put the old key back over a view chosen since. */
+const MD_VIEWS = {source: 'edit', preview: 'rendered', split: 'split'};
+const MD_PREFS = {edit: 'source', rendered: 'preview', split: 'split'};
+let mdAdopted = false;
+async function adoptMdView() {
+  if (mdAdopted) return;
+  mdAdopted = true;
+  await prefAdopt('workbench', 'markdownView', 'lee-md-view', v => MD_PREFS[v] || 'split');
+}
+
 async function mountFile(host, st) {
   const isProject = st.path?.endsWith('/pyproject.toml') || st.title === 'pyproject.toml';
   const crumbMode=lee.workbenchPrefs.breadcrumbs||'pathAndSymbols',crumb=crumbMode==='off'?'':`<nav class="lee-breadcrumbs" id="editorcrumbs" aria-label="File and symbol path"><span>${esc(compactPath(st.path||st.title||''))}</span></nav>`;
@@ -44,7 +57,8 @@ async function mountFile(host, st) {
   // only hidden by CSS, so saving, autosave, blame, the change gutter and jump-to-line all keep
   // reaching `lee.editors.get('file')`.
   const isMd = (st.lang || '') === 'markdown';
-  const view = isMd ? (localStorage.getItem('lee-md-view') || 'split') : '';
+  if (isMd) await adoptMdView();
+  const view = isMd ? (MD_VIEWS[prefGet('workbench', 'markdownView', 'source')] || 'split') : '';
   host.innerHTML = crumb + (isProject ? '<div class="lee-package-summary" id="packagebar" hidden></div>' : '') +
     (isMd ? `<div class="lee-doc-head lee-md-bar"><div class="lee-segbar" id="mdview" aria-label="markdown view">` +
             ['edit', 'split', 'rendered'].map(v =>
@@ -92,7 +106,7 @@ async function mountFile(host, st) {
     $('#mdview').onclick = e => {
       const b = e.target.closest('[data-md-view]'); if (!b) return;
       const next = b.dataset.mdView;
-      localStorage.setItem('lee-md-view', next);
+      prefSet('workbench', 'markdownView', MD_PREFS[next] || 'split');
       $('.lee-md-stage').dataset.view = next;
       $$('#mdview .lee-seg').forEach(x => x.classList.toggle('active', x === b));
       // The editor was display:none a moment ago, so CodeMirror has stale measurements and draws

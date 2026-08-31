@@ -1,7 +1,7 @@
 "The web IDE."
 
 from __future__ import annotations
-import ast, asyncio, ipaddress, json, os, re, sys, warnings
+import ast, asyncio, ipaddress, json, os, re, sys, time, uuid, warnings
 from itertools import accumulate, count
 from fasthtml.common import *
 from starlette.middleware import Middleware
@@ -711,7 +711,7 @@ def _agent_panel(ws):
                     Span(id='agentbudgetstatus', cls='lee-agent-budget-status',
                          title='tool calls used in this turn'), cls='lee-composer-primary'),
                 Details(Summary('settings'),
-                    Div(Label(Span('prompt cells', help_mark('inline'), cls='lee-routing-name'),
+                    Div(Label(Span('prompt cells · inline AI', help_mark('inline'), cls='lee-routing-name'),
                               Select(Option('loading…', value=inline_model), id='inlinemodel',
                               cls='lee-select', onchange='leeAgentModel("inline", this.value)')),
                         Label(Span('completion', help_mark('completion'), cls='lee-routing-name'),
@@ -795,6 +795,16 @@ def _shell(ws, gate):
         Button('terminal / exec', cls='lee-pane-restore restore-bottom', onclick='leePane("bottom", true)'),
         id='shell', cls='lee-app')
 
+def _saved_theme(ws):
+    "The theme the settings hold, for the first paint. Empty where none was ever chosen."
+    from .blocks.settings.settings import Settings
+    try: held = Settings(ws.project_root).effective()
+    except Exception: return ''
+    # `workbench` is where it briefly lived; a settings file written then still reads.
+    try: return str((held.get('appearance') or {}).get('theme')
+                    or (held.get('workbench') or {}).get('theme') or '')
+    except Exception: return ''
+
 def _warm_probes():
     """Pay for the model probes while the window is still opening.
 
@@ -818,8 +828,12 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
             Link(rel='icon', href=_asset('favicon-dark.svg'), type='image/svg+xml',
                  media='(prefers-color-scheme: dark)'),
             Script(src=_asset('htmx.min.js'), defer=True),
+            # The saved theme is rendered in as the fallback rather than left to the cache alone:
+            # the cache is per origin, and a first paint at an origin never used before is exactly
+            # the one that would otherwise be the wrong colour until the settings arrive.
             Script("""try { const legacy = {system: 'leela:system:relaxed', dark: 'leela:dark:relaxed', light: 'leela:light:relaxed', cursor: 'cursor:light:tight'};
-const stored = localStorage.getItem('lee-theme') || 'cursor:light:tight';
+const saved = """ + json.dumps(_saved_theme(ws)) + """;
+const stored = localStorage.getItem('lee-theme') || saved || 'cursor:light:tight';
 const [family, mode, density] = (stored.includes(':') ? stored : legacy[stored] || 'cursor:light:tight').split(':');
 const resolved = mode === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : mode;
 document.documentElement.dataset.theme = family;
@@ -1180,23 +1194,69 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if not text.strip(): return _fail('select some text first')
         if len(text) > 120_000: return _fail('selection is larger than 120,000 characters')
         if len(instruction) > 4000: return _fail('instruction is larger than 4,000 characters')
+        trail, note, started = [], ws.ai.note, time.time()
         if mode == 'summary':
             sp = ('Summarise the selected text faithfully and concisely. Preserve important names, values, '
                   'constraints and conclusions. Output only the proposed replacement, without a preamble.')
             answer = await _off_loop(ws.ai.summarise, text, sp)
         else:
             if not instruction: return _fail('tell the AI what help you want')
-            sp = ('You are inline editor help. Follow the instruction against only the selected text. '
-                  'Return only the proposed replacement text: no preamble, no markdown fence, no commentary '
-                  'outside the replacement. Preserve the source language and formatting unless asked otherwise.')
-            prompt = f'Language: {lang}\nInstruction: {instruction}\n\n<selection>\n{text}\n</selection>'
-            answer = await _off_loop(ws.ai.oneshot, prompt, sp, 'completion', 2048)
+            a = ws.selection_ai
+            if a.busy: return _fail('the inline assistant is still answering the last selection')
+            sel = {'path': d.get('path') or '', 'from': d.get('line_from'), 'to': d.get('line_to'), 'text': text}
+            # Not `ask_with`: `compose` labels whatever it is handed a notebook, and this is a range
+            # out of one file. The selection carries its own tags, and its path is what the
+            # read-only tools need to open anything around it.
+            prompt = (f'Language: {lang}\nInstruction: {instruction}\n\n'
+                      f'{ws._selection_context(sel)}')
+            mark = a.activity.mark()
+            answer = await _off_loop(a.ask, prompt)
+            trail, note = a.activity.rows(mark=mark), a.note
         answer = str(answer or '').strip()
         from fastcore.xtras import fenced_blocks
         if blocks := fenced_blocks(answer): answer = str(blocks[-1][1]).strip()
-        if not answer: return _fail(ws.ai.note or 'the model returned no suggestion')
-        return {'ok': True, 'text': answer, 'mode': mode,
-                'model': ws.ai.routing.name_for('summary' if mode == 'summary' else 'completion')}
+        if not answer: return _fail(note or 'the model returned no suggestion')
+        # `ask_id` is the server's: the browser reports the outcome later and only a shared id ties
+        # the two halves of one judgement together.
+        return {'ok': True, 'text': answer, 'mode': mode, 'activity': trail,
+                'ask_id': uuid.uuid4().hex[:12], 'ms': round((time.time() - started) * 1000),
+                'tools': len([r for r in trail if r.get('tool')]),
+                'model': ws.ai.routing.name_for('summary') if mode == 'summary' else a.routing.name_for('turn')}
+    def _completions_prefs():
+        "The effective `completions` settings: whether to record, and whether to keep the code."
+        from .blocks.settings.settings import Settings
+        try: return Settings(ws.project_root).effective().get('completions') or {}
+        except Exception: return {}
+    @rt('/ai/events')
+    async def ai_events(req):
+        """What the inline panel was asked and what became of the answer.
+
+        Client-owned, like the search events it shares a store with: the outcome is a click in the
+        browser and the server never learns of it otherwise. Recording never fails the panel.
+        """
+        from .blocks.agent.completions import completions
+        try: d = await req.json()
+        except Exception: return _fail('expected a JSON batch')
+        held = _completions_prefs()
+        if str(held.get('telemetry') or 'on') == 'off':
+            return {'ok': True, 'recorded': 0, 'note': 'completion telemetry is off'}
+        store = completions()
+        n = await _off_loop(store.record, d.get('events') or [], bool(held.get('snippets')))
+        return {'ok': True, 'recorded': n, 'note': store.note}
+    @rt('/ai/completions')
+    async def ai_completions(days: int = 30):
+        "What the inline panel has been asked, and how often its answers were taken."
+        from .blocks.agent.completions import completions, summary
+        held, store = _completions_prefs(), completions()
+        rows = await _off_loop(store.read, days)
+        return {'ok': True, 'telemetry': held.get('telemetry', 'on'),
+                'snippets': bool(held.get('snippets')), 'dir': str(store.dir),
+                'summary': summary(rows)}
+    @rt('/ai/completions/purge')
+    async def ai_completions_purge():
+        "Delete every completion event file."
+        from .blocks.agent.completions import completions
+        return {'ok': True, 'removed': await _off_loop(completions().purge)}
     @rt('/runs/file')
     def runs_file():
         "The configurations file as text, or a template for one, for the in-IDE editor."

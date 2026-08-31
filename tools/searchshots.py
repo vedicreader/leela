@@ -79,7 +79,7 @@ async def shoot():
             await pg.screenshot(path=str(OUT/f'{name}.png'))
             shots.append(OUT/f'{name}.png')
 
-        await pg.evaluate("() => { localStorage.setItem('lee-search-mode', 'rg'); codeSearch(); }")
+        await pg.evaluate("async () => { await prefSet('search', 'lastMode', 'rg'); codeSearch(); }")
         await pg.fill('#cs', 'mountCodeSurface')
         await pg.wait_for_selector('.lee-search-result')
         await pg.wait_for_timeout(600)

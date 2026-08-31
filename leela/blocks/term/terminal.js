@@ -149,9 +149,30 @@ window.leePane = leePane;
    each carries its own answer. Pinned is the default, and nothing moves until you unpin it. */
 const DOCKABLE = {left: '#left', right: '#right'};
 
-function leePinned(which) { return localStorage.getItem('lee-pin-' + which) !== '0'; }
-
+const PINNABLE = Object.keys(DOCKABLE);
+/* One list, where there was a key per pane. An empty `workbench.pinnedPanes` is what a fresh
+   install holds, not two panes somebody unpinned, so the list is believed only once something has
+   been written into it; until then the answer is the per-origin keys it replaces, which is also
+   what the gather below writes, once. */
+function pinsSaved() {
+  const origin = lee.settingsMeta?.origins?.workbench?.pinnedPanes;
+  return (origin && origin !== 'default') || localStorage.getItem('lee-pref:workbench.pinnedPanes') !== null;
+}
+function pinnedPanes() {
+  if (pinsSaved()) return prefGet('workbench', 'pinnedPanes', PINNABLE) || PINNABLE;
+  return PINNABLE.filter(p => localStorage.getItem('lee-pin-' + p) !== '0');
+}
+function leePinned(which) { return pinnedPanes().includes(which); }
+let pinsAdopted = false;
+async function adoptPins() {
+  if (pinsAdopted) return;
+  pinsAdopted = true;
+  if (pinsSaved() || !PINNABLE.some(p => localStorage.getItem('lee-pin-' + p) !== null)) return;
+  await prefSet('workbench', 'pinnedPanes', pinnedPanes());
+  PINNABLE.forEach(leeSyncPin);
+}
 function leeSyncPin(which) {
+  adoptPins().catch(() => {});
   const pinned = leePinned(which);
   $('#shell')?.classList.toggle('unpinned-' + which, !pinned);
   $$(`[data-pane-pin="${which}"]`).forEach(b => {
@@ -163,8 +184,9 @@ function leeSyncPin(which) {
   });
 }
 
-function leePinPane(which) {
-  localStorage.setItem('lee-pin-' + which, leePinned(which) ? '0' : '1');
+async function leePinPane(which) {
+  const now = leePinned(which);
+  await prefSet('workbench', 'pinnedPanes', PINNABLE.filter(p => p === which ? !now : leePinned(p)));
   leeSyncPin(which);
   status(leePinned(which) ? `${which} pane pinned open` : `${which} pane closes when you click away`);
 }

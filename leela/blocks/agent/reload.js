@@ -59,19 +59,39 @@ async function watchOpenFile() {
   } finally { lee.watchingDisk = false; }
 }
 
+/* Every tab holding one of `paths`, not only the one on screen. `/fs/events` and `/tab/watch` both
+   report the active tab alone, so a file restored under a background tab had no way to be heard
+   about: the copy from before sat in `lee.buffers` and in the server's document store until the
+   next `/tabs/save-all` wrote it back over the file that had just been restored.
+
+   The server decides what it dropped, and only those are cleared here: a tab with unsaved edits is
+   held rather than silently discarded, and comes back in `held` for the caller to report. */
+async function forgetDiskVersions(paths, force = false) {
+  const want = [...new Set((paths || []).filter(Boolean))];
+  if (!want.length) return {paths: [], held: []};
+  const d = await post('/tab/reload', {paths: want, force});
+  for (const path of d.paths || []) {
+    lee.heldSaveConflicts.delete(path);
+    // Remove any durable browser draft too, or `mountTab` restores the very buffer that was dropped.
+    await clearDrafts(path);
+    for (const key of [...lee.buffers.keys()])
+      if (key === path || key.startsWith(path + ':')) {
+        lee.buffers.delete(key); lee.dirtyBuffers.delete(key);
+      }
+  }
+  return d;
+}
+// Accepting disk for the tab on screen is explicit, so it takes what is there over unsaved edits.
 async function takeDiskVersion(path) {
-  lee.heldSaveConflicts.delete(path);
-  // Accepting disk is explicit. Remove any durable browser draft first, or `mountTab` restores
-  // the very buffer the user chose to discard.
-  await clearDrafts(path);
-  // Clear both client and server document caches, so the mount reads the bytes the tool just
-  // wrote rather than replaying the notebook object from before the turn.
-  for (const key of [...lee.buffers.keys()])
-    if (key === path || key.startsWith(path + ':')) {
-      lee.buffers.delete(key); lee.dirtyBuffers.delete(key);
-    }
-  await post('/tab/reload', {path});
+  await forgetDiskVersions([path], true);
   await mountTab();
+}
+/* What a rollback owes every tab holding a file it restored: the one on screen is remounted, and
+   the rest read from disk when they are next shown. Returns the paths it would not touch. */
+async function reloadRestored(paths) {
+  const d = await forgetDiskVersions(paths);
+  if ((d.paths || []).includes(lee.path)) await mountTab();
+  return d.held || [];
 }
 async function leeReloadFromDisk() {
   const name = (lee.path || '').split('/').pop();

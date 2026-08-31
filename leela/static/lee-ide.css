@@ -784,6 +784,20 @@ kbd {
 .lee-history-session-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 4px 4px; }
 .lee-history-session-head strong { color: var(--lee-fg); font-size: 11px; }
 .lee-history-session-head span { color: var(--lee-green); font-size: 9.5px; }
+.lee-completions { padding: 8px 4px 12px; border-top: 1px solid var(--lee-border); }
+.lee-completion-models, .lee-completion-log { display: flex; flex-direction: column; gap: 1px; max-height: 180px; overflow: auto; }
+.lee-completion-models > div, .lee-completion-log > div {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, .5fr); gap: 10px;
+  align-items: center; padding: 4px 6px; border-radius: 3px; color: var(--lee-fg3); font: 9.5px/1.4 var(--lee-mono);
+}
+.lee-completion-models > div:hover, .lee-completion-log > div:hover { background: var(--lee-sel); color: var(--lee-fg); }
+.lee-completion-models strong, .lee-completion-log strong,
+.lee-completion-models span, .lee-completion-log span,
+.lee-completion-models em, .lee-completion-log em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-completion-models span, .lee-completion-log span { color: var(--lee-fg4); }
+.lee-completion-models em, .lee-completion-log em { font-style: normal; text-align: right; }
+.lee-completion-log [data-completion="replace"] em { color: var(--lee-green); }
+.lee-completion-log [data-completion="discard"] em { color: var(--lee-red); }
 .lee-session-nav {
   position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 4px;
   padding: 5px 3px 7px; overflow-x: auto; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1);
@@ -920,6 +934,11 @@ kbd {
 }
 .lee-agent-reply { margin-right: 4px; }
 .lee-agent-reply:empty { display: none; }
+/* What has arrived since the last render, before it has been parsed. Same metrics as the prose it
+   follows, so the paragraph does not reflow when the render lands and takes it over. */
+.lee-agent-reply-tail { margin: 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--lee-fg2); }
+.lee-agent-reply-tail:empty { display: none; }
+.lee-agent-trimmed { color: var(--lee-fg4); font: 10px/1.4 var(--lee-mono); padding: 4px 2px 8px; }
 .lee-agent-timeline { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .lee-agent-timeline > .lee-agent-reply { margin: 0 4px; }
 /* what a delegated question did, which is otherwise thrown away with its conversation */
@@ -1734,6 +1753,10 @@ kbd {
   font: 11.5px/1.55 var(--lee-mono); }
 .lee-selection-reply > footer { display: flex; justify-content: flex-end; gap: 5px; padding: 6px 7px;
   border-top: 1px solid var(--lee-border); }
+.lee-selection-trail { display: flex; flex-wrap: wrap; gap: 5px; padding: 5px 10px;
+  border-top: 1px solid var(--lee-border); color: var(--lee-fg2); font: 10px/1.4 var(--lee-mono); }
+.lee-selection-trail span { color: var(--lee-fg4); }
+.lee-selection-trail.lee-trail-none span { font-style: italic; }
 .lee-selection-skeleton { padding: 12px; }
 .lee-selection-skeleton i { display: block; width: 100%; height: 9px; margin: 8px 0; border-radius: 2px;
   background: var(--lee-bg2); animation: lee-research-shimmer 1.1s ease-in-out infinite alternate; }

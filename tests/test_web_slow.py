@@ -1110,6 +1110,92 @@ def test_a_code_block_is_mounted_once_however_often_the_reply_around_it_repaints
     assert out['text'], 'and the code is still the code'
     assert out['built'] == 2, f'two code blocks were mounted {out["built"]} times over 12 repaints'
 
+def test_a_long_reply_is_not_re_rendered_from_the_top_ten_times_a_second():
+    """Every pass over a streaming reply costs the whole reply: a `/markdown/render` round trip that
+    parses and highlights the document again, an `innerHTML` write, and a re-measure of every code
+    surface in it. At a fixed 100ms gap a 12,000-character answer paid that thirty times, over an
+    average of six thousand characters, which is the pane going stiff exactly when the model is
+    writing its longest answer.
+
+    The gap grows with the text now. What keeps the words arriving at the rate they were written is
+    the unparsed tail after the prose, which costs a `textContent` write and no parse, and which
+    `seal` renders properly and removes at the end of the stretch.
+    """
+    async def go(pg):
+        return await pg.evaluate("""async () => {
+          const log = document.querySelector('#agentlog');
+          dropCodeSurfaces(log); log.innerHTML = ''; lee.agentView = 'live';
+          const card = agentTurnCard({prompt: 'probe', model: ''}); log.appendChild(card);
+          const root = document.createElement('div'); root.className = 'lee-agent-timeline';
+          turnBody(card).appendChild(root);
+          const tl = agentTimeline(root);
+          let renders = 0, live = 0;
+          const real = window.fetch;
+          window.fetch = (u, o) => { if (String(u).includes('/markdown/render')) renders++; return real(u, o); };
+          const sentence = '## a heading\\n\\nthe kernel wrote its outputs into the pane and the reader '
+            + 'read them one paragraph after another without ever reaching the end of what the model '
+            + 'had to say about the notebook it had just run. ';
+          try {
+            for (let i = 0; i < 60; i++) {
+              tl.chunk(sentence);
+              live = Math.max(live, root.querySelector('.lee-agent-reply-tail')?.textContent.length || 0);
+              await new Promise(r => setTimeout(r, 50));
+            }
+            tl.seal();
+            await new Promise(r => setTimeout(r, 900));
+          } finally { window.fetch = real; }
+          const prose = root.querySelector('.lee-timeline-prose');
+          return {renders, live, chars: prose.dataset.markdown.length,
+                  tail: !!root.querySelector('.lee-agent-reply-tail'),
+                  headings: prose.querySelectorAll('h2').length,
+                  shown: (prose.textContent.match(/one paragraph after another/g) || []).length};
+        }""")
+    out = _run(go)
+    assert out['chars'] > 9000, f'the probe has to be a long reply for this to mean anything: {out}'
+    assert 3 <= out['renders'] <= 16, f"{out['chars']} characters were re-rendered {out['renders']} times"
+    assert out['live'] > 0, 'nothing was on screen between one render and the next'
+    assert not out['tail'], 'the unparsed tail outlived the stretch of prose it belonged to'
+    assert out['headings'] >= 1, f'the sealed reply is not rendered markdown: {out}'
+    assert out['shown'] == 60, f"the sealed reply is {out['shown']} of its 60 chunks: {out}"
+
+def test_the_live_agent_pane_keeps_a_bounded_number_of_turns():
+    """Folding hides a turn from layout and frees nothing. Every turn of a session stayed in the
+    live pane holding its rendered replies and a CodeMirror view per code block in them, so a long
+    day's conversation was hundreds of live views carried through every paint.
+
+    The pane keeps the last `LIVE_TURNS`, tears down what it drops, and says where they went. A turn
+    holding a checkpoint nobody has answered is never dropped: its buttons are the only way that run
+    continues.
+    """
+    async def go(pg):
+        return await pg.evaluate("""async () => {
+          const log = document.querySelector('#agentlog');
+          dropCodeSurfaces(log); log.innerHTML = ''; approvalCards.clear(); lee.agentView = 'live';
+          let torn = 0;
+          const real = window.dropCodeSurfaces;
+          window.dropCodeSurfaces = n => { if (n?.classList?.contains('lee-agent-turn')) torn++; return real(n); };
+          try {
+            for (let i = 0; i < 40; i++) {
+              const card = agentTurnCard({prompt: 'turn ' + i, model: '', turnId: 't' + i});
+              log.appendChild(card);
+              if (i === 1) {
+                const held = document.createElement('div'); held.className = 'lee-approval proposed';
+                turnBody(card).appendChild(held);
+              }
+              trimAgentLog(log);
+            }
+          } finally { window.dropCodeSurfaces = real; }
+          const ids = [...log.querySelectorAll('.lee-agent-turn')].map(c => c.dataset.turn);
+          return {kept: ids.length, torn, newest: ids.at(-1), checkpoint: ids.includes('t1'),
+                  note: !!log.querySelector('.lee-agent-trimmed')};
+        }""")
+    out = _run(go)
+    assert out['newest'] == 't39', f'the turn being written was dropped: {out}'
+    assert out['kept'] <= 31, f'forty turns left {out["kept"]} in the pane'
+    assert out['checkpoint'], 'a turn holding an unanswered checkpoint was dropped'
+    assert out['torn'] >= 8, f'the turns it dropped kept their code surfaces: {out}'
+    assert out['note'], 'nothing on screen said where the earlier turns went'
+
 def test_the_agent_pane_follows_the_stream_without_dragging_a_reader_off_what_they_are_reading():
     """Every paint in the pane wrote `scrollTop = scrollHeight`, and wrote it *before* the markdown
     render it had just asked for had landed: the pane was measured short, jumped when the text
@@ -1573,6 +1659,9 @@ def _open(pw, url):
 
 def _bg(page): return page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--lee-bg').trim()")
 
+_NO_SAVED_THEME = ("() => post('/settings/save', {scope: 'user', language: '',"
+                   " section: 'appearance', values: {theme: ''}})")
+
 def test_every_family_repaints_and_the_picker_and_the_stored_preference_agree(proj_web_th):
     """Every family in every mode, the picker that offers them, the density that moves the header
     without moving the colours, and the pre-family preference a reload has to migrate rather than
@@ -1583,6 +1672,9 @@ def test_every_family_repaints_and_the_picker_and_the_stored_preference_agree(pr
         from playwright.sync_api import sync_playwright
         with sync_playwright() as pw:
             page = _open(pw, url)
+            # every assertion below is about the `lee-theme` cache, so the settings.json theme,
+            # which outranks it, has to be out of the way first.
+            page.evaluate(_NO_SAVED_THEME)
             seen = {}
             for family in FAMILIES:
                 for mode in ('dark', 'light', 'system'):
@@ -1624,6 +1716,7 @@ def test_every_family_repaints_and_the_picker_and_the_stored_preference_agree(pr
             page.click('[data-cancel]')
             assert page.evaluate('document.documentElement.dataset.theme') != 'nord'
 
+            page.evaluate(_NO_SAVED_THEME)   # the reloads above migrated the cache into settings
             page.evaluate("localStorage.setItem('lee-theme', 'dark')")
             page.reload(wait_until='networkidle')
             if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
@@ -1640,6 +1733,53 @@ def test_every_family_repaints_and_the_picker_and_the_stored_preference_agree(pr
             page.emulate_media(color_scheme='dark')
             page.wait_for_function("document.documentElement.dataset.mode === 'dark'")
             assert _bg(page) != light
+
+
+def test_the_theme_is_kept_in_settings_and_not_only_in_this_origin(proj_web_th):
+    """The packaged app takes whatever port it is given when 5001 is busy, and `localStorage` is per
+    origin, so a theme kept only there is gone on the next launch. Saving from the panel writes
+    settings.json, counts as a saved setting, and holds for a browser that has never seen the
+    origin. A theme that only ever lived in `localStorage` is migrated rather than dropped.
+    """
+    ws = Workspace(roots=[proj_web_th])
+    with serve(ws) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            def theme_setting():
+                for _ in range(50):
+                    value = page.evaluate("() => api('/settings')")['effective']['appearance']['theme']
+                    if value: return value
+                    page.wait_for_timeout(100)
+                return ''
+            page.evaluate(_NO_SAVED_THEME)
+            page.evaluate('leeEditorSettings()')
+            page.wait_for_selector('.lee-settings-modal')
+            page.click('[data-settings-page="appearance"]')
+            page.click('.lee-theme-mode[data-theme-mode="dark"]')
+            page.click('.lee-theme-choice[data-theme="nord"]')
+            page.click('[data-save]')
+            page.wait_for_function("!document.querySelector('.lee-settings-modal')")
+            said = page.locator('#status').inner_text()
+            assert 'no settings saved' not in said and 'saved to user' in said, said
+            d = page.evaluate("() => api('/settings?language=python')")
+            assert d['effective']['appearance']['theme'].startswith('nord:dark:'), d['effective']['appearance']
+            assert 'appearance' not in ((d['user'].get('languages') or {}).get('python') or {}), \
+                'a theme is not language-scoped'
+
+            page.evaluate("localStorage.removeItem('lee-theme')")   # what a new origin looks like
+            page.reload(wait_until='networkidle')
+            if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
+            page.wait_for_function("document.documentElement.dataset.theme === 'nord'")
+            assert page.evaluate('document.documentElement.dataset.mode') == 'dark'
+
+            page.evaluate(_NO_SAVED_THEME)
+            page.evaluate("localStorage.setItem('lee-theme', 'gruvbox:dark:tight')")
+            page.reload(wait_until='networkidle')
+            if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
+            page.wait_for_function("document.documentElement.dataset.theme === 'gruvbox'")
+            assert theme_setting() == 'gruvbox:dark:tight', 'the cached theme is migrated, not dropped'
+            page.evaluate(_NO_SAVED_THEME)
 
 
 def test_the_bundles_parse_and_share_one_scope(proj_web_th):
@@ -2834,7 +2974,7 @@ SEARCH_STUB = """() => {
     if (url === '/code/status') return Promise.resolve({ok: true, files: 1, packages: 0, graph_nodes: 0});
     return real(url, opts);
   };
-  localStorage.setItem('lee-search-mode', 'rg');
+  prefSet('search', 'lastMode', 'rg');
   codeSearch();
 }"""
 
@@ -2999,3 +3139,279 @@ def test_running_a_cell_near_the_bottom_leaves_room_under_the_next_one(tmp_path)
     assert out['calm'], 'selecting a cell that is already in view does not scroll the notebook'
     assert out['docked']['box'] < out['stepped']['box'], \
         f"precondition: the dock takes height off the notebook: {out['docked']} {out['stepped']}"
+
+
+def test_the_inline_reply_says_what_it_looked_at_even_when_that_is_nothing(tmp_path):
+    """An empty trail rendered as no trail at all, so a reader could not tell an answer written
+    without looking anything up from a panel whose trail had stopped working."""
+    import json
+    (tmp_path/'a.py').write_text('x = 1\n')
+    async def go(pg):
+        out = {}
+        for name, activity in (('used', [{'tool': 'view_file'}, {'tool': 'view_file'},
+                                         {'tool': 'search_code'}, {'note': 'not a call'}]),
+                               ('none', [])):
+            def reply(a):
+                body = json.dumps({'ok': True, 'text': 'rewritten', 'mode': 'instruction',
+                                   'model': 'fake', 'activity': a})
+                return lambda route, *_: route.fulfill(
+                    status=200, content_type='application/json', body=body)
+            await pg.route('**/complete/selection', reply(activity))
+            await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'a.py'))
+            await pg.wait_for_selector('#editor .cm-editor')
+            await pg.evaluate("""() => {
+              const view = lee.editors.get('file');
+              LeeCM.setSelection(view, 0, LeeCM.getDoc(view).length);
+              showSelectionHelp();
+            }""")
+            await pg.wait_for_selector('.lee-selection-tools')
+            await pg.click('[data-ask]')
+            await pg.fill('.lee-selection-tools input', 'tidy this')
+            await pg.click('[data-send]')
+            await pg.wait_for_selector('.lee-selection-reply:not(.loading)')
+            out[name] = await pg.evaluate(
+                "() => document.querySelector('.lee-selection-trail')?.innerText || ''")
+            await pg.evaluate("() => document.querySelector('.lee-selection-reply')?.remove()")
+        return out
+    out = _run(go, roots=[tmp_path])
+    assert 'view_file x2' in out['used'] and 'search_code' in out['used'], out['used']
+    assert 'note' not in out['used'], 'only tool calls are named'
+    assert 'without looking anything up' in out['none'], out['none']
+
+def test_the_history_panel_shows_what_the_inline_panel_was_asked_and_whether_it_was_taken(tmp_path):
+    """The completion log is preference data, so it has to be readable: the instruction, the model,
+    the verdict, and the accept rate the verdicts add up to."""
+    from playwright.sync_api import sync_playwright
+    from leela.blocks.agent.completions import completions
+    completions().record([
+        {'kind': 'ask', 'ask_id': '1', 'instruction': 'add a docstring', 'model': 'fast', 'lang': 'python'},
+        {'kind': 'reply', 'ask_id': '1', 'model': 'fast', 'ms': 800},
+        {'kind': 'replace', 'ask_id': '1'},
+        {'kind': 'ask', 'ask_id': '2', 'instruction': 'rename the widget', 'model': 'slow', 'lang': 'python'},
+        {'kind': 'reply', 'ask_id': '2', 'model': 'slow', 'ms': 2400},
+        {'kind': 'discard', 'ask_id': '2'}])
+    fake_kernels()
+    ws = Workspace(roots=[tmp_path])
+    with _server(ws) as url, sync_playwright() as pw:
+        browser = _launch_sync(pw)
+        page = browser.new_page(viewport={'width': 1440, 'height': 900})
+        page.goto(url, wait_until='networkidle')
+        if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
+        page.click('#agenthistory')
+        page.wait_for_selector('.lee-completions')
+        rows = page.locator('.lee-completion-log > div')
+        assert rows.count() == 2
+        assert 'rename the widget' in rows.nth(0).inner_text() and 'slow' in rows.nth(0).inner_text()
+        assert 'rejected' in rows.nth(0).inner_text()
+        assert 'add a docstring' in rows.nth(1).inner_text() and 'accepted' in rows.nth(1).inner_text()
+        models = page.locator('.lee-completion-models').inner_text()
+        assert 'fast' in models and '100%' in models and '0%' in models
+        note = page.locator('.lee-completions .lee-weight-note').inner_text()
+        assert '2 asked' in note and 'accepted 50%' in note
+        assert page.locator('.lee-completions [data-completion-pref="telemetry"]').input_value() == 'on'
+        assert page.locator('.lee-completions [data-completions-purge]').count() == 1
+        browser.close()
+
+
+def test_agent_preferences_are_kept_in_settings_and_not_only_in_this_origin(tmp_path, monkeypatch):
+    """The composer's notify box, reasoning picker and history filter, across a relaunch.
+
+    `localStorage` is per origin and the packaged app takes whatever port is free, so a preference
+    kept only there was gone at the next launch and read as its default: desktop notifications a
+    person switched on came back off without anyone asking for it. Each is saved to settings.json,
+    holds for a browser that has never seen the origin, and a value that only ever lived in the old
+    per-origin key is migrated rather than dropped.
+    """
+    import leela.blocks.settings.settings as settings_module
+    saved = tmp_path/'settings.json'
+    monkeypatch.setattr(settings_module, 'user_settings_file', lambda: saved)
+    (tmp_path/'main.py').write_text('x = 1\n')
+    fake_kernels()
+    ws = Workspace(roots=[tmp_path])
+    with serve(ws) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            # headless chromium answers `denied` however the permission is granted, and the toggle
+            # is only reached with a granted one
+            page.add_init_script("Object.defineProperty(Notification, 'permission',"
+                                 " {get: () => 'granted'})")
+            page.reload(wait_until='networkidle')
+            def agent_prefs(): return page.evaluate("() => api('/settings')")['effective']['agent']
+            def threads():
+                page.evaluate('leeAgentThreadsToggle(true)')
+                page.wait_for_selector('#agentnotify')
+            page.wait_for_function('window.lee && lee.settingsMeta')
+            threads()
+            page.check('#agentnotify')
+            page.wait_for_function('() => lee.prefs.agent.notify === true')
+            page.select_option('#agentreasoning', 'high')
+            page.wait_for_function("() => lee.prefs.agent.reasoning === 'high'")
+            got = agent_prefs()
+            assert (got['notify'], got['reasoning']) == (True, 'high'), got
+
+            page.evaluate('localStorage.clear()')   # what a new origin looks like
+            page.reload(wait_until='networkidle')
+            page.wait_for_function('window.lee && lee.settingsMeta')
+            page.wait_for_function("() => document.querySelector('#agentreasoning')?.value === 'high'")
+            threads()
+            assert page.is_checked('#agentnotify'), 'notifications came back off at a new origin'
+
+            saved.unlink()                          # a first launch, with an old cache to take from
+            page.evaluate("localStorage.clear();"
+                          " localStorage.setItem('lee-agent-notify', 'on');"
+                          " localStorage.setItem('lee-agent-reasoning', 'low');"
+                          " localStorage.setItem('leeHistoryLeelaOnly', '0')")
+            page.reload(wait_until='networkidle')
+            page.wait_for_function("() => lee.prefs?.agent?.reasoning === 'low'")
+            got = agent_prefs()
+            assert (got['notify'], got['reasoning'], got['historyLeelaOnly']) == (True, 'low', False), got
+
+            saved.unlink()
+            page.evaluate('localStorage.clear()')
+            page.reload(wait_until='networkidle')
+            page.wait_for_function('() => lee.prefs?.agent?.historyLeelaOnly === true')
+            assert agent_prefs()['historyLeelaOnly'] is True, 'the filter is on unless it is turned off'
+
+
+SEARCH_API_STUB = SEARCH_STUB.replace("prefSet('search', 'lastMode', 'rg');\n  codeSearch();", '')
+
+def _relaunch(page):
+    "A relaunch on a port nobody chose: the settings are still there, the origin's storage is not."
+    page.evaluate('localStorage.clear()')
+    page.reload(wait_until='networkidle')
+    page.wait_for_function('window.lee && lee.settingsMeta')
+
+def _settings_file(monkeypatch, tmp_path):
+    import leela.blocks.settings.settings as settings_module
+    saved = tmp_path/'settings.json'
+    monkeypatch.setattr(settings_module, 'user_settings_file', lambda: saved)
+    return saved
+
+def test_the_dotfile_toggle_is_kept_in_settings_and_not_only_in_this_origin(tmp_path, monkeypatch):
+    """Showing dotfiles came back off at every launch, because the port moves and `localStorage` is
+    per origin. It is `workbench.showHiddenFiles` now, it holds for a browser that has never seen
+    the origin, and a `lee-tree-hidden` that only ever lived in the old key is adopted, not dropped.
+    """
+    _settings_file(monkeypatch, tmp_path)
+    (tmp_path/'.hidden.py').write_text('x = 1\n')
+    fake_kernels()
+    with serve(Workspace(roots=[tmp_path])) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            page.wait_for_function('window.lee && lee.settingsMeta')
+            page.evaluate("localStorage.setItem('lee-tree-hidden', '1')")
+            page.reload(wait_until='networkidle')
+            page.wait_for_function('() => lee.prefs?.workbench?.showHiddenFiles === true')
+
+            _relaunch(page)
+            assert page.evaluate('() => treeHidden()') is True, 'the toggle came back off at a new origin'
+            assert page.evaluate("() => $('[data-action=\"show_hidden\"]').classList.contains('on')"), \
+                'the button does not say what the tree is doing'
+
+            page.evaluate('() => toggleHidden()')
+            page.wait_for_function('() => lee.prefs.workbench.showHiddenFiles === false')
+            _relaunch(page)
+            assert page.evaluate('() => treeHidden()') is False, 'turning it off did not last either'
+
+def test_the_markdown_view_is_kept_in_settings_and_not_only_in_this_origin(tmp_path, monkeypatch):
+    """Split, rendered or edit, chosen once and held across a relaunch. The setting names the views
+    `source`, `preview` and `split`; the buttons and the stage's CSS say `edit`, `rendered` and
+    `split`, and a `lee-md-view` from the old key is adopted through that mapping.
+    """
+    _settings_file(monkeypatch, tmp_path)
+    md = tmp_path/'note.md'
+    md.write_text('# Title\n\ntext\n')
+    fake_kernels()
+    with serve(Workspace(roots=[tmp_path])) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            page.wait_for_function('window.lee && lee.settingsMeta')
+            def open_md():
+                page.evaluate('p => leeOpenFile(p)', str(md))
+                page.wait_for_selector('.lee-md-stage')
+                return page.evaluate("() => $('.lee-md-stage').dataset.view")
+            page.evaluate("localStorage.setItem('lee-md-view', 'rendered')")
+            assert open_md() == 'rendered', 'the view the old key held was dropped'
+            page.wait_for_function("() => lee.prefs.workbench.markdownView === 'preview'")
+
+            _relaunch(page)
+            assert open_md() == 'rendered', 'the view came back at the default at a new origin'
+
+            page.click('[data-md-view="split"]')
+            page.wait_for_function("() => lee.prefs.workbench.markdownView === 'split'")
+            _relaunch(page)
+            assert open_md() == 'split'
+            assert page.evaluate("() => $('#mdview .lee-seg.active').dataset.mdView") == 'split', \
+                'the buttons and the stage disagree about the view'
+
+def test_a_pinned_pane_is_kept_in_settings_and_not_only_in_this_origin(tmp_path, monkeypatch):
+    """A pane holds its pin across a relaunch. There was a `lee-pin-<pane>` key per pane and the
+    setting is one list of the panes that are pinned, so the old keys are gathered into it once.
+    Pinned is still the default: an empty list is a fresh install, not two panes somebody unpinned.
+    """
+    _settings_file(monkeypatch, tmp_path)
+    (tmp_path/'main.py').write_text('x = 1\n')
+    fake_kernels()
+    with serve(Workspace(roots=[tmp_path])) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            page.wait_for_function('window.lee && lee.settingsMeta')
+            assert page.evaluate("() => leePinned('left') && leePinned('right')"), 'pinned is the default'
+            page.evaluate("localStorage.setItem('lee-pin-left', '0')")
+            page.reload(wait_until='networkidle')
+            page.wait_for_function("() => JSON.stringify(lee.prefs?.workbench?.pinnedPanes) === '[\"right\"]'")
+
+            _relaunch(page)
+            assert page.evaluate("() => [leePinned('left'), leePinned('right')]") == [False, True], \
+                'the unpinned pane came back pinned at a new origin'
+            assert page.evaluate("() => $('#shell').classList.contains('unpinned-left')"), \
+                'the shell does not lay out the way the setting says'
+
+            page.evaluate("() => leePinPane('left')")
+            page.wait_for_function("() => JSON.stringify(lee.prefs.workbench.pinnedPanes) === '[\"left\",\"right\"]'")
+            _relaunch(page)
+            assert page.evaluate("() => leePinned('left')") is True, 'pinning it again did not last'
+
+def test_the_search_dialog_reopens_on_the_choices_it_closed_on(tmp_path, monkeypatch):
+    """The mode, the scope and the extension filter, across a relaunch rather than only across a
+    reopen. All three were `localStorage`, so a moving port reset them; they are `search.last*` now,
+    and the old keys are adopted before the dialog reads anything.
+    """
+    _settings_file(monkeypatch, tmp_path)
+    (tmp_path/'main.py').write_text('x = 1\n')
+    fake_kernels()
+    with serve(Workspace(roots=[tmp_path])) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            page.wait_for_function('window.lee && lee.settingsMeta')
+            def open_search():
+                page.evaluate(SEARCH_API_STUB)
+                page.evaluate('() => { codeSearch(); }')
+                page.wait_for_selector('#csexts')
+                return page.evaluate("() => [$('.lee-searchrail-mode.active').dataset.mode,"
+                                     " $('#csscope').value, $('#csexts').value]")
+            def close_search():
+                page.keyboard.press('Escape')
+                page.wait_for_selector('.lee-code-search-modal', state='detached')
+            page.evaluate("localStorage.setItem('lee-search-mode', 'rg');"
+                          " localStorage.setItem('lee-search-scope', 'workspace');"
+                          " localStorage.setItem('lee-search-exts', 'py, ts')")
+            assert open_search() == ['rg', 'workspace', 'py, ts'], 'what the old keys held was dropped'
+            page.wait_for_function("() => lee.prefs.search.lastExts === 'py, ts'")
+            close_search()
+
+            _relaunch(page)
+            assert open_search() == ['rg', 'workspace', 'py, ts'], 'the dialog reset at a new origin'
+
+            page.click('[data-mode="context"]')
+            page.select_option('#csscope', 'project')
+            page.fill('#csexts', 'md')
+            close_search()
+            page.wait_for_function("() => lee.prefs.search.lastExts === 'md'")
+            _relaunch(page)
+            assert open_search() == ['context', 'project', 'md'], 'a change made in the dialog did not last'

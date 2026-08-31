@@ -63,16 +63,30 @@ function moveTreeSelection(d) {
 /* Dotfiles are off by default and on by choice, because `.gitignore`, `.github` and `.env` are
    files you edit. The server's skip list drops `.venv` and `node_modules` whatever the toggle
    says. */
-function treeHidden() { return localStorage.getItem('lee-tree-hidden') === '1'; }
+function treeHidden() { return prefGet('workbench', 'showHiddenFiles', false) === true; }
 function treeQuery(sep = '?') { return treeHidden() ? sep + 'hidden=1' : ''; }
+/* `lee-tree-hidden` was per origin, and the port moves between launches, so the toggle came back
+   off at a port nobody chose. The tree is painted before the adoption can answer, so it is painted
+   again when the answer changes it. */
+let hiddenAdopted = false;
+async function adoptTreeHidden() {
+  if (hiddenAdopted) return;
+  hiddenAdopted = true;
+  const was = treeHidden();
+  await prefAdopt('workbench', 'showHiddenFiles', 'lee-tree-hidden', v => v === '1');
+  if (treeHidden() === was) return;
+  paintHiddenBtn();
+  await refreshFileTree(undefined, false);
+}
 function paintHiddenBtn() {
+  adoptTreeHidden().catch(() => {});
   $$('[data-action="show_hidden"]').forEach(b => {
     b.classList.toggle('on', treeHidden());
     b.setAttribute('aria-pressed', String(treeHidden()));
   });
 }
 async function toggleHidden() {
-  localStorage.setItem('lee-tree-hidden', treeHidden() ? '0' : '1');
+  await prefSet('workbench', 'showHiddenFiles', !treeHidden());
   await refreshFileTree(undefined, false);
   status(treeHidden() ? 'showing dotfiles' : 'hiding dotfiles', 'ok');
 }

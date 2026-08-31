@@ -149,9 +149,30 @@ window.leePane = leePane;
    each carries its own answer. Pinned is the default, and nothing moves until you unpin it. */
 const DOCKABLE = {left: '#left', right: '#right'};
 
-function leePinned(which) { return localStorage.getItem('lee-pin-' + which) !== '0'; }
-
+const PINNABLE = Object.keys(DOCKABLE);
+/* One list, where there was a key per pane. An empty `workbench.pinnedPanes` is what a fresh
+   install holds, not two panes somebody unpinned, so the list is believed only once something has
+   been written into it; until then the answer is the per-origin keys it replaces, which is also
+   what the gather below writes, once. */
+function pinsSaved() {
+  const origin = lee.settingsMeta?.origins?.workbench?.pinnedPanes;
+  return (origin && origin !== 'default') || localStorage.getItem('lee-pref:workbench.pinnedPanes') !== null;
+}
+function pinnedPanes() {
+  if (pinsSaved()) return prefGet('workbench', 'pinnedPanes', PINNABLE) || PINNABLE;
+  return PINNABLE.filter(p => localStorage.getItem('lee-pin-' + p) !== '0');
+}
+function leePinned(which) { return pinnedPanes().includes(which); }
+let pinsAdopted = false;
+async function adoptPins() {
+  if (pinsAdopted) return;
+  pinsAdopted = true;
+  if (pinsSaved() || !PINNABLE.some(p => localStorage.getItem('lee-pin-' + p) !== null)) return;
+  await prefSet('workbench', 'pinnedPanes', pinnedPanes());
+  PINNABLE.forEach(leeSyncPin);
+}
 function leeSyncPin(which) {
+  adoptPins().catch(() => {});
   const pinned = leePinned(which);
   $('#shell')?.classList.toggle('unpinned-' + which, !pinned);
   $$(`[data-pane-pin="${which}"]`).forEach(b => {
@@ -163,8 +184,9 @@ function leeSyncPin(which) {
   });
 }
 
-function leePinPane(which) {
-  localStorage.setItem('lee-pin-' + which, leePinned(which) ? '0' : '1');
+async function leePinPane(which) {
+  const now = leePinned(which);
+  await prefSet('workbench', 'pinnedPanes', PINNABLE.filter(p => p === which ? !now : leePinned(p)));
   leeSyncPin(which);
   status(leePinned(which) ? `${which} pane pinned open` : `${which} pane closes when you click away`);
 }
@@ -585,7 +607,22 @@ function parseTheme(theme) {
           // A two-field value predates the split, when density was whatever the family implied.
           density: THEME_DENSITIES.includes(density) ? density : family === 'cursor' ? 'tight' : 'relaxed'};
 }
-const readTheme = () => parseTheme(localStorage.getItem('lee-theme'));
+const themeText = theme => {const {family, mode, density} = parseTheme(theme); return `${family}:${mode}:${density}`;};
+async function saveTheme(theme, scope = 'user') {
+  "Write the theme to settings.json. Never under `languages.<lang>`: a theme is not per language."
+  const value = themeText(theme);
+  await post('/settings/save', {scope, language: '', section: 'appearance', values: {theme: value}});
+  lee.appearancePrefs = {...lee.appearancePrefs, theme: value};
+}
+/* `localStorage` is per origin and Leela's port moves whenever 5001 is taken, so a theme kept only
+   there is gone on the next launch. settings.json is the theme; `lee-theme` is the first-paint
+   cache the boot script in `app.py` reads, and the store one already-set theme is migrated from. */
+function readTheme() {
+  const durable = lee.appearancePrefs?.theme ?? lee.workbenchPrefs?.theme,
+        cached = localStorage.getItem('lee-theme');
+  if (!durable && cached && cached !== THEME_DEFAULT) saveTheme(cached).catch(() => {});
+  return parseTheme(durable || cached);
+}
 const themeMode = mode => mode === 'system' ? (darkQuery().matches ? 'dark' : 'light') : mode;
 
 function paintTheme() {
@@ -600,7 +637,7 @@ function paintTheme() {
 function applyTheme(theme) {
   lee.theme = parseTheme(theme);
   const {family, mode, density} = lee.theme;
-  localStorage.setItem('lee-theme', `${family}:${mode}:${density}`);
+  localStorage.setItem('lee-theme', `${family}:${mode}:${density}`);   // the cache, not the record
   paintTheme();
 }
 // Following the system means following it now, not at the next reload.
@@ -617,7 +654,7 @@ async function editorSettings(languageScope = null) {
   await loadSettings(languageScope);
   const original = {...lee.editorPrefs}, originalFiles = {...lee.filePrefs},
         originalWorkbench = {...lee.workbenchPrefs}, originalDebug = {...lee.debugPrefs},
-        originalTheme = readTheme();
+        originalTheme = lee.theme || readTheme();
   let saved = false, previewView = null;
   const selected = (value, current) => value === current ? ' selected' : '';
   const prefsOf = section => section === 'editor' ? lee.editorPrefs : section === 'files' ? lee.filePrefs :
@@ -806,10 +843,10 @@ async function editorSettings(languageScope = null) {
   $$('[data-theme]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,family:b.dataset.theme});paintPicker();});
   $$('[data-theme-mode]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,mode:b.dataset.themeMode});paintPicker();});
   $$('[data-theme-density]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,density:b.dataset.themeDensity});paintPicker();});
-  $('[data-reset]',m).onclick=async()=>{const section=page==='appearance'?'editor':page; if(!sections[section])return;await post('/settings/reset',{scope:scope.value,section,language:language.value});saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
+  $('[data-reset]',m).onclick=async()=>{const targets=page==='appearance'?['appearance','editor']:[page]; if(!targets.every(t=>t==='appearance'||sections[t]))return;for(const section of targets)await post('/settings/reset',{scope:scope.value,section,language:section==='appearance'?'':language.value});saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
   $('[data-cancel]',m).onclick=()=>m.remove();
   const same=(a,b)=>Array.isArray(a)||Array.isArray(b)?JSON.stringify(a)===JSON.stringify(b):a===b;
-  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})`,'ok');};
+  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){await saveTheme(lee.theme,scope.value);count++;}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})${themeSaved&&language.value?', and the theme to all languages':''}`,'ok');};
   /* A secret's value never comes back from the server, so a row says that it is set, not what it is. */
   const paintEnv=async(d=null)=>{
     const list=$('[data-env-list]',m); if(!list) return;
@@ -3895,14 +3932,28 @@ function weighHit(hit, weights, keys) {
   return out;
 }
 
+/* What the dialog was last set to, kept where a moving port cannot lose it. The three legacy keys
+   are adopted before anything is read, so the dialog opens on the same choices it closed on. Once
+   a page: `origins` still says `default` until the settings are read again, so adopting on every
+   open would put the old keys back over a choice made since. */
+let searchAdopted = false;
+async function adoptSearchPrefs() {
+  if (searchAdopted) return;
+  searchAdopted = true;
+  await prefAdopt('search', 'lastMode', 'lee-search-mode');
+  await prefAdopt('search', 'lastScope', 'lee-search-scope');
+  await prefAdopt('search', 'lastExts', 'lee-search-exts');
+}
+
 async function codeSearch() {
+  await adoptSearchPrefs();
   const session = crypto.randomUUID?.() || String(Math.random()).slice(2);
   const signals = searchSignals(session);
   let hits = [], sel = 0, backend = '', previewView = null, searchSeq = 0;
   // Two zones, one selection. Tab walks the rail and switches as it goes; Enter on the rail steps
   // into the results, and Enter in the results opens. Arrows are always the results.
   let zone = 'list', tuned = false, weights = {}, weightKeys = {}, weightDefaults = {};
-  let mode = localStorage.getItem('lee-search-mode') || 'all';
+  let mode = prefGet('search', 'lastMode', 'all');
   if (!SEARCH_MODES.some(([id]) => id === mode)) mode = 'all';
   const counts = {};
   const m = modal(
@@ -3953,6 +4004,7 @@ async function codeSearch() {
     }, () => {
       if (previewView) LeeCM.destroy(previewView);
       clearTimeout(previewTimer);
+      if (extsTimer) { clearTimeout(extsTimer); prefSet('search', 'lastExts', extsEl.value.trim()); }
       // Closing the dialog must stop the search, or four backends work on for nothing.
       if (liveStream) { try { liveStream.close(); } catch {} liveStream = null; }
       signals.close();
@@ -3962,8 +4014,9 @@ async function codeSearch() {
   const pkgBtn = $('#cspkg', m), panel = $('#csweights', m);
   const scopeEl = $('#csscope', m), extsEl = $('#csexts', m);
   // Remembered, so somebody who works in Python does not retype `py` every time.
-  scopeEl.value = localStorage.getItem('lee-search-scope') || 'project';
-  extsEl.value = localStorage.getItem('lee-search-exts') || '';
+  scopeEl.value = prefGet('search', 'lastScope', 'project');
+  if (!scopeEl.value) scopeEl.value = 'project';
+  extsEl.value = prefGet('search', 'lastExts', '');
   const paintRail = () => {
     $$('.lee-searchrail-mode', m).forEach(b => {
       b.classList.toggle('active', b.dataset.mode === mode);
@@ -3980,7 +4033,7 @@ async function codeSearch() {
   };
   const setMode = (next, from = 'click') => {
     if (!next || next === mode) return;
-    mode = next; localStorage.setItem('lee-search-mode', mode);
+    mode = next; prefSet('search', 'lastMode', mode);
     zone = from === 'tab' ? 'rail' : 'list';
     signals.mode(mode);
     paintRail();
@@ -4189,11 +4242,14 @@ async function codeSearch() {
   };
   input.addEventListener('input', search);
   scopeEl.addEventListener('change', () => {
-    localStorage.setItem('lee-search-scope', scopeEl.value);
+    prefSet('search', 'lastScope', scopeEl.value);
     if (input.value.trim()) search();
   });
+  // Settled, not per keystroke: this one is a POST and a file write, where the old key was neither.
+  let extsTimer = 0;
   extsEl.addEventListener('input', () => {
-    localStorage.setItem('lee-search-exts', extsEl.value.trim());
+    clearTimeout(extsTimer);
+    extsTimer = setTimeout(() => prefSet('search', 'lastExts', extsEl.value.trim()), 400);
     if (input.value.trim()) search();
   });
   const setWeights = values => { weights = {...weights, ...values}; };
@@ -5003,16 +5059,30 @@ function moveTreeSelection(d) {
 /* Dotfiles are off by default and on by choice, because `.gitignore`, `.github` and `.env` are
    files you edit. The server's skip list drops `.venv` and `node_modules` whatever the toggle
    says. */
-function treeHidden() { return localStorage.getItem('lee-tree-hidden') === '1'; }
+function treeHidden() { return prefGet('workbench', 'showHiddenFiles', false) === true; }
 function treeQuery(sep = '?') { return treeHidden() ? sep + 'hidden=1' : ''; }
+/* `lee-tree-hidden` was per origin, and the port moves between launches, so the toggle came back
+   off at a port nobody chose. The tree is painted before the adoption can answer, so it is painted
+   again when the answer changes it. */
+let hiddenAdopted = false;
+async function adoptTreeHidden() {
+  if (hiddenAdopted) return;
+  hiddenAdopted = true;
+  const was = treeHidden();
+  await prefAdopt('workbench', 'showHiddenFiles', 'lee-tree-hidden', v => v === '1');
+  if (treeHidden() === was) return;
+  paintHiddenBtn();
+  await refreshFileTree(undefined, false);
+}
 function paintHiddenBtn() {
+  adoptTreeHidden().catch(() => {});
   $$('[data-action="show_hidden"]').forEach(b => {
     b.classList.toggle('on', treeHidden());
     b.setAttribute('aria-pressed', String(treeHidden()));
   });
 }
 async function toggleHidden() {
-  localStorage.setItem('lee-tree-hidden', treeHidden() ? '0' : '1');
+  await prefSet('workbench', 'showHiddenFiles', !treeHidden());
   await refreshFileTree(undefined, false);
   status(treeHidden() ? 'showing dotfiles' : 'hiding dotfiles', 'ok');
 }

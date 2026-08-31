@@ -40,17 +40,21 @@ def _num(v, default=0.0):
 
 class Signals:
     "One day's file of search events, the metrics fitted from them, and the session documents."
-    def __init__(self, dir=None, vault=None, keep_days=KEEP_DAYS):
+    def __init__(self, dir=None, vault=None, keep_days=KEEP_DAYS,
+                 kinds=KINDS, fields=FIELDS, snippet_fields=SNIPPET_FIELDS):
+        # The columns are the caller's: a second surface logs different events through the same
+        # store, and `summary` and `remember` below stay search's alone.
         self.dir, self.vault_path, self.keep_days = Path(dir or events_dir()), vault, keep_days
+        self.kinds, self.fields, self.snippet_fields = tuple(kinds), tuple(fields), tuple(snippet_fields)
         self.note = ''
     def _file(self, day=None): return self.dir/f'{day or time.strftime("%Y-%m-%d")}.jsonl'
     def files(self): return L(sorted(self.dir.glob('*.jsonl'))) if self.dir.is_dir() else L()
     def _clean(self, row, snippets=False):
         "One event, reduced to the fields this version stores."
-        if not isinstance(row, dict) or row.get('kind') not in KINDS: return None
-        out = {k: row[k] for k in FIELDS if k in row and row[k] is not None}
+        if not isinstance(row, dict) or row.get('kind') not in self.kinds: return None
+        out = {k: row[k] for k in self.fields if k in row and row[k] is not None}
         if not snippets:
-            for k in SNIPPET_FIELDS: out.pop(k, None)
+            for k in self.snippet_fields: out.pop(k, None)
         out['kind'] = row['kind']
         out['at'] = round(_num(row.get('at'), 0) or time.time(), 3)
         return out
@@ -83,7 +87,7 @@ class Signals:
                 if not line.strip(): continue
                 try: row = json.loads(line)
                 except ValueError: continue
-                if isinstance(row, dict) and row.get('kind') in KINDS: yield row
+                if isinstance(row, dict) and row.get('kind') in self.kinds: yield row
     def purge(self):
         "Delete every event file. The vault documents are the person's to remove separately."
         n = 0

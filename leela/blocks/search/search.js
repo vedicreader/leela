@@ -139,14 +139,28 @@ function weighHit(hit, weights, keys) {
   return out;
 }
 
+/* What the dialog was last set to, kept where a moving port cannot lose it. The three legacy keys
+   are adopted before anything is read, so the dialog opens on the same choices it closed on. Once
+   a page: `origins` still says `default` until the settings are read again, so adopting on every
+   open would put the old keys back over a choice made since. */
+let searchAdopted = false;
+async function adoptSearchPrefs() {
+  if (searchAdopted) return;
+  searchAdopted = true;
+  await prefAdopt('search', 'lastMode', 'lee-search-mode');
+  await prefAdopt('search', 'lastScope', 'lee-search-scope');
+  await prefAdopt('search', 'lastExts', 'lee-search-exts');
+}
+
 async function codeSearch() {
+  await adoptSearchPrefs();
   const session = crypto.randomUUID?.() || String(Math.random()).slice(2);
   const signals = searchSignals(session);
   let hits = [], sel = 0, backend = '', previewView = null, searchSeq = 0;
   // Two zones, one selection. Tab walks the rail and switches as it goes; Enter on the rail steps
   // into the results, and Enter in the results opens. Arrows are always the results.
   let zone = 'list', tuned = false, weights = {}, weightKeys = {}, weightDefaults = {};
-  let mode = localStorage.getItem('lee-search-mode') || 'all';
+  let mode = prefGet('search', 'lastMode', 'all');
   if (!SEARCH_MODES.some(([id]) => id === mode)) mode = 'all';
   const counts = {};
   const m = modal(
@@ -197,6 +211,7 @@ async function codeSearch() {
     }, () => {
       if (previewView) LeeCM.destroy(previewView);
       clearTimeout(previewTimer);
+      if (extsTimer) { clearTimeout(extsTimer); prefSet('search', 'lastExts', extsEl.value.trim()); }
       // Closing the dialog must stop the search, or four backends work on for nothing.
       if (liveStream) { try { liveStream.close(); } catch {} liveStream = null; }
       signals.close();
@@ -206,8 +221,9 @@ async function codeSearch() {
   const pkgBtn = $('#cspkg', m), panel = $('#csweights', m);
   const scopeEl = $('#csscope', m), extsEl = $('#csexts', m);
   // Remembered, so somebody who works in Python does not retype `py` every time.
-  scopeEl.value = localStorage.getItem('lee-search-scope') || 'project';
-  extsEl.value = localStorage.getItem('lee-search-exts') || '';
+  scopeEl.value = prefGet('search', 'lastScope', 'project');
+  if (!scopeEl.value) scopeEl.value = 'project';
+  extsEl.value = prefGet('search', 'lastExts', '');
   const paintRail = () => {
     $$('.lee-searchrail-mode', m).forEach(b => {
       b.classList.toggle('active', b.dataset.mode === mode);
@@ -224,7 +240,7 @@ async function codeSearch() {
   };
   const setMode = (next, from = 'click') => {
     if (!next || next === mode) return;
-    mode = next; localStorage.setItem('lee-search-mode', mode);
+    mode = next; prefSet('search', 'lastMode', mode);
     zone = from === 'tab' ? 'rail' : 'list';
     signals.mode(mode);
     paintRail();
@@ -433,11 +449,14 @@ async function codeSearch() {
   };
   input.addEventListener('input', search);
   scopeEl.addEventListener('change', () => {
-    localStorage.setItem('lee-search-scope', scopeEl.value);
+    prefSet('search', 'lastScope', scopeEl.value);
     if (input.value.trim()) search();
   });
+  // Settled, not per keystroke: this one is a POST and a file write, where the old key was neither.
+  let extsTimer = 0;
   extsEl.addEventListener('input', () => {
-    localStorage.setItem('lee-search-exts', extsEl.value.trim());
+    clearTimeout(extsTimer);
+    extsTimer = setTimeout(() => prefSet('search', 'lastExts', extsEl.value.trim()), 400);
     if (input.value.trim()) search();
   });
   const setWeights = values => { weights = {...weights, ...values}; };

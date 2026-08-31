@@ -95,12 +95,46 @@ function applyEditorPrefs(prefs = lee.editorPrefs, persist = false) {
   if (persist) localStorage.setItem('lee-editor-settings', JSON.stringify(p));
   return p;
 }
+/* A preference that outlives this origin.
+
+   `localStorage` is per origin, and the app's port moves, so a preference kept only there is empty
+   at the next launch and reads as its default: notifications a person switched on came back off,
+   and nobody could tell it from never having asked. These read settings.json, cache in
+   `localStorage` for the paint before the settings arrive, and write through.
+*/
+function prefGet(section, key, fallback = undefined) {
+  const held = lee.prefs?.[section];
+  if (held && held[key] !== undefined && held[key] !== '') return held[key];
+  const cached = localStorage.getItem(`lee-pref:${section}.${key}`);
+  if (cached !== null) { try { return JSON.parse(cached); } catch (_) {} }
+  return fallback;
+}
+async function prefSet(section, key, value, scope = 'user') {
+  lee.prefs = {...lee.prefs, [section]: {...(lee.prefs?.[section] || {}), [key]: value}};
+  localStorage.setItem(`lee-pref:${section}.${key}`, JSON.stringify(value));
+  // Never the caller's problem: a preference that could not be written is not a failed action.
+  try { await post('/settings/save', {scope, section, language: '', values: {[key]: value}}); }
+  catch (_) {}
+}
+/* One migration per key: what the old per-origin key held becomes the durable one, once, and only
+   where nothing durable was ever saved. Dropping it would silently reset everyone who has one.
+
+   Asked of `origins`, not of the value: `/settings` merges the defaults into `effective`, so every
+   key is always present and a never-saved one is told apart only by where it came from. No origins
+   means the settings have not arrived, and migrating against them would race the answer. */
+async function prefAdopt(section, key, legacyKey, parse = v => v) {
+  if (lee.settingsMeta?.origins?.[section]?.[key] !== 'default') return;
+  const old = localStorage.getItem(legacyKey);
+  if (old === null) return;
+  await prefSet(section, key, parse(old));
+}
 async function loadSettings(language = '') {
   try {
     const d = await api('/settings?language=' + encodeURIComponent(language));
     lee.settingsMeta = d; lee.filePrefs = d.effective.files || {};
     lee.workbenchPrefs = d.effective.workbench || {}; lee.debugPrefs = d.effective.debug || {};
     lee.backupPrefs = d.effective.backups || {}; lee.agentPrefs = d.effective.agent || {};
+    lee.prefs = d.effective || {}; lee.appearancePrefs = d.effective.appearance || {};
     applyEditorPrefs(d.effective.editor || EDITOR_DEFAULTS);
   } catch (_) { applyEditorPrefs(lee.editorPrefs); }
 }
@@ -563,7 +597,7 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null, delay = 32)
       if (el._leeCodeFrame) cancelAnimationFrame(el._leeCodeFrame);
       el._leeCodeFrame = requestAnimationFrame(() => {
         el._leeCodeFrame = 0;
-        if (onRender) try { onRender(el); } catch (e) { console.warn('Leela markdown annotation:', e); }
+        if (onRender) try { onRender(el, sent); } catch (e) { console.warn('Leela markdown annotation:', e); }
         resolveMarkdownImages(el); routeMarkdownLinks(el);
         upgradePortableToolMarkdown(el); enhanceCodeBlocks(el); addMarkdownCellAction(el);
         // Only now is the text on the page. Anything that measures the result waits for this.
@@ -579,11 +613,22 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null, delay = 32)
       }
     } finally {
       el._leeMarkdownBusy = false;
-      // the text moved on while this one was out, so the screen is a render behind
+      // the text moved on while this one was out, so the screen is a render behind. A flush that
+      // arrived mid-render is not made to wait out the gap it was asking to skip.
       if (el._leeMarkdownDirty || el.dataset.markdown !== sent)
-        renderMarkdown(el, el.dataset.markdown, allowRaw, onRender, delay);
+        renderMarkdown(el, el.dataset.markdown, allowRaw, onRender, el._leeMarkdownNow ? 0 : delay);
+      else el._leeMarkdownNow = false;
     }
   }, delay);
+}
+
+/* The end of a stream is not a moment to wait a throttle out. `agentTimeline` lengthens the gap
+   between renders as a reply grows, so a turn could otherwise finish with a second of unparsed
+   text on screen. The pending pass is dropped rather than left to repeat the work this one does. */
+function flushMarkdown(el, allowRaw = false, onRender = null) {
+  if (!el) return;
+  clearTimeout(el._leeMarkdownTimer); el._leeMarkdownTimer = 0; el._leeMarkdownNow = true;
+  renderMarkdown(el, el.dataset.markdown || '', allowRaw, onRender, 0);
 }
 
 async function api(url, opts, retried) {

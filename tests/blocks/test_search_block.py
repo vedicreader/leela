@@ -256,7 +256,8 @@ def test_the_settings_defaults_and_the_scorers_defaults_are_one_set_of_numbers()
     from leela.blocks.settings.settings import DEFAULT_SETTINGS
     held = DEFAULT_SETTINGS['search']
     assert Weights.load(held) == Weights()
-    assert set(SETTING_WEIGHTS) == set(held) - {'telemetry', 'snippets'}
+    # Everything else the section holds: what is recorded, and what the dialog was last set to.
+    assert set(SETTING_WEIGHTS) == set(held) - {'telemetry', 'snippets', 'lastMode', 'lastScope', 'lastExts'}
 
 def test_a_search_answers_with_the_weights_it_ranked_with(ws):
     "The panel re-ranks locally, so it has to be told what the server just paid."

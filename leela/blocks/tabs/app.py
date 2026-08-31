@@ -174,13 +174,36 @@ def connect(app, ctx):
         return tab_bar(session)
     @rt('/tab/reload')
     async def tab_reload(req):
-        "Drop server-side editor caches so the next state read comes straight from disk."
+        """Drop server-side editor caches so the next state read comes straight from disk.
+
+        Any open tab, not only the one on screen. A rolled-back turn restores files wherever they
+        happen to be open, and this route used to refuse every path but the active tab's, so a
+        notebook in a background tab kept the copy from before the restore in `docs` and wrote it
+        back over the restored file at the next `/tabs/save-all`.
+
+        A tab with unsaved edits is held rather than dropped: a restore underneath somebody is not
+        a reason to discard their typing. `bases` is armed for those instead, which is what makes
+        `/tabs/save-all` refuse the write and send them to the tab to look at it. `force` is the
+        deliberate "take what is on disk" that the reload command and the agent's own reloads mean.
+        """
         d = await req.json()
-        t = ctx.tab
-        if t is None or (d.get('path') and d.get('path') != t.path): return fail('that tab is no longer active')
-        docs.forget(t.path or t.title)
-        t.dirty = False
-        return {'ok': True, 'path': t.path}
+        force = bool(d.get('force'))
+        asked = [str(p) for p in (d.get('paths') or [])] or ([str(d['path'])] if d.get('path') else [])
+        if not asked:
+            t = ctx.tab
+            if t is None: return fail('that tab is no longer active')
+            asked = [docs.key(t)]
+        dropped, held = [], []
+        for key in dict.fromkeys(asked):
+            tab = first(session.tabs, lambda t: docs.key(t) == key)
+            if tab is None: continue
+            if tab.dirty and not force:
+                # the version it was read at, which is no longer the version on disk
+                known = docs.versions.get(key)
+                if known: docs.bases.setdefault(key, known)
+                held.append(key); continue
+            docs.forget(key); tab.dirty = False; dropped.append(key)
+        return {'ok': True, 'paths': dropped, 'held': held, 'path': first(dropped) or ''}
     @rt('/tab/buffer')
     async def tab_buffer(req):
         "Persist an editor buffer in memory so a tab switch cannot discard unsaved typing."

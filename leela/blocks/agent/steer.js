@@ -503,12 +503,14 @@ function initAgentComposer() {
   /* A one-line box with a placeholder telling you to write in it takes Enter, or it eats what you
      typed. It is not in a form and has no default action, so Enter does nothing unless it is bound
      here. */
-  const notify = $('#agentnotify'); if (notify) notify.checked = agentNotifyEnabled();
-  const reasoning = $('#agentreasoning');
-  if (reasoning) {
-    reasoning.value = localStorage.getItem('lee-agent-reasoning') || 'auto';
-    reasoning.onchange = () => localStorage.setItem('lee-agent-reasoning', reasoning.value);
-  }
+  const notify = $('#agentnotify'), reasoning = $('#agentreasoning');
+  if (reasoning) reasoning.onchange = () => prefSet('agent', 'reasoning', reasoning.value);
+  // Both are settings, and settings arrive over the network: painted from the cache, then again.
+  const paint = () => {
+    if (notify) notify.checked = agentNotifyEnabled();
+    if (reasoning) reasoning.value = prefGet('agent', 'reasoning', '') || 'auto';
+  };
+  paint(); agentPrefsReady().then(paint);
   const grow = () => {
     input.style.height = 'auto';
     input.style.height = Math.min(190, Math.max(64, input.scrollHeight)) + 'px';

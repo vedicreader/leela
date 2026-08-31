@@ -68,8 +68,43 @@ function showSelectionHelp() {
     input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); send(); } else if (e.key === 'Escape') closeSelectionHelp(); };
   };
 }
+/* What the model looked at before answering, named rather than counted: a rewrite that read the
+   file around the selection is worth more trust than one that read nothing, and the reader is the
+   one deciding whether to take it. */
+function trailHtml(activity) {
+  if (!Array.isArray(activity)) return '';   // an older server: say nothing rather than guess
+  const used = activity.filter(a => a.tool).map(a => a.tool);
+  // An empty trail is a fact about the answer, not a missing feature. Rendering nothing for it
+  // leaves the reader unable to tell "it looked at nothing" from "the trail is broken".
+  if (!used.length) return `<div class="lee-selection-trail lee-trail-none">` +
+    `<span>answered without looking anything up</span></div>`;
+  const counts = used.reduce((n, t) => ({...n, [t]: (n[t] || 0) + 1}), {});
+  const named = Object.entries(counts).map(([t, n]) => esc(n > 1 ? `${t} x${n}` : t)).join(', ');
+  return `<div class="lee-selection-trail"><span>looked at</span> ${named}</div>`;
+}
+/* One panel's judgement, reported as it happens.
+
+   The outcome is a click, so only the browser ever learns it, and the `ask_id` the server minted is
+   what ties the answer to what became of it. Every send is swallowed: `post` rejects on a non-2xx,
+   and a recording failure must never be what stops a replace. */
+function completionLog() {
+  let queue = [], timer = null, done = false;
+  const flush = () => {
+    clearTimeout(timer); timer = null;
+    const events = queue; queue = [];
+    if (events.length) post('/ai/events', {events}).catch(() => {});
+  };
+  const add = (kind, row = {}) => {
+    if (done) return;
+    if (['replace', 'discard', 'stale', 'abandon'].includes(kind)) done = true;   // one panel, one verdict
+    queue.push({kind, at: Date.now() / 1000, ...row});
+    clearTimeout(timer); timer = setTimeout(flush, done ? 0 : 2500);
+  };
+  return {add, flush, settled: () => done};
+}
 async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
   closeSelectionHelp();
+  const log = completionLog();
   status(mode === 'summary' ? 'summarising selection with the local model…' : 'asking the inline model to rewrite the selection…');
   const panel = document.createElement('aside'); panel.className = 'lee-selection-reply loading';
   panel.innerHTML = `<header><strong>${mode === 'summary' ? 'Summarising selection' : 'Inline AI help'}</strong>` +
@@ -79,25 +114,44 @@ async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
   const anchor = () => { try { return LeeCM.selectionCoords(view) || rect; } catch (_) { return rect; } };
   positionFloating(panel, anchor());
   try {
-    const result = await post('/complete/selection', {text: selected.text, mode, instruction, lang: curLang()});
+    // The path and the lines are what the read-only tools need to open anything around the
+    // selection. Without them a model asked about `check` can only see the range it was given.
+    const doc = LeeCM.getDoc(view), lineAt = i => doc.slice(0, i).split('\n').length;
+    log.add('ask', {mode, instruction, lang: curLang(), path: lee.path || '',
+                    chars: selected.text.length, text: selected.text});
+    const result = await post('/complete/selection', {
+      text: selected.text, mode, instruction, lang: curLang(), path: lee.path || '',
+      line_from: lineAt(selected.from), line_to: lineAt(selected.to)});
+    const ask_id = result.ask_id || '';
+    log.add('reply', {ask_id, model: result.model, ms: result.ms, tools: result.tools,
+                      reply: result.text});
     panel.classList.remove('loading'); panel.innerHTML = `<header><strong>${mode === 'summary' ? 'Summary' : 'Suggested replacement'}</strong>` +
-      `<span>${esc(result.model || '')}</span></header><pre></pre><footer>` +
+      `<span title="the inline model, set beside 'prompt cells · inline AI' in the agent settings">` +
+      `${esc(result.model || '')}${mode === 'summary' ? '' : ' · inline model'}</span></header>` +
+      `<pre></pre>${trailHtml(result.activity)}<footer>` +
       `<button class="lee-btn" data-discard>discard</button><button class="lee-btn go" data-replace>replace selection</button></footer>`;
     $('pre', panel).textContent = result.text;
-    $('[data-discard]', panel).onclick = () => panel.remove();
+    panel._leeLog = log; panel._leeAsk = ask_id;
+    $('[data-discard]', panel).onclick = () => { log.add('discard', {ask_id}); panel.remove(); };
     $('[data-replace]', panel).onclick = () => {
-      if (LeeCM.slice(view, selected.from, selected.to) !== selected.text)
+      // Not an accept: nothing was applied. Counting it as one would flatter the model.
+      if (LeeCM.slice(view, selected.from, selected.to) !== selected.text) {
+        log.add('stale', {ask_id});
         return status('selection changed while the model was answering; suggestion left open', 'err');
+      }
+      log.add('replace', {ask_id});
       LeeCM.replaceRange(view, selected.from, selected.to, result.text); panel.remove(); status('selection replaced', 'ok');
     };
     panel.onkeydown = e => {
-      if (e.key === 'Escape') panel.remove();
+      if (e.key === 'Escape') { log.add('abandon', {ask_id}); panel.remove(); }
       else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('[data-replace]', panel).click();
     };
     $('[data-replace]', panel).focus();
     positionFloating(panel, anchor());
     status(`${mode === 'summary' ? 'summary' : 'replacement'} ready from ${result.model || 'the inline model'} · review before replacing`, 'ok');
   } catch (e) {
+    // Asked and got nothing is the signal a rejection rate would otherwise hide.
+    log.add('error', {ask_id: '', mode, model: '', instruction});
     panel.classList.remove('loading'); panel.innerHTML = `<div class="lee-selection-error">${esc(e.message || e)}</div>` +
       `<footer><button class="lee-btn" data-discard>close</button></footer>`;
     $('[data-discard]', panel).onclick = () => panel.remove();
@@ -109,8 +163,22 @@ async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' || $$('.lee-modal').length) return;
   const panel = $('.lee-selection-reply'); if (!panel) return;
-  panel.remove(); e.stopPropagation();
+  abandonReply(panel); panel.remove(); e.stopPropagation();
 }, true);
+
+/* A panel closed without a verdict is still an answer nobody took, and leaving it unrecorded makes
+   the accept rate a ratio over a denominator that quietly drops them. */
+function abandonReply(panel) {
+  const log = panel?._leeLog;
+  if (log && !log.settled()) log.add('abandon', {ask_id: panel._leeAsk || ''});
+}
+addEventListener('pagehide', () => {
+  const panel = $('.lee-selection-reply'); if (!panel?._leeLog || panel._leeLog.settled()) return;
+  // `post` will not survive the unload; a beacon will.
+  const body = JSON.stringify({events: [{kind: 'abandon', ask_id: panel._leeAsk || '',
+                                         at: Date.now() / 1000}]});
+  try { navigator.sendBeacon('/ai/events', new Blob([body], {type: 'application/json'})); } catch (_) {}
+});
 let selectionHelpTimer = null;
 document.addEventListener('selectionchange', () => {
   clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 180);

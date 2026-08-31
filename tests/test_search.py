@@ -739,3 +739,12 @@ def test_the_search_handle_arrives_wrapped(monkeypatch, tmp_path):
     monkeypatch.setattr(kosha, 'Kosha', lambda **kw: fake)
     s = Search(Sandbox([tmp_path]))
     assert isinstance(s._make_kosha(), _Serial)
+
+def test_what_the_search_dialog_was_last_set_to_is_a_setting_it_can_save(tmp_path):
+    "The dialog's mode, scope and extension filter outlive the origin only if they can be written."
+    from leela.blocks.settings.settings import Settings
+    s = Settings(root=None, user_path=tmp_path/'settings.json')
+    saved = s.save('user', 'search', {'lastMode': 'rg', 'lastScope': 'workspace', 'lastExts': 'py, ts'})
+    got = saved['effective']['search']
+    assert (got['lastMode'], got['lastScope'], got['lastExts']) == ('rg', 'workspace', 'py, ts')
+    assert s.describe()['origins']['search']['lastMode'] == 'user'

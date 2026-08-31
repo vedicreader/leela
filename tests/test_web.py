@@ -475,22 +475,65 @@ def test_one_static_prefix_serves_both_the_authored_and_vendored_asset_trees(tmp
     assert missing.status_code == 404
 
 
-def test_selection_help_uses_summary_and_completion_jobs_without_editing(tmp_path, monkeypatch):
+def test_selection_help_summarises_on_the_summary_job_and_asks_the_readonly_agent_to_rewrite(tmp_path):
+    """Summarising is one call and needs nothing looked up. A rewrite is a turn of an agent that can
+    read the file the selection came from, and the selection reaches it with its path and lines."""
     ws = Workspace(roots=[tmp_path])
-    calls = []
+    calls, asked = [], []
     class FakeAI:
         note = ''
         routing = type('Routing', (), {'name_for': lambda self, job: 'fake-' + job})()
         def summarise(self, text, sp): calls.append(('summary', text, sp)); return 'short summary'
-        def oneshot(self, prompt, sp, job, max_tokens): calls.append((job, prompt, sp)); return 'rewritten text'
-    ws._ai = FakeAI()
+    class Acts:
+        def mark(self): return 0
+        def rows(self, mark=None): return [{'tool': 'view_file'}, {'tool': 'view_file'}, {'note': 'x'}]
+    class FakeSelectionAI:
+        note, busy = '', False
+        activity = Acts()
+        routing = type('Routing', (), {'name_for': lambda self, job: 'fake-inline'})()
+        def ask(self, prompt): asked.append(prompt); return 'rewritten text'
+    ws._ai, ws._selection_ai = FakeAI(), FakeSelectionAI()
     with TestClient(ide_app(ws)) as client:
         summary = client.post('/complete/selection', json={'text': 'long source', 'mode': 'summary'}).json()
-        rewrite = client.post('/complete/selection', json={'text': 'rough source', 'mode': 'instruction',
-                                                            'instruction': 'make clearer', 'lang': 'markdown'}).json()
+        rewrite = client.post('/complete/selection', json={
+            'text': 'rough source', 'mode': 'instruction', 'instruction': 'make clearer',
+            'lang': 'markdown', 'path': '/w/a.md', 'line_from': 4, 'line_to': 9}).json()
     assert summary['text'] == 'short summary' and summary['model'] == 'fake-summary'
-    assert rewrite['text'] == 'rewritten text' and rewrite['model'] == 'fake-completion'
-    assert [c[0] for c in calls] == ['summary', 'completion']
+    assert [c[0] for c in calls] == ['summary']
+    assert rewrite['text'] == 'rewritten text' and rewrite['model'] == 'fake-inline'
+    assert rewrite['activity'] == [{'tool': 'view_file'}, {'tool': 'view_file'}, {'note': 'x'}]
+    assert 'make clearer' in asked[0]
+    assert 'path="/w/a.md"' in asked[0] and 'lines="4-9"' in asked[0], asked[0]
+    assert '<notebook' not in asked[0], 'a range out of a file is not a notebook'
+
+
+def test_the_selection_agent_has_no_tool_that_could_change_anything(tmp_path):
+    """The panel promises nothing changes until Replace. The guarantee is that the tools are gone,
+    not that the briefing asked the model to leave them alone."""
+    from ramabana.tools import NO_EFFECTS, NO_SUB, WRITE_TOOLS
+    ws = Workspace(roots=[tmp_path])
+    a = ws.selection_ai
+    names = {t.__name__ for t in a.tools}
+    assert not (names & WRITE_TOOLS), f'a write survived: {sorted(names & WRITE_TOOLS)}'
+    assert not (names & NO_EFFECTS), f'an effect survived: {sorted(names & NO_EFFECTS)}'
+    assert not (names & NO_SUB), 'it cannot delegate its way past the refusal'
+    assert 'view_file' in names and 'search_code' in names, 'it can still look'
+    assert a.approvals is None, 'nothing is gated because nothing needs gating'
+    assert ws._threads is None, 'building it must not build the agent pane behind the scenes'
+    assert {t.__name__ for t in ws.inline_ai.tools} & WRITE_TOOLS, 'prompt cells keep their writes'
+
+
+def test_a_second_selection_is_refused_while_the_first_is_still_answering(tmp_path):
+    "One agent, one lock: a second ask would park a worker thread with nothing said about it."
+    ws = Workspace(roots=[tmp_path])
+    class Busy:
+        note, busy = '', True
+        def ask(self, prompt): raise AssertionError('must not be asked while busy')
+    ws._selection_ai = Busy()
+    with TestClient(ide_app(ws)) as client:
+        d = client.post('/complete/selection', json={'text': 'x', 'mode': 'instruction',
+                                                     'instruction': 'go'}).json()
+    assert not d.get('ok') and 'still answering' in d.get('error', '')
 
 def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
     """The property is that the tag is escaped, not that the string `onerror=` is absent.
@@ -699,6 +742,44 @@ def test_explicit_reload_invalidates_the_notebook_cache_and_reads_agent_changes(
         assert client.get('/tab/state').json()['cells'][0]['source'] == 'value = "before"'
         assert client.post('/tab/reload', json={'path': str(a)}).json()['ok']
         assert client.get('/tab/state').json()['cells'][0]['source'] == 'value = "agent edit"'
+
+
+def test_a_restored_file_is_dropped_from_every_tab_holding_it_not_only_the_active_one(tmp_path):
+    """A rolled-back turn restores files wherever they happen to be open, and `/tab/reload` refused
+    every path but the active tab's. A notebook in a background tab kept the copy from before the
+    restore, in the browser and in `docs`, and wrote it back over the restored file at the next
+    `/tabs/save-all`. Neither `/fs/events` nor `/tab/watch` reports a tab that is not on screen, so
+    nothing else was going to tell it.
+
+    A tab with unsaved edits is held rather than dropped, because a restore underneath somebody is
+    not a reason to discard their typing. `bases` is armed for those instead, which is what makes
+    save-all refuse the write and send them to the tab to look at it.
+    """
+    a, b = tmp_path/'a.ipynb', tmp_path/'b.ipynb'
+    _nb(a, 'value = "before"'); _nb(b, 'value = "before"')
+    ws = Workspace(roots=[tmp_path]); ws.open(a); ws.open(b)
+    with TestClient(ide_app(ws)) as client:
+        for p in (b, a):                    # both looked at, so the server holds a document for each
+            client.post('/tab/open', params={'path': str(p)})
+            assert client.get('/tab/state').json()['cells'][0]['source'] == 'value = "before"'
+        _nb(b, 'value = "restored"')         # b is the tab nobody is looking at, and it is clean
+        dropped = client.post('/tab/reload', json={'paths': [str(b)]}).json()
+        assert dropped['paths'] == [str(b)] and dropped['held'] == [], dropped
+        client.post('/tab/open', params={'path': str(b)})
+        assert client.get('/tab/state').json()['cells'][0]['source'] == 'value = "restored"'
+
+        client.post('/tab/open', params={'path': str(a)})
+        client.post('/tab/buffer', json={'path': str(a), 'kind': 'notebook', 'i': 0,
+                                         'text': 'value = "typed"'})
+        client.post('/tab/open', params={'path': str(b)})   # left dirty, and then restored under it
+        _nb(a, 'value = "restored"')
+        held = client.post('/tab/reload', json={'paths': [str(a)]}).json()
+        assert held['paths'] == [] and held['held'] == [str(a)], held
+        client.post('/tab/open', params={'path': str(a)})
+        assert client.get('/tab/state').json()['cells'][0]['source'] == 'value = "typed"', 'the typing was discarded'
+        out = client.post('/tabs/save-all')
+        assert not out.json().get('ok'), 'save-all wrote a draft that predates the restore'
+        assert json.loads(a.read_text())['cells'][0]['source'] == 'value = "restored"', 'the restore was written over'
 
 
 def test_browser_watch_detects_an_external_file_write(tmp_path):

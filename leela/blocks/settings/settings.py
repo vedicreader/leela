@@ -44,7 +44,12 @@ DEFAULT_SETTINGS = {
         'breadcrumbs': 'pathAndSymbols', 'restoreEditors': True,
         'problemsScope': 'workspace', 'dependencyHints': True,
         'projectFolder': '',            # where the folder picker starts; empty means find one
+        # Split is how a markdown file has always opened; the setting names it, it does not change it.
+        'showHiddenFiles': False, 'markdownView': 'split', 'pinnedPanes': [],
     },
+    #: Its own section so that resetting how Leela looks does not reach the folder picker or the
+    #: breadcrumbs beside it. `theme` is `family:mode:density`; empty is the browser's own default.
+    'appearance': {'theme': ''},
     'debug': {
         'justMyCode': True, 'stopOnEntry': False, 'subProcess': True,
         'showInlineValues': True, 'showBreakpointsInOverview': True,
@@ -59,12 +64,18 @@ DEFAULT_SETTINGS = {
         # Empty means Leela's own config dir. Pointing it at Ramabana's makes one history
         # serve both surfaces.
         'configFolder': '',
+        # On unless turned off, which is how the filter has always behaved.
+        'notify': False, 'reasoning': '', 'historyLeelaOnly': True,
     },
     # What `all` pays for each ranking signal, and what the search dialog is allowed to remember.
     # `leela.blocks.search.search.SETTING_WEIGHTS` maps these names onto the scorer's own; the
     # numbers here and its dataclass defaults are the same numbers, and a test says so.
+    #: Whether the inline AI panel keeps a record of what it was asked and whether the answer was
+    #: taken. `snippets` decides whether the selection and the suggestion are kept with it.
+    'completions': {'telemetry': 'on', 'snippets': False},
     'search': {
         'telemetry': 'vault', 'snippets': False,
+        'lastMode': '', 'lastScope': '', 'lastExts': '',
         'legFiles': 110.0, 'legSymbols': 100.0, 'legRg': 80.0, 'legFts': 60.0, 'legAnn': 40.0,
         'legRank': 10.0, 'symbolExact': 120.0, 'symbolPart': 55.0, 'queryInText': 40.0,
         'queryInFilename': 20.0, 'demoteNoise': 25.0,
@@ -79,6 +90,7 @@ DEFAULT_SETTINGS = {
 
 _ENUMS = {
     ('backups', 'cadence'): {'off', 'hourly', 'sixhourly', 'daily', 'weekly'},
+    ('completions', 'telemetry'): {'on', 'off'},
     ('editor', 'wordWrap'): {'off', 'viewport', 'column'},
     ('editor', 'wrapIndent'): {'none', 'same', 'indent', 'deepIndent'},
     ('editor', 'overviewMode'): {'off', 'long', 'always'},
@@ -90,13 +102,18 @@ _ENUMS = {
     ('workbench', 'breadcrumbs'): {'off', 'path', 'symbols', 'pathAndSymbols'},
     ('workbench', 'problemsScope'): {'file', 'workspace'},
     ('search', 'telemetry'): {'off', 'local', 'vault'},
+    ('workbench', 'markdownView'): {'source', 'preview', 'split'},
 }
 _RANGES = {
     ('editor', 'fontSize'): (9, 28), ('editor', 'lineHeight'): (1, 2.4),
     ('editor', 'tabSize'): (1, 8), ('editor', 'lineLength'): (40, 240),
     ('editor', 'overviewThreshold'): (20, 5000), ('editor', 'scrollMargin'): (0, 20),
     ('files', 'autoSaveDelay'): (100, 60000),
-    **{('search', k): (0, 500) for k in DEFAULT_SETTINGS['search'] if k not in ('telemetry', 'snippets')},
+    # The weights, found by being numbers rather than by naming what they are not: the section also
+    # holds the telemetry switches and what the dialog was last set to, and a range on a string
+    # rejects it outright.
+    **{('search', k): (0, 500) for k, v in DEFAULT_SETTINGS['search'].items()
+       if isinstance(v, (int, float)) and not isinstance(v, bool)},
 }
 
 def _read(path):

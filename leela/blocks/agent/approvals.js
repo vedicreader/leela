@@ -345,11 +345,17 @@ async function unsayTurn(bar) {
     catch (e) { status(`undone from the conversation; these files were not restored: ${e.message || e}`, 'err'); }
   }
   markTurnUndone(out, bar, (restored?.paths || []).length, revisable ? $('[data-revise]', bar) : null);
-  for (const path of restored?.paths || []) if (path === lee.path) await takeDiskVersion(path);
+  noteHeldRestores(await reloadRestored(restored?.paths || []));
   await refreshAgentThreads();
   status(restored ? `undone from the conversation · ${(restored.paths || []).length} file(s) restored`
                   : 'undone from the conversation; files left as they are', 'ok');
 }
+
+/* Naming what was left alone matters more here than anywhere else: a tab held back still holds the
+   version from before the restore, and the person is the only one who can decide between the two. */
+const noteHeldRestores = held => held.length && status(
+  `${held.length} file${held.length === 1 ? '' : 's'} with unsaved edits ${held.length === 1 ? 'was' : 'were'} not reloaded: `
+  + held.map(p => p.split('/').pop()).join(', '), 'err');
 
 async function restoreTurnFiles(bar) {
   const {turnId, out, revisable} = responseTurn(bar);
@@ -363,7 +369,7 @@ async function restoreTurnFiles(bar) {
       const d = await post('/agent/rollback-turn', {turn_id: turnId, thread: lee.agentThread || ''});
       // Marked before the files are reloaded, so a reload that raises still shows the turn undone.
       markTurnUndone(out, bar, (d.paths || []).length, revisable ? $('[data-revise]', bar) : null);
-      for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
+      noteHeldRestores(await reloadRestored(d.paths || []));
       status('turn changes rolled back', 'ok');
     } catch (e) { status(e.message || String(e), 'err'); }
   }

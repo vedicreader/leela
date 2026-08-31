@@ -138,6 +138,17 @@ IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'}
 AUDIO_EXTS = {'.wav', '.mp3', '.m4a', '.ogg', '.flac', '.aac'}
 VIDEO_EXTS = {'.mp4', '.webm', '.ogv', '.mov'}
 
+#: What the inline panel promises, said to the model that has to keep it. The tools are gone rather
+#: than discouraged, so this describes the situation rather than forbidding anything.
+SELECTION_SP = """You are inline editor help, working on one selected passage from one file.
+
+Follow the instruction against the selection. Look things up first if the instruction needs it:
+you have read-only tools, and no way to change anything. The person reads your answer beside their
+code and applies it themselves, or discards it.
+
+Return only the proposed replacement text. No preamble, no markdown fence, no commentary outside
+the replacement. Preserve the source language and its formatting unless asked otherwise."""
+
 @dataclass
 class Tab(Dictable):
     "One open editor tab."
@@ -226,7 +237,8 @@ class Workspace:
         self.tabs = L()
         self.active = 0
         self._untitled = 0
-        self._ai = self._inline_ai = self._completer = self._turn_runner = self._threads = None
+        self._ai = self._inline_ai = self._selection_ai = None
+        self._completer = self._turn_runner = self._threads = None
         from .agent.core import env as model_env
         self.model = model
         self.inline_model = inline_model or model_env('MODEL_INLINE') or 'gpt-mini'
@@ -355,6 +367,25 @@ class Workspace:
                                         on_compact=self._compacted, history_name='inline')
             self._notebook_approvals.host = self._inline_ai.host
         return self._inline_ai
+    @property
+    def selection_ai(self):
+        """Inline help on a selected passage: its own conversation, and nothing that could act.
+
+        The inline model, the same one prompt cells use, because this is inline help and not the
+        ghost-text completion the `completion` model answers for. Which one answered is on the
+        panel's header, and the settings say which surface each model serves. `readonly` takes
+        the tools off the list the model is given rather than asking it not to reach for them, so
+        the panel's promise that nothing changes until Replace is one the agent cannot break.
+        Approvals are passed explicitly: the default would resolve `ws.approvals`, which builds the
+        agent pane's thread to answer.
+        """
+        if self._selection_ai is None:
+            from .agent.core import env
+            self._selection_ai = Assistant(self, model=self.inline_model or env('MODEL_INLINE'),
+                                           surface='completion', local_multimodal=self.local_multimodal,
+                                           approvals=None, readonly=True, history_name='completion',
+                                           sp=SELECTION_SP)
+        return self._selection_ai
     def _compacted(self, summary):
         "Write a compaction summary into the notebook the conversation is happening in."
         t = self._approval_target
@@ -372,7 +403,7 @@ class Workspace:
         return self._completer
     def _rebrief_agents(self):
         "Tell any live assistant that the open folders changed."
-        for a in (self._ai, self._inline_ai):
+        for a in (self._ai, self._inline_ai, self._selection_ai):
             if a is not None:
                 try: a.refresh()
                 except Exception: pass

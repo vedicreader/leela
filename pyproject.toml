@@ -27,7 +27,7 @@ dependencies = [
     # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
     # change for, and a floor would take them on the next sync without a word. Raise these
     # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.1.29",
+    "ramabana[cli]==0.1.30",
     "fastcore>=1.7.0",
     "exhash>=0.4.10",
     "fossick>=0.1.14",   # 0.1.14 caches JSON, not pickle: GHSA-w8v5-vhqr-4h9v has no fixed release
