@@ -96,7 +96,10 @@ function completionLog() {
   };
   const add = (kind, row = {}) => {
     if (done) return;
-    if (['replace', 'discard', 'stale', 'abandon'].includes(kind)) done = true;   // one panel, one verdict
+    /* One panel, one verdict -- and `stale` is not one. The selection moved out from under a
+       replace, which leaves the panel open and the suggestion still there to accept once the
+       caret is back. Ending the log on it threw away the accept that followed. */
+    if (['replace', 'discard', 'abandon'].includes(kind)) done = true;
     queue.push({kind, at: Date.now() / 1000, ...row});
     clearTimeout(timer); timer = setTimeout(flush, done ? 0 : 2500);
   };
@@ -113,26 +116,35 @@ async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
   // rather than reused. `selectionCoords` gives nothing once the selection is gone.
   const anchor = () => { try { return LeeCM.selectionCoords(view) || rect; } catch (_) { return rect; } };
   positionFloating(panel, anchor());
+  /* Minted here, not by the route. The ask is logged before the request and the verdict long after
+     it, so a server-minted id reached the reply and the outcome and never the ask: the instruction
+     and the selected code sat on disk with nothing to join them to. Declared outside the `try`,
+     because the `error` a failed ask records is the half of the judgement that matters most. */
+  const ask_id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   try {
     // The path and the lines are what the read-only tools need to open anything around the
     // selection. Without them a model asked about `check` can only see the range it was given.
     const doc = LeeCM.getDoc(view), lineAt = i => doc.slice(0, i).split('\n').length;
-    log.add('ask', {mode, instruction, lang: curLang(), path: lee.path || '',
+    log.add('ask', {ask_id, mode, instruction, lang: curLang(), path: lee.path || '',
                     chars: selected.text.length, text: selected.text});
     const result = await post('/complete/selection', {
-      text: selected.text, mode, instruction, lang: curLang(), path: lee.path || '',
+      ask_id, text: selected.text, mode, instruction, lang: curLang(), path: lee.path || '',
       line_from: lineAt(selected.from), line_to: lineAt(selected.to)});
-    const ask_id = result.ask_id || '';
     log.add('reply', {ask_id, model: result.model, ms: result.ms, tools: result.tools,
                       reply: result.text});
     panel.classList.remove('loading'); panel.innerHTML = `<header><strong>${mode === 'summary' ? 'Summary' : 'Suggested replacement'}</strong>` +
       `<span title="the inline model, set beside 'prompt cells · inline AI' in the agent settings">` +
       `${esc(result.model || '')}${mode === 'summary' ? '' : ' · inline model'}</span></header>` +
       `<pre></pre>${trailHtml(result.activity)}<footer>` +
+      `<button class="lee-btn" data-completions title="what you have asked, and what you kept">log</button>` +
       `<button class="lee-btn" data-discard>discard</button><button class="lee-btn go" data-replace>replace selection</button></footer>`;
     $('pre', panel).textContent = result.text;
     panel._leeLog = log; panel._leeAsk = ask_id;
     $('[data-discard]', panel).onclick = () => { log.add('discard', {ask_id}); panel.remove(); };
+    /* `completionLog` holds events for 2500ms, so the ask on screen is not in the store yet and the
+       log would open without it. Flushed first, and the panel is left alone: reading the record is
+       not a verdict on this suggestion. */
+    $('[data-completions]', panel)?.addEventListener('click', () => { log.flush(); showCompletions(); });
     $('[data-replace]', panel).onclick = () => {
       // Not an accept: nothing was applied. Counting it as one would flatter the model.
       if (LeeCM.slice(view, selected.from, selected.to) !== selected.text) {
@@ -151,9 +163,12 @@ async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
     status(`${mode === 'summary' ? 'summary' : 'replacement'} ready from ${result.model || 'the inline model'} · review before replacing`, 'ok');
   } catch (e) {
     // Asked and got nothing is the signal a rejection rate would otherwise hide.
-    log.add('error', {ask_id: '', mode, model: '', instruction});
+    log.add('error', {ask_id, mode, model: '', instruction});
     panel.classList.remove('loading'); panel.innerHTML = `<div class="lee-selection-error">${esc(e.message || e)}</div>` +
-      `<footer><button class="lee-btn" data-discard>close</button></footer>`;
+      `<footer><button class="lee-btn" data-completions title="what you have asked, and what you kept">log</button>` +
+      `<button class="lee-btn" data-discard>close</button></footer>`;
+    // An ask that failed is when somebody most wants to know whether it has been failing all day
+    $('[data-completions]', panel).onclick = () => { log.flush(); showCompletions(); };
     $('[data-discard]', panel).onclick = () => panel.remove();
     positionFloating(panel, anchor());
   }

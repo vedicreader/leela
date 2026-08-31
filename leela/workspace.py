@@ -417,13 +417,18 @@ class Workspace:
         the panel's promise that nothing changes until Replace is one the agent cannot break.
         Approvals are passed explicitly: the default would resolve `ws.approvals`, which builds the
         agent pane's thread to answer.
+
+        The chosen inline model is applied on every access. The assistant is built once, and a model
+        change made after that reaches it here rather than at the next restart.
         """
+        from .agent.core import env
+        name = self.inline_model or env('MODEL_INLINE')
         if self._selection_ai is None:
-            from .agent.core import env
-            self._selection_ai = Assistant(self, model=self.inline_model or env('MODEL_INLINE'),
-                                           surface='completion', local_multimodal=self.local_multimodal,
-                                           approvals=None, readonly=True, history_name='completion',
-                                           sp=SELECTION_SP)
+            self._selection_ai = Assistant(self, model=name, surface='completion',
+                                           local_multimodal=self.local_multimodal, approvals=None,
+                                           readonly=True, history_name='completion', sp=SELECTION_SP)
+        elif not self._selection_ai.busy and self._selection_ai.routing.name_for('turn') != name:
+            self._selection_ai.set_model(name)
         return self._selection_ai
     def _compacted(self, summary):
         "Write a compaction summary into the notebook the conversation is happening in."

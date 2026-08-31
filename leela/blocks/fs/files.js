@@ -448,7 +448,9 @@ async function addRoot(find = false) {
   };
   const complete = () => {
     const r = rows[sel]; if (!r) return false;
-    input.value = r.path + '/'; draw(); return true;
+    // The caret is placed, not left where assigning `value` puts it: WebKit puts it at 0.
+    input.value = r.path + '/'; input.setSelectionRange(input.value.length, input.value.length);
+    draw(); return true;
   };
   const open = async path => {
     const target = path || input.value.trim(); if (!target) return;
@@ -478,7 +480,8 @@ async function addRoot(find = false) {
   };
   list.onclick = e => {
     const r = e.target.closest('.lee-folderrow'); if (!r) return;
-    input.value = r.dataset.path + '/'; input.focus(); draw();
+    input.value = r.dataset.path + '/'; input.focus();
+    input.setSelectionRange(input.value.length, input.value.length); draw();
   };
   openBtn.onclick = () => open();
   input.value = find ? '' : (await api('/fs/browse?path=').catch(() => ({path: ''}))).path + '/';

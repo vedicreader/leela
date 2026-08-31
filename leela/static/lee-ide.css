@@ -784,8 +784,11 @@ kbd {
 .lee-history-session-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 4px 4px; }
 .lee-history-session-head strong { color: var(--lee-fg); font-size: 11px; }
 .lee-history-session-head span { color: var(--lee-green); font-size: 9.5px; }
-.lee-completions { padding: 8px 4px 12px; border-top: 1px solid var(--lee-border); }
+.lee-completions { padding: 8px 4px 12px; }
+.lee-completions-modal .lee-modalbox { width: min(860px, 94vw); }
 .lee-completion-models, .lee-completion-log { display: flex; flex-direction: column; gap: 1px; max-height: 180px; overflow: auto; }
+.lee-completion-log { max-height: 46vh; }
+.lee-completion-log > .lee-dim { display: block; padding: 4px 6px; }
 .lee-completion-models > div, .lee-completion-log > div {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, .5fr); gap: 10px;
   align-items: center; padding: 4px 6px; border-radius: 3px; color: var(--lee-fg3); font: 9.5px/1.4 var(--lee-mono);
@@ -796,8 +799,19 @@ kbd {
 .lee-completion-models em, .lee-completion-log em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lee-completion-models span, .lee-completion-log span { color: var(--lee-fg4); }
 .lee-completion-models em, .lee-completion-log em { font-style: normal; text-align: right; }
-.lee-completion-log [data-completion="replace"] em { color: var(--lee-green); }
-.lee-completion-log [data-completion="discard"] em { color: var(--lee-red); }
+
+/* A row opens onto the question and the code either side of it. `summary` keeps the grid the flat
+   rows had, so an expandable row and a per-model row still line up in the same three columns. */
+.lee-completion-row > summary { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: baseline;
+  padding: 3px 6px; cursor: pointer; list-style: none; }
+.lee-completion-row > summary::-webkit-details-marker { display: none; }
+.lee-completion-row > summary:hover { background: var(--lee-sel); color: var(--lee-fg); }
+.lee-completion-row[data-completion="replace"] em { color: var(--lee-green); }
+.lee-completion-row[data-completion="discard"] em { color: var(--lee-red); }
+.lee-completion-detail { display: flex; flex-direction: column; gap: 6px; padding: 4px 8px 10px; }
+.lee-completion-code h5 { margin: 0 0 2px; font: 9px/1.3 var(--lee-mono); text-transform: uppercase; color: var(--lee-fg4); }
+.lee-completion-code pre { margin: 0; padding: 6px 8px; max-height: 220px; overflow: auto; white-space: pre-wrap;
+  overflow-wrap: anywhere; background: var(--lee-bg1); border: 1px solid var(--lee-border); border-radius: 4px; }
 .lee-session-nav {
   position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 4px;
   padding: 5px 3px 7px; overflow-x: auto; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1);

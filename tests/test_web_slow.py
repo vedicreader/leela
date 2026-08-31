@@ -301,6 +301,23 @@ def test_tab_takes_the_completion_that_is_on_screen():
     assert out['accepted'] == 'sanskrit_parse', 'Tab accepts the open completion'
     assert out['indented'].startswith((' ', '\t')), 'and still indents when nothing is offered'
 
+def test_completing_a_slash_command_leaves_the_caret_after_it():
+    """Tab on the composer's command list replaced the whole box, and assigning `value` on a box the
+    browser has not focused leaves the caret at 0, so completing a command read as Home. Every other
+    branch of the chooser sets the caret; this one now does too.
+    """
+    async def go(pg):
+        await pg.click('#agentprompt')
+        await pg.keyboard.type('/')
+        await pg.wait_for_selector('#agentsuggest:not([hidden]) button')
+        await pg.keyboard.press('Tab')
+        return await pg.evaluate("""() => { const i = document.getElementById('agentprompt');
+          return {value: i.value, at: i.selectionStart, focused: document.activeElement === i}; }""")
+    out = _run(go)
+    assert out['value'].startswith('/') and out['value'].endswith(' '), out['value']
+    assert out['at'] == len(out['value']), f"the caret sits at {out['at']} of {len(out['value'])}"
+    assert out['focused'], 'and the composer still has the keys'
+
 def test_changing_a_routed_job_model_saves_it_and_a_refusal_says_so():
     """Changing the subagent model did nothing and said nothing. The routed jobs are rows this file
     draws, with no id of their own, and `paintModelPickers` built `'#' + ''` for each -- a
@@ -1300,8 +1317,10 @@ def test_the_agent_pane_follows_the_stream_without_dragging_a_reader_off_what_th
 
 def test_every_editor_refuses_the_systems_own_autocorrect():
     """WKWebView hands a `contenteditable` to NSSpellChecker and a browser does not, so the packaged
-    app curled quotes and corrected identifiers under CodeMirror. `leela/desktop.py` turns it off
-    for the process; this is the same refusal on the view, for every editor Leela builds.
+    app curled quotes, corrected identifiers, and offered inline predictions under CodeMirror. An
+    inline prediction is accepted with Tab, which is the key the completion list is waiting for.
+    `leela/desktop.py` turns it off for the process; this is the same refusal on the view, for every
+    editor Leela builds.
     """
     async def go(pg):
         return await pg.evaluate("""() => {
@@ -1310,13 +1329,17 @@ def test_every_editor_refuses_the_systems_own_autocorrect():
           const named = n => v.contentDOM.getAttribute(n);
           return {spellcheck: named('spellcheck'), autocorrect: named('autocorrect'),
                   autocapitalize: named('autocapitalize'),
+                  writingsuggestions: named('writingsuggestions'),
                   everyMounted: [...document.querySelectorAll('.cm-content')]
-                    .every(n => n.getAttribute('spellcheck') === 'false')};
+                    .every(n => n.getAttribute('spellcheck') === 'false'
+                                && n.getAttribute('writingsuggestions') === 'false')};
         }""")
     out = _run(go)
     assert out['spellcheck'] == 'false', out
     assert out['autocorrect'] == 'off' and out['autocapitalize'] == 'off', out
-    assert out['everyMounted'], 'an editor on the page was left with the system spell checker on'
+    # An inline prediction is taken with Tab, which is the key the completion list wants.
+    assert out['writingsuggestions'] == 'false', out
+    assert out['everyMounted'], 'an editor on the page was left with the system text checker on'
 
 def test_a_pipeline_terminal_follows_the_package_it_was_opened_for(tmp_path):
     """Moving between packages showed the first package's release log, and closing the terminal
@@ -3244,18 +3267,28 @@ def test_the_inline_reply_says_what_it_looked_at_even_when_that_is_nothing(tmp_p
     assert 'note' not in out['used'], 'only tool calls are named'
     assert 'without looking anything up' in out['none'], out['none']
 
-def test_the_history_panel_shows_what_the_inline_panel_was_asked_and_whether_it_was_taken(tmp_path):
-    """The completion log is preference data, so it has to be readable: the instruction, the model,
-    the verdict, and the accept rate the verdicts add up to."""
+def test_the_completion_log_is_its_own_surface_and_opens_onto_what_was_asked_and_suggested(tmp_path, monkeypatch):
+    """The inline panel's telemetry used to be appended to the bottom of a conversation in the
+    agent's History view. Reaching it meant opening a conversation nobody wanted, and the two
+    preferences that decide whether any of it is recorded, and the purge button, lived there too.
+
+    It has a surface of its own now, and a row opens onto the question, the selection and the
+    suggestion. That last part never worked: `summary` joined asks to outcomes on `ask_id` and the
+    browser logged the ask before the route minted one, so every row read `(no instruction)`.
+    """
     from playwright.sync_api import sync_playwright
     from leela.blocks.agent.completions import completions
+    from leela.blocks.settings.settings import Settings
+    monkeypatch.setattr(Settings, 'raw', lambda self, scope: {'completions': {'snippets': True}}
+                        if scope == 'user' else {})
     completions().record([
-        {'kind': 'ask', 'ask_id': '1', 'instruction': 'add a docstring', 'model': 'fast', 'lang': 'python'},
-        {'kind': 'reply', 'ask_id': '1', 'model': 'fast', 'ms': 800},
+        {'kind': 'ask', 'ask_id': '1', 'instruction': 'add a docstring', 'lang': 'python',
+         'text': 'def f(x): return x'},
+        {'kind': 'reply', 'ask_id': '1', 'model': 'fast', 'ms': 800, 'reply': 'def f(x):\n    "doubles"\n    return x'},
         {'kind': 'replace', 'ask_id': '1'},
-        {'kind': 'ask', 'ask_id': '2', 'instruction': 'rename the widget', 'model': 'slow', 'lang': 'python'},
+        {'kind': 'ask', 'ask_id': '2', 'instruction': 'rename the widget', 'lang': 'python'},
         {'kind': 'reply', 'ask_id': '2', 'model': 'slow', 'ms': 2400},
-        {'kind': 'discard', 'ask_id': '2'}])
+        {'kind': 'discard', 'ask_id': '2'}], True)
     fake_kernels()
     ws = Workspace(roots=[tmp_path])
     with _server(ws) as url, sync_playwright() as pw:
@@ -3263,18 +3296,37 @@ def test_the_history_panel_shows_what_the_inline_panel_was_asked_and_whether_it_
         page = browser.new_page(viewport={'width': 1440, 'height': 900})
         page.goto(url, wait_until='networkidle')
         if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
+
+        # the agent's history is a conversation browser again, and carries none of this
         page.click('#agenthistory')
-        page.wait_for_selector('.lee-completions')
-        rows = page.locator('.lee-completion-log > div')
+        page.wait_for_selector('.lee-history-index')
+        assert page.locator('.lee-completions').count() == 0, 'completions are still inside the transcript'
+
+        page.evaluate('showCompletions()')
+        page.wait_for_selector('.lee-completions-modal .lee-completion-log')
+        rows = page.locator('.lee-completion-row')
         assert rows.count() == 2
-        assert 'rename the widget' in rows.nth(0).inner_text() and 'slow' in rows.nth(0).inner_text()
-        assert 'rejected' in rows.nth(0).inner_text()
-        assert 'add a docstring' in rows.nth(1).inner_text() and 'accepted' in rows.nth(1).inner_text()
+        newest = rows.nth(0)
+        assert 'rename the widget' in newest.inner_text() and 'rejected' in newest.inner_text()
+        oldest = rows.nth(1)
+        assert 'add a docstring' in oldest.inner_text() and 'accepted' in oldest.inner_text()
+
+        oldest.locator('summary').click()          # the three things a row is for
+        detail = oldest.locator('.lee-completion-detail')
+        page.wait_for_function("() => document.querySelector('.lee-completion-detail')?.offsetHeight > 0")
+        assert 'def f(x): return x' in detail.inner_text(), 'the selection is not on screen'
+        assert 'doubles' in detail.inner_text(), 'the suggestion is not on screen'
+        # the one with no code says so rather than showing an empty box
+        newest.locator('summary').click()
+        assert 'not kept' in newest.locator('.lee-completion-detail').inner_text()
+
         models = page.locator('.lee-completion-models').inner_text()
         assert 'fast' in models and '100%' in models and '0%' in models
         note = page.locator('.lee-completions .lee-weight-note').inner_text()
         assert '2 asked' in note and 'accepted 50%' in note
+        # the controls that have no other home came with it
         assert page.locator('.lee-completions [data-completion-pref="telemetry"]').input_value() == 'on'
+        assert page.locator('.lee-completions [data-completion-pref="snippets"]').count() == 1
         assert page.locator('.lee-completions [data-completions-purge]').count() == 1
         browser.close()
 

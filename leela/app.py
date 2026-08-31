@@ -1216,10 +1216,15 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         from fastcore.xtras import fenced_blocks
         if blocks := fenced_blocks(answer): answer = str(blocks[-1][1]).strip()
         if not answer: return _fail(note or 'the model returned no suggestion')
-        # `ask_id` is the server's: the browser reports the outcome later and only a shared id ties
-        # the two halves of one judgement together.
+        # The browser's `ask_id`, echoed. It logs the ask before this request and the outcome long
+        # after it, so an id minted here reached the reply and the verdict but never the ask, and
+        # the instruction and the selected code sat on disk with nothing to join them to.
         return {'ok': True, 'text': answer, 'mode': mode, 'activity': trail,
-                'ask_id': uuid.uuid4().hex[:12], 'ms': round((time.time() - started) * 1000),
+                # never truncated: a shortened echo would put one id on the ask and another on the
+                # reply, and the join would fail as silently as it used to
+                'ask_id': (str(d.get('ask_id') or '') if len(str(d.get('ask_id') or '')) <= 64 else '')
+                          or uuid.uuid4().hex[:12],
+                'ms': round((time.time() - started) * 1000),
                 'tools': len([r for r in trail if r.get('tool')]),
                 'model': ws.ai.routing.name_for('summary') if mode == 'summary' else a.routing.name_for('turn')}
     def _completions_prefs():
@@ -1227,6 +1232,16 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         from .blocks.settings.settings import Settings
         try: return Settings(ws.project_root).effective().get('completions') or {}
         except Exception: return {}
+    def _completions_snippets():
+        """Whether this response may carry the person's own code, from the user scope alone.
+
+        One store holds every project's events (`completions_dir` is under `leela_cfg`), and
+        `effective` lets a workspace override the user. Reading the effective value would let a
+        `snippets` turned on in one project serve selections recorded in every other.
+        """
+        from .blocks.settings.settings import Settings
+        try: return bool((Settings(ws.project_root).raw('user').get('completions') or {}).get('snippets'))
+        except Exception: return False
     @rt('/ai/events')
     async def ai_events(req):
         """What the inline panel was asked and what became of the answer.
@@ -1241,17 +1256,26 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if str(held.get('telemetry') or 'on') == 'off':
             return {'ok': True, 'recorded': 0, 'note': 'completion telemetry is off'}
         store = completions()
-        n = await _off_loop(store.record, d.get('events') or [], bool(held.get('snippets')))
+        # `_completions_snippets`, not `held`: a workspace can override the user for any section, so
+        # a cloned repo carrying `completions.snippets` would write selections and suggestions into
+        # the one global store while the checkbox and the banner both said the code was not kept.
+        n = await _off_loop(store.record, d.get('events') or [], _completions_snippets())
         return {'ok': True, 'recorded': n, 'note': store.note}
     @rt('/ai/completions')
     async def ai_completions(days: int = 30):
-        "What the inline panel has been asked, and how often its answers were taken."
-        from .blocks.agent.completions import completions, summary
-        held, store = _completions_prefs(), completions()
-        rows = await _off_loop(store.read, days)
-        return {'ok': True, 'telemetry': held.get('telemetry', 'on'),
-                'snippets': bool(held.get('snippets')), 'dir': str(store.dir),
-                'summary': summary(rows)}
+        """What the inline panel was asked, what it answered, and what became of each answer.
+
+        `no-store`, because the rows carry the person's own selections and suggestions and this is
+        a GET the window would otherwise be free to keep on disk.
+        """
+        from .blocks.agent.completions import completions, judgements, summary
+        held, store, snippets = _completions_prefs(), completions(), _completions_snippets()
+        # `read` is a generator and `summary` exhausts it, so the rows are taken once and shared
+        rows = list(await _off_loop(store.read, days))
+        return JSONResponse({'ok': True, 'telemetry': held.get('telemetry', 'on'),
+                             'snippets': snippets, 'dir': str(store.dir), 'days': days,
+                             'summary': summary(rows), 'events': judgements(rows, snippets)},
+                            headers={'Cache-Control': 'no-store'})
     @rt('/ai/completions/purge')
     async def ai_completions_purge():
         "Delete every completion event file."

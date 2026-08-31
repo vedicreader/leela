@@ -393,7 +393,9 @@ function paintAgentSuggest() {
 }
 function chooseAgentSuggest(i = lee.agentSuggestAt) {
   const item = lee.agentSuggest[i], input = $('#agentprompt'); if (!item || !input) return;
-  if (item.kind === 'command') input.value = `/${item.name} `;
+  // The caret is set on every branch: assigning `value` on a box that is not focused leaves it
+  // at 0, so completing a command read as Home.
+  if (item.kind === 'command') { input.value = `/${item.name} `; input.selectionStart = input.selectionEnd = input.value.length; }
   else if (item.kind === 'tool' || item.kind === 'skill') {
     const at = input.selectionStart, before = input.value.slice(0, at);
     const left = before.replace(/(^|\s)\/(?:[A-Za-z_][\w-]*)?$/, `$1/${item.name} `);

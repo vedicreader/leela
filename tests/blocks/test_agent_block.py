@@ -447,6 +447,132 @@ def test_the_accept_rate_is_reported_per_model(tmp_path):
     assert models['unknown']['stale'] == 1 and models['unknown']['accept_rate'] is None, \
         'an outcome whose ask is off the end of the log still has to go somewhere'
 
+def test_the_selection_route_answers_with_the_ask_id_the_browser_sent(tmp_path, monkeypatch):
+    """The browser logs the ask before this request and the verdict long after it, so an id minted
+    here reached the reply and the outcome and never the ask. Nothing joined the instruction and the
+    selected code to what became of them, and the log read `(no instruction)` for every row.
+    """
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    monkeypatch.setattr(type(ws.ai), 'summarise', lambda self, text, sp='': 'a shorter version')
+    with TestClient(ide_app(ws)) as client:
+        d = client.post('/complete/selection', json={'text': 'some selected prose', 'mode': 'summary',
+                                                     'ask_id': 'browser-minted'}).json()
+        assert d['ok'] and d['ask_id'] == 'browser-minted'
+        # a client that does not send one is still answered, so an old page keeps working
+        older = client.post('/complete/selection', json={'text': 'some selected prose', 'mode': 'summary'}).json()
+        assert older['ok'] and older['ask_id'] and older['ask_id'] != 'browser-minted'
+
+
+def test_a_completion_row_carries_the_question_the_suggestion_and_the_verdict(tmp_path, monkeypatch):
+    """The three things a completion log is for, none of which could be read.
+
+    `summary` joins asks to outcomes on `ask_id`, and the browser logged the ask before the route
+    minted one, so the join was always empty and every row said `(no instruction)`. The id is the
+    browser's now. `judgements` builds from the asks, so one still open and one whose model failed
+    are here too, and it never joins on an empty id: rows recorded before this heap together
+    otherwise, and they come back marked `unlinked`.
+    """
+    from leela.blocks.agent.completions import judgements
+    rows = [{'kind': 'ask', 'ask_id': 'a', 'instruction': 'tidy this', 'lang': 'python', 'text': 'x=1'},
+            {'kind': 'reply', 'ask_id': 'a', 'model': 'fast', 'ms': 90, 'reply': 'x = 1'},
+            {'kind': 'replace', 'ask_id': 'a'},
+            {'kind': 'ask', 'ask_id': 'b', 'instruction': 'still thinking'},
+            {'kind': 'ask', 'ask_id': 'c', 'instruction': 'this one failed'},
+            {'kind': 'error', 'ask_id': 'c'},
+            {'kind': 'reply', 'ask_id': '', 'model': 'old'},
+            {'kind': 'discard', 'ask_id': ''}]
+    out = {r['ask_id']: r for r in judgements(rows)}
+    assert out['a']['instruction'] == 'tidy this' and out['a']['kind'] == 'replace'
+    assert out['a']['text'] == 'x=1' and out['a']['reply'] == 'x = 1', 'the question and the answer'
+    assert out['a']['model'] == 'fast' and out['a']['code'] == 'kept'
+    assert out['b']['kind'] == 'ask', 'an ask with no verdict is still an ask'
+    assert out['c']['kind'] == 'error', 'a model that failed is the signal a rate would hide'
+    unlinked = [r for r in judgements(rows) if r['orphan']]
+    assert len(unlinked) == 2, 'two idless rows were joined into one ask'
+
+    withheld = {r['ask_id']: r for r in judgements(rows, snippets=False)}
+    assert withheld['a']['text'] is None and withheld['a']['reply'] is None
+    assert withheld['a']['code'] == 'withheld', 'recorded but not served reads the same as never recorded'
+    assert withheld['b']['code'] == 'not kept', 'and never recorded still reads as never recorded'
+
+
+def test_a_suggestion_accepted_after_it_went_stale_is_the_one_that_counts(tmp_path):
+    """`stale` is the selection moving out from under a replace. It leaves the panel open and the
+    suggestion still there to accept once the caret is back, so it is not a verdict and must not end
+    the log: `completionLog` stopped on it, and the accept that followed was never recorded.
+
+    One ask, one outcome, and the last one. Counting both would have a single suggestion rejected
+    and accepted at once, which is the accept rate this exists to report.
+    """
+    from leela.blocks.agent.completions import judgements, summary
+    rows = [{'kind': 'ask', 'ask_id': 'a', 'instruction': 'tidy this'},
+            {'kind': 'reply', 'ask_id': 'a', 'model': 'fast'},
+            {'kind': 'stale', 'ask_id': 'a'},
+            {'kind': 'replace', 'ask_id': 'a'}]
+    s = summary(rows)
+    assert (s['replaced'], s['discarded'], s['accept_rate']) == (1, 0, 1.0)
+    assert first(s['models'])['stale'] == 0, 'the stale was counted as well as the accept'
+    assert [r['kind'] for r in judgements(rows)] == ['replace'], 'the row reports the attempt, not the outcome'
+
+
+def test_an_ask_that_never_carried_an_id_still_shows_what_was_asked(tmp_path):
+    """Every event recorded before the browser began minting ids is this shape, so it is what the
+    log shows on its first open. Joining needs an id and these have none, but the ask still holds
+    the instruction, which is the field most worth reading. Dropping it left the reader a list of
+    unlinked verdicts with the one thing that was recorded correctly thrown away.
+    """
+    from leela.blocks.agent.completions import judgements
+    rows = [{'kind': 'ask', 'instruction': 'this is so convoluted', 'lang': 'python', 'at': 1},
+            {'ask_id': 'ec14fa9705e9', 'kind': 'reply', 'model': 'gpt-mini', 'ms': 5474, 'at': 2},
+            {'ask_id': 'ec14fa9705e9', 'kind': 'stale', 'at': 3}]
+    out = judgements(rows)
+    assert all(r['orphan'] for r in out), 'nothing here can be joined'
+    asked = first(r for r in out if r['kind'] == 'ask')
+    assert asked and asked['instruction'] == 'this is so convoluted', 'the question was dropped'
+    assert asked['lang'] == 'python'
+
+
+def test_the_code_is_not_written_because_a_project_said_so(tmp_path, monkeypatch):
+    """The reader's gate is the user scope, and so is the writer's. A workspace overrides the user
+    for any section, so a cloned repo carrying `completions.snippets` would write selections and
+    suggestions into the one global store while the checkbox and the banner both said otherwise.
+    """
+    from leela.blocks.agent.completions import completions
+    from leela.blocks.settings.settings import Settings
+    monkeypatch.setattr(Settings, 'raw', lambda self, scope: {'completions': {'snippets': False}}
+                        if scope == 'user' else {'completions': {'snippets': True}})
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        client.post('/ai/events', json={'events': [
+            {'kind': 'ask', 'ask_id': 'a', 'instruction': 'tidy', 'text': 'secret = 1'},
+            {'kind': 'reply', 'ask_id': 'a', 'model': 'fast', 'reply': 'secret = 1  # tidy'}]})
+    on_disk = '\n'.join(p.read_text() for p in completions().files())
+    assert 'tidy' in on_disk, 'the instruction is the label on the judgement and is kept'
+    assert 'secret = 1' not in on_disk, 'a project setting wrote the code the user said not to keep'
+
+
+def test_the_completion_route_reads_the_snippet_gate_from_the_user_scope_alone(tmp_path, monkeypatch):
+    """One store holds every project's events, and `effective` lets a workspace override the user.
+    Reading the effective value would let `snippets` turned on in one project serve selections
+    recorded in every other one.
+    """
+    from leela.blocks.agent.completions import completions
+    from leela.blocks.settings.settings import Settings
+    completions().record([{'kind': 'ask', 'ask_id': 'a', 'instruction': 'tidy', 'text': 'x=1'},
+                          {'kind': 'reply', 'ask_id': 'a', 'model': 'fast', 'reply': 'x = 1'},
+                          {'kind': 'replace', 'ask_id': 'a'}], True)
+    monkeypatch.setattr(Settings, 'raw', lambda self, scope: {'completions': {'snippets': False}}
+                        if scope == 'user' else {'completions': {'snippets': True}})
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        r = client.get('/ai/completions')
+        d = r.json()
+        assert d['snippets'] is False, 'a workspace override unlocked another project\'s code'
+        assert r.headers.get('cache-control') == 'no-store', 'source code in a cacheable GET'
+        row = first(e for e in d['events'] if e['ask_id'] == 'a')
+        assert row['instruction'] == 'tidy' and row['text'] is None and row['reply'] is None
+        assert row['code'] == 'withheld'
+
+
 def test_completion_events_are_recorded_and_reduced_to_the_fields_this_version_stores(tmp_path):
     from leela.blocks.agent.completions import completions
     _completion_prefs({'telemetry': 'on', 'snippets': False})

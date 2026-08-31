@@ -519,6 +519,7 @@ function appKeymap(binds) {
    `leela/vendor/lee-cm6.js` predates this line is still covered. */
 const quietTyping = EditorView.contentAttributes.of({
   spellcheck: "false", autocorrect: "off", autocapitalize: "off", "data-gramm": "false",
+  writingsuggestions: "false",
 });
 
 const OVERVIEW_W = 14;

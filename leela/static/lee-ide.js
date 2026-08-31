@@ -3724,6 +3724,7 @@ function leeToolsMenu(anchor) {
     {separator: true},
     {label: 'Settings…', detail: displayChord(lee.keys.find(k => k.action === 'settings')?.key || 'mod+,'), run: editorSettings},
     {label: 'Workspace history…', detail: 'conflict-safe undo', run: operationHistory},
+    {label: 'Inline completions…', detail: 'what you asked, and what you kept', run: () => showCompletions()},
     {label: 'Keybindings…', run: () => leeAct('edit_keys')},
     {label: 'Terminal', run: () => leeAct('terminal')},
   ]);
@@ -4974,6 +4975,7 @@ function palette() {
     {name: 'Agent: edit starting state', scope: 'agent', run: leeAgentState},
     {name: 'Agent: steer after current call', scope: 'agent', run: () => $('#agentprompt')?.focus()},
     {name: 'Agent: sub-agents', scope: 'agent', run: () => leeSubagents()},
+    {name: 'Inline completions: what was asked and taken', scope: 'global', run: () => showCompletions()},
   ];
   const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: k.key})).concat(agentCommands);
   let hits = cmds, sel = 0;
@@ -5449,7 +5451,9 @@ async function addRoot(find = false) {
   };
   const complete = () => {
     const r = rows[sel]; if (!r) return false;
-    input.value = r.path + '/'; draw(); return true;
+    // The caret is placed, not left where assigning `value` puts it: WebKit puts it at 0.
+    input.value = r.path + '/'; input.setSelectionRange(input.value.length, input.value.length);
+    draw(); return true;
   };
   const open = async path => {
     const target = path || input.value.trim(); if (!target) return;
@@ -5479,7 +5483,8 @@ async function addRoot(find = false) {
   };
   list.onclick = e => {
     const r = e.target.closest('.lee-folderrow'); if (!r) return;
-    input.value = r.dataset.path + '/'; input.focus(); draw();
+    input.value = r.dataset.path + '/'; input.focus();
+    input.setSelectionRange(input.value.length, input.value.length); draw();
   };
   openBtn.onclick = () => open();
   input.value = find ? '' : (await api('/fs/browse?path=').catch(() => ({path: ''}))).path + '/';

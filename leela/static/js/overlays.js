@@ -334,6 +334,7 @@ function leeToolsMenu(anchor) {
     {separator: true},
     {label: 'Settings…', detail: displayChord(lee.keys.find(k => k.action === 'settings')?.key || 'mod+,'), run: editorSettings},
     {label: 'Workspace history…', detail: 'conflict-safe undo', run: operationHistory},
+    {label: 'Inline completions…', detail: 'what you asked, and what you kept', run: () => showCompletions()},
     {label: 'Keybindings…', run: () => leeAct('edit_keys')},
     {label: 'Terminal', run: () => leeAct('terminal')},
   ]);

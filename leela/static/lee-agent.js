@@ -1125,20 +1125,71 @@ async function historyGroups() {
   lee.agentHistoryHidden = d.hidden || 0;
   return d.sessions || [];
 }
-/* The inline panel's asks belong beside the conversations: both answer what the model was asked
-   and whether the answer was any good. A `stale` is neither, so it is named rather than counted. */
-const COMPLETION_VERDICT = {replace: 'accepted', discard: 'rejected', stale: 'selection moved'};
+/* The inline panel's telemetry, in a surface of its own. It used to be appended to the bottom of a
+   conversation in the agent's History view, which is a different feature's transcript: the only way
+   to reach it was to open a conversation nobody wanted, and the two preferences that decide whether
+   any of this is recorded lived there too. A `stale` is neither an accept nor a reject, so it is
+   named rather than counted. */
+const COMPLETION_VERDICT = {replace: 'accepted', discard: 'rejected', stale: 'selection moved',
+                            abandon: 'abandoned', error: 'model failed', ask: 'still open',
+                            reply: 'answered, no verdict'};
+const COMPLETION_CODE = {kept: '', 'not kept': 'the code was not kept for this one',
+                         withheld: 'turn on "keep the code" to read the selection and the suggestion'};
+/* Two causes, one shape: nothing carried an id before the browser began minting them, and an ask
+   can fall outside the window this list covers while its verdict stays inside it. */
+const COMPLETION_ORPHAN = 'not joined to its ask: recorded before asks carried an id, or its ask is outside this window';
 const percent = r => r === null || r === undefined ? '—' : Math.round(r * 100) + '%';
-async function appendCompletions(log) {
+const completionWhen = at => at ? new Date(at * 1000).toLocaleString() : '';
+
+function completionRow(r) {
+  const row = document.createElement('details'); row.className = 'lee-completion-row';
+  row.dataset.completion = r.kind || '';
+  row.innerHTML = `<summary><strong></strong><span>${esc(r.model || 'unknown')}` +
+    `${r.lang ? ' · ' + esc(r.lang) : ''}${r.ms ? ' · ' + esc(r.ms) + 'ms' : ''}` +
+    `${r.at ? ' · ' + esc(completionWhen(r.at)) : ''}</span>` +
+    `<em>${esc(COMPLETION_VERDICT[r.kind] || r.kind || '')}</em></summary>` +
+    `<div class="lee-completion-detail"></div>`;
+  // textContent throughout: an instruction and a suggestion are whatever the person and the model wrote
+  $('summary strong', row).textContent = r.instruction || (r.orphan ? '(unlinked event)' : '(no instruction)');
+  const detail = $('.lee-completion-detail', row);
+  if (r.path) { const p = document.createElement('div'); p.className = 'lee-dim'; p.textContent = r.path; detail.appendChild(p); }
+  const pair = (label, text) => {
+    const box = document.createElement('div'); box.className = 'lee-completion-code';
+    const h = document.createElement('h5'); h.textContent = label; box.appendChild(h);
+    const pre = document.createElement('pre'); pre.textContent = text; box.appendChild(pre);
+    detail.appendChild(box);
+  };
+  if (r.text) pair('selection', r.text);
+  if (r.reply) pair('suggestion', r.reply);
+  for (const note of [COMPLETION_CODE[r.code], r.orphan ? COMPLETION_ORPHAN : ''].filter(Boolean)) {
+    const n = document.createElement('div'); n.className = 'lee-dim'; n.textContent = note; detail.appendChild(n);
+  }
+  return row;
+}
+
+async function showCompletions() {
+  const m = modal(`<div class="lee-mhead">Inline completions<span class="sub">what you asked, what came back, and what you did with it</span></div>` +
+    `<div class="lee-completions" id="completionsbody"><div class="lee-dim">reading the log…</div></div>`,
+    null, null, {className: 'lee-completions-modal', storageKey: 'completions'});
+  await paintCompletions(m);
+  return m;
+}
+
+/* A paint in flight when a purge lands would repaint the selections the purge deleted, so each one
+   takes a ticket and only the newest writes. */
+let completionsPaint = 0;
+async function paintCompletions(m) {
+  const body = $('#completionsbody', m); if (!body) return;
+  const mine = ++completionsPaint;
   let d;
   try { d = await api('/ai/completions?days=30'); }
-  catch (e) { return log.insertAdjacentHTML('beforeend',
-    `<div class="lee-dim">completions unavailable: ${esc(e.message || e)}</div>`); }
-  const s = d.summary || {};
-  const box = document.createElement('section');
-  box.className = 'lee-completions';
-  box.innerHTML = `<div class="lee-vgroup">completions</div>` +
-    `<div class="lee-weight-group"><h4>What Leela keeps about your completions</h4><div class="lee-weight-row">` +
+  catch (e) {
+    if (mine === completionsPaint) body.innerHTML = `<div class="lee-dim">completions unavailable: ${esc(e.message || e)}</div>`;
+    return;
+  }
+  if (mine !== completionsPaint) return;
+  const s = d.summary || {}, events = d.events || [];
+  body.innerHTML = `<div class="lee-weight-group"><h4>What Leela keeps about your completions</h4><div class="lee-weight-row">` +
     `<label>keep<select class="lee-select" data-completion-pref="telemetry">` +
     ['on', 'off'].map(v => `<option value="${v}"${v === d.telemetry ? ' selected' : ''}>${v}</option>`).join('') +
     `</select></label>` +
@@ -1148,35 +1199,37 @@ async function appendCompletions(log) {
     `<div class="lee-dim lee-weight-note">${esc(s.asks || 0)} asked · ${esc(s.answered || 0)} answered · ` +
     `${esc(s.replaced || 0)} accepted · ${esc(s.discarded || 0)} rejected · accepted ${percent(s.accept_rate)}` +
     `${d.telemetry === 'off' ? ' · recording is off, so nothing new is kept' : ''}` +
+    `${d.snippets ? '' : ' · the code is not being kept, so rows show the question and the verdict only'}` +
     `<br>${esc(d.dir || '')}</div></div>` +
     `<div class="lee-weight-group"><h4>Accepted per model</h4><div class="lee-completion-models">` +
-    ((s.models || []).map(m => `<div data-completion-model="${esc(m.model)}"><strong>${esc(m.model)}</strong>` +
-      `<span>${esc(m.replaced || 0)} accepted · ${esc(m.discarded || 0)} rejected` +
-      `${m.stale ? ' · ' + esc(m.stale) + ' stale' : ''}</span><em>${percent(m.accept_rate)}</em></div>`).join('') ||
+    ((s.models || []).map(x => `<div data-completion-model="${esc(x.model)}"><strong>${esc(x.model)}</strong>` +
+      `<span>${esc(x.replaced || 0)} accepted · ${esc(x.discarded || 0)} rejected` +
+      `${x.stale ? ' · ' + esc(x.stale) + ' stale' : ''}</span><em>${percent(x.accept_rate)}</em></div>`).join('') ||
       `<div class="lee-dim">nothing decided yet</div>`) + `</div></div>` +
-    `<div class="lee-weight-group"><h4>Recent completions</h4><div class="lee-completion-log">` +
-    ((s.recent || []).map(r => `<div data-completion="${esc(r.kind)}">` +
-      `<strong>${esc(r.instruction || '(no instruction)')}</strong>` +
-      `<span>${esc(r.model || 'unknown')}${r.lang ? ' · ' + esc(r.lang) : ''}` +
-      `${r.ms ? ' · ' + esc(r.ms) + 'ms' : ''}</span>` +
-      `<em>${esc(COMPLETION_VERDICT[r.kind] || r.kind)}</em></div>`).join('') ||
-      `<div class="lee-dim">nothing recorded yet</div>`) + `</div></div>`;
-  log.appendChild(box);
-  $$('[data-completion-pref]', box).forEach(el => el.onchange = async () => {
+    `<div class="lee-weight-group"><h4>Every ask</h4><div class="lee-completion-log"></div></div>`;
+  const log = $('.lee-completion-log', body);
+  if (!events.length) log.innerHTML = `<div class="lee-dim">nothing recorded yet</div>`;
+  else events.forEach(r => log.appendChild(completionRow(r)));
+  $$('[data-completion-pref]', body).forEach(el => el.onchange = async () => {
     const value = el.type === 'checkbox' ? el.checked : el.value;
-    try { await post('/settings/save', {scope: 'user', section: 'completions',
-                                        values: {[el.dataset.completionPref]: value}}); }
-    catch (e) { status(e.message || String(e), 'err'); }
+    try {
+      await post('/settings/save', {scope: 'user', section: 'completions',
+                                    values: {[el.dataset.completionPref]: value}});
+      await paintCompletions(m);   // `snippets` decides what the route will hand over at all
+    } catch (e) { status(e.message || String(e), 'err'); }
   });
-  $('[data-completions-purge]', box).onclick = async () => {
+  $('[data-completions-purge]', body).onclick = async () => {
     if (!await confirmDialog('Purge the completion log',
         'Delete every recorded completion event? The conversations are not touched.', 'purge')) return;
     const out = await post('/ai/completions/purge', {});
     status(`removed ${out.removed} completion event file${out.removed === 1 ? '' : 's'}`, 'ok');
-    box.remove();
-    await appendCompletions(log);
+    // repainted from the server, never from anything held here: the point of a purge is that the
+    // selections and suggestions are gone, and a cached copy on the page would outlive them
+    await paintCompletions(m);
   };
 }
+window.showCompletions = showCompletions;
+
 async function showHistorySession(group, groups) {
   const log = $('#agentlog'); if (!log) return; dropCodeSurfaces(log); log.innerHTML = ''; approvalCards.clear();
   log.dataset.foldScope = group?.id || '';   // these turns are that session's, whatever thread is live
@@ -1210,8 +1263,7 @@ async function showHistorySession(group, groups) {
   index.querySelector('.lee-history-resume')?.addEventListener('click', () => leeAgentResume(group));
   log.appendChild(index);
   if (!group) {
-    log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>');
-    return appendCompletions(log);
+    return log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>');
   }
   log.insertAdjacentHTML('beforeend', `<div class="lee-history-session-head">` +
     `<strong>${esc(titleText(group.title) || sessionTime(group))}</strong>` +
@@ -1225,7 +1277,6 @@ async function showHistorySession(group, groups) {
       renderSessionCells(log, transcript);
     }
   }
-  await appendCompletions(log);
   log.scrollTop = 0;
 }
 /* The live pane is DOM only, so a reload, an htmx swap of the shell, or a switch to a conversation
@@ -2584,7 +2635,9 @@ function paintAgentSuggest() {
 }
 function chooseAgentSuggest(i = lee.agentSuggestAt) {
   const item = lee.agentSuggest[i], input = $('#agentprompt'); if (!item || !input) return;
-  if (item.kind === 'command') input.value = `/${item.name} `;
+  // The caret is set on every branch: assigning `value` on a box that is not focused leaves it
+  // at 0, so completing a command read as Home.
+  if (item.kind === 'command') { input.value = `/${item.name} `; input.selectionStart = input.selectionEnd = input.value.length; }
   else if (item.kind === 'tool' || item.kind === 'skill') {
     const at = input.selectionStart, before = input.value.slice(0, at);
     const left = before.replace(/(^|\s)\/(?:[A-Za-z_][\w-]*)?$/, `$1/${item.name} `);

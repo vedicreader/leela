@@ -491,6 +491,7 @@ def test_selection_help_summarises_on_the_summary_job_and_asks_the_readonly_agen
         note, busy = '', False
         activity = Acts()
         routing = type('Routing', (), {'name_for': lambda self, job: 'fake-inline'})()
+        def set_model(self, name, job='turn'): pass
         def ask(self, prompt): asked.append(prompt); return 'rewritten text'
     ws._ai, ws._selection_ai = FakeAI(), FakeSelectionAI()
     with TestClient(ide_app(ws)) as client:
@@ -521,6 +522,19 @@ def test_the_selection_agent_has_no_tool_that_could_change_anything(tmp_path):
     assert a.approvals is None, 'nothing is gated because nothing needs gating'
     assert ws._threads is None, 'building it must not build the agent pane behind the scenes'
     assert {t.__name__ for t in ws.inline_ai.tools} & WRITE_TOOLS, 'prompt cells keep their writes'
+
+
+def test_changing_the_inline_model_moves_the_selection_panel_too(tmp_path):
+    """One control is labelled `prompt cells · inline AI`, and both run on what it says.
+
+    The panel's assistant was built once and kept the model it was built with, so a change made
+    after the first selection only took effect at the next restart."""
+    ws = Workspace(roots=[tmp_path])
+    assert ws.selection_ai.routing.name_for('turn') == ws.inline_model
+    with TestClient(ide_app(ws)) as client:
+        assert client.post('/agent/model', json={'target': 'inline', 'model': 'gemma-e2b'}).json()['ok']
+    assert ws.inline_ai.routing.name_for('turn') == 'gemma-e2b'
+    assert ws.selection_ai.routing.name_for('turn') == 'gemma-e2b', 'the panel is on the chosen model'
 
 
 def test_a_second_selection_is_refused_while_the_first_is_still_answering(tmp_path):

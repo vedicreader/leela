@@ -43,6 +43,8 @@ def test_the_system_text_checker_is_turned_off_before_a_window_can_ask(monkeypat
     assert desktop.quiet_text_substitution() is True
     assert set(written) == set(desktop.NO_SUBSTITUTION)
     assert not any(written.values())
+    # Inline prediction is taken with Tab, so it ate the Tab meant for the completion list.
+    assert 'NSAutomaticInlinePredictionEnabled' in written
 
 def test_the_text_checker_is_a_mac_question_and_nothing_else_is_asked(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'linux')

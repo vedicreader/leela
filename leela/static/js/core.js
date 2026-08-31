@@ -143,11 +143,14 @@ applyEditorPrefs(lee.editorPrefs);
    browser does not: the packaged app curled quotes, corrected identifiers and, because the rewrite
    lands behind CodeMirror's back, dropped the next character typed at the start of the line. The
    served workspace never did any of it, which is why this only ever looked like a Mac-app bug.
+   `writingsuggestions` is the newer half of the same problem: an inline prediction is accepted with
+   Tab, so the Tab meant for the completion list was taken by the system, which rewrote the line and
+   left the caret at the start of it. `spellcheck` and `autocorrect` do not cover it.
    Set on the view rather than in the CodeMirror build, because `frontend/editor.js` needs esbuild
    and the bundle is committed; CodeMirror only clears attributes it set itself, so these survive.
    `leela/desktop.py:quiet_text_substitution` turns the same thing off one layer down. */
 const TYPING_ATTRS = {spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off',
-                      'data-gramm': 'false'};
+                      'data-gramm': 'false', writingsuggestions: 'false'};
 function quietTyping(view) {
   try { for (const [k, v] of Object.entries(TYPING_ATTRS)) view.contentDOM.setAttribute(k, v); }
   catch (_) { /* a view torn down before it was ever drawn */ }
