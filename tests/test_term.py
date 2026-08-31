@@ -1,6 +1,6 @@
 "What the agent reads back off a terminal."
 
-from leela.blocks.term.term import Pty
+from leela.blocks.term.term import MAX_FRAME, SCROLLBACK, Pty
 
 def _held(raw):
     "A Pty holding `raw` as scrollback, with no child ever spawned."
@@ -37,3 +37,43 @@ def test_killing_a_terminal_ends_its_stream_and_logs_nothing():
     seen, problems = asyncio.run(run())
     assert b'hi' in seen
     assert problems == []
+
+
+def test_a_burst_arrives_whole_in_few_frames_and_the_last_of_it_is_not_lost():
+    """macOS returns 1024 bytes a read whatever is asked for, so `stream` called `on_data` once per
+    kilobyte and the socket sent a frame each, which is what made the terminal crawl in the app.
+    Reads are gathered now, and the gathering must not swallow the output a child writes as it
+    exits: the end of the stream can sit in the middle of a batch."""
+    import asyncio
+    line, n = 'leela' * 4, 40000
+    async def run():
+        problems = []
+        asyncio.get_running_loop().set_exception_handler(lambda loop, ctx: problems.append(ctx))
+        p = Pty(['sh', '-c', f'yes {line} | head -{n}']).start()
+        frames = []
+        async def on_data(b):
+            frames.append(b)
+            await asyncio.sleep(.002)   # what sending a websocket frame costs, near enough
+        await asyncio.wait_for(p.stream(on_data), 60)
+        return frames, problems, bytes(p.scrollback)
+    frames, problems, kept = asyncio.run(run())
+    body = b''.join(frames)
+    assert problems == [], problems
+    assert body.count(line.encode()) == n, f'every line arrives once: {body.count(line.encode())} of {n}'
+    assert max(len(f) for f in frames) <= MAX_FRAME, 'no frame is larger than the cap'
+    # The point of the change: frames far larger than the kilobyte a read hands back, whenever the
+    # consumer is the slow half. A consumer that keeps up gets small frames and pays nothing for them.
+    assert len(frames) < len(body) / 1024, f'{len(frames)} frames for {len(body)} bytes'
+    assert kept == body[-SCROLLBACK:], 'the scrollback is the same bytes, coalesced or not'
+
+
+def test_a_child_that_writes_and_exits_at_once_still_delivers_what_it_wrote():
+    "Data and end-of-output land in one batch here, which is the case that could drop the data."
+    import asyncio
+    async def run():
+        p = Pty(['sh', '-c', "printf 'abcdef'; exit 0"]).start()
+        seen = bytearray()
+        async def on_data(b): seen.extend(b)
+        await asyncio.wait_for(p.stream(on_data), 10)
+        return bytes(seen)
+    assert b'abcdef' in asyncio.run(run())

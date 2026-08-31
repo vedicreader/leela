@@ -10,6 +10,11 @@ __all__ = ['Pty', 'Terminals', 'TerminalGate', 'lazygit_argv', 'gh_auth_argv', '
            'external_terminal_argv', 'EXTERNAL_TERMINALS']
 
 READ_CHUNK = 65536
+#: macOS returns 1024 bytes a read however much is asked for, so a burst arrives as thousands of
+#: them. A websocket frame each costs a WKWebView about 140 times what the bytes themselves do, so
+#: reads are gathered up to this before anything downstream sees them. Large enough to take the
+#: cost out, small enough that one frame is not a visible pause in the terminal that draws it.
+MAX_FRAME = 65536
 DEFAULT_SHELL = '/bin/bash'
 SCROLLBACK = 200_000
 
@@ -132,20 +137,39 @@ class Pty:
             self.exit_note = self.exit_note or '[exited]'
             return
         def _pump():
+            "Take everything the child has ready, not one read of it, and queue it as one piece."
             if self.fd is None: q.put_nowait(b''); return
-            try: data = os.read(fd, READ_CHUNK)
-            except (BlockingIOError, InterruptedError): return
-            except OSError: data = b''
-            q.put_nowait(data)
+            out = bytearray()
+            while len(out) < MAX_FRAME:
+                try: data = os.read(fd, READ_CHUNK)
+                except (BlockingIOError, InterruptedError): break
+                except OSError: data = b''
+                if not data:
+                    # A master at EIO stays readable, so the reader goes now or this spins on EOF.
+                    try: loop.remove_reader(fd)
+                    except Exception: pass
+                    if out: q.put_nowait(bytes(out))
+                    return q.put_nowait(b'')
+                out += data
+            if out: q.put_nowait(bytes(out))
         loop.add_reader(fd, _pump)
         self._reader = (loop, fd, q)
         try:
             while True:
                 data = await q.get()
                 if not data: break
+                # Whatever else is already waiting travels in the same frame. The end of the output
+                # can be inside a batch, and what precedes it is still owed to the reader.
+                eof = False
+                while len(data) < MAX_FRAME:
+                    try: more = q.get_nowait()
+                    except asyncio.QueueEmpty: break
+                    if not more: eof = True; break
+                    data += more
                 self._keep(data)
                 r = on_data(data)
                 if asyncio.iscoroutine(r): await r
+                if eof: break
         finally:
             self._reader = None
             try: loop.remove_reader(fd)
