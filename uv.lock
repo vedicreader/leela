@@ -4657,7 +4657,7 @@ wheels = [
 [[package]]
 name = "ramabana"
 version = "0.1.31"
-source = { git = "https://github.com/vedicreader/ramabana?branch=claude%2Framabana-post-release-cleanup-czjuk8#880b8924acaf876b88108ab8752ab499eaea8d06" }
+source = { git = "https://github.com/vedicreader/ramabana?branch=claude%2Framabana-post-release-cleanup-czjuk8#3cf4e674982f24f026a784f6878235b1a5e15b2d" }
 dependencies = [
     { name = "exhash" },
     { name = "fastcore" },
@@ -5227,8 +5227,8 @@ wheels = [
 
 [[package]]
 name = "shalya"
-version = "0.0.2"
-source = { git = "https://github.com/vedicreader/shalya?branch=claude%2Framabana-post-release-cleanup-czjuk8#20d16d9f5316ec3760725ad23f73d1c13972d5cd" }
+version = "0.0.3"
+source = { git = "https://github.com/vedicreader/shalya?branch=claude%2Framabana-post-release-cleanup-czjuk8#d5c2103f94fe8b09890664902202ca3ebedae2f7" }
 dependencies = [
     { name = "dhrishti" },
     { name = "exhash" },
