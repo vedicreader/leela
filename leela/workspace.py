@@ -222,6 +222,7 @@ class Workspace:
         self._loop = None
         self._history_stamps = {}
         self._timeline_lock = threading.RLock()
+        self._timeline_rows, self._timeline_stamp = None, ''
         from .blocks.vault.clip import register_all
         from .blocks.vault.jobs import Jobs
         from .blocks.vault.news import Feeds
@@ -310,19 +311,54 @@ class Workspace:
         except Exception: return None
 
     def _timelines(self):
+        """The retained turns, from memory unless the file has moved under this process.
+
+        Every reader parsed the whole document. It reaches several megabytes, `with_timelines` runs
+        on the history list and on every thread switch, and `save_timeline` read it again before
+        each write.
+        """
         with self._timeline_lock:
-            try: return self._timeline_path.read_json()
-            except Exception: return {}
+            try: st = self._timeline_path.stat(); stamp = f'{st.st_mtime_ns}:{st.st_size}'
+            except Exception: stamp = ''
+            if self._timeline_rows is not None and stamp == self._timeline_stamp: return self._timeline_rows
+            try: self._timeline_rows = self._timeline_path.read_json()
+            except Exception: self._timeline_rows = {}
+            self._timeline_stamp = stamp
+            return self._timeline_rows
     def _timeline_key(self, thread_id, turn_id): return f'{thread_id}:{turn_id}'
     def timeline_parts(self, thread_id, turn_id):
         return list(self._timelines().get(self._timeline_key(thread_id, turn_id), ()))
     TIMELINE_KEEP = 200          # turns retained for restart and resync, oldest written first out
 
+    @staticmethod
+    def _retained(parts):
+        """One turn's events, reduced to what a replay rebuilds from them.
+
+        `reduceAgentTimeline` concatenates consecutive `chunk` events into one block of prose, and
+        keeps one part per `action_id` holding the newest payload, at the position where that call
+        first appeared. Every other row it is handed is read and dropped. Retaining them cost 15MB
+        across six workspaces, 95% of the rows, and a parse and a serialise of all of it per turn.
+
+        A row with no id has no identity to update, so it can only ever be new.
+        """
+        out, at = [], {}
+        for row in parts:
+            event, data = row.get('event'), row.get('data') or {}
+            if event == 'chunk' and out and out[-1].get('event') == 'chunk':
+                held = out[-1]['data']
+                out[-1]['data'] = {**held, 'text': (held.get('text') or '') + (data.get('text') or '')}
+                continue
+            if event == 'activity' and (aid := data.get('action_id') or data.get('id')):
+                if aid in at: out[at[aid]] = dict(row); continue
+                at[aid] = len(out)
+            out.append(dict(row))
+        return out
+
     def save_timeline(self, thread_id, turn_id, parts):
         "Atomically retain one thread turn's ordered browser events for restart and resync."
         key = self._timeline_key(thread_id, turn_id)
         with self._timeline_lock:
-            rows = self._timelines(); rows.pop(key, None); rows[key] = list(parts)
+            rows = self._timelines(); rows.pop(key, None); rows[key] = self._retained(parts)
             for old in list(rows)[:-self.TIMELINE_KEEP]: rows.pop(old, None)
             self._timeline_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._timeline_path.with_name(f'.{self._timeline_path.name}.{os.getpid()}.tmp')
@@ -330,6 +366,9 @@ class Workspace:
                 tmp.write_json(rows); os.replace(tmp, self._timeline_path)
             finally:
                 if tmp.exists(): tmp.unlink()
+            # this process wrote it, so what is in hand is the file and the next read is free
+            try: st = self._timeline_path.stat(); self._timeline_stamp = f'{st.st_mtime_ns}:{st.st_size}'
+            except Exception: self._timeline_stamp = ''
         return rows[key]
     def history_stamp(self, ai=None):
         "What identifies the conversation log as it is now: cheap, and enough to notice a write."

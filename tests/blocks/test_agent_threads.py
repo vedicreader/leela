@@ -608,6 +608,48 @@ def test_ordered_timeline_parts_survive_a_workspace_restart(tmp_path):
         {'session': 'thread-2', 'turn_id': 'turn-1'}]
 
 
+def test_a_retained_turn_holds_only_what_a_replay_rebuilds_from_it(tmp_path):
+    """`reduceAgentTimeline` joins consecutive chunks into one block of prose and keeps one part per
+    `action_id` holding the newest payload, at the position where that call first appeared. Every
+    other row it is handed is read and dropped, and all of it was being written: 15MB across six
+    workspaces and 95% of the rows, parsed and serialised again on every turn.
+    """
+    ws = Workspace(roots=[tmp_path]); ws._timeline_path = tmp_path/'timeline.json'
+    parts = [{'seq': 1, 'event': 'chunk', 'data': {'text': 'one '}},
+             {'seq': 2, 'event': 'chunk', 'data': {'text': 'two '}},
+             {'seq': 3, 'event': 'chunk', 'data': {'text': 'three'}},
+             {'seq': 4, 'event': 'activity', 'data': {'action_id': 'call-1', 'done': False}},
+             {'seq': 5, 'event': 'activity', 'data': {'action_id': 'call-1', 'done': True, 'ok': True}},
+             {'seq': 6, 'event': 'activity', 'data': {'summary': 'no id of its own'}},
+             {'seq': 7, 'event': 'chunk', 'data': {'text': 'after'}}]
+    held = ws.save_timeline('thread-1', 'turn-1', parts)
+    assert [r['event'] for r in held] == ['chunk', 'activity', 'activity', 'chunk']
+    assert held[0]['data']['text'] == 'one two three', 'the prose was not joined'
+    assert held[1]['data'] == {'action_id': 'call-1', 'done': True, 'ok': True}, 'the call kept a stale payload'
+    assert held[2]['data'] == {'summary': 'no id of its own'}, 'a row with no id can only ever be new'
+    assert held[3]['data']['text'] == 'after', 'prose after a call is a block of its own'
+    again = Workspace(roots=[tmp_path]); again._timeline_path = tmp_path/'timeline.json'
+    assert again.timeline_parts('thread-1', 'turn-1') == held, 'a restart reads back something else'
+
+
+def test_the_timeline_is_parsed_again_only_when_the_file_has_moved(tmp_path, monkeypatch):
+    """Every reader parsed the whole document, which reaches several megabytes. `with_timelines`
+    runs on the history list and on every thread switch, and the writer read it before each write.
+    """
+    from fastcore.all import Path as FPath
+    ws = Workspace(roots=[tmp_path]); ws._timeline_path = tmp_path/'timeline.json'
+    ws.save_timeline('thread-1', 'turn-1', [{'seq': 1, 'event': 'chunk', 'data': {'text': 'held'}}])
+    reads, real = [], FPath.read_json
+    monkeypatch.setattr(FPath, 'read_json', lambda self, *a, **kw: (reads.append(self), real(self, *a, **kw))[1])
+    ws.timeline_parts('thread-1', 'turn-1')
+    ws.with_timelines([{'session': 'thread-1', 'turn_id': 'turn-1'}])
+    assert reads == [], 'a reader parsed the file the writer already had in hand'
+    ws._timeline_path.write_json({'thread-1:turn-1': [{'seq': 9, 'event': 'chunk', 'data': {'text': 'elsewhere'}}]})
+    assert ws.timeline_parts('thread-1', 'turn-1')[0]['data']['text'] == 'elsewhere', \
+        'a file that moved under it was not read again'
+    assert len(reads) == 1
+
+
 def test_a_turn_finishes_after_its_only_subscriber_has_gone(tmp_path):
     """Closing the EventSource used to be how a turn ended. It is now how a subscriber ends, and
     the difference is only visible if the turn is still running when the subscriber leaves."""
