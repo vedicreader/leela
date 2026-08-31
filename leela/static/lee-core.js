@@ -2471,15 +2471,31 @@ function selectCell(i, extend = false) {
   } else { lee.cellAnchor = lee.sel; lee.cellSelection = new Set([lee.sel]); }
   paintSel();
 }
+/* Bring a cell into view with room around it.
+
+   `scrollIntoView({block: 'nearest'})` moves the minimum distance, so a cell arriving from below
+   parks flush against the bottom edge with nothing under it, which is the whole of what a reader
+   wants to see after running it. Moving the minimum is still right once the cell is comfortably
+   on screen, or stepping to a neighbour would jump the page, so the margin is what decides. */
+function revealCell(cell) {
+  const host = $('#editor'); if (!host || !cell) return;
+  const box = host.getBoundingClientRect(), r = cell.getBoundingClientRect();
+  const margin = Math.min(120, Math.max(24, box.height * .18));
+  const above = r.top - box.top - margin, below = r.bottom - box.bottom + margin;
+  // A cell taller than the room left over can only be shown from its top.
+  if (r.height > box.height - margin * 2 || above < 0) host.scrollTop += above;
+  else if (below > 0) host.scrollTop += below;
+}
 function focusCell(i) {
   selectCell(i);
   const c = lee.cells[lee.sel]; if (!c) return;
-  const cell = $(`.lee-cell[data-i="${lee.sel}"]`);
-  // CodeMirror focuses its own scroller but cannot reveal itself inside the notebook's outer
-  // scroller, so the cell is scrolled into view here.
-  cell?.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  // Mounted first: an unmounted cell is a shell whose height is a guess, and the reveal measures it.
   const v = ensureCellMounted(lee.sel);
-  if (v) requestAnimationFrame(() => LeeCM.focus(v));
+  const reveal = () => revealCell($(`.lee-cell[data-i="${lee.sel}"]`));
+  reveal();
+  // CodeMirror focuses its own scroller and reveals the caret minimally, which spends the margin
+  // again, so the reveal is repeated after it and after the layout mounting just caused.
+  requestAnimationFrame(() => { if (v) LeeCM.focus(v); reveal(); });
 }
 function focusCellPage(direction) {
   if (!lee.cells.length) return;
@@ -3394,11 +3410,18 @@ function selectionEditor() {
   if (!['editor', 'exec'].includes(lee.scope)) return null;
   return curEditor();
 }
+/* Place a floating panel beside `rect`, wholly inside the viewport.
+
+   `offsetHeight`, not `getBoundingClientRect`: these panels animate in from a transform, and the
+   rect is of the transformed box, which is short by a few pixels on the first frame. Callers place
+   twice, once while the panel is a skeleton and again once it has its content, so appending is
+   conditional and the second call only moves it. */
 function positionFloating(el, rect) {
-  document.body.appendChild(el);
-  const own = el.getBoundingClientRect(), left = Math.max(8, Math.min(rect.left, innerWidth - own.width - 8));
-  const below = rect.bottom + 7, top = below + own.height < innerHeight - 8 ? below : Math.max(8, rect.top - own.height - 7);
-  el.style.left = left + 'px'; el.style.top = top + 'px';
+  if (!el.isConnected) document.body.appendChild(el);
+  const w = el.offsetWidth, h = el.offsetHeight, below = innerHeight - rect.bottom - 15;
+  const top = h <= below || below >= rect.top - 15 ? rect.bottom + 7 : rect.top - h - 7;
+  el.style.left = Math.max(8, Math.min(rect.left, innerWidth - w - 8)) + 'px';
+  el.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + 'px';
 }
 function showSelectionHelp() {
   if ($('.lee-selection-reply') || document.activeElement?.closest?.('.lee-selection-tools')) return;
@@ -3427,7 +3450,10 @@ async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
   const panel = document.createElement('aside'); panel.className = 'lee-selection-reply loading';
   panel.innerHTML = `<header><strong>${mode === 'summary' ? 'Summarising selection' : 'Inline AI help'}</strong>` +
     `<span>working locally when available</span></header><div class="lee-selection-skeleton"><i></i><i></i><i></i></div>`;
-  positionFloating(panel, rect);
+  // The reader can scroll or resize while the model answers, so the anchor is asked for again
+  // rather than reused. `selectionCoords` gives nothing once the selection is gone.
+  const anchor = () => { try { return LeeCM.selectionCoords(view) || rect; } catch (_) { return rect; } };
+  positionFloating(panel, anchor());
   try {
     const result = await post('/complete/selection', {text: selected.text, mode, instruction, lang: curLang()});
     panel.classList.remove('loading'); panel.innerHTML = `<header><strong>${mode === 'summary' ? 'Summary' : 'Suggested replacement'}</strong>` +
@@ -3445,13 +3471,22 @@ async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
       else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('[data-replace]', panel).click();
     };
     $('[data-replace]', panel).focus();
+    positionFloating(panel, anchor());
     status(`${mode === 'summary' ? 'summary' : 'replacement'} ready from ${result.model || 'the inline model'} · review before replacing`, 'ok');
   } catch (e) {
     panel.classList.remove('loading'); panel.innerHTML = `<div class="lee-selection-error">${esc(e.message || e)}</div>` +
       `<footer><button class="lee-btn" data-discard>close</button></footer>`;
     $('[data-discard]', panel).onclick = () => panel.remove();
+    positionFloating(panel, anchor());
   }
 }
+/* The panel's own `onkeydown` only fires while the focus is inside it, which the first click
+   elsewhere ends. Escape closes it from anywhere, and defers to a modal above it. */
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || $$('.lee-modal').length) return;
+  const panel = $('.lee-selection-reply'); if (!panel) return;
+  panel.remove(); e.stopPropagation();
+}, true);
 let selectionHelpTimer = null;
 document.addEventListener('selectionchange', () => {
   clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 180);

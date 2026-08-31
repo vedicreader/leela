@@ -2901,3 +2901,101 @@ def test_the_code_search_dialog_has_one_selection_and_one_keyboard():
     assert out['click_again_opens'] == [3], 'the second click on the previewing row opens it'
     assert 'query' in out['events'] and 'impression' in out['events'] and 'open' in out['events']
     assert out['session'] == 'thing', 'closing the dialog files the session it just ran'
+
+
+def test_the_inline_reply_stays_on_screen_and_escape_closes_it(tmp_path):
+    """The panel was placed while it was still a loading skeleton and never placed again, so the
+    answer grew off the bottom of the window and took the discard button with it. Escape only
+    reached it while the focus was still inside, which the first click elsewhere ended."""
+    import json
+    cells = [{'cell_type': 'code', 'source': [f'x{i} = {i}\n'], 'metadata': {}, 'outputs': [],
+              'execution_count': None} for i in range(40)]
+    (tmp_path/'long.ipynb').write_text(json.dumps(
+        {'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    async def go(pg):
+        await pg.route('**/complete/selection', lambda route: route.fulfill(
+            status=200, content_type='application/json',
+            body=json.dumps({'ok': True, 'mode': 'summary', 'model': 'local-summary',
+                             'text': '\n'.join(f'line {i} of a long suggested replacement'
+                                                for i in range(60))})))
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'long.ipynb'))
+        await pg.wait_for_selector('.lee-cell .cm-editor')
+        # A cell at the bottom of the window is the case that broke: the skeleton fits below it.
+        await pg.evaluate("() => focusCell(lee.cells.length - 1)")
+        await pg.wait_for_timeout(120)
+        await pg.evaluate("""() => {
+          const view = lee.editors.get(lee.cells[lee.sel].id);
+          LeeCM.setSelection(view, 0, LeeCM.getDoc(view).length);
+          showSelectionHelp();
+        }""")
+        await pg.wait_for_selector('.lee-selection-tools')
+        await pg.click('[data-summary]')
+        await pg.wait_for_selector('.lee-selection-reply:not(.loading)')
+        await pg.wait_for_timeout(120)
+        out = await pg.evaluate("""() => {
+          const p = document.querySelector('.lee-selection-reply').getBoundingClientRect();
+          const f = document.querySelector('.lee-selection-reply footer').getBoundingClientRect();
+          return {top: p.top, bottom: p.bottom, height: p.height, footerBottom: f.bottom,
+                  h: innerHeight};
+        }""")
+        # Focus is moved out of the panel first: that is what used to make Escape stop working.
+        await pg.evaluate("() => document.activeElement.blur()")
+        out['focus_left'] = await pg.evaluate(
+            "() => !document.activeElement?.closest?.('.lee-selection-reply')")
+        await pg.keyboard.press('Escape')
+        await pg.wait_for_timeout(60)
+        out['closed'] = await pg.evaluate("() => !document.querySelector('.lee-selection-reply')")
+        return out
+    out = _run(go, roots=[tmp_path])
+    assert out['height'] > 200, f"precondition: the reply is tall enough to overflow, got {out}"
+    assert out['top'] >= 0, f"the panel starts inside the window: {out}"
+    assert out['bottom'] <= out['h'], f"the panel ends inside the window: {out}"
+    assert out['footerBottom'] <= out['h'], f"the discard and replace buttons are reachable: {out}"
+    assert out['focus_left'], 'precondition: the focus is no longer inside the panel'
+    assert out['closed'], 'Escape closes the panel after the focus has left it'
+
+
+def test_running_a_cell_near_the_bottom_leaves_room_under_the_next_one(tmp_path):
+    """`scrollIntoView({block: 'nearest'})` parked the next cell flush against the bottom edge, so
+    shift+enter showed the reader nothing of what they had just moved to."""
+    import json
+    cells = [{'cell_type': 'code', 'source': [f'x{i} = {i}\n'], 'metadata': {}, 'outputs': [],
+              'execution_count': None} for i in range(60)]
+    (tmp_path/'long.ipynb').write_text(json.dumps(
+        {'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    async def go(pg):
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'long.ipynb'))
+        await pg.wait_for_selector('.lee-cell .cm-editor')
+        room = """() => {
+          const host = document.querySelector('#editor');
+          const cell = document.querySelector(`.lee-cell[data-i="${lee.sel}"]`);
+          const b = host.getBoundingClientRect(), r = cell.getBoundingClientRect();
+          return {under: b.bottom - r.bottom, over: r.top - b.top, sel: lee.sel,
+                  scroll: host.scrollTop, box: b.height};
+        }"""
+        # Walk down until the selection has to move the view, which is where the fault showed.
+        await pg.evaluate("() => leePane('bottom', false)")
+        await pg.wait_for_timeout(200)
+        for _ in range(30): await pg.evaluate("() => focusCell(lee.sel + 1)")
+        await pg.wait_for_timeout(160)
+        out = {'stepped': await pg.evaluate(room)}
+        # A cell already comfortably on screen must not move the notebook at all.
+        before = await pg.evaluate("() => document.querySelector('#editor').scrollTop")
+        await pg.evaluate("() => focusCell(lee.sel)")
+        await pg.wait_for_timeout(120)
+        out['calm'] = await pg.evaluate("() => document.querySelector('#editor').scrollTop") == before
+        # And the same holds with the bottom dock taking height off the notebook.
+        await pg.evaluate("() => leePane('bottom', true)")
+        await pg.wait_for_timeout(250)
+        for _ in range(6): await pg.evaluate("() => focusCell(lee.sel + 1)")
+        await pg.wait_for_timeout(160)
+        out['docked'] = await pg.evaluate(room)
+        return out
+    out = _run(go, roots=[tmp_path])
+    for name in ('stepped', 'docked'):
+        got = out[name]
+        assert got['under'] >= 20, f"{name}: the cell is flush against the bottom edge: {got}"
+        assert got['over'] >= 0, f"{name}: the cell is not pushed off the top: {got}"
+    assert out['calm'], 'selecting a cell that is already in view does not scroll the notebook'
+    assert out['docked']['box'] < out['stepped']['box'], \
+        f"precondition: the dock takes height off the notebook: {out['docked']} {out['stepped']}"

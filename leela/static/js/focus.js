@@ -34,11 +34,18 @@ function selectionEditor() {
   if (!['editor', 'exec'].includes(lee.scope)) return null;
   return curEditor();
 }
+/* Place a floating panel beside `rect`, wholly inside the viewport.
+
+   `offsetHeight`, not `getBoundingClientRect`: these panels animate in from a transform, and the
+   rect is of the transformed box, which is short by a few pixels on the first frame. Callers place
+   twice, once while the panel is a skeleton and again once it has its content, so appending is
+   conditional and the second call only moves it. */
 function positionFloating(el, rect) {
-  document.body.appendChild(el);
-  const own = el.getBoundingClientRect(), left = Math.max(8, Math.min(rect.left, innerWidth - own.width - 8));
-  const below = rect.bottom + 7, top = below + own.height < innerHeight - 8 ? below : Math.max(8, rect.top - own.height - 7);
-  el.style.left = left + 'px'; el.style.top = top + 'px';
+  if (!el.isConnected) document.body.appendChild(el);
+  const w = el.offsetWidth, h = el.offsetHeight, below = innerHeight - rect.bottom - 15;
+  const top = h <= below || below >= rect.top - 15 ? rect.bottom + 7 : rect.top - h - 7;
+  el.style.left = Math.max(8, Math.min(rect.left, innerWidth - w - 8)) + 'px';
+  el.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + 'px';
 }
 function showSelectionHelp() {
   if ($('.lee-selection-reply') || document.activeElement?.closest?.('.lee-selection-tools')) return;
@@ -67,7 +74,10 @@ async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
   const panel = document.createElement('aside'); panel.className = 'lee-selection-reply loading';
   panel.innerHTML = `<header><strong>${mode === 'summary' ? 'Summarising selection' : 'Inline AI help'}</strong>` +
     `<span>working locally when available</span></header><div class="lee-selection-skeleton"><i></i><i></i><i></i></div>`;
-  positionFloating(panel, rect);
+  // The reader can scroll or resize while the model answers, so the anchor is asked for again
+  // rather than reused. `selectionCoords` gives nothing once the selection is gone.
+  const anchor = () => { try { return LeeCM.selectionCoords(view) || rect; } catch (_) { return rect; } };
+  positionFloating(panel, anchor());
   try {
     const result = await post('/complete/selection', {text: selected.text, mode, instruction, lang: curLang()});
     panel.classList.remove('loading'); panel.innerHTML = `<header><strong>${mode === 'summary' ? 'Summary' : 'Suggested replacement'}</strong>` +
@@ -85,13 +95,22 @@ async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
       else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('[data-replace]', panel).click();
     };
     $('[data-replace]', panel).focus();
+    positionFloating(panel, anchor());
     status(`${mode === 'summary' ? 'summary' : 'replacement'} ready from ${result.model || 'the inline model'} · review before replacing`, 'ok');
   } catch (e) {
     panel.classList.remove('loading'); panel.innerHTML = `<div class="lee-selection-error">${esc(e.message || e)}</div>` +
       `<footer><button class="lee-btn" data-discard>close</button></footer>`;
     $('[data-discard]', panel).onclick = () => panel.remove();
+    positionFloating(panel, anchor());
   }
 }
+/* The panel's own `onkeydown` only fires while the focus is inside it, which the first click
+   elsewhere ends. Escape closes it from anywhere, and defers to a modal above it. */
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || $$('.lee-modal').length) return;
+  const panel = $('.lee-selection-reply'); if (!panel) return;
+  panel.remove(); e.stopPropagation();
+}, true);
 let selectionHelpTimer = null;
 document.addEventListener('selectionchange', () => {
   clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 180);

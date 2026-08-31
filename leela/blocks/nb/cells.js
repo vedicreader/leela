@@ -396,15 +396,31 @@ function selectCell(i, extend = false) {
   } else { lee.cellAnchor = lee.sel; lee.cellSelection = new Set([lee.sel]); }
   paintSel();
 }
+/* Bring a cell into view with room around it.
+
+   `scrollIntoView({block: 'nearest'})` moves the minimum distance, so a cell arriving from below
+   parks flush against the bottom edge with nothing under it, which is the whole of what a reader
+   wants to see after running it. Moving the minimum is still right once the cell is comfortably
+   on screen, or stepping to a neighbour would jump the page, so the margin is what decides. */
+function revealCell(cell) {
+  const host = $('#editor'); if (!host || !cell) return;
+  const box = host.getBoundingClientRect(), r = cell.getBoundingClientRect();
+  const margin = Math.min(120, Math.max(24, box.height * .18));
+  const above = r.top - box.top - margin, below = r.bottom - box.bottom + margin;
+  // A cell taller than the room left over can only be shown from its top.
+  if (r.height > box.height - margin * 2 || above < 0) host.scrollTop += above;
+  else if (below > 0) host.scrollTop += below;
+}
 function focusCell(i) {
   selectCell(i);
   const c = lee.cells[lee.sel]; if (!c) return;
-  const cell = $(`.lee-cell[data-i="${lee.sel}"]`);
-  // CodeMirror focuses its own scroller but cannot reveal itself inside the notebook's outer
-  // scroller, so the cell is scrolled into view here.
-  cell?.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  // Mounted first: an unmounted cell is a shell whose height is a guess, and the reveal measures it.
   const v = ensureCellMounted(lee.sel);
-  if (v) requestAnimationFrame(() => LeeCM.focus(v));
+  const reveal = () => revealCell($(`.lee-cell[data-i="${lee.sel}"]`));
+  reveal();
+  // CodeMirror focuses its own scroller and reveals the caret minimally, which spends the margin
+  // again, so the reveal is repeated after it and after the layout mounting just caused.
+  requestAnimationFrame(() => { if (v) LeeCM.focus(v); reveal(); });
 }
 function focusCellPage(direction) {
   if (!lee.cells.length) return;
