@@ -1372,3 +1372,31 @@ def test_the_pane_is_never_ready_while_a_prompt_would_be_refused(tmp_path):
         client.post('/agent/stop', json={'thread': thread.id})
         clear = client.get('/agent/status', params={'thread': thread.id}).json()
         assert clear['held'] == '' and clear['busy'] is False
+
+
+def test_a_stop_settles_the_feed_but_a_rejected_turn_says_nothing(tmp_path):
+    """`_clear` drops the gate on a turn already running, which then read exactly like a turn nobody
+    ever accepted: the worker returned without settling, and anything waiting on `finished` waited
+    for ever. The two have to stay apart. A stop settles, because a reader has no other way to learn
+    the turn is over; a turn that was never accepted emits nothing at all."""
+    from tests.fakemodel import Step
+    ws = _scripted_workspace(tmp_path, [Step(text='thinking' * 40)], delay=.05)
+    runner = ws.turn_runner
+    with TestClient(ide_app(ws)) as client:
+        client.post('/agent/turn', json={'prompt': 'where?'})
+        assert client.post('/agent/stop', json={}).status_code == 200
+        feed = runner.feed
+        end = time.time() + 20
+        while not feed.settled_seq and time.time() < end: time.sleep(.05)
+        assert feed.settled_seq, 'a stopped turn left the feed unsettled'
+        assert feed.finished(feed.seq)
+
+    # the same flag, the other way round: `_clear` marks what it took off an accepted turn
+    ready = {'id': 'x', 'accepted': True, 'gate': threading.Event()}
+    runner._pending['x'] = ready
+    runner._clear()
+    assert ready['cleared'] is True and ready['accepted'] is False
+    never = {'id': 'y', 'accepted': False, 'gate': threading.Event()}
+    runner._pending['y'] = never
+    runner._clear()
+    assert never['cleared'] is False, 'a turn nobody accepted has nothing to settle'

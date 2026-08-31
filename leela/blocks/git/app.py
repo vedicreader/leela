@@ -8,7 +8,7 @@ from pathlib import Path
 from fastcore.all import first
 
 from ...core.web import fail, off_loop
-from ramabana.git import GitError, clone, clone_target, gateway, repo_root
+from gheasy.repo import GitError, clone, clone_target, gateway, repo_root
 from .git import GitRepo
 from .repos import RepoSet, clone_url, find_repos, repo_for
 from ..nb.nb import CHOICES

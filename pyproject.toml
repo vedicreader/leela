@@ -24,10 +24,17 @@ dependencies = [
     # `[cli]` because `workspace._attachment_context` imports `ramabana.cli` for the media
     # helpers, and that module needs pyghostty and teleprint. 0.9MB, and the alternative is
     # media handling that cannot be reached without a terminal UI.
-    # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
-    # change for, and a floor would take them on the next sync without a word. Raise these
-    # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.1.29",
+    # Floored rather than pinned only while the source below is a git branch, which pins to a
+    # commit of its own. Put the pin back with the version when both are on PyPI: the next ramabana
+    # and the next rishi both land behaviour Leela has to change for, and a floor would take them
+    # on the next sync without a word.
+    "ramabana[cli]>=0.1.31",
+    # The toolset and the git plumbing are their own packages now, and Leela names them itself
+    # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
+    # re-export seams stay for a release; a second package's spelling of the same object is not
+    # a dependency worth keeping.
+    "shalya>=0.0.2",
+    "gheasy>=0.0.9",
     "fastcore>=1.7.0",
     "exhash>=0.4.10",
     "fossick>=0.1.14",   # 0.1.14 caches JSON, not pickle: GHSA-w8v5-vhqr-4h9v has no fixed release
@@ -73,7 +80,9 @@ gateway = [
 # On-device inference. Kept out of the default install and out of the desktop bundle because it is
 # the heaviest thing Leela can depend on; `RUNTIME_EXTRAS` installs one of these from the settings
 # pane, pinned to the rishi the bundle was frozen with.
-local = ["rishi[litert,mlx,llama]==0.1.31"]
+# `litert` is not an extra any more: rishi 0.1.32 took litert-lm-api on as a base
+# dependency, so naming it here would install nothing and warn.
+local = ["rishi[mlx,llama]==0.1.32"]
 all = ["leela[github,gateway,lsp,local]"]
 desktop = [
     "pywebview>=5.3",
@@ -105,7 +114,7 @@ dev = [
     "fastaistyle>=0.0.17",
     "fastship>=0.1.2",     # Leela's own release pipeline; a project's `ship-*` runs in its venv
     "leela[all]",
-    "rishi[all]==0.1.31",
+    "rishi[all]==0.1.32",
     {include-group = "test"},
 ]
 test = [
@@ -114,7 +123,7 @@ test = [
     "nbformat>=5.10.0",
     "playwright>=1.40",
     "pandas>=2.0",
-    "rishi==0.1.31",
+    "rishi==0.1.32",
     "pywebview>=5.3",
     "pillow>=10.0",
     "setuptools>=68.0",
@@ -133,3 +142,7 @@ constraint-dependencies = ["mcp<2"]
 
 [tool.uv.sources]
 leela = { workspace = true }
+# shalya 0.0.2 and the ramabana that builds on it are not on PyPI yet. Replace both with the plain
+# floors above once they are: only `uv sync` in this checkout reads this.
+shalya = { git = "https://github.com/vedicreader/shalya", branch = "claude/ramabana-post-release-cleanup-czjuk8" }
+ramabana = { git = "https://github.com/vedicreader/ramabana", branch = "claude/ramabana-post-release-cleanup-czjuk8" }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json, sys
 
 from fastcore.all import Path, first
-from ramabana.git import (GitError, GitRepo as _GitRepo, _invalidate, _plural, _unborn, clone,
+from gheasy.repo import (GitError, GitRepo as _GitRepo, _invalidate, _plural, _unborn, clone,
     clone_target, gateway, repo_root)
 
 from ..nb.nb import source_spans as _source_spans
@@ -126,7 +126,7 @@ class GitRepo(_GitRepo):
 
     def _stage(self, path, stage):
         "One side of a conflicted file, as text, or `''` where that side has no file."
-        from ramabana.git import _run
+        from gheasy.repo import _run
         r = _run(self.root, 'show', f':{stage}:{path}', check=False)
         return r.stdout if r.returncode == 0 else ''
 

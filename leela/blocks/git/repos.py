@@ -10,9 +10,9 @@ from fastcore.all import Path, first
 from fastcore.parallel import parallel
 
 from ... import leela_cfg
-from ramabana.git import GitError, repo_root, url_name
+from gheasy.repo import GitError, repo_root, url_name
 from .git import GitRepo
-from ramabana.git import clone as git_clone
+from gheasy.repo import clone as git_clone
 
 __all__ = ['RepoSet', 'discover', 'repo_for', 'MEMBERS', 'OPS']
 

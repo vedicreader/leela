@@ -51,7 +51,9 @@ def unavailable_detail(runtime):
     except Exception as e: return f'{fn}(): {errstr(e)}'
 
 #: Runtimes a package can supply, named as rishi's own extras. The rest want a CLI, a daemon or a key.
-INSTALLABLE = ('litert', 'mlx', 'llama')
+#: LiteRT left this list in rishi 0.1.32, which took `litert-lm-api` on as a base dependency: there
+#: is no `rishi[litert]` to install any more, and nothing to install, because it is always there.
+INSTALLABLE = ('mlx', 'llama')
 
 #: Optional tools that are not a model: `(label, requirements, approximate MB, what it gives you)`.
 #: `basedpyright` over `ty` and `pyrefly` because it answers everything the LSP client asks for and
@@ -245,11 +247,12 @@ def install_runtime(runtime):
     return dict(row)
 
 #: Approximate installed size, so nobody starts a 400MB download without being told.
-SETUP_SIZES = {'mlx': 400, 'llama': 120, 'litert': 70}
+SETUP_SIZES = {'mlx': 400, 'llama': 120}
 
-#: The local runtime Leela recommends. It is the smallest of the three, it runs on any Mac, and the
-#: vault answers with it, so a packaged app without it has no memory rather than a slower one.
-RECOMMENDED = 'litert'
+#: The local runtime Leela recommends of the ones left to install. LiteRT arrives with rishi and
+#: the vault answers with it, so memory works before anything here is chosen; llama.cpp is the
+#: smaller of the two remaining and the only one that runs off a Mac.
+RECOMMENDED = 'llama'
 
 #: The first-run wording for an account runtime. `runtime_remedy` is the terser picker version.
 ACCOUNTS = (

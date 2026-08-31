@@ -18,6 +18,8 @@ Leela's house style is fastai/fastcore taken to the extreme, and `CLAUDE.md` in 
 
 `leela.agent` is an alias for the `ramabana` package, not a copy of it. The same holds for the other libraries Leela composes. A behaviour that belongs to the agent core belongs in Ramabana. When a change wants to reach into one of these seams, say so rather than reimplementing it on Leela's side.
 
+The toolset is `shalya` and the git plumbing is `gheasy`, and Leela imports both by name. `ramabana.tools` and `ramabana.git` re-export them for one release; do not reach through those. A tool primitive belongs in shalya, git behaviour in gheasy, and agent behaviour in Ramabana.
+
 Read the `write_docs` skill before writing docstrings, comments, READMEs, commit messages or PR descriptions. Read `write_prose` for narrative writing. Read `theory` for the design a codebase grew from. All three arrive with `ramabana` as pyskills, so `read_skill` finds them and no copy lives here.
 
 For every behavior-changing change, add or update a focused regression test that reproduces the prior fault and verifies the repaired contract. Run it and the project's relevant checks before reporting completion.

@@ -6,13 +6,13 @@ import time
 import pytest
 from fastcore.basics import first
 from leela.blocks.agent.ai import GIT_WRITE_TOOLS, WRITE_TOOLS
-from ramabana.git import git_tools as _git_tools
+from shalya.tools import git_tools as _git_tools
 from leela.blocks.git.git import GitError, GitRepo, repo_root
 from leela.workspace import Workspace
 from leela.app import ide_app
 from starlette.testclient import TestClient
 import threading
-from ramabana.git import GitGateway, classify, gateway
+from gheasy.repo import GitGateway, classify, gateway
 from leela.blocks.git.repos import MEMBERS, RepoSet, clone_url, discover
 
 def git(path, *args):
@@ -63,7 +63,7 @@ def test_status_stage_unstage_branch_and_commit(repo_git):
 
 def test_tree_decoration_asks_git_once_per_burst_not_once_per_folder(repo_git, monkeypatch):
     "A file-tree refresh reads `changes()` once per open folder; three git runs each is the lag."
-    from ramabana import git as safety
+    from gheasy import repo as safety
     runs, real = [], safety.GitGateway._exec
     monkeypatch.setattr(safety.GitGateway, '_exec',
         lambda self, cwd, args, **kw: (runs.append(args[0]), real(self, cwd, args, **kw))[1])
@@ -208,7 +208,7 @@ def test_agent_git_tools_fetch_track_and_report_failures(repo_git, tmp_path):
     checked_out = tools['git_checkout']('origin/from-agent')
     assert '"branch": "from-agent"' in checked_out
     assert '"upstream": "origin/from-agent"' in checked_out
-    from ramabana.tools import failed
+    from shalya.core import failed
     assert failed(tools['git_status'](str(repo_git.parent))), 'a path outside the roots is a message'
     from leela.blocks.agent.ai import GIT_TOOLS
     assert set(tools) == set(GIT_TOOLS)
@@ -224,7 +224,7 @@ def test_agent_checkout_reports_what_the_switch_said(repo_git, tmp_path):
             return Path(path or repo_git).resolve()
     checkout = {f.__name__: f for f in _git_tools(Host())}['git_checkout']
     out = checkout('other')
-    from ramabana.tools import failed
+    from shalya.core import failed
     assert not failed(out), out
     assert '"branch": "other"' in out and '"result"' in out, out[:200]
 
@@ -431,7 +431,7 @@ MIXED_THEIRS = 'shared\ntheirs only\ntail\n'
 
 def test_conflict_blocks_span_the_whole_marker_and_survive_an_empty_side():
     "Each payload must be exactly what its span should become, newline included."
-    from ramabana.git import _conflict_blocks
+    from gheasy.repo import _conflict_blocks
     text = 'a\n<<<<<<< HEAD\nx\n=======\n>>>>>>> o\nb\n'
     block, = _conflict_blocks(text)
     assert (block['ours'], block['theirs']) == ('x\n', '')
@@ -822,7 +822,7 @@ def test_a_files_change_marks_come_from_its_own_repository_not_the_chosen_one(tm
     ws.activate_root(b)
     with TestClient(ide_app(ws)) as client:
         d = client.get('/git/file', params={'path': str(a/'readme.md')}).json()
-    assert d.get('changed') is True and d['ranges'], 'the marks still come from ramabana'
+    assert d.get('changed') is True and d['ranges'], 'the marks still come from gheasy'
 
 def test_activating_a_folder_the_workspace_does_not_list_is_refused(tmp_path):
     from starlette.testclient import TestClient
@@ -1102,7 +1102,7 @@ def test_reads_do_not_take_the_index_lock_and_writes_are_not_given_the_flag(repo
     def spy(argv, *a, **kw):
         seen.append(list(argv))
         return real(argv, *a, **kw)
-    monkeypatch.setattr('ramabana.git.subprocess.run', spy)
+    monkeypatch.setattr('gheasy.repo.subprocess.run', spy)
     g = GitGateway()
     g.run(repo_git_sa, 'status', '--porcelain=v1')
     g.run(repo_git_sa, 'add', '--', 'app.py')
@@ -1170,13 +1170,13 @@ def test_a_foreign_lock_is_retried_and_then_explained(repo_git_sa, monkeypatch):
     "Another Git in the same checkout is a wait, then a sentence -- not a stack trace."
     (repo_git_sa/'.git'/'index.lock').write_text('')
     g = GitGateway()
-    monkeypatch.setattr('ramabana.git.LOCK_BACKOFF', .001)
+    monkeypatch.setattr('gheasy.repo.LOCK_BACKOFF', .001)
     attempts = []
     real = subprocess.run
     def spy(argv, *a, **kw):
         attempts.append(argv)
         return real(argv, *a, **kw)
-    monkeypatch.setattr('ramabana.git.subprocess.run', spy)
+    monkeypatch.setattr('gheasy.repo.subprocess.run', spy)
     (repo_git_sa/'app.py').write_text('value = 2\n')
     with pytest.raises(GitError) as e:
         g.run(repo_git_sa, 'add', '--', 'app.py')
@@ -1652,7 +1652,7 @@ def test_the_sync_dialog_survives_the_options_that_carry_no_conflicts(tmp_path):
     import sys
     from pathlib import Path as _P
     sys.path.insert(0, str(_P(__file__).resolve().parents[1]/'tools'))
-    from ramabana.git import GitRepo
+    from gheasy.repo import GitRepo
     a = _repo(tmp_path/'up', 'main')
     git(a, 'clone', str(a), str(tmp_path/'down'))
     down = tmp_path/'down'
@@ -1727,7 +1727,7 @@ def test_the_pull_request_panel_gets_a_blocking_github_client(monkeypatch, tmp_p
 
 def lfs_aware():
     "Skip unless the installed ramabana reports a binary diff. `diff_view` is ramabana's, not ours."
-    from ramabana.git import GitRepo
+    from gheasy.repo import GitRepo
     if not hasattr(GitRepo, 'LFS_MAGIC'):
         pytest.skip('this ramabana does not report binary diffs; needs the LFS_MAGIC change')
 
@@ -1748,7 +1748,7 @@ def test_a_binary_diff_says_so_instead_of_showing_the_pointer(tmp_path):
     """An LFS pointer is a text file, so git diffs it as text and the viewer showed three lines of
     oid and size where the image should be."""
     lfs_aware()
-    from ramabana.git import GitRepo
+    from gheasy.repo import GitRepo
     r = GitRepo.at(_lfs_repo(tmp_path))
     pic = r.diff_view('pic.png')
     assert pic['binary'] is True and pic['lfs']['size'] == '237756'

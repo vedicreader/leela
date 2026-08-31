@@ -7,12 +7,14 @@ import inspect, os, threading, time, weakref
 
 __all__ = ['EngineBroker', 'engine_broker', 'engine_key', 'engine_kw']
 
+#: Both moved out of `rishi.core` to rishi's own namespace in 0.1.32. `rishi.core` still carries
+#: `resolve_runtime`, which raises where these two answer, so the import is the whole change.
 def _chat_cls(runtime):
-    from rishi.core import get_runtime
+    from rishi import get_runtime
     return get_runtime(runtime)
 
 def _model_id(spec):
-    from rishi.core import split_runtime
+    from rishi import split_runtime
     return split_runtime(spec.model_id)[1]
 
 def _model_cls(spec, kw):

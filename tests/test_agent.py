@@ -10,6 +10,9 @@ from leela.agent.runtime import Backend, Usage
 from leela.agent.agent import Agent, prompt_directives, tool_plan
 from leela.agent.tools import Registry, load
 from leela.agent.tools import NullHost
+#: the capability groups a test host declares, and the error a declared-but-absent index raises
+from shalya.core import HostError
+from shalya.host import CodeHost, SessionHost, WebHost
 from leela.agent.tools import WRITE_TOOLS, tools_for
 from fastcore.all import first
 from leela.agent.agent import RULES, project_context, system_prompt, work_rules
@@ -36,7 +39,7 @@ from leela.agent.agent import Completer
 import asyncio
 from leela.blocks.agent.threads import Feed, TurnError
 
-class MemHost_agent(NullHost):
+class MemHost_agent(NullHost, CodeHost):
     "A host whose folders live in a dict, so file tools can be driven without touching disk."
     def __init__(self, files=None, root='/proj'):
         super().__init__([root])
@@ -57,6 +60,10 @@ class MemHost_agent(NullHost):
         return [Hit(p, 1, '', t.splitlines()[0]) for p, t in self.files.items() if query in t][:limit]
     @property
     def search_note(self): return 'memory'
+    # declaring the code group means answering all four, whatever a dict can say about three of them
+    def peers(self, path, line, limit=20): return []
+    def symbols(self, path): return []
+    def public_api(self, package, limit=200): raise HostError('no code index: memory')
     def run_python(self, code):
         self.ran.append(code)
         return 'ok'
@@ -116,11 +123,13 @@ def test_a_host_offers_only_the_tools_it_supports():
     from leela.agent.tools import read_only
     from leela.blocks.agent.ai import WorkspaceHost
     names = {t.__name__ for t in tools_for(NullHost(['/x']))}
-    assert 'search_code' in names and 'view_file' in names
-    assert 'run_python' not in names and 'notebook_cells' not in names
+    # a host declares its groups, and `NullHost` declares only the path boundary every host has.
+    # `search_code` used to be offered to it and refuse every call
+    assert 'view_file' in names
+    assert not {'search_code', 'run_python', 'notebook_cells'} & names
     names = {t.__name__ for t in tools_for(MemHost_agent())}
     assert 'run_python' not in names
-    from ramabana.git import GIT_WRITE_TOOLS
+    from shalya.core import GIT_WRITE_TOOLS
     # `add_root` is a write: multi-repo edits need it, and widening the boundary is a change
     # to what every later call may touch, so it is gated like any other write.
     assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
@@ -133,7 +142,7 @@ def test_a_host_offers_only_the_tools_it_supports():
     h = WorkspaceHost(Workspace(roots=[]))
     # A workspace can always reach a live namespace, so it declares `session` rather than being
     # probed for it. Probed with no kernel up, the whole group vanished for that assistant's life.
-    assert h.capabilities['session'] is True
+    assert 'session' in h.provides
     assert 'run_python' in {t.__name__ for t in tools_for(h)}
     with pytest.raises(NotImplementedError): h.run_python('1')   # no loop here to start one on
     assert 'run_shell' not in named(tools_for(NullHost(['/x'])))
@@ -457,7 +466,8 @@ def test_workspace_repo_writes_are_opt_in_and_persisted(tmp_path):
 
 def test_subagent_writes_are_opt_in_persisted_and_reach_the_assistant(tmp_path):
     "The checkbox is the front of it; the setting has to survive a restart and reach the `Agent`."
-    from ramabana.tools import WRITE_TOOLS, read_only
+    from shalya.core import WRITE_TOOLS
+    from shalya.tools import read_only
     ws = Workspace(roots=[tmp_path])
     assert ws.subagent_writes is False and ws.ai.subagent_writes is False
     assert not ({t.__name__ for t in read_only(ws.ai.tools)} & WRITE_TOOLS)
@@ -624,7 +634,7 @@ def test_a_workspace_answers_the_whole_host_protocol(tmp_path, monkeypatch):
     from leela.blocks.agent.ai import WorkspaceHost
     (tmp_path/'a.py').write_text('def hello():\n    return 1\n')
     h = WorkspaceHost(Workspace(roots=[tmp_path]))
-    assert h.capabilities['api'] and h.capabilities['memory'] and h.capabilities['watch']
+    assert {'api', 'memory', 'watch'} <= h.provides
     names = set(named(tools_for(h)))
     assert {'api_load', 'api_ops', 'api_call', 'ask_memory', 'poll_watches', 'grep'} <= names
     hits = h.grep('def hello', regex=False)
@@ -757,8 +767,11 @@ def test_skills_are_discovered_and_selected_by_the_prompt():
 
 
 def test_explicit_research_uses_only_the_request_not_composed_notebook_context():
-    class ResearchHost(MemHost_agent):
+    class ResearchHost(MemHost_agent, WebHost):
         def __init__(self): super().__init__(); self.queries = []
+        # declaring the web group means answering all three, whatever this test asks about one
+        def web_search(self, query, n=20): return []
+        def read_url(self, url, remember=True): return None
         def research(self, query): self.queries.append(query); return 'grounded research'
     host = ResearchHost()
     a, be = fake_agent(host=host, replies=['done'], model='sonnet')
@@ -1540,7 +1553,7 @@ def test_run_python_is_offered_before_any_kernel_exists(tmp_path):
     while the same request after one code cell worked."""
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
-    assert ws.inline_ai.host.capabilities['session'] is True, 'declared, not proved by a kernel'
+    assert ws.inline_ai.host.can('session'), 'declared, not proved by a kernel'
     for surface in (ws.inline_ai, ws.ai):
         tools = {t.__name__ for t in surface.tools}
         assert {'run_python', 'inspect_python', 'list_vars', 'read_terminal'} <= tools, sorted(tools)
@@ -1745,7 +1758,7 @@ def test_a_subagent_can_ask_for_the_overlay_scope():
     "A sub-agent gets the scope choice too, because the sandbox is a limit on the Python"
     import inspect as _i
     from leela.agent.tools import read_only
-    class H(NullHost):
+    class H(NullHost, SessionHost):
         def __init__(self, *a, **kw):
             super().__init__(*a, **kw)
             self.calls = []
@@ -2633,7 +2646,7 @@ def test_a_backend_is_pinned_to_the_rishi_that_is_here():
     import importlib.metadata as md
     from leela.blocks.agent.models import runtime_requirements
     declared = ' '.join(md.distribution('rishi').requires or [])
-    for name in ('mlx', 'llama', 'litert'):
+    for name in ('mlx', 'llama'):
         got = runtime_requirements(name)
         for req in got:
             assert req.split('>')[0].split('=')[0].split('<')[0] in declared, req
@@ -2643,7 +2656,7 @@ def test_a_runtime_no_package_provides_is_refused_before_any_subprocess(monkeypa
     import leela.blocks.agent.models as m
     ran = []
     monkeypatch.setattr(m.subprocess, 'run', lambda *a, **kw: ran.append(a))
-    for bad in ('', 'nonsense', 'remote', 'claude', 'litert; echo no'):
+    for bad in ('', 'nonsense', 'remote', 'claude', 'litert', 'llama; echo no'):
         with pytest.raises(ValueError): m.install_runtime(bad)
     assert ran == [], 'nothing was executed'
 
@@ -2663,12 +2676,12 @@ def test_a_frozen_app_installs_beside_itself_and_a_normal_one_into_its_own_env(m
     monkeypatch.setattr(m, '_run_install', lambda runtime, cmd: None)
     monkeypatch.setattr(sys, 'frozen', True, raising=False)
     m._installs.clear()
-    row = m.install_runtime('litert')
+    row = m.install_runtime('llama')
     assert '--target' in row['cmd'] and str(tmp_path/'extras') in row['cmd']
     assert (tmp_path/'extras').is_dir(), 'the target is made before pip is asked to write there'
     monkeypatch.delattr(sys, 'frozen', raising=False)
     m._installs.clear()
-    assert '--target' not in m.install_runtime('litert')['cmd']
+    assert '--target' not in m.install_runtime('llama')['cmd']
     m._installs.clear()
 
 def test_uv_installs_a_backend_but_never_for_a_frozen_app(monkeypatch, tmp_path):
@@ -2684,11 +2697,11 @@ def test_uv_installs_a_backend_but_never_for_a_frozen_app(monkeypatch, tmp_path)
 
     monkeypatch.delattr(sys, 'frozen', raising=False)
     m._installs.clear()
-    assert m.install_runtime('litert')['via'] == 'uv', 'a normal environment prefers uv'
+    assert m.install_runtime('llama')['via'] == 'uv', 'a normal environment prefers uv'
 
     monkeypatch.setattr(sys, 'frozen', True, raising=False)
     m._installs.clear()
-    row = m.install_runtime('litert')
+    row = m.install_runtime('llama')
     assert row['via'] != 'uv', 'uv cannot introspect a frozen interpreter'
     assert '-m pip install' in row['cmd'] and '--target' in row['cmd']
     m._installs.clear()
@@ -2700,7 +2713,7 @@ def test_with_neither_uv_nor_pip_the_install_says_so(monkeypatch):
     _pretend_pip(monkeypatch, present=False)
     monkeypatch.setattr(shutil, 'which', lambda n: None)
     m._installs.clear()
-    with pytest.raises(RuntimeError, match='neither uv nor pip'): m.install_runtime('litert')
+    with pytest.raises(RuntimeError, match='neither uv nor pip'): m.install_runtime('llama')
     m._installs.clear()
 
 
@@ -2812,11 +2825,13 @@ def test_any_of_the_four_language_servers_will_do():
     if argv: assert argv[0].endswith(found) and len(argv) >= 1
 
 def test_the_local_runtime_leela_recommends_is_named_and_offered_first():
-    """LiteRT is the smallest of the three, it runs on any Mac, and the vault answers with it, so a
-    packaged app without it has no memory rather than a slower one. The setup pane said nothing about
-    which to take."""
-    from leela.blocks.agent.models import RECOMMENDED, SETUP_SIZES, setup_plan
-    assert RECOMMENDED == 'litert' and SETUP_SIZES['litert'] < SETUP_SIZES['mlx']
+    """The setup pane said nothing about which to take. LiteRT used to be the answer; rishi 0.1.32
+    took `litert-lm-api` on as a base dependency, so it is there before the pane is opened and there
+    is no `rishi[litert]` left to offer. llama.cpp is the smaller of the two that remain and the
+    only one that runs off a Mac."""
+    from leela.blocks.agent.models import INSTALLABLE, RECOMMENDED, SETUP_SIZES, setup_plan
+    assert 'litert' not in INSTALLABLE, 'rishi carries LiteRT itself; there is no extra to install'
+    assert RECOMMENDED == 'llama' and SETUP_SIZES['llama'] < SETUP_SIZES['mlx']
     plan = setup_plan()
     offline = plan['offline']
     if not offline: return                      # everything is installed on this machine

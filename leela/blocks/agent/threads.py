@@ -348,10 +348,10 @@ class TurnRunner:
                 on_registered=registered, ai=ai)
             for chunk in stream:
                 if not run_id: return self._unstarted(ai, ready)
-                if not ready['accepted']: return
+                if not ready['accepted']: return self._cleared(ai, run_id) if ready.get('cleared') else None
                 if chunk is not None:self.feed.emit('chunk', {'text': chunk, 'run': run_id})
             if not run_id: return self._unstarted(ai, ready)
-            if not ready['accepted']: return
+            if not ready['accepted']: return self._cleared(ai, run_id) if ready.get('cleared') else None
             run = ai.run(run_id)
             # a turn that finished is told by `done`; `run` is how one that was stopped says so
             if run is not None and run.state in TERMINAL_CANCEL:self.feed.emit('run', run.dict())
@@ -370,6 +370,17 @@ class TurnRunner:
                 self._settled(ai, run_id)
         finally:
             with self._lock:self._pending.pop(ready['id'], None)
+
+    def _cleared(self, ai, run_id):
+        """A stop dropped this turn's gate while its worker was still inside the provider's stream.
+
+        The worker has nothing left to say, but the feed still has to settle: a reader waiting on
+        `finished` has no other way to learn the turn is over, and `stop` returning 200 is not one.
+        """
+        run = ai.run(run_id)
+        if run is not None and run.state in TERMINAL_CANCEL: self.feed.emit('run', run.dict())
+        self.feed.emit('done', self._done(ai, run_id))
+        self._settled(ai, run_id)
 
     def _unstarted(self, ai, ready):
         "A stream that ended without reporting a run: `note` holds the reason, and `start` is waiting on it."
@@ -422,7 +433,11 @@ class TurnRunner:
         "Drop every pending turn. Stop says it clears the conversation, so it has to clear this too."
         with self._lock:
             idents = list(self._pending)
-            for ident in idents: self._pending.pop(ident)['accepted'] = False
+            for ident in idents:
+                r = self._pending.pop(ident)
+                # `cleared` outlives `accepted`: without it a stopped turn and one nobody ever
+                # accepted look identical, and only the first of them may settle the feed
+                r['cleared'], r['accepted'] = r['accepted'], False
         return idents
 
     def abandon(self):

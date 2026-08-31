@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastcore.all import first
 from fastcore.xtras import flexicache, time_policy
 
-from ramabana.git import GitError
+from gheasy.repo import GitError
 
 __all__ = ['pr_context', 'hub_available']
 

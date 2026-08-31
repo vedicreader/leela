@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import importlib.util, json, subprocess, sys
 from pathlib import Path
 
@@ -581,16 +582,30 @@ def test_the_build_environment_installs_what_the_lock_names(tmp_path, monkeypatc
     import setup_app
     req = setup_app.lock_requirements()
     assert req is not None and req.exists(), 'uv export answered nothing'
-    pinned = dict(line.split('==', 1) for line in req.read_text().splitlines()
-                  if '==' in line and not line.startswith(('#', ' ')))
+    # Two spellings, both exact: a registry pin is `name==version`, and a package taken from a
+    # branch exports as `name @ git+URL@sha`, which pins harder. Neither may be a floor.
+    pinned, from_git = {}, {}
+    for line in req.read_text().splitlines():
+        if line.startswith(('#', ' ')) or not line.strip(): continue
+        if ' @ git+' in line:
+            nm, _, ref = line.partition(' @ git+')
+            from_git[nm.strip()] = ref.strip()
+        elif '==' in line:
+            nm, _, ver = line.partition('==')
+            pinned[nm] = ver
     import tomllib
     lock = tomllib.loads((setup_app.ROOT/'uv.lock').read_text())
     named = {p['name']: p['version'] for p in lock['package'] if 'version' in p}
     for name in ('rishi', 'ramabana', 'fastcore'):
-        assert name in pinned, f'{name} missing from the exported requirements'
+        assert name in pinned or name in from_git, f'{name} missing from the exported requirements'
+        if name in from_git:
+            assert re.search(r'@[0-9a-f]{40}$', from_git[name]), \
+                f'{name} comes from git at {from_git[name]}, which names no commit'
+            continue
         assert pinned[name].split(';')[0].strip() == named[name], \
             f'{name} pinned at {pinned[name]} but the lock names {named[name]}'
-    assert 'leela' not in pinned, 'the project itself is installed editable, not from the lock'
+    assert 'leela' not in pinned and 'leela' not in from_git, \
+        'the project itself is installed editable, not from the lock'
 
 def test_the_exported_requirements_live_where_git_ignores_them():
     "A generated file beside the build definition is one somebody commits by accident."

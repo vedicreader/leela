@@ -8,14 +8,19 @@ from fastcore.all import L, Path, delegates, first
 from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
 from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, preview_for
-from ...agent.tools import MAX_HITS, MAX_TOOL_CHARS, WRITE_TOOLS as HARNESS_WRITE_TOOLS
-from ...agent.tools import DENY, MAX_GREP_HITS, Host, clip, failed, tools_for
+from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
+                         WRITE_TOOLS as HARNESS_WRITE_TOOLS, clip, failed)
+from shalya.host import (ApiHost, AskHost, CodeHost, DENY, Host, MemoryHost, NotebookHost, SessionHost,
+                         ShellHost, WatchHost, WebHost)
+#: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
+#: cannot know. Everything else above is the toolset's own, taken from where it lives.
+from ...agent.tools import tools_for
 from ...agent.spec import MAX_OPS, SpecHost
 from ...core.session import assigned_names as _assigned
 from ..vault.jobs import cadence
 from .video import VideoJobs, video_available, video_tools
 
-from ramabana.git import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS   # re-exported: leela names them
+from shalya.core import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS
 
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
 FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
@@ -251,7 +256,8 @@ class Interventions(Approvals):
                 if row['tool'] == name and row['args'] == dict(args or {}))
             return self._execution_meta.pop(i) if i is not None else {}
 
-class WorkspaceHost(Host):
+class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiHost, ShellHost,
+                    SessionHost, AskHost, Host):
     "A `Workspace`, answering the harness's questions."
     mk_chat = None                          # `Agent.lend_model` fills this; declaring it is the opt-in
     # The default reads it off the launcher, because a kernel that serialises is the common case.
@@ -259,14 +265,9 @@ class WorkspaceHost(Host):
     # `test_an_inspection_runs_beside_a_yielding_cell` is parametrised over both and passes on both.
     concurrent = True
     def __init__(self, ws, session=None): self.ws, self.session = ws, session
-    @property
-    def capabilities(self):
-        """What a workspace has by construction. See `docs/integration.md`.
-
-        `session` is declared rather than probed, because `_kernel` starts one on demand.
-        """
-        return {**super().capabilities, 'notebook': True, 'web': True, 'memory': True,
-                'watch': True, 'api': True, 'shell': True, 'session': True}
+    #: Every group above is declared by inheritance rather than probed. `session` is the reason
+    #: the distinction matters: probed with no kernel up, the group vanished for that assistant's
+    #: life, and `_kernel` starts one on demand.
     @property
     def roots(self): return [str(r) for r in self.ws.fs.roots]
     @property
@@ -321,6 +322,7 @@ class WorkspaceHost(Host):
         return self.ws.search.search(query, limit=limit, mode='all', legs=legs)
     def peers(self, path, line, limit=20): return self.ws.search.peers(path, line, limit=limit)
     def symbols(self, path): return self.ws.search.symbols(path)
+    def public_api(self, package, limit=MAX_API): return self.ws.search.package_api(package)
     @property
     def search_note(self):
         s = self.ws.search
@@ -412,6 +414,7 @@ class WorkspaceHost(Host):
     api_load, api_ops = SpecHost.api_load, SpecHost.api_ops
     api_fetch = SpecHost.api_call       # ungated: the person reading the page owns the data on it
     api_names, _spec, _page = SpecHost.api_names, SpecHost._spec, SpecHost._page
+    api_count = SpecHost.api_count
     def api_call(self, operation, name='', **params):
         "What a model reaches through, which is why reach is enforced here and not in `api_fetch`."
         from ..vault.spec import SpecError
