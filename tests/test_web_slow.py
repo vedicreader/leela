@@ -607,6 +607,62 @@ def test_the_right_panels_filter_search_look_up_and_remember():
     assert 'Bad result' in got['purgeRows'] and 'Useful result' in got['purgeRows']
     assert got['purgeAll'] == 'purge everything'
 
+def test_a_search_result_is_previewed_before_it_opens_and_a_click_takes_the_row_on_screen():
+    """A click on a result selects and previews it, and a click on the row already in the preview
+    opens it, so a mouse can read a result before committing to it.
+
+    Which row that is, is the selected one. It was the last row the mouse hit, and the two differ
+    wherever the selection moved without the mouse. The first result is selected and previewed the
+    moment the results land, so opening the row on screen took two clicks, which is what left the
+    search modal over the rest of the page in `test_the_right_panels_filter_search_look_up_and_remember`.
+    A row reached with the arrow keys was previewed and then ignored the click that meant open.
+    """
+    async def go(pg):
+        out = {}
+        await pg.route('**/code/status', lambda route: route.fulfill(status=200, content_type='application/json',
+          body='{"ok":true,"files":2,"packages":0,"graph_nodes":4,"stale_files":0}'))
+        await pg.route('**/search/stream?*', lambda route: route.fulfill(
+            status=200, content_type='text/event-stream', body=_SEARCH_TWO))
+        async def results():
+            await pg.evaluate('lee.pendingLocation = null')
+            await pg.evaluate("leeAct('code_search')")
+            await pg.fill('#cs', 'def')
+            await pg.wait_for_selector('.lee-search-preview .cm-editor')
+        previewing = lambda name: pg.wait_for_function(
+            "n => document.querySelector('#cspreviewtitle')?.textContent.includes(n)", arg=name)
+
+        await results()
+        await previewing('first.py')                 # the first result is read without being asked for
+        await pg.click('.lee-search-result >> nth=1')   # a row nobody has read yet
+        await previewing('second.py')
+        out['onPreviewClick'] = await pg.evaluate('lee.pendingLocation')
+        out['stillOpen'] = await pg.locator('.lee-code-search-modal').count()
+        await pg.click('.lee-search-result >> nth=1')   # the row now in the preview
+        out['opened'] = await pg.evaluate('lee.pendingLocation')
+        out['closed'] = await pg.locator('.lee-code-search-modal').count()
+
+        await results()                              # the row on screen opens on one click
+        await previewing('first.py')
+        await pg.click('.lee-search-result >> nth=0')
+        out['first'] = await pg.evaluate('lee.pendingLocation')
+
+        await results()                              # and so does one the arrow keys selected
+        await pg.keyboard.press('ArrowDown')
+        await previewing('second.py')
+        await pg.click('.lee-search-result >> nth=1')
+        out['arrowed'] = await pg.evaluate('lee.pendingLocation')
+        return out
+    got = _run(go)
+    assert got['onPreviewClick'] is None, 'a result nobody had read was opened by the click that previews it'
+    assert got['stillOpen'] == 1, 'and the search closed before anything had been chosen'
+    assert (got['opened']['path'], got['opened']['line']) == ('/tmp/second.py', 9)
+    assert got['closed'] == 0, 'opening a result leaves the search behind'
+    assert (got['first']['path'], got['first']['line']) == ('/tmp/first.py', 3), \
+        'the result already in the preview needed a second click'
+    assert (got['arrowed']['path'], got['arrowed']['line']) == ('/tmp/second.py', 9), \
+        'a row selected with the arrow keys ignored the click'
+
+
 def test_the_agent_routes_are_served_and_a_result_is_an_inline_value():
     outputs = [{'output_type': 'execute_result', 'data': {'text/plain': 'x    int64\ny    object'}}]
     values = _inline_values('df.dtypes', [], outputs)
@@ -1636,6 +1692,16 @@ _SEARCH_STREAM = (
     'event: leg\ndata: {"leg": "symbols", "hits": ['
     + (_SEARCH_HIT % ('symbol', '"runtime_engine"', ', "sources": ["symbols"]')) + ']}\n\n'
     'event: leg\ndata: {"leg": "rg", "hits": [' + (_SEARCH_HIT % ('text', 'null', '')) + ']}\n\n'
+    'event: done\ndata: {}\n\n')
+
+
+_SEARCH_TWO = (
+    'event: start\ndata: {"legs": ["rg"], "searched": ["/tmp/proj"]}\n\n'
+    'event: leg\ndata: {"leg": "rg", "hits": ['
+    '{"path": "/tmp/first.py", "line": 3, "text": "def first():\\n    return 1",'
+    ' "kind": "text", "symbol": null, "score": 220},'
+    '{"path": "/tmp/second.py", "line": 9, "text": "def second():\\n    return 2",'
+    ' "kind": "text", "symbol": null, "score": 210}]}\n\n'
     'event: done\ndata: {}\n\n')
 
 

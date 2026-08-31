@@ -4143,14 +4143,19 @@ async function codeSearch() {
     if (!h.package) return status('package source is indexed read-only', 'info');
     await packageApi(h);
   };
-  // A click selects and previews. A second click on the row it is previewing is what opens it, so
-  // a mouse can read a result before committing to it, exactly as the arrow keys can.
+  /* A click selects and previews. A click on the row already in the preview is what opens it, so a
+     mouse can read a result before committing to it, exactly as the arrow keys can.
+
+     Against `sel`, not against the last row the mouse hit. Those differ wherever the selection
+     moved without the mouse: the first result is selected and previewed the moment the results
+     land, so opening the row on screen took two clicks, and a row reached with the arrow keys was
+     previewed and then ignored the click that meant open. */
   list.onclick = e => {
     const row = e.target.closest('[data-i]'); if (!row) return;
     const at = +row.dataset.i;
     zone = 'list';
-    if (at === clicked) return go();
-    clicked = at; select(at, false); clearTimeout(previewTimer); paintPreview();
+    if (at === sel) return go();
+    select(at, false); clearTimeout(previewTimer); paintPreview();
   };
   open.onclick = go;
   pkgBtn.onclick = () => { const h = hits[sel]; if (h?.package) packageApi(h); };
@@ -4207,7 +4212,7 @@ async function codeSearch() {
     es.onerror = () => { backend = backend || 'search stream failed'; paint(); stop(); };
   });
 
-  let timer, liveStream = null, clicked = -1;
+  let timer, liveStream = null;
   const search = () => {
     clearTimeout(timer); const seq = ++searchSeq;
     if (liveStream) { try { liveStream.close(); } catch {} liveStream = null; }
@@ -4216,7 +4221,7 @@ async function codeSearch() {
       if (!q) { hits = []; backend = ''; paint(); return; }
       signals.query(q, mode, scopeEl.value, extsEl.value.trim());
       if (mode === 'all') {
-        hits = []; sel = 0; clicked = -1; backend = 'all · searching';
+        hits = []; sel = 0; backend = 'all · searching';
         list.innerHTML = `<div class="lee-search-progress"><span></span>every backend, fastest first…</div>`;
         return streamAll(q, seq);
       }
@@ -4226,7 +4231,7 @@ async function codeSearch() {
                             '&scope=' + encodeURIComponent(scopeEl.value) +
                             '&exts=' + encodeURIComponent(extsEl.value.trim()));
         if (seq !== searchSeq) return;
-        hits = d.hits || []; backend = d.backend + (d.note ? ' · ' + d.note : ''); sel = 0; clicked = -1;
+        hits = d.hits || []; backend = d.backend + (d.note ? ' · ' + d.note : ''); sel = 0;
         if (d.weights) setWeights(d.weights);
         // Which folders were walked, because "no matches" and "no matches here" are different
         // answers.
