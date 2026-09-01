@@ -665,26 +665,14 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
 def _session_tools(host):
     "One variable read and the Run button, as the two tools Leela adds to the live session."
     def inspect_var(name: str, attrs: str = '') -> str:
-        """Ask about one live variable by name: whether it is bound, what it is, and any attributes.
-
-        `attrs` is a comma separated list, e.g. `shape, dtypes`. Use this rather than an
-        `inspect_python` expression over `globals()` or `vars()`, which the sandbox refuses:
-        this reads the same merged view `list_vars` does, and needs no approval. `list_vars`
-        for the whole namespace, this for one name.
+        """Report one live variable: whether it is bound, what it is, and the attributes `attrs` names.
+        `attrs` is comma separated, such as `shape, dtypes`. This needs no approval. Use `list_vars` for the whole namespace. The sandbox refuses `inspect_python` over `globals()` or `vars()`.
         """
         try: return clip(host.inspect_var(name, [a for a in str(attrs).replace(',', ' ').split() if a]))
         except Exception as e: return f'inspect_var failed: {errstr(e)}'
     def run_cell(path: str, cell_id: str, timeout: int = 120) -> str:
-        """Run one notebook cell in the user's live kernel, exactly as pressing Run on it would.
-
-        This is the tool for "does this cell work now". The cell's source runs as it is on disk,
-        in the kernel that notebook's tab uses, against the user's own namespace and execution
-        counter. `run_python` is not a substitute: that runs in your own layer over the namespace,
-        so what it does to imports and to name lookup is not what the user's cell will do.
-
-        You get the outputs, the exception if it raised, the execution count, how long it took,
-        and which variables changed. The notebook file is not written; saving stays the user's.
-        Take `cell_id` from `notebook_cells`, and fix a cell with `edit_cell` before running it.
+        """Run one notebook cell in the user's live kernel, as pressing Run on it would.
+        The source runs as it is on disk, in that notebook tab's kernel, against the user's namespace and execution counter. The notebook file is never written. Take `cell_id` from `notebook_cells`. `run_python` is not a substitute: it runs in your own layer, not the user's.
         """
         try: return clip(host.nb_run_cell(path, cell_id, timeout))
         except Exception as e: return f'run_cell failed: {errstr(e)}'
@@ -715,10 +703,8 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
             published=str(m.get('published') or '')[:19], author=m.get('author'),
             link=d.get('source'), summary=str(m.get('summary') or '')[:chars])
     def news_feeds() -> str:
-        """Which sources this vault follows, how often each is read, and what it last said.
-
-        Feed items are filed on the `news` shelf, not the main one, so `memory_search` reaches them
-        only in passing. Read them with `news_latest` and open one with `news_story`.
+        """List the sources this vault follows, how often each is read, and what it last said.
+        Feed items are filed on the `news` shelf, not the main one. Use `news_latest` to read them and `news_story` to open one.
         """
         try: rows = [dict(url=f.url, title=f.title, every=f.every, enabled=f.enabled,
                           last_status=f.last_status or 'not read yet', new_since_last_read=f.items)
@@ -727,9 +713,7 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         return clip(json.dumps(rows, default=str), mx)
     def news_latest(match: str = '', feed: str = '', limit: int = 20) -> str:
         """Recent feed items, newest first: headline, source, date, standfirst and `doc_id`.
-
-        `match` narrows by headline or standfirst, `feed` by the source's name. This reads what is
-        already filed. Call `news_refresh` first when the question is about today.
+        `match` narrows by headline or standfirst, `feed` by the source's name. This reads what is already filed. Call `news_refresh` first when the question is about today.
         """
         try: found = news_rows(host._vault(), match=match, feed=feed, limit=max(1, int(limit)))
         except Exception as e: return f'news_latest failed: {errstr(e)}'
@@ -737,17 +721,14 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         return clip(json.dumps([story(x) for x in found], default=str), mx * 2)
     def news_story(doc: str) -> str:
         """One feed item in full, by the `doc_id` or the headline `news_latest` reported.
-
-        `memory_read` cannot open this: it reads the main shelf, and feed items are on `news`.
+        Feed items are on the `news` shelf, so `memory_read` cannot open them.
         """
         text = host._vault().document_text(doc, shelf=NEWS_SHELF)
         if not text: return f'no such item on the news shelf: {doc!r}. Call news_latest for what is there.'
         return clip(text, mx * 2)
     def news_follow(url: str, title: str = '', every: str = '1h') -> str:
         """Follow a source and read it now. `url` may be the site itself, whose feed is found for you.
-
-        A source refused here carries no feed at all. Report that rather than retrying with a
-        guessed `/rss.xml`. `every` is how often to read it after this.
+        A refusal means the source carries no feed; never retry with a guessed `/rss.xml`. `every` is the cadence after this call.
         """
         try: f = feeds().add(url, title, every)
         except Exception as e: return f'could not follow that: {errstr(e)}'
@@ -761,19 +742,15 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         return f'stopped following {f.title or f.url}; its items remain on the news shelf.'
     def news_refresh(feed: str = '') -> str:
         """Read followed sources now and file whatever is new. Returns what came in, per feed.
-
-        `feed` is one source's address or title, from `news_feeds`; every one when omitted.
+        `feed` is one source's address or title from `news_feeds`; every source when omitted.
         """
         try: out = poll_feeds(host._vault(write=True), feeds(), force=True, only=feed)
         except Exception as e: return f'news_refresh failed: {errstr(e)}'
         if not out['feeds']: return f'not following {feed!r}. Call news_feeds to see what is followed.'
         return clip(json.dumps(out, default=str), mx)
     def api_access() -> str:
-        """What each loaded spec sends, what backs it, and which models may call it.
-
-        Header names and environment variable names, never a value. A spec with no credentials goes
-        out unauthenticated and most APIs answer 401. One marked local-only refuses on a hosted
-        model, and the refusal names what to change.
+        """Report what each loaded spec sends, what backs it, and which models may call it.
+        Header and environment variable names only, never a value. A spec with no credentials goes out unauthenticated. A local-only spec refuses on a hosted model, and the refusal names what to change.
         """
         from ..vault.spec import EXAMPLES
         keyed, loaded = host.api_keyed(), sorted(host.specs)

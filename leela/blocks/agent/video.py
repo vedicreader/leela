@@ -99,10 +99,8 @@ def video_tools(host, mx=MAX_TOOL_CHARS, session='', jobs=None, model=DFLT_VIDEO
     session = session or str(leela_cfg)
 
     def generate_video(prompt: str, seconds: int = 8) -> str:
-        """Start generating a video from a description. Returns a job id to check with `video_status`.
-
-        Generation takes minutes, so this returns immediately. Tell the user the job started,
-        then call `video_status` to collect the file.
+        """Start generating a video from a description. Returns a job id.
+        Generation takes minutes and this returns at once. Tell the user the job started, then collect the file with `video_status`.
         """
         if not video_available(): return err('video generation is unavailable', 'GEMINI_API_KEY is not set')
         lo, hi = video_caps(model)['seconds']
@@ -114,7 +112,7 @@ def video_tools(host, mx=MAX_TOOL_CHARS, session='', jobs=None, model=DFLT_VIDEO
         return f"video job {r['id']} started on {model}; check it with video_status"
 
     def video_status(job_id: str = '') -> str:
-        "Where a video job has got to, and the path to the file once it has finished."
+        "A video job's state, and the path to the file once it has finished."
         r = jobs.get(job_id)
         if r is None: return err('no such video job', job_id or 'there are none yet')
         if r['state'] != 'running': return _line(r)
