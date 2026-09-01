@@ -290,6 +290,9 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
     ['unsay', 'lee-btn', 'Undo from conversation', !!capabilities.branchable,
      'Forget this turn: branch the conversation to just before it, keeping it in history',
      gone ? unheld : 'this turn has no captured boundary to branch at'],
+    ['fork', 'lee-btn', 'Branch from here', !!capabilities.branchable,
+     'Start a branch that continues from this turn, leaving this conversation as it is',
+     gone ? unheld : 'this turn has no captured boundary to branch at'],
     ['undo', 'lee-btn warn', 'Restore files', !!capabilities.undoable,
      `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn`,
      gone ? unheld : 'this turn made no reversible file changes']];
@@ -431,6 +434,7 @@ function bindResponseRevisions(log) {
     if (button.hasAttribute('data-unsay')) unsayTurn(bar);
     else if (button.hasAttribute('data-undo')) restoreTurnFiles(bar);
     else if (button.hasAttribute('data-revise')) reviseTurn(bar);
+    else if (button.hasAttribute('data-fork')) leeAgentForkTurn(bar.dataset.turn, lee.agentThread);
   });
 }
 

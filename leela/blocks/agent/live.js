@@ -476,7 +476,10 @@ function paintResumed(d) {
 async function resumeLatestAgent() {
   // Nothing saved is the first run, not a failure, so this never speaks up about it.
   try {
-    const d = await post('/agent/resume', {session: 'latest'});
+    await agentPrefsReady();   // the saved filter, not the default, decides what boot may open
+    /* Read under the same filter as the history list: a pane that hides the CLI's conversations
+       cannot open one of them on boot. With the filter off, `latest` is the log's newest again. */
+    const d = await post('/agent/resume', {session: 'latest', everything: !leelaOnly()});
     if (!(d.turns || []).length) return;
     paintResumed(d);
     status(`picked up ${titleText(d.title) || d.session}`, 'ok');
@@ -548,10 +551,12 @@ function paintAgentThreads(d) {
         `<header><strong>${esc(threadName(t))}</strong>` +
         `<span class="lee-thread-state ${esc(t.state)}">${esc(t.state)}</span></header>` +
         `<footer><span>${t.unread ? `${t.unread} new` : (live ? 'on screen' : 'idle')}` +
+        `${t.branch && t.branch !== 'main' ? ` · on ${esc(t.branch)}` : ''}` +
         `${t.muted ? ' · muted' : ''}</span><span class="lee-spacer"></span>` +
         `<button type="button" data-thread-rename title="rename">rename</button>` +
         `<button type="button" data-thread-mute title="${t.muted ? 'unmute' : 'silence notifications'}">${t.muted ? 'unmute' : 'mute'}</button>` +
         `<button type="button" data-thread-reshape title="edit this conversation as a notebook">edit</button>` +
+        `<button type="button" data-thread-branches title="fork this conversation, or switch branch">branches</button>` +
         `<button type="button" data-thread-close class="warn" title="close">close</button></footer></article>`;
     }).join('') || '<div class="lee-dim">no live conversations</div>';
     list.insertAdjacentHTML('beforeend',
@@ -574,6 +579,7 @@ function bindAgentThreadCards(list) {
     if (button.hasAttribute('data-thread-rename')) return leeAgentThreadRename(id);
     if (button.hasAttribute('data-thread-mute')) return leeAgentThreadMute(id);
     if (button.hasAttribute('data-thread-reshape')) return leeAgentReshape(id);
+    if (button.hasAttribute('data-thread-branches')) return leeAgentBranches(id);
     if (button.hasAttribute('data-thread-close')) return leeAgentThreadClose(id);
   });
   list.addEventListener('keydown', e => {
@@ -619,6 +625,142 @@ async function leeAgentReshapeApply() {
   lee.agentReshape = null; $('#agentattention').hidden = true;
   await refreshAgentThreads();
   status(`reshaped · ${out.discarded.length} dropped, ${out.rewritten.length} rewritten · ${out.branch_id}`, 'ok');
+}
+/* Branches belong to a conversation, so the way in is that conversation's own card. Two lists in
+   one dialog: where this conversation has already been cut, and where it can still be. A branch is
+   a parent point and a manifest, recompiled on switch, so nothing here replays a turn. */
+async function leeAgentBranches(id = lee.agentThread) {
+  if (!id) return status('open a conversation first', 'err');
+  let d;
+  try { d = await api('/agent/branches?thread=' + encodeURIComponent(id)); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  const origin = b => b.branch_id === 'main' ? 'the conversation as recorded'
+    : `${b.shaped ? 'shaped' : 'forked'} from turn ${esc(turnShort(b.parent_turn_id))} ${esc(b.stage || 'after')}` +
+      `${b.parent_branch_id ? ` · off ${esc(b.parent_branch_id)}` : ''}`;
+  const branches = (d.branches || []).map(b =>
+    `<div class="lee-setup-row"><span><strong>${esc(b.branch_id)}</strong>` +
+    `${b.branch_id === d.active ? ' · active' : ''}<br><small>${origin(b)}</small></span>` +
+    (b.branch_id === d.active ? '<span class="lee-dim">on screen</span>'
+      : `<button class="lee-btn" data-switch="${esc(b.branch_id)}">switch</button>`) + '</div>').join('');
+  const points = (d.turns || []).filter(t => t.after).map(t =>
+    `<div class="lee-setup-row"><span><strong>turn ${esc(turnShort(t.turn_id))}</strong><br>` +
+    `<small>captured on ${esc(t.branch_id)}</small></span>` +
+    `<button class="lee-btn" data-fork="${esc(t.turn_id)}">fork…</button></div>`).reverse().join('');
+  const m = modal(`<div class="lee-mhead">Conversation branches<span class="sub">active · ${esc(d.active)}</span></div>` +
+    `<h4>branches</h4><div class="lee-modallist">${branches}</div>` +
+    `<h4>branch points</h4><div class="lee-modallist">${points ||
+      '<div class="lee-dim">no turn of this conversation was captured in this session</div>'}</div>` +
+    `<div class="lee-mfoot"><span class="lee-dim">a branch is a starting point, not a copy</span>` +
+    `<span class="lee-spacer"></span><button class="lee-btn" data-shape>shape context…</button></div>`,
+    null, null, {storageKey: 'agent-branches'});
+  $('[data-shape]', m).onclick = () => { m.remove(); leeAgentShape(id); };
+  $$('[data-switch]', m).forEach(b => b.onclick = async () => {
+    if (await leeAgentBranchSwitch(b.dataset.switch, id)) { m.remove(); leeAgentBranches(id); }
+  });
+  $$('[data-fork]', m).forEach(b => b.onclick = () => { m.remove(); leeAgentForkTurn(b.dataset.fork, id); });
+}
+const turnShort = id => String(id || '').split(':').at(-1);
+/* Switching moves what the model remembers, never what is on screen: the transcript is the record
+   of what was said, and saying otherwise would hide a turn that really happened. */
+async function leeAgentBranchSwitch(branchId, id = lee.agentThread) {
+  try {
+    const d = await post('/agent/branch/switch', {thread: id, branch_id: branchId});
+    await refreshAgentThreads();
+    status(`the next turn continues from ${d.active} · the transcript above is unchanged`, 'ok');
+    return d;
+  } catch (e) { status(e.message || String(e), 'err'); return null; }
+}
+/* A fork point is a part, not a message: a call and the results it produced move together, so
+   picking one inside a tool exchange takes the whole exchange. */
+async function leeAgentForkTurn(turnId, id = lee.agentThread) {
+  if (!turnId) return status('no turn to branch from', 'err');
+  let d;
+  try { d = await api(`/agent/branch/parts?turn_id=${encodeURIComponent(turnId)}&stage=after` +
+                      `&thread=${encodeURIComponent(id || '')}`); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  const kinds = {user: 'you', assistant: 'agent', calls: 'call', result: 'result'};
+  const rows = (d.parts || []).map(p =>
+    `<div class="lee-setup-row"><span><strong>${esc(kinds[p.kind] || p.kind)}</strong><br>` +
+    `<small>${esc((p.preview || '').slice(0, 120) || 'no text')}</small></span>` +
+    `<button class="lee-btn" data-part="${esc(p.part_id)}">keep to here</button></div>`).join('');
+  const m = modal(`<div class="lee-mhead">Branch from turn ${esc(turnShort(turnId))}` +
+    `<span class="sub">a new branch continuing from the point you pick · nothing is deleted</span></div>` +
+    `<div class="lee-modallist"><div class="lee-setup-row"><span><strong>the whole turn</strong><br>` +
+    `<small>everything said up to and including it</small></span>` +
+    `<button class="lee-btn go" data-part="">branch here</button></div>${rows}</div>`,
+    null, null, {storageKey: 'agent-fork'});
+  $$('[data-part]', m).forEach(b => b.onclick = async () => {
+    try {
+      const out = await post('/agent/fork', {thread: id, turn_id: turnId, stage: 'after', part_id: b.dataset.part});
+      m.remove(); await refreshAgentThreads();
+      status(`branched to ${out.branch_id} · ${out.kept} part(s) kept, ${out.omitted} dropped`, 'ok');
+    } catch (e) { status(e.message || String(e), 'err'); }
+  });
+}
+/* What the model still carries, decided in one place rather than in a notebook. Nothing is
+   written until apply, and apply is refused unless the branch is still at the revision the preview
+   was taken at: a conversation that moved while a person was deciding is a different question. */
+async function leeAgentShape(id = lee.agentThread) {
+  if (!id) return status('open a conversation first', 'err');
+  let d;
+  try { d = await api('/agent/conversation/parts?thread=' + encodeURIComponent(id)); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  const parts = d.parts || [];
+  if (!parts.length) return status('this conversation has no recorded turns to shape', 'err');
+  const kinds = {user: 'you', assistant: 'agent', call: 'call', result: 'result'};
+  const rows = parts.map(p =>
+    `<div class="lee-setup-row lee-shape-row" data-part="${esc(p.part_id)}">` +
+    `<span><strong>${esc(kinds[p.kind] || p.kind)}</strong>${p.tool ? ` · ${esc(p.tool)}` : ''}` +
+    (p.editable ? `<textarea class="lee-input" data-text rows="2" spellcheck="true"` +
+                  ` aria-label="what the model remembers here">${esc(p.text || '')}</textarea>`
+                : `<br><small>${esc((p.text || '').slice(0, 160) || 'no text')}</small>`) + '</span>' +
+    `<label title="uncheck to drop this part"><input type="checkbox" data-keep checked> keep</label></div>`).join('');
+  const m = modal(`<div class="lee-mhead">Shape this conversation` +
+    `<span class="sub">${esc(d.session)} · branch ${esc(d.branch_id)}</span></div>` +
+    `<section class="lee-revision-explainer"><strong>You are choosing what the model still carries.</strong>` +
+    `<span>Tools will not run again and files will not change. A call and its result go together. ` +
+    `Apply writes a new branch, and the recorded conversation stays as it is.</span></section>` +
+    `<div class="lee-modallist">${rows}</div>` +
+    `<div class="lee-mfoot"><span class="lee-dim" data-summary>reading…</span><span class="lee-spacer"></span>` +
+    `<button class="lee-btn" data-cancel>close</button>` +
+    `<button class="lee-btn go" data-apply disabled>apply as a new branch</button></div>`,
+    null, null, {className: 'lee-setup-modal', storageKey: 'agent-shape'});
+  const manifest = () => Object.fromEntries($$('[data-part]', m)
+    .filter(row => !$('[data-keep]', row).checked).map(row => [row.dataset.part, 'discard']));
+  const rewrites = () => Object.fromEntries(parts.filter(p => p.editable).map(p =>
+    [p.part_id, $(`[data-part="${CSS.escape(p.part_id)}"] [data-text]`, m)?.value])
+    .filter(([pid, text]) => text !== undefined && text !== (parts.find(p => p.part_id === pid).text || '')));
+  const summary = $('[data-summary]', m), apply = $('[data-apply]', m);
+  let seen = null, timer = null;
+  const preview = async () => {
+    try {
+      const pv = await post('/agent/history/preview',
+                            {thread: id, session: d.session, manifest: manifest(), rewrites: rewrites()});
+      seen = pv; apply.disabled = false;
+      summary.textContent = `${pv.kept} kept · ${pv.omitted} dropped · ${pv.rewritten.length} rewritten` +
+        ` · about ${pv.tokens} tokens` +
+        (pv.adjusted.length ? ` · ${pv.adjusted.length} went with the call they belong to` : '');
+    } catch (e) { seen = null; apply.disabled = true; summary.textContent = e.message || String(e); }
+  };
+  // Apply is only ever offered for a manifest the person has been shown the cost of.
+  const schedule = () => { seen = null; apply.disabled = true; clearTimeout(timer); timer = setTimeout(preview, 250); };
+  m.addEventListener('input', schedule); m.addEventListener('change', schedule);
+  preview();
+  $('[data-cancel]', m).onclick = () => m.remove();
+  apply.onclick = async () => {
+    if (!seen) return;
+    try {
+      const out = await post('/agent/history/apply',
+                             {thread: id, session: d.session, branch_id: seen.branch_id, revision: seen.revision,
+                              manifest: manifest(), rewrites: rewrites()});
+      m.remove(); await refreshAgentThreads();
+      status(`shaped into ${out.branch_id} · ${out.omitted} dropped, ${out.rewritten.length} rewritten`, 'ok');
+    } catch (e) {
+      /* A refusal here is nearly always the branch having moved, so the honest recovery is to
+         re-read it and show what it costs now rather than to send the same revision again. */
+      status(e.message || String(e), 'err'); preview();
+    }
+  };
 }
 async function leeAgentThreadOpen(id) {
   await leeAgentThreadSwitch(id);

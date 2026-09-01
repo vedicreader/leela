@@ -146,6 +146,7 @@ class Thread:
         meta = self.meta()
         return {'id': self.id, 'title': self.name(meta), 'state': self.state,
                 'created': self.created, 'touched': self.touched, 'unread': self.unread,
+                'branch': getattr(self.ai, 'current_branch_id', '') or 'main',
                 'muted': bool(meta.get('muted', self.muted)), 'problem': self.mute_problem}
     def close(self):
         "Close every part, and report what refused rather than skipping the rest."

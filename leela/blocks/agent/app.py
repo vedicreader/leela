@@ -14,8 +14,8 @@ from ...agent.runtime import estimate_tokens
 from ...core.web import diff_payload, fail, off_loop, sse
 from ...workspace import STEP_RANGE, TOOL_RANGE
 from .threads import TurnError
-from .turns import (edit_diffs, history_sessions, project_state_context, surfaces, tool_preview,
-                    tool_schemas, with_capabilities)
+from .turns import (edit_diffs, history_sessions, latest_started_here, project_state_context,
+                    surfaces, tool_preview, tool_schemas, with_capabilities)
 
 __all__ = ['CAPS', 'connect']
 
@@ -132,9 +132,21 @@ def connect(app, ctx):
                 'inline': list(ctx.inline_ai.history) if not session else []}
     @rt('/agent/resume')
     async def agent_resume(req):
-        "Resume a saved conversation as an isolated live thread."
+        """Resume a saved conversation as an isolated live thread.
+
+        `latest` is the newest conversation this Leela started, which is what its history list
+        shows. One log holds Leela's and the CLI's, most of it is the CLI's, and taking the newest
+        of both opened a conversation the pane is filtered to hide. A log with nothing marked falls
+        back to the newest of all rather than opening nothing: the mark is recent, and everything
+        written before it exists reads as the CLI's. `everything` asks for the newest of both, the
+        name the history list already uses for it.
+        """
         d = await req.json()
-        try: thread = await off_loop(ws.threads.resume, str(d.get('session') or 'latest'))
+        session = str(d.get('session') or 'latest')
+        if session == 'latest' and not d.get('everything'):
+            await off_loop(ws.fresh_history, ws.ai)
+            session = latest_started_here(ws.ai) or 'latest'
+        try: thread = await off_loop(ws.threads.resume, session)
         except Exception as e:
             from .threads import TurnError
             return _thread_error(e) if isinstance(e, TurnError) else fail(e)
