@@ -2334,7 +2334,12 @@ function setQueuedSteer(text, shown = '', cancel = false) {
   const log = $('#agentlog'), old = $('#agentqueuedsteer'); if (!log) return;
   if (!lee.queuedSteer) {
     if (cancel) { old?.remove(); return; }
-    if (old) { old.classList.remove('queued'); $('[data-cancel-steer]', old)?.remove(); return; }
+    /* A steer that has been taken is no longer the queued one, and the id has to go with the state.
+       It used to stay on the card, so the next steer found it here and returned without drawing,
+       and a queued one after that was written into it: the agent acted on a message the transcript
+       never showed. */
+    if (old) { old.id = ''; old.classList.remove('queued'); $('[data-cancel-steer]', old)?.remove(); }
+    if (old && old.dataset.steer === shown) return;
     /* Steering against a waiting approval answers it there and then, so it is never queued and
        nothing recorded what was said. The local reply and the feed event both arrive, and the
        same text twice with nothing between it is one steer. */

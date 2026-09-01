@@ -1101,6 +1101,29 @@ def test_a_completion_on_a_cells_last_line_is_drawn_whole():
     assert out['height'] > 0 and out['below'] > 0, 'the list is taller than the box that holds it'
     assert out['hits'], 'the point two thirds down the list is the list, not what is drawn over it'
 
+def test_every_steer_is_drawn_and_not_just_the_first_one():
+    """`setQueuedSteer` gave the queued card `id="agentqueuedsteer"` and never took it back when the
+    steer was consumed. The next steer found that card as `old`, de-queued it again and returned,
+    so it was never drawn. The agent acted on a message the transcript never showed.
+    """
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const log = document.getElementById('agentlog');
+          log.innerHTML = ''; lee.agentTimeline = null; lee.queuedSteer = '';
+          const said = () => [...log.querySelectorAll('[data-steer]')].map(n => n.dataset.steer);
+          setQueuedSteer('stop and read the file', 'stop and read the file');   // queued
+          setQueuedSteer('', 'stop and read the file');                          // the run took it
+          const first = said();
+          setQueuedSteer('use the other branch', 'use the other branch');        // a second steer
+          setQueuedSteer('', 'use the other branch');
+          return {first, both: said(), stranded: !!document.getElementById('agentqueuedsteer')};
+        }""")
+    out = _run(go)
+    assert out['first'] == ['stop and read the file'], out
+    assert out['both'] == ['stop and read the file', 'use the other branch'], \
+        f'the second steer was never drawn: {out["both"]}'
+    assert not out['stranded'], 'a consumed steer is no longer the queued one'
+
 def test_a_streaming_reply_repaints_while_it_streams():
     """The pane sat still through a burst of chunks and then jumped a paragraph at a time.
 
@@ -1475,10 +1498,12 @@ def test_the_agent_pane_draws_its_runs_its_steers_and_its_work_logs():
           setQueuedSteer('and then stop', 'and then stop');
           out.queued = Boolean($('#agentqueuedsteer'));
           out.cancellable = Boolean($('#agentqueuedsteer [data-cancel-steer]'));
-          // taken by the agent: the card stays as the message it is, without the cancel
+          // taken by the agent: the card stays as the message it is, without the cancel. Found by
+          // its text, not by `#agentqueuedsteer`: a steer that has been taken is not the queued one,
+          // and a card that kept that id swallowed every steer after it.
           setQueuedSteer('');
-          out.kept = Boolean($('#agentqueuedsteer'));
-          out.stillCancellable = Boolean($('#agentqueuedsteer [data-cancel-steer]'));
+          out.kept = Boolean($('[data-steer="and then stop"]', log));
+          out.stillCancellable = Boolean($('[data-steer="and then stop"] [data-cancel-steer]', log));
           log.innerHTML = '';
           return out;
         }""")
