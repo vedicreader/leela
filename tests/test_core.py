@@ -1261,6 +1261,20 @@ def test_no_test_can_reach_the_real_conversation_log(tmp_path, cfg_home):
     assert Path(fresh.ai.history_path).name == 'agent-history.jsonl', 'the same file, in a safe place'
     fresh.threads.shutdown()
 
+def test_the_log_helper_refuses_a_path_outside_the_suites_config_dir(tmp_path, cfg_home):
+    """The write that truncated a real log came from a script run without these fixtures, where
+    `agent.configFolder` resolved to the person's own directory. Every test writer goes through
+    `history_file`, which checks the path rather than trusting the fixture that is usually there."""
+    from tests.conftest import history_file
+    fresh = Workspace(roots=[tmp_path])
+    assert history_file(fresh).parent == Path(cfg_home), 'an isolated log is handed straight back'
+    fresh.threads.shutdown()
+    elsewhere = type('Elsewhere', (), {'ai': type('AI', (), {
+        'history_path': Path.home()/'.config'/'ramabana'/'agent-history.jsonl'})()})()
+    with pytest.raises(AssertionError, match='refusing to write a test conversation log'):
+        history_file(elsewhere)
+
+
 def test_a_write_from_outside_leela_is_kept_before_the_editor_takes_it(tmp_path):
     "The disk poll is the only moment anything notices another process editing an open file."
     from starlette.testclient import TestClient

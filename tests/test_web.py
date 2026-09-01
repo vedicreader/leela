@@ -626,8 +626,8 @@ def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(t
              {'session': 'agent-a', 'at': 2, 'model': model, 'prompt': 'what was it?', 'reply': 'cedar'}]
     # a resumed thread builds its own assistant and reads the log, so the session has to be in it
     import json as _json
-    path = ws.ai.history_path
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from tests.conftest import history_file
+    path = history_file(ws)
     path.write_text('\n'.join(_json.dumps(t) for t in turns) + '\n')
     ws.ai.history = list(turns)
     with TestClient(ide_app(ws)) as client:

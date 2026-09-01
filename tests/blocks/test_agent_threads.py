@@ -5,20 +5,7 @@ from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.agent.threads import Feed, Thread, Threads, TurnError, TurnRunner
 from leela.workspace import Workspace
-
-
-def _history_file(ws):
-    """The conversation log, checked before a test replaces it.
-
-    `agent.configFolder` can point the log at a real directory, and every writer here writes the
-    file whole, so outside the suite's config isolation one call is a person's whole conversation
-    log. `cfg_home` keeps it in a temp dir and `test_no_test_can_reach_the_real_conversation_log`
-    pins that; this refuses when something has escaped it.
-    """
-    p = Path(ws.ai.history_path)
-    assert Path.home() not in p.parents, f'refusing to write a test conversation log to {p}'
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
+from tests.conftest import history_file
 
 
 def test_threads_are_lazy_isolated_and_keep_workspace_compatibility(tmp_path):
@@ -479,7 +466,7 @@ def test_a_resumed_conversation_is_named_by_its_log_so_it_keeps_its_card(tmp_pat
     import json
     ws = Workspace(roots=[tmp_path]); ws.add_root(str(tmp_path))
     thread = ws.threads.active
-    log = _history_file(ws)
+    log = history_file(ws)
     log.write_text(json.dumps({'session': thread.id, 'at': 1, 'model': 'gpt-4.1',
                                'turn_id': f'{thread.id}:turn_000001',
                                'prompt': 'plot the release cadence', 'reply': 'done'}) + '\n')
@@ -1104,7 +1091,7 @@ def test_a_resumed_conversation_can_be_reshaped_and_its_prose_rewritten(tmp_path
     import json
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path]); ws.add_root('.')
-    log = _history_file(ws)
+    log = history_file(ws)
     turns = [{'session': 'conv-x', 'at': 1, 'model': ws.ai.model.name, 'turn_id': 'conv-x:turn_000001',
               'prompt': 'q1', 'reply': 'r1',
               'activity': [{'tool': 'view_file', 'line': 'view_file a.py', 'detail': 'contents',
@@ -1144,7 +1131,7 @@ def test_a_resumed_conversation_can_be_reshaped_and_its_prose_rewritten(tmp_path
 def _logged_conversation(ws, sid='conv-n'):
     import json
     a = ws.ai
-    log = _history_file(ws)
+    log = history_file(ws)
     turns = [{'session': sid, 'at': 1, 'model': a.model.name, 'turn_id': f'{sid}:turn_000001',
               'prompt': 'q1', 'reply': 'r1',
               'activity': [{'tool': 'view_file', 'line': 'view_file a.py', 'detail': 'contents',
@@ -1305,7 +1292,7 @@ def test_a_thread_card_carries_the_name_the_history_picker_shows(tmp_path):
     import json
     ws = Workspace(roots=[tmp_path]); ws.add_root(str(tmp_path))
     thread = ws.threads.active
-    log = _history_file(ws)
+    log = history_file(ws)
     log.write_text(json.dumps({'session': thread.id, 'at': 1, 'model': 'gpt-4.1',
                                'turn_id': f'{thread.id}:turn_000001',
                                'prompt': 'ascii art for the ramabana CLI', 'reply': 'r'}) + '\n')
@@ -1364,7 +1351,7 @@ def test_the_turn_that_starts_a_conversation_names_it(tmp_path):
 def _log(ws, rows):
     "Write the conversation log the way the agent writes it, and forget what was parsed before."
     import json
-    p = _history_file(ws)
+    p = history_file(ws)
     p.write_text(''.join(json.dumps(r) + '\n' for r in rows))
     ws._history_stamps.clear()
     return p
