@@ -138,6 +138,17 @@ IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'}
 AUDIO_EXTS = {'.wav', '.mp3', '.m4a', '.ogg', '.flac', '.aac'}
 VIDEO_EXTS = {'.mp4', '.webm', '.ogv', '.mov'}
 
+#: What the inline panel promises, said to the model that has to keep it. The tools are gone rather
+#: than discouraged, so this describes the situation rather than forbidding anything.
+SELECTION_SP = """You are inline editor help, working on one selected passage from one file.
+
+Follow the instruction against the selection. Look things up first if the instruction needs it:
+you have read-only tools, and no way to change anything. The person reads your answer beside their
+code and applies it themselves, or discards it.
+
+Return only the proposed replacement text. No preamble, no markdown fence, no commentary outside
+the replacement. Preserve the source language and its formatting unless asked otherwise."""
+
 @dataclass
 class Tab(Dictable):
     "One open editor tab."
@@ -211,6 +222,7 @@ class Workspace:
         self._loop = None
         self._history_stamps = {}
         self._timeline_lock = threading.RLock()
+        self._timeline_rows, self._timeline_stamp = None, ''
         from .blocks.vault.clip import register_all
         from .blocks.vault.jobs import Jobs
         from .blocks.vault.news import Feeds
@@ -226,7 +238,8 @@ class Workspace:
         self.tabs = L()
         self.active = 0
         self._untitled = 0
-        self._ai = self._inline_ai = self._completer = self._turn_runner = self._threads = None
+        self._ai = self._inline_ai = self._selection_ai = None
+        self._completer = self._turn_runner = self._threads = None
         from .agent.core import env as model_env
         self.model = model
         self.inline_model = inline_model or model_env('MODEL_INLINE') or 'gpt-mini'
@@ -298,19 +311,54 @@ class Workspace:
         except Exception: return None
 
     def _timelines(self):
+        """The retained turns, from memory unless the file has moved under this process.
+
+        Every reader parsed the whole document. It reaches several megabytes, `with_timelines` runs
+        on the history list and on every thread switch, and `save_timeline` read it again before
+        each write.
+        """
         with self._timeline_lock:
-            try: return self._timeline_path.read_json()
-            except Exception: return {}
+            try: st = self._timeline_path.stat(); stamp = f'{st.st_mtime_ns}:{st.st_size}'
+            except Exception: stamp = ''
+            if self._timeline_rows is not None and stamp == self._timeline_stamp: return self._timeline_rows
+            try: self._timeline_rows = self._timeline_path.read_json()
+            except Exception: self._timeline_rows = {}
+            self._timeline_stamp = stamp
+            return self._timeline_rows
     def _timeline_key(self, thread_id, turn_id): return f'{thread_id}:{turn_id}'
     def timeline_parts(self, thread_id, turn_id):
         return list(self._timelines().get(self._timeline_key(thread_id, turn_id), ()))
     TIMELINE_KEEP = 200          # turns retained for restart and resync, oldest written first out
 
+    @staticmethod
+    def _retained(parts):
+        """One turn's events, reduced to what a replay rebuilds from them.
+
+        `reduceAgentTimeline` concatenates consecutive `chunk` events into one block of prose, and
+        keeps one part per `action_id` holding the newest payload, at the position where that call
+        first appeared. Every other row it is handed is read and dropped. Retaining them cost 15MB
+        across six workspaces, 95% of the rows, and a parse and a serialise of all of it per turn.
+
+        A row with no id has no identity to update, so it can only ever be new.
+        """
+        out, at = [], {}
+        for row in parts:
+            event, data = row.get('event'), row.get('data') or {}
+            if event == 'chunk' and out and out[-1].get('event') == 'chunk':
+                held = out[-1]['data']
+                out[-1]['data'] = {**held, 'text': (held.get('text') or '') + (data.get('text') or '')}
+                continue
+            if event == 'activity' and (aid := data.get('action_id') or data.get('id')):
+                if aid in at: out[at[aid]] = dict(row); continue
+                at[aid] = len(out)
+            out.append(dict(row))
+        return out
+
     def save_timeline(self, thread_id, turn_id, parts):
         "Atomically retain one thread turn's ordered browser events for restart and resync."
         key = self._timeline_key(thread_id, turn_id)
         with self._timeline_lock:
-            rows = self._timelines(); rows.pop(key, None); rows[key] = list(parts)
+            rows = self._timelines(); rows.pop(key, None); rows[key] = self._retained(parts)
             for old in list(rows)[:-self.TIMELINE_KEEP]: rows.pop(old, None)
             self._timeline_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._timeline_path.with_name(f'.{self._timeline_path.name}.{os.getpid()}.tmp')
@@ -318,6 +366,9 @@ class Workspace:
                 tmp.write_json(rows); os.replace(tmp, self._timeline_path)
             finally:
                 if tmp.exists(): tmp.unlink()
+            # this process wrote it, so what is in hand is the file and the next read is free
+            try: st = self._timeline_path.stat(); self._timeline_stamp = f'{st.st_mtime_ns}:{st.st_size}'
+            except Exception: self._timeline_stamp = ''
         return rows[key]
     def history_stamp(self, ai=None):
         "What identifies the conversation log as it is now: cheap, and enough to notice a write."
@@ -355,6 +406,30 @@ class Workspace:
                                         on_compact=self._compacted, history_name='inline')
             self._notebook_approvals.host = self._inline_ai.host
         return self._inline_ai
+    @property
+    def selection_ai(self):
+        """Inline help on a selected passage: its own conversation, and nothing that could act.
+
+        The inline model, the same one prompt cells use, because this is inline help and not the
+        ghost-text completion the `completion` model answers for. Which one answered is on the
+        panel's header, and the settings say which surface each model serves. `readonly` takes
+        the tools off the list the model is given rather than asking it not to reach for them, so
+        the panel's promise that nothing changes until Replace is one the agent cannot break.
+        Approvals are passed explicitly: the default would resolve `ws.approvals`, which builds the
+        agent pane's thread to answer.
+
+        The chosen inline model is applied on every access. The assistant is built once, and a model
+        change made after that reaches it here rather than at the next restart.
+        """
+        from .agent.core import env
+        name = self.inline_model or env('MODEL_INLINE')
+        if self._selection_ai is None:
+            self._selection_ai = Assistant(self, model=name, surface='completion',
+                                           local_multimodal=self.local_multimodal, approvals=None,
+                                           readonly=True, history_name='completion', sp=SELECTION_SP)
+        elif not self._selection_ai.busy and self._selection_ai.routing.name_for('turn') != name:
+            self._selection_ai.set_model(name)
+        return self._selection_ai
     def _compacted(self, summary):
         "Write a compaction summary into the notebook the conversation is happening in."
         t = self._approval_target
@@ -372,7 +447,7 @@ class Workspace:
         return self._completer
     def _rebrief_agents(self):
         "Tell any live assistant that the open folders changed."
-        for a in (self._ai, self._inline_ai):
+        for a in (self._ai, self._inline_ai, self._selection_ai):
             if a is not None:
                 try: a.refresh()
                 except Exception: pass

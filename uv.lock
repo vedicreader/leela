@@ -1241,20 +1241,6 @@ wheels = [
 ]
 
 [[package]]
-name = "fastllm-claude-code"
-version = "0.0.7"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "claude-agent-sdk" },
-    { name = "llmsurgery" },
-    { name = "python-fastllm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/de/c6/8c621a63333c024356fe5e4a4b56562b86fa7d190b79f7170086d9bcf670/fastllm_claude_code-0.0.7.tar.gz", hash = "sha256:5d59429d63c3fc328d080644374f16c3fdaf4f96af1a2a4bc0d72efef8f57f38", size = 8348, upload-time = "2026-07-31T05:46:51.811Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/de/47/5008f509c4bf9aef8446e9ac27cdb0cae6e587c7f0e4bb383fd57a600096/fastllm_claude_code-0.0.7-py3-none-any.whl", hash = "sha256:b541d3c01d38f25cd776f525ff78e1d165580ee7b40c8c99224f83c1d047e18e", size = 9074, upload-time = "2026-07-31T05:46:50.786Z" },
-]
-
-[[package]]
 name = "fastprogress"
 version = "1.1.6"
 source = { registry = "https://pypi.org/simple" }
@@ -1301,15 +1287,15 @@ wheels = [
 
 [[package]]
 name = "fasttransport"
-version = "0.0.1"
+version = "0.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
     { name = "httpx2" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/92/ca/defba9b5466caafcdc069c74244c1fb27255e7c8574de523c99dec053551/fasttransport-0.0.1.tar.gz", hash = "sha256:c88fc989fb333efb4d3221379178600bac2f0c7156ad6f8d614ba7eafad39e3a", size = 9392, upload-time = "2026-08-13T03:00:45.251Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fb/2d/e332a8fd98717cb4c94214c85c1b38890d9399d1c18fef23ddc2c908bf1e/fasttransport-0.0.2.tar.gz", hash = "sha256:686ee5d8a54b3145704ced69aeddbc6329076cdc841df0ffff1161f93d36d579", size = 13202, upload-time = "2026-09-01T04:48:47.155Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/45/68/4f69754497b13ba216e11f13d9e3d19ba9aa42c29443ddc4ba948531774d/fasttransport-0.0.1-py3-none-any.whl", hash = "sha256:ab131ac912214e1f39cba0d8fcdbf3ed26a455abb23751f5f6008c2166860d5d", size = 10135, upload-time = "2026-08-13T03:00:43.873Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/af/4a5ea7ccd96cc5a4547e3a924eaba9a85cf7d78c31de25e32615f7cffb4b/fasttransport-0.0.2-py3-none-any.whl", hash = "sha256:e0173bf2d2785da31b940463713d9e90a5d15dc1c9764ff233e7214b321ae150", size = 12958, upload-time = "2026-09-01T04:48:46.014Z" },
 ]
 
 [[package]]
@@ -2483,10 +2469,10 @@ requires-dist = [
     { name = "dockeasy", marker = "extra == 'github'", specifier = ">=0.0.5" },
     { name = "exhash", specifier = ">=0.4.10" },
     { name = "fastcore", specifier = ">=1.7.0" },
-    { name = "fossick", specifier = ">=0.1.14" },
+    { name = "fossick", specifier = ">=0.1.17" },
     { name = "gheasy", specifier = ">=0.0.9" },
-    { name = "gheasy", marker = "extra == 'all'", specifier = ">=0.0.7" },
-    { name = "gheasy", marker = "extra == 'github'", specifier = ">=0.0.7" },
+    { name = "gheasy", marker = "extra == 'all'", specifier = ">=0.0.9" },
+    { name = "gheasy", marker = "extra == 'github'", specifier = ">=0.0.9" },
     { name = "httpx2", specifier = ">=2.10.0" },
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "ipymini", specifier = ">=0.0.1" },
@@ -2499,8 +2485,8 @@ requires-dist = [
     { name = "jupywire", marker = "extra == 'gateway'", specifier = ">=0.1.1" },
     { name = "keyring", marker = "extra == 'all'", specifier = ">=25.0.0" },
     { name = "keyring", marker = "extra == 'github'", specifier = ">=25.0.0" },
-    { name = "koshas", specifier = ">=0.1.0" },
-    { name = "litesearch", specifier = ">=0.1.31" },
+    { name = "koshas", specifier = ">=0.1.7" },
+    { name = "litesearch", specifier = ">=0.1.34" },
     { name = "mdhtml", specifier = ">=0.1.21" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "packaging", specifier = ">=24.0" },
@@ -2526,14 +2512,14 @@ requires-dist = [
     { name = "pywebview", marker = "extra == 'macapp'", specifier = ">=5.3" },
     { name = "pywebview", marker = "extra == 'windows'", specifier = ">=5.3" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ramabana", extras = ["cli"], git = "https://github.com/vedicreader/ramabana?branch=claude%2Framabana-post-release-cleanup-czjuk8" },
+    { name = "ramabana", extras = ["cli"], specifier = "==0.1.32" },
     { name = "rich", specifier = ">=13.0" },
-    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'all'", specifier = "==0.1.32" },
-    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.32" },
-    { name = "shalya", git = "https://github.com/vedicreader/shalya?branch=claude%2Framabana-post-release-cleanup-czjuk8" },
+    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'all'", specifier = "==0.1.36" },
+    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.36" },
+    { name = "shalya", specifier = ">=0.0.5" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
-    { name = "vishalakshi", specifier = ">=0.1.13" },
+    { name = "vishalakshi", specifier = ">=0.1.14" },
     { name = "vpseasy", marker = "extra == 'all'", specifier = ">=0.0.18" },
     { name = "vpseasy", marker = "extra == 'github'", specifier = ">=0.0.18" },
     { name = "watchfiles", specifier = ">=1.0" },
@@ -2552,8 +2538,8 @@ dev = [
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pywebview", specifier = ">=5.3" },
-    { name = "rishi", specifier = "==0.1.32" },
-    { name = "rishi", extras = ["all"], specifier = "==0.1.32" },
+    { name = "rishi", specifier = "==0.1.36" },
+    { name = "rishi", extras = ["all"], specifier = "==0.1.36" },
     { name = "setuptools", specifier = ">=68.0" },
 ]
 test = [
@@ -2564,7 +2550,7 @@ test = [
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pywebview", specifier = ">=5.3" },
-    { name = "rishi", specifier = "==0.1.32" },
+    { name = "rishi", specifier = "==0.1.36" },
     { name = "setuptools", specifier = ">=68.0" },
 ]
 
@@ -4424,17 +4410,17 @@ wheels = [
 
 [[package]]
 name = "python-fastllm"
-version = "0.0.41"
+version = "0.0.45"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aidialog" },
     { name = "fastcore" },
-    { name = "fastspec" },
+    { name = "fasttransport" },
     { name = "pillow" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/26/03/e5affdc7388d5e686ba3482b06a5085304141ac943db9a5792e0b243cb62/python_fastllm-0.0.41.tar.gz", hash = "sha256:2cad3612d3a7f529daf66c98ab53a802e1861b7adc502b9e9bda14e5397e7013", size = 776648, upload-time = "2026-08-13T03:14:30.211Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ae/f8/9e6a87f7092f8884bb40af807dfaac262f64f190dfde99d1d5e68f158b0c/python_fastllm-0.0.45.tar.gz", hash = "sha256:5bd0af0444a5e221903a1c535ef454134f13836961dd25ac6bcc7078eef9b65d", size = 59464, upload-time = "2026-09-01T04:57:27.16Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/96/59/40ba6964dee054d33256d99eca1a96252a3f5788c8de20750df14d189257/python_fastllm-0.0.41-py3-none-any.whl", hash = "sha256:597b8440b6ce057a57a8a5e16293e493eac3e1d2c452fde3a29e8a0c88cb2736", size = 789385, upload-time = "2026-08-13T03:14:28.486Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/68/1bf716c11da112bbe062b88e18cc892cded34d64825356360b2b51508a46/python_fastllm-0.0.45-py3-none-any.whl", hash = "sha256:7b4b0617b1bde9fcabed479da2d26065e1a8ead9359ba31a5b6664629493e6f4", size = 59126, upload-time = "2026-09-01T04:57:25.724Z" },
 ]
 
 [[package]]
@@ -4656,12 +4642,11 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.1.31"
-source = { git = "https://github.com/vedicreader/ramabana?branch=claude%2Framabana-post-release-cleanup-czjuk8#3cf4e674982f24f026a784f6878235b1a5e15b2d" }
+version = "0.1.32"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
     { name = "fastcore" },
-    { name = "fastllm-claude-code" },
     { name = "fastspec" },
     { name = "fossick" },
     { name = "gheasy" },
@@ -4672,9 +4657,12 @@ dependencies = [
     { name = "rgapi" },
     { name = "rishi" },
     { name = "shalya" },
-    { name = "toolslm" },
     { name = "uraiyadal" },
     { name = "vishalakshi" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a7/97/f2b9b1676954765227ef298e1bcfce0b64758e3b759a396a4a467eb0283d/ramabana-0.1.32.tar.gz", hash = "sha256:e4df8148f9ca2b36c4a3c4e0a5a65a5c96d0f20e493fbdcaf050a3fe5afa004a", size = 182945, upload-time = "2026-09-01T05:29:12.426Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/d3/6659e16dc470336f7dd48e58689092f4a8a8944b270f370f9b78c2cabea3/ramabana-0.1.32-py3-none-any.whl", hash = "sha256:4aba151ae416b62513d5e81952c5a25b733faa60768d29254197d9d4d9139d39", size = 195006, upload-time = "2026-09-01T05:29:11.05Z" },
 ]
 
 [package.optional-dependencies]
@@ -4927,7 +4915,7 @@ wheels = [
 
 [[package]]
 name = "rishi"
-version = "0.1.32"
+version = "0.1.36"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aidialog" },
@@ -4943,9 +4931,9 @@ dependencies = [
     { name = "truststore" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6b/44/3b5920ce5806d8bce1247d4be5e1b7a20a59da06215faef6f2250f55b4a4/rishi-0.1.32.tar.gz", hash = "sha256:3dca540ea14b492414d1e46bc191159b2f72c19d6f297ca88420cfa928bc84aa", size = 76449, upload-time = "2026-08-28T00:49:15.973Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b2/60/f02190354c04646516a61822ca329348b41101bad3c16b6ba08da5f32a1d/rishi-0.1.36.tar.gz", hash = "sha256:2b9a302b8edb2d71e9be78d2005e53f8c70f227618965c9fb778b589d9c62890", size = 76781, upload-time = "2026-09-01T05:16:43.084Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/95/2dbb5addc7fb27676ce33890f79775b223c15717a531a2a4ed4ab6e5c1b6/rishi-0.1.32-py3-none-any.whl", hash = "sha256:51ccd48e9ea76c4f93caefc62b0493ef7d37248e1f5b5569f20de5a546e5f9b5", size = 85816, upload-time = "2026-08-28T00:49:14.555Z" },
+    { url = "https://files.pythonhosted.org/packages/89/59/ee962182a68aaf6b8d5d86b16e44539c0d521ce1e560f27579fea87ef8b0/rishi-0.1.36-py3-none-any.whl", hash = "sha256:7afb0bd3a0de59bb5ab55d4023775d777fc3549f895f6ad106a9ac4543ced321", size = 86177, upload-time = "2026-09-01T05:16:41.875Z" },
 ]
 
 [package.optional-dependencies]
@@ -5227,8 +5215,8 @@ wheels = [
 
 [[package]]
 name = "shalya"
-version = "0.0.3"
-source = { git = "https://github.com/vedicreader/shalya?branch=claude%2Framabana-post-release-cleanup-czjuk8#d5c2103f94fe8b09890664902202ca3ebedae2f7" }
+version = "0.0.5"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dhrishti" },
     { name = "exhash" },
@@ -5237,6 +5225,10 @@ dependencies = [
     { name = "gheasy" },
     { name = "jupyter-client" },
     { name = "vishalakshi" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b0/7d/d552a976b8f54313d2038cea2f107ea7e0587ce48ccd25ceea163dc53504/shalya-0.0.5.tar.gz", hash = "sha256:0bc67a17b0f73848f9ece1d673268ffe982458bf69b18b53bb5731a44fad7aac", size = 38535, upload-time = "2026-09-01T04:58:48.735Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/32/39/58240d5f34a77eaa9df1c58792d800847fde24d18dfb762a3626036d8104/shalya-0.0.5-py3-none-any.whl", hash = "sha256:ca833b55688e1d41c9c55630c3a8c8c0be38db587becbde8926d1a9661312372", size = 41852, upload-time = "2026-09-01T04:58:47.536Z" },
 ]
 
 [[package]]
@@ -5475,21 +5467,6 @@ wheels = [
 ]
 
 [[package]]
-name = "toolslm"
-version = "0.3.48"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "codesigs" },
-    { name = "fastcore" },
-    { name = "ghapi" },
-    { name = "httpx" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/09/2c/ba2cbafdbe70ba65ea0dd7e9c6a1efa32d00ed4a8723e039776d405b4a21/toolslm-0.3.48.tar.gz", hash = "sha256:9bef3d3b570b45c5859688632df08613e68638c2c5b237735d4efcccf714cef3", size = 18829, upload-time = "2026-08-12T01:28:54.848Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/68/d4/8484898918988a07c4f47d27b3c339a9ba4efe1d21f382f9e31a4ed1c12a/toolslm-0.3.48-py3-none-any.whl", hash = "sha256:5e291dca2518d638844ef519205ad6ec9262111c436df639c7f5c51432f7d67c", size = 19894, upload-time = "2026-08-12T01:28:53.812Z" },
-]
-
-[[package]]
 name = "tornado"
 version = "6.5.8"
 source = { registry = "https://pypi.org/simple" }
@@ -5622,7 +5599,7 @@ wheels = [
 
 [[package]]
 name = "uraiyadal"
-version = "0.0.5"
+version = "0.0.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aidialog" },
@@ -5633,9 +5610,9 @@ dependencies = [
     { name = "safepyrun" },
     { name = "truststore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/df/53/51fbf7cef149dbe87e553f895687846ca95fa6fc8bf0f476bb6fa8ad8675/uraiyadal-0.0.5.tar.gz", hash = "sha256:f8beedd635fb4db994cab4a32f6b9eea4be654e5e273a9a05fe6347a6c13d4da", size = 46509, upload-time = "2026-08-30T22:40:03.145Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/3b/2f8b6a7da4d655857cf638807f0c65a25c4dd48d70f0364079ea8fca8836/uraiyadal-0.0.6.tar.gz", hash = "sha256:14cdfb5ace888646038f586c3f5aa9754a3cb885ae9b897196397fba43532f67", size = 46561, upload-time = "2026-09-01T01:55:55.928Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/9b/c131ec43da0fdb64e8f563d7ede2af400b3c7fedd8c400592cb9933a5cdb/uraiyadal-0.0.5-py3-none-any.whl", hash = "sha256:fdbc49248de0e952f86950946f9734309b1ac2b47086347378c3d79dacb6d084", size = 53264, upload-time = "2026-08-30T22:40:01.608Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/5d/e5d93fb76261fccf2f3d5753b20fe4286126d2e0decb0a08099b7d9448c2/uraiyadal-0.0.6-py3-none-any.whl", hash = "sha256:8fb8c91c8783a116d37c1fc13d6c21f1b712c7d465715e9f483cd9bf80f3f199", size = 53295, upload-time = "2026-09-01T01:55:54.833Z" },
 ]
 
 [[package]]

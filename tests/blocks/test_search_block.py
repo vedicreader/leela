@@ -239,3 +239,127 @@ def test_a_missing_or_broken_index_still_finds_the_definition(ws, tmp_path, monk
     assert 'index is locked' in ws.search.note and 'scanning site-packages' in ws.search.note
     found = ws.search.env_definitions('store_attr')
     assert [h.package for h in found] == ['fastcore'] and ws.search.backend == 'rg'
+
+def _client(ws):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    return TestClient(ide_app(ws))
+
+def _prefer(values):
+    "Write a `search` settings section the way the settings dialog does."
+    from leela.blocks.settings.settings import Settings
+    Settings(None).save('user', 'search', values)
+
+def test_the_settings_defaults_and_the_scorers_defaults_are_one_set_of_numbers():
+    "Two files hold these; a drift between them would tune a ranker nobody is running."
+    from leela.blocks.search.search import SETTING_WEIGHTS, Weights
+    from leela.blocks.settings.settings import DEFAULT_SETTINGS
+    held = DEFAULT_SETTINGS['search']
+    assert Weights.load(held) == Weights()
+    # Everything else the section holds: what is recorded, and what the dialog was last set to.
+    assert set(SETTING_WEIGHTS) == set(held) - {'telemetry', 'snippets', 'lastMode', 'lastScope', 'lastExts'}
+
+def test_a_search_answers_with_the_weights_it_ranked_with(ws):
+    "The panel re-ranks locally, so it has to be told what the server just paid."
+    _prefer({'legRg': 12.0})
+    with _client(ws) as client:
+        d = client.get('/search?q=block&mode=rg').json()
+    assert d['weights']['legRg'] == 12.0
+    assert d['weights']['symbolExact'] == 120.0, 'the rest stay at their defaults'
+
+def test_search_events_are_recorded_and_reduced_to_the_fields_this_version_stores(ws):
+    from leela.blocks.search.signals import Signals
+    _prefer({'telemetry': 'local'})
+    with _client(ws) as client:
+        out = client.post('/search/events', json={'events': [
+            {'kind': 'query', 'q': 'merge', 'mode': 'all', 'query_id': '1', 'secret': 'no'},
+            {'kind': 'open', 'query_id': '1', 'rank': 2, 'sources': ['rg']},
+            {'kind': 'invented'}]}).json()
+    assert out['ok'] and out['recorded'] == 2, 'a kind nobody declared is dropped, not stored'
+    rows = list(Signals().read())
+    assert [r['kind'] for r in rows] == ['query', 'open']
+    assert 'secret' not in rows[0] and rows[0]['q'] == 'merge' and rows[0]['at'] > 0
+
+def test_nothing_is_recorded_when_the_setting_says_not_to(ws):
+    from leela.blocks.search.signals import Signals
+    _prefer({'telemetry': 'off'})
+    with _client(ws) as client:
+        out = client.post('/search/events', json={'events': [{'kind': 'query', 'q': 'merge'}],
+                                                  'session': {'q': 'merge'}}).json()
+    assert out['recorded'] == 0 and 'off' in out['note']
+    assert list(Signals().read()) == []
+
+def test_the_matched_text_is_kept_only_when_the_setting_says_so(ws):
+    "A query is a person's search history and a snippet is their code. Off unless asked for."
+    from leela.blocks.search.signals import Signals
+    _prefer({'telemetry': 'local'})
+    with _client(ws) as client:
+        client.post('/search/events', json={'events': [
+            {'kind': 'open', 'query_id': '1', 'text': 'def secret_key():'}]})
+        assert 'text' not in list(Signals().read())[0]
+        _prefer({'snippets': True})
+        client.post('/search/events', json={'events': [
+            {'kind': 'open', 'query_id': '2', 'text': 'def secret_key():'}]})
+    assert [r.get('text') for r in Signals().read()] == [None, 'def secret_key():']
+
+def test_the_summary_is_the_numbers_a_ranker_is_tuned_from(tmp_path):
+    "Where the opened hit sat, which leg found it, and how often nothing was opened at all."
+    from leela.blocks.search.signals import Signals
+    s = Signals(tmp_path/'events')
+    s.record([{'kind': 'query', 'query_id': '1', 'q': 'a', 'mode': 'all'},
+              {'kind': 'leg', 'query_id': '1', 'leg': 'rg', 'ms': 20, 'n': 4},
+              {'kind': 'impression', 'query_id': '1', 'n': 4},
+              {'kind': 'open', 'query_id': '1', 'rank': 1, 'sources': ['rg', 'ann'], 'mode': 'all'},
+              {'kind': 'query', 'query_id': '2', 'q': 'b', 'mode': 'all'},
+              {'kind': 'impression', 'query_id': '2', 'n': 2},
+              {'kind': 'abandon', 'query_id': '2', 'n': 2}])
+    d = s.summary()
+    assert d['searches'] == 2 and d['opens'] == 1 and d['mrr'] == 0.5
+    assert d['success_at'] == {'1': 0.0, '3': 1.0, '10': 1.0}
+    assert d['abandon_rate'] == 0.5 and d['open_rate'] == 0.5
+    assert d['legs'] == {'ann': {'won': 1}, 'rg': {'found': 4, 'won': 1}}, 'which leg earned the click'
+    assert d['leg_ms'] == {'rg': 20} and d['modes']['all'] == {'searches': 2, 'opens': 1}
+
+def test_the_log_is_pruned_to_the_days_it_keeps_and_purged_on_request(ws, tmp_path):
+    from leela.blocks.search.signals import Signals
+    s = Signals(tmp_path/'events', keep_days=2)
+    for day in ('2026-01-01', '2026-01-02', '2026-01-03'):
+        s.dir.mkdir(parents=True, exist_ok=True)
+        (s.dir/f'{day}.jsonl').write_text('{"kind": "query", "q": "old"}\n')
+    s.record([{'kind': 'query', 'q': 'new'}])
+    assert len(s.files()) == 2, 'a day is a file, so keeping days is keeping files'
+    _prefer({'telemetry': 'local'})
+    with _client(ws) as client:
+        client.post('/search/events', json={'events': [{'kind': 'query', 'q': 'x'}]})
+        assert client.post('/search/signals/purge', json={}).json()['removed'] == 1
+        assert client.get('/search/signals').json()['summary']['events'] == 0
+
+def test_a_search_session_is_one_vault_document_not_one_per_keystroke(tmp_path):
+    "The vault answers questions about a search; the event log is what is fitted from."
+    from leela.blocks.search.signals import Signals
+    text = Signals(tmp_path)._document({
+        'q': 'merge dicts', 'mode': 'all', 'scope': 'project',
+        'shown': [{'rank': 0, 'path': 'a.py', 'line': 3, 'symbol': 'merge', 'sources': ['rg'],
+                   'previewed': True, 'opened': True},
+                  {'rank': 1, 'path': 'b.py', 'line': 9, 'sources': ['ann'], 'previewed': True},
+                  {'rank': 2, 'path': 'c.py', 'line': 1, 'sources': ['fts']}]})
+    assert '## Query\n\nmerge dicts' in text and 'mode all · scope project' in text
+    opened, rest = text.split('## Opened')[1].split('## Previewed')
+    previewed = rest.split('## Shown')[0]
+    assert 'a.py:3' in opened and 'b.py' not in opened
+    assert 'b.py:9' in previewed and 'a.py' not in previewed, 'opened is not also previewed-only'
+    assert 'c.py:1' in text.split('## Shown')[1]
+
+def test_the_vault_write_never_takes_a_search_down_with_it(ws, tmp_path, monkeypatch):
+    "A vault that will not open must cost the event log nothing."
+    from leela.blocks.search import signals as mod
+    from leela.blocks.search.signals import Signals
+    def boom(*a, **kw): raise RuntimeError('no encoder here')
+    monkeypatch.setattr(mod.Signals, '_document', boom)
+    s = Signals(tmp_path/'events')
+    assert s.remember({'q': 'merge'}) is None and 'could not write' in s.note
+    _prefer({'telemetry': 'vault'})
+    with _client(ws) as client:
+        out = client.post('/search/events', json={'events': [{'kind': 'query', 'q': 'merge'}],
+                                                  'session': {'q': 'merge'}}).json()
+    assert out['recorded'] == 1 and out['remembering'] is True

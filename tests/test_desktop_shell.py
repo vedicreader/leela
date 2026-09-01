@@ -43,6 +43,8 @@ def test_the_system_text_checker_is_turned_off_before_a_window_can_ask(monkeypat
     assert desktop.quiet_text_substitution() is True
     assert set(written) == set(desktop.NO_SUBSTITUTION)
     assert not any(written.values())
+    # Inline prediction is taken with Tab, so it ate the Tab meant for the completion list.
+    assert 'NSAutomaticInlinePredictionEnabled' in written
 
 def test_the_text_checker_is_a_mac_question_and_nothing_else_is_asked(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'linux')
@@ -104,6 +106,28 @@ def test_the_port_moves_out_of_the_way_of_a_leela_already_running():
         held.listen(1)
         got = leela_app.free_port(taken)
     assert got != taken and got > 0
+
+def test_the_port_a_window_is_served_from_is_the_same_one_next_launch():
+    """A window's origin is `http://<slug>.localhost:<port>`. The port used to fall back to
+    whatever the OS handed out, so a launch that could not have 5001 got a new origin and found
+    every per-origin thing the browser had kept for it empty: the theme reset on every reopen."""
+    import socket
+    ladder = range(5001, 5011)
+    assert leela_app.free_port(ports=ladder) in ladder
+    # Same answer every time, which is the whole property.
+    assert len({leela_app.free_port(ports=ladder) for _ in range(5)}) == 1
+    with socket.socket() as a, socket.socket() as b:
+        for s, p in ((a, 5001), (b, 5002)):
+            try: s.bind(('127.0.0.1', p)); s.listen(1)
+            except OSError: pytest.skip(f'{p} is held by something else on this machine')
+        assert leela_app.free_port(ports=ladder) == 5003, 'it steps down the ladder, it does not jump'
+        assert leela_app.free_port(ports=ladder) == 5003
+
+
+def test_a_full_ladder_still_starts_rather_than_refusing():
+    "A moving origin is a worse day than no app at all, so the OS fallback stays."
+    got = leela_app.free_port(preferred=5001, ports=range(0, 0))
+    assert got > 0
 
 def test_only_directories_are_taken_as_folders_to_open(tmp_path):
     "A double-click passes no arguments; a Finder drop can pass a file, which is not a root."
@@ -365,7 +389,10 @@ def test_the_menu_bar_names_only_actions_the_client_can_dispatch():
 def test_the_debug_menu_calls_functions_that_are_really_on_the_page():
     "`evaluate_js` runs in global scope, so a module-scope name is not reachable from a menu."
     from leela.blocks.keys.menus import BAR, Js
-    bundle = read('leela/static/lee-ide.js') + read('leela/static/lee-core.js')
+    from leela.core.web import IDE_BUNDLES
+    # every bundle the page loads, not two of the three: all of them run in the same global scope,
+    # so a menu row naming something in `lee-agent.js` was failing a check about reachability
+    bundle = ''.join(read(f'leela/static/{b}') for b in IDE_BUNDLES)
     for _, rows in BAR:
         for r in rows:
             if not isinstance(r, Js): continue
@@ -464,3 +491,65 @@ def test_an_external_link_never_navigates_the_app_window_away():
     assert 'openExternal(href)' in handler, 'a blocked or refused window still opens, via the server'
     assert 'lee.inShell = inShell()' in read('leela/blocks/workspace/projects.js'), \
         'nothing settles the flag `inDesktopShell` reads'
+
+
+def _stub_server(handler_body, status=400):
+    "A one-request loopback server answering `handler_body`, and the port it took."
+    import http.server, threading
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(status); self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(handler_body))); self.end_headers()
+            self.wfile.write(handler_body)
+        def log_message(self, *a): pass
+    srv = http.server.HTTPServer(('127.0.0.1', 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, srv.server_address[1]
+
+
+def test_only_a_leela_that_could_answer_an_attach_is_taken_for_one():
+    """The probe asks through the route an attach would use. A `leela` started without `--app` has
+    no hub and 404s there, and attaching to it would have opened nothing and said nothing."""
+    import json
+    hub, hub_port = _stub_server(json.dumps({'ok': False, 'error': 'not a folder: '}).encode(), 400)
+    plain, plain_port = _stub_server(b'404 Not Found', 404)
+    other, other_port = _stub_server(json.dumps({'ok': False, 'error': 'nope'}).encode(), 400)
+    try:
+        assert leela_app.leela_on(hub_port) is True
+        assert leela_app.leela_on(plain_port) is False, 'a Leela with no hub cannot be attached to'
+        assert leela_app.leela_on(other_port) is False, "somebody else's 400 is not a Leela"
+        assert leela_app.leela_on(1) is False
+        assert leela_app.running_leela(ports=[hub_port]) == hub_port
+        assert leela_app.running_leela(ports=[plain_port]) is None
+    finally:
+        for s in (hub, plain, other): s.shutdown()
+
+
+def test_a_second_launch_opens_windows_on_the_running_leela_instead_of_a_second_server(monkeypatch):
+    """One server means one origin, so what the first copy saved is what the second reads. It was
+    starting a second server on another port, which is a different origin and an empty one."""
+    opened, served = [], []
+    monkeypatch.setattr(leela_app, 'running_leela', lambda *a, **k: 5001)
+    monkeypatch.setattr(leela_app, 'serve', lambda *a, **k: served.append(a))
+    monkeypatch.setattr(leela_app, 'hub_open', lambda port, d, host=None: (
+        {'ok': True, 'id': 'proj', 'name': 'proj', 'url': f'http://proj.localhost:{port}/'}
+        if 'good' in str(d) else {'ok': False, 'error': 'not a folder'}))
+    monkeypatch.setattr('leela.desktop.run_shell',
+                        lambda urls, **kw: opened.append((list(urls), kw.get('titles'), kw.get('keys'))))
+    leela_app.attach(5001, ['/w/good', '/w/bad'])
+    assert served == [], 'no second server'
+    urls, titles, keys = opened[0]
+    assert urls == ['http://proj.localhost:5001/'], 'the window points at the running server'
+    assert titles == ['leela — proj'] and keys == ['proj']
+    # A folder the running copy refuses does not take the others down with it.
+    assert len(urls) == 1
+
+
+def test_attaching_to_a_copy_that_opens_nothing_says_so_rather_than_showing_a_blank_window(monkeypatch):
+    said = []
+    monkeypatch.setattr(leela_app, 'hub_open', lambda *a, **k: {'ok': False, 'error': 'not a folder'})
+    monkeypatch.setattr('leela.desktop.run_shell', lambda *a, **k: said.append('opened a window'))
+    monkeypatch.setattr('builtins.print', lambda *a, **k: said.append(' '.join(map(str, a))))
+    leela_app.attach(5001, ['/w/bad'])
+    assert not any(s == 'opened a window' for s in said)
+    assert any('opened none of these folders' in s for s in said), said

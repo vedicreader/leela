@@ -161,6 +161,7 @@ def test_the_briefing_says_what_is_true_of_both_kernels():
         assert host.concurrent, kind
         assert phrase in system_prompt(host, []), kind
 
+@pytest.mark.parametrize('kind', KINDS)
 def test_overlay_gives_the_real_interpreter_while_a_cell_runs(tmp_path, kind):
     "The scope that makes `inspect_python` worth having, and the one I got wrong first."
     async def go():

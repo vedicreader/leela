@@ -5,6 +5,7 @@ from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.agent.threads import Feed, Thread, Threads, TurnError, TurnRunner
 from leela.workspace import Workspace
+from tests.conftest import history_file
 
 
 def test_threads_are_lazy_isolated_and_keep_workspace_compatibility(tmp_path):
@@ -94,6 +95,7 @@ class _Workspace:
     def save_timeline(self, thread_id, turn_id, parts): self.timeline = list(parts); return self.timeline
     def ask_stream(self, prompt, attachments=(), on_registered=None, **kwargs):
         self.seen = tuple(attachments); on_registered(self.ai._run)
+        self.ai.current_turn_id = 'turn-2'      # `_prepare` mints this turn's id
         yield 'answer'
         self.ai._run.terminal = True
 
@@ -112,6 +114,51 @@ def test_runner_captures_acceptance_values_and_outlives_subscribers():
     events = [row['event'] for row in feed.since(0)]
     assert events[0] == 'user' and events[-3:] == ['done', 'title', 'state']
     assert [row['event'] for row in ws.timeline] == ['chunk']
+
+
+def test_the_watcher_leaves_the_previous_turns_calls_out_of_this_one():
+    """`on_registered` fires before `_prepare` marks the turn, so the mark the watcher's first poll
+    reads is the turn before this one's."""
+    from ramabana.agent import Activity
+    class Late(_Workspace):
+        def __init__(self):
+            super().__init__()
+            self.ai.activity = Activity()
+            self.ai.activity.start('view', {'path': 'old.py'}, action_id='old-1', turn_id='turn-1')
+        def ask_stream(self, prompt, attachments=(), on_registered=None, **kwargs):
+            on_registered(self.ai._run)
+            self.ai.current_turn_id = 'turn-2'; self.ai.activity.mark('turn-2')
+            self.ai.activity.start('grep', {'q': 'new'}, action_id='new-1', turn_id='turn-2')
+            time.sleep(.25)
+            yield 'answer'
+            self.ai._run.terminal = True
+    ws, feed = Late(), Feed()
+    TurnRunner(ws, feed).start('make it succinct, no tool calls')
+    end = time.time() + 3
+    while not any(row['event'] == 'done' for row in feed.since(0)) and time.time() < end: time.sleep(.01)
+    seen = [row['data'].get('id') for row in feed.since(0) if row['event'] == 'activity']
+    assert seen == ['new-1'], seen
+    assert [row['data'].get('id') for row in ws.timeline if row['event'] == 'activity'] == ['new-1']
+
+
+def test_a_turn_that_died_before_it_was_prepared_keeps_the_previous_turns_timeline():
+    """`save_timeline` files under `ai.current_turn_id`, which only becomes this turn's inside
+    `_prepare`. A turn that failed before that filed its own events under the previous turn's id,
+    over the calls and the answer that turn had saved."""
+    class Early(_Workspace):
+        def __init__(self): super().__init__(); self.saved = []
+        def save_timeline(self, thread_id, turn_id, parts):
+            self.saved.append((turn_id, [row['event'] for row in parts])); return list(parts)
+        def ask_stream(self, prompt, attachments=(), on_registered=None, **kwargs):
+            on_registered(self.ai._run); self.ai._run.terminal = True
+            raise RuntimeError('the model would not start')
+            yield
+    ws, feed = Early(), Feed()
+    TurnRunner(ws, feed).start('and the tests')
+    end = time.time() + 3
+    while not any(row['event'] == 'done' for row in feed.since(0)) and time.time() < end: time.sleep(.01)
+    assert ws.saved == [], ws.saved
+    assert [row['event'] for row in feed.since(0)][-3:] == ['error', 'done', 'state']
 
 
 def test_accepted_worker_failure_emits_error_then_done():
@@ -419,7 +466,7 @@ def test_a_resumed_conversation_is_named_by_its_log_so_it_keeps_its_card(tmp_pat
     import json
     ws = Workspace(roots=[tmp_path]); ws.add_root(str(tmp_path))
     thread = ws.threads.active
-    log = ws.ai.history_path; log.parent.mkdir(parents=True, exist_ok=True)
+    log = history_file(ws)
     log.write_text(json.dumps({'session': thread.id, 'at': 1, 'model': 'gpt-4.1',
                                'turn_id': f'{thread.id}:turn_000001',
                                'prompt': 'plot the release cadence', 'reply': 'done'}) + '\n')
@@ -606,6 +653,48 @@ def test_ordered_timeline_parts_survive_a_workspace_restart(tmp_path):
     assert second.with_timelines([{'session': 'thread-1', 'turn_id': 'turn-1'}, {'session': 'thread-2', 'turn_id': 'turn-1'}]) == [
         {'session': 'thread-1', 'turn_id': 'turn-1', 'timeline': parts},
         {'session': 'thread-2', 'turn_id': 'turn-1'}]
+
+
+def test_a_retained_turn_holds_only_what_a_replay_rebuilds_from_it(tmp_path):
+    """`reduceAgentTimeline` joins consecutive chunks into one block of prose and keeps one part per
+    `action_id` holding the newest payload, at the position where that call first appeared. Every
+    other row it is handed is read and dropped, and all of it was being written: 15MB across six
+    workspaces and 95% of the rows, parsed and serialised again on every turn.
+    """
+    ws = Workspace(roots=[tmp_path]); ws._timeline_path = tmp_path/'timeline.json'
+    parts = [{'seq': 1, 'event': 'chunk', 'data': {'text': 'one '}},
+             {'seq': 2, 'event': 'chunk', 'data': {'text': 'two '}},
+             {'seq': 3, 'event': 'chunk', 'data': {'text': 'three'}},
+             {'seq': 4, 'event': 'activity', 'data': {'action_id': 'call-1', 'done': False}},
+             {'seq': 5, 'event': 'activity', 'data': {'action_id': 'call-1', 'done': True, 'ok': True}},
+             {'seq': 6, 'event': 'activity', 'data': {'summary': 'no id of its own'}},
+             {'seq': 7, 'event': 'chunk', 'data': {'text': 'after'}}]
+    held = ws.save_timeline('thread-1', 'turn-1', parts)
+    assert [r['event'] for r in held] == ['chunk', 'activity', 'activity', 'chunk']
+    assert held[0]['data']['text'] == 'one two three', 'the prose was not joined'
+    assert held[1]['data'] == {'action_id': 'call-1', 'done': True, 'ok': True}, 'the call kept a stale payload'
+    assert held[2]['data'] == {'summary': 'no id of its own'}, 'a row with no id can only ever be new'
+    assert held[3]['data']['text'] == 'after', 'prose after a call is a block of its own'
+    again = Workspace(roots=[tmp_path]); again._timeline_path = tmp_path/'timeline.json'
+    assert again.timeline_parts('thread-1', 'turn-1') == held, 'a restart reads back something else'
+
+
+def test_the_timeline_is_parsed_again_only_when_the_file_has_moved(tmp_path, monkeypatch):
+    """Every reader parsed the whole document, which reaches several megabytes. `with_timelines`
+    runs on the history list and on every thread switch, and the writer read it before each write.
+    """
+    from fastcore.all import Path as FPath
+    ws = Workspace(roots=[tmp_path]); ws._timeline_path = tmp_path/'timeline.json'
+    ws.save_timeline('thread-1', 'turn-1', [{'seq': 1, 'event': 'chunk', 'data': {'text': 'held'}}])
+    reads, real = [], FPath.read_json
+    monkeypatch.setattr(FPath, 'read_json', lambda self, *a, **kw: (reads.append(self), real(self, *a, **kw))[1])
+    ws.timeline_parts('thread-1', 'turn-1')
+    ws.with_timelines([{'session': 'thread-1', 'turn_id': 'turn-1'}])
+    assert reads == [], 'a reader parsed the file the writer already had in hand'
+    ws._timeline_path.write_json({'thread-1:turn-1': [{'seq': 9, 'event': 'chunk', 'data': {'text': 'elsewhere'}}]})
+    assert ws.timeline_parts('thread-1', 'turn-1')[0]['data']['text'] == 'elsewhere', \
+        'a file that moved under it was not read again'
+    assert len(reads) == 1
 
 
 def test_a_turn_finishes_after_its_only_subscriber_has_gone(tmp_path):
@@ -1002,7 +1091,7 @@ def test_a_resumed_conversation_can_be_reshaped_and_its_prose_rewritten(tmp_path
     import json
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path]); ws.add_root('.')
-    log = ws.ai.history_path; log.parent.mkdir(parents=True, exist_ok=True)
+    log = history_file(ws)
     turns = [{'session': 'conv-x', 'at': 1, 'model': ws.ai.model.name, 'turn_id': 'conv-x:turn_000001',
               'prompt': 'q1', 'reply': 'r1',
               'activity': [{'tool': 'view_file', 'line': 'view_file a.py', 'detail': 'contents',
@@ -1042,7 +1131,7 @@ def test_a_resumed_conversation_can_be_reshaped_and_its_prose_rewritten(tmp_path
 def _logged_conversation(ws, sid='conv-n'):
     import json
     a = ws.ai
-    log = a.history_path; log.parent.mkdir(parents=True, exist_ok=True)
+    log = history_file(ws)
     turns = [{'session': sid, 'at': 1, 'model': a.model.name, 'turn_id': f'{sid}:turn_000001',
               'prompt': 'q1', 'reply': 'r1',
               'activity': [{'tool': 'view_file', 'line': 'view_file a.py', 'detail': 'contents',
@@ -1203,7 +1292,7 @@ def test_a_thread_card_carries_the_name_the_history_picker_shows(tmp_path):
     import json
     ws = Workspace(roots=[tmp_path]); ws.add_root(str(tmp_path))
     thread = ws.threads.active
-    log = ws.ai.history_path; log.parent.mkdir(parents=True, exist_ok=True)
+    log = history_file(ws)
     log.write_text(json.dumps({'session': thread.id, 'at': 1, 'model': 'gpt-4.1',
                                'turn_id': f'{thread.id}:turn_000001',
                                'prompt': 'ascii art for the ramabana CLI', 'reply': 'r'}) + '\n')
@@ -1262,7 +1351,7 @@ def test_the_turn_that_starts_a_conversation_names_it(tmp_path):
 def _log(ws, rows):
     "Write the conversation log the way the agent writes it, and forget what was parsed before."
     import json
-    p = Path(ws.ai.history_path); p.parent.mkdir(parents=True, exist_ok=True)
+    p = history_file(ws)
     p.write_text(''.join(json.dumps(r) + '\n' for r in rows))
     ws._history_stamps.clear()
     return p
@@ -1400,3 +1489,96 @@ def test_a_stop_settles_the_feed_but_a_rejected_turn_says_nothing(tmp_path):
     runner._pending['y'] = never
     runner._clear()
     assert never['cleared'] is False, 'a turn nobody accepted has nothing to settle'
+
+def test_every_branch_route_has_a_way_in_from_the_pane():
+    """The four branch routes shipped with tests and no caller: forking and switching were reachable
+    with curl and from nowhere in the app. A route nobody can reach is a route nobody has."""
+    root = Path(__file__).resolve().parents[2]
+    js = (root/'leela'/'static'/'lee-agent.js').read_text() + (root/'leela'/'static'/'lee-ide.js').read_text()
+    for route in ('/agent/branches', '/agent/branch/parts', '/agent/branch/switch', '/agent/fork',
+                  '/agent/conversation/parts', '/agent/history/preview', '/agent/history/apply'):
+        assert route in js, f'{route} is served but never called'
+    cards = (root/'leela'/'blocks'/'agent'/'live.js').read_text()
+    assert 'data-thread-branches' in cards, 'a conversation card is where its branches are reached'
+    assert "leeAgentBranches(id)" in cards, 'and the button has to be wired to the dialog'
+    bar = (root/'leela'/'blocks'/'agent'/'approvals.js').read_text()
+    assert "'Branch from here'" in bar and "hasAttribute('data-fork')" in bar, \
+        'forking from one turn belongs beside undo and revise, on that turn'
+    palette = (root/'leela'/'blocks'/'keys'/'palette.js').read_text()
+    assert 'leeAgentBranches()' in palette and 'leeAgentShape()' in palette
+    assert 'data-shape' in cards, 'shaping is a branch, so it is reached from the branches dialog too'
+
+
+def test_a_conversation_card_names_the_branch_the_next_turn_continues_from(tmp_path):
+    "Switching moves the model's context and not the transcript, so the card is what says where it is."
+    for ws, client in _answered_thread(tmp_path):
+        turn = client.get('/agent/branches').json()['turns'][-1]['turn_id']
+        forked = client.post('/agent/fork', json={'turn_id': turn}).json()['branch_id']
+        row = next(r for r in client.get('/agent/threads').json()['threads'] if r['id'] == ws.threads.active_id)
+        assert row['branch'] == forked != 'main'
+        client.post('/agent/branch/switch', json={'branch_id': 'main'})
+        rows = client.get('/agent/threads').json()['threads']
+        assert next(r for r in rows if r['id'] == ws.threads.active_id)['branch'] == 'main'
+
+
+def test_shaping_from_the_pane_previews_before_it_writes_and_survives_a_moved_branch(tmp_path):
+    """What the dialog does, in the order it does it: read the parts, price a manifest, apply at the
+    revision it was shown. An apply at a stale revision must leave the conversation alone."""
+    for ws, client in _answered_thread(tmp_path):
+        parts = client.get('/agent/conversation/parts').json()['parts']
+        assert parts and any(p['editable'] for p in parts), 'prose is what a person can rewrite'
+        drop = {parts[-1]['part_id']: 'discard'}
+        pv = client.post('/agent/history/preview', json={'manifest': drop}).json()
+        assert pv['omitted'] == 1 and pv['tokens'] > 0 and pv['branch_id'] == 'main'
+
+        stale = client.post('/agent/history/apply', json={'manifest': drop, 'revision': pv['revision'] + 5})
+        assert stale.status_code == 409 and stale.json()['code'] == 'history_changed'
+        assert client.get('/agent/branches').json()['active'] == 'main', 'and nothing was written'
+
+        out = client.post('/agent/history/apply',
+                          json={'branch_id': pv['branch_id'], 'revision': pv['revision'], 'manifest': drop}).json()
+        assert out['ok'] and out['omitted'] == 1 and out['stage'] == 'reshaped'
+        row = next(r for r in client.get('/agent/threads').json()['threads'] if r['id'] == ws.threads.active_id)
+        assert row['branch'] == out['branch_id'], 'and the card says which branch the next turn uses'
+
+
+
+def test_boot_picks_up_this_apps_newest_conversation_and_not_the_clis(tmp_path):
+    """One log holds Leela's conversations and the ramabana CLI's, and most of it is the CLI's. An
+    empty pane resuming the newest of both opened a conversation its own history list is filtered
+    to hide, and marked it as Leela's on the way in."""
+    from leela.blocks.agent.turns import mark_surface, surfaces
+    ws = Workspace(roots=[tmp_path]); model = ws.ai.model.name
+    _log(ws, [{'session': 'agent_mine', 'turn_id': 'agent_mine:1', 'at': 10, 'model': model,
+               'prompt': 'mine', 'reply': 'r1'},
+              {'session': 'agent_cli', 'turn_id': 'agent_cli:1', 'at': 30, 'model': model,
+               'prompt': 'theirs', 'reply': 'r2'}])
+    mark_surface(ws.ai.cfg, 'agent_mine')
+    try:
+        with TestClient(ide_app(ws)) as client:
+            d = client.post('/agent/resume', json={'session': 'latest'}).json()
+            assert d['session'] == 'agent_mine', "the newest of this app's own, not of the log"
+            assert 'agent_cli' not in surfaces(ws.ai.cfg), "and nothing adopted the CLI's"
+            both = client.post('/agent/resume', json={'session': 'latest', 'everything': True}).json()
+            assert both['session'] == 'agent_cli', "the filter off means the log's newest again"
+    finally: ws.threads.shutdown()
+
+
+def test_boot_still_opens_something_when_no_conversation_carries_the_mark(tmp_path):
+    """The mark is recent, so a person's own older conversations read as the CLI's. Refusing to open
+    any of them would leave the pane empty for exactly the people with the most history."""
+    ws = Workspace(roots=[tmp_path])
+    _log(ws, [{'session': 'agent_old', 'turn_id': 'agent_old:1', 'at': 30, 'model': ws.ai.model.name,
+               'prompt': 'before the mark existed', 'reply': 'r'}])
+    try:
+        with TestClient(ide_app(ws)) as client:
+            d = client.post('/agent/resume', json={'session': 'latest'})
+            assert d.status_code == 200 and d.json()['session'] == 'agent_old'
+    finally: ws.threads.shutdown()
+
+
+def test_the_boot_resume_asks_under_the_same_filter_as_the_history_list():
+    "The preference is the client's, so the client is what has to send it."
+    js = (Path(__file__).resolve().parents[2]/'leela'/'blocks'/'agent'/'live.js').read_text()
+    boot = js.split('async function resumeLatestAgent()')[1].split('\n}')[0]
+    assert 'everything: !leelaOnly()' in boot and 'agentPrefsReady()' in boot

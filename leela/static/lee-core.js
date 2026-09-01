@@ -95,12 +95,46 @@ function applyEditorPrefs(prefs = lee.editorPrefs, persist = false) {
   if (persist) localStorage.setItem('lee-editor-settings', JSON.stringify(p));
   return p;
 }
+/* A preference that outlives this origin.
+
+   `localStorage` is per origin, and the app's port moves, so a preference kept only there is empty
+   at the next launch and reads as its default: notifications a person switched on came back off,
+   and nobody could tell it from never having asked. These read settings.json, cache in
+   `localStorage` for the paint before the settings arrive, and write through.
+*/
+function prefGet(section, key, fallback = undefined) {
+  const held = lee.prefs?.[section];
+  if (held && held[key] !== undefined && held[key] !== '') return held[key];
+  const cached = localStorage.getItem(`lee-pref:${section}.${key}`);
+  if (cached !== null) { try { return JSON.parse(cached); } catch (_) {} }
+  return fallback;
+}
+async function prefSet(section, key, value, scope = 'user') {
+  lee.prefs = {...lee.prefs, [section]: {...(lee.prefs?.[section] || {}), [key]: value}};
+  localStorage.setItem(`lee-pref:${section}.${key}`, JSON.stringify(value));
+  // Never the caller's problem: a preference that could not be written is not a failed action.
+  try { await post('/settings/save', {scope, section, language: '', values: {[key]: value}}); }
+  catch (_) {}
+}
+/* One migration per key: what the old per-origin key held becomes the durable one, once, and only
+   where nothing durable was ever saved. Dropping it would silently reset everyone who has one.
+
+   Asked of `origins`, not of the value: `/settings` merges the defaults into `effective`, so every
+   key is always present and a never-saved one is told apart only by where it came from. No origins
+   means the settings have not arrived, and migrating against them would race the answer. */
+async function prefAdopt(section, key, legacyKey, parse = v => v) {
+  if (lee.settingsMeta?.origins?.[section]?.[key] !== 'default') return;
+  const old = localStorage.getItem(legacyKey);
+  if (old === null) return;
+  await prefSet(section, key, parse(old));
+}
 async function loadSettings(language = '') {
   try {
     const d = await api('/settings?language=' + encodeURIComponent(language));
     lee.settingsMeta = d; lee.filePrefs = d.effective.files || {};
     lee.workbenchPrefs = d.effective.workbench || {}; lee.debugPrefs = d.effective.debug || {};
     lee.backupPrefs = d.effective.backups || {}; lee.agentPrefs = d.effective.agent || {};
+    lee.prefs = d.effective || {}; lee.appearancePrefs = d.effective.appearance || {};
     applyEditorPrefs(d.effective.editor || EDITOR_DEFAULTS);
   } catch (_) { applyEditorPrefs(lee.editorPrefs); }
 }
@@ -109,11 +143,21 @@ applyEditorPrefs(lee.editorPrefs);
    browser does not: the packaged app curled quotes, corrected identifiers and, because the rewrite
    lands behind CodeMirror's back, dropped the next character typed at the start of the line. The
    served workspace never did any of it, which is why this only ever looked like a Mac-app bug.
+   `writingsuggestions` is the newer half of the same problem: an inline prediction is accepted with
+   Tab, so the Tab meant for the completion list was taken by the system, which rewrote the line and
+   left the caret at the start of it. `spellcheck` and `autocorrect` do not cover it.
    Set on the view rather than in the CodeMirror build, because `frontend/editor.js` needs esbuild
    and the bundle is committed; CodeMirror only clears attributes it set itself, so these survive.
    `leela/desktop.py:quiet_text_substitution` turns the same thing off one layer down. */
 const TYPING_ATTRS = {spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off',
-                      'data-gramm': 'false'};
+                      'data-gramm': 'false', writingsuggestions: 'false'};
+/* WKWebView refreshes the DOM selection lazily after CodeMirror rewrites a line, and resolves the
+   next keystroke against the value it has not refreshed yet: the caret is drawn from state at the
+   end of the line, and the character typed after a completion lands at the start of it. Reading the
+   selection is what forces the refresh, which is why the fault disappeared the moment a
+   `selectionchange` reader was attached by hand in the inspector. One reader for the window rather
+   than one per view: a notebook is one of these per cell. */
+document.addEventListener('selectionchange', () => { const s = document.getSelection(); if (s) void s.anchorOffset; });
 function quietTyping(view) {
   try { for (const [k, v] of Object.entries(TYPING_ATTRS)) view.contentDOM.setAttribute(k, v); }
   catch (_) { /* a view torn down before it was ever drawn */ }
@@ -563,7 +607,7 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null, delay = 32)
       if (el._leeCodeFrame) cancelAnimationFrame(el._leeCodeFrame);
       el._leeCodeFrame = requestAnimationFrame(() => {
         el._leeCodeFrame = 0;
-        if (onRender) try { onRender(el); } catch (e) { console.warn('Leela markdown annotation:', e); }
+        if (onRender) try { onRender(el, sent); } catch (e) { console.warn('Leela markdown annotation:', e); }
         resolveMarkdownImages(el); routeMarkdownLinks(el);
         upgradePortableToolMarkdown(el); enhanceCodeBlocks(el); addMarkdownCellAction(el);
         // Only now is the text on the page. Anything that measures the result waits for this.
@@ -579,11 +623,22 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null, delay = 32)
       }
     } finally {
       el._leeMarkdownBusy = false;
-      // the text moved on while this one was out, so the screen is a render behind
+      // the text moved on while this one was out, so the screen is a render behind. A flush that
+      // arrived mid-render is not made to wait out the gap it was asking to skip.
       if (el._leeMarkdownDirty || el.dataset.markdown !== sent)
-        renderMarkdown(el, el.dataset.markdown, allowRaw, onRender, delay);
+        renderMarkdown(el, el.dataset.markdown, allowRaw, onRender, el._leeMarkdownNow ? 0 : delay);
+      else el._leeMarkdownNow = false;
     }
   }, delay);
+}
+
+/* The end of a stream is not a moment to wait a throttle out. `agentTimeline` lengthens the gap
+   between renders as a reply grows, so a turn could otherwise finish with a second of unparsed
+   text on screen. The pending pass is dropped rather than left to repeat the work this one does. */
+function flushMarkdown(el, allowRaw = false, onRender = null) {
+  if (!el) return;
+  clearTimeout(el._leeMarkdownTimer); el._leeMarkdownTimer = 0; el._leeMarkdownNow = true;
+  renderMarkdown(el, el.dataset.markdown || '', allowRaw, onRender, 0);
 }
 
 async function api(url, opts, retried) {
@@ -921,6 +976,8 @@ const ACTIONS = {
   comment:      () => toggleComment(),
   complete:     () => kernelComplete(),
   ai_complete:  () => aiComplete(),
+  ask_ai:       () => askSelection('[data-ask]'),
+  summarise:    () => askSelection('[data-summary]'),
   show_docs:    () => showDocs(),
   show_diff:    () => lee.menuSurface === 'file' ? treeDiff() : showDiff(),
   git_blame:    () => lee.menuSurface === 'file' ? treeBlame() : leeBlame(),
@@ -1690,6 +1747,19 @@ function mountMedia(host, st) {
     `${esc(name)} could not be played by this browser.</${tag}></div></div>`;
 }
 
+/* The setting names the three views `source`, `preview` and `split`; the buttons and the stage's
+   CSS have always said `edit`, `rendered` and `split`, so the names meet here and nowhere else.
+   Adopted once a page: `origins` still says `default` until the settings are read again, so a
+   second adoption would put the old key back over a view chosen since. */
+const MD_VIEWS = {source: 'edit', preview: 'rendered', split: 'split'};
+const MD_PREFS = {edit: 'source', rendered: 'preview', split: 'split'};
+let mdAdopted = false;
+async function adoptMdView() {
+  if (mdAdopted) return;
+  mdAdopted = true;
+  await prefAdopt('workbench', 'markdownView', 'lee-md-view', v => MD_PREFS[v] || 'split');
+}
+
 async function mountFile(host, st) {
   const isProject = st.path?.endsWith('/pyproject.toml') || st.title === 'pyproject.toml';
   const crumbMode=lee.workbenchPrefs.breadcrumbs||'pathAndSymbols',crumb=crumbMode==='off'?'':`<nav class="lee-breadcrumbs" id="editorcrumbs" aria-label="File and symbol path"><span>${esc(compactPath(st.path||st.title||''))}</span></nav>`;
@@ -1697,7 +1767,8 @@ async function mountFile(host, st) {
   // only hidden by CSS, so saving, autosave, blame, the change gutter and jump-to-line all keep
   // reaching `lee.editors.get('file')`.
   const isMd = (st.lang || '') === 'markdown';
-  const view = isMd ? (localStorage.getItem('lee-md-view') || 'split') : '';
+  if (isMd) await adoptMdView();
+  const view = isMd ? (MD_VIEWS[prefGet('workbench', 'markdownView', 'source')] || 'split') : '';
   host.innerHTML = crumb + (isProject ? '<div class="lee-package-summary" id="packagebar" hidden></div>' : '') +
     (isMd ? `<div class="lee-doc-head lee-md-bar"><div class="lee-segbar" id="mdview" aria-label="markdown view">` +
             ['edit', 'split', 'rendered'].map(v =>
@@ -1745,7 +1816,7 @@ async function mountFile(host, st) {
     $('#mdview').onclick = e => {
       const b = e.target.closest('[data-md-view]'); if (!b) return;
       const next = b.dataset.mdView;
-      localStorage.setItem('lee-md-view', next);
+      prefSet('workbench', 'markdownView', MD_PREFS[next] || 'split');
       $('.lee-md-stage').dataset.view = next;
       $$('#mdview .lee-seg').forEach(x => x.classList.toggle('active', x === b));
       // The editor was display:none a moment ago, so CodeMirror has stale measurements and draws
@@ -2471,15 +2542,31 @@ function selectCell(i, extend = false) {
   } else { lee.cellAnchor = lee.sel; lee.cellSelection = new Set([lee.sel]); }
   paintSel();
 }
+/* Bring a cell into view with room around it.
+
+   `scrollIntoView({block: 'nearest'})` moves the minimum distance, so a cell arriving from below
+   parks flush against the bottom edge with nothing under it, which is the whole of what a reader
+   wants to see after running it. Moving the minimum is still right once the cell is comfortably
+   on screen, or stepping to a neighbour would jump the page, so the margin is what decides. */
+function revealCell(cell) {
+  const host = $('#editor'); if (!host || !cell) return;
+  const box = host.getBoundingClientRect(), r = cell.getBoundingClientRect();
+  const margin = Math.min(120, Math.max(24, box.height * .18));
+  const above = r.top - box.top - margin, below = r.bottom - box.bottom + margin;
+  // A cell taller than the room left over can only be shown from its top.
+  if (r.height > box.height - margin * 2 || above < 0) host.scrollTop += above;
+  else if (below > 0) host.scrollTop += below;
+}
 function focusCell(i) {
   selectCell(i);
   const c = lee.cells[lee.sel]; if (!c) return;
-  const cell = $(`.lee-cell[data-i="${lee.sel}"]`);
-  // CodeMirror focuses its own scroller but cannot reveal itself inside the notebook's outer
-  // scroller, so the cell is scrolled into view here.
-  cell?.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  // Mounted first: an unmounted cell is a shell whose height is a guess, and the reveal measures it.
   const v = ensureCellMounted(lee.sel);
-  if (v) requestAnimationFrame(() => LeeCM.focus(v));
+  const reveal = () => revealCell($(`.lee-cell[data-i="${lee.sel}"]`));
+  reveal();
+  // CodeMirror focuses its own scroller and reveals the caret minimally, which spends the margin
+  // again, so the reveal is repeated after it and after the layout mounting just caused.
+  requestAnimationFrame(() => { if (v) LeeCM.focus(v); reveal(); });
 }
 function focusCellPage(direction) {
   if (!lee.cells.length) return;
@@ -3394,17 +3481,26 @@ function selectionEditor() {
   if (!['editor', 'exec'].includes(lee.scope)) return null;
   return curEditor();
 }
+/* Place a floating panel beside `rect`, wholly inside the viewport.
+
+   `offsetHeight`, not `getBoundingClientRect`: these panels animate in from a transform, and the
+   rect is of the transformed box, which is short by a few pixels on the first frame. Callers place
+   twice, once while the panel is a skeleton and again once it has its content, so appending is
+   conditional and the second call only moves it. */
 function positionFloating(el, rect) {
-  document.body.appendChild(el);
-  const own = el.getBoundingClientRect(), left = Math.max(8, Math.min(rect.left, innerWidth - own.width - 8));
-  const below = rect.bottom + 7, top = below + own.height < innerHeight - 8 ? below : Math.max(8, rect.top - own.height - 7);
-  el.style.left = left + 'px'; el.style.top = top + 'px';
+  if (!el.isConnected) document.body.appendChild(el);
+  const w = el.offsetWidth, h = el.offsetHeight, below = innerHeight - rect.bottom - 15;
+  const top = h <= below || below >= rect.top - 15 ? rect.bottom + 7 : rect.top - h - 7;
+  el.style.left = Math.max(8, Math.min(rect.left, innerWidth - w - 8)) + 'px';
+  el.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + 'px';
 }
+/* Returns the panel it raised, or null. The chords below ask for one of its controls, and the four
+   guards here are the only place that knows whether there is a selection to act on. */
 function showSelectionHelp() {
-  if ($('.lee-selection-reply') || document.activeElement?.closest?.('.lee-selection-tools')) return;
-  const view = selectionEditor(); if (!view) return closeSelectionHelp();
-  const selected = LeeCM.selection(view); if (!selected?.text.trim()) return closeSelectionHelp();
-  const rect = LeeCM.selectionCoords(view); if (!rect) return closeSelectionHelp();
+  if ($('.lee-selection-reply') || document.activeElement?.closest?.('.lee-selection-tools')) return null;
+  const view = selectionEditor(); if (!view) return closeSelectionHelp(), null;
+  const selected = LeeCM.selection(view); if (!selected?.text.trim()) return closeSelectionHelp(), null;
+  const rect = LeeCM.selectionCoords(view); if (!rect) return closeSelectionHelp(), null;
   closeSelectionHelp();
   const tools = document.createElement('aside'); tools.className = 'lee-selection-tools';
   tools.innerHTML = `<button type="button" data-summary>summarise</button>` +
@@ -3420,38 +3516,145 @@ function showSelectionHelp() {
     $('[data-send]', tools).onclick = send;
     input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); send(); } else if (e.key === 'Escape') closeSelectionHelp(); };
   };
+  return tools;
+}
+/* The chords reach the panel's own controls rather than the route behind them, so the selection, the
+   coordinates and the four guards stay in one place. Each way of being unavailable says which one it
+   is: a reply already on screen is not a missing selection, and an ask already open is not a second
+   ask. Silence would be worse than either, because a chord that does nothing reads as broken. */
+function askSelection(control) {
+  if ($('.lee-selection-reply')) return status('finish or discard the open suggestion first', 'err');
+  if ($('.lee-selection-tools')?.classList.contains('asking')) return status('the ask box is already open', 'err');
+  const tools = showSelectionHelp();
+  if (!tools) return status('select some text in an editor first', 'err');
+  $(control, tools).click();
+}
+/* What the model looked at before answering, named rather than counted: a rewrite that read the
+   file around the selection is worth more trust than one that read nothing, and the reader is the
+   one deciding whether to take it. */
+function trailHtml(activity) {
+  if (!Array.isArray(activity)) return '';   // an older server: say nothing rather than guess
+  const used = activity.filter(a => a.tool).map(a => a.tool);
+  // An empty trail is a fact about the answer, not a missing feature. Rendering nothing for it
+  // leaves the reader unable to tell "it looked at nothing" from "the trail is broken".
+  if (!used.length) return `<div class="lee-selection-trail lee-trail-none">` +
+    `<span>answered without looking anything up</span></div>`;
+  const counts = used.reduce((n, t) => ({...n, [t]: (n[t] || 0) + 1}), {});
+  const named = Object.entries(counts).map(([t, n]) => esc(n > 1 ? `${t} x${n}` : t)).join(', ');
+  return `<div class="lee-selection-trail"><span>looked at</span> ${named}</div>`;
+}
+/* One panel's judgement, reported as it happens.
+
+   The outcome is a click, so only the browser ever learns it, and the `ask_id` the server minted is
+   what ties the answer to what became of it. Every send is swallowed: `post` rejects on a non-2xx,
+   and a recording failure must never be what stops a replace. */
+function completionLog() {
+  let queue = [], timer = null, done = false;
+  const flush = () => {
+    clearTimeout(timer); timer = null;
+    const events = queue; queue = [];
+    if (events.length) post('/ai/events', {events}).catch(() => {});
+  };
+  const add = (kind, row = {}) => {
+    if (done) return;
+    /* One panel, one verdict -- and `stale` is not one. The selection moved out from under a
+       replace, which leaves the panel open and the suggestion still there to accept once the
+       caret is back. Ending the log on it threw away the accept that followed. */
+    if (['replace', 'discard', 'abandon'].includes(kind)) done = true;
+    queue.push({kind, at: Date.now() / 1000, ...row});
+    clearTimeout(timer); timer = setTimeout(flush, done ? 0 : 2500);
+  };
+  return {add, flush, settled: () => done};
 }
 async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
   closeSelectionHelp();
+  const log = completionLog();
   status(mode === 'summary' ? 'summarising selection with the local model…' : 'asking the inline model to rewrite the selection…');
   const panel = document.createElement('aside'); panel.className = 'lee-selection-reply loading';
   panel.innerHTML = `<header><strong>${mode === 'summary' ? 'Summarising selection' : 'Inline AI help'}</strong>` +
     `<span>working locally when available</span></header><div class="lee-selection-skeleton"><i></i><i></i><i></i></div>`;
-  positionFloating(panel, rect);
+  // The reader can scroll or resize while the model answers, so the anchor is asked for again
+  // rather than reused. `selectionCoords` gives nothing once the selection is gone.
+  const anchor = () => { try { return LeeCM.selectionCoords(view) || rect; } catch (_) { return rect; } };
+  positionFloating(panel, anchor());
+  /* Minted here, not by the route. The ask is logged before the request and the verdict long after
+     it, so a server-minted id reached the reply and the outcome and never the ask: the instruction
+     and the selected code sat on disk with nothing to join them to. Declared outside the `try`,
+     because the `error` a failed ask records is the half of the judgement that matters most. */
+  const ask_id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   try {
-    const result = await post('/complete/selection', {text: selected.text, mode, instruction, lang: curLang()});
+    // The path and the lines are what the read-only tools need to open anything around the
+    // selection. Without them a model asked about `check` can only see the range it was given.
+    const doc = LeeCM.getDoc(view), lineAt = i => doc.slice(0, i).split('\n').length;
+    log.add('ask', {ask_id, mode, instruction, lang: curLang(), path: lee.path || '',
+                    chars: selected.text.length, text: selected.text});
+    const result = await post('/complete/selection', {
+      ask_id, text: selected.text, mode, instruction, lang: curLang(), path: lee.path || '',
+      line_from: lineAt(selected.from), line_to: lineAt(selected.to)});
+    log.add('reply', {ask_id, model: result.model, ms: result.ms, tools: result.tools,
+                      reply: result.text});
     panel.classList.remove('loading'); panel.innerHTML = `<header><strong>${mode === 'summary' ? 'Summary' : 'Suggested replacement'}</strong>` +
-      `<span>${esc(result.model || '')}</span></header><pre></pre><footer>` +
+      `<span title="the inline model, set beside 'prompt cells · inline AI' in the agent settings">` +
+      `${esc(result.model || '')}${mode === 'summary' ? '' : ' · inline model'}</span></header>` +
+      `<pre></pre>${trailHtml(result.activity)}<footer>` +
+      `<button class="lee-btn" data-completions title="what you have asked, and what you kept">log</button>` +
       `<button class="lee-btn" data-discard>discard</button><button class="lee-btn go" data-replace>replace selection</button></footer>`;
     $('pre', panel).textContent = result.text;
-    $('[data-discard]', panel).onclick = () => panel.remove();
+    panel._leeLog = log; panel._leeAsk = ask_id;
+    $('[data-discard]', panel).onclick = () => { log.add('discard', {ask_id}); panel.remove(); };
+    /* `completionLog` holds events for 2500ms, so the ask on screen is not in the store yet and the
+       log would open without it. Flushed first, and the panel is left alone: reading the record is
+       not a verdict on this suggestion. */
+    $('[data-completions]', panel)?.addEventListener('click', () => { log.flush(); showCompletions(); });
     $('[data-replace]', panel).onclick = () => {
-      if (LeeCM.slice(view, selected.from, selected.to) !== selected.text)
+      // Not an accept: nothing was applied. Counting it as one would flatter the model.
+      if (LeeCM.slice(view, selected.from, selected.to) !== selected.text) {
+        log.add('stale', {ask_id});
         return status('selection changed while the model was answering; suggestion left open', 'err');
+      }
+      log.add('replace', {ask_id});
       LeeCM.replaceRange(view, selected.from, selected.to, result.text); panel.remove(); status('selection replaced', 'ok');
     };
     panel.onkeydown = e => {
-      if (e.key === 'Escape') panel.remove();
+      if (e.key === 'Escape') { log.add('abandon', {ask_id}); panel.remove(); }
       else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('[data-replace]', panel).click();
     };
     $('[data-replace]', panel).focus();
+    positionFloating(panel, anchor());
     status(`${mode === 'summary' ? 'summary' : 'replacement'} ready from ${result.model || 'the inline model'} · review before replacing`, 'ok');
   } catch (e) {
+    // Asked and got nothing is the signal a rejection rate would otherwise hide.
+    log.add('error', {ask_id, mode, model: '', instruction});
     panel.classList.remove('loading'); panel.innerHTML = `<div class="lee-selection-error">${esc(e.message || e)}</div>` +
-      `<footer><button class="lee-btn" data-discard>close</button></footer>`;
+      `<footer><button class="lee-btn" data-completions title="what you have asked, and what you kept">log</button>` +
+      `<button class="lee-btn" data-discard>close</button></footer>`;
+    // An ask that failed is when somebody most wants to know whether it has been failing all day
+    $('[data-completions]', panel).onclick = () => { log.flush(); showCompletions(); };
     $('[data-discard]', panel).onclick = () => panel.remove();
+    positionFloating(panel, anchor());
   }
 }
+/* The panel's own `onkeydown` only fires while the focus is inside it, which the first click
+   elsewhere ends. Escape closes it from anywhere, and defers to a modal above it. */
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || $$('.lee-modal').length) return;
+  const panel = $('.lee-selection-reply'); if (!panel) return;
+  abandonReply(panel); panel.remove(); e.stopPropagation();
+}, true);
+
+/* A panel closed without a verdict is still an answer nobody took, and leaving it unrecorded makes
+   the accept rate a ratio over a denominator that quietly drops them. */
+function abandonReply(panel) {
+  const log = panel?._leeLog;
+  if (log && !log.settled()) log.add('abandon', {ask_id: panel._leeAsk || ''});
+}
+addEventListener('pagehide', () => {
+  const panel = $('.lee-selection-reply'); if (!panel?._leeLog || panel._leeLog.settled()) return;
+  // `post` will not survive the unload; a beacon will.
+  const body = JSON.stringify({events: [{kind: 'abandon', ask_id: panel._leeAsk || '',
+                                         at: Date.now() / 1000}]});
+  try { navigator.sendBeacon('/ai/events', new Blob([body], {type: 'application/json'})); } catch (_) {}
+});
 let selectionHelpTimer = null;
 document.addEventListener('selectionchange', () => {
   clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 180);

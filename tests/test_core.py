@@ -97,6 +97,29 @@ def test_settings_report_the_origin_of_each_effective_value(client):
     d = client.get('/settings').json()
     assert isinstance(d, dict) and d, 'describe() returns the effective layered view'
 
+def test_the_theme_is_a_setting_and_survives_a_round_trip(tmp_path):
+    "A theme kept in localStorage is lost whenever the port, and with it the origin, changes."
+    s = Settings(root=tmp_path, user_path=tmp_path/'user.json')
+    assert DEFAULT_SETTINGS['appearance']['theme'] == '', 'empty is what tells the browser to migrate'
+    s.save('user', 'appearance', {'theme': 'leela:dark:relaxed'})
+    assert s.effective()['appearance']['theme'] == 'leela:dark:relaxed'
+    assert Settings(root=tmp_path, user_path=tmp_path/'user.json').effective()['appearance']['theme'] \
+        == 'leela:dark:relaxed', 'a new process reads the same theme'
+
+def test_a_theme_saved_to_a_language_scope_is_still_the_theme_for_every_language(tmp_path):
+    "The panel saves the theme with no language. A `languages.python` theme would shadow it."
+    s = Settings(root=tmp_path, user_path=tmp_path/'user.json')
+    s.save('user', 'appearance', {'theme': 'nord:dark:tight'}, language='')
+    assert 'languages' not in s.raw('user')
+    assert s.effective(language='python')['appearance']['theme'] == 'nord:dark:tight'
+
+def test_a_workspace_theme_beats_the_user_theme(tmp_path):
+    s = Settings(root=tmp_path, user_path=tmp_path/'user.json')
+    s.save('user', 'appearance', {'theme': 'leela:dark:relaxed'})
+    s.save('workspace', 'appearance', {'theme': 'gruvbox:light:tight'})
+    assert s.effective()['appearance']['theme'] == 'gruvbox:light:tight'
+    assert s.describe()['origins']['appearance']['theme'] == 'workspace'
+
 def test_saving_an_unknown_settings_scope_fails_rather_than_writing_somewhere(client):
     r = client.post('/settings/save', json={'scope': 'nowhere', 'section': 'editor',
                                             'values': {'fontSize': 14}})
@@ -1238,6 +1261,20 @@ def test_no_test_can_reach_the_real_conversation_log(tmp_path, cfg_home):
     assert Path(fresh.ai.history_path).name == 'agent-history.jsonl', 'the same file, in a safe place'
     fresh.threads.shutdown()
 
+def test_the_log_helper_refuses_a_path_outside_the_suites_config_dir(tmp_path, cfg_home):
+    """The write that truncated a real log came from a script run without these fixtures, where
+    `agent.configFolder` resolved to the person's own directory. Every test writer goes through
+    `history_file`, which checks the path rather than trusting the fixture that is usually there."""
+    from tests.conftest import history_file
+    fresh = Workspace(roots=[tmp_path])
+    assert history_file(fresh).parent == Path(cfg_home), 'an isolated log is handed straight back'
+    fresh.threads.shutdown()
+    elsewhere = type('Elsewhere', (), {'ai': type('AI', (), {
+        'history_path': Path.home()/'.config'/'ramabana'/'agent-history.jsonl'})()})()
+    with pytest.raises(AssertionError, match='refusing to write a test conversation log'):
+        history_file(elsewhere)
+
+
 def test_a_write_from_outside_leela_is_kept_before_the_editor_takes_it(tmp_path):
     "The disk poll is the only moment anything notices another process editing an open file."
     from starlette.testclient import TestClient
@@ -1509,3 +1546,26 @@ def test_a_partial_save_and_an_unreadable_file_leave_the_folders_alone(tmp_path)
     state.write_text('{not json')
     Workspace(roots=[a]).save(state)
     assert [Path(r).name for r in state.read_json()['roots']] == ['a']
+
+
+def test_the_first_paint_uses_the_saved_theme_not_only_this_origin_s_cache(tmp_path, monkeypatch):
+    """The boot script read `localStorage` alone and fell back to the light cursor theme. That
+    cache is per origin, and the app's port moves, so a launch at a new origin painted the wrong
+    theme before the settings arrived. Which is the flash the theme fix alone does not remove."""
+    import re
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    from leela.blocks.settings import settings as S
+    monkeypatch.setattr(S, 'user_settings_file', lambda: tmp_path/'settings.json')
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as c:
+        blank = re.search(r'const saved = (.*?);', c.get('/').text).group(1)
+    assert blank == '""', f'nothing chosen means nothing rendered, got {blank}'
+    S.Settings(user_path=tmp_path/'settings.json').save('user', 'appearance', {'theme': 'nord:dark:relaxed'})
+    ws2 = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws2)) as c:
+        html = c.get('/').text
+    assert re.search(r'const saved = (.*?);', html).group(1) == '"nord:dark:relaxed"', html[:0]
+    # The cache still wins when it has something, so a theme changed in this tab is not undone.
+    assert "localStorage.getItem('lee-theme') || saved" in html

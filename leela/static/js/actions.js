@@ -123,6 +123,8 @@ const ACTIONS = {
   comment:      () => toggleComment(),
   complete:     () => kernelComplete(),
   ai_complete:  () => aiComplete(),
+  ask_ai:       () => askSelection('[data-ask]'),
+  summarise:    () => askSelection('[data-summary]'),
   show_docs:    () => showDocs(),
   show_diff:    () => lee.menuSurface === 'file' ? treeDiff() : showDiff(),
   git_blame:    () => lee.menuSurface === 'file' ? treeBlame() : leeBlame(),

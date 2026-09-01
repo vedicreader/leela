@@ -29,6 +29,21 @@ from leela.app import ide_app
 from leela.blocks.runtime.kernels import ExecOutcome, KernelPool
 from leela.workspace import Workspace
 
+def history_file(ws):
+    """The conversation log, checked before a test replaces it.
+
+    Every test writer replaces this file whole, and `agent.configFolder` can point it at a real
+    directory, so a caller that has escaped the config isolation truncates a person's whole
+    conversation log. `cfg_home` is what keeps it in a temp dir and
+    `test_no_test_can_reach_the_real_conversation_log` pins that; this refuses when something is
+    outside it, including a script run without these fixtures at all.
+    """
+    p = _pathlib.Path(ws.ai.history_path)
+    assert REAL_CONFIG_HOME not in p.parents and _pathlib.Path.home() not in p.parents, \
+        f'refusing to write a test conversation log to {p}'
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
 FIXTURES = 'fixtures'
 
 def fixture_dir(request):
@@ -120,6 +135,9 @@ def _isolate_vault(monkeypatch, tmp_path_factory):
     vault = _pathlib.Path(TEST_CONFIG_HOME)/'vaults'/tmp_path_factory.mktemp('v').name
     vault.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv('VISHALAKSHI_VAULT', str(vault/'vault.db'))
+    # The search telemetry vault is a second file, and a route that records one search session
+    # would otherwise write into the person's own `~/.vishalakshi`.
+    monkeypatch.setenv('LEELA_SEARCH_VAULT', str(vault/'search.db'))
     monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
 
 ROWS = {

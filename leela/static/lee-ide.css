@@ -784,6 +784,34 @@ kbd {
 .lee-history-session-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 4px 4px; }
 .lee-history-session-head strong { color: var(--lee-fg); font-size: 11px; }
 .lee-history-session-head span { color: var(--lee-green); font-size: 9.5px; }
+.lee-completions { padding: 8px 4px 12px; }
+.lee-completions-modal .lee-modalbox { width: min(860px, 94vw); }
+.lee-completion-models, .lee-completion-log { display: flex; flex-direction: column; gap: 1px; max-height: 180px; overflow: auto; }
+.lee-completion-log { max-height: 46vh; }
+.lee-completion-log > .lee-dim { display: block; padding: 4px 6px; }
+.lee-completion-models > div, .lee-completion-log > div {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, .5fr); gap: 10px;
+  align-items: center; padding: 4px 6px; border-radius: 3px; color: var(--lee-fg3); font: 9.5px/1.4 var(--lee-mono);
+}
+.lee-completion-models > div:hover, .lee-completion-log > div:hover { background: var(--lee-sel); color: var(--lee-fg); }
+.lee-completion-models strong, .lee-completion-log strong,
+.lee-completion-models span, .lee-completion-log span,
+.lee-completion-models em, .lee-completion-log em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-completion-models span, .lee-completion-log span { color: var(--lee-fg4); }
+.lee-completion-models em, .lee-completion-log em { font-style: normal; text-align: right; }
+
+/* A row opens onto the question and the code either side of it. `summary` keeps the grid the flat
+   rows had, so an expandable row and a per-model row still line up in the same three columns. */
+.lee-completion-row > summary { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: baseline;
+  padding: 3px 6px; cursor: pointer; list-style: none; }
+.lee-completion-row > summary::-webkit-details-marker { display: none; }
+.lee-completion-row > summary:hover { background: var(--lee-sel); color: var(--lee-fg); }
+.lee-completion-row[data-completion="replace"] em { color: var(--lee-green); }
+.lee-completion-row[data-completion="discard"] em { color: var(--lee-red); }
+.lee-completion-detail { display: flex; flex-direction: column; gap: 6px; padding: 4px 8px 10px; }
+.lee-completion-code h5 { margin: 0 0 2px; font: 9px/1.3 var(--lee-mono); text-transform: uppercase; color: var(--lee-fg4); }
+.lee-completion-code pre { margin: 0; padding: 6px 8px; max-height: 220px; overflow: auto; white-space: pre-wrap;
+  overflow-wrap: anywhere; background: var(--lee-bg1); border: 1px solid var(--lee-border); border-radius: 4px; }
 .lee-session-nav {
   position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 4px;
   padding: 5px 3px 7px; overflow-x: auto; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1);
@@ -920,6 +948,11 @@ kbd {
 }
 .lee-agent-reply { margin-right: 4px; }
 .lee-agent-reply:empty { display: none; }
+/* What has arrived since the last render, before it has been parsed. Same metrics as the prose it
+   follows, so the paragraph does not reflow when the render lands and takes it over. */
+.lee-agent-reply-tail { margin: 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--lee-fg2); }
+.lee-agent-reply-tail:empty { display: none; }
+.lee-agent-trimmed { color: var(--lee-fg4); font: 10px/1.4 var(--lee-mono); padding: 4px 2px 8px; }
 .lee-agent-timeline { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .lee-agent-timeline > .lee-agent-reply { margin: 0 4px; }
 /* what a delegated question did, which is otherwise thrown away with its conversation */
@@ -1610,6 +1643,8 @@ kbd {
 .lee-setup-row > .lee-dim, .lee-setup-row > .warn { padding: 0; font-size: 10px; white-space: nowrap; }
 .lee-setup-row > button, .lee-setup-row > a { justify-self: end; }
 .lee-setup-modal .lee-modalbox { width: min(860px, 94dvw); }
+.lee-shape-row textarea { display: block; width: 100%; margin-top: 4px; resize: vertical; }
+.lee-shape-row label { justify-self: end; white-space: nowrap; color: var(--lee-fg4); font-size: 10px; }
 /* `.sel` is the caret and stays one row; `.marked` is what an operation acts on. A cut row is
    marked as leaving, and stays put until the paste, so nothing has happened yet. */
 .lee-node.lee-file.marked, .lee-node.lee-dir.marked > summary { background: var(--lee-sel); }
@@ -1734,6 +1769,10 @@ kbd {
   font: 11.5px/1.55 var(--lee-mono); }
 .lee-selection-reply > footer { display: flex; justify-content: flex-end; gap: 5px; padding: 6px 7px;
   border-top: 1px solid var(--lee-border); }
+.lee-selection-trail { display: flex; flex-wrap: wrap; gap: 5px; padding: 5px 10px;
+  border-top: 1px solid var(--lee-border); color: var(--lee-fg2); font: 10px/1.4 var(--lee-mono); }
+.lee-selection-trail span { color: var(--lee-fg4); }
+.lee-selection-trail.lee-trail-none span { font-style: italic; }
 .lee-selection-skeleton { padding: 12px; }
 .lee-selection-skeleton i { display: block; width: 100%; height: 9px; margin: 8px 0; border-radius: 2px;
   background: var(--lee-bg2); animation: lee-research-shimmer 1.1s ease-in-out infinite alternate; }
@@ -2484,6 +2523,9 @@ kbd {
 .lee-searchrail-mode:hover { border-color: var(--lee-border); color: var(--lee-fg); }
 .lee-searchrail-mode.active { border-color: color-mix(in srgb, var(--lee-accent) 55%, var(--lee-border)); background: var(--lee-bg1); color: var(--lee-fg); }
 .lee-searchrail-mode.active b { color: var(--lee-accent); }
+/* Tab moves the mode and switches to it, so the rail carries the keyboard's position as well as
+   the mode that answered. They are the same row; the cursor ring says the keyboard is on it. */
+.lee-searchrail-mode.cursor { box-shadow: inset 0 0 0 1px var(--lee-accent); }
 .lee-searchrail-hint { margin-top: auto; padding: 6px 7px 2px; font: 8px/1.2 var(--lee-mono); }
 .lee-code-search-body > .lee-modallist { min-height: 0; border-right: 1px solid var(--lee-border); padding: 4px; }
 .lee-search-result { width: 100%; display: grid; grid-template-columns: 34px minmax(0,1fr) auto; align-items: center;
@@ -2522,6 +2564,39 @@ kbd {
 .lee-search-progress { display: flex; align-items: center; gap: 8px; padding: 12px; color: var(--lee-fg4); font-size: 11px; }
 .lee-search-progress span { width: 8px; height: 8px; border: 1px solid var(--lee-accent); border-top-color: transparent;
   border-radius: 50%; animation: lee-spin .72s linear infinite; }
+/* The keyboard model, said once where it is used, and what the dialog has recorded so far. */
+.lee-search-hints { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-top: 1px solid var(--lee-border);
+  background: var(--lee-bg1); color: var(--lee-fg4); font: 9px/1.4 var(--lee-mono); }
+.lee-search-hints kbd { margin-left: 6px; }
+.lee-search-hints kbd:first-child { margin-left: 0; }
+.lee-search-hint-click { margin-left: 14px; }
+/* Weights: sliders over the same features every hit carries, so the list re-ranks as one moves. */
+.lee-search-weights { max-height: 34vh; overflow: auto; padding: 8px 10px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1); }
+.lee-search-weights[hidden] { display: none; }
+.lee-weight-group { margin-bottom: 10px; }
+.lee-weight-group h4 { margin: 0 0 5px; color: var(--lee-fg3); font: 600 9px/1 var(--lee-mono); text-transform: uppercase; letter-spacing: .06em; }
+.lee-weight-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 6px 18px; }
+.lee-weight-lead { margin: 0 0 8px; max-width: 92ch; color: var(--lee-fg3); font: 10px/1.6 var(--lee-mono); }
+.lee-weight { display: grid; grid-template-columns: minmax(0, 1fr) 96px 46px; align-items: center; gap: 8px; color: var(--lee-fg3); font: 10px/1.3 var(--lee-mono); }
+.lee-weight > span { display: flex; flex-direction: column; min-width: 0; }
+.lee-weight small { color: var(--lee-fg4); font: 8.5px/1.4 var(--lee-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-weight input[type=range] { width: 100%; accent-color: var(--lee-accent); }
+/* The spinner takes half the box at this size, and a three-digit weight then shows two digits. */
+.lee-weight input[type=number] { width: 100%; padding: 2px 4px; font: 9.5px/1.2 var(--lee-mono); appearance: textfield; }
+.lee-weight input[type=number]::-webkit-inner-spin-button { appearance: none; margin: 0; }
+.lee-weight-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--lee-fg4); font: 9.5px/1 var(--lee-mono); }
+.lee-weight-row label { display: flex; align-items: center; gap: 5px; margin: 0; }
+.lee-weight-row .lee-settings-toggle span { display: flex; align-items: center; }
+.lee-weight-row select { border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg1); color: var(--lee-fg2); font: 9px/1 var(--lee-mono); padding: 3px 4px; }
+.lee-weight-note { margin-top: 6px; font: 9px/1.5 var(--lee-mono); }
+.lee-weight-actions { display: flex; align-items: center; gap: 8px; }
+.lee-search-log { display: flex; flex-direction: column; gap: 1px; max-height: 132px; overflow: auto; }
+.lee-search-log button { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, .9fr); gap: 10px;
+  align-items: center; padding: 4px 6px; border: 0; border-radius: 3px; background: transparent; color: var(--lee-fg3);
+  cursor: pointer; font: 9.5px/1.4 var(--lee-mono); text-align: left; }
+.lee-search-log button:hover { background: var(--lee-sel); color: var(--lee-fg); }
+.lee-search-log strong, .lee-search-log span, .lee-search-log em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-search-log span, .lee-search-log em { color: var(--lee-fg4); font-style: normal; }
 .lee-package-api { min-height: 180px; max-height: 68vh; overflow: auto; padding: 4px; }
 .lee-package-api button { width: 100%; display: grid;
                           grid-template-columns: minmax(140px, .8fr) minmax(0,1.1fr) minmax(0,.7fr);

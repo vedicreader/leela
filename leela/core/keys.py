@@ -118,6 +118,8 @@ DEFAULTS = L(
     Key('complete',         'alt+/ ctrl+space', 'global', 'complete',         'toast'),
     Key('ai_complete',      'alt+shift+space', 'global', 'ai completion',     'toast'),
     Key('show_docs',        'alt+shift+h',   'global', 'docs for symbol',     'toast'),
+    Key('ask_ai',           'hyper+a',       'global', 'ask AI about the selection'),
+    Key('summarise',        'hyper+m',       'global', 'summarise the selection'),
     Key('capture',          'alt+shift+p',   'global', 'screenshot for the assistant', 'toast'),
     Key('agent_selection',  'alt+shift+n',   'global', 'send selection to the agent', 'toast'),
     Key('clip_to_vault',    '',              'global', 'clip into the vault'),

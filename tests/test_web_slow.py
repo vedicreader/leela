@@ -301,6 +301,23 @@ def test_tab_takes_the_completion_that_is_on_screen():
     assert out['accepted'] == 'sanskrit_parse', 'Tab accepts the open completion'
     assert out['indented'].startswith((' ', '\t')), 'and still indents when nothing is offered'
 
+def test_completing_a_slash_command_leaves_the_caret_after_it():
+    """Tab on the composer's command list replaced the whole box, and assigning `value` on a box the
+    browser has not focused leaves the caret at 0, so completing a command read as Home. Every other
+    branch of the chooser sets the caret; this one now does too.
+    """
+    async def go(pg):
+        await pg.click('#agentprompt')
+        await pg.keyboard.type('/')
+        await pg.wait_for_selector('#agentsuggest:not([hidden]) button')
+        await pg.keyboard.press('Tab')
+        return await pg.evaluate("""() => { const i = document.getElementById('agentprompt');
+          return {value: i.value, at: i.selectionStart, focused: document.activeElement === i}; }""")
+    out = _run(go)
+    assert out['value'].startswith('/') and out['value'].endswith(' '), out['value']
+    assert out['at'] == len(out['value']), f"the caret sits at {out['at']} of {len(out['value'])}"
+    assert out['focused'], 'and the composer still has the keys'
+
 def test_changing_a_routed_job_model_saves_it_and_a_refusal_says_so():
     """Changing the subagent model did nothing and said nothing. The routed jobs are rows this file
     draws, with no id of their own, and `paintModelPickers` built `'#' + ''` for each -- a
@@ -606,6 +623,62 @@ def test_the_right_panels_filter_search_look_up_and_remember():
     assert 'Agent memory' in got['memoryBody'] and 'example.com' in got['memoryBody']
     assert 'Bad result' in got['purgeRows'] and 'Useful result' in got['purgeRows']
     assert got['purgeAll'] == 'purge everything'
+
+def test_a_search_result_is_previewed_before_it_opens_and_a_click_takes_the_row_on_screen():
+    """A click on a result selects and previews it, and a click on the row already in the preview
+    opens it, so a mouse can read a result before committing to it.
+
+    Which row that is, is the selected one. It was the last row the mouse hit, and the two differ
+    wherever the selection moved without the mouse. The first result is selected and previewed the
+    moment the results land, so opening the row on screen took two clicks, which is what left the
+    search modal over the rest of the page in `test_the_right_panels_filter_search_look_up_and_remember`.
+    A row reached with the arrow keys was previewed and then ignored the click that meant open.
+    """
+    async def go(pg):
+        out = {}
+        await pg.route('**/code/status', lambda route: route.fulfill(status=200, content_type='application/json',
+          body='{"ok":true,"files":2,"packages":0,"graph_nodes":4,"stale_files":0}'))
+        await pg.route('**/search/stream?*', lambda route: route.fulfill(
+            status=200, content_type='text/event-stream', body=_SEARCH_TWO))
+        async def results():
+            await pg.evaluate('lee.pendingLocation = null')
+            await pg.evaluate("leeAct('code_search')")
+            await pg.fill('#cs', 'def')
+            await pg.wait_for_selector('.lee-search-preview .cm-editor')
+        previewing = lambda name: pg.wait_for_function(
+            "n => document.querySelector('#cspreviewtitle')?.textContent.includes(n)", arg=name)
+
+        await results()
+        await previewing('first.py')                 # the first result is read without being asked for
+        await pg.click('.lee-search-result >> nth=1')   # a row nobody has read yet
+        await previewing('second.py')
+        out['onPreviewClick'] = await pg.evaluate('lee.pendingLocation')
+        out['stillOpen'] = await pg.locator('.lee-code-search-modal').count()
+        await pg.click('.lee-search-result >> nth=1')   # the row now in the preview
+        out['opened'] = await pg.evaluate('lee.pendingLocation')
+        out['closed'] = await pg.locator('.lee-code-search-modal').count()
+
+        await results()                              # the row on screen opens on one click
+        await previewing('first.py')
+        await pg.click('.lee-search-result >> nth=0')
+        out['first'] = await pg.evaluate('lee.pendingLocation')
+
+        await results()                              # and so does one the arrow keys selected
+        await pg.keyboard.press('ArrowDown')
+        await previewing('second.py')
+        await pg.click('.lee-search-result >> nth=1')
+        out['arrowed'] = await pg.evaluate('lee.pendingLocation')
+        return out
+    got = _run(go)
+    assert got['onPreviewClick'] is None, 'a result nobody had read was opened by the click that previews it'
+    assert got['stillOpen'] == 1, 'and the search closed before anything had been chosen'
+    assert (got['opened']['path'], got['opened']['line']) == ('/tmp/second.py', 9)
+    assert got['closed'] == 0, 'opening a result leaves the search behind'
+    assert (got['first']['path'], got['first']['line']) == ('/tmp/first.py', 3), \
+        'the result already in the preview needed a second click'
+    assert (got['arrowed']['path'], got['arrowed']['line']) == ('/tmp/second.py', 9), \
+        'a row selected with the arrow keys ignored the click'
+
 
 def test_the_agent_routes_are_served_and_a_result_is_an_inline_value():
     outputs = [{'output_type': 'execute_result', 'data': {'text/plain': 'x    int64\ny    object'}}]
@@ -1028,6 +1101,70 @@ def test_a_completion_on_a_cells_last_line_is_drawn_whole():
     assert out['height'] > 0 and out['below'] > 0, 'the list is taller than the box that holds it'
     assert out['hits'], 'the point two thirds down the list is the list, not what is drawn over it'
 
+def test_every_steer_is_drawn_and_not_just_the_first_one():
+    """`setQueuedSteer` gave the queued card `id="agentqueuedsteer"` and never took it back when the
+    steer was consumed. The next steer found that card as `old`, de-queued it again and returned,
+    so it was never drawn. The agent acted on a message the transcript never showed.
+    """
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const log = document.getElementById('agentlog');
+          log.innerHTML = ''; lee.agentTimeline = null; lee.queuedSteer = '';
+          const said = () => [...log.querySelectorAll('[data-steer]')].map(n => n.dataset.steer);
+          setQueuedSteer('stop and read the file', 'stop and read the file');   // queued
+          setQueuedSteer('', 'stop and read the file');                          // the run took it
+          const first = said();
+          setQueuedSteer('use the other branch', 'use the other branch');        // a second steer
+          setQueuedSteer('', 'use the other branch');
+          return {first, both: said(), stranded: !!document.getElementById('agentqueuedsteer')};
+        }""")
+    out = _run(go)
+    assert out['first'] == ['stop and read the file'], out
+    assert out['both'] == ['stop and read the file', 'use the other branch'], \
+        f'the second steer was never drawn: {out["both"]}'
+    assert not out['stranded'], 'a consumed steer is no longer the queued one'
+
+def test_the_selection_chords_reach_ask_and_summarise_and_say_what_is_in_the_way():
+    """Both controls were mouse-only. The chords go through the panel rather than the route, so the
+    selection, the coordinates and the four guards in `showSelectionHelp` stay in one place, and each
+    way of being unavailable names itself: a chord that quietly does nothing reads as broken.
+    """
+    async def go(pg):
+        await pg.evaluate("leeAct('new_notebook')")
+        await pg.wait_for_selector('.lee-cell .cm-editor')
+        pick = """() => {
+          const v = lee.editors.get(lee.cells[0].id);
+          LeeCM.setDoc(v, 'x = 1'); v.focus(); LeeCM.setSelection(v, 0, 5);
+        }"""
+        out = {}
+        # nothing selected: it says where to put the caret, not what the panel is
+        await pg.evaluate("() => { closeSelectionHelp(); document.getElementById('agentprompt')?.focus(); }")
+        await pg.evaluate("leeAct('summarise')")
+        out['unselected'] = await pg.evaluate("() => [!!$('.lee-selection-tools'), $('#status')?.textContent || '']")
+        await pg.evaluate(pick)
+        await pg.evaluate("leeAct('ask_ai')")
+        out['asking'] = await pg.evaluate("""() => ({open: !!$('.lee-selection-tools.asking'),
+          focused: document.activeElement === $('.lee-selection-tools input')})""")
+        # a second ask is not a second panel, and it says so rather than doing nothing
+        await pg.evaluate("leeAct('ask_ai')")
+        out['twice'] = await pg.evaluate("() => $('#status')?.textContent || ''")
+        await pg.evaluate("() => { closeSelectionHelp(); }")
+        await pg.evaluate(pick)
+        await pg.evaluate("leeAct('summarise')")
+        # `runSelectionHelp` closes the tools and puts its own panel where they were
+        out['summary'] = await pg.evaluate("() => !!$('.lee-selection-reply')")
+        # and while that panel is up, a chord says so rather than reporting a missing selection
+        await pg.evaluate("leeAct('ask_ai')")
+        out['busy'] = await pg.evaluate("() => $('#status')?.textContent || ''")
+        return out
+    out = _run(go)
+    assert out['unselected'][0] is False, 'no panel is raised for a selection that is not there'
+    assert 'select some text' in out['unselected'][1], out['unselected']
+    assert out['asking']['open'] and out['asking']['focused'], 'the chord opens the ask box ready to type'
+    assert 'already open' in out['twice'], f'a second ask names what is in the way: {out["twice"]!r}'
+    assert out['summary'], 'summarise hands the selection to the reply panel'
+    assert 'open suggestion' in out['busy'], f'a suggestion on screen is named as what is in the way: {out["busy"]!r}'
+
 def test_a_streaming_reply_repaints_while_it_streams():
     """The pane sat still through a burst of chunks and then jumped a paragraph at a time.
 
@@ -1110,6 +1247,92 @@ def test_a_code_block_is_mounted_once_however_often_the_reply_around_it_repaints
     assert out['text'], 'and the code is still the code'
     assert out['built'] == 2, f'two code blocks were mounted {out["built"]} times over 12 repaints'
 
+def test_a_long_reply_is_not_re_rendered_from_the_top_ten_times_a_second():
+    """Every pass over a streaming reply costs the whole reply: a `/markdown/render` round trip that
+    parses and highlights the document again, an `innerHTML` write, and a re-measure of every code
+    surface in it. At a fixed 100ms gap a 12,000-character answer paid that thirty times, over an
+    average of six thousand characters, which is the pane going stiff exactly when the model is
+    writing its longest answer.
+
+    The gap grows with the text now. What keeps the words arriving at the rate they were written is
+    the unparsed tail after the prose, which costs a `textContent` write and no parse, and which
+    `seal` renders properly and removes at the end of the stretch.
+    """
+    async def go(pg):
+        return await pg.evaluate("""async () => {
+          const log = document.querySelector('#agentlog');
+          dropCodeSurfaces(log); log.innerHTML = ''; lee.agentView = 'live';
+          const card = agentTurnCard({prompt: 'probe', model: ''}); log.appendChild(card);
+          const root = document.createElement('div'); root.className = 'lee-agent-timeline';
+          turnBody(card).appendChild(root);
+          const tl = agentTimeline(root);
+          let renders = 0, live = 0;
+          const real = window.fetch;
+          window.fetch = (u, o) => { if (String(u).includes('/markdown/render')) renders++; return real(u, o); };
+          const sentence = '## a heading\\n\\nthe kernel wrote its outputs into the pane and the reader '
+            + 'read them one paragraph after another without ever reaching the end of what the model '
+            + 'had to say about the notebook it had just run. ';
+          try {
+            for (let i = 0; i < 60; i++) {
+              tl.chunk(sentence);
+              live = Math.max(live, root.querySelector('.lee-agent-reply-tail')?.textContent.length || 0);
+              await new Promise(r => setTimeout(r, 50));
+            }
+            tl.seal();
+            await new Promise(r => setTimeout(r, 900));
+          } finally { window.fetch = real; }
+          const prose = root.querySelector('.lee-timeline-prose');
+          return {renders, live, chars: prose.dataset.markdown.length,
+                  tail: !!root.querySelector('.lee-agent-reply-tail'),
+                  headings: prose.querySelectorAll('h2').length,
+                  shown: (prose.textContent.match(/one paragraph after another/g) || []).length};
+        }""")
+    out = _run(go)
+    assert out['chars'] > 9000, f'the probe has to be a long reply for this to mean anything: {out}'
+    assert 3 <= out['renders'] <= 16, f"{out['chars']} characters were re-rendered {out['renders']} times"
+    assert out['live'] > 0, 'nothing was on screen between one render and the next'
+    assert not out['tail'], 'the unparsed tail outlived the stretch of prose it belonged to'
+    assert out['headings'] >= 1, f'the sealed reply is not rendered markdown: {out}'
+    assert out['shown'] == 60, f"the sealed reply is {out['shown']} of its 60 chunks: {out}"
+
+def test_the_live_agent_pane_keeps_a_bounded_number_of_turns():
+    """Folding hides a turn from layout and frees nothing. Every turn of a session stayed in the
+    live pane holding its rendered replies and a CodeMirror view per code block in them, so a long
+    day's conversation was hundreds of live views carried through every paint.
+
+    The pane keeps the last `LIVE_TURNS`, tears down what it drops, and says where they went. A turn
+    holding a checkpoint nobody has answered is never dropped: its buttons are the only way that run
+    continues.
+    """
+    async def go(pg):
+        return await pg.evaluate("""async () => {
+          const log = document.querySelector('#agentlog');
+          dropCodeSurfaces(log); log.innerHTML = ''; approvalCards.clear(); lee.agentView = 'live';
+          let torn = 0;
+          const real = window.dropCodeSurfaces;
+          window.dropCodeSurfaces = n => { if (n?.classList?.contains('lee-agent-turn')) torn++; return real(n); };
+          try {
+            for (let i = 0; i < 40; i++) {
+              const card = agentTurnCard({prompt: 'turn ' + i, model: '', turnId: 't' + i});
+              log.appendChild(card);
+              if (i === 1) {
+                const held = document.createElement('div'); held.className = 'lee-approval proposed';
+                turnBody(card).appendChild(held);
+              }
+              trimAgentLog(log);
+            }
+          } finally { window.dropCodeSurfaces = real; }
+          const ids = [...log.querySelectorAll('.lee-agent-turn')].map(c => c.dataset.turn);
+          return {kept: ids.length, torn, newest: ids.at(-1), checkpoint: ids.includes('t1'),
+                  note: !!log.querySelector('.lee-agent-trimmed')};
+        }""")
+    out = _run(go)
+    assert out['newest'] == 't39', f'the turn being written was dropped: {out}'
+    assert out['kept'] <= 31, f'forty turns left {out["kept"]} in the pane'
+    assert out['checkpoint'], 'a turn holding an unanswered checkpoint was dropped'
+    assert out['torn'] >= 8, f'the turns it dropped kept their code surfaces: {out}'
+    assert out['note'], 'nothing on screen said where the earlier turns went'
+
 def test_the_agent_pane_follows_the_stream_without_dragging_a_reader_off_what_they_are_reading():
     """Every paint in the pane wrote `scrollTop = scrollHeight`, and wrote it *before* the markdown
     render it had just asked for had landed: the pane was measured short, jumped when the text
@@ -1158,8 +1381,10 @@ def test_the_agent_pane_follows_the_stream_without_dragging_a_reader_off_what_th
 
 def test_every_editor_refuses_the_systems_own_autocorrect():
     """WKWebView hands a `contenteditable` to NSSpellChecker and a browser does not, so the packaged
-    app curled quotes and corrected identifiers under CodeMirror. `leela/desktop.py` turns it off
-    for the process; this is the same refusal on the view, for every editor Leela builds.
+    app curled quotes, corrected identifiers, and offered inline predictions under CodeMirror. An
+    inline prediction is accepted with Tab, which is the key the completion list is waiting for.
+    `leela/desktop.py` turns it off for the process; this is the same refusal on the view, for every
+    editor Leela builds.
     """
     async def go(pg):
         return await pg.evaluate("""() => {
@@ -1168,13 +1393,17 @@ def test_every_editor_refuses_the_systems_own_autocorrect():
           const named = n => v.contentDOM.getAttribute(n);
           return {spellcheck: named('spellcheck'), autocorrect: named('autocorrect'),
                   autocapitalize: named('autocapitalize'),
+                  writingsuggestions: named('writingsuggestions'),
                   everyMounted: [...document.querySelectorAll('.cm-content')]
-                    .every(n => n.getAttribute('spellcheck') === 'false')};
+                    .every(n => n.getAttribute('spellcheck') === 'false'
+                                && n.getAttribute('writingsuggestions') === 'false')};
         }""")
     out = _run(go)
     assert out['spellcheck'] == 'false', out
     assert out['autocorrect'] == 'off' and out['autocapitalize'] == 'off', out
-    assert out['everyMounted'], 'an editor on the page was left with the system spell checker on'
+    # An inline prediction is taken with Tab, which is the key the completion list wants.
+    assert out['writingsuggestions'] == 'false', out
+    assert out['everyMounted'], 'an editor on the page was left with the system text checker on'
 
 def test_a_pipeline_terminal_follows_the_package_it_was_opened_for(tmp_path):
     """Moving between packages showed the first package's release log, and closing the terminal
@@ -1310,10 +1539,12 @@ def test_the_agent_pane_draws_its_runs_its_steers_and_its_work_logs():
           setQueuedSteer('and then stop', 'and then stop');
           out.queued = Boolean($('#agentqueuedsteer'));
           out.cancellable = Boolean($('#agentqueuedsteer [data-cancel-steer]'));
-          // taken by the agent: the card stays as the message it is, without the cancel
+          // taken by the agent: the card stays as the message it is, without the cancel. Found by
+          // its text, not by `#agentqueuedsteer`: a steer that has been taken is not the queued one,
+          // and a card that kept that id swallowed every steer after it.
           setQueuedSteer('');
-          out.kept = Boolean($('#agentqueuedsteer'));
-          out.stillCancellable = Boolean($('#agentqueuedsteer [data-cancel-steer]'));
+          out.kept = Boolean($('[data-steer="and then stop"]', log));
+          out.stillCancellable = Boolean($('[data-steer="and then stop"] [data-cancel-steer]', log));
           log.innerHTML = '';
           return out;
         }""")
@@ -1393,6 +1624,39 @@ def test_the_agent_pane_draws_its_runs_its_steers_and_its_work_logs():
     group = got['group']
     assert group['rows'] == ['Read · a/b.py', 'Load skill · write_docs'], group
     assert group['group'] and '2 steps' in group['summary'], group
+
+
+def test_a_turn_stopped_at_a_checkpoint_still_folds_when_the_next_one_begins():
+    """A checkpoint the run never answered kept `proposed`, and `foldAgentTurn` refuses a card
+    holding one, so a turn stopped at a checkpoint stayed open for the rest of the session and
+    `trimAgentLog` could never drop it. `done` retires the checkpoints its own stream raised."""
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const log = $('#agentlog'); log.innerHTML = ''; log.dataset.foldScope = 'stale-checkpoint';
+          approvalCards.clear();
+          const stopped = agentTurnCard({prompt: 'edit the file', model: 'm', turnId: 'c1'});
+          log.appendChild(stopped);
+          showApproval({id: 'ask-1', tool: 'edit_file', args: {path: 'a.py'}, summary: 'change it'},
+                       turnBody(stopped));
+          const before = {open: turnAwaitingApproval(stopped), folds: (foldAgentTurn(stopped, true),
+                          stopped.classList.contains('folded'))};
+          foldAgentTurn(stopped, false);
+          retireCheckpoints(['ask-1']);
+          const card = approvalCards.get('ask-1');
+          log.appendChild(agentTurnCard({prompt: 'never mind', model: 'm', turnId: 'c2'}));
+          foldOlderTurns(log);
+          const after = {open: turnAwaitingApproval(stopped), folded: stopped.classList.contains('folded'),
+                         refused: card.classList.contains('refused'),
+                         off: [...card.querySelectorAll('button')].every(b => b.disabled),
+                         note: $('.lee-checkpoint-title small', card).textContent};
+          log.innerHTML = ''; log.dataset.foldScope = ''; approvalCards.clear();
+          return {before, after};
+        }""")
+    got = _run(go)
+    assert got['before']['open'] and not got['before']['folds'], 'a live checkpoint keeps its turn open'
+    assert not got['after']['open'] and got['after']['folded'], got['after']
+    assert got['after']['refused'] and got['after']['off']
+    assert got['after']['note'] == 'The turn ended before this ran', got['after']
 
 
 def test_a_conversation_folds_its_turns_and_keeps_each_ones_own_controls():
@@ -1553,6 +1817,16 @@ _SEARCH_STREAM = (
     'event: done\ndata: {}\n\n')
 
 
+_SEARCH_TWO = (
+    'event: start\ndata: {"legs": ["rg"], "searched": ["/tmp/proj"]}\n\n'
+    'event: leg\ndata: {"leg": "rg", "hits": ['
+    '{"path": "/tmp/first.py", "line": 3, "text": "def first():\\n    return 1",'
+    ' "kind": "text", "symbol": null, "score": 220},'
+    '{"path": "/tmp/second.py", "line": 9, "text": "def second():\\n    return 2",'
+    ' "kind": "text", "symbol": null, "score": 210}]}\n\n'
+    'event: done\ndata: {}\n\n')
+
+
 from conftest import serve
 
 
@@ -1573,6 +1847,9 @@ def _open(pw, url):
 
 def _bg(page): return page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--lee-bg').trim()")
 
+_NO_SAVED_THEME = ("() => post('/settings/save', {scope: 'user', language: '',"
+                   " section: 'appearance', values: {theme: ''}})")
+
 def test_every_family_repaints_and_the_picker_and_the_stored_preference_agree(proj_web_th):
     """Every family in every mode, the picker that offers them, the density that moves the header
     without moving the colours, and the pre-family preference a reload has to migrate rather than
@@ -1583,6 +1860,9 @@ def test_every_family_repaints_and_the_picker_and_the_stored_preference_agree(pr
         from playwright.sync_api import sync_playwright
         with sync_playwright() as pw:
             page = _open(pw, url)
+            # every assertion below is about the `lee-theme` cache, so the settings.json theme,
+            # which outranks it, has to be out of the way first.
+            page.evaluate(_NO_SAVED_THEME)
             seen = {}
             for family in FAMILIES:
                 for mode in ('dark', 'light', 'system'):
@@ -1624,6 +1904,7 @@ def test_every_family_repaints_and_the_picker_and_the_stored_preference_agree(pr
             page.click('[data-cancel]')
             assert page.evaluate('document.documentElement.dataset.theme') != 'nord'
 
+            page.evaluate(_NO_SAVED_THEME)   # the reloads above migrated the cache into settings
             page.evaluate("localStorage.setItem('lee-theme', 'dark')")
             page.reload(wait_until='networkidle')
             if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
@@ -1640,6 +1921,53 @@ def test_every_family_repaints_and_the_picker_and_the_stored_preference_agree(pr
             page.emulate_media(color_scheme='dark')
             page.wait_for_function("document.documentElement.dataset.mode === 'dark'")
             assert _bg(page) != light
+
+
+def test_the_theme_is_kept_in_settings_and_not_only_in_this_origin(proj_web_th):
+    """The packaged app takes whatever port it is given when 5001 is busy, and `localStorage` is per
+    origin, so a theme kept only there is gone on the next launch. Saving from the panel writes
+    settings.json, counts as a saved setting, and holds for a browser that has never seen the
+    origin. A theme that only ever lived in `localStorage` is migrated rather than dropped.
+    """
+    ws = Workspace(roots=[proj_web_th])
+    with serve(ws) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            def theme_setting():
+                for _ in range(50):
+                    value = page.evaluate("() => api('/settings')")['effective']['appearance']['theme']
+                    if value: return value
+                    page.wait_for_timeout(100)
+                return ''
+            page.evaluate(_NO_SAVED_THEME)
+            page.evaluate('leeEditorSettings()')
+            page.wait_for_selector('.lee-settings-modal')
+            page.click('[data-settings-page="appearance"]')
+            page.click('.lee-theme-mode[data-theme-mode="dark"]')
+            page.click('.lee-theme-choice[data-theme="nord"]')
+            page.click('[data-save]')
+            page.wait_for_function("!document.querySelector('.lee-settings-modal')")
+            said = page.locator('#status').inner_text()
+            assert 'no settings saved' not in said and 'saved to user' in said, said
+            d = page.evaluate("() => api('/settings?language=python')")
+            assert d['effective']['appearance']['theme'].startswith('nord:dark:'), d['effective']['appearance']
+            assert 'appearance' not in ((d['user'].get('languages') or {}).get('python') or {}), \
+                'a theme is not language-scoped'
+
+            page.evaluate("localStorage.removeItem('lee-theme')")   # what a new origin looks like
+            page.reload(wait_until='networkidle')
+            if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
+            page.wait_for_function("document.documentElement.dataset.theme === 'nord'")
+            assert page.evaluate('document.documentElement.dataset.mode') == 'dark'
+
+            page.evaluate(_NO_SAVED_THEME)
+            page.evaluate("localStorage.setItem('lee-theme', 'gruvbox:dark:tight')")
+            page.reload(wait_until='networkidle')
+            if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
+            page.wait_for_function("document.documentElement.dataset.theme === 'gruvbox'")
+            assert theme_setting() == 'gruvbox:dark:tight', 'the cached theme is migrated, not dropped'
+            page.evaluate(_NO_SAVED_THEME)
 
 
 def test_the_bundles_parse_and_share_one_scope(proj_web_th):
@@ -2811,3 +3139,496 @@ def test_a_delegation_row_keeps_its_kind_on_one_line(tmp_path):
     assert d['meta']['w'] >= 40, f"the kind has no room: {d['meta']}"
     assert abs(d['meta']['top'] - d['chev']['top']) <= 4, 'the chevron is on the same row, not below'
     assert d['open']['right'] <= d['meta']['right'], 'and the open button comes before the kind'
+
+SEARCH_STUB = """() => {
+  window._opened = []; window._events = [];
+  window.openLocation = hit => window._opened.push(hit);
+  const hits = n => Array.from({length: n}, (_, i) => ({
+    path: `/w/file${i}.py`, line: i + 1, text: `def thing${i}(): pass`, kind: 'symbol',
+    symbol: `thing${i}`, score: 100 - i, sources: ['rg'], callers: [],
+    why: {leg: 'rg', symbol_exact: i === 2 ? 1 : 0, text: 1, leg_rank: 1 / (1 + i), demote: 0}}));
+  const real = window.api;
+  window.api = (url, opts) => {
+    if (url.startsWith('/search?')) {
+      const mode = new URLSearchParams(url.split('?')[1]).get('mode');
+      return Promise.resolve({backend: mode, note: '', hits: hits(mode === 'rg' ? 4 : 3),
+                              searched: ['/w'], weights: {legRg: 80, symbolExact: 120}});
+    }
+    if (url.startsWith('/search/signals')) return Promise.resolve(
+      {ok: true, telemetry: 'local', snippets: false, dir: '/w/events', vault: '/w/search.db',
+       weights: {legRg: 80, symbolExact: 120}, defaults: {legRg: 80, symbolExact: 120},
+       keys: {legRg: 'rg', symbolExact: 'symbol_exact'}, summary: {searches: 0}});
+    if (url === '/search/events') { window._events.push(JSON.parse(opts.body)); return Promise.resolve({ok: true}); }
+    if (url === '/code/status') return Promise.resolve({ok: true, files: 1, packages: 0, graph_nodes: 0});
+    return real(url, opts);
+  };
+  prefSet('search', 'lastMode', 'rg');
+  codeSearch();
+}"""
+
+def test_the_code_search_dialog_has_one_selection_and_one_keyboard():
+    """Tab used to move DOM focus rather than the mode, because the dialog's own key handler ran
+    after the modal's focus trap, so Enter landed on a focused rail button whose activation the
+    handler then cancelled: the mode never changed and Enter did nothing. Selection and focus are
+    one thing now -- focus stays in the query box, the selection is `aria-activedescendant`, Tab
+    switches the mode, Enter steps into the results and then opens, and a click previews before it
+    commits.
+    """
+    async def go(pg):
+        await pg.evaluate(SEARCH_STUB)
+        await pg.fill('#cs', 'thing')
+        await pg.wait_for_function("() => $$('.lee-search-result').length === 4")
+        out = {}
+        out['starts_on_rg'] = await pg.evaluate("() => $('.lee-searchrail-mode.active').dataset.mode")
+
+        await pg.keyboard.press('Tab')
+        await pg.wait_for_function("() => $('.lee-searchrail-mode.active').dataset.mode === 'context'")
+        out['tab_keeps_focus'] = await pg.evaluate("() => document.activeElement.id")
+        out['tab_marks_the_rail'] = await pg.evaluate("() => !!$('.lee-searchrail-mode.cursor')")
+        await pg.wait_for_function("() => $$('.lee-search-result').length === 3")
+
+        # Enter on the rail steps into the results. It must not open anything.
+        await pg.keyboard.press('Enter')
+        out['enter_stays_open'] = await pg.evaluate("() => !!$('.lee-code-search-modal') && !window._opened.length")
+        out['enter_leaves_the_rail'] = await pg.evaluate("() => !$('.lee-searchrail-mode.cursor')")
+
+        # Arrows are always the results, wherever the rail cursor was.
+        await pg.keyboard.press('ArrowDown')
+        await pg.keyboard.press('ArrowDown')
+        out['selected'] = await pg.evaluate("() => $$('.lee-search-result').findIndex(r => r.classList.contains('sel'))")
+        out['activedescendant'] = await pg.evaluate("() => $('#cs').getAttribute('aria-activedescendant')")
+        out['focus_after_arrows'] = await pg.evaluate("() => document.activeElement.id")
+
+        await pg.keyboard.press('Enter')
+        out['opened_by_enter'] = await pg.evaluate("() => window._opened.map(h => h.line)")
+
+        # A click previews. The second click on the row it is previewing is what opens it.
+        await pg.evaluate(SEARCH_STUB)
+        await pg.fill('#cs', 'thing')
+        await pg.wait_for_function("() => $$('.lee-search-result').length === 4")
+        await pg.click('.lee-search-result:nth-child(3)')
+        await pg.wait_for_function("() => $('#cspreviewtitle').textContent === 'thing2'")
+        out['click_previews'] = await pg.evaluate("() => window._opened.length")
+        await pg.click('.lee-search-result:nth-child(3)')
+        out['click_again_opens'] = await pg.evaluate("() => window._opened.map(h => h.line)")
+
+        out['events'] = await pg.evaluate(
+            "() => window._events.flatMap(b => (b.events || []).map(e => e.kind))")
+        out['session'] = await pg.evaluate(
+            "() => (window._events.map(b => b.session).filter(Boolean).at(-1) || {}).q || ''")
+        return out
+    out = _run(go)
+    assert out['starts_on_rg'] == 'rg'
+    assert out['tab_keeps_focus'] == 'cs', 'Tab moves the mode, not the focus'
+    assert out['tab_marks_the_rail'] and out['enter_leaves_the_rail']
+    assert out['enter_stays_open'], 'Enter on the rail steps into the results, it does not open one'
+    assert out['selected'] == 2 and out['activedescendant'] == 'cshit2'
+    assert out['focus_after_arrows'] == 'cs', 'the arrows never take the focus out of the query box'
+    assert out['opened_by_enter'] == [3], 'Enter in the results opens the selected hit'
+    assert out['click_previews'] == 0, 'one click previews'
+    assert out['click_again_opens'] == [3], 'the second click on the previewing row opens it'
+    assert 'query' in out['events'] and 'impression' in out['events'] and 'open' in out['events']
+    assert out['session'] == 'thing', 'closing the dialog files the session it just ran'
+
+
+def test_the_inline_reply_stays_on_screen_and_escape_closes_it(tmp_path):
+    """The panel was placed while it was still a loading skeleton and never placed again, so the
+    answer grew off the bottom of the window and took the discard button with it. Escape only
+    reached it while the focus was still inside, which the first click elsewhere ended."""
+    import json
+    cells = [{'cell_type': 'code', 'source': [f'x{i} = {i}\n'], 'metadata': {}, 'outputs': [],
+              'execution_count': None} for i in range(40)]
+    (tmp_path/'long.ipynb').write_text(json.dumps(
+        {'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    async def go(pg):
+        await pg.route('**/complete/selection', lambda route: route.fulfill(
+            status=200, content_type='application/json',
+            body=json.dumps({'ok': True, 'mode': 'summary', 'model': 'local-summary',
+                             'text': '\n'.join(f'line {i} of a long suggested replacement'
+                                                for i in range(60))})))
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'long.ipynb'))
+        await pg.wait_for_selector('.lee-cell .cm-editor')
+        # A cell at the bottom of the window is the case that broke: the skeleton fits below it.
+        await pg.evaluate("() => focusCell(lee.cells.length - 1)")
+        await pg.wait_for_timeout(120)
+        await pg.evaluate("""() => {
+          const view = lee.editors.get(lee.cells[lee.sel].id);
+          LeeCM.setSelection(view, 0, LeeCM.getDoc(view).length);
+          showSelectionHelp();
+        }""")
+        await pg.wait_for_selector('.lee-selection-tools')
+        await pg.click('[data-summary]')
+        await pg.wait_for_selector('.lee-selection-reply:not(.loading)')
+        await pg.wait_for_timeout(120)
+        out = await pg.evaluate("""() => {
+          const p = document.querySelector('.lee-selection-reply').getBoundingClientRect();
+          const f = document.querySelector('.lee-selection-reply footer').getBoundingClientRect();
+          return {top: p.top, bottom: p.bottom, height: p.height, footerBottom: f.bottom,
+                  h: innerHeight};
+        }""")
+        # Focus is moved out of the panel first: that is what used to make Escape stop working.
+        await pg.evaluate("() => document.activeElement.blur()")
+        out['focus_left'] = await pg.evaluate(
+            "() => !document.activeElement?.closest?.('.lee-selection-reply')")
+        await pg.keyboard.press('Escape')
+        await pg.wait_for_timeout(60)
+        out['closed'] = await pg.evaluate("() => !document.querySelector('.lee-selection-reply')")
+        return out
+    out = _run(go, roots=[tmp_path])
+    assert out['height'] > 200, f"precondition: the reply is tall enough to overflow, got {out}"
+    assert out['top'] >= 0, f"the panel starts inside the window: {out}"
+    assert out['bottom'] <= out['h'], f"the panel ends inside the window: {out}"
+    assert out['footerBottom'] <= out['h'], f"the discard and replace buttons are reachable: {out}"
+    assert out['focus_left'], 'precondition: the focus is no longer inside the panel'
+    assert out['closed'], 'Escape closes the panel after the focus has left it'
+
+
+def test_running_a_cell_near_the_bottom_leaves_room_under_the_next_one(tmp_path):
+    """`scrollIntoView({block: 'nearest'})` parked the next cell flush against the bottom edge, so
+    shift+enter showed the reader nothing of what they had just moved to."""
+    import json
+    cells = [{'cell_type': 'code', 'source': [f'x{i} = {i}\n'], 'metadata': {}, 'outputs': [],
+              'execution_count': None} for i in range(60)]
+    (tmp_path/'long.ipynb').write_text(json.dumps(
+        {'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    async def go(pg):
+        await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'long.ipynb'))
+        await pg.wait_for_selector('.lee-cell .cm-editor')
+        room = """() => {
+          const host = document.querySelector('#editor');
+          const cell = document.querySelector(`.lee-cell[data-i="${lee.sel}"]`);
+          const b = host.getBoundingClientRect(), r = cell.getBoundingClientRect();
+          return {under: b.bottom - r.bottom, over: r.top - b.top, sel: lee.sel,
+                  scroll: host.scrollTop, box: b.height};
+        }"""
+        # Walk down until the selection has to move the view, which is where the fault showed.
+        await pg.evaluate("() => leePane('bottom', false)")
+        await pg.wait_for_timeout(200)
+        for _ in range(30): await pg.evaluate("() => focusCell(lee.sel + 1)")
+        await pg.wait_for_timeout(160)
+        out = {'stepped': await pg.evaluate(room)}
+        # A cell already comfortably on screen must not move the notebook at all.
+        before = await pg.evaluate("() => document.querySelector('#editor').scrollTop")
+        await pg.evaluate("() => focusCell(lee.sel)")
+        await pg.wait_for_timeout(120)
+        out['calm'] = await pg.evaluate("() => document.querySelector('#editor').scrollTop") == before
+        # And the same holds with the bottom dock taking height off the notebook.
+        await pg.evaluate("() => leePane('bottom', true)")
+        await pg.wait_for_timeout(250)
+        for _ in range(6): await pg.evaluate("() => focusCell(lee.sel + 1)")
+        await pg.wait_for_timeout(160)
+        out['docked'] = await pg.evaluate(room)
+        return out
+    out = _run(go, roots=[tmp_path])
+    for name in ('stepped', 'docked'):
+        got = out[name]
+        assert got['under'] >= 20, f"{name}: the cell is flush against the bottom edge: {got}"
+        assert got['over'] >= 0, f"{name}: the cell is not pushed off the top: {got}"
+    assert out['calm'], 'selecting a cell that is already in view does not scroll the notebook'
+    assert out['docked']['box'] < out['stepped']['box'], \
+        f"precondition: the dock takes height off the notebook: {out['docked']} {out['stepped']}"
+
+
+def test_the_inline_reply_says_what_it_looked_at_even_when_that_is_nothing(tmp_path):
+    """An empty trail rendered as no trail at all, so a reader could not tell an answer written
+    without looking anything up from a panel whose trail had stopped working."""
+    import json
+    (tmp_path/'a.py').write_text('x = 1\n')
+    async def go(pg):
+        out = {}
+        for name, activity in (('used', [{'tool': 'view_file'}, {'tool': 'view_file'},
+                                         {'tool': 'search_code'}, {'note': 'not a call'}]),
+                               ('none', [])):
+            def reply(a):
+                body = json.dumps({'ok': True, 'text': 'rewritten', 'mode': 'instruction',
+                                   'model': 'fake', 'activity': a})
+                return lambda route, *_: route.fulfill(
+                    status=200, content_type='application/json', body=body)
+            await pg.route('**/complete/selection', reply(activity))
+            await pg.evaluate("p => leeOpenFile(p)", str(tmp_path/'a.py'))
+            await pg.wait_for_selector('#editor .cm-editor')
+            await pg.evaluate("""() => {
+              const view = lee.editors.get('file');
+              LeeCM.setSelection(view, 0, LeeCM.getDoc(view).length);
+              showSelectionHelp();
+            }""")
+            await pg.wait_for_selector('.lee-selection-tools')
+            await pg.click('[data-ask]')
+            await pg.fill('.lee-selection-tools input', 'tidy this')
+            await pg.click('[data-send]')
+            await pg.wait_for_selector('.lee-selection-reply:not(.loading)')
+            out[name] = await pg.evaluate(
+                "() => document.querySelector('.lee-selection-trail')?.innerText || ''")
+            await pg.evaluate("() => document.querySelector('.lee-selection-reply')?.remove()")
+        return out
+    out = _run(go, roots=[tmp_path])
+    assert 'view_file x2' in out['used'] and 'search_code' in out['used'], out['used']
+    assert 'note' not in out['used'], 'only tool calls are named'
+    assert 'without looking anything up' in out['none'], out['none']
+
+def test_the_completion_log_is_its_own_surface_and_opens_onto_what_was_asked_and_suggested(tmp_path, monkeypatch):
+    """The inline panel's telemetry used to be appended to the bottom of a conversation in the
+    agent's History view. Reaching it meant opening a conversation nobody wanted, and the two
+    preferences that decide whether any of it is recorded, and the purge button, lived there too.
+
+    It has a surface of its own now, and a row opens onto the question, the selection and the
+    suggestion. That last part never worked: `summary` joined asks to outcomes on `ask_id` and the
+    browser logged the ask before the route minted one, so every row read `(no instruction)`.
+    """
+    from playwright.sync_api import sync_playwright
+    from leela.blocks.agent.completions import completions
+    from leela.blocks.settings.settings import Settings
+    monkeypatch.setattr(Settings, 'raw', lambda self, scope: {'completions': {'snippets': True}}
+                        if scope == 'user' else {})
+    completions().record([
+        {'kind': 'ask', 'ask_id': '1', 'instruction': 'add a docstring', 'lang': 'python',
+         'text': 'def f(x): return x'},
+        {'kind': 'reply', 'ask_id': '1', 'model': 'fast', 'ms': 800, 'reply': 'def f(x):\n    "doubles"\n    return x'},
+        {'kind': 'replace', 'ask_id': '1'},
+        {'kind': 'ask', 'ask_id': '2', 'instruction': 'rename the widget', 'lang': 'python'},
+        {'kind': 'reply', 'ask_id': '2', 'model': 'slow', 'ms': 2400},
+        {'kind': 'discard', 'ask_id': '2'}], True)
+    fake_kernels()
+    ws = Workspace(roots=[tmp_path])
+    with _server(ws) as url, sync_playwright() as pw:
+        browser = _launch_sync(pw)
+        page = browser.new_page(viewport={'width': 1440, 'height': 900})
+        page.goto(url, wait_until='networkidle')
+        if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
+
+        # the agent's history is a conversation browser again, and carries none of this
+        page.click('#agenthistory')
+        page.wait_for_selector('.lee-history-index')
+        assert page.locator('.lee-completions').count() == 0, 'completions are still inside the transcript'
+
+        page.evaluate('showCompletions()')
+        page.wait_for_selector('.lee-completions-modal .lee-completion-log')
+        rows = page.locator('.lee-completion-row')
+        assert rows.count() == 2
+        newest = rows.nth(0)
+        assert 'rename the widget' in newest.inner_text() and 'rejected' in newest.inner_text()
+        oldest = rows.nth(1)
+        assert 'add a docstring' in oldest.inner_text() and 'accepted' in oldest.inner_text()
+
+        oldest.locator('summary').click()          # the three things a row is for
+        detail = oldest.locator('.lee-completion-detail')
+        page.wait_for_function("() => document.querySelector('.lee-completion-detail')?.offsetHeight > 0")
+        assert 'def f(x): return x' in detail.inner_text(), 'the selection is not on screen'
+        assert 'doubles' in detail.inner_text(), 'the suggestion is not on screen'
+        # the one with no code says so rather than showing an empty box
+        newest.locator('summary').click()
+        assert 'not kept' in newest.locator('.lee-completion-detail').inner_text()
+
+        models = page.locator('.lee-completion-models').inner_text()
+        assert 'fast' in models and '100%' in models and '0%' in models
+        note = page.locator('.lee-completions .lee-weight-note').inner_text()
+        assert '2 asked' in note and 'accepted 50%' in note
+        # the controls that have no other home came with it
+        assert page.locator('.lee-completions [data-completion-pref="telemetry"]').input_value() == 'on'
+        assert page.locator('.lee-completions [data-completion-pref="snippets"]').count() == 1
+        assert page.locator('.lee-completions [data-completions-purge]').count() == 1
+        browser.close()
+
+
+def test_agent_preferences_are_kept_in_settings_and_not_only_in_this_origin(tmp_path, monkeypatch):
+    """The composer's notify box, reasoning picker and history filter, across a relaunch.
+
+    `localStorage` is per origin and the packaged app takes whatever port is free, so a preference
+    kept only there was gone at the next launch and read as its default: desktop notifications a
+    person switched on came back off without anyone asking for it. Each is saved to settings.json,
+    holds for a browser that has never seen the origin, and a value that only ever lived in the old
+    per-origin key is migrated rather than dropped.
+    """
+    import leela.blocks.settings.settings as settings_module
+    saved = tmp_path/'settings.json'
+    monkeypatch.setattr(settings_module, 'user_settings_file', lambda: saved)
+    (tmp_path/'main.py').write_text('x = 1\n')
+    fake_kernels()
+    ws = Workspace(roots=[tmp_path])
+    with serve(ws) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            # headless chromium answers `denied` however the permission is granted, and the toggle
+            # is only reached with a granted one
+            page.add_init_script("Object.defineProperty(Notification, 'permission',"
+                                 " {get: () => 'granted'})")
+            page.reload(wait_until='networkidle')
+            def agent_prefs(): return page.evaluate("() => api('/settings')")['effective']['agent']
+            def threads():
+                page.evaluate('leeAgentThreadsToggle(true)')
+                page.wait_for_selector('#agentnotify')
+            page.wait_for_function('window.lee && lee.settingsMeta')
+            threads()
+            page.check('#agentnotify')
+            page.wait_for_function('() => lee.prefs.agent.notify === true')
+            page.select_option('#agentreasoning', 'high')
+            page.wait_for_function("() => lee.prefs.agent.reasoning === 'high'")
+            got = agent_prefs()
+            assert (got['notify'], got['reasoning']) == (True, 'high'), got
+
+            page.evaluate('localStorage.clear()')   # what a new origin looks like
+            page.reload(wait_until='networkidle')
+            page.wait_for_function('window.lee && lee.settingsMeta')
+            page.wait_for_function("() => document.querySelector('#agentreasoning')?.value === 'high'")
+            threads()
+            assert page.is_checked('#agentnotify'), 'notifications came back off at a new origin'
+
+            saved.unlink()                          # a first launch, with an old cache to take from
+            page.evaluate("localStorage.clear();"
+                          " localStorage.setItem('lee-agent-notify', 'on');"
+                          " localStorage.setItem('lee-agent-reasoning', 'low');"
+                          " localStorage.setItem('leeHistoryLeelaOnly', '0')")
+            page.reload(wait_until='networkidle')
+            page.wait_for_function("() => lee.prefs?.agent?.reasoning === 'low'")
+            got = agent_prefs()
+            assert (got['notify'], got['reasoning'], got['historyLeelaOnly']) == (True, 'low', False), got
+
+            saved.unlink()
+            page.evaluate('localStorage.clear()')
+            page.reload(wait_until='networkidle')
+            page.wait_for_function('() => lee.prefs?.agent?.historyLeelaOnly === true')
+            assert agent_prefs()['historyLeelaOnly'] is True, 'the filter is on unless it is turned off'
+
+
+SEARCH_API_STUB = SEARCH_STUB.replace("prefSet('search', 'lastMode', 'rg');\n  codeSearch();", '')
+
+def _relaunch(page):
+    "A relaunch on a port nobody chose: the settings are still there, the origin's storage is not."
+    page.evaluate('localStorage.clear()')
+    page.reload(wait_until='networkidle')
+    page.wait_for_function('window.lee && lee.settingsMeta')
+
+def _settings_file(monkeypatch, tmp_path):
+    import leela.blocks.settings.settings as settings_module
+    saved = tmp_path/'settings.json'
+    monkeypatch.setattr(settings_module, 'user_settings_file', lambda: saved)
+    return saved
+
+def test_the_dotfile_toggle_is_kept_in_settings_and_not_only_in_this_origin(tmp_path, monkeypatch):
+    """Showing dotfiles came back off at every launch, because the port moves and `localStorage` is
+    per origin. It is `workbench.showHiddenFiles` now, it holds for a browser that has never seen
+    the origin, and a `lee-tree-hidden` that only ever lived in the old key is adopted, not dropped.
+    """
+    _settings_file(monkeypatch, tmp_path)
+    (tmp_path/'.hidden.py').write_text('x = 1\n')
+    fake_kernels()
+    with serve(Workspace(roots=[tmp_path])) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            page.wait_for_function('window.lee && lee.settingsMeta')
+            page.evaluate("localStorage.setItem('lee-tree-hidden', '1')")
+            page.reload(wait_until='networkidle')
+            page.wait_for_function('() => lee.prefs?.workbench?.showHiddenFiles === true')
+
+            _relaunch(page)
+            assert page.evaluate('() => treeHidden()') is True, 'the toggle came back off at a new origin'
+            assert page.evaluate("() => $('[data-action=\"show_hidden\"]').classList.contains('on')"), \
+                'the button does not say what the tree is doing'
+
+            page.evaluate('() => toggleHidden()')
+            page.wait_for_function('() => lee.prefs.workbench.showHiddenFiles === false')
+            _relaunch(page)
+            assert page.evaluate('() => treeHidden()') is False, 'turning it off did not last either'
+
+def test_the_markdown_view_is_kept_in_settings_and_not_only_in_this_origin(tmp_path, monkeypatch):
+    """Split, rendered or edit, chosen once and held across a relaunch. The setting names the views
+    `source`, `preview` and `split`; the buttons and the stage's CSS say `edit`, `rendered` and
+    `split`, and a `lee-md-view` from the old key is adopted through that mapping.
+    """
+    _settings_file(monkeypatch, tmp_path)
+    md = tmp_path/'note.md'
+    md.write_text('# Title\n\ntext\n')
+    fake_kernels()
+    with serve(Workspace(roots=[tmp_path])) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            page.wait_for_function('window.lee && lee.settingsMeta')
+            def open_md():
+                page.evaluate('p => leeOpenFile(p)', str(md))
+                page.wait_for_selector('.lee-md-stage')
+                return page.evaluate("() => $('.lee-md-stage').dataset.view")
+            page.evaluate("localStorage.setItem('lee-md-view', 'rendered')")
+            assert open_md() == 'rendered', 'the view the old key held was dropped'
+            page.wait_for_function("() => lee.prefs.workbench.markdownView === 'preview'")
+
+            _relaunch(page)
+            assert open_md() == 'rendered', 'the view came back at the default at a new origin'
+
+            page.click('[data-md-view="split"]')
+            page.wait_for_function("() => lee.prefs.workbench.markdownView === 'split'")
+            _relaunch(page)
+            assert open_md() == 'split'
+            assert page.evaluate("() => $('#mdview .lee-seg.active').dataset.mdView") == 'split', \
+                'the buttons and the stage disagree about the view'
+
+def test_a_pinned_pane_is_kept_in_settings_and_not_only_in_this_origin(tmp_path, monkeypatch):
+    """A pane holds its pin across a relaunch. There was a `lee-pin-<pane>` key per pane and the
+    setting is one list of the panes that are pinned, so the old keys are gathered into it once.
+    Pinned is still the default: an empty list is a fresh install, not two panes somebody unpinned.
+    """
+    _settings_file(monkeypatch, tmp_path)
+    (tmp_path/'main.py').write_text('x = 1\n')
+    fake_kernels()
+    with serve(Workspace(roots=[tmp_path])) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            page.wait_for_function('window.lee && lee.settingsMeta')
+            assert page.evaluate("() => leePinned('left') && leePinned('right')"), 'pinned is the default'
+            page.evaluate("localStorage.setItem('lee-pin-left', '0')")
+            page.reload(wait_until='networkidle')
+            page.wait_for_function("() => JSON.stringify(lee.prefs?.workbench?.pinnedPanes) === '[\"right\"]'")
+
+            _relaunch(page)
+            assert page.evaluate("() => [leePinned('left'), leePinned('right')]") == [False, True], \
+                'the unpinned pane came back pinned at a new origin'
+            assert page.evaluate("() => $('#shell').classList.contains('unpinned-left')"), \
+                'the shell does not lay out the way the setting says'
+
+            page.evaluate("() => leePinPane('left')")
+            page.wait_for_function("() => JSON.stringify(lee.prefs.workbench.pinnedPanes) === '[\"left\",\"right\"]'")
+            _relaunch(page)
+            assert page.evaluate("() => leePinned('left')") is True, 'pinning it again did not last'
+
+def test_the_search_dialog_reopens_on_the_choices_it_closed_on(tmp_path, monkeypatch):
+    """The mode, the scope and the extension filter, across a relaunch rather than only across a
+    reopen. All three were `localStorage`, so a moving port reset them; they are `search.last*` now,
+    and the old keys are adopted before the dialog reads anything.
+    """
+    _settings_file(monkeypatch, tmp_path)
+    (tmp_path/'main.py').write_text('x = 1\n')
+    fake_kernels()
+    with serve(Workspace(roots=[tmp_path])) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            page.wait_for_function('window.lee && lee.settingsMeta')
+            def open_search():
+                page.evaluate(SEARCH_API_STUB)
+                page.evaluate('() => { codeSearch(); }')
+                page.wait_for_selector('#csexts')
+                return page.evaluate("() => [$('.lee-searchrail-mode.active').dataset.mode,"
+                                     " $('#csscope').value, $('#csexts').value]")
+            def close_search():
+                page.keyboard.press('Escape')
+                page.wait_for_selector('.lee-code-search-modal', state='detached')
+            page.evaluate("localStorage.setItem('lee-search-mode', 'rg');"
+                          " localStorage.setItem('lee-search-scope', 'workspace');"
+                          " localStorage.setItem('lee-search-exts', 'py, ts')")
+            assert open_search() == ['rg', 'workspace', 'py, ts'], 'what the old keys held was dropped'
+            page.wait_for_function("() => lee.prefs.search.lastExts === 'py, ts'")
+            close_search()
+
+            _relaunch(page)
+            assert open_search() == ['rg', 'workspace', 'py, ts'], 'the dialog reset at a new origin'
+
+            page.click('[data-mode="context"]')
+            page.select_option('#csscope', 'project')
+            page.fill('#csexts', 'md')
+            close_search()
+            page.wait_for_function("() => lee.prefs.search.lastExts === 'md'")
+            _relaunch(page)
+            assert open_search() == ['context', 'project', 'md'], 'a change made in the dialog did not last'

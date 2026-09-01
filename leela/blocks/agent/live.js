@@ -132,6 +132,31 @@ function foldOlderTurns(log, keep = 1) {
   const cards = $$('.lee-agent-turn', log || $('#agentlog') || document);
   cards.slice(0, Math.max(0, cards.length - keep)).forEach(card => foldAgentTurn(card, true));
 }
+/* Folding hides a turn from layout; it does not free it. Every turn of a session stays in the live
+   pane holding its rendered replies and one CodeMirror view per code block in them, so a long day's
+   conversation is hundreds of live views the pane carries through every paint. The pane keeps the
+   last `LIVE_TURNS` and History holds the rest, which is where a conversation already lives.
+
+   A turn holding a checkpoint is never dropped: its buttons are the only way that run continues. */
+const LIVE_TURNS = 30;
+function trimAgentLog(log, keep = LIVE_TURNS) {
+  log = log || $('#agentlog');
+  if (!log || (lee.agentView && lee.agentView !== 'live')) return 0;
+  const cards = $$('.lee-agent-turn', log);
+  let dropped = 0;
+  for (const card of cards.slice(0, Math.max(0, cards.length - keep))) {
+    if (turnAwaitingApproval(card)) continue;
+    dropCodeSurfaces(card); card.remove(); dropped += 1;
+  }
+  if (!dropped) return 0;
+  for (const [id, node] of approvalCards) if (!node.isConnected) approvalCards.delete(id);
+  if (!$('.lee-agent-trimmed', log)) {
+    const note = document.createElement('div'); note.className = 'lee-agent-trimmed';
+    note.textContent = 'Earlier turns in this conversation are in History.';
+    log.prepend(note);
+  }
+  return dropped;
+}
 /* The newest turn is the one being read, so it is never folded from storage: a turn folded before
    a resume would otherwise hide the answer a person came back for. */
 function applyStoredFolds(log) {
@@ -216,18 +241,146 @@ const sessionTurns = async id => {
   try { return (await api('/agent/history/session?id=' + encodeURIComponent(id))).turns || []; }
   catch (e) { status(String(e.message || e), 'err'); return []; }
 };
+/* The three preferences this pane keeps, each of which used to live only in `localStorage` and so
+   came back at its default whenever the app was launched on a different port.
+
+   settings.json answers with a default for every key, so `lee.prefs` cannot say whether a value was
+   chosen, and `prefAdopt` reads that default as a choice and migrates nothing. `origins` names the
+   layer each key came from, and only `default` means nobody has saved one. The control's own
+   default is saved where it differs from settings', which is how the history filter stays on for
+   someone who never asked for it off. */
+const AGENT_PREFS = {notify: ['lee-agent-notify', v => v === 'on', false],
+                     reasoning: ['lee-agent-reasoning', v => v, ''],
+                     historyLeelaOnly: ['leeHistoryLeelaOnly', v => v !== '0', true]};
+async function adoptAgentPrefs() {
+  for (const [key, [legacy, parse, dflt]] of Object.entries(AGENT_PREFS)) {
+    if ((lee.settingsMeta?.origins?.agent?.[key] || 'default') !== 'default') continue;
+    const old = localStorage.getItem(legacy), value = old === null ? dflt : parse(old);
+    if (value !== lee.prefs?.agent?.[key]) await prefSet('agent', key, value);
+  }
+}
+let agentPrefsAdopted;
+// Once per session, and not before `loadSettings` has said what is already saved.
+const agentPrefsReady = () =>
+  lee.settingsMeta ? (agentPrefsAdopted ||= adoptAgentPrefs()) : Promise.resolve();
 /* Leela and the ramabana CLI append to one log, and only Leela marks the sessions it started, so
    anything unmarked reads as the CLI's, including Leela's history from before the mark. */
 /* Checked unless it has been turned off: one log holds both, most of it is the CLI's, and the
    list a person opens is their own work. Asking the server means the CLI's are not grouped and
    shipped only to be filtered out here. */
-const leelaOnly = () => localStorage.getItem('leeHistoryLeelaOnly') !== '0';
+const leelaOnly = () => prefGet('agent', 'historyLeelaOnly', true);
 const shownSessions = groups => leelaOnly() ? groups.filter(s => s.app === 'leela') : groups;
 async function historyGroups() {
+  await agentPrefsReady();
   const d = await api('/agent/history' + (leelaOnly() ? '' : '?everything=1'));
   lee.agentHistoryHidden = d.hidden || 0;
   return d.sessions || [];
 }
+/* The inline panel's telemetry, in a surface of its own. It used to be appended to the bottom of a
+   conversation in the agent's History view, which is a different feature's transcript: the only way
+   to reach it was to open a conversation nobody wanted, and the two preferences that decide whether
+   any of this is recorded lived there too. A `stale` is neither an accept nor a reject, so it is
+   named rather than counted. */
+const COMPLETION_VERDICT = {replace: 'accepted', discard: 'rejected', stale: 'selection moved',
+                            abandon: 'abandoned', error: 'model failed', ask: 'still open',
+                            reply: 'answered, no verdict'};
+const COMPLETION_CODE = {kept: '', 'not kept': 'the code was not kept for this one',
+                         withheld: 'turn on "keep the code" to read the selection and the suggestion'};
+/* Two causes, one shape: nothing carried an id before the browser began minting them, and an ask
+   can fall outside the window this list covers while its verdict stays inside it. */
+const COMPLETION_ORPHAN = 'not joined to its ask: recorded before asks carried an id, or its ask is outside this window';
+const percent = r => r === null || r === undefined ? '—' : Math.round(r * 100) + '%';
+const completionWhen = at => at ? new Date(at * 1000).toLocaleString() : '';
+
+function completionRow(r) {
+  const row = document.createElement('details'); row.className = 'lee-completion-row';
+  row.dataset.completion = r.kind || '';
+  row.innerHTML = `<summary><strong></strong><span>${esc(r.model || 'unknown')}` +
+    `${r.lang ? ' · ' + esc(r.lang) : ''}${r.ms ? ' · ' + esc(r.ms) + 'ms' : ''}` +
+    `${r.at ? ' · ' + esc(completionWhen(r.at)) : ''}</span>` +
+    `<em>${esc(COMPLETION_VERDICT[r.kind] || r.kind || '')}</em></summary>` +
+    `<div class="lee-completion-detail"></div>`;
+  // textContent throughout: an instruction and a suggestion are whatever the person and the model wrote
+  $('summary strong', row).textContent = r.instruction || (r.orphan ? '(unlinked event)' : '(no instruction)');
+  const detail = $('.lee-completion-detail', row);
+  if (r.path) { const p = document.createElement('div'); p.className = 'lee-dim'; p.textContent = r.path; detail.appendChild(p); }
+  const pair = (label, text) => {
+    const box = document.createElement('div'); box.className = 'lee-completion-code';
+    const h = document.createElement('h5'); h.textContent = label; box.appendChild(h);
+    const pre = document.createElement('pre'); pre.textContent = text; box.appendChild(pre);
+    detail.appendChild(box);
+  };
+  if (r.text) pair('selection', r.text);
+  if (r.reply) pair('suggestion', r.reply);
+  for (const note of [COMPLETION_CODE[r.code], r.orphan ? COMPLETION_ORPHAN : ''].filter(Boolean)) {
+    const n = document.createElement('div'); n.className = 'lee-dim'; n.textContent = note; detail.appendChild(n);
+  }
+  return row;
+}
+
+async function showCompletions() {
+  const m = modal(`<div class="lee-mhead">Inline completions<span class="sub">what you asked, what came back, and what you did with it</span></div>` +
+    `<div class="lee-completions" id="completionsbody"><div class="lee-dim">reading the log…</div></div>`,
+    null, null, {className: 'lee-completions-modal', storageKey: 'completions'});
+  await paintCompletions(m);
+  return m;
+}
+
+/* A paint in flight when a purge lands would repaint the selections the purge deleted, so each one
+   takes a ticket and only the newest writes. */
+let completionsPaint = 0;
+async function paintCompletions(m) {
+  const body = $('#completionsbody', m); if (!body) return;
+  const mine = ++completionsPaint;
+  let d;
+  try { d = await api('/ai/completions?days=30'); }
+  catch (e) {
+    if (mine === completionsPaint) body.innerHTML = `<div class="lee-dim">completions unavailable: ${esc(e.message || e)}</div>`;
+    return;
+  }
+  if (mine !== completionsPaint) return;
+  const s = d.summary || {}, events = d.events || [];
+  body.innerHTML = `<div class="lee-weight-group"><h4>What Leela keeps about your completions</h4><div class="lee-weight-row">` +
+    `<label>keep<select class="lee-select" data-completion-pref="telemetry">` +
+    ['on', 'off'].map(v => `<option value="${v}"${v === d.telemetry ? ' selected' : ''}>${v}</option>`).join('') +
+    `</select></label>` +
+    `<label class="lee-settings-toggle"><input type="checkbox" data-completion-pref="snippets"` +
+    `${d.snippets ? ' checked' : ''}><span>keep the code</span></label>` +
+    `<button class="lee-btn" data-completions-purge type="button">purge log</button></div>` +
+    `<div class="lee-dim lee-weight-note">${esc(s.asks || 0)} asked · ${esc(s.answered || 0)} answered · ` +
+    `${esc(s.replaced || 0)} accepted · ${esc(s.discarded || 0)} rejected · accepted ${percent(s.accept_rate)}` +
+    `${d.telemetry === 'off' ? ' · recording is off, so nothing new is kept' : ''}` +
+    `${d.snippets ? '' : ' · the code is not being kept, so rows show the question and the verdict only'}` +
+    `<br>${esc(d.dir || '')}</div></div>` +
+    `<div class="lee-weight-group"><h4>Accepted per model</h4><div class="lee-completion-models">` +
+    ((s.models || []).map(x => `<div data-completion-model="${esc(x.model)}"><strong>${esc(x.model)}</strong>` +
+      `<span>${esc(x.replaced || 0)} accepted · ${esc(x.discarded || 0)} rejected` +
+      `${x.stale ? ' · ' + esc(x.stale) + ' stale' : ''}</span><em>${percent(x.accept_rate)}</em></div>`).join('') ||
+      `<div class="lee-dim">nothing decided yet</div>`) + `</div></div>` +
+    `<div class="lee-weight-group"><h4>Every ask</h4><div class="lee-completion-log"></div></div>`;
+  const log = $('.lee-completion-log', body);
+  if (!events.length) log.innerHTML = `<div class="lee-dim">nothing recorded yet</div>`;
+  else events.forEach(r => log.appendChild(completionRow(r)));
+  $$('[data-completion-pref]', body).forEach(el => el.onchange = async () => {
+    const value = el.type === 'checkbox' ? el.checked : el.value;
+    try {
+      await post('/settings/save', {scope: 'user', section: 'completions',
+                                    values: {[el.dataset.completionPref]: value}});
+      await paintCompletions(m);   // `snippets` decides what the route will hand over at all
+    } catch (e) { status(e.message || String(e), 'err'); }
+  });
+  $('[data-completions-purge]', body).onclick = async () => {
+    if (!await confirmDialog('Purge the completion log',
+        'Delete every recorded completion event? The conversations are not touched.', 'purge')) return;
+    const out = await post('/ai/completions/purge', {});
+    status(`removed ${out.removed} completion event file${out.removed === 1 ? '' : 's'}`, 'ok');
+    // repainted from the server, never from anything held here: the point of a purge is that the
+    // selections and suggestions are gone, and a cached copy on the page would outlive them
+    await paintCompletions(m);
+  };
+}
+window.showCompletions = showCompletions;
+
 async function showHistorySession(group, groups) {
   const log = $('#agentlog'); if (!log) return; dropCodeSurfaces(log); log.innerHTML = ''; approvalCards.clear();
   log.dataset.foldScope = group?.id || '';   // these turns are that session's, whatever thread is live
@@ -253,14 +406,16 @@ async function showHistorySession(group, groups) {
   index.querySelector('select')?.addEventListener('change', e =>
     showHistorySession(all.find(s => s.id === e.target.value), all));
   index.querySelector('.lee-history-leelaonly')?.addEventListener('change', async e => {
-    localStorage.setItem('leeHistoryLeelaOnly', e.target.checked ? '1' : '0');
+    await prefSet('agent', 'historyLeelaOnly', e.target.checked);
     // The CLI's conversations are not in `all` when the box was checked, so this asks again.
     const groups = await historyGroups(), left = shownSessions(groups);
     showHistorySession(left.find(s => s.id === group?.id) || left[0], groups);
   });
   index.querySelector('.lee-history-resume')?.addEventListener('click', () => leeAgentResume(group));
   log.appendChild(index);
-  if (!group) { log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>'); return; }
+  if (!group) {
+    return log.insertAdjacentHTML('beforeend', '<div class="lee-dim">(no sessions yet)</div>');
+  }
   log.insertAdjacentHTML('beforeend', `<div class="lee-history-session-head">` +
     `<strong>${esc(titleText(group.title) || sessionTime(group))}</strong>` +
     `<span>${titleText(group.title) ? `${esc(sessionTime(group))} · ` : ''}` +
@@ -289,6 +444,7 @@ async function paintAgentThread(id) {
   if ((d.turns || []).length) { log.innerHTML = ''; renderTurns(log, d.turns, titleText(d.title) || 'conversation'); }
   else log.innerHTML = welcome ? welcome.outerHTML : '';
   lee.agentView = 'live'; $('#agenthistory')?.classList.remove('active');
+  trimAgentLog(log);   // a conversation of any length arrives here whole
   // Nothing to set aside: the live pane is what was just painted into the log.
   lee.agentLive = null; stickAgentLog(log, true);
   return d;
@@ -320,7 +476,10 @@ function paintResumed(d) {
 async function resumeLatestAgent() {
   // Nothing saved is the first run, not a failure, so this never speaks up about it.
   try {
-    const d = await post('/agent/resume', {session: 'latest'});
+    await agentPrefsReady();   // the saved filter, not the default, decides what boot may open
+    /* Read under the same filter as the history list: a pane that hides the CLI's conversations
+       cannot open one of them on boot. With the filter off, `latest` is the log's newest again. */
+    const d = await post('/agent/resume', {session: 'latest', everything: !leelaOnly()});
     if (!(d.turns || []).length) return;
     paintResumed(d);
     status(`picked up ${titleText(d.title) || d.session}`, 'ok');
@@ -392,10 +551,12 @@ function paintAgentThreads(d) {
         `<header><strong>${esc(threadName(t))}</strong>` +
         `<span class="lee-thread-state ${esc(t.state)}">${esc(t.state)}</span></header>` +
         `<footer><span>${t.unread ? `${t.unread} new` : (live ? 'on screen' : 'idle')}` +
+        `${t.branch && t.branch !== 'main' ? ` · on ${esc(t.branch)}` : ''}` +
         `${t.muted ? ' · muted' : ''}</span><span class="lee-spacer"></span>` +
         `<button type="button" data-thread-rename title="rename">rename</button>` +
         `<button type="button" data-thread-mute title="${t.muted ? 'unmute' : 'silence notifications'}">${t.muted ? 'unmute' : 'mute'}</button>` +
         `<button type="button" data-thread-reshape title="edit this conversation as a notebook">edit</button>` +
+        `<button type="button" data-thread-branches title="fork this conversation, or switch branch">branches</button>` +
         `<button type="button" data-thread-close class="warn" title="close">close</button></footer></article>`;
     }).join('') || '<div class="lee-dim">no live conversations</div>';
     list.insertAdjacentHTML('beforeend',
@@ -418,6 +579,7 @@ function bindAgentThreadCards(list) {
     if (button.hasAttribute('data-thread-rename')) return leeAgentThreadRename(id);
     if (button.hasAttribute('data-thread-mute')) return leeAgentThreadMute(id);
     if (button.hasAttribute('data-thread-reshape')) return leeAgentReshape(id);
+    if (button.hasAttribute('data-thread-branches')) return leeAgentBranches(id);
     if (button.hasAttribute('data-thread-close')) return leeAgentThreadClose(id);
   });
   list.addEventListener('keydown', e => {
@@ -463,6 +625,142 @@ async function leeAgentReshapeApply() {
   lee.agentReshape = null; $('#agentattention').hidden = true;
   await refreshAgentThreads();
   status(`reshaped · ${out.discarded.length} dropped, ${out.rewritten.length} rewritten · ${out.branch_id}`, 'ok');
+}
+/* Branches belong to a conversation, so the way in is that conversation's own card. Two lists in
+   one dialog: where this conversation has already been cut, and where it can still be. A branch is
+   a parent point and a manifest, recompiled on switch, so nothing here replays a turn. */
+async function leeAgentBranches(id = lee.agentThread) {
+  if (!id) return status('open a conversation first', 'err');
+  let d;
+  try { d = await api('/agent/branches?thread=' + encodeURIComponent(id)); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  const origin = b => b.branch_id === 'main' ? 'the conversation as recorded'
+    : `${b.shaped ? 'shaped' : 'forked'} from turn ${esc(turnShort(b.parent_turn_id))} ${esc(b.stage || 'after')}` +
+      `${b.parent_branch_id ? ` · off ${esc(b.parent_branch_id)}` : ''}`;
+  const branches = (d.branches || []).map(b =>
+    `<div class="lee-setup-row"><span><strong>${esc(b.branch_id)}</strong>` +
+    `${b.branch_id === d.active ? ' · active' : ''}<br><small>${origin(b)}</small></span>` +
+    (b.branch_id === d.active ? '<span class="lee-dim">on screen</span>'
+      : `<button class="lee-btn" data-switch="${esc(b.branch_id)}">switch</button>`) + '</div>').join('');
+  const points = (d.turns || []).filter(t => t.after).map(t =>
+    `<div class="lee-setup-row"><span><strong>turn ${esc(turnShort(t.turn_id))}</strong><br>` +
+    `<small>captured on ${esc(t.branch_id)}</small></span>` +
+    `<button class="lee-btn" data-fork="${esc(t.turn_id)}">fork…</button></div>`).reverse().join('');
+  const m = modal(`<div class="lee-mhead">Conversation branches<span class="sub">active · ${esc(d.active)}</span></div>` +
+    `<h4>branches</h4><div class="lee-modallist">${branches}</div>` +
+    `<h4>branch points</h4><div class="lee-modallist">${points ||
+      '<div class="lee-dim">no turn of this conversation was captured in this session</div>'}</div>` +
+    `<div class="lee-mfoot"><span class="lee-dim">a branch is a starting point, not a copy</span>` +
+    `<span class="lee-spacer"></span><button class="lee-btn" data-shape>shape context…</button></div>`,
+    null, null, {storageKey: 'agent-branches'});
+  $('[data-shape]', m).onclick = () => { m.remove(); leeAgentShape(id); };
+  $$('[data-switch]', m).forEach(b => b.onclick = async () => {
+    if (await leeAgentBranchSwitch(b.dataset.switch, id)) { m.remove(); leeAgentBranches(id); }
+  });
+  $$('[data-fork]', m).forEach(b => b.onclick = () => { m.remove(); leeAgentForkTurn(b.dataset.fork, id); });
+}
+const turnShort = id => String(id || '').split(':').at(-1);
+/* Switching moves what the model remembers, never what is on screen: the transcript is the record
+   of what was said, and saying otherwise would hide a turn that really happened. */
+async function leeAgentBranchSwitch(branchId, id = lee.agentThread) {
+  try {
+    const d = await post('/agent/branch/switch', {thread: id, branch_id: branchId});
+    await refreshAgentThreads();
+    status(`the next turn continues from ${d.active} · the transcript above is unchanged`, 'ok');
+    return d;
+  } catch (e) { status(e.message || String(e), 'err'); return null; }
+}
+/* A fork point is a part, not a message: a call and the results it produced move together, so
+   picking one inside a tool exchange takes the whole exchange. */
+async function leeAgentForkTurn(turnId, id = lee.agentThread) {
+  if (!turnId) return status('no turn to branch from', 'err');
+  let d;
+  try { d = await api(`/agent/branch/parts?turn_id=${encodeURIComponent(turnId)}&stage=after` +
+                      `&thread=${encodeURIComponent(id || '')}`); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  const kinds = {user: 'you', assistant: 'agent', calls: 'call', result: 'result'};
+  const rows = (d.parts || []).map(p =>
+    `<div class="lee-setup-row"><span><strong>${esc(kinds[p.kind] || p.kind)}</strong><br>` +
+    `<small>${esc((p.preview || '').slice(0, 120) || 'no text')}</small></span>` +
+    `<button class="lee-btn" data-part="${esc(p.part_id)}">keep to here</button></div>`).join('');
+  const m = modal(`<div class="lee-mhead">Branch from turn ${esc(turnShort(turnId))}` +
+    `<span class="sub">a new branch continuing from the point you pick · nothing is deleted</span></div>` +
+    `<div class="lee-modallist"><div class="lee-setup-row"><span><strong>the whole turn</strong><br>` +
+    `<small>everything said up to and including it</small></span>` +
+    `<button class="lee-btn go" data-part="">branch here</button></div>${rows}</div>`,
+    null, null, {storageKey: 'agent-fork'});
+  $$('[data-part]', m).forEach(b => b.onclick = async () => {
+    try {
+      const out = await post('/agent/fork', {thread: id, turn_id: turnId, stage: 'after', part_id: b.dataset.part});
+      m.remove(); await refreshAgentThreads();
+      status(`branched to ${out.branch_id} · ${out.kept} part(s) kept, ${out.omitted} dropped`, 'ok');
+    } catch (e) { status(e.message || String(e), 'err'); }
+  });
+}
+/* What the model still carries, decided in one place rather than in a notebook. Nothing is
+   written until apply, and apply is refused unless the branch is still at the revision the preview
+   was taken at: a conversation that moved while a person was deciding is a different question. */
+async function leeAgentShape(id = lee.agentThread) {
+  if (!id) return status('open a conversation first', 'err');
+  let d;
+  try { d = await api('/agent/conversation/parts?thread=' + encodeURIComponent(id)); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  const parts = d.parts || [];
+  if (!parts.length) return status('this conversation has no recorded turns to shape', 'err');
+  const kinds = {user: 'you', assistant: 'agent', call: 'call', result: 'result'};
+  const rows = parts.map(p =>
+    `<div class="lee-setup-row lee-shape-row" data-part="${esc(p.part_id)}">` +
+    `<span><strong>${esc(kinds[p.kind] || p.kind)}</strong>${p.tool ? ` · ${esc(p.tool)}` : ''}` +
+    (p.editable ? `<textarea class="lee-input" data-text rows="2" spellcheck="true"` +
+                  ` aria-label="what the model remembers here">${esc(p.text || '')}</textarea>`
+                : `<br><small>${esc((p.text || '').slice(0, 160) || 'no text')}</small>`) + '</span>' +
+    `<label title="uncheck to drop this part"><input type="checkbox" data-keep checked> keep</label></div>`).join('');
+  const m = modal(`<div class="lee-mhead">Shape this conversation` +
+    `<span class="sub">${esc(d.session)} · branch ${esc(d.branch_id)}</span></div>` +
+    `<section class="lee-revision-explainer"><strong>You are choosing what the model still carries.</strong>` +
+    `<span>Tools will not run again and files will not change. A call and its result go together. ` +
+    `Apply writes a new branch, and the recorded conversation stays as it is.</span></section>` +
+    `<div class="lee-modallist">${rows}</div>` +
+    `<div class="lee-mfoot"><span class="lee-dim" data-summary>reading…</span><span class="lee-spacer"></span>` +
+    `<button class="lee-btn" data-cancel>close</button>` +
+    `<button class="lee-btn go" data-apply disabled>apply as a new branch</button></div>`,
+    null, null, {className: 'lee-setup-modal', storageKey: 'agent-shape'});
+  const manifest = () => Object.fromEntries($$('[data-part]', m)
+    .filter(row => !$('[data-keep]', row).checked).map(row => [row.dataset.part, 'discard']));
+  const rewrites = () => Object.fromEntries(parts.filter(p => p.editable).map(p =>
+    [p.part_id, $(`[data-part="${CSS.escape(p.part_id)}"] [data-text]`, m)?.value])
+    .filter(([pid, text]) => text !== undefined && text !== (parts.find(p => p.part_id === pid).text || '')));
+  const summary = $('[data-summary]', m), apply = $('[data-apply]', m);
+  let seen = null, timer = null;
+  const preview = async () => {
+    try {
+      const pv = await post('/agent/history/preview',
+                            {thread: id, session: d.session, manifest: manifest(), rewrites: rewrites()});
+      seen = pv; apply.disabled = false;
+      summary.textContent = `${pv.kept} kept · ${pv.omitted} dropped · ${pv.rewritten.length} rewritten` +
+        ` · about ${pv.tokens} tokens` +
+        (pv.adjusted.length ? ` · ${pv.adjusted.length} went with the call they belong to` : '');
+    } catch (e) { seen = null; apply.disabled = true; summary.textContent = e.message || String(e); }
+  };
+  // Apply is only ever offered for a manifest the person has been shown the cost of.
+  const schedule = () => { seen = null; apply.disabled = true; clearTimeout(timer); timer = setTimeout(preview, 250); };
+  m.addEventListener('input', schedule); m.addEventListener('change', schedule);
+  preview();
+  $('[data-cancel]', m).onclick = () => m.remove();
+  apply.onclick = async () => {
+    if (!seen) return;
+    try {
+      const out = await post('/agent/history/apply',
+                             {thread: id, session: d.session, branch_id: seen.branch_id, revision: seen.revision,
+                              manifest: manifest(), rewrites: rewrites()});
+      m.remove(); await refreshAgentThreads();
+      status(`shaped into ${out.branch_id} · ${out.omitted} dropped, ${out.rewritten.length} rewritten`, 'ok');
+    } catch (e) {
+      /* A refusal here is nearly always the branch having moved, so the honest recovery is to
+         re-read it and show what it costs now rather than to send the same revision again. */
+      status(e.message || String(e), 'err'); preview();
+    }
+  };
 }
 async function leeAgentThreadOpen(id) {
   await leeAgentThreadSwitch(id);
@@ -511,19 +809,21 @@ async function leeAgentThreadMute(id = lee.agentThread) {
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 async function refreshAgentThreads() {
+  await agentPrefsReady();   // the list paints the notify box, which is one of them
   const d = await api('/agent/threads'); paintAgentThreads(d); notifyAgentAttention(d); return d;
 }
 /* Off by default, and permission is asked for only when a person turns it on, because a prompt
    nobody invited is why browsers stopped honouring them. Every state is terminal: unsupported and
    denied disable delivery and say so once. */
-function agentNotifyEnabled() { return localStorage.getItem('lee-agent-notify') === 'on'; }
+function agentNotifyEnabled() { return prefGet('agent', 'notify', false) === true; }
 async function leeAgentNotifyToggle(on) {
-  if (!on) { localStorage.setItem('lee-agent-notify', 'off'); return status('notifications off', 'ok'); }
-  if (!('Notification' in window)) { localStorage.setItem('lee-agent-notify', 'off'); return status('this browser has no notifications', 'err'); }
+  const off = async (said, tone) => { await prefSet('agent', 'notify', false); return status(said, tone); };
+  if (!on) return off('notifications off', 'ok');
+  if (!('Notification' in window)) return off('this browser has no notifications', 'err');
   let state = Notification.permission;
   if (state === 'default') { try { state = await Notification.requestPermission(); } catch (_) { state = 'denied'; } }
-  if (state !== 'granted') { localStorage.setItem('lee-agent-notify', 'off'); return status('notifications are blocked for this site', 'err'); }
-  localStorage.setItem('lee-agent-notify', 'on'); status('notifications on', 'ok');
+  if (state !== 'granted') return off('notifications are blocked for this site', 'err');
+  await prefSet('agent', 'notify', true); status('notifications on', 'ok');
 }
 /* One notification per thing that happened, keyed by what happened: replay, a reconnect and a
    second tab all deliver the same terminal event. */

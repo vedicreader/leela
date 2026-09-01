@@ -40,7 +40,7 @@ function themeFrom(el) {
 }
 
 class LeeTerminal {
-  constructor(el, {token, url, cwd, kind, onExit, onStatus}) {
+  constructor(el, {token, url, cwd, kind, id, onExit, onStatus}) {
     this.el = el;
     this.onExit = onExit || (() => {});
     this.onStatus = onStatus || (() => {});
@@ -60,7 +60,9 @@ class LeeTerminal {
 
     this.ws.onopen = () => {
       // The hello must be first: the server refuses everything until it has the token.
-      this.send({t: 'hello', token, cwd, kind: kind || 'shell',
+      // `id` keys the pty on the server. Without it every shell falls back to the kind, so a
+      // second terminal attaches to the first one's pty and takes its reader with it.
+      this.send({t: 'hello', token, cwd, kind: kind || 'shell', id,
                  cols: this.term.cols, rows: this.term.rows});
       this.onStatus('connected');
     };

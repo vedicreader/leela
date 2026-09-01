@@ -169,10 +169,13 @@ def _dock_delegates():
 #: What macOS rewrites as you type, and must not while you are typing code. WKWebView hands a
 #: `contenteditable` to NSSpellChecker; a browser does not, which is why the packaged app turned
 #: quotes into curly quotes and moved the caret out from under CodeMirror, and the served one
-#: never did. Written to Leela's own defaults domain, so nothing outside Leela changes.
+#: never did. Inline prediction is in the list because Tab is what accepts one, so the Tab that was
+#: meant for the completion list went to the system instead and left the caret at the start of the
+#: line. Written to Leela's own defaults domain, so nothing outside Leela changes.
 NO_SUBSTITUTION = ('NSAutomaticQuoteSubstitutionEnabled', 'NSAutomaticDashSubstitutionEnabled',
                    'NSAutomaticTextReplacementEnabled', 'NSAutomaticSpellingCorrectionEnabled',
-                   'NSAutomaticPeriodSubstitutionEnabled', 'NSAutomaticCapitalizationEnabled')
+                   'NSAutomaticPeriodSubstitutionEnabled', 'NSAutomaticCapitalizationEnabled',
+                   'NSAutomaticInlinePredictionEnabled')
 
 def quiet_text_substitution():
     "Turn off the system's autocorrect for this app. True when it took."

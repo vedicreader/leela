@@ -79,7 +79,12 @@ function setQueuedSteer(text, shown = '', cancel = false) {
   const log = $('#agentlog'), old = $('#agentqueuedsteer'); if (!log) return;
   if (!lee.queuedSteer) {
     if (cancel) { old?.remove(); return; }
-    if (old) { old.classList.remove('queued'); $('[data-cancel-steer]', old)?.remove(); return; }
+    /* A steer that has been taken is no longer the queued one, and the id has to go with the state.
+       It used to stay on the card, so the next steer found it here and returned without drawing,
+       and a queued one after that was written into it: the agent acted on a message the transcript
+       never showed. */
+    if (old) { old.id = ''; old.classList.remove('queued'); $('[data-cancel-steer]', old)?.remove(); }
+    if (old && old.dataset.steer === shown) return;
     /* Steering against a waiting approval answers it there and then, so it is never queued and
        nothing recorded what was said. The local reply and the feed event both arrive, and the
        same text twice with nothing between it is one steer. */
@@ -393,7 +398,9 @@ function paintAgentSuggest() {
 }
 function chooseAgentSuggest(i = lee.agentSuggestAt) {
   const item = lee.agentSuggest[i], input = $('#agentprompt'); if (!item || !input) return;
-  if (item.kind === 'command') input.value = `/${item.name} `;
+  // The caret is set on every branch: assigning `value` on a box that is not focused leaves it
+  // at 0, so completing a command read as Home.
+  if (item.kind === 'command') { input.value = `/${item.name} `; input.selectionStart = input.selectionEnd = input.value.length; }
   else if (item.kind === 'tool' || item.kind === 'skill') {
     const at = input.selectionStart, before = input.value.slice(0, at);
     const left = before.replace(/(^|\s)\/(?:[A-Za-z_][\w-]*)?$/, `$1/${item.name} `);
@@ -503,12 +510,14 @@ function initAgentComposer() {
   /* A one-line box with a placeholder telling you to write in it takes Enter, or it eats what you
      typed. It is not in a form and has no default action, so Enter does nothing unless it is bound
      here. */
-  const notify = $('#agentnotify'); if (notify) notify.checked = agentNotifyEnabled();
-  const reasoning = $('#agentreasoning');
-  if (reasoning) {
-    reasoning.value = localStorage.getItem('lee-agent-reasoning') || 'auto';
-    reasoning.onchange = () => localStorage.setItem('lee-agent-reasoning', reasoning.value);
-  }
+  const notify = $('#agentnotify'), reasoning = $('#agentreasoning');
+  if (reasoning) reasoning.onchange = () => prefSet('agent', 'reasoning', reasoning.value);
+  // Both are settings, and settings arrive over the network: painted from the cache, then again.
+  const paint = () => {
+    if (notify) notify.checked = agentNotifyEnabled();
+    if (reasoning) reasoning.value = prefGet('agent', 'reasoning', '') || 'auto';
+  };
+  paint(); agentPrefsReady().then(paint);
   const grow = () => {
     input.style.height = 'auto';
     input.style.height = Math.min(190, Math.max(64, input.scrollHeight)) + 'px';

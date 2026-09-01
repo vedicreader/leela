@@ -3,6 +3,19 @@
  * serves agent-chat and notebook prompt-cell streams. */
 // These are the log's own nodes. A detached one is held forever.
 const approvalCards = new Map();
+/* A checkpoint the run never answered keeps `proposed`, and a card holding one is never folded and
+   never trimmed, so the turn it sits in cannot be collapsed for the rest of the session. `done`
+   retires the ones its own stream raised: the run that asked is over, so nothing can answer them. */
+function retireCheckpoints(ids) {
+  for (const id of ids || []) {
+    const card = approvalCards.get(id);
+    if (!card?.classList.contains('proposed')) continue;
+    card.classList.remove('proposed'); card.classList.add('refused');
+    $$('button', card).forEach(b => b.disabled = true);
+    const state = $('.lee-checkpoint-title small', card);
+    if (state) state.textContent = 'The turn ended before this ran';
+  }
+}
 function proposalArgs(card) {
   const schema = card._schema, args = {};
   for (const field of (schema?.fields || [])) {
@@ -277,6 +290,9 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
     ['unsay', 'lee-btn', 'Undo from conversation', !!capabilities.branchable,
      'Forget this turn: branch the conversation to just before it, keeping it in history',
      gone ? unheld : 'this turn has no captured boundary to branch at'],
+    ['fork', 'lee-btn', 'Branch from here', !!capabilities.branchable,
+     'Start a branch that continues from this turn, leaving this conversation as it is',
+     gone ? unheld : 'this turn has no captured boundary to branch at'],
     ['undo', 'lee-btn warn', 'Restore files', !!capabilities.undoable,
      `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn`,
      gone ? unheld : 'this turn made no reversible file changes']];
@@ -345,11 +361,17 @@ async function unsayTurn(bar) {
     catch (e) { status(`undone from the conversation; these files were not restored: ${e.message || e}`, 'err'); }
   }
   markTurnUndone(out, bar, (restored?.paths || []).length, revisable ? $('[data-revise]', bar) : null);
-  for (const path of restored?.paths || []) if (path === lee.path) await takeDiskVersion(path);
+  noteHeldRestores(await reloadRestored(restored?.paths || []));
   await refreshAgentThreads();
   status(restored ? `undone from the conversation · ${(restored.paths || []).length} file(s) restored`
                   : 'undone from the conversation; files left as they are', 'ok');
 }
+
+/* Naming what was left alone matters more here than anywhere else: a tab held back still holds the
+   version from before the restore, and the person is the only one who can decide between the two. */
+const noteHeldRestores = held => held.length && status(
+  `${held.length} file${held.length === 1 ? '' : 's'} with unsaved edits ${held.length === 1 ? 'was' : 'were'} not reloaded: `
+  + held.map(p => p.split('/').pop()).join(', '), 'err');
 
 async function restoreTurnFiles(bar) {
   const {turnId, out, revisable} = responseTurn(bar);
@@ -363,7 +385,7 @@ async function restoreTurnFiles(bar) {
       const d = await post('/agent/rollback-turn', {turn_id: turnId, thread: lee.agentThread || ''});
       // Marked before the files are reloaded, so a reload that raises still shows the turn undone.
       markTurnUndone(out, bar, (d.paths || []).length, revisable ? $('[data-revise]', bar) : null);
-      for (const path of d.paths || []) if (path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(path);
+      noteHeldRestores(await reloadRestored(d.paths || []));
       status('turn changes rolled back', 'ok');
     } catch (e) { status(e.message || String(e), 'err'); }
   }
@@ -412,6 +434,7 @@ function bindResponseRevisions(log) {
     if (button.hasAttribute('data-unsay')) unsayTurn(bar);
     else if (button.hasAttribute('data-undo')) restoreTurnFiles(bar);
     else if (button.hasAttribute('data-revise')) reviseTurn(bar);
+    else if (button.hasAttribute('data-fork')) leeAgentForkTurn(bar.dataset.turn, lee.agentThread);
   });
 }
 

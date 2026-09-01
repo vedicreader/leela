@@ -9,6 +9,9 @@ function palette() {
     {name: 'Agent: edit starting state', scope: 'agent', run: leeAgentState},
     {name: 'Agent: steer after current call', scope: 'agent', run: () => $('#agentprompt')?.focus()},
     {name: 'Agent: sub-agents', scope: 'agent', run: () => leeSubagents()},
+    {name: 'Agent: conversation branches', scope: 'agent', run: () => leeAgentBranches()},
+    {name: 'Agent: shape what the model remembers', scope: 'agent', run: () => leeAgentShape()},
+    {name: 'Inline completions: what was asked and taken', scope: 'global', run: () => showCompletions()},
   ];
   const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: k.key})).concat(agentCommands);
   let hits = cmds, sel = 0;

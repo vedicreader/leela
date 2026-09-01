@@ -11,7 +11,7 @@ from ...core.web import diff_payload
 
 __all__ = ['TOOL_GROUPS', 'tool_group', 'tool_schemas', 'tool_preview', 'edit_diffs',
            'activity_changes', 'history_sessions', 'project_state_context', 'turn_media',
-           'with_capabilities', 'SURFACES_FILE', 'mark_surface', 'surfaces']
+           'with_capabilities', 'SURFACES_FILE', 'mark_surface', 'surfaces', 'latest_started_here']
 
 SURFACES_FILE = 'agent-surfaces.json'   #: sessions Leela started, beside Ramabana's own metadata
 
@@ -24,6 +24,17 @@ def surfaces(cfg):
         rows = json.loads(p.read_text()).get('sessions', {})
         return rows if isinstance(rows, dict) else {}
     except Exception: return {}
+
+def latest_started_here(ai):
+    """The newest conversation this Leela started, by the mark the history list filters on.
+
+    Ramabana's `latest` is the newest in the log, and one log holds Leela's conversations and the
+    CLI's, so on a machine that uses both it is usually the CLI's. Empty when nothing here is
+    marked, which is a log the filter has nothing to say about rather than an error.
+    """
+    here = surfaces(getattr(ai, 'cfg', None))
+    if not here: return ''
+    return first((s['id'] for s in ai.sessions() if s['id'] in here), '')
 
 def mark_surface(cfg, sid, surface='agent', keep=4000):
     "Record that Leela started `sid`. The CLI writes the same log and leaves no such mark."

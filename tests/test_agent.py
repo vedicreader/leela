@@ -798,7 +798,7 @@ def test_the_composer_carries_files_selections_and_notices():
     out = search('code_clusters')
     assert '/proj/nbs/core.ipynb:1' in out
     assert 'use this exact path with notebook_cells, then view_cell/edit_cell' in out
-    assert 'clean namespace' in compact.reorient(kernel_alive=False)
+    assert 'empty namespace' in compact.reorient(kernel_alive=False)
     assert compact.prompt_notices('where is this handled?') == [compact.Q_NOTICE]
     assert compact.APPROVAL_NOTICE in compact.prompt_notices('go')
     assert compact.APPROVAL_NOTICE in compact.prompt_notices('ok.')
@@ -854,7 +854,7 @@ def test_an_existing_summary_is_updated_not_re_summarised():
     prev, rest = compact.split_previous(msgs)
     assert prev == 'old summary' and len(rest) == 1
     p = compact.summarise_prompt(msgs)
-    assert '<previous-summary>' in p and 'PRESERVE' in p
+    assert '<previous-summary>' in p and 'Preserve still-true content' in p
 
 def test_the_kept_tail_starts_at_a_user_turn():
     "A tail starting at an orphaned tool result is a dangling call some providers reject outright."
@@ -886,8 +886,8 @@ def test_compaction_replaces_history_and_reorients(spec):
     assert out == 'GOAL: ship it'
     head = be.hist[0]['content']
     assert head.startswith(compact.SUMMARY_PREFIX) and 'GOAL: ship it' in head
-    assert 'kernel process was not touched' in head
-    assert 'do not re-import' in head
+    assert 'the kernel is unchanged' in head
+    assert 'Do not re-import' in head
 
 
 def test_skill_md_directories_win_over_packages(tmp_path):
