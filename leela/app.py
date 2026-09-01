@@ -873,6 +873,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 argv = shell_argv(shell.get('shell'), shell.get('shellArgs'), shell.get('loginShell'))
             t = ws.terms.open(key, argv=argv, cwd=cwd, env=env, prelude=prelude,
                               cols=int(hello.get('cols') or 80), rows=int(hello.get('rows') or 24))
+            # Refuse rather than take the pty's reader off the socket that has it: a second stream
+            # over one `Pty` leaves the first terminal alive on screen and silent forever.
+            if t.attached: raise RuntimeError(f'terminal {key} is already open in another view')
         except Exception as e:
             await sock.send_text(json.dumps({'t': 'error', 'error': errstr(e)}))
             await sock.close()

@@ -95,6 +95,10 @@ class Pty:
     @property
     def alive(self): return self.proc is not None and self.proc.poll() is None
     @property
+    def attached(self):
+        "Whether a socket is already streaming this pty. One fd carries one reader."
+        return self._reader is not None
+    @property
     def pid(self): return self.proc.pid if self.proc else None
     def start(self):
         "Spawn the command on a fresh pty."
@@ -130,6 +134,9 @@ class Pty:
         except OSError: return 0
     async def stream(self, on_data):
         "Pump the child's output into `on_data(bytes)` until it exits."
+        # A pty has one reader: `add_reader` replaces whatever was on the fd, so a second stream
+        # over the same `Pty` would silently freeze the first. Callers key their terminals apart.
+        if self.attached: raise RuntimeError('this terminal already has a reader')
         loop = asyncio.get_running_loop()
         q = asyncio.Queue()
         fd = self.fd

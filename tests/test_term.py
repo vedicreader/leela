@@ -77,3 +77,38 @@ def test_a_child_that_writes_and_exits_at_once_still_delivers_what_it_wrote():
         await asyncio.wait_for(p.stream(on_data), 10)
         return bytes(seen)
     assert b'abcdef' in asyncio.run(run())
+
+def test_a_second_stream_over_one_pty_is_refused_and_the_first_keeps_reading():
+    """Two terminals keyed the same shared a pty, and `add_reader` handed the fd to whichever
+    attached last: the older view stayed on screen and never printed another byte."""
+    import asyncio, pytest
+    async def run():
+        p = Pty(['sh', '-c', 'echo one; sleep 30']).start()
+        seen = bytearray()
+        async def on_data(b): seen.extend(b)
+        task = asyncio.create_task(p.stream(on_data))
+        for _ in range(100):
+            await asyncio.sleep(.02)
+            if seen: break
+        assert p.attached
+        with pytest.raises(RuntimeError): await p.stream(on_data)
+        p.write(b'echo two\n')
+        for _ in range(100):
+            await asyncio.sleep(.02)
+            if b'two' in bytes(seen): break
+        p.kill()
+        await asyncio.wait_for(task, 5)
+        return bytes(seen)
+    seen = asyncio.run(run())
+    assert b'one' in seen and b'two' in seen
+
+def test_the_terminal_bundle_sends_the_id_the_server_keys_the_pty_by():
+    """`dock.js` passes an id per session, but the wrapper dropped it and the hello went without
+    one, so every shell keyed as its kind and the second one took the first one's pty."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    for js in (root/'frontend/term.js', root/'leela/vendor/lee-term.js'):
+        hello = re.search(r"""t: ?['"]hello['"](.*?)\}""", js.read_text(), re.S)
+        assert hello, js.name
+        assert re.search(r'\bid\b', hello[1]), f'{js.name} sends no id; rebuild with npm run build'
