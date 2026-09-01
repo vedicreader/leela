@@ -272,7 +272,8 @@ class TurnRunner:
         #: How long a turn may hold the conversation after the core has stopped running anything.
         self.stale_after = 60
 
-    def _watch(self, ai, run_id):
+    def _watch(self, ai, run_id, before=''):
+        "Emit one run's events until it is terminal. `before` is the turn id it registered under."
         activity, approval, execution, compact = {}, '', '', ai.compactor.count
         while True:
             run = ai.run(run_id)
@@ -289,11 +290,14 @@ class TurnRunner:
             if pending is not None and pending.id != approval:
                 approval = pending.id
                 self.feed.emit('approval', {**pending.dict(), 'schemas': tool_schemas(ai), 'run': run_id})
-            for row in ai.activity.rows(mark=ai.activity._mark):
-                version = (row.get('done'), row.get('detail'), row.get('ok'))
-                if activity.get(row.get('id')) != version:
-                    activity[row.get('id')] = version
-                    self.feed.emit('activity', {**row, 'run': run_id})
+            # `on_registered` fires ahead of `_prepare`, so until it has marked the new turn the
+            # activity mark is the previous turn's, whose calls would be drawn under this prompt
+            if ai.current_turn_id != before:
+                for row in ai.activity.rows(mark=ai.activity._mark):
+                    version = (row.get('done'), row.get('detail'), row.get('ok'))
+                    if activity.get(row.get('id')) != version:
+                        activity[row.get('id')] = version
+                        self.feed.emit('activity', {**row, 'run': run_id})
             if run.terminal:return
             time.sleep(.1)
 
@@ -320,6 +324,16 @@ class TurnRunner:
             except Exception as e: out['problems'].append(errstr(e))
         return out
 
+    def _retain(self, ai, run_id, before):
+        """File this turn's events under this turn's id.
+
+        `_prepare` is what mints that id, so a turn that died before it reached the core still
+        carries the previous turn's, and the write would land on top of what that turn saved.
+        """
+        if ai.current_turn_id == before: return
+        try: self.workspace.save_timeline(ai.session_id, ai.current_turn_id, self.feed.for_run(run_id))
+        except Exception as e: self.feed.emit('state', {'run': run_id, 'problems': [errstr(e)]})
+
     def _settled(self, ai, run_id, title=False):
         if title:
             try:
@@ -334,13 +348,14 @@ class TurnRunner:
 
     def _work(self, prompt, attachments, reasoning, context, context_path, grounding, ready):
         ai, run_id = self.ai or self.workspace.ai, ''
+        before = ai.current_turn_id
         def registered(run):
             nonlocal run_id
             run_id = run.id; threading.current_thread().name = f'leela-turn-{run_id}'
             ready['run'] = run_id; ready['event'].set(); ready['gate'].wait(self.start_timeout)
             # the run alone, not `ai.cancel`: a turn nobody accepted must not clear a live one's checkpoint
             if not ready['accepted']: run.cancel(); return
-            threading.Thread(target=self._watch, args=(ai, run_id), daemon=True,
+            threading.Thread(target=self._watch, args=(ai, run_id, before), daemon=True,
                 name=f'leela-feed-{run_id}').start()
         try:
             stream = self.workspace.ask_stream(prompt, attachments=attachments, reasoning=reasoning,
@@ -356,8 +371,7 @@ class TurnRunner:
             # a turn that finished is told by `done`; `run` is how one that was stopped says so
             if run is not None and run.state in TERMINAL_CANCEL:self.feed.emit('run', run.dict())
             self.feed.emit('done', self._done(ai, run_id))
-            try: self.workspace.save_timeline(ai.session_id, ai.current_turn_id, self.feed.for_run(run_id))
-            except Exception as e: self.feed.emit('state', {'run': run_id, 'problems': [errstr(e)]})
+            self._retain(ai, run_id, before)
             self._settled(ai, run_id, title=True)
         except Exception as e:
             if not ready['accepted']:
@@ -365,8 +379,7 @@ class TurnRunner:
             else:
                 self.feed.emit('error', {'message': errstr(e), 'run': run_id})
                 self.feed.emit('done', self._done(ai, run_id, ok=False))
-                try: self.workspace.save_timeline(ai.session_id, ai.current_turn_id, self.feed.for_run(run_id))
-                except Exception as e: self.feed.emit('state', {'run': run_id, 'problems': [errstr(e)]})
+                self._retain(ai, run_id, before)
                 self._settled(ai, run_id)
         finally:
             with self._lock:self._pending.pop(ready['id'], None)

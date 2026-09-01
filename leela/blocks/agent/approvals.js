@@ -3,6 +3,19 @@
  * serves agent-chat and notebook prompt-cell streams. */
 // These are the log's own nodes. A detached one is held forever.
 const approvalCards = new Map();
+/* A checkpoint the run never answered keeps `proposed`, and a card holding one is never folded and
+   never trimmed, so the turn it sits in cannot be collapsed for the rest of the session. `done`
+   retires the ones its own stream raised: the run that asked is over, so nothing can answer them. */
+function retireCheckpoints(ids) {
+  for (const id of ids || []) {
+    const card = approvalCards.get(id);
+    if (!card?.classList.contains('proposed')) continue;
+    card.classList.remove('proposed'); card.classList.add('refused');
+    $$('button', card).forEach(b => b.disabled = true);
+    const state = $('.lee-checkpoint-title small', card);
+    if (state) state.textContent = 'The turn ended before this ran';
+  }
+}
 function proposalArgs(card) {
   const schema = card._schema, args = {};
   for (const field of (schema?.fields || [])) {

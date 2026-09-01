@@ -177,6 +177,7 @@ function agentListen(thread, since, card = null) {
   // between the prose before it and the call after, so it needs the same painter.
   lee.agentTimeline = timeline;
   let raw = '', runDone = false, lastSeq = since, body = null;
+  const checkpoints = new Set();
   if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); }
   const generation = ++lee.agentStreamGen; let es, reconnecting = false;
   const reconnect = ms => { if (reconnecting || generation !== lee.agentStreamGen) return; reconnecting = true; setTimeout(() => { reconnecting = false; if (generation === lee.agentStreamGen) connect(); }, ms); };
@@ -253,6 +254,7 @@ function agentListen(thread, since, card = null) {
   }, true));
 
   es.addEventListener('approval', dedupe(d => {
+    checkpoints.add(d.id);
     timeline.seal(); progress.phase('Waiting for your approval'); showApproval(d, timelineRoot);
   }));
   es.addEventListener('execution', dedupe(d => updateAgentRunstrip(d)));
@@ -313,7 +315,7 @@ function agentListen(thread, since, card = null) {
   }));
 
   es.addEventListener('done', dedupe(async d => {
-    timeline.seal(); runDone = true; lee.agentBusy = false; lee.agentRuns = []; setAgentStatus('ready'); progress.finish(true); updateAgentRunstrip({runs: []}); refreshAgentBudget();
+    timeline.seal(); retireCheckpoints(checkpoints); runDone = true; lee.agentBusy = false; lee.agentRuns = []; setAgentStatus('ready'); progress.finish(true); updateAgentRunstrip({runs: []}); refreshAgentBudget();
     // a turn that ended on a call has no prose block, and its pictures are still its own
     const closing = body || timelineRoot;
     addResponseRevision(closing, d.turn_id, raw, d.capabilities || {}); drawTurnMedia(closing, d.media);
