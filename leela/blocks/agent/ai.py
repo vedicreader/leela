@@ -9,7 +9,7 @@ from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
 from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, preview_for
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
-                         WRITE_TOOLS as HARNESS_WRITE_TOOLS, clip, failed)
+                         WRITE_TOOLS as HARNESS_WRITE_TOOLS, clip, failed, one_line as _1, summary)
 from shalya.host import (ApiHost, AskHost, CodeHost, DENY, Host, MemoryHost, NotebookHost, SessionHost,
                          ShellHost, WatchHost, WebHost)
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
@@ -664,12 +664,14 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
 
 def _session_tools(host):
     "One variable read and the Run button, as the two tools Leela adds to the live session."
+    @summary(lambda a: f'Inspect {a.get("name","")}')
     def inspect_var(name: str, attrs: str = '') -> str:
         """Report one live variable: whether it is bound, what it is, and the attributes `attrs` names.
         `attrs` is comma separated, such as `shape, dtypes`. This needs no approval. Use `list_vars` for the whole namespace. The sandbox refuses `inspect_python` over `globals()` or `vars()`.
         """
         try: return clip(host.inspect_var(name, [a for a in str(attrs).replace(',', ' ').split() if a]))
         except Exception as e: return f'inspect_var failed: {errstr(e)}'
+    @summary(lambda a: f'Run {a.get("path","")} cell {a.get("cell_id","?")}')
     def run_cell(path: str, cell_id: str, timeout: int = 120) -> str:
         """Run one notebook cell in the user's live kernel, as pressing Run on it would.
         The source runs as it is on disk, in that notebook tab's kernel, against the user's namespace and execution counter. The notebook file is never written. Take `cell_id` from `notebook_cells`. `run_python` is not a substitute: it runs in your own layer, not the user's.
@@ -680,6 +682,7 @@ def _session_tools(host):
 
 def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
     "Leela's blended search as one tool: every backend at once, each hit stamped with what agreed."
+    @summary(lambda a: f'Search all for {_1(a.get("query"))}')
     def search_all(query: str) -> str:
         "Search every code backend at once: exact symbols, literal text, keywords, and meaning."
         try: hits = host.search_blend(query, limit=MAX_HITS, legs=legs)
@@ -702,6 +705,7 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         return dict(doc_id=d.get('doc_id') or d.get('id'), title=d.get('title'), feed=m.get('feed'),
             published=str(m.get('published') or '')[:19], author=m.get('author'),
             link=d.get('source'), summary=str(m.get('summary') or '')[:chars])
+    @summary(lambda a: 'Followed sources')
     def news_feeds() -> str:
         """List the sources this vault follows, how often each is read, and what it last said.
         Feed items are filed on the `news` shelf, not the main one. Use `news_latest` to read them and `news_story` to open one.
@@ -711,6 +715,8 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
                      for f in feeds()]
         except Exception as e: return f'news_feeds failed: {errstr(e)}'
         return clip(json.dumps(rows, default=str), mx)
+    @summary(lambda a: 'Latest news' + (f' matching {_1(a.get("match"))}' if a.get('match') else '')
+                       + (f' from {a["feed"]}' if a.get('feed') else ''))
     def news_latest(match: str = '', feed: str = '', limit: int = 20) -> str:
         """Recent feed items, newest first: headline, source, date, standfirst and `doc_id`.
         `match` narrows by headline or standfirst, `feed` by the source's name. This reads what is already filed. Call `news_refresh` first when the question is about today.
@@ -719,6 +725,7 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         except Exception as e: return f'news_latest failed: {errstr(e)}'
         if not found: return 'nothing on the news shelf matches that.'
         return clip(json.dumps([story(x) for x in found], default=str), mx * 2)
+    @summary(lambda a: f'Read {_1(a.get("doc"))}')
     def news_story(doc: str) -> str:
         """One feed item in full, by the `doc_id` or the headline `news_latest` reported.
         Feed items are on the `news` shelf, so `memory_read` cannot open them.
@@ -726,6 +733,7 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         text = host._vault().document_text(doc, shelf=NEWS_SHELF)
         if not text: return f'no such item on the news shelf: {doc!r}. Call news_latest for what is there.'
         return clip(text, mx * 2)
+    @summary(lambda a: f'Follow {a.get("title") or a.get("url","")}')
     def news_follow(url: str, title: str = '', every: str = '1h') -> str:
         """Follow a source and read it now. `url` may be the site itself, whose feed is found for you.
         A refusal means the source carries no feed; never retry with a guessed `/rss.xml`. `every` is the cadence after this call.
@@ -734,12 +742,14 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         except Exception as e: return f'could not follow that: {errstr(e)}'
         out = poll_feeds(host._vault(write=True), feeds(), only=f.id)
         return f"following {f.title} at {f.url}, {cadence(f.seconds)}; filed {out['added']} items."
+    @summary(lambda a: f'Unfollow {a.get("url","")}')
     def news_unfollow(url: str) -> str:
         "Stop following one source. What it already filed stays in the vault."
         f = first(x for x in feeds() if url in (x.id, x.url, x.title))
         if f is None: return f'not following {url!r}. Call news_feeds to see what is followed.'
         feeds().remove(f.id)
         return f'stopped following {f.title or f.url}; its items remain on the news shelf.'
+    @summary(lambda a: f'Refresh {a.get("feed") or "every source"}')
     def news_refresh(feed: str = '') -> str:
         """Read followed sources now and file whatever is new. Returns what came in, per feed.
         `feed` is one source's address or title from `news_feeds`; every source when omitted.
@@ -748,6 +758,7 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         except Exception as e: return f'news_refresh failed: {errstr(e)}'
         if not out['feeds']: return f'not following {feed!r}. Call news_feeds to see what is followed.'
         return clip(json.dumps(out, default=str), mx)
+    @summary(lambda a: 'API access')
     def api_access() -> str:
         """Report what each loaded spec sends, what backs it, and which models may call it.
         Header and environment variable names only, never a value. A spec with no credentials goes out unauthenticated. A local-only spec refuses on a hosted model, and the refusal names what to change.

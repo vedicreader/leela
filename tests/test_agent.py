@@ -946,6 +946,32 @@ def test_activity_fires_at_the_start_of_a_call_not_only_at_the_end():
     assert a.detail == 'the page' and a.done
 
 
+def test_every_tool_leela_adds_summarises_itself_in_words():
+    from shalya.core import summarise
+    from leela.blocks.agent.ai import _news_tools, _search_tools, _session_tools
+    from leela.blocks.agent.video import video_tools
+    class NoHost:
+        ws = None
+        def __getattr__(self, k): raise AttributeError(k)
+    args = {'inspect_var': {'name': 'df'}, 'run_cell': {'path': 'a.ipynb', 'cell_id': 'c1'},
+            'search_all': {'query': 'kernel pool'}, 'news_feeds': {},
+            'news_latest': {'match': 'rust', 'feed': 'LWN'}, 'news_story': {'doc': 'doc-9'},
+            'news_follow': {'url': 'https://lwn.net', 'title': 'LWN'},
+            'news_unfollow': {'url': 'https://lwn.net'}, 'news_refresh': {}, 'api_access': {},
+            'generate_video': {'prompt': 'a heron'}, 'video_status': {}, 'video_jobs': {}}
+    h = NoHost()
+    tools = [*_session_tools(h), *_search_tools(h), *_news_tools(h), *video_tools(h)]
+    assert {t.__name__ for t in tools} == set(args)
+    for t in tools:
+        line = summarise(t, args[t.__name__])
+        assert not line.startswith(t.__name__ + '('), f'{t.__name__} fell back to a repr: {line}'
+        assert line[0].isupper() and len(line) <= 90, f'{t.__name__} reads {line!r}'
+    assert summarise(first(t for t in tools if t.__name__ == 'run_cell'),
+                     args['run_cell']) == 'Run a.ipynb cell c1'
+    assert summarise(first(t for t in tools if t.__name__ == 'news_refresh'),
+                     {}) == 'Refresh every source'
+
+
 def test_results_are_clipped_and_failures_spelled_one_way():
     import inspect
     a, _ = fake_agent()

@@ -4,7 +4,8 @@ from __future__ import annotations
 import json, os, time, uuid
 from fastcore.all import Path
 from ... import errstr, leela_cfg
-from ...agent.tools import MAX_TOOL_CHARS, clip, err, save_media
+from shalya.core import MAX_TOOL_CHARS, clip, err, one_line as _1, summary
+from shalya.tools import save_media
 
 __all__ = ['VIDEO_MODELS', 'DFLT_VIDEO', 'VideoJobs', 'video_available', 'video_caps', 'video_tools']
 
@@ -98,6 +99,7 @@ def video_tools(host, mx=MAX_TOOL_CHARS, session='', jobs=None, model=DFLT_VIDEO
     jobs = jobs if jobs is not None else VideoJobs()
     session = session or str(leela_cfg)
 
+    @summary(lambda a: f'Generate video {_1(a.get("prompt"))}')
     def generate_video(prompt: str, seconds: int = 8) -> str:
         """Start generating a video from a description. Returns a job id.
         Generation takes minutes and this returns at once. Tell the user the job started, then collect the file with `video_status`.
@@ -111,6 +113,7 @@ def video_tools(host, mx=MAX_TOOL_CHARS, session='', jobs=None, model=DFLT_VIDEO
         r = jobs.add(model=model, prompt=prompt, op=op, seconds=seconds)
         return f"video job {r['id']} started on {model}; check it with video_status"
 
+    @summary(lambda a: f'Video job {a.get("job_id") or "(latest)"}')
     def video_status(job_id: str = '') -> str:
         "A video job's state, and the path to the file once it has finished."
         r = jobs.get(job_id)
@@ -124,6 +127,7 @@ def video_tools(host, mx=MAX_TOOL_CHARS, session='', jobs=None, model=DFLT_VIDEO
         except Exception as ex: return _line(jobs.update(r['id'], state='failed', error=errstr(ex)))
         return _line(jobs.update(r['id'], state='done', path=str(p), mime='video/mp4'))
 
+    @summary(lambda a: 'Video jobs')
     def video_jobs() -> str:
         "Every video job started here, newest last."
         rows = jobs.all()
