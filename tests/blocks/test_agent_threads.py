@@ -94,6 +94,7 @@ class _Workspace:
     def save_timeline(self, thread_id, turn_id, parts): self.timeline = list(parts); return self.timeline
     def ask_stream(self, prompt, attachments=(), on_registered=None, **kwargs):
         self.seen = tuple(attachments); on_registered(self.ai._run)
+        self.ai.current_turn_id = 'turn-2'      # `_prepare` mints this turn's id
         yield 'answer'
         self.ai._run.terminal = True
 
@@ -112,6 +113,51 @@ def test_runner_captures_acceptance_values_and_outlives_subscribers():
     events = [row['event'] for row in feed.since(0)]
     assert events[0] == 'user' and events[-3:] == ['done', 'title', 'state']
     assert [row['event'] for row in ws.timeline] == ['chunk']
+
+
+def test_the_watcher_leaves_the_previous_turns_calls_out_of_this_one():
+    """`on_registered` fires before `_prepare` marks the turn, so the mark the watcher's first poll
+    reads is the turn before this one's."""
+    from ramabana.agent import Activity
+    class Late(_Workspace):
+        def __init__(self):
+            super().__init__()
+            self.ai.activity = Activity()
+            self.ai.activity.start('view', {'path': 'old.py'}, action_id='old-1', turn_id='turn-1')
+        def ask_stream(self, prompt, attachments=(), on_registered=None, **kwargs):
+            on_registered(self.ai._run)
+            self.ai.current_turn_id = 'turn-2'; self.ai.activity.mark('turn-2')
+            self.ai.activity.start('grep', {'q': 'new'}, action_id='new-1', turn_id='turn-2')
+            time.sleep(.25)
+            yield 'answer'
+            self.ai._run.terminal = True
+    ws, feed = Late(), Feed()
+    TurnRunner(ws, feed).start('make it succinct, no tool calls')
+    end = time.time() + 3
+    while not any(row['event'] == 'done' for row in feed.since(0)) and time.time() < end: time.sleep(.01)
+    seen = [row['data'].get('id') for row in feed.since(0) if row['event'] == 'activity']
+    assert seen == ['new-1'], seen
+    assert [row['data'].get('id') for row in ws.timeline if row['event'] == 'activity'] == ['new-1']
+
+
+def test_a_turn_that_died_before_it_was_prepared_keeps_the_previous_turns_timeline():
+    """`save_timeline` files under `ai.current_turn_id`, which only becomes this turn's inside
+    `_prepare`. A turn that failed before that filed its own events under the previous turn's id,
+    over the calls and the answer that turn had saved."""
+    class Early(_Workspace):
+        def __init__(self): super().__init__(); self.saved = []
+        def save_timeline(self, thread_id, turn_id, parts):
+            self.saved.append((turn_id, [row['event'] for row in parts])); return list(parts)
+        def ask_stream(self, prompt, attachments=(), on_registered=None, **kwargs):
+            on_registered(self.ai._run); self.ai._run.terminal = True
+            raise RuntimeError('the model would not start')
+            yield
+    ws, feed = Early(), Feed()
+    TurnRunner(ws, feed).start('and the tests')
+    end = time.time() + 3
+    while not any(row['event'] == 'done' for row in feed.since(0)) and time.time() < end: time.sleep(.01)
+    assert ws.saved == [], ws.saved
+    assert [row['event'] for row in feed.since(0)][-3:] == ['error', 'done', 'state']
 
 
 def test_accepted_worker_failure_emits_error_then_done():

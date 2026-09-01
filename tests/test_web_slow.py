@@ -1560,6 +1560,39 @@ def test_the_agent_pane_draws_its_runs_its_steers_and_its_work_logs():
     assert group['group'] and '2 steps' in group['summary'], group
 
 
+def test_a_turn_stopped_at_a_checkpoint_still_folds_when_the_next_one_begins():
+    """A checkpoint the run never answered kept `proposed`, and `foldAgentTurn` refuses a card
+    holding one, so a turn stopped at a checkpoint stayed open for the rest of the session and
+    `trimAgentLog` could never drop it. `done` retires the checkpoints its own stream raised."""
+    async def go(pg):
+        return await pg.evaluate("""() => {
+          const log = $('#agentlog'); log.innerHTML = ''; log.dataset.foldScope = 'stale-checkpoint';
+          approvalCards.clear();
+          const stopped = agentTurnCard({prompt: 'edit the file', model: 'm', turnId: 'c1'});
+          log.appendChild(stopped);
+          showApproval({id: 'ask-1', tool: 'edit_file', args: {path: 'a.py'}, summary: 'change it'},
+                       turnBody(stopped));
+          const before = {open: turnAwaitingApproval(stopped), folds: (foldAgentTurn(stopped, true),
+                          stopped.classList.contains('folded'))};
+          foldAgentTurn(stopped, false);
+          retireCheckpoints(['ask-1']);
+          const card = approvalCards.get('ask-1');
+          log.appendChild(agentTurnCard({prompt: 'never mind', model: 'm', turnId: 'c2'}));
+          foldOlderTurns(log);
+          const after = {open: turnAwaitingApproval(stopped), folded: stopped.classList.contains('folded'),
+                         refused: card.classList.contains('refused'),
+                         off: [...card.querySelectorAll('button')].every(b => b.disabled),
+                         note: $('.lee-checkpoint-title small', card).textContent};
+          log.innerHTML = ''; log.dataset.foldScope = ''; approvalCards.clear();
+          return {before, after};
+        }""")
+    got = _run(go)
+    assert got['before']['open'] and not got['before']['folds'], 'a live checkpoint keeps its turn open'
+    assert not got['after']['open'] and got['after']['folded'], got['after']
+    assert got['after']['refused'] and got['after']['off']
+    assert got['after']['note'] == 'The turn ended before this ran', got['after']
+
+
 def test_a_conversation_folds_its_turns_and_keeps_each_ones_own_controls():
     """Every turn painted the same flat run of siblings into one log, so there was nothing to fold
     and nothing that knew where a turn ended. Folding a turn the agent is blocked on would hide the
