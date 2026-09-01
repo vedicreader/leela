@@ -1739,6 +1739,42 @@ def test_workspace_repo_writes_setting_route_persists_and_reports_approval(tmp_p
     assert response.status_code == 200 and response.json()['enabled']
     assert 'approval rules still apply' in response.json()['note']
 
+def test_the_vault_privacy_policy_is_persisted_and_reaches_what_the_model_retrieves(tmp_path):
+    """The policy is the workspace's, never the model's: `WorkspaceHost.ask` drops a `pii` the caller
+    sent and puts the workspace's in its place, and the memory tools carry the same one. A route that
+    saved a setting nothing read would be a promise with no mechanism behind it."""
+    path = tmp_path/'workspace.json'
+    ws = Workspace(roots=[tmp_path]); ws._state_path = path
+    assert ws.vault_pii == 'off'
+    with TestClient(ide_app(ws)) as client:
+        d = client.post('/agent/vault-pii', json={'pii': 'refuse'}).json()
+        assert d['ok'] and d['pii'] == 'refuse' and 'withheld' in d['note']
+        bad = client.post('/agent/vault-pii', json={'pii': 'refuze'})
+        assert bad.status_code == 400 and 'pii must be one of' in bad.json()['error']
+    assert ws.vault_pii == 'refuse', 'the typo left the saved policy alone'
+    assert Workspace.load(path).vault_pii == 'refuse'
+
+    from types import SimpleNamespace
+    asked = {}
+    host = ws.ai.host
+    class Vault:
+        def ask(self, question, **kw): asked.update(kw); return {'answer': 'ok'}
+    host._vault = lambda write=False: SimpleNamespace(
+        vault=Vault(), context=lambda q, **kw: dict(kw, kind='context'),
+        read=lambda n, **kw: dict(kw, kind='read'), toc=lambda d=None, **kw: dict(kw, kind='toc'),
+        sections=lambda d, **kw: dict(kw, kind='sections'))
+    host.ask('who signed it', pii='off')
+    assert asked['pii'] == 'refuse', "the caller's `pii` is dropped, not honoured"
+    assert host.memory_search('x')['pii'] == host.memory_read('n#1')['pii'] == 'refuse'
+    assert host.memory_tree()['pii'] == host.memory_sections('d')['pii'] == 'refuse'
+
+def test_a_workspace_saved_with_a_policy_this_build_lost_still_opens(tmp_path):
+    "A settings file is not a reason to refuse to start; an unreadable policy is the safest default."
+    path = tmp_path/'workspace.json'
+    ws = Workspace(roots=[tmp_path]); ws._state_path = path
+    ws.restore_settings({'vault_pii': 'quarantine'})
+    assert ws.vault_pii == 'off'
+
 def test_prompt_cell_endpoint_streams_into_the_notebook():
     from pathlib import Path
     from tests.fakemodel import Step, install

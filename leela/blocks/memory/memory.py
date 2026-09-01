@@ -11,9 +11,18 @@ except ImportError:
     def _safe_shelf(name=None, default='main'): return re.sub(r'[^a-z0-9_]+', '_', str(name or default).lower()).strip('_') or default
 
 __all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'shared_encoder', 'source_kind',
-           'GLOBAL', 'ACQUIRE']
+           'GLOBAL', 'ACQUIRE', 'PII_GATES', 'pii_gate']
 
 GLOBAL = 'leela'
+
+#: What a retrieval may do about personal information: nothing, mask it, or withhold the text.
+PII_GATES = ('off', 'redact', 'refuse')
+
+def pii_gate(v):
+    "A stored or posted policy, refused rather than silently read as `off`."
+    g = str(v or 'off').strip().lower()
+    if g not in PII_GATES: raise ValueError(f'pii must be one of {", ".join(PII_GATES)}')
+    return g
 
 #: The vault readers a person can point at something, each named for what it reads.
 ACQUIRE = ('grab', 'web', 'crawl', 'note', 'harvest', 'github', 'arxiv', 'youtube', 'pdf')
@@ -240,32 +249,36 @@ class Memory:
         suffix = '' if removed == 1 else 's'
         self.note = f'purged {removed} remembered document{suffix}'
         return removed
-    def toc(self, doc=None, depth=3):
+    def toc(self, doc=None, depth=3, pii='off'):
+        gate = pii_gate(pii)
         try:
-            rows = self._open().toc(doc, max_depth=max(1, min(6, int(depth))))
+            rows = self._open().toc(doc, max_depth=max(1, min(6, int(depth))), pii=gate)
             return list(rows)
         except Exception as e:
             self.note = f'could not read memory tree ({errstr(e)})'
             return []
-    def read(self, node_id, max_chars=40_000):
-        try: return dict(self._open().read(node_id, max_chars=max_chars))
+    def read(self, node_id, max_chars=40_000, pii='off'):
+        gate = pii_gate(pii)
+        try: return dict(self._open().read(node_id, max_chars=max_chars, pii=gate))
         except Exception as e:
             self.note = f'could not read memory section ({errstr(e)})'
             return {}
-    def search(self, query, limit=8):
-        query = (query or '').strip()
+    def search(self, query, limit=8, pii='off'):
+        query, gate = (query or '').strip(), pii_gate(pii)
         if not query: return []
         try:
-            rows = self._open().search(query, limit=max(1, int(limit)))
+            rows = self._open().search(query, limit=max(1, int(limit)), pii=gate)
             self.note = f'{len(rows)} memory hits'
             return [dict(r) for r in rows]
         except Exception as e:
             self.note = f'memory search failed ({errstr(e)})'
             return []
-    def context(self, query, sections=6, related=6, max_read=6000):
+    def context(self, query, sections=6, related=6, max_read=6000, pii='off'):
         "Whole sections plus related paths; never leaks other shelves or kosha code."
+        gate = pii_gate(pii)
         try:
-            r = self._open().context(query, sections=sections, related=related, max_read=max_read, shelves=0, code=0)
+            r = self._open().context(query, sections=sections, related=related, max_read=max_read,
+                                     shelves=0, code=0, pii=gate)
             self.note = f'{len(r.results)} memory sections'
             return dict(query=query, results=[dict(x) for x in r.results], related=[dict(x) for x in r.related])
         except Exception as e:
@@ -330,13 +343,14 @@ class Memory:
         self.note = f'reindexed {len(done)} of {checked} filed documents'
         return dict(checked=checked, reindexed=len(done), paths=done,
                     missing=missing, unknown=unknown, failed=failed)
-    def search_all(self, query, limit=20, shelves=None):
+    def search_all(self, query, limit=20, shelves=None, pii='off'):
         "Search every populated shelf and merge."
-        query = (query or '').strip()
+        query, gate = (query or '').strip(), pii_gate(pii)
         if not query: return []
         names = shelves if shelves is not None else self._populated()
         per = max(3, int(limit) // max(1, len(names)))
-        rows = self._across(names, lambda n, v: v.search(query, limit=per), lambda n: f'{n} hits for {query!r}')
+        rows = self._across(names, lambda n, v: v.search(query, limit=per, pii=gate),
+                            lambda n: f'{n} hits for {query!r}')
         return sorted(rows, key=lambda r: -(r.get('score') or 0))[:max(1, int(limit))]
     def document(self, doc_id, shelf=None):
         "One document's row, or `{}`."
@@ -344,13 +358,14 @@ class Memory:
         except Exception as e:
             self.note = f'could not read document ({errstr(e)})'
             return {}
-    def shelf_toc(self, doc_id, shelf=None, depth=3):
+    def shelf_toc(self, doc_id, shelf=None, depth=3, pii='off'):
         "One document's section tree, in whichever shelf holds it."
-        try: return [dict(r) for r in self._shelf(shelf).toc(doc_id, max_depth=max(1, min(6, int(depth))))]
+        gate = pii_gate(pii)
+        try: return [dict(r) for r in self._shelf(shelf).toc(doc_id, max_depth=max(1, min(6, int(depth))), pii=gate)]
         except Exception as e:
             self.note = f'could not read the section tree ({errstr(e)})'
             return []
-    def sections(self, doc_id, shelf=None, depth=6):
+    def sections(self, doc_id, shelf=None, depth=6, pii='off'):
         "`toc` flattened: each document is a row whose `tree` holds the nesting, walked once here."
         out = []
         def walk(items, at=0):
@@ -363,7 +378,7 @@ class Memory:
                         'level': x.get('level', at), 'depth': at, 'chunks': x.get('nchunks') or 0,
                         'page': (pages[0] + 1) if pages else None, 'summary': x.get('summary') or ''})
                 walk(x.get('children'), at + 1)
-        walk(self.shelf_toc(doc_id, shelf, depth))
+        walk(self.shelf_toc(doc_id, shelf, depth, pii=pii))
         return out
     def shelf_text(self, ref, shelf=None, max_chars=60_000):
         "The readable text behind a reference, in whichever shelf holds it: a whole document, or one section."
@@ -373,9 +388,10 @@ class Memory:
         except Exception as e:
             self.note = f'could not read document ({errstr(e)})'
             return ''
-    def shelf_read(self, node_id, shelf=None, max_chars=40_000):
+    def shelf_read(self, node_id, shelf=None, max_chars=40_000, pii='off'):
         "One section, in whichever shelf holds it."
-        try: return dict(self._shelf(shelf).read(node_id, max_chars=max_chars) or {})
+        gate = pii_gate(pii)
+        try: return dict(self._shelf(shelf).read(node_id, max_chars=max_chars, pii=gate) or {})
         except Exception as e:
             self.note = f'could not read section ({errstr(e)})'
             return {}
@@ -404,6 +420,9 @@ class Memory:
     def mark_not_pii(self, doc_id, shelf=None, clear=True, reason=''):
         "Override the PII report, or restore detection. Via `doc_marks`: `meta` is erased on re-ingest."
         return dict(self._shelf(shelf).mark_not_pii(doc_id, clear=clear, reason=reason))
+    def mark_pii(self, doc_id, shelf=None, force=True, reason=''):
+        "The other override: private though the arithmetic found nothing. A name and an address are not patterns."
+        return dict(self._shelf(shelf).mark_pii(doc_id, force=force, reason=reason))
     def pii_evidence(self, doc_id, shelf=None):
         "Recognised PII spans by page. Returned, never written back: that would store it twice."
         from vishalakshi.pii import pii_report

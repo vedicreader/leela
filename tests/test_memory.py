@@ -384,6 +384,42 @@ def test_pii_evidence_matches_the_badge_and_an_override_is_durable(mem_vaults, t
     mem_vaults.mark_not_pii(doc_id, clear=False)
     assert mem_vaults.pii(doc_id)['has_pii'], 'automatic detection comes back'
 
+def test_a_retrieval_policy_masks_or_withholds_what_the_model_would_have_read(mem_vaults, tmp_path):
+    """The gate is on the retrieval, not on the model: `off` hands the text over, `redact` masks the
+    identifiers in it, `refuse` hands back a stand-in saying what was held. A person browsing their
+    own vault is never gated; only what a retrieval returns is."""
+    mem_vaults.clip([tmp_path/'minute.md'])
+    node = mem_vaults.search('Babbage signed the minute')[0]['node_id']
+    plain = mem_vaults.read(node)['text']
+    assert 'ada@example.com' in plain, 'off is the default, and off is what it says'
+    assert 'ada@example.com' not in mem_vaults.read(node, pii='redact')['text']
+    withheld = mem_vaults.read(node, pii='refuse')['text']
+    assert 'ada@example.com' not in withheld and 'withheld' in withheld
+    hits = mem_vaults.search('Babbage signed the minute', pii='redact')
+    assert hits and not any('ada@example.com' in str(h.get('snippet') or '') for h in hits)
+    ctx = mem_vaults.context('who signed the minute', pii='refuse')
+    assert not any('ada@example.com' in str(r.get('text') or '') for r in ctx['results'])
+
+def test_an_unknown_retrieval_policy_is_refused_rather_than_read_as_off(mem_vaults, tmp_path):
+    "Reading a typo as `off` would turn the safest-looking spelling into no gate at all."
+    from leela.blocks.memory.memory import pii_gate
+    assert pii_gate(None) == pii_gate('') == pii_gate('OFF') == 'off'
+    with pytest.raises(ValueError, match='pii must be one of'): pii_gate('redct')
+    mem_vaults.clip([tmp_path/'minute.md'])
+    with pytest.raises(ValueError): mem_vaults.context('who signed it', pii='refuze')
+
+def test_a_document_can_be_forced_private_and_the_gate_honours_it(mem_vaults, tmp_path):
+    """`mark_not_pii` was the only override, so a document arithmetic cannot read as private -- a
+    bare name, a loose address, a scanned page -- had no way to be treated as one."""
+    doc_id = mem_vaults.clip([tmp_path/'notes.md'])[0]['doc_id']
+    assert not mem_vaults.pii(doc_id)['has_pii'], 'nothing in it is a pattern'
+    mem_vaults.mark_pii(doc_id, reason='a colleague is named in it')
+    report = mem_vaults.pii(doc_id)
+    assert report['has_pii'] and report['override'] == 'force' and not report['detected']
+    assert 'ranking' not in mem_vaults.search('recall and ranking', pii='refuse')[0].get('snippet', '').lower()
+    mem_vaults.mark_pii(doc_id, force=False)
+    assert not mem_vaults.pii(doc_id)['has_pii'], 'automatic detection comes back'
+
 def test_every_document_row_carries_one_id_name(mem_vaults, tmp_path):
     "`sources()` says `id`, `add`/`clip` say `doc_id`. A browser holding both should not care."
     clipped = mem_vaults.clip([tmp_path/'notes.md'])[0]
@@ -435,6 +471,30 @@ def test_privacy_travels_with_the_document_and_can_be_overridden(ws, proj):
         after = c.post('/vault/not-pii', data={'doc': doc_id, 'reason': 'fictional'}).json()
         assert not after['privacy']['has_pii'] and after['privacy']['detected']
         assert c.get('/vault/doc', params={'doc': doc_id}).json()['evidence'] == [], 'no longer flagged'
+
+def test_a_document_arithmetic_cannot_read_as_private_can_still_be_marked_one(ws, proj):
+    "The other half of the override, and the same shape of answer: ok, the fresh report, what it covers."
+    with TestClient(ide_app(ws)) as c:
+        doc_id = ws.memory.clip([proj/'notes.md'])[0]['doc_id']
+        assert not c.get('/vault/doc', params={'doc': doc_id}).json()['privacy']['has_pii']
+        marked = c.post('/vault/pii/mark', data={'doc': doc_id, 'reason': 'a colleague is named'}).json()
+        assert marked['ok'] and marked['privacy']['has_pii'] and marked['privacy']['override'] == 'force'
+        assert 'never' in marked['covers']
+        assert c.get('/vault/doc', params={'doc': doc_id}).json()['privacy']['override'] == 'force'
+        back = c.post('/vault/pii/mark', data={'doc': doc_id, 'force': False}).json()
+        assert not back['privacy']['has_pii'], 'automatic detection comes back'
+        assert c.post('/vault/pii/mark', data={'doc': doc_id, 'vault': 'nope'}).status_code in (400, 403)
+
+def test_both_privacy_overrides_have_a_button_in_the_reader_and_reach_their_route():
+    """`/vault/pii/mark` shipped as a route with no caller once before, on the branch routes. Draw
+    the button in the source and the bundle the app actually serves, and wire it to the route."""
+    from pathlib import Path as _P
+    root = _P(__file__).resolve().parents[1]/'leela'
+    for js in ((root/'blocks'/'vault'/'reader.js').read_text(), (root/'static'/'lee-ide.js').read_text()):
+        assert "'/vault/pii/mark'" in js and "'/vault/not-pii'" in js, 'a route nobody can reach'
+        assert 'data-vault-pii' in js and 'data-vault-notpii' in js
+        assert 'mark personal' in js and 'mark not personal' in js
+        assert 'Marked personal' in js, 'a forced document has to say so, not read as a found pattern'
 
 def test_shelves_can_be_managed_and_an_occupied_one_is_not_dropped(ws, proj):
     with TestClient(ide_app(ws)) as c:

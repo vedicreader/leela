@@ -14,6 +14,7 @@ from . import errstr
 from .blocks.term.app import term_cwd
 from .core.ui import bar as btn_bar
 from .blocks.agent.models import JOB_HELP
+from .blocks.memory.memory import PII_GATES
 
 def help_mark(job):
     "The `?` beside a model control, saying what that job spends its model on."
@@ -755,6 +756,14 @@ def _agent_panel(ws):
                                     onchange='leeAgentReadOutside(this.checked)'), ' read outside the open folders',
                               cls='lee-check-setting',
                               title='Let the agent read a named path anywhere (a sibling checkout, a library in the venv). Writes stay confined; credential files stay refused'),
+                        Label(' vault privacy ',
+                              Select(*[Option(v, value=v, selected=v == ws.vault_pii) for v in PII_GATES],
+                                     id='vault-pii', data_was=ws.vault_pii,
+                                     onchange='leeVaultPii(this.value)'),
+                              cls='lee-check-setting',
+                              title='What a vault retrieval hands the model. off: as it is. redact: identifiers '
+                                    'masked. refuse: the section withheld. A document you marked not personal '
+                                    'is never gated; one you marked personal always is'),
                         Label(Input(type='checkbox', id='legacymodels', checked=True,
                                     onchange='leeLoadModels(this.checked)'), ' show older models',
                               cls='lee-check-setting'),

@@ -79,6 +79,7 @@ GET,POST /agent/turn
 GET,POST /agent/turn-transaction
 GET,POST /agent/undo-turn
 GET,POST /agent/updates
+GET,POST /agent/vault-pii
 GET,POST /agent/workspace-repo-writes
 GET,POST /ai/completions
 GET,POST /ai/completions/purge
@@ -336,6 +337,7 @@ GET,POST /vault/open
 GET,POST /vault/panel
 GET,POST /vault/pii
 GET,POST /vault/pii/badge
+GET,POST /vault/pii/mark
 GET,POST /vault/plan
 GET,POST /vault/poll
 GET,POST /vault/reindex

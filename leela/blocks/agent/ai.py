@@ -342,18 +342,23 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
         if write and not ref.agent_writable:
             raise PermissionError(f'the agent may not write to {ref.name}; turn on agent writes for it first')
         return vaults.memory(ref.name)
-    def memory_search(self, query, limit=8): return self._vault().context(query, sections=limit)
-    def memory_tree(self, document=''): return self._vault().toc(document or None)
-    def memory_read(self, node_id): return self._vault().read(node_id)
+    @property
+    def _pii(self):
+        "What a retrieval does about personal information here. The workspace's, never the model's."
+        return getattr(self.ws, 'vault_pii', 'off')
+    def memory_search(self, query, limit=8): return self._vault().context(query, sections=limit, pii=self._pii)
+    def memory_tree(self, document=''): return self._vault().toc(document or None, pii=self._pii)
+    def memory_read(self, node_id): return self._vault().read(node_id, pii=self._pii)
     def memory_topics(self, limit=12): return self._vault().clusters(limit)
     def memory_forget(self, doc_id): return self._vault(write=True).forget(doc_id)
     def memory_documents(self, limit=50): return self._vault().all_documents(limit)
-    def memory_sections(self, doc_id): return self._vault().sections(doc_id)
+    def memory_sections(self, doc_id): return self._vault().sections(doc_id, pii=self._pii)
     def ask(self, question, ref=None, instruction='', **kw):
         "The vault answers with citations, on this session's model. `pii` is not the caller's to set."
         kw.pop('pii', None)
         if self.mk_chat is not None: kw.setdefault('mk_chat', self.mk_chat)
-        return self._vault().vault.ask(question, ref=ref, instruction=str(instruction or ''), **kw)
+        return self._vault().vault.ask(question, ref=ref, instruction=str(instruction or ''),
+                                       pii=self._pii, **kw)
     def remember(self, text, title=None, tags=()):
         return self._vault(write=True)._open().note(str(text), title=title, tags=list(tags or []))
     def watch(self, target, action='url', every='1d', note=None, **kw):

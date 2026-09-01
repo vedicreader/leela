@@ -229,6 +229,15 @@ def connect(app, ctx):
             await off_loop(m.mark_not_pii, doc, shelf or None, clear, reason)
             return {'ok': True, 'privacy': await off_loop(m.pii, doc, shelf or None), 'covers': PII_COVERS}
         except Exception as e: return _refused(e)
+    @rt('/vault/pii/mark')
+    async def vault_mark_pii(doc: str, vault: str = '', shelf: str = '', force: bool = True, reason: str = ''):
+        "The override the arithmetic cannot reach: a name, an address, a whole scanned page."
+        try:
+            _writable(vault)
+            m = _mem(vault)
+            await off_loop(m.mark_pii, doc, shelf or None, force, reason)
+            return {'ok': True, 'privacy': await off_loop(m.pii, doc, shelf or None), 'covers': PII_COVERS}
+        except Exception as e: return _refused(e)
     @rt('/vault/open')
     def vault_open(doc: str, shelf: str = '', vault: str = '', title: str = ''):
         try:

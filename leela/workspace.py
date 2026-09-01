@@ -11,6 +11,7 @@ from .agent.agent import Completer
 from .blocks.agent.ai import Assistant, notebook_approvals
 from .blocks.runtime.devserver import DevServers
 from .blocks.fs.fs import Sandbox, Unsafe, lang_for, is_texty
+from .blocks.memory.memory import pii_gate
 from .blocks.runtime.kernels import KernelPool
 from .blocks.nb.nb import Notebook, media_outputs
 from .blocks.research.research import Research
@@ -255,6 +256,7 @@ class Workspace:
         self.origins = Origins()       # which cell or tool last bound each live variable
         self.agent_read_outside = False     # reads may leave the open folders; writes never do
         self.subagent_writes = False        # delegated sub-agents may only read unless this is on
+        self.vault_pii = 'off'              # what a vault retrieval does about personal information
         self.active_root = None
         #: Folders this window closed. Everything else in the saved session belongs to somebody.
         self._closed_roots = set()
@@ -1191,6 +1193,7 @@ class Workspace:
                 'allow_workspace_repo_writes': self.allow_workspace_repo_writes,
                 'agent_read_outside': self.agent_read_outside,
                 'subagent_writes': self.subagent_writes,
+                'vault_pii': self.vault_pii,
                 'job_models': self.job_models,
                 'active_root': str(self.active_root or ''),
                 'per_folder': True, 'saved': time.time()}
@@ -1204,6 +1207,9 @@ class Workspace:
         self.allow_workspace_repo_writes = bool(d.get('allow_workspace_repo_writes', False))
         self.agent_read_outside = bool(d.get('agent_read_outside', False))
         self.subagent_writes = bool(d.get('subagent_writes', False))
+        # a saved policy this build no longer knows is `off`, not a workspace that will not load
+        try: self.vault_pii = pii_gate(d.get('vault_pii'))
+        except ValueError: self.vault_pii = 'off'
         self.job_models = {str(k): str(v) for k, v in (d.get('job_models') or {}).items() if v}
         self.agent_state = str(d.get('agent_state') or '')
         saved_selection = d.get('agent_memory_selection')

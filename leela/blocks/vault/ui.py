@@ -53,7 +53,8 @@ def _kinds(kinds):
 def pii_badge(report):
     if not report.get('doc_id') and report.get('note'): return Span('pii unavailable', cls='lee-pii', title=report['note'])
     if not report.get('has_pii'): return Span('no pattern found', cls='lee-pii clear', title=PII_COVERS)
-    return Span(_kinds(report.get('kinds')), cls='lee-pii found', title=PII_COVERS)
+    # forced private is the case with nothing to count: what was found is that somebody said so
+    return Span(_kinds(report.get('kinds')) or 'marked personal', cls='lee-pii found', title=PII_COVERS)
 
 def _clip_pii_badge(pii):
     docs = pii.get('documents') or []

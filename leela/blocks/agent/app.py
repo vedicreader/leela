@@ -12,6 +12,7 @@ from ... import errstr
 from ...agent.core import model_note
 from ...agent.runtime import estimate_tokens
 from ...core.web import diff_payload, fail, off_loop, sse
+from ...blocks.memory.memory import pii_gate
 from ...workspace import STEP_RANGE, TOOL_RANGE
 from .threads import TurnError
 from .turns import (edit_diffs, history_sessions, latest_started_here, project_state_context,
@@ -411,6 +412,17 @@ def connect(app, ctx):
         ws.agent_read_outside = enabled; ws.save()
         return {'ok': True, 'enabled': enabled,
                 'note': f'reads outside the open folders {"allowed" if enabled else "refused"}; writes are unchanged'}
+    @rt('/agent/vault-pii')
+    async def agent_vault_pii(req):
+        "What a vault retrieval hands the model: everything, masked identifiers, or nothing at all."
+        d = await req.json()
+        try: policy = pii_gate(d.get('pii'))
+        except ValueError as e: return fail(e)
+        ws.vault_pii = policy; ws.save()
+        said = {'off': 'the model reads the vault as it is',
+                'redact': 'identifiers are masked before the model sees them',
+                'refuse': 'sections holding personal information are withheld from the model'}
+        return {'ok': True, 'pii': policy, 'note': said[policy]}
     @rt('/agent/compaction')
     async def agent_compaction(req):
         "Configure visible automatic compaction without restarting the model conversation."

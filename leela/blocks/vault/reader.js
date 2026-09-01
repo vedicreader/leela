@@ -72,17 +72,26 @@ function vaultSectionRows(sections, active) {
 
 function vaultPrivacy(d) {
   const p = d.privacy || {};
-  if (!p.has_pii && !p.detected) return `<div class="lee-pii clear" title="${esc(d.covers || '')}">no pattern found</div>`;
   const kinds = Object.entries(p.kinds || {}).map(([k, n]) => `${k}×${n}`).join(', ');
-  const cleared = p.override === 'clear';
+  const cleared = p.override === 'clear', forced = p.override === 'force';
+  // Nothing found and nothing said about it: the scan is the whole story, and the only override
+  // left is the one arithmetic cannot reach.
+  if (!p.has_pii && !p.detected && !forced) {
+    return `<div class="lee-vault-privacy"><strong>No pattern found</strong>` +
+      `<span class="lee-pii clear" title="${esc(d.covers || '')}">no pattern found</span>` +
+      `<button data-vault-pii="1">mark personal</button></div>`;
+  }
   // `detected` stays true under an override, so an overridden document says so rather than
   // claiming the scan found nothing.
+  const head = cleared ? 'Marked not personal' : forced ? 'Marked personal' : 'Personal information found';
   return `<div class="lee-vault-privacy${cleared ? '' : ' sensitive'}">` +
-    `<strong>${cleared ? 'Marked not personal' : 'Personal information found'}</strong>` +
+    `<strong>${head}</strong>` +
     `<span class="lee-pii ${cleared ? 'clear' : 'found'}" title="${esc(d.covers || '')}">${esc(kinds || 'no kinds')}</span>` +
     (d.evidence?.length ? `<div class="lee-vault-evidence">${d.evidence.slice(0, 40).map(e =>
       `<span title="${esc(e.kind)}, page ${e.page}"><mark>${esc(e.value)}</mark><small>p. ${e.page}</small></span>`).join('')}</div>` : '') +
-    `<button data-vault-notpii="${cleared ? '0' : '1'}">${cleared ? 'restore detection' : 'mark not personal'}</button></div>`;
+    (forced ? `<button data-vault-pii="0">restore detection</button>`
+            : `<button data-vault-notpii="${cleared ? '0' : '1'}">${cleared ? 'restore detection' : 'mark not personal'}</button>`) +
+    `</div>`;
 }
 
 async function mountVault(host, st) {
@@ -121,6 +130,14 @@ async function mountVault(host, st) {
     try {
       await post('/vault/not-pii', {doc: st.doc, shelf: st.shelf || '', vault: st.vault || '',
                                     clear: e.target.dataset.vaultNotpii === '1'});
+      mountVault(host, st);
+    } catch (err) { status(err.message || String(err), 'err'); }
+  };
+  const forcepii = $('[data-vault-pii]', host);
+  if (forcepii) forcepii.onclick = async e => {
+    try {
+      await post('/vault/pii/mark', {doc: st.doc, shelf: st.shelf || '', vault: st.vault || '',
+                                     force: e.target.dataset.vaultPii === '1'});
       mountVault(host, st);
     } catch (err) { status(err.message || String(err), 'err'); }
   };

@@ -542,6 +542,21 @@ async function leeAgentReadOutside(enabled) {
 }
 window.leeAgentReadOutside = leeAgentReadOutside;
 
+/* Three-valued, so the control is a select and the recovery is putting the old value back rather
+   than flipping a box. The policy is the workspace's: the model is never asked to respect it. */
+async function leeVaultPii(policy) {
+  const sel = $('#vault-pii'), was = sel ? sel.dataset.was || 'off' : 'off';
+  try {
+    const d = await post('/agent/vault-pii', {pii: policy});
+    if (!d.ok && sel) sel.value = was; else if (sel) sel.dataset.was = policy;
+    status(d.ok ? d.note : (d.error || 'vault privacy setting failed'), d.ok ? 'ok' : 'err');
+  } catch (e) {
+    if (sel) sel.value = was;
+    status(String(e.message || e), 'err');
+  }
+}
+window.leeVaultPii = leeVaultPii;
+
 async function leeSubagentWrites(enabled) {
   const box = $('#subagent-writes');
   try {

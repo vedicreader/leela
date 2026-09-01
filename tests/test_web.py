@@ -640,6 +640,20 @@ def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(t
     assert d['session'] == 'agent-a' and [t['prompt'] for t in d['turns']] == ['remember cedar', 'what was it?']
     assert missing.status_code == 400
 
+def test_the_vault_privacy_control_offers_every_policy_and_can_recover_from_a_refusal():
+    """A three-valued control cannot recover by flipping a box, so it carries the value it had. Read
+    it out of the markup: a `data-was` the server never wrote would reset a refusal to `off`, which
+    is the least private answer and the one nobody chose."""
+    from leela.app import _agent_panel
+    from leela.blocks.memory.memory import PII_GATES
+    ws = Workspace(roots=[]); ws.vault_pii = 'redact'
+    html = str(_agent_panel(ws))
+    for g in PII_GATES: assert f'value="{g}"' in html, f'{g} is a policy with no way to choose it'
+    assert 'data-was="redact"' in html and 'selected' in html
+    js = (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'agent'/'budgets.js').read_text()
+    body = js.split('async function leeVaultPii')[1].split('\nwindow.')[0]
+    assert "'/agent/vault-pii'" in body and 'sel.value = was' in body
+
 def test_routing_popover_closes_on_outside_click_and_escape():
     from leela.app import _agent_panel
     html = str(_agent_panel(Workspace(roots=[])))
@@ -651,6 +665,7 @@ def test_agent_pane_has_model_history_and_expand_controls():
     assert 'agentmodel' in html and 'leeAgentModel' in html
     assert 'localmultimodal' in html and 'leeLocalMultimodal' in html
     assert 'workspace-repo-writes' in html and 'leeWorkspaceRepoWrites' in html
+    assert 'vault-pii' in html and 'leeVaultPii' in html
     assert 'leeAgentHistory' in html and 'leeAgentExpand' in html
     assert html.count('>transcript</button>') == 0
     assert 'id="agentprompt"' in html and '<textarea' in html
