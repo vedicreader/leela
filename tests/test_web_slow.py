@@ -1124,6 +1124,47 @@ def test_every_steer_is_drawn_and_not_just_the_first_one():
         f'the second steer was never drawn: {out["both"]}'
     assert not out['stranded'], 'a consumed steer is no longer the queued one'
 
+def test_the_selection_chords_reach_ask_and_summarise_and_say_what_is_in_the_way():
+    """Both controls were mouse-only. The chords go through the panel rather than the route, so the
+    selection, the coordinates and the four guards in `showSelectionHelp` stay in one place, and each
+    way of being unavailable names itself: a chord that quietly does nothing reads as broken.
+    """
+    async def go(pg):
+        await pg.evaluate("leeAct('new_notebook')")
+        await pg.wait_for_selector('.lee-cell .cm-editor')
+        pick = """() => {
+          const v = lee.editors.get(lee.cells[0].id);
+          LeeCM.setDoc(v, 'x = 1'); v.focus(); LeeCM.setSelection(v, 0, 5);
+        }"""
+        out = {}
+        # nothing selected: it says where to put the caret, not what the panel is
+        await pg.evaluate("() => { closeSelectionHelp(); document.getElementById('agentprompt')?.focus(); }")
+        await pg.evaluate("leeAct('summarise')")
+        out['unselected'] = await pg.evaluate("() => [!!$('.lee-selection-tools'), $('#status')?.textContent || '']")
+        await pg.evaluate(pick)
+        await pg.evaluate("leeAct('ask_ai')")
+        out['asking'] = await pg.evaluate("""() => ({open: !!$('.lee-selection-tools.asking'),
+          focused: document.activeElement === $('.lee-selection-tools input')})""")
+        # a second ask is not a second panel, and it says so rather than doing nothing
+        await pg.evaluate("leeAct('ask_ai')")
+        out['twice'] = await pg.evaluate("() => $('#status')?.textContent || ''")
+        await pg.evaluate("() => { closeSelectionHelp(); }")
+        await pg.evaluate(pick)
+        await pg.evaluate("leeAct('summarise')")
+        # `runSelectionHelp` closes the tools and puts its own panel where they were
+        out['summary'] = await pg.evaluate("() => !!$('.lee-selection-reply')")
+        # and while that panel is up, a chord says so rather than reporting a missing selection
+        await pg.evaluate("leeAct('ask_ai')")
+        out['busy'] = await pg.evaluate("() => $('#status')?.textContent || ''")
+        return out
+    out = _run(go)
+    assert out['unselected'][0] is False, 'no panel is raised for a selection that is not there'
+    assert 'select some text' in out['unselected'][1], out['unselected']
+    assert out['asking']['open'] and out['asking']['focused'], 'the chord opens the ask box ready to type'
+    assert 'already open' in out['twice'], f'a second ask names what is in the way: {out["twice"]!r}'
+    assert out['summary'], 'summarise hands the selection to the reply panel'
+    assert 'open suggestion' in out['busy'], f'a suggestion on screen is named as what is in the way: {out["busy"]!r}'
+
 def test_a_streaming_reply_repaints_while_it_streams():
     """The pane sat still through a burst of chunks and then jumped a paragraph at a time.
 

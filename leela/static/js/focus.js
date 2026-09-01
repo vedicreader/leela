@@ -47,11 +47,13 @@ function positionFloating(el, rect) {
   el.style.left = Math.max(8, Math.min(rect.left, innerWidth - w - 8)) + 'px';
   el.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + 'px';
 }
+/* Returns the panel it raised, or null. The chords below ask for one of its controls, and the four
+   guards here are the only place that knows whether there is a selection to act on. */
 function showSelectionHelp() {
-  if ($('.lee-selection-reply') || document.activeElement?.closest?.('.lee-selection-tools')) return;
-  const view = selectionEditor(); if (!view) return closeSelectionHelp();
-  const selected = LeeCM.selection(view); if (!selected?.text.trim()) return closeSelectionHelp();
-  const rect = LeeCM.selectionCoords(view); if (!rect) return closeSelectionHelp();
+  if ($('.lee-selection-reply') || document.activeElement?.closest?.('.lee-selection-tools')) return null;
+  const view = selectionEditor(); if (!view) return closeSelectionHelp(), null;
+  const selected = LeeCM.selection(view); if (!selected?.text.trim()) return closeSelectionHelp(), null;
+  const rect = LeeCM.selectionCoords(view); if (!rect) return closeSelectionHelp(), null;
   closeSelectionHelp();
   const tools = document.createElement('aside'); tools.className = 'lee-selection-tools';
   tools.innerHTML = `<button type="button" data-summary>summarise</button>` +
@@ -67,6 +69,18 @@ function showSelectionHelp() {
     $('[data-send]', tools).onclick = send;
     input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); send(); } else if (e.key === 'Escape') closeSelectionHelp(); };
   };
+  return tools;
+}
+/* The chords reach the panel's own controls rather than the route behind them, so the selection, the
+   coordinates and the four guards stay in one place. Each way of being unavailable says which one it
+   is: a reply already on screen is not a missing selection, and an ask already open is not a second
+   ask. Silence would be worse than either, because a chord that does nothing reads as broken. */
+function askSelection(control) {
+  if ($('.lee-selection-reply')) return status('finish or discard the open suggestion first', 'err');
+  if ($('.lee-selection-tools')?.classList.contains('asking')) return status('the ask box is already open', 'err');
+  const tools = showSelectionHelp();
+  if (!tools) return status('select some text in an editor first', 'err');
+  $(control, tools).click();
 }
 /* What the model looked at before answering, named rather than counted: a rewrite that read the
    file around the selection is worth more trust than one that read nothing, and the reader is the

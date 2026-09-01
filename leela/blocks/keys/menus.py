@@ -48,7 +48,7 @@ MENUS = {
                 S('refresh_files')),
     'root': L(S('new_file'), S('new_dir'), S(), S('copy_abs_path'), S(), S('remove_root', 'warn'),
               S(), S('open_folder'), S('add_root'), S('refresh_files')),
-    'editor': L(S('complete'), S('ai_complete'), S('show_docs'), S(), S('find_similar'),
+    'editor': L(S('complete'), S('ai_complete'), S('show_docs'), S('ask_ai'), S('summarise'), S(), S('find_similar'),
                 S('code_map'), S('git_blame'), S(), S('extract_variable'), S('extract_method'),
                 S('extract_constant'), S('inline_variable'), S('move_symbol'), S('rename_symbol'),
                 S('replace_workspace'), S(), S('move_line_up'), S('move_line_down'),
