@@ -65,20 +65,13 @@ def python_for(cwd=None, session=None, stop=None):
     return session.pool.default_python or project_python(session.fs.roots)
 
 def venv_env(python, env=None):
-    """`env` (this process's, by default) with `python`'s environment in front of it.
-
-    A frozen app starts from `clean_env`. py2app points `PYTHONPATH`, `PYTHONHOME` and
-    `__PYVENV_LAUNCHER__` at the bundle so its own helper starts, and a child that keeps them
-    imports the bundle's standard library under another interpreter. `nbdev-test` run from the app
-    died inside `linecache` doing exactly that, before it could report a single notebook.
-    """
+    "`env` (this process's, by default) with `python`'s environment in front of it."
     env = strip_bundle(dict(os.environ if env is None else env))
     if not python: return env
     bindir = str(Path(python).parent)
     env['VIRTUAL_ENV'] = str(Path(bindir).parent)
-    # Not `UV_PROJECT_ENVIRONMENT`. It is read wherever the process ends up, not where it started,
-    # so a `uv sync` run in another checkout syncs that project's lock into this venv and prunes
-    # everything the lock does not name. uv finds the right environment from the directory anyway.
+    # Not `UV_PROJECT_ENVIRONMENT`: it is read wherever the process ends up, not where it started.
+    # uv finds the right environment from the directory anyway.
     env.pop('UV_PROJECT_ENVIRONMENT', None)
     env['PATH'] = bindir + os.pathsep + env.get('PATH', '')
     env.pop('PYTHONHOME', None)
@@ -92,11 +85,7 @@ def _venv_roots(roots):
         except OSError: pass
 
 def find_pythons(roots=(), current=None):
-    """Interpreters a kernel could be launched under: this one, `current`, and the venvs in reach.
-
-    `current` is what `python_for` resolved for the open tab, which the walk up can find deeper than
-    a folder of checkouts is scanned. Listing it is what makes the picker able to mark it.
-    """
+    "Interpreters a kernel could be launched under: this one, `current` as `python_for` resolved it, and the venvs under `roots`."
     from shutil import which
     out, seen = L(), set()
     def add(p, label):
@@ -131,16 +120,13 @@ def run_file_src(path, src=None, argv=(), cwd=None):
 BOOTSTRAP = '''
 def _lee_bootstrap():
 	import sys, importlib.util
-	# Borrowed only by a kernel of Leela's own minor version. A frozen build ships bytecode-only
-	# modules in its zip, and another version reads their magic number and refuses: an import that
-	# fell through to them died as `bad magic number`, not as anything about the inspector.
+	# Borrowed only by a kernel of Leela's own minor version: a frozen build ships bytecode-only
+	# modules that another version refuses on their magic number.
 	if tuple(sys.version_info[:2]) == tuple({version!r}):
 		for _p in {support!r}:
 			if _p and _p not in sys.path: sys.path.append(_p)
-	# The project venv may contain an older dhrishti. Pin the inspector protocol to this
-	# Leela installation while every other import stays project-local. Best-effort: a frozen
-	# build imports dhrishti out of a zip, where there is no file to point at. A failed pin
-	# must leave nothing in sys.modules, or the fallback import finds the broken module.
+	# Pin the inspector protocol to this Leela installation while every other import stays
+	# project-local. A failed pin must leave nothing in `sys.modules`.
 	try:
 		if tuple(sys.version_info[:2]) != tuple({version!r}): raise ImportError('another Python')
 		for _n in [n for n in sys.modules if n == 'dhrishti' or n.startswith('dhrishti.')]:
@@ -212,12 +198,7 @@ class KernelStartError(RuntimeError):
     "A kernel that could not start, said in terms of the environment rather than the protocol."
 
 def missing_kernel_module(python=None, kernel='ipykernel'):
-    """The kernel package `python` cannot import, or None.
-
-    A venv without it exits before the first message, and jupyter_client can only report that the
-    kernel died before replying to `kernel_info`. Asked here, the environment says which module it
-    is short of. Only the failure path pays for this.
-    """
+    "The kernel package `python` cannot import, or None."
     mod = 'ipymini' if kernel == 'ipymini' else 'ipykernel_launcher'
     exe = _runtime_python(python)
     if exe == sys.executable: return None if importlib.util.find_spec(mod) else mod
@@ -242,10 +223,7 @@ def _kernel_env(python=None):
     return env
 
 def _spec(python=None, name='python3', kernel='ipykernel', lang='python'):
-    """A kernelspec pinned to a specific interpreter, so the kernel runs in *this* venv.
-
-    Python is the language Leela pins an interpreter for. Any other language runs whatever
-    kernelspec is installed for it, unmodified, because there is no venv of ours to point it at."""
+    "A kernelspec pinned to a specific interpreter, so the kernel runs in *this* venv."
     if lang and lang != 'python': return installed_spec(lang)
     runtime = _runtime_python(python)
     if kernel == 'ipymini': argv = [runtime, '-Xfrozen_modules=off', '-m', 'ipymini', '-f', '{connection_file}']
@@ -865,10 +843,7 @@ class KernelPool:
         if python is not False: self.default_python = python
         return {'kernel': self.default_kernel, 'python': self.default_python}
     def _class_for(self, kw):
-        """What runs this language: a Jupyter kernel where one is installed, else Leela's own runner.
-
-        The gateway transport carries Python. A language Leela runs itself has no wire protocol to
-        put through it, so it stays in this process whichever transport the workspace picked."""
+        "What runs this language: a Jupyter kernel where one is installed, else Leela's own runner."
         from .runners import runner_for
         lang = kw.get('lang') or 'python'
         if lang == 'python': return GatewayKernel if self.transport == 'gateway' else Kernel

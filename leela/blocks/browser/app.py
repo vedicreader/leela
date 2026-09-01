@@ -28,9 +28,7 @@ def connect(app, ctx):
 
     @rt('/browser/external')
     def browser_external(url: str = ''):
-        """Open `url` in the machine's own browser, which is where the logged-in sessions are.
-
-        The CDP Chrome is a fresh automation profile that sites like Medium answer with a bot wall."""
+        "Open `url` in the machine's own browser, which is where the logged-in sessions are."
         try:
             if urlparse(url).scheme not in ('http', 'https'):
                 raise ValueError(f'{url[:80]!r} is not an http address')
@@ -115,9 +113,8 @@ def _socket(app, ctx, browser):
             w, h, _ = await browser.start_cast(tid, hello.get('w'), hello.get('h'),
                                                scale=hello.get('scale') or 1, owner=mine)
             cast = True
-            # `note` names a Chrome that cannot rasterise at `MAX_SCALE`, and `browser` is the id
-            # the client dedupes it by. Both go on every `ready`: a socket that fails mid-send must
-            # not be the only time it was said.
+            # Both go on every `ready`: a socket that fails mid-send must not be the only time it
+            # was said.
             await say(t='ready', w=w, h=h, scale=browser.scale, note=browser.warning,
                       browser=browser.guid, **await browser.state(tid))
             # Guarded: Chrome dying here must leave neither a cast running nor a socket open.

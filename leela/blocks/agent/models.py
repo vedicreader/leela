@@ -52,20 +52,14 @@ def unavailable_detail(runtime):
     except Exception as e: return f'{fn}(): {errstr(e)}'
 
 #: Runtimes a package can supply, named as rishi's own extras. The rest want a CLI, a daemon or a key.
-#: LiteRT left this list in rishi 0.1.32, which took `litert-lm-api` on as a base dependency: there
-#: is no `rishi[litert]` to install any more, and nothing to install, because it is always there.
 INSTALLABLE = ('mlx', 'llama')
 
 #: Optional tools that are not a model: `(label, requirements, approximate MB, what it gives you)`.
-#: `basedpyright` over `ty` and `pyrefly` because it answers everything the LSP client asks for and
-#: carries its own node, so it needs neither a system node nor a download when first run.
 TOOLS = {'langserver': ('Language server',
                         ['basedpyright>=1.39'], 70,
                         'Red squiggles, hover types, go to definition and rename.')}
 
-#: The last answer from a probe, and the thread refreshing it. Asking what is installed reaches for
-#: every backend, and asking who is signed in asks every account: seconds on a cold machine, and the
-#: model picker is on the boot path.
+#: The last answer from a probe, and the thread refreshing it. The model picker is on the boot path.
 _PROBED, PROBE_TTL = {}, 90
 _probe_lock = threading.Lock()
 #: Bumped whenever the answers are dropped. A probe gathering across that moment was asked about a
@@ -98,13 +92,7 @@ def _keep(key, value, gen):
     _write_probe(key, value)
 
 def probed(key, fn, ttl=PROBE_TTL):
-    """`fn()`'s last answer, with a stale one refreshed behind whoever asked.
-
-    Kept on disk as well as in memory, because a desktop app is a fresh process every launch and an
-    in-memory cache is empty exactly when the picker is first drawn. What a previous run learned is
-    served at once and re-probed behind it: a model installed since is worth showing a moment late,
-    and a pane that will not open is not worth a fresher list.
-    """
+    "`fn()`'s last answer, with a stale one refreshed behind whoever asked."
     with _probe_lock: row, gen = _PROBED.get(key), _probe_gen
     if row is None and (kept := _read_probe(key)) is not None:
         # `at: 0` so the refresh below fires: what a previous run saw is a starting point, not news.
@@ -125,19 +113,13 @@ def probed(key, fn, ttl=PROBE_TTL):
     return row['value']
 
 def catalog(legacy=True):
-    """Every model this machine offers, and the id each row resolves to.
-
-    Both halves are probed together because the index is what makes a lookup a lookup: `selected`
-    used to scan all ninety-odd rows resolving each one, three times per request, to answer which
-    row a chosen model is.
-    """
+    "Every model this machine offers, and the id each row resolves to."
     from ...agent.core import available_models, resolve
     rows = list(available_models(include_legacy=legacy) or [])
     index = {}
     for r in rows:
-        # The modality marks go on here rather than per request: `spec_caps` scans the Hugging Face
-        # cache for a local model, and doing that once per row per request was three and a half
-        # seconds of the picker.
+        # Here rather than per request: `spec_caps` scans the Hugging Face cache, and once per row
+        # per request was seconds of the picker.
         r.update(model_marks(r.get('value')))
         try: spec = resolve(r['value'])
         except Exception: continue
@@ -250,9 +232,7 @@ def install_runtime(runtime):
 #: Approximate installed size, so nobody starts a 400MB download without being told.
 SETUP_SIZES = {'mlx': 400, 'llama': 120}
 
-#: The local runtime Leela recommends of the ones left to install. LiteRT arrives with rishi and
-#: the vault answers with it, so memory works before anything here is chosen; llama.cpp is the
-#: smaller of the two remaining and the only one that runs off a Mac.
+#: The local runtime Leela recommends of the ones left to install.
 RECOMMENDED = 'llama'
 
 #: The first-run wording for an account runtime. `runtime_remedy` is the terser picker version.
@@ -384,12 +364,7 @@ def model_marks(name):
                                   'gen_video': c.gen_video}
 
 def mark_models(rows):
-    """Stamp every picker row with what its model accepts and returns. No row may fail the picker.
-
-    A row the catalog already marked is left alone. `model_marks` reaches `spec_caps`, which scans
-    the Hugging Face cache for a local model, and running that over ninety rows on every request
-    was three and a half seconds of a picker that is drawn on load.
-    """
+    "Stamp every picker row with what its model accepts and returns. No row may fail the picker."
     for r in rows:
         if 'modalities' in r or 'gen_image' in r: continue
         r.update(model_marks(r.get('value')))

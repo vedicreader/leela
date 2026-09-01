@@ -1,9 +1,4 @@
-"""The languages Leela can run, serve and highlight, in one place.
-
-Every block that has to ask "what is this language" asks here: `runtime` for what starts a cell,
-`lsp` for what answers hover and diagnostics, `nb` for what a notebook's kernelspec means.
-`blocks.fs.LANGS` is a wider map and a different question -- what to highlight -- and stays there.
-"""
+"The languages Leela can run, serve and highlight, in one place."
 from __future__ import annotations
 from dataclasses import dataclass, field
 
@@ -13,19 +8,14 @@ DEFAULT_LANG = 'python'
 
 @dataclass(frozen=True)
 class Lang:
-    """One language Leela knows.
-
-    `kernel` names the Jupyter kernelspec that runs it, `runner` the in-process runner that runs it
-    when no kernel is installed, and `inspect` says whether dhrishti can read its namespace. Only
-    Python has all three.
-    """
+    "One language Leela knows. Only Python has a kernel, a runner and inspection all three."
     id: str
     label: str
     exts: tuple = ()
-    kernel: str = ''
-    runner: str = ''
+    kernel: str = ''        # the Jupyter kernelspec that runs it
+    runner: str = ''        # the in-process runner that runs it where no kernel is installed
     servers: tuple = ()
-    inspect: bool = False
+    inspect: bool = False   # whether dhrishti can read its namespace
     install: str = ''
 
 LANGS = {l.id: l for l in [

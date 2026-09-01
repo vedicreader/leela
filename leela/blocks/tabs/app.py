@@ -17,17 +17,12 @@ __all__ = ['CAPS', 'connect', 'disk_version']
 
 CAPS = ('fs', 'history', 'pool', 'tab', 'docs', 'browser')
 
-#: `path -> ((mtime_ns, size), token)`. Hashing is only paid when the stat moves, which is the rare
-#: case; a poll on an untouched file costs one `stat` as it always did. Capped because a long session
-#: opens many files and none of these entries is ever worth keeping.
+#: `path -> ((mtime_ns, size), token)`. Hashing is paid only when the stat moves. Capped, because
+#: a long session opens many files and no entry is worth keeping.
 _TOKENS, TOKEN_CACHE = {}, 512
 
 def disk_version(path):
-    """A browser-watch token that changes when the bytes change, and not when only the mtime does.
-
-    `nbdev_clean` rewrites a notebook it has nothing to change, and every tool that formats in place
-    does the same. On an mtime the rewrite read as an outside write and the next save was a conflict.
-    """
+    "A browser-watch token that changes when the bytes change, and not when only the mtime does."
     if not path: return ''
     try: s = Path(path).stat()
     except OSError:
@@ -42,11 +37,7 @@ def disk_version(path):
     return token
 
 async def _shut_page(browser, tid):
-    """Close the Chrome page a web tab was showing, once the tab itself has gone.
-
-    A page adopted from the user's own Chrome is theirs and stays open. No Chrome is started to
-    close a page, and a wedged one cannot hold the tab strip: the tab is already closed either way.
-    """
+    "Close the Chrome page a web tab was showing, once the tab itself has gone."
     if not (tid and browser.running()): return
     try: await asyncio.wait_for(browser.shut(tid, mine_only=True), 2)
     except Exception: pass
@@ -146,10 +137,7 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     outside = {}
     def keep_outside_write(path, version):
-        """A write Leela did not make, kept before the editor takes it.
-
-        This poll is the only place another process's edit to an open file is noticed, and the
-        editor's next move is to load it over what is there."""
+        "A write Leela did not make, kept before the editor takes it."
         if outside.get(path) == version: return
         outside[path] = version
         try: ctx.history.keep(path, None, ctx.fs.read(path), 'changed outside Leela')
@@ -165,27 +153,11 @@ def connect(app, ctx):
         return {'path': t.path if t else '', 'disk_version': held}
     @rt('/tab/bar')
     def tab_strip():
-        """The tab strip on its own, for a change the server made that the client did not ask for.
-
-        Deleting a folder and removing a root both close tabs server-side, and the strip is
-        index-addressed, so leaving it stale meant the next click selected and closed the wrong
-        document. Every other route that moves a tab already answers with this.
-        """
+        "The tab strip on its own, for a change the server made that the client did not ask for."
         return tab_bar(session)
     @rt('/tab/reload')
     async def tab_reload(req):
-        """Drop server-side editor caches so the next state read comes straight from disk.
-
-        Any open tab, not only the one on screen. A rolled-back turn restores files wherever they
-        happen to be open, and this route used to refuse every path but the active tab's, so a
-        notebook in a background tab kept the copy from before the restore in `docs` and wrote it
-        back over the restored file at the next `/tabs/save-all`.
-
-        A tab with unsaved edits is held rather than dropped: a restore underneath somebody is not
-        a reason to discard their typing. `bases` is armed for those instead, which is what makes
-        `/tabs/save-all` refuse the write and send them to the tab to look at it. `force` is the
-        deliberate "take what is on disk" that the reload command and the agent's own reloads mean.
-        """
+        "Drop server-side editor caches so the next state read comes straight from disk."
         d = await req.json()
         force = bool(d.get('force'))
         asked = [str(p) for p in (d.get('paths') or [])] or ([str(d['path'])] if d.get('path') else [])

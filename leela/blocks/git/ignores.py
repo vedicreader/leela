@@ -1,21 +1,11 @@
-"""What a folder should not commit, and whether the repository already knows it.
-
-Staging a folder is `git add`, which honours `.gitignore` -- so the whole problem is that a folder
-you have just created does not have one yet. `target/`, `dist/`, `__pycache__` and `node_modules`
-then go in with everything else, and a person meeting the language for the first time has no way to
-know which of the files in front of them belong.
-
-Git is asked rather than guessed at: `check-ignore` says whether a rule already covers a path, so a
-repository whose ignores are already right is left alone.
-"""
+"What a folder should not commit, and whether the repository already knows it."
 from __future__ import annotations
 from fastcore.all import Path
 
 __all__ = ['KINDS', 'kinds_in', 'missing_rules', 'prepare']
 
 #: Per project kind: the files that say it is one, a path that must end up ignored, and the block
-#: to write when it does not. `probe` is what `check-ignore` is asked about, so a `.gitignore`
-#: written by hand in some other shape is still recognised as sufficient.
+#: to write when it does not. `probe` is what `check-ignore` is asked about.
 KINDS = {
     'rust': dict(
         markers=('Cargo.toml',), probes=('target/debug/build',),
@@ -66,16 +56,7 @@ def missing_rules(repo, folder):
     return out
 
 def prepare(repo, folder, write=True):
-    """Give `folder` the ignore rules its project kinds need, and say what was added.
-
-    The rules go in the folder's own `.gitignore`, not the repository's. `/target/` at the root of
-    a repository does not match `mycrate/target/`, so a crate in a subfolder written the other way
-    would ignore nothing at all -- and a crate carrying its own ignores is what every crate does
-    anyway, and survives being moved into another repository.
-
-    Returns `{'kinds', 'added', 'path'}`. `added` is empty when the rules are already there, which
-    is the common case on the second run and on a checkout someone else set up.
-    """
+    "Give `folder` the ignore rules its project kinds need, and say what was added."
     missing = missing_rules(repo, folder)
     wanted = [l for _, lines in missing for l in lines]
     target = Path(folder)/'.gitignore'

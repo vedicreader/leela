@@ -16,8 +16,7 @@ MAX_SIZE = (2560, 1600)
 #: A frame costs `scale**2` pixels to encode, and no desktop display needs more than this.
 MAX_SCALE = 2
 #: How many image pixels a screencast frame carries per CSS pixel. A per-page `deviceScaleFactor`
-#: does not change this: measured against Chrome, a 200px div is 200 image pixels at any of them.
-#: Only the browser's own factor rasterises higher, and it is fixed at launch.
+#: does not change it, and the browser's own factor is fixed at launch.
 SCALE_FLAG = f'--force-device-scale-factor={MAX_SCALE}'
 
 #: Ports whose Chrome this process started, and the connected `Browser`s on each. One Chrome serves
@@ -86,11 +85,7 @@ class Browser:
                 bool(d.get('launched')))
 
     def _remember(self, drop=()):
-        """Write the owned set back, keeping what another Leela on this port owns.
-
-        Best effort. A file that cannot be written costs a page that stays open, never a page
-        closed by mistake. The write is atomic, so a torn file cannot name a target either.
-        """
+        "Write the owned set back, keeping what another Leela on this port owns."
         if not self.guid: return
         guid, stored, _ = self._stored()
         keep = sorted(((stored if guid == self.guid else set()) | self._mine) - set(drop))
@@ -118,13 +113,7 @@ class Browser:
         self._mine |= stored & live
 
     async def _measure(self, p):
-        """Read how many image pixels a frame carries per CSS pixel, and note a Chrome that is short.
-
-        The ratio between the two layout viewports is the browser's own scale factor. Unlike
-        `devicePixelRatio` it reads the same under an `Emulation` override, so `resize` cannot
-        move it. `SCALE_FLAG` only takes at launch, so a Chrome that answers at 1x answers at 1x
-        for as long as it runs.
-        """
+        "Read how many image pixels a frame carries per CSS pixel, and note a Chrome that is short."
         try: m = await asyncio.wait_for(p.page.getLayoutMetrics(), 5)
         except Exception: return
         raster = (m.get('layoutViewport') or {}).get('clientWidth')
@@ -169,12 +158,7 @@ class Browser:
         except Exception: pass
 
     async def quit(self):
-        """Close the Chrome Leela started, and drop the connection either way.
-
-        One that was already answering on the port when Leela connected is somebody else's, and
-        outlives it. The graceful CDP close is the only handle there is: `cdp_connect` starts
-        Chrome in its own session and keeps no pid, so a browser left running cannot be signalled.
-        """
+        "Close the Chrome Leela started, and drop the connection either way."
         cdp = self._cdp
         _LIVE.get(self.port, set()).discard(self)
         if cdp is not None and self.port in _OURS and not _LIVE.get(self.port):
@@ -223,13 +207,7 @@ class Browser:
         return WebPage(id=tid, url=url, title=await self.title(p) or url, attached=True)
 
     async def shut(self, tid, mine_only=False):
-        """Close one page in Chrome and forget its session. `mine_only` spares one Leela adopted.
-
-        The connection comes first, because the set of pages Leela opened is read from disk when
-        it is made. A previous Leela's page is only recognised as Leela's own after that.
-        Ownership is given up once Chrome has closed the target, so a close that fails or is
-        cancelled leaves the page closeable.
-        """
+        "Close one page in Chrome and forget its session. `mine_only` spares one Leela adopted."
         cdp = await self.cdp()
         if mine_only and tid not in self._mine: return False
         self._pages.pop(tid, None); self._casts.pop(tid, None)
@@ -290,12 +268,7 @@ class Browser:
         return (await p.eval('document.body ? document.body.innerText : ""') or '').strip()
 
     async def resize(self, tid, width, height, scale=1):
-        """Pin the viewport to the panel showing it, so panel (x, y) is page (x, y).
-
-        `(width, height)` and the pair that comes back are CSS pixels. `scale` is the panel's
-        device pixel ratio, which sets what the page reads as its own `devicePixelRatio`; how
-        many image pixels a frame carries per CSS pixel is `SCALE_FLAG`, decided at launch.
-        """
+        "Pin the viewport to the panel showing it, so panel (x, y) is page (x, y). Sizes are CSS pixels; `scale` is the panel's device pixel ratio."
         w = max(240, min(int(width or 0) or DEFAULT_SIZE[0], MAX_SIZE[0]))
         h = max(180, min(int(height or 0) or DEFAULT_SIZE[1], MAX_SIZE[1]))
         s = max(1.0, min(float(scale or 1), MAX_SCALE))

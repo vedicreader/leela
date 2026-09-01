@@ -17,9 +17,7 @@ __all__ = ['CAPS', 'connect', 'git_paths', 'Stale']
 
 CAPS = ('fs', 'jobs', 'journal', 'docs')
 
-#: Panes remembered per `(root, path)`, so a write can be checked against the text it was composed
-#: from even when the browser does not send it back. Conflicts and merge reviews keep their own, so
-#: reading one never refreshes the other's before-image.
+#: Panes remembered per `(root, path)`. Conflicts and merge reviews keep their own.
 PANES = 32
 
 def _remember(seen, key, text):
@@ -50,11 +48,7 @@ def git_paths(values):
     return out
 
 def _dropped(repo, branch, force):
-    """Delete a branch and report the commit it was at, which is the only handle for bringing it back.
-
-    Git prints `Deleted branch x (was abc1234)` and the gateway returns None, so the sha never
-    reached the panel. Read it first: after the delete there is no ref left to ask.
-    """
+    "Delete a branch and report the commit it was at, which is the only handle for bringing it back."
     was = ''
     try: was = repo.run('rev-parse', '--short', branch).strip()
     except Exception: pass
@@ -264,12 +258,7 @@ def _unsaved(ctx, repo, path):
         raise Stale(f'unsaved open file: {path}')
 
 def _guard_batch(ctx, repo, d, plans):
-    """Refuse an automatic resolution of several files at once when any of them moved under the plan.
-
-    The whole batch is checked before a single file is written, so a stale file refuses the batch
-    rather than half-applying it: `resolve_safe_conflicts` writes and stages one file at a time, and
-    `_rollback` puts back what it can rather than what it must.
-    """
+    "Refuse an automatic resolution of several files at once when any of them moved under the plan."
     held = plans.get(str(repo.root))
     if held is None:
         raise Stale('reopen the conflict list: Leela no longer holds the text it was built from')
@@ -295,9 +284,8 @@ def connect(app, ctx):
         root = clone(job.target, job.params.get('parent') or '', job.params.get('name') or '')
         return {'root': str(root), 'name': root.name}
     ctx.jobs.register('git_clone', run_clone)
-    #: What the conflict centre's one-click button was built from: every conflicted file's text at
-    #: the moment `/git/conflicts` served the plan, one entry per repository rather than per file, so
-    #: a forty-file merge cannot evict its own before-images.
+    #: Every conflicted file's text at the moment `/git/conflicts` served the plan, one entry per
+    #: repository rather than per file.
     panes, reviews, plans = {}, {}, {}
     def git_undo(op, side):
         "A Git row's own reversal. It reports what it could not do rather than failing the undo."
@@ -526,13 +514,7 @@ def connect(app, ctx):
         except Exception as e: return _failed(e)
     @rt('/git/tree/prepare')
     async def git_tree_prepare(req):
-        """Stage a folder the way a person who knows the language would.
-
-        `git add` already honours `.gitignore`; a folder you just made does not have one, which is
-        the whole difficulty. This writes the rules the folder's project kinds need -- and only the
-        ones git says are missing -- and then stages, so `target/` and `__pycache__` never have to
-        be noticed one at a time.
-        """
+        "Stage a folder the way a person who knows the language would."
         from .ignores import prepare
         d = await req.json()
         try:

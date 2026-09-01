@@ -1047,3 +1047,51 @@ its own `Browser` on the same port.
 Ownership lasts as long as the Chrome that holds the page. A page Leela opened, that the user then
 navigated somewhere of their own and kept, is still Leela's to close until that Chrome quits.
 Recording the URL would narrow this, and would put browsing history in `leela_cfg`.
+
+## `leela/__init__.py` `extras_bin`
+Nothing puts that directory on PATH, so a language server installed into a frozen app was installed correctly and then never found.
+
+## `leela/app.py` `_git_pill_text`
+It shipped as the literal `no git`, which is a claim that the folder is not a checkout. Any first paint the client does not reach leaves that claim on screen, and it is the one thing `cwd.js` refuses to say for a request it could not make. An unknown says so instead.
+
+## `leela/app.py` `_state_label`
+The badge read `state active` for every state there could be, so a person could not tell which charter the agent had been given, nor that it was the one they had just activated.
+
+## `leela/app.py` `_warm_probes`
+`available_models` reaches for every backend and `auth_status` asks every account: together they were most of a seven-second first paint of the model picker. On a thread, so a slow or absent network delays nothing.
+
+## `leela/app.py` `ide_app.exec_history`
+A kernel that will not start is answered, not raised: this route used to return a 500 with a traceback where every other route in this file answers with a failure the client can read.
+
+## `leela/app.py` `ide_app.screen_native`
+`getDisplayMedia` is how the browser does it, and WKWebView does not offer `navigator.mediaDevices` at all, so in the packaged app the shortcut and the Tools entry both failed with a TypeError. The server is on the same Mac as the display, which is the one thing that is true of the desktop app and not of a browser tab.
+
+## `leela/blocks/agent/app.py` `connect.agent_subagents`
+A delegated conversation is thrown away when it ends, so these recorded calls are the only account of it. An empty list is not the same answer as "it did nothing", so `records_sub_calls` says whether linkage has ever been seen to work here: the core stamps `parent_action_id` on a call made inside a delegation, and where a read-only sub-agent gets unwrapped tools nothing is stamped at all. Evidence rather than a version check, because no release has advertised this.
+
+## `leela/blocks/agent/models.py` `catalog`
+Both halves are probed together because the index is what makes a lookup a lookup: `selected` used to scan all ninety-odd rows resolving each one, three times per request, to answer which row a chosen model is.
+
+## `leela/blocks/fs/ui.py` `git_tree_state`
+Ignored files are in here too. Knowing that a file is deliberately not committed is the same question as knowing that one is missing, and only one of the two used to be answerable.
+
+## `leela/blocks/search/search.py` `_Serial`
+apsw binds a connection to whichever thread is inside it, and one handle is shared by every reader: `/search/stream` runs the fts, symbols and ann legs at once, and the agent searches while a person does. Four concurrent `context` calls lost one to `ThreadingViolationError`, and the leg reported the exception instead of its results. `db_lock` is litesearch's guard for this exact fault, keyed on the connection, so a caller arriving through either library waits on the same lock rather than on a second one that knows nothing about it. Both databases, always in the same order, because a composed retrieval reads the repository and the environment together.
+
+A handle per thread is the other answer, and the wrong one here: a handle carries an embedding function, and `athreaded` hands work to a pool that is as wide as the machine.
+
+A store is an object that is itself callable, so wrapping every callable attribute in a function replaced `code_st` with something that had no `rows_where`, and the symbol leg answered with that AttributeError on every search anyone ran. An attribute that is not a method is proxied instead of called: `k.code_st.rows_where(...)` and `k.codedb.t.store.fts_search(...)` reach the real thing, and reach it holding the same two locks.
+
+## `leela/blocks/tabs/app.py` `connect.tab_reload`
+Any open tab, not only the one on screen. A rolled-back turn restores files wherever they happen to be open, and this route used to refuse every path but the active tab's, so a notebook in a background tab kept the copy from before the restore in `docs` and wrote it back over the restored file at the next `/tabs/save-all`.
+
+A tab with unsaved edits is held rather than dropped: a restore underneath somebody is not a reason to discard their typing. `bases` is armed for those instead, which is what makes `/tabs/save-all` refuse the write and send them to the tab to look at it. `force` is the deliberate "take what is on disk" that the reload command and the agent's own reloads mean.
+
+## `leela/core/envs.py` `shell_env`
+Interactive first. zsh reads `.zshrc` only for an interactive shell, and that is where an `OPENAI_API_KEY` usually lives, so a login-but-not-interactive shell answered with eight names and no key at all. Shells that refuse `-i` are asked again without it.
+
+## `leela/core/session.py` `DocStore.doc_for`
+What is held is a cache, and a change on disk drops it. A run arriving before the next mount then found nothing and answered `no notebook open`, for a notebook that is open.
+
+## `leela/workspace.py` `Workspace.runtime_label`
+The tab's own kernel is named by its key, so the pill says the same thing whether or not one is running. It used to take the kernel's own name when there was one and the tab's file name when there was not, so a notebook's kernel was `kosha` alive and `01_graph.ipynb` dead. A watched environment is another kernel entirely, and is named by that kernel.

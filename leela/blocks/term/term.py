@@ -10,10 +10,8 @@ __all__ = ['Pty', 'Terminals', 'TerminalGate', 'lazygit_argv', 'gh_auth_argv', '
            'external_terminal_argv', 'EXTERNAL_TERMINALS']
 
 READ_CHUNK = 65536
-#: macOS returns 1024 bytes a read however much is asked for, so a burst arrives as thousands of
-#: them. A websocket frame each costs a WKWebView about 140 times what the bytes themselves do, so
-#: reads are gathered up to this before anything downstream sees them. Large enough to take the
-#: cost out, small enough that one frame is not a visible pause in the terminal that draws it.
+#: Reads are gathered up to this before anything downstream sees them: a websocket frame costs a
+#: WKWebView about 140 times what its own bytes do.
 MAX_FRAME = 65536
 DEFAULT_SHELL = '/bin/bash'
 SCROLLBACK = 200_000

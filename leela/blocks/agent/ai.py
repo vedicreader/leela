@@ -260,14 +260,10 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
                     SessionHost, AskHost, Host):
     "A `Workspace`, answering the harness's questions."
     mk_chat = None                          # `Agent.lend_model` fills this; declaring it is the opt-in
-    # The default reads it off the launcher, because a kernel that serialises is the common case.
-    # Leela serves the inspector from inside the kernel process, so it holds for ipykernel too:
-    # `test_an_inspection_runs_beside_a_yielding_cell` is parametrised over both and passes on both.
+    # Leela serves the inspector from inside the kernel process, so this holds for ipykernel too.
     concurrent = True
     def __init__(self, ws, session=None): self.ws, self.session = ws, session
-    #: Every group above is declared by inheritance rather than probed. `session` is the reason
-    #: the distinction matters: probed with no kernel up, the group vanished for that assistant's
-    #: life, and `_kernel` starts one on demand.
+    #: Every group above is declared by inheritance rather than probed.
     @property
     def roots(self): return [str(r) for r in self.ws.fs.roots]
     @property
@@ -388,10 +384,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
         from ..vault.spec import CREDS
         return CREDS.set(name, headers, reach=reach)
     def api_keyed(self):
-        """What may be said about each spec out loud: header names, the variables behind them, reach.
-
-        Read off the index rather than the values, so a keyless spec marked local-only is here too.
-        """
+        "What may be said about each spec out loud: header names, the variables behind them, reach."
         from ..vault.spec import CREDS, env_status
         return {n: dict(headers=p['headers'], reach=p['reach'], env=env_status(p['refs']))
                 for n, p in CREDS.policies().items()}
@@ -438,12 +431,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
         nb.save(p, sandbox=self.ws.fs)
         return c.id
     def nb_run_cell(self, path, cell_id, timeout=120):
-        """Run one cell in the kernel its notebook's tab runs in, the way the Run button does.
-
-        The file is left alone: the outputs come back to the caller rather than to disk. The
-        bindings it reports are the merged view before and after, so a rebind shows as well as
-        a new name.
-        """
+        "Run one cell in the kernel its notebook's tab runs in, the way the Run button does."
         from ..nb.nb import Notebook
         p = self.check(path, must_exist=True)
         nb = Notebook.load(p)
@@ -482,11 +470,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
             raise NotImplementedError('no live kernel inspector')
         return k
     def _start_kernel(self):
-        """Start the tab's kernel for a tool that needs one. `None` when it cannot be waited for.
-
-        Tools run on the turn's own thread, so this hands the work to the loop that owns the
-        kernels and waits. Called on that loop there is nothing to wait for, and the peek stands.
-        """
+        "Start the tab's kernel for a tool that needs one. `None` where there is no loop to start it on."
         loop = self._loop()
         if loop is None: return None
         try: return asyncio.run_coroutine_threadsafe(self.ws.runtime(), loop).result(120)
@@ -501,11 +485,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
         return loop
     @staticmethod
     def _partial(out, error, bound=()):
-        """A failed run said in full. An exception on its own read as though nothing had happened,
-
-        and the expensive half of the call had already happened: printed output, and names bound
-        before the line that raised. A live kernel cannot roll those back, so it reports them.
-        """
+        "A failed run said in full: the printed output, and the names bound before the line that raised."
         return ((f'{out}\n' if out else '') + error +
                 '\n[partial run: everything before the error already happened' +
                 (f'; bound {", ".join(bound)}' if bound else '') + ']')
@@ -548,11 +528,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
         origins = getattr(self.ws, 'origins', None)
         if names and origins is not None and scope == 'overlay': origins.record(names, 'run_python', ok)
     def run_python(self, code):
-        """Run in the agent's own layer over the user's namespace, never in the namespace itself.
-
-        The overlay reads the user's variables, keeps what the agent binds across calls, and blocks
-        a mutation of anything the user owns.
-        """
+        "Run in the agent's own layer over the user's namespace, never in the namespace itself."
         return self._run(code, 'overlay' if 'overlay' in self.scopes else 'isolated')
     def inspect_python(self, code, scope='isolated'):
         "Read-only execution in one of `AgentSession`'s scopes; neither can change what the user made."
@@ -598,12 +574,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
         if self.session is not None: return set(self.session.owner())
         return {v.get('name') for v in (self._rows('/api/rows') or [])}
     def promote_var(self, name):
-        """Hand one name the agent bound in its own layer to the user, the way the vars pane does.
-
-        Leela's, not the model's. `Workspace._land` calls it when the user's own prompt named the
-        destination. There is no tool for it: the overlay exists so that nothing the agent decides
-        to do reaches the namespace, and a promotion the agent can choose is that decision back.
-        """
+        "Hand one name the agent bound in its own layer to the user, the way the vars pane does."
         name = str(name or '').strip()
         if not name.isidentifier(): return f'{name!r} is not a variable name'
         if name in self.owner_names():
@@ -776,11 +747,7 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
     return [news_feeds, news_latest, news_story, news_follow, news_unfollow, news_refresh, api_access]
 
 def api_context(host):
-    """The specs already loaded in this session, as something the model is told rather than finds.
-
-    Without it the agent re-loads a spec the page already loaded, guesses at group names, and
-    discovers a local-only api by being refused. Header names only: a value never reaches a briefing.
-    """
+    "The specs already loaded in this session, as something the model is told rather than finds."
     names = sorted(getattr(host, 'specs', {}) or {})
     if not names: return ''
     keyed, rows = host.api_keyed(), []
@@ -904,11 +871,7 @@ class Assistant(Agent):
         from .turns import mark_surface
         mark_surface(getattr(self, 'cfg', None), getattr(self, 'session_id', ''), self.surface)
     def _steered(self, prompt):
-        """Fold in a steer that no tool result consumed.
-
-        Only a text prompt takes the fold, so a multimodal turn leaves the steer queued rather than
-        dropping it.
-        """
+        "Fold in a steer that no tool result consumed."
         if self.approvals is None or not isinstance(prompt, str): return prompt
         steer = self.approvals.consume_steer()
         return f'{prompt}\n\nUser steering: {steer}'.strip() if steer else prompt
@@ -933,8 +896,7 @@ class Assistant(Agent):
         return super().terminate(run_id)
 
     def _be(self, job='turn'):
-        """The backend for `job`, on an engine the whole daemon shares rather than a copy of the
-        weights per workspace. Attached before the backend builds its chat, so rishi borrows it."""
+        "The backend for `job`, on an engine the whole daemon shares rather than a copy of the weights per workspace."
         be = super()._be(job)
         if self.engines is not None: self.engines.attach(be)
         return be
@@ -948,19 +910,14 @@ class Assistant(Agent):
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             built = super().tools
-            # `_plain` is what the briefing is written from. The turn model keeps the Git writes,
-            # since `built` is untouched, but is not invited to reach for them. Delegation is
-            # refused them outright, in `_sub_plain`.
+            # `_plain` is what the briefing is written from, and `built` is untouched: the turn
+            # model keeps the Git writes without being invited to reach for them.
             self._plain = [f for f in self._plain if f.__name__ not in GIT_WRITE_TOOLS]
             return built
         return super().tools
 
     def _sub_plain(self):
-        """No delegated agent gets leela's Git writes, whichever list upstream hands back.
-
-        A sub-agent sized to a different model is built from `registry.tools`, and one allowed to
-        write is given the recorded wrappers, so both lists are filtered here.
-        """
+        "No delegated agent gets leela's Git writes, whichever list upstream hands back."
         refused = {*GIT_WRITE_TOOLS, 'user_steering'}
         return [f for f in super()._sub_plain() if f.__name__ not in refused]
     def model_local(self):
@@ -1006,13 +963,7 @@ class Assistant(Agent):
             kind='agent', irreversible=irreversible)
         return out
     def turn_capabilities(self, turn_id):
-        """Which post-turn operations have a real checkpoint or artifact behind them.
-
-        `known` is whether this process holds anything for the turn at all. Checkpoints and
-        transactions live in memory, and `MAX_CHECKPOINTS` bounds the checkpoints, so a turn from
-        a restart ago or from far enough back in this session has no boundary to branch at. That
-        is a different answer from "this turn changed nothing", and the pane says so.
-        """
+        "Which post-turn operations have a real checkpoint or artifact behind them."
         checkpoint = self.checkpoints.get(str(turn_id), {})
         after = checkpoint.get('after') or []
         revisable = any(isinstance(m, dict) and m.get('role') == 'assistant' and

@@ -26,12 +26,7 @@ def surfaces(cfg):
     except Exception: return {}
 
 def latest_started_here(ai):
-    """The newest conversation this Leela started, by the mark the history list filters on.
-
-    Ramabana's `latest` is the newest in the log, and one log holds Leela's conversations and the
-    CLI's, so on a machine that uses both it is usually the CLI's. Empty when nothing here is
-    marked, which is a log the filter has nothing to say about rather than an error.
-    """
+    "The newest conversation this Leela started, by the mark the history list filters on."
     here = surfaces(getattr(ai, 'cfg', None))
     if not here: return ''
     return first((s['id'] for s in ai.sessions() if s['id'] in here), '')
@@ -147,11 +142,7 @@ def tool_schemas(agent):
     return out
 
 def with_capabilities(ai, turns):
-    """Each turn with what can still be done to it, so a painted turn carries its own controls.
-
-    The live `done` payload was the only place these reached the browser, so undo, restore and
-    revise disappeared on every repaint that rebuilt from the turn log.
-    """
+    "Each turn with what can still be done to it, so a painted turn carries its own controls."
     out = []
     for turn in turns or ():
         try: caps = ai.turn_capabilities(turn.get('turn_id') or '')
@@ -174,11 +165,7 @@ def activity_changes(a, versions):
     return changed
 
 def history_sessions(turns, execution=(), started_here=None):
-    """Turns grouped by durable model-context id; old untagged history splits after 30m.
-
-    `app` is `leela` for a session `started_here` records, `ramabana` for the rest. Only Leela
-    marks the shared log, so history written before the mark existed reads as the CLI's.
-    """
+    "Turns grouped by durable model-context id; old untagged history splits after 30m. `started_here` marks Leela's own."
     here = started_here or {}
     groups, by_id, legacy_n, legacy_last = [], {}, 0, None
     for turn in turns or ():

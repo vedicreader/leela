@@ -22,16 +22,10 @@ def leela_path():
     return [p for p in sys.path if p and os.path.isabs(p) and os.path.exists(p)]
 
 def _boot_src(paths=None):
-    """Source that runs `_child` under an interpreter that has never heard of leela.
-
-    `-m` fails because the module is not on that interpreter's path yet. PYTHONPATH *prepends*, so
-    leela's copy of fasthtml would shadow the project's own.
-    """
+    "Source that runs `_child` under an interpreter that has never heard of leela."
     from .support import LEELA_PY
     paths = leela_path() if paths is None else list(paths)
-    # Only where the minor version matches, the same condition `_probe` and the kernel bootstrap
-    # ask. Leela's path carries bytecode and extension modules built for Leela's interpreter, and a
-    # project on another 3.x that extended anyway died on the import rather than on the command.
+    # Only where the minor version matches, the same condition `_probe` and the kernel bootstrap ask.
     return ('import sys\n'
             f'if tuple(sys.version_info[:2]) == {LEELA_PY!r}:\n'
             f' sys.path.extend([p for p in {paths!r} if p not in sys.path])\n'

@@ -136,9 +136,7 @@ class Thread:
         row = next((r for r in ai.sessions() if r.get('id') == self.id), {})
         return {**meta, 'title': row.get('title', '')}
     def name(self, meta=None):
-        """What to call this conversation: a name a person chose, else a summarised or derived one,
-        else the first thing they said. A card is named the moment a turn starts, rather than
-        waiting for the summariser, the sidecar, or the turn to reach the log."""
+        "What to call this conversation: a name a person chose, else a summarised or derived one, else the first thing they said."
         meta = self.meta() if meta is None else meta
         chosen = self.title.strip() if self.title else ''
         return chosen or str(meta.get('title', '')).strip() or ' '.join(self.opener.split())[:60]
@@ -326,11 +324,7 @@ class TurnRunner:
         return out
 
     def _retain(self, ai, run_id, before):
-        """File this turn's events under this turn's id.
-
-        `_prepare` is what mints that id, so a turn that died before it reached the core still
-        carries the previous turn's, and the write would land on top of what that turn saved.
-        """
+        "File this turn's events under this turn's id."
         if ai.current_turn_id == before: return
         try: self.workspace.save_timeline(ai.session_id, ai.current_turn_id, self.feed.for_run(run_id))
         except Exception as e: self.feed.emit('state', {'run': run_id, 'problems': [errstr(e)]})
@@ -386,11 +380,7 @@ class TurnRunner:
             with self._lock:self._pending.pop(ready['id'], None)
 
     def _cleared(self, ai, run_id):
-        """A stop dropped this turn's gate while its worker was still inside the provider's stream.
-
-        The worker has nothing left to say, but the feed still has to settle: a reader waiting on
-        `finished` has no other way to learn the turn is over, and `stop` returning 200 is not one.
-        """
+        "A stop dropped this turn's gate while its worker was still inside the provider's stream."
         run = ai.run(run_id)
         if run is not None and run.state in TERMINAL_CANCEL: self.feed.emit('run', run.dict())
         self.feed.emit('done', self._done(ai, run_id))
@@ -410,12 +400,7 @@ class TurnRunner:
                 'steer it, or stop to clear it')
 
     def _reap(self, ai=None):
-        """Drop pending turns nothing is running any more, and stop their workers from speaking.
-
-        The gate is Leela's and `busy` is the core's, so a turn whose run has gone terminal while its
-        worker sits in the provider's stream held the conversation with nothing behind it. A worker
-        that has exited leaked its entry outright. Neither is a turn, so neither keeps the gate shut.
-        """
+        "Drop pending turns nothing is running any more, and stop their workers from speaking."
         ai = ai or self.ai or getattr(self.workspace, '_ai', None)
         try: running = bool(ai.runs(active=True)) if ai is not None else False
         except Exception: return []                        # cannot tell, so do not clear
@@ -433,11 +418,7 @@ class TurnRunner:
         return dropped
 
     def held(self):
-        """Why a prompt would be refused right now, or `''`.
-
-        The pane reads this rather than the core's `busy`, so what it shows cannot contradict what
-        `start` does.
-        """
+        "Why a prompt would be refused right now, or `''`."
         self._reap()
         with self._lock:
             if not self._pending: return ''
@@ -470,12 +451,7 @@ class TurnRunner:
             except Exception: pass
 
     def stop(self, run_id='', ai=None):
-        """Stop the turn in flight, and clear what it left holding the conversation.
-
-        `cancel` reaches a turn between steps, so a worker parked in a provider's stream does not
-        feel it. A foreground stop therefore drops the gate itself, which is what its own refusal
-        message promises. Stopping one named run leaves the rest of the conversation as it was.
-        """
+        "Stop the turn in flight, and clear what it left holding the conversation."
         ai = ai or self.ai or self.workspace._ai
         cleared = self.abandon()
         out = ai.cancel(run_id)

@@ -1,9 +1,4 @@
-"""What the inline AI panel was asked, what answered, and whether the answer was taken.
-
-Accepting or discarding a suggestion is the plainest preference signal in the IDE: a person read
-the proposal beside their own code and said yes or no. `blocks/search/signals.py` already stores
-events of this shape, so this names the columns and reuses it.
-"""
+"What the inline AI panel was asked, what answered, and whether the answer was taken."
 
 from __future__ import annotations
 from collections import Counter
@@ -19,9 +14,8 @@ __all__ = ['KINDS', 'FIELDS', 'SNIPPET_FIELDS', 'VERDICTS', 'completions_dir', '
 #: an accept and it is not a discard, and counting it as either would flatter or libel the model.
 KINDS = ('ask', 'reply', 'error', 'replace', 'discard', 'stale', 'abandon')
 
-#: What became of a suggestion. `stale` does not end the panel -- the selection moved under a
-#: replace, and the suggestion is still there to accept once the caret is back -- so one ask can
-#: report a `stale` and then a verdict. The last one is what became of it.
+#: What became of a suggestion. One ask can report a `stale` and then a verdict, and the last one
+#: is what became of it.
 VERDICTS = ('replace', 'discard', 'stale', 'abandon')
 
 FIELDS = ('session', 'ask_id', 'kind', 'mode', 'model', 'lang', 'path', 'chars', 'ms',
@@ -39,19 +33,13 @@ def completions(dir=None):
                    snippet_fields=SNIPPET_FIELDS)
 
 def summary(rows, recent=20):
-    """What was asked and how often the answer was taken, per model.
-
-    Only the outcomes are counted, never the asks: an ask with no outcome is a panel still open or
-    one abandoned, and dividing by it would report a rejection nobody made.
-    """
+    "What was asked and how often the answer was taken, per model."
     rows = L(rows)
     asks = {r['ask_id']: r for r in rows if r.get('kind') == 'ask' and r.get('ask_id')}
     replies = {r['ask_id']: r for r in rows if r.get('kind') == 'reply' and r.get('ask_id')}
     took, left, by_model = 0, 0, {}
     seen = []
-    # One outcome per ask, and the last: `stale` no longer closes the panel, so an ask that went
-    # stale and was then accepted reports both, and counting each would have one suggestion both
-    # rejected and accepted. An outcome with no id has no identity to be superseded by.
+    # One outcome per ask, and the last. An outcome with no id has no identity to be superseded by.
     outcomes = {}
     for r in rows:
         if r.get('kind') in ('replace', 'discard', 'stale'):
@@ -79,21 +67,7 @@ def summary(rows, recent=20):
 
 
 def judgements(rows, snippets=True, limit=200):
-    """One row per ask: what was asked, what came back, and what became of it.
-
-    Built from the asks rather than from the outcomes, so an ask still open, one abandoned, and one
-    whose model failed are all here. `summary` counts only decided ones, which is right for a rate
-    and wrong for a log.
-
-    Rows join on `ask_id`, and an id is only an id when it is non-empty. No ask carried one before
-    the browser began minting them, and an ask can also fall outside the window `read` returns while
-    its verdict stays inside it. Both come back `orphan`, alone but whole: an unjoined ask still
-    holds the instruction, which is the field most worth reading.
-
-    `snippets` is the reader's gate, not the writer's. `text` and `reply` are the person's own code,
-    and `Signals.record` refuses to write them unless the preference was on, so a row can be bare
-    because nothing was kept or because this caller may not have it. `code` says which.
-    """
+    "One row per ask: what was asked, what came back, and what became of it. `snippets` keeps the text."
     rows = L(rows)
     asks = {r['ask_id']: r for r in rows if r.get('kind') == 'ask' and r.get('ask_id')}
     held, out = {}, []

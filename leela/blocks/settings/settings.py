@@ -67,12 +67,11 @@ DEFAULT_SETTINGS = {
         # On unless turned off, which is how the filter has always behaved.
         'notify': False, 'reasoning': '', 'historyLeelaOnly': True,
     },
-    # What `all` pays for each ranking signal, and what the search dialog is allowed to remember.
-    # `leela.blocks.search.search.SETTING_WEIGHTS` maps these names onto the scorer's own; the
-    # numbers here and its dataclass defaults are the same numbers, and a test says so.
     #: Whether the inline AI panel keeps a record of what it was asked and whether the answer was
     #: taken. `snippets` decides whether the selection and the suggestion are kept with it.
     'completions': {'telemetry': 'on', 'snippets': False},
+    #: What `all` pays for each ranking signal, and what the search dialog may remember.
+    #: `search.SETTING_WEIGHTS` maps these names onto the scorer's own.
     'search': {
         'telemetry': 'vault', 'snippets': False,
         'lastMode': '', 'lastScope': '', 'lastExts': '',
@@ -109,9 +108,8 @@ _RANGES = {
     ('editor', 'tabSize'): (1, 8), ('editor', 'lineLength'): (40, 240),
     ('editor', 'overviewThreshold'): (20, 5000), ('editor', 'scrollMargin'): (0, 20),
     ('files', 'autoSaveDelay'): (100, 60000),
-    # The weights, found by being numbers rather than by naming what they are not: the section also
-    # holds the telemetry switches and what the dialog was last set to, and a range on a string
-    # rejects it outright.
+    # The weights, found by being numbers: the section also holds the telemetry switches and what
+    # the dialog was last set to.
     **{('search', k): (0, 500) for k, v in DEFAULT_SETTINGS['search'].items()
        if isinstance(v, (int, float)) and not isinstance(v, bool)},
 }
@@ -209,12 +207,7 @@ class Settings:
             out = _merge(out, (workspace.get('languages') or {}).get(language, {}))
         return out
     def layers(self):
-        """Every layer that names each key, least specific first.
-
-        `origins` answers with the one layer in charge, which cannot warn you about a layer you are
-        not looking at: editing all languages, nothing said that a `languages.python` block held the
-        same key and would win. This says all of them and lets the panel decide.
-        """
+        "Every layer that names each key, least specific first."
         out = {}
         for scope in ('user', 'workspace'):
             data = self.raw(scope)
@@ -259,10 +252,7 @@ class Settings:
         return self.describe(language)
 
 def agent_cfg(settings=None):
-    """Where the agent's durable conversations live: `agent.configFolder`, else Leela's own config.
-
-    Ramabana writes `<history_name>-history.jsonl` and its sidecars here. A folder that cannot be
-    made raises rather than becoming a second empty log."""
+    "Where the agent's durable conversations live: `agent.configFolder`, else Leela's own config."
     folder = str(((settings or Settings()).effective().get('agent') or {}).get('configFolder') or '').strip()
     if not folder: return Path(leela_cfg)
     out = Path(folder).expanduser()

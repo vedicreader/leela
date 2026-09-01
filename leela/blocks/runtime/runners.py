@@ -1,9 +1,4 @@
-"""Languages Leela runs without a Jupyter kernel: a cargo scratch crate, and one node process.
-
-Both present the `Kernel` surface `execute`/`interrupt`/`restart`/`shutdown`, so `/nb/run`,
-`/nb/run/stream` and `Notebook.run` reach them unchanged. Neither has a namespace dhrishti can
-read, so `base` stays None and the Variables pane says so rather than showing an empty tree.
-"""
+"Languages Leela runs without a Jupyter kernel: a cargo scratch crate, and one node process."
 from __future__ import annotations
 import asyncio, hashlib, json, os, re, shutil
 from pathlib import Path
@@ -97,8 +92,6 @@ class Runner(_Inspector):
         return ExecOutcome(ok=err is None, execution_count=self.count, outputs=outs, error=err)
     async def run(self, code, emit, timeout=None): raise NotImplementedError
 
-# Rust ---------------------------------------------------------------------------------------
-
 CARGO_TOML = '''[package]
 name = "leela_cell"
 version = "0.0.0"
@@ -122,11 +115,7 @@ ITEM = re.compile(r'^(?:pub\s+|unsafe\s+|async\s+|extern\s+(?:"[^"]*"\s+)?|defau
 DEP = re.compile(r'^\s*(?://[!/]\s*dep:|:dep\s)\s*(.+?)\s*$')
 
 def rust_chunks(src):
-    """Top-level chunks of Rust source, split where a statement or an item ends.
-
-    Brace depth decides, and strings, chars and comments are skipped so a `}` inside one does not
-    close a block. A raw string holding an unbalanced brace is the case this does not see.
-    """
+    "Top-level chunks of Rust source, split where a statement or an item ends."
     out, buf, depth, i, n = [], [], 0, 0, len(src)
     def flush():
         if (t := ''.join(buf).strip()): out.append(t)
@@ -171,12 +160,7 @@ def rust_source(items, stmts):
             + f'\n\nfn main() {{\n    {body}\n}}\n')
 
 class CargoRunner(Runner):
-    """Rust cells as one scratch crate that grows.
-
-    A cell that defines things adds them to the crate; a cell that does things becomes the body of
-    `main`. The compiler is the point: its diagnostics come back as the cell's error output, with
-    the code (`E0382`) as the error name and rustc's own rendering as the traceback.
-    """
+    "Rust cells as one scratch crate that grows."
     lang, tool = 'rust', 'cargo'
     TRAILING = re.compile(r'^(?:let|return|break|continue|use|fn|struct|enum|impl|trait|mod|'
                           r'const|static|type|for|while|loop|if|match|unsafe|pub)\b')
@@ -261,15 +245,8 @@ class CargoRunner(Runner):
         self.items, self.deps = [], {}
         await super().restart()
 
-# JavaScript ---------------------------------------------------------------------------------
-
 class NodeRunner(Runner):
-    """JavaScript cells against one long-lived node process.
-
-    Every cell runs in the same `vm` context, so `let`, `function` and `class` from one cell are
-    there in the next. `driver.mjs` is the other half of this: it owns the context, the console
-    capture and the newline-delimited JSON both sides speak.
-    """
+    "JavaScript cells against one long-lived node process."
     lang, tool = 'javascript', 'node'
     @property
     def missing(self):

@@ -83,8 +83,7 @@ SETTING_WEIGHTS = {'legFiles': 'files', 'legSymbols': 'symbols', 'legRg': 'rg', 
 
 @dataclass
 class Weights(Dictable):
-    """What `all` pays for each signal. One weight per leg, one per lexical feature, so a hit's
-    score is `sum(weight * feature)` and the client can re-rank without asking again."""
+    "What `all` pays for each signal."
     files: float = 110.0
     symbols: float = 100.0
     rg: float = 80.0
@@ -137,25 +136,7 @@ class Cluster:
             'files': self.files, 'members': [m.dict() for m in self.members]}
 
 class _Serial:
-    """A Kosha handle held behind litesearch's own connection locks.
-
-    apsw binds a connection to whichever thread is inside it, and one handle is shared by every
-    reader: `/search/stream` runs the fts, symbols and ann legs at once, and the agent searches
-    while a person does. Four concurrent `context` calls lost one to `ThreadingViolationError`, and
-    the leg reported the exception instead of its results. `db_lock` is litesearch's guard for this
-    exact fault, keyed on the connection, so a caller arriving through either library waits on the
-    same lock rather than on a second one that knows nothing about it. Both databases, always in the
-    same order, because a composed retrieval reads the repository and the environment together.
-
-    A handle per thread is the other answer, and the wrong one here: a handle carries an embedding
-    function, and `athreaded` hands work to a pool that is as wide as the machine.
-
-    A store is an object that is itself callable, so wrapping every callable attribute in a function
-    replaced `code_st` with something that had no `rows_where`, and the symbol leg answered with that
-    AttributeError on every search anyone ran. An attribute that is not a method is proxied instead
-    of called: `k.code_st.rows_where(...)` and `k.codedb.t.store.fts_search(...)` reach the real
-    thing, and reach it holding the same two locks.
-    """
+    "A Kosha handle held behind litesearch's own connection locks."
     _PLAIN = (str, bytes, bool, int, float, complex, Path, type(None))
     def __init__(self, inner, dbs=None):
         self.__dict__['inner'] = inner
@@ -201,13 +182,7 @@ class Search:
         try: return self.focus() if callable(self.focus) else self.focus
         except Exception: return None
     def kosha_root(self, path=None):
-        """The checkout whose index answers for `path`: the nearest one at or above it.
-
-        The walk the interpreter already takes. One folder of checkouts opened as one root holds an
-        index per repo, and the repo a file sits in is the repo that indexed it, so reading the
-        folder's own index reads one nothing ever built. The walk stops at the open folder, because
-        a checkout above the workspace is somebody else's.
-        """
+        "The checkout whose index answers for `path`: the nearest one at or above it."
         from ...core.projects import PROJECT_MARKERS, nearest_marked
         roots = L(self.fs.roots)
         here = path or self._focus()
@@ -224,11 +199,7 @@ class Search:
         k.status(pyproject=False)
         return _Serial(k)
     def _kosha(self, path=None):
-        """The kosha handle for the checkout in hand, or None.
-
-        Tried once per checkout, since retrying on every keystroke would stall the search. Moving to
-        a file in another repo is what makes it try again, and what it tries is that repo's index.
-        """
+        "The kosha handle for the checkout in hand, or None."
         root = self.kosha_root(path)
         if self._k_root is not None and root != self._k_root: self._k, self._k_tried = None, False
         if self._k_tried: return self._k
@@ -432,11 +403,7 @@ class Search:
                     if len(out) >= limit: return out
         return out
     def _rg(self, q, limit, regex=False, exts=(), roots=None, no_ignore=False, cased=False):
-        """Fast, current-disk search. JSON output keeps colons and non-UTF8 paths unambiguous.
-
-        `no_ignore` is for the environment: `.venv` is in everyone's `.gitignore`, so ripgrep skips
-        every file in it otherwise.
-        """
+        "Fast, current-disk search. JSON output keeps colons and non-UTF8 paths unambiguous. `no_ignore` reaches into `.venv`."
         exe = shutil.which('rg')
         if not exe:
             self.backend, self.note = 'scan', 'ripgrep is not installed; Python fallback'
@@ -695,10 +662,7 @@ class Search:
         if not re.match(r'^[_A-Za-z]\w*$', name): return L()
         return self._place(self._rg(rf'\b{re.escape(name)}\b', limit, regex=True))
     def env_roots(self):
-        """The project interpreter's `site-packages`, which the project walk deliberately skips.
-
-        Without them a lookup on an imported symbol can only offer the import lines that mention it.
-        """
+        "The project interpreter's `site-packages`, which the project walk deliberately skips."
         from ..runtime.kernels import project_python
         py = project_python(self.fs.roots)
         if not py: return L()
@@ -780,12 +744,7 @@ class Search:
     #: Bundled stubs and vendored copies. Real code answers the question; these repeat it.
     VENDORED = ('/third_party/', 'typeshed', '/dist/dist/', '/site-packages/pip/_vendor/')
     def env_definitions(self, name, limit=12, path=''):
-        """Where an installed package defines `name`: Kosha's environment index, else ripgrep.
-
-        Ripgrep needs nothing to be fresh, so it answers when the index is missing or stale for a
-        package installed since the last sync. The search is cased either way: insensitive, a
-        lookup on `store_attr` answers with `STORE_ATTR` from vendored stubs.
-        """
+        "Where an installed package defines `name`: Kosha's environment index, else ripgrep."
         name = (name or '').strip()
         if not re.match(r'^[_A-Za-z]\w*$', name): return L()
         if indexed := self.env_symbols(name, limit): return self._env_ranked(indexed, name, path)
@@ -807,11 +766,7 @@ class Search:
             hit.module = self.env_module(hit.path, roots)
         return self._env_ranked(out, name, path)
     def env_module(self, path, roots=None):
-        """The dotted module a `site-packages` file is, so a hit reads `fastcore.basics`.
-
-        The basename cannot say which one: two packages both offer a `document.py`. `__init__` is
-        dropped because the module is its folder.
-        """
+        "The dotted module a `site-packages` file is, so a hit reads `fastcore.basics`."
         p = Path(path)
         for r in (self.env_roots() if roots is None else roots):
             if not str(p).startswith(str(r)): continue
@@ -821,11 +776,7 @@ class Search:
             return '.'.join(parts)
         return ''
     def env_symbols(self, name, limit=12):
-        """Kosha's environment store, which knows the package and the line without guessing.
-
-        A path prefix guesses which package a file belongs to, and a namespace package, a vendored
-        copy or an editable install each break that guess.
-        """
+        "Kosha's environment store, which knows the package and the line without guessing."
         k = self._kosha()
         if k is None: return L()
         try:
@@ -864,11 +815,7 @@ class Search:
             elif int(h.line or 0) == int(line): return True
         return False
     def declaration_or_usages(self, name, path=None, line=0, cell_index=-1, limit=30, dotted=''):
-        """Where `name` is declared, or who uses it when the cursor is already there.
-
-        `cell_index` is separate because the file line a notebook hit carries is a line of JSON.
-        `dotted` is the chain the cursor ends, the only thing that says `fastcore.test` is a module.
-        """
+        "Where `name` is declared, or who uses it when the cursor is already there. `cell_index` locates a notebook hit; `dotted` is the chain the cursor ends."
         if '.' in (dotted or '') and (m := self.module_hit(dotted, path or '')):
             self.backend, self.note = 'module', f'{dotted} is a module'
             return 'definition', L(m)
@@ -937,9 +884,7 @@ class Search:
         "What makes two hits the same hit, so two engines finding one location merge into one row."
         return (hit.path, int(hit.line), hit.package if hit.kind == 'env-symbol' else '')
     def features(self, source, hit, q, rank=0):
-        """Why this hit ranks where it does, as the vector the weights are paid against. `leg_rank`
-        normalises the backend's own ordering, whose raw scores are pagerank, FTS rank and cosine
-        distance and so are not comparable across legs."""
+        "Why this hit ranks where it does, as the vector the weights are paid against."
         query, leaf = q.lower(), re.split(r'::|\\|->|\.', q)[-1].lower()
         symbol, text, filename = hit.symbol.lower(), hit.text.lower(), Path(hit.path).name.lower()
         exact = bool(symbol) and symbol.rsplit('.', 1)[-1] == leaf

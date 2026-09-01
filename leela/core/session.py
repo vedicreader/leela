@@ -30,11 +30,7 @@ def assigned_names(code):
     return list(dict.fromkeys(out))
 
 class Origins:
-    """What last bound each name: the cell or the tool, when, and whether that run then failed.
-
-    A variable in the panel is the end of something, and reading it says nothing about which cell
-    or tool put it there, or whether the run that did went on to raise afterwards.
-    """
+    "What last bound each name: the cell or the tool, when, and whether that run then failed."
     LIMIT = 2000
     def __init__(self): self.rows = {}
     def record(self, names, by, ok=True):
@@ -60,11 +56,7 @@ async def kernel_api(session, path, params=None, timeout=15, tab=None):
     return await client.api(path, params, timeout) if client else None
 
 class FileHistory:
-    """Every version of a project file Leela saw, so a write it did not make is still recoverable.
-
-    The loss happens before a commit, often from another process editing the same tree, so git
-    cannot cover it. Bodies are stored once per distinct content.
-    """
+    "Every version of a project file Leela saw, so a write it did not make is still recoverable."
     def __init__(self, root, pinned=None):
         self.root = Path(root); self.path = self.root/'index.json'
         self.rows_ = []
@@ -137,8 +129,8 @@ class FileHistory:
         if not p.exists(): raise ValueError(f"the stored body for {row['path']} is gone")
         return gzip.decompress(p.read_bytes()).decode('utf-8', 'replace')
     def keep(self, path, before, after, label='change'):
-        """Both sides of one change. The first `before` for a path is the only copy of what was
-        there before Leela ever looked."""
+        """Both sides of one change. The first `before` for a path is the only copy of what was there before Leela ever looked.
+        """
         if before is not None and self.latest(path) is None:
             self.record(path, before, 'before the first change seen')
         return self.record(path, after, label)
@@ -185,11 +177,7 @@ class DocStore:
         return tab, self.doc_for(tab), lock
 
     def doc_for(self, tab):
-        """The notebook behind `tab`, read from disk when nothing is held.
-
-        What is held is a cache, and a change on disk drops it. A run arriving before the next mount
-        then found nothing and answered `no notebook open`, for a notebook that is open.
-        """
+        "The notebook behind `tab`, read from disk when nothing is held."
         key = self.key(tab)
         nb = self.docs.get(key)
         if nb is None and getattr(tab, 'path', ''):
@@ -245,12 +233,7 @@ class RunState:
 MAX_OPERATIONS = 200
 
 class Trash:
-    """Where a deleted file or folder goes, so deleting either is recoverable.
-
-    A journal resource is text, and neither a directory nor a binary survives being one: a folder
-    was recorded as nothing at all and a PNG came back as replacement characters. Moving the thing
-    itself aside keeps whatever it was, and costs one rename instead of a copy.
-    """
+    "Where a deleted file or folder goes, so deleting either is recoverable."
     def __init__(self, root): self.root = Path(root)
     def keep(self, path):
         "Move `path` aside whole and return the key that brings it back."
@@ -296,18 +279,18 @@ class OperationJournal:
         tmp = self.path.with_suffix('.tmp')
         tmp.write_text(json.dumps({'operations': self.operations[-MAX_OPERATIONS:]}, ensure_ascii=False))
         tmp.replace(self.path)
-    def record(self, label, resources, kind='file', irreversible=(), moved=(), trashed=(),
-               created=(), extra=None, hooked=False):
-        """Append one operation, or None when nothing actually changed.
-
-        `resources` are content changes, `(path, before, after)`. The rest name where something went
-        rather than what was in it, which is the only way to record a directory or a file that is
-        not text: `moved` are `(new, old)` pairs, `trashed` are `(path, key)` for what was deleted,
-        and `created` are paths this operation brought into being, which undo puts in the trash.
-        `extra` is whatever this `kind`'s own undo hook needs, kept on the row. `hooked` marks an
-        operation that changed no file at all and is reversed by that hook alone; it may name the
-        paths it touched in `extra` for the history to show.
-        """
+    def record(self,
+               label,
+               resources,          # content changes, as `(path, before, after)`
+               kind='file',
+               irreversible=(),
+               moved=(),           # `(new, old)` pairs; where it went, not what was in it
+               trashed=(),         # `(path, key)` for what was deleted
+               created=(),         # paths this operation brought into being; undo trashes them
+               extra=None,         # whatever this `kind`'s own undo hook needs, kept on the row
+               hooked=False,       # changed no file; the hook alone reverses it
+               ):
+        "Append one operation, or None when nothing actually changed."
         rows = [{'path': str(path), 'before': before, 'after': after}
                 for path, before, after in resources if before != after]
         paths = ([{'path': str(new), 'from': str(old)} for new, old in moved] +
@@ -365,11 +348,7 @@ class OperationJournal:
             if p.exists(): p.unlink()
         else: self.sandbox.write(p, text)
     def _blocked(self, row, side):
-        """Why this row cannot be reversed, or None.
-
-        `side` names the state the tree has to be in already: undo checks `after` and then reverses
-        to `before`, redo the other way about.
-        """
+        "Why this row cannot be reversed, or None. `side` is the state the tree must already be in."
         p = self.sandbox._check(row['path'])
         if 'at' in row:
             # A delete and a create are the same row read from opposite ends: the thing is either

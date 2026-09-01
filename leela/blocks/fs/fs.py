@@ -175,11 +175,7 @@ class Sandbox:
         _changed()
         return self.entry(dst)
     def copy(self, ref, dest_dir, name=None):
-        """Copy a file or a whole directory into `dest_dir`; both ends are checked.
-
-        `name` renames on the way, which is what duplicating into the same folder needs. A copy
-        never overwrites: the caller picks a free name, so a slip cannot land on someone's work.
-        """
+        "Copy into `dest_dir` under `name`, checking both ends. Never overwrites: the caller picks a free name."
         p = self._check(ref, must_exist=True)
         d = self._check(dest_dir, must_exist=True)
         if not d.is_dir(): raise NotADirectoryError(str(d))
@@ -206,11 +202,7 @@ class Sandbox:
         _changed()
         return str(p)
     def take(self, ref, trash):
-        """Move `ref` into `trash` whole, and return the key that brings it back.
-
-        What `delete` means for anything a journal resource cannot hold: a directory, or a file that
-        is not text. Same guards, and the listing cache is dropped the same way.
-        """
+        "Move `ref` into `trash` whole, and return the key that brings it back."
         p = self._check(ref, must_exist=True)
         if p in self.roots: raise Unsafe('close the folder instead of deleting an open root')
         key = trash.keep(p)

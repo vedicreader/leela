@@ -81,12 +81,7 @@ async def _json(send, body, status=200):
 def _headers(scope): return {k.lower(): v for k, v in (scope.get('headers') or ())}
 
 def _name(raw):
-    """A host name from a header or a URL: an IPv6 literal unbracketed, the port and root dot gone.
-
-    `vruksha.localhost.` is `vruksha.localhost` written absolutely, which is what a browser sends
-    when a search domain has made the short form ambiguous. Reading the two as different names
-    turned choosing a workspace from the folder list into `invalid Host header`.
-    """
+    "A host name from a header or a URL: an IPv6 literal unbracketed, the port and root dot gone."
     raw = str(raw or '').lower()
     name = raw[1:].split(']', 1)[0] if raw.startswith('[') else raw.split(':', 1)[0]
     return name.rstrip('.')
@@ -164,11 +159,7 @@ class WorkspaceHub:
         self.add_site(s)
         return self._noted(root, s)
     def _noted(self, root, site):
-        """Remember the folder here, where both callers pass, rather than in the desktop one.
-
-        A folder opened as a site is reopened at launch and offered by the welcome screen only
-        if this runs; noting it in the shell left a browser opening the same folder with neither.
-        """
+        "Remember the folder here, where both callers pass, rather than in the desktop one."
         from .core.projects import note_folder
         try: note_folder(str(root))
         except Exception: pass

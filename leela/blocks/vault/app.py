@@ -337,11 +337,7 @@ def connect(app, ctx):
         return ui.call_panel(name, operation, '', ops)
     @rt('/vault/apis/call')
     async def apis_call(operation: str, name: str = '', params: str = ''):
-        """Call one operation and show what came back.
-
-        `api_fetch`, not `api_call`: the reach gate is about a model reading the answer, and this
-        is the person whose data it is.
-        """
+        "Call one operation and show what came back."
         try:
             kw = json.loads(params) if str(params or '').strip() else {}
             if not isinstance(kw, dict): raise ValueError('the parameters must be a JSON object')

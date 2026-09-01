@@ -30,12 +30,7 @@ def connect(app, ctx):
         client = await ws.runtime()
         return await client.api(path, params, timeout) if client else None
     async def api_peek(path, params=None, timeout=15):
-        """The runtime's inspector, but only where one is already running.
-
-        `ws.runtime()` starts a kernel, which is over a second, and a read that only decorates its
-        answer must not be what starts one: listing conversations booted Python to ask it nothing
-        the list could not do without.
-        """
+        "The runtime's inspector, but only where one is already running."
         client = ws.kernel_peek()
         return await client.api(path, params, timeout) if client else None
 
@@ -75,8 +70,7 @@ def connect(app, ctx):
                 for g in history_sessions(turns, execution, here)])
         return _history_cache['groups']
     def _settled_thread(target=''):
-        """The conversation a branch operation may act on. Reshaping context under a live run or an
-        unanswered checkpoint would change the question the model is already answering."""
+        "The conversation a branch operation may act on."
         t = _thread(target)
         if t.state == 'working': raise TurnError('thread_busy', 'stop this conversation before reshaping it', t.id)
         if t.state == 'waiting': raise TurnError('thread_busy', 'answer the waiting checkpoint first', t.id)
@@ -133,15 +127,7 @@ def connect(app, ctx):
                 'inline': list(ctx.inline_ai.history) if not session else []}
     @rt('/agent/resume')
     async def agent_resume(req):
-        """Resume a saved conversation as an isolated live thread.
-
-        `latest` is the newest conversation this Leela started, which is what its history list
-        shows. One log holds Leela's and the CLI's, most of it is the CLI's, and taking the newest
-        of both opened a conversation the pane is filtered to hide. A log with nothing marked falls
-        back to the newest of all rather than opening nothing: the mark is recent, and everything
-        written before it exists reads as the CLI's. `everything` asks for the newest of both, the
-        name the history list already uses for it.
-        """
+        "Resume a saved conversation as an isolated live thread."
         d = await req.json()
         session = str(d.get('session') or 'latest')
         if session == 'latest' and not d.get('everything'):
@@ -206,15 +192,7 @@ def connect(app, ctx):
         return {'ok': True, 'session': thread.id}
     @rt('/agent/history')
     async def agent_history(thread: str = '', everything: bool = False):
-        """Leela's durable conversations, newest first, without their turns.
-
-        `everything` adds the ones the CLI started. One log holds both, and most of it is the CLI's,
-        so the list a person opens is Leela's own until they ask for the rest.
-
-        The turns are what makes this expensive: shipping all of them was 60MB of JSON and forty
-        seconds once Leela and the CLI shared one log. `count` says how many there are, and
-        `/agent/history/session` fetches the ones a person actually opens.
-        """
+        "Leela's durable conversations, newest first, without their turns. `everything` adds the CLI's."
         try: t = _thread(thread)
         except Exception as e: return _thread_error(e)
         ai = t.ai
@@ -240,12 +218,7 @@ def connect(app, ctx):
                 **{**group, 'turns': with_capabilities(t.ai, group['turns'])}}
     @rt('/agent/models')
     def agent_models(legacy: bool = True, refresh: bool = False):
-        """Every model the picker offers, and which one each routed job is on.
-
-        Probing what is installed costs seconds on a cold machine and the answer barely moves, so
-        the catalog comes from `probed` and `refresh=1` is what asks for a new one. Which model each
-        routed job is on is this workspace's own state and is read fresh every time.
-        """
+        "Every model the picker offers, and which one each routed job is on."
         from ...agent.core import DFLT_LOCAL, available_models, auth_status, resolve
         from .models import JOB_HELP, catalog, forget_probes, load_models, mark_models, probed, runtimes
         notes = {}
@@ -261,9 +234,8 @@ def connect(app, ctx):
             return _specs[name]
         def _name(what, get, dflt): return _try(what, get, dflt) or dflt
         saved = _try('saved models', load_models, []) or []
-        # The catalog and the id each row resolves to are the machine's, not this workspace's, and
-        # cost seconds to gather. Probed together, served from the last answer, refreshed behind
-        # this. `refresh` is the button: it drops the answer and gathers a new one now.
+        # The catalog and the id each row resolves to are the machine's, not this workspace's.
+        # Probed together, served from the last answer, refreshed behind this.
         if refresh: forget_probes(disk=True)   # the button means ask again, not read the last answer
         rows, by_id = _try('model catalog', lambda: probed(f'catalog:{legacy}',
                                                            lambda: catalog(legacy)), ([], {})) or ([], {})
@@ -298,9 +270,7 @@ def connect(app, ctx):
         from ...agent.core import JOBS, Routing
         routing = ctx.ai.routing if ws._ai is not None else Routing(turn=agent)
         if ws._ai is None: routing.policy.update(ws.job_models)
-        # `inline` has a field of its own, and `**jobs` is spread last: left in here, the routing
-        # default for the job overwrote the saved prompt-cell model every time, so a choice that
-        # had been saved correctly always came back reading as the turn model.
+        # `**jobs` is spread last, and `inline` has a field of its own.
         jobs = {j: _name(f'{j} model', lambda j=j: routing.name_for(j), '')
                 for j in JOBS if j not in ('turn', 'completion', 'inline')}
         # The catalog's rows are marked already; only the saved aliases and the rows added for
@@ -529,12 +499,7 @@ def connect(app, ctx):
         refresh_assistants()
         return {'ok': ok, 'note': ctx.memory.note}
     def _state_origin(state):
-        """One saved state with where it came from: its layer, its folders, and whether they are ours.
-
-        States are kept in the one store every workspace shares, so the list has always held other
-        projects' as well. Nothing said so, and a row that reads `Working state` and a date is not
-        something anyone can reuse deliberately.
-        """
+        "One saved state with where it came from: its layer, its folders, and whether they are ours."
         agent = dict(((state.get('meta') or {}).get('agent') or {}))
         roots = [str(r) for r in (agent.get('roots') or [])]
         def resolved(paths):
@@ -549,11 +514,7 @@ def connect(app, ctx):
                 'revision': agent.get('revision') or 0}
     @rt('/agent/states')
     def agent_states(scope: str = 'everywhere'):
-        """Saved states, each saying where it came from, and the state now in the briefing.
-
-        `scope=project` narrows to states saved from these folders; the default is every one this
-        machine has, which is what makes another project's charter reusable here.
-        """
+        "Saved states, each saying where it came from, and the state now in the briefing."
         active = any(str(layer.get('text') or '').strip() and layer.get('enabled', True)
                      for layer in ws.agent_state_layers.values())
         states = [_state_origin(s) for s in ctx.memory.agent_states()]
@@ -691,12 +652,7 @@ def connect(app, ctx):
         }
     @rt('/agent/status')
     def agent_status(thread: str = ''):
-        """Whether the assistant is loaded, what model it is on, and what it is doing right now.
-
-        `busy` came from the core alone, which knows nothing of the gate that refuses a prompt, so a
-        conversation held by a turn the core had already finished with reported itself ready. `held`
-        is that gate's own reason, and it is what makes this `busy` true.
-        """
+        "Whether the assistant is loaded, what model it is on, and what it is doing right now."
         try: t = _thread(thread)
         except Exception as e: return _thread_error(e)
         held = t.runner.held()
@@ -732,11 +688,7 @@ def connect(app, ctx):
         except Exception as e: return {'ok': False, 'error': errstr(e), 'thread': t.id}
     @rt('/agent/runs/{run_id}/steer')
     async def agent_run_steer(req, run_id: str):
-        """Say one thing to a delegated sub-agent, delivered on its next tool result.
-
-        A sub-agent cannot see the conversation that would otherwise correct it, so stopping one
-        that had gone wrong was the only thing a person could do to it.
-        """
+        "Say one thing to a delegated sub-agent, delivered on its next tool result."
         try: d = await req.json()
         except Exception: return fail('steer body must be JSON')
         try: t = _thread(str(d.get('thread') or ''))
@@ -757,15 +709,7 @@ def connect(app, ctx):
         return {'ok': True, 'thread': t.id, **run.dict()}
     @rt('/agent/subagents')
     def agent_subagents(action_id: str = '', thread: str = '', limit: int = 40):
-        """One delegation: the call that asked, what its sub-agents did, and the runs still going.
-
-        A delegated conversation is thrown away when it ends, so these recorded calls are the only
-        account of it. An empty list is not the same answer as "it did nothing", so
-        `records_sub_calls` says whether linkage has ever been seen to work here: the core stamps
-        `parent_action_id` on a call made inside a delegation, and where a read-only sub-agent gets
-        unwrapped tools nothing is stamped at all. Evidence rather than a version check, because no
-        release has advertised this.
-        """
+        "One delegation: the call that asked, what its sub-agents did, and the runs still going."
         try: t = _thread(thread)
         except Exception as e: return _thread_error(e)
         rows = t.ai.activity.rows()
@@ -813,10 +757,7 @@ def connect(app, ctx):
         except Exception as e: return _thread_error(e)
         try: grounding = await off_loop(ws.prepare_turn, attachments, context)
         except Exception as e: return fail(e)
-        # The agent's own tools run Python in an overlay over the tab's kernel, and a turn asked for
-        # in a window where nothing has been run yet had no kernel to overlay. Started here, on the
-        # loop that owns the kernels, so the first tool call meets a live one instead of the tool
-        # thread waiting on a start it cannot make.
+        # Started here, on the loop that owns the kernels, so the first tool call meets a live one.
         if ws.runtime_peek() is None: asyncio.ensure_future(_warm_runtime())
         try: return await off_loop(runner.start, q, attachments, reasoning,
                                     context, context_path, grounding)
@@ -889,11 +830,7 @@ def connect(app, ctx):
         return {'ok': True, 'thread': th.id, 'policy': policy, **th.approvals.state()}
     @rt('/agent/steer')
     async def agent_steer(req):
-        """Queue guidance after the current tool; the next proposed call is skipped and replaced by it.
-
-        `force` cancels the foreground run and returns the unsent text. A queued steer waits for a
-        tool call, and a turn writing its answer never makes another one.
-        """
+        "Queue guidance after the current tool; the next proposed call is skipped and replaced by it."
         d = await req.json()
         text = (d.get('text') or '').strip()
         try: th = _thread(d.get('thread'))
@@ -974,8 +911,7 @@ def connect(app, ctx):
         return _branch_reply(t, branch)
     @rt('/agent/undo-turn')
     async def agent_undo_turn(req):
-        """Undo a turn from the conversation: a branch that stops before it. The turn stays in
-        canonical history, and files are a separate, explicit choice."""
+        "Undo a turn from the conversation: a branch that stops before it."
         d = await req.json()
         try: t = _settled_thread(d.get('thread'))
         except Exception as e: return _branch_error(e)
@@ -991,8 +927,7 @@ def connect(app, ctx):
         return _branch_reply(t, branch, undone=turns, files_restored=None)
     @rt('/agent/conversation/parts')
     def agent_conversation_parts(thread: str = '', session: str = ''):
-        """One stored conversation as the ordered parts a person can keep, drop or rewrite. Read
-        from the turn log, so a conversation that was just resumed can be reshaped like any other."""
+        "One stored conversation as the ordered parts a person can keep, drop or rewrite."
         try: th = _thread(thread)
         except Exception as e: return _thread_error(e)
         try: parts = th.ai.conversation_parts(session or None)
@@ -1002,12 +937,7 @@ def connect(app, ctx):
                 'revision': th.ai.branch_meta(th.ai.current_branch_id)['revision']}
     @rt('/agent/conversation/notebook')
     async def agent_conversation_notebook(req):
-        """Write one conversation out as a notebook a person can edit like any other.
-
-        A cell per part, in order, with the part id and its kind in the cell metadata so the edits
-        can be read back. Prose is editable; a call and its result are there to be read or deleted,
-        never reworded, so they are written as raw cells a person can remove but not fake.
-        """
+        "Write one conversation out as a notebook a person can edit like any other."
         d = await req.json() if req.method == 'POST' else {}
         try: th = _thread(d.get('thread'))
         except Exception as e: return _thread_error(e)
@@ -1039,11 +969,7 @@ def connect(app, ctx):
                 'parts': len(parts), 'branch_id': held['branch_id'], 'revision': held['revision']}
     @rt('/agent/conversation/reshape')
     async def agent_conversation_reshape(req):
-        """Read an edited notebook back as one reshaped branch.
-
-        A part whose cell is gone is discarded; a prose part whose text changed is rewritten. The
-        notebook is a view of the conversation, so anything it cannot say is simply not said.
-        """
+        "Read an edited notebook back as one reshaped branch."
         d = await req.json()
         try: th = _settled_thread(d.get('thread'))
         except Exception as e: return _branch_error(e)

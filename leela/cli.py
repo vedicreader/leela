@@ -62,10 +62,7 @@ def main(argv=None):
         print('  "keys" holds what you changed; copy a line out of "_defaults" to change one more.')
         for n in NOTES: print(f'  ⚠ {n}')
         return
-    # An optional backend is installed beside the bundle rather than into it, and `use_extras` was
-    # called in one place: straight after an install. So a backend worked for the session that
-    # installed it and was gone at the next launch, which made every install look like it had not
-    # taken. Put the directory on the path where the process starts.
+# Put the extras directory on the path where the process starts, not only after an install.
     from . import use_extras
     use_extras()
     # A window opened from Finder has launchd's environment, not a shell's, so the keys and the

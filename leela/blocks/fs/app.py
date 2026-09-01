@@ -26,13 +26,7 @@ SERVED_TYPES = {'.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/j
 CAPS = ('fs', 'fs_watch', 'journal', 'docs')
 
 def _forget(ctx, *paths):
-    """Drop server state for paths that have just moved or gone.
-
-    `/tab/state` prefers a cached buffer over the disk, so a path that is reused later served the
-    old file's text and saving put it back. A tab left on a path that no longer exists saves to a
-    `missing` disk version, which the client offers to force through, recreating the file under the
-    name it was renamed away from.
-    """
+    "Drop server state for paths that have just moved or gone."
     for path in paths:
         if not path: continue
         ctx.docs.forget(str(path))
@@ -42,19 +36,13 @@ def _forget(ctx, *paths):
                 yield tab
 
 def _freshen(ctx, paths, resync=False):
-    """Drop the cached copy of an open, unedited document that changed on disk.
-
-    `/tab/state` serves what `DocStore` holds, and only the active tab's poll ever refreshed it, so
-    a background tab mounted the version from before the change. A tab with unsaved edits keeps what
-    it holds: the cache is the user's work, not a copy of the file.
-    """
+    "Drop the cached copy of an open, unedited document that changed on disk."
     changed = {str(p) for p in paths}
     for tab in ctx.session.tabs:
         if not tab.path or tab.dirty: continue
         if not (resync or tab.path in changed): continue
-        # A save Leela made is not a change to follow: what is on disk is what it holds, and dropping
-        # it there made the tab read the file again on its next mount, and its own write look like an
-        # outside edit. `versions` is stamped whenever a document is read or written.
+        # A save Leela made is not a change to follow. `versions` is stamped whenever a document is
+        # read or written.
         if ctx.docs.versions.get(tab.path) == disk_version(tab.path): continue
         ctx.docs.forget(tab.path)
 
@@ -116,11 +104,7 @@ def connect(app, ctx):
                            for p in recent_folders()]}
     @rt('/fs/paths')
     def fs_paths(path: str = ''):
-        """Both ways of naming one file. Only the server knows which folder it is under.
-
-        `relative` is against the open folder holding it. A path under no open folder has no
-        relative form.
-        """
+        "Both ways of naming one file. Only the server knows which folder it is under."
         p = str(path or '').strip()
         if not p: return fail('no path')
         try: full = ctx.fs._check(p)
@@ -176,11 +160,7 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/fs/move')
     async def fs_move(req):
-        """Move every selected path into one folder, as a single undoable operation.
-
-        One row per path that actually moved, so a partial failure is still reversible and the
-        failures come back named rather than as one exception for the whole selection.
-        """
+        "Move every selected path into one folder, as a single undoable operation."
         d = await req.json()
         dest, moved, failed = d.get('dest') or '', [], []
         for path in d.get('paths') or ([d['path']] if d.get('path') else []):

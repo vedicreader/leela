@@ -124,11 +124,7 @@ def env_status(headers, env=None):
     return {k: bool(env.get(k)) for k in names}
 
 def expand(headers, env=None):
-    """A header set with this machine's own values in it.
-
-    The reference is what is stored, so rotating the variable rotates the credential. A name with
-    nothing behind it is refused here: a literal `${…}` sent as a key comes back as a bare 401.
-    """
+    "A header set with this machine's own values in it."
     env = os.environ if env is None else env
     if missing := [k for k, ok in env_status(headers, env).items() if not ok]:
         raise SpecError(f"nothing here sets {', '.join(missing)}, so the header naming it cannot "
@@ -142,10 +138,7 @@ def redact(value, keep=4):
     return f'…{s[-keep:]}' if len(s) > keep else '…'
 
 def _policy(entry, reach=None):
-    """One spec's row, whether the file holds a policy or a flat list of header names.
-
-    `refs` are the environment variables the values name, which is what the page can show.
-    """
+    "One spec's row, whether the file holds a policy or a flat list of header names."
     refs = []
     if isinstance(entry, dict):
         headers, refs = entry.get('headers') or [], entry.get('refs') or []

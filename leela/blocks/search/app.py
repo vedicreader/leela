@@ -34,12 +34,7 @@ def connect(app, ctx):
         try: return ctx.vaults.attach(search_vault_path(), name='search')
         except Exception: return None
     def scope_roots(scope):
-        """The folders a scope names: the checkout being worked in, or `None` for every open folder.
-
-        The checkout, not the folder that is open: with a folder of clones open the two options in
-        the picker named the same thing, and the indexed legs already answered from one repo while
-        ripgrep answered from all of them.
-        """
+        "The folders a scope names: the checkout being worked in, or `None` for every open folder."
         if scope != 'project': return None
         root = ctx.session.project_repo
         return [root] if root is not None else None
@@ -121,8 +116,7 @@ def connect(app, ctx):
         return found(ctx.search, await off_loop(fn, path, line, limit=limit))
     @rt('/search/events')
     async def search_events(req):
-        """What was asked, shown, previewed and opened. Recording never fails a search, so a
-        problem is reported in `note` and the batch is dropped."""
+        "What was asked, shown, previewed and opened."
         try: d = await req.json()
         except Exception: return fail('expected a JSON batch')
         held = prefs()

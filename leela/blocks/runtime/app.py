@@ -26,9 +26,7 @@ def connect(app, ctx):
                 'idle': ctx.pool.idle}
     @rt('/runtime/engines/clear')
     async def runtime_engines_clear(req):
-        """Release the loaded model weights. A model a session is talking to is refused, then forced.
-
-        Weights outlive the chats built on them, so the memory is held until something asks for it."""
+        "Release the loaded model weights. A model a session is using answers 409 until `force` is set."
         from .engines import engine_broker
         d = await req.json()
         broker = engine_broker()
@@ -66,11 +64,7 @@ def connect(app, ctx):
                          if enabled else 'leela asks before closing a runtime')}
     @rt('/runtime/info')
     async def runtime_info():
-        """Whether this project has an interpreter Leela can run cells with.
-
-        `kernel_support` interrogates that interpreter, which is most of half a second, and it was
-        run again on every poll. It is the machine's answer about one path, so it is probed.
-        """
+        "Whether this project has an interpreter Leela can run cells with."
         from ..agent.models import probed
         from .kernels import project_python
         from .support import inspector_support, installable, kernel_support
@@ -98,11 +92,7 @@ def connect(app, ctx):
         except Exception as e: return fail(f'could not install project kernel support — {errstr(e)}')
     @rt('/runtime/inspector')
     async def runtime_inspector(req):
-        """Give a project environment its own copy of what the live-variable inspector imports.
-
-        Separate from `/runtime/support`, which `/runtime/create` also calls: a folder that gets a
-        `.venv` without being asked should not also get numpy and pandas without being asked.
-        """
+        "Give a project environment its own copy of what the live-variable inspector imports."
         from .support import install_inspector_support, installable
         d = await req.json()
         py = d.get('python') or ctx.pool.default_python
@@ -145,16 +135,7 @@ def connect(app, ctx):
         return {'ok': True, 'base': k.base if k else None}
     @rt('/kernel/info')
     async def k_info():
-        """What the kernel pill shows. Never starts one: it reports that there is none.
-
-        This asked `session.runtime()`, which starts a kernel, so opening Leela booted Python
-        whether or not anybody ran anything, and paid over a second for it on the load path. The
-        pill has always drawn an empty circle for "no kernel"; running a cell is what starts one.
-
-        It peeked only the tab's own kernel, while `runtime()` runs in the watched environment when
-        there is one. The polled pill could therefore report dead while the kernel executing the
-        cells was alive, and disagree with the pill the page was rendered with.
-        """
+        "What the kernel pill shows. Never starts one: it reports that there is none."
         k = session.runtime_peek()
         evicted = getattr(k, 'evicted', None)
         if k is not None: k.evicted = None

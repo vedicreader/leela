@@ -1,8 +1,4 @@
-"""One loaded model engine per (runtime, model, chat class, engine options), shared by every workspace.
-
-One engine, many chats, outliving all of them. `RishiBackend` takes it as `engine=`. Unlike a kernel
-namespace an idle engine is only a cache entry, so it is evicted and reloaded. A live one is kept.
-"""
+"One loaded model engine per (runtime, model, chat class, engine options), shared by every workspace."
 import inspect, os, threading, time, weakref
 
 __all__ = ['EngineBroker', 'engine_broker', 'engine_key', 'engine_kw']
@@ -18,20 +14,13 @@ def _model_id(spec):
     return split_runtime(spec.model_id)[1]
 
 def _model_cls(spec, kw):
-    """The chat class rishi will build for this model, which is not always its runtime's own.
-
-    `get_runtime` is asked for a runtime and never sees the model, and `MlxChat.__new__` re-routes a
-    vision repo to `MlxVlmChat`, which loads with mlx-vlm instead of mlx-lm. Rishi's own `Chat`
-    dispatches through `__new__` for that reason, so this asks its question the way it asks it."""
+    "The chat class rishi will build for this model, which is not always its runtime's own."
     cls = _chat_cls(spec.runtime)
     if cls.__new__ is object.__new__: return cls   # no `__new__` of its own is nowhere to re-route
     return type(cls.__new__(cls, _model_id(spec), **kw))
 
 def engine_kw(runtime, kw, cls=None):
-    """The part of a backend's runtime kwargs the engine is built from.
-
-    Rishi takes engine and conversation options through one signature, so `create_engine` says
-    which are its own. A runtime that loads nothing in this process has none to name."""
+    "The part of a backend's runtime kwargs the engine is built from."
     if (create := getattr(cls or _chat_cls(runtime), 'create_engine', None)) is None: return {}
     params = set(inspect.signature(create).parameters)
     out = {k: v for k, v in kw.items() if k in params or k == 'backend'}   # litert takes `backend` via **kw
@@ -39,11 +28,7 @@ def engine_kw(runtime, kw, cls=None):
     return out
 
 def engine_key(spec, kw, cls=None):
-    """What splits an engine.
-
-    Two workspaces on one model with different context limits or accelerators need two engines. So
-    do two chat classes on one repo: `vlm=False` sends an mlx vision model down the text loader,
-    and the two loaders build engines that are not interchangeable."""
+    "What splits an engine: the runtime, the model id, the chat class, and the engine options."
     cls = cls or _model_cls(spec, kw)
     eng = engine_kw(spec.runtime, kw, cls)
     return (spec.runtime, _model_id(spec), cls.__qualname__,
@@ -84,11 +69,7 @@ class EngineBroker:
             return loaded.engine
 
     def _cls_for(self, spec, kw):
-        """The chat class for one model, resolved once.
-
-        Rishi sniffs the model's `config.json` through the hub, which is half a second to two on a
-        warm cache, and `attach` runs on every turn. `model_path` and `vlm` are what
-        `MlxChat.__new__` reads besides the model id."""
+        "The chat class for one model, resolved once."
         k = (spec.runtime, _model_id(spec), repr(kw.get('model_path')), repr(kw.get('vlm')))
         if k not in self._cls: self._cls[k] = _model_cls(spec, kw)
         return self._cls[k]
@@ -119,9 +100,7 @@ class EngineBroker:
     def _desc(self, loaded): return {'runtime': loaded.key[0], 'model': loaded.key[1]}
 
     def drop(self, runtime=None):
-        """Close the idle engines of `runtime`, or of every runtime, and say which went.
-
-        Needed when the accelerator changes, and when a person asks for the memory back."""
+        "Close the idle engines of `runtime`, or of every runtime, and say which went."
         with self._lock:
             gone = [l for l in self.engines.values()
                     if (runtime is None or l.key[0] == runtime) and not self._live(l)]

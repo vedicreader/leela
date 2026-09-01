@@ -14,11 +14,7 @@ from ..nb.nb import merge_rows as _merge_rows, merged_cells as _merged_cells
 __all__ = ['GitRepo', 'GitError', 'repo_root', 'clone', 'clone_target', 'wire_env']
 
 def _project_env(cwd):
-    """The virtualenv a checkout's own hooks and filters run under.
-
-    `None` handed git the app's own environment, so in the bundle a Python `filter.clean` -- nbdev's
-    cleaner, pre-commit -- ran against the bundle's standard library and died on every staging.
-    """
+    "The virtualenv a checkout's own hooks and filters run under."
     from ..runtime.kernels import project_python, venv_env
     p = Path(cwd).expanduser().resolve()
     for d in (p, *p.parents):
@@ -49,15 +45,11 @@ class GitRepo(_GitRepo):
         "Stage, handing `stager` the index as it stands first, so an undo can put it back."
         if self.stager is not None: self.stager([str(p) for p in paths])
         return super().stage(paths)
-    #: `(target, before, after, oid) -> None`, set per instance beside `saver`. A whole-side
-    #: resolution is a Git checkout, which writes the worktree file itself and cannot be expressed
-    #: as a write through `saver`: `git show :2:` hands back the cleaned blob, so writing that would
-    #: clean it a second time and stage content that is on neither side. What the checkout replaced
-    #: is read here instead. `oid` is the blob the replaced file hashed to.
+#: `(target, before, after, oid) -> None`, set per instance beside `saver`. `oid` is the blob the
+#: replaced file hashed to.
     sider = None
-    #: `path -> None`, set per instance beside `saver`. Taking the side of a modify/delete conflict
-    #: that deleted the file removes a file that may be binary, executable or a symlink, and none of
-    #: those survives being journal text, so the block moves it aside whole instead.
+    #: `path -> None`, set per instance beside `saver`. The block moves the file aside whole rather
+    #: than through journal text.
     dropper = None
     def drop(self, target):
         "One worktree removal, through `dropper` when the block set one."
@@ -81,12 +73,7 @@ class GitRepo(_GitRepo):
         try: return super().resolve_conflict(path, choice, content)
         finally: self.sider(self.root/str(path), before, self._version(path, 'worktree'), oid)
     def _drop_side(self, path, choice, stages):
-        """Take the side of a modify/delete conflict that deleted the file.
-
-        `git checkout --ours` refuses outright when the stage is not there, and writing `git show
-        :2:path` would stage an empty file where a deletion is meant. Taking the file away and
-        staging that is what the button says it does.
-        """
+        "Take the side of a modify/delete conflict that deleted the file."
         if first(m for m, _ in stages.values() if m == '160000'):
             raise GitError(f'{path} is a submodule: resolve it with Git directly')
         self.drop(self.root/str(path))
@@ -131,12 +118,7 @@ class GitRepo(_GitRepo):
         return r.stdout if r.returncode == 0 else ''
 
     def notebook_conflict(self, path):
-        """The two sides of a conflicted notebook, cell by cell.
-
-        The worktree file carries conflict markers, which make a notebook unreadable and say nothing
-        about cells. Git keeps all three sides in the index as whole notebooks, so those are what is
-        read: a person answers about cells, not about JSON.
-        """
+        "The two sides of a conflicted notebook, cell by cell."
         sides, raw = {}, {}
         for name, stage in self.STAGES.items():
             text = self._stage(path, stage)

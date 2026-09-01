@@ -14,10 +14,7 @@ from ..git.git import GitError, GitRepo
 __all__ = ['git_tree_state', 'tree_node', 'files_panel']
 
 def git_tree_state(fs):
-    """Absolute changed paths for file-tree decoration, across every open repository.
-
-    Ignored files are in here too. Knowing that a file is deliberately not committed is the same
-    question as knowing that one is missing, and only one of the two used to be answerable."""
+    "Absolute changed paths for file-tree decoration, across every open repository."
     out = {}
     seen = set()
     for root in fs.roots:
@@ -51,11 +48,7 @@ def _git_class(change):
     return 'modified'
 
 def _folder_class(path, git_state):
-    """The strongest state anywhere under this folder.
-
-    A folder you have just created is entirely untracked, and every row inside it is out of sight
-    until you open it. Rolling the state up is what makes `which ones am I missing` answerable
-    without expanding the tree."""
+    "The strongest state anywhere under this folder."
     try: prefix = str(Path(path).resolve())
     except Exception: return ''
     best = ''

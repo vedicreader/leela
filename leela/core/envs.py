@@ -38,11 +38,7 @@ def _write(values):
     tmp.replace(path)
 
 def apply_stored_env(env=None):
-    """Put Leela's own values into the environment, over whatever the shell said. Returns the names.
-
-    Last, and winning: this is the escape hatch for a machine where asking the shell gives the wrong
-    answer, so a value typed into Leela has to beat the one that is already wrong.
-    """
+    "Put Leela's own values into the environment, over whatever the shell said. Returns the names."
     target = os.environ if env is None else env
     values = stored_env()
     target.update(values)
@@ -69,11 +65,7 @@ def unset_env(key):
     return {'key': key, 'removed': True}
 
 def env_rows():
-    """Every name worth showing, with a value only where one is safe to show.
-
-    Leela's own, the names the model backends read, and anything already in the environment that
-    looks like a credential. A secret's value never leaves the server; that it is set does.
-    """
+    "Every name worth showing, with a value only where one is safe to show."
     values = stored_env()
     names = set(values) | set(KNOWN_KEYS) | {k for k in os.environ if is_secret(k)}
     rows = []
@@ -91,12 +83,7 @@ def env_rows():
 BUNDLE_ONLY = ('PYTHONHOME', 'PYTHONPATH', 'PYTHONEXECUTABLE', '__PYVENV_LAUNCHER__', 'RESOURCEPATH')
 
 def strip_bundle(env):
-    """`env` without py2app's interpreter redirection state, unchanged where there is none.
-
-    Outside a bundle this returns what it was given, untouched: a caller that claimed nothing about
-    an environment still claims nothing, which is what `venv_env(None, env)` and git's `env_for` both
-    promise.
-    """
+    "`env` without py2app's interpreter redirection state, unchanged where there is none."
     if not getattr(sys, 'frozen', False): return env
     for name in BUNDLE_ONLY: env.pop(name, None)
     env['PYTHONUTF8'] = '1'
@@ -113,12 +100,7 @@ def clean_env():
 _SHELL_ONLY = {'_', 'PWD', 'OLDPWD', 'SHLVL', 'PS1', 'TERM', 'TERM_SESSION_ID', 'TMPDIR'}
 
 def preferred_shell():
-    """The shell to ask about the environment: the terminal setting, else `$SHELL`.
-
-    `$SHELL` is the shell the login record names, which is not always the one a person uses. Leela
-    already has somewhere to say otherwise, and the terminal reads it, so this reads the same place
-    rather than adding a second answer to one question.
-    """
+    "The shell to ask about the environment: the terminal setting, else `$SHELL`."
     try:
         from ..blocks.settings.settings import Settings
         if (chosen := str((Settings().effective().get('terminal') or {}).get('shell') or '').strip()):
@@ -127,18 +109,11 @@ def preferred_shell():
     return os.environ.get('SHELL') or '/bin/zsh'
 
 def shell_env(shell=None, timeout=8):
-    """What `shell` exports, as `{name: value}`, asked the way a person's terminal is.
-
-    Interactive first. zsh reads `.zshrc` only for an interactive shell, and that is where an
-    `OPENAI_API_KEY` usually lives, so a login-but-not-interactive shell answered with eight names
-    and no key at all. Shells that refuse `-i` are asked again without it.
-    """
+    "What `shell` exports, as `{name: value}`, asked the way a person's terminal is."
     shell = shell or preferred_shell()
     for args in (('-l', '-i', '-c', 'env -0'), ('-l', '-c', 'env -0')):
-        # `clean_env`, or the shell inherits the bundle's `PYTHONHOME` and hands it to whatever
-        # Python its startup files run. A `python` that dies on a path configuration takes the whole
-        # profile with it: fish exited 1 with nothing exported, so every key was missing in the app
-        # and present everywhere else.
+# `clean_env`, or the shell inherits the bundle's `PYTHONHOME` and hands it to whatever Python
+# its startup files run.
         try: r = subprocess.run([shell, *args], capture_output=True, timeout=timeout, env=clean_env())
         except (OSError, subprocess.SubprocessError): return {}
         if r.returncode != 0: continue
@@ -150,13 +125,7 @@ def shell_env(shell=None, timeout=8):
     return {}
 
 def import_login_env(shell=None, env=None, timeout=8):
-    """Merge the shell's exported environment into this process, and return what was added.
-
-    An app opened from Finder inherits launchd's environment rather than a shell's, so an
-    `OPENAI_API_KEY` exported from a shell profile is invisible to it while the same Leela started
-    from a terminal sees it. Names this process already has are kept: nothing the launcher chose is
-    overwritten, `PATH` included, which only gains the directories the shell knows about.
-    """
+    "Merge the shell's exported environment into this process, and return what was added."
     exported = shell_env(shell, timeout)
     if not exported: return []
     target = os.environ if env is None else env

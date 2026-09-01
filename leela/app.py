@@ -45,12 +45,7 @@ from .workspace import STEP_RANGE, TOOL_RANGE, Workspace
 __all__ = ['ide_app', 'serve_ide']
 
 def _md_highlight():
-    """`spans` when mdhtml can highlight, else off.
-
-    mdhtml's highlighting is the `hl` extra. Asking for it without `fastpylight` installed renders
-    the same plain code and adds a warning about a missing package to every render, which the
-    editor then shows the person as a problem with their Markdown.
-    """
+    "`spans` when mdhtml can highlight, else off."
     try: import fastpylight; return 'spans'
     except ImportError: return None
 
@@ -64,18 +59,11 @@ def _patch_fasttransport():
     import httpcore2._utils as core_utils
     import httpcore2._async.connection_pool as connection_pool
     import httpcore2._async.http11 as http11
-    # HTTP/2 is an extra: this module imports `h2`, which an environment without the extra does
-    # not have. One attribute is patched on it, so a missing one is not a reason for the whole
-    # app to refuse to import.
+    # One attribute is patched on `h2`, which an environment without the HTTP/2 extra does not have.
     try: import httpcore2._async.http2 as http2
     except ImportError: http2 = None
     class safe_async_iterate:
-        """`httpcore2`'s helper as a class, because a generator-based one cannot always stop.
-
-        An `@asynccontextmanager` misses its `GeneratorExit` under the loop's asyncgen shutdown.
-        `__aexit__` is told which case it is, because `sys.exc_info()` is not reliably ours during
-        that finalisation. Closing must not await, because the response context owns the iterator.
-        """
+        "`httpcore2`'s helper as a class, because a generator-based one cannot always stop."
         def __init__(self, source):
             self.it = source if hasattr(source, '__anext__') else source.__aiter__()
         async def __aenter__(self): return self.it
@@ -289,12 +277,7 @@ async def _explain(k, err, scope='live'):
     return did_you_mean(err, await k.names(scope)) if k else err
 
 def _git_pill_text(ws):
-    """What the branch pill says before the client has asked anything.
-
-    It shipped as the literal `no git`, which is a claim that the folder is not a checkout. Any first
-    paint the client does not reach leaves that claim on screen, and it is the one thing `cwd.js`
-    refuses to say for a request it could not make. An unknown says so instead.
-    """
+    "What the branch pill says before the client has asked anything."
     root = ws.project_repo
     if root is None: return 'git …'
     try:
@@ -617,11 +600,7 @@ def _state_text(ws):
     return '\n'.join([ws.agent_state or '', *layers])
 
 def _state_label(ws):
-    """What the agent pane calls the state it is carrying.
-
-    The badge read `state active` for every state there could be, so a person could not tell which
-    charter the agent had been given, nor that it was the one they had just activated.
-    """
+    "What the agent pane calls the state it is carrying."
     text = _state_text(ws)
     if not text.strip(): return 'no state'
     head = first(l.lstrip('# ').strip() for l in text.splitlines()
@@ -815,12 +794,7 @@ def _saved_theme(ws):
     except Exception: return ''
 
 def _warm_probes():
-    """Pay for the model probes while the window is still opening.
-
-    `available_models` reaches for every backend and `auth_status` asks every account: together
-    they were most of a seven-second first paint of the model picker. On a thread, so a slow or
-    absent network delays nothing.
-    """
+    "Pay for the model probes while the window is still opening."
     import threading
     from .blocks.agent.models import warm_probes
     threading.Thread(target=warm_probes, daemon=True, name='leela-warm-probes').start()
@@ -838,8 +812,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
                  media='(prefers-color-scheme: dark)'),
             Script(src=_asset('htmx.min.js'), defer=True),
             # The saved theme is rendered in as the fallback rather than left to the cache alone:
-            # the cache is per origin, and a first paint at an origin never used before is exactly
-            # the one that would otherwise be the wrong colour until the settings arrive.
+            # the cache is per origin.
             Script("""try { const legacy = {system: 'leela:system:relaxed', dark: 'leela:dark:relaxed', light: 'leela:light:relaxed', cursor: 'cursor:light:tight'};
 const saved = """ + json.dumps(_saved_theme(ws)) + """;
 const stored = localStorage.getItem('lee-theme') || saved || 'cursor:light:tight';
@@ -911,8 +884,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 if not task.done(): task.cancel()
             try: await sock.close()
             except Exception: pass
-    # `fast_app` imports `fasthtml.pico` whatever `pico=` says: 212ms and IPython, for a
-    # stylesheet link this app never uses.
+    # `fast_app` imports `fasthtml.pico` whatever `pico=` says: 212ms and IPython, for a stylesheet link this app never uses.
     # Starlette's exclusion list spares `text/event-stream`. The streams stay unbuffered.
     app = FastHTML(default_hdrs=False, hdrs=hdrs,
                    middleware=(Middleware(GZipMiddleware, minimum_size=512),),
@@ -1025,9 +997,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             except Exception as e: errors.append(f'{t.title}: {errstr(e)}')
         ws.save()
         if errors: return _fail('; '.join(errors))
-        # What was written, and what it now says on disk. Without this the browser kept the version
-        # it had before the save, and the next one read as another process having written the file:
-        # the save was Leela's own.
+        # What was written, and what it now says on disk, so the next read is not another process
+        # having written the file.
         return {'ok': True, 'saved': saved, 'versions': versions}
     def _on_disk(path):
         "What the file says now, or None when it is not there."
@@ -1100,11 +1071,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 'text': await _explain(k, res.error) or res.text or 'ok'}
     @rt('/exec/history')
     async def exec_history(n: int = 200):
-        """The rolling history notebook, oldest first, as ctrl+up/down cycles through it.
-
-        A kernel that will not start is answered, not raised: this route used to return a 500 with a
-        traceback where every other route in this file answers with a failure the client can read.
-        """
+        "The rolling history notebook, oldest first, as ctrl+up/down cycles through it."
         try: r = await _api('/api/history', {'n': n})
         except Exception as e: return {'cells': [], 'error': errstr(e)}
         return {'cells': (r or {}).get('cells', [])}
@@ -1216,9 +1183,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             a = ws.selection_ai
             if a.busy: return _fail('the inline assistant is still answering the last selection')
             sel = {'path': d.get('path') or '', 'from': d.get('line_from'), 'to': d.get('line_to'), 'text': text}
-            # Not `ask_with`: `compose` labels whatever it is handed a notebook, and this is a range
-            # out of one file. The selection carries its own tags, and its path is what the
-            # read-only tools need to open anything around it.
+            # Not `ask_with`: `compose` labels whatever it is handed a notebook, and this is a
+            # range out of one file.
             prompt = (f'Language: {lang}\nInstruction: {instruction}\n\n'
                       f'{ws._selection_context(sel)}')
             mark = a.activity.mark()
@@ -1228,9 +1194,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         from fastcore.xtras import fenced_blocks
         if blocks := fenced_blocks(answer): answer = str(blocks[-1][1]).strip()
         if not answer: return _fail(note or 'the model returned no suggestion')
-        # The browser's `ask_id`, echoed. It logs the ask before this request and the outcome long
-        # after it, so an id minted here reached the reply and the verdict but never the ask, and
-        # the instruction and the selected code sat on disk with nothing to join them to.
+        # The browser's `ask_id`, echoed: it logs the ask before this request and the outcome long
+        # after it.
         return {'ok': True, 'text': answer, 'mode': mode, 'activity': trail,
                 # never truncated: a shortened echo would put one id on the ask and another on the
                 # reply, and the join would fail as silently as it used to
@@ -1245,22 +1210,13 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         try: return Settings(ws.project_root).effective().get('completions') or {}
         except Exception: return {}
     def _completions_snippets():
-        """Whether this response may carry the person's own code, from the user scope alone.
-
-        One store holds every project's events (`completions_dir` is under `leela_cfg`), and
-        `effective` lets a workspace override the user. Reading the effective value would let a
-        `snippets` turned on in one project serve selections recorded in every other.
-        """
+        "Whether this response may carry the person's own code, from the user scope alone."
         from .blocks.settings.settings import Settings
         try: return bool((Settings(ws.project_root).raw('user').get('completions') or {}).get('snippets'))
         except Exception: return False
     @rt('/ai/events')
     async def ai_events(req):
-        """What the inline panel was asked and what became of the answer.
-
-        Client-owned, like the search events it shares a store with: the outcome is a click in the
-        browser and the server never learns of it otherwise. Recording never fails the panel.
-        """
+        "What the inline panel was asked and what became of the answer."
         from .blocks.agent.completions import completions
         try: d = await req.json()
         except Exception: return _fail('expected a JSON batch')
@@ -1268,18 +1224,12 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if str(held.get('telemetry') or 'on') == 'off':
             return {'ok': True, 'recorded': 0, 'note': 'completion telemetry is off'}
         store = completions()
-        # `_completions_snippets`, not `held`: a workspace can override the user for any section, so
-        # a cloned repo carrying `completions.snippets` would write selections and suggestions into
-        # the one global store while the checkbox and the banner both said the code was not kept.
+        # `_completions_snippets`, not `held`: a workspace can override the user for any section.
         n = await _off_loop(store.record, d.get('events') or [], _completions_snippets())
         return {'ok': True, 'recorded': n, 'note': store.note}
     @rt('/ai/completions')
     async def ai_completions(days: int = 30):
-        """What the inline panel was asked, what it answered, and what became of each answer.
-
-        `no-store`, because the rows carry the person's own selections and suggestions and this is
-        a GET the window would otherwise be free to keep on disk.
-        """
+        "What the inline panel was asked, what it answered, and what became of each answer."
         from .blocks.agent.completions import completions, judgements, summary
         held, store, snippets = _completions_prefs(), completions(), _completions_snippets()
         # `read` is a generator and `summary` exhausts it, so the rows are taken once and shared
@@ -1306,13 +1256,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 'note': ws.runs.note}
     @rt('/screen/native')
     async def screen_native():
-        """Take the picture from here, for a window whose engine will not.
-
-        `getDisplayMedia` is how the browser does it, and WKWebView does not offer
-        `navigator.mediaDevices` at all, so in the packaged app the shortcut and the Tools entry
-        both failed with a TypeError. The server is on the same Mac as the display, which is the one
-        thing that is true of the desktop app and not of a browser tab.
-        """
+        "Take the picture from here, for a window whose engine will not."
         import shutil, subprocess, tempfile
         if sys.platform != 'darwin': return _fail('capturing from the server is a macOS path')
         exe = shutil.which('screencapture')

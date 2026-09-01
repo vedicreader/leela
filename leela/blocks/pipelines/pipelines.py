@@ -235,18 +235,13 @@ RELEASE_FILE = '.leela/release.json'
 ReleaseError = PipelineError
 
 def uv_argv(root, argv):
-    """`argv` through `uv run` where uv owns the project, else None.
-
-    What the terminal does. uv syncs the lock before it runs anything, so a venv that has drifted
-    is repaired rather than failing halfway through with an import error.
-    """
+    "`argv` through `uv run` where uv owns the project, else None."
     root = Path(root)
     if not (root/'uv.lock').exists(): return None
     exe = which('uv')
     if not exe: return None
-    # Spelled the way the project spells it. uv runs the project's own script where there is one
-    # and falls through to PATH where there is not, and PATH is where another interpreter's
-    # differently-spelled copy of the same tool is waiting.
+    # Spelled the way the project spells it: uv runs the project's own script where there is one,
+    # and PATH is where another interpreter's copy waits.
     name = argv[0]
     bindir = root/'.venv'/'bin'
     hit = first(n for n in (name, name.replace('_', '-'), name.replace('-', '_'))
@@ -358,10 +353,7 @@ def app_project(root):
     return (root/'tools'/'build_release.py').exists() and (root/'setup_app.py').exists()
 
 def release_flow(root):
-    """Which release flow this project uses.
-
-    Rust is asked before fastship, because a maturin crate has a `pyproject.toml` too and the
-    fastship flow would try to `ship-pypi` a wheel that only the runners can build."""
+    "Which release flow this project uses."
     if nbdev_project(root): return 'nbdev'
     if maturin_project(root): return 'maturin'
     if rust_project(root): return 'crate'

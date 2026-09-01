@@ -182,10 +182,8 @@ DEFAULTS = L(
     Key('cell_above',       'mod+alt+up',      'editor', 'insert cell above'),
     Key('cell_below',       'mod+alt+down',    'editor', 'insert cell below'),
     Key('cell_delete',      'mod+alt+backspace', 'editor', 'delete cell'),
-    # CodeMirror's own keymap already answers these inside an editor. Naming them here is what
-    # puts them in the palette and the keys help, and it is the same command either way, so the
-    # chord a hand already knows keeps working. `indent_selection` re-indents to the syntax; the
-    # only chord it had was `mod+alt+backslash`, which nobody finds.
+# Naming these here is what puts them in the palette and the keys help. CodeMirror's own keymap
+# already answers them inside an editor, and it is the same command either way.
     Key('indent_more',      'mod+]',           'editor', 'indent'),
     Key('indent_less',      'mod+[',           'editor', 'outdent'),
     Key('indent_selection', 'hyper+]',         'editor', 're-indent to the syntax', 'toast'),

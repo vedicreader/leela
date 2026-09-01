@@ -6,20 +6,12 @@ from urllib.parse import quote
 
 from ...core.langs import servers_for
 
-#: Servers Leela will drive for Python, in the order they are tried. Each speaks LSP on stdio and
-#: differs only in how it is asked to. `basedpyright` leads because it answers everything `start`
-#: asks for and carries its own node, so installing it needs neither a system node nor a download
-#: at first run. Every language's list lives in `core.langs`; this is Python's, named here because
-#: Python is the language the rest of Leela reaches for without saying so.
+#: Servers Leela will drive for Python, in the order they are tried. Every language's list lives
+#: in `core.langs`; this is Python's.
 SERVERS = servers_for('python')
 
 def find_server(lang='python'):
-    """The first language server for `lang`, as `(name, argv)`, or `(None, None)`.
-
-    PATH first, then the extras directory. A frozen app installs an optional tool there because the
-    bundle is signed and read-only, and nothing puts its `bin` on PATH, so a server installed from
-    the Tools row was found by nothing and the row went on offering to install it.
-    """
+    "The first language server for `lang`, as `(name, argv)`, or `(None, None)`."
     from ... import extras_bin
     for name, args in servers_for(lang):
         if (found := shutil.which(name)): return name, [found, *args]
@@ -54,10 +46,8 @@ class LspService:
     def alive(self): return bool(self.process and self.process.poll() is None)
     def _uri(self, path): return 'file://' + quote(str(Path(path).resolve()))
     def start(self):
-        # The check and the spawn had nothing between them, and a notebook mount fires one lint
-        # request per mounted cell, so a window ended up running two language servers with one of
-        # them orphaned. The handshake is inside the lock: the second caller waits for the first
-        # server rather than starting a second.
+        # The handshake is inside the lock: the second caller waits for the first server rather
+        # than starting a second.
         with self._start_lock: return self._start()
 
     def _start(self):

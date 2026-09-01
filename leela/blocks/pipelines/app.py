@@ -20,11 +20,7 @@ CAPS = ('fs', 'gate')
 KINDS = {'release': Release, 'deploy': Deploy}
 
 def nbdev_config(root):
-    """The nbdev config for `root`, or None. Whichever of the two files the project keeps.
-
-    `nbdev_project` decides; `get_config` is only asked for the paths, because on its own it
-    answers with defaults rather than nothing and any folder with a `pyproject.toml` passes.
-    """
+    "The nbdev config for `root`, or None. Whichever of the two files the project keeps."
     if not nbdev_project(root): return None
     from nbdev.config import get_config
     try: return get_config(str(root), also_settings=True)

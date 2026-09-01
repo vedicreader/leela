@@ -16,14 +16,7 @@ __all__ = ['SESSION', 'SERVING', 'MAX_RECENT', 'PROJECT_MARKERS', 'nearest_marke
 PROJECT_MARKERS = ('.git', 'pyproject.toml', 'setup.py', 'settings.ini')
 
 def nearest_marked(start, markers, stop=None):
-    """The nearest directory at or above `start` holding one of `markers`, and the marker it holds.
-
-    One walk, because a workspace has several answers keyed to the same question and they have to
-    agree: which interpreter a kernel starts in, which index a search reads, which checkout a
-    release runs in. `stop` is the open folder, and the walk does not pass it: what is above the
-    workspace belongs to something else. `markers` are relative paths, so `.venv/bin/python` asks
-    about a file and `.git` asks about a directory.
-    """
+    "The nearest directory at or above `start` holding one of `markers`, and the marker it holds. `stop` bounds the walk."
     try: start = Path(start).resolve()
     except (OSError, ValueError): return None, None
     try: stop = Path(stop).resolve() if stop else None
@@ -47,12 +40,7 @@ SERVING = leela_cfg/'serving.json'
 MAX_RECENT = 12
 
 def _temporary(p):
-    """Whether `p` is inside the system temp dir.
-
-    A folder there is a test's, a probe's or an unpacked archive's, and none of them is a project a
-    person wants reopened next launch. One of them written into the session is a folder they then
-    have to close by hand, in every window.
-    """
+    "Whether `p` is inside the system temp dir."
     import tempfile
     try: p, root = Path(p).expanduser().resolve(), Path(tempfile.gettempdir()).resolve()
     except (OSError, ValueError): return False
@@ -65,12 +53,7 @@ def _dir(p):
     return str(p) if p.is_dir() else None
 
 def _lasting(paths):
-    """`paths` without the temporary ones, when this is the session a person actually opens.
-
-    A test names its own file and may keep whatever it likes in it. The real session is the one that
-    must never fill up with a suite's scratch folders, which is how eleven `tmp…` directories came to
-    be sitting in somebody's window.
-    """
+    "`paths` without the temporary ones, when this is the session a person actually opens."
     if Path(SESSION) != DEFAULT_SESSION: return list(paths)
     return [p for p in paths if not _temporary(Path(p))]
 

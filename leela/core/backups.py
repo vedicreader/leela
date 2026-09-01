@@ -1,10 +1,4 @@
-"""Dated copies of the state Leela cannot regenerate, and the retention that keeps them useful.
-
-The conversation log, its sidecars, saved workspaces, keymaps and notes are appended to or replaced
-in place, and nothing else holds a second copy. Copies are taken on a cadence and before anything
-overwrites the log. Each is one gzipped tar with a JSON manifest beside it. What goes in is a
-person's choice.
-"""
+"Dated copies of the state Leela cannot regenerate, and the retention that keeps them useful."
 
 import io, json, os, shutil, tarfile, threading, time
 from datetime import datetime
@@ -23,9 +17,8 @@ BACKUP_DIR = 'backups'
 STAMP = '%Y%m%d_%H%M%S'
 ARCHIVE = '.tar.gz'
 
-#: What a person cannot get back by rebuilding, and what to call it on the settings page. Caches,
-#: logs and indexes are absent: they regenerate, and copying them makes a backup too big to keep
-#: many of. Everything here is a path under the config dir except `vault`.
+#: What a person cannot get back by rebuilding, and what to call it on the settings page. Every
+#: path is under the config dir except `vault`.
 ENTRIES = {
     'agent-history.jsonl': 'conversations',
     'agent-sessions.json': 'conversation titles',
@@ -45,9 +38,7 @@ ENTRIES = {
     'vault': 'vault memory (outside the config dir)',
 }
 
-#: Chosen until a person chooses otherwise. The vault is out because a restore of it writes outside
-#: the config dir. `journals` is out because it is undo state for files still on disk, and a day of
-#: saving one large notebook makes it the biggest thing in an archive. `ENTRIES` still offers both.
+#: Chosen until a person chooses otherwise. `ENTRIES` still offers `vault` and `journals`.
 PRECIOUS = tuple(k for k in ENTRIES if k not in ('vault', 'journals'))
 
 #: How often, in hours. `off` keeps the pre-write guard and nothing else, because a bad write to the
@@ -72,10 +63,7 @@ def backup_dir(cfg=None): return Path(cfg or leela_cfg)/BACKUP_DIR
 AGENT_ENTRIES = ('agent-history.jsonl', 'agent-sessions.json', 'agent-branches.json', 'agent-plans')
 
 def agent_source(cfg=None):
-    """Where the agent's own files are, which is not Leela's config dir once a folder is shared.
-
-    With `agent.configFolder` empty this is the config dir, so an existing install is unchanged.
-    """
+    "Where the agent's own files are: `agent.configFolder` where it is set, else Leela's config dir."
     try:
         from ..blocks.settings.settings import Settings
         folder = str((Settings().effective().get('agent') or {}).get('configFolder') or '').strip()
@@ -176,12 +164,7 @@ def create_backup(src, dest, reason='', dry_run=False, include=None, agent=None)
 SQLITE_SIDECARS = ('-wal', '-shm')
 
 def _add_entry(tar, name, path):
-    """Add one entry, taking any live database through SQLite rather than copying its files.
-
-    A `.db` in WAL mode is three files that change independently, so copying them one after another
-    can capture a set that never existed together. A copied `-shm` confuses recovery; SQLite rebuilds
-    it anyway.
-    """
+    "Add one entry, taking any live database through SQLite rather than copying its files."
     if path.is_file():
         if path.suffix == '.db': return _add_sqlite(tar, name, path)
         tar.add(path, arcname=name); return 1
@@ -212,10 +195,7 @@ def _add_text(tar, name, text):
     tar.addfile(info, io.BytesIO(data))
 
 def clean_dates(dates, now=None, max_ages=(2, 14, 60), k=5):
-    """Which dated names to keep: the oldest still inside each age band, plus the newest `k`.
-
-    Tiered rather than "last n", so a mistake noticed a month later still has something to go back to.
-    """
+    "Which dated names to keep: the oldest still inside each age band, plus the newest `k`."
     now, keep = now or datetime.now(), []
     dated = sorted([d for d in dates if _when(d) is not None])
     for age in max_ages:
@@ -272,10 +252,7 @@ def due(cadence='daily', cfg=None, now=None):
     return (now or time.time()) - have[-1]['at'] >= hours * 3600
 
 def guard(path, cfg=None, reason='before an overwrite'):
-    """A copy taken because something is about to replace `path`, kept apart from the cadence.
-
-    The copy happens on the write itself rather than on a timer hours away.
-    """
+    "A copy taken because something is about to replace `path`, kept apart from the cadence."
     path = Path(path)
     if not path.exists() or not path.stat().st_size: return None
     root = backup_dir(cfg)/'guard'
@@ -290,11 +267,7 @@ def guard(path, cfg=None, reason='before an overwrite'):
     return out
 
 def restore(name, cfg=None, only=None, dry_run=False):
-    """Put a dated backup back, keeping a guard copy of whatever it replaces.
-
-    Restoring is itself a write over live state, so a restore of the wrong backup does not lose a
-    conversation. `only` names the entries to put back, and only those come out of the archive.
-    """
+    "Put a dated backup back, keeping a guard copy of whatever it replaces. `only` limits which entries."
     cfg, name = Path(cfg or leela_cfg), _stem(name)
     arc, folder = backup_dir(cfg)/f'{name}{ARCHIVE}', backup_dir(cfg)/name
     if arc.is_file(): return _from_archive(arc, name, cfg, only, dry_run)
@@ -345,10 +318,7 @@ def _place(src, names, cfg, why):
     return done
 
 def schedule_backups(cadence='daily', cfg=None, interval=900):
-    """A daemon thread that takes a copy whenever the cadence is due. Returns a stop function.
-
-    Checked every `interval` so a long-running window gets its daily copy whenever it started.
-    """
+    "A daemon thread that copies whenever `cadence` is due, checked every `interval`. Returns a stop function."
     stop = threading.Event()
     if not CADENCES.get(str(cadence), 0): return stop.set
     def loop():

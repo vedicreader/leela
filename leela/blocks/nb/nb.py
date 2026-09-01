@@ -250,14 +250,7 @@ class Notebook:
         self.dirty = True
         return n
     def split_symbols(self, i):
-        """Each top-level class and function of cell `i` into a cell of its own, in source order.
-
-        The cell's own directives go on top of every part, so splitting an `#| export` cell leaves
-        every part exported and a test cell can go under each. `default_exp` and its kind name the
-        notebook rather than the cell, so they are not copied and they hold the original cell open.
-        Whatever was not a class or a function stays where it was, above. No part ends in a
-        newline: a cell source that does draws an empty line under itself in the editor.
-        """
+        "Each top-level class and function of cell `i` into a cell of its own, in source order."
         c = self.cells[i]
         if c.cell_type != 'code': return 0
         head, tag, body = _directives(c.source)
@@ -444,15 +437,7 @@ def _clear(cell):
     return out
 
 def merge_rows(base, ours, theirs):
-    """The two sides of a conflicted notebook, lined up cell by cell.
-
-    Git holds all three sides of a conflict in the index as whole notebooks, so nothing here reads
-    the markers in the worktree file: they make a notebook unreadable and say nothing about cells.
-    Cells are matched by their own id where a notebook has them, and by position where it does not.
-
-    `state` is what a person has to answer: `both` needs a decision, `added` and `deleted` need one,
-    and the rest are context.
-    """
+    "The two sides of a conflicted notebook, lined up cell by cell."
     ours, theirs, base = list(ours or []), list(theirs or []), list(base or [])
     at = lambda cells: {_key(c, i): c for i, c in enumerate(cells)}
     ours_at, theirs_at, base_at = at(ours), at(theirs), at(base)
@@ -475,11 +460,7 @@ def merge_rows(base, ours, theirs):
     return rows
 
 def merged_cells(rows, choices=None):
-    """The cells a set of choices makes, in order, with `None` where one is still owed.
-
-    A cell somebody decided about comes back without its outputs: they were produced by a version of
-    the source that no longer exists. A cell nobody had to decide about is untouched.
-    """
+    "The cells a set of choices makes, in order, with `None` where one is still owed."
     choices, out = dict(choices or {}), []
     for row in rows:
         state, o, t = row['state'], row['ours'], row['theirs']

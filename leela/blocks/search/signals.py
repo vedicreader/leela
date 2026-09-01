@@ -1,8 +1,4 @@
-"""What a search was asked, what it showed, and what turned out to be worth opening.
-
-The event log is the exact record and the vault holds one document per session. `docs/search.md`
-says why there are two.
-"""
+"What a search was asked, what it showed, and what turned out to be worth opening."
 
 from __future__ import annotations
 import json, os, time
@@ -96,8 +92,8 @@ class Signals:
             except OSError: pass
         return n
     def summary(self, days=30, recent=12):
-        """The numbers that tune a ranker: where the opened hit sat, which leg found it, and how
-        often a search was abandoned or retyped instead."""
+        """The numbers that tune a ranker: where the opened hit sat, which leg found it, and how often a search was abandoned or retyped instead.
+        """
         queries, opens, previews, per = {}, L(), L(), {}
         kinds, modes, legs = Counter(), defaultdict(Counter), defaultdict(Counter)
         latency = defaultdict(list)

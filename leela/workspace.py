@@ -83,12 +83,7 @@ def ws_path(): return leela_cfg/'workspace.json'
 
 @contextmanager
 def _session_lock(path, timeout=5):
-    """Hold the saved session while it is read and rewritten, so two windows merge rather than race.
-
-    Advisory, and best effort: a platform without `flock`, or a lock nobody releases, gives the
-    caller the write anyway. A save that races is a worse session than one that does not; a save
-    that never happens is no session at all.
-    """
+    "Hold the saved session while it is read and rewritten, so two windows merge rather than race."
     try: import fcntl
     except ImportError: yield False; return
     lock = Path(str(path) + '.lock')
@@ -296,10 +291,7 @@ class Workspace:
         if self._threads is None and self._turn_runner is not None: return self._turn_runner
         return self.threads.active.runner
     def start_backups(self):
-        """Begin the chosen cadence, and take one now if it is already due.
-
-        Not in `__init__`: a test that builds a hundred workspaces would start a hundred threads.
-        """
+        "Begin the chosen cadence, and take one now if it is already due."
         from .core.backups import backup_cadence, schedule_backups
         if self._stop_backups is not None: return self._stop_backups
         self._stop_backups = schedule_backups(backup_cadence())
@@ -313,12 +305,7 @@ class Workspace:
         except Exception: return None
 
     def _timelines(self):
-        """The retained turns, from memory unless the file has moved under this process.
-
-        Every reader parsed the whole document. It reaches several megabytes, `with_timelines` runs
-        on the history list and on every thread switch, and `save_timeline` read it again before
-        each write.
-        """
+        "The retained turns, from memory unless the file has moved under this process."
         with self._timeline_lock:
             try: st = self._timeline_path.stat(); stamp = f'{st.st_mtime_ns}:{st.st_size}'
             except Exception: stamp = ''
@@ -334,15 +321,7 @@ class Workspace:
 
     @staticmethod
     def _retained(parts):
-        """One turn's events, reduced to what a replay rebuilds from them.
-
-        `reduceAgentTimeline` concatenates consecutive `chunk` events into one block of prose, and
-        keeps one part per `action_id` holding the newest payload, at the position where that call
-        first appeared. Every other row it is handed is read and dropped. Retaining them cost 15MB
-        across six workspaces, 95% of the rows, and a parse and a serialise of all of it per turn.
-
-        A row with no id has no identity to update, so it can only ever be new.
-        """
+        "One turn's events, reduced to what a replay rebuilds from them."
         out, at = [], {}
         for row in parts:
             event, data = row.get('event'), row.get('data') or {}
@@ -380,11 +359,7 @@ class Workspace:
             return f'{p}:{st.st_mtime_ns}:{st.st_size}'
         except Exception: return ''
     def fresh_history(self, ai=None):
-        """Reread the conversation log, but only when it has actually changed.
-
-        Parsing is linear in its size, which reaches 60MB once Leela and the CLI share one. A stat
-        tells an unchanged log from a written one.
-        """
+        "Reread the conversation log, but only when it has actually changed."
         ai = ai or self.ai
         stamp = self.history_stamp(ai)
         if stamp and self._history_stamps.get(id(ai)) == stamp: return False
@@ -410,19 +385,7 @@ class Workspace:
         return self._inline_ai
     @property
     def selection_ai(self):
-        """Inline help on a selected passage: its own conversation, and nothing that could act.
-
-        The inline model, the same one prompt cells use, because this is inline help and not the
-        ghost-text completion the `completion` model answers for. Which one answered is on the
-        panel's header, and the settings say which surface each model serves. `readonly` takes
-        the tools off the list the model is given rather than asking it not to reach for them, so
-        the panel's promise that nothing changes until Replace is one the agent cannot break.
-        Approvals are passed explicitly: the default would resolve `ws.approvals`, which builds the
-        agent pane's thread to answer.
-
-        The chosen inline model is applied on every access. The assistant is built once, and a model
-        change made after that reaches it here rather than at the next restart.
-        """
+        "Inline help on a selected passage: its own conversation, and nothing that could act."
         from .agent.core import env
         name = self.inline_model or env('MODEL_INLINE')
         if self._selection_ai is None:
@@ -522,13 +485,7 @@ class Workspace:
         return first(self.fs.roots)
     @property
     def project_repo(self):
-        """The checkout a project surface acts on: the nearest one at or above the folder in hand.
-
-        `project_root` is the folder that is open, which is not always a checkout. A folder of
-        clones opened to work across them is not one, and acting on it put a `.venv`, a run
-        configuration and a release beside the clones instead of inside the one being worked on.
-        The walk is the one the interpreter and the code index already take.
-        """
+        "The checkout a project surface acts on: the nearest one at or above the folder in hand."
         from .core.projects import project_dir
         root = self.project_root
         if root is None: return None
@@ -659,11 +616,7 @@ class Workspace:
         m = re.search(r'\bas\s+[`\'"]?([A-Za-z_]\w*)[`\'"]?[.!]?\s*$', (prompt or '').strip())
         return m.group(1) if m else ''
     def _name_exists(self, name, agent=None, owner=False):
-        """Whether `name` is bound: in the agent's merged view, or in the user's own namespace.
-
-        The merged view is what the agent sees. Only the user's own namespace answers the question
-        a prompt cell asks, which is whether the next cell can use the name.
-        """
+        "Whether `name` is bound: in the agent's merged view, or in the user's own namespace."
         if not name: return True
         h = (agent or self.inline_ai).host
         try:
@@ -806,10 +759,7 @@ class Workspace:
         return self._grounding(attachments, context)
     def ask_stream(self, prompt, attachments=(), reasoning=None, context='', context_path='',
                    grounding=None, on_registered=None, ai=None):
-        """The same turn, yielding markdown as it arrives.
-
-        `ai` pins the conversation the turn belongs to, against a thread switch mid-turn. It
-        defaults to the active one."""
+        "The same turn, yielding markdown as it arrives. `ai` pins the conversation, else the active one."
         ai = ai or self.ai
         self.sync_agent_routing(ai)
         context, screen, media = grounding or self._grounding(attachments, context)
@@ -923,13 +873,7 @@ class Workspace:
                                    lang=(t.nb_lang if t else '') or 'python')
     def kernel_peek(self, tab=None): return self.pool.peek(self.kernel_key(tab))
     def runtime_label(self, tab=None, k=False):
-        """What to call the runtime a tab runs in, alive or not.
-
-        The tab's own kernel is named by its key, so the pill says the same thing whether or not one
-        is running. It used to take the kernel's own name when there was one and the tab's file name
-        when there was not, so a notebook's kernel was `kosha` alive and `01_graph.ipynb` dead. A
-        watched environment is another kernel entirely, and is named by that kernel.
-        """
+        "What to call the runtime a tab runs in, alive or not."
         key = self.kernel_key(tab)
         if k is False: k = self.runtime_peek(tab)
         if k is not None and self.pool.peek(key) is not k and (nm := getattr(k, 'name', '')): return nm
@@ -953,9 +897,8 @@ class Workspace:
                 await k.bootstrap()
         desired, current = self.cwd_for(t), getattr(k, 'cwd', None)
         if desired and current and Path(desired).resolve() != Path(current).resolve():
-            # `chdir` is the runtime's own answer to this: Python runs an `os.chdir`, a runner moves
-            # a field, and a kernel in a language we cannot address declines. A fixture kernel has
-            # none, and the inline exec it used to get is what it still gets.
+            # `chdir` is the runtime's own answer to this. A fixture kernel has none and gets the
+            # inline exec instead.
             if (move := getattr(k, 'chdir', None)) is not None: await move(desired)
             else:
                 result = await k.execute(f'import os as __leela_os; __leela_os.chdir({str(desired)!r}); del __leela_os')
@@ -1010,9 +953,7 @@ class Workspace:
         from .blocks.runtime.kernels import KERNELS, find_pythons, ipymini_available, python_for
         t = tab or self.tab
         k = self.kernel_peek(t)
-        # What this tab's kernel is actually started under. `Workspace.kernel` resolves it the
-        # same way. `default_python` is one interpreter for the whole workspace, taken from the
-        # folder opened first.
+        # What this tab's kernel is actually started under. `Workspace.kernel` resolves it the same way.
         cur_py = python_for(self.cwd_for(t), self)
         return {
             'key': self.kernel_key(t),
@@ -1052,12 +993,7 @@ class Workspace:
         await k.restart()
         return k
     def initialize_notebook(self, path, nb=None):
-        """Make one zero-byte ``.ipynb`` valid JSON before code reads it, and report it when written.
-
-        `nb` is the document already open on that path. Writing it, rather than a fresh blank, keeps
-        the cell ids the browser and the server share: a blank invents new ones, and then the next
-        save cannot match a single cell and refuses as a conflict.
-        """
+        "Make one zero-byte ``.ipynb`` valid JSON before code reads it, and report it when written. `nb` is the document already open, whose cell ids are kept."
         if not path: return None
         path = Path(path)
         try:
@@ -1066,11 +1002,7 @@ class Workspace:
         (nb or Notebook.blank(path)).save(path, sandbox=self.fs)
         return str(path)
     def initialize_empty_notebooks(self, root=None):
-        """Turn zero-byte ``.ipynb`` placeholders into valid empty notebooks before code runs.
-
-        Once per root. It is a whole-tree walk, and it ran on every cell of every run to catch a
-        placeholder only another tool can leave: Leela's own new notebooks are valid when created.
-        """
+        "Turn zero-byte ``.ipynb`` placeholders into valid empty notebooks before code runs."
         root = self.fs._check(root or self.cwd_for(), must_exist=True)
         if str(root) in self._swept: return []
         self._swept.add(str(root))
@@ -1089,13 +1021,7 @@ class Workspace:
             if src is None: return None, f'could not read {Path(t.path).name}'
         return run_file_src(t.path, src, cwd=self.cwd_for(t)), Path(t.path).name
     def lsp_for(self, lang='python'):
-        """The language server for `lang` in the checkout being worked in, started on first use.
-
-        One per language *and* root: a server is rooted where it reads the project's configuration
-        from, and a folder of clones holds neither a `Cargo.toml` nor a `pyproject.toml` of its own.
-        Keyed by both, so moving to a file in another repo starts that repo's server rather than
-        going on asking one rooted beside the clones.
-        """
+        "The language server for `lang` in the checkout being worked in, started on first use."
         lang = lang or 'python'
         root = self.project_repo or first(self.fs.roots)
         key = (lang, str(root or ''))
@@ -1252,12 +1178,7 @@ class Workspace:
                                        if t.path == str(was.get('path') or '')), 0)
         return opened
     def _merge_roots(self, held, mine):
-        """The folders the saved session should hold: everything in it this window did not close,
-        then everything this window has.
-
-        One file, several windows. Overwriting the list meant the last window to save decided what
-        every other one would come back to, so opening the app on one folder emptied a session that
-        had four.
+        """The folders the saved session should hold: everything in it this window did not close, then everything this window has.
         """
         closed = self._closed_roots
         out = [r for r in held if isinstance(r, str) and r not in closed]

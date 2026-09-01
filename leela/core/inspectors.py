@@ -19,9 +19,8 @@ PROFILES = {
 # Mirrors `dhrishti.core.SORTS`.
 SORTS = ('name', 'recent', 'type', 'size')
 
-#: What a kernel says when it cannot import the inspector, as opposed to when the inspector ran and
-#: something else went wrong. The second form is numpy's, whose ABI failure never names itself an
-#: ImportError until its eighteen lines of advice are over.
+#: What a kernel says when it cannot import the inspector, as opposed to the inspector running and
+#: something else going wrong.
 IMPORT_FAULTS = ('ModuleNotFoundError', 'ImportError', 'No module named')
 
 def import_failure(err):

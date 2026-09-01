@@ -42,10 +42,7 @@ def connect(app, ctx):
         return {'path': str(p), 'exists': p.exists(), 'notes': list(keymap.NOTES), **_file(p)}
     @rt('/keys/save')
     async def keys_save(req):
-        """Write the keymap, re-read it, and hand back what it now says, including what it refused.
-
-        A map naming every action is one an older client dumped, so its default-equal entries are
-        pruned rather than frozen against the next default that moves."""
+        "Write the keymap, re-read it, and hand back what it now says, including what it refused."
         d = await req.json()
         text = d.get('text') or ''
         try: posted = json.loads(text)
@@ -64,10 +61,7 @@ def connect(app, ctx):
                 'keys': web_keymap(), 'help': help_rows(), **_file(p)}
     @rt('/keys/check')
     async def keys_check(req):
-        """What a proposed map would be refused for, without writing it.
-
-        Runs the save's own `apply_overrides` on a throwaway note list, so the warnings cannot drift
-        from what saving rejects."""
+        "Why a proposed keymap would be refused, and the map it would produce, without writing either."
         d = await req.json()
         over = d.get('keys') or {}
         if not isinstance(over, dict): return fail('keys must be an object of action to chord')

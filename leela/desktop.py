@@ -166,12 +166,8 @@ def _dock_delegates():
     _delegates = (Windows, App)
     return _delegates
 
-#: What macOS rewrites as you type, and must not while you are typing code. WKWebView hands a
-#: `contenteditable` to NSSpellChecker; a browser does not, which is why the packaged app turned
-#: quotes into curly quotes and moved the caret out from under CodeMirror, and the served one
-#: never did. Inline prediction is in the list because Tab is what accepts one, so the Tab that was
-#: meant for the completion list went to the system instead and left the caret at the start of the
-#: line. Written to Leela's own defaults domain, so nothing outside Leela changes.
+#: What macOS rewrites as you type, and must not while you are typing code. Written to Leela's
+#: own defaults domain, so nothing outside Leela changes.
 NO_SUBSTITUTION = ('NSAutomaticQuoteSubstitutionEnabled', 'NSAutomaticDashSubstitutionEnabled',
                    'NSAutomaticTextReplacementEnabled', 'NSAutomaticSpellingCorrectionEnabled',
                    'NSAutomaticPeriodSubstitutionEnabled', 'NSAutomaticCapitalizationEnabled',
@@ -369,12 +365,7 @@ def mac_key(chord):
     return base, mask
 
 def menu_chord(action):
-    """The chord to put on a menu row, or None to leave it bare.
-
-    A key equivalent is consulted before the keystroke reaches the web view, so anything installed
-    here is taken away from the page. Only a global action with a modifier is safe: a scoped one
-    would fire outside its scope, and a bare letter would fire while you were typing it.
-    """
+    "The chord to put on a menu row, or None to leave it bare."
     from .core.keys import lookup
     k = lookup(action)
     if k is None or not k.bound or k.scope != 'global': return None
@@ -420,11 +411,7 @@ def _menu_run(js):
 _menu_patched = False
 
 def install_menu_patch(specs):
-    """Finish each item off as AppKit needs it, wherever pywebview builds the bar.
-
-    It rebuilds on every focus change to a window whose menu differs, so anything done once to the
-    bar after start is thrown away. This wraps the one method both rebuild paths go through.
-    """
+    "Finish each item off as AppKit needs it, wherever pywebview builds the bar."
     global _menu_patched
     if _menu_patched: return False
     try:

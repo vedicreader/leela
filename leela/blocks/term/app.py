@@ -17,12 +17,7 @@ def term_cwd(session, ref=None):
     return session.cwd_for() or (session.fs.roots[0] if session.fs.roots else None)
 
 def term_project(session, cwd):
-    """The checkout a terminal belongs to, from where it is. The walk the interpreter takes.
-
-    A shell is one long-lived process and cannot follow anything by itself. Naming the checkout it
-    was opened in is what lets the client keep one per checkout, rather than one shell that stays
-    where the first project was.
-    """
+    "The checkout a terminal belongs to, from where it is. The walk the interpreter takes."
     from ...core.projects import project_dir
     if not cwd: return ''
     try: root = session.fs.root_of(cwd)

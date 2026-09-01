@@ -22,12 +22,7 @@ __all__ = ['CAPS', 'connect']
 CAPS = ('fs', 'journal', 'inline_ai', 'tab', 'pending_approval', 'docs', 'debug', 'running')
 
 def _rebase_notebook(tab, payload, docs):
-    """Put a draft's source edits onto the notebook as it is on disk now.
-
-    Returns the cells whose source moved on both sides, `[]` when the rebase is clean, or None when
-    it cannot be attempted at all and the caller should refuse the save. Cells are matched by id,
-    because an external write may have added or removed one and shifted every index after it.
-    """
+    "Put a draft's source edits onto the notebook as it is on disk now."
     key = tab.path or tab.title
     base = docs.get(key)
     if base is None or not tab.path: return None
@@ -111,10 +106,8 @@ def connect(app, ctx):
             if owner_tab: owner_tab.running += 1
             def emitted(_i, _output): q.put_nowait([dict(x) for x in nb[i].outputs])
             task = asyncio.create_task(nb.run(i, k, on_output=emitted))
-            # The end of the cell wakes this loop. It used to wait on the queue with a 120ms timeout
-            # and re-check, so a cell that finished without printing anything -- an assignment, an
-            # import, a definition, most cells in most notebooks -- paid that 120ms in full, every
-            # run, on top of the two milliseconds it took to execute.
+            # The end of the cell wakes this loop, rather than a queue timeout every cell pays in
+            # full whether it printed anything or not.
             task.add_done_callback(lambda _: q.put_nowait(None))
             run_key = ((owner_tab.path or owner_tab.title) if owner_tab else '', nb[i].id)
             running_cells[run_key] = (k, task)
@@ -392,10 +385,8 @@ def connect(app, ctx):
         base_version = str(d.get('base_disk_version') or '')
         rebased = ''
         if base_version and current_version != base_version and not d.get('force'):
-            # A save writes cell sources and nothing else, and `nbdev_clean` rewrites outputs and
-            # metadata and nothing else, so the two rarely touch the same thing. Take the file as it
-            # is now and put the draft's edits back on top; only a source changed on both sides is a
-            # conflict worth stopping for.
+            # Take the file as it is now and put the draft's edits back on top. Only a source
+            # changed on both sides is a conflict worth stopping for.
             clash = _rebase_notebook(t, d, docs) if t.kind == 'notebook' else None
             if clash is None:
                 mine = doc_versions.get(t.path or t.title) == current_version
@@ -438,12 +429,7 @@ def connect(app, ctx):
             return fail(e)
     @rt('/nb/language')
     async def nb_language(req):
-        """Read or set which language this notebook's cells are.
-
-        The notebook's kernelspec is the only record of it, so setting one writes the file. The
-        runtime a tab already holds is for the old language, so it goes; the next run starts the
-        one this notebook now names.
-        """
+        "Read or set which language this notebook's cells are."
         from ...core.langs import LANGS, lang_named
         from ..runtime.kernels import kernelspec_for
         from ..runtime.runners import runner_for
@@ -468,13 +454,7 @@ def connect(app, ctx):
                                    else f'needs `{l.install}`')} for l in LANGS.values()]}
     @rt('/nb/interrupt')
     async def nb_interrupt(req):
-        """Interrupt one exact running cell, force-restarting its managed kernel if needed.
-
-        A prompt cell is not in a kernel: it is a turn of the inline agent, and it was answered
-        here with `that cell is not running` while it plainly was. The agent has a stop of its own
-        -- refuse the calls still to come, release the one already waiting -- and that is what Stop
-        means for a prompt.
-        """
+        "Interrupt one exact running cell, force-restarting its managed kernel if needed."
         d = await req.json()
         cell_id = d.get('id') or ''
         item = running_cells.get((d.get('path') or '', cell_id))

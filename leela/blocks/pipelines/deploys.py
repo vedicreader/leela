@@ -53,9 +53,8 @@ ROOT = repo_root()
 APP = {app!r}
 LFS_PATTERNS = {patterns}
 
-# The schema, and the only place keys are declared. `None` -> GitHub secret; a string ->
-# GitHub variable with that default. gheasy reads this to route each value; the workflow's
-# `env:` block is this dict rendered; `.env` is this dict materialised.
+# The schema, and the only place keys are declared. `None` -> GitHub secret; a string -> GitHub
+# variable with that default.
 ENV_KEYS = dict(
     MODE='prod', PORT={int(port)!r}, DOMAIN={host!r},
     SERVER_NAME=None, SERVER_USER='deploy', SERVER_PASSWORD=None,
@@ -150,10 +149,8 @@ def deploy_template(app, domain, subdomain='', port=5001, second_host=''):
     tunnel = f'{subdomain or app}_{domain}'
     second = f'''
 
-# The second hostname: same server, same container, same tunnel. Caddy tells them apart by
-# the Host header, and `or` rather than a getenv default because the workflow passes every
-# key as `${{ vars.KEY }}`. An unset repository variable arrives as the empty string, not as
-# absent, so a getenv default would not fire.
+# `or` rather than a getenv default: an unset repository variable arrives as the empty string,
+# not as absent.
 second_host = os.getenv('SECOND_HOST') or {second_host!r}''' if second_host else (
     '\n\nsecond_host = os.getenv("SECOND_HOST") or ""')
     return f'''"""Deploy {app} to a VPS: dockeasy image, vpseasy stack and server, cfeasy tunnel.

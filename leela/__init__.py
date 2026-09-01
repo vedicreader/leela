@@ -17,17 +17,11 @@ def extras_site():
     return xdg_data_home()/'leela'/'extras'/f'lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages'
 
 def extras_bin():
-    """Where an extra's console scripts land: `pip install --target X` writes them to `X/bin`.
-
-    Nothing puts that directory on PATH, so a language server installed into a frozen app was
-    installed correctly and then never found.
-    """
+    "Where an extra's console scripts land: `pip install --target X` writes them to `X/bin`."
     return extras_site()/'bin'
 
 def use_extras():
-    """Put the extras directory first on `sys.path`, and say whether it was there.
-
-    First, so a backend installed there later beats a stale copy inside the bundle."""
+    "Put the extras directory first on `sys.path`, and say whether it was there."
     p = extras_site()
     if str(p) in sys.path: return True
     if not p.is_dir(): return False

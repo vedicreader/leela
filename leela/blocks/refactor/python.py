@@ -106,10 +106,7 @@ def _writes(nodes):
             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
 
 def _reads(text):
-    """Every name the text loads, so a name still wanted afterwards can be told from a dead one.
-
-    The tail of a file is the middle of a block and rarely parses. The identifier fallback errs
-    towards handing a value back, which is untidy rather than broken."""
+    "Every name the text loads, so a name still wanted afterwards can be told from a dead one."
     for candidate in (text, textwrap.dedent(text)):
         try: tree = ast.parse(candidate)
         except SyntaxError: continue
@@ -124,10 +121,7 @@ _EVAL_ORDER = {ast.Assign: ('value', 'targets'), ast.AugAssign: ('value', 'targe
                ast.withitem: ('context_expr', 'optional_vars')}
 
 def _reads_before_writes(nodes):
-    """Names the selection reads before it binds them: those have to arrive as parameters.
-
-    A name both read and bound, as in `total = total + n`, is a parameter as well as a result.
-    Subtracting the bound names from the read ones would miss it."""
+    "Names the selection reads before it binds them: those have to arrive as parameters."
     bound, params = set(), []
     def visit(node):
         if isinstance(node, ast.Name):

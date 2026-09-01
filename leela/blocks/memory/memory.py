@@ -86,13 +86,7 @@ def _registered_encoder(path, store):
 
 
 def _why_no_vault(e):
-    """Why memory could not take something, in terms of what to do about it.
-
-    The vault reaches its own model through `rishi.litert`, so where LiteRT is not installed the
-    failure arrives as `No module named 'litert_lm'`, which says nothing about memory and nothing
-    about the remedy. The packaged app is exactly that case: the runtime is a download, not part of
-    the bundle.
-    """
+    "Why memory could not take something, in terms of what to do about it."
     missing = getattr(e, 'name', '') or ''
     if isinstance(e, ImportError) and missing in ('litert_lm', 'rishi', 'vishalakshi'):
         return ('memory needs the LiteRT runtime here, and it is not installed. '

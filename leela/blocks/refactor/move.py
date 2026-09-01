@@ -191,10 +191,7 @@ def _gained(path, before, after):
     return sorted(_free([_parse(path, after)]) - _free([_parse(path, before or '')]))
 
 def move_plan(read, src, names, dest, others=(), shim=True):
-    """Move `names` from `src` into `dest` and repoint every file in `others` that imported them.
-
-    `read` returns a file's text, or None when it does not exist. A destination that did not exist
-    comes back with `before` None, which is what makes undo delete it again."""
+    "Move `names` from `src` into `dest` and repoint every file in `others` that imported them. `read(path)` gives a file's text, or None."
     src, dest, names, notes = str(src), str(dest), list(names), []
     if not names: raise ValueError('choose a function or class to move')
     if Path(src).resolve() == Path(dest).resolve(): raise ValueError('choose a different file to move into')
