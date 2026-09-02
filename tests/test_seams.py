@@ -64,9 +64,7 @@ def test_no_module_of_a_composed_library_is_reached_through_a_private_attribute(
 
 
 def test_every_gheasy_helper_leela_uses_resolves_to_something_callable():
-    """gheasy opens these in 0.0.10 and spells each with a leading underscore before it, so
-    `blocks/git/seam.py` takes whichever is there. Both spellings are the same function; what
-    must never happen is neither, which is an ImportError in the git panel."""
+    "Either spelling is the same function; neither is an ImportError in the git panel."
     from leela.blocks.git import seam
     for name in ('invalidate', 'plural', 'unborn', 'gh_api', 'gh_token', 'yaml_instance'):
         assert callable(getattr(seam, name, None)), f'the seam has no {name}'
@@ -75,7 +73,7 @@ def test_every_gheasy_helper_leela_uses_resolves_to_something_callable():
 
 
 def test_the_seam_prefers_the_public_name_wherever_gheasy_has_opened_one(monkeypatch):
-    "So it takes the supported spelling on a new gheasy and the private one only until then."
+    "The supported spelling on a new gheasy, the private one only until then."
     import gheasy.repo as repo
     from leela.blocks.git.seam import _opened
     monkeypatch.setattr(repo, 'invalidate', lambda *a: 'public', raising=False)

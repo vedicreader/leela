@@ -8,7 +8,5 @@ __all__ = ['Workflows', 'WorkflowError', 'levels', 'SPEC_DIR']
 
 SPEC_DIR = '.leela/workflows'
 
-# Beside `Workflows` and not beside the builder: `Workflows` writes and reads specs itself, and the
-# builder is imported lazily, so configuring it there left every spec written before the panel
-# opened in pullup's own visible `workflows/` folder.
+# Here and not in `wfbuild`, which is imported lazily and so fires after the first spec is written.
 use_spec_dir(SPEC_DIR)

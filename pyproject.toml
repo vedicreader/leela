@@ -33,7 +33,7 @@ dependencies = [
     # re-export seams stay for a release; a second package's spelling of the same object is not
     # a dependency worth keeping.
     "shalya>=0.0.6",   # 0.0.6 is `read_page` and `tool_groups`
-    "gheasy>=0.0.9",   # `blocks/git/seam.py` takes the public names from 0.0.10 or the private ones
+    "gheasy>=0.0.9",   # `blocks/git/seam.py` takes either spelling of the six helpers
     "fastcore>=1.7.0",
     # The three packages Leela's own code was lifted into. `kavacha` is a base dependency and not
     # a desktop extra: `blocks/keys/menus.py` takes the menu vocabulary from it, and its spec,
@@ -149,8 +149,7 @@ constraint-dependencies = ["mcp<2"]
 
 [tool.uv.sources]
 leela = { workspace = true }
-# The six packages Leela composes are developed beside it. Point at the checkouts, so a change to a
-# seam is testable from here before either side is released. Drop a line to take the published one.
+# The checkouts beside this one; drop a line to take the published package.
 ramabana = { path = "../ramabana", editable = true }
 shalya = { path = "../shalya", editable = true }
 kavacha = { path = "../kavacha", editable = true }
