@@ -26,6 +26,7 @@ def _result(text, count): return {'output_type': 'execute_result', 'execution_co
 class Runner(_Inspector):
     "The `Kernel` surface for a language with no kernel: the same execute, no namespace to inspect."
     lang, tool, inspect, base, boot_error, evicted = '', '', False, None, None, None
+    wants_key = True   # no connection file to be found by, so `KernelPool` hands it its key
     def __init__(self, cwd=None, name=None, key='', python=None, **kw):
         self.cwd = str(cwd) if cwd else os.getcwd()
         self.name = name or self.lang

@@ -50,5 +50,5 @@ def test_a_port_already_held_falls_back_instead_of_stalling_and_raising_oserror(
     def busy(app, **kw): raise TimeoutError('uvicorn did not start')
     monkeypatch.setattr(jupygate, 'serve', busy)
     with pytest.raises(RuntimeError) as e: GatewayService(port=8787).start()
-    assert '8787' in str(e.value) and 'another Leela' in str(e.value)
+    assert '8787' in str(e.value) and 'another leela' in str(e.value)
     assert isinstance(e.value.__cause__, TimeoutError)
