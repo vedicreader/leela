@@ -116,3 +116,45 @@ def test_url_notebooks_get_distinct_meaningful_default_names(monkeypatch, tmp_pa
 def test_url_slug_has_a_safe_fallback():
     assert _url_slug('') == 'page'
     assert _url_slug('https://www.example.com/a useful/page') == 'example-com-a-useful-page'
+
+def test_the_page_reader_lives_in_shalya_and_leela_only_wraps_it():
+    """`Research.read` and `shalya.host.read_page` were two spellings of one reader dispatch and
+    one thin-page escalation, diverged in both directions: Leela had the extraction fallback and
+    the repeated-`<article>` sectioning, shalya had JSON-LD and the stealthy retry, and each was
+    worse than the union. `read_page` is the union, and this module holds none of it."""
+    import inspect
+    from leela.blocks.research import research as mod
+    src = inspect.getsource(mod)
+    for gone in ('_article_sections', '_page_text', '_read_page', '_extracted_text',
+                 '_CONTENT_SELECTORS', '_BLOCK_SELECTOR', "'github.com' in url"):
+        assert gone not in src, f'{gone} is shalya\'s now'
+    assert 'read_page' in inspect.getsource(mod.Research.read)
+
+def test_structured_data_and_the_stealthy_retry_reach_leela_now(monkeypatch, tmp_path):
+    "The two halves Leela did not have. Both arrive through `read_page`, not through a copy of it."
+    body = 'real article text ' * 60
+    fetches = []
+    def fetch(url, **kw):
+        fetches.append(kw)
+        if kw.get('stealthy'): return SimpleNamespace(html_content='<script type="application/ld+json">{"@type":"Product","price":"9.99"}</script>')
+        return None if kw.get('heavy') else SimpleNamespace(html_content='')
+    def to_md(page, sel=None, multi=False):
+        return body if getattr(page, 'html_content', '').startswith('<script') else 'wall'
+    research = Research(Sandbox([tmp_path]))
+    monkeypatch.setattr(research, '_fossick', lambda: SimpleNamespace(fetch=fetch, to_md=to_md))
+    doc = research.read('https://shop.example/item')
+    assert any(call.get('stealthy') for call in fetches), 'the bot wall is retried stealthily'
+    assert doc.text.startswith('<structured-data>') and '9.99' in doc.text
+    assert 'real article text' in doc.text
+
+def test_a_reader_that_gives_up_falls_through_to_the_page_rather_than_returning_nothing(monkeypatch, tmp_path):
+    "Leela used to return None here: an arxiv reader that raised ended the read."
+    body = 'the abstract page as html ' * 50
+    fake = SimpleNamespace(
+        read_arxiv=lambda *a, **k: (_ for _ in ()).throw(RuntimeError('pdf server is down')),
+        fetch=lambda url, **kw: SimpleNamespace(html_content=''),
+        to_md=lambda page, sel=None, multi=False: body if sel is None else '')
+    research = Research(Sandbox([tmp_path]))
+    monkeypatch.setattr(research, '_fossick', lambda: fake)
+    doc = research.read('https://arxiv.org/abs/2601.09999')
+    assert doc is not None and 'abstract page' in doc.text and doc.kind == 'page'

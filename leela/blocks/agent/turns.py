@@ -9,7 +9,7 @@ from fastcore.basics import first
 
 from ...core.web import diff_payload
 
-__all__ = ['TOOL_GROUPS', 'tool_group', 'tool_schemas', 'tool_preview', 'edit_diffs',
+__all__ = ['GROUP_LABELS', 'LEELA_TOOLS', 'tool_group', 'tool_schemas', 'tool_preview', 'edit_diffs',
            'activity_changes', 'history_sessions', 'project_state_context', 'turn_media',
            'with_capabilities', 'SURFACES_FILE', 'mark_surface', 'surfaces', 'latest_started_here']
 
@@ -105,19 +105,24 @@ def tool_preview(agent, tool, args):
         return {'kind': 'network', 'text': str(args.get('url') or args.get('query') or '')}
     return {'kind': 'json', 'text': json.dumps(args, indent=2, default=str)}
 
-TOOL_GROUPS = {
-    'Repository': {'search_code', 'similar_code', 'outline', 'list_files', 'grep', 'ls',
-                   'view_file', 'edit_file', 'replace_text', 'create_file'},
-    'Runtime': {'run_python', 'inspect_python', 'list_vars', 'inspect_var', 'run_cell',
-                'read_terminal', 'run_shell'},
-    'Web': {'web_search', 'read_url', 'research'},
-}
+#: shalya's capability groups under the names the checkpoint form shows. Two groups share a label
+#: where the distinction is shalya's and not a person's: reading a file is repository work, and a
+#: shell command is the runtime.
+GROUP_LABELS = {'code': 'Repository', 'file': 'Repository', 'notebook': 'Notebook', 'web': 'Web',
+                'memory': 'Memory', 'ask': 'Memory', 'watch': 'Watches', 'api': 'API',
+                'session': 'Runtime', 'shell': 'Runtime', 'git': 'Git', 'skill': 'Skills',
+                'image': 'Media'}
+#: The tools Leela adds to shalya's, which shalya has no way to name for us.
+LEELA_TOOLS = {'inspect_var': 'Runtime', 'run_cell': 'Runtime', 'search_all': 'Repository',
+               'api_access': 'API', 'generate_video': 'Media', 'video_status': 'Media',
+               'video_jobs': 'Media', 'news_feeds': 'Web', 'news_latest': 'Web',
+               'news_story': 'Web', 'news_follow': 'Web', 'news_unfollow': 'Web',
+               'news_refresh': 'Web'}
 
 def tool_group(name):
-    "Which browser-facing family a tool belongs to."
-    group = first(g for g, names in TOOL_GROUPS.items() if name in names)
-    if group: return group
-    return 'Notebook' if 'cell' in name or 'notebook' in name else 'Other'
+    "Which browser-facing family a tool belongs to: shalya's group for it, or one of Leela's own."
+    from shalya.tools import group_of
+    return LEELA_TOOLS.get(name) or GROUP_LABELS.get(group_of(name)) or 'Other'
 
 def tool_schemas(agent):
     "Browser-sized schemas for editable checkpoint forms; callable validation remains authoritative."

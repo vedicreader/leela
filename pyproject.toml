@@ -27,13 +27,13 @@ dependencies = [
     # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
     # change for, and a floor would take them on the next sync without a word. Raise these
     # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.1.32",   # the release that carries the shalya/gheasy split
+    "ramabana[cli]==0.1.33",   # `probed`, `runtime_detail`, saved aliases, `Agent.memory_context`
     # The toolset and the git plumbing are their own packages now, and Leela names them itself
     # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
     # re-export seams stay for a release; a second package's spelling of the same object is not
     # a dependency worth keeping.
-    "shalya>=0.0.5",   # 0.0.5 gives each tool its own summary
-    "gheasy>=0.0.9",
+    "shalya>=0.0.6",   # 0.0.6 is `read_page` and `tool_groups`
+    "gheasy>=0.0.10",   # 0.0.10 makes the six helpers Leela imports public
     "fastcore>=1.7.0",
     "exhash>=0.4.10",
     "fossick>=0.1.17",   # caches JSON, not pickle: GHSA-w8v5-vhqr-4h9v has no fixed release
@@ -43,6 +43,9 @@ dependencies = [
     "koshas>=0.1.7",
     "litesearch>=0.1.34",   # onnx, onnxruntime and flashrank are extras, on both rerank paths
     "mdhtml>=0.1.21",
+    # The ripgrep flags and its event stream, in one place rather than a command line built here.
+    # `koshas` and `fossick` both bring it; Leela calls it directly, so Leela names it.
+    "rgapi>=0.1.22",
     "python-fasthtml>=0.14.9",
     "starlette>=1.6.0",        # 1.6.0 excludes text/event-stream from GZip; below it every stream buffers
     "uvicorn>=0.30.0",
@@ -63,7 +66,7 @@ dependencies = [
 ipymini = [] # compatibility extra; ipymini now ships with Leela
 lsp = ["pyright>=1.1.400"]
 github = [
-    "gheasy>=0.0.9",
+    "gheasy>=0.0.10",
     "dockeasy>=0.0.5",
     "vpseasy>=0.0.18",
     "cfeasy>=0.0.4",

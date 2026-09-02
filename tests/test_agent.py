@@ -708,7 +708,8 @@ def test_an_agent_harness_is_not_a_pip_extra(monkeypatch):
 
 def test_older_specialized_openai_models_are_opt_in(monkeypatch):
     monkeypatch.setenv('OPENAI_API_KEY', 'present')
-    monkeypatch.setattr(models, '_oai_cache', (float('inf'), ['gpt-4.1', 'gpt-4.1-mini', 'gpt-5']))
+    models.forget_probes()
+    monkeypatch.setattr(models, '_openai_ids', lambda: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-5'])
     normal = {r['label'] for r in models.available_models() if r['provider'] == 'openai'}
     older = {r['label'] for r in models.available_models(include_legacy=True) if r['provider'] == 'openai'}
     assert 'gpt-5' in normal and 'gpt-4.1' not in normal
@@ -730,7 +731,8 @@ def test_available_models_follow_environment_and_codex_login(monkeypatch, tmp_pa
     monkeypatch.setenv('OPENAI_API_KEY', 'present')
     monkeypatch.setenv('GEMINI_API_KEY', 'present')
     monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
-    monkeypatch.setattr(models, '_oai_cache', (float('inf'), []))
+    models.forget_probes()
+    monkeypatch.setattr(models, '_openai_ids', lambda: [])
     rows = models.available_models()
     providers = {r['provider'] for r in rows}
     assert {'openai', 'codex', 'gemini'} <= providers
@@ -2833,24 +2835,29 @@ def test_a_version_check_that_fails_does_not_break_the_pane(monkeypatch):
 
 def test_an_unreachable_harness_says_what_went_wrong(monkeypatch):
     """`runtime_available` answers yes or no and swallows the reason, which is how Claude Code read
-    as "not installed" in the packaged app with nothing anywhere naming the cause."""
+    as "not installed" in the packaged app with nothing anywhere naming the cause. The reason lives
+    beside `runtime_remedy` in Ramabana now: Leela was importing `rishi.claude` and `rishi.copilot`
+    itself to recover it, which is the runtime's business and not an IDE's."""
     import leela.blocks.agent.models as m
-    assert m.unavailable_detail('remote') == '', 'only a harness has a module to fail'
-    monkeypatch.setitem(m.HARNESS, 'claude', ('leela_no_such_module', 'claude_bin'))
-    got = m.unavailable_detail('claude')
+    from leela.agent import core
+    assert not hasattr(m, 'unavailable_detail') and not hasattr(m, 'HARNESS')
+    assert core.runtime_detail('remote') == '', 'only a harness has a module to fail'
+    monkeypatch.setitem(core.HARNESS, 'claude', ('leela_no_such_module', 'claude_bin'))
+    got = core.runtime_detail('claude')
     assert 'import leela_no_such_module' in got and 'ModuleNotFoundError' in got, got
+    assert next(r for r in m.runtimes() if r['value'] == 'claude')['detail'] == got
 
 def test_a_harness_whose_probe_returns_nothing_says_so(monkeypatch):
     "A binary that is simply not on PATH is a different answer from an import that blew up."
     import types
-    import leela.blocks.agent.models as m
+    from leela.agent import core
     mod = types.ModuleType('fake_harness')
     mod.probe = lambda: None
     monkeypatch.setitem(__import__('sys').modules, 'fake_harness', mod)
-    monkeypatch.setitem(m.HARNESS, 'claude', ('fake_harness', 'probe'))
-    assert m.unavailable_detail('claude') == 'probe() found nothing'
+    monkeypatch.setitem(core.HARNESS, 'claude', ('fake_harness', 'probe'))
+    assert core.runtime_detail('claude') == 'probe() found nothing'
     mod.probe = lambda: (_ for _ in ()).throw(FileNotFoundError('claude is not on $PATH'))
-    assert 'probe():' in m.unavailable_detail('claude')
+    assert 'probe():' in core.runtime_detail('claude')
 
 
 def test_the_language_server_is_an_installable_tool():

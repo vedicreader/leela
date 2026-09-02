@@ -1,15 +1,15 @@
 "Persistent user-added local and hosted model aliases."
-import json, os, re, subprocess, sys, threading, time
+import json, subprocess, sys, threading, time
 from fastcore.all import Path
 from fastcore.net import urljson
 from ... import extras_site, leela_cfg, use_extras
 from ..runtime.support import clean_env
 
-__all__ = ['model_path', 'load_models', 'save_model', 'delete_model', 'runtimes', 'model_marks',
-           'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements', 'install_runtime', 'probed', 'catalog', 'forget_probes', 'warm_probes',
-           'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed', 'SETUP_SIZES', 'RECOMMENDED',
-           'unavailable_detail', 'HARNESS', 'TOOLS', 'tool_rows',
-           'updates']
+__all__ = ['model_path', 'MODELS_FILE', 'load_models', 'save_model', 'delete_model', 'runtimes',
+           'model_marks', 'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements',
+           'install_runtime', 'probe_dir', 'probe_path', 'probed', 'catalog', 'forget_probes',
+           'warm_probes', 'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed',
+           'SETUP_SIZES', 'RECOMMENDED', 'TOOLS', 'tool_rows', 'updates']
 
 #: What each routed job spends its model on. One copy: the settings pane renders three of these
 #: server-side and the rest from `/agent/models`, and two copies drifted apart the first time.
@@ -21,9 +21,7 @@ JOB_HELP = {
  'oneshot': 'The fallback for the cheap jobs with no model of their own: classify, completion and inline. Nothing calls it directly, so setting it only moves the jobs you have left unset.',
  'classify': 'One-label questions the agent asks itself mid-turn. Unset, it falls back to oneshot.',
  'summary': 'Context compaction, conversation titles, agent charter drafts, and "summarise selection". Unset, it follows the turn model, so a long conversation is summarised by the model holding it.',
- 'subagent': 'Delegated searches and folder-monitor reviews, which run as their own read-only agent. Defaults to gpt-4.1, not to oneshot.'}
-
-API_KEYS = ('base_url', 'api_key_env', 'vendor_name', 'api_name')
+ 'subagent': 'Delegated searches, which run as their own read-only agent. Defaults to gpt-4.1, not to oneshot.'}
 
 def _runtimes():
     from ...agent.core import RUNTIMES
@@ -37,20 +35,6 @@ def _why(runtime, agents):
     from ...agent.core import runtime_remedy
     return runtime_remedy(runtime)
 
-#: The harness runtimes and what reaching one needs, so an unavailable one can say more than "no".
-HARNESS = {'claude': ('rishi.claude', 'claude_bin'), 'copilot': ('rishi.copilot', 'copilot_oauth')}
-
-def unavailable_detail(runtime):
-    "The error behind an unavailable harness. `runtime_available` only ever answers yes or no."
-    import importlib
-    from ... import errstr
-    mod, fn = HARNESS.get(runtime) or (None, None)
-    if not mod: return ''
-    try: m = importlib.import_module(mod)
-    except Exception as e: return f'import {mod}: {errstr(e)}'
-    try: return '' if getattr(m, fn)() else f'{fn}() found nothing'
-    except Exception as e: return f'{fn}(): {errstr(e)}'
-
 #: Runtimes a package can supply, named as rishi's own extras. The rest want a CLI, a daemon or a key.
 INSTALLABLE = ('mlx', 'llama')
 
@@ -59,58 +43,19 @@ TOOLS = {'langserver': ('Language server',
                         ['basedpyright>=1.39'], 70,
                         'Red squiggles, hover types, go to definition and rename.')}
 
-#: The last answer from a probe, and the thread refreshing it. The model picker is on the boot path.
-_PROBED, PROBE_TTL = {}, 90
-_probe_lock = threading.Lock()
-#: Bumped whenever the answers are dropped. A probe gathering across that moment was asked about a
-#: machine that no longer applies, and its answer is discarded rather than written in behind.
-_probe_gen = 0
+def probe_dir():
+    "Where a probe's last answer is kept between runs. Read per call: `leela_cfg` moves under a test."
+    return leela_cfg/'probes'
 
 def probe_path(key):
     "Where one probe's last answer is kept between runs."
-    return leela_cfg/'probes'/f"{re.sub(r'[^A-Za-z0-9_.-]', '_', str(key))}.json"
+    from ...agent.core import probe_path as at
+    return at(key, dir=probe_dir())
 
-def _read_probe(key):
-    "The answer a previous run left, or None. A malformed one is simply not there."
-    try: return json.loads(probe_path(key).read_text())['value']
-    except Exception: return None
-
-def _write_probe(key, value):
-    p = probe_path(key)
-    try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_name(f'.{p.name}.{os.getpid()}.tmp')
-        tmp.write_text(json.dumps({'at': time.time(), 'value': value}))
-        tmp.replace(p)
-    except Exception: pass          # a probe that cannot be kept is still an answer
-
-def _keep(key, value, gen):
-    "Write an answer in, unless it was gathered about a machine `forget_probes` has since dropped."
-    with _probe_lock:
-        if gen != _probe_gen: return
-        _PROBED[key] = {'at': time.time(), 'value': value, 'busy': False}
-    _write_probe(key, value)
-
-def probed(key, fn, ttl=PROBE_TTL):
+def probed(key, fn, ttl=None):
     "`fn()`'s last answer, with a stale one refreshed behind whoever asked."
-    with _probe_lock: row, gen = _PROBED.get(key), _probe_gen
-    if row is None and (kept := _read_probe(key)) is not None:
-        # `at: 0` so the refresh below fires: what a previous run saw is a starting point, not news.
-        row = {'at': 0.0, 'value': kept, 'busy': False}
-        with _probe_lock:
-            if gen == _probe_gen: _PROBED[key] = row
-    if row is None:
-        value = fn()
-        _keep(key, value, gen)
-        return value
-    if time.time() - row['at'] < ttl or row['busy']: return row['value']
-    row['busy'] = True
-    def again():
-        try: _keep(key, fn(), gen)
-        except Exception:
-            with _probe_lock: row['at'], row['busy'] = time.time(), False
-    threading.Thread(target=again, daemon=True, name=f'leela-probe-{key}').start()
-    return row['value']
+    from ...agent.core import PROBE_TTL, probed as memo
+    return memo(key, fn, ttl=PROBE_TTL if ttl is None else ttl, dir=probe_dir())
 
 def catalog(legacy=True):
     "Every model this machine offers, and the id each row resolves to."
@@ -128,12 +73,8 @@ def catalog(legacy=True):
 
 def forget_probes(disk=False):
     "Drop every cached probe. The cache is process-wide, because what it holds is the machine's."
-    global _probe_gen
-    with _probe_lock: keys, _probe_gen, _ = list(_PROBED), _probe_gen+1, _PROBED.clear()
-    if not disk: return
-    for key in keys:
-        try: probe_path(key).unlink(missing_ok=True)
-        except Exception: pass
+    from ...agent.core import forget_probes as forget
+    return forget(disk=disk, dir=probe_dir())
 
 def warm_probes():
     "Pay for the first probe at startup rather than on the first click."
@@ -345,11 +286,11 @@ def setup_plan():
 
 def runtimes():
     "Every runtime, whether rishi can reach it here, and what it wants when it cannot."
-    from ...agent.core import AGENTS, runtime_available
+    from ...agent.core import AGENTS, runtime_available, runtime_detail
     return [{'value': r, 'label': LABELS.get(r, r), 'available': bool(runtime_available(r)),
              'why': _why(r, AGENTS), 'installable': r in INSTALLABLE,
              'requirements': runtime_requirements(r), 'install': install_state(r),
-             'detail': '' if runtime_available(r) else unavailable_detail(r)}
+             'detail': '' if runtime_available(r) else runtime_detail(r)}
             for r in _runtimes()]
 
 def model_marks(name):
@@ -370,56 +311,25 @@ def mark_models(rows):
         r.update(model_marks(r.get('value')))
     return rows
 
-def model_path(path=None): return Path(path or leela_cfg/'models.json')
+#: Where this application keeps its aliases. `register_model` is in-process only, so the file that
+#: outlives the process is Ramabana's now: its own CLI wanted the same one for the same reason.
+MODELS_FILE = 'models.json'
 
-def _rows(path=None):
-    try: d = json.loads(model_path(path).read_text())
-    except Exception: return []
-    return d if isinstance(d, list) else []
-
-def _without(name, path=None):
-    "The saved rows, minus any alias called `name`."
-    return [x for x in _rows(path) if x.get('name') != name]
-
-def _write(rows, path=None):
-    "Persist the alias list, creating the config directory on first save."
-    p = model_path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(rows, indent=2)+'\n')
+def model_path(path=None):
+    "The alias file, Leela's own unless a caller names another."
+    return Path(path or leela_cfg/MODELS_FILE)
 
 def load_models(path=None):
-    "Register saved aliases with Ramabana and return valid rows."
-    from ...agent.core import register_model
-    out = []
-    for row in _rows(path):
-        try:
-            cfg = {k: row.get(k) for k in API_KEYS if row.get(k)}
-            spec = register_model(row.get('name'), row.get('model_id'), row.get('runtime'),
-                                  row.get('ctx', 128_000), 'saved model', **cfg)
-            out.append({**row, 'name': spec.name, 'model_id': spec.model_id, 'runtime': spec.runtime, 'ctx': spec.ctx})
-        except Exception: continue
-    return out
+    "Register saved aliases with Ramabana and return the rows that took."
+    from ...agent.core import load_models as load
+    return load(path=model_path(path))
 
 def save_model(row, path=None):
     "Validate, register and persist one model alias. API keys are never stored here."
-    from ...agent.core import MODELS, CUSTOM, register_model
-    name = str(row.get('name') or '').strip()
-    model_id = str(row.get('model_id') or '').strip()
-    runtime = str(row.get('runtime') or '').strip()
-    if not re.match(r'^[A-Za-z0-9][\w.-]{0,63}$', name): raise ValueError('name must use letters, numbers, _, . or -')
-    if runtime not in (rts := _runtimes()): raise ValueError(f'runtime must be one of {", ".join(rts)}')
-    if name in MODELS and name not in CUSTOM: raise ValueError(f'{name!r} is a built-in model name')
-    ctx = int(row.get('ctx') or 128_000)
-    if not 1024 <= ctx <= 10_000_000: raise ValueError('context must be between 1,024 and 10,000,000 tokens')
-    cfg = {k: str(row.get(k) or '').strip() for k in API_KEYS if row.get(k)}
-    if runtime != 'remote' and cfg: raise ValueError('API settings apply only to the remote runtime')
-    spec = register_model(name, model_id, runtime, ctx, 'saved model', **cfg)
-    clean = {'name': name, 'model_id': spec.model_id, 'runtime': runtime, 'ctx': ctx, **cfg}
-    _write(_without(name, path)+[clean], path)
-    return clean
+    from ...agent.core import save_model as save
+    return save(row, path=model_path(path))
 
 def delete_model(name, path=None):
-    from ...agent.core import unregister_model
-    _write(_without(name, path), path)
-    unregister_model(name)
-    return name
+    "Forget one alias, on disk and in this process."
+    from ...agent.core import delete_model as forget
+    return forget(name, path=model_path(path))

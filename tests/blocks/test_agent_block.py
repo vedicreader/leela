@@ -70,12 +70,34 @@ def test_the_block_declares_what_it_touches():
     assert set(block.CAPS) <= set(CAPABILITIES)
     assert {'ai', 'memory', 'docs'} <= set(block.CAPS)
 
-def test_tool_groups_cover_the_families_the_picker_shows():
-    from leela.blocks.agent.turns import TOOL_GROUPS, tool_group
+def test_every_tool_the_agent_can_be_given_has_a_family_the_picker_shows():
+    """`TOOL_GROUPS` was a hand-copy of shalya's `GROUPS` naming twenty tools, and shalya ships
+    about fifty. Every git, memory, watch, api, skill and image tool fell through to `Other`, so a
+    checkpoint form drew `git_status` and `remember` in the same unnamed pile. shalya builds the
+    name-to-group table from its own factories now, so this cannot go stale again."""
+    from shalya.tools import tool_groups
+    from leela.blocks.agent.turns import GROUP_LABELS, LEELA_TOOLS, tool_group
     assert tool_group('search_code') == 'Repository' and tool_group('run_python') == 'Runtime'
     assert tool_group('web_search') == 'Web' and tool_group('edit_cell') == 'Notebook'
+    assert tool_group('git_status') == 'Git' and tool_group('remember') == 'Watches'
+    assert tool_group('memory_search') == 'Memory' and tool_group('read_skill') == 'Skills'
+    assert tool_group('api_call') == 'API' and tool_group('generate_image') == 'Media'
+    assert tool_group('run_cell') == 'Runtime' and tool_group('search_all') == 'Repository'
     assert tool_group('something_else') == 'Other'
-    assert set(TOOL_GROUPS) == {'Repository', 'Runtime', 'Web'}
+    ungrouped = sorted(n for n in tool_groups() if tool_group(n) == 'Other')
+    assert ungrouped == [], f'shalya groups these and Leela does not label them: {ungrouped}'
+    assert set(tool_groups().values()) <= set(GROUP_LABELS), 'a shalya group with no label here'
+    assert not (set(LEELA_TOOLS) & set(tool_groups())), 'shalya already names these'
+
+def test_the_tools_leela_adds_are_the_ones_it_labels_itself():
+    "A name in `LEELA_TOOLS` that Leela no longer builds is a stale label hiding the next gap."
+    from leela.blocks.agent.ai import _news_tools, _search_tools, _session_tools
+    from leela.blocks.agent.turns import LEELA_TOOLS
+    from leela.blocks.agent.video import video_tools
+    built = {t.__name__ for f in (_session_tools, _search_tools, _news_tools, video_tools)
+             for t in f(None)}
+    assert set(LEELA_TOOLS) == built, (f'only in the table: {set(LEELA_TOOLS) - built}; '
+                                      f'only built: {built - set(LEELA_TOOLS)}')
 
 def test_the_tool_tables_have_one_home():
     """`app.py` carried its own `TOOL_GROUPS`, `_tool_group` and `_tool_preview`. Nothing called
@@ -84,7 +106,7 @@ def test_the_tool_tables_have_one_home():
     """
     import ast
     owner = 'leela/blocks/agent/turns.py'
-    for name in ('TOOL_GROUPS', 'tool_group', 'tool_preview'):
+    for name in ('GROUP_LABELS', 'LEELA_TOOLS', 'tool_group', 'tool_preview'):
         homes = []
         for p in sorted((ROOT/'leela').rglob('*.py')):
             if 'vendor' in p.parts: continue
@@ -313,17 +335,16 @@ def test_a_probe_serves_its_last_answer_and_refreshes_behind_it():
     def slow():
         calls.append(1)
         return f'answer {len(calls)}'
-    models._PROBED.pop('t', None)
+    models.forget_probes(disk=True)
     assert models.probed('t', slow) == 'answer 1', 'the first caller has nothing to serve but the truth'
     assert models.probed('t', slow) == 'answer 1' and len(calls) == 1, 'and the next waits for nothing'
-    models._PROBED['t']['at'] = 0            # stale
-    assert models.probed('t', slow) == 'answer 1', 'a stale answer is still served at once'
+    assert models.probed('t', slow, ttl=0) == 'answer 1', 'a stale answer is still served at once'
     for _ in range(100):
         if len(calls) > 1: break
         time.sleep(.02)
     assert len(calls) == 2, 'while it is refreshed behind'
     assert models.probed('t', slow) == 'answer 2'
-    models._PROBED.pop('t', None)
+    models.forget_probes(disk=True)
 
 def test_a_probe_already_gathering_when_the_cache_is_dropped_does_not_come_back(tmp_path, monkeypatch):
     """`forget_probes` means the machine changed under us: the refresh button, or the next test.
@@ -647,3 +668,69 @@ def test_the_migration_asks_which_layer_a_value_came_from(tmp_path):
     s.save('user', 'agent', {'notify': False})
     assert Settings(root=tmp_path, user_path=path).describe()['origins']['agent']['notify'] == 'user'
     assert "origins?.agent?.[key]" in _pane_js(), 'the pane decides from origins, not from the value'
+
+def test_the_probe_memo_and_the_alias_file_are_ramabanas_and_leela_only_names_the_place():
+    """`probed` was a TTL memo with atomic disk persistence and a background refresh here, while
+    Ramabana hand-rolled two worse versions of the same idea as bare module tuples. `register_model`
+    is in-process only, so the file that outlives the process was Leela's alone, and Ramabana's own
+    CLI wanted the same one for the same reason. Both are Ramabana's; what stays is the path."""
+    import inspect
+    from leela.agent import core
+    from leela.blocks.agent import models
+    for gone in ('_PROBED', '_probe_lock', '_probe_gen', '_read_probe', '_write_probe', '_keep',
+                 '_rows', '_without', '_write', 'API_KEYS', 'HARNESS', 'unavailable_detail'):
+        assert not hasattr(models, gone), f'{gone} belongs to Ramabana now'
+    for name in ('probed', 'probe_path', 'forget_probes', 'load_models', 'save_model',
+                 'delete_model', 'runtime_detail', 'PROBE_TTL', 'API_KEYS'):
+        assert hasattr(core, name), f'ramabana.core is missing {name}'
+    for name in ('probed', 'probe_path', 'forget_probes', 'load_models', 'save_model', 'delete_model'):
+        src = inspect.getsource(getattr(models, name))
+        assert 'agent.core import' in src, f'{name} should bind Ramabana\'s, not reimplement it'
+        assert len(src.splitlines()) <= 5, f'{name} is a binding, not an implementation'
+
+def test_the_probe_directory_and_the_alias_file_are_under_leelas_own_config():
+    import leela.blocks.agent.models as models
+    from leela.blocks.agent.models import MODELS_FILE, model_path, probe_dir, probe_path
+    assert probe_path('k').parent == probe_dir() == models.leela_cfg/'probes'
+    assert model_path() == models.leela_cfg/MODELS_FILE
+    assert model_path('/elsewhere/models.json') == Path('/elsewhere/models.json')
+
+def test_pinned_notes_reach_a_completion_prompt_and_not_only_the_briefing(tmp_path, monkeypatch):
+    """`Completer._prompt` reached `self.a.ws.agent_memory_context(...)`. Ramabana sets `Agent.ws`
+    nowhere, so on any embedder but Leela the call raised into a bare `except` and the notes were
+    silently dropped; in Leela it worked only because `Assistant` happens to carry `ws`. The hook
+    is `Agent.memory_context` now, so the completer asks the agent and every agent answers."""
+    from leela.agent.agent import Completer
+    from leela.agent.core import env
+    from leela.blocks.agent.ai import BRIEFING_NOTES, Assistant
+    from ramabana.agent import Agent
+    assert Assistant.memory_context is not Agent.memory_context, 'Leela fills the seam in'
+    assert Agent.memory_context(None, 'completion') == '', 'and an embedder without one answers ""'
+    asked = []
+    class Stub:
+        ws = None
+        host = None
+        def memory_context(self, surface, max_chars=6000):
+            asked.append((surface, max_chars))
+            return 'remember: the encoder is shared'
+    prompt = Completer(Stub())._prompt('x = 1', 5, 'python')
+    assert asked == [('completion', 6000)], 'the completer names its own surface and its own budget'
+    assert '<user_memory>\nremember: the encoder is shared\n</user_memory>' in prompt
+
+def test_the_briefing_and_the_completer_ask_the_same_hook_with_different_budgets(tmp_path):
+    "One route to the notes, two budgets: a briefing can afford 24k of them and a keystroke cannot."
+    import inspect
+    from leela.blocks.agent.ai import BRIEFING_NOTES, Assistant
+    src = inspect.getsource(Assistant.system_prompt)
+    assert 'self.memory_context(' in src and 'self.ws.agent_memory_context' not in src
+    assert inspect.signature(Assistant.memory_context).parameters['max_chars'].default == BRIEFING_NOTES
+
+def test_the_folder_monitor_is_not_advertised_until_it_is_wired():
+    """`JOB_HELP` told the user the subagent model was used for folder-monitor reviews.
+    `ramabana.monitor` is imported nowhere in Leela but `leela/agent/monitor.py`, which exists so
+    `every_seconds` can reach `secs`. Nothing schedules a folder review, so nothing offers one."""
+    from leela.blocks.agent.models import JOB_HELP
+    assert 'folder-monitor' not in JOB_HELP['subagent']
+    users = [p.relative_to(ROOT).as_posix() for p in (ROOT/'leela').rglob('*.py')
+             if 'monitor' in p.read_text(encoding='utf-8') and p.name != 'monitor.py']
+    assert users == ['leela/blocks/vault/jobs.py'], f'monitor is wired now, so say so again: {users}'

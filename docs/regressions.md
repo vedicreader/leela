@@ -1095,3 +1095,15 @@ What is held is a cache, and a change on disk drops it. A run arriving before th
 
 ## `leela/workspace.py` `Workspace.runtime_label`
 The tab's own kernel is named by its key, so the pill says the same thing whether or not one is running. It used to take the kernel's own name when there was one and the tab's file name when there was not, so a notebook's kernel was `kosha` alive and `01_graph.ipynb` dead. A watched environment is another kernel entirely, and is named by that kernel.
+
+## `leela/blocks/agent/turns.py` `tool_group`
+`TOOL_GROUPS` was a hand-copy of shalya's `GROUPS` naming twenty tools, and shalya ships about fifty. Every git, memory, watch, api, skill and image tool fell through to `Other`, so a checkpoint form drew `git_status`, `remember` and `generate_image` in the same unnamed pile. Fixed by deriving the mapping from `shalya.tools.group_of`, which builds it from the factories rather than beside them. `LEELA_TOOLS` is the thirteen tools Leela adds, and a test asserts it is exactly what Leela's own factories build.
+
+## `leela/blocks/agent/ai.py` `Assistant.memory_context`
+`Completer._prompt` reached `self.a.ws.agent_memory_context(...)`. Nothing in Ramabana sets `Agent.ws`, so the call raised `AttributeError` into a bare `except` and a person's pinned notes never reached a completion prompt on any embedder but Leela, where it worked only because `Assistant` happens to carry `ws`. Fixed by `Agent.memory_context`, a hook every agent answers, which `Assistant` fills in. The briefing and the completer ask the same hook with different budgets.
+
+## `leela/blocks/agent/models.py` `probe_dir`
+The probe directory was briefly a module constant, which froze it at import. `leela_cfg` is replaced under a test, so a probe would have written into the directory of the run before it. Fixed by reading it per call, which is what the original `probe_path` did.
+
+## `leela/blocks/search/search.py` `_rg`
+The default ignore list was passed to ripgrep as `--glob '!{...}/**'`, which anchors to the working directory rather than to the searched root. For any root that was not the process's own directory it excluded nothing, and the noise weights in `relevance` were what actually demoted a hit in `node_modules`. Moving to `rgapi` made the skipping real, which silently deleted the demotion. Fixed by skipping only `__pycache__` by name and leaving the rest to `.gitignore` and the weights: a person searching for a vendored symbol wants it last, not missing.

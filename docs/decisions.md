@@ -610,3 +610,24 @@ Not `ptymini.PtyRegistry`: that one holds `PtySession`s and reaps them with `awa
 
 ## `leela/blocks/term/term.py` `Pty`
 ptymini owns the pty, the reader thread and the ring a late viewer replays from, so `Pty` is an adapter over `PtySession`. The frame coalescing a WKWebView needs stays here, and so does the argv building: `shell_argv`, `default_shell`, `path_prelude`, `lazygit_argv`, `gh_auth_argv` and `external_terminal_argv` know this machine's shells and tools, which no pty library can.
+
+## `leela/blocks/agent/models.py` `probed`
+The memo is `ramabana.core.probed`, and only the directory is Leela's. Ramabana held two worse versions of the same idea as bare module tuples, and its own CLI wants what the picker wants: an answer about this machine that survives the process, refreshed behind whoever asked. `disk=False` is the same memo for a library that must leave nothing behind.
+
+## `leela/blocks/agent/models.py` `model_path`
+`register_model` is in-process only, so the file that outlives the process is the part every application offering an alias would write for itself. It is Ramabana's now; `MODELS_FILE` is where Leela keeps its copy.
+
+## `leela/blocks/research/research.py` `Research.read`
+The readers, the extraction and the escalation are `shalya.host.read_page`. This and shalya's `read_url` were two spellings of one dispatch which had diverged in both directions, so each was worse than the union. What is left here is the `Doc`, the status line, and filing the result into memory.
+
+## `leela/blocks/agent/turns.py` `GROUP_LABELS`
+Two shalya groups share a label where the distinction is shalya's and not a person's: reading a file is repository work, and a shell command is the runtime. Anything shalya groups and Leela does not label reads as `Other`, and a test refuses that.
+
+## `leela/blocks/search/search.py` `_rg`
+Only `__pycache__` is skipped by name. `node_modules`, `dist` and a virtualenv are in everyone's `.gitignore` and hidden to ripgrep already, and what leaks past both is demoted by `relevance` rather than hidden: a person searching for a vendored symbol wants it last, not missing.
+
+## `leela/blocks/vault/jobs.py` `every_seconds`
+The units table is `ramabana.monitor.secs`, which is pobblebonk's, which is the one parser for the family. What is Leela's is what a person types into this field: a bare number means hours, a floor of a minute because zero would poll continuously, and a cadence nobody can read is the default rather than an error nobody can act on.
+
+## `leela/blocks/browser/browser.py` `Browser.running`
+`fossick.cdp._debug_ready` is the last private import Leela makes, and `tests/test_seams.py` allows exactly this one. Whether Chrome is *up* is not whether the port is open, and fossick's is the only implementation of that distinction, so asking fossick for a public name is the fix and copying its four lines here is not.

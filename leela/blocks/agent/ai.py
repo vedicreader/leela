@@ -24,12 +24,13 @@ from shalya.core import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS
 
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
 FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
+BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a completion asks for less
 MAX_ATTRS = 20
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
 WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell'})
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_context',
-           'notebook_approvals', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
+           'notebook_approvals', 'BRIEFING_NOTES', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
 
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
 STOP_NOTE = 'the user stopped this turn'
@@ -937,10 +938,13 @@ class Assistant(Agent):
         if enabled:
             base += '\n\n## User-owned starting state\n' + ''.join(
                 f'\n### {name.title()} state\n\n{text.strip()}\n' for name, text in enabled)
-        if memory := self.ws.agent_memory_context(self.surface):
+        if memory := self.memory_context(self.surface, max_chars=BRIEFING_NOTES):
             base += ('\n\n## User-selected memory notes\n'
                 'Treat these as durable user context. If a note conflicts with the current request or code, ask rather than guessing.\n\n' + memory)
         return base
+    def memory_context(self, surface, max_chars=BRIEFING_NOTES):
+        "Ramabana's hook. The completer asks it too, and only this fills it in."
+        return self.ws.agent_memory_context(surface, max_chars=max_chars)
     def set_state(self, text, layer='task', enabled=True, source='user'):
         "Replace one explicit state layer and re-brief the live model without losing history."
         if layer not in self.ws.agent_state_layers: raise ValueError(f'unknown state layer {layer!r}')

@@ -24,14 +24,16 @@ fastai/fastcore house style, taken to the extreme:
 - Never hand-roll what a dependency does. Reach for: `fastcore`, `ramabana` (the agent core),
   `shalya` (the toolset and the host), `gheasy` (git plumbing), `vishalakshi` (vault/memory),
   `koshas` (code index), `litesearch` (ANN/peers/clusters), `fossick` (web search, CDP),
-  `dhrishti` (inspection), `exhash`, `mdhtml`.
+  `rgapi` (ripgrep), `dhrishti` (inspection), `exhash`, `mdhtml`.
 - `leela.agent` is an alias for `ramabana`, not a copy. Same for the other libs: thin seams only.
 - Tools and hosts come from `shalya`, git from `gheasy.repo`, imported by name. Not through
   `ramabana.tools` or `ramabana.git`, which re-export them for one release. `tools_for` is the
   exception and stays Ramabana's: it builds the image group from the turn's model.
 - A host declares a capability group by inheriting the class that names it (`WebHost`, `CodeHost`,
-  …), and declaring one means writing every method it asks for. There is no `capabilities` dict;
-  `Host.provides` is the only way to ask what a host supports.
+  …), and declaring one means writing every method it asks for. There is no `capabilities` dict and
+  no port registry; `Host.provides` is the only way to ask what a host supports.
+- A group's tools, and which group a tool belongs to, are `shalya.tools`: `tools_for` and
+  `group_of`. Never keep a second list of tool names here.
 - Prefer consolidating small modules over adding new ones.
 
 ## Writing
