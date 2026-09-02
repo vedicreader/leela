@@ -209,11 +209,17 @@ def test_both_platform_builds_say_to_draw_the_icons_first():
         assert 'tools/build_icons.py' in (ROOT/rel).read_text(), rel
 
 def test_the_build_extras_carry_what_the_build_imports():
-    "`Leela.icns` is built, not committed, and the workflow installs the extras and nothing else."
+    """`Leela.icns` is built, not committed, and the workflow installs the extras and nothing else.
+
+    The freezer and the icon tooling both arrive through `kavacha`, which installs py2app or py2exe
+    and Pillow per platform. Naming the extra is what a checkout can check; that the tooling is
+    really there is the import below."""
     import tomllib
     extras = tomllib.load(open(ROOT/'pyproject.toml', 'rb'))['project']['optional-dependencies']
     for which in ('macapp', 'windows'):
-        assert any('pillow' in d.lower() for d in extras[which]), f'{which} cannot build icons'
+        assert any(f'kavacha[{which}]' in d for d in extras[which]), f'{which} names no freezer'
+    pytest.importorskip('PIL')
+    from kavacha.icons import icns  # noqa: F401
 
 def test_a_release_says_what_is_missing_rather_than_failing_inside_shutil(monkeypatch):
     "With the app build skipped and no bundle to package, both platforms say so."

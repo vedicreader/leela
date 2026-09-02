@@ -1,35 +1,11 @@
 "Contextual menus, as rows naming actions from the shared keymap; labels and chords come from it."
 
-from dataclasses import dataclass
-
 from fastcore.all import L
+from kavacha import Js, MenuItem, Std
 
 from ...core.keys import KEYS, chord_display, lookup
 
 __all__ = ['MenuItem', 'Std', 'Js', 'MENUS', 'BAR', 'menu', 'web_menus']
-
-@dataclass(frozen=True)
-class MenuItem:
-    "One action in a contextual menu; a blank action is a separator."
-    action: str = ''
-    kind: str = ''
-    def __post_init__(self):
-        if self.kind not in ('', 'warn'):
-            raise ValueError(f'{self.action or "separator"}: bad menu kind {self.kind!r}')
-
-@dataclass(frozen=True)
-class Std:
-    "A row AppKit already implements: the selector goes to the responder chain, target nil."
-    title: str
-    selector: str
-    key: str = ''
-    mods: str = 'mod'
-
-@dataclass(frozen=True)
-class Js:
-    "A row the keymap has no action for. Debug is only reachable as JS, so it is named as JS."
-    title: str
-    expr: str
 
 S = MenuItem
 MENUS = {

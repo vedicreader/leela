@@ -1,21 +1,16 @@
 "py2app definition for `dist/Leela.app`. Run it through `setup_app.py`."
 from __future__ import annotations
 import sys
-from fastcore.all import Path, first, globtastic, groupby
+from fastcore.all import Path
 from setuptools import setup
-from setuptools.dist import Distribution
+
+from kavacha import App, doc_types, finish, frozen_distribution, mypyc_modules, tree
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT/'packaging'/'assets'
 sys.path.insert(0, str(ROOT))
 
 from leela import __version__  # noqa: E402
-
-def tree(src, dest, skip=()):
-    "Every file under `src` as py2app `(dest_dir, [files])` pairs. Recursively: see `vendor/fonts/`."
-    fs = globtastic(src, skip_folder_re=f'^({"|".join([*skip, "__pycache__"])})$', skip_file_re=r'^\.')
-    dirs = groupby(fs, lambda f: str(Path(dest)/Path(f).parent.relative_to(src)))
-    return sorted((d, sorted(v)) for d, v in dirs.items())
 
 # The modules under `blocks/*/*.js` and `static/js/` build the `static/lee-*.js` bundles;
 # shipping both doubles ~680KB, as the wheel notes.
@@ -28,6 +23,7 @@ PACKAGES = [
     'leela', 'ramabana', 'dhrishti', 'fastcore', 'fasthtml', 'starlette', 'uvicorn',
     'httpx', 'httpcore', 'anyio', 'certifi', 'websockets',
     'fossick', 'fastcdp', 'scrapling', 'html2text', 'readability',
+    'kavacha', 'kunda', 'pullup',   # the casing, the kernels and the release half
     'webview',                      # the shell itself
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
     'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'yaml',
@@ -56,39 +52,6 @@ PACKAGES = [
     'pip',
 ]
 
-#: What `leela[local]` drags in, by module name. Measured on the bundle it used to be in: mlx 204MB,
-#: cv2 125, transformers 99, scipy 97, spacy 24, llama_cpp 18, and the mlx sidecars.
-#: `litert_lm` is not among them any more: `vishalakshi` imports `rishi.litert` to read one model id,
-#: so leaving it out took the vault, and with it memory, out of the packaged app entirely.
-#: `tests/test_packaging.py` holds the two platform definitions to the same list.
-HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'llama_cpp', 'cv2', 'transformers',
-         'scipy', 'spacy', 'torch', 'blis', 'thinc', 'srsly', 'llguidance')
-
-#: Packages py2app cannot carry either way, put in place after it runs. `apsw` is one package whose
-#: `__init__` is the extension module: the scanner flattens it to a lone `apsw.so` and loses
-#: `apsw.ext`, which is how fastlite opens the vault, and naming it in `PACKAGES` instead only gets
-#: `ImportError: No module named 'apsw'`, because the lookup wants an `__init__.py` to find.
-#: Packages the freezer's zip cannot hold. `apsw` has the extension module for its own `__init__`,
-#: and a flattened copy loses `apsw.ext` and with it the vault. `playwright` and `patchright` each
-#: carry a Node binary they have to *execute*, and a file inside an archive cannot be executed, so
-#: browser fetching failed in the packaged app and nowhere else. A grafted package is the real one:
-#: `strip_zip` takes the archive's copy away so there is only one.
-GRAFTED = ('apsw', 'playwright', 'patchright')
-# Entry points, lazy optionals, and pywebview's Cocoa half, reached as `webview.platforms.<gui>`.
-def _mypyc_modules():
-    """Compiled accelerators that sit beside a package rather than inside it.
-
-    `chardet` is built with mypyc, so importing it imports a top-level extension whose name is a hash
-    of the build. Nothing references it by name, so no scanner finds it, and the package looks
-    complete without it: `readability`, the agent's web tool and research all die on the import.
-    The hash moves with the version, so it is read from the environment being frozen rather than
-    written down.
-    """
-    import sysconfig
-    site = Path(sysconfig.get_paths()['purelib'])
-    return sorted(f.name.split('.')[0] for f in site.glob('*__mypyc*.so')) + \
-           sorted(f.name.split('.')[0] for f in site.glob('*__mypyc*.pyd'))
-
 INCLUDES = [
     'leela.cli', 'leela.desktop', 'leela.app',
     'packaging.requirements',       # `leela.blocks.editor.app` imports it inside a function
@@ -101,113 +64,22 @@ INCLUDES = [
     # Named as a string in the kernel's argv, so nothing follows it. A project with no environment of
     # its own runs on the bundle's interpreter, which then has no kernel to launch.
     'ipykernel_launcher',
-]
-INCLUDES += _mypyc_modules()
-
-
-# Build tooling and other platforms' backends: ~100MB, and half a library a frozen app never wanted.
-EXCLUDES = [
-    'tkinter', 'test', 'setuptools', 'wheel', 'py2app', 'py2exe',
-    'webview.platforms.gtk', 'webview.platforms.qt', 'webview.platforms.winforms',
-    'gi', 'PyQt5', 'PyQt6', 'PySide2', 'PySide6', 'clr', 'matplotlib',
-    # The on-device stack, which `leela[local]` installs beside the bundle instead. A lean build
-    # has none of it to find; these keep a build made in a full development environment lean too,
-    # which is the one a person is most likely to run by hand.
-    *HEAVY,
+    *mypyc_modules(),
 ]
 
-#: Better opened somewhere else, whatever Leela can edit: a browser renders these and Leela would
-#: only show their source. Everything else it knows a language for, it asks to own.
-VIEW_ELSEWHERE = {'.svg', '.html', '.htm', '.pdf'}
+#: What `leela[local]` drags in, by module name. Measured on the bundle it used to be in: mlx 204MB,
+#: cv2 125, transformers 99, scipy 97, spacy 24, llama_cpp 18, and the mlx sidecars.
+#: `litert_lm` is not among them any more: `vishalakshi` imports `rishi.litert` to read one model id,
+#: so leaving it out took the vault, and with it memory, out of the packaged app entirely.
+#: `tests/test_packaging.py` holds the two platform definitions to the same list.
+HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'llama_cpp', 'cv2', 'transformers',
+         'scipy', 'spacy', 'torch', 'blis', 'thinc', 'srsly', 'llguidance')
 
-def doc_types():
-    "One document type per language Leela edits, taken from the map the file tree already uses."
-    sys.path.insert(0, str(ROOT))
-    from leela.blocks.fs.fs import LANGS
-    exts = sorted({e.lstrip('.') for e, lang in LANGS.items() if lang and e not in VIEW_ELSEWHERE})
-    return [
-        # A folder stays `Alternate`: Finder is the right default for one, and this is what puts
-        # "Open With" on it and makes a Dock drop mean something.
-        {'CFBundleTypeName': 'Folder', 'CFBundleTypeRole': 'Viewer',
-         'LSItemContentTypes': ['public.folder'], 'LSHandlerRank': 'Alternate'},
-        {'CFBundleTypeName': 'Source file', 'CFBundleTypeRole': 'Editor',
-         'CFBundleTypeExtensions': exts, 'LSHandlerRank': 'Owner'},
-    ]
-
-DOC_TYPES = doc_types()
-
-PLIST = {
-    'CFBundleName': 'Leela',
-    'CFBundleDisplayName': 'Leela',
-    'CFBundleIdentifier': 'org.vedicreader.leela',
-    'CFBundleVersion': __version__,
-    'CFBundleShortVersionString': __version__,
-    'CFBundleGetInfoString': 'leela — creative workspace that starts with coding',
-    'LSApplicationCategoryType': 'public.app-category.developer-tools',
-    'LSMinimumSystemVersion': '11.0',
-    'NSHighResolutionCapable': True,
-    # Without this the app is locked to the light appearance, and Leela's dark themes render
-    # against a white window.
-    'NSRequiresAquaSystemAppearance': False,
-    'NSHumanReadableCopyright': 'Apache-2.0',
-    # App Transport Security blocks cleartext HTTP, loopback included, so WKWebView refuses
-    # `http://127.0.0.1:<port>`. The narrow exemption, not `NSAllowsArbitraryLoads`.
-    'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
-    'CFBundleDocumentTypes': DOC_TYPES,
-    # Set before the interpreter starts, which `leela.use_utf8` cannot be. Both are wanted.
-    'LSEnvironment': {'LANG': 'en_US.UTF-8', 'PYTHONUTF8': '1'},
-}
-
-OPTIONS = {
-    'iconfile': str(ASSETS/'Leela.icns'),
-    'packages': PACKAGES,
-    'includes': INCLUDES,
-    'excludes': EXCLUDES,
-    'plist': PLIST,
-    # Leela is opened from the Dock and from `open`, never with a shell's argv conventions;
-    # argv emulation costs a visible Apple Event wait at launch.
-    'argv_emulation': False,
-    'semi_standalone': False,
-    'site_packages': True,
-    'strip': True,
-}
-
-def graft(app, name):
-    "Put the real `name` package into a built bundle, over whatever the freezer left of it."
-    import importlib.util, shutil
-    spec = importlib.util.find_spec(name)
-    src = Path(first(spec.submodule_search_locations))
-    lib = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3.*')))
-    # The package carries compiled modules built for the interpreter running this, so a bundle on
-    # another version would take a wrong-ABI `.so` and fail at import with nothing to point at it.
-    want = 'python%d.%d' % sys.version_info[:2]
-    if lib.name != want: raise SystemExit(f'cannot graft {name}: bundle is {lib.name}, this is {want}')
-    dest = Path(lib)/name
-    for stray in lib.glob(f'{name}.*'): stray.unlink()     # the flattened extension module
-    shutil.rmtree(dest, ignore_errors=True)
-    shutil.copytree(src, dest, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-    return dest.relative_to(app)
-
-def link_duplicates(app, floor=1_000_000):
-    """Hardlink identical files across the grafted packages. Returns the megabytes saved.
-
-    `patchright` is a fork of `playwright` and ships the same 121MB Node binary, byte for byte, so
-    grafting both wrote it twice. A hardlink leaves two real, executable files and one copy of the
-    bytes; these are read-only library files, so nothing can write through one and surprise the
-    other.
-    """
-    import hashlib, os
-    lib = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3.*')))
-    seen, saved = {}, 0
-    for name in GRAFTED:
-        for f in sorted((lib/name).rglob('*')):
-            if not f.is_file() or f.is_symlink() or f.stat().st_size < floor: continue
-            key = (f.stat().st_size, hashlib.sha256(f.read_bytes()).hexdigest())
-            if (other := seen.get(key)) is None: seen[key] = f; continue
-            if os.stat(f).st_ino == os.stat(other).st_ino: continue
-            saved += f.stat().st_size
-            f.unlink(); os.link(other, f)
-    return round(saved / 1e6)
+#: Packages the freezer's zip cannot hold. `apsw` has the extension module for its own `__init__`,
+#: and a flattened copy loses `apsw.ext` and with it the vault. `playwright` and `patchright` each
+#: carry a Node binary they have to *execute*, and a file inside an archive cannot be executed, so
+#: browser fetching failed in the packaged app and nowhere else.
+GRAFTED = ('apsw', 'playwright', 'patchright')
 
 #: Entries that can never be reached from inside `python313.zip`. `claude_agent_sdk` looks for its
 #: bundled CLI with `Path(__file__).parent.parent.parent/'_bundled'/name` and `.exists()`, which is
@@ -215,66 +87,53 @@ def link_duplicates(app, floor=1_000_000):
 #: `use_login_path` repairs at startup, so the copy is 93MB of a 205MB zip that nothing can open.
 UNREACHABLE = ('claude_agent_sdk/_bundled/',)
 
-def strip_zip(app, prefixes=None):
-    "Rewrite the bundle's zip without entries nothing can read, or that were grafted. Megabytes saved."
-    import zipfile
-    prefixes = UNREACHABLE + tuple(f'{n}/' for n in GRAFTED) if prefixes is None else prefixes
-    z = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3*.zip')))
-    if not z: return 0
-    keep, dropped = [], 0
-    with zipfile.ZipFile(z) as src:
-        for info in src.infolist():
-            if info.filename.startswith(prefixes): dropped += info.compress_size; continue
-            keep.append((info, src.read(info.filename)))
-    if not dropped: return 0
-    tmp = z.with_suffix('.zip.new')
-    with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as out:
-        for info, data in keep: out.writestr(info, data)
-    tmp.replace(z)
-    return round(dropped / 1e6)
+#: Better opened somewhere else, whatever Leela can edit: a browser renders these and Leela would
+#: only show their source. Everything else it knows a language for, it asks to own.
+VIEW_ELSEWHERE = {'.svg', '.html', '.htm', '.pdf'}
 
-class Frozen(Distribution):
-    """A distribution with no `install_requires`, which py2app 0.28.10 and up refuse outright.
+def _doc_types():
+    "One document type per language Leela edits, taken from the map the file tree already uses."
+    from leela.blocks.fs.fs import LANGS
+    return doc_types([e for e, lang in LANGS.items() if lang], VIEW_ELSEWHERE)
 
-    The build runs from the repository root, so setuptools reads `pyproject.toml` and fills the
-    field in from `[project] dependencies`. Nothing here wants it: `PACKAGES` and `INCLUDES` say
-    what the bundle carries, because the scanner cannot see an import made inside a function.
-    """
-    def parse_config_files(self, *args, **kwargs):
-        super().parse_config_files(*args, **kwargs)
-        self.install_requires = []
+APP = App(
+    name       = 'Leela',
+    entry      = str(ROOT/'leela_app.py'),
+    version    = __version__,
+    icon       = str(ASSETS/'Leela.icns'),
+    modern_icon= str(ASSETS/'Leela.icon'),
+    identifier = 'org.vedicreader.leela',
+    summary    = 'leela — creative workspace that starts with coding',
+    packages   = PACKAGES,
+    includes   = INCLUDES,
+    # `webview.platforms.qt` is not one of kavacha's three backends, and the on-device stack is
+    # what `leela[local]` installs beside the bundle instead. A lean build has none of it to find;
+    # these keep a build made in a full development environment lean too, which is the one a
+    # person is most likely to run by hand.
+    excludes   = ['webview.platforms.qt', *HEAVY],
+    grafted    = GRAFTED,
+    unreachable= UNREACHABLE,
+    data       = DATA_FILES,
+    plist      = {'NSHumanReadableCopyright': 'Apache-2.0'},
+    doc_types  = _doc_types(),
+    extras     = ['gateway', 'macapp'],
+)
 
-def install_modern_icon(app, identity=None):
-    """Compile `Leela.icon` into a built bundle, after py2app and before anything signs it.
-
-    `iconfile` above is the ICNS fallback, all py2app installs and all macOS before 26 reads. The
-    Icon Composer document is what 26 draws, and its plist entries must reach `Info.plist` before
-    a signature covers them. None when the document or the tooling is absent: a machine without
-    Xcode 26 still builds a working app, with the older icon.
-    """
-    icon = ASSETS/'Leela.icon'
-    if not icon.is_dir(): return None
-    try: from iconmage import install_icon
-    except ImportError:
-        print('  iconmage not installed; keeping the ICNS icon alone '
-              '(uv tool install git+https://github.com/AnswerDotAI/iconmage.git)')
-        return None
-    try: return install_icon(icon, app, deployment_target='14.0', identity=identity)
-    except Exception as e:
-        print(f'  Icon Composer icon not installed ({type(e).__name__}: {e}); keeping the ICNS one')
-        return None
+OPTIONS = APP.py2app_options()
+PLIST, EXCLUDES = OPTIONS['plist'], OPTIONS['excludes']
+Frozen = frozen_distribution()
 
 if __name__ == '__main__':
     if not (ASSETS/'Leela.icns').is_file():
         raise SystemExit('missing packaging/assets/Leela.icns — run tools/build_icons.py first')
-    setup(name='Leela', version=__version__, app=[str(ROOT/'leela_app.py')],
-          data_files=DATA_FILES, options={'py2app': OPTIONS}, setup_requires=['py2app'],
-          distclass=Frozen)
+    setup(name=APP.name, version=APP.version, app=[APP.entry], data_files=DATA_FILES,
+          options={'py2app': OPTIONS}, setup_requires=['py2app'], distclass=Frozen)
     # `ROOT/dist`, because py2app writes it relative to the working directory and `setup_app.py`
     # builds from the root. Taken from this file's own folder it named a path nothing writes, so
     # the icon step never ran and a stale bundle sat there instead.
-    if (built := ROOT/'dist'/'Leela.app').is_dir():
-        for name in GRAFTED: print(f'  grafted {name} -> {graft(built, name)}')
-        if (saved := strip_zip(built)): print(f'  dropped {saved}MB of unreachable archive entries')
-        if (saved := link_duplicates(built)): print(f'  linked {saved}MB of duplicate grafted files')
-        if install_modern_icon(built): print(f'  Icon Composer icon installed in {built}')
+    if (built := APP.out(ROOT)).is_dir():
+        got = finish(built, APP)
+        for name in GRAFTED: print(f'  grafted {name} -> {got[name]}')
+        if got['stripped_mb']: print(f"  dropped {got['stripped_mb']}MB of unreachable archive entries")
+        if got['linked_mb']: print(f"  linked {got['linked_mb']}MB of duplicate grafted files")
+        if got['modern_icon']: print(f'  Icon Composer icon installed in {built}')

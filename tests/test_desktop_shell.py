@@ -239,7 +239,7 @@ def test_a_pywebview_that_moved_on_leaves_the_old_behaviour(monkeypatch, capsys)
         return real(name, *a, **kw)
     monkeypatch.setattr(builtins, '__import__', blocked)
     assert keep_running_in_dock() is False
-    assert 'quit Leela' in capsys.readouterr().out
+    assert 'quit leela' in capsys.readouterr().out
 
 
 @pytest.mark.skipif(sys.platform != 'darwin', reason='the Cocoa shell is macOS only')
@@ -324,10 +324,10 @@ def test_a_folder_already_open_raises_its_window_rather_than_opening_a_second(mo
         def show(self): shown.append(self.title)
         def load_url(self, url): self.url = url
         def load_html(self, html): self.url = None
-    monkeypatch.setattr(desktop, '_windows', {})
-    monkeypatch.setattr(desktop, 'make_window', lambda title='leela', size=None:
+    monkeypatch.setattr('kavacha.window._windows', {})
+    monkeypatch.setattr('kavacha.window.make_window', lambda title='leela', size=None:
                         made.append(title) or FakeWindow(title))
-    monkeypatch.setattr(desktop, 'wait_for_http', lambda url, timeout=90: True)
+    monkeypatch.setattr('kavacha.window.wait_for_http', lambda url, timeout=90: True)
     first = desktop.open_window('http://one.localhost:5001/', 'leela — one', key='one')
     again = desktop.open_window('http://one.localhost:5001/', 'leela — one', key='one')
     assert made == ['leela — one'], 'the second ask built nothing'
@@ -338,9 +338,9 @@ def test_a_window_that_never_answers_says_so_rather_than_showing_the_splash_fore
     class FakeWindow:
         def load_url(self, url): shown.append(('url', url))
         def load_html(self, html): shown.append(('html', html))
-    monkeypatch.setattr(desktop, '_windows', {})
-    monkeypatch.setattr(desktop, 'make_window', lambda title='leela', size=None: FakeWindow())
-    monkeypatch.setattr(desktop, 'wait_for_http', lambda url, timeout=90: False)
+    monkeypatch.setattr('kavacha.window._windows', {})
+    monkeypatch.setattr('kavacha.window.make_window', lambda title='leela', size=None: FakeWindow())
+    monkeypatch.setattr('kavacha.window.wait_for_http', lambda url, timeout=90: False)
     desktop.open_window('http://gone.localhost:5001/', 'leela — gone', key='gone')
     assert shown[0][0] == 'html' and 'did not answer' in shown[0][1]
 
@@ -463,7 +463,7 @@ def test_the_standard_rows_are_left_to_appkit_rather_than_reimplemented():
     assert {'Minimize', 'Zoom', 'Bring All to Front'} <= set(std), 'a Window menu macOS recognises'
 
 def test_the_menu_bar_is_a_no_op_off_macos(monkeypatch):
-    monkeypatch.setattr(desktop.sys, 'platform', 'linux')
+    monkeypatch.setattr('kavacha.window.sys.platform', 'linux')
     assert desktop.menus() == []
 
 def test_nothing_opens_a_window_the_app_cannot_open():

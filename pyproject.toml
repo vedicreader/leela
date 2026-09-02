@@ -35,6 +35,13 @@ dependencies = [
     "shalya>=0.0.6",   # 0.0.6 is `read_page` and `tool_groups`
     "gheasy>=0.0.10",   # 0.0.10 makes the six helpers Leela imports public
     "fastcore>=1.7.0",
+    # The three packages Leela's own code was lifted into. `kavacha` is a base dependency and not
+    # a desktop extra: `blocks/keys/menus.py` takes the menu vocabulary from it, and its spec,
+    # bundle and probe halves need nothing but fastcore. `kunda` is the kernels and the interpreter
+    # discovery; `pullup` the project, the release pipeline, the deploys and the workflows.
+    "kavacha>=0.0.1",
+    "kunda>=0.0.1",
+    "pullup>=0.0.3",
     "exhash>=0.4.10",
     "fossick>=0.1.17",   # caches JSON, not pickle: GHSA-w8v5-vhqr-4h9v has no fixed release
     "ipykernel>=7.3.0",        # launched, not imported: leela's own venv is a kernel target
@@ -87,14 +94,11 @@ gateway = [
 # dependency, so naming it here would install nothing and warn.
 local = ["rishi[mlx,llama]==0.1.36"]
 all = ["leela[github,gateway,lsp,local]"]
-desktop = [
-    "pywebview>=5.3",
-    "pyobjc-framework-Cocoa>=10.1; sys_platform == 'darwin'",
-    "pyobjc-framework-WebKit>=10.1; sys_platform == 'darwin'",
-    "pythonnet>=3.0.3; sys_platform == 'win32'",
-]
-macapp = ["leela[desktop]", "py2app>=0.28.8; sys_platform == 'darwin'", "pillow>=10.0"]
-windows = ["leela[desktop]", "py2exe>=0.14.2; sys_platform == 'win32'", "pillow>=10.0"]
+# The native window and the two freezers, through kavacha, which installs each platform's own
+# bindings and nothing else. `pillow` arrives with `kavacha[icons]`, which both build extras carry.
+desktop = ["kavacha[window]>=0.0.1"]
+macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.1"]
+windows = ["leela[desktop]", "kavacha[windows]>=0.0.1"]
 
 [project.urls]
 Repository = "https://github.com/vedicreader/leela"
