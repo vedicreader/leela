@@ -72,22 +72,33 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/lsp/rename')
     async def lsp_rename(req):
-        "Preview or atomically apply the language server's workspace rename edit within open roots."
+        "Preview or atomically apply a workspace rename, built from the server's references."
         d = await req.json()
+        name = str(d.get('newName') or '')
+        if not name.isidentifier(): return fail(ValueError(f'{name!r} is not a valid name'))
         try:
-            edit = await ask(d, 'textDocument/rename', d.get('text', ''),
+            # `textDocument/rename` answers for the one file, whatever is open: pyright and
+            # basedpyright both return a single `documentChanges` entry where `references`
+            # returns every use. References is the whole workspace, and resolves the symbol, so
+            # a same-named method on another class is left alone.
+            refs = await ask(d, 'textDocument/references', d.get('text', ''),
                              d.get('line', 0), d.get('character', 0),
-                             {'newName': d.get('newName', '')}, 12)
-            changes = (edit or {}).get('changes') or {}
+                             {'context': {'includeDeclaration': True}}, 12)
+            here, outside = {}, 0
+            for ref in (refs or []):
+                try: p = ctx.fs._check(unquote(urlparse(ref['uri']).path), must_exist=True)
+                except Exception: outside += 1; continue
+                here.setdefault(str(p), []).append({'range': ref['range'], 'newText': name})
             previews = []
-            for uri, edits in changes.items():
-                p = ctx.fs._check(unquote(urlparse(uri).path), must_exist=True)
-                before = ctx.fs.read(p)
-                previews.append({'path': str(p), 'before': before, 'after': _edited(before, edits),
+            for path, edits in sorted(here.items()):
+                before = ctx.fs.read(path)
+                previews.append({'path': path, 'before': before, 'after': _edited(before, edits),
                                  'edits': len(edits)})
+            previews = [r for r in previews if r['after'] != r['before']]
+            if not previews: return fail(ValueError('nothing to rename at that position'))
             if d.get('apply'):
                 for row in previews: ctx.fs.write(row['path'], row['after'])
-                ctx.journal.record(f"Rename to {d.get('newName','')}",
+                ctx.journal.record(f'Rename to {name}',
                                    [(r['path'], r['before'], r['after']) for r in previews], kind='rename-symbol')
-            return {'ok': True, 'applied': bool(d.get('apply')), 'files': previews}
+            return {'ok': True, 'applied': bool(d.get('apply')), 'files': previews, 'outside': outside}
         except Exception as e: return fail(e)
