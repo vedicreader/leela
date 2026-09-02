@@ -5,8 +5,9 @@ from __future__ import annotations
 import json, sys
 
 from fastcore.all import Path, first
-from gheasy.repo import (GitError, GitRepo as _GitRepo, clone, clone_target, gateway,
-    invalidate, plural, repo_root, unborn)
+from gheasy.repo import GitError, GitRepo as _GitRepo, clone, clone_target, gateway, repo_root
+
+from .seam import invalidate, plural, unborn
 
 from ..nb.nb import source_spans as _source_spans
 from ..nb.nb import merge_rows as _merge_rows, merged_cells as _merged_cells

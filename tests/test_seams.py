@@ -63,16 +63,26 @@ def test_no_module_of_a_composed_library_is_reached_through_a_private_attribute(
     assert found == [], '\n'.join(found)
 
 
-@pytest.mark.parametrize('mod,names', [
-    ('gheasy.repo', ('invalidate', 'plural', 'unborn', 'gateway')),
-    ('gheasy.core', ('gh_api', 'gh_token')),
-    ('gheasy.workflow', ('yaml_instance',)),
-])
-def test_the_public_names_gheasy_opened_are_the_ones_leela_imports(mod, names):
-    m = pytest.importorskip(mod)
-    for name in names:
-        assert callable(getattr(m, name, None)), f'{mod}.{name} is not there'
-        assert name in getattr(m, '__all__', (name,)), f'{mod}.{name} is not exported'
+def test_every_gheasy_helper_leela_uses_resolves_to_something_callable():
+    """gheasy opens these in 0.0.10 and spells each with a leading underscore before it, so
+    `blocks/git/seam.py` takes whichever is there. Both spellings are the same function; what
+    must never happen is neither, which is an ImportError in the git panel."""
+    from leela.blocks.git import seam
+    for name in ('invalidate', 'plural', 'unborn', 'gh_api', 'gh_token', 'yaml_instance'):
+        assert callable(getattr(seam, name, None)), f'the seam has no {name}'
+    import gheasy.repo as repo
+    assert callable(getattr(repo, 'gateway', None)), 'gateway has always been public'
+
+
+def test_the_seam_prefers_the_public_name_wherever_gheasy_has_opened_one(monkeypatch):
+    "So it takes the supported spelling on a new gheasy and the private one only until then."
+    import gheasy.repo as repo
+    from leela.blocks.git.seam import _opened
+    monkeypatch.setattr(repo, 'invalidate', lambda *a: 'public', raising=False)
+    assert _opened(repo, 'invalidate')() == 'public'
+    monkeypatch.delattr(repo, 'invalidate', raising=False)
+    assert _opened(repo, 'invalidate') is repo._invalidate, 'and falls back where it has not'
+    with pytest.raises(ImportError): _opened(repo, 'no_such_helper')
 
 
 def test_the_one_outstanding_request_is_still_answerable():

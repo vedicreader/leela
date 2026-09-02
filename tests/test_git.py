@@ -1671,7 +1671,7 @@ def test_the_pull_request_panel_calls_github_the_way_ghapi_binds_it(monkeypatch,
     positionally bound them to *query* parameters: `pulls.list` filtered on a base branch named
     after the owner and `compare_commits` dropped its fourth argument.
     """
-    import sys, types
+    import types
     from leela.blocks.git import hub
     seen = {}
     class Group:
@@ -1685,11 +1685,10 @@ def test_the_pull_request_panel_calls_github_the_way_ghapi_binds_it(monkeypatch,
                 return {'check_runs': [{'name': 'ci', 'conclusion': 'success', 'status': 'completed'}]}
             return go
     api = types.SimpleNamespace(pulls=Group('pulls'), repos=Group('repos'), checks=Group('checks'))
-    fake = types.ModuleType('gheasy.core')
-    fake.gh_api = lambda token=None, path='.': ('vedicreader', 'leela', api)
-    fake._get_repo_slug = lambda path='.': ('vedicreader', 'leela')
-    fake.gh_token = lambda: 'tok'
-    monkeypatch.setitem(sys.modules, 'gheasy.core', fake)
+    # `seam` binds gheasy's helpers at import, so replacing the module afterwards reaches nothing
+    monkeypatch.setattr('leela.blocks.git.seam.gh_api',
+                        lambda token=None, path='.': ('vedicreader', 'leela', api))
+    monkeypatch.setattr('leela.blocks.git.seam.gh_token', lambda: 'tok')
     monkeypatch.setattr(hub, 'hub_available', lambda: True)
 
     out = hub.pr_context.__wrapped__(str(tmp_path), 'my-branch')
@@ -1719,7 +1718,8 @@ def test_the_pull_request_panel_gets_a_blocking_github_client(monkeypatch, tmp_p
     from leela.blocks.git import hub
     g = pytest.importorskip('gheasy.core')
     monkeypatch.setattr(g, '_get_repo_slug', lambda path='.': ('vedicreader', 'leela'))
-    monkeypatch.setattr(g, 'gh_token', lambda *a, **kw: 'tok')
+    # the token only: `gh_api` stays gheasy's, because whether it binds a blocking client is the point
+    monkeypatch.setattr('leela.blocks.git.seam.gh_token', lambda *a, **kw: 'tok')
     api, owner, name = hub._api(str(tmp_path))
     assert not iscoroutinefunction(type(api.pulls.list).__call__)
     assert (owner, name) == ('vedicreader', 'leela')

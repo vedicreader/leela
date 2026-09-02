@@ -2204,6 +2204,55 @@ wheels = [
 ]
 
 [[package]]
+name = "kavacha"
+source = { editable = "../kavacha" }
+dependencies = [
+    { name = "fastcore" },
+]
+
+[package.optional-dependencies]
+macapp = [
+    { name = "pillow" },
+    { name = "py2app", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'" },
+    { name = "pythonnet", marker = "sys_platform == 'win32'" },
+    { name = "pywebview" },
+]
+window = [
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'" },
+    { name = "pythonnet", marker = "sys_platform == 'win32'" },
+    { name = "pywebview" },
+]
+windows = [
+    { name = "pillow" },
+    { name = "py2exe", marker = "sys_platform == 'win32'" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'" },
+    { name = "pythonnet", marker = "sys_platform == 'win32'" },
+    { name = "pywebview" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastcore", specifier = ">=1.8.17" },
+    { name = "kavacha", extras = ["icons", "window"], marker = "extra == 'macapp'" },
+    { name = "kavacha", extras = ["icons", "window"], marker = "extra == 'windows'" },
+    { name = "nbdev", marker = "extra == 'dev'", specifier = ">=2.4.6" },
+    { name = "pillow", marker = "extra == 'dev'", specifier = ">=10.0" },
+    { name = "pillow", marker = "extra == 'icons'", specifier = ">=10.0" },
+    { name = "py2app", marker = "sys_platform == 'darwin' and extra == 'macapp'", specifier = ">=0.28.8" },
+    { name = "py2exe", marker = "sys_platform == 'win32' and extra == 'windows'", specifier = ">=0.14.2" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin' and extra == 'window'", specifier = ">=10.1" },
+    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin' and extra == 'window'", specifier = ">=10.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pythonnet", marker = "sys_platform == 'win32' and extra == 'window'", specifier = ">=3.0.3" },
+    { name = "pywebview", marker = "extra == 'window'", specifier = ">=5.3" },
+]
+provides-extras = ["window", "icons", "macapp", "windows", "dev"]
+
+[[package]]
 name = "kernmini"
 version = "0.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2340,6 +2389,31 @@ wheels = [
 ]
 
 [[package]]
+name = "kunda"
+source = { editable = "../kunda" }
+dependencies = [
+    { name = "fastcore" },
+    { name = "jupyter-client" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dhrishti", marker = "extra == 'inspect'", specifier = ">=0.1.3" },
+    { name = "fastcore", specifier = ">=1.8.17" },
+    { name = "ipykernel", marker = "extra == 'kernels'", specifier = ">=6.29" },
+    { name = "ipymini", marker = "extra == 'kernels'", specifier = ">=0.1.17" },
+    { name = "jupyasyncclient", marker = "extra == 'gateway'", specifier = ">=0.2.1,!=0.2.8" },
+    { name = "jupygate", marker = "extra == 'gateway'", specifier = ">=0.0.1" },
+    { name = "jupyter-client", specifier = ">=8.6" },
+    { name = "jupywire", marker = "extra == 'gateway'", specifier = ">=0.1.1" },
+    { name = "kunda", extras = ["kernels"], marker = "extra == 'dev'" },
+    { name = "nbdev", marker = "extra == 'dev'", specifier = ">=2.4.6" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+]
+provides-extras = ["kernels", "inspect", "gateway", "dev"]
+
+[[package]]
 name = "lark"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2361,15 +2435,19 @@ dependencies = [
     { name = "ipykernel" },
     { name = "ipymini" },
     { name = "jupyter-client" },
+    { name = "kavacha" },
     { name = "koshas" },
+    { name = "kunda" },
     { name = "litesearch" },
     { name = "mdhtml" },
     { name = "numpy" },
     { name = "packaging" },
     { name = "ptymini" },
+    { name = "pullup" },
     { name = "python-fasthtml" },
     { name = "pyyaml" },
     { name = "ramabana", extra = ["cli"] },
+    { name = "rgapi" },
     { name = "rich" },
     { name = "shalya" },
     { name = "starlette" },
@@ -2393,10 +2471,7 @@ all = [
     { name = "vpseasy" },
 ]
 desktop = [
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'" },
-    { name = "pythonnet", marker = "sys_platform == 'win32'" },
-    { name = "pywebview" },
+    { name = "kavacha", extra = ["window"] },
 ]
 gateway = [
     { name = "jupyasyncclient" },
@@ -2418,20 +2493,10 @@ lsp = [
     { name = "pyright" },
 ]
 macapp = [
-    { name = "pillow" },
-    { name = "py2app", marker = "sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'" },
-    { name = "pythonnet", marker = "sys_platform == 'win32'" },
-    { name = "pywebview" },
+    { name = "kavacha", extra = ["macapp", "window"] },
 ]
 windows = [
-    { name = "pillow" },
-    { name = "py2exe", marker = "sys_platform == 'win32'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'" },
-    { name = "pythonnet", marker = "sys_platform == 'win32'" },
-    { name = "pywebview" },
+    { name = "kavacha", extra = ["window", "windows"] },
 ]
 
 [package.dev-dependencies]
@@ -2484,41 +2549,34 @@ requires-dist = [
     { name = "jupyter-client", specifier = ">=8.9.1" },
     { name = "jupywire", marker = "extra == 'all'", specifier = ">=0.1.1" },
     { name = "jupywire", marker = "extra == 'gateway'", specifier = ">=0.1.1" },
+    { name = "kavacha", editable = "../kavacha" },
+    { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", editable = "../kavacha" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", editable = "../kavacha" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", editable = "../kavacha" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", editable = "../kavacha" },
+    { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", editable = "../kavacha" },
     { name = "keyring", marker = "extra == 'all'", specifier = ">=25.0.0" },
     { name = "keyring", marker = "extra == 'github'", specifier = ">=25.0.0" },
     { name = "koshas", specifier = ">=0.1.7" },
+    { name = "kunda", editable = "../kunda" },
     { name = "litesearch", specifier = ">=0.1.34" },
     { name = "mdhtml", specifier = ">=0.1.21" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "packaging", specifier = ">=24.0" },
-    { name = "pillow", marker = "extra == 'macapp'", specifier = ">=10.0" },
-    { name = "pillow", marker = "extra == 'windows'", specifier = ">=10.0" },
     { name = "ptymini", specifier = ">=0.0.5" },
-    { name = "py2app", marker = "sys_platform == 'darwin' and extra == 'macapp'", specifier = ">=0.28.8" },
-    { name = "py2exe", marker = "sys_platform == 'win32' and extra == 'windows'", specifier = ">=0.14.2" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin' and extra == 'desktop'", specifier = ">=10.1" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin' and extra == 'macapp'", specifier = ">=10.1" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin' and extra == 'windows'", specifier = ">=10.1" },
-    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin' and extra == 'desktop'", specifier = ">=10.1" },
-    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin' and extra == 'macapp'", specifier = ">=10.1" },
-    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin' and extra == 'windows'", specifier = ">=10.1" },
+    { name = "pullup", editable = "../pullup" },
     { name = "pyright", marker = "extra == 'all'", specifier = ">=1.1.400" },
     { name = "pyright", marker = "extra == 'lsp'", specifier = ">=1.1.400" },
     { name = "python-dotenv", marker = "extra == 'all'", specifier = ">=1.0.0" },
     { name = "python-dotenv", marker = "extra == 'github'", specifier = ">=1.0.0" },
     { name = "python-fasthtml", specifier = ">=0.14.9" },
-    { name = "pythonnet", marker = "sys_platform == 'win32' and extra == 'desktop'", specifier = ">=3.0.3" },
-    { name = "pythonnet", marker = "sys_platform == 'win32' and extra == 'macapp'", specifier = ">=3.0.3" },
-    { name = "pythonnet", marker = "sys_platform == 'win32' and extra == 'windows'", specifier = ">=3.0.3" },
-    { name = "pywebview", marker = "extra == 'desktop'", specifier = ">=5.3" },
-    { name = "pywebview", marker = "extra == 'macapp'", specifier = ">=5.3" },
-    { name = "pywebview", marker = "extra == 'windows'", specifier = ">=5.3" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ramabana", extras = ["cli"], specifier = "==0.1.32" },
+    { name = "ramabana", extras = ["cli"], editable = "../ramabana" },
+    { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
     { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'all'", specifier = "==0.1.36" },
     { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.36" },
-    { name = "shalya", specifier = ">=0.0.5" },
+    { name = "shalya", editable = "../shalya" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
     { name = "vishalakshi", specifier = ">=0.1.14" },
@@ -3990,6 +4048,33 @@ wheels = [
 ]
 
 [[package]]
+name = "pullup"
+source = { editable = "../pullup" }
+dependencies = [
+    { name = "fastcore" },
+    { name = "ptymini" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cfeasy", marker = "extra == 'cloud'", specifier = ">=0.0.4" },
+    { name = "dockeasy", marker = "extra == 'cloud'", specifier = ">=0.0.5" },
+    { name = "fastcore", specifier = ">=1.8.17" },
+    { name = "gheasy", marker = "extra == 'cloud'", specifier = ">=0.0.10" },
+    { name = "keyring", marker = "extra == 'cloud'", specifier = ">=25.0.0" },
+    { name = "nbdev", marker = "extra == 'dev'", specifier = ">=3.3.11" },
+    { name = "ptymini", specifier = ">=0.0.5" },
+    { name = "pullup", extras = ["cloud"], marker = "extra == 'dev'" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "python-dotenv", marker = "extra == 'cloud'", specifier = ">=1.0.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "vpseasy", marker = "extra == 'cloud'", specifier = ">=0.0.18" },
+]
+provides-extras = ["cloud", "dev"]
+
+[[package]]
 name = "pure-eval"
 version = "0.2.3"
 source = { registry = "https://pypi.org/simple" }
@@ -4644,8 +4729,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.1.32"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../ramabana" }
 dependencies = [
     { name = "exhash" },
     { name = "fastcore" },
@@ -4662,16 +4746,64 @@ dependencies = [
     { name = "uraiyadal" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a7/97/f2b9b1676954765227ef298e1bcfce0b64758e3b759a396a4a467eb0283d/ramabana-0.1.32.tar.gz", hash = "sha256:e4df8148f9ca2b36c4a3c4e0a5a65a5c96d0f20e493fbdcaf050a3fe5afa004a", size = 182945, upload-time = "2026-09-01T05:29:12.426Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f8/d3/6659e16dc470336f7dd48e58689092f4a8a8944b270f370f9b78c2cabea3/ramabana-0.1.32-py3-none-any.whl", hash = "sha256:4aba151ae416b62513d5e81952c5a25b733faa60768d29254197d9d4d9139d39", size = 195006, upload-time = "2026-09-01T05:29:11.05Z" },
-]
 
 [package.optional-dependencies]
 cli = [
     { name = "pyghostty" },
     { name = "teleprint" },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.12.1" },
+    { name = "agent-client-protocol", marker = "extra == 'all'", specifier = ">=0.12.1" },
+    { name = "agent-client-protocol", marker = "extra == 'dev'", specifier = ">=0.12.1" },
+    { name = "dhrishti", marker = "extra == 'all'", specifier = ">=0.1.2" },
+    { name = "dhrishti", marker = "extra == 'dev'", specifier = ">=0.1.2" },
+    { name = "dhrishti", marker = "extra == 'pyrepl'", specifier = ">=0.1.2" },
+    { name = "exhash", specifier = ">=0.4.9" },
+    { name = "fastcore", specifier = ">=2.1.16" },
+    { name = "fastspec", specifier = ">=0.2.1" },
+    { name = "fossick", specifier = ">=0.1.17" },
+    { name = "gheasy", specifier = ">=0.0.9" },
+    { name = "jupyter-client", marker = "extra == 'all'", specifier = ">=8.9.1" },
+    { name = "jupyter-client", marker = "extra == 'dev'", specifier = ">=8.9.1" },
+    { name = "jupyter-client", marker = "extra == 'pyrepl'", specifier = ">=8.9.1" },
+    { name = "koshas", specifier = ">=0.1.7" },
+    { name = "liteparse", specifier = ">=2.12,<2.13" },
+    { name = "litesearch", specifier = ">=0.1.1" },
+    { name = "mcp", marker = "extra == 'all'", specifier = ">=1.2" },
+    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.2" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2" },
+    { name = "nbdev", marker = "extra == 'dev'", specifier = ">=3.3.11" },
+    { name = "notebook", marker = "extra == 'dev'", specifier = ">=7.6.1" },
+    { name = "pobblebonk", marker = "extra == 'all'", specifier = ">=0.0.3" },
+    { name = "pobblebonk", marker = "extra == 'cron'", specifier = ">=0.0.3" },
+    { name = "pobblebonk", marker = "extra == 'dev'", specifier = ">=0.0.3" },
+    { name = "pyghostty", marker = "extra == 'all'", specifier = ">=0.1.0" },
+    { name = "pyghostty", marker = "extra == 'cli'", specifier = ">=0.1.0" },
+    { name = "pyghostty", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "pyghostty", marker = "extra == 'pyrepl'", specifier = ">=0.1.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rgapi", specifier = ">=0.1.19" },
+    { name = "rishi", specifier = ">=0.1.32" },
+    { name = "rishi", marker = "extra == 'copilot'", specifier = ">=0.1.32" },
+    { name = "rishi", extras = ["all"], marker = "extra == 'all'" },
+    { name = "rishi", extras = ["all"], marker = "extra == 'dev'" },
+    { name = "rishi", extras = ["all"], marker = "extra == 'dev'", specifier = ">=0.1.32" },
+    { name = "shalya", editable = "../shalya" },
+    { name = "teleprint", marker = "extra == 'all'", specifier = ">=0.1.1" },
+    { name = "teleprint", marker = "extra == 'cli'", specifier = ">=0.1.1" },
+    { name = "teleprint", marker = "extra == 'dev'", specifier = ">=0.1.1" },
+    { name = "teleprint", marker = "extra == 'pyrepl'", specifier = ">=0.1.1" },
+    { name = "uraiyadal", specifier = ">=0.0.6" },
+    { name = "vishalakshi", specifier = ">=0.1.14" },
+]
+provides-extras = ["acp", "all", "cli", "copilot", "cron", "dev", "mcp", "pyrepl"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ramabana", extras = ["dev"] }]
 
 [[package]]
 name = "readability-lxml"
@@ -5217,8 +5349,7 @@ wheels = [
 
 [[package]]
 name = "shalya"
-version = "0.0.5"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../shalya" }
 dependencies = [
     { name = "dhrishti" },
     { name = "exhash" },
@@ -5228,10 +5359,28 @@ dependencies = [
     { name = "jupyter-client" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b0/7d/d552a976b8f54313d2038cea2f107ea7e0587ce48ccd25ceea163dc53504/shalya-0.0.5.tar.gz", hash = "sha256:0bc67a17b0f73848f9ece1d673268ffe982458bf69b18b53bb5731a44fad7aac", size = 38535, upload-time = "2026-09-01T04:58:48.735Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/32/39/58240d5f34a77eaa9df1c58792d800847fde24d18dfb762a3626036d8104/shalya-0.0.5-py3-none-any.whl", hash = "sha256:ca833b55688e1d41c9c55630c3a8c8c0be38db587becbde8926d1a9661312372", size = 41852, upload-time = "2026-09-01T04:58:47.536Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "dhrishti" },
+    { name = "exhash", specifier = ">=0.4.9" },
+    { name = "fastcore", specifier = ">=2.1.16" },
+    { name = "fastspec" },
+    { name = "fossick", marker = "extra == 'dev'", specifier = ">=0.1.17" },
+    { name = "fossick", marker = "extra == 'web'", specifier = ">=0.1.17" },
+    { name = "gheasy" },
+    { name = "jupyter-client" },
+    { name = "litesearch", marker = "extra == 'dev'", specifier = ">=0.1.34" },
+    { name = "litesearch", marker = "extra == 'search'", specifier = ">=0.1.34" },
+    { name = "nbdev", marker = "extra == 'dev'", specifier = ">=3.3.11" },
+    { name = "notebook", marker = "extra == 'dev'", specifier = ">=7.6.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "vishalakshi" },
 ]
+provides-extras = ["dev", "search", "web"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "shalya", extras = ["dev"] }]
 
 [[package]]
 name = "shellingham"

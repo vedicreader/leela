@@ -20,7 +20,7 @@ def hub_available():
 
 def _api(root):
     "gheasy owns the token and the client. `GhApi` binds owner and repo, so calls do not repeat them."
-    from gheasy.core import gh_api, gh_token
+    from .seam import gh_api, gh_token
     try: owner, name, api = gh_api(token=gh_token(), path=root)
     except ValueError as e: raise GitError(f'this repository has no GitHub remote ({e})') from e
     return api, owner, name

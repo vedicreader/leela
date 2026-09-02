@@ -354,6 +354,7 @@ def test_the_page_can_ask_the_native_shell_for_a_window(monkeypatch):
     assert api.open_folder('') is False, 'an empty path opens nothing'
 
 
+@pytest.mark.skipif(sys.platform != 'darwin', reason='the Cocoa menu bar is macOS only')
 def test_the_menu_bar_is_in_the_order_macos_expects():
     "pywebview puts its own View and Edit first, which no Mac app does. Ours are the only ones."
     import webview

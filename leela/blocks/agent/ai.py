@@ -10,8 +10,8 @@ from ..fs.fs import Unsafe
 from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, preview_for
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
                          WRITE_TOOLS as HARNESS_WRITE_TOOLS, clip, failed, one_line as _1, summary)
-from shalya.host import (ApiHost, AskHost, CodeHost, DENY, Host, MemoryHost, NotebookHost, SessionHost,
-                         ShellHost, WatchHost, WebHost)
+from shalya.host import (ApiHost, AskHost, CodeHost, DENY, GitHost, Host, MemoryHost, NotebookHost,
+                         SessionHost, ShellHost, WatchHost, WebHost)
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
 #: cannot know. Everything else above is the toolset's own, taken from where it lives.
 from ...agent.tools import tools_for
@@ -258,7 +258,7 @@ class Interventions(Approvals):
             return self._execution_meta.pop(i) if i is not None else {}
 
 class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiHost, ShellHost,
-                    SessionHost, AskHost, Host):
+                    SessionHost, AskHost, GitHost, Host):
     "A `Workspace`, answering the harness's questions."
     mk_chat = None                          # `Agent.lend_model` fills this; declaring it is the opt-in
     # Leela serves the inspector from inside the kernel process, so this holds for ipykernel too.

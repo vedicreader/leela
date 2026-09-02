@@ -33,15 +33,15 @@ dependencies = [
     # re-export seams stay for a release; a second package's spelling of the same object is not
     # a dependency worth keeping.
     "shalya>=0.0.6",   # 0.0.6 is `read_page` and `tool_groups`
-    "gheasy>=0.0.10",   # 0.0.10 makes the six helpers Leela imports public
+    "gheasy>=0.0.9",   # `blocks/git/seam.py` takes the public names from 0.0.10 or the private ones
     "fastcore>=1.7.0",
     # The three packages Leela's own code was lifted into. `kavacha` is a base dependency and not
     # a desktop extra: `blocks/keys/menus.py` takes the menu vocabulary from it, and its spec,
     # bundle and probe halves need nothing but fastcore. `kunda` is the kernels and the interpreter
     # discovery; `pullup` the project, the release pipeline, the deploys and the workflows.
-    "kavacha>=0.0.1",
-    "kunda>=0.0.1",
-    "pullup>=0.0.3",
+    "kavacha>=0.0.2",
+    "kunda>=0.0.2",
+    "pullup>=0.0.4",
     "exhash>=0.4.10",
     "fossick>=0.1.17",   # caches JSON, not pickle: GHSA-w8v5-vhqr-4h9v has no fixed release
     "ipykernel>=7.3.0",        # launched, not imported: leela's own venv is a kernel target
@@ -73,7 +73,7 @@ dependencies = [
 ipymini = [] # compatibility extra; ipymini now ships with Leela
 lsp = ["pyright>=1.1.400"]
 github = [
-    "gheasy>=0.0.10",
+    "gheasy>=0.0.9",
     "dockeasy>=0.0.5",
     "vpseasy>=0.0.18",
     "cfeasy>=0.0.4",
@@ -149,3 +149,10 @@ constraint-dependencies = ["mcp<2"]
 
 [tool.uv.sources]
 leela = { workspace = true }
+# The six packages Leela composes are developed beside it. Point at the checkouts, so a change to a
+# seam is testable from here before either side is released. Drop a line to take the published one.
+ramabana = { path = "../ramabana", editable = true }
+shalya = { path = "../shalya", editable = true }
+kavacha = { path = "../kavacha", editable = true }
+kunda = { path = "../kunda", editable = true }
+pullup = { path = "../pullup", editable = true }

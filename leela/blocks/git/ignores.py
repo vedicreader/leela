@@ -67,6 +67,6 @@ def prepare(repo, folder, write=True):
         if added:
             head = old + ([''] if old and old[-1].strip() else [])
             target.write_text('\n'.join(head + added) + '\n', encoding='utf-8')
-            from gheasy.repo import invalidate
+            from .seam import invalidate
             invalidate(repo.root)
     return {'kinds': [k for k, _ in missing], 'added': added, 'path': str(target)}
