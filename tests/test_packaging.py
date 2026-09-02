@@ -588,12 +588,13 @@ def test_the_build_environment_installs_what_the_lock_names(tmp_path, monkeypatc
     import setup_app
     req = setup_app.lock_requirements()
     assert req is not None and req.exists(), 'uv export answered nothing'
-    # Two spellings, both exact: a registry pin is `name==version`, and a package taken from a
-    # branch exports as `name @ git+URL@sha`, which pins harder. Neither may be a floor.
-    pinned, from_git = {}, {}
+    # Three spellings, all exact: a registry pin is `name==version`, a package taken from a branch
+    # exports as `name @ git+URL@sha`, and a checkout beside this one as `-e ../name`. None is a floor.
+    pinned, from_git, local = {}, {}, set()
     for line in req.read_text().splitlines():
         if line.startswith(('#', ' ')) or not line.strip(): continue
-        if ' @ git+' in line:
+        if line.startswith('-e '): local.add(Path(line[3:].strip()).name)
+        elif ' @ git+' in line:
             nm, _, ref = line.partition(' @ git+')
             from_git[nm.strip()] = ref.strip()
         elif '==' in line:
@@ -603,14 +604,16 @@ def test_the_build_environment_installs_what_the_lock_names(tmp_path, monkeypatc
     lock = tomllib.loads((setup_app.ROOT/'uv.lock').read_text())
     named = {p['name']: p['version'] for p in lock['package'] if 'version' in p}
     for name in ('rishi', 'ramabana', 'fastcore'):
-        assert name in pinned or name in from_git, f'{name} missing from the exported requirements'
+        assert name in pinned or name in from_git or name in local, \
+            f'{name} missing from the exported requirements'
+        if name in local: continue
         if name in from_git:
             assert re.search(r'@[0-9a-f]{40}$', from_git[name]), \
                 f'{name} comes from git at {from_git[name]}, which names no commit'
             continue
         assert pinned[name].split(';')[0].strip() == named[name], \
             f'{name} pinned at {pinned[name]} but the lock names {named[name]}'
-    assert 'leela' not in pinned and 'leela' not in from_git, \
+    assert 'leela' not in pinned and 'leela' not in from_git and 'leela' not in local, \
         'the project itself is installed editable, not from the lock'
 
 def test_the_exported_requirements_live_where_git_ignores_them():

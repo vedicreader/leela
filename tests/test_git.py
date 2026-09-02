@@ -1718,7 +1718,6 @@ def test_the_pull_request_panel_gets_a_blocking_github_client(monkeypatch, tmp_p
     from leela.blocks.git import hub
     g = pytest.importorskip('gheasy.core')
     monkeypatch.setattr(g, '_get_repo_slug', lambda path='.': ('vedicreader', 'leela'))
-    # the token only: whether `gh_api` binds a blocking client is the point
     monkeypatch.setattr('leela.blocks.git.seam.gh_token', lambda *a, **kw: 'tok')
     api, owner, name = hub._api(str(tmp_path))
     assert not iscoroutinefunction(type(api.pulls.list).__call__)
