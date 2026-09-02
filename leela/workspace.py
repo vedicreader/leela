@@ -196,14 +196,13 @@ class Workspace:
         self.pool = KernelPool(port=port, default_kernel=kernel, default_python=runtime_python,
                                transport=transport, gateway=gateway)
         self.dev = DevServers(port=dev_port)
-        from .core.ports import build as build_provider
-        from .blocks.memory.memory import memory_shelf
-        self.search = build_provider('search', self.fs)
+        from .blocks.memory.memory import Memory, memory_shelf
+        from .blocks.search.search import Search
+        self.search = Search(self.fs)
         # the index a search reads is the one for the folder being worked in, as the interpreter is
         self.search.focus = self.cwd_for
         root = first(self.fs.roots)
-        self.memory = build_provider('memory', shelf=memory_shelf(root),
-                                     kosha=getattr(self.search, '_kosha', None))
+        self.memory = Memory(shelf=memory_shelf(root), kosha=getattr(self.search, '_kosha', None))
         from .blocks.memory.vaults import Vaults
         self.vaults = Vaults(shelf=memory_shelf(root), own=self.memory)
         self.research = Research(self.fs, memory=self.memory)

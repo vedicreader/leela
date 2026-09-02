@@ -47,7 +47,7 @@ for a panel one block deliberately owns over another's data.
 
 Common capabilities: `fs`, `pool`, `search`, `memory`, `research`, `runs`, `journal`, `jobs`, `vaults`, `ai`, `lsp`, `tab`, and `pending_approval`. A block without `CAPS` is unrestricted.
 
-`leela/core/ports.py` defines `MemoryPort`, `SearchPort`, and `RuntimePort`. Owning blocks register default providers. Run `python -m leela.conformance <port> <name>` for alternates.
+What the agent can reach is `WorkspaceHost.provides`, which is shalya's capability groups and nothing beside them. `docs/integration.md` is the map from a group to the block that backs it.
 
 ```python
 from .blocks import BLOCKS

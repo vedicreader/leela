@@ -1,4 +1,4 @@
-"Search routes over the `SearchPort`; every backend blocks, so every call goes through."
+"Search routes; every backend blocks, so every call goes through."
 
 from __future__ import annotations
 

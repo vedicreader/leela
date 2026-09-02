@@ -1,7 +1,8 @@
-"Core: the block contract, ports, diffs, settings, routes and the journal."
+"Core: the block contract, the host boundary, diffs, settings, routes and the journal."
 
-import re
 import ast
+import importlib
+import re
 import json
 import subprocess
 import sys
@@ -11,19 +12,16 @@ import pytest
 from starlette.testclient import TestClient
 from leela.blocks import keys as keys_block
 from leela.blocks import settings as settings_block
+from leela import core
 from leela.core import Ctx, connect_all
 from leela.app import BLOCKS, ide_app
 from leela.workspace import Workspace
 ROOT = Path(__file__).resolve().parents[1]
-from leela.core import (CAPABILITIES, DebugState, DocStore, MemoryPort, RunState,
-                        RuntimePort, SearchPort)
+from leela.core import CAPABILITIES, DebugState, DocStore, RunState
 from leela.core.text import (closest, diff_label, diff_rows, diff_stat,
                                 did_you_mean, fuzzy_rank, udiff)
 from leela.blocks.fs.fs import Sandbox
 from leela.core.session import OperationJournal
-from leela import conformance
-from leela.core import ports as providers
-from leela.core.ports import ProviderError, build, providers_for, selected
 from leela.blocks.settings.settings import DEFAULT_SETTINGS, Settings
 import asyncio
 from leela.core.envs import EnvStore
@@ -474,7 +472,7 @@ def test_core_imports_no_block():
     assert json.loads(r.stdout) == [], (
         'leela.core reached into a block. Anything two blocks need belongs in core itself; '
         'anything that must name an implementation belongs above the blocks, the way '
-        'leela/conformance.py does.')
+        'leela/workspace.py does.')
 
 def test_no_domain_module_imports_another_blocks_routes_or_ui():
     "A block may use another block's domain module -- never its routes or its fragments."
@@ -681,20 +679,12 @@ def test_debugstate_clears_the_notebook_and_script_sessions_separately():
     d.clear_direct()
     assert d.direct_session is None and d.direct_name == ''
 
-def test_the_current_implementations_conform_to_their_ports(ws):
-    "The Protocols are extracted from these classes; drift between them is a bug in the port."
-    assert isinstance(ws.memory, MemoryPort)
-    assert isinstance(ws.search, SearchPort)
-
-def test_the_agent_backend_conforms_to_the_runtime_port():
-    "The contract ramabana has to meet, asserted against the implementation that defines it."
-    import inspect
-    from leela.agent.runtime import Backend
-    missing = sorted(m for m in RuntimePort.__protocol_attrs__
-                     if m != 'spec' and not hasattr(Backend, m))
-    assert not missing, f'Backend no longer satisfies RuntimePort: {missing}'
-    assert 'spec' in inspect.signature(Backend.__init__).parameters
-    for p in ('ready', 'busy', 'hist'): assert isinstance(getattr(Backend, p), property)
+def test_the_workspace_builds_its_own_search_and_memory(ws):
+    "Directly, because there was never a second implementation of either to choose between."
+    from leela.blocks.memory.memory import Memory
+    from leela.blocks.search.search import Search
+    assert isinstance(ws.search, Search) and isinstance(ws.memory, Memory)
+    assert ws.search.focus == ws.cwd_for, 'and the index it reads follows the folder in hand'
 
 A = 'def f(x):\n    return x\n\nz = 1\n'
 B = 'def f(x, y=0):\n    return x + y\n\nz = 1\nw = 2\n'
@@ -792,108 +782,56 @@ def test_workspace_journal_refuses_diverged_files_atomically(tmp_path):
         journal.undo(op['id'])
     assert a.read_text() == 'a2' and b.read_text() == 'newer'
 
-@pytest.fixture(autouse=True)
-def clean_registry():
-    "Each test gets the real registry back, so an installed fake cannot leak."
-    import copy
-    saved = copy.deepcopy(providers._REGISTRY)
-    yield
-    providers._REGISTRY.clear(); providers._REGISTRY.update(saved)
+def test_the_second_capability_model_is_retired():
+    """`leela/core/ports.py` and `leela/conformance.py` were a parallel answer to the question
+    shalya's `Host` already answers: three Protocols over fifty method signatures, a provider
+    registry, an environment override, and a conformance checker with a hand-maintained table of
+    expected parameter names. Exactly one provider was ever registered per port, all three named
+    `leela`, and the swap the machinery existed to permit never happened once. `RuntimePort` was a
+    hand-copy of `ramabana.runtime.Backend` that had already drifted: `Backend` grew `spawn`,
+    `resume_hist`, `revise_last_assistant`, `used_tokens`, `pct_full`, `fits` and `problem`, and
+    the Protocol listed none of them."""
+    assert not (ROOT/'leela'/'core'/'ports.py').exists()
+    assert not (ROOT/'leela'/'conformance.py').exists()
+    with pytest.raises(ImportError): importlib.import_module('leela.core.ports')
+    with pytest.raises(ImportError): importlib.import_module('leela.conformance')
+    for gone in ('MemoryPort', 'SearchPort', 'RuntimePort', 'provider', 'build', 'selected',
+                 'providers_for', 'ProviderError', 'register'):
+        assert not hasattr(core, gone), f'leela.core still re-exports {gone}'
 
-def test_conformance_checks_a_port_without_constructing_it():
-    from leela.agent.runtime import Backend
-    for port in ('memory', 'search', 'runtime'):
-        assert 'leela' in providers_for(port)
-    ws = Workspace(roots=[])
-    assert conformance.check('memory', ws.memory) == []
-    assert conformance.check('search', ws.search) == []
-    assert conformance.check('runtime', Backend) == []
-    obj = _stub('memory', search=lambda self, q, n=8: [])()
-    assert isinstance(obj, MemoryPort), 'isinstance is satisfied, which is the problem'
-    problems = conformance.check('memory', obj)
-    assert any("search: leela passes ['query', 'limit']" in p for p in problems)
-    obj = _stub('runtime', ready=lambda self: True)()
-    problems = conformance.check('runtime', obj)
-    assert any('ready: port declares an attribute' in p for p in problems)
-    obj = _stub('memory', search='not callable')()
-    assert any('search: port declares a method' in p for p in conformance.check('memory', obj))
-    assert conformance.check('memory', _stub('memory')()) == []
-    assert 'missing: spec' not in conformance.check('runtime', Backend)
-    ok = conformance.report('memory', Workspace(roots=[]).memory)
-    assert ok.startswith('memory <- Memory: OK')
-    bad = conformance.report('memory', object(), label='nothing')
-    assert 'problem(s)' in bad and '  - missing:' in bad
-    with pytest.raises(ValueError, match='unknown port'): conformance.check('telepathy', object())
+def test_no_source_registers_a_provider_or_reads_a_provider_environment_variable():
+    "The env override never selected anything but the default, and nothing may bring it back."
+    gone = re.compile(r'core\.ports|@provider\(|LEELA_(?:MEMORY|SEARCH|RUNTIME)(?![_A-Z])')
+    bad = [f'{path.relative_to(ROOT)}:{n}: {m.group(0)}'
+           for path in sorted((ROOT/'leela').rglob('*.py'))
+           for n, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1)
+           if (m := gone.search(line))]
+    assert bad == [], '\n'.join(bad)
 
+def test_host_provides_is_the_one_way_to_ask_what_the_agent_can_do(ws):
+    "shalya's groups, read off the class, less the ones whose backend is not attached."
+    from leela.blocks.agent.ai import WorkspaceHost
+    host = WorkspaceHost(ws)
+    declared = {c.group for c in type(host).__mro__ if getattr(c, 'group', '')}
+    assert {'file', 'code', 'web', 'memory', 'notebook', 'session'} <= declared
+    assert host.provides == declared - set(host.without)
+    assert 'file' in host.provides, 'every host has the path boundary the file tools need'
+    for group in host.provides: assert host.can(group)
+    for group in host.without: assert not host.can(group)
 
-def test_selection_prefers_an_explicit_override_then_the_environment(monkeypatch):
-    monkeypatch.delenv('LEELA_MEMORY', raising=False)
-    assert selected('memory') == 'leela'
-    monkeypatch.setenv('LEELA_MEMORY', 'vishalakshi')
-    assert selected('memory') == 'vishalakshi'
-    assert selected('memory', 'ramabana') == 'ramabana', 'an explicit override wins'
+def test_a_host_that_declares_a_group_it_has_not_written_refuses_to_be_built():
+    "What conformance checking was for, except that shalya enforces it at construction."
+    from shalya.host import CodeHost, Host
+    class Half(Host, CodeHost):
+        @property
+        def roots(self): return []
+        def check(self, path, must_exist=False, reading=False): return path
+        def walk(self): return []
+        def read(self, path): return None
+        def write(self, path, text): return path
+        def text_at(self, path): return ''
+    with pytest.raises(TypeError, match='abstract'): Half()
 
-def test_an_unknown_provider_raises_and_names_what_is_available(monkeypatch):
-    monkeypatch.setenv('LEELA_MEMORY', 'nope')
-    with pytest.raises(ProviderError, match="unknown memory provider 'nope'.*available: leela"):
-        build('memory')
-
-def test_a_provider_whose_package_is_missing_says_so(monkeypatch):
-    "The failure a user actually hits before pip-installing the alternate."
-    def missing(**kw): raise ImportError("No module named 'vishalakshi'")
-    providers.register('memory', 'vishalakshi', missing)
-    monkeypatch.setenv('LEELA_MEMORY', 'vishalakshi')
-    with pytest.raises(ProviderError, match='not installed'): build('memory')
-
-def test_a_broken_provider_never_falls_back_to_the_builtin(monkeypatch):
-    "Silently running on the default would make an A/B comparison meaningless -- you"
-    providers.register('memory', 'boom', lambda **kw: 1/0)
-    monkeypatch.setenv('LEELA_MEMORY', 'boom')
-    with pytest.raises(ProviderError, match='failed to start'): build('memory')
-
-def test_a_registered_alternate_is_what_the_workspace_builds(monkeypatch):
-    "End to end: the switch really changes what a Workspace ends up holding."
-    sentinel = object()
-    providers.register('memory', 'fake', lambda **kw: sentinel)
-    monkeypatch.setenv('LEELA_MEMORY', 'fake')
-    assert Workspace(roots=[]).memory is sentinel
-
-def test_the_default_workspace_still_builds_the_builtin(monkeypatch):
-    from leela.blocks.memory.memory import Memory
-    monkeypatch.delenv('LEELA_MEMORY', raising=False)
-    assert isinstance(Workspace(roots=[]).memory, Memory)
-
-
-def _stub(port, **overrides):
-    "A class with every member the port names, as real attributes."
-    proto = conformance.PORTS[port]
-    ns = {}
-    for name in proto.__protocol_attrs__:
-        ns[name] = (lambda self, *a, **kw: None) if callable(getattr(proto, name, None)) else ''
-    ns.update(overrides)
-    return type(f'Stub{port.title()}', (), ns)
-
-
-@pytest.mark.parametrize('port', ['memory', 'search', 'runtime'])
-def test_every_port_can_be_checked_from_the_command_line(port, capsys):
-    "`python -m leela.conformance <port>` is the first thing to run against an"
-    assert conformance._main([port]) == 0
-    assert 'OK' in capsys.readouterr().out
-
-def test_the_cli_reports_a_bad_provider_without_a_traceback(capsys):
-    assert conformance._main(['memory', 'nosuch']) == 2
-    out = capsys.readouterr().out
-    assert 'unknown memory provider' in out and 'Traceback' not in out
-
-def test_the_cli_rejects_an_unknown_port_with_usage(capsys):
-    assert conformance._main(['telepathy']) == 2
-    assert 'usage:' in capsys.readouterr().out
-
-def test_the_cli_exits_nonzero_when_an_implementation_does_not_conform(capsys, monkeypatch):
-    providers.register('memory', 'broken', lambda **kw: _stub('memory', search='nope')())
-    monkeypatch.setenv('LEELA_MEMORY', 'broken')
-    assert conformance._main(['memory']) == 1
-    assert 'port declares a method' in capsys.readouterr().out
 
 def test_settings_layer_default_user_workspace_and_language(tmp_path):
     root, user = tmp_path/'project', tmp_path/'user.json'
