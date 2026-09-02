@@ -748,3 +748,64 @@ def test_what_the_search_dialog_was_last_set_to_is_a_setting_it_can_save(tmp_pat
     got = saved['effective']['search']
     assert (got['lastMode'], got['lastScope'], got['lastExts']) == ('rg', 'workspace', 'py, ts')
     assert s.describe()['origins']['search']['lastMode'] == 'user'
+
+def test_ripgrep_is_called_through_rgapi_and_not_a_hand_built_command_line():
+    """`_rg` built ripgrep's `--json` command line and parsed its event stream by hand, about
+    forty lines. shalya calls `rgapi.rg`, and now so does this: one place knows the flags, and a
+    non-UTF8 path or a colon in a filename is rgapi's problem rather than a parser here."""
+    import inspect
+    from leela.blocks.search import search as mod
+    src = inspect.getsource(mod.Search._rg)
+    assert 'from rgapi import rg' in src
+    for gone in ('--json', 'subprocess.run', 'json.loads', '--max-filesize', 'shutil.which'):
+        assert gone not in src, f'{gone} is rgapi\'s job'
+
+def test_a_literal_search_stays_literal_and_a_regex_search_does_not(tmp_path):
+    "rgapi has no fixed-strings flag, so a literal pattern is escaped rather than passed through."
+    (tmp_path/'a.py').write_text('needle here\n')
+    (tmp_path/'b.py').write_text('nee.le there\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    literal = {Path(h.path).name for h in s._rg('nee.le', 20)}
+    assert literal == {'b.py'}, 'a dot in a literal search is a dot'
+    assert {Path(h.path).name for h in s._rg('nee.le', 20, regex=True)} == {'a.py', 'b.py'}
+
+def test_an_environment_search_reaches_past_the_ignore_file(tmp_path):
+    "`no_ignore` is the whole point of the flag: `.venv` is in everyone's `.gitignore`."
+    (tmp_path/'.gitignore').write_text('hidden.py\n')
+    (tmp_path/'hidden.py').write_text('needle here\n')
+    (tmp_path/'shown.py').write_text('needle here\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    assert {Path(h.path).name for h in s._rg('needle', 20)} == {'shown.py'}
+    assert {Path(h.path).name for h in s._rg('needle', 20, no_ignore=True)} == {'hidden.py', 'shown.py'}
+
+def test_rg_hits_are_absolute_and_carry_the_line_and_the_backend(tmp_path):
+    "rgapi answers with paths relative to the root it was given; every surface here wants absolute."
+    (tmp_path/'a.py').write_text('one\ntwo\nneedle here\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    hit = s._rg('needle', 20)[0]
+    assert Path(hit.path).is_absolute() and Path(hit.path) == tmp_path/'a.py'
+    assert (hit.line, hit.text, hit.kind) == (3, 'needle here', 'rg')
+    assert s.backend == 'rg' and 'ripgrep' in s.note
+
+def test_a_case_sensitive_search_and_an_extension_filter_both_still_narrow(tmp_path):
+    (tmp_path/'a.py').write_text('Needle here\n')
+    (tmp_path/'b.txt').write_text('Needle here\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    assert len(s._rg('needle', 20)) == 2, 'insensitive by default'
+    assert s._rg('needle', 20, cased=True) == []
+    assert {Path(h.path).name for h in s._rg('Needle', 20, exts=['py'])} == {'a.py'}
+    assert '*.py' in s.note
+
+def test_without_rgapi_the_python_fallback_answers_and_says_so(tmp_path, monkeypatch):
+    "The scan is slower and always right, and a missing package is not an empty result."
+    import builtins
+    (tmp_path/'a.py').write_text('needle here\n')
+    real = builtins.__import__
+    def no_rgapi(name, *a, **kw):
+        if name == 'rgapi': raise ImportError("No module named 'rgapi'")
+        return real(name, *a, **kw)
+    monkeypatch.setattr(builtins, '__import__', no_rgapi)
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    hits = s._rg('needle', 20)
+    assert [Path(h.path).name for h in hits] == ['a.py']
+    assert s.backend == 'scan' and 'not installed' in s.note

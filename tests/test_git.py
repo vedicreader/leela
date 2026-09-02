@@ -1686,9 +1686,9 @@ def test_the_pull_request_panel_calls_github_the_way_ghapi_binds_it(monkeypatch,
             return go
     api = types.SimpleNamespace(pulls=Group('pulls'), repos=Group('repos'), checks=Group('checks'))
     fake = types.ModuleType('gheasy.core')
-    fake._gh_api = lambda token=None, path='.': ('vedicreader', 'leela', api)
+    fake.gh_api = lambda token=None, path='.': ('vedicreader', 'leela', api)
     fake._get_repo_slug = lambda path='.': ('vedicreader', 'leela')
-    fake._resolve_gh_token = lambda: 'tok'
+    fake.gh_token = lambda: 'tok'
     monkeypatch.setitem(sys.modules, 'gheasy.core', fake)
     monkeypatch.setattr(hub, 'hub_available', lambda: True)
 
@@ -1719,7 +1719,7 @@ def test_the_pull_request_panel_gets_a_blocking_github_client(monkeypatch, tmp_p
     from leela.blocks.git import hub
     g = pytest.importorskip('gheasy.core')
     monkeypatch.setattr(g, '_get_repo_slug', lambda path='.': ('vedicreader', 'leela'))
-    monkeypatch.setattr(g, '_resolve_gh_token', lambda *a, **kw: 'tok')
+    monkeypatch.setattr(g, 'gh_token', lambda *a, **kw: 'tok')
     api, owner, name = hub._api(str(tmp_path))
     assert not iscoroutinefunction(type(api.pulls.list).__call__)
     assert (owner, name) == ('vedicreader', 'leela')

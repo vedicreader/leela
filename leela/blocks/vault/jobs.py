@@ -11,12 +11,13 @@ __all__ = ['Job', 'Jobs', 'JobError', 'ACTIVE', 'TERMINAL', 'every_seconds', 'ca
 ACTIVE = ('queued', 'running')
 TERMINAL = ('complete', 'error')
 
-UNITS = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 604800}
-
 def every_seconds(spec, default=3600):
-    m = re.fullmatch(r'\s*(\d+)\s*([smhdw])?\s*', str(spec or '').lower())
-    if not m: return default
-    return max(60, int(m.group(1)) * UNITS.get(m.group(2) or 'h', 3600))
+    "Seconds from `'30m'`, `'6h'`, or a bare number of hours. `default` when it is not a duration."
+    from ...agent.monitor import secs
+    text = ''.join(str('' if spec is None else spec).split()).lower()
+    if not re.fullmatch(r'\d+(?:\.\d+)?[smhdw]?', text): return default
+    try: return max(60, secs(text if text[-1].isalpha() else text + 'h'))
+    except ValueError: return default
 
 def cadence(seconds):
     seconds = int(seconds or 0)

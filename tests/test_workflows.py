@@ -212,8 +212,8 @@ class _Api:
 class _Core:
     "As much of gheasy.core as `Workflows._api` uses, over a client that is async by default."
     GhApi = staticmethod(lambda owner=None, repo=None, token=None, sync=False: _Api(sync=sync))
-    _resolve_gh_token = staticmethod(lambda: 'token')
-    _gh_api = staticmethod(lambda token, path: ('o', 'r', _Api()))
+    gh_token = staticmethod(lambda: 'token')
+    gh_api = staticmethod(lambda token, path: ('o', 'r', _Api()))
 
 def test_github_calls_get_the_synchronous_client(tmp_path, monkeypatch):
     "Left async, every call returns a coroutine and Environment's refresh raises on `.get`."

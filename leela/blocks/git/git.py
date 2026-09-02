@@ -5,8 +5,8 @@ from __future__ import annotations
 import json, sys
 
 from fastcore.all import Path, first
-from gheasy.repo import (GitError, GitRepo as _GitRepo, _invalidate, _plural, _unborn, clone,
-    clone_target, gateway, repo_root)
+from gheasy.repo import (GitError, GitRepo as _GitRepo, clone, clone_target, gateway,
+    invalidate, plural, repo_root, unborn)
 
 from ..nb.nb import source_spans as _source_spans
 from ..nb.nb import merge_rows as _merge_rows, merged_cells as _merged_cells
@@ -81,7 +81,7 @@ class GitRepo(_GitRepo):
         remaining = [c['path'] for c in self._changes_uncached() if c['conflicted']]
         return {'path': path, 'choice': choice, 'conflicted': remaining, 'deleted': True,
             'operation': self._operation(),
-            'summary': f'{_plural(len(remaining), "file")} still conflicted' if remaining else
+            'summary': f'{plural(len(remaining), "file")} still conflicted' if remaining else
                 'every conflict is resolved -- commit to finish the merge'}
     def index_entries(self, paths):
         "`update-index --index-info` lines for these paths, unmerged stages and all."
@@ -97,7 +97,7 @@ class GitRepo(_GitRepo):
         if target.exists() and not target.is_file(): raise GitError(f'{path} is not a working-tree file')
         if not target.parent.exists(): raise GitError(f'the parent directory for {path} does not exist')
         self.save(target, content)
-        _invalidate(self.root)
+        invalidate(self.root)
     def ignore(self, path, directory=False):
         "Add one repository-relative path to .gitignore without duplicating an existing rule."
         rule = str(path).strip().strip('/') + ('/' if directory else '')
@@ -106,15 +106,14 @@ class GitRepo(_GitRepo):
         lines = target.read_text(encoding='utf-8').splitlines() if target.exists() else []
         if rule not in lines:
             self.save(target, '\n'.join(lines + [rule]) + '\n')
-            _invalidate(self.root)
+            invalidate(self.root)
         return {'path': str(target), 'rule': rule}
     #: Where git keeps the three sides of a conflict while a merge is unfinished.
     STAGES = {'base': 1, 'ours': 2, 'theirs': 3}
 
     def _stage(self, path, stage):
         "One side of a conflicted file, as text, or `''` where that side has no file."
-        from gheasy.repo import _run
-        r = _run(self.root, 'show', f':{stage}:{path}', check=False)
+        r = gateway().run(self.root, 'show', f':{stage}:{path}', check=False)
         return r.stdout if r.returncode == 0 else ''
 
     def notebook_conflict(self, path):
@@ -174,10 +173,10 @@ class GitRepo(_GitRepo):
                     if r is None: continue
                     lines.append({'line': n, 'n': n - span[0] + 1, 'text': str(text).rstrip('\n'),
                         'oid': r['oid'], 'author': r['author'], 'summary': r['summary'],
-                        'timestamp': r['timestamp'], 'uncommitted': _unborn(r['oid'])})
+                        'timestamp': r['timestamp'], 'uncommitted': unborn(r['oid'])})
                     seen.setdefault(r['oid'], {'oid': r['oid'], 'author': r['author'],
                         'summary': r['summary'], 'timestamp': r['timestamp'],
-                        'uncommitted': _unborn(r['oid'])})
+                        'uncommitted': unborn(r['oid'])})
             commits, last = {}, None
             for row in lines:
                 commits[row['oid']] = commits.get(row['oid'], 0) + 1

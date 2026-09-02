@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from ..runtime.support import clean_env
-import ast, json, re, shutil, subprocess
+import ast, json, re, subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from functools import wraps
@@ -403,39 +403,27 @@ class Search:
                     if len(out) >= limit: return out
         return out
     def _rg(self, q, limit, regex=False, exts=(), roots=None, no_ignore=False, cased=False):
-        "Fast, current-disk search. JSON output keeps colons and non-UTF8 paths unambiguous. `no_ignore` reaches into `.venv`."
-        exe = shutil.which('rg')
-        if not exe:
+        "Fast, current-disk search through rgapi. `no_ignore` reaches into `.venv`."
+        try: from rgapi import rg
+        except ImportError:
             self.backend, self.note = 'scan', 'ripgrep is not installed; Python fallback'
             return self._scan(q, limit, regex, exts, roots)
         globs = [f'*{e}' for e in sorted(self.clean_exts(exts))]
+        kw = dict(case_sensitive=bool(cased), max_filesize=MAX_SCAN_BYTES, timeout_ms=15_000,
+                  max_results=limit, skip_dir=['__pycache__'])
+        if globs: kw['ext'] = [g[2:] for g in globs]
+        if no_ignore: kw['ignore'] = False
         out = L()
         for root in (roots if roots is not None else self.fs.roots):
-            cmd = [exe, '--json', '--max-filesize', str(MAX_SCAN_BYTES),
-                   '--case-sensitive' if cased else '--ignore-case']
-            # the skip list is matched from the working directory, so `!.venv/**` excludes the very
-            # tree an environment search is pointed at. An environment search skips the list instead.
-            if no_ignore: cmd += ['--no-ignore', '--glob', '!__pycache__/**']
-            else: cmd += ['--glob', '!{.git,.hg,.svn,.venv,venv,node_modules,__pycache__,dist,build}/**']
-            for g in globs: cmd += ['--glob', g]
-            if not regex: cmd.append('--fixed-strings')
-            cmd += ['--', q, str(root)]
-            try: p = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            try: found = list(rg(q if regex else re.escape(q), root=str(root), **kw))
             except Exception as e:
                 self.note = f'ripgrep failed ({errstr(e)}); Python fallback'
                 return self._scan(q, limit, regex)
-            if p.returncode not in (0, 1):
-                self.note = (p.stderr or 'ripgrep failed').strip()[:200]
-                return L()
-            for line in p.stdout.splitlines():
-                try: msg = json.loads(line)
-                except Exception: continue
-                if msg.get('type') != 'match': continue
-                d = msg.get('data') or {}
-                path = (d.get('path') or {}).get('text') or ''
-                text = (d.get('lines') or {}).get('text') or ''
-                out.append(Hit(path=path, line=int(d.get('line_number') or 1),
-                    text=text.rstrip('\r\n').strip()[:200], kind='rg'))
+            for m in found:
+                if getattr(m, 'kind', 'match') != 'match': continue
+                path = Path(m.path)
+                out.append(Hit(path=str(path if path.is_absolute() else Path(root)/path),
+                    line=int(m.line_number or 1), text=(m.line or '').strip()[:200], kind='rg'))
                 if len(out) >= limit:
                     self.backend, self.note = 'rg', f'first {limit} matches on disk'
                     return out

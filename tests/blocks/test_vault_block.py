@@ -90,9 +90,22 @@ def test_a_cadence_is_read_as_written(spec, secs):
     assert every_seconds(spec) == secs
 
 def test_an_unreadable_cadence_is_the_default_rather_than_a_busy_loop():
-    for junk in ('', None, 'soon', '1 fortnight', '-4h'):
+    for junk in ('', None, 'soon', '1 fortnight', '-4h', '3x', '1h30m'):
         assert every_seconds(junk) == 3600
     assert every_seconds('0s') == 60, 'zero would poll continuously'
+
+def test_the_units_table_is_the_one_the_rest_of_the_family_uses():
+    """`every_seconds` carried its own `UNITS` dict. `ramabana.monitor.secs` exists for exactly
+    this and says so in its own comment, delegating to `pobblebonk.core.secs`. What stays here is
+    Leela's: a bare number means hours in this field, and an unreadable cadence is the default."""
+    import inspect
+    from leela.agent.monitor import secs
+    from leela.blocks.vault import jobs
+    assert not hasattr(jobs, 'UNITS')
+    assert 'secs' in inspect.getsource(jobs.every_seconds)
+    for spec in ('30m', '6h', '1d', '2w', '90s'): assert every_seconds(spec) == secs(spec)
+    assert every_seconds('3') == secs('3h') == 10800, 'a bare number is hours, which is Leela\'s'
+    assert every_seconds('  5 m ') == 300, 'and whitespace in the field is a person, not an error'
 
 def test_a_cadence_says_itself_at_the_coarsest_unit_that_divides_it():
     assert cadence(86400) == 'every 1 day' and cadence(172800) == 'every 2 days'

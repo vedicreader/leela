@@ -128,7 +128,7 @@ class Browser:
     def running(self):
         "Whether a debug Chrome is already answering on the port, asked without starting one."
         try:
-            from fossick.cdp import _debug_ready
+            from fossick.cdp import _debug_ready   # the one seam still behind an underscore
             return bool(_debug_ready(self.port))
         except Exception: return False
 
