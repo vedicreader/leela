@@ -375,15 +375,17 @@ def test_the_path_prelude_is_written_in_the_users_own_shell():
 
 def test_terminals_report_the_key_each_pty_is_filed_under(tmp_path):
     "The browser picks terminal ids, so it has to know which are taken."
+    import asyncio
     from leela.blocks.term.term import Terminals
-    terms = Terminals(cwd=tmp_path)
-    terms.open('term-1', argv=['/bin/sh', '-c', 'sleep 30'])
-    try:
-        states = terms.states()
-        assert [s['id'] for s in states] == ['term-1']
-        assert states[0]['alive'] is True and states[0]['pid']
-    finally:
-        terms.close_all()
+    async def run():
+        "On a loop: a pty's ring wakes its readers on the one that was running when it was opened."
+        terms = Terminals(cwd=tmp_path)
+        terms.open('term-1', argv=['/bin/sh', '-c', 'sleep 30'])
+        try: return terms, terms.states()
+        finally: terms.close_all()
+    terms, states = asyncio.run(run())
+    assert [s['id'] for s in states] == ['term-1']
+    assert states[0]['alive'] is True and states[0]['pid']
     assert terms.states() == [], 'and closing takes the process with it'
 
 

@@ -1,7 +1,7 @@
 "Run any command from the IDE under a live inspector in the same process, so its namespace is visible."
 
 from __future__ import annotations
-import asyncio, os, re, signal, sys, time, traceback
+import asyncio, os, re, sys, time, traceback
 from collections import deque
 from dataclasses import dataclass
 from fastcore.all import Path, L, first
@@ -69,8 +69,6 @@ class DevServer:
         self.command_code = None
         self.screen = bytearray()    # raw terminal bytes, for a viewer that attaches late
         self._subs = set()
-    @property
-    def proc(self): return self.pty.proc if self.pty else None
     @property
     def alive(self): return self.pty is not None and self.pty.alive
     @property
@@ -171,17 +169,10 @@ class DevServer:
     async def stop(self, grace=3.0):
         "Terminate the whole process group; a web server usually has children of its own."
         if not self.alive: return
-        proc = self.proc
-        try: os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            try: proc.terminate()
-            except ProcessLookupError: pass
-        for _ in range(max(1, int(grace * 10))):
-            if proc.poll() is not None: break
+        self.pty.kill(grace)
+        for _ in range(max(1, int(grace * 10)) + 5):
+            if not self.alive: break
             await asyncio.sleep(0.1)
-        else:
-            try: os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except Exception: pass
         if self._reader: self._reader.cancel()
         self.base = self.app_url = None
     async def restart(self):
@@ -191,7 +182,7 @@ class DevServer:
     def state(self):
         return {'label': self.label, 'script': self.script, 'cmd': ' '.join(self.argv),
             'alive': self.alive, 'running': self.running, 'code': self.command_code,
-            'pid': self.pid, 'returncode': self.proc.returncode if self.proc else None,
+            'pid': self.pid, 'returncode': self.pty.exit_code if self.pty else None,
             'watch': self.watch or infer_watch(self.argv), 'base': self.base, 'app_url': self.app_url,
             'started': self.started, 'ended': self.ended,
             'uptime': (time.time() - self.started) if self.started and self.alive else 0}
