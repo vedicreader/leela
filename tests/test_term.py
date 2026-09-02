@@ -112,3 +112,29 @@ def test_the_terminal_bundle_sends_the_id_the_server_keys_the_pty_by():
         hello = re.search(r"""t: ?['"]hello['"](.*?)\}""", js.read_text(), re.S)
         assert hello, js.name
         assert re.search(r'\bid\b', hello[1]), f'{js.name} sends no id; rebuild with npm run build'
+
+def test_a_view_that_reconnects_is_owed_only_what_it_missed():
+    """A pty outlives the socket that draws it, and the ring holds what the child printed while
+    nothing was attached. The next view is owed that, and not a second copy of what it already had."""
+    import asyncio
+    async def run():
+        p = Pty(['sh', '-c', 'echo one; sleep .6; echo two; sleep 30']).start()
+        first, second = bytearray(), bytearray()
+        async def until(dst, want):
+            for _ in range(200):
+                await asyncio.sleep(.02)
+                if want in bytes(dst): return
+        task = asyncio.create_task(p.stream(lambda b: first.extend(b)))
+        await until(first, b'one')
+        task.cancel()
+        try: await task
+        except asyncio.CancelledError: pass
+        await asyncio.sleep(1)   # 'two' is printed with nobody reading
+        task = asyncio.create_task(p.stream(lambda b: second.extend(b)))
+        await until(second, b'two')
+        p.kill()
+        await asyncio.wait_for(task, 5)
+        return bytes(first), bytes(second)
+    first, second = asyncio.run(run())
+    assert b'one' in first and b'two' not in first
+    assert b'two' in second and b'one' not in second, 'the replay starts where the last view stopped'

@@ -185,7 +185,7 @@ class Pipeline:
         try: await self.pty.stream(self._broadcast)
         except Exception as e:
             self._broadcast(f'\r\n\x1b[31m{type(e).__name__}: {e}\x1b[0m\r\n'.encode())
-        code = self.pty.proc.returncode if self.pty.proc else None
+        code = self.pty.exit_code if self.pty is not None else None
         ok = code == 0
         self.results[step.id] = {'status': 'passed' if ok else 'failed', 'code': code,
             'started': (self.results.get(step.id) or {}).get('started', 0),

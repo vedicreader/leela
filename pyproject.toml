@@ -49,6 +49,7 @@ dependencies = [
     "httpx2>=2.10.0",
     "numpy>=1.26",
     "packaging>=24.0",
+    "ptymini>=0.0.5",   # the pty layer: one ring per session, replayed on attach
     # `workspace._attachment_context` imports `ramabana.cli` for the media helpers, and that
     # module imports rich, which ramabana declares nowhere. Ours to name while that is true.
     "rich>=13.0",
