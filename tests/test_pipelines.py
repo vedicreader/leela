@@ -485,7 +485,7 @@ def test_a_traceback_blames_the_deepest_frame_that_is_yours():
 
 def test_a_checkout_shadowed_by_an_installed_copy_is_the_row_worth_seeing(tmp_path, monkeypatch):
     "An edit in the checkout does nothing until the environment is reinstalled."
-    import leela.blocks.stack.packages as pkg
+    import pullup.stack as pkg
     checkout = make_checkout(tmp_path, 'cfeasy')
     monkeypatch.setattr(pkg, '_origin', lambda n: tmp_path/'venv'/'site-packages'/n if n == 'cfeasy' else None)
     rows = {r['name']: r for r in survey(['cfeasy', 'vpseasy'], [checkout])}
@@ -494,7 +494,7 @@ def test_a_checkout_shadowed_by_an_installed_copy_is_the_row_worth_seeing(tmp_pa
     assert not rows['vpseasy']['installed'] and not rows['vpseasy']['shadowed']
 
 def test_a_package_run_from_its_checkout_is_not_shadowed(tmp_path, monkeypatch):
-    import leela.blocks.stack.packages as pkg
+    import pullup.stack as pkg
     checkout = make_checkout(tmp_path, 'cfeasy')
     monkeypatch.setattr(pkg, '_origin', lambda n: checkout/'cfeasy')
     row = survey(['cfeasy'], [checkout])[0]
@@ -545,7 +545,7 @@ def test_a_uv_project_runs_through_uv_the_way_the_terminal_does(tmp_path, monkey
     synced to another project's lock failed on an import instead of being repaired."""
     from leela.blocks.pipelines.pipelines import uv_argv
     root = tmp_path/'proj'; root.mkdir()
-    monkeypatch.setattr('leela.blocks.pipelines.pipelines.which', lambda n: '/opt/uv')
+    monkeypatch.setattr('pullup.pipeline.which', lambda n: '/opt/uv')
     assert uv_argv(root, ['nbdev-prepare']) is None, 'no lock, so uv does not own it'
     (root/'uv.lock').write_text('')
     assert uv_argv(root, ['nbdev-prepare']) == ['/opt/uv', 'run', '--project', str(root), 'nbdev-prepare']
@@ -556,5 +556,5 @@ def test_a_uv_project_runs_through_uv_the_way_the_terminal_does(tmp_path, monkey
     assert uv_argv(root, ['nbdev_prepare'])[4] == 'nbdev-prepare'
     (bindir/'odd_name').write_text('')
     assert uv_argv(root, ['odd_name'])[4] == 'odd_name', 'a command the project really spells that way'
-    monkeypatch.setattr('leela.blocks.pipelines.pipelines.which', lambda n: None)
+    monkeypatch.setattr('pullup.pipeline.which', lambda n: None)
     assert uv_argv(root, ['nbdev-prepare']) is None, 'and without uv installed it falls back'

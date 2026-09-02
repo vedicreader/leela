@@ -217,7 +217,7 @@ class _Core:
 
 def test_github_calls_get_the_synchronous_client(tmp_path, monkeypatch):
     "Left async, every call returns a coroutine and Environment's refresh raises on `.get`."
-    monkeypatch.setattr('leela.blocks.workflows.workflows._gheasy', lambda: _Core)
+    monkeypatch.setattr('pullup.workflows._gheasy', lambda: _Core)
     wf = Workflows(tmp_path)
     assert wf.remote_env() == {'secrets': [{'name': 'A', 'updated_at': 'x'}],
                                'variables': [{'name': 'B', 'value': '1', 'updated_at': ''}]}

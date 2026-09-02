@@ -908,13 +908,13 @@ def test_workspace_settings_are_project_local_and_resettable(tmp_path):
 def test_env_store_reads_async_dockeasy_ops(monkeypatch):
     async def get(*args, **kwargs): return 'value'
     async def put(*args, **kwargs): return None
-    monkeypatch.setattr('leela.core.envs._dockeasy', lambda: (get, put, get, put))
+    monkeypatch.setattr('pullup.env._dockeasy', lambda: (get, put, get, put))
     assert EnvStore().get('TOKEN') == 'value'
     assert EnvStore().set('TOKEN', 'next')['key'] == 'TOKEN'
 
 def test_env_store_reads_async_ops_inside_an_event_loop(monkeypatch):
     async def get(*args, **kwargs): return 'value'
-    monkeypatch.setattr('leela.core.envs._dockeasy', lambda: (get, get, get, get))
+    monkeypatch.setattr('pullup.env._dockeasy', lambda: (get, get, get, get))
     async def read(): return EnvStore().get('TOKEN')
     assert asyncio.run(read()) == 'value'
 
@@ -1376,7 +1376,7 @@ def test_the_shell_is_asked_without_the_bundles_interpreter_pointed_at_it(tmp_pa
     shell.write_text("#!/bin/sh\nif [ -n \"$PYTHONHOME\" ]; then exit 1; fi\n"
                      "printf 'GITHUB_TOKEN=ghp-from-the-profile\\0'\n")
     shell.chmod(0o755)
-    monkeypatch.setattr(envs.sys, 'frozen', True, raising=False)
+    monkeypatch.setattr('kunda.pythons.sys.frozen', True, raising=False)
     monkeypatch.setattr(envs.os, 'environ', {'PYTHONHOME': '/Leela.app/Contents/Resources',
                                              'PYTHONPATH': '/Leela.app/python313.zip'})
     assert envs.shell_env(str(shell)) == {'GITHUB_TOKEN': 'ghp-from-the-profile'}
