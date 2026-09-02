@@ -99,3 +99,25 @@ def test_half_a_statement_is_refused_rather_than_guessed_at():
 """
     with pytest.raises(ValueError):
         extract('x.py', src, src.index('    x = compute('), src.index('        1, 2)') - 1, 'function', 'nope')
+
+
+def test_a_comprehensions_loop_variable_is_not_a_parameter_of_the_lifted_function():
+    "`sum(r.price for r in rows)` binds `r` itself. Passing it produced code that raised NameError."
+    src = 'def report(rows, tax):\n    n = sum(r.price for r in rows)\n    return n * tax\n'
+    out = extract('a.py', src, src.index('    n = sum'), src.index('    return') - 1,
+                  'function', 'compute').after
+    assert 'def compute(rows):' in out, out
+    assert 'compute(r, rows)' not in out, out
+    ns = {}
+    exec(out, ns)
+    class Row: price = 2
+    assert ns['report']([Row()], 3) == 6
+
+
+def test_every_comprehension_form_binds_its_own_target():
+    bodies = ['    n = sum(r.price for r in rows)\n', '    n = sum([r.price for r in rows])\n',
+              '    n = len({r.id: r.price for r in rows})\n', '    n = sum(p for r in rows for p in r.parts)\n']
+    for body in bodies:
+        src = 'def report(rows, tax):\n' + body + '    return n * tax\n'
+        out = extract('a.py', src, src.index(body), src.index('    return') - 1, 'function', 'compute').after
+        assert 'def compute(rows):' in out, (body, out)
