@@ -9,6 +9,10 @@ from fastcore.ansi import strip_ansi
 from jupyter_client.manager import AsyncKernelManager
 from jupyter_client.kernelspec import KernelSpec
 
+from kunda.pythons import (VENV_BINS, VENV_DIRS, VENV_PYTHONS, _venv_pythons, _venv_roots,
+    find_pythons as _find_pythons, project_python, python_for as _python_for, venv_env)
+from kunda.pythons import nearest_python
+
 from ...core.inspectors import reg_dir, active
 
 from .support import LEELA_PY, clean_env, strip_bundle, support_paths, work_dir
@@ -21,9 +25,6 @@ __all__ = ['ExecOutcome', 'Kernel', 'KernelStartError', 'GatewayKernel', 'Gatewa
 
 KERNELS = ('ipykernel', 'ipymini')
 
-VENV_DIRS = ('.venv', 'venv', 'env', '.env')
-VENV_BINS = ('bin/python', 'Scripts/python.exe')
-
 SHUTDOWN_WAIT = 5.0
 
 async def _give_up_after(coro, timeout=SHUTDOWN_WAIT):
@@ -35,73 +36,17 @@ def ipymini_available():
     "True when the ipymini package can be imported in this interpreter."
     return importlib.util.find_spec('ipymini') is not None
 
-def _venv_pythons(root):
-    "Every conventional venv interpreter path under `root`, as `(venv dir, path)`; existence."
-    root = Path(root)
-    return L((d, root/d/b) for d in VENV_DIRS for b in VENV_BINS)
-
-def project_python(roots=()):
-    "The first conventional project-local virtualenv interpreter, or None."
-    for root in L(roots):
-        if (p := first(p for _, p in _venv_pythons(root) if p.exists())): return str(p)
-    return None
-
-#: The interpreters `nearest_python` looks for, as paths relative to a project folder.
-VENV_PYTHONS = tuple(f'{d}/{b}' for d in VENV_DIRS for b in VENV_BINS)
-
-def nearest_python(start, stop=None):
-    "The nearest conventional venv interpreter at or above `start`, not searched past `stop`."
-    from ...core.projects import nearest_marked
-    p = nearest_marked(start, VENV_PYTHONS, stop)[1]
-    return str(p) if p else None
-
 def python_for(cwd=None, session=None, stop=None):
     "The interpreter anything Leela spawns for `cwd` should be inside."
     if cwd and stop is None and session is not None:
         try: stop = session.fs.root_of(cwd)
         except Exception: stop = None
-    if (py := nearest_python(cwd, stop) if cwd else None): return py
-    if session is None: return None
-    return session.pool.default_python or project_python(session.fs.roots)
-
-def venv_env(python, env=None):
-    "`env` (this process's, by default) with `python`'s environment in front of it."
-    env = strip_bundle(dict(os.environ if env is None else env))
-    if not python: return env
-    bindir = str(Path(python).parent)
-    env['VIRTUAL_ENV'] = str(Path(bindir).parent)
-    # Not `UV_PROJECT_ENVIRONMENT`: it is read wherever the process ends up, not where it started.
-    # uv finds the right environment from the directory anyway.
-    env.pop('UV_PROJECT_ENVIRONMENT', None)
-    env['PATH'] = bindir + os.pathsep + env.get('PATH', '')
-    env.pop('PYTHONHOME', None)
-    return env
-
-def _venv_roots(roots):
-    "Each open folder and the checkouts directly inside it: one folder of repos holds a venv each."
-    for r in L(roots):
-        yield Path(r)
-        try: yield from sorted(d for d in Path(r).iterdir() if d.is_dir() and not d.name.startswith('.'))
-        except OSError: pass
+    if session is None: return _python_for(cwd, stop)
+    return _python_for(cwd, stop, roots=session.fs.roots, default=session.pool.default_python)
 
 def find_pythons(roots=(), current=None):
-    "Interpreters a kernel could be launched under: this one, `current` as `python_for` resolved it, and the venvs under `roots`."
-    from shutil import which
-    out, seen = L(), set()
-    def add(p, label):
-        p = str(p)
-        if p in seen or not os.path.exists(p): return
-        seen.add(p)
-        out.append({'path': p, 'label': label})
-    add(sys.executable, 'this one (leela’s own)')
-    if current:
-        d = Path(current).parents
-        add(current, f'{d[2].name}/{d[1].name}' if len(d) > 2 else str(current))
-    for r in _venv_roots(roots):
-        for d, p in _venv_pythons(r): add(p, f'{Path(r).name}/{d}')
-    for n in ('python3', 'python'):
-        if (w := which(n)): add(w, f'{n} on PATH')
-    return out
+    "Interpreters a kernel could be launched under, this one among them."
+    return _find_pythons(roots, current, 'this one (leela’s own)')
 
 def run_file_src(path, src=None, argv=(), cwd=None):
     "Code that runs a file in the kernel's *own* namespace, with script semantics."

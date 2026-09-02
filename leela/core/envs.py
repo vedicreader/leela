@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio, inspect, json, os, re, subprocess, sys, threading
 
+from kunda.pythons import BUNDLE_ONLY, clean_env, strip_bundle
+
 __all__ = ['EnvStore', 'EnvError', 'import_login_env', 'preferred_shell', 'shell_env',
            'BUNDLE_ONLY', 'clean_env', 'strip_bundle',
            'env_file', 'stored_env', 'apply_stored_env', 'set_env', 'unset_env', 'env_rows',
@@ -77,24 +79,6 @@ def env_rows():
                      'source': 'leela' if mine else ('environment' if live else ''),
                      'editable': True, 'removable': mine})
     return rows
-
-#: What py2app sets so its own helper starts, and what makes a child import the bundle's standard
-#: library under somebody else's interpreter.
-BUNDLE_ONLY = ('PYTHONHOME', 'PYTHONPATH', 'PYTHONEXECUTABLE', '__PYVENV_LAUNCHER__', 'RESOURCEPATH')
-
-def strip_bundle(env):
-    "`env` without py2app's interpreter redirection state, unchanged where there is none."
-    if not getattr(sys, 'frozen', False): return env
-    for name in BUNDLE_ONLY: env.pop(name, None)
-    env['PYTHONUTF8'] = '1'
-    return env
-
-def clean_env():
-    "Environment for a child, without py2app's interpreter redirection state."
-    env = os.environ.copy()
-    for name in BUNDLE_ONLY: env.pop(name, None)
-    env['PYTHONUTF8'] = '1'
-    return env
 
 #: Names that describe the shell that printed them, not the environment a program wants.
 _SHELL_ONLY = {'_', 'PWD', 'OLDPWD', 'SHLVL', 'PS1', 'TERM', 'TERM_SESSION_ID', 'TMPDIR'}

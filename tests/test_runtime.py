@@ -21,7 +21,7 @@ from leela.workspace import _EnvClient
 from leela.blocks.runtime.kernels import find_pythons, run_file_src
 from leela.blocks.debug.debug import DebugSession, debugpy_available
 import subprocess
-from leela.blocks.runtime import support as support
+from kunda import support as support
 import numpy as np
 import pandas as pd
 from dhrishti.core import PROFILES, SORTS, expand, grid_page, value_str, var_info
@@ -1489,7 +1489,7 @@ def test_an_installed_kernel_that_will_not_import_is_reported_as_that(monkeypatc
     """The installer returned 0 and the kernel would not import, and what reached the person was
     `No module named pip` from the fallback attempt: a report about the installer a uv environment
     was never going to have, rather than about the package that does not work."""
-    from leela.blocks.runtime import support
+    from kunda import support
     monkeypatch.setattr(support, '_run', lambda args, timeout=180: completed(args))
     monkeypatch.setattr(support, 'kernel_support', lambda python: {
         'ipykernel': {'available': True, 'version': '7.3.0', 'error': ''},
@@ -1507,7 +1507,7 @@ def test_the_inspector_a_project_must_install_is_the_one_it_cannot_borrow():
 
 def test_the_inspector_probe_asks_the_question_the_kernel_asks(monkeypatch):
     "A probe that extends the path where the kernel would not is a probe answering for nobody."
-    from leela.blocks.runtime import support
+    from kunda import support
     seen = {}
     class Done:
         returncode, stdout, stderr = 0, '1.0', ''
