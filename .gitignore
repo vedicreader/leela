@@ -184,5 +184,6 @@ spikes/nbship/rustparse/target/
 # Agent harness state, not the project's. `.github` is the exception and stays.
 .agents/
 .claude/
+**/.claude/
 .cursor/
 .ramabana/
