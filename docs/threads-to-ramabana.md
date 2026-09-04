@@ -215,7 +215,7 @@ Leela pins `ramabana[cli]==0.1.32` and `shalya>=0.0.5` from PyPI (`pyproject.tom
 5. Leela: bump to `ramabana[cli]==0.1.33`, `shalya>=0.0.6`, regenerate `uv.lock`. One commit, no behaviour.
 6. Leela: rewrite `blocks/agent/threads.py` to hold `LeelaApp` and re-export. Delete the ported test bodies, rewrite the three source-text tests. Full `pytest`, including `-m slow`.
 7. Leela: `turns.py` cleanup. `diff_payload` to `shalya.core.diff_view`, the three private aliases to `shalya.core`, `tool_schemas` forwarded with `writes=WRITE_TOOLS, group=tool_group`.
-8. Leela: `docs/chat-threads-implementation.md` and `docs/integration.md` name the new seam, and `CLAUDE.md`'s "what lives where" gains one sentence.
+8. Leela: `docs/integration.md` names the new seam, and `CLAUDE.md`'s "what lives where" gains one sentence.
 
 Steps 1 to 4 land in the upstream repos alone. Steps 5 to 8 are the Leela half and cannot be interleaved. If step 4 slips, nothing in Leela is half-migrated.
 

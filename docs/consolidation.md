@@ -1,6 +1,6 @@
 # Search and memory
 
-Roadmap: [litesearch](https://github.com/Karthik777/litesearch/blob/main/docs/consolidation.md). Memory design: [vault design](superpowers/specs/2026-08-11-vishalakshi-memory-design.md).
+Roadmap: [litesearch](https://github.com/Karthik777/litesearch/blob/main/docs/consolidation.md).
 
 ## Search
 

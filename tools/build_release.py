@@ -1,7 +1,7 @@
 """Build the distributable: a signed-local macOS app + DMG, or a zipped Windows folder."""
 from __future__ import annotations
 import os, re, shutil, subprocess, sys, tempfile
-from fastcore.all import Path
+from fastcore.all import Path, first
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ('Leela-macOS.dmg', 'Leela-Windows.zip')
@@ -99,11 +99,30 @@ def version():
     return m.group(1)
 
 
+def has_release(tag):
+    "Whether a GitHub release exists for `tag`."
+    return subprocess.run(['gh', 'release', 'view', str(tag)],
+                          capture_output=True, text=True).returncode == 0
+
+
+def release_tag(tag=''):
+    """The release to attach to: `tag` where given, else whichever spelling of this version exists.
+
+    fastship tags a Python project with the bare version and its other flows with a `v` prefix, so
+    which one the release carries is not knowable from here. `gh release upload` on the wrong one
+    fails with `release not found` and names no alternative.
+    """
+    if tag: return tag
+    v = version()
+    if (found := first(t for t in (f'v{v}', v) if has_release(t))): return found
+    raise SystemExit(f'no release for {v}: run `ship-gh` first, or pass the tag to upload')
+
+
 def upload(tag=''):
-    "Attach what this platform built to a release. Defaults to the tag for the current version."
+    "Attach what this platform built to a release. Defaults to the release for the current version."
     built = [p for name in ARTIFACTS if (p := ROOT/'dist'/name).exists()]
     if not built: raise SystemExit(f'nothing to upload: build one of {", ".join(ARTIFACTS)} first')
-    run('gh', 'release', 'upload', tag or f'v{version()}', *built, '--clobber')
+    run('gh', 'release', 'upload', release_tag(tag), *built, '--clobber')
     for p in built: print(f'Uploaded {p}')
 
 

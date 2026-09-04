@@ -26,7 +26,7 @@ def _repo(tmp_path):
     return GitRepo.at(tmp_path)
 
 def _crate(root, name='mycrate'):
-    "What `nbship` writes, minus the ignore file, plus the build output that trips people up."
+    "A maturin crate, minus the ignore file, plus the build output that trips people up."
     d = root/name
     (d/'src').mkdir(parents=True)
     (d/'Cargo.toml').write_text('[package]\nname = "mycrate"\n')

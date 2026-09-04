@@ -90,27 +90,18 @@ One thing is not done here: `frontend/editor.js` still asks the server for diagn
 Hover, symbols, inlay hints and rename are routed; inline squiggles from a non-Python server are
 not yet reachable from the editor.
 
-## Exporting a notebook into something shippable
+## Releasing a project written in one of them
 
-`spikes/nbship` settles whether the nbdev path extends to these languages, and it does for both. A
-Rust notebook exports through `nb_export(mod_maker=CargoMaker)` into a crate that maturin turns
-into a wheel, with `#[pyfunction]` and `#[pyclass]` bindings written at export so the cells stay
-plain Rust. A JavaScript notebook exports into an ESM package that `deno bundle` turns into one
-minified file a CDN can serve.
+`release_flow` answers `maturin` for a crate with Python bindings and `crate` for one without, so
+the Release panel offers `cargo test`, a local wheel, a workflow refresh and a tag for the first,
+and `cargo test`, clippy, package and `cargo publish` for the second. A maturin crate used to be
+claimed by the fastship flow, because it has a `pyproject.toml`, and that flow would have tried to
+`ship-pypi` one platform's wheel.
 
-Both makers are small because nbdev's cell collection was already language-neutral and reads the
-same kernelspec this page is about, and because `pub` and `export` are already the export list
-that Python needs an `__all__` for. Read that spike's README before designing anything around it.
-
-One command takes a Rust notebook to an installed wheel:
-
-    python -m nbship geometry.ipynb --install
-
-The binding is generated from a `syn` parse rather than from regular expressions, so every item
-that cannot cross into Python is named with its reason instead of quietly producing a crate that
-does not compile.
-
-![The bundle, imported into a browser from a URL](screenshots/cdn-in-browser.png)
+Exporting a notebook in these languages into a crate or an npm package is not Leela's. A spike
+under `spikes/nbship` established that nbdev's `nb_export(mod_maker=...)` reaches both, and it was
+removed in 0.1.3: running the export in CI for a `cargo build` should not install FastHTML and
+uvicorn. Read it at tag `v0.1.2` before designing anything around it.
 
 ## What stays Python
 

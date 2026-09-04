@@ -2,11 +2,20 @@
 
 > creative workspace that starts with coding
 
-A browser IDE for notebooks, files and live variables.
+A browser IDE for notebooks, files and live variables, with a coding agent in the same window.
+It runs as a web application on loopback, or as a packaged desktop application on macOS and
+Windows.
 
-[dhrishti](https://github.com/vedicreader/dhrishti) is the engine. It turns a live Python
-namespace into a node tree and serves it as a JSON API from inside the kernel that owns it.
-This repository is the shell around that engine: workspace, notebook, agent, frontend.
+This repository is the workspace, the notebook, the agent surface and the frontend. The parts
+that are not specific to an IDE are their own packages, and Leela imports them by name:
+[kunda](https://github.com/vedicreader/kunda) runs the kernels and finds the interpreters,
+[dhrishti](https://github.com/vedicreader/dhrishti) inspects a live namespace from inside the
+kernel that owns it, [ramabana](https://github.com/vedicreader/ramabana) is the agent harness,
+[shalya](https://github.com/vedicreader/shalya) the toolset and the host contract,
+[gheasy](https://github.com/vedicreader/gheasy) the git plumbing,
+[kavacha](https://github.com/vedicreader/kavacha) the native window and both freezer definitions,
+and [pullup](https://github.com/vedicreader/pullup) the project, release, deploy and workflow
+model behind the Ship it panel.
 
 ## Install
 
@@ -14,6 +23,11 @@ This repository is the shell around that engine: workspace, notebook, agent, fro
 pip install leela                # everything Leela imports, the gateway and the GitHub half included
 pip install "leela[local]"       # + on-device inference (mlx, llama). Large, and installable later
 ```
+
+The desktop application is a separate download. Each release attaches `Leela-macOS.dmg` and
+`Leela-Windows.zip`, built by `.github/workflows/desktop-artifacts.yml` on the tag. Take them
+from [the releases page](https://github.com/vedicreader/leela/releases). Nothing older than
+0.1.3 carries a working one.
 
 ## Use
 
@@ -77,8 +91,9 @@ you expand it.
 
 ### Live variables
 
-Each notebook tab owns a real kernel with an inspector inside it. The tree stays responsive
-while a cell runs. `--kernel ipymini` puts execs and shell-channel calls on a subshell, so
+Each notebook tab owns a real kernel with a dhrishti inspector inside it. kunda supervises the
+kernel, finds the interpreters and builds the kernelspec; the tree stays responsive while a cell
+runs. `--kernel ipymini` puts execs and shell-channel calls on a subshell, so
 completion does not queue behind a long cell. On a cell that awaits two seconds, a
 completion request drops from about 3s to about 275ms
 ([screenshot](docs/screenshots/web-concurrency.png)). A trailing value opens in a lazy lens.
@@ -227,15 +242,15 @@ leela/
   core/           what every block may import
     block.py      `Ctx` (capabilities), the block contract, ordered wiring
     langs.py      the languages Leela runs, serves and highlights
-    ports.py      the contracts a workspace depends on, and the provider registry
     keys.py       single-source keymap and the user's overrides
     ui.py         button bars and shared atoms, over those same actions
     text.py       diffs, fuzzy ranking, markdown block structure
     session.py    open docs, running cells, the debugger, the journal
+    backups.py    the checkpoint a save writes, outside the repository
     envs.py       which values a project needs; dockeasy keeps them
     web.py        shared route helpers
     projects.py   which folders are open, and which were open lately
-    inspectors.py dhrishti's registry and menus, without importing dhrishti
+    inspectors.py the inspector registry, without importing dhrishti's kernel half
   blocks/         one folder per feature: `connect(app, ctx)` plus a `CAPS` tuple
     nb git search memory agent runtime research workflows pipelines drive
     fs term keys tabs vars runs stack refactor lsp debug editor settings workspace
@@ -253,7 +268,7 @@ packaging/        the platform build definitions and the mark
 
 A block imports `leela.core` and never another block. [docs/blocks.md](docs/blocks.md) has
 the contract. [docs/integration.md](docs/integration.md) says what belongs in a dependency
-rather than here.
+rather than here. [docs/](docs/README.md) indexes the rest.
 
 ## Standalone desktop builds
 
@@ -267,13 +282,13 @@ has, with the logins it already has.
 ![The packaged app](docs/screenshots/desktop-window.png)
 
 ```sh
-uv sync --extra gateway --extra macapp --group test
+uv sync --extra desktop --extra macapp --group dev
 python setup_app.py                 # dist/Leela.app
 python tools/build_release.py       # + dist/Leela-macOS.dmg
 ```
 
 ```powershell
-uv sync --extra gateway --extra windows --group test
+uv sync --extra desktop --extra windows --group dev
 python setup_app.py                 # dist\Leela\Leela.exe
 python tools\build_release.py       # + dist\Leela-Windows.zip
 ```
@@ -289,17 +304,39 @@ lives in `packaging/assets`: an ICNS for macOS, an ICO with executable metadata 
 `leela --app` server on a daemon thread, and gives the main thread to the window. Cocoa allows
 no other order.
 
-The release pipeline builds and attaches them: `python tools/build_release.py` makes the
-bundle, and `python tools/build_release.py upload` sends the DMG and the zip to the release
-for the current `leela/__init__.py` version. Both are steps in the Release panel whenever
-`setup_app.py` and `tools/build_release.py` are both present.
-
 `tests/test_packaging.py` checks what a green build would not. That the asset walk reaches
 `vendor/fonts/`. That the plist carries the `NSAllowsLocalNetworking` exemption WKWebView
 needs for a loopback URL. That Windows keeps modules as files, so a kernel subprocess can
-import them. `.github/workflows/desktop-artifacts.yml` builds both on version tags, runs that
-file against the artefact, and uploads the DMG and the zip. Set `LEELA_CODESIGN_IDENTITY` for
-Developer ID signing. Notarization credentials stay in the release environment.
+import them.
+
+### Cutting a release
+
+Leela is a fastship project, so the Release panel runs `pytest`, `ship-changelog`, `ship-gh`,
+`ship-pypi`, then the two desktop steps, then `ship-bump`. From a shell the same sequence is:
+
+```sh
+pytest tests -q
+ship-gh --no_changelog --no_editor --yes    # commit, push, tag, create the GitHub release
+ship-pypi
+python tools/build_release.py               # this platform's bundle, into dist/
+python tools/build_release.py upload        # attach it to the release for this version
+ship-bump && git commit -am bump && git push
+```
+
+Write the `## <version>` section of `CHANGELOG.md` before `ship-gh`. That section is the
+release body.
+
+The tag is what builds the other platform. `.github/workflows/desktop-artifacts.yml` runs on a
+push of `v*` or of a bare version tag, because `ship-gh` tags a Python project `0.1.3` while
+fastship's Rust, Zig and npm flows push `v0.1.3`. Each job exports `uv.lock` as the bundle's
+requirements before it freezes anything: pip resolving `>=` fresh on a runner is what shipped
+the 0.1.2 bundle a jupyasyncclient whose kernel answered 500 to every cell. Each job then runs
+`tests/test_packaging.py` against the artefact it built and uploads it to the release the tag
+names. Set `LEELA_CODESIGN_IDENTITY` for Developer ID signing. Notarization credentials stay in
+the release environment.
+
+`python tools/build_release.py upload` finds the release under either tag spelling and refuses
+with the command to run when there is none.
 
 The window needs no build. From a checkout:
 
@@ -392,18 +429,19 @@ browser is cold. `/browser/ready` answers "is there a Chrome to drive", not "is 
 Nearly all of the first three lines was dhrishti, which the server imported for two constants
 and a directory listing. dhrishti belongs *inside a kernel*. `dhrishti.core` imports IPython,
 pandas and numpy at module scope, and leela's server never formats a live value.
-`leela/core/inspectors.py` holds the profile and sort menus, and the reader for the registry
-in-kernel inspectors write themselves into. `tests/test_inspectors.py` imports the real
-dhrishti and fails if the two disagree, round trip included. The kernel side is untouched,
-which is why the dependency stays. The IPython still resident arrives through `fasthtml.pico`,
-which `fast_app` imports even for `pico=False`. That one is a one-line fix upstream.
+`leela/core/inspectors.py` reaches `dhrishti.registry` for the profile and sort menus and the
+reader for the registry in-kernel inspectors write themselves into, and `kunda.support` for the
+import classifier. Neither import pulls in the kernel half. `tests/test_inspectors.py` imports
+the real dhrishti and fails if the two disagree, round trip included. The kernel side is
+untouched, which is why the dependency stays. The IPython still resident arrives through
+`fasthtml.pico`, which `fast_app` imports even for `pico=False`. That one is a one-line fix
+upstream.
 
 ## Develop
 
 ```sh
-uv venv --python 3.12
-uv pip install -e . --group test
-pytest tests -q          # `-m ""` adds the slow ones: browsers, real kernels, a real model
+uv sync --group dev --python 3.12
+uv run pytest tests -q   # `-m ""` adds the slow ones: browsers, real kernels, a real model
 ```
 
 Kernels are faked in `tests/conftest.py`, and the harness tests drive a `FakeBackend` over
