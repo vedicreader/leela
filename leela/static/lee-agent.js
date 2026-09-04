@@ -1633,7 +1633,35 @@ async function leeAgentThreadOpen(id) {
 }
 /* `status()` is footer-only and addressed to nothing. A checkpoint in another conversation needs
    naming and a way in. */
+/* The `done` event is the only thing that clears `agentBusy`, and a stream that drops as the turn
+   ends never delivers it -- `es.onerror` reconnects and leaves it standing. The pane then reads as
+   working over a conversation the server has long since finished, and the composer stays in steer
+   mode with no way back. This poll already carries the server's own view of the active
+   conversation, so it is what settles the disagreement. The delay is for the other race: a send
+   raises `agentBusy` before the run is registered, and a poll landing in that window would clear a
+   turn that is about to start. */
+const BUSY_SETTLE_MS = 6000;
+function reconcileAgentBusy(attention) {
+  const state = attention.active_state;
+  if (!state || !lee.agentBusy) return;
+  if (state === 'working' || state === 'waiting') return;
+  if (Date.now() - (lee.agentBusyAt || 0) < BUSY_SETTLE_MS) return;
+  lee.agentBusy = false; lee.agentRuns = [];
+  setAgentStatus(state === 'failed' ? 'idle' : 'ready');
+  updateAgentRunstrip({runs: []});
+}
+/* Nothing else polls: `refreshAgentThreads` runs on what a person does, and the stream that would
+   say `done` is the thing missing when this goes wrong. So the check has to run on its own clock,
+   and only while a turn is outstanding -- it stops itself as soon as one is not. */
+function startAgentBusyWatch() {
+  if (lee.agentBusyWatch) return;
+  lee.agentBusyWatch = setInterval(async () => {
+    if (!lee.agentBusy) { clearInterval(lee.agentBusyWatch); lee.agentBusyWatch = null; return; }
+    try { reconcileAgentBusy((await api('/agent/threads')).attention || {}); } catch (_) {}
+  }, 5000);
+}
 function paintAgentAttention(attention, rows) {
+  reconcileAgentBusy(attention);
   const bar = $('#agentattention'); if (!bar) return;
   const waiting = (attention.waiting || []).filter(id => id !== attention.active);
   const working = Math.max(0, (attention.working || 0) - (rows.some(t => t.id === attention.active && t.state === 'working') ? 1 : 0));
@@ -3129,7 +3157,7 @@ async function sendAgent(force = false) {
   catch (e) { el.value = q; return status(e.message || String(e), 'err'); }
   el.value = ''; el.style.height = '64px';
   lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
-  lee.agentBusy = true; setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
+  lee.agentBusy = true; lee.agentBusyAt = Date.now(); startAgentBusyWatch(); setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   const card = agentTurnCard({prompt: q, model: $('#agentmodel')?.value || ''});
   turnBody(card).appendChild(userMessage(q));

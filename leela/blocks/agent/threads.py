@@ -183,11 +183,19 @@ class Threads:
         return [d for d in (row.dict() for row in rows)
                 if d['title'] or d['unread'] or d['state'] != 'idle']
     def attention(self):
-        "What the badge and the switcher need: how many are working, how many want a person."
+        """What the badge and the switcher need: how many are working, how many want a person.
+
+        `active_state` because `dicts` leaves out the empty conversation a person was handed, so the
+        pane cannot always find the active row to read its state from. Without it a client that
+        missed the `done` event has nothing authoritative to correct itself against.
+        """
         rows = self.rows()
-        return {'working': sum(1 for r in rows if r.state == 'working'),
-                'waiting': self.waiting(), 'unread': sum(r.unread for r in rows),
-                'threads': len(rows), 'active': self.active_id}
+        states = {r.id: r.state for r in rows}   # a property with a reap behind it: read it once
+        return {'working': sum(1 for s in states.values() if s == 'working'),
+                'waiting': [i for i, s in states.items() if s == 'waiting'],
+                'unread': sum(r.unread for r in rows),
+                'threads': len(rows), 'active': self.active_id,
+                'active_state': states.get(self.active_id, 'idle')}
     def mute(self, thread_id, muted=True): return self.require(thread_id).mute(muted)
     def waiting(self):
         "Every conversation holding a checkpoint. What the attention bar and the badge read."

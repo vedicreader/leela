@@ -147,7 +147,7 @@ async function sendAgent(force = false) {
   catch (e) { el.value = q; return status(e.message || String(e), 'err'); }
   el.value = ''; el.style.height = '64px';
   lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
-  lee.agentBusy = true; setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
+  lee.agentBusy = true; lee.agentBusyAt = Date.now(); startAgentBusyWatch(); setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   const card = agentTurnCard({prompt: q, model: $('#agentmodel')?.value || ''});
   turnBody(card).appendChild(userMessage(q));

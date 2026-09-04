@@ -1213,6 +1213,21 @@ def test_the_log_helper_refuses_a_path_outside_the_suites_config_dir(tmp_path, c
         history_file(elsewhere)
 
 
+def test_attention_names_the_active_conversations_state_even_where_the_list_omits_it(tmp_path):
+    """The pane clears `agentBusy` on the stream's `done`, and a stream that drops as the turn ends
+    never sends one, so it needs the server's own view to correct itself against. `dicts` leaves out
+    the empty conversation a person was handed, which is the one they are usually looking at.
+    """
+    ws = Workspace(roots=[tmp_path])
+    try:
+        seen = ws.threads.attention()
+        assert seen['active'] == ws.threads.active_id
+        assert seen['active_state'] == 'idle', 'nothing is running in a workspace just opened'
+        assert not any(d['id'] == seen['active'] for d in ws.threads.dicts()), \
+            'and the row it would otherwise be read from is not in the list'
+    finally: ws.threads.shutdown()
+
+
 def test_a_write_from_outside_leela_is_kept_before_the_editor_takes_it(tmp_path):
     "The disk poll is the only moment anything notices another process editing an open file."
     from starlette.testclient import TestClient
